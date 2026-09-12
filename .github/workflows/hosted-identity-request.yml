@@ -819,6 +819,7 @@ jobs:
     if: ${{ needs.validate-target.outputs.action == 'destroy' && needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' && needs.destroy-runtime.result == 'success' }}
     environment: pr-preview
     concurrency:
+      # destroy-runtime releases this lifecycle lock; retire-identity reacquires it and rechecks identity before retirement.
       group: preview-allocation-lifecycle
       cancel-in-progress: false
       queue: max

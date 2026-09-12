@@ -225,6 +225,65 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
                     "pr-42.preview.example.test",
                 )
 
+    def test_manifest_validates_object_metadata_once_before_kind_specific_checks(self):
+        validator = self.validator
+        document = self._manifest_fixture({"emptyDir": {}})
+        validation_order = []
+        original_metadata_validator = validator._validate_object_metadata
+
+        def record_metadata(document, expected_namespace):
+            validation_order.append("metadata")
+            return original_metadata_validator(document, expected_namespace)
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.yaml"
+            path.write_text(yaml.safe_dump(document), encoding="utf-8")
+            with (
+                patch.object(
+                    validator,
+                    "EXPECTED_NAMES",
+                    {kind: {"account-service"} if kind == "Deployment" else set() for kind in validator.EXPECTED_NAMES},
+                ),
+                patch.object(
+                    validator, "EXPECTED_OBJECTS", {("Deployment", "account-service")}
+                ),
+                patch.object(validator, "validate_services"),
+                patch.object(validator, "validate_network_policies"),
+                patch.object(validator, "validate_infrastructure_deployments"),
+                patch.object(validator, "validate_service_consumers"),
+                patch.object(
+                    validator,
+                    "_validate_object_metadata",
+                    side_effect=record_metadata,
+                ),
+                patch.object(
+                    validator,
+                    "_validate_firemud_config_shape",
+                    side_effect=lambda _document: validation_order.append("config"),
+                ),
+                patch.object(
+                    validator,
+                    "_validate_restricted_pod_security",
+                    side_effect=lambda _pod, _path: validation_order.append("security"),
+                ),
+                patch.object(
+                    validator,
+                    "_validate_workload_selector_metadata",
+                    side_effect=lambda _document: validation_order.append("selector"),
+                ),
+            ):
+                validator.validate_manifest(
+                    path,
+                    "pr-42",
+                    "pr-42-head-42",
+                    "pr-42.preview.example.test",
+                )
+
+        self.assertEqual(
+            validation_order,
+            ["metadata", "config", "security", "selector"],
+        )
+
     def test_manifest_walk_rejects_projected_and_csi_secret_references(self):
         cases = (
             (

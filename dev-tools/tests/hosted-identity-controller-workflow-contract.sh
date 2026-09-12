@@ -379,7 +379,8 @@ from pathlib import Path
 
 import yaml
 
-workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+trusted_source = Path(sys.argv[1]).read_text(encoding="utf-8")
+workflow = yaml.safe_load(trusted_source)
 preview_workflow = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
 preview_annotator = Path(sys.argv[3]).read_text(encoding="utf-8")
 dev_demo_workflow = yaml.safe_load(Path(sys.argv[4]).read_text(encoding="utf-8"))
@@ -1013,6 +1014,10 @@ for job_name in ("deploy-runtime", "destroy-runtime", "retire-identity"):
         "cancel-in-progress": False,
         "queue": "max",
     }
+assert (
+    "# destroy-runtime releases this lifecycle lock; retire-identity reacquires it "
+    "and rechecks identity before retirement."
+) in trusted_source
 prepare_by_name = {
     step.get("name"): step
     for step in jobs["prepare-runtime"]["steps"]
@@ -1146,20 +1151,30 @@ assert 'echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"' in (
     dev_demo_kubeconfig_step["run"]
 )
 dev_demo_requester_write = dev_demo_by_name["Write hosted identity requester kubeconfig"]
-assert "uses" not in dev_demo_requester_write
-assert dev_demo_requester_write["env"] == {
-    "PREVIEW_KUBECONFIG": "${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}"
+assert dev_demo_requester_write["uses"] == "./.github/actions/write-kubeconfig"
+assert dev_demo_requester_write["with"] == {
+    "content": "${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
 }
-assert "GITHUB_ENV" not in dev_demo_requester_write["run"]
-for required in (
-    "umask 077",
-    'written_path="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh "$expected_path")"',
-    'kubectl --kubeconfig "$written_path" config view --minify >/dev/null',
-):
-    assert required in dev_demo_requester_write["run"]
 assert dev_demo_by_name["Apply fixed dev-demo Active request"]["env"] == {
     "KUBECONFIG": "${{ runner.temp }}/hosted-identity-requester.kubeconfig"
 }
+dev_demo_active_restore = dev_demo_by_name[
+    "Restore dev-demo runtime kubeconfig after Active request"
+]
+assert dev_demo_active_restore["if"] == (
+    "${{ always() && steps.cluster-access.outputs.available == 'true' && "
+    "steps.certificate-identity.outputs.mode == 'hosted-controller' }}"
+)
+assert '[[ -z "${DEV_DEMO_RUNTIME_KUBECONFIG:-}" ]]' in (
+    dev_demo_active_restore["run"]
+)
+assert 'echo "KUBECONFIG=$DEV_DEMO_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"' in (
+    dev_demo_active_restore["run"]
+)
+assert dev_demo_steps.index(dev_demo_active_restore) == (
+    dev_demo_steps.index(dev_demo_by_name["Apply fixed dev-demo Active request"]) + 1
+)
 assert dev_demo_render_step["env"]["CERTIFICATE_IDENTITY_MODE"] == (
     "${{ steps.certificate-identity.outputs.mode }}"
 )

@@ -194,6 +194,7 @@ ordered = (
     "Record exact dev-demo runtime target",
     "Write hosted identity requester kubeconfig",
     "Apply fixed dev-demo Active request",
+    "Restore dev-demo runtime kubeconfig after Active request",
     "Remove hosted identity requester kubeconfig",
     "Wait for all controller identity projections",
     "Deploy dev-demo release",
@@ -211,6 +212,7 @@ if positions != sorted(positions):
 controller_steps = (
     "Write hosted identity requester kubeconfig",
     "Apply fixed dev-demo Active request",
+    "Restore dev-demo runtime kubeconfig after Active request",
     "Wait for all controller identity projections",
     "Wait for dev-demo runtime rollouts",
     "Wait for exact dev-demo controller readiness",
@@ -234,31 +236,38 @@ for required in (
     if required not in runtime_kubeconfig["run"]:
         raise SystemExit(f"dev-demo runtime kubeconfig initialization lacks {required}")
 requester_writer = deploy_by_name["Write hosted identity requester kubeconfig"]
-if "uses" in requester_writer:
-    raise SystemExit("dev-demo Active requester credential must not use a job-wide exporter")
-if requester_writer.get("env") != {
-    "PREVIEW_KUBECONFIG": "${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}"
+if requester_writer.get("uses") != "./.github/actions/write-kubeconfig":
+    raise SystemExit("dev-demo Active requester must use the canonical kubeconfig action")
+if requester_writer.get("with") != {
+    "content": "${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
 }:
-    raise SystemExit("dev-demo Active requester writer does not scope the protected content")
-expected_requester_path = "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"
-if expected_requester_path not in requester_writer["run"]:
-    raise SystemExit("dev-demo Active requester writer targets the wrong private file")
-if "GITHUB_ENV" in requester_writer["run"]:
-    raise SystemExit("dev-demo Active requester writer exports credentials job-wide")
-for required in (
-    "set -euo pipefail",
-    "umask 077",
-    'written_path="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh "$expected_path")"',
-    '[[ "$written_path" != "$expected_path" ]]',
-    'kubectl --kubeconfig "$written_path" config view --minify >/dev/null',
-):
-    if required not in requester_writer["run"]:
-        raise SystemExit(f"dev-demo Active requester writer lacks {required}")
+    raise SystemExit("dev-demo Active requester action does not scope the protected content and path")
 active_request = deploy_by_name["Apply fixed dev-demo Active request"]
 if active_request.get("env") != {
     "KUBECONFIG": "${{ runner.temp }}/hosted-identity-requester.kubeconfig"
 }:
     raise SystemExit("dev-demo Active request does not scope KUBECONFIG to its requester file")
+active_restore = deploy_by_name["Restore dev-demo runtime kubeconfig after Active request"]
+expected_active_restore_condition = (
+    "${{ always() && steps.cluster-access.outputs.available == 'true' && "
+    "steps.certificate-identity.outputs.mode == 'hosted-controller' }}"
+)
+if active_restore.get("if") != expected_active_restore_condition:
+    raise SystemExit("dev-demo Active requester must always restore runtime credentials")
+active_restore_run = active_restore["run"]
+for required in (
+    '[[ -z "${DEV_DEMO_RUNTIME_KUBECONFIG:-}" ]]',
+    'echo "KUBECONFIG=$DEV_DEMO_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"',
+):
+    if required not in active_restore_run:
+        raise SystemExit(f"dev-demo Active runtime credential restore lacks {required}")
+if active_restore_run.index('[[ -z "${DEV_DEMO_RUNTIME_KUBECONFIG:-}" ]]') >= (
+    active_restore_run.index(
+        'echo "KUBECONFIG=$DEV_DEMO_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"'
+    )
+):
+    raise SystemExit("dev-demo Active restore publishes its runtime path before validating it")
 deploy_requester_cleanup = deploy_by_name["Remove hosted identity requester kubeconfig"]
 if deploy_requester_cleanup.get("if") != "${{ always() }}":
     raise SystemExit("dev-demo deploy requester credential cleanup must run after failures")
@@ -266,10 +275,14 @@ if deploy_requester_cleanup.get("run") != (
     'rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"'
 ):
     raise SystemExit("dev-demo deploy requester credential cleanup targets the wrong file")
-if deploy_names.index("Remove hosted identity requester kubeconfig") != (
+if deploy_names.index("Restore dev-demo runtime kubeconfig after Active request") != (
     deploy_names.index("Apply fixed dev-demo Active request") + 1
 ):
-    raise SystemExit("dev-demo Active requester credential is not removed immediately")
+    raise SystemExit("dev-demo Active runtime credentials are not restored immediately")
+if deploy_names.index("Remove hosted identity requester kubeconfig") != (
+    deploy_names.index("Restore dev-demo runtime kubeconfig after Active request") + 1
+):
+    raise SystemExit("dev-demo Active requester credential is not removed after restore")
 standalone_condition = deploy_by_name["Ensure dev-demo gRPC TLS secret exists"].get("if", "")
 if "steps.certificate-identity.outputs.mode == 'standalone'" not in standalone_condition:
     raise SystemExit("standalone gRPC setup is not isolated from controller identity")

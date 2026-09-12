@@ -1375,9 +1375,7 @@ def validate_manifest(
         identity = (document.get("apiVersion"), document.get("kind"))
         if identity not in EXPECTED_KINDS:
             fail(f"manifest contains unsupported object {identity}")
-        metadata = _require_mapping(
-            document.get("metadata"), f"{document.get('kind', 'object')}.metadata"
-        )
+        metadata = _validate_object_metadata(document, expected_namespace)
         name = metadata.get("name")
         if not isinstance(name, str) or not NAME_RE.fullmatch(name):
             fail(f"manifest object has unsafe name: {name!r}")
@@ -1399,7 +1397,6 @@ def validate_manifest(
             )
         if document["kind"] == "Ingress":
             validate_ingress(document, expected_namespace, expected_hostname)
-        metadata = _validate_object_metadata(document, expected_namespace)
         object_key = (document["kind"], name)
         if object_key in seen:
             fail(f"manifest contains duplicate {document['kind']}/{name}")

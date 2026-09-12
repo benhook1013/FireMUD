@@ -275,6 +275,22 @@ def main() -> int:
         return 0
 
     if args.revalidate_deploy or args.revalidate_cleanup:
+        mode_name = "--revalidate-cleanup" if args.revalidate_cleanup else "--revalidate-deploy"
+        unrelated = [
+            name
+            for name, value in (
+                ("--operation", args.operation),
+                ("--state", args.state),
+                ("--base-ref", args.base_ref),
+                ("--author", args.author),
+                ("--labels-json", args.labels_json),
+            )
+            if value is not None
+        ]
+        if unrelated:
+            parser.error(
+                f"{mode_name} cannot be combined with: {', '.join(unrelated)}"
+            )
         missing = [
             name
             for name, value in (

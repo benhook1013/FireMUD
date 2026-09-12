@@ -253,6 +253,30 @@ assert_conflicting_modes_refused --revalidate-deploy --inspect-labels
 assert_conflicting_modes_refused --revalidate-deploy --revalidate-cleanup
 assert_conflicting_modes_refused --batch-deploy-candidates --inspect-labels
 
+assert_revalidation_argument_refused() {
+  local mode="$1"
+  local supplied_argument="$2"
+  local output
+  local -a argument_fields
+  read -r -a argument_fields <<<"$supplied_argument"
+  if output="$(python3 "$SCRIPT" "$mode" "${argument_fields[@]}" \
+    --expected-repository example/FireMUD \
+    --expected-head-sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    </dev/null 2>&1)"; then
+    echo "Revalidation accepted an evaluator-only argument: $mode $supplied_argument" >&2
+    exit 1
+  fi
+  grep -Fq -- "$mode cannot be combined with: ${argument_fields[0]}" <<<"$output"
+}
+
+for revalidation_mode in --revalidate-deploy --revalidate-cleanup; do
+  for evaluator_argument in \
+    '--operation deploy' '--state open' '--base-ref develop' '--author human' \
+    '--labels-json []'; do
+    assert_revalidation_argument_refused "$revalidation_mode" "$evaluator_argument"
+  done
+done
+
 if python3 "$SCRIPT" \
   --operation deploy \
   --state open \
