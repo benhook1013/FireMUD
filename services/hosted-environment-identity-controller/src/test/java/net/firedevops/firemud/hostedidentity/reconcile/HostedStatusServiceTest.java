@@ -2,6 +2,7 @@ package net.firedevops.firemud.hostedidentity.reconcile;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -263,6 +264,46 @@ class HostedStatusServiceTest {
     assertEquals("head-recorded", resource.getStatus().getProfile().getRequestedHeadSha());
     assertEquals("head-recorded", resource.getStatus().getProfile().getDeployedHeadSha());
     assertEquals(32007, resource.getStatus().getProfile().getTelnetPort());
+  }
+
+  @Test
+  void missingMetadataStillBuildsBlockedStatus(CapturedOutput output) {
+    HostedEnvironmentIdentity resource = new HostedEnvironmentIdentity();
+    resource.setMetadata(null);
+    HostedEnvironmentIdentityStatus oldStatus = new HostedEnvironmentIdentityStatus();
+    RuntimeProfile oldProfile = new RuntimeProfile();
+    oldProfile.setName("pr-42");
+    oldProfile.setRuntimeNamespace("pr-42");
+    oldStatus.setProfile(oldProfile);
+    resource.setStatus(oldStatus);
+    var service =
+        new HostedStatusService(new EnvironmentIdentityPlanner(new HostedIdentityProperties()));
+
+    HostedEnvironmentIdentityStatus status =
+        service.status(
+            resource,
+            HostedEnvironmentIdentityStatus.Phase.Blocked,
+            "ReconciliationBlocked",
+            "HostedEnvironmentIdentity metadata is required",
+            false,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null);
+
+    assertEquals(HostedEnvironmentIdentityStatus.Phase.Blocked, status.getPhase());
+    assertEquals("ReconciliationBlocked", status.getConditions().get(0).getReason());
+    assertNull(status.getObservedGeneration());
+    assertNull(status.getConditions().get(0).getObservedGeneration());
+    assertEquals("pr-42", status.getProfile().getName());
+    assertEquals("pr-42", status.getProfile().getRuntimeNamespace());
+    assertTrue(
+        output
+            .getOut()
+            .contains(
+                "Unable to plan hosted identity resource '<unknown>'; preserving previous runtime profile"));
   }
 
   @Test

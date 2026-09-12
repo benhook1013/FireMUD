@@ -1062,8 +1062,7 @@ class CertificateMaterialServiceTest {
   void serializedRotationContinuesPendingRoleBeforeStartingAnotherChange() {
     var ingress = rotationState("ingress", RotationCondition.CHANGED);
     var telnet = rotationState("telnet", RotationCondition.CHANGED);
-    var grpc =
-        rotationState("grpc", RotationCondition.PENDING, RotationCondition.CHANGED);
+    var grpc = rotationState("grpc", RotationCondition.PENDING, RotationCondition.CHANGED);
 
     assertEquals(
         "grpc",
@@ -1082,16 +1081,12 @@ class CertificateMaterialServiceTest {
     assertEquals(
         null,
         CertificateMaterialService.selectSerializedRole(
-            java.util.List.of(
-                ingress,
-                rotationState("telnet"),
-                rotationState("grpc"))));
+            java.util.List.of(ingress, rotationState("telnet"), rotationState("grpc"))));
   }
 
   @Test
   void serializedRotationSelectsExistingChangeWhileAnotherRoleInitializes() {
-    var ingress =
-        rotationState("ingress", RotationCondition.PENDING, RotationCondition.CHANGED);
+    var ingress = rotationState("ingress", RotationCondition.PENDING, RotationCondition.CHANGED);
     var telnet = rotationState("telnet", RotationCondition.UNINITIALIZED);
     var grpc = rotationState("grpc", RotationCondition.PENDING, RotationCondition.CHANGED);
 
@@ -1660,10 +1655,8 @@ class CertificateMaterialServiceTest {
   @Test
   void serializedRotationPrioritizesTheFirstDriftedRole() {
     var pending = rotationState("ingress", RotationCondition.PENDING);
-    var firstDrift =
-        rotationState("telnet", RotationCondition.PENDING, RotationCondition.DRIFTED);
-    var secondDrift =
-        rotationState("grpc", RotationCondition.PENDING, RotationCondition.DRIFTED);
+    var firstDrift = rotationState("telnet", RotationCondition.PENDING, RotationCondition.DRIFTED);
+    var secondDrift = rotationState("grpc", RotationCondition.PENDING, RotationCondition.DRIFTED);
 
     assertEquals(
         "telnet",

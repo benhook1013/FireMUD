@@ -38,6 +38,9 @@ public class HostedStatusService {
       RoleStatus gatewayInternalWs,
       RoleStatus tcpProxyBridge,
       RoleStatus grpc) {
+    var metadata = resource.getMetadata();
+    Long observedGeneration = metadata == null ? null : metadata.getGeneration();
+    String resourceName = metadata == null ? null : metadata.getName();
     HostedEnvironmentIdentityStatus status =
         resource.getStatus() == null ? new HostedEnvironmentIdentityStatus() : resource.getStatus();
     HostedCondition previousReady =
@@ -84,7 +87,7 @@ public class HostedStatusService {
         phase = Phase.Pending;
       }
     }
-    status.setObservedGeneration(resource.getMetadata().getGeneration());
+    status.setObservedGeneration(observedGeneration);
     status.setPhase(phase);
     status.setIngress(ingress);
     status.setTelnet(telnet);
@@ -93,7 +96,7 @@ public class HostedStatusService {
     status.setGrpc(grpc);
     RuntimeProfile profile = new RuntimeProfile();
     try {
-      var plan = planner.plan(resource.getMetadata().getName());
+      var plan = planner.plan(resourceName);
       profile.setName(plan.name());
       profile.setEnvironmentClass(HostedIdentityContract.environmentClass(plan.name()));
       profile.setIdentityNamespace(plan.identityNamespace());
@@ -102,7 +105,7 @@ public class HostedStatusService {
     } catch (RuntimeException exception) {
       LOGGER.warn(
           "Unable to plan hosted identity resource '{}'; preserving previous runtime profile",
-          resource.getMetadata().getName(),
+          resourceName == null || resourceName.isBlank() ? "<unknown>" : resourceName,
           exception);
       if (previousProfile != null) {
         profile.setName(previousProfile.getName());
@@ -126,7 +129,7 @@ public class HostedStatusService {
     status.setProfile(profile);
     HostedCondition condition =
         new HostedCondition("Ready", effectiveReady ? "True" : "False", reason, message);
-    condition.setObservedGeneration(resource.getMetadata().getGeneration());
+    condition.setObservedGeneration(observedGeneration);
     condition.setLastTransitionTime(
         sameConditionStatus(previousReady, condition)
                 && previousReady.getLastTransitionTime() != null

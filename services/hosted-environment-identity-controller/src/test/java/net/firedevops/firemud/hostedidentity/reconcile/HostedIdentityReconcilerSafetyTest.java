@@ -5,6 +5,7 @@ import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMateri
 import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SOURCE_READY;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -479,6 +480,48 @@ class HostedIdentityReconcilerSafetyTest {
             .contains(
                 "Hosted identity reconciliation failed for environment 'pr-42' and runtime Namespace 'pr-42'"));
     assertTrue(output.getOut().contains("IllegalStateException: unexpected scope failure"));
+  }
+
+  @Test
+  void missingResourceMetadataReturnsReconciliationBlockedStatus() {
+    HostedIdentityProperties properties =
+        initializedProperties(HostedIdentityProperties.ActivationMode.ACTIVE);
+    EnvironmentIdentityPlanner planner = new EnvironmentIdentityPlanner(properties);
+    RuntimeProfileService runtime = mock(RuntimeProfileService.class);
+    CertificateMaterialService certificates = mock(CertificateMaterialService.class);
+    SecretProjectionService projections = mock(SecretProjectionService.class);
+    HostedIdentityScopeService scope = mock(HostedIdentityScopeService.class);
+    DeploymentRolloutService rollout = mock(DeploymentRolloutService.class);
+    ServedEnvironmentProbe probes = mock(ServedEnvironmentProbe.class);
+    HostedIdentityReconciler reconciler =
+        new HostedIdentityReconciler(
+            mock(KubernetesClient.class),
+            new AdmissionValidator(planner),
+            planner,
+            certificates,
+            projections,
+            scope,
+            runtime,
+            rollout,
+            probes,
+            new HostedStatusService(planner),
+            properties);
+    HostedEnvironmentIdentity resource = new HostedEnvironmentIdentity();
+    resource.setMetadata(null);
+
+    UpdateControl<HostedEnvironmentIdentity> result =
+        reconciler.reconcile(resource, mock(Context.class));
+
+    HostedEnvironmentIdentityStatus status = result.getResource().orElseThrow().getStatus();
+    assertTrue(result.isPatchStatus());
+    assertEquals(HostedEnvironmentIdentityStatus.Phase.Blocked, status.getPhase());
+    assertEquals("ReconciliationBlocked", status.getConditions().get(0).getReason());
+    assertEquals(
+        "HostedEnvironmentIdentity metadata is required",
+        status.getConditions().get(0).getMessage());
+    assertNull(status.getObservedGeneration());
+    assertNull(status.getConditions().get(0).getObservedGeneration());
+    verifyNoInteractions(runtime, certificates, projections, scope, rollout, probes);
   }
 
   @Test

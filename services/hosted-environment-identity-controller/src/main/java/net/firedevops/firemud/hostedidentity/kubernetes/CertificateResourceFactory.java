@@ -45,6 +45,7 @@ public class CertificateResourceFactory {
 
   public GenericKubernetesResource gatewayInternalWs(
       EnvironmentIdentityPlan plan, Duration renewBefore) {
+    HostedIdentityProperties.requireValidGrpcRenewBefore(renewBefore);
     return certificate(
         plan,
         HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE,
@@ -60,6 +61,7 @@ public class CertificateResourceFactory {
 
   public GenericKubernetesResource tcpProxyBridge(
       EnvironmentIdentityPlan plan, Duration renewBefore) {
+    HostedIdentityProperties.requireValidGrpcRenewBefore(renewBefore);
     return certificate(
         plan,
         HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE,
@@ -129,8 +131,10 @@ public class CertificateResourceFactory {
     spec.put("encodeUsagesInRequest", true);
     spec.put("issuerRef", issuerRef);
     if (duration != null) {
-      HostedIdentityProperties.requireValidGrpcRenewBefore(renewBefore);
       spec.put("duration", certManagerDuration(duration));
+    }
+    if (renewBefore != null) {
+      HostedIdentityProperties.requireValidGrpcRenewBefore(renewBefore);
       spec.put("renewBefore", certManagerDuration(renewBefore));
     }
     resource.setAdditionalProperties(Map.of("spec", spec));
