@@ -1849,6 +1849,34 @@ test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 1
 grep -Fqx 'get namespace pr-901 --ignore-not-found -o json' "$FAKE_NAMESPACE_SNAPSHOT_LOG"
 
 reset_case
+reconciler_unvalidated_priority_output="$TEMP_DIR/reconciler-unvalidated-priority.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="0\t901\tfeature-901\thead-901\thuman\tdevelop\topen\ttrue\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_NAMESPACE_ABSENT=true \
+    PREVIEW_MAX_ACTIVE=1 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_unvalidated_priority_output"
+grep -qx 'Skipping ordinary PR #901: preview capacity is full.' \
+  "$reconciler_unvalidated_priority_output"
+test ! -e "$FAKE_DISPATCH_LOG"
+
+reset_case
+reconciler_validated_priority_output="$TEMP_DIR/reconciler-validated-priority.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${priority_labels_base64}\n" \
+    FAKE_PR_901_NAMESPACE_ABSENT=true \
+    PREVIEW_MAX_ACTIVE=1 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_validated_priority_output"
+grep -qx 'Dispatching preview deploy for PR #901 (head-901) on ref feature-901' \
+  "$reconciler_validated_priority_output"
+grep -Fq \
+  'actions/workflows/preview.yml/dispatches -f ref=feature-901' \
+  "$FAKE_DISPATCH_LOG"
+
+reset_case
 reconciler_stale_active_run_output="$TEMP_DIR/reconciler-stale-active-run.out"
 (
   cd "$ROOT_DIR"
@@ -2526,6 +2554,14 @@ grep -Fq 'KUBECONFIG: ${{ env.PREVIEW_RUNTIME_KUBECONFIG }}' "$janitor_workflow"
 grep -Fq '(.labels | map({name: .name}) | tojson | @base64)' "$reconciler_workflow"
 # shellcheck disable=SC2016 # Assert decoded labels reach the centralized parser.
 grep -Fq -- '--labels-json "$labels_json"' "$reconciler_workflow"
+# shellcheck disable=SC2016 # Assert capacity uses centralized validated priority.
+grep -Fq -- 'priority="$(sed -n '\''s/^priority=//p'\'' <<<"$eligibility_output")"' \
+  "$reconciler_workflow"
+# shellcheck disable=SC2016 # Reject a separate transported raw-priority capacity predicate.
+if grep -Fq '$_sort_priority' "$reconciler_workflow"; then
+  echo "reconciler capacity decision bypassed centralized validated priority" >&2
+  exit 1
+fi
 # shellcheck disable=SC2016 # Assert malformed label metadata fails closed before eligibility.
 grep -Fq -- 'if ! labels_json="$(printf '\''%s'\'' "$labels_json_base64" | base64 --decode 2>/dev/null)" ||' \
   "$reconciler_workflow"
