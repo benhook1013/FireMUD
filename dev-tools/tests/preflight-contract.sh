@@ -2236,6 +2236,17 @@ finally:
     else:
         os.environ[secret_ready_timeout_env] = original_secret_ready_timeout_env
 
+class SequencedClock:
+    def __init__(self, values):
+        self.values = list(values)
+        self.final = self.values[-1]
+
+    def __call__(self):
+        if self.values:
+            self.final = self.values.pop(0)
+        return self.final
+
+
 def secret_lookup(payload):
     def lookup(args, **kwargs):
         if kwargs.get("timeout") != module.SECRET_LOOKUP_TIMEOUT_SECONDS:
@@ -2361,7 +2372,7 @@ try:
             f"{mixed_secret_issues}"
         )
 
-    immediate_deadline_times = iter((0.0, 5.0, 5.0))
+    immediate_deadline_clock = SequencedClock((0.0, 5.0, 5.0))
 
     def immediate_deadline_lookup(*args, **kwargs):
         raise SystemExit("Secret readiness performed a lookup at an expired deadline")
@@ -2370,8 +2381,7 @@ try:
         patch.object(module, "secret_keys_lookup_failure", immediate_deadline_lookup),
         patch.object(
             module.time,
-            "monotonic",
-            lambda: next(immediate_deadline_times),
+            "monotonic", immediate_deadline_clock,
         ),
     ):
         immediate_deadline_issues = module.wait_for_secret_key_requirements(
@@ -2394,7 +2404,7 @@ try:
             f"{immediate_deadline_issues}"
         )
 
-    below_floor_times = iter((0.0, 4.0, 4.0))
+    below_floor_clock = SequencedClock((0.0, 4.0, 4.0))
     below_floor_lookup_calls = [0]
 
     def below_floor_lookup(*args, **kwargs):
@@ -2403,7 +2413,7 @@ try:
 
     with (
         patch.object(module, "secret_keys_lookup_failure", below_floor_lookup),
-        patch.object(module.time, "monotonic", lambda: next(below_floor_times)),
+        patch.object(module.time, "monotonic", below_floor_clock),
     ):
         below_floor_issues = module.wait_for_secret_key_requirements(
             [("below-floor", {"tls.crt"})],
@@ -2423,7 +2433,7 @@ try:
             f"Secret readiness did not report its below-floor deadline: {below_floor_issues}"
         )
 
-    exact_floor_times = iter((0.0, 3.0, 3.0))
+    exact_floor_clock = SequencedClock((0.0, 3.0, 3.0))
     exact_floor_lookup_calls = [0]
 
     def exact_floor_lookup(args, **kwargs):
@@ -2436,7 +2446,7 @@ try:
 
     with (
         patch.object(module.subprocess, "run", exact_floor_lookup),
-        patch.object(module.time, "monotonic", lambda: next(exact_floor_times)),
+        patch.object(module.time, "monotonic", exact_floor_clock),
     ):
         exact_floor_issues = module.wait_for_secret_key_requirements(
             [("exact-floor", {"tls.crt"})],
@@ -2450,7 +2460,7 @@ try:
             f"{exact_floor_issues}"
         )
 
-    one_second_floor_times = iter((0.0, 0.0, 0.0))
+    one_second_floor_clock = SequencedClock((0.0, 0.0, 0.0))
     one_second_floor_lookup_calls = [0]
 
     def one_second_floor_lookup(args, **kwargs):
@@ -2463,7 +2473,7 @@ try:
 
     with (
         patch.object(module.subprocess, "run", one_second_floor_lookup),
-        patch.object(module.time, "monotonic", lambda: next(one_second_floor_times)),
+        patch.object(module.time, "monotonic", one_second_floor_clock),
     ):
         one_second_floor_issues = module.wait_for_secret_key_requirements(
             [("one-second-floor", {"tls.crt"})],
@@ -2477,7 +2487,7 @@ try:
             f"{one_second_floor_issues}"
         )
 
-    one_second_residual_times = iter((0.0, 0.1, 0.1))
+    one_second_residual_clock = SequencedClock((0.0, 0.1, 0.1))
     one_second_residual_lookup_calls = [0]
 
     def one_second_residual_lookup(*args, **kwargs):
@@ -2488,8 +2498,7 @@ try:
         patch.object(module, "secret_keys_lookup_failure", one_second_residual_lookup),
         patch.object(
             module.time,
-            "monotonic",
-            lambda: next(one_second_residual_times),
+            "monotonic", one_second_residual_clock,
         ),
     ):
         one_second_residual_issues = module.wait_for_secret_key_requirements(
@@ -9443,7 +9452,7 @@ invalid_port = run_hosted(
     "--expected-hosted-telnet-node-port",
     "0",
 )
-if invalid_port.returncode == 0 or "must be a positive integer" not in invalid_port.stderr:
+if invalid_port.returncode == 0 or "must be an integer between 1 and 65535" not in invalid_port.stderr:
     raise SystemExit(f"hosted-bridge accepted invalid expected port: {invalid_port.stderr}")
 
 invalid_maximum_port = run_hosted(
@@ -9453,7 +9462,7 @@ invalid_maximum_port = run_hosted(
 )
 if (
     invalid_maximum_port.returncode == 0
-    or "must be a positive integer" not in invalid_maximum_port.stderr
+    or "must be an integer between 1 and 65535" not in invalid_maximum_port.stderr
 ):
     raise SystemExit(
         f"hosted-bridge accepted expected port above the valid range: {invalid_maximum_port.stderr}"

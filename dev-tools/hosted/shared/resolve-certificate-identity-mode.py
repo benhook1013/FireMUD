@@ -97,7 +97,7 @@ def _construct_unique_mapping(
         raise yaml.constructor.ConstructorError(
             "while constructing a mapping",
             node.start_mark,
-            "found duplicate previewStack.certificateIdentity.mode through YAML merge",
+            "found duplicate certificateIdentity.mode through YAML merge",
             node.start_mark,
         )
     loader.flatten_mapping(node)

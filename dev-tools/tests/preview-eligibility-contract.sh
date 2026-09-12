@@ -48,11 +48,15 @@ revalidate_cleanup() {
 }
 
 assert_revalidation_refused() {
-  local pull_request_json="$1"
-  local expected_reason="$2"
+  local mode="$1"
+  local pull_request_json="$2"
+  local expected_reason="$3"
   local output
 
-  if output="$(revalidate_deploy "$pull_request_json")"; then
+  if output="$(python3 "$SCRIPT" "$mode" \
+    --expected-repository example/FireMUD \
+    --expected-head-sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    <<<"$pull_request_json")"; then
     echo "Revalidation unexpectedly accepted: $pull_request_json" >&2
     exit 1
   fi
@@ -104,32 +108,49 @@ test "$invalid_expected_closed_output" = \
   'expected head SHA must be exactly 40 hexadecimal characters'
 
 assert_revalidation_refused \
+  --revalidate-deploy \
   '{not-json' \
   'current pull request metadata is malformed'
 assert_revalidation_refused \
+  --revalidate-deploy \
   '[]' \
   'current pull request metadata is malformed'
 assert_revalidation_refused \
+  --revalidate-deploy \
   '{"state":"closed","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}' \
   'pull request is not open (state=closed)'
 assert_revalidation_refused \
+  --revalidate-deploy \
   '{"state":"open","head":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}' \
   'head is stale (expected=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, current=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)'
 assert_revalidation_refused \
+  --revalidate-deploy \
   '{"state":"open","head":{"sha":"not-a-sha","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}' \
   'head is stale (expected=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, current=not-a-sha)'
 assert_revalidation_refused \
+  --revalidate-deploy \
   '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"fork/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}' \
   'head repository is not trusted (expected=example/FireMUD, current=fork/FireMUD)'
 assert_revalidation_refused \
+  --revalidate-deploy \
   '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":null}' \
   'label metadata is malformed'
 assert_revalidation_refused \
+  --revalidate-deploy \
   '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"feature/stack"},"user":{"login":"human"},"labels":[]}' \
   'target is not preview-eligible (reason=unsupported-base-branch)'
 assert_revalidation_refused \
+  --revalidate-deploy \
   '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"dependabot[bot]"},"labels":[]}' \
   'target is not preview-eligible (reason=dependency-bot)'
+assert_revalidation_refused \
+  --revalidate-cleanup \
+  '{not-json' \
+  'current pull request metadata is malformed'
+assert_revalidation_refused \
+  --revalidate-cleanup \
+  '[]' \
+  'current pull request metadata is malformed'
 for malformed_author_pull_request in \
   '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"labels":[]}' \
   '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":null,"labels":[]}' \
@@ -137,6 +158,7 @@ for malformed_author_pull_request in \
   '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":""},"labels":[]}'
 do
   assert_revalidation_refused \
+    --revalidate-deploy \
     "$malformed_author_pull_request" \
     'current pull request metadata is malformed (user.login must be a non-empty string)'
 done

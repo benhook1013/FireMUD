@@ -1096,7 +1096,7 @@ do
 done
 
 valid_open_pr_row="901"$'\t'"${priority_candidate_head}"$'\t'"example/FireMUD"$'\t'"human"$'\t'"develop"$'\t'"open"$'\t'"${priority_labels_base64}"
-for missing_identity_field in 1 2 3 4 5 6; do
+for missing_identity_field in 1 2 3 4 5 6 7; do
   reset_case
   export FAKE_TARGET_PRIORITY=false
   FAKE_OPEN_PRIORITY_ROWS="$(

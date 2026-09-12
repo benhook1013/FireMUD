@@ -6740,7 +6740,10 @@ def main() -> int:
                 or len(sys.argv[6]) > 5
                 or int(sys.argv[6]) > 65535
             ):
-                fail("--expected-hosted-telnet-node-port must be a positive integer")
+                fail(
+                    "--expected-hosted-telnet-node-port must be an integer "
+                    "between 1 and 65535"
+                )
             expected_hosted_telnet_node_port = int(sys.argv[6])
         return hosted_bridge_preflight(
             Path(sys.argv[2]),

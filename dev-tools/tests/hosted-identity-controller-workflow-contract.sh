@@ -2,6 +2,14 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+for required_command in helm jq kubectl openssl python3; do
+  if ! command -v "$required_command" >/dev/null 2>&1; then
+    echo "Missing required command: $required_command" >&2
+    exit 1
+  fi
+done
+
 trusted="$ROOT_DIR/.github/workflows/hosted-identity-request.yml"
 preview="$ROOT_DIR/.github/workflows/preview.yml"
 dev_demo="$ROOT_DIR/.github/workflows/dev-demo.yml"
@@ -344,6 +352,11 @@ for phase in \
 done
 contains "$mode_resolver" 'UniqueKeyLoader'
 contains "$mode_resolver" 'ALLOWED_MODES = frozenset({"standalone", "hosted-controller"})'
+contains "$mode_resolver" 'found duplicate certificateIdentity.mode through YAML merge'
+if grep -Fq -- 'found duplicate previewStack.certificateIdentity.mode through YAML merge' "$mode_resolver"; then
+  echo "$mode_resolver must use a location-neutral duplicate merge diagnostic" >&2
+  exit 1
+fi
 # shellcheck disable=SC2016 # Match the literal desired-state interpolation in the helper.
 contains "$requester" 'desiredState: ${desired_state}'
 contains "$trusted" 'actions: read # Inspect the completed source workflow and its artifacts.'
@@ -826,10 +839,13 @@ assert deploy_runtime_remember["run"] == (
 deploy_runtime_restore = deploy_by_name["Restore preview runtime kubeconfig"]
 assert deploy_runtime_restore["if"] == "${{ always() }}"
 deploy_runtime_restore_run = deploy_runtime_restore["run"]
-assert '[[ -n "${PREVIEW_RUNTIME_KUBECONFIG:-}" ]]' in deploy_runtime_restore_run
-assert "Missing preview runtime kubeconfig" not in deploy_runtime_restore_run
+assert '[[ -z "${PREVIEW_RUNTIME_KUBECONFIG:-}" ]]' in deploy_runtime_restore_run
+assert (
+    "::error title=Missing preview runtime kubeconfig::"
+    "The runtime kubeconfig path was not initialized."
+) in deploy_runtime_restore_run
 assert deploy_runtime_restore_run.index(
-    '[[ -n "${PREVIEW_RUNTIME_KUBECONFIG:-}" ]]'
+    '[[ -z "${PREVIEW_RUNTIME_KUBECONFIG:-}" ]]'
 ) < deploy_runtime_restore_run.index(
     'echo "KUBECONFIG=$PREVIEW_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"'
 )
@@ -838,8 +854,17 @@ with tempfile.TemporaryDirectory() as restore_fixture_dir:
     fixture_env = os.environ.copy()
     fixture_env["GITHUB_ENV"] = str(github_env)
     fixture_env.pop("PREVIEW_RUNTIME_KUBECONFIG", None)
-    subprocess.run(
-        ["bash", "-c", deploy_runtime_restore_run], check=True, env=fixture_env
+    missing_restore = subprocess.run(
+        ["bash", "-c", deploy_runtime_restore_run],
+        check=False,
+        env=fixture_env,
+        capture_output=True,
+        text=True,
+    )
+    assert missing_restore.returncode != 0
+    assert missing_restore.stderr.strip() == (
+        "::error title=Missing preview runtime kubeconfig::"
+        "The runtime kubeconfig path was not initialized."
     )
     assert not github_env.exists()
     fixture_env["PREVIEW_RUNTIME_KUBECONFIG"] = "/tmp/preview-runtime.kubeconfig"

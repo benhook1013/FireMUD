@@ -443,9 +443,11 @@ jobs:
         if: ${{ always() }}
         run: |
           set -euo pipefail
-          if [[ -n "${PREVIEW_RUNTIME_KUBECONFIG:-}" ]]; then
-            echo "KUBECONFIG=$PREVIEW_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"
+          if [[ -z "${PREVIEW_RUNTIME_KUBECONFIG:-}" ]]; then
+            echo "::error title=Missing preview runtime kubeconfig::The runtime kubeconfig path was not initialized." >&2
+            exit 1
           fi
+          echo "KUBECONFIG=$PREVIEW_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"
 
       - name: Remove requester kubeconfig
         if: ${{ always() }}
