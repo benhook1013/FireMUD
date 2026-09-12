@@ -393,7 +393,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
   static ReadinessStatus deploymentHeadStatus(RuntimeProfileService.RuntimeProfile runtimeProfile) {
     if (runtimeProfile.deployedHeadMatchesRequest()) {
       return new ReadinessStatus(
-          HostedEnvironmentIdentityStatus.Phase.Ready,
+          HostedEnvironmentIdentityStatus.Phase.Verifying,
           "RuntimeDeploymentCurrent",
           "deployed runtime head matches the requested head",
           true);

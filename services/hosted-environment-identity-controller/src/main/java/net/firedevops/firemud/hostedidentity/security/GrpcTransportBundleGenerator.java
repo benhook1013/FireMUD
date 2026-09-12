@@ -52,6 +52,8 @@ import org.springframework.stereotype.Component;
 @Component
 public class GrpcTransportBundleGenerator {
   private static final String TYPE = "Opaque";
+  private static final boolean GRPC_REQUIRES_SERVER_AUTH = true;
+  private static final boolean GRPC_REQUIRES_CLIENT_AUTH = true;
   private static final SecretMaterialValidator MATERIAL_VALIDATOR =
       new SecretMaterialValidator();
   private static final SecureRandom SERIAL_RANDOM = new SecureRandom();
@@ -290,8 +292,8 @@ public class GrpcTransportBundleGenerator {
           grpcDnsNames(plan),
           List.of(),
           TYPE,
-          true,
-          true,
+          GRPC_REQUIRES_SERVER_AUTH,
+          GRPC_REQUIRES_CLIENT_AUTH,
           expectedTrustAnchorSha256);
       return !renewalRequired(secret, renewBefore, now);
     } catch (
@@ -544,6 +546,7 @@ public class GrpcTransportBundleGenerator {
 
   private static String pem(Object object) throws Exception {
     if (object instanceof java.security.PrivateKey privateKey) {
+      // Manual encoding preserves the exact PKCS#8 PRIVATE KEY label expected by both parsers.
       String body =
           Base64.getMimeEncoder(64, new byte[] {'\n'}).encodeToString(privateKey.getEncoded());
       String value = "-----BEGIN PRIVATE KEY-----\n" + body + "\n-----END PRIVATE KEY-----\n";

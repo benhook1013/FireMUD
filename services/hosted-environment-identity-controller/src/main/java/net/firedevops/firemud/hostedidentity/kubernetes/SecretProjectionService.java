@@ -239,6 +239,7 @@ public class SecretProjectionService {
     String name = targetName + "-previous";
     Map<String, String> annotations = new LinkedHashMap<>(existing.getMetadata().getAnnotations());
     annotations.put(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION, "predecessor");
+    // Retain the predecessor in identityNamespace; the projected source is in disposable runtimeNamespace.
     Secret predecessor =
         new SecretBuilder()
             .withMetadata(

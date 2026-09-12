@@ -243,7 +243,7 @@ class HostedIdentityReconcilerSafetyTest {
         false);
     assertReadinessStatus(
         HostedIdentityReconciler.deploymentHeadStatus(deployed),
-        HostedEnvironmentIdentityStatus.Phase.Ready,
+        HostedEnvironmentIdentityStatus.Phase.Verifying,
         "RuntimeDeploymentCurrent",
         "deployed runtime head matches the requested head",
         true);
