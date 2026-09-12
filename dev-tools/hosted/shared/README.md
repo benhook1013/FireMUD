@@ -16,7 +16,7 @@ These scripts are shared because they manage infrastructure or validation behavi
   - persists the generated kubeconfig into the runner's standard kubeconfig location
 
 - `delete-hosted-namespace.sh`
-  - deletes the exact ownership-validated runtime namespace under a UID precondition and waits for Kubernetes cascading cleanup to make it absent
+  - uninstalls the Helm release and deletes the target namespace for a hosted environment
 
 - `ensure-ghcr-pull-secret.sh`
   - creates or updates the shared GHCR image-pull secret in the target namespace

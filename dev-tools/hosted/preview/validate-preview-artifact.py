@@ -103,7 +103,7 @@ EXPECTED_OBJECTS = {
 INFRASTRUCTURE_IMAGES = {
     "postgres:16",
     "redis:7.4.3",
-    "minio/minio:RELEASE.2024-05-10T01-41-38Z",
+    "quay.io/minio/minio:RELEASE.2024-05-10T01-41-38Z",
 }
 EXPECTED_SECRET_REFS = {
     "firemud-secret",
@@ -294,7 +294,7 @@ EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS = {
     "minio": _infrastructure_deployment_spec(
         "minio",
         1000,
-        "minio/minio:RELEASE.2024-05-10T01-41-38Z",
+        "quay.io/minio/minio:RELEASE.2024-05-10T01-41-38Z",
         ["server", "/data"],
         9000,
         "minio-data",
