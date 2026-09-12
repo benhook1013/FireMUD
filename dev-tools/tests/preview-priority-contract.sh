@@ -126,6 +126,42 @@ if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
     '{metadata:{name:"pr-901",resourceVersion:"rv-901",annotations:{"firemud.dev/last-preview-head-sha":$head,"firemud.dev/requested-preview-head-sha":$requested_head}}}'
   exit 0
 fi
+if [[ "$1" == get && "$2" == namespace &&
+  "$*" == *"--ignore-not-found -o json"* ]]; then
+  printf '%s\n' "$*" >> "$FAKE_RUNTIME_KUBECTL_LOG"
+  if [[ "${FAKE_RUNTIME_LOOKUP_ERROR:-false}" == true ]]; then
+    exit 1
+  fi
+  if [[ "${FAKE_RUNTIME_NAMESPACE_PRESENT:-true}" == false ]] ||
+    [[ -f "$FAKE_RUNTIME_NAMESPACE_DELETED_MARKER" ]]; then
+    exit 0
+  fi
+  if [[ "${FAKE_RUNTIME_NAMESPACE_JSON_PARSE_FAIL:-false}" == true ]]; then
+    printf '%s' '{not-json'
+    exit 0
+  fi
+  runtime_name="${FAKE_RUNTIME_LOOKUP_IDENTITY:-$3}"
+  runtime_uid="${FAKE_RUNTIME_NAMESPACE_UID:-uid-$3}"
+  if [[ "${FAKE_RUNTIME_NAMESPACE_UID_MISSING:-false}" == true ]]; then
+    runtime_uid=""
+  fi
+  if [[ "$3" == dev ]]; then
+    jq -cn \
+      --arg name "$runtime_name" \
+      --arg uid "$runtime_uid" \
+      --arg dev_demo "${FAKE_RUNTIME_DEV_DEMO_LABEL:-true}" \
+      --arg environment_class "${FAKE_RUNTIME_ENVIRONMENT_CLASS:-dev-demo-cluster}" \
+      '{metadata:{name:$name,uid:$uid,labels:{"firemud.dev/dev-demo":$dev_demo,"firemud.dev/environment-class":$environment_class}}}'
+  else
+    jq -cn \
+      --arg name "$runtime_name" \
+      --arg uid "$runtime_uid" \
+      --arg preview "${FAKE_RUNTIME_PREVIEW_LABEL:-true}" \
+      --arg owner "${FAKE_RUNTIME_PR_NUMBER_LABEL:-${3#pr-}}" \
+      '{metadata:{name:$name,uid:$uid,labels:{"firemud.dev/preview":$preview,"firemud.dev/pr-number":$owner}}}'
+  fi
+  exit 0
+fi
 if [[ "$1" == get && "$2" == namespace && "$*" == *"--ignore-not-found -o name"* ]]; then
   printf '%s\n' "$*" >> "$FAKE_RUNTIME_KUBECTL_LOG"
   if [[ -f "$FAKE_REQUESTED_HEAD_NOT_FOUND_MARKER" ]]; then
@@ -146,7 +182,8 @@ if [[ "$1" == get && "$2" == namespace && "$*" == *"--ignore-not-found -o name"*
   if [[ "${FAKE_RUNTIME_LOOKUP_ERROR:-false}" == true ]]; then
     exit 1
   fi
-  if [[ "${FAKE_RUNTIME_NAMESPACE_PRESENT:-true}" == false ]]; then
+  if [[ "${FAKE_RUNTIME_NAMESPACE_PRESENT:-true}" == false ]] ||
+    [[ -f "$FAKE_RUNTIME_NAMESPACE_DELETED_MARKER" ]]; then
     if [[ -n "${FAKE_OPERATION_SEQUENCE:-}" && "${FAKE_RECORD_RUNTIME_CHECK:-false}" == true ]]; then
       printf 'runtime-check\n' >> "$FAKE_OPERATION_SEQUENCE"
     fi
@@ -166,6 +203,28 @@ if [[ "$1" == get && "$2" == namespace && "$*" == *"requested-preview-head-sha"*
     exit 1
   fi
   printf '%s' "${FAKE_PR_901_REQUESTED_HEAD:-}"
+  exit 0
+fi
+if [[ "$1" == delete && "$2" == --raw && "$4" == -f && "$5" == - ]]; then
+  printf '%s\n' "$*" >> "$FAKE_RUNTIME_KUBECTL_LOG"
+  printf 'namespace-delete\n' >> "$FAKE_HOSTED_DELETE_ORDER_LOG"
+  delete_options="$(cat)"
+  if ! delete_uid="$(jq -e -r '.preconditions.uid | select(type == "string" and length > 0)' <<<"$delete_options")"; then
+    exit 1
+  fi
+  printf '%s\n' "$delete_uid" >> "$FAKE_RUNTIME_DELETE_UID_LOG"
+  if [[ "${FAKE_RUNTIME_NAMESPACE_ABSENT_ON_DELETE:-false}" == true ]]; then
+    : > "$FAKE_RUNTIME_NAMESPACE_DELETED_MARKER"
+    exit 1
+  fi
+  if [[ "${FAKE_RUNTIME_DELETE_ERROR:-false}" == true ]] ||
+    [[ "$3" == */"${FAKE_RUNTIME_DELETE_ERROR_NAMESPACE:-__none__}" ]]; then
+    exit 1
+  fi
+  expected_delete_uid="${FAKE_RUNTIME_DELETE_CURRENT_UID:-${FAKE_RUNTIME_NAMESPACE_UID:-uid-${3##*/}}}"
+  if [[ "$delete_uid" != "$expected_delete_uid" ]]; then
+    exit 1
+  fi
   exit 0
 fi
 if [[ "$1" == delete && "$2" == namespace ]]; then
@@ -266,6 +325,7 @@ cat > "$TEMP_DIR/bin/helm" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$FAKE_HELM_LOG"
+printf 'helm-uninstall\n' >> "$FAKE_HOSTED_DELETE_ORDER_LOG"
 if [[ "${FAKE_HELM_UNINSTALL_ERROR:-false}" == true ]]; then
   exit 1
 fi
@@ -556,8 +616,11 @@ export FAKE_NAMESPACE_JSON_CALLS="$TEMP_DIR/namespace-json-calls"
 export FAKE_NAMESPACE_SNAPSHOT_LOG="$TEMP_DIR/namespace-snapshot.log"
 export FAKE_NAMESPACE_SNAPSHOT_CALLS="$TEMP_DIR/namespace-snapshot-calls"
 export FAKE_RUNTIME_KUBECTL_LOG="$TEMP_DIR/runtime-kubectl.log"
+export FAKE_RUNTIME_DELETE_UID_LOG="$TEMP_DIR/runtime-delete-uid.log"
+export FAKE_RUNTIME_NAMESPACE_DELETED_MARKER="$TEMP_DIR/runtime-namespace-deleted"
 export FAKE_RUNTIME_WAIT_MARKER="$TEMP_DIR/runtime-wait-failed"
 export FAKE_HELM_LOG="$TEMP_DIR/helm.log"
+export FAKE_HOSTED_DELETE_ORDER_LOG="$TEMP_DIR/hosted-delete-order.log"
 export FAKE_IDENTITY_LOG="$TEMP_DIR/identity.log"
 export FAKE_IDENTITY_REQUEST_LOG="$TEMP_DIR/identity-request.log"
 export FAKE_IDENTITY_WAIT_LOG="$TEMP_DIR/identity-wait.log"
@@ -575,7 +638,7 @@ adversarial_labels_base64="$(printf '%s' '[{"name":"custom:label"},{"name":"quot
 invalid_json_labels_base64="$(printf '%s' '{invalid-json' | base64 | tr -d '\n')"
 
 reset_case() {
-  rm -f "$FAKE_DELETE_LOG" "$FAKE_DELETE_TIMEOUT_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_ANNOTATE_FAILURE_MARKER" "$FAKE_REQUESTED_HEAD_LOG" "$FAKE_REQUESTED_HEAD_NOT_FOUND_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_NAMESPACE_SNAPSHOT_LOG" "$FAKE_NAMESPACE_SNAPSHOT_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$FAKE_IDENTITY_LOG" "$FAKE_IDENTITY_REQUEST_LOG" "$FAKE_IDENTITY_WAIT_LOG" "$FAKE_OPERATION_SEQUENCE" "$TEMP_DIR/output"
+  rm -f "$FAKE_DELETE_LOG" "$FAKE_DELETE_TIMEOUT_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_ANNOTATE_FAILURE_MARKER" "$FAKE_REQUESTED_HEAD_LOG" "$FAKE_REQUESTED_HEAD_NOT_FOUND_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_NAMESPACE_SNAPSHOT_LOG" "$FAKE_NAMESPACE_SNAPSHOT_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_DELETE_UID_LOG" "$FAKE_RUNTIME_NAMESPACE_DELETED_MARKER" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$FAKE_HOSTED_DELETE_ORDER_LOG" "$FAKE_IDENTITY_LOG" "$FAKE_IDENTITY_REQUEST_LOG" "$FAKE_IDENTITY_WAIT_LOG" "$FAKE_OPERATION_SEQUENCE" "$TEMP_DIR/output"
   export GITHUB_OUTPUT="$TEMP_DIR/output"
   export FAKE_TARGET_PRIORITY=true
   export FAKE_TARGET_LABELS_VALID=valid
@@ -633,6 +696,15 @@ reset_case() {
   export FAKE_RUNTIME_LOOKUP_ERROR=false
   export FAKE_RUNTIME_LOOKUP_IDENTITY=''
   export FAKE_RUNTIME_NAMESPACE_PRESENT=true
+  export FAKE_RUNTIME_NAMESPACE_UID=''
+  export FAKE_RUNTIME_NAMESPACE_UID_MISSING=false
+  export FAKE_RUNTIME_NAMESPACE_JSON_PARSE_FAIL=false
+  export FAKE_RUNTIME_PREVIEW_LABEL=true
+  export FAKE_RUNTIME_PR_NUMBER_LABEL=''
+  export FAKE_RUNTIME_DEV_DEMO_LABEL=true
+  export FAKE_RUNTIME_ENVIRONMENT_CLASS=dev-demo-cluster
+  export FAKE_RUNTIME_NAMESPACE_ABSENT_ON_DELETE=false
+  export FAKE_RUNTIME_DELETE_CURRENT_UID=''
   export FAKE_RUNTIME_DELETE_ERROR=false
   export FAKE_RUNTIME_DELETE_ERROR_NAMESPACE=''
   export FAKE_RUNTIME_WAIT_ERROR=false
@@ -1242,7 +1314,7 @@ done
 reset_case
 export FAKE_RUNTIME_NAMESPACE_PRESENT=false
 bash "$DELETE_HOSTED_NAMESPACE" dev dev
-grep -qx 'get namespace dev --ignore-not-found -o name' "$FAKE_RUNTIME_KUBECTL_LOG"
+grep -qx 'get namespace dev --ignore-not-found -o json' "$FAKE_RUNTIME_KUBECTL_LOG"
 test ! -e "$FAKE_HELM_LOG"
 test "$(wc -l < "$FAKE_RUNTIME_KUBECTL_LOG")" -eq 1
 
@@ -1250,9 +1322,12 @@ reset_case
 export FAKE_RUNTIME_NAMESPACE_PRESENT_AFTER_WAIT=false
 bash "$DELETE_HOSTED_NAMESPACE" dev dev
 grep -qx 'uninstall dev --namespace dev --ignore-not-found' "$FAKE_HELM_LOG"
-grep -qx 'delete namespace dev --ignore-not-found=true --wait=false' \
+grep -qx 'delete --raw /api/v1/namespaces/dev -f -' \
   "$FAKE_RUNTIME_KUBECTL_LOG"
+grep -qx 'uid-dev' "$FAKE_RUNTIME_DELETE_UID_LOG"
 grep -qx 'wait --for=delete namespace/dev --timeout=180s' "$FAKE_RUNTIME_KUBECTL_LOG"
+printf '%s\n' helm-uninstall namespace-delete >"$TEMP_DIR/expected-hosted-delete-order"
+diff -u "$TEMP_DIR/expected-hosted-delete-order" "$FAKE_HOSTED_DELETE_ORDER_LOG"
 
 reset_case
 export FAKE_RUNTIME_LOOKUP_ERROR=true
@@ -1270,6 +1345,67 @@ if bash "$DELETE_HOSTED_NAMESPACE" pr-101 pr-101; then
   exit 1
 fi
 test ! -e "$FAKE_HELM_LOG"
+test ! -e "$FAKE_RUNTIME_DELETE_UID_LOG"
+
+for invalid_runtime_metadata in \
+  FAKE_RUNTIME_NAMESPACE_JSON_PARSE_FAIL \
+  FAKE_RUNTIME_NAMESPACE_UID_MISSING \
+  FAKE_RUNTIME_PREVIEW_LABEL \
+  FAKE_RUNTIME_PR_NUMBER_LABEL; do
+  reset_case
+  case "$invalid_runtime_metadata" in
+    FAKE_RUNTIME_NAMESPACE_JSON_PARSE_FAIL) export "$invalid_runtime_metadata"=true ;;
+    FAKE_RUNTIME_NAMESPACE_UID_MISSING) export "$invalid_runtime_metadata"=true ;;
+    FAKE_RUNTIME_PREVIEW_LABEL) export "$invalid_runtime_metadata"=false ;;
+    FAKE_RUNTIME_PR_NUMBER_LABEL) export "$invalid_runtime_metadata"=102 ;;
+  esac
+  if bash "$DELETE_HOSTED_NAMESPACE" pr-101 pr-101; then
+    echo "hosted deletion accepted invalid preview metadata from ${invalid_runtime_metadata}" >&2
+    exit 1
+  fi
+  test ! -e "$FAKE_HELM_LOG"
+  test ! -e "$FAKE_RUNTIME_DELETE_UID_LOG"
+done
+
+for invalid_dev_metadata in FAKE_RUNTIME_DEV_DEMO_LABEL FAKE_RUNTIME_ENVIRONMENT_CLASS; do
+  reset_case
+  if [[ "$invalid_dev_metadata" == FAKE_RUNTIME_DEV_DEMO_LABEL ]]; then
+    export "$invalid_dev_metadata"=false
+  else
+    export "$invalid_dev_metadata"=pr-preview
+  fi
+  if bash "$DELETE_HOSTED_NAMESPACE" dev dev; then
+    echo "hosted deletion accepted invalid dev-demo metadata from ${invalid_dev_metadata}" >&2
+    exit 1
+  fi
+  test ! -e "$FAKE_HELM_LOG"
+  test ! -e "$FAKE_RUNTIME_DELETE_UID_LOG"
+done
+
+reset_case
+export FAKE_RUNTIME_NAMESPACE_UID=uid-pr-101-original
+export FAKE_RUNTIME_DELETE_CURRENT_UID=uid-pr-101-replacement
+if bash "$DELETE_HOSTED_NAMESPACE" pr-101 pr-101; then
+  echo "hosted deletion suppressed a namespace UID precondition conflict" >&2
+  exit 1
+fi
+grep -qx 'uid-pr-101-original' "$FAKE_RUNTIME_DELETE_UID_LOG"
+grep -qx 'uninstall pr-101 --namespace pr-101 --ignore-not-found' "$FAKE_HELM_LOG"
+if grep -q '^wait ' "$FAKE_RUNTIME_KUBECTL_LOG"; then
+  echo "hosted deletion waited after a namespace UID precondition conflict" >&2
+  exit 1
+fi
+
+reset_case
+export FAKE_RUNTIME_NAMESPACE_ABSENT_ON_DELETE=true
+bash "$DELETE_HOSTED_NAMESPACE" pr-101 pr-101
+grep -qx 'uid-pr-101' "$FAKE_RUNTIME_DELETE_UID_LOG"
+grep -qx 'uninstall pr-101 --namespace pr-101 --ignore-not-found' "$FAKE_HELM_LOG"
+test "$(grep -Fc 'get namespace pr-101 --ignore-not-found -o name' "$FAKE_RUNTIME_KUBECTL_LOG")" -eq 1
+if grep -q '^wait ' "$FAKE_RUNTIME_KUBECTL_LOG"; then
+  echo "hosted deletion waited after the namespace became absent during delete" >&2
+  exit 1
+fi
 
 reset_case
 export FAKE_HELM_UNINSTALL_ERROR=true
@@ -1277,8 +1413,9 @@ export FAKE_RUNTIME_NAMESPACE_PRESENT_AFTER_WAIT=false
 helm_failure_output="$(bash "$DELETE_HOSTED_NAMESPACE" pr-101 pr-101 2>&1)"
 grep -Fq 'Helm uninstall failed for hosted release pr-101; continuing namespace deletion.' <<<"$helm_failure_output"
 grep -qx 'uninstall pr-101 --namespace pr-101 --ignore-not-found' "$FAKE_HELM_LOG"
-grep -qx 'delete namespace pr-101 --ignore-not-found=true --wait=false' \
+grep -qx 'delete --raw /api/v1/namespaces/pr-101 -f -' \
   "$FAKE_RUNTIME_KUBECTL_LOG"
+grep -qx 'uid-pr-101' "$FAKE_RUNTIME_DELETE_UID_LOG"
 grep -qx 'wait --for=delete namespace/pr-101 --timeout=180s' \
   "$FAKE_RUNTIME_KUBECTL_LOG"
 
@@ -1315,8 +1452,9 @@ if bash "$DELETE_HOSTED_NAMESPACE" pr-101 pr-101; then
   echo "hosted deletion suppressed a namespace delete failure" >&2
   exit 1
 fi
-grep -qx 'delete namespace pr-101 --ignore-not-found=true --wait=false' \
+grep -qx 'delete --raw /api/v1/namespaces/pr-101 -f -' \
   "$FAKE_RUNTIME_KUBECTL_LOG"
+grep -qx 'uid-pr-101' "$FAKE_RUNTIME_DELETE_UID_LOG"
 if grep -q '^wait ' "$FAKE_RUNTIME_KUBECTL_LOG"; then
   echo "hosted deletion continued after a namespace delete failure" >&2
   exit 1
@@ -1326,7 +1464,9 @@ reset_case
 export FAKE_RUNTIME_NAMESPACE_PRESENT_AFTER_WAIT=false
 bash "$DELETE_HOSTED_NAMESPACE" pr-101 pr-101
 grep -qx 'uninstall pr-101 --namespace pr-101 --ignore-not-found' "$FAKE_HELM_LOG"
-test "$(grep -Fc 'get namespace pr-101 --ignore-not-found -o name' "$FAKE_RUNTIME_KUBECTL_LOG")" -eq 2
+grep -qx 'get namespace pr-101 --ignore-not-found -o json' "$FAKE_RUNTIME_KUBECTL_LOG"
+test "$(grep -Fc 'get namespace pr-101 --ignore-not-found -o name' "$FAKE_RUNTIME_KUBECTL_LOG")" -eq 1
+grep -qx 'uid-pr-101' "$FAKE_RUNTIME_DELETE_UID_LOG"
 grep -qx 'wait --for=delete namespace/pr-101 --timeout=180s' "$FAKE_RUNTIME_KUBECTL_LOG"
 
 reset_case
