@@ -314,8 +314,10 @@ verify_grpc_ca_prerequisite() {
     -o jsonpath='{.type}' 2>/dev/null)" || fail "missing trusted firemud-system/firemud-grpc-ca prerequisite"
   [[ "$secret_type" == "Opaque" ]] || fail "firemud-grpc-ca must be an Opaque Secret"
   # shellcheck disable=SC2016 # The dollar-prefixed names are literal kubectl Go-template variables.
-  ca_keys="$(kubectl -n "$CONTROL_NAMESPACE" get secret firemud-grpc-ca \
-    -o go-template='{{range $key, $value := .data}}{{printf "%s\n" $key}}{{end}}' | LC_ALL=C sort)"
+  if ! ca_keys="$(kubectl -n "$CONTROL_NAMESPACE" get secret firemud-grpc-ca \
+    -o go-template='{{range $key, $value := .data}}{{printf "%s\n" $key}}{{end}}' | LC_ALL=C sort)"; then
+    fail "firemud-grpc-ca data-key listing failed"
+  fi
   [[ "$ca_keys" == $'ca.crt\nca.key' ]] || \
     fail "firemud-grpc-ca must contain exactly the ca.crt and ca.key data keys"
   encoded_certificate="$(kubectl -n "$CONTROL_NAMESPACE" get secret firemud-grpc-ca \

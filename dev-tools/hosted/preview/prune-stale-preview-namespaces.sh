@@ -5,6 +5,13 @@ preview_delete_timeout="${PREVIEW_DELETE_TIMEOUT:-600}"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 delete_script="${PREVIEW_DELETE_SCRIPT:-${script_dir}/../shared/delete-hosted-namespace.sh}"
 
+if ! [[ "$preview_delete_timeout" =~ ^[1-9][0-9]*$ ]] ||
+  ((${#preview_delete_timeout} > 4)) ||
+  ((10#$preview_delete_timeout > 3600)); then
+  echo "PREVIEW_DELETE_TIMEOUT must be an integer between 1 and 3600" >&2
+  exit 2
+fi
+
 if [[ "${1:-}" == "--delete-runtime" ]]; then
   if [[ $# -ne 2 ]]; then
     echo "usage: $0 --delete-runtime <runtime_namespace>" >&2
@@ -13,12 +20,6 @@ if [[ "${1:-}" == "--delete-runtime" ]]; then
   runtime_namespace="$2"
   if [[ ! "$runtime_namespace" =~ ^pr-[1-9][0-9]*$ ]]; then
     echo "runtime namespace must match canonical pr-[1-9][0-9]* identity" >&2
-    exit 2
-  fi
-  if ! [[ "$preview_delete_timeout" =~ ^[1-9][0-9]*$ ]] ||
-    ((${#preview_delete_timeout} > 4)) ||
-    ((10#$preview_delete_timeout > 3600)); then
-    echo "PREVIEW_DELETE_TIMEOUT must be an integer between 1 and 3600" >&2
     exit 2
   fi
   PREVIEW_NAMESPACE_DELETE_TIMEOUT_SECONDS="$preview_delete_timeout" \
@@ -327,7 +328,8 @@ for row in "${namespace_rows[@]}"; do
 
   echo "Pruning ${namespace}: PR #${pr_number} is not preview-eligible (reason=${reason})"
   if [[ "$apply" == true ]]; then
-    if ! bash "$delete_script" "$namespace" "$release_name"; then
+    if ! PREVIEW_NAMESPACE_DELETE_TIMEOUT_SECONDS="$preview_delete_timeout" \
+      bash "$delete_script" "$namespace" "$release_name"; then
       runtime_deletion_failures=$((runtime_deletion_failures + 1))
       echo "Hosted runtime deletion failed for ${namespace}; skipping identity retirement and continuing stale cleanup." >&2
       continue

@@ -1127,8 +1127,10 @@ test ! -e "$FAKE_DELETE_LOG"
 reset_case
 export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
 export FAKE_PRUNE_METADATA="open\tfeature/stack\thuman\t${adversarial_labels_base64}\n"
+export PREVIEW_DELETE_TIMEOUT=37
 bash "$PRUNER" --apply
 grep -qx 'pr-101 pr-101' "$FAKE_DELETE_LOG"
+grep -qx '37' "$FAKE_DELETE_TIMEOUT_LOG"
 
 # Scheduled terminal cleanup may retire an existing identity only through the
 # explicit hosted-controller mode. Runtime deletion, retirement request, the
@@ -2192,9 +2194,14 @@ import os
 from pathlib import Path
 
 source = Path(os.environ["PRUNER_PATH"]).read_text(encoding="utf-8")
-assert source.index('if [[ "${1:-}" == "--delete-runtime" ]]') < source.index(
-    'PREVIEW_DELETE_TIMEOUT must be an integer between 1 and 3600'
+timeout_error = 'PREVIEW_DELETE_TIMEOUT must be an integer between 1 and 3600'
+assert source.count(timeout_error) == 1
+assert source.index(timeout_error) < source.index(
+    'if [[ "${1:-}" == "--delete-runtime" ]]'
 )
+assert source.count(
+    'PREVIEW_NAMESPACE_DELETE_TIMEOUT_SECONDS="$preview_delete_timeout"'
+) == 2
 PY
 grep -Fq "printf 'identity=%s\\nphase=Retired\\n' \"\$identity_name\"" \
   "$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh"

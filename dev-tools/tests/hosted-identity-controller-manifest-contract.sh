@@ -1495,7 +1495,13 @@ if [[ "${1:-}" == "-n" && "${2:-}" == "firemud-system" && "${3:-}" == "get" && "
   record_event ca-read
   case "$*" in
     *'{.type}'*) printf 'Opaque' ;;
-    *'go-template='*) printf 'ca.crt\nca.key\n' ;;
+    *'go-template='*)
+      if [[ "${FAKE_CA_KEY_LIST_ERROR:-0}" == 1 ]]; then
+        printf 'simulated CA data-key listing failure\n' >&2
+        exit 1
+      fi
+      printf 'ca.crt\nca.key\n'
+      ;;
     *'{.data.ca\.crt}'*) base64 --wrap=0 <"$FAKE_CA_CERT" ;;
     *'{.data.ca\.key}'*) base64 --wrap=0 <"$FAKE_CA_KEY" ;;
     *) exit 2 ;;
@@ -1828,6 +1834,19 @@ fi
 require_literal "$bootstrap_error" "does not match the configured fingerprint"
 if grep -Fxq -- "apply:active" "$mismatch_event_log"; then
   fail "bootstrap applied active mode after a mismatched gRPC CA fingerprint"
+fi
+key_list_error_event_log="$bootstrap_test_dir/key-list-error-events"
+if FAKE_EVENT_LOG="$key_list_error_event_log" FAKE_CA_KEY_LIST_ERROR=1 \
+  FAKE_CA_CERT="$bootstrap_ca_cert" FAKE_CA_KEY="$bootstrap_ca_key" \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted a failed gRPC CA data-key listing"
+fi
+require_literal "$bootstrap_error" "firemud-grpc-ca data-key listing failed"
+if grep -Fxq -- "apply:active" "$key_list_error_event_log"; then
+  fail "bootstrap applied active mode after the gRPC CA data-key listing failed"
 fi
 key_mismatch_event_log="$bootstrap_test_dir/key-mismatch-events"
 if FAKE_EVENT_LOG="$key_mismatch_event_log" \
