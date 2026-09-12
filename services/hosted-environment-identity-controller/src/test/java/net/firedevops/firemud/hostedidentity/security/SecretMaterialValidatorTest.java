@@ -784,7 +784,7 @@ public class SecretMaterialValidatorTest {
     Secret rotatedCa =
         generatedCaWithDistinctKeyPair(now, Duration.ofDays(60), DISTINCT_CA_KEY_PAIR_TWO);
     String rotatedTrustAnchor = SecretMaterialValidator.trustAnchorFingerprint(rotatedCa);
-    assertFalse(GrpcTransportBundleGenerator.renewalRequired(existing, renewBefore, Instant.now()));
+    assertFalse(GrpcTransportBundleGenerator.renewalRequired(existing, renewBefore, now));
     assertNotEquals(rotatedTrustAnchor, SecretMaterialValidator.trustAnchorFingerprint(existing));
 
     IdentityClient identityClient = identityClient(plan, existing, rotatedCa);

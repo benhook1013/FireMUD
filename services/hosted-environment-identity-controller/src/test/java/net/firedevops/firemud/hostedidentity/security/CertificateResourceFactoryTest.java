@@ -133,7 +133,7 @@ class CertificateResourceFactoryTest {
 
     for (Duration invalidRenewBefore :
         java.util.List.of(
-            Duration.ofMinutes(5).minusNanos(1),
+            HostedIdentityProperties.MINIMUM_GRPC_RENEW_BEFORE.minusNanos(1),
             HostedIdentityProperties.INTERNAL_CERTIFICATE_DURATION
                 .minus(HostedIdentityProperties.INTERNAL_CERTIFICATE_RENEWAL_SLACK)
                 .plusNanos(1),
@@ -150,7 +150,7 @@ class CertificateResourceFactoryTest {
 
     for (Duration validRenewBefore :
         java.util.List.of(
-            Duration.ofMinutes(5),
+            HostedIdentityProperties.MINIMUM_GRPC_RENEW_BEFORE,
             HostedIdentityProperties.INTERNAL_CERTIFICATE_DURATION.minus(
                 HostedIdentityProperties.INTERNAL_CERTIFICATE_RENEWAL_SLACK))) {
       assertDoesNotThrow(() -> factory.gatewayInternalWs(plan, validRenewBefore));

@@ -1438,22 +1438,28 @@ preview_requester = next(
 preview_active_request = next(
     step for step in preview_steps if step.get("name") == "Apply canonical Active request"
 )
-preview_restore = next(
-    step for step in preview_steps if step.get("name") == "Restore preview runtime kubeconfig"
-)
 preview_cleanup = next(
     step for step in preview_steps if step.get("name") == "Remove hosted identity requester kubeconfig"
 )
 preview_projection_wait = next(
     step for step in preview_steps if step.get("name") == "Wait for all controller identity projections"
 )
-for step in (preview_requester, preview_active_request, preview_restore, preview_projection_wait):
+for step in (preview_requester, preview_active_request, preview_projection_wait):
     assert "steps.certificate-identity.outputs.mode == 'hosted-controller'" in step["if"]
+assert preview_requester["with"] == {
+    "content": "${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
+    "export-to-github-env": "false",
+}
 assert preview_active_request["run"] == (
     'bash ./dev-tools/hosted/shared/request-hosted-identity.sh "pr-${{ needs.preview-plan.outputs.pr_number }}" Active'
 )
-assert preview_restore["if"].startswith("${{ always() &&")
-assert 'echo "KUBECONFIG=$PREVIEW_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"' in preview_restore["run"]
+assert preview_active_request["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/hosted-identity-requester.kubeconfig"
+}
+assert "Restore preview runtime kubeconfig" not in {
+    step.get("name") for step in preview_steps
+}
 assert preview_cleanup["if"] == "${{ always() }}"
 assert preview_cleanup["run"] == 'rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"'
 projection_lines = [line.strip() for line in preview_projection_wait["run"].splitlines()]
@@ -1485,8 +1491,7 @@ preview_render_index = next(
 preview_projection_index = preview_steps.index(preview_projection_wait)
 assert preview_requested_index < preview_steps.index(preview_requester)
 assert preview_steps.index(preview_requester) < preview_steps.index(preview_active_request)
-assert preview_steps.index(preview_active_request) < preview_steps.index(preview_restore)
-assert preview_steps.index(preview_restore) < preview_steps.index(preview_cleanup)
+assert preview_steps.index(preview_active_request) < preview_steps.index(preview_cleanup)
 assert preview_steps.index(preview_cleanup) < preview_projection_index
 assert preview_projection_index < preview_render_index < preview_deploy_index
 preview_deployed_step = preview_steps[preview_deployed_index]
