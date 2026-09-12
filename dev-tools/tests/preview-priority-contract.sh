@@ -81,7 +81,7 @@ if [[ "$*" == *"get namespaces"* ]]; then
   exit 0
 fi
 if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
-  "$*" == *"--ignore-not-found -o json"* ]]; then
+  "$*" == *"--ignore-not-found -o json"* && "$*" != *jsonpath* ]]; then
   printf '%s\n' "$*" >> "$FAKE_NAMESPACE_SNAPSHOT_LOG"
   count=0
   if [[ -f "$FAKE_NAMESPACE_SNAPSHOT_CALLS" ]]; then
@@ -128,7 +128,7 @@ if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
   exit 0
 fi
 if [[ "$1" == get && "$2" == namespace &&
-  "$*" == *"--ignore-not-found -o json"* ]]; then
+  "$*" == *"--ignore-not-found -o json"* && "$*" != *jsonpath* ]]; then
   printf '%s\n' "$*" >> "$FAKE_RUNTIME_KUBECTL_LOG"
   if [[ -f "$FAKE_RUNTIME_WAIT_MARKER" ]]; then
     if [[ "${FAKE_RUNTIME_RECHECK_ERROR:-false}" == true ]]; then
@@ -305,6 +305,12 @@ case "$namespace" in
     esac
     ;;
   pr-901)
+    if [[ "${FAKE_PRIORITY_CANDIDATE_NAMESPACE_LOOKUP_ERROR:-false}" == true ]]; then
+      exit 1
+    fi
+    if [[ "${FAKE_PRIORITY_CANDIDATE_NAMESPACE_ABSENT:-false}" == true ]]; then
+      exit 0
+    fi
     case "$*" in
       *pr-number*) printf '%s' "${FAKE_PR_901_OWNER:-}" ;;
       *last-preview-head-sha*) printf '%s' "${FAKE_PR_901_HEAD:-}" ;;
@@ -652,6 +658,8 @@ reset_case() {
   export FAKE_OPEN_PRIORITY_ROWS=''
   export FAKE_PRIORITY_OVERFLOW=false
   export FAKE_PRIORITY_QUERY_FAIL=false
+  export FAKE_PRIORITY_CANDIDATE_NAMESPACE_LOOKUP_ERROR=false
+  export FAKE_PRIORITY_CANDIDATE_NAMESPACE_ABSENT=false
   export FAKE_ACTIVE_PREVIEW_RUNS_JSON='[]'
   export FAKE_PR_901_OWNER=''
   export FAKE_PR_901_HEAD=''
@@ -1054,10 +1062,24 @@ grep -qx 'reclaimed' "$FAKE_PUBLISHED_STATE"
 reset_case
 export FAKE_TARGET_PRIORITY=false
 export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
+export FAKE_PRIORITY_CANDIDATE_NAMESPACE_ABSENT=true
 if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
   echo "ordinary allocation did not yield to an unsatisfied priority PR" >&2
   exit 1
 fi
+test ! -e "$FAKE_DELETE_LOG"
+
+reset_case
+export FAKE_TARGET_PRIORITY=false
+export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
+export FAKE_PRIORITY_CANDIDATE_NAMESPACE_LOOKUP_ERROR=true
+if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD" \
+  >"$TEMP_DIR/priority-candidate-namespace-error.output" 2>&1; then
+  echo "ordinary allocation proceeded after a priority candidate namespace lookup failed" >&2
+  exit 1
+fi
+grep -Fxq 'Refusing ordinary allocation because priority intent could not be evaluated' \
+  "$TEMP_DIR/priority-candidate-namespace-error.output"
 test ! -e "$FAKE_DELETE_LOG"
 
 for ineligible_priority_row in \

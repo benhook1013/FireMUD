@@ -973,6 +973,12 @@ assert "'^(firemud-system|dev-identity|pr-[1-9][0-9]{0,50}-identity)$'" in names
 assert "request.subResource == ''" in namespace_expression
 assert "request.subResource in ['status', 'finalize']" in namespace_expression
 assert "request.operation == 'UPDATE'" in namespace_expression
+controller_namespace_branch = namespace_expression.split(
+    f"(request.userInfo.username == '{controller}' &&", 1
+)[1]
+assert "(request.operation == 'DELETE'" in controller_namespace_branch
+assert "(request.operation == 'CREATE'" in controller_namespace_branch
+assert "request.operation != 'DELETE'" not in controller_namespace_branch
 namespace_noop_update_expression = namespace_expression.split(
     "(request.operation == 'UPDATE' &&", 1
 )[1].split(

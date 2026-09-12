@@ -247,6 +247,8 @@ def main() -> int:
                 ("--state", args.state),
                 ("--base-ref", args.base_ref),
                 ("--author", args.author),
+                ("--expected-repository", args.expected_repository),
+                ("--expected-head-sha", args.expected_head_sha),
             )
             if value is not None
         ]

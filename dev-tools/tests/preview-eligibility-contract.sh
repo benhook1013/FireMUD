@@ -154,7 +154,9 @@ grep -Fq 'the following arguments are required: --labels-json' \
   "$TEMP_DIR/inspect-missing-labels.err"
 
 for unrelated_inspection_argument in \
-  '--operation deploy' '--state open' '--base-ref develop' '--author human'; do
+  '--operation deploy' '--state open' '--base-ref develop' '--author human' \
+  '--expected-repository example/FireMUD' \
+  '--expected-head-sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; do
   read -r -a unrelated_inspection_fields <<<"$unrelated_inspection_argument"
   if python3 "$SCRIPT" --inspect-labels --labels-json '[]' \
     "${unrelated_inspection_fields[@]}" \

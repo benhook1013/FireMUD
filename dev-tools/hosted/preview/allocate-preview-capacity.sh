@@ -185,8 +185,11 @@ find_unsatisfied_priority_pr() {
       return 1
     fi
     namespace="pr-${pr_number}"
-    namespace_owner="$(kubectl get namespace "$namespace" -o jsonpath='{.metadata.labels.firemud\.dev/pr-number}' 2>/dev/null || true)"
-    namespace_head="$(kubectl get namespace "$namespace" -o jsonpath='{.metadata.annotations.firemud\.dev/last-preview-head-sha}' 2>/dev/null || true)"
+    if ! namespace_owner="$(kubectl get namespace "$namespace" --ignore-not-found -o jsonpath='{.metadata.labels.firemud\.dev/pr-number}')" ||
+      ! namespace_head="$(kubectl get namespace "$namespace" --ignore-not-found -o jsonpath='{.metadata.annotations.firemud\.dev/last-preview-head-sha}')"; then
+      echo "Unable to revalidate priority candidate namespace ${namespace}; refusing priority evaluation" >&2
+      return 1
+    fi
     if [[ "$namespace_owner" != "$pr_number" || "$namespace_head" != "$head_sha" ]]; then
       printf '%s\n' "$pr_number"
       return

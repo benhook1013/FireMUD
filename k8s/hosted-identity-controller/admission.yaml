@@ -696,7 +696,7 @@ spec:
            oldObject.metadata.labels.all(k,
              !k.startsWith('firemud.dev/') ||
              k in ['firemud.dev/managed-by', 'firemud.dev/identity-name', 'firemud.dev/environment-class', 'firemud.dev/retention'])) ||
-          (request.operation != 'DELETE' &&
+          (request.operation == 'CREATE' &&
            object.metadata.name.matches('^(dev-identity|pr-[1-9][0-9]{0,50}-identity)$') &&
            (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) &&
            (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) &&

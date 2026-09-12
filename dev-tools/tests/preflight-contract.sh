@@ -2325,6 +2325,42 @@ try:
     ):
         raise SystemExit(f"non-string Secret value did not exhaust as retryable: {exhausted_issues}")
 
+    mixed_lookup_calls = []
+
+    def mixed_secret_lookup(secret_name, namespace, required_keys, timeout_seconds):
+        mixed_lookup_calls.append(secret_name)
+        if secret_name == "already-ready":
+            return None, False
+        return (
+            f"Required Secret {namespace}/{secret_name} is missing keys: tls.crt",
+            True,
+        )
+
+    with patch.object(module, "secret_keys_lookup_failure", mixed_secret_lookup), patch.object(
+        module.time, "sleep", lambda _: None
+    ):
+        mixed_secret_issues = module.wait_for_secret_key_requirements(
+            [("already-ready", {"tls.crt"}), ("still-missing", {"tls.crt"})],
+            "pr-42",
+            ready_attempts=2,
+            ready_timeout_seconds=5,
+        )
+    if mixed_lookup_calls != ["already-ready", "still-missing", "still-missing"]:
+        raise SystemExit(
+            "Secret readiness did not remove the ready Secret before exhausting retries: "
+            f"{mixed_lookup_calls}"
+        )
+    if (
+        len(mixed_secret_issues) != 1
+        or "pr-42/still-missing" not in mixed_secret_issues[0]
+        or "already-ready" in mixed_secret_issues[0]
+        or "still not ready after 2 attempts" not in mixed_secret_issues[0]
+    ):
+        raise SystemExit(
+            "Secret readiness mishandled a ready and missing Secret while exhausting attempts: "
+            f"{mixed_secret_issues}"
+        )
+
     immediate_deadline_times = iter((0.0, 5.0, 5.0))
 
     def immediate_deadline_lookup(*args, **kwargs):
