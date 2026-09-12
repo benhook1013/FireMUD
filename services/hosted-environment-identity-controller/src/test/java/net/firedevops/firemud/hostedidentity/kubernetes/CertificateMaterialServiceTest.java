@@ -439,16 +439,12 @@ class CertificateMaterialServiceTest {
   void normalGrpcMaterializationRejectsUnownedGeneratorResultBeforeValidation() {
     HostedIdentityProperties properties = new HostedIdentityProperties();
     EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
-    KubernetesClient client = mock(KubernetesClient.class);
-    MixedOperation<Secret, SecretList, Resource<Secret>> secrets = mock(MixedOperation.class);
-    NonNamespaceOperation<Secret, SecretList, Resource<Secret>> runtimeSecrets =
-        mock(NonNamespaceOperation.class);
-    Resource<Secret> runtimeSecret = mock(Resource.class);
-    when(client.secrets()).thenReturn(secrets);
-    when(secrets.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeSecrets);
-    when(runtimeSecrets.withName(org.mockito.ArgumentMatchers.anyString()))
-        .thenReturn(runtimeSecret);
-    when(runtimeSecret.get()).thenReturn(null);
+    SecretClient secretClient = secretClient(plan);
+    KubernetesClient client = secretClient.client();
+    Resource<Secret> absentRuntimeSecret = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(absentRuntimeSecret);
+    when(absentRuntimeSecret.get()).thenReturn(null);
     GrpcTransportBundleGenerator generator = mock(GrpcTransportBundleGenerator.class);
     Secret unowned =
         new SecretBuilder()
@@ -490,16 +486,12 @@ class CertificateMaterialServiceTest {
   void normalGrpcMaterializationReportsAnAbsentOrMetadataLessGeneratorResultPrecisely() {
     HostedIdentityProperties properties = new HostedIdentityProperties();
     EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
-    KubernetesClient client = mock(KubernetesClient.class);
-    MixedOperation<Secret, SecretList, Resource<Secret>> secrets = mock(MixedOperation.class);
-    NonNamespaceOperation<Secret, SecretList, Resource<Secret>> runtimeSecrets =
-        mock(NonNamespaceOperation.class);
-    Resource<Secret> runtimeSecret = mock(Resource.class);
-    when(client.secrets()).thenReturn(secrets);
-    when(secrets.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeSecrets);
-    when(runtimeSecrets.withName(org.mockito.ArgumentMatchers.anyString()))
-        .thenReturn(runtimeSecret);
-    when(runtimeSecret.get()).thenReturn(null);
+    SecretClient secretClient = secretClient(plan);
+    KubernetesClient client = secretClient.client();
+    Resource<Secret> absentRuntimeSecret = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(absentRuntimeSecret);
+    when(absentRuntimeSecret.get()).thenReturn(null);
     GrpcTransportBundleGenerator generator = mock(GrpcTransportBundleGenerator.class);
     Secret metadataLess = new SecretBuilder().withType("Opaque").build();
     when(generator.ensure(

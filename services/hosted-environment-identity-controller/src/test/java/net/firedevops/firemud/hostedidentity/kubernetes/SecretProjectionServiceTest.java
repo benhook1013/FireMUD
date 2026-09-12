@@ -186,8 +186,9 @@ class SecretProjectionServiceTest {
             plan,
             HostedIdentityContract.INGRESS_ROLE,
             plan.ingressSecretName(),
-            Map.of("tls.crt", encoded("tampered"), "tls.key", encoded("key")),
+            desiredData,
             acceptedAnnotations(revision, "1".repeat(64)));
+    existing.setType("Opaque");
     existing.getMetadata().setResourceVersion("7");
     Resource<Secret> existingResource = mock(Resource.class);
     when(secretClient.runtimeSecrets().withName(plan.ingressSecretName()))
@@ -713,7 +714,7 @@ class SecretProjectionServiceTest {
   }
 
   @Test
-  void equalRevisionDataDriftIsRepairedAndMustBeAcceptedAgain() {
+  void equalRevisionTypeDriftIsRepairedAndMustBeAcceptedAgain() {
     EnvironmentIdentityPlan plan = plan();
     SecretProjectionService service = new SecretProjectionService();
     SecretClient secretClient = secretClient(plan);
@@ -727,8 +728,9 @@ class SecretProjectionServiceTest {
             plan,
             HostedIdentityContract.INGRESS_ROLE,
             plan.ingressSecretName(),
-            Map.of("tls.crt", encoded("tampered"), "tls.key", encoded("key")),
+            desiredData,
             acceptedAnnotations(revision, spki));
+    drifted.setType("Opaque");
     drifted.getMetadata().setResourceVersion("7");
     Resource<Secret> existingResource = mock(Resource.class);
     when(secretClient.runtimeSecrets().withName(plan.ingressSecretName()))
@@ -756,22 +758,26 @@ class SecretProjectionServiceTest {
     assertEquals("projected", repair.state());
     assertEquals(desiredData, repaired.getData());
     assertEquals("7", repaired.getMetadata().getResourceVersion());
-    assertNull(
+    assertEquals(
+        revision,
         repaired
             .getMetadata()
             .getAnnotations()
             .get(HostedIdentityContract.ACCEPTED_REVISION_ANNOTATION));
-    assertNull(
+    assertEquals(
+        "1",
         repaired
             .getMetadata()
             .getAnnotations()
             .get(HostedIdentityContract.ACCEPTED_SOURCE_GENERATION_ANNOTATION));
-    assertNull(
+    assertEquals(
+        "1",
         repaired
             .getMetadata()
             .getAnnotations()
             .get(HostedIdentityContract.ACCEPTED_SOURCE_OBJECT_GENERATION_ANNOTATION));
-    assertNull(
+    assertEquals(
+        spki,
         repaired
             .getMetadata()
             .getAnnotations()
@@ -975,8 +981,9 @@ class SecretProjectionServiceTest {
             plan,
             HostedIdentityContract.INGRESS_ROLE,
             plan.ingressSecretName(),
-            Map.of("tls.crt", encoded("tampered"), "tls.key", encoded("key")),
+            desiredData,
             incomplete);
+    drifted.setType("Opaque");
     drifted.getMetadata().setResourceVersion("7");
     Resource<Secret> existingResource = mock(Resource.class);
     when(secretClient.runtimeSecrets().withName(plan.ingressSecretName()))
@@ -1005,7 +1012,7 @@ class SecretProjectionServiceTest {
   }
 
   @Test
-  void sameRevisionDriftWithoutAnAcceptedSnapshotIsRepairedPendingAcceptance() {
+  void sameRevisionDataDriftFailsClosedWithoutAnAcceptedSnapshot() {
     EnvironmentIdentityPlan plan = plan();
     SecretProjectionService service = new SecretProjectionService();
     SecretClient secretClient = secretClient(plan);
@@ -1034,28 +1041,24 @@ class SecretProjectionServiceTest {
     when(existingResource.get()).thenReturn(drifted);
     Secret source = new SecretBuilder().withType("kubernetes.io/tls").withData(desiredData).build();
 
-    var repair =
-        service.project(
-            secretClient.client(),
-            plan,
-            HostedIdentityContract.INGRESS_ROLE,
-            source,
-            1,
-            1,
-            spki,
-            "cert-manager",
-            ALWAYS_CURRENT);
+    IllegalStateException exception =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.project(
+                    secretClient.client(),
+                    plan,
+                    HostedIdentityContract.INGRESS_ROLE,
+                    source,
+                    1,
+                    1,
+                    spki,
+                    "cert-manager",
+                    ALWAYS_CURRENT));
 
-    ArgumentCaptor<Secret> candidate = ArgumentCaptor.forClass(Secret.class);
-    verify(secretClient.runtimeSecrets()).resource(candidate.capture());
-    Map<String, String> repairedAnnotations = candidate.getValue().getMetadata().getAnnotations();
-    assertEquals("projected", repair.state());
-    assertEquals(desiredData, candidate.getValue().getData());
-    assertEquals(
-        "pending", repairedAnnotations.get(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION));
-    assertEquals(
-        false,
-        repairedAnnotations.containsKey(HostedIdentityContract.ACCEPTED_REVISION_ANNOTATION));
+    assertEquals("runtime projection revision does not match its material", exception.getMessage());
+    verify(secretClient.runtimeSecrets(), never())
+        .resource(org.mockito.ArgumentMatchers.any(Secret.class));
   }
 
   @Test
@@ -1082,8 +1085,9 @@ class SecretProjectionServiceTest {
             plan,
             HostedIdentityContract.INGRESS_ROLE,
             plan.ingressSecretName(),
-            Map.of("tls.crt", encoded("tampered"), "tls.key", encoded("key-2")),
+            desiredData,
             annotations);
+    drifted.setType("Opaque");
     drifted.getMetadata().setResourceVersion("8");
     Resource<Secret> existingResource = mock(Resource.class);
     when(secretClient.runtimeSecrets().withName(plan.ingressSecretName()))
@@ -1174,7 +1178,7 @@ class SecretProjectionServiceTest {
   }
 
   @Test
-  void materializationSelectsSameRevisionIdentitySourceToRepairProjectionDrift() {
+  void materializationSelectsSameRevisionIdentitySourceButProjectionFailsClosedOnDrift() {
     DriftSelectionFixture fixture = driftSelectionFixture(false);
 
     CertificateMaterialService.RoleMaterial material = fixture.materialization().ingress();
@@ -1182,25 +1186,27 @@ class SecretProjectionServiceTest {
     assertEquals(fixture.ingressSource(), material.source());
     assertEquals(SOURCE_READY, material.state());
     SecretProjectionService projectionService = new SecretProjectionService();
-    var repair =
-        projectionService.project(
-            fixture.secretClient().client(),
-            fixture.plan(),
-            material.role(),
-            material.source(),
-            material.sourceGeneration(),
-            material.sourceObjectGeneration(),
-            material.summary().spkiSha256(),
-            material.provenance(),
-            ALWAYS_CURRENT);
-    ArgumentCaptor<Secret> candidate = ArgumentCaptor.forClass(Secret.class);
-    verify(fixture.secretClient().runtimeSecrets()).resource(candidate.capture());
-    assertEquals("projected", repair.state());
-    assertEquals(fixture.ingressSource().getData(), candidate.getValue().getData());
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                projectionService.project(
+                    fixture.secretClient().client(),
+                    fixture.plan(),
+                    material.role(),
+                    material.source(),
+                    material.sourceGeneration(),
+                    material.sourceObjectGeneration(),
+                    material.summary().spkiSha256(),
+                    material.provenance(),
+                    ALWAYS_CURRENT));
+    assertEquals("runtime projection revision does not match its material", failure.getMessage());
+    verify(fixture.secretClient().runtimeSecrets(), never())
+        .resource(org.mockito.ArgumentMatchers.any(Secret.class));
   }
 
   @Test
-  void materializationDefersASecondDriftWhileTheFirstProjectionRepairs() {
+  void materializationDefersASecondDriftWhileTheFirstProjectionFailsClosed() {
     DriftSelectionFixture fixture = driftSelectionFixture(false);
     Secret telnetProjection =
         fixture.secretClient().runtimeSecrets().withName(fixture.plan().telnetSecretName()).get();
@@ -1213,22 +1219,24 @@ class SecretProjectionServiceTest {
     assertEquals(SOURCE_READY, ingress.state());
     assertEquals(SERIALIZED_DEFERRED_DRIFT, telnet.state());
     assertEquals(true, telnet.projectionDeferred());
-    var repair =
-        new SecretProjectionService()
-            .project(
-                fixture.secretClient().client(),
-                fixture.plan(),
-                ingress.role(),
-                ingress.source(),
-                ingress.sourceGeneration(),
-                ingress.sourceObjectGeneration(),
-                ingress.summary().spkiSha256(),
-                ingress.provenance(),
-                ALWAYS_CURRENT);
-    ArgumentCaptor<Secret> candidate = ArgumentCaptor.forClass(Secret.class);
-    verify(fixture.secretClient().runtimeSecrets()).resource(candidate.capture());
-    assertEquals("projected", repair.state());
-    assertEquals(fixture.plan().ingressSecretName(), candidate.getValue().getMetadata().getName());
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                new SecretProjectionService()
+                    .project(
+                        fixture.secretClient().client(),
+                        fixture.plan(),
+                        ingress.role(),
+                        ingress.source(),
+                        ingress.sourceGeneration(),
+                        ingress.sourceObjectGeneration(),
+                        ingress.summary().spkiSha256(),
+                        ingress.provenance(),
+                        ALWAYS_CURRENT));
+    assertEquals("runtime projection revision does not match its material", failure.getMessage());
+    verify(fixture.secretClient().runtimeSecrets(), never())
+        .resource(org.mockito.ArgumentMatchers.any(Secret.class));
   }
 
   @Test
@@ -1256,20 +1264,23 @@ class SecretProjectionServiceTest {
     assertEquals(SOURCE_READY, ingress.state());
     assertEquals(SOURCE_READY, telnet.state());
     SecretProjectionService projectionService = new SecretProjectionService();
+    IllegalStateException ingressFailure =
+        assertThrows(
+            IllegalStateException.class,
+            ()
+                ->
+                    projectionService.project(
+                        fixture.secretClient().client(),
+                        fixture.plan(),
+                        ingress.role(),
+                        ingress.source(),
+                        ingress.sourceGeneration(),
+                        ingress.sourceObjectGeneration(),
+                        ingress.summary().spkiSha256(),
+                        ingress.provenance(),
+                        ALWAYS_CURRENT));
     assertEquals(
-        "projected",
-        projectionService
-            .project(
-                fixture.secretClient().client(),
-                fixture.plan(),
-                ingress.role(),
-                ingress.source(),
-                ingress.sourceGeneration(),
-                ingress.sourceObjectGeneration(),
-                ingress.summary().spkiSha256(),
-                ingress.provenance(),
-                ALWAYS_CURRENT)
-            .state());
+        "runtime projection revision does not match its material", ingressFailure.getMessage());
     assertEquals(
         "projected",
         projectionService
@@ -1285,10 +1296,10 @@ class SecretProjectionServiceTest {
                 ALWAYS_CURRENT)
             .state());
     ArgumentCaptor<Secret> candidates = ArgumentCaptor.forClass(Secret.class);
-    verify(fixture.secretClient().runtimeSecrets(), org.mockito.Mockito.times(2))
+    verify(fixture.secretClient().runtimeSecrets(), org.mockito.Mockito.times(1))
         .resource(candidates.capture());
     assertEquals(
-        List.of(fixture.plan().ingressSecretName(), fixture.plan().telnetSecretName()),
+        List.of(fixture.plan().telnetSecretName()),
         candidates.getAllValues().stream()
             .map(candidate -> candidate.getMetadata().getName())
             .toList());
@@ -1428,7 +1439,7 @@ class SecretProjectionServiceTest {
   }
 
   @Test
-  void materializationSelectsValidatedSourceWhenRuntimeProjectionDataIsMalformed() {
+  void materializationSelectsValidatedSourceButProjectionFailsClosedOnMalformedData() {
     DriftSelectionFixture fixture = driftSelectionFixture(false);
     Secret malformed =
         fixture.secretClient().runtimeSecrets().withName(fixture.plan().ingressSecretName()).get();
@@ -1438,22 +1449,24 @@ class SecretProjectionServiceTest {
 
     assertEquals(fixture.ingressSource(), material.source());
     assertEquals(SOURCE_READY, material.state());
-    var repair =
-        new SecretProjectionService()
-            .project(
-                fixture.secretClient().client(),
-                fixture.plan(),
-                material.role(),
-                material.source(),
-                material.sourceGeneration(),
-                material.sourceObjectGeneration(),
-                material.summary().spkiSha256(),
-                material.provenance(),
-                ALWAYS_CURRENT);
-    ArgumentCaptor<Secret> candidate = ArgumentCaptor.forClass(Secret.class);
-    verify(fixture.secretClient().runtimeSecrets()).resource(candidate.capture());
-    assertEquals("projected", repair.state());
-    assertEquals(fixture.ingressSource().getData(), candidate.getValue().getData());
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                new SecretProjectionService()
+                    .project(
+                        fixture.secretClient().client(),
+                        fixture.plan(),
+                        material.role(),
+                        material.source(),
+                        material.sourceGeneration(),
+                        material.sourceObjectGeneration(),
+                        material.summary().spkiSha256(),
+                        material.provenance(),
+                        ALWAYS_CURRENT));
+    assertEquals("runtime projection revision does not match its material", failure.getMessage());
+    verify(fixture.secretClient().runtimeSecrets(), never())
+        .resource(org.mockito.ArgumentMatchers.any(Secret.class));
   }
 
   private static String encoded(String value) {

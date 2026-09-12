@@ -57,6 +57,32 @@ class HostedIdentityScopeServiceTest {
   private static final String RUNTIME_SCOPE_MARKER =
       "object.metadata.name == 'firemud-hosted-runtime-scope'";
   private static final Pattern CEL_STRING_LITERAL = Pattern.compile("'([^']+)'");
+  private static final Map<String, String> ROLE_LABELS =
+      Map.of(
+          "app.kubernetes.io/name",
+          "hosted-environment-identity-controller",
+          "app.kubernetes.io/component",
+          "controller-scope",
+          "app.kubernetes.io/part-of",
+          "firemud",
+          "firemud.dev/managed-by",
+          "hosted-identity-controller",
+          "firemud.dev/identity-name",
+          "pr-42",
+          "firemud.dev/environment-class",
+          HostedIdentityContract.PREVIEW_ENVIRONMENT_CLASS);
+  private static final Map<String, String> BINDING_LABELS =
+      Map.of(
+          "app.kubernetes.io/name",
+          "hosted-environment-identity-controller",
+          "app.kubernetes.io/component",
+          "controller-scope",
+          "app.kubernetes.io/part-of",
+          "firemud",
+          "firemud.dev/managed-by",
+          "hosted-identity-controller",
+          "firemud.dev/identity-name",
+          "pr-42");
 
   @Test
   @SuppressWarnings("unchecked")
@@ -216,33 +242,6 @@ class HostedIdentityScopeServiceTest {
         HostedIdentityScopeService.requiredDeploymentNames(planner.plan("dev-demo")),
         admittedDeploymentNames);
   }
-
-  private static final Map<String, String> ROLE_LABELS =
-      Map.of(
-          "app.kubernetes.io/name",
-          "hosted-environment-identity-controller",
-          "app.kubernetes.io/component",
-          "controller-scope",
-          "app.kubernetes.io/part-of",
-          "firemud",
-          "firemud.dev/managed-by",
-          "hosted-identity-controller",
-          "firemud.dev/identity-name",
-          "pr-42",
-          "firemud.dev/environment-class",
-          HostedIdentityContract.PREVIEW_ENVIRONMENT_CLASS);
-  private static final Map<String, String> BINDING_LABELS =
-      Map.of(
-          "app.kubernetes.io/name",
-          "hosted-environment-identity-controller",
-          "app.kubernetes.io/component",
-          "controller-scope",
-          "app.kubernetes.io/part-of",
-          "firemud",
-          "firemud.dev/managed-by",
-          "hosted-identity-controller",
-          "firemud.dev/identity-name",
-          "pr-42");
 
   @Test
   void retainedIdentityNamespaceAllowsUnrelatedAnnotations() {

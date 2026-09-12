@@ -167,6 +167,7 @@ public class HostedStatusService {
 
   static boolean profileMatches(
       RuntimeProfile previous, RuntimeProfileService.RuntimeProfile current) {
+    // A null current profile means no fresh trusted observation on fence or failure paths.
     if (current == null) {
       return true;
     }

@@ -59,6 +59,10 @@ public class SecretProjectionService {
       requireFingerprint(oldSpki, "runtime SPKI fingerprint");
       existingMaterialMatchesRevision = materialMatchesRevision(existing, role, oldRevision);
       if (revision.equals(oldRevision)) {
+        if (!existingMaterialMatchesRevision) {
+          throw new IllegalStateException(
+              "runtime projection revision does not match its material");
+        }
         if (sourceGeneration != oldGeneration
             || sourceObjectGeneration != oldObjectGeneration
             || !spkiSha256.equals(oldSpki)) {
@@ -67,10 +71,6 @@ public class SecretProjectionService {
         }
         if (data.equals(existing.getData())
             && Objects.equals(source.getType(), existing.getType())) {
-          if (!existingMaterialMatchesRevision) {
-            throw new IllegalStateException(
-                "runtime projection revision does not match its material");
-          }
           return accepted(old, oldRevision, oldGeneration, oldObjectGeneration, oldSpki)
               ? ProjectionResult.synced(revision)
               : ProjectionResult.awaiting("awaiting-acceptance", revision);

@@ -2,6 +2,7 @@ package net.firedevops.firemud.hostedidentity.reconcile;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -449,9 +450,9 @@ class HostedStatusServiceTest {
         role,
         role);
     assertEquals("True", resource.getStatus().getConditions().get(0).getStatus());
-    assertFalse(
-        "2026-01-01T00:00:00Z"
-            .equals(resource.getStatus().getConditions().get(0).getLastTransitionTime()));
+    assertNotEquals(
+        "2026-01-01T00:00:00Z",
+        resource.getStatus().getConditions().get(0).getLastTransitionTime());
   }
 
   @ParameterizedTest
