@@ -2858,7 +2858,14 @@ with tempfile.TemporaryDirectory() as directory:
         ingress = {
             "apiVersion": "networking.k8s.io/v1",
             "kind": "Ingress",
-            "metadata": {"name": "firemud-preview", "namespace": "pr-42"},
+            "metadata": {
+                "name": "firemud-preview",
+                "namespace": "pr-42",
+                "labels": {
+                    **validator._expected_top_level_labels(),
+                    "app.kubernetes.io/instance": "pr-42",
+                },
+            },
             "spec": malformed_spec,
         }
         ingress_path.write_text(yaml.safe_dump(ingress), encoding="utf-8")
