@@ -34,6 +34,19 @@ cat >"$MOCK_BIN/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "$1" == "api" ]]; then
+  [[ "$2" == repos/example/FireMUD/git/ref/heads/* ]] || {
+    echo "unexpected base ref lookup" >&2
+    exit 91
+  }
+  if [[ "${TEST_BASE_TIP_MODE:-}" == "unavailable" ]]; then
+    echo "base branch unavailable" >&2
+    exit 90
+  fi
+  printf '%s\n' "$TEST_BASE_TIP_SHA"
+  exit 0
+fi
+
 if [[ "$1" != "pr" || "$2" != "view" ]]; then
   echo "unexpected gh invocation" >&2
   exit 91
@@ -41,7 +54,7 @@ fi
 
 scenario="$TEST_SCENARIO"
 case "$scenario" in
-  normal|closed)
+  normal|closed|merged|unmerged|unavailable|unrelated|ambiguous)
     base_ref="develop"
     base_sha="$TEST_BASE_SHA"
     head_sha="$TEST_PR_HEAD_SHA"
@@ -154,6 +167,7 @@ git -C "$REPO" switch -q -c stack-base "$BASE_SHA"
 printf 'stack base initial\n' >"$REPO/stack-base.txt"
 git -C "$REPO" add stack-base.txt
 git -C "$REPO" commit -q -m "stack base initial"
+STACK_INITIAL_SHA="$(git -C "$REPO" rev-parse HEAD)"
 git -C "$REPO" switch -q -c stack-candidate
 printf 'stack feature\n' >"$REPO/stack-feature.txt"
 git -C "$REPO" add stack-feature.txt
@@ -171,10 +185,53 @@ STACK_BASE_SHA="$(git -C "$REPO" rev-parse HEAD)"
 git -C "$REPO" push -q origin stack-base
 git -C "$REPO" switch -q codex/local-alias
 
+git -C "$REPO" switch -q -c develop-advance "$BASE_SHA"
+printf 'base branch only\n' >"$REPO/base-branch-only.txt"
+git -C "$REPO" add base-branch-only.txt
+git -C "$REPO" commit -q -m "advance develop after candidate fork"
+DEVELOP_ADVANCE_SHA="$(git -C "$REPO" rev-parse HEAD)"
+git -C "$REPO" push -q origin develop-advance
+git -C "$REPO" switch -q -c merged-candidate codex/local-alias
+git -C "$REPO" merge -q --no-ff develop-advance -m "merge current develop into candidate"
+MERGED_CANDIDATE_SHA="$(git -C "$REPO" rev-parse HEAD)"
+git -C "$REPO" switch -q codex/local-alias
+
+git -C "$REPO" switch -q -c ambiguous-a "$BASE_SHA"
+printf 'ambiguous A\n' >"$REPO/ambiguous-a.txt"
+git -C "$REPO" add ambiguous-a.txt
+git -C "$REPO" commit -q -m "ambiguous base A"
+AMBIGUOUS_A_SHA="$(git -C "$REPO" rev-parse HEAD)"
+git -C "$REPO" switch -q -c ambiguous-b "$BASE_SHA"
+printf 'ambiguous B\n' >"$REPO/ambiguous-b.txt"
+git -C "$REPO" add ambiguous-b.txt
+git -C "$REPO" commit -q -m "ambiguous base B"
+git -C "$REPO" switch -q ambiguous-a
+git -C "$REPO" merge -q --no-ff ambiguous-b -m "ambiguous merge A"
+AMBIGUOUS_TIP_A_SHA="$(git -C "$REPO" rev-parse HEAD)"
+git -C "$REPO" switch -q ambiguous-b
+git -C "$REPO" merge -q --no-ff "$AMBIGUOUS_A_SHA" -m "ambiguous merge B"
+AMBIGUOUS_TIP_B_SHA="$(git -C "$REPO" rev-parse HEAD)"
+git -C "$REPO" push -q origin HEAD:refs/heads/ambiguous-base-tip
+git -C "$REPO" switch -q -c ambiguous-candidate codex/local-alias
+git -C "$REPO" merge -q --no-ff "$AMBIGUOUS_TIP_A_SHA" -m "merge ambiguous candidate history"
+AMBIGUOUS_CANDIDATE_SHA="$(git -C "$REPO" rev-parse HEAD)"
+git -C "$REPO" switch -q codex/local-alias
+
+UNRELATED_BASE_BLOB="$(printf 'unrelated base\n' | git -C "$REPO" hash-object -w --stdin)"
+UNRELATED_BASE_TREE="$(printf '100644 blob %s\tunrelated.txt\n' "$UNRELATED_BASE_BLOB" | git -C "$REPO" mktree)"
+UNRELATED_BASE_SHA="$(printf 'unrelated base\n' | git -C "$REPO" -c user.name='FireMUD Test' -c user.email='test@example.com' commit-tree "$UNRELATED_BASE_TREE")"
+git -C "$REPO" push -q origin "$UNRELATED_BASE_SHA:refs/heads/unrelated-base"
+
 export PATH="$MOCK_BIN:$PATH"
 export TEST_BASE_SHA="$BASE_SHA"
 export TEST_PR_HEAD_SHA="$PR_HEAD_SHA"
 export TEST_STACK_BASE_SHA="$STACK_BASE_SHA"
+export TEST_STACK_INITIAL_SHA="$STACK_INITIAL_SHA"
+export TEST_DEVELOP_ADVANCE_SHA="$DEVELOP_ADVANCE_SHA"
+export TEST_MERGED_CANDIDATE_SHA="$MERGED_CANDIDATE_SHA"
+export TEST_AMBIGUOUS_TIP_B_SHA="$AMBIGUOUS_TIP_B_SHA"
+export TEST_AMBIGUOUS_CANDIDATE_SHA="$AMBIGUOUS_CANDIDATE_SHA"
+export TEST_UNRELATED_BASE_SHA="$UNRELATED_BASE_SHA"
 export TEST_STACK_PR_HEAD_SHA="$STACK_PR_HEAD_SHA"
 export TEST_WEIRD_PATH="$WEIRD_PATH"
 export TEST_PR_STATE=OPEN
@@ -203,11 +260,39 @@ run_wrapper() {
   local output_file="${4:-$TMP_DIR/output}"
   local error_file="${5:-$TMP_DIR/error}"
 
+  local base_tip_sha
+  local base_tip_mode=""
+  case "$scenario" in
+    merged|unmerged)
+      base_tip_sha="$TEST_DEVELOP_ADVANCE_SHA"
+      git --git-dir="$REMOTE" update-ref refs/heads/develop "$base_tip_sha"
+      ;;
+    stacked)
+      base_tip_sha="$STACK_BASE_SHA"
+      git --git-dir="$REMOTE" update-ref refs/heads/stack-base "$base_tip_sha"
+      ;;
+    ambiguous)
+      base_tip_sha="$TEST_AMBIGUOUS_TIP_B_SHA"
+      git --git-dir="$REMOTE" update-ref refs/heads/develop "$base_tip_sha"
+      ;;
+    unrelated)
+      base_tip_sha="$TEST_UNRELATED_BASE_SHA"
+      git --git-dir="$REMOTE" update-ref refs/heads/develop "$base_tip_sha"
+      ;;
+    unavailable)
+      base_tip_sha="$BASE_SHA"
+      base_tip_mode=unavailable
+      git --git-dir="$REMOTE" update-ref refs/heads/develop "$base_tip_sha"
+      ;;
+    *)
+      base_tip_sha="${TEST_FETCH_BASE_SHA:-$BASE_SHA}"
+      git --git-dir="$REMOTE" update-ref refs/heads/develop "$base_tip_sha"
+      ;;
+  esac
   : >"$ARGS_FILE"
   : >"$HEAD_FILE"
   : >"$BASE_FILE"
   : >"$STATUS_FILE"
-  git --git-dir="$REMOTE" update-ref refs/heads/develop "${TEST_FETCH_BASE_SHA:-$BASE_SHA}"
   (
     cd "$REPO"
     env \
@@ -215,6 +300,8 @@ run_wrapper() {
       TEST_ADVANCE_BASE="$advance_base" \
       TEST_INVOCATIONS="$mode" \
       TEST_SCENARIO="$scenario" \
+      TEST_BASE_TIP_SHA="$base_tip_sha" \
+      TEST_BASE_TIP_MODE="$base_tip_mode" \
       "$WRAPPER" 2694 --repo example/FireMUD
   ) >"$output_file" 2>"$error_file"
   RUN_STATUS="$?"
@@ -240,6 +327,8 @@ set -e
 [[ "$RUN_OUTPUT" == *"published_files=2"* ]] || exit 1
 [[ "$RUN_OUTPUT" == *"candidate_files=3"* ]] || exit 1
 [[ "$RUN_OUTPUT" == *"published_status=unpublished-commits-ahead:1"* ]] || exit 1
+[[ "$RUN_OUTPUT" == *"pr_base_sha=$BASE_SHA"* ]] || exit 1
+[[ "$RUN_OUTPUT" == *"base_tip_sha=$BASE_SHA"* ]] || exit 1
 [[ "$RUN_OUTPUT" == *"report_command=python3 dev-tools/validation/report-pr-review-checkpoints.py --repo example/FireMUD --pr 2694"* ]] || exit 1
 [[ "$(cat "$HEAD_FILE")" == "$LOCAL_HEAD_SHA" ]] || exit 1
 [[ "$(cat "$BASE_FILE")" == "$BASE_SHA" ]] || exit 1
@@ -263,10 +352,43 @@ pinned_ref="$(sed -n 's/^pinned_base_ref=//p' "$RUN_LOG_DIR/metadata")"
 grep -q '^refs/heads/codex-review-base/run\.' < <(sed -n '5p' "$ARGS_FILE")
 [[ "$(wc -l <"$ARGS_FILE")" == 5 ]] || exit 1
 
-# The live base branch can advance after GitHub records the pull request base.
-# Fetch and pin that immutable PR base commit rather than reviewing the new tip.
+# A candidate that merged a newer base tip excludes the base-only file while
+# retaining the published feature and the unpublished local fix.
+git -C "$REPO" switch -q merged-candidate
 set +e
-TEST_FETCH_BASE_SHA="$LOCAL_HEAD_SHA" run_wrapper success 0
+run_wrapper success 0 merged
+merged_status="$?"
+set -e
+[[ "$merged_status" == 0 ]] || {
+  echo "merged-base wrapper run failed: $RUN_ERROR" >&2
+  exit 1
+}
+[[ "$RUN_OUTPUT" == *"pr_base_sha=$BASE_SHA"* ]] || exit 1
+[[ "$RUN_OUTPUT" == *"base_tip_sha=$DEVELOP_ADVANCE_SHA"* ]] || exit 1
+[[ "$RUN_OUTPUT" == *"base_sha=$DEVELOP_ADVANCE_SHA"* ]] || exit 1
+[[ "$RUN_OUTPUT" == *"candidate_files=3"* ]] || exit 1
+[[ "$(cat "$BASE_FILE")" == "$DEVELOP_ADVANCE_SHA" ]] || exit 1
+
+# When the base advances without being merged, use the inherited fork point so
+# base-only files remain outside the candidate scope.
+git -C "$REPO" switch -q codex/local-alias
+set +e
+run_wrapper success 0 unmerged
+unmerged_status="$?"
+set -e
+[[ "$unmerged_status" == 0 ]] || {
+  echo "unmerged-base wrapper run failed: $RUN_ERROR" >&2
+  exit 1
+}
+[[ "$RUN_OUTPUT" == *"base_tip_sha=$DEVELOP_ADVANCE_SHA"* ]] || exit 1
+[[ "$RUN_OUTPUT" == *"base_sha=$BASE_SHA"* ]] || exit 1
+[[ "$RUN_OUTPUT" == *"candidate_files=3"* ]] || exit 1
+[[ "$(cat "$BASE_FILE")" == "$BASE_SHA" ]] || exit 1
+
+# The named base branch can advance after GitHub records the pull request base.
+# The recorded PR base still validates the published scope independently.
+set +e
+TEST_FETCH_BASE_SHA="$DEVELOP_ADVANCE_SHA" run_wrapper success 0
 advanced_base_status="$?"
 set -e
 [[ "$advanced_base_status" == 0 ]] || {
@@ -276,9 +398,8 @@ set -e
 [[ "$RUN_OUTPUT" == *"base_sha=$BASE_SHA"* ]] || exit 1
 [[ "$(cat "$BASE_FILE")" == "$BASE_SHA" ]] || exit 1
 
-# The base branch may advance independently after the candidate fork. GitHub and
-# the wrapper must still agree on the published three-dot scope, while local fixes
-# ahead of the published PR head may broaden the candidate scope.
+# A non-default stacked base may advance independently after the candidate fork.
+# The derived merge base retains the stack change and local candidate fix.
 git -C "$REPO" switch -q stack-candidate
 set +e
 run_wrapper success 0 stacked
@@ -288,11 +409,41 @@ set -e
   echo "stacked-base wrapper run failed: $RUN_ERROR" >&2
   exit 1
 }
-[[ "$RUN_OUTPUT" == *"base_sha=$STACK_BASE_SHA"* ]] || exit 1
+[[ "$RUN_OUTPUT" == *"pr_base_sha=$STACK_BASE_SHA"* ]] || exit 1
+[[ "$RUN_OUTPUT" == *"base_tip_sha=$STACK_BASE_SHA"* ]] || exit 1
+[[ "$RUN_OUTPUT" == *"base_sha=$STACK_INITIAL_SHA"* ]] || exit 1
 [[ "$RUN_OUTPUT" == *"published_files=1"* ]] || exit 1
 [[ "$RUN_OUTPUT" == *"candidate_files=2"* ]] || exit 1
 [[ "$(cat "$HEAD_FILE")" == "$STACK_LOCAL_HEAD_SHA" ]] || exit 1
-[[ "$(cat "$BASE_FILE")" == "$STACK_BASE_SHA" ]] || exit 1
+[[ "$(cat "$BASE_FILE")" == "$STACK_INITIAL_SHA" ]] || exit 1
+
+git -C "$REPO" switch -q codex/local-alias
+invocations_before_base_failures="$(wc -l <"$INVOCATIONS_FILE")"
+set +e
+run_wrapper success 0 unavailable
+unavailable_status="$?"
+set -e
+[[ "$unavailable_status" == 1 ]] || exit 1
+[[ "$RUN_ERROR" == *"could not resolve current pull request base branch"* ]] || exit 1
+[[ "$(wc -l <"$INVOCATIONS_FILE")" == "$invocations_before_base_failures" ]] || exit 1
+
+set +e
+run_wrapper success 0 unrelated
+unrelated_base_status="$?"
+set -e
+[[ "$unrelated_base_status" == 1 ]] || exit 1
+[[ "$RUN_ERROR" == *"current pull request base tip are unrelated histories"* ]] || exit 1
+[[ "$(wc -l <"$INVOCATIONS_FILE")" == "$invocations_before_base_failures" ]] || exit 1
+
+git -C "$REPO" switch -q ambiguous-candidate
+set +e
+run_wrapper success 0 ambiguous
+ambiguous_base_status="$?"
+set -e
+[[ "$ambiguous_base_status" == 1 ]] || exit 1
+[[ "$RUN_ERROR" == *"current pull request base tip have ambiguous merge bases"* ]] || exit 1
+[[ "$(wc -l <"$INVOCATIONS_FILE")" == "$invocations_before_base_failures" ]] || exit 1
+git -C "$REPO" switch -q codex/local-alias
 
 # Scope and log provenance must be visible before the review process completes,
 # and a concurrent wrapper must fail before a second CodeRabbit invocation.
@@ -306,6 +457,7 @@ git --git-dir="$REMOTE" update-ref refs/heads/develop "$BASE_SHA"
     TEST_ADVANCE_BASE=0 \
     TEST_INVOCATIONS=block \
     TEST_SCENARIO=normal \
+    TEST_BASE_TIP_SHA="$BASE_SHA" \
     "$WRAPPER" 2694 --repo example/FireMUD
 ) >"$BLOCK_OUTPUT" 2>"$BLOCK_ERROR" &
 BLOCK_PID=$!
