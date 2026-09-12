@@ -1849,8 +1849,9 @@ require_contains(
         "may be applied as an initial emergency fence",
         "For any reset or recovery mutation, Automation must be contained before relying on Game Session tick/region containment",
         "complete affected scope set from the authoritative durable PostgreSQL/runtime inventory",
-        "live per-scope `SetAutomationAdmissionMode`/`GetAutomationDrainStatus` surfaces are not a recovery authorization",
-        "do not yet provide a durable request-result acknowledgement or matching readback identity",
+        "live per-scope `SetAutomationAdmissionMode`/`GetAutomationDrainStatus` surfaces now provide durable exact-scope request-result acknowledgement and matching readback",
+        "Matching Set/Get evidence is required but is not complete recovery authorization",
+        "exact pin-epoch, process-cessation, and safe-rebuild proof remain unavailable",
         "deployment-wide Automation containment only with explicit impact approval",
         "durable request-result/fingerprint/acknowledgement readback before recovery proceeds",
     ],
@@ -1858,8 +1859,9 @@ require_contains(
 require_contains(
     "design/operations/deployments/production/recovery/README.md",
     [
-        "not a current recovery authorization",
-        "does not yet provide a durable request-result acknowledgement",
+        "durable exact-scope successful acknowledgement/readback",
+        "do not treat a successful RPC response, admission mode/epoch, fresh `observedAt`, or zero drain counts alone as proof of recovery containment",
+        "overall queue recovery/resume path still lacks exact pin-epoch, process-cessation, and rebuild proof",
         "deployment-wide Automation containment only with explicit impact approval",
         "complete affected-scope enumeration from the durable PostgreSQL/runtime inventory",
         "distinct durable deployment/owner acknowledgement plus authoritative readback",

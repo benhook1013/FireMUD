@@ -178,8 +178,8 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
       if (!AutomationRuntimeScopeSupport.matches(state, runtimeScope)) {
         continue;
       }
-      String pluginId = blankToEmpty(state.getPluginId());
-      String pluginVersionId = blankToEmpty(state.getActivePluginVersionId());
+      String pluginId = normalizedText(state.getPluginId());
+      String pluginVersionId = normalizedText(state.getActivePluginVersionId());
       if (!pluginId.isBlank() && !pluginVersionId.isBlank()) {
         active.put(pluginId, pluginVersionId);
       }
@@ -212,7 +212,8 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
     if (pluginOwner.isBaseScript()) {
       return true;
     }
-    return pluginOwner.pluginVersionId().equals(activePluginVersions.get(pluginOwner.pluginId()));
+    return normalizedText(pluginOwner.pluginVersionId())
+        .equals(normalizedText(activePluginVersions.get(pluginOwner.pluginId())));
   }
 
   private void validateCommandAliases(List<ResolvedBinding> targetBindings) {
