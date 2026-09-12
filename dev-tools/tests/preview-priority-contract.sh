@@ -2107,7 +2107,7 @@ grep -q -- '--inspect-labels --labels-json "$labels_json"' "$trusted_workflow"
 grep -q 'malformed-label-metadata' "$eligibility_script"
 # shellcheck disable=SC2016 # Assert centralized exact-label inspection in trusted workflow source.
 test "$(grep -Fc -- '--inspect-labels --labels-json "$labels_json"' "$trusted_workflow")" -eq 1
-test "$(grep -Fc -- 'revalidate-preview-deploy.sh' "$trusted_workflow")" -eq 7
+test "$(grep -Fc -- 'revalidate-preview-deploy.sh' "$trusted_workflow")" -eq 6
 # shellcheck disable=SC2016 # Assert literal cleanup helper arguments.
 test "$(grep -Fc -- '--cleanup "$PR_NUMBER" "$EXPECTED_HEAD_SHA"' "$trusted_workflow")" -eq 2
 test "$(grep -Fc -- '--revalidate-deploy' "$trusted_workflow")" -eq 0
