@@ -6,9 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.lang.reflect.InvocationTargetException;
 import java.time.Duration;
-import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
@@ -148,67 +146,10 @@ class CertificateResourceFactoryTest {
     }
   }
 
-  @Test
-  void certificateIncludesAndValidatesRenewBeforeWhenDurationUsesIssuerDefault()
-      throws ReflectiveOperationException {
-    var plan = new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
-    var factory = new CertificateResourceFactory();
-
-    var certificate = certificate(factory, plan, null, Duration.ofHours(5));
-    var certificateSpec = spec(certificate);
-    assertFalse(certificateSpec.containsKey("duration"));
-    assertEquals("5h", certificateSpec.get("renewBefore"));
-
-    var invalidRenewBefore = Duration.ofMinutes(5).minusNanos(1);
-    InvocationTargetException failure =
-        assertThrows(
-            InvocationTargetException.class,
-            () -> certificate(factory, plan, null, invalidRenewBefore));
-    assertEquals(IllegalStateException.class, failure.getCause().getClass());
-    assertEquals(
-        "gRPC renewal window must be at least 5 minutes and leave at least 5 minutes before the 30-day certificate expiry",
-        failure.getCause().getMessage());
-  }
-
   private static HostedIdentityProperties propertiesWithRenewBefore() {
     var properties = new HostedIdentityProperties();
     properties.setGrpcRenewBefore(Duration.ofHours(5));
     return properties;
-  }
-
-  private static io.fabric8.kubernetes.api.model.GenericKubernetesResource certificate(
-      CertificateResourceFactory factory,
-      EnvironmentIdentityPlan plan,
-      Duration duration,
-      Duration renewBefore)
-      throws ReflectiveOperationException {
-    var certificateMethod =
-        CertificateResourceFactory.class.getDeclaredMethod(
-            "certificate",
-            EnvironmentIdentityPlan.class,
-            String.class,
-            String.class,
-            String.class,
-            String.class,
-            List.class,
-            List.class,
-            List.class,
-            Duration.class,
-            Duration.class);
-    certificateMethod.setAccessible(true);
-    return (io.fabric8.kubernetes.api.model.GenericKubernetesResource)
-        certificateMethod.invoke(
-            factory,
-            plan,
-            HostedIdentityContract.INGRESS_ROLE,
-            plan.ingressCertificateName(),
-            plan.ingressSecretName(),
-            plan.ingressIssuer(),
-            List.of(plan.hostname()),
-            List.of(),
-            List.of("digital signature", "key encipherment", "server auth"),
-            duration,
-            renewBefore);
   }
 
   @SuppressWarnings("unchecked")

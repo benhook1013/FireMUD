@@ -120,13 +120,20 @@ for required in (
     'docker run --detach',
     '--env FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE=paused',
     '"$CONTROLLER_IMAGE"',
-    'for _ in {1..300}; do',
+    'deadline=$((SECONDS + 300))',
+    'while (( SECONDS < deadline )); do',
+    'request_timeout=$((deadline - SECONDS))',
+    '(( request_timeout > 0 )) || break',
+    '(( request_timeout <= 5 )) || request_timeout=5',
+    '--connect-timeout 2 --max-time "$request_timeout"',
+    '(( SECONDS < deadline )) && sleep 1',
     "http://127.0.0.1:8081/actuator/health/liveness",
     "[[ \"$health\" == *'\"status\":\"UP\"'* ]]",
     'docker rm --force "$container_name"',
 ):
     assert required in smoke_run, required
 assert "--entrypoint" not in smoke_run
+assert 'for _ in {1..300}; do' not in smoke_run
 export_run = export_step["run"]
 assert "hosted-environment-identity-controller" not in export_run
 assert "account-service" in export_run
@@ -479,6 +486,18 @@ publish_index = next(i for i, step in enumerate(controller_steps) if step.get("n
 assert login_index < build_index < smoke_index < publish_index
 assert "--tag \"$CONTROLLER_IMAGE\"" in controller_steps[build_index]["run"]
 assert "ghcr.io/benhook1013/firemud-base@${{ needs.build-base-image.outputs.digest }}" in controller_steps[build_index]["run"]
+trusted_smoke_run = controller_steps[smoke_index]["run"]
+for required in (
+    'deadline=$((SECONDS + 300))',
+    'while (( SECONDS < deadline )); do',
+    'request_timeout=$((deadline - SECONDS))',
+    '(( request_timeout > 0 )) || break',
+    '(( request_timeout <= 5 )) || request_timeout=5',
+    '--connect-timeout 2 --max-time "$request_timeout"',
+    '(( SECONDS < deadline )) && sleep 1',
+):
+    assert required in trusted_smoke_run, required
+assert 'for _ in {1..300}; do' not in trusted_smoke_run
 assert 'docker push "$CONTROLLER_IMAGE"' in controller_steps[publish_index]["run"]
 publish_run = controller_steps[publish_index]["run"]
 assert "docker manifest inspect" not in publish_run
@@ -513,9 +532,6 @@ janitor_requester_step = next(
     for step in janitor_steps
     if step.get("name") == "Write hosted identity requester kubeconfig"
 )
-janitor_restore_step = next(
-    step for step in janitor_steps if step.get("name") == "Restore preview kubeconfig"
-)
 janitor_verify_step = next(
     step for step in janitor_steps if step.get("name") == "Verify preview cluster access"
 )
@@ -527,17 +543,20 @@ janitor_cleanup_step = next(
 assert janitor_prune_step["env"]["HOSTED_IDENTITY_REQUESTER_KUBECONFIG"] == (
     "${{ runner.temp }}/hosted-identity-requester.kubeconfig"
 )
+assert janitor_verify_step["env"]["KUBECONFIG"] == (
+    "${{ runner.temp }}/preview-kubeconfig.yaml"
+)
+assert janitor_prune_step["env"]["KUBECONFIG"] == (
+    "${{ runner.temp }}/preview-kubeconfig.yaml"
+)
 assert "export HOSTED_IDENTITY_REQUESTER_KUBECONFIG=" not in janitor_prune_step["run"]
 assert "${{ runner.temp }}/hosted-identity-requester.kubeconfig" not in janitor_prune_step["run"]
-assert janitor_restore_step.get("if") == (
-    "${{ always() && steps.certificate-identity.outputs.mode == 'hosted-controller' }}"
-)
-assert janitor_restore_step.get("run") == (
-    'echo "KUBECONFIG=$RUNNER_TEMP/preview-kubeconfig.yaml" >> "$GITHUB_ENV"'
+assert not any(
+    step.get("name") == "Restore preview kubeconfig" for step in janitor_steps
 )
 assert janitor_steps.index(janitor_requester_step) < janitor_steps.index(
-    janitor_restore_step
-) < janitor_steps.index(janitor_verify_step) < janitor_steps.index(janitor_prune_step)
+    janitor_verify_step
+) < janitor_steps.index(janitor_prune_step)
 assert janitor_steps.index(janitor_cleanup_step) > janitor_steps.index(janitor_prune_step)
 assert janitor_cleanup_step.get("if") == "${{ always() }}"
 assert janitor_cleanup_step.get("run") == (
@@ -1805,7 +1824,7 @@ for missing_dependency in jq openssl base64 sha256sum; do
     echo "credential step succeeded without $missing_dependency" >&2
     exit 1
   fi
-  grep -Fxq "$missing_dependency is required" "$missing_dependency_error"
+  test "$(<"$missing_dependency_error")" = "$missing_dependency is required"
 done
 
 create_once_state="$credential_state_root/create-once"

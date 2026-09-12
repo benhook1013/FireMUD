@@ -25,6 +25,7 @@ expect_mode() {
   local expected="$1"
   local fixture="$2"
   local path="$fixture_dir/values.yaml"
+  local actual
   printf '%s' "$fixture" >"$path"
   actual="$(python3 "$mode_resolver" "$path")"
   [[ "$actual" == "$expected" ]] || {
@@ -918,20 +919,25 @@ if [[ $# -eq 6 && "$1" == get && "$2" == namespace && ( "$3" == dev || "$3" == p
   if [[ "$3" == dev ]]; then
     requested_annotation="firemud.dev/requested-dev-demo-head-sha"
     deployed_annotation="firemud.dev/last-dev-demo-head-sha"
+    telnet_annotation="firemud.dev/last-dev-demo-telnet-port"
   else
     requested_annotation="firemud.dev/requested-preview-head-sha"
     deployed_annotation="firemud.dev/last-preview-head-sha"
+    telnet_annotation="firemud.dev/last-preview-telnet-port"
   fi
   "$REAL_JQ" -cn \
     --arg requested "${FAKE_NAMESPACE_REQUESTED_HEAD:?}" \
     --arg deployed "${FAKE_NAMESPACE_DEPLOYED_HEAD:?}" \
+    --arg telnet_port "${FAKE_NAMESPACE_TELNET_PORT:?}" \
     --arg requested_annotation "$requested_annotation" \
-    --arg deployed_annotation "$deployed_annotation" '
+    --arg deployed_annotation "$deployed_annotation" \
+    --arg telnet_annotation "$telnet_annotation" '
       {metadata:{uid:"runtime-uid",annotations:{}}}
       | if $requested == "__missing__" then .
         else .metadata.annotations[$requested_annotation] = $requested end
       | if $deployed == "__missing__" then .
         else .metadata.annotations[$deployed_annotation] = $deployed end
+      | .metadata.annotations[$telnet_annotation] = $telnet_port
     '
   exit 0
 fi
@@ -946,6 +952,7 @@ if [[ $# -eq 8 && "$1" == -n && "$2" == firemud-system && "$3" == get && "$4" ==
     --arg requested "${FAKE_REQUESTED_HEAD:?}" \
     --arg deployed "${FAKE_DEPLOYED_HEAD:?}" \
     --arg profile_uid "${FAKE_PROFILE_UID:?}" \
+    --argjson telnet_port "${FAKE_PROFILE_TELNET_PORT:?}" \
     --arg revision "$revision" \
     --arg grpc_revision "$grpc_revision" '
       {
@@ -954,7 +961,7 @@ if [[ $# -eq 8 && "$1" == -n && "$2" == firemud-system && "$3" == get && "$4" ==
           observedGeneration:7,
           phase:"Ready",
           conditions:[{type:"Ready",status:"True",reason:"Reconciled",message:"served"}],
-          profile:{runtimeNamespaceUid:$profile_uid},
+          profile:{runtimeNamespaceUid:$profile_uid,telnetPort:$telnet_port},
           ingress:{revision:$revision},
           telnet:{revision:$revision},
           gatewayInternalWs:{revision:$revision},
@@ -989,6 +996,8 @@ assert_waiter_rejects() {
   local profile_uid="$6"
   local missing_role="$7"
   local expected_message="$8"
+  local namespace_telnet_port="${9:-32016}"
+  local profile_telnet_port="${10:-$namespace_telnet_port}"
   local output="$fixture_dir/waiter-${name}.out"
   local actual_status
 
@@ -997,9 +1006,11 @@ assert_waiter_rejects() {
     REAL_JQ="$real_jq" \
     FAKE_NAMESPACE_REQUESTED_HEAD="$namespace_requested_head" \
     FAKE_NAMESPACE_DEPLOYED_HEAD="$namespace_deployed_head" \
+    FAKE_NAMESPACE_TELNET_PORT="$namespace_telnet_port" \
     FAKE_REQUESTED_HEAD="$requested_head" \
     FAKE_DEPLOYED_HEAD="$deployed_head" \
     FAKE_PROFILE_UID="$profile_uid" \
+    FAKE_PROFILE_TELNET_PORT="$profile_telnet_port" \
     FAKE_MISSING_ROLE="$missing_role" \
     bash "$waiter" dev-demo "$expected_waiter_head" dev 1 >"$output" 2>&1
   actual_status=$?
@@ -1054,6 +1065,15 @@ assert_waiter_rejects \
   "$expected_waiter_head" "$expected_waiter_head" other-runtime-uid "" \
   "namespace UID other-runtime-uid, requested head ${expected_waiter_head}"
 assert_waiter_rejects \
+  telnet-port-mismatch "$expected_waiter_head" "$expected_waiter_head" \
+  "$expected_waiter_head" "$expected_waiter_head" runtime-uid "" \
+  "Telnet port 32015; expected 32016" 32016 32015
+assert_waiter_rejects \
+  oversized-namespace-telnet-port "$expected_waiter_head" "$expected_waiter_head" \
+  "$expected_waiter_head" "$expected_waiter_head" runtime-uid "" \
+  "has no canonical Telnet port; observed 99999999999999999999" \
+  99999999999999999999 32016
+assert_waiter_rejects \
   projection-missing "$expected_waiter_head" "$expected_waiter_head" \
   "$expected_waiter_head" "$expected_waiter_head" runtime-uid grpc \
   "Ready identity has incomplete projected revisions"
@@ -1064,15 +1084,18 @@ PATH="$waiter_stub_dir:$PATH" \
   REAL_JQ="$real_jq" \
   FAKE_NAMESPACE_REQUESTED_HEAD="$uppercase_waiter_head" \
   FAKE_NAMESPACE_DEPLOYED_HEAD="$uppercase_waiter_head" \
+  FAKE_NAMESPACE_TELNET_PORT=32016 \
   FAKE_REQUESTED_HEAD="$uppercase_waiter_head" \
   FAKE_DEPLOYED_HEAD="$uppercase_waiter_head" \
   FAKE_PROFILE_UID="runtime-uid" \
+  FAKE_PROFILE_TELNET_PORT=32016 \
   FAKE_MISSING_ROLE="" \
   bash "$waiter" dev-demo "$expected_waiter_head" dev 1 >"$waiter_success_output"
 for expected_line in \
   'identity=dev-demo' \
   'phase=Ready' \
   'observedGeneration=7' \
+  'telnetPort=32016' \
   'ingressRevision=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
   'telnetRevision=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
   'gatewayInternalWsRevision=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
@@ -1094,9 +1117,11 @@ assert_preview_waiter_rejects() {
     REAL_JQ="$real_jq" \
     FAKE_NAMESPACE_REQUESTED_HEAD="$namespace_requested_head" \
     FAKE_NAMESPACE_DEPLOYED_HEAD="$namespace_deployed_head" \
+    FAKE_NAMESPACE_TELNET_PORT=32000 \
     FAKE_REQUESTED_HEAD="$expected_waiter_head" \
     FAKE_DEPLOYED_HEAD="$expected_waiter_head" \
     FAKE_PROFILE_UID="runtime-uid" \
+    FAKE_PROFILE_TELNET_PORT=32000 \
     FAKE_MISSING_ROLE="" \
     bash "$waiter" pr-42 "$expected_waiter_head" pr-42 1 >"$output" 2>&1
   actual_status=$?
@@ -1122,12 +1147,15 @@ PATH="$waiter_stub_dir:$PATH" \
   REAL_JQ="$real_jq" \
   FAKE_NAMESPACE_REQUESTED_HEAD="$uppercase_waiter_head" \
   FAKE_NAMESPACE_DEPLOYED_HEAD="$uppercase_waiter_head" \
+  FAKE_NAMESPACE_TELNET_PORT=32000 \
   FAKE_REQUESTED_HEAD="$uppercase_waiter_head" \
   FAKE_DEPLOYED_HEAD="$uppercase_waiter_head" \
   FAKE_PROFILE_UID="runtime-uid" \
+  FAKE_PROFILE_TELNET_PORT=32000 \
   FAKE_MISSING_ROLE="" \
   bash "$waiter" pr-42 "$expected_waiter_head" pr-42 1 >"$preview_waiter_success_output"
 grep -Fxq -- "identity=pr-42" "$preview_waiter_success_output"
+grep -Fxq -- "telnetPort=32000" "$preview_waiter_success_output"
 
 # Execute the exact reconciler workflow step against deterministic GitHub and
 # Kubernetes command fixtures. The reference model above keeps the cases easy

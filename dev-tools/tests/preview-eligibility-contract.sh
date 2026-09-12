@@ -326,6 +326,8 @@ grep -Fxq \
 grep -Fxq \
   'Refusing preview deploy for PR #42: current pull request metadata is malformed' \
   "$TEMP_DIR/refused.stderr"
+grep -Fxq 'api repos/example/FireMUD/pulls/42' "$TEMP_DIR/refused-gh.log"
+test "$(wc -l <"$TEMP_DIR/refused-gh.log")" -eq 1
 
 GITHUB_REPOSITORY=example/FireMUD \
   GH_TOKEN=test-token \
@@ -333,6 +335,8 @@ GITHUB_REPOSITORY=example/FireMUD \
   FAKE_PULL_REQUEST_JSON="$valid_cleanup_pull_request" \
   PATH="$TEMP_DIR/bin:$PATH" \
   bash "$revalidation_helper" --cleanup 42 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+grep -Fxq 'api repos/example/FireMUD/pulls/42' "$TEMP_DIR/cleanup-gh.log"
+test "$(wc -l <"$TEMP_DIR/cleanup-gh.log")" -eq 1
 
 if GITHUB_REPOSITORY=example/FireMUD \
   GH_TOKEN=test-token \
@@ -351,6 +355,8 @@ grep -Fxq \
 grep -Fxq \
   'Refusing preview cleanup for PR #42: pull request is not closed (state=open)' \
   "$TEMP_DIR/reopened.stderr"
+grep -Fxq 'api repos/example/FireMUD/pulls/42' "$TEMP_DIR/reopened-gh.log"
+test "$(wc -l <"$TEMP_DIR/reopened-gh.log")" -eq 1
 
 dispatch_metadata_output="$TEMP_DIR/dispatch-metadata.out"
 (

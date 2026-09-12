@@ -65,6 +65,12 @@ import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 public class SecretMaterialValidatorTest {
+  static {
+    if (Security.getProvider("BC") == null) {
+      Security.addProvider(new BouncyCastleProvider());
+    }
+  }
+
   private static final AtomicLong CA_SERIAL = new AtomicLong(1);
   private static final List<KeyPair> RSA_KEY_FIXTURES =
       List.of(generateRsaKeyPair(), generateRsaKeyPair(), generateRsaKeyPair());
@@ -536,6 +542,30 @@ public class SecretMaterialValidatorTest {
     Secret existing = generator.generate(plan, ca, 4, renewBefore, now);
     existing.getMetadata().setResourceVersion(resourceVersion);
     String trustAnchor = SecretMaterialValidator.trustAnchorFingerprint(ca);
+
+    IdentityClient identityClient = identityClient(plan, existing, ca);
+
+    assertSame(
+        existing, generator.ensure(identityClient.client(), plan, 4L, renewBefore, trustAnchor));
+    verify(identityClient.identitySecrets(), org.mockito.Mockito.never())
+        .resource(org.mockito.ArgumentMatchers.any(Secret.class));
+  }
+
+  @Test
+  void ensurePreservesCurrentBundleWithAdditionalNonDnsSan() throws Exception {
+    Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+    Duration renewBefore = Duration.ofDays(7);
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    GrpcTransportBundleGenerator generator = new GrpcTransportBundleGenerator();
+    Secret ca = generatedCa(now, Duration.ofDays(60));
+    Secret existing = generator.generate(plan, ca, 4, renewBefore, now);
+    existing = withAdditionalUriSan(existing, plan, now);
+    existing.getMetadata().setResourceVersion("7");
+    String trustAnchor = SecretMaterialValidator.trustAnchorFingerprint(ca);
+    assertTrue(
+        certificate(existing.getData().get("tls.crt")).getSubjectAlternativeNames().stream()
+            .anyMatch(name -> Integer.valueOf(6).equals(name.get(0))));
 
     IdentityClient identityClient = identityClient(plan, existing, ca);
 
@@ -1031,9 +1061,8 @@ public class SecretMaterialValidatorTest {
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
     Secret source = generatedGrpcBundle(plan);
     Map<String, String> data = new LinkedHashMap<>(source.getData());
-    data.put(
-        "tls.crt",
-        encode(pemText(source.getData().get("tls.crt")) + pemText(data.remove("ca.crt"))));
+    String caCertificate = data.remove("ca.crt");
+    data.put("tls.crt", encode(pemText(source.getData().get("tls.crt")) + pemText(caCertificate)));
     Secret publicChain =
         new SecretBuilder(source).withType("kubernetes.io/tls").withData(data).build();
     Secret unexpectedAnchor =
@@ -1220,9 +1249,6 @@ public class SecretMaterialValidatorTest {
       String dnsName,
       Instant now)
       throws Exception {
-    if (Security.getProvider("BC") == null) {
-      Security.addProvider(new BouncyCastleProvider());
-    }
     var builder =
         new JcaX509v3CertificateBuilder(
             issuer,
@@ -1262,6 +1288,48 @@ public class SecretMaterialValidatorTest {
   private static EnvironmentIdentityPlan withGrpcConsumers(
       EnvironmentIdentityPlan plan, String... consumers) {
     return plan.withGrpcConsumers(java.util.List.of(consumers));
+  }
+
+  private static Secret withAdditionalUriSan(
+      Secret source, EnvironmentIdentityPlan plan, Instant now) throws Exception {
+    KeyPair leafKeyPair = generateRsaKeyPair();
+    X509Certificate ca = certificate(source.getData().get("ca.crt"));
+    var builder =
+        new JcaX509v3CertificateBuilder(
+            new X500Name(ca.getSubjectX500Principal().getName()),
+            BigInteger.valueOf(CA_SERIAL.getAndIncrement()),
+            Date.from(now.minus(Duration.ofMinutes(1))),
+            Date.from(now.plus(Duration.ofDays(30))),
+            new X500Name("CN=" + plan.name() + ", O=FireMUD"),
+            leafKeyPair.getPublic());
+    builder.addExtension(Extension.basicConstraints, true, new BasicConstraints(false));
+    builder.addExtension(
+        Extension.keyUsage,
+        true,
+        new KeyUsage(KeyUsage.digitalSignature | KeyUsage.keyEncipherment));
+    builder.addExtension(
+        Extension.extendedKeyUsage,
+        false,
+        new ExtendedKeyUsage(
+            new KeyPurposeId[] {KeyPurposeId.id_kp_serverAuth, KeyPurposeId.id_kp_clientAuth}));
+    List<GeneralName> names =
+        new java.util.ArrayList<>(
+            GrpcTransportBundleGenerator.grpcDnsNames(plan).stream()
+                .map(name -> new GeneralName(GeneralName.dNSName, name))
+                .toList());
+    names.add(new GeneralName(GeneralName.uniformResourceIdentifier, "spiffe://firemud/pr-42"));
+    builder.addExtension(
+        Extension.subjectAlternativeName,
+        false,
+        new GeneralNames(names.toArray(GeneralName[]::new)));
+    var signer =
+        new JcaContentSignerBuilder("SHA256withRSA").build(FIXTURE_CA_KEY_PAIR.getPrivate());
+    X509Certificate leaf =
+        new JcaX509CertificateConverter().setProvider("BC").getCertificate(builder.build(signer));
+    Map<String, String> data = new LinkedHashMap<>(source.getData());
+    data.put("tls.crt", pem("CERTIFICATE", leaf.getEncoded()));
+    data.put("tls.key", pem("PRIVATE KEY", leafKeyPair.getPrivate().getEncoded()));
+    return new SecretBuilder(source).withData(data).build();
   }
 
   /** Compile-time test seam for cross-package probe coverage of generated transport material. */
@@ -1341,9 +1409,6 @@ public class SecretMaterialValidatorTest {
   private static Secret generatedCa(
       Instant now, Duration lifetime, X500Name name, KeyPair keyPair, int keyUsageBits)
       throws Exception {
-    if (Security.getProvider("BC") == null) {
-      Security.addProvider(new BouncyCastleProvider());
-    }
     var builder =
         new JcaX509v3CertificateBuilder(
             name,

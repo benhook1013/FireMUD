@@ -253,6 +253,7 @@ while (( SECONDS < deadline )); do
     continue
   fi
   if [[ ! "$namespace_telnet_port" =~ ^[1-9][0-9]*$ ]] ||
+    ((${#namespace_telnet_port} > 5)) ||
     { [[ "$identity_name" == dev-demo ]] && [[ "$namespace_telnet_port" != 32016 ]]; } ||
     { [[ "$identity_name" != dev-demo ]] &&
       ((10#$namespace_telnet_port < 32000 || 10#$namespace_telnet_port > 32015)); }; then

@@ -2018,6 +2018,7 @@ import importlib.util
 import os
 import pathlib
 import sys
+from unittest.mock import patch
 import yaml
 
 root = pathlib.Path(sys.argv[1])
@@ -2094,16 +2095,15 @@ except module.TIMESTAMP_ERRORS as exc:
 else:
     raise SystemExit("naive timestamp unexpectedly accepted")
 
-original_subprocess_run = module.subprocess.run
-try:
-    def not_found_lookup(*args, **kwargs):
-        if kwargs.get("timeout") != module.SECRET_LOOKUP_TIMEOUT_SECONDS:
-            raise SystemExit("Secret lookup did not receive its deployment timeout")
-        return module.subprocess.CompletedProcess(
-            args, 1, "", 'Error from server (NotFound): secrets "missing" not found'
-        )
+def not_found_lookup(*args, **kwargs):
+    if kwargs.get("timeout") != module.SECRET_LOOKUP_TIMEOUT_SECONDS:
+        raise SystemExit("Secret lookup did not receive its deployment timeout")
+    return module.subprocess.CompletedProcess(
+        args, 1, "", 'Error from server (NotFound): secrets "missing" not found'
+    )
 
-    module.subprocess.run = not_found_lookup
+
+with patch.object(module.subprocess, "run", not_found_lookup):
     not_found_message = module.secret_lookup_failure("missing")
     if not_found_message != "Missing required Secret in cluster: firemud/missing":
         raise SystemExit(f"NotFound Secret lookup reported incorrectly: {not_found_message}")
@@ -2111,10 +2111,12 @@ try:
     if namespaced_message != "Missing required Secret in cluster: other/missing":
         raise SystemExit(f"namespaced Secret lookup reported incorrectly: {namespaced_message}")
 
-    forbidden_stderr = 'Error from server (Forbidden): secrets is forbidden'
-    module.subprocess.run = lambda *args, **kwargs: module.subprocess.CompletedProcess(
-        args, 1, "", forbidden_stderr
-    )
+forbidden_stderr = 'Error from server (Forbidden): secrets is forbidden'
+with patch.object(
+    module.subprocess,
+    "run",
+    lambda *args, **kwargs: module.subprocess.CompletedProcess(args, 1, "", forbidden_stderr),
+):
     forbidden_message = module.secret_lookup_failure("forbidden")
     expected_forbidden = (
         "Secret lookup could not be verified for firemud/forbidden: "
@@ -2123,12 +2125,11 @@ try:
     if forbidden_message != expected_forbidden:
         raise SystemExit(f"non-NotFound Secret lookup reported incorrectly: {forbidden_message}")
 
-    def raise_lookup_timeout(*args, **kwargs):
-        raise module.subprocess.TimeoutExpired(
-            args, module.SECRET_LOOKUP_TIMEOUT_SECONDS
-        )
+def raise_lookup_timeout(*args, **kwargs):
+    raise module.subprocess.TimeoutExpired(args, module.SECRET_LOOKUP_TIMEOUT_SECONDS)
 
-    module.subprocess.run = raise_lookup_timeout
+
+with patch.object(module.subprocess, "run", raise_lookup_timeout):
     timeout_message = module.secret_lookup_failure("timed-out")
     if (
         timeout_message is None
@@ -2139,10 +2140,11 @@ try:
     ):
         raise SystemExit(f"Timeout Secret lookup reported incorrectly: {timeout_message}")
 
-    def raise_lookup_unicode_error(*args, **kwargs):
-        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+def raise_lookup_unicode_error(*args, **kwargs):
+    raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
 
-    module.subprocess.run = raise_lookup_unicode_error
+
+with patch.object(module.subprocess, "run", raise_lookup_unicode_error):
     unicode_error_message = module.secret_lookup_failure("undecodable")
     if (
         unicode_error_message is None
@@ -2155,10 +2157,11 @@ try:
             f"Unicode decoding Secret lookup reported incorrectly: {unicode_error_message}"
         )
 
-    def raise_lookup_os_error(*args, **kwargs):
-        raise OSError("kubectl unavailable")
+def raise_lookup_os_error(*args, **kwargs):
+    raise OSError("kubectl unavailable")
 
-    module.subprocess.run = raise_lookup_os_error
+
+with patch.object(module.subprocess, "run", raise_lookup_os_error):
     os_error_message = module.secret_lookup_failure("unavailable")
     expected_os_error = (
         "Secret lookup could not be verified for firemud/unavailable: "
@@ -2167,14 +2170,8 @@ try:
     if os_error_message != expected_os_error:
         raise SystemExit(f"OSError Secret lookup reported incorrectly: {os_error_message}")
 
-finally:
-    module.subprocess.run = original_subprocess_run
-
-original_subprocess_run = module.subprocess.run
 original_secret_ready_attempts = module.HOSTED_BRIDGE_SECRET_READY_ATTEMPTS
 original_secret_retry_delay = module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS
-original_time_sleep = module.time.sleep
-original_time_monotonic = module.time.monotonic
 
 secret_ready_timeout_env = "FIREMUD_HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS"
 original_secret_ready_timeout_env = os.environ.get(secret_ready_timeout_env)
@@ -2227,34 +2224,43 @@ finally:
     else:
         os.environ[secret_ready_timeout_env] = original_secret_ready_timeout_env
 
+def secret_lookup(payload):
+    def lookup(args, **kwargs):
+        if kwargs.get("timeout") != module.SECRET_LOOKUP_TIMEOUT_SECONDS:
+            raise SystemExit("Secret-key lookup did not receive its deployment timeout")
+        return module.subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
+
+    return lookup
+
+
 try:
-    def secret_lookup(payload):
-        def lookup(args, **kwargs):
-            if kwargs.get("timeout") != module.SECRET_LOOKUP_TIMEOUT_SECONDS:
-                raise SystemExit("Secret-key lookup did not receive its deployment timeout")
-            return module.subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
-
-        return lookup
-
-    module.subprocess.run = secret_lookup({"data": {"tls.crt": "encoded"}})
-    ready_issue, ready_retryable = module.secret_keys_lookup_failure(
-        "ready", "pr-42", {"tls.crt"}
-    )
+    with patch.object(
+        module.subprocess,
+        "run",
+        secret_lookup({"data": {"tls.crt": "encoded"}}),
+    ):
+        ready_issue, ready_retryable = module.secret_keys_lookup_failure(
+            "ready", "pr-42", {"tls.crt"}
+        )
     if ready_issue is not None or ready_retryable:
         raise SystemExit(f"non-empty Secret data was not accepted: {ready_issue}, {ready_retryable}")
 
-    module.subprocess.run = secret_lookup({"data": {}})
-    missing_issue, missing_retryable = module.secret_keys_lookup_failure(
-        "missing-key", "pr-42", {"tls.crt"}
-    )
+    with patch.object(module.subprocess, "run", secret_lookup({"data": {}})):
+        missing_issue, missing_retryable = module.secret_keys_lookup_failure(
+            "missing-key", "pr-42", {"tls.crt"}
+        )
     if missing_retryable is not True or "missing keys" not in missing_issue:
         raise SystemExit(f"missing Secret data key was not retryable: {missing_issue}, {missing_retryable}")
 
     for invalid_value in ("", 123):
-        module.subprocess.run = secret_lookup({"data": {"tls.crt": invalid_value}})
-        invalid_issue, invalid_retryable = module.secret_keys_lookup_failure(
-            "not-ready", "pr-42", {"tls.crt"}
-        )
+        with patch.object(
+            module.subprocess,
+            "run",
+            secret_lookup({"data": {"tls.crt": invalid_value}}),
+        ):
+            invalid_issue, invalid_retryable = module.secret_keys_lookup_failure(
+                "not-ready", "pr-42", {"tls.crt"}
+            )
         if invalid_retryable is not True or "empty or non-string values" not in invalid_issue:
             raise SystemExit(
                 f"invalid Secret data value was not retryable: {invalid_issue}, {invalid_retryable}"
@@ -2262,7 +2268,6 @@ try:
 
     module.HOSTED_BRIDGE_SECRET_READY_ATTEMPTS = 2
     module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS = 0
-    module.time.sleep = lambda _: None
     retry_payloads = iter(
         ({"data": {"tls.crt": ""}}, {"data": {"tls.crt": "encoded"}})
     )
@@ -2272,10 +2277,13 @@ try:
             raise SystemExit("retrying Secret lookup did not receive its deployment timeout")
         return module.subprocess.CompletedProcess(args, 0, json.dumps(next(retry_payloads)), "")
 
-    module.subprocess.run = retry_lookup
-    retry_issues = module.wait_for_secret_key_requirements(
-        [("retrying", {"tls.crt"})], "pr-42"
-    )
+    with (
+        patch.object(module.subprocess, "run", retry_lookup),
+        patch.object(module.time, "sleep", lambda _: None),
+    ):
+        retry_issues = module.wait_for_secret_key_requirements(
+            [("retrying", {"tls.crt"})], "pr-42"
+        )
     if retry_issues:
         raise SystemExit(f"empty Secret value did not retry to readiness: {retry_issues}")
 
@@ -2290,10 +2298,14 @@ try:
         else:
             raise SystemExit(f"non-positive ready_attempts was accepted: {invalid_attempts}")
 
-    module.subprocess.run = secret_lookup({"data": {"tls.crt": 456}})
-    exhausted_issues = module.wait_for_secret_key_requirements(
-        [("exhausted", {"tls.crt"})], "pr-42"
-    )
+    with patch.object(
+        module.subprocess,
+        "run",
+        secret_lookup({"data": {"tls.crt": 456}}),
+    ):
+        exhausted_issues = module.wait_for_secret_key_requirements(
+            [("exhausted", {"tls.crt"})], "pr-42"
+        )
     if (
         len(exhausted_issues) != 1
         or "empty or non-string values" not in exhausted_issues[0]
@@ -2311,14 +2323,16 @@ try:
         monotonic_now[0] += 6.0
         return module.subprocess.CompletedProcess(args, 0, json.dumps({"data": {}}), "")
 
-    module.time.monotonic = lambda: monotonic_now[0]
-    module.subprocess.run = slow_retry_lookup
-    deadline_issues = module.wait_for_secret_key_requirements(
-        [("slow", {"tls.crt"})],
-        "pr-42",
-        ready_attempts=3,
-        ready_timeout_seconds=5,
-    )
+    with (
+        patch.object(module.subprocess, "run", slow_retry_lookup),
+        patch.object(module.time, "monotonic", lambda: monotonic_now[0]),
+    ):
+        deadline_issues = module.wait_for_secret_key_requirements(
+            [("slow", {"tls.crt"})],
+            "pr-42",
+            ready_attempts=3,
+            ready_timeout_seconds=5,
+        )
     if slow_lookup_calls[0] != 1:
         raise SystemExit(
             "Secret readiness performed another lookup after the monotonic deadline expired"
@@ -2330,11 +2344,8 @@ try:
     ):
         raise SystemExit(f"slow Secret lookup did not honor its readiness deadline: {deadline_issues}")
 finally:
-    module.subprocess.run = original_subprocess_run
     module.HOSTED_BRIDGE_SECRET_READY_ATTEMPTS = original_secret_ready_attempts
     module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS = original_secret_retry_delay
-    module.time.sleep = original_time_sleep
-    module.time.monotonic = original_time_monotonic
 
 issues = module.external_binding_uniqueness_issues(env_root, "staging", staging)
 if not any("backupStorage.bucket matches production" in issue for issue in issues):
@@ -4038,22 +4049,16 @@ recovery_smoke_entry = {
     "contentDigest": "sha256:" + hashlib.sha256(smoke_evidence_path.read_bytes()).hexdigest(),
 }
 
-original_subprocess_run = module.subprocess.run
-
-
 def timed_out_smoke_validator(*args, **kwargs):
     raise module.subprocess.TimeoutExpired(args[0], kwargs.get("timeout"))
 
 
-module.subprocess.run = timed_out_smoke_validator
-try:
+with patch.object(module.subprocess, "run", timed_out_smoke_validator):
     timeout_status, timeout_message = module.validate_retained_smoke_evidence(
         tmp,
         [smoke_evidence_ref],
         "Contract smokeEvidence",
     )
-finally:
-    module.subprocess.run = original_subprocess_run
 if timeout_status != "fail" or "validation timed out" not in timeout_message:
     raise SystemExit(f"smoke evidence validator timeout did not fail closed: {timeout_message}")
 
@@ -4062,15 +4067,12 @@ def unavailable_smoke_validator(*args, **kwargs):
     raise OSError("validator executable missing")
 
 
-module.subprocess.run = unavailable_smoke_validator
-try:
+with patch.object(module.subprocess, "run", unavailable_smoke_validator):
     unavailable_status, unavailable_message = module.validate_retained_smoke_evidence(
         tmp,
         [smoke_evidence_ref],
         "Contract smokeEvidence",
     )
-finally:
-    module.subprocess.run = original_subprocess_run
 if unavailable_status != "fail" or "could not run: validator executable missing" not in unavailable_message:
     raise SystemExit(f"smoke evidence validator launch failure did not fail closed: {unavailable_message}")
 

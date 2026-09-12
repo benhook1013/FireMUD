@@ -295,8 +295,13 @@ public class GrpcTransportBundleGenerator {
       for (List<?> subjectAlternativeName : subjectAlternativeNames) {
         if (subjectAlternativeName == null
             || subjectAlternativeName.size() != 2
-            || !Integer.valueOf(2).equals(subjectAlternativeName.get(0))
-            || !(subjectAlternativeName.get(1) instanceof String name)) {
+            || !(subjectAlternativeName.get(0) instanceof Integer nameType)) {
+          return false;
+        }
+        if (!Integer.valueOf(2).equals(nameType)) {
+          continue;
+        }
+        if (!(subjectAlternativeName.get(1) instanceof String name)) {
           return false;
         }
         actualDnsNames.add(name.toLowerCase(Locale.ROOT));

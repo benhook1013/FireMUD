@@ -421,20 +421,24 @@ jobs:
             "$CONTROLLER_IMAGE"
 
           healthy=false
-          for _ in {1..300}; do
+          deadline=$((SECONDS + 300))
+          while (( SECONDS < deadline )); do
             if [[ "$(docker inspect --format '{{.State.Running}}' "$container_name")" != true ]]; then
               docker logs "$container_name"
               echo "Hosted identity controller exited before its paused-mode health endpoint became available." >&2
               exit 1
             fi
+            request_timeout=$((deadline - SECONDS))
+            (( request_timeout > 0 )) || break
+            (( request_timeout <= 5 )) || request_timeout=5
             if health="$(docker exec "$container_name" \
-              curl --fail --silent --show-error \
+              curl --fail --silent --show-error --connect-timeout 2 --max-time "$request_timeout" \
                 http://127.0.0.1:8081/actuator/health/liveness 2>/dev/null)" \
               && [[ "$health" == *'"status":"UP"'* ]]; then
               healthy=true
               break
             fi
-            sleep 1
+            (( SECONDS < deadline )) && sleep 1
           done
 
           if [[ "$healthy" != true ]]; then
@@ -581,19 +585,23 @@ jobs:
             --env FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE=paused \
             "$CONTROLLER_IMAGE"
 
-          for _ in {1..300}; do
+          deadline=$((SECONDS + 300))
+          while (( SECONDS < deadline )); do
             if [[ "$(docker inspect --format '{{.State.Running}}' "$container_name")" != true ]]; then
               docker logs "$container_name"
               echo "Hosted identity controller exited before its paused-mode health endpoint became available." >&2
               exit 1
             fi
+            request_timeout=$((deadline - SECONDS))
+            (( request_timeout > 0 )) || break
+            (( request_timeout <= 5 )) || request_timeout=5
             if health="$(docker exec "$container_name" \
-              curl --fail --silent --show-error \
+              curl --fail --silent --show-error --connect-timeout 2 --max-time "$request_timeout" \
                 http://127.0.0.1:8081/actuator/health/liveness 2>/dev/null)" \
               && [[ "$health" == *'"status":"UP"'* ]]; then
               exit 0
             fi
-            sleep 1
+            (( SECONDS < deadline )) && sleep 1
           done
 
           docker logs "$container_name"
