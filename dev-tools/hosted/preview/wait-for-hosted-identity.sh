@@ -57,6 +57,13 @@ validate_timeout_seconds() {
   fi
 }
 
+is_retryable_kubectl_transport_failure() {
+  local error_text="$1"
+  local transport_pattern='unable to connect to the server|connection refused|connection to .* was refused|connection reset by peer|i/o timeout|tls handshake timeout|net/http: request canceled|unexpected eof'
+
+  [[ "${error_text,,}" =~ $transport_pattern ]]
+}
+
 if [[ "${1:-}" == "--projections" ]]; then
   if [[ $# -lt 2 || $# -gt 4 ]]; then
     echo "usage: $0 --projections <identity_name> [runtime_namespace] [timeout_seconds]" >&2
@@ -86,14 +93,23 @@ if [[ "${1:-}" == "--projections" ]]; then
     "firemud-grpc-tls|grpc|tls.crt,tls.key,ca.crt,client.crt,client.key"
   )
   deadline=$((SECONDS + timeout_seconds))
+  max_transport_retries=2
+  kubectl_error_file="$(mktemp)"
+  cleanup_kubectl_error_file() {
+    rm -f -- "$kubectl_error_file"
+  }
+  trap cleanup_kubectl_error_file EXIT
   all_projections_ready=true
   for projection in "${projections[@]}"; do
     IFS='|' read -r secret_name role required_keys <<<"$projection"
     projection_ready=false
     projection_attempted=false
+    transport_retries=0
     while (( SECONDS < deadline )); do
       projection_attempted=true
-      if secret_json="$(kubectl -n "$runtime_namespace" get secret "$secret_name" --ignore-not-found -o json)"; then
+      : >"$kubectl_error_file"
+      if secret_json="$(kubectl -n "$runtime_namespace" get secret "$secret_name" --ignore-not-found -o json 2>"$kubectl_error_file")"; then
+        transport_retries=0
         if [[ -z "$secret_json" ]]; then
           echo "Waiting for controller projection ${runtime_namespace}/${secret_name} to appear."
         elif jq -e \
@@ -116,6 +132,17 @@ if [[ "${1:-}" == "--projections" ]]; then
         fi
       else
         kubectl_status=$?
+        kubectl_error="$(<"$kubectl_error_file")"
+        if [[ -n "$kubectl_error" ]]; then
+          printf '%s\n' "$kubectl_error" >&2
+        fi
+        if is_retryable_kubectl_transport_failure "$kubectl_error" &&
+          ((transport_retries < max_transport_retries)); then
+          ((transport_retries += 1))
+          echo "Transient kubectl transport failure reading ${runtime_namespace}/${secret_name}; retry ${transport_retries}/${max_transport_retries}." >&2
+          sleep 5
+          continue
+        fi
         echo "Unable to determine controller projection ${runtime_namespace}/${secret_name}; kubectl get failed (exit ${kubectl_status})." >&2
         exit "$kubectl_status"
       fi

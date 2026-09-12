@@ -803,6 +803,11 @@ janitor_cleanup_step = next(
     for step in janitor_steps
     if step.get("name") == "Remove hosted identity requester kubeconfig"
 )
+assert janitor_requester_step["with"] == {
+    "content": "${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
+    "export-to-github-env": "false",
+}
 assert janitor_prune_step["env"]["HOSTED_IDENTITY_REQUESTER_KUBECONFIG"] == (
     "${{ runner.temp }}/hosted-identity-requester.kubeconfig"
 )
@@ -3661,9 +3666,34 @@ identity_json() {
 if [[ "$1" == -n && "$2" == pr-42 && "$3" == get && "$4" == secret ]]; then
   [[ $# -eq 8 && "$6" == --ignore-not-found && "$7" == -o && "$8" == json ]]
   secret_name="$5"
-  if [[ "$scenario" == projection-command-failure ]]; then
-    printf 'Error from server (Forbidden): secrets are forbidden\n' >&2
-    exit 42
+  case "$scenario" in
+    projection-command-failure)
+      printf 'Error from server (Forbidden): secrets are forbidden\n' >&2
+      exit 42
+      ;;
+    projection-command-not-found)
+      printf 'Error from server (NotFound): secrets "pr-42-tls" not found\n' >&2
+      exit 46
+      ;;
+    projection-command-unauthorized)
+      printf 'Error from server (Unauthorized): the server has asked for credentials\n' >&2
+      exit 47
+      ;;
+    projection-command-usage-error)
+      printf 'error: unknown flag: --invalid\n' >&2
+      exit 2
+      ;;
+  esac
+  if [[ "$scenario" == projection-transport-recovery && "$secret_name" == pr-42-tls ]]; then
+    projection_transport_count="$(next_count projection-transport)"
+    if (( projection_transport_count <= 2 )); then
+      printf 'Unable to connect to the server: dial tcp 10.0.0.1:443: i/o timeout\n' >&2
+      exit 45
+    fi
+  fi
+  if [[ "$scenario" == projection-transport-exhaustion ]]; then
+    printf 'Unable to connect to the server: dial tcp 10.0.0.1:443: i/o timeout\n' >&2
+    exit 45
   fi
   if [[ "$scenario" == projection-absence && "$secret_name" == pr-42-tls ]]; then
     projection_count="$(next_count projection)"
@@ -3746,6 +3776,7 @@ run_projection_waiter_fixture() {
   local expected_status="$2"
   local expected_kubectl_calls="$3"
   local expected_sleep_calls="$4"
+  local expected_error="${5:-}"
   local kubectl_log="$TEMP_DIR/${scenario}.kubectl.log"
   local sleep_log="$TEMP_DIR/${scenario}.sleep.log"
   local count_root="$TEMP_DIR/${scenario}.counts"
@@ -3779,12 +3810,17 @@ run_projection_waiter_fixture() {
     grep -Fq 'projections=ready' "$output"
   else
     grep -Fq 'kubectl get failed' "$error"
-    grep -Fq 'Error from server (Forbidden)' "$error"
+    grep -Fq "$expected_error" "$error"
   fi
 }
 
 run_projection_waiter_fixture projection-absence 0 7 2
-run_projection_waiter_fixture projection-command-failure 42 1 0
+run_projection_waiter_fixture projection-command-failure 42 1 0 'Error from server (Forbidden)'
+run_projection_waiter_fixture projection-command-not-found 46 1 0 'Error from server (NotFound)'
+run_projection_waiter_fixture projection-command-unauthorized 47 1 0 'Error from server (Unauthorized)'
+run_projection_waiter_fixture projection-command-usage-error 2 1 0 'error: unknown flag'
+run_projection_waiter_fixture projection-transport-recovery 0 7 2
+run_projection_waiter_fixture projection-transport-exhaustion 45 3 2 'Unable to connect to the server'
 
 run_active_waiter_fixture() {
   local scenario="$1"

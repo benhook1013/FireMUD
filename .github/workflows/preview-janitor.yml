@@ -53,6 +53,7 @@ jobs:
         with:
           content: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
           path: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
+          export-to-github-env: 'false'
 
       - name: Verify preview cluster access
         env:
