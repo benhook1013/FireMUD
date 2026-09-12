@@ -41,6 +41,9 @@ public class SecretMaterialValidator {
       String expectedType,
       boolean requireClientAuth,
       String expectedTrustAnchorSha256) {
+    if (expectedHostname == null) {
+      throw new MaterialValidationException("expected hostname is required");
+    }
     return validate(
         secret,
         Set.of(expectedHostname),
@@ -191,8 +194,11 @@ public class SecretMaterialValidator {
           (X509Certificate) factory.generateCertificate(new ByteArrayInputStream(der)));
       consumed = matcher.end();
     }
-    if (certificates.isEmpty() || !pem.substring(consumed).isBlank()) {
+    if (certificates.isEmpty()) {
       throw new MaterialValidationException("certificate PEM contains no X.509 certificate");
+    }
+    if (!pem.substring(consumed).isBlank()) {
+      throw new MaterialValidationException("certificate PEM contains unexpected trailing content");
     }
     return certificates;
   }

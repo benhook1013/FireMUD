@@ -2106,6 +2106,16 @@ def assert_rejected(call, expected):
         raise AssertionError(f"validator accepted malformed artifact: {expected}")
 
 
+missing_application_deployments = sorted(validator.SERVICE_IMAGES)
+assert_rejected(
+    lambda: validator.validate_service_consumers([], "pr-42"),
+    "preview application Deployment set is incomplete; missing: "
+    + ", ".join(
+        f"Deployment/{name}" for name in missing_application_deployments
+    ),
+)
+
+
 image_location = "Deployment/account-service.spec.template.spec.containers[0].image"
 assert_rejected(
     lambda: validator._validate_image_reference(

@@ -8791,6 +8791,36 @@ if module.hosted_bridge_success_message("operator") != (
 ):
     raise SystemExit("hosted-bridge operator success does not confirm projection readiness")
 
+duplicate_mount_documents = list(
+    yaml.safe_load_all(render_path.read_text(encoding="utf-8"))
+)
+duplicate_mount_container = next(
+    document
+    for document in duplicate_mount_documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)["spec"]["template"]["spec"]["containers"][0]
+duplicate_mount_container["volumeMounts"].append(
+    copy.deepcopy(
+        next(
+            mount
+            for mount in duplicate_mount_container["volumeMounts"]
+            if mount.get("mountPath") == "/telnet-tls"
+        )
+    )
+)
+duplicate_mount_issues = module.validate_hosted_telnet_tls_values(
+    duplicate_mount_documents,
+    required_identity_mode="hosted-controller",
+    expected_hosted_telnet_node_port=node_port,
+    target_namespace=namespace,
+)
+if "hosted TCP Proxy TLS requires exactly one /telnet-tls mount" not in duplicate_mount_issues:
+    raise SystemExit(
+        "hosted-bridge accepted duplicate /telnet-tls mounts: "
+        f"{duplicate_mount_issues}"
+    )
+
 required_telnet_tls_paths = {
     "TCP_PROXY_TLS_CERT": "/telnet-tls/tls.crt",
     "TCP_PROXY_TLS_KEY": "/telnet-tls/tls.key",

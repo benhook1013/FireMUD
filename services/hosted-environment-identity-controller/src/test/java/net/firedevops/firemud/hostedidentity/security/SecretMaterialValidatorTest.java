@@ -256,6 +256,16 @@ public class SecretMaterialValidatorTest {
   }
 
   @Test
+  void singleHostnameValidationRejectsNullThroughItsDeclaredException() {
+    var failure =
+        assertThrows(
+            SecretMaterialValidator.MaterialValidationException.class,
+            () -> new SecretMaterialValidator().validate(null, (String) null, "Opaque", false, ""));
+
+    assertEquals("expected hostname is required", failure.getMessage());
+  }
+
+  @Test
   void grpcBundleRenewalIsExpiryDrivenWhileAcceptedGenerationRemainsAnAntiRollbackFloor() {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
@@ -1009,6 +1019,46 @@ public class SecretMaterialValidatorTest {
                 "Opaque",
                 true,
                 fingerprint));
+  }
+
+  @Test
+  void materialValidationDistinguishesMissingCertificatePemFromTrailingContent() {
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    Secret generated = generatedGrpcBundle(plan);
+    String fingerprint = SecretMaterialValidator.trustAnchorFingerprint(generated);
+    var validator = new SecretMaterialValidator();
+
+    Map<String, String> noCertificate = new LinkedHashMap<>(generated.getData());
+    noCertificate.put("tls.crt", encode("not a certificate"));
+    var missingCertificate =
+        assertThrows(
+            SecretMaterialValidator.MaterialValidationException.class,
+            () ->
+                validator.validate(
+                    new SecretBuilder(generated).withData(noCertificate).build(),
+                    GrpcTransportBundleGenerator.grpcDnsNames(plan),
+                    "Opaque",
+                    true,
+                    fingerprint));
+    assertEquals("certificate PEM contains no X.509 certificate", missingCertificate.getMessage());
+
+    Map<String, String> trailingContent = new LinkedHashMap<>(generated.getData());
+    trailingContent.put(
+        "tls.crt", encode(pemText(generated.getData().get("tls.crt")) + "unexpected"));
+    var unexpectedTrailingContent =
+        assertThrows(
+            SecretMaterialValidator.MaterialValidationException.class,
+            () ->
+                validator.validate(
+                    new SecretBuilder(generated).withData(trailingContent).build(),
+                    GrpcTransportBundleGenerator.grpcDnsNames(plan),
+                    "Opaque",
+                    true,
+                    fingerprint));
+    assertEquals(
+        "certificate PEM contains unexpected trailing content",
+        unexpectedTrailingContent.getMessage());
   }
 
   @Test

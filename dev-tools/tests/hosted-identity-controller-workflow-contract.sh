@@ -157,12 +157,20 @@ done
 # shellcheck disable=SC2016 # These assertions intentionally match literal action source.
 for required in \
   'using: composite' \
-  "helm_version='v3.20.1'" \
-  "helm_sha256='0165ee4a2db012cc657381001e593e981f42aa5707acdd50658326790c9d0dc3'" \
+  "echo 'version=v3.20.1'" \
+  "echo 'sha256=0165ee4a2db012cc657381001e593e981f42aa5707acdd50658326790c9d0dc3'" \
+  'uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9' \
+  'path: ${{ runner.temp }}/firemud-helm/${{ steps.pinned-release.outputs.version }}/helm.tar.gz' \
+  'key: firemud-helm-${{ runner.os }}-${{ runner.arch }}-${{ steps.pinned-release.outputs.version }}-${{ steps.pinned-release.outputs.sha256 }}' \
+  'HELM_VERSION: ${{ steps.pinned-release.outputs.version }}' \
+  'HELM_SHA256: ${{ steps.pinned-release.outputs.sha256 }}' \
   'RUNNER_OS' \
   'RUNNER_ARCH' \
   'RUNNER_TEMP' \
   'helm_root="${RUNNER_TEMP:?}/firemud-helm/${helm_version}"' \
+  '[[ ! -f "$archive_path" ]]' \
+  'temporary_archive="$(mktemp -- "${helm_root}/helm.tar.gz.XXXXXX")"' \
+  'mv -fT -- "$temporary_archive" "$archive_path"' \
   'curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30' \
   'sha256sum --check --status' \
   'echo "$install_dir" >> "$GITHUB_PATH"' \
@@ -171,6 +179,10 @@ for required in \
   'Expected ${helm_version}, but the installed Helm binary reported ${reported_version}.'; do
   contains "$helm_action" "$required"
 done
+if [[ "$(grep -Fc 'sha256sum --check --status' "$helm_action")" -lt 2 ]]; then
+  echo "$helm_action must verify both restored and downloaded Helm archives" >&2
+  exit 1
+fi
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
 for forbidden in \
   'if command -v helm' \

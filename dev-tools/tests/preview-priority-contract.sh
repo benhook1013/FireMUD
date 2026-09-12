@@ -130,6 +130,14 @@ fi
 if [[ "$1" == get && "$2" == namespace &&
   "$*" == *"--ignore-not-found -o json"* ]]; then
   printf '%s\n' "$*" >> "$FAKE_RUNTIME_KUBECTL_LOG"
+  if [[ -f "$FAKE_RUNTIME_WAIT_MARKER" ]]; then
+    if [[ "${FAKE_RUNTIME_RECHECK_ERROR:-false}" == true ]]; then
+      exit 1
+    fi
+    if [[ "${FAKE_RUNTIME_NAMESPACE_PRESENT_AFTER_WAIT:-true}" == false ]]; then
+      exit 0
+    fi
+  fi
   if [[ "${FAKE_RUNTIME_LOOKUP_ERROR:-false}" == true ]]; then
     exit 1
   fi
@@ -142,7 +150,13 @@ if [[ "$1" == get && "$2" == namespace &&
     exit 0
   fi
   runtime_name="${FAKE_RUNTIME_LOOKUP_IDENTITY:-$3}"
+  if [[ -f "$FAKE_RUNTIME_WAIT_MARKER" && -n "${FAKE_RUNTIME_RECHECK_IDENTITY:-}" ]]; then
+    runtime_name="$FAKE_RUNTIME_RECHECK_IDENTITY"
+  fi
   runtime_uid="${FAKE_RUNTIME_NAMESPACE_UID:-uid-$3}"
+  if [[ -f "$FAKE_RUNTIME_WAIT_MARKER" && -n "${FAKE_RUNTIME_RECHECK_UID:-}" ]]; then
+    runtime_uid="$FAKE_RUNTIME_RECHECK_UID"
+  fi
   if [[ "${FAKE_RUNTIME_NAMESPACE_UID_MISSING:-false}" == true ]]; then
     runtime_uid=""
   fi
@@ -681,6 +695,8 @@ reset_case() {
   export FAKE_RUNTIME_DELETE_ERROR=false
   export FAKE_RUNTIME_WAIT_ERROR=false
   export FAKE_RUNTIME_RECHECK_ERROR=false
+  export FAKE_RUNTIME_RECHECK_IDENTITY=''
+  export FAKE_RUNTIME_RECHECK_UID=''
   export FAKE_RUNTIME_NAMESPACE_PRESENT_AFTER_WAIT=true
   export FAKE_RECORD_RUNTIME_CHECK=false
   export FAKE_IDENTITY_JSON='{"apiVersion":"platform.firemud.dev/v1alpha1","kind":"HostedEnvironmentIdentity","metadata":{"namespace":"firemud-system","name":"pr-101"}}'
@@ -1498,7 +1514,7 @@ export FAKE_RUNTIME_NAMESPACE_PRESENT_AFTER_WAIT=false
 bash "$DELETE_HOSTED_NAMESPACE" pr-101 pr-101
 test ! -e "$FAKE_HELM_LOG"
 grep -qx 'get namespace pr-101 --ignore-not-found -o json' "$FAKE_RUNTIME_KUBECTL_LOG"
-test "$(grep -Fc 'get namespace pr-101 --ignore-not-found -o name' "$FAKE_RUNTIME_KUBECTL_LOG")" -eq 1
+test "$(grep -Fc 'get namespace pr-101 --ignore-not-found -o json' "$FAKE_RUNTIME_KUBECTL_LOG")" -eq 2
 grep -qx 'uid-pr-101' "$FAKE_RUNTIME_DELETE_UID_LOG"
 grep -qx 'wait --for=delete namespace/pr-101 --timeout=180s' "$FAKE_RUNTIME_KUBECTL_LOG"
 
@@ -1511,6 +1527,25 @@ reset_case
 export FAKE_RUNTIME_WAIT_ERROR=true
 if bash "$DELETE_HOSTED_NAMESPACE" pr-101 pr-101; then
   echo "hosted deletion suppressed a wait failure while the namespace remained present" >&2
+  exit 1
+fi
+
+reset_case
+export FAKE_RUNTIME_NAMESPACE_UID=uid-pr-101-original
+export FAKE_RUNTIME_RECHECK_UID=uid-pr-101-recreated
+if bash "$DELETE_HOSTED_NAMESPACE" pr-101 pr-101 \
+  >"$TEMP_DIR/recreated-runtime-namespace.out" 2>&1; then
+  echo "hosted deletion accepted a same-name recreated namespace" >&2
+  exit 1
+fi
+grep -Fqx \
+  'hosted namespace pr-101 was recreated with a new UID while deletion completed' \
+  "$TEMP_DIR/recreated-runtime-namespace.out"
+
+reset_case
+export FAKE_RUNTIME_RECHECK_IDENTITY=pr-102
+if bash "$DELETE_HOSTED_NAMESPACE" pr-101 pr-101; then
+  echo "hosted deletion accepted an unexpected post-wait namespace identity" >&2
   exit 1
 fi
 

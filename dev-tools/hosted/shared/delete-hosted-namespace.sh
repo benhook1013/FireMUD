@@ -96,15 +96,31 @@ fi
 wait_status=0
 kubectl wait --for=delete "namespace/${namespace}" --timeout="${wait_seconds}s" || wait_status=$?
 
-if ! namespace_lookup="$(
-  kubectl get namespace "$namespace" --ignore-not-found -o name
+if ! namespace_json="$(
+  kubectl get namespace "$namespace" --ignore-not-found -o json
 )"; then
   echo "unable to verify deletion of hosted namespace ${namespace}" >&2
   exit 1
 fi
-if [[ -n "$namespace_lookup" ]]; then
-  if [[ "$namespace_lookup" != "namespace/${namespace}" ]]; then
+if [[ -n "$namespace_json" ]]; then
+  if ! namespace_identity="$(
+    jq -e -r '
+      select(.metadata.name | type == "string" and length > 0)
+      | select(.metadata.uid | type == "string" and length > 0)
+      | [.metadata.name, .metadata.uid]
+      | @tsv
+    ' <<<"$namespace_json"
+  )"; then
     echo "hosted namespace ${namespace} deletion lookup returned an unexpected identity" >&2
+    exit 1
+  fi
+  IFS=$'\t' read -r observed_namespace observed_uid <<<"$namespace_identity"
+  if [[ "$observed_namespace" != "$namespace" ]]; then
+    echo "hosted namespace ${namespace} deletion lookup returned an unexpected identity" >&2
+    exit 1
+  fi
+  if [[ "$observed_uid" != "$namespace_uid" ]]; then
+    echo "hosted namespace ${namespace} was recreated with a new UID while deletion completed" >&2
     exit 1
   fi
   echo "hosted namespace ${namespace} still exists after ${wait_seconds}s" >&2

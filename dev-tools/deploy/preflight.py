@@ -4416,17 +4416,17 @@ def validate_hosted_telnet_tls_values(
         for volume in pod_spec.get("volumes") or []
         if isinstance(volume, dict) and volume.get("name")
     }
-    mount = next(
-        (
-            mount
-            for mount in container.get("volumeMounts") or []
-            if isinstance(mount, dict) and mount.get("mountPath") == "/telnet-tls"
-        ),
-        None,
-    )
-    if not mount or mount.get("readOnly") is not True:
+    telnet_mounts = [
+        mount
+        for mount in container.get("volumeMounts") or []
+        if isinstance(mount, dict) and mount.get("mountPath") == "/telnet-tls"
+    ]
+    if len(telnet_mounts) != 1:
+        issues.append("hosted TCP Proxy TLS requires exactly one /telnet-tls mount")
+    elif telnet_mounts[0].get("readOnly") is not True:
         issues.append("hosted TCP Proxy TLS requires a read-only /telnet-tls mount")
     else:
+        mount = telnet_mounts[0]
         volume = volumes.get(mount.get("name")) or {}
         secret_name = ((volume.get("secret") or {}).get("secretName"))
         if secret_name != certificate_secret:

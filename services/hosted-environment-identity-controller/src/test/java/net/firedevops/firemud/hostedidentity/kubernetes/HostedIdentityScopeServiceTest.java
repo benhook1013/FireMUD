@@ -38,8 +38,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.UnaryOperator;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
@@ -54,11 +54,8 @@ import org.mockito.ArgumentCaptor;
 import org.yaml.snakeyaml.Yaml;
 
 class HostedIdentityScopeServiceTest {
-  private static final Pattern RUNTIME_DEPLOYMENT_RESOURCE_NAMES =
-      Pattern.compile(
-          "r\\.apiGroups\\s*==\\s*\\['apps']\\s*&&\\s*r\\.resources\\s*==\\s*\\['deployments']\\s*&&\\s*r\\.resourceNames\\s*==\\s*\\[([^\\]]+)]\\s*&&\\s*r\\.verbs\\s*==\\s*\\[([^\\]]+)]");
-  private static final Pattern RUNTIME_SCOPE_MARKER =
-      Pattern.compile("\\(object\\.metadata\\.name\\s*==\\s*'firemud-hosted-runtime-scope'");
+  private static final String RUNTIME_SCOPE_MARKER =
+      "object.metadata.name == 'firemud-hosted-runtime-scope'";
   private static final Pattern CEL_STRING_LITERAL = Pattern.compile("'([^']+)'");
 
   @Test
@@ -796,21 +793,69 @@ class HostedIdentityScopeServiceTest {
             .map(validation -> validation.get("expression"))
             .filter(String.class::isInstance)
             .map(String.class::cast)
-            .filter(expression -> RUNTIME_SCOPE_MARKER.matcher(expression).find())
+            .filter(expression -> expression.contains(RUNTIME_SCOPE_MARKER))
             .toList();
     assertEquals(
         1, runtimeScopeExpressions.size(), "exactly one runtime-scope admission branch must exist");
-    Matcher runtimeScope = RUNTIME_SCOPE_MARKER.matcher(runtimeScopeExpressions.get(0));
-    assertTrue(runtimeScope.find(), "runtime-scope admission branch marker must exist");
-    Matcher resourceNames =
-        RUNTIME_DEPLOYMENT_RESOURCE_NAMES.matcher(
-            runtimeScopeExpressions.get(0).substring(runtimeScope.start()));
-    assertTrue(resourceNames.find(), "runtime deployment resourceNames rule must exist");
-    List<String> admittedDeploymentNames = celStringLiterals(resourceNames.group(1));
-    List<String> admittedVerbs = celStringLiterals(resourceNames.group(2));
-    assertEquals(List.of("get", "update", "patch"), admittedVerbs);
-    assertFalse(resourceNames.find(), "admission deployment matcher must have exactly one rule");
-    return admittedDeploymentNames;
+    List<String> deploymentRules =
+        celExistsRuleBodies(runtimeScopeExpressions.get(0)).stream()
+            .filter(
+                rule ->
+                    Optional.of(List.of("apps")).equals(celListEquality(rule, "apiGroups"))
+                        && Optional.of(List.of("deployments"))
+                            .equals(celListEquality(rule, "resources"))
+                        && celListEquality(rule, "resourceNames").isPresent())
+            .toList();
+    assertEquals(
+        1, deploymentRules.size(), "runtime deployment matcher must have exactly one rule");
+    String deploymentRule = deploymentRules.get(0);
+    assertEquals(
+        List.of("get", "update", "patch"),
+        celListEquality(deploymentRule, "verbs")
+            .orElseThrow(() -> new AssertionError("runtime deployment verbs must exist")));
+    return celListEquality(deploymentRule, "resourceNames")
+        .orElseThrow(() -> new AssertionError("runtime deployment resourceNames must exist"));
+  }
+
+  private static List<String> celExistsRuleBodies(String expression) {
+    String marker = "object.rules.exists(r,";
+    java.util.ArrayList<String> rules = new java.util.ArrayList<>();
+    int searchFrom = 0;
+    while (true) {
+      int markerStart = expression.indexOf(marker, searchFrom);
+      if (markerStart < 0) {
+        return List.copyOf(rules);
+      }
+      int openingParenthesis = expression.indexOf('(', markerStart);
+      int bodyStart = expression.indexOf(',', openingParenthesis) + 1;
+      int depth = 0;
+      boolean inString = false;
+      for (int index = openingParenthesis; index < expression.length(); index++) {
+        char current = expression.charAt(index);
+        if (current == '\'' && (index == 0 || expression.charAt(index - 1) != '\\')) {
+          inString = !inString;
+        } else if (!inString && current == '(') {
+          depth++;
+        } else if (!inString && current == ')' && --depth == 0) {
+          rules.add(expression.substring(bodyStart, index));
+          searchFrom = index + 1;
+          break;
+        }
+      }
+      if (searchFrom <= markerStart) {
+        throw new AssertionError("unterminated object.rules.exists expression");
+      }
+    }
+  }
+
+  private static Optional<List<String>> celListEquality(String expression, String field) {
+    Pattern equality = Pattern.compile("r\\." + Pattern.quote(field) + "\\s*==\\s*\\[([^\\]]*)]");
+    var matches = equality.matcher(expression).results().toList();
+    if (matches.isEmpty()) {
+      return Optional.empty();
+    }
+    assertEquals(1, matches.size(), "CEL rule must contain one equality for " + field);
+    return Optional.of(celStringLiterals(matches.get(0).group(1)));
   }
 
   private static Path findRepositoryFile(String relativePath) {

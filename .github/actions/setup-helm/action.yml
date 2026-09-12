@@ -3,13 +3,29 @@ description: Install and verify the pinned Helm release for FireMUD workflows.
 runs:
   using: composite
   steps:
+    - name: Resolve pinned Helm release
+      id: pinned-release
+      shell: bash
+      run: |
+        echo 'version=v3.20.1' >> "$GITHUB_OUTPUT"
+        echo 'sha256=0165ee4a2db012cc657381001e593e981f42aa5707acdd50658326790c9d0dc3' >> "$GITHUB_OUTPUT"
+
+    - name: Restore pinned Helm archive
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: ${{ runner.temp }}/firemud-helm/${{ steps.pinned-release.outputs.version }}/helm.tar.gz
+        key: firemud-helm-${{ runner.os }}-${{ runner.arch }}-${{ steps.pinned-release.outputs.version }}-${{ steps.pinned-release.outputs.sha256 }}
+
     - name: Install pinned Helm
       shell: bash
+      env:
+        HELM_VERSION: ${{ steps.pinned-release.outputs.version }}
+        HELM_SHA256: ${{ steps.pinned-release.outputs.sha256 }}
       run: |
         set -euo pipefail
 
-        helm_version='v3.20.1'
-        helm_sha256='0165ee4a2db012cc657381001e593e981f42aa5707acdd50658326790c9d0dc3'
+        helm_version="${HELM_VERSION:?}"
+        helm_sha256="${HELM_SHA256:?}"
         if [[ "${RUNNER_OS:-}" != Linux || "${RUNNER_ARCH:-}" != X64 ]]; then
           echo "pinned Helm installer requires a Linux X64 runner" >&2
           exit 1
@@ -20,9 +36,19 @@ runs:
         install_dir="${helm_root}/bin"
 
         mkdir -p -- "$extraction_dir" "$install_dir"
-        curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
-          "https://get.helm.sh/helm-${helm_version}-linux-amd64.tar.gz" \
-          -o "$archive_path"
+        if [[ ! -f "$archive_path" ]] \
+          || ! printf '%s  %s\n' "$helm_sha256" "$archive_path" \
+            | sha256sum --check --status; then
+          temporary_archive="$(mktemp -- "${helm_root}/helm.tar.gz.XXXXXX")"
+          trap 'rm -f -- "$temporary_archive"' EXIT
+          curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
+            "https://get.helm.sh/helm-${helm_version}-linux-amd64.tar.gz" \
+            -o "$temporary_archive"
+          printf '%s  %s\n' "$helm_sha256" "$temporary_archive" \
+            | sha256sum --check --status
+          mv -fT -- "$temporary_archive" "$archive_path"
+          trap - EXIT
+        fi
         printf '%s  %s\n' "$helm_sha256" "$archive_path" \
           | sha256sum --check --status
         tar -xzf "$archive_path" -C "$extraction_dir"

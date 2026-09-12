@@ -1005,6 +1005,12 @@ def validate_service_consumers(documents: list[dict], expected_namespace: str) -
         for document in documents
         if document.get("kind") == "Deployment"
     }
+    missing_deployments = sorted(SERVICE_IMAGES - deployments.keys())
+    if missing_deployments:
+        fail(
+            "preview application Deployment set is incomplete; missing: "
+            + ", ".join(f"Deployment/{name}" for name in missing_deployments)
+        )
     for service in SERVICE_IMAGES:
         deployment = deployments[service]
         pod = deployment.get("spec", {}).get("template", {}).get("spec", {})
