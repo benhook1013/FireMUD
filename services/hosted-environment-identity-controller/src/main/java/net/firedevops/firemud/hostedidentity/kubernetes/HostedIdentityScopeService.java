@@ -88,10 +88,11 @@ public class HostedIdentityScopeService {
         expectedLabels.entrySet().stream()
                 .allMatch(entry -> entry.getValue().equals(labels.get(entry.getKey())))
             && labels.entrySet().stream()
-                .filter(entry -> entry.getKey().startsWith("firemud.dev/"))
-                .allMatch(entry -> entry.getValue().equals(expectedLabels.get(entry.getKey())))
-            && (!labels.containsKey("kubernetes.io/metadata.name")
-                || plan.identityNamespace().equals(labels.get("kubernetes.io/metadata.name")));
+                .allMatch(
+                    entry ->
+                        entry.getValue().equals(expectedLabels.get(entry.getKey()))
+                            || ("kubernetes.io/metadata.name".equals(entry.getKey())
+                                && plan.identityNamespace().equals(entry.getValue())));
     if (!plan.identityNamespace().equals(namespace.getMetadata().getName())
         || (namespace.getMetadata().getGenerateName() != null
             && !namespace.getMetadata().getGenerateName().isBlank())
@@ -101,7 +102,9 @@ public class HostedIdentityScopeService {
     return (namespace.getMetadata().getOwnerReferences() == null
             || namespace.getMetadata().getOwnerReferences().isEmpty())
         && (namespace.getMetadata().getFinalizers() == null
-            || namespace.getMetadata().getFinalizers().isEmpty());
+            || namespace.getMetadata().getFinalizers().isEmpty())
+        && (namespace.getMetadata().getAnnotations() == null
+            || namespace.getMetadata().getAnnotations().isEmpty());
   }
 
   private static Map<String, String> identityNamespaceLabels(EnvironmentIdentityPlan plan) {
