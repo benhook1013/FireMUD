@@ -503,8 +503,7 @@ public class ServedEnvironmentProbe {
     int statusCode =
         (statusLine.charAt(9) - '0') * 100
             + (statusLine.charAt(10) - '0') * 10
-            + statusLine.charAt(11)
-            - '0';
+            + (statusLine.charAt(11) - '0');
     return statusCode >= 100 && statusCode <= 599 ? statusCode : -1;
   }
 

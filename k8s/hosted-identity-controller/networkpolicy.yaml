@@ -39,9 +39,10 @@ spec:
     # post-DNAT port.
     # The controller therefore needs TCP/443 and TCP/6443 to the API endpoint,
     # while retaining 443 for the fixed, derived public HTTPS identity endpoint.
-    # The application must
-    # still enforce its exact SNI/SAN/issuer allowlist; this is intentionally not
-    # presented as unrestricted destination trust.
+    # This destination-broad 443 allowance also carries the exact Gateway TLS
+    # probe; a later selector rule could not narrow the union. The application
+    # must still enforce its exact SNI/SAN/issuer allowlist; this is intentionally
+    # not presented as unrestricted destination trust.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
@@ -124,23 +125,3 @@ spec:
       ports:
         - protocol: TCP
           port: 6565
-    # Ready also proves the TCP Proxy client identity against the exact
-    # Gateway-internal WebSocket server identity over TLS. The selector rule
-    # documents that intent but does not narrow TCP/443 beyond the public/API
-    # allowance above; the TCP/6565 Account rule remains genuinely narrower.
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              firemud.dev/preview: "true"
-          podSelector:
-            matchLabels:
-              app: spring-cloud-gateway
-        - namespaceSelector:
-            matchLabels:
-              firemud.dev/dev-demo: "true"
-          podSelector:
-            matchLabels:
-              app: spring-cloud-gateway
-      ports:
-        - protocol: TCP
-          port: 443

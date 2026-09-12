@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-ROOT_DIR="$(cd "$(dirname "$(dirname "$(dirname "${BASH_SOURCE[0]}")")")" && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MANIFEST_DIR="$ROOT_DIR/k8s/hosted-identity-controller"
 CONTROLLER_DIR="$ROOT_DIR/dev-tools/hosted/controller"
 ARTIFACT_VALIDATOR="$ROOT_DIR/dev-tools/hosted/preview/validate-preview-artifact.py"
@@ -242,7 +242,10 @@ from pathlib import Path
 
 import yaml
 
-crd = yaml.safe_load(Path(os.environ["CRD"]).read_text(encoding="utf-8"))
+source = Path(os.environ["CRD"]).read_text(encoding="utf-8")
+assert source.count("&consumer_status_schema") == 1
+assert source.count("*consumer_status_schema") == 4
+crd = yaml.safe_load(source)
 schema = crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"]
 assert crd["spec"].get("preserveUnknownFields", False) is False
 assert schema["properties"]["metadata"] == {"type": "object"}
@@ -270,6 +273,12 @@ assert hostname["pattern"] == (
 status_properties = schema["properties"]["status"]["properties"]["profile"]["properties"]
 assert status_properties["requestedHeadSha"]["maxLength"] == 40
 assert status_properties["deployedHeadSha"]["maxLength"] == 40
+consumer_properties = schema["properties"]["status"]["properties"]
+consumer_schemas = [
+    consumer_properties[name]
+    for name in ("ingress", "telnet", "gatewayInternalWs", "tcpProxyBridge", "grpc")
+]
+assert all(value == consumer_schemas[0] for value in consumer_schemas[1:])
 PY
 
 for text_value in \
@@ -1239,20 +1248,12 @@ for target in grpc_targets:
 gateway_targets = [
     target
     for rule in policy["spec"]["egress"]
-    if any(port.get("port") == 443 for port in rule.get("ports", []))
     for target in rule.get("to", [])
     if target.get("podSelector", {}).get("matchLabels") == {
         "app": "spring-cloud-gateway"
     }
 ]
-assert len(gateway_targets) == 2, "controller Gateway-internal TLS egress rule is missing"
-assert {
-    tuple(sorted(target["namespaceSelector"]["matchLabels"].items()))
-    for target in gateway_targets
-} == {
-    (("firemud.dev/preview", "true"),),
-    (("firemud.dev/dev-demo", "true"),),
-}
+assert not gateway_targets, "destination-broad TCP/443 makes a Gateway selector rule inert"
 PY
 for text_value in \
   FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR \

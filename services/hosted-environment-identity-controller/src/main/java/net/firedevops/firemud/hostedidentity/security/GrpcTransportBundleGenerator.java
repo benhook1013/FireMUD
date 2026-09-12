@@ -63,6 +63,12 @@ public class GrpcTransportBundleGenerator {
           "\\A\\s*-----BEGIN PRIVATE KEY-----(.*?)-----END PRIVATE KEY-----\\s*\\z",
           Pattern.DOTALL);
 
+  static {
+    if (Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null) {
+      Security.addProvider(new BouncyCastleProvider());
+    }
+  }
+
   public Secret ensure(
       KubernetesClient client,
       EnvironmentIdentityPlan plan,
@@ -149,9 +155,6 @@ public class GrpcTransportBundleGenerator {
       Instant now) {
     try {
       requirePositiveRenewalWindow(renewBefore);
-      if (Security.getProvider("BC") == null) {
-        Security.addProvider(new BouncyCastleProvider());
-      }
       X509Certificate caCertificate = parseCertificate(requiredData(caSource, "ca.crt"));
       Instant caNotAfter = caCertificate.getNotAfter().toInstant();
       Instant renewalHorizon = renewalHorizon(now, renewBefore);
@@ -181,7 +184,7 @@ public class GrpcTransportBundleGenerator {
               grpcDnsNames(plan),
               false,
               now,
-              caNotAfter);
+              effectiveNotAfter);
       Map<String, String> data = new LinkedHashMap<>();
       // ca.crt is the directly pinned issuing trust anchor, so tls.crt intentionally contains
       // only the leaf certificate rather than duplicating that anchor in the presented chain.
@@ -412,16 +415,8 @@ public class GrpcTransportBundleGenerator {
       List<String> dnsNames,
       boolean ca,
       Instant now,
-      Instant maximumNotAfter)
+      Instant notAfter)
       throws Exception {
-    Instant notAfter =
-        plus(
-            now,
-            HostedIdentityProperties.INTERNAL_CERTIFICATE_DURATION,
-            "certificate validity window is out of range");
-    if (maximumNotAfter != null && maximumNotAfter.isBefore(notAfter)) {
-      notAfter = maximumNotAfter;
-    }
     if (!notAfter.isAfter(now)) {
       throw new IllegalStateException("certificate validity window is exhausted");
     }

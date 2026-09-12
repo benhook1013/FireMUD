@@ -164,7 +164,7 @@ spec:
                         type: integer
                         format: int64
                         minimum: 0
-                ingress:
+                ingress: &consumer_status_schema
                   type: object
                   properties:
                     revision:
@@ -191,114 +191,10 @@ spec:
                       type: string
                       maxLength: 64
                       pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"
-                telnet:
-                  type: object
-                  properties:
-                    revision:
-                      type: string
-                      maxLength: 128
-                      pattern: "^[A-Za-z0-9][A-Za-z0-9._:+/@=-]{0,127}$"
-                    sourceGeneration:
-                      type: integer
-                      format: int64
-                      minimum: 1
-                    sourceObjectGeneration:
-                      type: integer
-                      format: int64
-                      minimum: 1
-                    spkiSha256:
-                      type: string
-                      maxLength: 64
-                      pattern: "^[0-9a-f]{64}$"
-                    provenance:
-                      type: string
-                      maxLength: 128
-                      pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
-                    state:
-                      type: string
-                      maxLength: 64
-                      pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"
-                gatewayInternalWs:
-                  type: object
-                  properties:
-                    revision:
-                      type: string
-                      maxLength: 128
-                      pattern: "^[A-Za-z0-9][A-Za-z0-9._:+/@=-]{0,127}$"
-                    sourceGeneration:
-                      type: integer
-                      format: int64
-                      minimum: 1
-                    sourceObjectGeneration:
-                      type: integer
-                      format: int64
-                      minimum: 1
-                    spkiSha256:
-                      type: string
-                      maxLength: 64
-                      pattern: "^[0-9a-f]{64}$"
-                    provenance:
-                      type: string
-                      maxLength: 128
-                      pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
-                    state:
-                      type: string
-                      maxLength: 64
-                      pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"
-                tcpProxyBridge:
-                  type: object
-                  properties:
-                    revision:
-                      type: string
-                      maxLength: 128
-                      pattern: "^[A-Za-z0-9][A-Za-z0-9._:+/@=-]{0,127}$"
-                    sourceGeneration:
-                      type: integer
-                      format: int64
-                      minimum: 1
-                    sourceObjectGeneration:
-                      type: integer
-                      format: int64
-                      minimum: 1
-                    spkiSha256:
-                      type: string
-                      maxLength: 64
-                      pattern: "^[0-9a-f]{64}$"
-                    provenance:
-                      type: string
-                      maxLength: 128
-                      pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
-                    state:
-                      type: string
-                      maxLength: 64
-                      pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"
-                grpc:
-                  type: object
-                  properties:
-                    revision:
-                      type: string
-                      maxLength: 128
-                      pattern: "^[A-Za-z0-9][A-Za-z0-9._:+/@=-]{0,127}$"
-                    sourceGeneration:
-                      type: integer
-                      format: int64
-                      minimum: 1
-                    sourceObjectGeneration:
-                      type: integer
-                      format: int64
-                      minimum: 1
-                    spkiSha256:
-                      type: string
-                      maxLength: 64
-                      pattern: "^[0-9a-f]{64}$"
-                    provenance:
-                      type: string
-                      maxLength: 128
-                      pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
-                    state:
-                      type: string
-                      maxLength: 64
-                      pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"
+                telnet: *consumer_status_schema
+                gatewayInternalWs: *consumer_status_schema
+                tcpProxyBridge: *consumer_status_schema
+                grpc: *consumer_status_schema
           x-kubernetes-validations:
             - rule: "self.metadata.name.matches('^(dev-demo|pr-[1-9][0-9]*)$')"
               message: name must be dev-demo or pr-N with a positive decimal PR number

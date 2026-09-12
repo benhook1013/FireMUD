@@ -1343,6 +1343,25 @@ class HostedIdentityReconcilerSafetyTest {
   }
 
   @Test
+  void statusMaterialIsMappedByRoleRatherThanCallPosition() {
+    var expected =
+        new RuntimeProfileService.RuntimeProfile(
+            "uid", "a".repeat(40), "a".repeat(40), 32016, true);
+    DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(expected);
+    when(fixture.rollout.sync(any(), any(), anyString(), anyString(), any()))
+        .thenReturn(new DeploymentRolloutService.RolloutResult(false, false, false));
+
+    HostedEnvironmentIdentityStatus status =
+        fixture.reconcile().getResource().orElseThrow().getStatus();
+
+    assertEquals("1".repeat(64), status.getIngress().getSpkiSha256());
+    assertEquals("2".repeat(64), status.getTelnet().getSpkiSha256());
+    assertEquals("3".repeat(64), status.getGatewayInternalWs().getSpkiSha256());
+    assertEquals("4".repeat(64), status.getTcpProxyBridge().getSpkiSha256());
+    assertEquals("5".repeat(64), status.getGrpc().getSpkiSha256());
+  }
+
+  @Test
   void runtimeProfileFencePreservesMalformedProfileCause() {
     var expected =
         new RuntimeProfileService.RuntimeProfile(
