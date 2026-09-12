@@ -646,33 +646,33 @@ assert 'echo "digest=' in digest_selector_run
 assert "github.event_name != 'pull_request'" in trusted_build["if"]
 matrix_entries = trusted_build["strategy"]["matrix"]["service"]
 assert "hosted-environment-identity-controller" not in matrix_entries
-controller_job = runtime_jobs["build-hosted-identity-controller"]
-assert "build-base-image" in controller_job["needs"]
-assert controller_job["timeout-minutes"] == 25
-assert all(token in controller_job["if"] for token in (
+controller_build_job = runtime_jobs["build-hosted-identity-controller"]
+assert controller_build_job["needs"] == ["image-meta", "build-base-image"]
+assert controller_build_job["timeout-minutes"] == 25
+assert all(token in controller_build_job["if"] for token in (
     "github.event_name != 'pull_request'", "github.ref == 'refs/heads/main'", "github.ref == 'refs/heads/develop'"
 ))
-assert controller_job["permissions"] == {
-    "contents": "read",
-    "packages": "write",
-    "id-token": "write",
-    "attestations": "write",
-}
-controller_steps = controller_job["steps"]
-checkout = next(step for step in controller_steps if step.get("uses", "").startswith("actions/checkout@"))
+assert controller_build_job["permissions"] == {"contents": "read"}
+assert all(
+    permission not in controller_build_job["permissions"]
+    for permission in ("packages", "id-token", "attestations")
+)
+assert controller_build_job["outputs"]["image_id"] == "${{ steps.smoke.outputs.image_id }}"
+controller_build_steps = controller_build_job["steps"]
+checkout = next(step for step in controller_build_steps if step.get("uses", "").startswith("actions/checkout@"))
 assert checkout["with"]["persist-credentials"] is False
 assert checkout["with"]["ref"] == "${{ needs.image-meta.outputs.checkout_ref }}"
-assert controller_job["env"]["CONTROLLER_IMAGE"] == (
+assert controller_build_job["env"]["CONTROLLER_IMAGE"] == (
     "ghcr.io/benhook1013/firemud-hosted-identity-controller:${{ needs.image-meta.outputs.image_tag }}"
 )
-build_index = next(i for i, step in enumerate(controller_steps) if step.get("name") == "Build controller JAR and image locally")
-smoke_index = next(i for i, step in enumerate(controller_steps) if step.get("name") == "Smoke exact controller image")
-login_index = next(i for i, step in enumerate(controller_steps) if step.get("name") == "Login to GHCR")
-publish_index = next(i for i, step in enumerate(controller_steps) if step.get("name") == "Publish exact smoke-tested controller image")
-assert login_index < build_index < smoke_index < publish_index
-assert "--tag \"$CONTROLLER_IMAGE\"" in controller_steps[build_index]["run"]
-assert "ghcr.io/benhook1013/firemud-base@${{ needs.build-base-image.outputs.digest }}" in controller_steps[build_index]["run"]
-trusted_smoke_run = controller_steps[smoke_index]["run"]
+build_index = next(i for i, step in enumerate(controller_build_steps) if step.get("name") == "Build controller JAR and image locally")
+smoke_index = next(i for i, step in enumerate(controller_build_steps) if step.get("name") == "Smoke exact controller image")
+export_index = next(i for i, step in enumerate(controller_build_steps) if step.get("name") == "Export exact verified controller image artifact")
+upload_index = next(i for i, step in enumerate(controller_build_steps) if step.get("name") == "Upload exact verified controller image artifact")
+assert build_index < smoke_index < export_index < upload_index
+assert "--tag \"$CONTROLLER_IMAGE\"" in controller_build_steps[build_index]["run"]
+assert "ghcr.io/benhook1013/firemud-base@${{ needs.build-base-image.outputs.digest }}" in controller_build_steps[build_index]["run"]
+trusted_smoke_run = controller_build_steps[smoke_index]["run"]
 exact_health_predicate = 'jq -e \'.status == "UP"\' <<<"$health" >/dev/null 2>&1'
 for required in (
     'deadline=$((SECONDS + 300))',
@@ -687,8 +687,79 @@ for required in (
     assert required in trusted_smoke_run, required
 assert 'for _ in {1..300}; do' not in trusted_smoke_run
 assert '[[ "$health" == *' not in trusted_smoke_run
-assert 'docker push "$CONTROLLER_IMAGE"' in controller_steps[publish_index]["run"]
-publish_run = controller_steps[publish_index]["run"]
+assert "docker/login-action@" not in str(controller_build_job)
+assert "docker push" not in str(controller_build_job)
+assert "actions/attest@" not in str(controller_build_job)
+export_run = controller_build_steps[export_index]["run"]
+assert controller_build_steps[export_index]["env"] == {
+    "VERIFIED_IMAGE_ID": "${{ steps.smoke.outputs.image_id }}",
+}
+assert 'docker save "$CONTROLLER_IMAGE" | gzip -1 > "$RUNNER_TEMP/hosted-identity-controller.tar.gz"' in export_run
+assert 'current_image_id="$(docker image inspect --format' in export_run
+assert '[[ "$current_image_id" == "$VERIFIED_IMAGE_ID" ]]' in export_run
+assert controller_build_steps[upload_index]["uses"] == (
+    "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+)
+assert controller_build_steps[upload_index]["with"] == {
+    "name": "hosted-identity-controller-${{ needs.image-meta.outputs.image_tag }}",
+    "path": "${{ runner.temp }}/hosted-identity-controller.tar.gz",
+    "if-no-files-found": "error",
+    "retention-days": 1,
+}
+
+controller_publish_job = runtime_jobs["publish-hosted-identity-controller"]
+assert controller_publish_job["needs"] == [
+    "image-meta",
+    "build-base-image",
+    "build-hosted-identity-controller",
+]
+assert controller_publish_job["timeout-minutes"] == 25
+assert all(token in controller_publish_job["if"] for token in (
+    "always()",
+    "github.event_name != 'pull_request'",
+    "github.ref == 'refs/heads/main'",
+    "github.ref == 'refs/heads/develop'",
+    "needs.image-meta.result == 'success'",
+    "needs.build-base-image.result == 'success'",
+    "needs.build-hosted-identity-controller.result == 'success'",
+))
+assert controller_publish_job["permissions"] == {
+    "contents": "read",
+    "packages": "write",
+    "id-token": "write",
+    "attestations": "write",
+}
+assert controller_publish_job["env"] == controller_build_job["env"]
+controller_publish_steps = controller_publish_job["steps"]
+download_index = next(i for i, step in enumerate(controller_publish_steps) if step.get("name") == "Download exact verified controller image artifact")
+load_index = next(i for i, step in enumerate(controller_publish_steps) if step.get("name") == "Load and verify exact controller image")
+login_index = next(i for i, step in enumerate(controller_publish_steps) if step.get("name") == "Login to GHCR")
+publish_index = next(i for i, step in enumerate(controller_publish_steps) if step.get("name") == "Publish exact verified controller image")
+assert download_index < load_index < login_index < publish_index
+assert controller_publish_steps[download_index]["uses"] == (
+    "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+)
+assert controller_publish_steps[download_index]["with"] == {
+    "name": "hosted-identity-controller-${{ needs.image-meta.outputs.image_tag }}",
+    "path": "${{ runner.temp }}/hosted-identity-controller-artifact",
+}
+load_run = controller_publish_steps[load_index]["run"]
+assert controller_publish_steps[load_index]["env"] == {
+    "CONTROLLER_ARCHIVE": "${{ runner.temp }}/hosted-identity-controller-artifact/hosted-identity-controller.tar.gz",
+    "VERIFIED_IMAGE_ID": "${{ needs.build-hosted-identity-controller.outputs.image_id }}",
+}
+for required in (
+    'gzip -dc "$CONTROLLER_ARCHIVE" | docker load',
+    'loaded_image_id="$(docker image inspect --format',
+    '[[ "$loaded_image_id" == "$VERIFIED_IMAGE_ID" ]]',
+):
+    assert required in load_run, required
+publish_run = controller_publish_steps[publish_index]["run"]
+assert "./gradlew" not in str(controller_publish_steps)
+assert "docker build" not in str(controller_publish_steps)
+assert "docker run" not in str(controller_publish_steps)
+assert "health/liveness" not in str(controller_publish_steps)
+assert 'docker push "$CONTROLLER_IMAGE"' in publish_run
 assert "docker manifest inspect" not in publish_run
 assert "current_image_id" in publish_run
 assert "pushed_digest" in publish_run
@@ -697,14 +768,14 @@ assert "push_output" in publish_run
 assert "pushed_digests" in publish_run
 assert '${#pushed_digests[@]} != 1' in publish_run
 assert "BASH_REMATCH[1]" in publish_run
-attest_step = next(step for step in controller_steps if step.get("uses") == "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6")
+attest_step = next(step for step in controller_publish_steps if step.get("uses") == "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6")
 assert attest_step["with"]["subject-name"] == "${{ env.CONTROLLER_IMAGE_NAME }}"
 assert attest_step["with"]["subject-digest"] == "${{ steps.publish.outputs.digest }}"
-assert controller_steps.index(attest_step) > publish_index
+assert controller_publish_steps.index(attest_step) > publish_index
 assert attest_step["with"]["subject-name"] == "${{ env.CONTROLLER_IMAGE_NAME }}"
 assert attest_step["with"]["push-to-registry"] is True
 assert attest_step["with"]["create-storage-record"] is False
-assert controller_steps[publish_index]["id"] == "publish"
+assert controller_publish_steps[publish_index]["id"] == "publish"
 assert "pushed_digest" in publish_run
 assert "sha256:[0-9a-f]" in publish_run
 assert "hosted-environment-identity-controller" not in publisher_script
@@ -1726,8 +1797,8 @@ import yaml
 workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
 publish_step = next(
     step
-    for step in workflow["jobs"]["build-hosted-identity-controller"]["steps"]
-    if step.get("name") == "Publish exact smoke-tested controller image"
+    for step in workflow["jobs"]["publish-hosted-identity-controller"]["steps"]
+    if step.get("name") == "Publish exact verified controller image"
 )
 Path(sys.argv[2]).write_text(
     "#!/usr/bin/env bash\n" + publish_step["run"],
@@ -1743,7 +1814,7 @@ cat >"$controller_publish_stub_dir/docker" <<'SH'
 set -euo pipefail
 
 if [[ "$1" == image && "$2" == inspect ]]; then
-  printf '%s\n' "${SMOKED_IMAGE_ID:?}"
+  printf '%s\n' "${VERIFIED_IMAGE_ID:?}"
   exit 0
 fi
 if [[ "$1" != push || "$2" != "${CONTROLLER_IMAGE:?}" ]]; then
@@ -1796,7 +1867,7 @@ successful_digest="sha256:$(printf '2%.0s' {1..64})"
 env \
   PATH="$controller_publish_stub_dir:$PATH" \
   CONTROLLER_IMAGE="$controller_image" \
-  SMOKED_IMAGE_ID="$controller_image_id" \
+  VERIFIED_IMAGE_ID="$controller_image_id" \
   CONTROLLER_PUSH_MODE=failed-then-success \
   CONTROLLER_PUSH_COUNT="$controller_push_count" \
   CONTROLLER_SLEEP_LOG="$controller_sleep_log" \
@@ -1815,7 +1886,7 @@ controller_duplicate_output="$TEMP_DIR/controller-duplicate.output"
 if env \
   PATH="$controller_publish_stub_dir:$PATH" \
   CONTROLLER_IMAGE="$controller_image" \
-  SMOKED_IMAGE_ID="$controller_image_id" \
+  VERIFIED_IMAGE_ID="$controller_image_id" \
   CONTROLLER_PUSH_MODE=duplicate-success \
   CONTROLLER_PUSH_COUNT="$controller_duplicate_count" \
   CONTROLLER_SLEEP_LOG="$TEMP_DIR/controller-duplicate-sleep.log" \

@@ -354,14 +354,13 @@ jobs:
   build-hosted-identity-controller:
     name: Build Trusted Hosted Identity Controller
     needs: [image-meta, build-base-image]
-    if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main') && needs.build-base-image.result == 'success' }}
+    if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main') && needs.image-meta.result == 'success' && needs.build-base-image.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    outputs:
+      image_id: ${{ steps.smoke.outputs.image_id }}
     permissions:
       contents: read
-      packages: write
-      id-token: write
-      attestations: write
     env:
       CONTROLLER_IMAGE_NAME: ghcr.io/benhook1013/firemud-hosted-identity-controller
       CONTROLLER_IMAGE: ghcr.io/benhook1013/firemud-hosted-identity-controller:${{ needs.image-meta.outputs.image_tag }}
@@ -390,13 +389,6 @@ jobs:
           build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
           build-scan-terms-of-use-agree: 'yes'
           cache-read-only: false
-
-      - name: Login to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build controller JAR and image locally
         run: |
@@ -454,15 +446,85 @@ jobs:
           }
           echo "image_id=$local_image_id" >> "$GITHUB_OUTPUT"
 
-      - name: Publish exact smoke-tested controller image
-        id: publish
+      - name: Export exact verified controller image artifact
         env:
-          SMOKED_IMAGE_ID: ${{ steps.smoke.outputs.image_id }}
+          VERIFIED_IMAGE_ID: ${{ steps.smoke.outputs.image_id }}
         run: |
           set -euo pipefail
           current_image_id="$(docker image inspect --format '{{.Id}}' "$CONTROLLER_IMAGE")"
-          [[ "$current_image_id" == "$SMOKED_IMAGE_ID" ]] || {
-            echo "Controller image changed after its smoke proof; refusing publication." >&2
+          [[ "$current_image_id" == "$VERIFIED_IMAGE_ID" ]] || {
+            echo "Controller image changed after its smoke proof; refusing artifact export." >&2
+            exit 1
+          }
+          docker save "$CONTROLLER_IMAGE" | gzip -1 > "$RUNNER_TEMP/hosted-identity-controller.tar.gz"
+
+      - name: Upload exact verified controller image artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: hosted-identity-controller-${{ needs.image-meta.outputs.image_tag }}
+          path: ${{ runner.temp }}/hosted-identity-controller.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-hosted-identity-controller:
+    name: Publish Trusted Hosted Identity Controller
+    needs: [image-meta, build-base-image, build-hosted-identity-controller]
+    if: ${{ always() && github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main') && needs.image-meta.result == 'success' && needs.build-base-image.result == 'success' && needs.build-hosted-identity-controller.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      CONTROLLER_IMAGE_NAME: ghcr.io/benhook1013/firemud-hosted-identity-controller
+      CONTROLLER_IMAGE: ghcr.io/benhook1013/firemud-hosted-identity-controller:${{ needs.image-meta.outputs.image_tag }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
+      - name: Download exact verified controller image artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: hosted-identity-controller-${{ needs.image-meta.outputs.image_tag }}
+          path: ${{ runner.temp }}/hosted-identity-controller-artifact
+
+      - name: Load and verify exact controller image
+        env:
+          CONTROLLER_ARCHIVE: ${{ runner.temp }}/hosted-identity-controller-artifact/hosted-identity-controller.tar.gz
+          VERIFIED_IMAGE_ID: ${{ needs.build-hosted-identity-controller.outputs.image_id }}
+        run: |
+          set -euo pipefail
+          [[ -f "$CONTROLLER_ARCHIVE" ]] || {
+            echo "Verified hosted identity controller image artifact is missing." >&2
+            exit 1
+          }
+          gzip -dc "$CONTROLLER_ARCHIVE" | docker load
+          loaded_image_id="$(docker image inspect --format '{{.Id}}' "$CONTROLLER_IMAGE")"
+          [[ "$loaded_image_id" == "$VERIFIED_IMAGE_ID" ]] || {
+            echo "Loaded controller image does not match the exact verified build image." >&2
+            exit 1
+          }
+
+      - name: Login to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish exact verified controller image
+        id: publish
+        env:
+          VERIFIED_IMAGE_ID: ${{ needs.build-hosted-identity-controller.outputs.image_id }}
+        run: |
+          set -euo pipefail
+          current_image_id="$(docker image inspect --format '{{.Id}}' "$CONTROLLER_IMAGE")"
+          [[ "$current_image_id" == "$VERIFIED_IMAGE_ID" ]] || {
+            echo "Controller image changed after its verification proof; refusing publication." >&2
             exit 1
           }
 
