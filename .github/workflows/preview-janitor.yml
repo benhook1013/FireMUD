@@ -45,7 +45,7 @@ jobs:
         run: |
           KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"
           bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
-          echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
+          echo "PREVIEW_RUNTIME_KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Write hosted identity requester kubeconfig
         if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' }}
@@ -56,14 +56,14 @@ jobs:
 
       - name: Verify preview cluster access
         env:
-          KUBECONFIG: ${{ runner.temp }}/preview-kubeconfig.yaml
+          KUBECONFIG: ${{ env.PREVIEW_RUNTIME_KUBECONFIG }}
         run: |
           kubectl get namespace kube-system >/dev/null
           kubectl auth can-i list namespaces --all-namespaces
 
       - name: Prune stale preview namespaces
         env:
-          KUBECONFIG: ${{ runner.temp }}/preview-kubeconfig.yaml
+          KUBECONFIG: ${{ env.PREVIEW_RUNTIME_KUBECONFIG }}
           GH_TOKEN: ${{ github.token }}
           HOSTED_IDENTITY_MODE: ${{ steps.certificate-identity.outputs.mode }}
           HOSTED_IDENTITY_REQUESTER_KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig

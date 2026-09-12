@@ -235,26 +235,24 @@ jobs:
 
       - name: Write hosted identity requester kubeconfig
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
-        uses: ./.github/actions/write-kubeconfig
-        with:
-          content: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
-          path: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
+        env:
+          PREVIEW_KUBECONFIG: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
+        run: |
+          set -euo pipefail
+          umask 077
+          expected_path="$RUNNER_TEMP/hosted-identity-requester.kubeconfig"
+          written_path="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh "$expected_path")"
+          if [[ "$written_path" != "$expected_path" ]]; then
+            echo "Hosted identity requester kubeconfig was written to an unexpected path." >&2
+            exit 1
+          fi
+          kubectl --kubeconfig "$written_path" config view --minify >/dev/null
 
       - name: Apply fixed dev-demo Active request
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
         run: bash ./dev-tools/hosted/shared/request-hosted-identity.sh dev-demo Active
-
-      - name: Restore dev-demo runtime kubeconfig
-        # The requester kubeconfig is needed only for the identity request;
-        # subsequent runtime waits must use the restored runtime credentials.
-        if: ${{ always() && steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${DEV_DEMO_RUNTIME_KUBECONFIG:-}" ]]; then
-            echo "::error title=Missing dev-demo runtime kubeconfig::The runtime kubeconfig path was not initialized." >&2
-            exit 1
-          fi
-          echo "KUBECONFIG=$DEV_DEMO_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"
 
       - name: Remove hosted identity requester kubeconfig
         if: ${{ always() }}
@@ -978,6 +976,16 @@ jobs:
             --retired dev-demo 600
           kubectl -n firemud-system delete hostedenvironmentidentity dev-demo \
             --wait=true --timeout=180s
+
+      - name: Restore dev-demo runtime kubeconfig after retirement
+        if: ${{ always() && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${DEV_DEMO_RUNTIME_KUBECONFIG:-}" ]]; then
+            echo "::error title=Missing dev-demo runtime kubeconfig::The runtime kubeconfig path was not initialized." >&2
+            exit 1
+          fi
+          echo "KUBECONFIG=$DEV_DEMO_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"
 
       - name: Remove hosted identity requester kubeconfig
         if: ${{ always() }}

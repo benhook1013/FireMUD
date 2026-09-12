@@ -94,6 +94,7 @@ for unrelated_service in (
     "services/tcp-proxy-service/",
 ):
     assert unrelated_service not in controller_scope_script
+
 steps = workflow["jobs"]["pr-local-smoke"]["steps"]
 steps_by_name = {
     step.get("name"): step for step in steps if isinstance(step, dict)
@@ -697,6 +698,9 @@ assert_mode_step(janitor_mode_step, "preview janitor")
 janitor_prune_step = next(
     step for step in janitor_steps if step.get("name") == "Prune stale preview namespaces"
 )
+janitor_runtime_writer = next(
+    step for step in janitor_steps if step.get("name") == "Write preview kubeconfig"
+)
 janitor_requester_step = next(
     step
     for step in janitor_steps
@@ -713,20 +717,26 @@ janitor_cleanup_step = next(
 assert janitor_prune_step["env"]["HOSTED_IDENTITY_REQUESTER_KUBECONFIG"] == (
     "${{ runner.temp }}/hosted-identity-requester.kubeconfig"
 )
-assert janitor_verify_step["env"]["KUBECONFIG"] == (
-    "${{ runner.temp }}/preview-kubeconfig.yaml"
-)
-assert janitor_prune_step["env"]["KUBECONFIG"] == (
-    "${{ runner.temp }}/preview-kubeconfig.yaml"
-)
+janitor_runtime_writer_run = janitor_runtime_writer["run"]
+for required in (
+    'KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"',
+    'persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"',
+    'echo "PREVIEW_RUNTIME_KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"',
+):
+    assert required in janitor_runtime_writer_run, required
+assert 'echo "KUBECONFIG=$KUBECONFIG_PATH"' not in janitor_runtime_writer_run
+janitor_runtime_path_expression = "${{ env.PREVIEW_RUNTIME_KUBECONFIG }}"
+for consumer in (janitor_verify_step, janitor_prune_step):
+    assert consumer["env"]["KUBECONFIG"] == janitor_runtime_path_expression
+    assert "${{ runner.temp }}/preview-kubeconfig.yaml" not in str(consumer)
 assert "export HOSTED_IDENTITY_REQUESTER_KUBECONFIG=" not in janitor_prune_step["run"]
 assert "${{ runner.temp }}/hosted-identity-requester.kubeconfig" not in janitor_prune_step["run"]
 assert not any(
     step.get("name") == "Restore preview kubeconfig" for step in janitor_steps
 )
-assert janitor_steps.index(janitor_requester_step) < janitor_steps.index(
-    janitor_verify_step
-) < janitor_steps.index(janitor_prune_step)
+assert janitor_steps.index(janitor_runtime_writer) < janitor_steps.index(
+    janitor_requester_step
+) < janitor_steps.index(janitor_verify_step) < janitor_steps.index(janitor_prune_step)
 assert janitor_steps.index(janitor_cleanup_step) > janitor_steps.index(janitor_prune_step)
 assert janitor_cleanup_step.get("if") == "${{ always() }}"
 assert janitor_cleanup_step.get("run") == (
@@ -1132,9 +1142,24 @@ assert '"$RUNNER_TEMP/dev-demo-runtime.kubeconfig"' in dev_demo_kubeconfig_step[
 assert 'echo "DEV_DEMO_RUNTIME_KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"' in (
     dev_demo_kubeconfig_step["run"]
 )
-assert 'echo "KUBECONFIG=$DEV_DEMO_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"' in (
-    dev_demo_by_name["Restore dev-demo runtime kubeconfig"]["run"]
+assert 'echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"' in (
+    dev_demo_kubeconfig_step["run"]
 )
+dev_demo_requester_write = dev_demo_by_name["Write hosted identity requester kubeconfig"]
+assert "uses" not in dev_demo_requester_write
+assert dev_demo_requester_write["env"] == {
+    "PREVIEW_KUBECONFIG": "${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}"
+}
+assert "GITHUB_ENV" not in dev_demo_requester_write["run"]
+for required in (
+    "umask 077",
+    'written_path="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh "$expected_path")"',
+    'kubectl --kubeconfig "$written_path" config view --minify >/dev/null',
+):
+    assert required in dev_demo_requester_write["run"]
+assert dev_demo_by_name["Apply fixed dev-demo Active request"]["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/hosted-identity-requester.kubeconfig"
+}
 assert dev_demo_render_step["env"]["CERTIFICATE_IDENTITY_MODE"] == (
     "${{ steps.certificate-identity.outputs.mode }}"
 )
