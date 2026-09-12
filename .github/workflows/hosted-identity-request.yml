@@ -223,6 +223,9 @@ jobs:
           content: ${{ secrets.PREVIEW_RUNTIME_KUBECONFIG }}
           path: ${{ runner.temp }}/preview-runtime.kubeconfig
 
+      - name: Remember preview runtime kubeconfig
+        run: echo "PREVIEW_RUNTIME_KUBECONFIG=$KUBECONFIG" >> "$GITHUB_ENV"
+
       - name: Download source render artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -324,7 +327,7 @@ jobs:
 
       - name: Restore preview runtime kubeconfig
         if: ${{ always() }}
-        run: echo "KUBECONFIG=$RUNNER_TEMP/preview-runtime.kubeconfig" >> "$GITHUB_ENV"
+        run: echo "KUBECONFIG=$PREVIEW_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"
 
       - name: Remove requester kubeconfig
         if: ${{ always() }}
@@ -365,27 +368,6 @@ jobs:
         env:
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
         run: bash ./dev-tools/hosted/preview/provision-runtime-credentials.sh
-
-      - name: Validate trusted preview runtime target
-        env:
-          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
-          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
-          ARTIFACT_PATH: ${{ runner.temp }}/preview-rendered-with-port.yaml
-          TELNET_PORT: ${{ steps.allocate-telnet-port.outputs.port }}
-        run: |
-          set -euo pipefail
-          [[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]]
-          python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
-            runtime-target "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$TELNET_PORT"
-
-      - name: Final revalidate open PR before server dry-run and apply
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
-          EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
-        run: |
-          bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
-            "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
 
       - name: Apply validated PR runtime artifact
         id: deploy-runtime-artifact

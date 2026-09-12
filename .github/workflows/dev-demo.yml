@@ -214,10 +214,22 @@ jobs:
           TELNET_PORT: ${{ needs.dev-demo-plan.outputs.telnet_port }}
         run: |
           set -euo pipefail
-          [[ "$RUNTIME_NAMESPACE" == dev ]]
-          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ -n "$IMAGE_TAG" ]]
-          [[ "$TELNET_PORT" == 32016 ]]
+          if [[ "$RUNTIME_NAMESPACE" != dev ]]; then
+            echo "::error title=Invalid dev-demo runtime namespace::Expected the canonical dev namespace." >&2
+            exit 1
+          fi
+          if [[ ! "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error title=Invalid dev-demo head SHA::Expected exactly 40 lowercase hexadecimal characters." >&2
+            exit 1
+          fi
+          if [[ -z "$IMAGE_TAG" ]]; then
+            echo "::error title=Invalid dev-demo image tag::Expected a non-empty image tag." >&2
+            exit 1
+          fi
+          if [[ "$TELNET_PORT" != 32016 ]]; then
+            echo "::error title=Invalid dev-demo Telnet port::Expected the canonical 32016 port." >&2
+            exit 1
+          fi
           bash ./dev-tools/hosted/dev-demo/annotate-dev-demo-namespace.sh \
             "$RUNTIME_NAMESPACE" "$HEAD_SHA" "$IMAGE_TAG" "$TELNET_PORT"
 
@@ -347,8 +359,14 @@ jobs:
           HEAD_SHA: ${{ needs.dev-demo-plan.outputs.head_sha }}
         run: |
           set -euo pipefail
-          [[ "$RUNTIME_NAMESPACE" == dev ]]
-          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          if [[ "$RUNTIME_NAMESPACE" != dev ]]; then
+            echo "::error title=Invalid dev-demo runtime namespace::Expected the canonical dev namespace." >&2
+            exit 1
+          fi
+          if [[ ! "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error title=Invalid dev-demo head SHA::Expected exactly 40 lowercase hexadecimal characters." >&2
+            exit 1
+          fi
           kubectl annotate namespace "$RUNTIME_NAMESPACE" \
             "firemud.dev/last-dev-demo-head-sha=${HEAD_SHA}" \
             --overwrite >/dev/null
@@ -934,16 +952,6 @@ jobs:
             --retired dev-demo 600
           kubectl -n firemud-system delete hostedenvironmentidentity dev-demo \
             --wait=true --timeout=180s
-
-      - name: Restore dev-demo runtime kubeconfig after retirement
-        if: ${{ always() && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${DEV_DEMO_RUNTIME_KUBECONFIG:-}" ]]; then
-            echo "::error title=Missing dev-demo runtime kubeconfig::The runtime kubeconfig path was not initialized." >&2
-            exit 1
-          fi
-          echo "KUBECONFIG=$DEV_DEMO_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"
 
       - name: Remove hosted identity requester kubeconfig
         if: ${{ always() }}

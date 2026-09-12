@@ -687,14 +687,14 @@ class PreviewArtifactCommandLineTest(unittest.TestCase):
                 encoding="utf-8",
             )
             missing_chart = temp_dir / "missing-Chart.yaml"
-            unreadable_chart = temp_dir / "unreadable-Chart.yaml"
+            directory_chart = temp_dir / "directory-Chart.yaml"
             malformed_chart = temp_dir / "malformed-Chart.yaml"
-            unreadable_chart.mkdir()
+            directory_chart.mkdir()
             malformed_chart.write_text("name: [\n", encoding="utf-8")
 
             for chart_metadata in (
                 missing_chart,
-                unreadable_chart,
+                directory_chart,
                 malformed_chart,
             ):
                 with self.subTest(chart_metadata=chart_metadata):

@@ -458,6 +458,80 @@ subresource_rule = policies["firemud-hosted-identity-subresources"]["spec"][
 ]["resourceRules"][0]
 assert subresource_rule["operations"] == ["UPDATE"]
 assert subresource_rule["resources"] == ["hostedenvironmentidentities/status"]
+subresource_expressions = [
+    validation["expression"]
+    for validation in policies["firemud-hosted-identity-subresources"]["spec"]["validations"]
+]
+subresource_preservation = next(
+    expression
+    for expression in subresource_expressions
+    if "object.spec.desiredState == oldObject.spec.desiredState" in expression
+)
+for required in (
+    "request.subResource != 'status'",
+    "object.spec.desiredState == oldObject.spec.desiredState",
+    "has(object.metadata.labels) == has(oldObject.metadata.labels)",
+    "(!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels)",
+    "has(object.metadata.annotations) == has(oldObject.metadata.annotations)",
+    "(!has(object.metadata.annotations) || object.metadata.annotations == oldObject.metadata.annotations)",
+    "has(object.metadata.finalizers) == has(oldObject.metadata.finalizers)",
+    "(!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers)",
+):
+    assert required in subresource_preservation, required
+
+
+def status_subresource_update_accepted(new_object, old_object):
+    if new_object["spec"]["desiredState"] != old_object["spec"]["desiredState"]:
+        return False
+    return all(
+        (field in new_object["metadata"]) == (field in old_object["metadata"])
+        and (
+            field not in new_object["metadata"]
+            or new_object["metadata"][field] == old_object["metadata"][field]
+        )
+        for field in ("labels", "annotations", "finalizers")
+    )
+
+
+status_old = {
+    "metadata": {
+        "labels": {"example.test/label": "preserved"},
+        "annotations": {"example.test/annotation": "preserved"},
+        "finalizers": ["platform.firemud.dev/hosted-environment-identity"],
+    },
+    "spec": {"desiredState": "Active"},
+    "status": {"phase": "Pending"},
+}
+status_only_update = {
+    "metadata": dict(status_old["metadata"]),
+    "spec": dict(status_old["spec"]),
+    "status": {"phase": "Ready"},
+}
+assert status_subresource_update_accepted(status_only_update, status_old)
+for field, changed in (
+    ("labels", {"example.test/label": "changed"}),
+    ("annotations", {"example.test/annotation": "changed"}),
+    ("finalizers", []),
+):
+    metadata_mutation = {
+        **status_only_update,
+        "metadata": {**status_only_update["metadata"], field: changed},
+    }
+    assert not status_subresource_update_accepted(metadata_mutation, status_old)
+    metadata_removal = {
+        **status_only_update,
+        "metadata": {
+            key: value
+            for key, value in status_only_update["metadata"].items()
+            if key != field
+        },
+    }
+    assert not status_subresource_update_accepted(metadata_removal, status_old)
+desired_state_mutation = {
+    **status_only_update,
+    "spec": {"desiredState": "Retired"},
+}
+assert not status_subresource_update_accepted(desired_state_mutation, status_old)
 for required in (
     "request.operation == 'UPDATE'",
     "object.spec == oldObject.spec",

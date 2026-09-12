@@ -261,6 +261,29 @@ if "steps.deploy-release.outcome == 'success'" not in deployed_head_step.get("if
     raise SystemExit("deployed-head evidence is not gated on successful Helm completion")
 if "firemud.dev/last-dev-demo-head-sha=${HEAD_SHA}" not in deployed_head_step["run"]:
     raise SystemExit("successful Helm completion does not record exact deployed-head evidence")
+runtime_target_run = deploy_by_name["Record exact dev-demo runtime target"]["run"]
+for diagnostic in (
+    "::error title=Invalid dev-demo runtime namespace::Expected the canonical dev namespace.",
+    "::error title=Invalid dev-demo head SHA::Expected exactly 40 lowercase hexadecimal characters.",
+    "::error title=Invalid dev-demo image tag::Expected a non-empty image tag.",
+    "::error title=Invalid dev-demo Telnet port::Expected the canonical 32016 port.",
+):
+    if diagnostic not in runtime_target_run:
+        raise SystemExit(f"dev-demo runtime target validation lacks {diagnostic}")
+for diagnostic in (
+    "::error title=Invalid dev-demo runtime namespace::Expected the canonical dev namespace.",
+    "::error title=Invalid dev-demo head SHA::Expected exactly 40 lowercase hexadecimal characters.",
+):
+    if diagnostic not in deployed_head_step["run"]:
+        raise SystemExit(f"dev-demo deployed-head validation lacks {diagnostic}")
+for bare_assertion in (
+    '[[ "$RUNTIME_NAMESPACE" == dev ]]',
+    '[[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]',
+    '[[ -n "$IMAGE_TAG" ]]',
+    '[[ "$TELNET_PORT" == 32016 ]]',
+):
+    if bare_assertion in runtime_target_run or bare_assertion in deployed_head_step["run"]:
+        raise SystemExit(f"dev-demo validation retained opaque assertion {bare_assertion}")
 if "success()" not in deploy_by_name["Smoke dev-demo over TCP"].get("if", ""):
     raise SystemExit("dev-demo smoke must not bypass an earlier identity/preflight failure")
 success_condition = deploy_by_name["Summarize dev-demo access"].get("if", "")
@@ -280,8 +303,8 @@ destroy_order = (
     "Write hosted identity requester kubeconfig",
     "Apply fixed dev-demo Retired request",
     "Observe terminal dev-demo retirement and delete request",
-    "Restore dev-demo runtime kubeconfig after retirement",
     "Remove hosted identity requester kubeconfig",
+    "Summarize dev-demo destroy",
 )
 destroy_positions = [destroy_names.index(name) for name in destroy_order]
 if destroy_positions != sorted(destroy_positions):
@@ -295,11 +318,14 @@ if "request-hosted-identity.sh dev-demo Retired" not in destroy_by_name[
 destroy_runtime_kubeconfig = destroy_by_name["Write dev-demo runtime kubeconfig"]
 if "DEV_DEMO_RUNTIME_KUBECONFIG=$KUBECONFIG_PATH" not in destroy_runtime_kubeconfig["run"]:
     raise SystemExit("dev-demo destroy does not retain its runtime kubeconfig path")
-destroy_restore = destroy_by_name["Restore dev-demo runtime kubeconfig after retirement"]
-if destroy_restore.get("if") != "${{ always() && steps.certificate-identity.outputs.mode == 'hosted-controller' }}":
-    raise SystemExit("dev-demo destroy runtime kubeconfig restore lost its fail-safe controller gate")
-if 'echo "KUBECONFIG=$DEV_DEMO_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"' not in destroy_restore["run"]:
-    raise SystemExit("dev-demo destroy does not restore runtime credentials after retirement")
+if "Restore dev-demo runtime kubeconfig after retirement" in destroy_by_name:
+    raise SystemExit("dev-demo destroy retains a runtime credential restore with no consumer")
+retirement_index = destroy_names.index(
+    "Observe terminal dev-demo retirement and delete request"
+)
+for step in destroy_steps[retirement_index + 1 :]:
+    if "DEV_DEMO_RUNTIME_KUBECONFIG" in str(step):
+        raise SystemExit("a post-retirement step consumes the dev-demo runtime kubeconfig")
 requester_cleanup = destroy_by_name["Remove hosted identity requester kubeconfig"]
 if requester_cleanup.get("if") != "${{ always() }}":
     raise SystemExit("dev-demo requester credential cleanup must run after failures")

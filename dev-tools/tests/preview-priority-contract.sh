@@ -2155,8 +2155,8 @@ if printf '%s\n' "901"$'\t'"${priority_candidate_head}"$'\t'"example/FireMUD"$'\
 fi
 grep -Fxq 'expected repository is required' "$TEMP_DIR/empty-expected-repository.error"
 
-# Accept exactly the configured candidate limit, then use only a one-record
-# overflow probe to reject candidate 1001.
+# The fake API reuses these 100 rows across 10 mock pages to reach the configured
+# 1,000-candidate limit, then uses a one-record overflow probe to reject record 1001.
 priority_limit_rows=""
 for _ in $(seq 1 100); do
   priority_limit_rows+="901"$'\t'"${priority_candidate_head}"$'\texample/FireMUD\thuman\tdevelop\topen\t'"${priority_labels_base64}"$'\n'

@@ -110,8 +110,16 @@ spec:
     - expression: "request.userInfo.groups.exists(group, group == 'system:masters') || request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller'"
       message: only system:masters or the hosted-identity controller may write status
       reason: Forbidden
-    - expression: "request.subResource != 'status' || object.spec.desiredState == oldObject.spec.desiredState"
-      message: status updates may not change spec
+    - expression: >-
+        request.subResource != 'status' ||
+        (object.spec.desiredState == oldObject.spec.desiredState &&
+         has(object.metadata.labels) == has(oldObject.metadata.labels) &&
+         (!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels) &&
+         has(object.metadata.annotations) == has(oldObject.metadata.annotations) &&
+         (!has(object.metadata.annotations) || object.metadata.annotations == oldObject.metadata.annotations) &&
+         has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) &&
+         (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers))
+      message: status updates may change only status while preserving desiredState, labels, annotations, and finalizers
       reason: Forbidden
 ---
 apiVersion: admissionregistration.k8s.io/v1

@@ -619,12 +619,25 @@ active_request = deploy_by_name["Apply canonical Active request"]
 assert active_request["run"] == (
     'bash ./dev-tools/hosted/shared/request-hosted-identity.sh "$IDENTITY_NAME" Active'
 )
+deploy_runtime_write = deploy_by_name["Write runtime kubeconfig"]
+deploy_requester_write = deploy_by_name["Write requester kubeconfig"]
+deploy_runtime_remember = deploy_by_name["Remember preview runtime kubeconfig"]
+assert deploy_runtime_remember["run"] == (
+    'echo "PREVIEW_RUNTIME_KUBECONFIG=$KUBECONFIG" >> "$GITHUB_ENV"'
+)
 deploy_runtime_restore = deploy_by_name["Restore preview runtime kubeconfig"]
 assert deploy_runtime_restore["if"] == "${{ always() }}"
 assert deploy_runtime_restore["run"] == (
-    'echo "KUBECONFIG=$RUNNER_TEMP/preview-runtime.kubeconfig" >> "$GITHUB_ENV"'
+    'echo "KUBECONFIG=$PREVIEW_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"'
 )
 assert "uses" not in deploy_runtime_restore
+assert (
+    deploy_steps.index(deploy_runtime_write)
+    < deploy_steps.index(deploy_runtime_remember)
+    < deploy_steps.index(deploy_requester_write)
+    < deploy_steps.index(active_request)
+    < deploy_steps.index(deploy_runtime_restore)
+)
 deploy_requester_cleanup = deploy_by_name["Remove requester kubeconfig"]
 assert deploy_requester_cleanup["if"] == "${{ always() }}"
 assert deploy_requester_cleanup["run"] == (
@@ -657,10 +670,8 @@ assert deployed_step["if"] == "${{ steps.deploy-runtime-artifact.outcome == 'suc
 assert "firemud.dev/last-preview-head-sha=${HEAD_SHA}" in deployed_step["run"]
 inject_step = deploy_by_name["Inject trusted allocated Telnet port"]["run"]
 assert '"$RUNTIME_NAMESPACE" "$TELNET_PORT"' in inject_step
-target_step = deploy_by_name["Validate trusted preview runtime target"]["run"]
-assert '[[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]]' in target_step
-assert "validate-preview-artifact.py" in target_step
-assert 'runtime-target "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$TELNET_PORT"' in target_step
+assert "Validate trusted preview runtime target" not in deploy_by_name
+assert "Final revalidate open PR before server dry-run and apply" not in deploy_by_name
 apply_run = apply_step["run"]
 target_validation = (
     'runtime-target "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$TELNET_PORT"'
