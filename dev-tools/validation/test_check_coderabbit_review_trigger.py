@@ -45,6 +45,38 @@ def trigger_comment() -> dict[str, object]:
     return comment(10, "owner", "@coderabbitai full review", TRIGGER_AT)
 
 
+def finished_reply() -> dict[str, object]:
+    return comment(
+        11,
+        "coderabbitai",
+        """<!-- This is an auto-generated reply by CodeRabbit -->
+<!-- CodeRabbit review command invocation: v2:example -->
+<details>
+<summary>✅ Action performed</summary>
+
+Full review finished.
+
+</details>""",
+        "2026-09-14T01:00:06Z",
+        updated_at="2026-09-14T01:06:00Z",
+    )
+
+
+def zero_finding_summary(head: str = HEAD) -> dict[str, object]:
+    return comment(
+        12,
+        "coderabbitai",
+        f"""<!-- recent_review_start -->
+No actionable comments were generated in the recent review. 🎉
+Reviewing files that changed from the base of the PR and between {'b' * 40} and {head}.
+Files selected for processing (24)
+<!-- recent_review_end -->
+<!-- walkthrough_start -->""",
+        "2026-09-13T00:00:00Z",
+        updated_at="2026-09-14T01:05:00Z",
+    )
+
+
 def payload(
     comments: list[dict[str, object]] | None = None,
     reviews: list[dict[str, object]] | None = None,
@@ -181,6 +213,31 @@ Your next included review will be available in 39 minutes.
         self.assertTrue(state.terminal)
         self.assertTrue(state.attributed)
         self.assertEqual(state.cooldown_until, "2026-09-14T01:39:07+00:00")
+
+    def test_finished_reply_uses_exact_head_zero_finding_summary(self) -> None:
+        comments = [trigger_comment(), finished_reply(), zero_finding_summary()]
+        state = self.state(comments)
+        self.assertEqual(state.state, "completed")
+        self.assertTrue(state.terminal)
+        self.assertTrue(state.attributed)
+        self.assertEqual(state.response_id, 11)
+
+        summary = CHECKER.summarize(REPO, PR, payload(comments))
+        self.assertTrue(summary.ok)
+        self.assertTrue(summary.review_finished_after_latest_request)
+        self.assertTrue(summary.substantive_review_after_latest_commit)
+
+    def test_finished_reply_without_matching_zero_finding_summary_keeps_waiting(
+        self,
+    ) -> None:
+        for summary_comment in (None, zero_finding_summary("c" * 40)):
+            with self.subTest(summary=summary_comment is not None):
+                comments = [trigger_comment(), finished_reply()]
+                if summary_comment is not None:
+                    comments.append(summary_comment)
+                state = self.state(comments)
+                self.assertEqual(state.state, "awaiting_response")
+                self.assertFalse(state.terminal)
 
     def test_empty_rate_limit_snapshot_does_not_qualify(self) -> None:
         state = self.state(

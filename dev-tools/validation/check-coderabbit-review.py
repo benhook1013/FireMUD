@@ -59,6 +59,14 @@ REVIEW_LIMIT_WINDOW_PATTERN = re.compile(
 )
 NOOP_REVIEW_MARKER = "does not re-review already reviewed commits"
 ACTIVE_REVIEW_PATTERN = re.compile(r"\bfull\s+review\s+triggered\b", re.IGNORECASE)
+FINISHED_REVIEW_PATTERN = re.compile(
+    r"^[ \t]*full\s+review\s+finished\.\s*$", re.IGNORECASE | re.MULTILINE
+)
+COMMAND_INVOCATION_MARKER = "<!-- CodeRabbit review command invocation:"
+RECENT_REVIEW_MARKER = "<!-- recent_review_start -->"
+NO_ACTIONABLE_REVIEW_MARKER = (
+    "No actionable comments were generated in the recent review."
+)
 FAILED_REVIEW_PATTERN = re.compile(
     r"(?:\breview\b.{0,80}\b(?:failed|failure)\b|\b(?:failed|unable)\b.{0,80}\breview\b|"
     r"\bsomething went wrong\b)",
@@ -513,6 +521,39 @@ def oid_matches(actual: str, reported: str) -> bool:
     )
 
 
+def is_finished_review_reply(body: str) -> bool:
+    return (
+        COMMAND_INVOCATION_MARKER in body
+        and FINISHED_REVIEW_PATTERN.search(unquoted_body(body)) is not None
+    )
+
+
+def matching_zero_finding_summary(
+    pr: dict[str, Any], head_sha: str, after: datetime
+) -> tuple[datetime, dict[str, Any]] | None:
+    matches: list[tuple[datetime, dict[str, Any]]] = []
+    for comment in pr["comments"]["nodes"]:
+        if (comment.get("author") or {}).get("login", "") != "coderabbitai":
+            continue
+        body = comment.get("body") or ""
+        if (
+            RECENT_REVIEW_MARKER not in body
+            or NO_ACTIONABLE_REVIEW_MARKER not in body
+        ):
+            continue
+        updated_dt = parse_timestamp(comment.get("updatedAt"))
+        scope = review_scope(body)
+        if (
+            updated_dt is None
+            or updated_dt <= after
+            or scope is None
+            or not oid_matches(head_sha, scope[1])
+        ):
+            continue
+        matches.append((updated_dt, comment))
+    return max(matches, key=lambda match: match[0]) if matches else None
+
+
 def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSummary:
     pr = payload["data"]["repository"]["pullRequest"]
     latest_commit = pr["commits"]["nodes"][-1]["commit"]
@@ -631,6 +672,40 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
             review_requests, key=lambda request: request[0]
         )
         latest_explicit_review_request_dt = latest_request_dt
+
+    if latest_explicit_review_request_dt is not None:
+        zero_finding_summary = matching_zero_finding_summary(
+            pr, pr["headRefOid"], latest_explicit_review_request_dt
+        )
+        finished_replies = [
+            comment
+            for comment in pr["comments"]["nodes"]
+            if (comment.get("author") or {}).get("login", "") == "coderabbitai"
+            and (created_dt := parse_timestamp(comment.get("createdAt"))) is not None
+            and created_dt > latest_explicit_review_request_dt
+            and is_finished_review_reply(comment.get("body") or "")
+        ]
+        if zero_finding_summary is not None and finished_replies:
+            completed_dt, summary_comment = zero_finding_summary
+            substantive_review_evidence.append(
+                (completed_dt, summary_comment.get("body") or "")
+            )
+            if (
+                latest_coderabbit_review_finished_dt is None
+                or completed_dt > latest_coderabbit_review_finished_dt
+            ):
+                latest_coderabbit_review_finished_dt = completed_dt
+                latest_coderabbit_review_finished_at = completed_dt.isoformat()
+            if (
+                latest_commit_at_dt is not None
+                and completed_dt >= latest_commit_at_dt
+                and (
+                    latest_review_outcome_dt is None
+                    or completed_dt >= latest_review_outcome_dt
+                )
+            ):
+                latest_review_outcome_dt = completed_dt
+                latest_review_outcome = "substantive"
 
     prior_substantive_review_checkpoint = False
     plan_ceiling_rejection_evidence = False
@@ -1148,6 +1223,7 @@ def trigger_state(
             )
 
     candidates: list[tuple[datetime, str, dict[str, Any], str | None]] = []
+    zero_finding_summary = matching_zero_finding_summary(pr, captured_head, trigger_dt)
     for comment in comments:
         if (comment.get("author") or {}).get("login", "") != "coderabbitai":
             continue
@@ -1180,6 +1256,8 @@ def trigger_state(
                 if scope is not None and oid_matches(captured_head, scope[1])
                 else "ambiguous"
             )
+        elif is_finished_review_reply(body) and zero_finding_summary is not None:
+            state = "completed"
         elif FAILED_REVIEW_PATTERN.search(unquoted_body(body)):
             state = "failed"
         elif ACTIVE_REVIEW_PATTERN.search(unquoted_body(body)):
