@@ -511,8 +511,17 @@ mode_step = next(
 assert_mode_step(mode_step, "hosted identity request")
 target_step = next(step for step in validate_job["steps"] if step.get("id") == "target")
 assert "Unsupported lifecycle event" in target_step["run"]
-for job_name in ("prepare-runtime", "deploy-runtime", "verify-runtime", "destroy-runtime", "retire-identity"):
+for job_name in ("prepare-runtime", "deploy-runtime", "verify-runtime"):
     assert "certificate_identity_mode == 'hosted-controller'" in jobs[job_name]["if"], job_name
+assert jobs["destroy-runtime"]["if"] == (
+    "${{ needs.validate-target.outputs.action == 'destroy' }}"
+)
+assert jobs["retire-identity"]["if"] == (
+    "${{ needs.validate-target.outputs.action == 'destroy' && "
+    "needs.destroy-runtime.result == 'success' }}"
+)
+for job_name in ("destroy-runtime", "retire-identity"):
+    assert "certificate_identity_mode" not in jobs[job_name]["if"], job_name
 assert validate_job["if"] == (
     "${{ (github.event_name == 'workflow_run' && "
     "github.event.workflow_run.event == 'pull_request' && "

@@ -708,7 +708,9 @@ jobs:
       - self-hosted
       - preview
     needs: validate-target
-    if: ${{ needs.validate-target.outputs.action == 'destroy' && needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
+    # Close cleanup is mode-independent: a retained identity may have been created
+    # before the default-branch certificate identity mode changed.
+    if: ${{ needs.validate-target.outputs.action == 'destroy' }}
     environment: pr-preview
     concurrency:
       group: preview-allocation-lifecycle
@@ -805,7 +807,7 @@ jobs:
       - self-hosted
       - preview
     needs: [validate-target, destroy-runtime]
-    if: ${{ needs.validate-target.outputs.action == 'destroy' && needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' && needs.destroy-runtime.result == 'success' }}
+    if: ${{ needs.validate-target.outputs.action == 'destroy' && needs.destroy-runtime.result == 'success' }}
     environment: pr-preview
     concurrency:
       # destroy-runtime releases this lifecycle lock; retire-identity reacquires it and rechecks identity before retirement.
