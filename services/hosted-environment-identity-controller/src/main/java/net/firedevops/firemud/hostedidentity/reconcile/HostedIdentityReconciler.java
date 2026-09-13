@@ -37,9 +37,12 @@ import org.springframework.stereotype.Component;
 
 /** Narrow, periodic reconciler for one closed HostedEnvironmentIdentity resource. */
 @Component
+// Finalizers are activation-gated, so route deletion events through the explicit state machine
+// instead of implementing Cleaner, which would make JOSDK add the finalizer before reconcile.
 @ControllerConfiguration(
     finalizerName = HostedIdentityContract.FINALIZER,
-    informer = @Informer(namespaces = {HostedIdentityContract.CONTROL_NAMESPACE}))
+    informer = @Informer(namespaces = {HostedIdentityContract.CONTROL_NAMESPACE}),
+    triggerReconcilerOnAllEvents = true)
 public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIdentity> {
   private static final Logger LOGGER = LoggerFactory.getLogger(HostedIdentityReconciler.class);
   private final KubernetesClient client;

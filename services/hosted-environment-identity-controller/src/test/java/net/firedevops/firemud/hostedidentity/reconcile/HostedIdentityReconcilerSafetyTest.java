@@ -606,6 +606,7 @@ class HostedIdentityReconcilerSafetyTest {
     assertEquals(
         java.util.List.of(HostedIdentityContract.CONTROL_NAMESPACE),
         java.util.Arrays.asList(configuration.informer().namespaces()));
+    assertEquals(true, configuration.triggerReconcilerOnAllEvents());
 
     HostedIdentityProperties canonical = new HostedIdentityProperties();
     assertEquals(HostedIdentityContract.CONTROL_NAMESPACE, canonical.getControlNamespace());
