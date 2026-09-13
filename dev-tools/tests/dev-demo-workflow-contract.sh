@@ -105,6 +105,7 @@ python3 - "$workflow" "$reconciler" "$requester" "$waiter" "$annotator" "$target
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -442,10 +443,14 @@ for bare_assertion in (
     if bare_assertion in runtime_target_run or bare_assertion in deployed_head_step["run"]:
         raise SystemExit(f"dev-demo validation retained opaque assertion {bare_assertion}")
 smoke_condition = deploy_by_name["Smoke dev-demo over TCP"].get("if", "")
-if "success()" not in smoke_condition:
-    raise SystemExit("dev-demo smoke must not bypass an earlier identity/preflight failure")
-if "!cancelled()" in smoke_condition:
-    raise SystemExit("dev-demo smoke redundantly combines !cancelled() with success()")
+smoke_match = re.fullmatch(
+    r"\$\{\{\s*success\(\)\s*(?:(&&)\s*.+)?\s*\}\}",
+    smoke_condition,
+)
+if smoke_match is None or "||" in smoke_condition or "!" in smoke_condition:
+    raise SystemExit(
+        "dev-demo smoke must use success() as a mandatory leading && guard"
+    )
 success_condition = deploy_by_name["Summarize dev-demo access"].get("if", "")
 expected_success_condition = (
     "${{ success() && steps.cluster-access.outputs.available == 'true' && "

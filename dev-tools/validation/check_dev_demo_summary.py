@@ -929,6 +929,38 @@ def _validate_smoke_account_contract(root: Path) -> None:
                 )
 
 
+def _validate_smoke_condition(condition: object) -> None:
+    if not isinstance(condition, str):
+        raise AssertionError(
+            "dev-demo TCP smoke must use a success() leading && guard"
+        )
+
+    expression = condition.strip()
+    if not (expression.startswith("${{") and expression.endswith("}}")):
+        raise AssertionError(
+            "dev-demo TCP smoke must use a success() leading && guard"
+        )
+
+    body = expression[3:-2].strip()
+    if not body.startswith("success()"):
+        raise AssertionError(
+            "dev-demo TCP smoke must use a success() leading && guard"
+        )
+
+    remainder = body[len("success()") :].strip()
+    if not remainder:
+        return
+    if not remainder.startswith("&&"):
+        raise AssertionError(
+            "dev-demo TCP smoke must use success() as a mandatory leading && guard"
+        )
+    continuation = remainder[2:].strip()
+    if not continuation or "||" in continuation or "!" in body:
+        raise AssertionError(
+            "dev-demo TCP smoke must use success() as a mandatory leading && guard"
+        )
+
+
 def validate_workflow(root: Path) -> None:
     workflow = _load_workflow(root)
     jobs = workflow.get("jobs")
@@ -941,15 +973,7 @@ def validate_workflow(root: Path) -> None:
         raise AssertionError("dev-demo-deploy job missing its required steps list")
     bootstrap_step = _find_step(deploy_job, "Create dev-demo smoke account")
     smoke_step = _find_step(deploy_job, "Smoke dev-demo over TCP")
-    smoke_condition = smoke_step.get("if")
-    if not isinstance(smoke_condition, str) or "success()" not in smoke_condition:
-        raise AssertionError(
-            "dev-demo TCP smoke must remain gated on prior-step success"
-        )
-    if "!cancelled()" in smoke_condition:
-        raise AssertionError(
-            "dev-demo TCP smoke must not redundantly combine !cancelled() with success()"
-        )
+    _validate_smoke_condition(smoke_step.get("if"))
     bootstrap_manifest = bootstrap_step.get("run")
     if not isinstance(bootstrap_manifest, str):
         raise AssertionError("dev-demo bootstrap step run must be a string")

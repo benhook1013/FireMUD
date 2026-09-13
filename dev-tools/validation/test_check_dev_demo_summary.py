@@ -354,17 +354,51 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             ):
                 self.validator.validate_workflow(root)
 
+    def test_validate_workflow_rejects_optional_smoke_success_or_guard(self):
+        for smoke_condition in (
+            "${{ success() || steps.cluster-access.outputs.available == 'true' }}",
+            "${{ steps.cluster-access.outputs.available == 'true' && success() }}",
+        ):
+            with self.subTest(
+                smoke_condition=smoke_condition
+            ), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._write_workflow_fixture(
+                    root,
+                    self._bootstrap_manifest_fixture(),
+                    smoke_condition=smoke_condition,
+                )
+                with self.assertRaisesRegex(
+                    AssertionError,
+                    r"dev-demo TCP smoke must use .*leading .* guard",
+                ):
+                    self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_negated_smoke_success_guard(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(
+                root,
+                self._bootstrap_manifest_fixture(),
+                smoke_condition="${{ !success() && steps.cluster-access.outputs.available == 'true' }}",
+            )
+            with self.assertRaisesRegex(
+                AssertionError,
+                r"dev-demo TCP smoke must use .*leading .* guard",
+            ):
+                self.validator.validate_workflow(root)
+
     def test_validate_workflow_rejects_redundant_smoke_cancellation_guard(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(
                 root,
                 self._bootstrap_manifest_fixture(),
-                smoke_condition="${{ !cancelled() && success() }}",
+                smoke_condition="${{ success() && !cancelled() }}",
             )
             with self.assertRaisesRegex(
                 AssertionError,
-                r"dev-demo TCP smoke must not redundantly combine !cancelled\(\) with success\(\)",
+                r"dev-demo TCP smoke must use .*leading .* guard",
             ):
                 self.validator.validate_workflow(root)
 
