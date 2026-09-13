@@ -1,0 +1,698 @@
+package net.firedevops.firemud.hostedidentity.probe;
+
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.fabric8.kubernetes.api.model.Secret;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
+import java.security.KeyFactory;
+import java.security.KeyStore;
+import java.security.MessageDigest;
+import java.security.PrivateKey;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.security.interfaces.RSAPrivateCrtKey;
+import java.security.spec.PKCS8EncodedKeySpec;
+import java.security.spec.RSAPublicKeySpec;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Collection;
+import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SNIHostName;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLParameters;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.TrustManagerFactory;
+import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
+import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+/** Probes the derived public HTTPS and TLS-Telnet endpoints without accepting arbitrary hosts. */
+@Component
+public class ServedEnvironmentProbe {
+  static final class HandshakePolicyRejectedException extends IllegalStateException {
+    HandshakePolicyRejectedException(String message) {
+      super(message);
+    }
+  }
+
+  private static final Pattern PRIVATE_KEY_BLOCK =
+      Pattern.compile(
+          "\\A\\s*-----BEGIN PRIVATE KEY-----(.*?)-----END PRIVATE KEY-----\\s*\\z",
+          Pattern.DOTALL);
+  private static final int CONNECT_TIMEOUT_MILLIS = 5000;
+  private static final int IO_TIMEOUT_MILLIS = 8000;
+  private static final Duration TOTAL_PROBE_TIMEOUT_SLACK = Duration.ofSeconds(1);
+  static final Duration TOTAL_PROBE_TIMEOUT =
+      Duration.ofMillis(CONNECT_TIMEOUT_MILLIS + IO_TIMEOUT_MILLIS)
+          .plus(TOTAL_PROBE_TIMEOUT_SLACK);
+  private static final int GRPC_PORT = 6565;
+  private static final int MAX_HTTP_STATUS_LINE_BYTES = 256;
+  private static final String GRPC_PROBE_SERVICE = "account-service";
+  private static final Logger LOGGER = LoggerFactory.getLogger(ServedEnvironmentProbe.class);
+  private static final ThreadLocal<ProbeAttempt> CURRENT_ATTEMPT = new ThreadLocal<>();
+  private final HostedIdentityProperties properties;
+
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected configuration is application-scoped and is never exposed.")
+  public ServedEnvironmentProbe(HostedIdentityProperties properties) {
+    this.properties = properties;
+  }
+
+  public ProbeResult probe(
+      EnvironmentIdentityPlan plan,
+      int telnetPort,
+      String expectedIngressLeafSha256,
+      String expectedTelnetLeafSha256,
+      Secret tcpProxyBridgeMaterial,
+      String expectedGatewayInternalWsLeafSha256,
+      Secret grpcMaterial,
+      String expectedGrpcLeafSha256) {
+    return probe(
+        plan,
+        telnetPort,
+        (hostname, port) -> https(hostname, port, expectedIngressLeafSha256),
+        (hostname, port) -> telnet(hostname, port, expectedTelnetLeafSha256),
+        (hostname, port) ->
+            bridge(hostname, port, tcpProxyBridgeMaterial, expectedGatewayInternalWsLeafSha256),
+        (hostname, port) -> grpc(hostname, port, grpcMaterial, expectedGrpcLeafSha256));
+  }
+
+  ProbeResult probe(
+      EnvironmentIdentityPlan plan,
+      int telnetPort,
+      EndpointProbe httpsProbe,
+      EndpointProbe telnetProbe,
+      EndpointProbe bridgeProbe,
+      EndpointProbe grpcProbe) {
+    return probe(
+        plan, telnetPort, httpsProbe, telnetProbe, bridgeProbe, grpcProbe, TOTAL_PROBE_TIMEOUT);
+  }
+
+  ProbeResult probe(
+      EnvironmentIdentityPlan plan,
+      int telnetPort,
+      EndpointProbe httpsProbe,
+      EndpointProbe telnetProbe,
+      EndpointProbe bridgeProbe,
+      EndpointProbe grpcProbe,
+      Duration timeout) {
+    List<RunningProbe> probes =
+        List.of(
+            startProbe(ProbeName.HTTPS, () -> httpsProbe.check(plan.hostname(), 443)),
+            startProbe(ProbeName.TELNET, () -> telnetProbe.check(plan.hostname(), telnetPort)),
+            startProbe(
+                ProbeName.BRIDGE, () -> bridgeProbe.check(plan.gatewayInternalWsDnsName(), 443)),
+            startProbe(
+                ProbeName.GRPC,
+                () -> {
+                  try {
+                    return grpcProbe.check(grpcHostname(plan), GRPC_PORT);
+                  } catch (IllegalArgumentException exception) {
+                    LOGGER.debug(
+                        "gRPC probe rejected material or configuration for runtime Namespace {}",
+                        plan.runtimeNamespace(),
+                        exception);
+                    return new ProbeResult(false, "grpc-material-or-configuration-invalid");
+                  }
+                }));
+    long deadline = System.nanoTime() + timeout.toNanos();
+    try {
+      List<CompletedProbe> results = new ArrayList<>(probes.size());
+      for (RunningProbe probe : probes) {
+        long remaining = deadline - System.nanoTime();
+        if (remaining <= 0) {
+          throw new TimeoutException();
+        }
+        results.add(new CompletedProbe(probe, probe.task().get(remaining, TimeUnit.NANOSECONDS)));
+      }
+      for (CompletedProbe completedProbe : results) {
+        if (!completedProbe.result().ready()) {
+          cancelOutstanding(probes);
+          return prefixedResult(completedProbe.probe().name(), completedProbe.result());
+        }
+      }
+      return new ProbeResult(true, "served-bridge-and-grpc-accepted");
+    } catch (TimeoutException exception) {
+      cancelOutstanding(probes);
+      LOGGER.debug(
+          "Served-environment probes exceeded the {} total deadline for runtime Namespace {}",
+          timeout,
+          plan.runtimeNamespace());
+      return new ProbeResult(false, "probe-deadline-exceeded");
+    } catch (InterruptedException exception) {
+      cancelOutstanding(probes);
+      Thread.currentThread().interrupt();
+      return new ProbeResult(false, "probe-interrupted");
+    } catch (ExecutionException exception) {
+      cancelOutstanding(probes);
+      if (exception.getCause() instanceof RuntimeException runtimeException) {
+        throw runtimeException;
+      }
+      if (exception.getCause() instanceof Error error) {
+        throw error;
+      }
+      throw new IllegalStateException("served-environment probe failed", exception.getCause());
+    }
+  }
+
+  private static RunningProbe startProbe(ProbeName name, Callable<ProbeResult> operation) {
+    ProbeAttempt attempt = new ProbeAttempt();
+    FutureTask<ProbeResult> task =
+        new FutureTask<>(
+            () -> {
+              CURRENT_ATTEMPT.set(attempt);
+              try {
+                return operation.call();
+              } finally {
+                attempt.closeOpenSocket();
+                CURRENT_ATTEMPT.remove();
+              }
+            });
+    Thread.ofVirtual().name("served-environment-probe-" + name.label()).start(task);
+    return new RunningProbe(name, task, attempt);
+  }
+
+  private static void cancelOutstanding(List<RunningProbe> probes) {
+    for (RunningProbe probe : probes) {
+      probe.attempt().closeOpenSocket();
+    }
+    for (RunningProbe probe : probes) {
+      probe.task().cancel(true);
+    }
+  }
+
+  static ProbeResult prefixedResult(ProbeName probeName, ProbeResult result) {
+    if (probeName == ProbeName.GRPC
+        && "grpc-material-or-configuration-invalid".equals(result.reason())) {
+      return result;
+    }
+    return new ProbeResult(false, probeName.failurePrefix() + result.reason());
+  }
+
+  private ProbeResult bridge(
+      String hostname, int port, Secret material, String expectedFingerprint) {
+    if (material == null || expectedFingerprint == null || expectedFingerprint.isBlank()) {
+      return new ProbeResult(false, "material-or-leaf-fingerprint-missing");
+    }
+    return internalTlsProbe(
+        () ->
+            openBridgeTlsSocket(
+                hostname,
+                hostname,
+                port,
+                expectedFingerprint,
+                material,
+                properties.getGrpcTrustAnchorSha256()),
+        "mtls-handshake",
+        "bridge endpoint " + hostname + ":" + port);
+  }
+
+  ProbeResult grpc(String hostname, int port, Secret material, String expectedFingerprint) {
+    if (material == null || expectedFingerprint == null || expectedFingerprint.isBlank()) {
+      return new ProbeResult(false, "material-or-leaf-fingerprint-missing");
+    }
+    return internalTlsProbe(
+        () ->
+            openGrpcTlsSocket(
+                hostname,
+                hostname,
+                port,
+                expectedFingerprint,
+                material,
+                properties.getGrpcTrustAnchorSha256()),
+        "mtls-handshake",
+        "gRPC endpoint " + hostname + ":" + port);
+  }
+
+  static ProbeResult internalTlsProbe(InternalTlsSocketOpener opener, String successReason) {
+    return internalTlsProbe(opener, successReason, "internal TLS endpoint");
+  }
+
+  private static ProbeResult internalTlsProbe(
+      InternalTlsSocketOpener opener, String successReason, String context) {
+    try (SSLSocket socket = opener.open()) {
+      return socket == null
+          ? new ProbeResult(false, "leaf-fingerprint-mismatch")
+          : new ProbeResult(true, successReason);
+    } catch (IllegalArgumentException exception) {
+      LOGGER.debug("{} rejected material or configuration", context, exception);
+      return new ProbeResult(false, "material-or-configuration-invalid");
+    } catch (HandshakePolicyRejectedException exception) {
+      LOGGER.debug("{} rejected the required handshake policy", context, exception);
+      return new ProbeResult(false, "handshake-policy-rejected");
+    } catch (Exception exception) {
+      LOGGER.debug("{} connection failed", context, exception);
+      return new ProbeResult(false, "connection-failed");
+    } finally {
+      releaseTrackedSocket();
+    }
+  }
+
+  @FunctionalInterface
+  interface InternalTlsSocketOpener {
+    SSLSocket open() throws Exception;
+  }
+
+  private static String grpcHostname(EnvironmentIdentityPlan plan) {
+    if (!plan.grpcConsumers().contains(GRPC_PROBE_SERVICE)) {
+      throw new IllegalArgumentException("fixed gRPC probe service is not a rollout consumer");
+    }
+    return GRPC_PROBE_SERVICE + "." + plan.runtimeNamespace() + ".svc.cluster.local";
+  }
+
+  static SSLSocket openGrpcTlsSocket(
+      String connectHost,
+      String identityHostname,
+      int port,
+      String expectedFingerprint,
+      Secret material,
+      String expectedTrustAnchor)
+      throws Exception {
+    return openInternalTlsSocket(
+        connectHost,
+        identityHostname,
+        port,
+        expectedFingerprint,
+        material,
+        expectedTrustAnchor,
+        "h2");
+  }
+
+  static SSLSocket openBridgeTlsSocket(
+      String connectHost,
+      String identityHostname,
+      int port,
+      String expectedFingerprint,
+      Secret material,
+      String expectedTrustAnchor)
+      throws Exception {
+    return openInternalTlsSocket(
+        connectHost,
+        identityHostname,
+        port,
+        expectedFingerprint,
+        material,
+        expectedTrustAnchor,
+        null);
+  }
+
+  private static SSLSocket openInternalTlsSocket(
+      String connectHost,
+      String identityHostname,
+      int port,
+      String expectedFingerprint,
+      Secret material,
+      String expectedTrustAnchor,
+      String requiredApplicationProtocol)
+      throws Exception {
+    Socket transport = trackSocket(new Socket());
+    SSLSocket socket = null;
+    boolean transferred = false;
+    try {
+      transport.connect(new InetSocketAddress(connectHost, port), CONNECT_TIMEOUT_MILLIS);
+      socket =
+          (SSLSocket)
+              grpcSslContext(material, expectedTrustAnchor)
+                  .getSocketFactory()
+                  .createSocket(transport, identityHostname, port, true);
+      socket.setSoTimeout(IO_TIMEOUT_MILLIS);
+      SSLParameters parameters = socket.getSSLParameters();
+      parameters.setEndpointIdentificationAlgorithm("HTTPS");
+      parameters.setServerNames(List.of(new SNIHostName(identityHostname)));
+      if (requiredApplicationProtocol != null) {
+        parameters.setApplicationProtocols(new String[] {requiredApplicationProtocol});
+      }
+      socket.setSSLParameters(parameters);
+      socket.startHandshake();
+      if (requiredApplicationProtocol != null
+          && !requiredApplicationProtocol.equals(socket.getApplicationProtocol())) {
+        throw new HandshakePolicyRejectedException("gRPC endpoint did not negotiate HTTP/2");
+      }
+      X509Certificate leaf = (X509Certificate) socket.getSession().getPeerCertificates()[0];
+      if (!normalize(expectedFingerprint).equals(normalize(fingerprint(leaf)))) {
+        return null;
+      }
+      transferred = true;
+      return socket;
+    } finally {
+      if (!transferred) {
+        if (socket != null) {
+          socket.close();
+        } else {
+          transport.close();
+        }
+      }
+    }
+  }
+
+  static SSLContext grpcSslContext(Secret material, String expectedTrustAnchor) throws Exception {
+    if (expectedTrustAnchor == null) {
+      throw new IllegalArgumentException("configured gRPC trust anchor is invalid");
+    }
+    String normalizedAnchor = normalize(expectedTrustAnchor);
+    if (!normalizedAnchor.matches("[0-9a-f]{64}")) {
+      throw new IllegalArgumentException("configured gRPC trust anchor is invalid");
+    }
+    if (material == null || material.getData() == null) {
+      throw new IllegalArgumentException("gRPC probe material is absent");
+    }
+    List<X509Certificate> chain = certificates(requiredData(material, "tls.crt"));
+    PrivateKey privateKey = privateKey(requiredData(material, "tls.key"));
+    requireMatchingPrivateKey(chain.get(0), privateKey);
+    List<X509Certificate> anchors = certificates(requiredData(material, "ca.crt"));
+    X509Certificate anchor =
+        anchors.stream()
+            .filter(
+                certificate -> {
+                  try {
+                    return normalizedAnchor.equals(fingerprint(certificate));
+                  } catch (Exception exception) {
+                    throw new IllegalArgumentException("gRPC trust anchor is invalid", exception);
+                  }
+                })
+            .findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("gRPC trust anchor mismatch"));
+
+    char[] password = new char[0];
+    KeyStore keys = KeyStore.getInstance(KeyStore.getDefaultType());
+    keys.load(null, password);
+    keys.setKeyEntry("client", privateKey, password, chain.toArray(Certificate[]::new));
+    KeyManagerFactory keyManagers =
+        KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+    keyManagers.init(keys, password);
+
+    KeyStore trust = KeyStore.getInstance(KeyStore.getDefaultType());
+    trust.load(null, null);
+    trust.setCertificateEntry("fixed-grpc-ca", anchor);
+    TrustManagerFactory trustManagers =
+        TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+    trustManagers.init(trust);
+
+    SSLContext context = SSLContext.getInstance("TLS");
+    context.init(keyManagers.getKeyManagers(), trustManagers.getTrustManagers(), null);
+    return context;
+  }
+
+  private static String requiredData(Secret material, String key) {
+    String value = material.getData().get(key);
+    if (value == null || value.isBlank()) {
+      throw new IllegalArgumentException("gRPC probe material is incomplete");
+    }
+    return value;
+  }
+
+  private static List<X509Certificate> certificates(String encodedPem) throws Exception {
+    byte[] pem = Base64.getDecoder().decode(encodedPem);
+    Collection<? extends Certificate> parsed =
+        CertificateFactory.getInstance("X.509").generateCertificates(new ByteArrayInputStream(pem));
+    if (parsed.isEmpty()) {
+      throw new IllegalArgumentException("gRPC certificate material is empty");
+    }
+    List<X509Certificate> result = new ArrayList<>();
+    for (Certificate certificate : parsed) {
+      result.add((X509Certificate) certificate);
+    }
+    return result;
+  }
+
+  private static PrivateKey privateKey(String encodedPem) {
+    String pem = new String(Base64.getDecoder().decode(encodedPem), StandardCharsets.US_ASCII);
+    Matcher matcher = PRIVATE_KEY_BLOCK.matcher(pem);
+    if (!matcher.matches()) {
+      throw new IllegalArgumentException("gRPC private key PEM label is invalid");
+    }
+    byte[] der = Base64.getDecoder().decode(matcher.group(1).replaceAll("\\s", ""));
+    try {
+      return KeyFactory.getInstance("RSA").generatePrivate(new PKCS8EncodedKeySpec(der));
+    } catch (GeneralSecurityException exception) {
+      throw new IllegalArgumentException("gRPC private key is not valid RSA PKCS#8", exception);
+    }
+  }
+
+  private static void requireMatchingPrivateKey(X509Certificate leaf, PrivateKey privateKey) {
+    if (!(privateKey instanceof RSAPrivateCrtKey rsaKey)) {
+      throw new IllegalArgumentException("gRPC private key is not an RSA key");
+    }
+    try {
+      if (!leaf.getPublicKey()
+          .equals(
+              KeyFactory.getInstance("RSA")
+                  .generatePublic(
+                      new RSAPublicKeySpec(rsaKey.getModulus(), rsaKey.getPublicExponent())))) {
+        throw new IllegalArgumentException("gRPC private key does not match the leaf certificate");
+      }
+    } catch (GeneralSecurityException exception) {
+      throw new IllegalArgumentException("gRPC private key could not be validated", exception);
+    }
+  }
+
+  @SuppressFBWarnings(
+      value = "REC_CATCH_EXCEPTION",
+      justification =
+          "Readiness intentionally maps every TLS, I/O, and response-parse failure to one bounded result.")
+  private ProbeResult https(String hostname, int port, String expectedFingerprint) {
+    if (expectedFingerprint == null || expectedFingerprint.isBlank()) {
+      return new ProbeResult(false, "leaf-fingerprint-missing");
+    }
+    try (SSLSocket socket = openTlsSocket(hostname, port, expectedFingerprint)) {
+      if (socket == null) {
+        return new ProbeResult(false, "leaf-fingerprint-mismatch");
+      }
+      OutputStream output = socket.getOutputStream();
+      output.write(
+          ("GET / HTTP/1.1\r\nHost: " + hostname + "\r\nConnection: close\r\n\r\n")
+              .getBytes(StandardCharsets.ISO_8859_1));
+      output.flush();
+      int code = readHttpStatusCode(socket.getInputStream());
+      if (code < 0) {
+        return new ProbeResult(false, "invalid-http-response");
+      }
+      return code < 500
+          ? new ProbeResult(true, "http-" + code)
+          : new ProbeResult(false, "http-" + code);
+    } catch (Exception exception) {
+      LOGGER.debug("HTTPS probe connection failed for {}:{}", hostname, port, exception);
+      return new ProbeResult(false, "connection-failed");
+    } finally {
+      releaseTrackedSocket();
+    }
+  }
+
+  static int readHttpStatusCode(InputStream input) throws IOException {
+    byte[] statusLineBytes = new byte[MAX_HTTP_STATUS_LINE_BYTES];
+    int length = 0;
+    boolean carriageReturn = false;
+    while (true) {
+      int next = input.read();
+      if (next < 0) {
+        return -1;
+      }
+      if (next == '\n') {
+        if (!carriageReturn) {
+          return -1;
+        }
+        break;
+      }
+      if (carriageReturn) {
+        return -1;
+      }
+      if (next == '\r') {
+        carriageReturn = true;
+      } else {
+        if (length == statusLineBytes.length) {
+          return -1;
+        }
+        statusLineBytes[length++] = (byte) next;
+      }
+    }
+
+    String statusLine = new String(statusLineBytes, 0, length, StandardCharsets.ISO_8859_1);
+    if (statusLine.length() < 12
+        || !(statusLine.startsWith("HTTP/1.0 ") || statusLine.startsWith("HTTP/1.1 "))
+        || !isAsciiDigit(statusLine.charAt(9))
+        || !isAsciiDigit(statusLine.charAt(10))
+        || !isAsciiDigit(statusLine.charAt(11))
+        || (statusLine.length() > 12 && statusLine.charAt(12) != ' ')) {
+      return -1;
+    }
+    int statusCode =
+        (statusLine.charAt(9) - '0') * 100
+            + (statusLine.charAt(10) - '0') * 10
+            + (statusLine.charAt(11) - '0');
+    return statusCode >= 100 && statusCode <= 599 ? statusCode : -1;
+  }
+
+  private static boolean isAsciiDigit(char value) {
+    return value >= '0' && value <= '9';
+  }
+
+  private ProbeResult telnet(String hostname, int port, String expectedFingerprint) {
+    if (expectedFingerprint == null || expectedFingerprint.isBlank()) {
+      return new ProbeResult(false, "leaf-fingerprint-missing");
+    }
+    try (SSLSocket socket = openTlsSocket(hostname, port, expectedFingerprint)) {
+      return socket == null
+          ? new ProbeResult(false, "leaf-fingerprint-mismatch")
+          : new ProbeResult(true, "tls-handshake");
+    } catch (Exception exception) {
+      LOGGER.debug("Telnet probe connection failed for {}:{}", hostname, port, exception);
+      return new ProbeResult(false, "connection-failed");
+    } finally {
+      releaseTrackedSocket();
+    }
+  }
+
+  private static SSLSocket openTlsSocket(String hostname, int port, String expectedFingerprint)
+      throws Exception {
+    if (expectedFingerprint == null || expectedFingerprint.isBlank()) {
+      throw new IllegalStateException("expected served leaf fingerprint is required");
+    }
+    SSLSocket socket =
+        trackSocket((SSLSocket) SSLSocketFactory.getDefault().createSocket());
+    return openTlsSocket(hostname, port, expectedFingerprint, socket);
+  }
+
+  static <S extends Socket> S trackSocket(S socket) {
+    ProbeAttempt attempt = CURRENT_ATTEMPT.get();
+    if (attempt != null) {
+      attempt.track(socket);
+    }
+    return socket;
+  }
+
+  private static void releaseTrackedSocket() {
+    ProbeAttempt attempt = CURRENT_ATTEMPT.get();
+    if (attempt != null) {
+      attempt.releaseOpenSocket();
+    }
+  }
+
+  enum ProbeName {
+    HTTPS("https"),
+    TELNET("telnet"),
+    BRIDGE("bridge"),
+    GRPC("grpc");
+
+    private final String label;
+
+    ProbeName(String label) {
+      this.label = label;
+    }
+
+    String label() {
+      return label;
+    }
+
+    String failurePrefix() {
+      return label + "-";
+    }
+  }
+
+  private record RunningProbe(ProbeName name, FutureTask<ProbeResult> task, ProbeAttempt attempt) {}
+
+  private record CompletedProbe(RunningProbe probe, ProbeResult result) {}
+
+  private static final class ProbeAttempt {
+    private Socket openSocket;
+    private boolean closed;
+
+    synchronized void track(Socket socket) {
+      if (closed) {
+        closeQuietly(socket);
+        throw new IllegalStateException("probe attempt already closed");
+      }
+      if (openSocket != null) {
+        closeQuietly(socket);
+        throw new IllegalStateException("probe attempt already has an open socket");
+      }
+      openSocket = socket;
+    }
+
+    synchronized void releaseOpenSocket() {
+      openSocket = null;
+    }
+
+    synchronized void closeOpenSocket() {
+      closed = true;
+      closeQuietly(openSocket);
+      openSocket = null;
+    }
+
+    private static void closeQuietly(Socket socket) {
+      if (socket == null) {
+        return;
+      }
+      try {
+        socket.close();
+      } catch (IOException exception) {
+        LOGGER.debug("Unable to close served-environment probe socket", exception);
+      }
+    }
+  }
+
+  static SSLSocket openTlsSocket(
+      String hostname, int port, String expectedFingerprint, SSLSocket socket) throws Exception {
+    boolean transferred = false;
+    try {
+      socket.setSoTimeout(IO_TIMEOUT_MILLIS);
+      socket.connect(new InetSocketAddress(hostname, port), CONNECT_TIMEOUT_MILLIS);
+      SSLParameters parameters = socket.getSSLParameters();
+      parameters.setEndpointIdentificationAlgorithm("HTTPS");
+      parameters.setServerNames(List.of(new SNIHostName(hostname)));
+      socket.setSSLParameters(parameters);
+      socket.startHandshake();
+      X509Certificate leaf = (X509Certificate) socket.getSession().getPeerCertificates()[0];
+      String actual = fingerprint(leaf);
+      if (!normalize(expectedFingerprint).equals(normalize(actual))) {
+        return null;
+      }
+      transferred = true;
+      return socket;
+    } finally {
+      if (!transferred) {
+        socket.close();
+      }
+    }
+  }
+
+  private static String fingerprint(X509Certificate certificate) throws Exception {
+    byte[] digest = MessageDigest.getInstance("SHA-256").digest(certificate.getEncoded());
+    StringBuilder result = new StringBuilder(digest.length * 2);
+    for (byte value : digest) {
+      result.append(String.format(Locale.ROOT, "%02x", value));
+    }
+    return result.toString();
+  }
+
+  private static String normalize(String fingerprint) {
+    return fingerprint.toLowerCase(Locale.ROOT).replace(":", "").trim();
+  }
+
+  @FunctionalInterface
+  interface EndpointProbe {
+    ProbeResult check(String hostname, int port);
+  }
+
+  public record ProbeResult(boolean ready, String reason) {}
+}

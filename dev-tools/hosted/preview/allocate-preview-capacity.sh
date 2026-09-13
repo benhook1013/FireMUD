@@ -13,6 +13,7 @@ target_head_sha="$4"
 priority_label="preview:priority"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 eligibility_script="${PREVIEW_ELIGIBILITY_SCRIPT:-${script_dir}/preview-eligibility.py}"
+revalidate_deploy_script="${PREVIEW_REVALIDATE_DEPLOY_SCRIPT:-${script_dir}/revalidate-preview-deploy.sh}"
 delete_script="${PREVIEW_DELETE_SCRIPT:-${script_dir}/../shared/delete-hosted-namespace.sh}"
 publish_reclaimed_script="${PREVIEW_RECLAIMED_PUBLISH_SCRIPT:-${script_dir}/publish-preview-reclaimed.sh}"
 publish_attempts="${PREVIEW_RECLAIM_PUBLISH_ATTEMPTS:-3}"
@@ -47,69 +48,174 @@ emit_output() {
   fi
 }
 
+inspect_labels() {
+  local labels_json="$1"
+  local inspection
+  local labels_valid
+  local is_priority
+
+  inspection="$(python3 "$eligibility_script" --inspect-labels --labels-json "$labels_json")" || return 1
+  labels_valid="$(sed -n 's/^labels_valid=//p' <<<"$inspection")"
+  is_priority="$(sed -n 's/^priority=//p' <<<"$inspection")"
+  if [[ "$labels_valid" != true && "$labels_valid" != false ]] ||
+    [[ "$is_priority" != true && "$is_priority" != false ]]; then
+    return 1
+  fi
+  printf '%s\t%s\n' "$labels_valid" "$is_priority"
+}
+
 get_pr_state() {
   local pr_number="$1"
-  gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" \
-    --jq '[.state, .head.sha, (.labels | map(.name) | any(. == "preview:priority"))] | @tsv'
+  local raw_metadata
+  local pr_state
+  local head_sha
+  local labels_base64
+  local labels_json
+  local inspection
+  local labels_valid
+  local is_priority
+  local extra
+
+  raw_metadata="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" \
+    --jq '[.state, .head.sha, (.labels | tojson | @base64)] | @tsv')" || return 1
+  if [[ "$raw_metadata" == *$'\n'* || "$raw_metadata" == *$'\r'* ]]; then
+    return 1
+  fi
+  IFS=$'\t' read -r pr_state head_sha labels_base64 extra <<<"$raw_metadata"
+  if [[ -n "${extra:-}" || -z "$pr_state" || -z "$head_sha" || -z "$labels_base64" ]]; then
+    return 1
+  fi
+  labels_json="$(printf '%s' "$labels_base64" | base64 --decode 2>/dev/null)" || return 1
+  inspection="$(inspect_labels "$labels_json")" || return 1
+  IFS=$'\t' read -r labels_valid is_priority <<<"$inspection"
+  printf '%s\t%s\t%s\t%s\n' \
+    "$pr_state" "$head_sha" "$is_priority" \
+    "$([[ "$labels_valid" == true ]] && printf valid || printf invalid)"
 }
 
 find_unsatisfied_priority_pr() {
-  local priority_rows
+  local max_open_pr_candidates=1000
+  local open_pr_rows
+  local priority_candidates
+  local candidate_row
   local pr_number
   local head_sha
-  local head_repository
-  local pr_author
-  local pr_base_ref
-  local pr_state
-  local eligibility_output
-  local eligible
+  local extra
   local namespace
   local namespace_owner
   local namespace_head
+  local page
+  local page_rows
+  local open_pr_page_size=100
+  local max_open_pr_pages
+  local overflow_page
+  local overflow_row
+  local open_pr_jq='.[] | [
+          (.number // ""),
+          (.head.sha // ""),
+          (.head.repo.full_name // ""),
+          (.user.login // ""),
+          (.base.ref // ""),
+          (.state // ""),
+          ((.labels // null) | tojson | @base64)
+        ] | @tsv'
 
-  if ! priority_rows="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
-    --jq '.[] | select(.labels | map(.name) | any(. == "preview:priority")) | [.number, .head.sha, .head.repo.full_name, .user.login, .base.ref, .state] | @tsv')"; then
-    echo "Unable to query current priority pull requests" >&2
+  open_pr_rows=""
+  if (( max_open_pr_candidates <= 0 || open_pr_page_size <= 0 )); then
+    echo "Open pull request pagination bounds must be positive" >&2
     return 1
   fi
-  while IFS=$'\t' read -r pr_number head_sha head_repository pr_author pr_base_ref pr_state; do
-    if [[ -z "$pr_number" ]]; then
-      continue
-    fi
-    if [[ "$head_repository" != "$GITHUB_REPOSITORY" ]]; then
-      continue
-    fi
-    if ! eligibility_output="$(python3 "$eligibility_script" \
-      --operation deploy \
-      --state "$pr_state" \
-      --base-ref "$pr_base_ref" \
-      --author "$pr_author")"; then
-      echo "Unable to evaluate preview eligibility for priority PR #${pr_number}" >&2
+  if (( max_open_pr_candidates % open_pr_page_size != 0 )); then
+    echo "Open pull request candidate limit must be divisible by the page size" >&2
+    return 1
+  fi
+  max_open_pr_pages=$((max_open_pr_candidates / open_pr_page_size))
+  overflow_page=$((max_open_pr_pages + 1))
+  for ((page = 1; page <= max_open_pr_pages; page++)); do
+    if ! page_rows="$(gh api \
+      "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=${open_pr_page_size}&page=${page}" \
+      --jq "$open_pr_jq")"; then
+      echo "Unable to query open pull requests for priority evaluation" >&2
       return 1
     fi
-    eligible="$(sed -n 's/^eligible=//p' <<<"$eligibility_output")"
-    if [[ "$eligible" != "true" && "$eligible" != "false" ]]; then
-      echo "Invalid preview eligibility result for priority PR #${pr_number}" >&2
+    if [[ -z "$page_rows" ]]; then
+      break
+    fi
+    if ! awk -F '\t' -v expected_repository="$GITHUB_REPOSITORY" '
+      NF != 7 { invalid = 1; next }
+      $3 == expected_repository &&
+        ($1 == "" || $2 == "" || $4 == "" || $5 == "" || $6 == "" || $7 == "") {
+          invalid = 1
+        }
+      END { exit invalid }
+    ' <<<"$page_rows"; then
+      echo "Open pull request metadata is missing required identity fields" >&2
       return 1
     fi
-    if [[ "$eligible" != "true" ]]; then
+    open_pr_rows+="$page_rows"$'\n'
+    if (( $(grep -c . <<<"$page_rows") < open_pr_page_size )); then
+      break
+    fi
+  done
+  if (( page > max_open_pr_pages )); then
+    if ! overflow_row="$(gh api \
+      "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=${open_pr_page_size}&page=${overflow_page}" \
+      --jq "$open_pr_jq")"; then
+      echo "Unable to query open pull requests for priority evaluation" >&2
+      return 1
+    fi
+    if [[ -n "$overflow_row" ]]; then
+      echo "Unable to evaluate open pull requests for priority intent: candidate limit exceeded" >&2
+      return 1
+    fi
+  fi
+  if ! priority_candidates="$(
+    printf '%s' "$open_pr_rows" | python3 "$eligibility_script" \
+      --batch-deploy-candidates \
+      --expected-repository "$GITHUB_REPOSITORY"
+  )"; then
+    echo "Unable to evaluate preview eligibility for open pull requests" >&2
+    return 1
+  fi
+  while IFS= read -r candidate_row; do
+    if [[ -z "$candidate_row" ]]; then
       continue
+    fi
+    IFS=$'\t' read -r pr_number head_sha extra <<<"$candidate_row"
+    if ! [[ "$pr_number" =~ ^[1-9][0-9]*$ ]] ||
+      [[ -z "$head_sha" || -n "${extra:-}" || "$candidate_row" != "${pr_number}"$'\t'"${head_sha}" ]]; then
+      echo "Invalid batched preview eligibility result" >&2
+      return 1
     fi
     namespace="pr-${pr_number}"
-    namespace_owner="$(kubectl get namespace "$namespace" -o jsonpath='{.metadata.labels.firemud\.dev/pr-number}' 2>/dev/null || true)"
-    namespace_head="$(kubectl get namespace "$namespace" -o jsonpath='{.metadata.annotations.firemud\.dev/last-preview-head-sha}' 2>/dev/null || true)"
+    if ! namespace_owner="$(kubectl get namespace "$namespace" --ignore-not-found -o jsonpath='{.metadata.labels.firemud\.dev/pr-number}')" ||
+      ! namespace_head="$(kubectl get namespace "$namespace" --ignore-not-found -o jsonpath='{.metadata.annotations.firemud\.dev/last-preview-head-sha}')"; then
+      echo "Unable to revalidate priority candidate namespace ${namespace}; refusing priority evaluation" >&2
+      return 1
+    fi
     if [[ "$namespace_owner" != "$pr_number" || "$namespace_head" != "$head_sha" ]]; then
       printf '%s\n' "$pr_number"
       return
     fi
-  done <<<"$priority_rows"
+  done <<<"$priority_candidates"
 }
 
-mapfile -t namespace_rows < <(
+# Fail closed on the complete live PR contract before evaluating or mutating
+# shared preview capacity. The workflow repeats this check immediately before
+# Helm so both race-sensitive deploy boundaries stay protected.
+if ! bash "$revalidate_deploy_script" "$target_pr_number" "$target_head_sha"; then
+  echo "Refusing capacity action because target deploy eligibility could not be revalidated" >&2
+  exit 1
+fi
+
+if ! namespace_rows_output="$(
   kubectl get namespaces -l firemud.dev/preview=true \
-    -o jsonpath='{range .items[*]}{.metadata.creationTimestamp}{"|"}{.metadata.name}{"|"}{.metadata.labels.firemud\.dev/pr-number}{"|"}{.metadata.annotations.firemud\.dev/preview-allocated-at}{"|"}{.metadata.annotations.firemud\.dev/last-preview-head-sha}{"|"}{.metadata.annotations.firemud\.dev/last-preview-image-tag}{"\n"}{end}' \
-    | sed '/^$/d'
-)
+    -o jsonpath='{range .items[*]}{.metadata.creationTimestamp}{"|"}{.metadata.name}{"|"}{.metadata.labels.firemud\.dev/pr-number}{"|"}{.metadata.annotations.firemud\.dev/preview-allocated-at}{"|"}{.metadata.annotations.firemud\.dev/last-preview-head-sha}{"|"}{.metadata.annotations.firemud\.dev/last-preview-image-tag}{"\n"}{end}'
+)"; then
+  echo "Unable to list current preview namespaces; refusing capacity action" >&2
+  exit 1
+fi
+mapfile -t namespace_rows < <(printf '%s\n' "$namespace_rows_output" | sed '/^$/d')
 
 active_count=0
 target_exists=false
@@ -143,8 +249,15 @@ emit_output reclaimed_pr ""
 
 echo "Active preview namespaces excluding ${target_namespace}: ${active_count}"
 echo "Configured preview capacity limit: ${max_active}"
-target_metadata="$(get_pr_state "$target_pr_number")"
-IFS=$'\t' read -r target_state current_target_head target_is_priority <<<"$target_metadata"
+if ! target_metadata="$(get_pr_state "$target_pr_number")"; then
+  echo "Refusing capacity action for target PR #${target_pr_number}: current metadata is unavailable" >&2
+  exit 1
+fi
+IFS=$'\t' read -r target_state current_target_head target_is_priority target_labels_valid <<<"$target_metadata"
+if [[ "$target_labels_valid" != valid ]]; then
+  echo "Refusing capacity action for target PR #${target_pr_number}: malformed label metadata" >&2
+  exit 1
+fi
 if [[ "$target_state" != "open" || "$current_target_head" != "$target_head_sha" ]]; then
   echo "Refusing capacity action for stale target PR #${target_pr_number}" >&2
   exit 1
@@ -186,8 +299,8 @@ for row in "${sorted_candidates[@]}"; do
     echo "Skipping ${namespace}: PR #${pr_number} metadata is unavailable"
     continue
   fi
-  IFS=$'\t' read -r candidate_state _ candidate_is_priority <<<"$candidate_metadata"
-  if [[ "$candidate_state" != "open" || "$candidate_is_priority" == "true" ]]; then
+  IFS=$'\t' read -r candidate_state _ candidate_is_priority candidate_labels_valid <<<"$candidate_metadata"
+  if [[ "$candidate_labels_valid" != valid || "$candidate_state" != "open" || "$candidate_is_priority" == "true" ]]; then
     continue
   fi
   selected="$row"
@@ -276,9 +389,11 @@ fi
 # deletion. The job-level lifecycle lock prevents another managed preview
 # deploy, proof, or cleanup from racing this destructive boundary.
 revalidation_failure=""
-if target_metadata="$(get_pr_state "$target_pr_number")"; then
-  IFS=$'\t' read -r target_state current_target_head target_is_priority <<<"$target_metadata"
-  if [[ "$target_state" != "open" || "$current_target_head" != "$target_head_sha" || "$target_is_priority" != "true" ]]; then
+if ! bash "$revalidate_deploy_script" "$target_pr_number" "$target_head_sha"; then
+  revalidation_failure="target PR #${target_pr_number} complete deploy contract could not be revalidated"
+elif target_metadata="$(get_pr_state "$target_pr_number")"; then
+  IFS=$'\t' read -r target_state current_target_head target_is_priority target_labels_valid <<<"$target_metadata"
+  if [[ "$target_labels_valid" != valid || "$target_state" != "open" || "$current_target_head" != "$target_head_sha" || "$target_is_priority" != "true" ]]; then
     revalidation_failure="target PR #${target_pr_number} is no longer the current priority target"
   fi
 else
@@ -286,8 +401,8 @@ else
 fi
 
 if candidate_metadata="$(get_pr_state "$selected_pr")"; then
-  IFS=$'\t' read -r candidate_state _ candidate_is_priority <<<"$candidate_metadata"
-  if [[ -z "$revalidation_failure" && ( "$candidate_state" != "open" || "$candidate_is_priority" == "true" ) ]]; then
+  IFS=$'\t' read -r candidate_state _ candidate_is_priority candidate_labels_valid <<<"$candidate_metadata"
+  if [[ -z "$revalidation_failure" && ( "$candidate_labels_valid" != valid || "$candidate_state" != "open" || "$candidate_is_priority" == "true" ) ]]; then
     revalidation_failure="candidate PR #${selected_pr} is no longer an ordinary open PR"
   fi
 elif [[ -z "$revalidation_failure" ]]; then

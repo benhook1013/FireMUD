@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# This is deliberately a small, cluster-scoped install surface.  The controller
+# establishes one exact per-environment Role/RoleBinding pair during reconcile;
+# the operator helper is only a single-name bootstrap/debug fallback.  The
+# controller's scope-writer ClusterRole is guarded by fail-closed admission and
+# is not a wildcard grant over workload or identity data.
+resources:
+  - namespace.yaml
+  - serviceaccounts.yaml
+  - crd.yaml
+  - admission.yaml
+  - rbac.yaml
+  - deployment.yaml
+  - networkpolicy.yaml

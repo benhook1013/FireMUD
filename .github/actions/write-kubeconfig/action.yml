@@ -1,0 +1,59 @@
+name: Write kubeconfig
+description: Write a validated kubeconfig to a private runner file and write KUBECONFIG to GITHUB_ENV by default
+inputs:
+  content:
+    description: Kubeconfig content supplied by the caller's protected secret
+    required: true
+  path:
+    description: Private runner path for the kubeconfig
+    required: true
+  export-to-github-env:
+    description: Whether to append KUBECONFIG to GITHUB_ENV for subsequent job steps
+    required: false
+    default: 'true'
+runs:
+  using: composite
+  steps:
+    - name: Write private kubeconfig
+      shell: bash
+      env:
+        KUBECONFIG_CONTENT: ${{ inputs.content }}
+        KUBECONFIG_PATH: ${{ inputs.path }}
+        EXPORT_TO_GITHUB_ENV: ${{ inputs.export-to-github-env }}
+      run: |
+        set -euo pipefail
+        umask 077
+        [[ -n "$KUBECONFIG_CONTENT" ]] || {
+          echo "::error title=Missing kubeconfig content::A kubeconfig document is required." >&2
+          exit 1
+        }
+        [[ -n "$KUBECONFIG_PATH" ]] || {
+          echo "::error title=Missing kubeconfig path::A destination path is required." >&2
+          exit 1
+        }
+        [[ "$EXPORT_TO_GITHUB_ENV" == true || "$EXPORT_TO_GITHUB_ENV" == false ]] || {
+          echo "::error title=Invalid export-to-github-env input::Expected true or false." >&2
+          exit 1
+        }
+        command -v kubectl >/dev/null 2>&1 || {
+          echo "::error title=kubectl unavailable::kubectl is required to validate the kubeconfig." >&2
+          exit 1
+        }
+        destination_directory="$(dirname -- "$KUBECONFIG_PATH")"
+        destination_name="$(basename -- "$KUBECONFIG_PATH")"
+        mkdir -p -- "$destination_directory"
+        temporary_path="$(mktemp -- "$destination_directory/.${destination_name}.XXXXXX")"
+        cleanup() {
+          if [[ -n "$temporary_path" ]]; then
+            rm -f -- "$temporary_path"
+          fi
+        }
+        trap cleanup EXIT
+        printf '%s\n' "$KUBECONFIG_CONTENT" > "$temporary_path"
+        chmod 600 "$temporary_path"
+        kubectl --kubeconfig "$temporary_path" config view --minify >/dev/null
+        mv -fT -- "$temporary_path" "$KUBECONFIG_PATH"
+        temporary_path=''
+        if [[ "$EXPORT_TO_GITHUB_ENV" == true ]]; then
+          printf 'KUBECONFIG=%s\n' "$KUBECONFIG_PATH" >> "$GITHUB_ENV"
+        fi

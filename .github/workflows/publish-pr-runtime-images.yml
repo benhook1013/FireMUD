@@ -80,22 +80,41 @@ jobs:
 
       - name: Publish fixed PR image tags
         run: |
-          for service in \
-            account-service \
-            automation-scripting-service \
-            entity-management-service \
-            game-design-service \
-            game-logic-service \
-            game-session-service \
-            logging-admin-service \
-            social-groups-service \
-            spring-cloud-gateway \
-            tcp-proxy-service \
-            world-management-service; do
+          set -euo pipefail
+
+          services=(
+            account-service
+            automation-scripting-service
+            entity-management-service
+            game-design-service
+            game-logic-service
+            game-session-service
+            logging-admin-service
+            social-groups-service
+            spring-cloud-gateway
+            tcp-proxy-service
+            world-management-service
+          )
+
+          missing_source_images=()
+          for service in "${services[@]}"; do
             image="ghcr.io/benhook1013/${service}:${IMAGE_TAG}"
-            docker image inspect "$image" >/dev/null
+            if ! docker image inspect "$image" >/dev/null 2>&1; then
+              echo "Required source artifact image for $service is missing: $image." >&2
+              missing_source_images+=("$image")
+            fi
+          done
+          if (( ${#missing_source_images[@]} > 0 )); then
+            echo "Required source artifact is incomplete; ${#missing_source_images[@]} runtime image(s) are missing. Nothing was published." >&2
+            exit 1
+          fi
+
+          available_services=()
+          for service in "${services[@]}"; do
+            image="ghcr.io/benhook1013/${service}:${IMAGE_TAG}"
             if docker manifest inspect "$image" >/dev/null 2>&1; then
               echo "Fixed image tag already exists; preserving first publication: $image"
+              available_services+=("$service")
               continue
             fi
 
@@ -111,6 +130,40 @@ jobs:
               fi
               if (( push_attempt >= max_push_attempts )); then
                 echo "Failed to publish $image after ${push_attempt} attempts." >&2
+                unpublished_services=()
+                reached_failure=false
+                for candidate_service in "${services[@]}"; do
+                  if [[ "$candidate_service" == "$service" ]]; then
+                    reached_failure=true
+                  fi
+                  if [[ "$reached_failure" == true ]]; then
+                    candidate_image="ghcr.io/benhook1013/${candidate_service}:${IMAGE_TAG}"
+                    if docker manifest inspect "$candidate_image" >/dev/null 2>&1; then
+                      available_services+=("$candidate_service")
+                    else
+                      unpublished_services+=("$candidate_service")
+                    fi
+                  fi
+                done
+                {
+                  echo "### Partial PR runtime image publication"
+                  echo
+                  echo "Successfully available fixed tags:"
+                  if ((${#available_services[@]} == 0)); then
+                    echo "- None"
+                  else
+                    # shellcheck disable=SC2016 # Backticks are literal Markdown delimiters.
+                    printf -- '- `%s`\n' "${available_services[@]}"
+                  fi
+                  echo
+                  echo "Unpublished fixed tags:"
+                  if ((${#unpublished_services[@]} == 0)); then
+                    echo "- None"
+                  else
+                    # shellcheck disable=SC2016 # Backticks are literal Markdown delimiters.
+                    printf -- '- `%s`\n' "${unpublished_services[@]}"
+                  fi
+                } >> "$GITHUB_STEP_SUMMARY"
                 exit 1
               fi
               backoff_seconds=$((5 * 2 ** (push_attempt - 1)))
@@ -118,4 +171,5 @@ jobs:
               sleep "$backoff_seconds"
               push_attempt=$((push_attempt + 1))
             done
+            available_services+=("$service")
           done

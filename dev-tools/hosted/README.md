@@ -6,11 +6,14 @@ This directory contains tooling for FireMUD's hosted Kubernetes environments.
 
 - `shared/`
   - helpers used by both hosted lanes
-  - kubeconfig setup, namespace deletion, shared smoke, shared image wait, shared rollout diagnostics, and shared pull-secret/TLS setup
+  - kubeconfig setup, namespace deletion, shared smoke, shared image wait, shared runtime rollout wait, rollout diagnostics, and shared pull-secret/TLS setup
+  - `wait-for-hosted-runtime-rollouts.sh` owns the canonical 15-deployment rollout inventory; callers provide the namespace and per-deployment timeout
 
 - `preview/`
   - PR-preview-only helpers
   - capacity allocation and bounded priority reclaim, PR-head freshness checks, preview namespace pruning, preview NodePort allocation, and preview-specific value rendering/summary output
+  - [Preview eligibility](preview/preview-eligibility.py) requires valid GitHub label metadata for deploy and retain operations; destroy remains eligible for cleanup when metadata is malformed. `preview:priority` changes allocation ordering only when it is present on an otherwise eligible preview
+  - priority reclaim applies only when the preview pool is full, selects the oldest ordinary allocation after rechecking both target and victim labels at the deletion boundary, and never reclaims another currently priority-labelled allocation
 
 - `dev-demo/`
   - fixed `develop` environment helpers

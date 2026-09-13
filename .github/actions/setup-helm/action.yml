@@ -1,0 +1,72 @@
+name: Set up Helm
+description: Install and verify the pinned Helm release for FireMUD workflows.
+runs:
+  using: composite
+  steps:
+    - name: Resolve pinned Helm release
+      id: pinned-release
+      shell: bash
+      run: |
+        echo 'version=v3.20.1' >> "$GITHUB_OUTPUT"
+        echo 'sha256=0165ee4a2db012cc657381001e593e981f42aa5707acdd50658326790c9d0dc3' >> "$GITHUB_OUTPUT"
+
+    - name: Validate supported runner
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ "${RUNNER_OS:-}" != Linux || "${RUNNER_ARCH:-}" != X64 ]]; then
+          echo "pinned Helm installer requires a Linux X64 runner" >&2
+          exit 1
+        fi
+
+    - name: Restore pinned Helm archive
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: ${{ runner.temp }}/firemud-helm/${{ steps.pinned-release.outputs.version }}/helm.tar.gz
+        key: firemud-helm-${{ runner.os }}-${{ runner.arch }}-${{ steps.pinned-release.outputs.version }}-${{ steps.pinned-release.outputs.sha256 }}
+
+    - name: Install pinned Helm
+      shell: bash
+      env:
+        HELM_VERSION: ${{ steps.pinned-release.outputs.version }}
+        HELM_SHA256: ${{ steps.pinned-release.outputs.sha256 }}
+      run: |
+        set -euo pipefail
+
+        helm_version="${HELM_VERSION:?}"
+        helm_sha256="${HELM_SHA256:?}"
+        helm_root="${RUNNER_TEMP:?}/firemud-helm/${helm_version}"
+        archive_path="${helm_root}/helm.tar.gz"
+        extraction_dir="${helm_root}/extracted"
+        install_dir="${helm_root}/bin"
+
+        mkdir -p -- "$helm_root" "$install_dir"
+        if [[ ! -f "$archive_path" ]] \
+          || ! printf '%s  %s\n' "$helm_sha256" "$archive_path" \
+            | sha256sum --check --status; then
+          temporary_archive="$(mktemp -- "${helm_root}/helm.tar.gz.XXXXXX")"
+          trap 'rm -f -- "$temporary_archive"' EXIT
+          curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
+            "https://get.helm.sh/helm-${helm_version}-linux-amd64.tar.gz" \
+            -o "$temporary_archive"
+          printf '%s  %s\n' "$helm_sha256" "$temporary_archive" \
+            | sha256sum --check --status
+          mv -fT -- "$temporary_archive" "$archive_path"
+          trap - EXIT
+        fi
+        # Revalidate the canonical archive after either cache restore or download before extraction.
+        printf '%s  %s\n' "$helm_sha256" "$archive_path" \
+          | sha256sum --check --status
+        rm -rf -- "$extraction_dir"
+        mkdir -p -- "$extraction_dir"
+        tar -xzf "$archive_path" -C "$extraction_dir" -- linux-amd64/helm
+        install -m 0755 "$extraction_dir/linux-amd64/helm" "$install_dir/helm"
+
+        reported_version="$(
+          "$install_dir/helm" version --template '{{ .Version }}'
+        )"
+        if [[ "$reported_version" != "$helm_version" ]]; then
+          echo "::error title=Helm version mismatch::Expected ${helm_version}, but the installed Helm binary reported ${reported_version}." >&2
+          exit 1
+        fi
+        echo "$install_dir" >> "$GITHUB_PATH"

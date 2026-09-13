@@ -72,48 +72,120 @@ jobs:
       base_sha: ${{ steps.derive.outputs.base_sha }}
       eligible: ${{ steps.eligibility.outputs.eligible }}
       eligibility_reason: ${{ steps.eligibility.outputs.reason }}
+      close_certificate_identity_mode: ${{ steps.close-certificate-identity.outputs.mode }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
         with:
           egress-policy: audit
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Check out preview candidate
+        if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+
+      - name: Check out trusted default branch for close lifecycle
+        if: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Resolve close lifecycle certificate identity owner
+        id: close-certificate-identity
+        if: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' }}
+        uses: ./.github/actions/resolve-certificate-identity-mode
+        with:
+          values-file: k8s/helm/firemud/values-hosted-shared.example.yaml
 
       - name: Derive preview identifiers
         id: derive
         env:
           GH_TOKEN: ${{ github.token }}
+          INPUT_ACTION: ${{ inputs.action }}
+          INPUT_HEAD_SHA: ${{ inputs.head_sha }}
+          INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
+          INPUT_PREVIEW_DOMAIN: ${{ inputs.preview_domain }}
+          INPUT_PR_NUMBER: ${{ inputs.pr_number }}
         run: |
+          set -euo pipefail
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             PR_NUMBER="${{ github.event.pull_request.number }}"
             HEAD_SHA="${{ github.event.pull_request.head.sha }}"
             BASE_SHA="${{ github.event.pull_request.base.sha }}"
             PREVIEW_DOMAIN="preview.firedevops.net"
+            IMAGE_TAG=""
             if [ "${{ github.event.action }}" = "closed" ]; then
               ACTION="destroy"
             else
               ACTION="deploy"
             fi
           else
-            PR_NUMBER="${{ inputs.pr_number }}"
-            HEAD_SHA="${{ inputs.head_sha }}"
+            PR_NUMBER="$INPUT_PR_NUMBER"
+            HEAD_SHA="$INPUT_HEAD_SHA"
             BASE_SHA=""
-            PREVIEW_DOMAIN="${{ inputs.preview_domain }}"
-            ACTION="${{ inputs.action }}"
-            IMAGE_TAG="${{ inputs.image_tag }}"
+            PREVIEW_DOMAIN="$INPUT_PREVIEW_DOMAIN"
+            ACTION="$INPUT_ACTION"
+            IMAGE_TAG="$INPUT_IMAGE_TAG"
           fi
-          if [ -z "$HEAD_SHA" ] && [ "${{ github.event_name }}" != "pull_request" ]; then
-            HEAD_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.head.sha')"
+          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error title=Invalid preview PR number::Expected a canonical positive decimal integer." >&2
+            exit 1
           fi
-          if [ -z "$BASE_SHA" ] && [ "${{ github.event_name }}" != "pull_request" ]; then
-            BASE_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.base.sha')"
+          if [[ "$ACTION" != deploy && "$ACTION" != destroy ]]; then
+            echo "::error title=Invalid preview action::Expected deploy or destroy." >&2
+            exit 1
+          fi
+          if [ -n "$HEAD_SHA" ] && [[ ! "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+            echo "::error title=Invalid preview head SHA::Expected exactly 40 hexadecimal characters." >&2
+            exit 1
+          fi
+          if [ -n "$IMAGE_TAG" ] && [[ ! "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "::error title=Invalid preview image tag::Expected a non-empty tag of at most 128 safe characters." >&2
+            exit 1
+          fi
+          if ((${#PREVIEW_DOMAIN} > 253)) ||
+            [[ ! "$PREVIEW_DOMAIN" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$ ]]; then
+            echo "::error title=Invalid preview domain::Expected a lowercase DNS domain of at most 253 characters." >&2
+            exit 1
+          fi
+          PREVIEW_HOSTNAME="pr-${PR_NUMBER}.${PREVIEW_DOMAIN}"
+          if ((${#PREVIEW_HOSTNAME} > 253)); then
+            echo "::error title=Invalid preview domain::Derived preview hostname exceeds 253 characters." >&2
+            exit 1
+          fi
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            PULL_REQUEST_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+            if ! PR_HEAD_SHA="$(jq -er '.head.sha | select(type == "string")' <<<"$PULL_REQUEST_JSON")" ||
+              ! BASE_SHA="$(jq -er '.base.sha | select(type == "string")' <<<"$PULL_REQUEST_JSON")"; then
+              echo "::error title=Invalid pull request metadata::Expected string head and base SHAs." >&2
+              exit 1
+            fi
+            if [[ ! "$PR_HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+              echo "::error title=Invalid preview head SHA::Expected exactly 40 hexadecimal characters." >&2
+              exit 1
+            fi
+            if [[ ! "$BASE_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+              echo "::error title=Invalid preview base SHA::Expected exactly 40 hexadecimal characters." >&2
+              exit 1
+            fi
+            PR_HEAD_SHA="${PR_HEAD_SHA,,}"
+            BASE_SHA="${BASE_SHA,,}"
+            if [ -z "$HEAD_SHA" ]; then
+              HEAD_SHA="$PR_HEAD_SHA"
+            fi
           fi
           if [ -z "$HEAD_SHA" ]; then
             HEAD_SHA="${GITHUB_SHA}"
           fi
+          if [[ ! "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+            echo "::error title=Invalid preview head SHA::Expected exactly 40 hexadecimal characters." >&2
+            exit 1
+          fi
+          # Keep an explicitly supplied image tag unchanged; only the requested
+          # head identity is normalized for every downstream lifecycle boundary.
+          HEAD_SHA="${HEAD_SHA,,}"
           if [ -z "$IMAGE_TAG" ]; then
             IMAGE_TAG="${HEAD_SHA}"
           fi
@@ -122,7 +194,7 @@ jobs:
             echo "pr_number=${PR_NUMBER}"
             echo "namespace=pr-${PR_NUMBER}"
             echo "release_name=pr-${PR_NUMBER}"
-            echo "hostname=pr-${PR_NUMBER}.${PREVIEW_DOMAIN}"
+            echo "hostname=${PREVIEW_HOSTNAME}"
             echo "image_tag=${IMAGE_TAG}"
             echo "head_sha=${HEAD_SHA}"
             echo "base_sha=${BASE_SHA}"
@@ -136,25 +208,31 @@ jobs:
           EVENT_ACTION: ${{ github.event.action }}
           PR_USER_LOGIN: ${{ github.event.pull_request.user.login }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_LABELS_JSON: ${{ toJson(github.event.pull_request.labels) }}
           DERIVED_PR_NUMBER: ${{ steps.derive.outputs.pr_number }}
         run: |
+          set -euo pipefail
           if [ "$EVENT_NAME" = "pull_request" ]; then
             PR_AUTHOR="$PR_USER_LOGIN"
             BASE_REF="$PR_BASE_REF"
+            LABELS_JSON="$(jq -c 'if type == "array" then [.[] | {name: .name}] else . end' <<<"$PR_LABELS_JSON")"
             if [ "$EVENT_ACTION" = "closed" ]; then
               PR_STATE="closed"
             else
               PR_STATE="open"
             fi
           else
-            PR_AUTHOR="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${DERIVED_PR_NUMBER}" --jq '.user.login')"
-            BASE_REF="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${DERIVED_PR_NUMBER}" --jq '.base.ref')"
-            PR_STATE="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${DERIVED_PR_NUMBER}" --jq '.state')"
+            PULL_REQUEST_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${DERIVED_PR_NUMBER}")"
+            PR_AUTHOR="$(jq -r '.user.login' <<<"$PULL_REQUEST_JSON")"
+            BASE_REF="$(jq -r '.base.ref' <<<"$PULL_REQUEST_JSON")"
+            PR_STATE="$(jq -r '.state' <<<"$PULL_REQUEST_JSON")"
+            LABELS_JSON="$(jq -c '.labels | if type == "array" then [.[] | {name: .name}] else . end' <<<"$PULL_REQUEST_JSON")"
           fi
           {
             echo "author=${PR_AUTHOR}"
             echo "base_ref=${BASE_REF}"
             echo "state=${PR_STATE}"
+            echo "labels_json=${LABELS_JSON}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Resolve preview eligibility
@@ -164,12 +242,14 @@ jobs:
           TARGET_STATE: ${{ steps.target-metadata.outputs.state }}
           TARGET_BASE_REF: ${{ steps.target-metadata.outputs.base_ref }}
           TARGET_AUTHOR: ${{ steps.target-metadata.outputs.author }}
+          TARGET_LABELS_JSON: ${{ steps.target-metadata.outputs.labels_json }}
         run: |
           python3 ./dev-tools/hosted/preview/preview-eligibility.py \
             --operation "$DERIVED_ACTION" \
             --state "$TARGET_STATE" \
             --base-ref "$TARGET_BASE_REF" \
-            --author "$TARGET_AUTHOR" >> "$GITHUB_OUTPUT"
+            --author "$TARGET_AUTHOR" \
+            --labels-json "$TARGET_LABELS_JSON" >> "$GITHUB_OUTPUT"
 
       - name: Explain preview skip
         if: ${{ steps.eligibility.outputs.eligible != 'true' }}
@@ -221,6 +301,7 @@ jobs:
 
   preview-deploy:
     name: Deploy Preview Release
+    timeout-minutes: 120
     runs-on:
       - self-hosted
       - preview
@@ -235,6 +316,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+
+      - name: Resolve certificate identity mode
+        id: certificate-identity
+        uses: ./.github/actions/resolve-certificate-identity-mode
+        with:
+          values-file: k8s/helm/firemud/values-hosted-shared.example.yaml
 
       - name: Publish preview lifecycle state
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
@@ -266,18 +353,7 @@ jobs:
           version: v1.33.4
 
       - name: Set up Helm
-        run: |
-          if ! command -v helm >/dev/null 2>&1; then
-            HELM_VERSION="v3.20.1"
-            INSTALL_DIR="$HOME/.local/bin"
-            mkdir -p "$INSTALL_DIR"
-            curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o /tmp/helm.tgz
-            tar -xzf /tmp/helm.tgz -C /tmp
-            install /tmp/linux-amd64/helm "$INSTALL_DIR/helm"
-          fi
-          export PATH="$HOME/.local/bin:$PATH"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          helm version
+        uses: ./.github/actions/setup-helm
 
       - name: Set up GitHub CLI
         run: |
@@ -414,17 +490,86 @@ jobs:
           echo "PREVIEW_STAGE=wait-for-images" >> "$GITHUB_ENV"
           bash ./dev-tools/hosted/shared/wait-for-runtime-images.sh "${{ steps.effective-image-tag.outputs.image_tag }}"
 
-      - name: Ensure preview gRPC TLS secret exists
+      - name: Record reconciled preview target
         if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
+        env:
+          RUNTIME_NAMESPACE: ${{ needs.preview-plan.outputs.namespace }}
+          PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
+          IMAGE_TAG: ${{ steps.effective-image-tag.outputs.image_tag }}
+          TELNET_PORT: ${{ steps.telnet-port.outputs.telnet_port }}
+          ALLOCATION_TIMESTAMP: ${{ steps.preview-capacity.outputs.allocation_timestamp }}
+        run: |
+          set -euo pipefail
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,50}$ ]] || {
+            echo "::error title=Invalid preview PR number::Expected a canonical positive decimal integer." >&2
+            exit 1
+          }
+          [[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]] || {
+            echo "::error title=Invalid preview runtime namespace::Expected namespace pr-${PR_NUMBER}." >&2
+            exit 1
+          }
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error title=Invalid preview head SHA::Expected exactly 40 lowercase hexadecimal characters." >&2
+            exit 1
+          }
+          [[ "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || {
+            echo "::error title=Invalid preview image tag::Expected a non-empty canonical image tag of at most 128 safe characters." >&2
+            exit 1
+          }
+          [[ "$TELNET_PORT" =~ ^32(00[0-9]|01[0-5])$ ]] || {
+            echo "::error title=Invalid preview Telnet port::Expected a port from 32000 through 32015." >&2
+            exit 1
+          }
+          if [[ ! "$ALLOCATION_TIMESTAMP" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] \
+            || [[ "$(date -u -d "$ALLOCATION_TIMESTAMP" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)" != "$ALLOCATION_TIMESTAMP" ]]; then
+            echo "::error title=Invalid preview allocation timestamp::Expected a valid UTC timestamp in YYYY-MM-DDTHH:MM:SSZ format." >&2
+            exit 1
+          fi
+          bash ./dev-tools/hosted/preview/annotate-preview-namespace.sh \
+            "$RUNTIME_NAMESPACE" "$PR_NUMBER" "$HEAD_SHA" "$IMAGE_TAG" \
+            "$TELNET_PORT" "$ALLOCATION_TIMESTAMP"
+
+      - name: Write hosted identity requester kubeconfig
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
+          path: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
+          export-to-github-env: 'false'
+
+      - name: Apply canonical Active request
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
+        run: bash ./dev-tools/hosted/shared/request-hosted-identity.sh "pr-${{ needs.preview-plan.outputs.pr_number }}" Active
+
+      - name: Remove hosted identity requester kubeconfig
+        if: ${{ always() }}
+        run: rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"
+
+      - name: Wait for all controller identity projections
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
+        run: |
+          echo "PREVIEW_STAGE=identity-projections" >> "$GITHUB_ENV"
+          bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
+            --projections "pr-${{ needs.preview-plan.outputs.pr_number }}" "${{ needs.preview-plan.outputs.namespace }}" 900
+
+      - name: Ensure preview gRPC TLS secret exists
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.certificate-identity.outputs.mode == 'standalone' }}
         run: |
           bash ./dev-tools/hosted/shared/ensure-grpc-tls-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
 
       - name: Show namespace state
         if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
+        env:
+          CERTIFICATE_IDENTITY_MODE: ${{ steps.certificate-identity.outputs.mode }}
         run: |
           kubectl get namespace "${{ needs.preview-plan.outputs.namespace }}"
           kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get secret ghcr-preview-pull
-          kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get secret firemud-grpc-tls
+          if [[ "$CERTIFICATE_IDENTITY_MODE" == "standalone" ]]; then
+            kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get secret firemud-grpc-tls
+          fi
 
       - name: Render preview values
         if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
@@ -457,17 +602,6 @@ jobs:
           path: |
             /tmp/preview-values.yaml
             /tmp/preview-rendered.yaml
-
-      - name: Record reconciled preview target
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
-        run: |
-          bash ./dev-tools/hosted/preview/annotate-preview-namespace.sh \
-            "${{ needs.preview-plan.outputs.namespace }}" \
-            "${{ needs.preview-plan.outputs.pr_number }}" \
-            "${{ needs.preview-plan.outputs.head_sha }}" \
-            "${{ steps.effective-image-tag.outputs.image_tag }}" \
-            "${{ steps.telnet-port.outputs.telnet_port }}" \
-            "${{ steps.preview-capacity.outputs.allocation_timestamp }}"
 
       - name: Summarize preview target
         if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
@@ -509,6 +643,31 @@ jobs:
             --namespace "${{ needs.preview-plan.outputs.namespace }}" \
             --wait \
             --timeout 15m
+
+      - name: Record exact deployed preview head
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.deploy-release.outcome == 'success' }}
+        env:
+          RUNTIME_NAMESPACE: ${{ needs.preview-plan.outputs.namespace }}
+          HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
+          PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error title=Invalid preview PR number::Expected a canonical positive decimal integer." >&2
+            exit 1
+          fi
+          if [[ "$RUNTIME_NAMESPACE" != "pr-${PR_NUMBER}" ]]; then
+            echo "::error title=Invalid preview runtime namespace::Expected namespace pr-${PR_NUMBER}." >&2
+            exit 1
+          fi
+          if [[ ! "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+            echo "::error title=Invalid preview head SHA::Expected exactly 40 hexadecimal characters." >&2
+            exit 1
+          fi
+          head_sha="${HEAD_SHA,,}"
+          kubectl annotate namespace "$RUNTIME_NAMESPACE" \
+            "firemud.dev/last-preview-head-sha=${head_sha}" \
+            --overwrite >/dev/null
 
       - name: Show deployed preview services
         if: ${{ always() && steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
@@ -667,11 +826,13 @@ jobs:
 
   preview-destroy:
     name: Destroy Preview Release
+    timeout-minutes: 60
     runs-on:
       - self-hosted
       - preview
     needs: preview-plan
-    if: ${{ needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'destroy' }}
+    # Closed PRs with a non-standalone identity mode are cleaned by hosted-identity-request.yml via pull_request_target.
+    if: ${{ needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'destroy' && (github.event_name != 'pull_request' || github.event.action != 'closed' || needs.preview-plan.outputs.close_certificate_identity_mode == 'standalone') }}
     environment: pr-preview
     concurrency:
       group: preview-allocation-lifecycle
@@ -716,18 +877,7 @@ jobs:
           version: v1.33.4
 
       - name: Set up Helm
-        run: |
-          if ! command -v helm >/dev/null 2>&1; then
-            HELM_VERSION="v3.20.1"
-            INSTALL_DIR="$HOME/.local/bin"
-            mkdir -p "$INSTALL_DIR"
-            curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o /tmp/helm.tgz
-            tar -xzf /tmp/helm.tgz -C /tmp
-            install /tmp/linux-amd64/helm "$INSTALL_DIR/helm"
-          fi
-          export PATH="$HOME/.local/bin:$PATH"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          helm version
+        uses: ./.github/actions/setup-helm
 
       - name: Write preview kubeconfig
         env:

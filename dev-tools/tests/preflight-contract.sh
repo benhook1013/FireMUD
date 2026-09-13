@@ -2015,8 +2015,10 @@ import copy
 import hashlib
 import json
 import importlib.util
+import os
 import pathlib
 import sys
+from unittest.mock import patch
 import yaml
 
 root = pathlib.Path(sys.argv[1])
@@ -2093,16 +2095,15 @@ except module.TIMESTAMP_ERRORS as exc:
 else:
     raise SystemExit("naive timestamp unexpectedly accepted")
 
-original_subprocess_run = module.subprocess.run
-try:
-    def not_found_lookup(*args, **kwargs):
-        if kwargs.get("timeout") != module.SECRET_LOOKUP_TIMEOUT_SECONDS:
-            raise SystemExit("Secret lookup did not receive its deployment timeout")
-        return module.subprocess.CompletedProcess(
-            args, 1, "", 'Error from server (NotFound): secrets "missing" not found'
-        )
+def not_found_lookup(*args, **kwargs):
+    if kwargs.get("timeout") != module.SECRET_LOOKUP_TIMEOUT_SECONDS:
+        raise SystemExit("Secret lookup did not receive its deployment timeout")
+    return module.subprocess.CompletedProcess(
+        args, 1, "", 'Error from server (NotFound): secrets "missing" not found'
+    )
 
-    module.subprocess.run = not_found_lookup
+
+with patch.object(module.subprocess, "run", not_found_lookup):
     not_found_message = module.secret_lookup_failure("missing")
     if not_found_message != "Missing required Secret in cluster: firemud/missing":
         raise SystemExit(f"NotFound Secret lookup reported incorrectly: {not_found_message}")
@@ -2110,10 +2111,12 @@ try:
     if namespaced_message != "Missing required Secret in cluster: other/missing":
         raise SystemExit(f"namespaced Secret lookup reported incorrectly: {namespaced_message}")
 
-    forbidden_stderr = 'Error from server (Forbidden): secrets is forbidden'
-    module.subprocess.run = lambda *args, **kwargs: module.subprocess.CompletedProcess(
-        args, 1, "", forbidden_stderr
-    )
+forbidden_stderr = 'Error from server (Forbidden): secrets is forbidden'
+with patch.object(
+    module.subprocess,
+    "run",
+    lambda *args, **kwargs: module.subprocess.CompletedProcess(args, 1, "", forbidden_stderr),
+):
     forbidden_message = module.secret_lookup_failure("forbidden")
     expected_forbidden = (
         "Secret lookup could not be verified for firemud/forbidden: "
@@ -2122,12 +2125,11 @@ try:
     if forbidden_message != expected_forbidden:
         raise SystemExit(f"non-NotFound Secret lookup reported incorrectly: {forbidden_message}")
 
-    def raise_lookup_timeout(*args, **kwargs):
-        raise module.subprocess.TimeoutExpired(
-            args, module.SECRET_LOOKUP_TIMEOUT_SECONDS
-        )
+def raise_lookup_timeout(*args, **kwargs):
+    raise module.subprocess.TimeoutExpired(args, module.SECRET_LOOKUP_TIMEOUT_SECONDS)
 
-    module.subprocess.run = raise_lookup_timeout
+
+with patch.object(module.subprocess, "run", raise_lookup_timeout):
     timeout_message = module.secret_lookup_failure("timed-out")
     if (
         timeout_message is None
@@ -2138,10 +2140,11 @@ try:
     ):
         raise SystemExit(f"Timeout Secret lookup reported incorrectly: {timeout_message}")
 
-    def raise_lookup_unicode_error(*args, **kwargs):
-        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+def raise_lookup_unicode_error(*args, **kwargs):
+    raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
 
-    module.subprocess.run = raise_lookup_unicode_error
+
+with patch.object(module.subprocess, "run", raise_lookup_unicode_error):
     unicode_error_message = module.secret_lookup_failure("undecodable")
     if (
         unicode_error_message is None
@@ -2154,10 +2157,11 @@ try:
             f"Unicode decoding Secret lookup reported incorrectly: {unicode_error_message}"
         )
 
-    def raise_lookup_os_error(*args, **kwargs):
-        raise OSError("kubectl unavailable")
+def raise_lookup_os_error(*args, **kwargs):
+    raise OSError("kubectl unavailable")
 
-    module.subprocess.run = raise_lookup_os_error
+
+with patch.object(module.subprocess, "run", raise_lookup_os_error):
     os_error_message = module.secret_lookup_failure("unavailable")
     expected_os_error = (
         "Secret lookup could not be verified for firemud/unavailable: "
@@ -2166,8 +2170,582 @@ try:
     if os_error_message != expected_os_error:
         raise SystemExit(f"OSError Secret lookup reported incorrectly: {os_error_message}")
 
+original_secret_ready_attempts = module.HOSTED_BRIDGE_SECRET_READY_ATTEMPTS
+original_secret_retry_delay = module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS
+
+secret_ready_timeout_env = "FIREMUD_HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS"
+original_secret_ready_timeout_env = os.environ.get(secret_ready_timeout_env)
+try:
+    os.environ.pop(secret_ready_timeout_env, None)
+    default_attempts = module.hosted_bridge_secret_ready_attempts()
+    if default_attempts != module.HOSTED_BRIDGE_SECRET_READY_ATTEMPTS:
+        raise SystemExit("default hosted bridge Secret readiness budget was not preserved")
+    if default_attempts != module._hosted_bridge_secret_ready_attempts_for_timeout(
+        module.HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS
+    ):
+        raise SystemExit("default hosted bridge Secret readiness budget bypassed its shared formula")
+    if (
+        default_attempts * module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS
+        < module.HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS
+    ):
+        raise SystemExit("default hosted bridge Secret readiness budget is too short")
+
+    os.environ[secret_ready_timeout_env] = str(
+        module.HOSTED_BRIDGE_SECRET_READY_MAX_TIMEOUT_SECONDS
+    )
+    expected_max_attempts = (
+        module.HOSTED_BRIDGE_SECRET_READY_MAX_TIMEOUT_SECONDS
+        + module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS
+        - 1
+    ) // module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS
+    if module.hosted_bridge_secret_ready_attempts() != expected_max_attempts:
+        raise SystemExit("maximum hosted bridge Secret readiness budget was not honored")
+
+    try:
+        module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS = 7
+        os.environ[secret_ready_timeout_env] = "15"
+        if module.hosted_bridge_secret_ready_attempts() != 3:
+            raise SystemExit("configured readiness budget bypassed its shared ceiling formula")
+    finally:
+        module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS = original_secret_retry_delay
+
+    os.environ[secret_ready_timeout_env] = "1"
+    if module.hosted_bridge_secret_ready_attempts() != 1:
+        raise SystemExit("minimum hosted bridge Secret readiness budget was not honored")
+
+    expected_timeout_error = (
+        "FIREMUD_HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS must be an integer "
+        "between 1 and 900"
+    )
+    for invalid_timeout in ("", "0", "901", "not-a-number"):
+        os.environ[secret_ready_timeout_env] = invalid_timeout
+        try:
+            module.hosted_bridge_secret_ready_attempts()
+        except ValueError as exc:
+            if str(exc) != expected_timeout_error:
+                raise SystemExit(
+                    f"invalid hosted bridge Secret readiness budget error changed: {exc}"
+                ) from exc
+        else:
+            raise SystemExit(
+                f"invalid hosted bridge Secret readiness budget was accepted: {invalid_timeout!r}"
+            )
 finally:
-    module.subprocess.run = original_subprocess_run
+    if original_secret_ready_timeout_env is None:
+        os.environ.pop(secret_ready_timeout_env, None)
+    else:
+        os.environ[secret_ready_timeout_env] = original_secret_ready_timeout_env
+
+class SequencedClock:
+    def __init__(self, values):
+        self.values = list(values)
+        self.final = self.values[-1]
+
+    def __call__(self):
+        if self.values:
+            self.final = self.values.pop(0)
+        return self.final
+
+
+def secret_lookup(payload):
+    def lookup(args, **kwargs):
+        if kwargs.get("timeout") != module.SECRET_LOOKUP_TIMEOUT_SECONDS:
+            raise SystemExit("Secret-key lookup did not receive its deployment timeout")
+        return module.subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
+
+    return lookup
+
+
+try:
+    with patch.object(
+        module.subprocess,
+        "run",
+        secret_lookup({"data": {"tls.crt": "encoded"}}),
+    ):
+        ready_issue, ready_retryable = module.secret_keys_lookup_failure(
+            "ready", "pr-42", {"tls.crt"}
+        )
+    if ready_issue is not None or ready_retryable:
+        raise SystemExit(f"non-empty Secret data was not accepted: {ready_issue}, {ready_retryable}")
+
+    with patch.object(module.subprocess, "run", secret_lookup({"data": {}})):
+        missing_issue, missing_retryable = module.secret_keys_lookup_failure(
+            "missing-key", "pr-42", {"tls.crt"}
+        )
+    if missing_retryable is not True or "missing keys" not in missing_issue:
+        raise SystemExit(f"missing Secret data key was not retryable: {missing_issue}, {missing_retryable}")
+
+    def timeout_secret_lookup(args, **kwargs):
+        raise module.subprocess.TimeoutExpired(args, kwargs["timeout"])
+
+    with patch.object(module.subprocess, "run", timeout_secret_lookup):
+        timeout_issue, timeout_retryable = module.secret_keys_lookup_failure(
+            "timed-out", "pr-42", {"tls.crt"}
+        )
+    if timeout_retryable is not True or "timed out" not in timeout_issue:
+        raise SystemExit(
+            f"timed-out Secret-key lookup was not retryable: {timeout_issue}, {timeout_retryable}"
+        )
+
+    for lookup_error in (
+        OSError("kubectl unavailable"),
+        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),
+    ):
+        def failed_secret_lookup(*args, **kwargs):
+            raise lookup_error
+
+        with patch.object(module.subprocess, "run", failed_secret_lookup):
+            failed_issue, failed_retryable = module.secret_keys_lookup_failure(
+                "failed", "pr-42", {"tls.crt"}
+            )
+        if failed_retryable or "could not be verified" not in failed_issue:
+            raise SystemExit(
+                "non-timeout Secret-key lookup failure became retryable: "
+                f"{failed_issue}, {failed_retryable}"
+            )
+
+    for invalid_value in ("", 123):
+        with patch.object(
+            module.subprocess,
+            "run",
+            secret_lookup({"data": {"tls.crt": invalid_value}}),
+        ):
+            invalid_issue, invalid_retryable = module.secret_keys_lookup_failure(
+                "not-ready", "pr-42", {"tls.crt"}
+            )
+        if invalid_retryable is not True or "empty or non-string values" not in invalid_issue:
+            raise SystemExit(
+                f"invalid Secret data value was not retryable: {invalid_issue}, {invalid_retryable}"
+            )
+
+    module.HOSTED_BRIDGE_SECRET_READY_ATTEMPTS = 2
+    module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS = 0
+    retry_payloads = iter(
+        ({"data": {"tls.crt": ""}}, {"data": {"tls.crt": "encoded"}})
+    )
+
+    def retry_lookup(args, **kwargs):
+        if kwargs.get("timeout") != module.SECRET_LOOKUP_TIMEOUT_SECONDS:
+            raise SystemExit("retrying Secret lookup did not receive its deployment timeout")
+        return module.subprocess.CompletedProcess(args, 0, json.dumps(next(retry_payloads)), "")
+
+    with (
+        patch.object(module.subprocess, "run", retry_lookup),
+        patch.object(module.time, "sleep", lambda _: None),
+    ):
+        retry_issues = module.wait_for_secret_key_requirements(
+            [("retrying", {"tls.crt"})], "pr-42"
+        )
+    if retry_issues:
+        raise SystemExit(f"empty Secret value did not retry to readiness: {retry_issues}")
+
+    timeout_then_ready_calls = [0]
+
+    def timeout_then_ready_lookup(args, **kwargs):
+        timeout_then_ready_calls[0] += 1
+        if timeout_then_ready_calls[0] == 1:
+            raise module.subprocess.TimeoutExpired(args, kwargs["timeout"])
+        return module.subprocess.CompletedProcess(
+            args, 0, json.dumps({"data": {"tls.crt": "encoded"}}), ""
+        )
+
+    with (
+        patch.object(module.subprocess, "run", timeout_then_ready_lookup),
+        patch.object(module.time, "sleep", lambda _: None),
+    ):
+        timeout_then_ready_issues = module.wait_for_secret_key_requirements(
+            [("timeout-then-ready", {"tls.crt"})], "pr-42"
+        )
+    if timeout_then_ready_calls[0] != 2 or timeout_then_ready_issues:
+        raise SystemExit(
+            "timed-out Secret-key lookup did not retry to readiness: "
+            f"{timeout_then_ready_issues}"
+        )
+
+    timeout_exhaustion_calls = [0]
+
+    def exhausting_timeout_lookup(args, **kwargs):
+        timeout_exhaustion_calls[0] += 1
+        raise module.subprocess.TimeoutExpired(args, timeout_exhaustion_calls[0])
+
+    with (
+        patch.object(module.subprocess, "run", exhausting_timeout_lookup),
+        patch.object(module.time, "sleep", lambda _: None),
+    ):
+        timeout_exhaustion_issues = module.wait_for_secret_key_requirements(
+            [("timeout-exhausted", {"tls.crt"})], "pr-42"
+        )
+    if (
+        timeout_exhaustion_calls[0] != 2
+        or len(timeout_exhaustion_issues) != 1
+        or "timed out after 2 seconds" not in timeout_exhaustion_issues[0]
+        or "still not ready after 2 attempts" not in timeout_exhaustion_issues[0]
+    ):
+        raise SystemExit(
+            "timed-out Secret-key lookup did not preserve its latest exhausted issue: "
+            f"{timeout_exhaustion_issues}"
+        )
+
+    for invalid_attempts in (0, -1):
+        try:
+            module.wait_for_secret_key_requirements(
+                [("invalid-attempts", {"tls.crt"})], "pr-42", ready_attempts=invalid_attempts
+            )
+        except ValueError as error:
+            if str(error) != "ready_attempts must be positive":
+                raise SystemExit(f"invalid readiness-attempt error was not precise: {error}")
+        else:
+            raise SystemExit(f"non-positive ready_attempts was accepted: {invalid_attempts}")
+
+    with patch.object(
+        module.subprocess,
+        "run",
+        secret_lookup({"data": {"tls.crt": 456}}),
+    ):
+        exhausted_issues = module.wait_for_secret_key_requirements(
+            [("exhausted", {"tls.crt"})], "pr-42"
+        )
+    if (
+        len(exhausted_issues) != 1
+        or "empty or non-string values" not in exhausted_issues[0]
+        or "still not ready after 2 attempts" not in exhausted_issues[0]
+    ):
+        raise SystemExit(f"non-string Secret value did not exhaust as retryable: {exhausted_issues}")
+
+    mixed_lookup_calls = []
+
+    def mixed_secret_lookup(secret_name, namespace, required_keys, timeout_seconds):
+        mixed_lookup_calls.append(secret_name)
+        if secret_name == "already-ready":
+            return None, False
+        return (
+            f"Required Secret {namespace}/{secret_name} is missing keys: tls.crt",
+            True,
+        )
+
+    with patch.object(module, "secret_keys_lookup_failure", mixed_secret_lookup), patch.object(
+        module.time, "sleep", lambda _: None
+    ):
+        mixed_secret_issues = module.wait_for_secret_key_requirements(
+            [("already-ready", {"tls.crt"}), ("still-missing", {"tls.crt"})],
+            "pr-42",
+            ready_attempts=2,
+            ready_timeout_seconds=5,
+        )
+    if mixed_lookup_calls != ["already-ready", "still-missing", "still-missing"]:
+        raise SystemExit(
+            "Secret readiness did not remove the ready Secret before exhausting retries: "
+            f"{mixed_lookup_calls}"
+        )
+    if (
+        len(mixed_secret_issues) != 1
+        or "pr-42/still-missing" not in mixed_secret_issues[0]
+        or "already-ready" in mixed_secret_issues[0]
+        or "still not ready after 2 attempts" not in mixed_secret_issues[0]
+    ):
+        raise SystemExit(
+            "Secret readiness mishandled a ready and missing Secret while exhausting attempts: "
+            f"{mixed_secret_issues}"
+        )
+
+    immediate_deadline_clock = SequencedClock((0.0, 5.0, 5.0))
+
+    def immediate_deadline_lookup(*args, **kwargs):
+        raise SystemExit("Secret readiness performed a lookup at an expired deadline")
+
+    with (
+        patch.object(module, "secret_keys_lookup_failure", immediate_deadline_lookup),
+        patch.object(
+            module.time,
+            "monotonic", immediate_deadline_clock,
+        ),
+    ):
+        immediate_deadline_issues = module.wait_for_secret_key_requirements(
+            [("expired-before-first-attempt", {"tls.crt"})],
+            "pr-42",
+            ready_attempts=3,
+            ready_timeout_seconds=5,
+        )
+    if (
+        len(immediate_deadline_issues) != 1
+        or "Secret readiness deadline left less than the"
+        not in immediate_deadline_issues[0]
+        or "2s minimum lookup window" not in immediate_deadline_issues[0]
+        or "no Secret lookups attempted" not in immediate_deadline_issues[0]
+        or "still not ready after" in immediate_deadline_issues[0]
+        or "elapsed 5.0s of 5s readiness budget" not in immediate_deadline_issues[0]
+    ):
+        raise SystemExit(
+            "Secret readiness did not stop before its first expired-deadline lookup: "
+            f"{immediate_deadline_issues}"
+        )
+
+    below_floor_clock = SequencedClock((0.0, 4.0, 4.0))
+    below_floor_lookup_calls = [0]
+
+    def below_floor_lookup(*args, **kwargs):
+        below_floor_lookup_calls[0] += 1
+        raise SystemExit("Secret readiness started a lookup below its usable timeout floor")
+
+    with (
+        patch.object(module, "secret_keys_lookup_failure", below_floor_lookup),
+        patch.object(module.time, "monotonic", below_floor_clock),
+    ):
+        below_floor_issues = module.wait_for_secret_key_requirements(
+            [("below-floor", {"tls.crt"})],
+            "pr-42",
+            ready_attempts=3,
+            ready_timeout_seconds=5,
+        )
+    if below_floor_lookup_calls[0] != 0:
+        raise SystemExit("Secret readiness performed a lookup below its usable timeout floor")
+    if (
+        len(below_floor_issues) != 1
+        or "2s minimum lookup window" not in below_floor_issues[0]
+        or "no Secret lookups attempted" not in below_floor_issues[0]
+        or "elapsed 4.0s of 5s readiness budget" not in below_floor_issues[0]
+    ):
+        raise SystemExit(
+            f"Secret readiness did not report its below-floor deadline: {below_floor_issues}"
+        )
+
+    exact_floor_clock = SequencedClock((0.0, 3.0, 3.0))
+    exact_floor_lookup_calls = [0]
+
+    def exact_floor_lookup(args, **kwargs):
+        exact_floor_lookup_calls[0] += 1
+        if kwargs.get("timeout") != 2.0:
+            raise SystemExit("Secret readiness did not preserve the exact usable timeout floor")
+        return module.subprocess.CompletedProcess(
+            args, 0, json.dumps({"data": {"tls.crt": "encoded"}}), ""
+        )
+
+    with (
+        patch.object(module.subprocess, "run", exact_floor_lookup),
+        patch.object(module.time, "monotonic", exact_floor_clock),
+    ):
+        exact_floor_issues = module.wait_for_secret_key_requirements(
+            [("exact-floor", {"tls.crt"})],
+            "pr-42",
+            ready_attempts=3,
+            ready_timeout_seconds=5,
+        )
+    if exact_floor_lookup_calls[0] != 1 or exact_floor_issues:
+        raise SystemExit(
+            "Secret readiness did not allow a lookup at the exact usable timeout floor: "
+            f"{exact_floor_issues}"
+        )
+
+    one_second_floor_clock = SequencedClock((0.0, 0.0, 0.0))
+    one_second_floor_lookup_calls = [0]
+
+    def one_second_floor_lookup(args, **kwargs):
+        one_second_floor_lookup_calls[0] += 1
+        if kwargs.get("timeout") != 1.0:
+            raise SystemExit("one-second Secret readiness did not fund one exact lookup")
+        return module.subprocess.CompletedProcess(
+            args, 0, json.dumps({"data": {"tls.crt": "encoded"}}), ""
+        )
+
+    with (
+        patch.object(module.subprocess, "run", one_second_floor_lookup),
+        patch.object(module.time, "monotonic", one_second_floor_clock),
+    ):
+        one_second_floor_issues = module.wait_for_secret_key_requirements(
+            [("one-second-floor", {"tls.crt"})],
+            "pr-42",
+            ready_attempts=1,
+            ready_timeout_seconds=1,
+        )
+    if one_second_floor_lookup_calls[0] != 1 or one_second_floor_issues:
+        raise SystemExit(
+            "one-second Secret readiness did not preserve its supported exact lookup: "
+            f"{one_second_floor_issues}"
+        )
+
+    one_second_residual_clock = SequencedClock((0.0, 0.1, 0.1))
+    one_second_residual_lookup_calls = [0]
+
+    def one_second_residual_lookup(*args, **kwargs):
+        one_second_residual_lookup_calls[0] += 1
+        raise SystemExit("one-second Secret readiness started a lookup below its usable floor")
+
+    with (
+        patch.object(module, "secret_keys_lookup_failure", one_second_residual_lookup),
+        patch.object(
+            module.time,
+            "monotonic", one_second_residual_clock,
+        ),
+    ):
+        one_second_residual_issues = module.wait_for_secret_key_requirements(
+            [("one-second-residual", {"tls.crt"})],
+            "pr-42",
+            ready_attempts=1,
+            ready_timeout_seconds=1,
+        )
+    if one_second_residual_lookup_calls[0] != 0:
+        raise SystemExit("one-second Secret readiness used a sub-floor residual")
+    if (
+        len(one_second_residual_issues) != 1
+        or "1s minimum lookup window" not in one_second_residual_issues[0]
+        or "no Secret lookups attempted" not in one_second_residual_issues[0]
+        or "elapsed 0.1s of 1s readiness budget" not in one_second_residual_issues[0]
+    ):
+        raise SystemExit(
+            "one-second Secret readiness did not report its sub-floor residual: "
+            f"{one_second_residual_issues}"
+        )
+
+    authoritative_deadline_now = [0.0]
+    authoritative_deadline_calls = [0]
+
+    def retry_before_floor(args, **kwargs):
+        authoritative_deadline_calls[0] += 1
+        authoritative_deadline_now[0] = 4.0
+        return module.subprocess.CompletedProcess(args, 0, json.dumps({"data": {}}), "")
+
+    with (
+        patch.object(module.subprocess, "run", retry_before_floor),
+        patch.object(
+            module.time,
+            "monotonic",
+            lambda: authoritative_deadline_now[0],
+        ),
+    ):
+        authoritative_deadline_issues = module.wait_for_secret_key_requirements(
+            [("deadline-authoritative", {"tls.crt"})],
+            "pr-42",
+            ready_attempts=3,
+            ready_timeout_seconds=5,
+        )
+    if authoritative_deadline_calls[0] != 1:
+        raise SystemExit("Secret readiness retried after losing its usable timeout window")
+    if (
+        len(authoritative_deadline_issues) != 1
+        or "2s minimum lookup window" not in authoritative_deadline_issues[0]
+        or "missing keys" in authoritative_deadline_issues[0]
+        or "still not ready after 1 attempts" not in authoritative_deadline_issues[0]
+        or "elapsed 4.0s of 5s readiness budget"
+        not in authoritative_deadline_issues[0]
+    ):
+        raise SystemExit(
+            "Secret readiness did not make its aggregate deadline diagnostic authoritative: "
+            f"{authoritative_deadline_issues}"
+        )
+
+    monotonic_now = [0.0]
+    slow_lookup_calls = [0]
+
+    def slow_retry_lookup(args, **kwargs):
+        if kwargs.get("timeout") != 5.0:
+            raise SystemExit("slow Secret lookup did not receive the remaining readiness budget")
+        slow_lookup_calls[0] += 1
+        monotonic_now[0] += 6.0
+        return module.subprocess.CompletedProcess(args, 0, json.dumps({"data": {}}), "")
+
+    with (
+        patch.object(module.subprocess, "run", slow_retry_lookup),
+        patch.object(module.time, "monotonic", lambda: monotonic_now[0]),
+    ):
+        deadline_issues = module.wait_for_secret_key_requirements(
+            [("slow", {"tls.crt"})],
+            "pr-42",
+            ready_attempts=3,
+            ready_timeout_seconds=5,
+        )
+    if slow_lookup_calls[0] != 1:
+        raise SystemExit(
+            "Secret readiness performed another lookup after the monotonic deadline expired"
+        )
+    if (
+        len(deadline_issues) != 1
+        or "still not ready after 1 attempts" not in deadline_issues[0]
+        or "elapsed 6.0s of 5s readiness budget" not in deadline_issues[0]
+    ):
+        raise SystemExit(f"slow Secret lookup did not honor its readiness deadline: {deadline_issues}")
+
+    timeout_deadline_now = [0.0]
+    timeout_deadline_calls = [0]
+
+    def timeout_past_deadline(args, **kwargs):
+        timeout_deadline_calls[0] += 1
+        timeout_deadline_now[0] = 6.0
+        raise module.subprocess.TimeoutExpired(args, kwargs["timeout"])
+
+    with (
+        patch.object(module.subprocess, "run", timeout_past_deadline),
+        patch.object(module.time, "monotonic", lambda: timeout_deadline_now[0]),
+    ):
+        timeout_deadline_issues = module.wait_for_secret_key_requirements(
+            [("timeout-past-deadline", {"tls.crt"})],
+            "pr-42",
+            ready_attempts=3,
+            ready_timeout_seconds=5,
+        )
+    if (
+        timeout_deadline_calls[0] != 1
+        or len(timeout_deadline_issues) != 1
+        or "Secret readiness deadline left less than the" not in timeout_deadline_issues[0]
+        or "still not ready after 1 attempts" not in timeout_deadline_issues[0]
+        or "elapsed 6.0s of 5s readiness budget" not in timeout_deadline_issues[0]
+    ):
+        raise SystemExit(
+            "timed-out Secret-key lookup did not stop at its readiness deadline: "
+            f"{timeout_deadline_issues}"
+        )
+
+    monotonic_now = [0.0]
+    expiry_lookup_calls = [0]
+
+    def expiry_during_iteration(args, **kwargs):
+        expiry_lookup_calls[0] += 1
+        if expiry_lookup_calls[0] > 1:
+            raise SystemExit("readiness loop performed a lookup after its deadline expired")
+        monotonic_now[0] += 6.0
+        return module.subprocess.CompletedProcess(args, 0, json.dumps({"data": {}}), "")
+
+    with (
+        patch.object(module.subprocess, "run", expiry_during_iteration),
+        patch.object(module.time, "monotonic", lambda: monotonic_now[0]),
+    ):
+        mid_iteration_expiry_issues = module.wait_for_secret_key_requirements(
+            [("looked-up", {"tls.crt"}), ("deadline-skipped", {"tls.crt"})],
+            "pr-42",
+            ready_attempts=3,
+            ready_timeout_seconds=5,
+        )
+    skipped_issue = next(
+        issue
+        for issue in mid_iteration_expiry_issues
+        if "pr-42/deadline-skipped" in issue
+    )
+    looked_up_issue = next(
+        issue
+        for issue in mid_iteration_expiry_issues
+        if "pr-42/looked-up" in issue
+    )
+    if (
+        "Secret readiness deadline left less than the" not in skipped_issue
+        or "2s minimum lookup window" not in skipped_issue
+        or "no Secret lookups attempted" not in skipped_issue
+        or "still not ready after" in skipped_issue
+        or "elapsed 6.0s of 5s readiness budget" not in skipped_issue
+    ):
+        raise SystemExit(
+            f"mid-iteration Secret readiness expiry was not reported: {mid_iteration_expiry_issues}"
+        )
+    if (
+        "Secret readiness deadline left less than the" not in looked_up_issue
+        or "still not ready after 1 attempts" not in looked_up_issue
+        or "no Secret lookups attempted" in looked_up_issue
+    ):
+        raise SystemExit(
+            "Secret readiness did not retain the per-Secret lookup count before expiry: "
+            f"{mid_iteration_expiry_issues}"
+        )
+finally:
+    module.HOSTED_BRIDGE_SECRET_READY_ATTEMPTS = original_secret_ready_attempts
+    module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS = original_secret_retry_delay
 
 issues = module.external_binding_uniqueness_issues(env_root, "staging", staging)
 if not any("backupStorage.bucket matches production" in issue for issue in issues):
@@ -3036,6 +3614,30 @@ _, bridge_missing_grpc_mount_issues = module.validate_gateway_ws_values(
 if not any("dedicated read-only Secret-backed gRPC TLS mount" in issue for issue in bridge_missing_grpc_mount_issues):
     raise SystemExit(f"missing gRPC TLS mount was accepted: {bridge_missing_grpc_mount_issues}")
 
+bridge_empty_grpc_mount_documents = copy.deepcopy(rendered_documents)
+bridge_empty_grpc_mount = next(
+    mount
+    for document in bridge_empty_grpc_mount_documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    for container in document["spec"]["template"]["spec"]["containers"]
+    if container.get("name") == "tcp-proxy-service"
+    for mount in container["volumeMounts"]
+    if mount.get("name") == "grpc-tls"
+)
+bridge_empty_grpc_mount["mountPath"] = ""
+_, bridge_empty_grpc_mount_issues = module.validate_gateway_ws_values(
+    bridge_empty_grpc_mount_documents,
+    yaml.safe_load(current_expected_path.read_text(encoding="utf-8")),
+)
+if not any(
+    "dedicated read-only Secret-backed gRPC TLS mount" in issue
+    for issue in bridge_empty_grpc_mount_issues
+):
+    raise SystemExit(
+        f"empty gRPC TLS mountPath was accepted: {bridge_empty_grpc_mount_issues}"
+    )
+
 bridge_writable_grpc_mount_documents = copy.deepcopy(rendered_documents)
 bridge_writable_grpc_mount = next(
     mount
@@ -3871,22 +4473,16 @@ recovery_smoke_entry = {
     "contentDigest": "sha256:" + hashlib.sha256(smoke_evidence_path.read_bytes()).hexdigest(),
 }
 
-original_subprocess_run = module.subprocess.run
-
-
 def timed_out_smoke_validator(*args, **kwargs):
     raise module.subprocess.TimeoutExpired(args[0], kwargs.get("timeout"))
 
 
-module.subprocess.run = timed_out_smoke_validator
-try:
+with patch.object(module.subprocess, "run", timed_out_smoke_validator):
     timeout_status, timeout_message = module.validate_retained_smoke_evidence(
         tmp,
         [smoke_evidence_ref],
         "Contract smokeEvidence",
     )
-finally:
-    module.subprocess.run = original_subprocess_run
 if timeout_status != "fail" or "validation timed out" not in timeout_message:
     raise SystemExit(f"smoke evidence validator timeout did not fail closed: {timeout_message}")
 
@@ -3895,15 +4491,12 @@ def unavailable_smoke_validator(*args, **kwargs):
     raise OSError("validator executable missing")
 
 
-module.subprocess.run = unavailable_smoke_validator
-try:
+with patch.object(module.subprocess, "run", unavailable_smoke_validator):
     unavailable_status, unavailable_message = module.validate_retained_smoke_evidence(
         tmp,
         [smoke_evidence_ref],
         "Contract smokeEvidence",
     )
-finally:
-    module.subprocess.run = original_subprocess_run
 if unavailable_status != "fail" or "could not run: validator executable missing" not in unavailable_message:
     raise SystemExit(f"smoke evidence validator launch failure did not fail closed: {unavailable_message}")
 
@@ -8352,6 +8945,643 @@ blocked_status, blocked_message = module.backup_readiness_check(
 )
 if blocked_status != "fail" or "remains blocked until canonical recovery-controller" not in blocked_message:
     raise SystemExit(f"incomplete nested roll-forward validation did not fail closed: {blocked_message}")
+PY
+
+python3 - <<'PY' "$ROOT_DIR" "$TMP_DIR"
+import copy
+import contextlib
+import importlib.util
+import io
+import json
+import os
+import pathlib
+import subprocess
+import sys
+from unittest.mock import patch
+
+import yaml
+
+root = pathlib.Path(sys.argv[1])
+tmp = pathlib.Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location(
+    "preflight_hosted_bridge_contract", root / "dev-tools/deploy/preflight.py"
+)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+namespace = "pr-42"
+release = "pr-42"
+node_port = 32007
+render = """apiVersion: v1
+kind: Service
+metadata:
+  name: spring-cloud-gateway-mtls
+  namespace: __NAMESPACE__
+spec:
+  type: ClusterIP
+  ports:
+    - port: 443
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tcp-proxy-service
+  namespace: __NAMESPACE__
+  labels:
+    app.kubernetes.io/instance: __RELEASE__
+    firemud.dev/certificate-identity-mode: hosted-controller
+  annotations:
+    firemud.dev/allocated-telnet-port: "32007"
+spec:
+  type: NodePort
+  ports:
+    - name: tcp-2323
+      port: 2323
+      targetPort: 2323
+      protocol: TCP
+      nodePort: 32007
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tcp-proxy-service
+  namespace: __NAMESPACE__
+  labels:
+    app.kubernetes.io/instance: __RELEASE__
+    firemud.dev/certificate-identity-mode: hosted-controller
+spec:
+  template:
+    spec:
+      containers:
+        - name: tcp-proxy-service
+          env:
+            - name: GATEWAY_WS_URL
+              value: wss://spring-cloud-gateway-mtls.__NAMESPACE__.svc.cluster.local/ws/game
+            - name: FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH
+              value: /tls/client.crt
+            - name: FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH
+              value: /tls/client.key
+            - name: FIREMUD_GATEWAY_WS_CA_CERT_PATH
+              value: /tls/ca.crt
+            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
+              value: /grpc-tls/client.crt
+            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
+              value: /grpc-tls/client.key
+            - name: FIREMUD_GRPC_CA_CERT_PATH
+              value: /grpc-tls/ca.crt
+            - name: TCP_PROXY_TLS_ENABLED
+              value: "true"
+            - name: TCP_PROXY_TELNET_MODE
+              value: DIRECT_TLS
+            - name: TCP_PROXY_TLS_CERT
+              value: /telnet-tls/tls.crt
+            - name: TCP_PROXY_TLS_KEY
+              value: /telnet-tls/tls.key
+          volumeMounts:
+            - name: bridge
+              mountPath: /tls
+              readOnly: true
+            - name: grpc
+              mountPath: /grpc-tls
+              readOnly: true
+            - name: telnet
+              mountPath: /telnet-tls
+              readOnly: true
+      volumes:
+        - name: bridge
+          secret:
+            secretName: __RELEASE__-tcp-proxy-bridge
+            items:
+              - key: client.crt
+                path: client.crt
+              - key: client.key
+                path: client.key
+              - key: ca.crt
+                path: ca.crt
+        - name: grpc
+          secret:
+            secretName: firemud-grpc-tls
+        - name: telnet
+          secret:
+            secretName: __RELEASE__-telnet-tls
+"""
+render = render.replace("__NAMESPACE__", namespace).replace("__RELEASE__", release)
+render_path = tmp / "hosted-bridge-contract.yaml"
+render_path.write_text(render, encoding="utf-8")
+
+
+def run_hosted(path, *extra_args):
+    return subprocess.run(
+        [
+            sys.executable,
+            str(root / "dev-tools/deploy/preflight.py"),
+            "hosted-bridge",
+            str(path),
+            namespace,
+            release,
+            *extra_args,
+        ],
+        env={**os.environ, "FIREMUD_PREFLIGHT_CONTEXT": "ci-static"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+malformed_invocation = subprocess.run(
+    [
+        sys.executable,
+        str(root / "dev-tools/deploy/preflight.py"),
+        "hosted-bridge",
+    ],
+    env={**os.environ, "FIREMUD_PREFLIGHT_CONTEXT": "ci-static"},
+    capture_output=True,
+    text=True,
+    check=False,
+)
+if malformed_invocation.returncode == 0 or malformed_invocation.stderr.strip() != (
+    "malformed hosted-bridge invocation: expected 3 or 5 arguments after hosted-bridge"
+):
+    raise SystemExit(
+        "hosted-bridge malformed invocation did not receive its specific error: "
+        f"{malformed_invocation.stderr!r}"
+    )
+
+invalid_flag = run_hosted(
+    render_path,
+    "--unexpected-hosted-option",
+    str(node_port),
+)
+if invalid_flag.returncode == 0 or invalid_flag.stderr.strip() != (
+    "hosted-bridge optional flag must be --expected-hosted-telnet-node-port"
+):
+    raise SystemExit(
+        "hosted-bridge invalid flag did not receive its specific error: "
+        f"{invalid_flag.stderr!r}"
+    )
+
+invalid_context = subprocess.run(
+    [
+        sys.executable,
+        str(root / "dev-tools/deploy/preflight.py"),
+        "hosted-bridge",
+        str(render_path),
+        "pr-0",
+        "preview",
+    ],
+    env={**os.environ, "FIREMUD_PREFLIGHT_CONTEXT": "invalid-context"},
+    capture_output=True,
+    text=True,
+    check=False,
+)
+if invalid_context.returncode == 0 or invalid_context.stderr.strip() != (
+    "Invalid FIREMUD_PREFLIGHT_CONTEXT: invalid-context"
+):
+    raise SystemExit(
+        "hosted-bridge invalid context did not win before target validation: "
+        f"{invalid_context.stderr!r}"
+    )
+
+
+valid = run_hosted(
+    render_path,
+    "--expected-hosted-telnet-node-port",
+    str(node_port),
+)
+if valid.returncode != 0:
+    raise SystemExit(f"hosted-bridge valid fixture failed: {valid.stderr}{valid.stdout}")
+valid_result = json.loads(valid.stdout)
+if valid_result != {
+    "category": "apply-blocking",
+    "message": (
+        "Gateway bridge and direct Telnet TLS alignment is valid; "
+        "ci-static did not check controller-projected Secret readiness"
+    ),
+    "policyId": "PREFLIGHT-BRIDGE-001",
+    "required": True,
+    "status": "pass",
+}:
+    raise SystemExit(f"hosted-bridge did not emit its canonical pass result: {valid_result}")
+if module.hosted_bridge_success_message("operator") != (
+    "Gateway bridge and direct Telnet TLS alignment is valid; "
+    "controller-projected Secret readiness is confirmed"
+):
+    raise SystemExit("hosted-bridge operator success does not confirm projection readiness")
+
+duplicate_mount_documents = list(
+    yaml.safe_load_all(render_path.read_text(encoding="utf-8"))
+)
+duplicate_mount_container = next(
+    document
+    for document in duplicate_mount_documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)["spec"]["template"]["spec"]["containers"][0]
+duplicate_mount_container["volumeMounts"].append(
+    copy.deepcopy(
+        next(
+            mount
+            for mount in duplicate_mount_container["volumeMounts"]
+            if mount.get("mountPath") == "/telnet-tls"
+        )
+    )
+)
+duplicate_mount_issues = module.validate_hosted_telnet_tls_values(
+    duplicate_mount_documents,
+    required_identity_mode="hosted-controller",
+    expected_hosted_telnet_node_port=node_port,
+    target_namespace=namespace,
+)
+if "hosted TCP Proxy TLS requires exactly one /telnet-tls mount" not in duplicate_mount_issues:
+    raise SystemExit(
+        "hosted-bridge accepted duplicate /telnet-tls mounts: "
+        f"{duplicate_mount_issues}"
+    )
+
+missing_listener_documents = list(
+    yaml.safe_load_all(render_path.read_text(encoding="utf-8"))
+)
+missing_listener_service = next(
+    document
+    for document in missing_listener_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+missing_listener_service["spec"]["ports"] = []
+missing_listener_issues = module.validate_hosted_telnet_tls_values(
+    missing_listener_documents,
+    required_identity_mode="hosted-controller",
+    expected_hosted_telnet_node_port=node_port,
+    target_namespace=namespace,
+)
+if missing_listener_issues.count(
+    "TCP Proxy Service requires exactly one direct TLS listener with port 2323, targetPort 2323, and protocol TCP"
+) != 1 or any("nodePort" in issue for issue in missing_listener_issues):
+    raise SystemExit(
+        "hosted-bridge emitted cascading nodePort diagnostics for a missing Telnet listener: "
+        f"{missing_listener_issues}"
+    )
+
+missing_node_port_documents = list(
+    yaml.safe_load_all(render_path.read_text(encoding="utf-8"))
+)
+missing_node_port_service = next(
+    document
+    for document in missing_node_port_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+del missing_node_port_service["spec"]["ports"][0]["nodePort"]
+missing_node_port_issues = module.validate_hosted_telnet_tls_values(
+    missing_node_port_documents,
+    required_identity_mode="hosted-controller",
+    expected_hosted_telnet_node_port=node_port,
+    target_namespace=namespace,
+)
+if missing_node_port_issues.count(
+    "hosted-controller TCP Proxy Service requires exactly one explicit allocated nodePort"
+) != 1 or any(
+    "must not declare any other explicit nodePorts" in issue
+    for issue in missing_node_port_issues
+):
+    raise SystemExit(
+        "hosted-bridge emitted cascading surplus-nodePort diagnostics for a missing Telnet nodePort: "
+        f"{missing_node_port_issues}"
+    )
+
+independent_telnet_mount_documents = list(
+    yaml.safe_load_all(render_path.read_text(encoding="utf-8"))
+)
+independent_telnet_deployment = next(
+    document
+    for document in independent_telnet_mount_documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+independent_telnet_pod = independent_telnet_deployment["spec"]["template"]["spec"]
+independent_telnet_mount = next(
+    mount
+    for mount in independent_telnet_pod["containers"][0]["volumeMounts"]
+    if mount.get("mountPath") == "/telnet-tls"
+)
+independent_telnet_mount["readOnly"] = False
+next(
+    volume
+    for volume in independent_telnet_pod["volumes"]
+    if volume.get("name") == independent_telnet_mount["name"]
+)["secret"]["secretName"] = "wrong-telnet-secret"
+independent_telnet_mount_issues = module.validate_hosted_telnet_tls_values(
+    independent_telnet_mount_documents,
+    required_identity_mode="hosted-controller",
+    expected_hosted_telnet_node_port=node_port,
+    target_namespace=namespace,
+)
+for expected_issue in (
+    "hosted TCP Proxy TLS requires a read-only /telnet-tls mount",
+    "/telnet-tls must reference the dedicated Telnet TLS Secret",
+):
+    if expected_issue not in independent_telnet_mount_issues:
+        raise SystemExit(
+            "hosted-bridge did not report independent Telnet mount defects: "
+            f"{independent_telnet_mount_issues}"
+        )
+
+required_telnet_tls_paths = {
+    "TCP_PROXY_TLS_CERT": "/telnet-tls/tls.crt",
+    "TCP_PROXY_TLS_KEY": "/telnet-tls/tls.key",
+}
+if module.TELNET_TLS_REQUIRED_PATHS != required_telnet_tls_paths:
+    raise SystemExit(
+        "hosted-bridge Telnet TLS path contract drifted: "
+        f"{module.TELNET_TLS_REQUIRED_PATHS}"
+    )
+for path_name, required_path in required_telnet_tls_paths.items():
+    mismatched_path_documents = list(
+        yaml.safe_load_all(render_path.read_text(encoding="utf-8"))
+    )
+    tcp_proxy_deployment = next(
+        document
+        for document in mismatched_path_documents
+        if document.get("kind") == "Deployment"
+        and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    )
+    path_entry = next(
+        entry
+        for entry in tcp_proxy_deployment["spec"]["template"]["spec"]["containers"][0]["env"]
+        if entry.get("name") == path_name
+    )
+    path_entry["value"] = f"/wrong/{path_name.lower()}"
+    path_issues = module.validate_hosted_telnet_tls_values(
+        mismatched_path_documents,
+        required_identity_mode="hosted-controller",
+        expected_hosted_telnet_node_port=node_port,
+        target_namespace=namespace,
+    )
+    expected_issue = f"{path_name} must be {required_path}"
+    if expected_issue not in path_issues:
+        raise SystemExit(
+            f"hosted-bridge accepted mismatched {path_name}: {path_issues}"
+        )
+
+maximum_documents = list(yaml.safe_load_all(render_path.read_text(encoding="utf-8")))
+maximum_service = next(
+    document
+    for document in maximum_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+maximum_service["metadata"]["annotations"]["firemud.dev/allocated-telnet-port"] = "65535"
+maximum_service["spec"]["ports"][0]["nodePort"] = 65535
+maximum_path = tmp / "hosted-bridge-contract-maximum-port.yaml"
+maximum_path.write_text(
+    yaml.safe_dump_all(maximum_documents, sort_keys=False), encoding="utf-8"
+)
+maximum = run_hosted(
+    maximum_path,
+    "--expected-hosted-telnet-node-port",
+    "65535",
+)
+if maximum.returncode != 0:
+    raise SystemExit(f"hosted-bridge rejected maximum valid expected port: {maximum.stderr}{maximum.stdout}")
+
+mismatched_documents = list(yaml.safe_load_all(render_path.read_text(encoding="utf-8")))
+next(
+    document
+    for document in mismatched_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)["spec"]["ports"][0]["nodePort"] = node_port + 1
+mismatched_path = tmp / "hosted-bridge-contract-mismatch.yaml"
+mismatched_path.write_text(
+    yaml.safe_dump_all(mismatched_documents, sort_keys=False), encoding="utf-8"
+)
+mismatched = run_hosted(
+    mismatched_path,
+    "--expected-hosted-telnet-node-port",
+    str(node_port),
+)
+if mismatched.returncode == 0:
+    raise SystemExit("hosted-bridge accepted a mismatched expected Telnet nodePort")
+mismatch_result = json.loads(mismatched.stdout)
+if (
+    mismatch_result.get("status") != "fail"
+    or "trusted hosted-controller TCP Proxy Telnet nodePort must equal"
+    not in mismatch_result.get("message", "")
+):
+    raise SystemExit(f"hosted-bridge mismatch result was not explicit: {mismatch_result}")
+
+quoted_node_port_documents = list(
+    yaml.safe_load_all(render_path.read_text(encoding="utf-8"))
+)
+next(
+    document
+    for document in quoted_node_port_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)["spec"]["ports"][0]["nodePort"] = str(node_port)
+quoted_node_port_path = tmp / "hosted-bridge-contract-quoted-node-port.yaml"
+quoted_node_port_path.write_text(
+    yaml.safe_dump_all(quoted_node_port_documents, sort_keys=False), encoding="utf-8"
+)
+quoted_node_port = run_hosted(
+    quoted_node_port_path,
+    "--expected-hosted-telnet-node-port",
+    str(node_port),
+)
+if quoted_node_port.returncode == 0:
+    raise SystemExit("hosted-bridge accepted a quoted-string Telnet nodePort")
+quoted_node_port_result = json.loads(quoted_node_port.stdout)
+if (
+    quoted_node_port_result.get("status") != "fail"
+    or "hosted-controller TCP Proxy Service nodePort must be an integer"
+    not in quoted_node_port_result.get("message", "")
+    or "nodePort must match its allocated Telnet port"
+    in quoted_node_port_result.get("message", "")
+    or "trusted hosted-controller TCP Proxy Telnet nodePort must equal"
+    in quoted_node_port_result.get("message", "")
+):
+    raise SystemExit(
+        "hosted-bridge quoted-string nodePort result was not explicit: "
+        f"{quoted_node_port_result}"
+    )
+
+out_of_range_documents = list(yaml.safe_load_all(render_path.read_text(encoding="utf-8")))
+out_of_range_service = next(
+    document
+    for document in out_of_range_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+out_of_range_service["metadata"]["annotations"]["firemud.dev/allocated-telnet-port"] = "65536"
+out_of_range_service["spec"]["ports"][0]["nodePort"] = 65536
+out_of_range_path = tmp / "hosted-bridge-contract-out-of-range.yaml"
+out_of_range_path.write_text(
+    yaml.safe_dump_all(out_of_range_documents, sort_keys=False), encoding="utf-8"
+)
+out_of_range = run_hosted(out_of_range_path)
+if out_of_range.returncode == 0:
+    raise SystemExit("hosted-bridge accepted an out-of-range allocated Telnet port")
+out_of_range_result = json.loads(out_of_range.stdout)
+if (
+    out_of_range_result.get("status") != "fail"
+    or "requires an allocated Telnet port annotation"
+    not in out_of_range_result.get("message", "")
+):
+    raise SystemExit(
+        f"hosted-bridge out-of-range allocated port result was not explicit: {out_of_range_result}"
+    )
+
+instance_mismatch_documents = list(yaml.safe_load_all(render_path.read_text(encoding="utf-8")))
+next(
+    document
+    for document in instance_mismatch_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "spring-cloud-gateway-mtls"
+)["metadata"].setdefault("labels", {})["app.kubernetes.io/instance"] = "pr-43"
+instance_mismatch_path = tmp / "hosted-bridge-contract-instance-mismatch.yaml"
+instance_mismatch_path.write_text(
+    yaml.safe_dump_all(instance_mismatch_documents, sort_keys=False), encoding="utf-8"
+)
+instance_mismatch = run_hosted(
+    instance_mismatch_path,
+    "--expected-hosted-telnet-node-port",
+    str(node_port),
+)
+if instance_mismatch.returncode == 0:
+    raise SystemExit("hosted-bridge accepted a mismatched rendered Helm release identity")
+instance_mismatch_result = json.loads(instance_mismatch.stdout)
+if (
+    instance_mismatch_result.get("status") != "fail"
+    or "does not match trusted release" not in instance_mismatch_result.get("message", "")
+):
+    raise SystemExit(
+        "hosted-bridge release identity mismatch result was not explicit: "
+        f"{instance_mismatch_result}"
+    )
+
+with patch.object(
+    module,
+    "wait_for_secret_key_requirements",
+    side_effect=SystemExit(
+        "operator preflight waited for projections after render failure"
+    ),
+):
+    operator_mismatch_output = io.StringIO()
+    with contextlib.redirect_stdout(operator_mismatch_output):
+        operator_mismatch_status = module.hosted_bridge_preflight(
+            mismatched_path,
+            namespace,
+            release,
+            "operator",
+            node_port,
+        )
+    operator_mismatch_result = json.loads(operator_mismatch_output.getvalue())
+    if (
+        operator_mismatch_status != 1
+        or operator_mismatch_result.get("status") != "fail"
+        or "trusted hosted-controller TCP Proxy Telnet nodePort must equal"
+        not in operator_mismatch_result.get("message", "")
+    ):
+        raise SystemExit(
+            "operator preflight did not return the existing render failure immediately: "
+            f"{operator_mismatch_result}"
+        )
+
+standalone_documents = list(yaml.safe_load_all(render_path.read_text(encoding="utf-8")))
+for document in standalone_documents:
+    if (
+        document.get("kind") in {"Service", "Deployment"}
+        and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    ):
+        document["metadata"]["labels"]["firemud.dev/certificate-identity-mode"] = "standalone"
+standalone_documents.extend(
+    [
+        {
+            "apiVersion": "cert-manager.io/v1",
+            "kind": "Certificate",
+            "metadata": {
+                "name": f"{release}-telnet-tls",
+                "namespace": namespace,
+            },
+            "spec": {"secretName": f"{release}-telnet-tls"},
+        },
+        {
+            "apiVersion": "networking.k8s.io/v1",
+            "kind": "Ingress",
+            "metadata": {"name": "firemud-preview", "namespace": namespace},
+            "spec": {"tls": [{"secretName": f"{release}-http-tls"}]},
+        },
+    ]
+)
+for omitted_kind in ("Deployment", "Certificate"):
+    omitted_documents = copy.deepcopy(standalone_documents)
+    next(
+        document
+        for document in omitted_documents
+        if document.get("kind") == omitted_kind
+    )["metadata"].pop("namespace")
+    omitted_issues = module.validate_hosted_telnet_tls_values(
+        omitted_documents,
+        required_identity_mode="standalone",
+        target_namespace=namespace,
+    )
+    if omitted_issues:
+        raise SystemExit(
+            f"omitted {omitted_kind} metadata.namespace was rejected: {omitted_issues}"
+        )
+
+ingress_omitted_documents = copy.deepcopy(standalone_documents)
+ingress_document = next(
+    document
+    for document in ingress_omitted_documents
+    if document.get("kind") == "Ingress"
+)
+ingress_document["spec"]["tls"][0]["secretName"] = f"{release}-telnet-tls"
+ingress_document["metadata"].pop("namespace")
+ingress_omitted_issues = module.validate_hosted_telnet_tls_values(
+    ingress_omitted_documents,
+    required_identity_mode="standalone",
+    target_namespace=namespace,
+)
+if not any(
+    "must not reuse the HTTP Ingress TLS Secret" in issue
+    for issue in ingress_omitted_issues
+):
+    raise SystemExit(
+        "omitted Ingress metadata.namespace did not resolve against the target namespace: "
+        f"{ingress_omitted_issues}"
+    )
+
+invalid_port = run_hosted(
+    render_path,
+    "--expected-hosted-telnet-node-port",
+    "0",
+)
+if invalid_port.returncode == 0 or "must be an integer between 1 and 65535" not in invalid_port.stderr:
+    raise SystemExit(f"hosted-bridge accepted invalid expected port: {invalid_port.stderr}")
+
+invalid_maximum_port = run_hosted(
+    render_path,
+    "--expected-hosted-telnet-node-port",
+    "65536",
+)
+if (
+    invalid_maximum_port.returncode == 0
+    or "must be an integer between 1 and 65535" not in invalid_maximum_port.stderr
+):
+    raise SystemExit(
+        f"hosted-bridge accepted expected port above the valid range: {invalid_maximum_port.stderr}"
+    )
+
+for invalid_namespace, invalid_release in (("pr-0", "pr-0"), ("pr-42", "preview")):
+    try:
+        module.hosted_bridge_expected_bindings(invalid_namespace, invalid_release)
+    except ValueError:
+        continue
+    raise SystemExit(
+        f"hosted bridge accepted a non-canonical identity: {invalid_namespace}/{invalid_release}"
+    )
 PY
 
 echo "preflight contract checks passed"

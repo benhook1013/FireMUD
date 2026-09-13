@@ -17,6 +17,7 @@ concurrency:
 jobs:
   reconcile-previews:
     name: Reconcile Open PR Previews
+    timeout-minutes: 60
     runs-on:
       - self-hosted
       - preview
@@ -65,25 +66,130 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PREVIEW_MAX_ACTIVE: ${{ vars.PREVIEW_MAX_ACTIVE }}
         run: |
+          set -euo pipefail
           preview_workflow_name="PR Preview Environment"
           eligibility_script="./dev-tools/hosted/preview/preview-eligibility.py"
           max_active="${PREVIEW_MAX_ACTIVE:-1}"
+
+          parse_namespace_heads() {
+            jq -er '
+              def annotation($annotations; $name):
+                ($annotations[$name] // "")
+                | if type != "string" then
+                    error("namespace head annotation is not a string")
+                  elif test("[|\\r\\n]") then
+                    error("namespace head annotation contains an unsafe delimiter")
+                  else
+                    .
+                  end;
+              if type != "object" or (.metadata | type) != "object" then
+                error("namespace snapshot is not an object with metadata")
+              elif ((.metadata.annotations // {}) | type) != "object" then
+                error("namespace annotations are not an object")
+              else
+                (.metadata.annotations // {}) as $annotations
+                | [
+                    annotation($annotations; "firemud.dev/last-preview-head-sha"),
+                    annotation($annotations; "firemud.dev/requested-preview-head-sha"),
+                    (.metadata.resourceVersion // "")
+                  ]
+                | join("|")
+              end
+            ' <<<"$1"
+          }
+
+          readonly repair_success=0
+          readonly repair_skip=10
+          readonly repair_dispatch=11
+          readonly repair_abort=20
+
+          repair_requested_head() {
+            local namespace="$1"
+            local pr_number="$2"
+            local head_sha="$3"
+            local requested_head_sha="$4"
+            local fresh_namespace_json
+            local fresh_namespace_heads
+            local fresh_head_sha
+            local fresh_requested_head_sha
+            local fresh_namespace_resource_version
+            local annotation_failure_namespace_json
+
+            if ! fresh_namespace_json="$(
+              kubectl get namespace "${namespace}" --ignore-not-found -o json
+            )"; then
+              echo "Unable to recheck namespace ${namespace} before annotation repair." >&2
+              return "$repair_abort"
+            fi
+            if [[ -z "${fresh_namespace_json}" ]]; then
+              return "$repair_dispatch"
+            fi
+            if ! fresh_namespace_heads="$(parse_namespace_heads "${fresh_namespace_json}")"; then
+              echo "Skipping PR #${pr_number}: unable to parse namespace ${namespace} recheck." >&2
+              return "$repair_skip"
+            fi
+            IFS='|' read -r fresh_head_sha fresh_requested_head_sha fresh_namespace_resource_version <<<"${fresh_namespace_heads}"
+            if [[ "${fresh_head_sha}" != "${head_sha}" ]]; then
+              echo "Skipping preview repair for PR #${pr_number}: deployed head changed during annotation repair check."
+              return "$repair_skip"
+            fi
+            if [[ "${fresh_requested_head_sha}" == "${head_sha}" ]]; then
+              echo "Preview ${namespace} already aligned to ${head_sha}"
+              return "$repair_success"
+            fi
+            if [[ "${fresh_requested_head_sha}" != "${requested_head_sha}" ]]; then
+              echo "Skipping preview repair for PR #${pr_number}: requested head changed during annotation repair check."
+              return "$repair_skip"
+            fi
+            if ! kubectl annotate namespace "${namespace}" \
+              "firemud.dev/requested-preview-head-sha=${head_sha}" \
+              --overwrite \
+              --resource-version "${fresh_namespace_resource_version}" >/dev/null; then
+              if ! annotation_failure_namespace_json="$(
+                kubectl get namespace "${namespace}" --ignore-not-found -o json
+              )"; then
+                echo "Unable to recheck namespace ${namespace} after annotation failure; refusing preview reconcile." >&2
+                return "$repair_abort"
+              fi
+              if [[ -n "${annotation_failure_namespace_json}" ]]; then
+                echo "Skipping PR #${pr_number}: unable to annotate namespace ${namespace}; namespace still exists." >&2
+                return "$repair_skip"
+              fi
+              echo "Namespace ${namespace} was deleted during requested-head repair; dispatching replacement."
+              return "$repair_dispatch"
+            fi
+            if [[ -z "${requested_head_sha}" ]]; then
+              echo "Repaired missing requested head for aligned preview ${namespace}"
+            else
+              echo "Repaired stale requested head for aligned preview ${namespace}"
+            fi
+            return "$repair_success"
+          }
+
           active_count="$(kubectl get namespaces -l firemud.dev/preview=true -o name | sed '/^$/d' | wc -l)"
           available_slots=$((max_active - active_count))
           dispatch_sent=false
           gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
-            --jq '.[] | [(if (.labels | map(.name) | any(. == "preview:priority")) then 0 else 1 end), .number, .head.ref, .head.sha, .user.login, .base.ref, .state, (.labels | map(.name) | any(. == "preview:priority"))] | @tsv' \
+            --jq '.[] | [(if (.labels | map(.name) | any(. == "preview:priority")) then 0 else 1 end), .number, .head.ref, .head.sha, .user.login, .base.ref, .state, (.labels | map({name: .name}) | tojson | @base64)] | @tsv' \
             | sort -t $'\t' -k1,1n -k2,2n |
-          while IFS=$'\t' read -r _ pr_number head_ref head_sha pr_author pr_base_ref pr_state is_priority; do
+          while IFS=$'\t' read -r _ pr_number head_ref head_sha pr_author pr_base_ref pr_state labels_json_base64; do
+            if ! labels_json="$(printf '%s' "$labels_json_base64" | base64 --decode 2>/dev/null)" ||
+              [[ -z "$labels_json" ]] ||
+              ! jq -e 'type == "array"' <<<"$labels_json" >/dev/null; then
+              echo "Skipping PR #${pr_number}: label metadata could not be decoded as a JSON array." >&2
+              continue
+            fi
             eligibility_output="$(
               python3 "$eligibility_script" \
                 --operation deploy \
                 --state "$pr_state" \
                 --base-ref "$pr_base_ref" \
-                --author "$pr_author"
+                --author "$pr_author" \
+                --labels-json "$labels_json"
             )"
             eligible="$(sed -n 's/^eligible=//p' <<<"$eligibility_output")"
             reason="$(sed -n 's/^reason=//p' <<<"$eligibility_output")"
+            priority="$(sed -n 's/^priority=//p' <<<"$eligibility_output")"
             if [[ "$eligible" != "true" ]]; then
               echo "Skipping preview reconcile for PR #${pr_number}: not preview-eligible (reason=${reason}, author=${pr_author}, base=${pr_base_ref})"
               continue
@@ -91,15 +197,52 @@ jobs:
 
             namespace="pr-${pr_number}"
             desired_image_tag="${head_sha}"
-            current_head_sha="$(kubectl get namespace "${namespace}" -o jsonpath='{.metadata.annotations.firemud\.dev/last-preview-head-sha}' 2>/dev/null || true)"
             namespace_exists=false
-            if kubectl get namespace "${namespace}" >/dev/null 2>&1; then
+            current_head_sha=""
+            requested_head_sha=""
+            if ! namespace_json="$(
+              kubectl get namespace "${namespace}" --ignore-not-found -o json
+            )"; then
+              echo "Unable to inspect namespace ${namespace}; refusing preview reconcile." >&2
+              exit 1
+            fi
+            if [[ -n "${namespace_json}" ]]; then
               namespace_exists=true
+              if ! namespace_heads="$(parse_namespace_heads "${namespace_json}")"; then
+                echo "Skipping PR #${pr_number}: unable to parse namespace ${namespace} snapshot." >&2
+                continue
+              fi
+              IFS='|' read -r current_head_sha requested_head_sha _ <<<"${namespace_heads}"
             fi
 
             if [[ "${current_head_sha}" == "${head_sha}" ]]; then
-              echo "Preview ${namespace} already aligned to ${head_sha}"
-              continue
+              if [[ "${requested_head_sha}" != "${head_sha}" ]]; then
+                repair_status="$repair_success"
+                if repair_requested_head \
+                  "$namespace" "$pr_number" "$head_sha" "$requested_head_sha"; then
+                  repair_status="$repair_success"
+                else
+                  repair_status=$?
+                fi
+                case "$repair_status" in
+                  "$repair_success" | "$repair_skip")
+                    continue
+                    ;;
+                  "$repair_dispatch")
+                    namespace_exists=false
+                    ;;
+                  "$repair_abort")
+                    exit 1
+                    ;;
+                  *)
+                    echo "Unexpected requested-head repair status: ${repair_status}" >&2
+                    exit 1
+                    ;;
+                esac
+              else
+                echo "Preview ${namespace} already aligned to ${head_sha}"
+                continue
+              fi
             fi
 
             if [[ "$dispatch_sent" == "true" ]]; then
@@ -108,7 +251,7 @@ jobs:
             fi
 
             if [[ "$namespace_exists" != "true" ]]; then
-              if [[ "$is_priority" != "true" && "$available_slots" -le 0 ]]; then
+              if [[ "$priority" != "true" && "$available_slots" -le 0 ]]; then
                 echo "Skipping ordinary PR #${pr_number}: preview capacity is full."
                 continue
               fi
@@ -118,14 +261,29 @@ jobs:
               gh run list \
                 --workflow "${preview_workflow_name}" \
                 --branch "${head_ref}" \
+                --commit "${head_sha}" \
                 --limit 20 \
-                --json databaseId,status \
-                --jq '.[] | select(.status == "queued" or .status == "in_progress") | .databaseId' \
-                | head -n 1
+                --json databaseId,status,headSha \
+                | jq -r --arg head_sha "${head_sha}" '
+                    first(
+                      .[]
+                      | select(
+                          .headSha == $head_sha
+                          and (
+                            .status == "requested"
+                            or .status == "queued"
+                            or .status == "in_progress"
+                            or .status == "waiting"
+                            or .status == "pending"
+                          )
+                        )
+                      | .databaseId
+                    ) // ""
+                  '
             )"
 
             if [[ -n "${active_preview_run_id}" ]]; then
-              echo "Skipping dispatch for PR #${pr_number}: preview run ${active_preview_run_id} is already queued or in progress."
+              echo "Skipping dispatch for PR #${pr_number}: preview run ${active_preview_run_id} for head ${head_sha} is already queued or in progress."
               continue
             fi
 

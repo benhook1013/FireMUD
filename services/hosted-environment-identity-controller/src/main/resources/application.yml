@@ -1,0 +1,48 @@
+spring:
+  application:
+    name: hosted-environment-identity-controller
+
+server:
+  port: 8080
+
+management:
+  server:
+    port: 8081
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+
+firemud:
+  hosted-identity:
+    # This checked-in default is paused. Among SHA-256 pins, Active mode requires the
+    # canonical grpc-trust-anchor-sha256 below, set to the lowercase 64-hex SHA-256 of
+    # firemud-grpc-ca's DER ca.crt. The ingress and Telnet leaf pins remain optional.
+    activation-mode: paused
+    control-namespace: firemud-system
+    preview-domain: preview.firedevops.net
+    dev-demo-hostname: dev.preview.firedevops.net
+    ingress-issuer: letsencrypt-prod
+    telnet-issuer: letsencrypt-prod
+    grpc-issuer: firemud-ca-issuer
+    ca-secret-name: firemud-grpc-ca
+    ingress-trust-anchor-sha256: ""
+    telnet-trust-anchor-sha256: ""
+    grpc-trust-anchor-sha256: ""
+    ingress-leaf-sha256: ""
+    telnet-leaf-sha256: ""
+    preview-requested-head-annotation: firemud.dev/requested-preview-head-sha
+    preview-deployed-head-annotation: firemud.dev/last-preview-head-sha
+    dev-demo-requested-head-annotation: firemud.dev/requested-dev-demo-head-sha
+    dev-demo-head-annotation: firemud.dev/last-dev-demo-head-sha
+    preview-telnet-port-annotation: firemud.dev/last-preview-telnet-port
+    dev-demo-telnet-port-annotation: firemud.dev/last-dev-demo-telnet-port
+    preview-telnet-port-base: 32000
+    dev-demo-telnet-port: 32016
+    reconcile-interval: 30s
+    grpc-renew-before: 7d

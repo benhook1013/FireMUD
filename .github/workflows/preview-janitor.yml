@@ -12,6 +12,7 @@ permissions:
 jobs:
   prune-stale-preview-namespaces:
     name: Prune Stale Preview Namespaces
+    timeout-minutes: 60
     runs-on:
       - self-hosted
       - preview
@@ -23,24 +24,19 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Resolve certificate identity mode
+        id: certificate-identity
+        uses: ./.github/actions/resolve-certificate-identity-mode
+        with:
+          values-file: k8s/helm/firemud/values-hosted-shared.example.yaml
+
       - name: Set up kubectl
         uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
         with:
           version: v1.33.4
 
       - name: Set up Helm
-        run: |
-          if ! command -v helm >/dev/null 2>&1; then
-            HELM_VERSION="v3.20.1"
-            INSTALL_DIR="$HOME/.local/bin"
-            mkdir -p "$INSTALL_DIR"
-            curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o /tmp/helm.tgz
-            tar -xzf /tmp/helm.tgz -C /tmp
-            install /tmp/linux-amd64/helm "$INSTALL_DIR/helm"
-          fi
-          export PATH="$HOME/.local/bin:$PATH"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          helm version
+        uses: ./.github/actions/setup-helm
 
       - name: Write preview kubeconfig
         env:
@@ -49,15 +45,45 @@ jobs:
         run: |
           KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"
           bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
-          echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
+          echo "PREVIEW_RUNTIME_KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
+
+      - name: Write hosted identity requester kubeconfig
+        if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' }}
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
+          path: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
+          export-to-github-env: 'false'
 
       - name: Verify preview cluster access
+        env:
+          KUBECONFIG: ${{ env.PREVIEW_RUNTIME_KUBECONFIG }}
         run: |
           kubectl get namespace kube-system >/dev/null
           kubectl auth can-i list namespaces --all-namespaces
 
       - name: Prune stale preview namespaces
         env:
+          KUBECONFIG: ${{ env.PREVIEW_RUNTIME_KUBECONFIG }}
           GH_TOKEN: ${{ github.token }}
+          HOSTED_IDENTITY_MODE: ${{ steps.certificate-identity.outputs.mode }}
+          HOSTED_IDENTITY_REQUESTER_KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
         run: |
-          bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh --apply
+          set -euo pipefail
+          case "$HOSTED_IDENTITY_MODE" in
+            hosted-controller)
+              bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh \
+                --apply --retire-terminal-identities
+              ;;
+            standalone)
+              bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh --apply
+              ;;
+            *)
+              echo "unsupported certificate identity mode: ${HOSTED_IDENTITY_MODE}" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Remove hosted identity requester kubeconfig
+        if: ${{ always() }}
+        run: rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"
