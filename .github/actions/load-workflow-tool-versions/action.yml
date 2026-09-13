@@ -48,7 +48,7 @@ runs:
         for key in "${checksum_keys[@]}"; do
           [[ "${!key:-}" =~ ^[0-9a-f]{64}$ ]] || { echo "::error title=Invalid workflow tool checksum::${key} must be a lowercase SHA-256." >&2; exit 1; }
         done
-        for key in ORT_DIGEST ZAP_DIGEST; do
+        for key in VELERO_IMAGE_DIGEST ORT_DIGEST ZAP_DIGEST; do
           [[ "${!key:-}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error title=Invalid workflow image digest::${key} must be a sha256 digest." >&2; exit 1; }
         done
         {

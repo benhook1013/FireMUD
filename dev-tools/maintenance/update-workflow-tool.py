@@ -4,12 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import tempfile
 import urllib.request
 from pathlib import Path
-
 
 SPECS = {
     "helm": ("HELM", "helm-v{v}-linux-amd64.tar.gz", "https://get.helm.sh/helm-v{v}-linux-amd64.tar.gz.sha256sum"),
@@ -33,11 +33,52 @@ def replace(text: str, key: str, value: str) -> str:
     return updated
 
 
-def atomic_write(path: Path, text: str) -> None:
+def staged_file(path: Path, text: str) -> Path:
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
         handle.write(text)
-        temporary = Path(handle.name)
-    os.replace(temporary, path)
+        handle.flush()
+        os.fsync(handle.fileno())
+        return Path(handle.name)
+
+
+def transactional_write(updates: list[tuple[Path, str]]) -> None:
+    originals = {path: path.read_text(encoding="utf-8") for path, _ in updates}
+    staged = {path: staged_file(path, text) for path, text in updates}
+    replaced: list[Path] = []
+    try:
+        for path, _ in updates:
+            os.replace(staged[path], path)
+            replaced.append(path)
+    except OSError:
+        for path in reversed(replaced):
+            rollback = staged_file(path, originals[path])
+            os.replace(rollback, path)
+        raise
+    finally:
+        for temporary in staged.values():
+            temporary.unlink(missing_ok=True)
+
+
+def dockerhub_digest(repository: str, tag: str) -> str:
+    token_url = (
+        "https://auth.docker.io/token?service=registry.docker.io&scope="
+        f"repository:{repository}:pull"
+    )
+    with urllib.request.urlopen(token_url, timeout=30) as response:
+        token = json.load(response)["token"]
+    request = urllib.request.Request(
+        f"https://registry-1.docker.io/v2/{repository}/manifests/{tag}",
+        method="HEAD",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        digest = response.headers.get("Docker-Content-Digest", "")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        raise SystemExit("registry did not return a valid Velero image digest")
+    return digest
 
 
 def main() -> None:
@@ -47,6 +88,7 @@ def main() -> None:
     parser.add_argument("--checksum-file", type=Path, help="offline checksum manifest")
     parser.add_argument("--authority", type=Path, default=Path("config/workflow-tool-versions.env"))
     parser.add_argument("--velero-manifest", type=Path, default=Path("k8s/velero/verify-backups-cronjob.yaml"))
+    parser.add_argument("--image-digest", help="verified Velero image digest (offline/test override)")
     args = parser.parse_args()
     if not re.fullmatch(r"\d+\.\d+\.\d+", args.version):
         parser.error("version must have exactly three numeric parts")
@@ -69,13 +111,22 @@ def main() -> None:
     authority = replace(authority, f"{stem}_SHA256", matches[0])
     manifest = None
     if args.tool == "velero":
+        image_digest = args.image_digest or dockerhub_digest("velero/velero", f"v{args.version}")
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_digest):
+            raise SystemExit("Velero image digest must be a lowercase SHA-256")
+        authority = replace(authority, "VELERO_IMAGE_DIGEST", image_digest)
         manifest = args.velero_manifest.read_text(encoding="utf-8")
-        manifest, count = re.subn(r"image: velero/velero:v\d+\.\d+\.\d+", f"image: velero/velero:v{args.version}", manifest)
+        manifest, count = re.subn(
+            r"image: velero/velero:v\d+\.\d+\.\d+@sha256:[0-9a-f]{64}",
+            f"image: velero/velero:v{args.version}@{image_digest}",
+            manifest,
+        )
         if count != 1:
             raise SystemExit("expected one Velero image projection")
-    atomic_write(args.authority, authority)
+    updates = [(args.authority, authority)]
     if manifest is not None:
-        atomic_write(args.velero_manifest, manifest)
+        updates.append((args.velero_manifest, manifest))
+    transactional_write(updates)
 
 
 if __name__ == "__main__":

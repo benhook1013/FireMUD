@@ -625,6 +625,8 @@ jobs:
 
       - name: Set up canonical Python
         uses: ./.github/actions/setup-python
+        with:
+          requirements: smoke
 
       - name: Set up Java
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654
@@ -642,9 +644,6 @@ jobs:
 
       - name: Build local PR runtime images
         run: bash ./dev-tools/build-local-smoke-images.sh "${SMOKE_IMAGE_TAG}"
-
-      - name: Install WebSocket smoke dependency
-        run: python3 -m pip install --disable-pip-version-check -r config/python/smoke-requirements.txt
 
       - name: Run credential-free full-stack smoke
         run: bash ./dev-tools/verify-smoke-images.sh

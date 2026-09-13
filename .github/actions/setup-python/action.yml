@@ -1,5 +1,10 @@
 name: Set up Python
-description: Install the repository-pinned Python release for FireMUD workflows.
+description: Install repository-pinned Python and an optional owned dependency profile.
+inputs:
+  requirements:
+    description: Dependency profile to install (none, yaml, ci, smoke, or docs).
+    required: false
+    default: none
 runs:
   using: composite
   steps:
@@ -7,3 +12,19 @@ runs:
       uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
       with:
         python-version-file: '.python-version'
+
+    - name: Install pinned Python dependencies
+      if: ${{ inputs.requirements != 'none' }}
+      shell: bash
+      env:
+        REQUIREMENTS_PROFILE: ${{ inputs.requirements }}
+      run: |
+        set -euo pipefail
+        case "$REQUIREMENTS_PROFILE" in
+          yaml) requirements_file=config/python/yaml-requirements.txt ;;
+          ci) requirements_file=config/python/ci-requirements.txt ;;
+          smoke) requirements_file=config/python/smoke-requirements.txt ;;
+          docs) requirements_file=config/docs/requirements.txt ;;
+          *) echo "Unsupported Python requirements profile: $REQUIREMENTS_PROFILE" >&2; exit 1 ;;
+        esac
+        python3 -m pip install --disable-pip-version-check -r "$requirements_file"

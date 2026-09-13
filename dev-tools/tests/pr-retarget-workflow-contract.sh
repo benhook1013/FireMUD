@@ -509,7 +509,7 @@ require_contains "$pr_image_publisher_path" 'GitHub displays this run in the def
 require_contains "$pr_image_publisher_path" 'markdown_code(os.environ['
 require_contains "$pr_image_publisher_path" 'from html import escape'
 require_contains "$pr_image_publisher_path" '<code>{markdown_code(os.environ['
-assert_job_excludes publish-pr-runtime-images.yml publish 'contents: read'
+assert_job_contains publish-pr-runtime-images.yml publish 'contents: read'
 # shellcheck disable=SC2016 # These are literal GitHub expression and shell source contracts.
 require_contains "$pr_image_publisher_path" 'pr-runtime-images-${{ github.event.workflow_run.head_sha }}'
 # shellcheck disable=SC2016 # This assertion intentionally matches the unevaluated publisher script.
@@ -522,10 +522,9 @@ require_contains "$pr_image_publisher_path" 'max_push_attempts=3'
 require_contains "$pr_image_publisher_path" 'backoff_seconds=$((5 * 2 ** (push_attempt - 1)))'
 # shellcheck disable=SC2016 # This assertion intentionally matches unevaluated publisher shell.
 require_contains "$pr_image_publisher_path" 'sleep "$backoff_seconds"'
-if grep -Fq 'actions/checkout@' "$pr_image_publisher_path"; then
-  echo "trusted PR image publisher must not checkout or execute PR source" >&2
-  exit 1
-fi
+# shellcheck disable=SC2016 # This assertion intentionally matches a literal GitHub expression.
+require_contains "$pr_image_publisher_path" 'ref: ${{ github.event.repository.default_branch }}'
+require_contains "$pr_image_publisher_path" 'persist-credentials: false'
 
 python3 - "$pr_image_publisher_path" <<'PY'
 import os

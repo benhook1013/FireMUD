@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 if ! command -v yamllint >/dev/null 2>&1; then
-  echo "yamllint is required. Install it with: python3 -m pip install --user yamllint" >&2
+  echo "yamllint is required. Install the pinned workflow tools with: python3 -m pip install -r config/python/ci-requirements.txt" >&2
   exit 1
 fi
 

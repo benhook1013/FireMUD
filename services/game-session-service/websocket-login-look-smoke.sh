@@ -73,7 +73,7 @@ try:
 except ImportError as exc:
     raise SystemExit(
         "The python 'websocket-client' package is required. "
-        "Install it with 'python3 -m pip install websocket-client'."
+        "Install it with 'python3 -m pip install -r config/python/smoke-requirements.txt'."
     ) from exc
 
 websocket_url = os.environ.get("SMOKE_GAME_SESSION_WS_URL", "ws://localhost:8086/ws/game")

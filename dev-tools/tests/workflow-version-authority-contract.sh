@@ -24,9 +24,10 @@ node=(root/'.node-version').read_text().strip()
 if not re.fullmatch(r'24\.\d+\.\d+',node): fail('.node-version must pin an exact Node 24 release')
 python=(root/'.python-version').read_text().strip()
 if not re.fullmatch(r'3\.14\.\d+',python): fail('.python-version must pin an exact Python 3.14 release')
-for req in ('config/docs/requirements.txt','config/python/ci-requirements.txt','config/python/smoke-requirements.txt'):
+for req in ('config/docs/requirements.txt','config/python/ci-requirements.txt','config/python/smoke-requirements.txt','config/python/yaml-requirements.txt'):
  lines=(root/req).read_text().splitlines()
- if not lines or any(not re.fullmatch(r'[A-Za-z0-9_-]+==[^=\s]+',x) for x in lines): fail(f'{req} must contain only exact pins')
+ if not lines or any(not (re.fullmatch(r'[A-Za-z0-9_-]+==[^=\s]+',x) or (req.endswith('ci-requirements.txt') and x=='-r yaml-requirements.txt')) for x in lines): fail(f'{req} must contain only exact pins or its canonical YAML include')
+if 'PyYAML==' in (root/'config/python/ci-requirements.txt').read_text(): fail('PyYAML must have one canonical requirements authority')
 
 ap=root/'config/workflow-tool-versions.env'; a=authority(ap)
 versions=['KUBECTL','HELM','GH','BUF','KUBECONFORM','VELERO','ACTIONLINT','TRIVY','LYCHEE','ORT','ZAP']
@@ -35,25 +36,42 @@ pairs={'HELM':'HELM_LINUX_AMD64','GH':'GH_LINUX_AMD64','BUF':'BUF_LINUX_X86_64',
 for tool,stem in pairs.items():
  if a.get(f'{stem}_CHECKSUM_VERSION') != a[f'{tool}_VERSION']: fail(f'{tool} checksum version is stale')
  if not re.fullmatch(r'[0-9a-f]{64}',a.get(f'{stem}_SHA256','')): fail(f'{tool} checksum is invalid')
-for tool in ('ORT','ZAP'):
+for tool in ('VELERO_IMAGE','ORT','ZAP'):
  if not re.fullmatch(r'sha256:[0-9a-f]{64}',a.get(f'{tool}_DIGEST','')): fail(f'{tool} digest is invalid')
-expected={f'{x}_VERSION' for x in versions}|{f'{s}_{suffix}' for s in pairs.values() for suffix in ('CHECKSUM_VERSION','SHA256')}|{'ORT_DIGEST','ZAP_DIGEST'}
+expected={f'{x}_VERSION' for x in versions}|{f'{s}_{suffix}' for s in pairs.values() for suffix in ('CHECKSUM_VERSION','SHA256')}|{'VELERO_IMAGE_DIGEST','ORT_DIGEST','ZAP_DIGEST'}
 if set(a)!=expected: fail('workflow tool authority has unexpected or missing keys')
 
 def load(path):
  d=yaml.safe_load(path.read_text()); return d if isinstance(d,dict) else {}
 def run_has_gh(run): return bool(re.search(r'(^|[;&|()\s])gh(?:\s|$)',run))
-def referenced_gh_script(run):
- for name in re.findall(r'(?:\./)?(dev-tools/[A-Za-z0-9_./-]+)',run):
-  p=root/name.rstrip('"\'')
-  if p.is_file() and run_has_gh(p.read_text()): return True
- return False
+def references(text):
+ result=set()
+ for name in re.findall(r'(?:\./)?((?:dev-tools|services)/[A-Za-z0-9_./-]+)',text):
+  path=root/name.rstrip('"\'')
+  if path.is_file(): result.add(path)
+ return result
+def helper_text(text, seen=None):
+ seen=set() if seen is None else seen
+ parts=[text]
+ for path in references(text):
+  if path in seen: continue
+  seen.add(path); source=path.read_text(errors='ignore'); parts.extend(helper_text(source,seen))
+ return parts
+def python_needs(text):
+ sources=helper_text(text); combined='\n'.join(sources)
+ if 'python3' not in combined: return None
+ if re.search(r'(^|\n)\s*(?:import|from) yaml\b',combined): return 'yaml'
+ if re.search(r'(^|\n)\s*import websocket\b',combined): return 'smoke'
+ if re.search(r'(^|[;&|\s])(ruff|yamllint)(?:\s|$)',combined): return 'ci'
+ if re.search(r'(^|[;&|\s])(?:python3 -m )?mkdocs(?:\s|$)',combined): return 'docs'
+ return 'none'
+def has_gh_consumer(text): return any(run_has_gh(source) for source in helper_text(text))
 
 node_count=python_count=gh_count=0
 for path in sorted(workflows.glob('*.yml')):
  for job_name,job in (load(path).get('jobs') or {}).items():
   if not isinstance(job,dict): continue
-  checkout=py=gh=loader=False
+  checkout=py=gh=loader=False; python_profile=None
   for step in job.get('steps',[]):
    if not isinstance(step,dict): continue
    uses=str(step.get('uses','')); run=str(step.get('run',''))
@@ -68,22 +86,32 @@ for path in sorted(workflows.glob('*.yml')):
    if uses=='./.github/actions/setup-python':
     python_count+=1
     if not checkout: fail(f'{path.name}:{job_name}: Python setup before checkout')
-    py=True
+    py=True; python_profile=step.get('with',{}).get('requirements','none')
+    if python_profile not in {'none','yaml','ci','smoke','docs'}: fail(f'{path.name}:{job_name}: invalid Python dependency profile')
+   if uses=='./.github/actions/resolve-certificate-identity-mode':
+    py=True; python_profile='yaml'
    if uses=='./.github/actions/setup-gh':
     gh_count+=1
     if not checkout: fail(f'{path.name}:{job_name}: gh setup before checkout')
     gh=True
-   if 'python3' in run and not py: fail(f'{path.name}:{job_name}: python3 uses ambient runner Python')
-   if (run_has_gh(run) or referenced_gh_script(run)) and not gh: fail(f'{path.name}:{job_name}: gh consumer is not preceded by canonical setup-gh')
+   need=python_needs(run)
+   if need is not None and not py: fail(f'{path.name}:{job_name}: direct or helper Python consumer uses ambient runner Python')
+   if need=='yaml' and python_profile not in {'yaml','ci'}: fail(f'{path.name}:{job_name}: PyYAML helper lacks its pinned dependency profile')
+   if need in {'smoke','ci','docs'} and python_profile!=need: fail(f'{path.name}:{job_name}: {need} helper lacks its pinned dependency profile')
+   if has_gh_consumer(run) and not gh: fail(f'{path.name}:{job_name}: direct or helper gh consumer is not preceded by canonical setup-gh')
    if uses.startswith('oss-review-toolkit/ort-ci-github-action@'):
     if not loader or step.get('with',{}).get('image')!='${{ steps.workflow-tool-versions.outputs.ort-image }}': fail(f'{path.name}:{job_name}: ORT bypasses authority')
 if not min(node_count,python_count,gh_count): fail('expected Node, Python, and gh consumers')
+
+publisher=load(workflows/'publish-pr-runtime-images.yml')['jobs']['publish']
+if publisher.get('permissions',{}).get('contents')!='read': fail('trusted publisher checkout requires contents: read')
 
 for path in sorted(actions.glob('*/action.yml')):
  setup_py=setup_gh=False
  for step in load(path).get('runs',{}).get('steps',[]):
   uses=str(step.get('uses','')); run=str(step.get('run',''))
-  setup_py |= uses=='./.github/actions/setup-python'; setup_gh |= uses=='./.github/actions/setup-gh'
+  setup_py |= uses=='./.github/actions/setup-python' or (path.parent.name=='setup-python' and uses.startswith('actions/setup-python@'))
+  setup_gh |= uses=='./.github/actions/setup-gh'
   if uses.startswith('actions/setup-python@') and path.parent.name!='setup-python': fail(f'{path}: bypasses setup-python wrapper')
   if 'python3' in run and not setup_py: fail(f'{path}: Python consumer lacks setup')
   if run_has_gh(run) and not setup_gh: fail(f'{path}: gh consumer lacks setup')
@@ -98,7 +126,8 @@ required={
 for name,needles in required.items():
  data=(workflows/name).read_text()
  if any(n not in data for n in needles): fail(f'{name} does not consume all canonical tool outputs')
-if f'image: velero/velero:v{a["VELERO_VERSION"]}' not in (root/'k8s/velero/verify-backups-cronjob.yaml').read_text(): fail('Velero image projection is stale')
+velero_image=f'image: velero/velero:v{a["VELERO_VERSION"]}@{a["VELERO_IMAGE_DIGEST"]}'
+if velero_image not in (root/'k8s/velero/verify-backups-cronjob.yaml').read_text(): fail('Velero image projection is stale')
 
 renovate=json.loads((root/'renovate.json').read_text())
 if not {'nodenv','pyenv','pip_requirements','custom.regex'} <= set(renovate['enabledManagers']): fail('Renovate managers incomplete')
@@ -116,7 +145,16 @@ for action in ('setup-gh','setup-helm'):
  if 'sha256sum --check --status' not in data: fail(f'{action} must verify its archive')
 if 'RUNNER_OS' not in (actions/'setup-gh/action.yml').read_text() or 'RUNNER_ARCH' not in (actions/'setup-gh/action.yml').read_text(): fail('setup-gh must reject unsupported platforms')
 lychee=(root/'dev-tools/docs/link-check.sh').read_text()
-for required in ('source "$ROOT_DIR/config/workflow-tool-versions.env"','/lychee/${LYCHEE_VERSION}','LYCHEE_LINUX_X86_64_MUSL_SHA256','sha256sum --check --status'):
+for required in ('source "$ROOT_DIR/config/workflow-tool-versions.env"','/lychee/${LYCHEE_VERSION}','LYCHEE_LINUX_X86_64_MUSL_SHA256','sha256sum --check --status','VERIFIED_MARKER','ARCHIVE=','marker_binary_sha','extracted_sha','mv -f "$staging/lychee" "$BIN"','mv -f "$staged_archive" "$ARCHIVE"'):
  if required not in lychee: fail(f'local Lychee installer does not consume its authority: {required}')
+docs=(workflows/'docs.yml').read_text()
+if 'lycheeverse/lychee-action@' in docs or 'run: bash ./dev-tools/docs/link-check.sh' not in docs: fail('docs workflow must use the checksum-verifying Lychee installer')
+for identity in ('outputs.lychee-version','outputs.lychee-linux-x86-64-musl-sha256'):
+ if identity not in docs: fail(f'docs Lychee cache omits tool identity: {identity}')
+setup_python=load(actions/'setup-python/action.yml')
+if set(setup_python.get('inputs',{}))!={'requirements'}: fail('setup-python must expose one canonical requirements profile input')
+setup_source=(actions/'setup-python/action.yml').read_text()
+for profile,path in {'yaml':'config/python/yaml-requirements.txt','ci':'config/python/ci-requirements.txt','smoke':'config/python/smoke-requirements.txt','docs':'config/docs/requirements.txt'}.items():
+ if f'{profile}) requirements_file={path}' not in setup_source: fail(f'setup-python does not own {profile} requirements')
 print('Workflow version authority contract passed')
 PY

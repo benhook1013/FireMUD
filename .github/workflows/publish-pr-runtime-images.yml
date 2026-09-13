@@ -21,6 +21,7 @@ jobs:
     permissions:
       # This trusted default-branch workflow reads one successful run artifact and publishes fixed SHA tags.
       actions: read
+      contents: read
       packages: write
     env:
       IMAGE_TAG: ${{ github.event.workflow_run.head_sha }}

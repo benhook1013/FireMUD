@@ -545,6 +545,7 @@ assert len(mode_action["runs"]["steps"]) == 2
 assert mode_action["runs"]["steps"][0] == {
     "name": "Set up canonical Python",
     "uses": "./.github/actions/setup-python",
+    "with": {"requirements": "yaml"},
 }
 resolve_step = mode_action["runs"]["steps"][1]
 assert resolve_step["id"] == "resolve"

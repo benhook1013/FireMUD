@@ -46,6 +46,8 @@ jobs:
 
       - name: Set up canonical Python
         uses: ./.github/actions/setup-python
+        with:
+          requirements: yaml
 
       - name: Set up canonical GitHub CLI
         uses: ./.github/actions/setup-gh
@@ -230,6 +232,8 @@ jobs:
 
       - name: Set up canonical Python
         uses: ./.github/actions/setup-python
+        with:
+          requirements: yaml
 
       - name: Set up canonical GitHub CLI
         uses: ./.github/actions/setup-gh
@@ -316,6 +320,8 @@ jobs:
 
       - name: Set up canonical Python
         uses: ./.github/actions/setup-python
+        with:
+          requirements: yaml
 
       - name: Set up canonical GitHub CLI
         uses: ./.github/actions/setup-gh
@@ -558,6 +564,9 @@ jobs:
       - name: Set up canonical GitHub CLI
         uses: ./.github/actions/setup-gh
 
+      - name: Set up canonical Python dependencies
+        uses: ./.github/actions/setup-python
+
       - name: Set up kubectl
         uses: ./.github/actions/setup-kubectl
 
@@ -724,6 +733,10 @@ jobs:
           persist-credentials: false
       - name: Set up canonical GitHub CLI
         uses: ./.github/actions/setup-gh
+      - name: Set up canonical Python dependencies
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: yaml
       - name: Set up kubectl
         uses: ./.github/actions/setup-kubectl
       - name: Write runtime kubeconfig
@@ -822,6 +835,8 @@ jobs:
           persist-credentials: false
       - name: Set up canonical GitHub CLI
         uses: ./.github/actions/setup-gh
+      - name: Set up canonical Python dependencies
+        uses: ./.github/actions/setup-python
       - name: Set up kubectl
         uses: ./.github/actions/setup-kubectl
       - name: Check Hosted identity requester credentials

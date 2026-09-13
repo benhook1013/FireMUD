@@ -26,6 +26,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Set up Python
         uses: ./.github/actions/setup-python
+        with:
+          requirements: docs
       - name: Load workflow tool versions
         id: workflow-tool-versions
         uses: ./.github/actions/load-workflow-tool-versions
@@ -33,21 +35,14 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .lychee_cache
-          key: lychee-${{ runner.os }}-${{ hashFiles('**/*.md') }}
+          key: lychee-${{ runner.os }}-${{ steps.workflow-tool-versions.outputs.lychee-version }}-${{ steps.workflow-tool-versions.outputs.lychee-linux-x86-64-musl-sha256 }}-${{ hashFiles('**/*.md') }}
       - name: Check links
-        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
         env:
           LYCHEE_CACHE: true
-        with:
-          lycheeVersion: v${{ steps.workflow-tool-versions.outputs.lychee-version }}
-          # Keep docs publishing resilient to third-party outages. Full external
-          # link validation remains in CI via `./gradlew lintMarkdown linkCheck -PfullCheck`.
-          args: --no-progress --verbose --scheme file --exclude-path './**/node_modules/**' --exclude-path './**/build/**' --exclude-path './**/.gradle/**' './**/*.md'
-          fail: true
-          jobSummary: true
+        # Keep docs publishing resilient to third-party outages. Full external
+        # link validation remains in CI via `./gradlew lintMarkdown linkCheck -PfullCheck`.
+        run: bash ./dev-tools/docs/link-check.sh
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
-      - name: Install MkDocs
-        run: python3 -m pip install --disable-pip-version-check -r config/docs/requirements.txt
       - name: Build documentation
         run: |
           python3 dev-tools/docs/build_pages_site.py

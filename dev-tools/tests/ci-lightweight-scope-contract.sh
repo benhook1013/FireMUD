@@ -219,12 +219,8 @@ require_contains(
     "npm ci --prefix config/openapi",
     "ci workflow",
 )
-require_contains(
-    docs_dependencies_step,
-    ("run",),
-    "python3 -m pip install --disable-pip-version-check -r config/docs/requirements.txt",
-    "ci workflow",
-)
+docs_python_step = find_step(ci, "docs-check", "🐍 Set Up Python", "ci workflow")
+require_equal(docs_python_step, ("with", "requirements"), "docs", "ci workflow")
 docs_links_step = find_step(ci, "docs-check", "Lint Markdown and links", "ci workflow")
 require_contains(
     docs_links_step,

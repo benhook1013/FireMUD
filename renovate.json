@@ -31,7 +31,7 @@
         "/^config/workflow-tool-versions\\.env$/"
       ],
       "matchStrings": [
-        "# renovate-version: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\n[A-Z][A-Z0-9_]*_VERSION=(?<currentValue>\\S+)"
+        "# renovate-version: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\n(?:# renovate-image:[^\\n]+\\n)?[A-Z][A-Z0-9_]*_VERSION=(?<currentValue>\\S+)"
       ]
     },
     {
@@ -40,7 +40,7 @@
         "/^config/workflow-tool-versions\\.env$/"
       ],
       "matchStrings": [
-        "# renovate-image: datasource=(?<datasource>docker) depName=(?<depName>\\S+)\\n[A-Z][A-Z0-9_]*_VERSION=(?<currentValue>\\S+)\\n[A-Z][A-Z0-9_]*_DIGEST=(?<currentDigest>sha256:[0-9a-f]{64})"
+        "# renovate-image: datasource=(?<datasource>docker) depName=(?<depName>\\S+)\\n[A-Z][A-Z0-9_]*_VERSION=(?<currentValue>\\S+)\\n(?:[A-Z][A-Z0-9_]*=[^\\n]+\\n)*?[A-Z][A-Z0-9_]*_DIGEST=(?<currentDigest>sha256:[0-9a-f]{64})"
       ],
       "versioningTemplate": "docker"
     }

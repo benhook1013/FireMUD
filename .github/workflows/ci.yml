@@ -209,9 +209,8 @@ jobs:
 
       - name: 🐍 Set Up Python
         uses: ./.github/actions/setup-python
-
-      - name: 📦 Install Ruff
-        run: python3 -m pip install --disable-pip-version-check -r config/python/ci-requirements.txt
+        with:
+          requirements: ci
 
       - name: 🧪 Validate tracked Python scripts
         run: |
@@ -246,15 +245,14 @@ jobs:
 
       - name: 🐍 Set Up Python
         uses: ./.github/actions/setup-python
+        with:
+          requirements: ci
 
       - name: 📦 Install cloc
         if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
         run: |
           sudo apt-get update
           sudo apt-get install -y cloc
-
-      - name: 📦 Install Python script dependencies
-        run: python3 -m pip install --disable-pip-version-check -r config/python/ci-requirements.txt
 
       - name: Set up Helm
         if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
@@ -317,9 +315,8 @@ jobs:
 
       - name: 🐍 Set Up Python
         uses: ./.github/actions/setup-python
-
-      - name: 📦 Install yamllint
-        run: python3 -m pip install --disable-pip-version-check -r config/python/ci-requirements.txt
+        with:
+          requirements: ci
 
       - name: 🧪 Lint tracked YAML
         run: bash ./dev-tools/validation/lint-yaml.sh
@@ -464,6 +461,11 @@ jobs:
       - name: Set up Helm
         uses: ./.github/actions/setup-helm
 
+      - name: Set up canonical Python dependencies
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: yaml
+
       - name: 🧪 Lint tracked Helm charts
         run: bash ./dev-tools/validation/validate-helm.sh lint
 
@@ -483,6 +485,11 @@ jobs:
 
       - name: Set up Helm
         uses: ./.github/actions/setup-helm
+
+      - name: Set up canonical Python dependencies
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: yaml
 
       - name: Load workflow tool versions
         id: workflow-tool-versions
@@ -520,6 +527,8 @@ jobs:
 
       - name: 🐍 Set Up Python
         uses: ./.github/actions/setup-python
+        with:
+          requirements: docs
 
       - name: 🔎 Validate Observability Contracts
         run: python3 dev-tools/observability/validate-observability-contract.py
@@ -534,7 +543,6 @@ jobs:
       - name: 📦 Install documentation dependencies
         run: |
           npm ci --prefix config/openapi
-          python3 -m pip install --disable-pip-version-check -r config/docs/requirements.txt
 
       - name: 🧹 Lint Markdown and links
         run: |
