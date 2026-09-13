@@ -195,7 +195,7 @@ class ServedEnvironmentProbeTest {
         };
 
     ServedEnvironmentProbe.ProbeResult result =
-        probe.probe(plan, 32001, endpoint, endpoint, endpoint, endpoint, Duration.ofSeconds(1));
+        probe.probe(plan, 32001, endpoint, endpoint, endpoint, endpoint, Duration.ofSeconds(3));
 
     assertEquals("probe-deadline-exceeded", result.reason());
     assertTrue(started.await(1, TimeUnit.SECONDS));
