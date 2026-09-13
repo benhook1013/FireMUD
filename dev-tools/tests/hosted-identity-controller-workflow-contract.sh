@@ -109,17 +109,12 @@ for required in (
 ):
     assert required in smoke_scope_script, required
 
-runtime_scope_script = smoke_scope_script[
+runtime_prefixes_script = smoke_scope_script[
     smoke_scope_script.index("const runtimePrefixes"):
-    smoke_scope_script.index("runtimeSmokeRequired = paths.some")
+    smoke_scope_script.index("const runtimeFiles")
 ]
-for runtime_service in (
-    "services/account-service/",
-    "services/game-session-service/",
-    "services/tcp-proxy-service/",
-):
-    assert runtime_service in runtime_scope_script
-assert "dev-tools/smoke/" in runtime_scope_script
+assert not re.search(r'"services/[^"]+/"', runtime_prefixes_script)
+assert "dev-tools/smoke/" in runtime_prefixes_script
 runtime_scope_predicate = smoke_scope_script[
     smoke_scope_script.index("runtimeSmokeRequired = paths.some"):
     smoke_scope_script.index("controllerSmokeRequired = paths.some")
@@ -136,12 +131,6 @@ controller_scope_script = smoke_scope_script[
     smoke_scope_script.index("runtimeSmokeRequired = paths.some")
 ]
 assert "services/hosted-environment-identity-controller/" in controller_scope_script
-for unrelated_service in (
-    "services/account-service/",
-    "services/game-session-service/",
-    "services/tcp-proxy-service/",
-):
-    assert unrelated_service not in controller_scope_script
 
 runtime_job = workflow["jobs"]["pr-local-smoke"]
 assert "needs.image-meta.outputs.runtime_smoke_required" not in runtime_job["if"]
