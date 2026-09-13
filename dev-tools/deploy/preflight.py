@@ -90,7 +90,6 @@ SECRET_LOOKUP_TIMEOUT_SECONDS = 30
 HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS = 300
 HOSTED_BRIDGE_SECRET_READY_MAX_TIMEOUT_SECONDS = 900
 HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS = 2
-HOSTED_BRIDGE_SECRET_MIN_LOOKUP_TIMEOUT_SECONDS = SECRET_LOOKUP_TIMEOUT_SECONDS
 
 
 def _hosted_bridge_secret_ready_attempts_for_timeout(timeout_seconds: int) -> int:
@@ -6525,10 +6524,6 @@ def wait_for_secret_key_requirements(
         raise ValueError("ready_attempts must be positive")
     if ready_timeout_seconds is None:
         ready_timeout_seconds = HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS
-    usable_lookup_timeout_floor_seconds = min(
-        HOSTED_BRIDGE_SECRET_MIN_LOOKUP_TIMEOUT_SECONDS,
-        ready_timeout_seconds,
-    )
     readiness_started_at = time.monotonic()
     deadline = readiness_started_at + ready_timeout_seconds
     pending = list(secret_requirements)
@@ -6536,16 +6531,15 @@ def wait_for_secret_key_requirements(
     lookup_attempts: dict[str, int] = {}
     lookup_timed_out: set[str] = set()
 
-    def record_unusable_deadline_window(
+    def record_expired_deadline_window(
         skipped_requirements: list[tuple[str, set[str]]],
     ) -> None:
         for skipped_name, _ in skipped_requirements:
             if skipped_name in lookup_timed_out or skipped_name in latest_issues:
                 continue
             latest_issues[skipped_name] = (
-                "Secret readiness deadline left less than the "
-                f"{usable_lookup_timeout_floor_seconds}s minimum "
-                f"lookup window before lookup for {namespace}/{skipped_name}"
+                "Secret readiness deadline expired before lookup for "
+                f"{namespace}/{skipped_name}"
             )
 
     def format_known_issues(
@@ -6568,21 +6562,15 @@ def wait_for_secret_key_requirements(
         ]
 
     for attempt in range(ready_attempts):
-        if (
-            deadline - time.monotonic()
-            < usable_lookup_timeout_floor_seconds
-        ):
-            record_unusable_deadline_window(pending)
+        if deadline - time.monotonic() <= 0:
+            record_expired_deadline_window(pending)
             break
         retry_pending: list[tuple[str, set[str]]] = []
         for pending_index, (secret_name, required_keys) in enumerate(pending):
             remaining_seconds = deadline - time.monotonic()
-            if (
-                remaining_seconds
-                < usable_lookup_timeout_floor_seconds
-            ):
+            if remaining_seconds <= 0:
                 skipped_requirements = pending[pending_index:]
-                record_unusable_deadline_window(skipped_requirements)
+                record_expired_deadline_window(skipped_requirements)
                 retry_pending.extend(skipped_requirements)
                 break
             lookup_attempts[secret_name] = lookup_attempts.get(secret_name, 0) + 1
@@ -6607,11 +6595,8 @@ def wait_for_secret_key_requirements(
         pending = retry_pending
         if attempt + 1 < ready_attempts:
             remaining_seconds = deadline - time.monotonic()
-            if (
-                remaining_seconds
-                < usable_lookup_timeout_floor_seconds
-            ):
-                record_unusable_deadline_window(pending)
+            if remaining_seconds <= 0:
+                record_expired_deadline_window(pending)
                 break
             time.sleep(min(HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS, remaining_seconds))
     return format_known_issues(pending)

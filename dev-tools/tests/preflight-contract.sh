@@ -2553,9 +2553,8 @@ try:
         )
     if (
         len(immediate_deadline_issues) != 1
-        or "Secret readiness deadline left less than the"
+        or "Secret readiness deadline expired before lookup"
         not in immediate_deadline_issues[0]
-        or "5s minimum lookup window" not in immediate_deadline_issues[0]
         or "no Secret lookups attempted" not in immediate_deadline_issues[0]
         or "still not ready after" in immediate_deadline_issues[0]
         or "elapsed 5.0s of 5s readiness budget" not in immediate_deadline_issues[0]
@@ -2565,33 +2564,31 @@ try:
             f"{immediate_deadline_issues}"
         )
 
-    below_floor_clock = SequencedClock((0.0, 4.0, 4.0))
+    short_budget_clock = SequencedClock((0.0, 4.0, 4.0))
     below_floor_lookup_calls = [0]
+    below_floor_lookup_timeout = [None]
 
-    def below_floor_lookup(*args, **kwargs):
+    def below_floor_lookup(args, namespace, required_keys, timeout_seconds):
         below_floor_lookup_calls[0] += 1
-        raise SystemExit("Secret readiness started a lookup below its usable timeout floor")
+        below_floor_lookup_timeout[0] = timeout_seconds
+        return None, False, False
 
     with (
         patch.object(module, "secret_keys_lookup_failure", below_floor_lookup),
-        patch.object(module.time, "monotonic", below_floor_clock),
+        patch.object(module.time, "monotonic", short_budget_clock),
     ):
         below_floor_issues = module.wait_for_secret_key_requirements(
-            [("below-floor", {"tls.crt"})],
+            [("short-budget", {"tls.crt"})],
             "pr-42",
             ready_attempts=3,
             ready_timeout_seconds=5,
         )
-    if below_floor_lookup_calls[0] != 0:
-        raise SystemExit("Secret readiness performed a lookup below its usable timeout floor")
-    if (
-        len(below_floor_issues) != 1
-        or "5s minimum lookup window" not in below_floor_issues[0]
-        or "no Secret lookups attempted" not in below_floor_issues[0]
-        or "elapsed 4.0s of 5s readiness budget" not in below_floor_issues[0]
-    ):
+    if below_floor_lookup_calls[0] != 1 or below_floor_issues:
+        raise SystemExit(f"short readiness budget did not perform its lookup: {below_floor_issues}")
+    if below_floor_lookup_timeout[0] != 1.0:
         raise SystemExit(
-            f"Secret readiness did not report its below-floor deadline: {below_floor_issues}"
+            "short readiness budget did not pass its actual positive remaining time: "
+            f"{below_floor_lookup_timeout[0]}"
         )
 
     exact_floor_clock = SequencedClock((0.0, 5.0, 5.0))
@@ -2698,10 +2695,12 @@ try:
 
     one_second_residual_clock = SequencedClock((0.0, 0.1, 0.1))
     one_second_residual_lookup_calls = [0]
+    one_second_residual_lookup_timeout = [None]
 
-    def one_second_residual_lookup(*args, **kwargs):
+    def one_second_residual_lookup(args, namespace, required_keys, timeout_seconds):
         one_second_residual_lookup_calls[0] += 1
-        raise SystemExit("one-second Secret readiness started a lookup below its usable floor")
+        one_second_residual_lookup_timeout[0] = timeout_seconds
+        return None, False, False
 
     with (
         patch.object(module, "secret_keys_lookup_failure", one_second_residual_lookup),
@@ -2716,17 +2715,15 @@ try:
             ready_attempts=1,
             ready_timeout_seconds=1,
         )
-    if one_second_residual_lookup_calls[0] != 0:
-        raise SystemExit("one-second Secret readiness used a sub-floor residual")
-    if (
-        len(one_second_residual_issues) != 1
-        or "1s minimum lookup window" not in one_second_residual_issues[0]
-        or "no Secret lookups attempted" not in one_second_residual_issues[0]
-        or "elapsed 0.1s of 1s readiness budget" not in one_second_residual_issues[0]
-    ):
+    if one_second_residual_lookup_calls[0] != 1 or one_second_residual_issues:
         raise SystemExit(
-            "one-second Secret readiness did not report its sub-floor residual: "
+            "one-second Secret readiness did not perform its positive-residual lookup: "
             f"{one_second_residual_issues}"
+        )
+    if abs(one_second_residual_lookup_timeout[0] - 0.9) > 1e-9:
+        raise SystemExit(
+            "one-second Secret readiness did not pass its actual positive remaining time: "
+            f"{one_second_residual_lookup_timeout[0]}"
         )
 
     authoritative_deadline_now = [0.0]
@@ -2734,7 +2731,7 @@ try:
 
     def retry_before_floor(args, **kwargs):
         authoritative_deadline_calls[0] += 1
-        authoritative_deadline_now[0] = 4.0
+        authoritative_deadline_now[0] = 5.0
         return module.subprocess.CompletedProcess(args, 0, json.dumps({"data": {}}), "")
 
     with (
@@ -2757,9 +2754,8 @@ try:
         len(authoritative_deadline_issues) != 1
         or "Required Secret pr-42/deadline-authoritative is missing keys: tls.crt"
         not in authoritative_deadline_issues[0]
-        or "5s minimum lookup window" in authoritative_deadline_issues[0]
         or "still not ready after 1 attempts" not in authoritative_deadline_issues[0]
-        or "elapsed 4.0s of 5s readiness budget"
+        or "elapsed 5.0s of 5s readiness budget"
         not in authoritative_deadline_issues[0]
     ):
         raise SystemExit(
@@ -2861,8 +2857,7 @@ try:
         if "pr-42/looked-up" in issue
     )
     if (
-        "Secret readiness deadline left less than the" not in skipped_issue
-        or "5s minimum lookup window" not in skipped_issue
+        "Secret readiness deadline expired before lookup" not in skipped_issue
         or "no Secret lookups attempted" not in skipped_issue
         or "still not ready after" in skipped_issue
         or "elapsed 6.0s of 5s readiness budget" not in skipped_issue
@@ -2872,7 +2867,7 @@ try:
         )
     if (
         "Required Secret pr-42/looked-up is missing keys: tls.crt" not in looked_up_issue
-        or "Secret readiness deadline left less than the" in looked_up_issue
+        or "Secret readiness deadline expired before lookup" in looked_up_issue
         or "still not ready after 1 attempts" not in looked_up_issue
         or "no Secret lookups attempted" in looked_up_issue
     ):
