@@ -361,6 +361,7 @@ jobs:
       image_id: ${{ steps.smoke.outputs.image_id }}
     permissions:
       contents: read
+      packages: read
     env:
       CONTROLLER_IMAGE_NAME: ghcr.io/benhook1013/firemud-hosted-identity-controller
       CONTROLLER_IMAGE: ghcr.io/benhook1013/firemud-hosted-identity-controller:${{ needs.image-meta.outputs.image_tag }}
@@ -389,6 +390,13 @@ jobs:
           build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
           build-scan-terms-of-use-agree: 'yes'
           cache-read-only: false
+
+      - name: Login to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build controller JAR and image locally
         run: |

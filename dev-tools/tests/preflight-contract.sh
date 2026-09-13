@@ -2533,6 +2533,63 @@ try:
             f"{mixed_non_retryable_issues}"
         )
 
+    stale_issue_calls = []
+
+    def stale_issue_then_ready_lookup(
+        secret_name, namespace, required_keys, timeout_seconds
+    ):
+        stale_issue_calls.append(secret_name)
+        if secret_name == "recovers-before-non-retryable":
+            if stale_issue_calls.count(secret_name) == 1:
+                return (
+                    f"Required Secret {namespace}/{secret_name} is missing keys: tls.crt",
+                    True,
+                    False,
+                )
+            return None, False, False
+        if secret_name == "non-retryable-after-recovery":
+            if stale_issue_calls.count(secret_name) == 1:
+                return (
+                    f"Required Secret {namespace}/{secret_name} is missing keys: tls.crt",
+                    True,
+                    False,
+                )
+            return (
+                f"Secret lookup could not be verified for {namespace}/{secret_name}: kubectl denied",
+                False,
+                False,
+            )
+        raise SystemExit(f"unperformed Secret lookup was invented: {secret_name}")
+
+    with (
+        patch.object(module, "secret_keys_lookup_failure", stale_issue_then_ready_lookup),
+        patch.object(module.time, "sleep", lambda _: None),
+    ):
+        stale_issue_recovery = module.wait_for_secret_key_requirements(
+            [
+                ("recovers-before-non-retryable", {"tls.crt"}),
+                ("non-retryable-after-recovery", {"tls.crt"}),
+            ],
+            "pr-42",
+            ready_attempts=2,
+            ready_timeout_seconds=35,
+        )
+    if stale_issue_calls != [
+        "recovers-before-non-retryable",
+        "non-retryable-after-recovery",
+        "recovers-before-non-retryable",
+        "non-retryable-after-recovery",
+    ]:
+        raise SystemExit(
+            "Secret readiness did not retry the recovered Secret before the later failure: "
+            f"{stale_issue_calls}"
+        )
+    if len(stale_issue_recovery) != 1 or "recovers-before-non-retryable" in stale_issue_recovery[0]:
+        raise SystemExit(
+            "Secret readiness retained a stale issue after the Secret became ready: "
+            f"{stale_issue_recovery}"
+        )
+
     immediate_deadline_clock = SequencedClock((0.0, 5.0, 5.0))
 
     def immediate_deadline_lookup(*args, **kwargs):
@@ -9418,6 +9475,60 @@ for expected_issue in (
             "hosted-bridge did not report independent Telnet mount defects: "
             f"{independent_telnet_mount_issues}"
         )
+
+subpath_telnet_documents = list(yaml.safe_load_all(render_path.read_text(encoding="utf-8")))
+subpath_telnet_mount = next(
+    mount
+    for mount in next(
+        document
+        for document in subpath_telnet_documents
+        if document.get("kind") == "Deployment"
+        and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    )["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]
+    if mount.get("mountPath") == "/telnet-tls"
+)
+subpath_telnet_mount["subPath"] = "tls.crt"
+subpath_telnet_issues = module.validate_hosted_telnet_tls_values(
+    subpath_telnet_documents,
+    required_identity_mode="hosted-controller",
+    expected_hosted_telnet_node_port=node_port,
+    target_namespace=namespace,
+)
+if "/telnet-tls must not use subPath" not in subpath_telnet_issues:
+    raise SystemExit(f"hosted-bridge accepted a /telnet-tls subPath mount: {subpath_telnet_issues}")
+
+invalid_telnet_items_documents = list(
+    yaml.safe_load_all(render_path.read_text(encoding="utf-8"))
+)
+invalid_telnet_items_pod = next(
+    document
+    for document in invalid_telnet_items_documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)["spec"]["template"]["spec"]
+invalid_telnet_items_volume = next(
+    volume
+    for volume in invalid_telnet_items_pod["volumes"]
+    if volume.get("name") == "telnet"
+)
+invalid_telnet_items_volume["secret"]["items"] = [
+    {"key": "tls.crt", "path": "certificate.crt"},
+    {"key": "tls.key", "path": "tls.key"},
+]
+invalid_telnet_items_issues = module.validate_hosted_telnet_tls_values(
+    invalid_telnet_items_documents,
+    required_identity_mode="hosted-controller",
+    expected_hosted_telnet_node_port=node_port,
+    target_namespace=namespace,
+)
+if (
+    "/telnet-tls Secret items must map exactly tls.crt to tls.crt and tls.key to tls.key"
+    not in invalid_telnet_items_issues
+):
+    raise SystemExit(
+        "hosted-bridge accepted an incomplete /telnet-tls Secret projection: "
+        f"{invalid_telnet_items_issues}"
+    )
 
 required_telnet_tls_paths = {
     "TCP_PROXY_TLS_CERT": "/telnet-tls/tls.crt",

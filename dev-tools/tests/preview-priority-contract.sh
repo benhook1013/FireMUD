@@ -533,6 +533,14 @@ cat > "$TEMP_DIR/identity-request" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$FAKE_IDENTITY_REQUEST_LOG"
+if [[ -n "${FAKE_IDENTITY_HELPER_STDIN_LOG:-}" ]]; then
+  helper_stdin=''
+  if IFS= read -r helper_stdin; then
+    printf '%s\n' "$helper_stdin" >> "$FAKE_IDENTITY_HELPER_STDIN_LOG"
+  else
+    printf '<eof>\n' >> "$FAKE_IDENTITY_HELPER_STDIN_LOG"
+  fi
+fi
 if [[ -n "${FAKE_OPERATION_SEQUENCE:-}" ]]; then
   printf 'identity-request\n' >> "$FAKE_OPERATION_SEQUENCE"
 fi
@@ -1313,6 +1321,20 @@ for stranded_phase in RuntimeAbsent Retiring Retired; do
   grep -Fq "Recovering HostedEnvironmentIdentity/pr-101 from phase ${stranded_phase}" \
     "$TEMP_DIR/recover-${stranded_phase}.out"
 done
+
+# Recovery rows must use a dedicated descriptor so request helpers retain the
+# caller's stdin instead of consuming the candidate-row transport.
+reset_case
+export FAKE_NAMESPACE_ROWS=''
+export FAKE_PRUNE_METADATA="closed\tdevelop\thuman\t${adversarial_labels_base64}\n"
+export HOSTED_IDENTITY_MODE=hosted-controller
+export FAKE_RUNTIME_NAMESPACE_PRESENT=false
+export FAKE_RECORD_RUNTIME_CHECK=true
+export FAKE_IDENTITY_LIST_JSON='{"apiVersion":"platform.firemud.dev/v1alpha1","kind":"HostedEnvironmentIdentityList","items":[{"apiVersion":"platform.firemud.dev/v1alpha1","kind":"HostedEnvironmentIdentity","metadata":{"namespace":"firemud-system","name":"pr-101"},"spec":{"desiredState":"Retired"},"status":{"phase":"Retired"}}]}'
+export FAKE_IDENTITY_HELPER_STDIN_LOG="$TEMP_DIR/identity-helper-stdin.log"
+printf 'caller-stdin-survives\n' | bash "$PRUNER" --apply --retire-terminal-identities \
+  >"$TEMP_DIR/recover-stdin.out"
+grep -Fqx 'caller-stdin-survives' "$FAKE_IDENTITY_HELPER_STDIN_LOG"
 
 reset_case
 export FAKE_NAMESPACE_ROWS=''
@@ -2344,7 +2366,32 @@ for job_name, required_gate in expected_gates.items():
 janitor = yaml.safe_load(
     Path(os.environ["JANITOR_WORKFLOW"]).read_text(encoding="utf-8")
 )
-assert janitor["jobs"]["prune-stale-preview-namespaces"]["timeout-minutes"] == 60
+janitor_job = janitor["jobs"]["prune-stale-preview-namespaces"]
+assert janitor_job["timeout-minutes"] == 60
+janitor_steps = janitor_job["steps"]
+requester_check = next(
+    step for step in janitor_steps if step.get("id") == "requester-credentials"
+)
+assert requester_check["if"] == (
+    "${{ steps.certificate-identity.outputs.mode == 'hosted-controller' }}"
+)
+assert "available=false" in requester_check["run"]
+assert "available=true" in requester_check["run"]
+requester_write = next(
+    step for step in janitor_steps if step.get("name") == "Write hosted identity requester kubeconfig"
+)
+assert requester_write["if"] == (
+    "${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && "
+    "steps.requester-credentials.outputs.available == 'true' }}"
+)
+prune_step = next(
+    step for step in janitor_steps if step.get("name") == "Prune stale preview namespaces"
+)
+prune_run = prune_step["run"]
+assert "HOSTED_IDENTITY_REQUESTER_CREDENTIALS_AVAILABLE" in prune_step["env"]
+assert "--retire-terminal-identities" in prune_run
+assert "prune-stale-preview-namespaces.sh --apply" in prune_run
+assert "HOSTED_IDENTITY_REQUESTER_CREDENTIALS_AVAILABLE\" == true" in prune_run
 
 
 def logical_commands(run):

@@ -47,8 +47,22 @@ jobs:
           bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
           echo "PREVIEW_RUNTIME_KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
-      - name: Write hosted identity requester kubeconfig
+      - name: Check hosted identity requester credentials
+        id: requester-credentials
         if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' }}
+        env:
+          REQUESTER_KUBECONFIG: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$REQUESTER_KUBECONFIG" ]]; then
+            echo "Hosted identity requester credentials are unavailable; skipping identity retirement."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Write hosted identity requester kubeconfig
+        if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available == 'true' }}
         uses: ./.github/actions/write-kubeconfig
         with:
           content: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
@@ -68,12 +82,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           HOSTED_IDENTITY_MODE: ${{ steps.certificate-identity.outputs.mode }}
           HOSTED_IDENTITY_REQUESTER_KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
+          HOSTED_IDENTITY_REQUESTER_CREDENTIALS_AVAILABLE: ${{ steps.requester-credentials.outputs.available }}
         run: |
           set -euo pipefail
           case "$HOSTED_IDENTITY_MODE" in
             hosted-controller)
-              bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh \
-                --apply --retire-terminal-identities
+              if [[ "$HOSTED_IDENTITY_REQUESTER_CREDENTIALS_AVAILABLE" == true ]]; then
+                bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh \
+                  --apply --retire-terminal-identities
+              else
+                bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh --apply
+              fi
               ;;
             standalone)
               bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh --apply

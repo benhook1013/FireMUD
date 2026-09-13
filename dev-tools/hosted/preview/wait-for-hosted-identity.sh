@@ -59,7 +59,7 @@ validate_timeout_seconds() {
 
 is_retryable_kubectl_transport_failure() {
   local error_text="$1"
-  local transport_pattern='unable to connect to the server|connection refused|connection to .* was refused|connection reset by peer|i/o timeout|tls handshake timeout|net/http: request canceled|unexpected eof'
+  local transport_pattern='unable to connect to the server|connection refused|connection to .* was refused|connection reset by peer|i/o timeout|tls handshake timeout|net/http: request canceled|unexpected eof|etcdserver: request timed out|etcdserver: leader changed|too many requests|temporarily unable to handle (the )?request|the server is currently unable to handle (the )?request|apiserver (is )?shutting down'
 
   [[ "${error_text,,}" =~ $transport_pattern ]]
 }

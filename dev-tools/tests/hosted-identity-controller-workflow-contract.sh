@@ -826,10 +826,14 @@ assert controller_build_job["timeout-minutes"] == 25
 assert all(token in controller_build_job["if"] for token in (
     "github.event_name != 'pull_request'", "github.ref == 'refs/heads/main'", "github.ref == 'refs/heads/develop'"
 ))
-assert controller_build_job["permissions"] == {"contents": "read"}
+assert controller_build_job["permissions"] == {
+    "contents": "read",
+    "packages": "read",
+}
+assert controller_build_job["permissions"].get("packages") != "write"
 assert all(
     permission not in controller_build_job["permissions"]
-    for permission in ("packages", "id-token", "attestations")
+    for permission in ("id-token", "attestations")
 )
 assert controller_build_job["outputs"]["image_id"] == "${{ steps.smoke.outputs.image_id }}"
 controller_build_steps = controller_build_job["steps"]
@@ -840,10 +844,19 @@ assert controller_build_job["env"]["CONTROLLER_IMAGE"] == (
     "ghcr.io/benhook1013/firemud-hosted-identity-controller:${{ needs.image-meta.outputs.image_tag }}"
 )
 build_index = next(i for i, step in enumerate(controller_build_steps) if step.get("name") == "Build controller JAR and image locally")
+login_index = next(i for i, step in enumerate(controller_build_steps) if step.get("name") == "Login to GHCR")
 smoke_index = next(i for i, step in enumerate(controller_build_steps) if step.get("name") == "Smoke exact controller image")
 export_index = next(i for i, step in enumerate(controller_build_steps) if step.get("name") == "Export exact verified controller image artifact")
 upload_index = next(i for i, step in enumerate(controller_build_steps) if step.get("name") == "Upload exact verified controller image artifact")
-assert build_index < smoke_index < export_index < upload_index
+assert login_index < build_index < smoke_index < export_index < upload_index
+assert controller_build_steps[login_index]["uses"] == (
+    "docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee"
+)
+assert controller_build_steps[login_index]["with"] == {
+    "registry": "ghcr.io",
+    "username": "${{ github.actor }}",
+    "password": "${{ secrets.GITHUB_TOKEN }}",
+}
 assert "--tag \"$CONTROLLER_IMAGE\"" in controller_build_steps[build_index]["run"]
 assert "ghcr.io/benhook1013/firemud-base@${{ needs.build-base-image.outputs.digest }}" in controller_build_steps[build_index]["run"]
 trusted_smoke_run = controller_build_steps[smoke_index]["run"]
@@ -861,7 +874,6 @@ for required in (
     assert required in trusted_smoke_run, required
 assert 'for _ in {1..300}; do' not in trusted_smoke_run
 assert '[[ "$health" == *' not in trusted_smoke_run
-assert "docker/login-action@" not in str(controller_build_job)
 assert "docker push" not in str(controller_build_job)
 assert "actions/attest@" not in str(controller_build_job)
 export_run = controller_build_steps[export_index]["run"]
@@ -4151,6 +4163,25 @@ if [[ "$1" == -n && "$2" == pr-42 && "$3" == get && "$4" == secret ]]; then
     printf 'Unable to connect to the server: dial tcp 10.0.0.1:443: i/o timeout\n' >&2
     exit 45
   fi
+  if [[ "$scenario" == projection-etcd-timeout-recovery ||
+    "$scenario" == projection-etcd-leader-recovery ||
+    "$scenario" == projection-overload-recovery ||
+    "$scenario" == projection-unavailable-recovery ||
+    "$scenario" == projection-currently-unavailable-recovery ||
+    "$scenario" == projection-apiserver-shutdown-recovery ]]; then
+    projection_server_failure_count="$(next_count projection-server-failure)"
+    if (( projection_server_failure_count <= 2 )); then
+      case "$scenario" in
+        projection-etcd-timeout-recovery) printf 'etcdserver: request timed out\n' >&2 ;;
+        projection-etcd-leader-recovery) printf 'etcdserver: leader changed\n' >&2 ;;
+        projection-overload-recovery) printf 'Error from server (TooManyRequests): too many requests\n' >&2 ;;
+        projection-unavailable-recovery) printf 'Error from server: temporarily unable to handle the request\n' >&2 ;;
+        projection-currently-unavailable-recovery) printf 'Error from server: the server is currently unable to handle the request\n' >&2 ;;
+        projection-apiserver-shutdown-recovery) printf 'apiserver is shutting down\n' >&2 ;;
+      esac
+      exit 45
+    fi
+  fi
   if [[ "$scenario" == projection-absence && "$secret_name" == pr-42-tls ]]; then
     projection_count="$(next_count projection)"
     if (( projection_count == 1 )); then
@@ -4299,6 +4330,12 @@ run_projection_waiter_fixture projection-command-unauthorized 47 1 0 'Error from
 run_projection_waiter_fixture projection-command-usage-error 2 1 0 'error: unknown flag'
 run_projection_waiter_fixture projection-transport-recovery 0 7 2
 run_projection_waiter_fixture projection-transport-exhaustion 45 3 2 'Unable to connect to the server'
+run_projection_waiter_fixture projection-etcd-timeout-recovery 0 7 2
+run_projection_waiter_fixture projection-etcd-leader-recovery 0 7 2
+run_projection_waiter_fixture projection-overload-recovery 0 7 2
+run_projection_waiter_fixture projection-unavailable-recovery 0 7 2
+run_projection_waiter_fixture projection-currently-unavailable-recovery 0 7 2
+run_projection_waiter_fixture projection-apiserver-shutdown-recovery 0 7 2
 
 run_active_waiter_fixture() {
   local scenario="$1"

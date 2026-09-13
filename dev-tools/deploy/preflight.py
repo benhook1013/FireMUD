@@ -4426,12 +4426,36 @@ def validate_hosted_telnet_tls_values(
         issues.append("hosted TCP Proxy TLS requires exactly one /telnet-tls mount")
     else:
         mount = telnet_mounts[0]
+        if "subPath" in mount:
+            issues.append("/telnet-tls must not use subPath")
         if mount.get("readOnly") is not True:
             issues.append("hosted TCP Proxy TLS requires a read-only /telnet-tls mount")
         volume = volumes.get(mount.get("name")) or {}
-        secret_name = ((volume.get("secret") or {}).get("secretName"))
+        secret = volume.get("secret") if isinstance(volume, dict) else None
+        secret_name = (secret or {}).get("secretName") if isinstance(secret, dict) else None
         if secret_name != certificate_secret:
             issues.append("/telnet-tls must reference the dedicated Telnet TLS Secret")
+        if isinstance(secret, dict) and "items" in secret:
+            items = secret.get("items")
+            expected_items = {("tls.crt", "tls.crt"), ("tls.key", "tls.key")}
+            actual_items = {
+                (item.get("key"), item.get("path"))
+                for item in items
+                if isinstance(item, dict)
+            } if isinstance(items, list) else set()
+            if (
+                not isinstance(items, list)
+                or len(items) != len(expected_items)
+                or actual_items != expected_items
+                or any(
+                    not isinstance(item, dict)
+                    or set(item) != {"key", "path"}
+                    for item in items
+                )
+            ):
+                issues.append(
+                    "/telnet-tls Secret items must map exactly tls.crt to tls.crt and tls.key to tls.key"
+                )
     grpc_paths = {
         path
         for path in (env.get(name) for name in GRPC_TLS_PATH_NAMES)
@@ -6584,6 +6608,7 @@ def wait_for_secret_key_requirements(
             if timed_out:
                 lookup_timed_out.add(secret_name)
             if issue is None:
+                latest_issues.pop(secret_name, None)
                 continue
             if not retryable:
                 latest_issues[secret_name] = issue

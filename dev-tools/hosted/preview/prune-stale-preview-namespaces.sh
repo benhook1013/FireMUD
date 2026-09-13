@@ -232,7 +232,7 @@ recover_stranded_hosted_identities() {
     return 1
   fi
 
-  while IFS= read -r candidate_row; do
+  while IFS= read -r -u 3 candidate_row; do
     [[ -n "$candidate_row" ]] || continue
     if ! identity_json="$(printf '%s' "$candidate_row" | base64 --decode 2>/dev/null)" ||
       ! identity_name="$(
@@ -280,7 +280,7 @@ recover_stranded_hosted_identities() {
     if ! retire_hosted_identity "$identity_name"; then
       retirement_failures=$((retirement_failures + 1))
     fi
-  done <<<"$candidate_rows"
+  done 3<<<"$candidate_rows"
 }
 
 if ! namespace_rows_output="$(
