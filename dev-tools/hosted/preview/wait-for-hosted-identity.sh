@@ -258,6 +258,20 @@ normalize_head_sha() {
   printf '%s' "${head_sha,,}"
 }
 
+report_stale_identity_profile() {
+  local profile_uid="$1"
+  local profile_requested_head="$2"
+  local profile_deployed_head="$3"
+  local profile_telnet_port="$4"
+  local expected_telnet_port="${5:-}"
+  local expected_telnet_port_suffix=""
+
+  if [[ -n "$expected_telnet_port" ]]; then
+    expected_telnet_port_suffix="; expected ${expected_telnet_port}"
+  fi
+  echo "Ready identity profile is stale (namespace UID ${profile_uid:-missing}, requested head ${profile_requested_head:-missing}, deployed head ${profile_deployed_head:-missing}, Telnet port ${profile_telnet_port:-missing}${expected_telnet_port_suffix}); retrying."
+}
+
 if ! expected_head_sha="$(normalize_head_sha "$expected_head_sha")"; then
   echo "expected head SHA must be exactly 40 hexadecimal characters" >&2
   exit 2
@@ -389,7 +403,8 @@ while (( SECONDS < deadline )); do
     continue
   fi
   if [[ "$profile_uid" != "$namespace_uid" ]]; then
-    echo "Ready identity profile is stale (namespace UID ${profile_uid:-missing}, requested head ${profile_requested_head:-missing}, deployed head ${profile_deployed_head:-missing}, Telnet port ${profile_telnet_port:-missing}); retrying."
+    report_stale_identity_profile \
+      "$profile_uid" "$profile_requested_head" "$profile_deployed_head" "$profile_telnet_port"
     sleep 5
     continue
   fi
@@ -397,12 +412,15 @@ while (( SECONDS < deadline )); do
     ! normalized_profile_deployed_head="$(normalize_head_sha "$profile_deployed_head")" ||
     [[ "$normalized_profile_requested_head" != "$expected_head_sha" ]] ||
     [[ "$normalized_profile_deployed_head" != "$expected_head_sha" ]]; then
-    echo "Ready identity profile is stale (namespace UID ${profile_uid:-missing}, requested head ${profile_requested_head:-missing}, deployed head ${profile_deployed_head:-missing}, Telnet port ${profile_telnet_port:-missing}); retrying."
+    report_stale_identity_profile \
+      "$profile_uid" "$profile_requested_head" "$profile_deployed_head" "$profile_telnet_port"
     sleep 5
     continue
   fi
   if [[ "$profile_telnet_port" != "$namespace_telnet_port" ]]; then
-    echo "Ready identity profile is stale (namespace UID ${profile_uid:-missing}, requested head ${profile_requested_head:-missing}, deployed head ${profile_deployed_head:-missing}, Telnet port ${profile_telnet_port:-missing}; expected ${namespace_telnet_port}); retrying."
+    report_stale_identity_profile \
+      "$profile_uid" "$profile_requested_head" "$profile_deployed_head" "$profile_telnet_port" \
+      "$namespace_telnet_port"
     sleep 5
     continue
   fi
