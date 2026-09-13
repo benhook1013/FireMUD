@@ -13,12 +13,13 @@ MOCK_STATE="$TMP_DIR/mock-state"
 mkdir -p "$TEST_REPO/dev-tools/validation" "$MOCK_BIN" "$MOCK_STATE"
 cp "$WRAPPER" "$TEST_REPO/dev-tools/request-coderabbit-review.sh"
 cp "$CHECKER" "$TEST_REPO/dev-tools/validation/check-coderabbit-review.py"
-chmod +x "$TEST_REPO/dev-tools/request-coderabbit-review.sh" "$TEST_REPO/dev-tools/validation/check-coderabbit-review.py"
+chmod +x "$TEST_REPO/dev-tools/request-coderabbit-review.sh"
+chmod 644 "$TEST_REPO/dev-tools/validation/check-coderabbit-review.py"
 git -C "$TEST_REPO" init -q
 git -C "$TEST_REPO" config user.email test@example.test
 git -C "$TEST_REPO" config user.name test
 touch "$TEST_REPO/tracked"
-git -C "$TEST_REPO" add tracked
+git -C "$TEST_REPO" add tracked dev-tools/request-coderabbit-review.sh dev-tools/validation/check-coderabbit-review.py
 git -C "$TEST_REPO" commit -qm initial
 
 cat >"$MOCK_BIN/gh" <<'EOF'
@@ -88,6 +89,24 @@ expect_invalid_wait --wait --timeout 2 --poll-interval 3
 expect_invalid_wait --wait --timeout 2 --timeout 3 --poll-interval 1
 expect_invalid_wait --wait --poll-interval 1 --poll-interval 2
 [[ ! -f "$MOCK_STATE/count" ]]
+
+[[ ! -x "$TEST_REPO/dev-tools/validation/check-coderabbit-review.py" ]]
+mv "$TEST_REPO/dev-tools/validation/check-coderabbit-review.py" \
+  "$TEST_REPO/dev-tools/validation/check-coderabbit-review.py.missing"
+if (cd "$TEST_REPO" && PATH="$MOCK_BIN:$PATH" dev-tools/request-coderabbit-review.sh 42 --repo owner/repo) >"$TMP_DIR/missing-checker.out" 2>&1; then
+  exit 1
+fi
+grep -q 'checker is not a readable regular file' "$TMP_DIR/missing-checker.out"
+mv "$TEST_REPO/dev-tools/validation/check-coderabbit-review.py.missing" \
+  "$TEST_REPO/dev-tools/validation/check-coderabbit-review.py"
+if (( EUID != 0 )); then
+  chmod 000 "$TEST_REPO/dev-tools/validation/check-coderabbit-review.py"
+  if (cd "$TEST_REPO" && PATH="$MOCK_BIN:$PATH" dev-tools/request-coderabbit-review.sh 42 --repo owner/repo) >"$TMP_DIR/unreadable-checker.out" 2>&1; then
+    exit 1
+  fi
+  grep -q 'checker is not a readable regular file' "$TMP_DIR/unreadable-checker.out"
+  chmod 644 "$TEST_REPO/dev-tools/validation/check-coderabbit-review.py"
+fi
 
 (cd "$TEST_REPO" && PATH="$MOCK_BIN:$PATH" dev-tools/request-coderabbit-review.sh 42 --repo owner/repo) >"$TMP_DIR/first.out"
 record="$TEST_REPO/.git/coderabbit-review-logs/hosted/owner_repo/pr-42/trigger.json"

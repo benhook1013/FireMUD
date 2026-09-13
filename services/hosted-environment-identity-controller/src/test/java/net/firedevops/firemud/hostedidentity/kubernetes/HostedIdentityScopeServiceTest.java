@@ -56,6 +56,8 @@ import org.yaml.snakeyaml.Yaml;
 class HostedIdentityScopeServiceTest {
   private static final String RUNTIME_SCOPE_MARKER =
       "object.metadata.name == 'firemud-hosted-runtime-scope'";
+  // These test-only helpers parse the checked-in CEL subset: single-quoted strings, no nested
+  // exists calls, and at most one list equality for each requested rule field.
   private static final Pattern CEL_STRING_LITERAL = Pattern.compile("'([^']+)'");
   private static final Map<String, String> ROLE_LABELS =
       Map.of(

@@ -347,7 +347,7 @@ class RuntimeProfileServiceTest {
     assertEquals(
         "runtime Namespace has an invalid Telnet port identity: 32016",
         invalidPortFailure.getMessage());
-    assertEquals(IllegalArgumentException.class, invalidPortFailure.getCause().getClass());
+    assertInstanceOf(IllegalArgumentException.class, invalidPortFailure.getCause());
     assertEquals(
         "parsed Telnet port is outside the configured allocation",
         invalidPortFailure.getCause().getMessage());

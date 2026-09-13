@@ -22,9 +22,11 @@ build_gradle="$ROOT_DIR/build.gradle.kts"
 controller_build_gradle="$ROOT_DIR/services/hosted-environment-identity-controller/build.gradle.kts"
 controller_dockerfile="$ROOT_DIR/services/hosted-environment-identity-controller/Dockerfile"
 bootstrap="$ROOT_DIR/dev-tools/hosted/controller/bootstrap-hosted-identity-controller.sh"
+controller_smoke="$ROOT_DIR/dev-tools/hosted/controller/smoke-paused-controller-image.sh"
 waiter="$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh"
 mode_resolver="$ROOT_DIR/dev-tools/hosted/shared/resolve-certificate-identity-mode.py"
 mode_action="$ROOT_DIR/.github/actions/resolve-certificate-identity-mode/action.yml"
+artifact_action="$ROOT_DIR/.github/actions/download-validated-preview-artifact/action.yml"
 requester="$ROOT_DIR/dev-tools/hosted/shared/request-hosted-identity.sh"
 artifact_validator="$ROOT_DIR/dev-tools/hosted/preview/validate-preview-artifact.py"
 render_preview_values="$ROOT_DIR/dev-tools/hosted/preview/render-preview-values.py"
@@ -73,80 +75,141 @@ import yaml
 
 workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
 publisher_workflow = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
+pull_request = workflow[True]["pull_request"]
+assert "dev-tools/smoke/**" in pull_request["paths"]
 image_meta = workflow["jobs"]["image-meta"]
+assert image_meta["outputs"]["runtime_smoke_required"] == (
+    "${{ steps.smoke_scope.outputs.runtime_smoke_required }}"
+)
 assert image_meta["outputs"]["controller_smoke_required"] == (
-    "${{ steps.controller_scope.outputs.controller_smoke_required }}"
+    "${{ steps.smoke_scope.outputs.controller_smoke_required }}"
 )
 assert image_meta["permissions"]["pull-requests"] == "read"
-controller_scope = next(
+smoke_scope = next(
     step
     for step in image_meta["steps"]
-    if step.get("name") == "Detect controller image changes"
+    if step.get("name") == "Detect PR smoke scopes"
 )
-assert controller_scope["id"] == "controller_scope"
-controller_scope_script = controller_scope["with"]["script"]
+assert smoke_scope["id"] == "smoke_scope"
+smoke_scope_script = smoke_scope["with"]["script"]
 for required in (
+    "let runtimeSmokeRequired = true;",
     "let controllerSmokeRequired = true;",
     "github.rest.pulls.listFiles",
     "context.payload.pull_request.changed_files",
     "file.previous_filename",
     "services/hosted-environment-identity-controller/",
     "docker/base.Dockerfile",
+    "dev-tools/hosted/controller/smoke-paused-controller-image.sh",
     ".github/workflows/runtime-images.yml",
-    "Controller change detection was incomplete; running its local smoke.",
-    "Controller change detection failed; running its local smoke:",
+    "PR smoke scope detection was incomplete; running both local smokes.",
+    "PR smoke scope detection failed; running both local smokes:",
+    'core.setOutput("runtime_smoke_required", String(runtimeSmokeRequired))',
     'core.setOutput("controller_smoke_required", String(controllerSmokeRequired))',
 ):
-    assert required in controller_scope_script, required
-for unrelated_service in (
-    "services/account-service/",
-    "services/game-session-service/",
-    "services/tcp-proxy-service/",
-):
-    assert unrelated_service not in controller_scope_script
+    assert required in smoke_scope_script, required
 
-steps = workflow["jobs"]["pr-local-smoke"]["steps"]
-steps_by_name = {
-    step.get("name"): step for step in steps if isinstance(step, dict)
-}
-build_step = steps_by_name["Build controller image for credential-free local validation"]
-smoke_step = steps_by_name["Smoke controller image entrypoint and paused health"]
-export_step = steps_by_name["Export fixed-tag preview image artifact"]
-upload_step = steps_by_name["Upload preview image artifact"]
-assert steps.index(build_step) < steps.index(smoke_step) < steps.index(export_step)
-controller_condition = (
-    "${{ needs.image-meta.outputs.controller_smoke_required == 'true' }}"
+runtime_prefixes_script = smoke_scope_script[
+    smoke_scope_script.index("const runtimePrefixes"):
+    smoke_scope_script.index("const runtimeFiles")
+]
+assert not re.search(r'"services/[^"]+/"', runtime_prefixes_script)
+assert "dev-tools/smoke/" in runtime_prefixes_script
+runtime_scope_predicate = smoke_scope_script[
+    smoke_scope_script.index("runtimeSmokeRequired = paths.some"):
+    smoke_scope_script.index("controllerSmokeRequired = paths.some")
+]
+normalized_runtime_scope_predicate = "".join(runtime_scope_predicate.split())
+assert 'path.startsWith("services/")' in normalized_runtime_scope_predicate
+assert (
+    '!path.startsWith("services/hosted-environment-identity-controller/")'
+    in normalized_runtime_scope_predicate
 )
-assert build_step["if"] == controller_condition
-assert smoke_step["if"] == controller_condition
+
+controller_scope_script = smoke_scope_script[
+    smoke_scope_script.index("const controllerPrefixes"):
+    smoke_scope_script.index("runtimeSmokeRequired = paths.some")
+]
+assert "services/hosted-environment-identity-controller/" in controller_scope_script
+
+runtime_job = workflow["jobs"]["pr-local-smoke"]
+assert "needs.image-meta.outputs.runtime_smoke_required" not in runtime_job["if"]
+runtime_steps = runtime_job["steps"]
+runtime_steps_by_name = {
+    step.get("name"): step for step in runtime_steps if isinstance(step, dict)
+}
+export_step = runtime_steps_by_name["Export fixed-tag preview image artifact"]
+upload_step = runtime_steps_by_name["Upload preview image artifact"]
+build_runtime_step = runtime_steps_by_name["Build local PR runtime images"]
+install_smoke_step = runtime_steps_by_name["Install WebSocket smoke dependency"]
+run_smoke_step = runtime_steps_by_name["Run credential-free full-stack smoke"]
+dump_logs_step = runtime_steps_by_name["Dump Docker Compose logs on failure"]
+stop_smoke_step = runtime_steps_by_name["Stop smoke stack"]
+assert "Build controller image for credential-free local validation" not in runtime_steps_by_name
+assert "Smoke controller image entrypoint and paused health" not in runtime_steps_by_name
+assert "if" not in build_runtime_step
 assert "if" not in export_step
 assert "if" not in upload_step
-assert smoke_step["env"]["CONTROLLER_IMAGE"] == (
+smoke_gate = "${{ needs.image-meta.outputs.runtime_smoke_required == 'true' }}"
+assert install_smoke_step["if"] == smoke_gate
+assert run_smoke_step["if"] == smoke_gate
+assert dump_logs_step["if"] == (
+    "${{ failure() && needs.image-meta.outputs.runtime_smoke_required == 'true' }}"
+)
+assert stop_smoke_step["if"] == (
+    "${{ always() && needs.image-meta.outputs.runtime_smoke_required == 'true' }}"
+)
+
+controller_job = workflow["jobs"]["pr-controller-smoke"]
+assert controller_job["needs"] == ["image-meta"]
+assert "needs.image-meta.outputs.controller_smoke_required == 'true'" in (
+    controller_job["if"]
+)
+assert controller_job["permissions"] == {"contents": "read"}
+assert controller_job["env"]["BASE_IMAGE"] == "${{ needs.image-meta.outputs.base_image }}"
+assert controller_job["env"]["CONTROLLER_IMAGE"] == (
     "firemud-hosted-identity-controller-local:"
     "${{ needs.image-meta.outputs.image_tag }}"
 )
+controller_steps = controller_job["steps"]
+controller_steps_by_name = {
+    step.get("name"): step for step in controller_steps if isinstance(step, dict)
+}
+controller_checkout = controller_steps_by_name["Checkout PR merge"]
+assert controller_checkout["with"]["persist-credentials"] is False
+buildx_step = controller_steps_by_name["Set up Docker Buildx"]
+base_step = controller_steps_by_name["Build exact local runtime base image"]
+build_step = controller_steps_by_name[
+    "Build controller image for credential-free local validation"
+]
+smoke_step = controller_steps_by_name["Smoke controller image entrypoint and paused health"]
+assert controller_steps.index(buildx_step) < controller_steps.index(base_step)
+assert controller_steps.index(base_step) < controller_steps.index(build_step) < controller_steps.index(smoke_step)
+assert buildx_step["uses"] == (
+    "docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5"
+)
+assert base_step["uses"] == (
+    "docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf"
+)
+assert base_step["with"] == {
+    "context": ".",
+    "file": "docker/base.Dockerfile",
+    "push": False,
+    "load": True,
+    "tags": "${{ env.BASE_IMAGE }}",
+    "cache-from": "type=gha,scope=pr-controller-smoke",
+    "cache-to": "type=gha,mode=max,scope=pr-controller-smoke",
+}
+assert "docker/login-action@" not in str(controller_job)
+assert "GITHUB_TOKEN" not in str(controller_job)
+assert '--build-arg BASE_IMAGE="$BASE_IMAGE"' in build_step["run"]
 smoke_run = smoke_step["run"]
-exact_health_predicate = 'jq -e \'.status == "UP"\' <<<"$health" >/dev/null 2>&1'
-for required in (
-    'trap \'docker rm --force "$container_name" >/dev/null 2>&1 || true\' EXIT',
-    'docker run --detach',
-    '--env FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE=paused',
-    '"$CONTROLLER_IMAGE"',
-    'deadline=$((SECONDS + 300))',
-    'while (( SECONDS < deadline )); do',
-    'request_timeout=$((deadline - SECONDS))',
-    '(( request_timeout > 0 )) || break',
-    '(( request_timeout <= 5 )) || request_timeout=5',
-    '--connect-timeout 2 --max-time "$request_timeout"',
-    '(( SECONDS < deadline )) && sleep 1',
-    "http://127.0.0.1:8081/actuator/health/liveness",
-    exact_health_predicate,
-    'docker rm --force "$container_name"',
-):
-    assert required in smoke_run, required
-assert "--entrypoint" not in smoke_run
-assert 'for _ in {1..300}; do' not in smoke_run
-assert '[[ "$health" == *' not in smoke_run
+assert smoke_run == (
+    "set -euo pipefail\n"
+    "bash ./dev-tools/hosted/controller/smoke-paused-controller-image.sh "
+    '"$CONTROLLER_IMAGE" >/dev/null\n'
+)
+assert "actions/upload-artifact@" not in str(controller_job)
 export_run = export_step["run"]
 assert "hosted-environment-identity-controller" not in export_run
 assert "account-service" in export_run
@@ -163,6 +226,7 @@ runtime_services = [
     line.removesuffix(" \\").strip()
     for line in runtime_services_match.group("services").splitlines()
 ]
+assert "hosted-environment-identity-controller" not in runtime_services
 publisher_steps = publisher_workflow["jobs"]["publish"]["steps"]
 publisher_run = next(
     step["run"]
@@ -177,6 +241,33 @@ assert not re.search(
 )
 assert 'docker image ls --format' not in publisher_run
 PY
+
+# shellcheck disable=SC2016 # These assertions intentionally match literal helper shell.
+for required in \
+  'readonly timeout_seconds="${FIREMUD_CONTROLLER_SMOKE_TIMEOUT_SECONDS:-300}"' \
+  'container_name="hosted-identity-controller-smoke-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-$$-${RANDOM}"' \
+  'trap cleanup EXIT' \
+  'docker run --detach' \
+  '--env FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE=paused' \
+  'deadline=$((SECONDS + timeout_seconds))' \
+  'while ((SECONDS < deadline)); do' \
+  "docker inspect --format '{{.State.Running}}'" \
+  'request_timeout=$((deadline - SECONDS))' \
+  '((request_timeout <= 5)) || request_timeout=5' \
+  '--connect-timeout 2 --max-time "$request_timeout"' \
+  'http://127.0.0.1:8081/actuator/health/liveness' \
+  'jq -e '\''.status == "UP"'\'' <<<"$health"' \
+  'docker logs "$container_name" >&2 || true' \
+  'docker rm --force "$container_name"' \
+  "docker inspect --format '{{.Image}}'"; do
+  contains "$controller_smoke" "$required"
+done
+for forbidden in GITHUB_TOKEN GHCR 'docker login' 'docker push' kubectl KUBECONFIG; do
+  if grep -Fq -- "$forbidden" "$controller_smoke"; then
+    echo "$controller_smoke must remain credential-free: $forbidden" >&2
+    exit 1
+  fi
+done
 
 nested_status_health='{"components":{"controller":{"status":"UP"}}}'
 if jq -e '.status == "UP"' <<<"$nested_status_health" >/dev/null 2>&1; then
@@ -442,7 +533,7 @@ for required in \
   contains "$requester" "$required"
 done
 
-python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" "$janitor" "$mode_action" "$runtime" <<'PY'
+python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" "$janitor" "$mode_action" "$runtime" "$artifact_action" <<'PY'
 import os
 import re
 import subprocess
@@ -462,6 +553,7 @@ credential_source_text = Path(sys.argv[6]).read_text(encoding="utf-8")
 janitor_workflow = yaml.safe_load(Path(sys.argv[7]).read_text(encoding="utf-8"))
 mode_action = yaml.safe_load(Path(sys.argv[8]).read_text(encoding="utf-8"))
 runtime_workflow = yaml.safe_load(Path(sys.argv[9]).read_text(encoding="utf-8"))
+artifact_action = yaml.safe_load(Path(sys.argv[10]).read_text(encoding="utf-8"))
 
 expected_mode_step = {
     "name": "Resolve certificate identity mode",
@@ -500,6 +592,74 @@ assert "Resolver output must be exactly standalone or hosted-controller." in res
 assert resolve_run.index('case "$mode" in') < resolve_run.index(
     "printf 'mode=%s\\n' \"$mode\" >> \"$GITHUB_OUTPUT\""
 )
+
+expected_artifact_inputs = {
+    "artifact-directory",
+    "artifact-name",
+    "source-run-id",
+    "github-token",
+    "repository",
+    "pr-number",
+    "base-sha",
+    "head-sha",
+    "merge-sha",
+    "image-tag",
+    "preview-hostname",
+}
+assert set(artifact_action["inputs"]) == expected_artifact_inputs
+assert all(
+    artifact_action["inputs"][input_name]["required"] is True
+    for input_name in expected_artifact_inputs
+)
+assert artifact_action["runs"]["using"] == "composite"
+artifact_action_steps = artifact_action["runs"]["steps"]
+assert [step["name"] for step in artifact_action_steps] == [
+    "Download exact source render artifact",
+    "Verify artifact provenance, checksum, and closed object set",
+]
+artifact_download = artifact_action_steps[0]
+assert artifact_download["uses"] == (
+    "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+)
+assert artifact_download["with"] == {
+    "name": "${{ inputs['artifact-name'] }}",
+    "path": "${{ inputs['artifact-directory'] }}",
+    "github-token": "${{ inputs['github-token'] }}",
+    "run-id": "${{ inputs['source-run-id'] }}",
+}
+artifact_validation = artifact_action_steps[1]
+assert artifact_validation["shell"] == "bash"
+assert artifact_validation["env"] == {
+    "ARTIFACT_DIRECTORY": "${{ inputs['artifact-directory'] }}",
+    "SOURCE_REPOSITORY": "${{ inputs.repository }}",
+    "SOURCE_RUN_ID": "${{ inputs['source-run-id'] }}",
+    "PR_NUMBER": "${{ inputs['pr-number'] }}",
+    "BASE_SHA": "${{ inputs['base-sha'] }}",
+    "HEAD_SHA": "${{ inputs['head-sha'] }}",
+    "MERGE_SHA": "${{ inputs['merge-sha'] }}",
+    "IMAGE_TAG": "${{ inputs['image-tag'] }}",
+    "PREVIEW_HOSTNAME": "${{ inputs['preview-hostname'] }}",
+}
+artifact_validation_run = artifact_validation["run"]
+assert "set -euo pipefail" in artifact_validation_run
+assert (
+    'python3 "$GITHUB_ACTION_PATH/../../../dev-tools/hosted/preview/'
+    'validate-preview-artifact.py"'
+) in artifact_validation_run
+assert "$GITHUB_WORKSPACE" not in artifact_validation_run
+for validation_argument in (
+    '"$ARTIFACT_DIRECTORY/preview-metadata.json"',
+    '"$ARTIFACT_DIRECTORY/preview-rendered-sanitized.yaml"',
+    '"$SOURCE_REPOSITORY"',
+    '"$SOURCE_RUN_ID"',
+    '"$PR_NUMBER"',
+    '"$BASE_SHA"',
+    '"$HEAD_SHA"',
+    '"$MERGE_SHA"',
+    '"$IMAGE_TAG"',
+    '"$PREVIEW_HOSTNAME"',
+):
+    assert artifact_validation_run.count(validation_argument) == 1, validation_argument
 triggers = workflow.get("on", workflow.get(True))
 assert list(triggers) == ["workflow_run", "pull_request_target"], triggers
 assert triggers["workflow_run"] == {
@@ -958,20 +1118,17 @@ assert controller_build_steps[login_index]["with"] == {
 assert "--tag \"$CONTROLLER_IMAGE\"" in controller_build_steps[build_index]["run"]
 assert "ghcr.io/benhook1013/firemud-base@${{ needs.build-base-image.outputs.digest }}" in controller_build_steps[build_index]["run"]
 trusted_smoke_run = controller_build_steps[smoke_index]["run"]
-exact_health_predicate = 'jq -e \'.status == "UP"\' <<<"$health" >/dev/null 2>&1'
 for required in (
-    'deadline=$((SECONDS + 300))',
-    'while (( SECONDS < deadline )); do',
-    'request_timeout=$((deadline - SECONDS))',
-    '(( request_timeout > 0 )) || break',
-    '(( request_timeout <= 5 )) || request_timeout=5',
-    '--connect-timeout 2 --max-time "$request_timeout"',
-    '(( SECONDS < deadline )) && sleep 1',
-    exact_health_predicate,
+    'smoked_image_id="$(bash ./dev-tools/hosted/controller/smoke-paused-controller-image.sh "$CONTROLLER_IMAGE")"',
+    'local_image_id="$(docker image inspect --format',
+    '[[ "$smoked_image_id" == "$local_image_id" ]]',
+    'echo "image_id=$local_image_id" >> "$GITHUB_OUTPUT"',
 ):
     assert required in trusted_smoke_run, required
 assert 'for _ in {1..300}; do' not in trusted_smoke_run
 assert '[[ "$health" == *' not in trusted_smoke_run
+assert "docker run" not in trusted_smoke_run
+assert "health/liveness" not in trusted_smoke_run
 assert "docker push" not in str(controller_build_job)
 assert "actions/attest@" not in str(controller_build_job)
 export_run = controller_build_steps[export_index]["run"]
@@ -1174,16 +1331,48 @@ deploy_steps = jobs["deploy-runtime"]["steps"]
 deploy_by_name = {
     step.get("name"): step for step in deploy_steps if isinstance(step, dict)
 }
-artifact_verification = deploy_by_name[
-    "Verify artifact provenance, checksum, and closed object set"
-]
-assert artifact_verification["env"]["PREVIEW_HOSTNAME"] == (
-    "${{ needs.validate-target.outputs.hostname }}"
-)
-assert "HOSTNAME" not in artifact_verification["env"]
-assert '"$HEAD_SHA" "$MERGE_SHA" "$IMAGE_TAG" "$PREVIEW_HOSTNAME"' in (
-    artifact_verification["run"]
-)
+expected_artifact_call = {
+    "name": "Download and validate source render artifact",
+    "uses": "./.github/actions/download-validated-preview-artifact",
+    "with": {
+        "artifact-directory": "${{ runner.temp }}/preview-artifact",
+        "artifact-name": "${{ needs.validate-target.outputs.artifact_name }}",
+        "source-run-id": "${{ needs.validate-target.outputs.render_run_id }}",
+        "github-token": "${{ github.token }}",
+        "repository": "${{ github.repository }}",
+        "pr-number": "${{ needs.validate-target.outputs.pr_number }}",
+        "base-sha": "${{ needs.validate-target.outputs.base_sha }}",
+        "head-sha": "${{ needs.validate-target.outputs.head_sha }}",
+        "merge-sha": "${{ needs.validate-target.outputs.merge_sha }}",
+        "image-tag": "${{ needs.validate-target.outputs.image_tag }}",
+        "preview-hostname": "${{ needs.validate-target.outputs.hostname }}",
+    },
+}
+for artifact_job_name in ("prepare-runtime", "deploy-runtime"):
+    artifact_job_steps = jobs[artifact_job_name]["steps"]
+    artifact_call = next(
+        step
+        for step in artifact_job_steps
+        if step.get("name") == "Download and validate source render artifact"
+    )
+    assert artifact_call == expected_artifact_call, artifact_job_name
+    trusted_checkout = next(
+        step
+        for step in artifact_job_steps
+        if step.get("uses", "").startswith("actions/checkout@")
+    )
+    assert trusted_checkout == {
+        "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+        "with": {
+            "ref": "${{ github.event.repository.default_branch }}",
+            "persist-credentials": False,
+        },
+    }
+    assert artifact_job_steps.index(trusted_checkout) < artifact_job_steps.index(
+        artifact_call
+    )
+assert trusted_source.count("./.github/actions/download-validated-preview-artifact") == 2
+assert "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" not in trusted_source
 active_request = deploy_by_name["Apply canonical Active request"]
 assert active_request["run"] == (
     'bash ./dev-tools/hosted/shared/request-hosted-identity.sh "$IDENTITY_NAME" Active'
@@ -1520,9 +1709,7 @@ dev_demo_kubeconfig_step = dev_demo_by_name["Write dev-demo runtime kubeconfig"]
 assert '"$RUNNER_TEMP/dev-demo-runtime.kubeconfig"' in dev_demo_kubeconfig_step[
     "run"
 ]
-assert 'echo "DEV_DEMO_RUNTIME_KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"' in (
-    dev_demo_kubeconfig_step["run"]
-)
+assert "DEV_DEMO_RUNTIME_KUBECONFIG" not in dev_demo_kubeconfig_step["run"]
 assert 'echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"' in (
     dev_demo_kubeconfig_step["run"]
 )
@@ -2105,6 +2292,107 @@ PY
 # successful workflow run with no validated artifact. It must emit only no-op.
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT
+
+controller_smoke_stub_dir="$TEMP_DIR/controller-smoke-stubs"
+controller_smoke_docker_log="$TEMP_DIR/controller-smoke-docker.log"
+mkdir -p "$controller_smoke_stub_dir"
+cat >"$controller_smoke_stub_dir/docker" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf '%s\n' "$*" >>"${CONTROLLER_SMOKE_DOCKER_LOG:?}"
+case "$1" in
+  run)
+    printf '%s\n' fake-container-id
+    ;;
+  inspect)
+    case "$3" in
+      '{{.State.Running}}')
+        if [[ "${CONTROLLER_SMOKE_MODE:?}" == early-exit ]]; then
+          printf '%s\n' false
+        else
+          printf '%s\n' true
+        fi
+        ;;
+      '{{.Image}}')
+        printf '%s\n' sha256:smoked-controller
+        ;;
+      *)
+        echo "unexpected controller smoke inspect format: $3" >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  exec)
+    if [[ "${CONTROLLER_SMOKE_MODE:?}" == success ]]; then
+      printf '%s\n' '{"status":"UP"}'
+    else
+      exit 22
+    fi
+    ;;
+  logs)
+    printf 'fixture controller logs: %s\n' "${CONTROLLER_SMOKE_MODE:?}"
+    ;;
+  rm)
+    ;;
+  *)
+    echo "unexpected controller smoke docker invocation: $*" >&2
+    exit 2
+    ;;
+esac
+SH
+chmod +x "$controller_smoke_stub_dir/docker"
+
+run_controller_smoke_fixture() {
+  local mode="$1"
+  shift
+  env \
+    PATH="$controller_smoke_stub_dir:$PATH" \
+    CONTROLLER_SMOKE_DOCKER_LOG="$controller_smoke_docker_log" \
+    CONTROLLER_SMOKE_MODE="$mode" \
+    GITHUB_RUN_ID=123 \
+    GITHUB_RUN_ATTEMPT=2 \
+    "$@" \
+    bash "$controller_smoke" ghcr.io/example/controller:test
+}
+
+: >"$controller_smoke_docker_log"
+controller_smoke_success_output="$(run_controller_smoke_fixture success env)"
+[[ "$controller_smoke_success_output" == sha256:smoked-controller ]]
+grep -Eq '^run --detach --name hosted-identity-controller-smoke-123-2-[0-9]+-[0-9]+ --env FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE=paused ghcr.io/example/controller:test$' \
+  "$controller_smoke_docker_log"
+grep -Fq 'exec hosted-identity-controller-smoke-123-2-' "$controller_smoke_docker_log"
+grep -Fq 'curl --fail --silent --show-error --connect-timeout 2 --max-time ' \
+  "$controller_smoke_docker_log"
+grep -Fq 'http://127.0.0.1:8081/actuator/health/liveness' \
+  "$controller_smoke_docker_log"
+grep -Eq '^rm --force hosted-identity-controller-smoke-123-2-[0-9]+-[0-9]+$' \
+  "$controller_smoke_docker_log"
+
+: >"$controller_smoke_docker_log"
+if run_controller_smoke_fixture early-exit env \
+  >"$TEMP_DIR/controller-smoke-early.output" \
+  2>"$TEMP_DIR/controller-smoke-early.error"; then
+  echo "controller smoke accepted a container that exited before becoming healthy" >&2
+  exit 1
+fi
+grep -Fq 'fixture controller logs: early-exit' "$TEMP_DIR/controller-smoke-early.error"
+grep -Fq 'exited before its paused-mode health endpoint became available' \
+  "$TEMP_DIR/controller-smoke-early.error"
+grep -Eq '^rm --force hosted-identity-controller-smoke-123-2-[0-9]+-[0-9]+$' \
+  "$controller_smoke_docker_log"
+
+: >"$controller_smoke_docker_log"
+if run_controller_smoke_fixture timeout env FIREMUD_CONTROLLER_SMOKE_TIMEOUT_SECONDS=1 \
+  >"$TEMP_DIR/controller-smoke-timeout.output" \
+  2>"$TEMP_DIR/controller-smoke-timeout.error"; then
+  echo "controller smoke accepted a liveness endpoint that never became healthy" >&2
+  exit 1
+fi
+grep -Fq 'fixture controller logs: timeout' "$TEMP_DIR/controller-smoke-timeout.error"
+grep -Fq 'paused-mode health check timed out' "$TEMP_DIR/controller-smoke-timeout.error"
+grep -Eq '^rm --force hosted-identity-controller-smoke-123-2-[0-9]+-[0-9]+$' \
+  "$controller_smoke_docker_log"
 
 preview_annotator_stub_dir="$TEMP_DIR/preview-annotator-stubs"
 preview_annotator_log="$TEMP_DIR/preview-annotator-kubectl.log"

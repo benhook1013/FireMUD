@@ -35,7 +35,7 @@ import javax.net.ssl.SSLSocket;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import net.firedevops.firemud.hostedidentity.security.EnvironmentIdentityPlanner;
-import net.firedevops.firemud.hostedidentity.security.SecretMaterialValidatorTest;
+import net.firedevops.firemud.hostedidentity.security.GrpcMaterialFixture;
 import org.junit.jupiter.api.Test;
 
 class ServedEnvironmentProbeTest {
@@ -290,7 +290,7 @@ class ServedEnvironmentProbeTest {
 
   @Test
   void malformedGrpcTrustAnchorIsRejectedBeforeAbsentOrMalformedMaterial() {
-    IllegalArgumentException absentMaterial =
+    IllegalArgumentException nullSecret =
         assertThrows(
             IllegalArgumentException.class,
             () -> ServedEnvironmentProbe.grpcSslContext(null, "not-a-trust-anchor"));
@@ -307,7 +307,7 @@ class ServedEnvironmentProbeTest {
             IllegalArgumentException.class,
             () -> ServedEnvironmentProbe.grpcSslContext(malformedMaterial, "not-a-trust-anchor"));
 
-    assertEquals("configured gRPC trust anchor is invalid", absentMaterial.getMessage());
+    assertEquals("configured gRPC trust anchor is invalid", nullSecret.getMessage());
     assertEquals("configured gRPC trust anchor is invalid", unreadableMaterial.getMessage());
   }
 
@@ -468,7 +468,7 @@ class ServedEnvironmentProbeTest {
   }
 
   private static Secret generatedMaterial(EnvironmentIdentityPlan plan) throws Exception {
-    return SecretMaterialValidatorTest.GrpcMaterialFixture.generate(plan);
+    return GrpcMaterialFixture.generate(plan);
   }
 
   private static SSLServerSocket mutualTlsServer(

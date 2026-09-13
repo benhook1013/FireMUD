@@ -2,6 +2,18 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+real_jq="$(command -v jq)" || {
+  echo "jq is required for the dev-demo workflow contract." >&2
+  exit 1
+}
+command -v python3 >/dev/null 2>&1 || {
+  echo "python3 with PyYAML is required for the dev-demo workflow contract." >&2
+  exit 1
+}
+python3 -c 'import yaml' >/dev/null 2>&1 || {
+  echo "python3 with PyYAML is required for the dev-demo workflow contract." >&2
+  exit 1
+}
 python3 "$ROOT_DIR/dev-tools/validation/check_dev_demo_summary.py" "$ROOT_DIR"
 python3 "$ROOT_DIR/dev-tools/validation/test_check_dev_demo_summary.py"
 
@@ -89,9 +101,10 @@ expect_invalid_target "Invalid dev-demo image tag" dev "$valid_head" "" 32016
 expect_invalid_target "Invalid dev-demo image tag" dev "$valid_head" 'invalid/tag' 32016
 expect_invalid_target "Invalid dev-demo Telnet port" dev "$valid_head" "$valid_head" 32017
 
-python3 - "$workflow" "$reconciler" "$requester" "$waiter" "$annotator" "$target_validator" "$reconcile_step" "$mode_action" <<'PY'
+python3 - "$workflow" "$reconciler" "$requester" "$waiter" "$annotator" "$target_validator" "$reconcile_step" "$mode_action" "$ROOT_DIR/dev-tools/validation/check_dev_demo_summary.py" <<'PY'
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -100,9 +113,17 @@ from pathlib import Path
 
 import yaml
 
-workflow_path, reconciler_path, requester_path, waiter_path, annotator_path, target_validator_path, reconcile_script_path, mode_action_path = map(
+workflow_path, reconciler_path, requester_path, waiter_path, annotator_path, target_validator_path, reconcile_script_path, mode_action_path, validator_script_path = map(
     Path, sys.argv[1:]
 )
+validator_spec = importlib.util.spec_from_file_location(
+    "dev_demo_summary_validator_contract", validator_script_path
+)
+if validator_spec is None or validator_spec.loader is None:
+    raise SystemExit(f"could not load dev-demo summary validator: {validator_script_path}")
+validator = importlib.util.module_from_spec(validator_spec)
+sys.modules[validator_spec.name] = validator
+validator_spec.loader.exec_module(validator)
 workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
 reconciler = yaml.safe_load(reconciler_path.read_text(encoding="utf-8"))
 requester = requester_path.read_text(encoding="utf-8")
@@ -333,7 +354,6 @@ if (
     raise SystemExit("dev-demo readiness wait does not use the derived runtime namespace")
 runtime_kubeconfig = deploy_by_name["Write dev-demo runtime kubeconfig"]
 for required in (
-    'DEV_DEMO_RUNTIME_KUBECONFIG=$KUBECONFIG_PATH',
     'KUBECONFIG=$KUBECONFIG_PATH',
 ):
     if required not in runtime_kubeconfig["run"]:
@@ -355,8 +375,12 @@ if active_request.get("env") != {
 if "Restore dev-demo runtime kubeconfig after Active request" in deploy_by_name:
     raise SystemExit("dev-demo Active requester must not require runtime credential restore")
 deploy_requester_cleanup = deploy_by_name["Remove hosted identity requester kubeconfig"]
-if deploy_requester_cleanup.get("if") != "${{ always() }}":
-    raise SystemExit("dev-demo deploy requester credential cleanup must run after failures")
+if deploy_requester_cleanup.get("if") != (
+    "${{ always() && steps.certificate-identity.outputs.mode == 'hosted-controller' }}"
+):
+    raise SystemExit(
+        "dev-demo deploy requester credential cleanup must always run in hosted-controller mode"
+    )
 if deploy_requester_cleanup.get("run") != (
     'rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"'
 ):
@@ -426,12 +450,16 @@ for bare_assertion in (
 ):
     if bare_assertion in runtime_target_run or bare_assertion in deployed_head_step["run"]:
         raise SystemExit(f"dev-demo validation retained opaque assertion {bare_assertion}")
-if "success()" not in deploy_by_name["Smoke dev-demo over TCP"].get("if", ""):
-    raise SystemExit("dev-demo smoke must not bypass an earlier identity/preflight failure")
+validator._validate_smoke_condition(
+    deploy_by_name["Smoke dev-demo over TCP"].get("if")
+)
 success_condition = deploy_by_name["Summarize dev-demo access"].get("if", "")
-for required in ("success()", "steps.smoke.outcome == 'success'"):
-    if required not in success_condition:
-        raise SystemExit(f"dev-demo success publication lacks {required}")
+expected_success_condition = (
+    "${{ success() && steps.cluster-access.outputs.available == 'true' && "
+    "steps.deploy-release.outcome == 'success' }}"
+)
+if success_condition != expected_success_condition:
+    raise SystemExit("dev-demo success publication condition is not minimal and fail-closed")
 
 destroy_steps = workflow["jobs"]["dev-demo-destroy"]["steps"]
 destroy_by_name = {step.get("name"): step for step in destroy_steps if isinstance(step, dict)}
@@ -695,6 +723,7 @@ for required in (
     "max_failed_attempts=3",
     "max_unaligned_completed_attempts=3",
     "max_history_pages=10",
+    "page_size_limit=100",
     'failed_attempts >= max_failed_attempts',
     "Dev-demo retry budget exhausted",
     "automatic redispatch is stopped",
@@ -708,7 +737,7 @@ for required in (
     "Dev-demo history bootstrap invalid",
     "bootstrap_failed_attempts",
     "bootstrap_exact_run_count",
-    'if (( bootstrap_page_size < 100 )); then',
+    'if (( bootstrap_page_size < page_size_limit )); then',
     'if (( bootstrap_exact_run_count == 0 )); then',
     'history_not_before="1970-01-01T00:00:00Z"',
     "retained history is complete and dispatch may proceed",
@@ -719,7 +748,7 @@ for required in (
     "refusing a history-blind dispatch",
     "-f event=push",
     "-F branch=develop",
-    "-F per_page=100",
+    '-F "per_page=${page_size_limit}"',
     '.status != "completed"',
     ".head_sha == $head",
     ".display_title == $title",
@@ -738,6 +767,8 @@ for required in (
         raise SystemExit(f"dev-demo reconciler lacks {required}")
 if "repair_requested_head_if_aligned" in reconcile_run:
     raise SystemExit("dev-demo requested-head repair retained its misleading old name")
+if reconcile_run.count("page_size < page_size_limit") != 3:
+    raise SystemExit("dev-demo reconciler does not use one page-size limit for every short-page check")
 aligned_guard = 'if [[ "${current_head_sha}" == "${desired_head_sha}" ]]; then'
 if reconcile_run.index(aligned_guard) > reconcile_run.index("develop_push_run="):
     raise SystemExit("dev-demo alignment must short-circuit before retry history is consumed")
@@ -1213,7 +1244,6 @@ run_deployment_evidence_fixture success
 # behaviorally required, rather than merely present as source fragments.
 waiter_stub_dir="$fixture_dir/waiter-stubs"
 mkdir -p "$waiter_stub_dir"
-real_jq="$(command -v jq)"
 
 cat >"$waiter_stub_dir/sleep" <<'SH'
 #!/usr/bin/env bash

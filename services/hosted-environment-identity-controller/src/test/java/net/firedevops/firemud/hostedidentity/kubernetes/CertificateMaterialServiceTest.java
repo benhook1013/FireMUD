@@ -6,13 +6,34 @@ import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMateri
 import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SERIALIZED_DEFERRED_DRIFT;
 import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SERIALIZED_IN_FLIGHT;
 import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SOURCE_READY;
+import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.acceptedAnnotations;
+import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.certManagerSource;
+import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.certificateRequest;
+import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.encoded;
+import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.ownedSecret;
+import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.plan;
+import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.readyCertificate;
+import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.secretClient;
+import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.secretName;
+import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.stableBatchFixture;
+import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.stubCertificate;
+import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.stubCertificateRequests;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -20,7 +41,6 @@ import static org.mockito.Mockito.when;
 import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.api.model.GenericKubernetesResourceList;
 import io.fabric8.kubernetes.api.model.ObjectMetaBuilder;
-import io.fabric8.kubernetes.api.model.OwnerReferenceBuilder;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
 import io.fabric8.kubernetes.api.model.SecretList;
@@ -30,13 +50,13 @@ import io.fabric8.kubernetes.client.dsl.MixedOperation;
 import io.fabric8.kubernetes.client.dsl.NonNamespaceOperation;
 import io.fabric8.kubernetes.client.dsl.ReplaceDeletable;
 import io.fabric8.kubernetes.client.dsl.Resource;
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
+import net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.SecretClient;
+import net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.StableBatchFixture;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import net.firedevops.firemud.hostedidentity.security.EnvironmentIdentityPlanner;
 import net.firedevops.firemud.hostedidentity.security.GrpcTransportBundleGenerator;
@@ -65,15 +85,14 @@ class CertificateMaterialServiceTest {
   void certificateCreateConflictAcceptsExactWinningCertificate() {
     CertificateApplyFixture fixture = certificateApplyFixture();
     when(fixture.existingResource().get()).thenReturn(null, fixture.existing());
-    org.mockito.Mockito.doThrow(new KubernetesClientException("conflict", 409, null))
+    doThrow(new KubernetesClientException("conflict", 409, null))
         .when(fixture.replacementResource())
         .create();
 
     assertDoesNotThrow(fixture::apply);
 
-    verify(fixture.existingResource(), org.mockito.Mockito.times(2)).get();
-    verify(fixture.replacementResource(), never())
-        .lockResourceVersion(org.mockito.ArgumentMatchers.anyString());
+    verify(fixture.existingResource(), times(2)).get();
+    verify(fixture.replacementResource(), never()).lockResourceVersion(anyString());
   }
 
   @Test
@@ -82,14 +101,13 @@ class CertificateMaterialServiceTest {
     fixture.existingSpec().put("duration", "2160h");
     fixture.existingSpec().put("revisionHistoryLimit", 1);
     when(fixture.existingResource().get()).thenReturn(null, fixture.existing());
-    org.mockito.Mockito.doThrow(new KubernetesClientException("conflict", 409, null))
+    doThrow(new KubernetesClientException("conflict", 409, null))
         .when(fixture.replacementResource())
         .create();
 
     assertDoesNotThrow(fixture::apply);
 
-    verify(fixture.replacementResource(), never())
-        .lockResourceVersion(org.mockito.ArgumentMatchers.anyString());
+    verify(fixture.replacementResource(), never()).lockResourceVersion(anyString());
   }
 
   @Test
@@ -97,7 +115,7 @@ class CertificateMaterialServiceTest {
     CertificateApplyFixture fixture = certificateApplyFixture();
     when(fixture.existingResource().get()).thenReturn(null, (GenericKubernetesResource) null);
     KubernetesClientException conflict = new KubernetesClientException("conflict", 409, null);
-    org.mockito.Mockito.doThrow(conflict).when(fixture.replacementResource()).create();
+    doThrow(conflict).when(fixture.replacementResource()).create();
 
     IllegalStateException failure = assertThrows(IllegalStateException.class, fixture::apply);
 
@@ -114,7 +132,7 @@ class CertificateMaterialServiceTest {
         .getLabels()
         .put(HostedIdentityContract.MANAGED_BY_LABEL, "other-controller");
     when(fixture.existingResource().get()).thenReturn(null, fixture.existing());
-    org.mockito.Mockito.doThrow(new KubernetesClientException("conflict", 409, null))
+    doThrow(new KubernetesClientException("conflict", 409, null))
         .when(fixture.replacementResource())
         .create();
 
@@ -128,7 +146,7 @@ class CertificateMaterialServiceTest {
     CertificateApplyFixture fixture = certificateApplyFixture();
     fixture.existingSpec().put("commonName", "unexpected.example.test");
     when(fixture.existingResource().get()).thenReturn(null, fixture.existing());
-    org.mockito.Mockito.doThrow(new KubernetesClientException("conflict", 409, null))
+    doThrow(new KubernetesClientException("conflict", 409, null))
         .when(fixture.replacementResource())
         .create();
 
@@ -307,7 +325,7 @@ class CertificateMaterialServiceTest {
     when(identityCertificates.resource(desired)).thenReturn(replacementResource);
     when(replacementResource.lockResourceVersion("7")).thenReturn(lockedReplacementResource);
 
-    org.mockito.Mockito.doThrow(new KubernetesClientException("conflict", 409, null))
+    doThrow(new KubernetesClientException("conflict", 409, null))
         .when(lockedReplacementResource)
         .replace();
 
@@ -317,7 +335,7 @@ class CertificateMaterialServiceTest {
 
     existingSpec.put("secretName", "another-obsolete-secret-name");
     KubernetesClientException failure = new KubernetesClientException("forbidden", 403, null);
-    org.mockito.Mockito.doThrow(failure).when(lockedReplacementResource).replace();
+    doThrow(failure).when(lockedReplacementResource).replace();
 
     KubernetesClientException thrown =
         assertThrows(
@@ -327,7 +345,7 @@ class CertificateMaterialServiceTest {
                     client, plan.identityNamespace(), desired));
 
     assertSame(failure, thrown);
-    verify(replacementResource, org.mockito.Mockito.times(2)).lockResourceVersion("7");
+    verify(replacementResource, times(2)).lockResourceVersion("7");
   }
 
   @Test
@@ -358,8 +376,7 @@ class CertificateMaterialServiceTest {
     when(client.secrets()).thenReturn(secrets);
     when(secrets.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeSecrets);
     when(secrets.inNamespace(plan.identityNamespace())).thenReturn(identitySecrets);
-    when(runtimeSecrets.withName(org.mockito.ArgumentMatchers.anyString()))
-        .thenReturn(runtimeSecret);
+    when(runtimeSecrets.withName(anyString())).thenReturn(runtimeSecret);
     when(runtimeSecret.get()).thenReturn(null);
 
     GrpcTransportBundleGenerator generator = mock(GrpcTransportBundleGenerator.class);
@@ -397,13 +414,13 @@ class CertificateMaterialServiceTest {
             java.time.Instant.MAX,
             "3".repeat(64));
     when(validator.validateIdentity(
-            org.mockito.ArgumentMatchers.any(Secret.class),
-            org.mockito.ArgumentMatchers.anyCollection(),
-            org.mockito.ArgumentMatchers.anyCollection(),
-            org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.anyBoolean(),
-            org.mockito.ArgumentMatchers.anyBoolean(),
-            org.mockito.ArgumentMatchers.anyString()))
+            any(Secret.class),
+            anyCollection(),
+            anyCollection(),
+            anyString(),
+            anyBoolean(),
+            anyBoolean(),
+            anyString()))
         .thenReturn(summary);
     CertificateMaterialService service =
         new CertificateMaterialService(
@@ -442,8 +459,7 @@ class CertificateMaterialServiceTest {
     SecretClient secretClient = secretClient(plan);
     KubernetesClient client = secretClient.client();
     Resource<Secret> absentRuntimeSecret = mock(Resource.class);
-    when(secretClient.runtimeSecrets().withName(org.mockito.ArgumentMatchers.anyString()))
-        .thenReturn(absentRuntimeSecret);
+    when(secretClient.runtimeSecrets().withName(anyString())).thenReturn(absentRuntimeSecret);
     when(absentRuntimeSecret.get()).thenReturn(null);
     GrpcTransportBundleGenerator generator = mock(GrpcTransportBundleGenerator.class);
     Secret unowned =
@@ -489,8 +505,7 @@ class CertificateMaterialServiceTest {
     SecretClient secretClient = secretClient(plan);
     KubernetesClient client = secretClient.client();
     Resource<Secret> absentRuntimeSecret = mock(Resource.class);
-    when(secretClient.runtimeSecrets().withName(org.mockito.ArgumentMatchers.anyString()))
-        .thenReturn(absentRuntimeSecret);
+    when(secretClient.runtimeSecrets().withName(anyString())).thenReturn(absentRuntimeSecret);
     when(absentRuntimeSecret.get()).thenReturn(null);
     GrpcTransportBundleGenerator generator = mock(GrpcTransportBundleGenerator.class);
     Secret metadataLess = new SecretBuilder().withType("Opaque").build();
@@ -526,8 +541,7 @@ class CertificateMaterialServiceTest {
     EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
     SecretClient secretClient = secretClient(plan);
     Resource<Secret> absentRuntimeSecret = mock(Resource.class);
-    when(secretClient.runtimeSecrets().withName(org.mockito.ArgumentMatchers.anyString()))
-        .thenReturn(absentRuntimeSecret);
+    when(secretClient.runtimeSecrets().withName(anyString())).thenReturn(absentRuntimeSecret);
     when(absentRuntimeSecret.get()).thenReturn(null);
     stubCertificate(secretClient.client(), plan, plan.ingressCertificateName(), true);
     Secret source =
@@ -557,8 +571,7 @@ class CertificateMaterialServiceTest {
     assertEquals(mutation.expectedMessage(), failure.getMessage());
 
     verifyNoInteractions(validator);
-    verify(secretClient.runtimeSecrets(), never())
-        .resource(org.mockito.ArgumentMatchers.any(Secret.class));
+    verify(secretClient.runtimeSecrets(), never()).resource(any(Secret.class));
   }
 
   @Test
@@ -570,11 +583,10 @@ class CertificateMaterialServiceTest {
 
     IssuanceObservation observation = materializeIngress(1, oldData, newData);
 
-    assertEquals(false, observation.material().ready());
+    assertFalse(observation.material().ready());
     assertEquals(MATERIALIZATION_PENDING, observation.material().state());
     verifyNoInteractions(observation.validator());
-    verify(observation.runtimeSecrets(), never())
-        .resource(org.mockito.ArgumentMatchers.any(Secret.class));
+    verify(observation.runtimeSecrets(), never()).resource(any(Secret.class));
   }
 
   @Test
@@ -586,11 +598,10 @@ class CertificateMaterialServiceTest {
 
     IssuanceObservation observation = materializeIngress(2, newData, oldData);
 
-    assertEquals(false, observation.material().ready());
+    assertFalse(observation.material().ready());
     assertEquals(MATERIALIZATION_PENDING, observation.material().state());
     verifyNoInteractions(observation.validator());
-    verify(observation.runtimeSecrets(), never())
-        .resource(org.mockito.ArgumentMatchers.any(Secret.class));
+    verify(observation.runtimeSecrets(), never()).resource(any(Secret.class));
   }
 
   @Test
@@ -600,19 +611,19 @@ class CertificateMaterialServiceTest {
 
     IssuanceObservation observation = materializeIngress(2, data, data);
 
-    assertEquals(true, observation.material().ready());
+    assertTrue(observation.material().ready());
     assertEquals(SOURCE_READY, observation.material().state());
     assertEquals(2, observation.material().sourceGeneration());
     assertEquals(2, observation.material().sourceObjectGeneration());
     verify(observation.validator())
         .validateIdentity(
-            org.mockito.ArgumentMatchers.any(Secret.class),
-            org.mockito.ArgumentMatchers.anyCollection(),
-            org.mockito.ArgumentMatchers.anyCollection(),
-            org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.anyBoolean(),
-            org.mockito.ArgumentMatchers.anyBoolean(),
-            org.mockito.ArgumentMatchers.anyString());
+            any(Secret.class),
+            anyCollection(),
+            anyCollection(),
+            anyString(),
+            anyBoolean(),
+            anyBoolean(),
+            anyString());
   }
 
   @Test
@@ -623,7 +634,7 @@ class CertificateMaterialServiceTest {
         materializeIngress(2, data, data, 2, new KubernetesClientException("conflict", 409, null));
 
     assertEquals(SOURCE_READY, observation.material().state());
-    assertEquals(true, observation.material().ready());
+    assertTrue(observation.material().ready());
   }
 
   @Test
@@ -652,7 +663,7 @@ class CertificateMaterialServiceTest {
 
     IssuanceObservation observation = materializeIngress(2, requestData, secretData);
 
-    assertEquals(true, observation.material().ready());
+    assertTrue(observation.material().ready());
     assertEquals(SOURCE_READY, observation.material().state());
   }
 
@@ -663,7 +674,7 @@ class CertificateMaterialServiceTest {
 
     IssuanceObservation observation = materializeIngress(2, data, data, 3);
 
-    assertEquals(false, observation.material().ready());
+    assertFalse(observation.material().ready());
     assertEquals(MATERIALIZATION_PENDING, observation.material().state());
     verifyNoInteractions(observation.validator());
   }
@@ -674,8 +685,7 @@ class CertificateMaterialServiceTest {
     EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
     SecretClient secretClient = secretClient(plan);
     Resource<Secret> absentRuntimeSecret = mock(Resource.class);
-    when(secretClient.runtimeSecrets().withName(org.mockito.ArgumentMatchers.anyString()))
-        .thenReturn(absentRuntimeSecret);
+    when(secretClient.runtimeSecrets().withName(anyString())).thenReturn(absentRuntimeSecret);
     when(absentRuntimeSecret.get()).thenReturn(null);
     stubCertificate(secretClient.client(), plan, plan.ingressCertificateName(), false);
     CertificateMaterialService service =
@@ -688,12 +698,10 @@ class CertificateMaterialServiceTest {
     CertificateMaterialService.RoleMaterial ingress =
         service.beginMaterialization(secretClient.client(), plan).ingress();
 
-    assertEquals(false, ingress.ready());
+    assertFalse(ingress.ready());
     assertEquals(CERTIFICATE_PENDING, ingress.state());
-    verify(secretClient.runtimeSecrets(), org.mockito.Mockito.atLeastOnce())
-        .withName(org.mockito.ArgumentMatchers.anyString());
-    verify(secretClient.identitySecrets(), never())
-        .withName(org.mockito.ArgumentMatchers.anyString());
+    verify(secretClient.runtimeSecrets(), org.mockito.Mockito.atLeastOnce()).withName(anyString());
+    verify(secretClient.identitySecrets(), never()).withName(anyString());
   }
 
   @Test
@@ -776,8 +784,7 @@ class CertificateMaterialServiceTest {
     assertEquals(HostedIdentityContract.INGRESS_ROLE, continued.role());
     assertEquals(SERIALIZED_IN_FLIGHT, continued.state());
     assertEquals(projectedReplacement, continued.source());
-    verify(fixture.secretClient().runtimeSecrets(), org.mockito.Mockito.times(1))
-        .resource(org.mockito.ArgumentMatchers.any(Secret.class));
+    verify(fixture.secretClient().runtimeSecrets(), times(1)).resource(any(Secret.class));
   }
 
   @Test
@@ -900,7 +907,7 @@ class CertificateMaterialServiceTest {
                         "type", "Ready",
                         "status", "True",
                         "observedGeneration", 6)))));
-    assertEquals(null, CertificateMaterialService.readyRevision(certificate));
+    assertNull(CertificateMaterialService.readyRevision(certificate));
 
     for (int nonPositiveRevision : java.util.List.of(0, -1)) {
       certificate.setAdditionalProperties(
@@ -912,7 +919,7 @@ class CertificateMaterialServiceTest {
                   "conditions",
                   java.util.List.of(
                       Map.of("type", "Ready", "status", "True", "observedGeneration", 7)))));
-      assertEquals(null, CertificateMaterialService.readyRevision(certificate));
+      assertNull(CertificateMaterialService.readyRevision(certificate));
     }
   }
 
@@ -948,13 +955,13 @@ class CertificateMaterialServiceTest {
             new java.util.ArrayList<>(java.util.List.of("pr-42.example.test")),
             "duration",
             "2160h");
-    assertEquals(true, CertificateMaterialService.desiredSubsetEquivalent(desired, defaulted));
+    assertTrue(CertificateMaterialService.desiredSubsetEquivalent(desired, defaulted));
     Map<String, Object> changed = new java.util.LinkedHashMap<>(defaulted);
     changed.put("secretName", "other");
-    assertEquals(false, CertificateMaterialService.desiredSubsetEquivalent(desired, changed));
+    assertFalse(CertificateMaterialService.desiredSubsetEquivalent(desired, changed));
     changed = new java.util.LinkedHashMap<>(defaulted);
     changed.put("encodeUsagesInRequest", false);
-    assertEquals(false, CertificateMaterialService.desiredSubsetEquivalent(desired, changed));
+    assertFalse(CertificateMaterialService.desiredSubsetEquivalent(desired, changed));
     for (Map.Entry<String, Object> semanticExtra :
         Map.<String, Object>of(
                 "isCA", true,
@@ -965,13 +972,13 @@ class CertificateMaterialServiceTest {
             .entrySet()) {
       Map<String, Object> unsafe = new LinkedHashMap<>(defaulted);
       unsafe.put(semanticExtra.getKey(), semanticExtra.getValue());
-      assertEquals(false, CertificateMaterialService.desiredSubsetEquivalent(desired, unsafe));
+      assertFalse(CertificateMaterialService.desiredSubsetEquivalent(desired, unsafe));
     }
     for (Map.Entry<String, Object> invalidDefault :
         Map.<String, Object>of("duration", "1h", "revisionHistoryLimit", 2).entrySet()) {
       Map<String, Object> unsafe = new LinkedHashMap<>(defaulted);
       unsafe.put(invalidDefault.getKey(), invalidDefault.getValue());
-      assertEquals(false, CertificateMaterialService.desiredSubsetEquivalent(desired, unsafe));
+      assertFalse(CertificateMaterialService.desiredSubsetEquivalent(desired, unsafe));
     }
     Map<String, Object> unsafePrivateKey = new LinkedHashMap<>(defaulted);
     unsafePrivateKey.put("privateKey", Map.of("algorithm", "RSA", "size", 4096));
@@ -1015,8 +1022,8 @@ class CertificateMaterialServiceTest {
     readback.put("duration", "2160h");
     readback.put("revisionHistoryLimit", 1);
 
-    assertEquals(true, CertificateMaterialService.desiredSubsetEquivalent(desired, readback));
-    assertEquals(true, readback.get("encodeUsagesInRequest"));
+    assertTrue(CertificateMaterialService.desiredSubsetEquivalent(desired, readback));
+    assertTrue((Boolean) readback.get("encodeUsagesInRequest"));
     Map<?, ?> secretTemplate = (Map<?, ?>) readback.get("secretTemplate");
     assertEquals(
         HostedIdentityContract.managedLabels(plan.name(), HostedIdentityContract.INGRESS_ROLE),
@@ -1623,7 +1630,7 @@ class CertificateMaterialServiceTest {
     CertificateMaterialService.RoleMaterial material = fixture.batch().ingress();
 
     assertEquals(MATERIALIZATION_PENDING, material.state());
-    assertEquals(false, material.ready());
+    assertFalse(material.ready());
   }
 
   @Test
@@ -1691,13 +1698,13 @@ class CertificateMaterialServiceTest {
     when(grpcSourceResource.get()).thenReturn(ownedGrpc);
     SecretMaterialValidator validator = mock(SecretMaterialValidator.class);
     when(validator.validateIdentity(
-            org.mockito.ArgumentMatchers.any(Secret.class),
-            org.mockito.ArgumentMatchers.anyCollection(),
-            org.mockito.ArgumentMatchers.anyCollection(),
-            org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.anyBoolean(),
-            org.mockito.ArgumentMatchers.anyBoolean(),
-            org.mockito.ArgumentMatchers.anyString()))
+            any(Secret.class),
+            anyCollection(),
+            anyCollection(),
+            anyString(),
+            anyBoolean(),
+            anyBoolean(),
+            anyString()))
         .thenReturn(
             new SecretMaterialValidator.MaterialSummary(
                 "1".repeat(64),
@@ -1717,55 +1724,7 @@ class CertificateMaterialServiceTest {
     CertificateMaterialService.RoleMaterial grpc = materialization.grpc(1L);
 
     assertEquals(SERIALIZED_DEFERRED, grpc.state());
-    verify(grpcSourceResource, org.mockito.Mockito.times(1)).get();
-  }
-
-  private static String encoded(String value) {
-    return Base64.getEncoder().encodeToString(value.getBytes(StandardCharsets.UTF_8));
-  }
-
-  private static Secret certManagerSource(
-      EnvironmentIdentityPlan plan, String role, String name, Map<String, String> data) {
-    String issuer =
-        switch (role) {
-          case HostedIdentityContract.INGRESS_ROLE -> plan.ingressIssuer();
-          case HostedIdentityContract.TELNET_ROLE -> plan.telnetIssuer();
-          case HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE,
-              HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE ->
-              plan.grpcIssuer();
-          default -> throw new IllegalArgumentException("unsupported cert-manager role: " + role);
-        };
-    Secret source = ownedSecret(plan, role, name, data, new LinkedHashMap<>());
-    source.getMetadata().setNamespace(plan.identityNamespace());
-    source
-        .getMetadata()
-        .setOwnerReferences(
-            List.of(
-                new OwnerReferenceBuilder()
-                    .withApiVersion("cert-manager.io/v1")
-                    .withKind("Certificate")
-                    .withName(name)
-                    .withUid("uid-" + name)
-                    .withController(true)
-                    .build()));
-    source
-        .getMetadata()
-        .setAnnotations(
-            new LinkedHashMap<>(
-                Map.of(
-                    HostedIdentityContract.PROVENANCE_ANNOTATION,
-                    "cert-manager",
-                    HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION,
-                    "source-materialized",
-                    "cert-manager.io/certificate-name",
-                    name,
-                    "cert-manager.io/issuer-name",
-                    issuer,
-                    "cert-manager.io/issuer-kind",
-                    "ClusterIssuer",
-                    "cert-manager.io/issuer-group",
-                    "cert-manager.io")));
-    return source;
+    verify(grpcSourceResource, times(1)).get();
   }
 
   private static IssuanceObservation materializeIngress(
@@ -1791,8 +1750,7 @@ class CertificateMaterialServiceTest {
     EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
     SecretClient secretClient = secretClient(plan);
     Resource<Secret> absentRuntimeSecret = mock(Resource.class);
-    when(secretClient.runtimeSecrets().withName(org.mockito.ArgumentMatchers.anyString()))
-        .thenReturn(absentRuntimeSecret);
+    when(secretClient.runtimeSecrets().withName(anyString())).thenReturn(absentRuntimeSecret);
     when(absentRuntimeSecret.get()).thenReturn(null);
     Resource<GenericKubernetesResource> certificate =
         stubCertificate(
@@ -1817,13 +1775,13 @@ class CertificateMaterialServiceTest {
                 plan, HostedIdentityContract.INGRESS_ROLE, plan.ingressSecretName(), sourceData));
     SecretMaterialValidator validator = mock(SecretMaterialValidator.class);
     when(validator.validateIdentity(
-            org.mockito.ArgumentMatchers.any(Secret.class),
-            org.mockito.ArgumentMatchers.anyCollection(),
-            org.mockito.ArgumentMatchers.anyCollection(),
-            org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.anyBoolean(),
-            org.mockito.ArgumentMatchers.anyBoolean(),
-            org.mockito.ArgumentMatchers.anyString()))
+            any(Secret.class),
+            anyCollection(),
+            anyCollection(),
+            anyString(),
+            anyBoolean(),
+            anyBoolean(),
+            anyString()))
         .thenReturn(
             new SecretMaterialValidator.MaterialSummary(
                 "1".repeat(64),
@@ -1843,108 +1801,6 @@ class CertificateMaterialServiceTest {
         secretClient.runtimeSecrets());
   }
 
-  private static Resource<GenericKubernetesResource> stubCertificate(
-      KubernetesClient client,
-      EnvironmentIdentityPlan plan,
-      String certificateName,
-      boolean readyAfterCreate) {
-    return stubCertificate(
-        client,
-        plan,
-        certificateName,
-        readyAfterCreate,
-        1,
-        Map.of("tls.crt", encoded("certificate"), "tls.key", encoded("key")));
-  }
-
-  private static Resource<GenericKubernetesResource> stubCertificate(
-      KubernetesClient client,
-      EnvironmentIdentityPlan plan,
-      String certificateName,
-      boolean readyAfterCreate,
-      long revision,
-      Map<String, String> sourceData) {
-    return stubCertificate(
-        client, plan, certificateName, readyAfterCreate, revision, sourceData, null);
-  }
-
-  @SuppressWarnings("unchecked")
-  private static Resource<GenericKubernetesResource> stubCertificate(
-      KubernetesClient client,
-      EnvironmentIdentityPlan plan,
-      String certificateName,
-      boolean readyAfterCreate,
-      long revision,
-      Map<String, String> sourceData,
-      KubernetesClientException createFailure) {
-    MixedOperation<
-            GenericKubernetesResource,
-            GenericKubernetesResourceList,
-            Resource<GenericKubernetesResource>>
-        certificates = mock(MixedOperation.class);
-    NonNamespaceOperation<
-            GenericKubernetesResource,
-            GenericKubernetesResourceList,
-            Resource<GenericKubernetesResource>>
-        identityCertificates = mock(NonNamespaceOperation.class);
-    Resource<GenericKubernetesResource> certificate = mock(Resource.class);
-    Resource<GenericKubernetesResource> createOperation = mock(Resource.class);
-    when(client.genericKubernetesResources(ResourceContexts.CERTIFICATES)).thenReturn(certificates);
-    when(certificates.inNamespace(plan.identityNamespace())).thenReturn(identityCertificates);
-    when(identityCertificates.withName(certificateName)).thenReturn(certificate);
-    when(identityCertificates.resource(
-            org.mockito.ArgumentMatchers.any(GenericKubernetesResource.class)))
-        .thenReturn(createOperation);
-    if (createFailure != null) {
-      org.mockito.Mockito.doThrow(createFailure).when(createOperation).create();
-    }
-    if (readyAfterCreate) {
-      GenericKubernetesResource ready = readyCertificate(plan, certificateName, revision);
-      when(certificate.get()).thenReturn(null, ready);
-      stubCertificateRequest(client, plan, certificateName, revision, sourceData);
-    } else {
-      when(certificate.get()).thenReturn(null);
-    }
-    return certificate;
-  }
-
-  private static GenericKubernetesResource readyCertificate(
-      EnvironmentIdentityPlan plan, String certificateName, long revision) {
-    GenericKubernetesResource ready = new GenericKubernetesResource();
-    ready.setApiVersion("cert-manager.io/v1");
-    ready.setKind("Certificate");
-    ready.setMetadata(
-        new ObjectMetaBuilder()
-            .withName(certificateName)
-            .withNamespace(plan.identityNamespace())
-            .withUid("uid-" + certificateName)
-            .withGeneration(revision)
-            .build());
-    ready.setAdditionalProperties(
-        Map.of(
-            "spec",
-            Map.of(
-                "issuerRef",
-                Map.of(
-                    "name",
-                    issuerFor(plan, certificateName),
-                    "kind",
-                    "ClusterIssuer",
-                    "group",
-                    "cert-manager.io")),
-            "status",
-            Map.of(
-                "revision",
-                revision,
-                "conditions",
-                List.of(
-                    Map.of(
-                        "type", "Ready",
-                        "status", "True",
-                        "observedGeneration", revision)))));
-    return ready;
-  }
-
   private static GenericKubernetesResource readyOwnedIngressCertificate(
       EnvironmentIdentityPlan plan, long revision) {
     GenericKubernetesResource desired = new CertificateResourceFactory().ingress(plan);
@@ -1956,125 +1812,6 @@ class CertificateMaterialServiceTest {
     properties.put("status", ready.getAdditionalProperties().get("status"));
     desired.setAdditionalProperties(properties);
     return desired;
-  }
-
-  @SuppressWarnings("unchecked")
-  private static void stubCertificateRequest(
-      KubernetesClient client,
-      EnvironmentIdentityPlan plan,
-      String certificateName,
-      long revision,
-      Map<String, String> sourceData) {
-    GenericKubernetesResource request =
-        certificateRequest(
-            plan,
-            certificateName,
-            revision,
-            certificateName + "-request-" + revision,
-            sourceData,
-            true);
-    GenericKubernetesResourceList requestList = new GenericKubernetesResourceList();
-    requestList.setItems(List.of(request));
-    MixedOperation<
-            GenericKubernetesResource,
-            GenericKubernetesResourceList,
-            Resource<GenericKubernetesResource>>
-        requests = mock(MixedOperation.class);
-    NonNamespaceOperation<
-            GenericKubernetesResource,
-            GenericKubernetesResourceList,
-            Resource<GenericKubernetesResource>>
-        identityRequests = mock(NonNamespaceOperation.class);
-    when(client.genericKubernetesResources(ResourceContexts.CERTIFICATE_REQUESTS))
-        .thenReturn(requests);
-    when(requests.inNamespace(plan.identityNamespace())).thenReturn(identityRequests);
-    when(identityRequests.list()).thenReturn(requestList);
-  }
-
-  @SuppressWarnings("unchecked")
-  private static NonNamespaceOperation<
-          GenericKubernetesResource,
-          GenericKubernetesResourceList,
-          Resource<GenericKubernetesResource>>
-      stubCertificateRequests(
-          KubernetesClient client,
-          EnvironmentIdentityPlan plan,
-          List<GenericKubernetesResource> requestsToReturn) {
-    MixedOperation<
-            GenericKubernetesResource,
-            GenericKubernetesResourceList,
-            Resource<GenericKubernetesResource>>
-        requests = mock(MixedOperation.class);
-    NonNamespaceOperation<
-            GenericKubernetesResource,
-            GenericKubernetesResourceList,
-            Resource<GenericKubernetesResource>>
-        identityRequests = mock(NonNamespaceOperation.class);
-    GenericKubernetesResourceList requestList = new GenericKubernetesResourceList();
-    requestList.setItems(requestsToReturn);
-    when(client.genericKubernetesResources(ResourceContexts.CERTIFICATE_REQUESTS))
-        .thenReturn(requests);
-    when(requests.inNamespace(plan.identityNamespace())).thenReturn(identityRequests);
-    when(identityRequests.list()).thenReturn(requestList);
-    return identityRequests;
-  }
-
-  private static GenericKubernetesResource certificateRequest(
-      EnvironmentIdentityPlan plan,
-      String certificateName,
-      long revision,
-      String requestName,
-      Map<String, String> sourceData,
-      boolean ready) {
-    GenericKubernetesResource request = new GenericKubernetesResource();
-    request.setApiVersion("cert-manager.io/v1");
-    request.setKind("CertificateRequest");
-    request.setMetadata(
-        new ObjectMetaBuilder()
-            .withName(requestName)
-            .withNamespace(plan.identityNamespace())
-            .withAnnotations(
-                Map.of(
-                    "cert-manager.io/certificate-name",
-                    certificateName,
-                    "cert-manager.io/certificate-revision",
-                    Long.toString(revision)))
-            .withOwnerReferences(
-                new OwnerReferenceBuilder()
-                    .withApiVersion("cert-manager.io/v1")
-                    .withKind("Certificate")
-                    .withName(certificateName)
-                    .withUid("uid-" + certificateName)
-                    .withController(true)
-                    .build())
-            .build());
-    Map<String, Object> status = new LinkedHashMap<>();
-    status.put("certificate", sourceData.get("tls.crt"));
-    if (sourceData.containsKey("ca.crt")) {
-      status.put("ca", sourceData.get("ca.crt"));
-    }
-    status.put(
-        "conditions", ready ? List.of(Map.of("type", "Ready", "status", "True")) : List.of());
-    request.setAdditionalProperties(
-        Map.of(
-            "spec",
-            Map.of(
-                "issuerRef",
-                Map.of(
-                    "name", issuerFor(plan, certificateName),
-                    "kind", "ClusterIssuer",
-                    "group", "cert-manager.io")),
-            "status",
-            status));
-    return request;
-  }
-
-  private static String issuerFor(EnvironmentIdentityPlan plan, String certificateName) {
-    return certificateName.equals(plan.ingressCertificateName())
-        ? plan.ingressIssuer()
-        : certificateName.equals(plan.telnetCertificateName())
-            ? plan.telnetIssuer()
-            : plan.grpcIssuer();
   }
 
   @SuppressWarnings("unchecked")
@@ -2127,128 +1864,6 @@ class CertificateMaterialServiceTest {
         lockedReplacementResource);
   }
 
-  @SuppressWarnings("unchecked")
-  private static SecretClient secretClient(EnvironmentIdentityPlan plan) {
-    KubernetesClient client = mock(KubernetesClient.class);
-    MixedOperation<Secret, SecretList, Resource<Secret>> secrets = mock(MixedOperation.class);
-    NonNamespaceOperation<Secret, SecretList, Resource<Secret>> runtimeSecrets =
-        mock(NonNamespaceOperation.class);
-    NonNamespaceOperation<Secret, SecretList, Resource<Secret>> identitySecrets =
-        mock(NonNamespaceOperation.class);
-    when(client.secrets()).thenReturn(secrets);
-    when(secrets.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeSecrets);
-    when(secrets.inNamespace(plan.identityNamespace())).thenReturn(identitySecrets);
-    Resource<Secret> runtimeReplacementResource = mock(Resource.class);
-    ReplaceDeletable<Secret> runtimeLockedResource = mock(ReplaceDeletable.class);
-    when(runtimeReplacementResource.lockResourceVersion(org.mockito.ArgumentMatchers.anyString()))
-        .thenReturn(runtimeLockedResource);
-    Resource<Secret> identityReplacementResource = mock(Resource.class);
-    ReplaceDeletable<Secret> identityLockedResource = mock(ReplaceDeletable.class);
-    when(identityReplacementResource.lockResourceVersion(org.mockito.ArgumentMatchers.anyString()))
-        .thenReturn(identityLockedResource);
-    when(runtimeSecrets.resource(org.mockito.ArgumentMatchers.any(Secret.class)))
-        .thenReturn(runtimeReplacementResource);
-    when(identitySecrets.resource(org.mockito.ArgumentMatchers.any(Secret.class)))
-        .thenReturn(identityReplacementResource);
-    return new SecretClient(client, runtimeSecrets, identitySecrets);
-  }
-
-  private static StableBatchFixture stableBatchFixture() {
-    HostedIdentityProperties properties = new HostedIdentityProperties();
-    EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
-    SecretClient secretClient = secretClient(plan);
-    Map<String, String> acceptedData =
-        Map.of("tls.crt", encoded("accepted"), "tls.key", encoded("key-1"));
-    for (String role :
-        List.of(
-            HostedIdentityContract.INGRESS_ROLE,
-            HostedIdentityContract.TELNET_ROLE,
-            HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE,
-            HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE,
-            HostedIdentityContract.GRPC_ROLE)) {
-      stubProjectionAndSource(secretClient, plan, role, acceptedData, acceptedData, acceptedData);
-      secretClient
-          .runtimeSecrets()
-          .withName(secretName(plan, role))
-          .get()
-          .getMetadata()
-          .getAnnotations()
-          .put(
-              HostedIdentityContract.PROVENANCE_ANNOTATION,
-              HostedIdentityContract.GRPC_ROLE.equals(role)
-                  ? HostedIdentityContract.TRANSPORT_PROVENANCE
-                  : "cert-manager");
-    }
-    SecretMaterialValidator validator = mock(SecretMaterialValidator.class);
-    SecretMaterialValidator.MaterialSummary summary =
-        new SecretMaterialValidator.MaterialSummary(
-            "1".repeat(64),
-            "2".repeat(64),
-            java.time.Instant.EPOCH,
-            java.time.Instant.MAX,
-            "3".repeat(64));
-    when(validator.validateIdentity(
-            org.mockito.ArgumentMatchers.any(Secret.class),
-            org.mockito.ArgumentMatchers.anyCollection(),
-            org.mockito.ArgumentMatchers.anyCollection(),
-            org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.anyBoolean(),
-            org.mockito.ArgumentMatchers.anyBoolean(),
-            org.mockito.ArgumentMatchers.anyString()))
-        .thenReturn(summary);
-    GrpcTransportBundleGenerator grpcGenerator = mock(GrpcTransportBundleGenerator.class);
-    CertificateMaterialService service =
-        new CertificateMaterialService(
-            new CertificateResourceFactory(), validator, grpcGenerator, properties);
-    return new StableBatchFixture(
-        plan,
-        properties,
-        secretClient,
-        acceptedData,
-        validator,
-        grpcGenerator,
-        service,
-        service.beginMaterialization(secretClient.client(), plan));
-  }
-
-  private static Secret stubProjectionAndSource(
-      SecretClient secretClient,
-      EnvironmentIdentityPlan plan,
-      String role,
-      Map<String, String> projectionData,
-      Map<String, String> recordedData,
-      Map<String, String> sourceData) {
-    String name = secretName(plan, role);
-    String revision = SecretProjectionService.revisionForRole(role, recordedData);
-    Secret projection =
-        ownedSecret(
-            plan, role, name, projectionData, acceptedAnnotations(revision, "2".repeat(64)));
-    if (HostedIdentityContract.GRPC_ROLE.equals(role)) {
-      projection.setType("Opaque");
-    }
-    projection.getMetadata().setResourceVersion("7");
-    Resource<Secret> projectionResource = mock(Resource.class);
-    when(secretClient.runtimeSecrets().withName(name)).thenReturn(projectionResource);
-    when(projectionResource.get()).thenReturn(projection);
-    Secret source =
-        HostedIdentityContract.GRPC_ROLE.equals(role)
-            ? ownedSecret(plan, role, name, sourceData, Map.of())
-            : certManagerSource(plan, role, name, sourceData);
-    Resource<Secret> sourceResource = mock(Resource.class);
-    when(secretClient.identitySecrets().withName(name)).thenReturn(sourceResource);
-    when(sourceResource.get()).thenReturn(source);
-    Resource<Secret> predecessorResource = mock(Resource.class);
-    when(secretClient.identitySecrets().withName(name + "-previous"))
-        .thenReturn(predecessorResource);
-    when(predecessorResource.get()).thenReturn(null);
-    return source;
-  }
-
-  private record SecretClient(
-      KubernetesClient client,
-      NonNamespaceOperation<Secret, SecretList, Resource<Secret>> runtimeSecrets,
-      NonNamespaceOperation<Secret, SecretList, Resource<Secret>> identitySecrets) {}
-
   private record CertificateApplyFixture(
       EnvironmentIdentityPlan plan,
       GenericKubernetesResource desired,
@@ -2262,16 +1877,6 @@ class CertificateMaterialServiceTest {
       CertificateMaterialService.applyCertificate(client, plan.identityNamespace(), desired);
     }
   }
-
-  private record StableBatchFixture(
-      EnvironmentIdentityPlan plan,
-      HostedIdentityProperties properties,
-      SecretClient secretClient,
-      Map<String, String> acceptedData,
-      SecretMaterialValidator validator,
-      GrpcTransportBundleGenerator grpcGenerator,
-      CertificateMaterialService service,
-      CertificateMaterialService.MaterializationBatch batch) {}
 
   private record IssuanceObservation(
       CertificateMaterialService.RoleMaterial material,
@@ -2382,52 +1987,5 @@ class CertificateMaterialServiceTest {
         case OWNER_UID -> source.getMetadata().getOwnerReferences().get(0).setUid("stale-uid");
       }
     }
-  }
-
-  private static EnvironmentIdentityPlan plan() {
-    return new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
-  }
-
-  private static Map<String, String> acceptedAnnotations(String revision, String spki) {
-    Map<String, String> annotations = new LinkedHashMap<>();
-    annotations.put(HostedIdentityContract.REVISION_ANNOTATION, revision);
-    annotations.put(HostedIdentityContract.SOURCE_GENERATION_ANNOTATION, "1");
-    annotations.put(HostedIdentityContract.SOURCE_OBJECT_GENERATION_ANNOTATION, "1");
-    annotations.put(HostedIdentityContract.SPKI_SHA256_ANNOTATION, spki);
-    annotations.put(HostedIdentityContract.ACCEPTED_REVISION_ANNOTATION, revision);
-    annotations.put(HostedIdentityContract.ACCEPTED_SOURCE_GENERATION_ANNOTATION, "1");
-    annotations.put(HostedIdentityContract.ACCEPTED_SOURCE_OBJECT_GENERATION_ANNOTATION, "1");
-    annotations.put(HostedIdentityContract.ACCEPTED_SPKI_SHA256_ANNOTATION, spki);
-    annotations.put(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION, "accepted");
-    return annotations;
-  }
-
-  private static Secret ownedSecret(
-      EnvironmentIdentityPlan plan,
-      String role,
-      String name,
-      Map<String, String> data,
-      Map<String, String> annotations) {
-    return new SecretBuilder()
-        .withNewMetadata()
-        .withName(name)
-        .withNamespace(plan.runtimeNamespace())
-        .withLabels(HostedIdentityContract.managedLabels(plan.name(), role))
-        .withAnnotations(annotations)
-        .endMetadata()
-        .withType("kubernetes.io/tls")
-        .withData(data)
-        .build();
-  }
-
-  private static String secretName(EnvironmentIdentityPlan plan, String role) {
-    return switch (role) {
-      case HostedIdentityContract.INGRESS_ROLE -> plan.ingressSecretName();
-      case HostedIdentityContract.TELNET_ROLE -> plan.telnetSecretName();
-      case HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE -> plan.gatewayInternalWsSecretName();
-      case HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE -> plan.tcpProxyBridgeSecretName();
-      case HostedIdentityContract.GRPC_ROLE -> plan.grpcSecretName();
-      default -> throw new IllegalArgumentException("unsupported role");
-    };
   }
 }
