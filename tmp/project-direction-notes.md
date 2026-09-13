@@ -43,3 +43,7 @@ Last refreshed: 2026-09-12. These notes are non-normative continuity guidance. A
 
 - Preserve unrelated dirty/conflicted worktrees and worker artifacts. Do not revert, delete, overwrite, stage, or commit unrelated edits.
 - **Validation for this edit:** `git diff --check` and the scoped diff for the two private notes are the only checks run; no tests, lints, or review/CI/PR operations were run.
+
+## Process-cost correction (2026-09-13 12:49:56 NZST, Pacific/Auckland)
+
+Gameplay's #2694 retrospective reported approximately 27 completed CLI rounds, 5 substantive Hosted rounds, 45 implementation commits, and material implementation growth. Overseer initially misclassified the review volume as excessive, then corrected that judgment because recent useful yields remained high (CLI examples 13/9, 7/5, and 21/11; Hosted 3/3) and the work was substantive. Accepted efficiency corrections: combine same-scope implementation with focused validation; run focused tests during integration and broader gates at meaningful or material-boundary checkpoints; use existing reporting tools instead of manual reconstruction; recognize already-fixed or downstream-owned findings early; and use waiters instead of model polling. This does not authorize slowing, spacing, or reducing full Hosted/CLI review while findings remain useful. Gameplay was given/ferried this corrected direction in chat on 2026-09-13 NZ time.
