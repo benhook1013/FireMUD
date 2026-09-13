@@ -189,7 +189,11 @@ jobs:
                   runtimeSmokeRequired = paths.some(
                     (path) =>
                       runtimeFiles.has(path) ||
-                      runtimePrefixes.some((prefix) => path.startsWith(prefix))
+                      runtimePrefixes.some((prefix) => path.startsWith(prefix)) ||
+                      (path.startsWith("services/") &&
+                        !path.startsWith(
+                          "services/hosted-environment-identity-controller/"
+                        ))
                   );
                   controllerSmokeRequired = paths.some(
                     (path) =>

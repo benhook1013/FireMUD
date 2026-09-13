@@ -111,7 +111,7 @@ for required in (
 
 runtime_scope_script = smoke_scope_script[
     smoke_scope_script.index("const runtimePrefixes"):
-    smoke_scope_script.index("const controllerPrefixes")
+    smoke_scope_script.index("runtimeSmokeRequired = paths.some")
 ]
 for runtime_service in (
     "services/account-service/",
@@ -120,7 +120,16 @@ for runtime_service in (
 ):
     assert runtime_service in runtime_scope_script
 assert "dev-tools/smoke/" in runtime_scope_script
-assert "services/hosted-environment-identity-controller/" not in runtime_scope_script
+runtime_scope_predicate = smoke_scope_script[
+    smoke_scope_script.index("runtimeSmokeRequired = paths.some"):
+    smoke_scope_script.index("controllerSmokeRequired = paths.some")
+]
+normalized_runtime_scope_predicate = "".join(runtime_scope_predicate.split())
+assert 'path.startsWith("services/")' in normalized_runtime_scope_predicate
+assert (
+    '!path.startsWith("services/hosted-environment-identity-controller/")'
+    in normalized_runtime_scope_predicate
+)
 
 controller_scope_script = smoke_scope_script[
     smoke_scope_script.index("const controllerPrefixes"):

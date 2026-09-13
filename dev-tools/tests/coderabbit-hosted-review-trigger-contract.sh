@@ -99,12 +99,14 @@ fi
 grep -q 'checker is not a readable regular file' "$TMP_DIR/missing-checker.out"
 mv "$TEST_REPO/dev-tools/validation/check-coderabbit-review.py.missing" \
   "$TEST_REPO/dev-tools/validation/check-coderabbit-review.py"
-chmod 000 "$TEST_REPO/dev-tools/validation/check-coderabbit-review.py"
-if (cd "$TEST_REPO" && PATH="$MOCK_BIN:$PATH" dev-tools/request-coderabbit-review.sh 42 --repo owner/repo) >"$TMP_DIR/unreadable-checker.out" 2>&1; then
-  exit 1
+if (( EUID != 0 )); then
+  chmod 000 "$TEST_REPO/dev-tools/validation/check-coderabbit-review.py"
+  if (cd "$TEST_REPO" && PATH="$MOCK_BIN:$PATH" dev-tools/request-coderabbit-review.sh 42 --repo owner/repo) >"$TMP_DIR/unreadable-checker.out" 2>&1; then
+    exit 1
+  fi
+  grep -q 'checker is not a readable regular file' "$TMP_DIR/unreadable-checker.out"
+  chmod 644 "$TEST_REPO/dev-tools/validation/check-coderabbit-review.py"
 fi
-grep -q 'checker is not a readable regular file' "$TMP_DIR/unreadable-checker.out"
-chmod 644 "$TEST_REPO/dev-tools/validation/check-coderabbit-review.py"
 
 (cd "$TEST_REPO" && PATH="$MOCK_BIN:$PATH" dev-tools/request-coderabbit-review.sh 42 --repo owner/repo) >"$TMP_DIR/first.out"
 record="$TEST_REPO/.git/coderabbit-review-logs/hosted/owner_repo/pr-42/trigger.json"
