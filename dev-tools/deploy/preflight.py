@@ -6540,7 +6540,7 @@ def wait_for_secret_key_requirements(
         skipped_requirements: list[tuple[str, set[str]]],
     ) -> None:
         for skipped_name, _ in skipped_requirements:
-            if skipped_name in lookup_timed_out:
+            if skipped_name in lookup_timed_out or skipped_name in latest_issues:
                 continue
             latest_issues[skipped_name] = (
                 "Secret readiness deadline left less than the "

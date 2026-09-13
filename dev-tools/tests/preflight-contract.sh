@@ -2755,14 +2755,15 @@ try:
         raise SystemExit("Secret readiness retried after losing its usable timeout window")
     if (
         len(authoritative_deadline_issues) != 1
-        or "5s minimum lookup window" not in authoritative_deadline_issues[0]
-        or "missing keys" in authoritative_deadline_issues[0]
+        or "Required Secret pr-42/deadline-authoritative is missing keys: tls.crt"
+        not in authoritative_deadline_issues[0]
+        or "5s minimum lookup window" in authoritative_deadline_issues[0]
         or "still not ready after 1 attempts" not in authoritative_deadline_issues[0]
         or "elapsed 4.0s of 5s readiness budget"
         not in authoritative_deadline_issues[0]
     ):
         raise SystemExit(
-            "Secret readiness did not make its aggregate deadline diagnostic authoritative: "
+            "Secret readiness did not preserve its concrete lookup diagnostic after deadline exhaustion: "
             f"{authoritative_deadline_issues}"
         )
 
@@ -2870,12 +2871,13 @@ try:
             f"mid-iteration Secret readiness expiry was not reported: {mid_iteration_expiry_issues}"
         )
     if (
-        "Secret readiness deadline left less than the" not in looked_up_issue
+        "Required Secret pr-42/looked-up is missing keys: tls.crt" not in looked_up_issue
+        or "Secret readiness deadline left less than the" in looked_up_issue
         or "still not ready after 1 attempts" not in looked_up_issue
         or "no Secret lookups attempted" in looked_up_issue
     ):
         raise SystemExit(
-            "Secret readiness did not retain the per-Secret lookup count before expiry: "
+            "Secret readiness did not retain the concrete per-Secret diagnostic before expiry: "
             f"{mid_iteration_expiry_issues}"
         )
 finally:
