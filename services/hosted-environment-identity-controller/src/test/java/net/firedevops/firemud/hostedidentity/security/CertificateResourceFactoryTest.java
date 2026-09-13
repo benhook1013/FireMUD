@@ -137,7 +137,7 @@ class CertificateResourceFactoryTest {
             HostedIdentityProperties.INTERNAL_CERTIFICATE_DURATION
                 .minus(HostedIdentityProperties.INTERNAL_CERTIFICATE_RENEWAL_SLACK)
                 .plusNanos(1),
-            Duration.ofDays(30))) {
+            HostedIdentityProperties.INTERNAL_CERTIFICATE_DURATION)) {
       assertInvalidRenewalWindow(() -> factory.gatewayInternalWs(plan, invalidRenewBefore));
       assertInvalidRenewalWindow(() -> factory.tcpProxyBridge(plan, invalidRenewBefore));
     }

@@ -925,7 +925,7 @@ public class SecretMaterialValidatorTest {
                     .generate(plan, caSource, 2, Duration.ofMinutes(5).minusNanos(1), now));
 
     assertEquals(
-        "gRPC renewal window must be at least 5 minutes and leave at least 5 minutes before the 30-day certificate expiry",
+        expectedRenewalWindowMessage(),
         failure.getMessage());
   }
 
@@ -944,7 +944,7 @@ public class SecretMaterialValidatorTest {
                     .generate(plan, caSource, 2, Duration.ofDays(30), now));
 
     assertEquals(
-        "gRPC renewal window must be at least 5 minutes and leave at least 5 minutes before the 30-day certificate expiry",
+        expectedRenewalWindowMessage(),
         failure.getMessage());
   }
 
@@ -965,6 +965,16 @@ public class SecretMaterialValidatorTest {
 
       assertEquals(2, GrpcTransportBundleGenerator.issuanceGeneration(generated));
     }
+  }
+
+  private static String expectedRenewalWindowMessage() {
+    return "gRPC renewal window must be at least "
+        + HostedIdentityProperties.MINIMUM_GRPC_RENEW_BEFORE.toMinutes()
+        + " minutes and leave at least "
+        + HostedIdentityProperties.INTERNAL_CERTIFICATE_RENEWAL_SLACK.toMinutes()
+        + " minutes before the "
+        + HostedIdentityProperties.INTERNAL_CERTIFICATE_DURATION.toDays()
+        + "-day certificate expiry";
   }
 
   @Test
