@@ -1,0 +1,66 @@
+name: Download validated preview artifact
+description: Download a trusted preview render artifact and validate its complete immutable source binding
+inputs:
+  artifact-directory:
+    description: Runner-local directory where the preview artifact will be downloaded
+    required: true
+  artifact-name:
+    description: Exact source workflow artifact name
+    required: true
+  source-run-id:
+    description: Exact source preview workflow run ID
+    required: true
+  github-token:
+    description: Token authorized to download the source workflow artifact
+    required: true
+  repository:
+    description: Exact source repository owner and name
+    required: true
+  pr-number:
+    description: Exact source pull request number
+    required: true
+  base-sha:
+    description: Exact source pull request base SHA
+    required: true
+  head-sha:
+    description: Exact source pull request head SHA
+    required: true
+  merge-sha:
+    description: Exact source pull request merge SHA
+    required: true
+  image-tag:
+    description: Exact runtime image tag bound to the source head
+    required: true
+  preview-hostname:
+    description: Exact preview hostname bound to the source pull request
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Download exact source render artifact
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        name: ${{ inputs['artifact-name'] }}
+        path: ${{ inputs['artifact-directory'] }}
+        github-token: ${{ inputs['github-token'] }}
+        run-id: ${{ inputs['source-run-id'] }}
+
+    - name: Verify artifact provenance, checksum, and closed object set
+      shell: bash
+      env:
+        ARTIFACT_DIRECTORY: ${{ inputs['artifact-directory'] }}
+        SOURCE_REPOSITORY: ${{ inputs.repository }}
+        SOURCE_RUN_ID: ${{ inputs['source-run-id'] }}
+        PR_NUMBER: ${{ inputs['pr-number'] }}
+        BASE_SHA: ${{ inputs['base-sha'] }}
+        HEAD_SHA: ${{ inputs['head-sha'] }}
+        MERGE_SHA: ${{ inputs['merge-sha'] }}
+        IMAGE_TAG: ${{ inputs['image-tag'] }}
+        PREVIEW_HOSTNAME: ${{ inputs['preview-hostname'] }}
+      run: |
+        set -euo pipefail
+        python3 "$GITHUB_ACTION_PATH/../../../dev-tools/hosted/preview/validate-preview-artifact.py" \
+          "$ARTIFACT_DIRECTORY/preview-metadata.json" \
+          "$ARTIFACT_DIRECTORY/preview-rendered-sanitized.yaml" \
+          "$SOURCE_REPOSITORY" "$SOURCE_RUN_ID" "$PR_NUMBER" "$BASE_SHA" \
+          "$HEAD_SHA" "$MERGE_SHA" "$IMAGE_TAG" "$PREVIEW_HOSTNAME"

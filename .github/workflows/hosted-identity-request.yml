@@ -222,30 +222,20 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
-      - name: Download source render artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - name: Download and validate source render artifact
+        uses: ./.github/actions/download-validated-preview-artifact
         with:
-          name: ${{ needs.validate-target.outputs.artifact_name }}
-          path: ${{ runner.temp }}/preview-artifact
+          artifact-directory: ${{ runner.temp }}/preview-artifact
+          artifact-name: ${{ needs.validate-target.outputs.artifact_name }}
+          source-run-id: ${{ needs.validate-target.outputs.render_run_id }}
           github-token: ${{ github.token }}
-          run-id: ${{ needs.validate-target.outputs.render_run_id }}
-
-      - name: Verify artifact provenance, checksum, and closed object set
-        env:
-          ARTIFACT_DIR: ${{ runner.temp }}/preview-artifact
-          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
-          BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
-          HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
-          MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
-          IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
-          PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
-          SOURCE_RUN_ID: ${{ needs.validate-target.outputs.render_run_id }}
-        run: |
-          python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
-            "$ARTIFACT_DIR/preview-metadata.json" \
-            "$ARTIFACT_DIR/preview-rendered-sanitized.yaml" \
-            "$GITHUB_REPOSITORY" "$SOURCE_RUN_ID" "$PR_NUMBER" "$BASE_SHA" \
-            "$HEAD_SHA" "$MERGE_SHA" "$IMAGE_TAG" "$PREVIEW_HOSTNAME"
+          repository: ${{ github.repository }}
+          pr-number: ${{ needs.validate-target.outputs.pr_number }}
+          base-sha: ${{ needs.validate-target.outputs.base_sha }}
+          head-sha: ${{ needs.validate-target.outputs.head_sha }}
+          merge-sha: ${{ needs.validate-target.outputs.merge_sha }}
+          image-tag: ${{ needs.validate-target.outputs.image_tag }}
+          preview-hostname: ${{ needs.validate-target.outputs.hostname }}
 
       - name: Revalidate open PR before waiting for runtime images
         env:
@@ -323,30 +313,20 @@ jobs:
           content: ${{ secrets.PREVIEW_RUNTIME_KUBECONFIG }}
           path: ${{ runner.temp }}/preview-runtime.kubeconfig
 
-      - name: Download source render artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - name: Download and validate source render artifact
+        uses: ./.github/actions/download-validated-preview-artifact
         with:
-          name: ${{ needs.validate-target.outputs.artifact_name }}
-          path: ${{ runner.temp }}/preview-artifact
+          artifact-directory: ${{ runner.temp }}/preview-artifact
+          artifact-name: ${{ needs.validate-target.outputs.artifact_name }}
+          source-run-id: ${{ needs.validate-target.outputs.render_run_id }}
           github-token: ${{ github.token }}
-          run-id: ${{ needs.validate-target.outputs.render_run_id }}
-
-      - name: Verify artifact provenance, checksum, and closed object set
-        env:
-          ARTIFACT_DIR: ${{ runner.temp }}/preview-artifact
-          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
-          BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
-          HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
-          MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
-          IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
-          PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
-          SOURCE_RUN_ID: ${{ needs.validate-target.outputs.render_run_id }}
-        run: |
-          python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
-            "$ARTIFACT_DIR/preview-metadata.json" \
-            "$ARTIFACT_DIR/preview-rendered-sanitized.yaml" \
-            "$GITHUB_REPOSITORY" "$SOURCE_RUN_ID" "$PR_NUMBER" "$BASE_SHA" \
-            "$HEAD_SHA" "$MERGE_SHA" "$IMAGE_TAG" "$PREVIEW_HOSTNAME"
+          repository: ${{ github.repository }}
+          pr-number: ${{ needs.validate-target.outputs.pr_number }}
+          base-sha: ${{ needs.validate-target.outputs.base_sha }}
+          head-sha: ${{ needs.validate-target.outputs.head_sha }}
+          merge-sha: ${{ needs.validate-target.outputs.merge_sha }}
+          image-tag: ${{ needs.validate-target.outputs.image_tag }}
+          preview-hostname: ${{ needs.validate-target.outputs.hostname }}
 
       - name: Revalidate open PR before privileged deployment
         env:
