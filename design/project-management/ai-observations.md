@@ -44,3 +44,8 @@ Entry format:
   - Context: Renovate can discover GitHub release versions but cannot derive the checksum of an arbitrary release archive into a second authority field.
   - Observation: independently managed version and checksum fields would either permit stale verification or leave routine update repair ambiguous.
   - Expected pattern: store the checksum's source version beside the digest, fail closed when it differs from the tool version, and use the repository updater to fetch the publisher's checksum manifest and update the pair together.
+
+- `2026-09-14`: Production image pinning remains a promotion even when the runtime version is unchanged
+  - Context: pinning the existing Velero CronJob tag to its registry digest changed a production-applicable manifest, while the repository has no retained staging deployment and promotion evidence for that change.
+  - Observation: a correct digest does not substitute for the canonical staging, smoke, recovery, custody, and approval lineage required by production preflight.
+  - Expected pattern: retain the verified digest authority and transactional update path, but commit the production projection only in an evidence-backed promotion PR; never fabricate an attestation or weaken preflight for a tooling-only change.

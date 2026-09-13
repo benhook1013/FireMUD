@@ -126,8 +126,14 @@ required={
 for name,needles in required.items():
  data=(workflows/name).read_text()
  if any(n not in data for n in needles): fail(f'{name} does not consume all canonical tool outputs')
-velero_image=f'image: velero/velero:v{a["VELERO_VERSION"]}@{a["VELERO_IMAGE_DIGEST"]}'
-if velero_image not in (root/'k8s/velero/verify-backups-cronjob.yaml').read_text(): fail('Velero image projection is stale')
+velero_manifest=(root/'k8s/velero/verify-backups-cronjob.yaml').read_text()
+velero_images=re.findall(r'image: velero/velero:[^\s]+',velero_manifest)
+allowed_velero_images={
+ f'image: velero/velero:v{a["VELERO_VERSION"]}',
+ f'image: velero/velero:v{a["VELERO_VERSION"]}@{a["VELERO_IMAGE_DIGEST"]}',
+}
+if len(velero_images)!=1 or velero_images[0] not in allowed_velero_images:
+ fail('Velero image version/digest projection is stale')
 
 renovate=json.loads((root/'renovate.json').read_text())
 if not {'nodenv','pyenv','pip_requirements','custom.regex'} <= set(renovate['enabledManagers']): fail('Renovate managers incomplete')

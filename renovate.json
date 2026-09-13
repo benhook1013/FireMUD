@@ -52,7 +52,7 @@
   "prConcurrentLimit": 10,
   "packageRules": [
     {
-      "description": "Keep the canonical Velero CLI and its static CronJob image projection in one update",
+      "description": "Keep the Velero CLI, image authority, and evidence-gated production projection in one update",
       "matchManagers": [
         "custom.regex",
         "kubernetes"
