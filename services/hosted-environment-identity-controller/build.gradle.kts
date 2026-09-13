@@ -7,6 +7,7 @@ dependencies {
     implementation(libs.micrometer.registry.prometheus)
     implementation(libs.spring.boot.starter.web)
     implementation(libs.java.operator.sdk.spring.boot.starter)
+    implementation(libs.fabric8.kubernetes.client)
     implementation(libs.bouncycastle)
     implementation(libs.bouncycastle.pkix)
     compileOnly(libs.spotbugs.annotations)
