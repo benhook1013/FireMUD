@@ -269,7 +269,7 @@ jobs:
         run: bash ./dev-tools/hosted/shared/request-hosted-identity.sh dev-demo Active
 
       - name: Remove hosted identity requester kubeconfig
-        if: ${{ always() }}
+        if: ${{ always() && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
         run: rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"
 
       - name: Wait for all controller identity projections

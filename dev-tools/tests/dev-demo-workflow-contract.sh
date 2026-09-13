@@ -366,8 +366,12 @@ if active_request.get("env") != {
 if "Restore dev-demo runtime kubeconfig after Active request" in deploy_by_name:
     raise SystemExit("dev-demo Active requester must not require runtime credential restore")
 deploy_requester_cleanup = deploy_by_name["Remove hosted identity requester kubeconfig"]
-if deploy_requester_cleanup.get("if") != "${{ always() }}":
-    raise SystemExit("dev-demo deploy requester credential cleanup must run after failures")
+if deploy_requester_cleanup.get("if") != (
+    "${{ always() && steps.certificate-identity.outputs.mode == 'hosted-controller' }}"
+):
+    raise SystemExit(
+        "dev-demo deploy requester credential cleanup must run after failures only in hosted-controller mode"
+    )
 if deploy_requester_cleanup.get("run") != (
     'rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"'
 ):
