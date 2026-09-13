@@ -96,6 +96,20 @@ read_kubectl_json() {
   exit "$kubectl_status"
 }
 
+# shellcheck disable=SC2317 # ShellCheck does not follow EXIT trap callbacks.
+cleanup_kubectl_error_file() {
+  rm -f -- "$kubectl_error_file"
+}
+
+initialize_wait_state() {
+  local timeout_seconds="$1"
+
+  deadline=$((SECONDS + timeout_seconds))
+  max_transport_retries=2
+  kubectl_error_file="$(mktemp)"
+  trap cleanup_kubectl_error_file EXIT
+}
+
 if [[ "${1:-}" == "--projections" ]]; then
   if [[ $# -lt 2 || $# -gt 4 ]]; then
     echo "usage: $0 --projections <identity_name> [runtime_namespace] [timeout_seconds]" >&2
@@ -124,14 +138,7 @@ if [[ "${1:-}" == "--projections" ]]; then
     "${projection_prefix}-tcp-proxy-bridge|tcp-proxy-bridge|tls.crt,tls.key,ca.crt"
     "firemud-grpc-tls|grpc|tls.crt,tls.key,ca.crt,client.crt,client.key"
   )
-  deadline=$((SECONDS + timeout_seconds))
-  max_transport_retries=2
-  kubectl_error_file="$(mktemp)"
-  # shellcheck disable=SC2317 # ShellCheck does not follow EXIT trap callbacks.
-  cleanup_kubectl_error_file() {
-    rm -f -- "$kubectl_error_file"
-  }
-  trap cleanup_kubectl_error_file EXIT
+  initialize_wait_state "$timeout_seconds"
   all_projections_ready=true
   for projection in "${projections[@]}"; do
     IFS='|' read -r secret_name role required_keys <<<"$projection"
@@ -197,16 +204,9 @@ if [[ "${1:-}" == "--retired" ]]; then
   validate_identity_name "$identity_name"
   validate_timeout_seconds "$timeout_seconds"
 
-  deadline=$((SECONDS + timeout_seconds))
-  max_transport_retries=2
+  initialize_wait_state "$timeout_seconds"
   # shellcheck disable=SC2034 # Mutated through read_kubectl_json's nameref.
   transport_retries=0
-  kubectl_error_file="$(mktemp)"
-  # shellcheck disable=SC2317 # ShellCheck does not follow EXIT trap callbacks.
-  cleanup_kubectl_error_file() {
-    rm -f -- "$kubectl_error_file"
-  }
-  trap cleanup_kubectl_error_file EXIT
   while (( SECONDS < deadline )); do
     if ! read_kubectl_json \
       identity_json \
@@ -266,18 +266,11 @@ validate_canonical_names "$identity_name" "$runtime_namespace"
 validate_timeout_seconds "$timeout_seconds"
 validate_identity_runtime_pairing "$identity_name" "$runtime_namespace"
 
-deadline=$((SECONDS + timeout_seconds))
-max_transport_retries=2
+initialize_wait_state "$timeout_seconds"
 # shellcheck disable=SC2034 # Mutated through read_kubectl_json's nameref.
 namespace_transport_retries=0
 # shellcheck disable=SC2034 # Mutated through read_kubectl_json's nameref.
 identity_transport_retries=0
-kubectl_error_file="$(mktemp)"
-# shellcheck disable=SC2317 # ShellCheck does not follow EXIT trap callbacks.
-cleanup_kubectl_error_file() {
-  rm -f -- "$kubectl_error_file"
-}
-trap cleanup_kubectl_error_file EXIT
 while (( SECONDS < deadline )); do
   if ! read_kubectl_json \
     namespace_json \

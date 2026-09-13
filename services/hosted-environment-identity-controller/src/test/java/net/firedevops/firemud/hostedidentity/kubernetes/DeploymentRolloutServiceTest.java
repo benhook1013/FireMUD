@@ -22,6 +22,7 @@ import io.fabric8.kubernetes.client.dsl.MixedOperation;
 import io.fabric8.kubernetes.client.dsl.NonNamespaceOperation;
 import io.fabric8.kubernetes.client.dsl.ReplaceDeletable;
 import io.fabric8.kubernetes.client.dsl.RollableScalableResource;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
@@ -112,22 +113,13 @@ class DeploymentRolloutServiceTest {
   }
 
   @Test
-  @SuppressWarnings({"unchecked", "rawtypes"})
   void tcpProxyTelnetAndGrpcChangesUseOneCasReplaceAndConvergeTogether() {
     EnvironmentIdentityPlan plan = planWithConsumers("tcp-proxy-service", "account-service");
-    KubernetesClient client = mock(KubernetesClient.class);
-    AppsAPIGroupDSL apps = mock(AppsAPIGroupDSL.class);
-    MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>> deployments =
-        mock(MixedOperation.class);
-    NonNamespaceOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>
-        runtimeDeployments = mock(NonNamespaceOperation.class);
-    RollableScalableResource<Deployment> proxy = mock(RollableScalableResource.class);
-    RollableScalableResource<Deployment> account = mock(RollableScalableResource.class);
-    when(client.apps()).thenReturn(apps);
-    when(apps.deployments()).thenReturn(deployments);
-    when(deployments.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeDeployments);
-    when(runtimeDeployments.withName("tcp-proxy-service")).thenReturn(proxy);
-    when(runtimeDeployments.withName("account-service")).thenReturn(account);
+    DeploymentClientGraph graph =
+        deploymentClient(plan, "tcp-proxy-service", "account-service");
+    KubernetesClient client = graph.client();
+    RollableScalableResource<Deployment> proxy = graph.resources().get("tcp-proxy-service");
+    RollableScalableResource<Deployment> account = graph.resources().get("account-service");
     Deployment oldProxy = readyDeployment("tcp-proxy-service", Map.of("other", "keep"), 3L);
     Deployment readyAccount =
         readyDeployment(
@@ -180,22 +172,13 @@ class DeploymentRolloutServiceTest {
   }
 
   @Test
-  @SuppressWarnings({"unchecked", "rawtypes"})
   void revisionCasConflictIsRetryableAndKeepsGuardPassed() {
     EnvironmentIdentityPlan plan = planWithConsumers("account-service");
-    KubernetesClient client = mock(KubernetesClient.class);
-    AppsAPIGroupDSL apps = mock(AppsAPIGroupDSL.class);
-    MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>> deployments =
-        mock(MixedOperation.class);
-    NonNamespaceOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>
-        runtimeDeployments = mock(NonNamespaceOperation.class);
-    RollableScalableResource<Deployment> proxy = mock(RollableScalableResource.class);
-    RollableScalableResource<Deployment> account = mock(RollableScalableResource.class);
-    when(client.apps()).thenReturn(apps);
-    when(apps.deployments()).thenReturn(deployments);
-    when(deployments.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeDeployments);
-    when(runtimeDeployments.withName("tcp-proxy-service")).thenReturn(proxy);
-    when(runtimeDeployments.withName("account-service")).thenReturn(account);
+    DeploymentClientGraph graph =
+        deploymentClient(plan, "tcp-proxy-service", "account-service");
+    KubernetesClient client = graph.client();
+    RollableScalableResource<Deployment> proxy = graph.resources().get("tcp-proxy-service");
+    RollableScalableResource<Deployment> account = graph.resources().get("account-service");
     Deployment observed = readyDeployment("tcp-proxy-service", Map.of(), 3L);
     Deployment readyAccount =
         readyDeployment(
@@ -228,20 +211,11 @@ class DeploymentRolloutServiceTest {
   }
 
   @Test
-  @SuppressWarnings({"unchecked", "rawtypes"})
   void revisionCasRequiresObservedResourceVersion() {
     EnvironmentIdentityPlan plan = planWithConsumers("tcp-proxy-service");
-    KubernetesClient client = mock(KubernetesClient.class);
-    AppsAPIGroupDSL apps = mock(AppsAPIGroupDSL.class);
-    MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>> deployments =
-        mock(MixedOperation.class);
-    NonNamespaceOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>
-        runtimeDeployments = mock(NonNamespaceOperation.class);
-    RollableScalableResource<Deployment> proxy = mock(RollableScalableResource.class);
-    when(client.apps()).thenReturn(apps);
-    when(apps.deployments()).thenReturn(deployments);
-    when(deployments.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeDeployments);
-    when(runtimeDeployments.withName("tcp-proxy-service")).thenReturn(proxy);
+    DeploymentClientGraph graph = deploymentClient(plan, "tcp-proxy-service");
+    KubernetesClient client = graph.client();
+    RollableScalableResource<Deployment> proxy = graph.resources().get("tcp-proxy-service");
     Deployment observed = readyDeployment("tcp-proxy-service", Map.of(), 3L);
     observed.getMetadata().setResourceVersion(null);
     when(proxy.get()).thenReturn(observed);
@@ -258,22 +232,13 @@ class DeploymentRolloutServiceTest {
   }
 
   @Test
-  @SuppressWarnings({"unchecked", "rawtypes"})
   void readinessRemainsIndependentAcrossTelnetAndGrpcConsumers() {
     EnvironmentIdentityPlan plan = planWithConsumers("tcp-proxy-service", "account-service");
-    KubernetesClient client = mock(KubernetesClient.class);
-    AppsAPIGroupDSL apps = mock(AppsAPIGroupDSL.class);
-    MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>> deployments =
-        mock(MixedOperation.class);
-    NonNamespaceOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>
-        runtimeDeployments = mock(NonNamespaceOperation.class);
-    RollableScalableResource<Deployment> proxy = mock(RollableScalableResource.class);
-    RollableScalableResource<Deployment> account = mock(RollableScalableResource.class);
-    when(client.apps()).thenReturn(apps);
-    when(apps.deployments()).thenReturn(deployments);
-    when(deployments.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeDeployments);
-    when(runtimeDeployments.withName("tcp-proxy-service")).thenReturn(proxy);
-    when(runtimeDeployments.withName("account-service")).thenReturn(account);
+    DeploymentClientGraph graph =
+        deploymentClient(plan, "tcp-proxy-service", "account-service");
+    KubernetesClient client = graph.client();
+    RollableScalableResource<Deployment> proxy = graph.resources().get("tcp-proxy-service");
+    RollableScalableResource<Deployment> account = graph.resources().get("account-service");
     when(proxy.get())
         .thenReturn(
             readyDeployment(
@@ -298,22 +263,13 @@ class DeploymentRolloutServiceTest {
   }
 
   @Test
-  @SuppressWarnings({"unchecked", "rawtypes"})
   void readinessRequiresTelnetEvenWhenGrpcConsumerIsReady() {
     EnvironmentIdentityPlan plan = planWithConsumers("tcp-proxy-service", "account-service");
-    KubernetesClient client = mock(KubernetesClient.class);
-    AppsAPIGroupDSL apps = mock(AppsAPIGroupDSL.class);
-    MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>> deployments =
-        mock(MixedOperation.class);
-    NonNamespaceOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>
-        runtimeDeployments = mock(NonNamespaceOperation.class);
-    RollableScalableResource<Deployment> proxy = mock(RollableScalableResource.class);
-    RollableScalableResource<Deployment> account = mock(RollableScalableResource.class);
-    when(client.apps()).thenReturn(apps);
-    when(apps.deployments()).thenReturn(deployments);
-    when(deployments.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeDeployments);
-    when(runtimeDeployments.withName("tcp-proxy-service")).thenReturn(proxy);
-    when(runtimeDeployments.withName("account-service")).thenReturn(account);
+    DeploymentClientGraph graph =
+        deploymentClient(plan, "tcp-proxy-service", "account-service");
+    KubernetesClient client = graph.client();
+    RollableScalableResource<Deployment> proxy = graph.resources().get("tcp-proxy-service");
+    RollableScalableResource<Deployment> account = graph.resources().get("account-service");
     when(proxy.get()).thenReturn(null);
     when(account.get())
         .thenReturn(
@@ -334,22 +290,13 @@ class DeploymentRolloutServiceTest {
   }
 
   @Test
-  @SuppressWarnings({"unchecked", "rawtypes"})
   void runtimeProfileFenceExceptionStopsSyncBeforeEditAndLaterDeploymentReads() {
     EnvironmentIdentityPlan plan = planWithConsumers("tcp-proxy-service", "account-service");
-    KubernetesClient client = mock(KubernetesClient.class);
-    AppsAPIGroupDSL apps = mock(AppsAPIGroupDSL.class);
-    MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>> deployments =
-        mock(MixedOperation.class);
-    NonNamespaceOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>
-        runtimeDeployments = mock(NonNamespaceOperation.class);
-    RollableScalableResource<Deployment> proxy = mock(RollableScalableResource.class);
-    RollableScalableResource<Deployment> account = mock(RollableScalableResource.class);
-    when(client.apps()).thenReturn(apps);
-    when(apps.deployments()).thenReturn(deployments);
-    when(deployments.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeDeployments);
-    when(runtimeDeployments.withName("tcp-proxy-service")).thenReturn(proxy);
-    when(runtimeDeployments.withName("account-service")).thenReturn(account);
+    DeploymentClientGraph graph =
+        deploymentClient(plan, "tcp-proxy-service", "account-service");
+    KubernetesClient client = graph.client();
+    RollableScalableResource<Deployment> proxy = graph.resources().get("tcp-proxy-service");
+    RollableScalableResource<Deployment> account = graph.resources().get("account-service");
     when(proxy.get()).thenReturn(readyDeployment("tcp-proxy-service", Map.of("other", "keep"), 3L));
     java.util.concurrent.atomic.AtomicInteger guardCalls =
         new java.util.concurrent.atomic.AtomicInteger();
@@ -400,22 +347,14 @@ class DeploymentRolloutServiceTest {
   }
 
   @Test
-  @SuppressWarnings({"unchecked", "rawtypes"})
   void runtimeProfileFenceStopsRetirementAfterDeploymentReadBeforeEdit() {
     EnvironmentIdentityPlan plan = planWithConsumers("account-service");
-    KubernetesClient client = mock(KubernetesClient.class);
-    AppsAPIGroupDSL apps = mock(AppsAPIGroupDSL.class);
-    MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>> deployments =
-        mock(MixedOperation.class);
-    NonNamespaceOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>
-        runtimeDeployments = mock(NonNamespaceOperation.class);
-    RollableScalableResource<Deployment> gateway = mock(RollableScalableResource.class);
-    RollableScalableResource<Deployment> proxy = mock(RollableScalableResource.class);
-    when(client.apps()).thenReturn(apps);
-    when(apps.deployments()).thenReturn(deployments);
-    when(deployments.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeDeployments);
-    when(runtimeDeployments.withName("spring-cloud-gateway")).thenReturn(gateway);
-    when(runtimeDeployments.withName("tcp-proxy-service")).thenReturn(proxy);
+    DeploymentClientGraph graph =
+        deploymentClient(plan, "spring-cloud-gateway", "tcp-proxy-service");
+    KubernetesClient client = graph.client();
+    RollableScalableResource<Deployment> gateway =
+        graph.resources().get("spring-cloud-gateway");
+    RollableScalableResource<Deployment> proxy = graph.resources().get("tcp-proxy-service");
     when(gateway.get()).thenReturn(readyDeployment("spring-cloud-gateway", Map.of(), 3L));
     java.util.concurrent.atomic.AtomicInteger guardCalls =
         new java.util.concurrent.atomic.AtomicInteger();
@@ -442,22 +381,14 @@ class DeploymentRolloutServiceTest {
   }
 
   @Test
-  @SuppressWarnings({"unchecked", "rawtypes"})
   void retirementCasRequiresObservedResourceVersion() {
     EnvironmentIdentityPlan plan = planWithConsumers("account-service");
-    KubernetesClient client = mock(KubernetesClient.class);
-    AppsAPIGroupDSL apps = mock(AppsAPIGroupDSL.class);
-    MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>> deployments =
-        mock(MixedOperation.class);
-    NonNamespaceOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>
-        runtimeDeployments = mock(NonNamespaceOperation.class);
-    RollableScalableResource<Deployment> gateway = mock(RollableScalableResource.class);
-    RollableScalableResource<Deployment> proxy = mock(RollableScalableResource.class);
-    when(client.apps()).thenReturn(apps);
-    when(apps.deployments()).thenReturn(deployments);
-    when(deployments.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeDeployments);
-    when(runtimeDeployments.withName("spring-cloud-gateway")).thenReturn(gateway);
-    when(runtimeDeployments.withName("tcp-proxy-service")).thenReturn(proxy);
+    DeploymentClientGraph graph =
+        deploymentClient(plan, "spring-cloud-gateway", "tcp-proxy-service");
+    KubernetesClient client = graph.client();
+    RollableScalableResource<Deployment> gateway =
+        graph.resources().get("spring-cloud-gateway");
+    RollableScalableResource<Deployment> proxy = graph.resources().get("tcp-proxy-service");
     Deployment observed = readyDeployment("spring-cloud-gateway", Map.of(), 3L);
     observed.getMetadata().setResourceVersion(null);
     when(gateway.get()).thenReturn(observed);
@@ -475,22 +406,14 @@ class DeploymentRolloutServiceTest {
   }
 
   @Test
-  @SuppressWarnings({"unchecked", "rawtypes"})
   void stopBridgesCasReplacesBothDeploymentsThenObservesBothStopped() {
     EnvironmentIdentityPlan plan = planWithConsumers("account-service");
-    KubernetesClient client = mock(KubernetesClient.class);
-    AppsAPIGroupDSL apps = mock(AppsAPIGroupDSL.class);
-    MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>> deployments =
-        mock(MixedOperation.class);
-    NonNamespaceOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>
-        runtimeDeployments = mock(NonNamespaceOperation.class);
-    RollableScalableResource<Deployment> gateway = mock(RollableScalableResource.class);
-    RollableScalableResource<Deployment> proxy = mock(RollableScalableResource.class);
-    when(client.apps()).thenReturn(apps);
-    when(apps.deployments()).thenReturn(deployments);
-    when(deployments.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeDeployments);
-    when(runtimeDeployments.withName("spring-cloud-gateway")).thenReturn(gateway);
-    when(runtimeDeployments.withName("tcp-proxy-service")).thenReturn(proxy);
+    DeploymentClientGraph graph =
+        deploymentClient(plan, "spring-cloud-gateway", "tcp-proxy-service");
+    KubernetesClient client = graph.client();
+    RollableScalableResource<Deployment> gateway =
+        graph.resources().get("spring-cloud-gateway");
+    RollableScalableResource<Deployment> proxy = graph.resources().get("tcp-proxy-service");
     Deployment runningGateway = readyDeployment("spring-cloud-gateway", Map.of(), 3L);
     Deployment runningProxy = readyDeployment("tcp-proxy-service", Map.of(), 3L);
     when(gateway.get()).thenReturn(runningGateway);
@@ -540,22 +463,14 @@ class DeploymentRolloutServiceTest {
   }
 
   @Test
-  @SuppressWarnings({"unchecked", "rawtypes"})
   void retirementCasConflictIsRetryableAndAllowsNextBridgeRead() {
     EnvironmentIdentityPlan plan = planWithConsumers("account-service");
-    KubernetesClient client = mock(KubernetesClient.class);
-    AppsAPIGroupDSL apps = mock(AppsAPIGroupDSL.class);
-    MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>> deployments =
-        mock(MixedOperation.class);
-    NonNamespaceOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>
-        runtimeDeployments = mock(NonNamespaceOperation.class);
-    RollableScalableResource<Deployment> gateway = mock(RollableScalableResource.class);
-    RollableScalableResource<Deployment> proxy = mock(RollableScalableResource.class);
-    when(client.apps()).thenReturn(apps);
-    when(apps.deployments()).thenReturn(deployments);
-    when(deployments.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeDeployments);
-    when(runtimeDeployments.withName("spring-cloud-gateway")).thenReturn(gateway);
-    when(runtimeDeployments.withName("tcp-proxy-service")).thenReturn(proxy);
+    DeploymentClientGraph graph =
+        deploymentClient(plan, "spring-cloud-gateway", "tcp-proxy-service");
+    KubernetesClient client = graph.client();
+    RollableScalableResource<Deployment> gateway =
+        graph.resources().get("spring-cloud-gateway");
+    RollableScalableResource<Deployment> proxy = graph.resources().get("tcp-proxy-service");
     when(gateway.get()).thenReturn(readyDeployment("spring-cloud-gateway", Map.of(), 3L));
     when(proxy.get()).thenReturn(null);
     ReplaceDeletable<Deployment> lockedGateway = mock(ReplaceDeletable.class);
@@ -713,6 +628,31 @@ class DeploymentRolloutServiceTest {
     deployment.getStatus().setObservedGeneration(2L);
     assertEquals(true, DeploymentRolloutService.retirementScaleDownObserved(deployment));
   }
+
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  private static DeploymentClientGraph deploymentClient(
+      EnvironmentIdentityPlan plan, String... deploymentNames) {
+    KubernetesClient client = mock(KubernetesClient.class);
+    AppsAPIGroupDSL apps = mock(AppsAPIGroupDSL.class);
+    MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>> deployments =
+        mock(MixedOperation.class);
+    NonNamespaceOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>
+        runtimeDeployments = mock(NonNamespaceOperation.class);
+    when(client.apps()).thenReturn(apps);
+    when(apps.deployments()).thenReturn(deployments);
+    when(deployments.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeDeployments);
+
+    Map<String, RollableScalableResource<Deployment>> resources = new LinkedHashMap<>();
+    for (String deploymentName : deploymentNames) {
+      RollableScalableResource<Deployment> resource = mock(RollableScalableResource.class);
+      resources.put(deploymentName, resource);
+      when(runtimeDeployments.withName(deploymentName)).thenReturn(resource);
+    }
+    return new DeploymentClientGraph(client, resources);
+  }
+
+  private record DeploymentClientGraph(
+      KubernetesClient client, Map<String, RollableScalableResource<Deployment>> resources) {}
 
   private static Deployment readyDeployment(
       String name, Map<String, String> annotations, long generation) {
