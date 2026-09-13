@@ -1,0 +1,34 @@
+name: Resolve certificate identity mode
+description: Resolve and validate the hosted certificate identity mode from a Helm values file
+inputs:
+  values-file:
+    description: Repository-relative or absolute Helm values file to inspect
+    required: true
+outputs:
+  mode:
+    description: Validated certificate identity mode
+    value: ${{ steps.resolve.outputs.mode }}
+runs:
+  using: composite
+  steps:
+    - name: Resolve and validate mode
+      id: resolve
+      shell: bash
+      env:
+        VALUES_FILE: ${{ inputs['values-file'] }}
+      run: |
+        set -euo pipefail
+        [[ -n "$VALUES_FILE" ]] || {
+          echo "::error title=Missing certificate identity values file::A Helm values file is required." >&2
+          exit 1
+        }
+        mode="$(python3 "$GITHUB_ACTION_PATH/../../../dev-tools/hosted/shared/resolve-certificate-identity-mode.py" \
+          "$VALUES_FILE")"
+        case "$mode" in
+          standalone|hosted-controller) ;;
+          *)
+            echo "::error title=Invalid certificate identity mode::Resolver output must be exactly standalone or hosted-controller." >&2
+            exit 1
+            ;;
+        esac
+        printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"

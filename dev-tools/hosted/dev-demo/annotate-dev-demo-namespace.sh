@@ -13,7 +13,7 @@ telnet_port="$4"
 sync_timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 kubectl annotate namespace "$namespace" \
-  "firemud.dev/last-dev-demo-head-sha=${head_sha}" \
+  "firemud.dev/requested-dev-demo-head-sha=${head_sha}" \
   "firemud.dev/last-dev-demo-image-tag=${image_tag}" \
   "firemud.dev/last-dev-demo-telnet-port=${telnet_port}" \
   "firemud.dev/last-dev-demo-sync-at=${sync_timestamp}" \

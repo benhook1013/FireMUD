@@ -251,6 +251,10 @@ jobs:
       - name: 📦 Install Python script dependencies
         run: python3 -m pip install --disable-pip-version-check PyYAML
 
+      - name: Set up Helm
+        if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
+        uses: ./.github/actions/setup-helm
+
       - name: 🧪 Validate dev tool contracts
         if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
         run: |
@@ -267,6 +271,8 @@ jobs:
           bash ./dev-tools/tests/reset-service-db-contract.sh
           bash ./dev-tools/tests/preview-eligibility-contract.sh
           bash ./dev-tools/tests/preview-priority-contract.sh
+          bash ./dev-tools/tests/hosted-identity-controller-manifest-contract.sh
+          bash ./dev-tools/tests/hosted-identity-controller-workflow-contract.sh
           bash ./dev-tools/tests/worktree-topology-contract.sh
           bash ./dev-tools/tests/preflight-contract.sh
           bash ./dev-tools/tests/verify-backups-velero-contract.sh
@@ -447,14 +453,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Helm
-        run: |
-          if ! command -v helm >/dev/null 2>&1; then
-            HELM_VERSION="v3.20.1"
-            curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o /tmp/helm.tgz
-            tar -xzf /tmp/helm.tgz -C /tmp
-            sudo install /tmp/linux-amd64/helm /usr/local/bin/helm
-          fi
-          helm version
+        uses: ./.github/actions/setup-helm
 
       - name: 🧪 Lint tracked Helm charts
         run: bash ./dev-tools/validation/validate-helm.sh lint
@@ -474,14 +473,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Helm
-        run: |
-          if ! command -v helm >/dev/null 2>&1; then
-            HELM_VERSION="v3.20.1"
-            curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o /tmp/helm.tgz
-            tar -xzf /tmp/helm.tgz -C /tmp
-            sudo install /tmp/linux-amd64/helm /usr/local/bin/helm
-          fi
-          helm version
+        uses: ./.github/actions/setup-helm
 
       - name: Set up kubeconform
         run: |

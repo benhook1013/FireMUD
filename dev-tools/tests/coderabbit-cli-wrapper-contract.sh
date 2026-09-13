@@ -35,6 +35,32 @@ cat >"$MOCK_BIN/gh" <<'EOF'
 set -euo pipefail
 
 if [[ "$1" == "api" ]]; then
+  if [[ "$2" == "--paginate" ]]; then
+    [[ "$3" == "--slurp" && "$4" == repos/example/FireMUD/pulls/2694/files\?per_page=100 ]] || {
+      echo "unexpected paginated file-list lookup" >&2
+      exit 91
+    }
+    case "${TEST_SCENARIO:-}" in
+      many-files)
+        api_files_json="$(jq -cn '[range(0; 101) | {filename:("bulk-" + tostring + ".txt")}]')"
+        ;;
+      many-files-mismatch)
+        api_files_json="$(jq -cn '[range(0; 100) | {filename:("bulk-" + tostring + ".txt")}]')"
+        ;;
+      empty)
+        api_files_json='[]'
+        ;;
+      stacked)
+        api_files_json='[{"filename":"stack-feature.txt"}]'
+        ;;
+      *)
+        api_files_json="$(jq -cn --arg weird "$TEST_WEIRD_PATH" '[{filename:"feature.txt"},{filename:$weird}]')"
+        ;;
+    esac
+    jq -cn --argjson files "$api_files_json" \
+      '$files | if length > 100 then [.[0:100], .[100:]] else [.] end'
+    exit 0
+  fi
   [[ "$2" == repos/example/FireMUD/git/ref/heads/* ]] || {
     echo "unexpected base ref lookup" >&2
     exit 91
@@ -74,6 +100,13 @@ case "$scenario" in
     head_sha="$TEST_STACK_PR_HEAD_SHA"
     changed_files=1
     files_json='[{"path":"stack-feature.txt"}]'
+    ;;
+  many-files|many-files-mismatch)
+    base_ref="develop"
+    base_sha="$TEST_BASE_SHA"
+    head_sha="$TEST_MANY_FILES_PR_HEAD_SHA"
+    changed_files=101
+    files_json="$(jq -cn '[range(0; 101) | {path:("bulk-" + tostring + ".txt")}]')"
     ;;
   *)
     echo "unexpected test scenario: $scenario" >&2
@@ -151,6 +184,15 @@ git -C "$REPO" commit -q -m "feature"
 PR_HEAD_SHA="$(git -C "$REPO" rev-parse HEAD)"
 git -C "$REPO" branch -M codex/local-alias
 
+git -C "$REPO" switch -q -c many-files-candidate "$BASE_SHA"
+for file_number in $(seq 0 100); do
+  printf 'bulk %s\n' "$file_number" >"$REPO/bulk-${file_number}.txt"
+done
+git -C "$REPO" add bulk-*.txt
+git -C "$REPO" commit -q -m "101-file feature"
+MANY_FILES_PR_HEAD_SHA="$(git -C "$REPO" rev-parse HEAD)"
+git -C "$REPO" switch -q codex/local-alias
+
 printf 'local fix\n' >"$REPO/local-fix.txt"
 git -C "$REPO" add local-fix.txt
 git -C "$REPO" commit -q -m "local fix ahead of published head"
@@ -225,6 +267,7 @@ git -C "$REPO" push -q origin "$UNRELATED_BASE_SHA:refs/heads/unrelated-base"
 export PATH="$MOCK_BIN:$PATH"
 export TEST_BASE_SHA="$BASE_SHA"
 export TEST_PR_HEAD_SHA="$PR_HEAD_SHA"
+export TEST_MANY_FILES_PR_HEAD_SHA="$MANY_FILES_PR_HEAD_SHA"
 export TEST_STACK_BASE_SHA="$STACK_BASE_SHA"
 export TEST_STACK_INITIAL_SHA="$STACK_INITIAL_SHA"
 export TEST_DEVELOP_ADVANCE_SHA="$DEVELOP_ADVANCE_SHA"
@@ -351,6 +394,32 @@ pinned_ref="$(sed -n 's/^pinned_base_ref=//p' "$RUN_LOG_DIR/metadata")"
 [[ "$(sed -n '4p' "$ARGS_FILE")" == --base ]] || exit 1
 grep -q '^refs/heads/codex-review-base/run\.' < <(sed -n '5p' "$ARGS_FILE")
 [[ "$(wc -l <"$ARGS_FILE")" == 5 ]] || exit 1
+
+# The GitHub CLI's pull-request view caps its file list at 100 entries. The
+# paginated REST file list must retain all 101 paths and allow the scope check
+# to proceed.
+git -C "$REPO" switch -q many-files-candidate
+set +e
+run_wrapper success 0 many-files
+many_files_status="$?"
+set -e
+[[ "$many_files_status" == 0 ]] || {
+  echo "101-file wrapper run failed: $RUN_ERROR" >&2
+  exit 1
+}
+[[ "$RUN_OUTPUT" == *"expected_files=101"* ]] || exit 1
+[[ "$RUN_OUTPUT" == *"published_files=101"* ]] || exit 1
+[[ "$RUN_OUTPUT" == *"candidate_files=101"* ]] || exit 1
+
+invocations_before_file_count_rejection="$(wc -l <"$INVOCATIONS_FILE")"
+set +e
+run_wrapper success 0 many-files-mismatch
+many_files_mismatch_status="$?"
+set -e
+[[ "$many_files_mismatch_status" == 1 ]] || exit 1
+[[ "$RUN_ERROR" == *"pull request file list/count mismatch (files: 100, changedFiles: 101)"* ]] || exit 1
+[[ "$(wc -l <"$INVOCATIONS_FILE")" == "$invocations_before_file_count_rejection" ]] || exit 1
+git -C "$REPO" switch -q codex/local-alias
 
 # A candidate that merged a newer base tip excludes the base-only file while
 # retaining the published feature and the unpublished local fix.
