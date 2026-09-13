@@ -25,6 +25,7 @@ bootstrap="$ROOT_DIR/dev-tools/hosted/controller/bootstrap-hosted-identity-contr
 waiter="$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh"
 mode_resolver="$ROOT_DIR/dev-tools/hosted/shared/resolve-certificate-identity-mode.py"
 mode_action="$ROOT_DIR/.github/actions/resolve-certificate-identity-mode/action.yml"
+artifact_action="$ROOT_DIR/.github/actions/download-validated-preview-artifact/action.yml"
 requester="$ROOT_DIR/dev-tools/hosted/shared/request-hosted-identity.sh"
 artifact_validator="$ROOT_DIR/dev-tools/hosted/preview/validate-preview-artifact.py"
 render_preview_values="$ROOT_DIR/dev-tools/hosted/preview/render-preview-values.py"
@@ -420,7 +421,7 @@ contains "$dev_demo" 'wait-for-hosted-identity.sh'
 contains "$dev_demo" 'ensure-grpc-tls-secret.sh'
 contains "$dev_demo" "steps.certificate-identity.outputs.mode == 'standalone'"
 
-python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" "$janitor" "$mode_action" "$runtime" <<'PY'
+python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" "$janitor" "$mode_action" "$runtime" "$artifact_action" <<'PY'
 import os
 import subprocess
 import sys
@@ -438,6 +439,7 @@ publisher_workflow = yaml.safe_load(Path(sys.argv[5]).read_text(encoding="utf-8"
 janitor_workflow = yaml.safe_load(Path(sys.argv[7]).read_text(encoding="utf-8"))
 mode_action = yaml.safe_load(Path(sys.argv[8]).read_text(encoding="utf-8"))
 runtime_workflow = yaml.safe_load(Path(sys.argv[9]).read_text(encoding="utf-8"))
+artifact_action = yaml.safe_load(Path(sys.argv[10]).read_text(encoding="utf-8"))
 
 expected_mode_step = {
     "name": "Resolve certificate identity mode",
@@ -476,6 +478,74 @@ assert "Resolver output must be exactly standalone or hosted-controller." in res
 assert resolve_run.index('case "$mode" in') < resolve_run.index(
     "printf 'mode=%s\\n' \"$mode\" >> \"$GITHUB_OUTPUT\""
 )
+
+expected_artifact_inputs = {
+    "artifact-directory",
+    "artifact-name",
+    "source-run-id",
+    "github-token",
+    "repository",
+    "pr-number",
+    "base-sha",
+    "head-sha",
+    "merge-sha",
+    "image-tag",
+    "preview-hostname",
+}
+assert set(artifact_action["inputs"]) == expected_artifact_inputs
+assert all(
+    artifact_action["inputs"][input_name]["required"] is True
+    for input_name in expected_artifact_inputs
+)
+assert artifact_action["runs"]["using"] == "composite"
+artifact_action_steps = artifact_action["runs"]["steps"]
+assert [step["name"] for step in artifact_action_steps] == [
+    "Download exact source render artifact",
+    "Verify artifact provenance, checksum, and closed object set",
+]
+artifact_download = artifact_action_steps[0]
+assert artifact_download["uses"] == (
+    "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+)
+assert artifact_download["with"] == {
+    "name": "${{ inputs['artifact-name'] }}",
+    "path": "${{ inputs['artifact-directory'] }}",
+    "github-token": "${{ inputs['github-token'] }}",
+    "run-id": "${{ inputs['source-run-id'] }}",
+}
+artifact_validation = artifact_action_steps[1]
+assert artifact_validation["shell"] == "bash"
+assert artifact_validation["env"] == {
+    "ARTIFACT_DIRECTORY": "${{ inputs['artifact-directory'] }}",
+    "SOURCE_REPOSITORY": "${{ inputs.repository }}",
+    "SOURCE_RUN_ID": "${{ inputs['source-run-id'] }}",
+    "PR_NUMBER": "${{ inputs['pr-number'] }}",
+    "BASE_SHA": "${{ inputs['base-sha'] }}",
+    "HEAD_SHA": "${{ inputs['head-sha'] }}",
+    "MERGE_SHA": "${{ inputs['merge-sha'] }}",
+    "IMAGE_TAG": "${{ inputs['image-tag'] }}",
+    "PREVIEW_HOSTNAME": "${{ inputs['preview-hostname'] }}",
+}
+artifact_validation_run = artifact_validation["run"]
+assert "set -euo pipefail" in artifact_validation_run
+assert (
+    'python3 "$GITHUB_ACTION_PATH/../../../dev-tools/hosted/preview/'
+    'validate-preview-artifact.py"'
+) in artifact_validation_run
+assert "$GITHUB_WORKSPACE" not in artifact_validation_run
+for validation_argument in (
+    '"$ARTIFACT_DIRECTORY/preview-metadata.json"',
+    '"$ARTIFACT_DIRECTORY/preview-rendered-sanitized.yaml"',
+    '"$SOURCE_REPOSITORY"',
+    '"$SOURCE_RUN_ID"',
+    '"$PR_NUMBER"',
+    '"$BASE_SHA"',
+    '"$HEAD_SHA"',
+    '"$MERGE_SHA"',
+    '"$IMAGE_TAG"',
+    '"$PREVIEW_HOSTNAME"',
+):
+    assert artifact_validation_run.count(validation_argument) == 1, validation_argument
 triggers = workflow.get("on", workflow.get(True))
 assert list(triggers) == ["workflow_run", "pull_request_target"], triggers
 assert triggers["workflow_run"] == {
@@ -1041,16 +1111,48 @@ deploy_steps = jobs["deploy-runtime"]["steps"]
 deploy_by_name = {
     step.get("name"): step for step in deploy_steps if isinstance(step, dict)
 }
-artifact_verification = deploy_by_name[
-    "Verify artifact provenance, checksum, and closed object set"
-]
-assert artifact_verification["env"]["PREVIEW_HOSTNAME"] == (
-    "${{ needs.validate-target.outputs.hostname }}"
-)
-assert "HOSTNAME" not in artifact_verification["env"]
-assert '"$HEAD_SHA" "$MERGE_SHA" "$IMAGE_TAG" "$PREVIEW_HOSTNAME"' in (
-    artifact_verification["run"]
-)
+expected_artifact_call = {
+    "name": "Download and validate source render artifact",
+    "uses": "./.github/actions/download-validated-preview-artifact",
+    "with": {
+        "artifact-directory": "${{ runner.temp }}/preview-artifact",
+        "artifact-name": "${{ needs.validate-target.outputs.artifact_name }}",
+        "source-run-id": "${{ needs.validate-target.outputs.render_run_id }}",
+        "github-token": "${{ github.token }}",
+        "repository": "${{ github.repository }}",
+        "pr-number": "${{ needs.validate-target.outputs.pr_number }}",
+        "base-sha": "${{ needs.validate-target.outputs.base_sha }}",
+        "head-sha": "${{ needs.validate-target.outputs.head_sha }}",
+        "merge-sha": "${{ needs.validate-target.outputs.merge_sha }}",
+        "image-tag": "${{ needs.validate-target.outputs.image_tag }}",
+        "preview-hostname": "${{ needs.validate-target.outputs.hostname }}",
+    },
+}
+for artifact_job_name in ("prepare-runtime", "deploy-runtime"):
+    artifact_job_steps = jobs[artifact_job_name]["steps"]
+    artifact_call = next(
+        step
+        for step in artifact_job_steps
+        if step.get("name") == "Download and validate source render artifact"
+    )
+    assert artifact_call == expected_artifact_call, artifact_job_name
+    trusted_checkout = next(
+        step
+        for step in artifact_job_steps
+        if step.get("uses", "").startswith("actions/checkout@")
+    )
+    assert trusted_checkout == {
+        "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+        "with": {
+            "ref": "${{ github.event.repository.default_branch }}",
+            "persist-credentials": False,
+        },
+    }
+    assert artifact_job_steps.index(trusted_checkout) < artifact_job_steps.index(
+        artifact_call
+    )
+assert trusted_source.count("./.github/actions/download-validated-preview-artifact") == 2
+assert "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" not in trusted_source
 active_request = deploy_by_name["Apply canonical Active request"]
 assert active_request["run"] == (
     'bash ./dev-tools/hosted/shared/request-hosted-identity.sh "$IDENTITY_NAME" Active'
