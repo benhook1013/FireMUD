@@ -553,6 +553,7 @@ assert jobs["destroy-runtime"]["permissions"] == {
 }
 assert jobs["retire-identity"]["permissions"] == {
     "contents": "read",
+    "issues": "write",
     "pull-requests": "read",
 }
 for job_name in ("verify-runtime", "destroy-runtime", "retire-identity"):
@@ -648,6 +649,62 @@ exit 99
     assert len([call for call in calls if call.startswith("image inspect ")]) == 11
     assert not any(call.startswith("manifest inspect ") for call in calls)
     assert not any(call.startswith("push ") for call in calls)
+
+with tempfile.TemporaryDirectory() as partial_publish_fixture_dir:
+    fixture_root = Path(partial_publish_fixture_dir)
+    docker_calls = fixture_root / "docker-calls"
+    summary = fixture_root / "summary"
+    fake_docker = fixture_root / "docker"
+    fake_sleep = fixture_root / "sleep"
+    fake_docker.write_text(
+        """#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$DOCKER_CALLS"
+if [[ "$1 $2" == "image inspect" ]]; then
+  exit 0
+fi
+if [[ "$1 $2" == "manifest inspect" ]]; then
+  case "$3" in
+    *account-service*|*entity-management-service*) exit 0 ;;
+    *) exit 1 ;;
+  esac
+fi
+if [[ "$1" == push ]]; then
+  exit 1
+fi
+exit 99
+""",
+        encoding="utf-8",
+    )
+    fake_sleep.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    fake_docker.chmod(0o755)
+    fake_sleep.chmod(0o755)
+    fixture_env = os.environ.copy()
+    fixture_env.update(
+        DOCKER_CALLS=str(docker_calls),
+        GITHUB_STEP_SUMMARY=str(summary),
+        IMAGE_TAG="fixture-head",
+        PATH=f"{fixture_root}:{fixture_env['PATH']}",
+    )
+    result = subprocess.run(
+        ["bash", "-c", publisher_script],
+        check=False,
+        env=fixture_env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert result.returncode == 1, result
+    summary_text = summary.read_text(encoding="utf-8")
+    assert "Partial PR runtime image publication" in summary_text
+    available_section, unpublished_section = summary_text.split(
+        "Unpublished fixed tags:", maxsplit=1
+    )
+    assert "`account-service`" in available_section
+    assert "`entity-management-service`" in available_section
+    assert "`automation-scripting-service`" not in available_section
+    assert "`automation-scripting-service`" in unpublished_section
+    assert "`world-management-service`" in unpublished_section
+    assert "`entity-management-service`" not in unpublished_section
 
 runtime_jobs = runtime_workflow["jobs"]
 trusted_build = runtime_jobs["build-runtime-images"]
@@ -1183,6 +1240,32 @@ for fragment in (
     'staleDescription: "trusted preview removal failure"',
 ):
     assert fragment in destroy_failure_script, fragment
+
+retire_steps = jobs["retire-identity"]["steps"]
+retire_by_name = {
+    step.get("name"): step for step in retire_steps if isinstance(step, dict)
+}
+retire_failure = retire_by_name["Publish trusted identity retirement failure"]
+assert retire_failure["if"] == "${{ !cancelled() && failure() }}"
+assert retire_failure["env"] == {
+    "PREVIEW_PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
+    "PREVIEW_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
+    "PREVIEW_IMAGE_TAG": "${{ needs.validate-target.outputs.image_tag }}",
+    "PREVIEW_HOSTNAME": "${{ needs.validate-target.outputs.hostname }}",
+}
+for fragment in (
+    "publishPreviewComment",
+    'mode: "failure"',
+    'markerPolicy: "replace"',
+    'statePolicy: "expected-closed"',
+    'telnetPort: "unavailable"',
+    'failureStage: "retire-identity"',
+    'staleDescription: "trusted identity retirement failure"',
+):
+    assert fragment in retire_failure["with"]["script"], fragment
+assert retire_steps.index(
+    retire_by_name["Observe terminal retirement and delete request"]
+) < retire_steps.index(retire_failure)
 assert destroy_steps.index(destroy_success) < destroy_steps.index(destroy_failure)
 assert destroy_steps.index(destroy_failure) < destroy_steps.index(
     destroy_by_name["Remove runtime kubeconfig"]
@@ -1437,9 +1520,10 @@ assert '== "standalone"' in preview_namespace_step["run"]
 preview_kubeconfig_step = next(
     step for step in preview_steps if step.get("name") == "Write preview kubeconfig"
 )
-assert 'echo "PREVIEW_RUNTIME_KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"' in (
-    preview_kubeconfig_step["run"]
-)
+assert "PREVIEW_RUNTIME_KUBECONFIG" not in preview_kubeconfig_step["run"]
+assert 'echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"' in preview_kubeconfig_step[
+    "run"
+]
 preview_requester = next(
     step for step in preview_steps if step.get("name") == "Write hosted identity requester kubeconfig"
 )
@@ -1480,6 +1564,73 @@ preview_requested_index = next(
     for index, step in enumerate(preview_steps)
     if step.get("name") == "Record reconciled preview target"
 )
+preview_requested_step = preview_steps[preview_requested_index]
+assert preview_requested_step["env"] == {
+    "RUNTIME_NAMESPACE": "${{ needs.preview-plan.outputs.namespace }}",
+    "PR_NUMBER": "${{ needs.preview-plan.outputs.pr_number }}",
+    "HEAD_SHA": "${{ needs.preview-plan.outputs.head_sha }}",
+    "IMAGE_TAG": "${{ steps.effective-image-tag.outputs.image_tag }}",
+    "TELNET_PORT": "${{ steps.telnet-port.outputs.telnet_port }}",
+    "ALLOCATION_TIMESTAMP": "${{ steps.preview-capacity.outputs.allocation_timestamp }}",
+}
+preview_requested_run = preview_requested_step["run"]
+for required in (
+    '[[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,50}$ ]]',
+    '[[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]]',
+    '[[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]',
+    '[[ "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]',
+    '[[ "$TELNET_PORT" =~ ^32(00[0-9]|01[0-5])$ ]]',
+    'date -u -d "$ALLOCATION_TIMESTAMP"',
+    '"$RUNTIME_NAMESPACE" "$PR_NUMBER" "$HEAD_SHA" "$IMAGE_TAG"',
+    '"$TELNET_PORT" "$ALLOCATION_TIMESTAMP"',
+):
+    assert required in preview_requested_run, required
+assert "${{" not in preview_requested_run
+with tempfile.TemporaryDirectory() as preview_requested_fixture_dir:
+    fixture_root = Path(preview_requested_fixture_dir)
+    annotator_calls = fixture_root / "annotator-calls"
+    fake_bash = fixture_root / "bash"
+    fake_bash.write_text(
+        "#!/bin/bash\nprintf '%s\\n' \"$*\" >> \"$ANNOTATOR_CALLS\"\n",
+        encoding="utf-8",
+    )
+    fake_bash.chmod(0o755)
+    valid_environment = os.environ.copy()
+    valid_environment.update(
+        ALLOCATION_TIMESTAMP="2026-09-13T01:02:03Z",
+        ANNOTATOR_CALLS=str(annotator_calls),
+        HEAD_SHA="a" * 40,
+        IMAGE_TAG="a" * 40,
+        PATH=f"{fixture_root}:{valid_environment['PATH']}",
+        PR_NUMBER="42",
+        RUNTIME_NAMESPACE="pr-42",
+        TELNET_PORT="32015",
+    )
+    valid_result = subprocess.run(
+        ["/bin/bash", "-c", preview_requested_run],
+        check=False,
+        env=valid_environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert valid_result.returncode == 0, valid_result
+    assert annotator_calls.read_text(encoding="utf-8").strip() == (
+        "./dev-tools/hosted/preview/annotate-preview-namespace.sh "
+        f"pr-42 42 {'a' * 40} {'a' * 40} 32015 2026-09-13T01:02:03Z"
+    )
+    annotator_calls.unlink()
+    invalid_environment = valid_environment | {"RUNTIME_NAMESPACE": "pr-43"}
+    invalid_result = subprocess.run(
+        ["/bin/bash", "-c", preview_requested_run],
+        check=False,
+        env=invalid_environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert invalid_result.returncode == 1, invalid_result
+    assert not annotator_calls.exists()
 preview_deploy_index = next(
     index
     for index, step in enumerate(preview_steps)
@@ -1571,10 +1722,6 @@ retired_request = next(
 assert retired_request["run"] == (
     'bash ./dev-tools/hosted/shared/request-hosted-identity.sh "$IDENTITY_NAME" Retired'
 )
-retire_steps = jobs["retire-identity"]["steps"]
-retire_by_name = {
-    step.get("name"): step for step in retire_steps if isinstance(step, dict)
-}
 retire_requester_cleanup = retire_by_name["Remove requester kubeconfig"]
 assert retire_requester_cleanup["if"] == "${{ always() }}"
 assert retire_requester_cleanup["run"] == (
@@ -1582,7 +1729,7 @@ assert retire_requester_cleanup["run"] == (
 )
 assert retire_steps.index(
     retire_by_name["Observe terminal retirement and delete request"]
-) < retire_steps.index(retire_requester_cleanup)
+) < retire_steps.index(retire_failure) < retire_steps.index(retire_requester_cleanup)
 
 credential_step = next(
     step

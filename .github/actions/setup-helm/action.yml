@@ -54,6 +54,7 @@ runs:
           mv -fT -- "$temporary_archive" "$archive_path"
           trap - EXIT
         fi
+        # Revalidate the canonical archive after either cache restore or download before extraction.
         printf '%s  %s\n' "$helm_sha256" "$archive_path" \
           | sha256sum --check --status
         rm -rf -- "$extraction_dir"

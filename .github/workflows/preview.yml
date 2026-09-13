@@ -376,7 +376,6 @@ jobs:
         run: |
           KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"
           bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
-          echo "PREVIEW_RUNTIME_KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Verify preview cluster access
@@ -493,14 +492,43 @@ jobs:
 
       - name: Record reconciled preview target
         if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
+        env:
+          RUNTIME_NAMESPACE: ${{ needs.preview-plan.outputs.namespace }}
+          PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
+          IMAGE_TAG: ${{ steps.effective-image-tag.outputs.image_tag }}
+          TELNET_PORT: ${{ steps.telnet-port.outputs.telnet_port }}
+          ALLOCATION_TIMESTAMP: ${{ steps.preview-capacity.outputs.allocation_timestamp }}
         run: |
+          set -euo pipefail
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,50}$ ]] || {
+            echo "::error title=Invalid preview PR number::Expected a canonical positive decimal integer." >&2
+            exit 1
+          }
+          [[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]] || {
+            echo "::error title=Invalid preview runtime namespace::Expected namespace pr-${PR_NUMBER}." >&2
+            exit 1
+          }
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error title=Invalid preview head SHA::Expected exactly 40 lowercase hexadecimal characters." >&2
+            exit 1
+          }
+          [[ "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || {
+            echo "::error title=Invalid preview image tag::Expected a non-empty canonical image tag of at most 128 safe characters." >&2
+            exit 1
+          }
+          [[ "$TELNET_PORT" =~ ^32(00[0-9]|01[0-5])$ ]] || {
+            echo "::error title=Invalid preview Telnet port::Expected a port from 32000 through 32015." >&2
+            exit 1
+          }
+          if [[ ! "$ALLOCATION_TIMESTAMP" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] \
+            || [[ "$(date -u -d "$ALLOCATION_TIMESTAMP" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)" != "$ALLOCATION_TIMESTAMP" ]]; then
+            echo "::error title=Invalid preview allocation timestamp::Expected a valid UTC timestamp in YYYY-MM-DDTHH:MM:SSZ format." >&2
+            exit 1
+          fi
           bash ./dev-tools/hosted/preview/annotate-preview-namespace.sh \
-            "${{ needs.preview-plan.outputs.namespace }}" \
-            "${{ needs.preview-plan.outputs.pr_number }}" \
-            "${{ needs.preview-plan.outputs.head_sha }}" \
-            "${{ steps.effective-image-tag.outputs.image_tag }}" \
-            "${{ steps.telnet-port.outputs.telnet_port }}" \
-            "${{ steps.preview-capacity.outputs.allocation_timestamp }}"
+            "$RUNTIME_NAMESPACE" "$PR_NUMBER" "$HEAD_SHA" "$IMAGE_TAG" \
+            "$TELNET_PORT" "$ALLOCATION_TIMESTAMP"
 
       - name: Write hosted identity requester kubeconfig
         if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}

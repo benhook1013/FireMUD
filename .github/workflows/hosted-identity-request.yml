@@ -815,6 +815,7 @@ jobs:
     permissions:
       contents: read # Check out the trusted default-branch retirement implementation.
       pull-requests: read # Revalidate the closed pull request before identity retirement.
+      issues: write # Publish a retirement failure on the closed pull request.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -877,6 +878,31 @@ jobs:
             --retired "$IDENTITY_NAME" 600
           kubectl -n firemud-system delete hostedenvironmentidentity "$IDENTITY_NAME" \
             --wait=true --timeout=180s
+
+      - name: Publish trusted identity retirement failure
+        if: ${{ !cancelled() && failure() }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          PREVIEW_PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          PREVIEW_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          PREVIEW_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
+          PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
+        with:
+          script: |
+            const { publishPreviewComment } = require(
+              `${process.env.GITHUB_WORKSPACE}/dev-tools/hosted/preview/publish-preview-comment.js`
+            );
+            await publishPreviewComment({
+              github,
+              context,
+              core,
+              mode: "failure",
+              markerPolicy: "replace",
+              statePolicy: "expected-closed",
+              telnetPort: "unavailable",
+              failureStage: "retire-identity",
+              staleDescription: "trusted identity retirement failure",
+            });
 
       - name: Remove requester kubeconfig
         if: ${{ always() }}

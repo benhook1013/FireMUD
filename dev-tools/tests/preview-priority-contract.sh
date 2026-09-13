@@ -1804,7 +1804,7 @@ reset_case
 reconciler_valid_output="$TEMP_DIR/reconciler-valid.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD=head-901 \
     PREVIEW_MAX_ACTIVE=3 \
@@ -1821,7 +1821,7 @@ reset_case
 reconciler_empty_deployed_output="$TEMP_DIR/reconciler-empty-deployed.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD='' \
     FAKE_PR_901_REQUESTED_HEAD=head-901 \
     PREVIEW_MAX_ACTIVE=3 \
@@ -1836,7 +1836,7 @@ reset_case
 reconciler_namespace_absent_output="$TEMP_DIR/reconciler-namespace-absent.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_NAMESPACE_ABSENT=true \
     PREVIEW_MAX_ACTIVE=3 \
@@ -1852,7 +1852,7 @@ reset_case
 reconciler_unvalidated_priority_output="$TEMP_DIR/reconciler-unvalidated-priority.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="0\t901\tfeature-901\thead-901\thuman\tdevelop\topen\ttrue\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="0\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_NAMESPACE_ABSENT=true \
     PREVIEW_MAX_ACTIVE=1 \
     bash "$RECONCILER_RUN"
@@ -1865,7 +1865,7 @@ reset_case
 reconciler_validated_priority_output="$TEMP_DIR/reconciler-validated-priority.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${priority_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${priority_labels_base64}\n" \
     FAKE_PR_901_NAMESPACE_ABSENT=true \
     PREVIEW_MAX_ACTIVE=1 \
     bash "$RECONCILER_RUN"
@@ -1880,7 +1880,7 @@ reset_case
 reconciler_stale_active_run_output="$TEMP_DIR/reconciler-stale-active-run.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_NAMESPACE_ABSENT=true \
     FAKE_ACTIVE_PREVIEW_RUNS_JSON='[{"databaseId":41,"status":"in_progress","headSha":"stale-head"}]' \
     PREVIEW_MAX_ACTIVE=3 \
@@ -1896,7 +1896,7 @@ reset_case
 reconciler_current_active_run_output="$TEMP_DIR/reconciler-current-active-run.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_NAMESPACE_ABSENT=true \
     FAKE_ACTIVE_PREVIEW_RUNS_JSON='[{"databaseId":42,"status":"queued","headSha":"head-901"}]' \
     PREVIEW_MAX_ACTIVE=3 \
@@ -1911,7 +1911,7 @@ reset_case
 reconciler_namespace_absent_on_recheck_output="$TEMP_DIR/reconciler-namespace-absent-on-recheck.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
     FAKE_PR_901_NAMESPACE_ABSENT_ON_RECHECK=true \
@@ -1928,7 +1928,7 @@ reset_case
 reconciler_namespace_error_output="$TEMP_DIR/reconciler-namespace-error.out"
 if (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_NAMESPACE_SNAPSHOT_ERROR=true \
     PREVIEW_MAX_ACTIVE=3 \
@@ -1946,7 +1946,7 @@ reset_case
 reconciler_namespace_parse_output="$TEMP_DIR/reconciler-namespace-parse.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="0\t901\tfeature-901\thead-901\thuman\tdevelop\topen\ttrue\t${priority_labels_base64}\n1\t101\tfeature-101\tnew-head-101\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="0\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${priority_labels_base64}\n1\t101\tfeature-101\tnew-head-101\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_NAMESPACE_SNAPSHOT_PARSE_FAIL=true \
     PREVIEW_MAX_ACTIVE=3 \
     bash "$RECONCILER_RUN"
@@ -1963,7 +1963,7 @@ reset_case
 reconciler_namespace_recheck_parse_output="$TEMP_DIR/reconciler-namespace-recheck-parse.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="0\t901\tfeature-901\thead-901\thuman\tdevelop\topen\ttrue\t${priority_labels_base64}\n1\t101\tfeature-101\tnew-head-101\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="0\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${priority_labels_base64}\n1\t101\tfeature-101\tnew-head-101\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
     FAKE_NAMESPACE_SNAPSHOT_RECHECK_PARSE_FAIL=true \
@@ -1982,7 +1982,7 @@ reset_case
 reconciler_missing_requested_output="$TEMP_DIR/reconciler-missing-requested.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
     PREVIEW_MAX_ACTIVE=3 \
@@ -2001,7 +2001,7 @@ reset_case
 reconciler_stale_requested_output="$TEMP_DIR/reconciler-stale-requested.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD=stale-head \
     PREVIEW_MAX_ACTIVE=3 \
@@ -2020,7 +2020,7 @@ reset_case
 reconciler_annotation_deleted_output="$TEMP_DIR/reconciler-annotation-deleted.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
     FAKE_ANNOTATE_ERROR=true \
@@ -2042,7 +2042,7 @@ reset_case
 reconciler_annotation_existing_output="$TEMP_DIR/reconciler-annotation-existing.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="0\t901\tfeature-901\thead-901\thuman\tdevelop\topen\ttrue\t${priority_labels_base64}\n1\t101\tfeature-101\tnew-head-101\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="0\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${priority_labels_base64}\n1\t101\tfeature-101\tnew-head-101\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
     FAKE_ANNOTATE_ERROR=true \
@@ -2063,7 +2063,7 @@ reset_case
 reconciler_annotation_confirmation_error_output="$TEMP_DIR/reconciler-annotation-confirmation-error.out"
 if (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
     FAKE_ANNOTATE_ERROR=true \
@@ -2084,7 +2084,7 @@ reset_case
 reconciler_namespace_recheck_error_output="$TEMP_DIR/reconciler-namespace-recheck-error.out"
 if (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
     FAKE_NAMESPACE_SNAPSHOT_RECHECK_ERROR=true \
@@ -2104,7 +2104,7 @@ reset_case
 reconciler_changed_requested_output="$TEMP_DIR/reconciler-changed-requested.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
     FAKE_PR_901_RECHECK_REQUESTED_HEAD=raced-head \
@@ -2122,7 +2122,7 @@ reset_case
 reconciler_changed_stale_requested_output="$TEMP_DIR/reconciler-changed-stale-requested.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD=stale-head \
     FAKE_PR_901_RECHECK_REQUESTED_HEAD=other-stale-head \
@@ -2140,7 +2140,7 @@ reset_case
 reconciler_changed_deployed_output="$TEMP_DIR/reconciler-changed-deployed.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
     FAKE_PR_901_RECHECK_HEAD=changed-head \
@@ -2159,7 +2159,7 @@ malformed_labels_base64="$(printf '%s' '{}' | base64 | tr -d '\n')"
 reconciler_malformed_output="$TEMP_DIR/reconciler-malformed.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${malformed_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${malformed_labels_base64}\n" \
     PREVIEW_MAX_ACTIVE=3 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_malformed_output" 2>&1
@@ -2557,11 +2557,33 @@ grep -Fq -- '--labels-json "$labels_json"' "$reconciler_workflow"
 # shellcheck disable=SC2016 # Assert capacity uses centralized validated priority.
 grep -Fq -- 'priority="$(sed -n '\''s/^priority=//p'\'' <<<"$eligibility_output")"' \
   "$reconciler_workflow"
-# shellcheck disable=SC2016 # Reject a separate transported raw-priority capacity predicate.
-if grep -Fq '$_sort_priority' "$reconciler_workflow"; then
-  echo "reconciler capacity decision bypassed centralized validated priority" >&2
+# Reject the redundant transported raw-priority field and read placeholder while
+# retaining the leading numeric key used only for stable priority ordering.
+if grep -Fq '_sort_priority' "$reconciler_workflow"; then
+  echo "reconciler retained a redundant transported raw-priority field" >&2
   exit 1
 fi
+python3 - "$reconciler_workflow" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+step = next(
+    step
+    for step in workflow["jobs"]["reconcile-previews"]["steps"]
+    if step.get("name") == "Dispatch preview deploys for drifted PRs"
+)
+run = step["run"]
+assert run.count('any(. == "preview:priority")') == 1
+assert "then 0 else 1 end" in run
+assert "sort -t $'\\t' -k1,1n -k2,2n" in run
+assert (
+    "read -r _ pr_number head_ref head_sha pr_author pr_base_ref pr_state "
+    "labels_json_base64"
+) in run
+PY
 # shellcheck disable=SC2016 # Assert malformed label metadata fails closed before eligibility.
 grep -Fq -- 'if ! labels_json="$(printf '\''%s'\'' "$labels_json_base64" | base64 --decode 2>/dev/null)" ||' \
   "$reconciler_workflow"
