@@ -39,3 +39,8 @@ Entry format:
   - Context: workflow language and operational tool versions moved from repeated YAML literals to repository-owned authority files.
   - Observation: GitHub setup actions and local composites cannot consume repository files before checkout, and a top-level workflow environment value cannot read a file directly.
   - Expected pattern: keep checkout before every file-backed setup action, validate that ordering as a workflow contract, and route operational tools through a local loader that rejects malformed or missing authority files.
+
+- `2026-09-14`: Release-asset version updates need an explicit checksum completion step
+  - Context: Renovate can discover GitHub release versions but cannot derive the checksum of an arbitrary release archive into a second authority field.
+  - Observation: independently managed version and checksum fields would either permit stale verification or leave routine update repair ambiguous.
+  - Expected pattern: store the checksum's source version beside the digest, fail closed when it differs from the tool version, and use the repository updater to fetch the publisher's checksum manifest and update the pair together.

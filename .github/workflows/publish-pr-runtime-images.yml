@@ -30,6 +30,15 @@ jobs:
         with:
           egress-policy: audit
 
+      - name: Check out trusted workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Set up canonical Python
+        uses: ./.github/actions/setup-python
+
       - name: Summarize trusted publication source
         env:
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}

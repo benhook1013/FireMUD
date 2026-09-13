@@ -19,9 +19,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 🐍 Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version-file: '.python-version'
+        uses: ./.github/actions/setup-python
+
+      - name: Set up canonical GitHub CLI
+        uses: ./.github/actions/setup-gh
 
       - name: ⚙️ Set Up Java
         uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6

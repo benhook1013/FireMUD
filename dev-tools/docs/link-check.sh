@@ -1,14 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-LYCHEE_VERSION="lychee-v0.19.1"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck disable=SC1091
+source "$ROOT_DIR/config/workflow-tool-versions.env"
+[[ "$(uname -s)/$(uname -m)" == "Linux/x86_64" ]] || {
+  echo "The pinned Lychee archive supports Linux x86_64 only." >&2
+  exit 1
+}
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/lychee"
 BIN="$CACHE_DIR/lychee"
-URL="https://github.com/lycheeverse/lychee/releases/download/${LYCHEE_VERSION}/lychee-x86_64-unknown-linux-gnu.tar.gz"
+URL="https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}/lychee-x86_64-unknown-linux-gnu.tar.gz"
 
 if [ ! -x "$BIN" ]; then
   mkdir -p "$CACHE_DIR"
-  curl -sSL "$URL" | tar -xz -C "$CACHE_DIR"
+  archive="$CACHE_DIR/lychee.tar.gz"
+  curl -fsSL "$URL" -o "$archive"
+  echo "${LYCHEE_LINUX_X86_64_SHA256}  ${archive}" | sha256sum --check --status
+  tar -xzf "$archive" -C "$CACHE_DIR"
+  rm "$archive"
   chmod +x "$BIN"
 fi
 

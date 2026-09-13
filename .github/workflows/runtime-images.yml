@@ -623,6 +623,9 @@ jobs:
           ref: ${{ needs.image-meta.outputs.checkout_ref }}
           persist-credentials: false
 
+      - name: Set up canonical Python
+        uses: ./.github/actions/setup-python
+
       - name: Set up Java
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654
         with:
@@ -641,7 +644,7 @@ jobs:
         run: bash ./dev-tools/build-local-smoke-images.sh "${SMOKE_IMAGE_TAG}"
 
       - name: Install WebSocket smoke dependency
-        run: python3 -m pip install --disable-pip-version-check websocket-client
+        run: python3 -m pip install --disable-pip-version-check -r config/python/smoke-requirements.txt
 
       - name: Run credential-free full-stack smoke
         run: bash ./dev-tools/verify-smoke-images.sh

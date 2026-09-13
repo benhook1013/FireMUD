@@ -31,8 +31,18 @@
         "/^config/workflow-tool-versions\\.env$/"
       ],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\n[A-Z][A-Z0-9_]*_VERSION=(?<currentValue>\\S+)"
+        "# renovate-version: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\n[A-Z][A-Z0-9_]*_VERSION=(?<currentValue>\\S+)"
       ]
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^config/workflow-tool-versions\\.env$/"
+      ],
+      "matchStrings": [
+        "# renovate-image: datasource=(?<datasource>docker) depName=(?<depName>\\S+)\\n[A-Z][A-Z0-9_]*_VERSION=(?<currentValue>\\S+)\\n[A-Z][A-Z0-9_]*_DIGEST=(?<currentDigest>sha256:[0-9a-f]{64})"
+      ],
+      "versioningTemplate": "docker"
     }
   ],
   "vulnerabilityAlerts": {
@@ -41,6 +51,18 @@
   "prHourlyLimit": 2,
   "prConcurrentLimit": 10,
   "packageRules": [
+    {
+      "description": "Keep the canonical Velero CLI and its static CronJob image projection in one update",
+      "matchManagers": [
+        "custom.regex",
+        "kubernetes"
+      ],
+      "matchPackageNames": [
+        "vmware-tanzu/velero",
+        "velero/velero"
+      ],
+      "groupName": "velero tool and image"
+    },
     {
       "matchManagers": [
         "gradle"

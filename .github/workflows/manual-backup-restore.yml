@@ -91,12 +91,21 @@ jobs:
       - name: Set up kubectl
         uses: ./.github/actions/setup-kubectl
 
+      - name: Load workflow tool versions
+        id: workflow-tool-versions
+        uses: ./.github/actions/load-workflow-tool-versions
+
       - name: Install Velero CLI
+        env:
+          VELERO_VERSION: ${{ steps.workflow-tool-versions.outputs.velero-version }}
+          VELERO_SHA256: ${{ steps.workflow-tool-versions.outputs.velero-linux-amd64-sha256 }}
         run: |
-          VELERO_VERSION=v1.12.3
-          curl -L https://github.com/vmware-tanzu/velero/releases/download/$VELERO_VERSION/velero-$VELERO_VERSION-linux-amd64.tar.gz -o velero.tar.gz
-          tar -xzf velero.tar.gz
-          sudo mv velero-$VELERO_VERSION-linux-amd64/velero /usr/local/bin/velero
+          [[ "$(uname -s)/$(uname -m)" == "Linux/x86_64" ]] || { echo "Unsupported Velero platform" >&2; exit 1; }
+          archive="velero-v${VELERO_VERSION}-linux-amd64.tar.gz"
+          curl -fsSL "https://github.com/vmware-tanzu/velero/releases/download/v${VELERO_VERSION}/${archive}" -o "$archive"
+          echo "${VELERO_SHA256}  ${archive}" | sha256sum --check --status
+          tar -xzf "$archive"
+          sudo install -m 0755 "velero-v${VELERO_VERSION}-linux-amd64/velero" /usr/local/bin/velero
 
       - name: Verify backups
         run: dev-tools/backups/verify-backups.sh

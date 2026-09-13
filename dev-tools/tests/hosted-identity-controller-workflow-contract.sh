@@ -541,8 +541,12 @@ assert mode_action["inputs"]["values-file"]["required"] is True
 assert set(mode_action["outputs"]) == {"mode"}
 assert mode_action["outputs"]["mode"]["value"] == "${{ steps.resolve.outputs.mode }}"
 assert mode_action["runs"]["using"] == "composite"
-assert len(mode_action["runs"]["steps"]) == 1
-resolve_step = mode_action["runs"]["steps"][0]
+assert len(mode_action["runs"]["steps"]) == 2
+assert mode_action["runs"]["steps"][0] == {
+    "name": "Set up canonical Python",
+    "uses": "./.github/actions/setup-python",
+}
+resolve_step = mode_action["runs"]["steps"][1]
 assert resolve_step["id"] == "resolve"
 assert resolve_step["shell"] == "bash"
 assert resolve_step["env"] == {"VALUES_FILE": "${{ inputs['values-file'] }}"}

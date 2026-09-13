@@ -148,6 +148,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Set up canonical Python
+        uses: ./.github/actions/setup-python
+
+      - name: Set up canonical GitHub CLI
+        uses: ./.github/actions/setup-gh
+
       - name: Resolve certificate identity mode
         id: certificate-identity
         uses: ./.github/actions/resolve-certificate-identity-mode

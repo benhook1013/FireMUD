@@ -3,7 +3,7 @@ self-hosted-runner:
     - preview
 
 # GitHub Actions added concurrency.queue in May 2026. This repository's pinned
-# actionlint v1.7.11 does not parse it, so suppress only that known parser lag
+# the repository-pinned actionlint release does not parse it, so suppress only that known parser lag
 # in the three workflows that use the shared preview lifecycle queue.
 paths:
   .github/workflows/preview.yml:

@@ -44,6 +44,12 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
+      - name: Set up canonical Python
+        uses: ./.github/actions/setup-python
+
+      - name: Set up canonical GitHub CLI
+        uses: ./.github/actions/setup-gh
+
       - name: Resolve certificate identity mode
         id: certificate-identity
         uses: ./.github/actions/resolve-certificate-identity-mode
@@ -222,6 +228,12 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
+      - name: Set up canonical Python
+        uses: ./.github/actions/setup-python
+
+      - name: Set up canonical GitHub CLI
+        uses: ./.github/actions/setup-gh
+
       - name: Download and validate source render artifact
         uses: ./.github/actions/download-validated-preview-artifact
         with:
@@ -301,6 +313,12 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
+
+      - name: Set up canonical Python
+        uses: ./.github/actions/setup-python
+
+      - name: Set up canonical GitHub CLI
+        uses: ./.github/actions/setup-gh
 
       - name: Set up kubectl
         uses: ./.github/actions/setup-kubectl
@@ -537,6 +555,9 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
+      - name: Set up canonical GitHub CLI
+        uses: ./.github/actions/setup-gh
+
       - name: Set up kubectl
         uses: ./.github/actions/setup-kubectl
 
@@ -701,6 +722,8 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
+      - name: Set up canonical GitHub CLI
+        uses: ./.github/actions/setup-gh
       - name: Set up kubectl
         uses: ./.github/actions/setup-kubectl
       - name: Write runtime kubeconfig
@@ -797,6 +820,8 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
+      - name: Set up canonical GitHub CLI
+        uses: ./.github/actions/setup-gh
       - name: Set up kubectl
         uses: ./.github/actions/setup-kubectl
       - name: Check Hosted identity requester credentials

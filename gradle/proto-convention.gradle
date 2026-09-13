@@ -31,7 +31,7 @@ protobuf {
     generateProtoTasks {
         all().configureEach { task ->
             task.notCompatibleWithConfigurationCache(
-                "protobuf-gradle-plugin 0.10.0 retains Gradle Project and SourceDirectorySet state with Gradle ${gradle.gradleVersion}"
+                "protobuf-gradle-plugin ${libs.plugins.protobuf.get().version.requiredVersion} retains Gradle Project and SourceDirectorySet state with Gradle ${gradle.gradleVersion}"
             )
         }
         ofSourceSet('main').each { task ->

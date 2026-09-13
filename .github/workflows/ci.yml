@@ -115,14 +115,20 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Load workflow tool versions
+        id: workflow-tool-versions
+        uses: ./.github/actions/load-workflow-tool-versions
+
       - name: 🧰 Install Buf CLI
+        id: install-buf
         env:
-          BUF_VERSION: '1.30.0'
+          BUF_VERSION: ${{ steps.workflow-tool-versions.outputs.buf-version }}
+          BUF_SHA256: ${{ steps.workflow-tool-versions.outputs.buf-linux-x86-64-sha256 }}
         run: |
-          sudo curl -sSL \
-            "https://github.com/bufbuild/buf/releases/download/v${BUF_VERSION}/buf-$(uname -s)-$(uname -m)" \
-            -o /usr/local/bin/buf
-          sudo chmod +x /usr/local/bin/buf
+          [[ "$(uname -s)/$(uname -m)" == "Linux/x86_64" ]] || { echo "Unsupported Buf platform" >&2; exit 1; }
+          curl -fsSL "https://github.com/bufbuild/buf/releases/download/v${BUF_VERSION}/buf-Linux-x86_64" -o /tmp/buf
+          echo "${BUF_SHA256}  /tmp/buf" | sha256sum --check --status
+          sudo install -m 0755 /tmp/buf /usr/local/bin/buf
           buf --version
 
       - name: 💾 Cache Buf modules
@@ -202,12 +208,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 🐍 Set Up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version-file: '.python-version'
+        uses: ./.github/actions/setup-python
 
       - name: 📦 Install Ruff
-        run: python3 -m pip install --disable-pip-version-check ruff==0.16.0
+        run: python3 -m pip install --disable-pip-version-check -r config/python/ci-requirements.txt
 
       - name: 🧪 Validate tracked Python scripts
         run: |
@@ -237,10 +241,11 @@ jobs:
         if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
         uses: ./.github/actions/setup-kubectl
 
+      - name: Set up canonical GitHub CLI
+        uses: ./.github/actions/setup-gh
+
       - name: 🐍 Set Up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version-file: '.python-version'
+        uses: ./.github/actions/setup-python
 
       - name: 📦 Install cloc
         if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
@@ -249,7 +254,7 @@ jobs:
           sudo apt-get install -y cloc
 
       - name: 📦 Install Python script dependencies
-        run: python3 -m pip install --disable-pip-version-check PyYAML
+        run: python3 -m pip install --disable-pip-version-check -r config/python/ci-requirements.txt
 
       - name: Set up Helm
         if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
@@ -261,6 +266,7 @@ jobs:
           bash ./dev-tools/tests/cloc-report-contract.sh
           bash ./dev-tools/tests/ci-lightweight-scope-contract.sh
           bash ./dev-tools/tests/workflow-version-authority-contract.sh
+          bash ./dev-tools/tests/workflow-tool-updater-contract.sh
           bash ./dev-tools/tests/coderabbit-cli-wrapper-contract.sh
           bash ./dev-tools/tests/coderabbit-review-contract.sh
           bash ./dev-tools/tests/pr-retarget-workflow-contract.sh
@@ -310,12 +316,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 🐍 Set Up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version-file: '.python-version'
+        uses: ./.github/actions/setup-python
 
       - name: 📦 Install yamllint
-        run: python3 -m pip install --disable-pip-version-check yamllint
+        run: python3 -m pip install --disable-pip-version-check -r config/python/ci-requirements.txt
 
       - name: 🧪 Lint tracked YAML
         run: bash ./dev-tools/validation/lint-yaml.sh
@@ -335,9 +339,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 🐍 Set Up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version-file: '.python-version'
+        uses: ./.github/actions/setup-python
 
       - name: 📏 Validate metric label policy
         run: python3 dev-tools/observability/check-metrics-cardinality.py
@@ -428,6 +430,10 @@ jobs:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Load workflow tool versions
+        id: workflow-tool-versions
+        uses: ./.github/actions/load-workflow-tool-versions
+
       - name: ⚙️ Set Up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
@@ -435,8 +441,10 @@ jobs:
           cache: false
 
       - name: 🧪 Validate GitHub Actions Workflows
+        env:
+          ACTIONLINT_VERSION: ${{ steps.workflow-tool-versions.outputs.actionlint-version }}
         run: |
-          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
+          go install "github.com/rhysd/actionlint/cmd/actionlint@v${ACTIONLINT_VERSION}"
           "$(go env GOPATH)/bin/actionlint" -config-file .github/actionlint.yaml
 
   helm-lint:
@@ -476,10 +484,18 @@ jobs:
       - name: Set up Helm
         uses: ./.github/actions/setup-helm
 
+      - name: Load workflow tool versions
+        id: workflow-tool-versions
+        uses: ./.github/actions/load-workflow-tool-versions
+
       - name: Set up kubeconform
+        env:
+          KUBECONFORM_VERSION: ${{ steps.workflow-tool-versions.outputs.kubeconform-version }}
+          KUBECONFORM_SHA256: ${{ steps.workflow-tool-versions.outputs.kubeconform-linux-amd64-sha256 }}
         run: |
-          KUBECONFORM_VERSION="v0.6.7"
-          curl -fsSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" -o /tmp/kubeconform.tgz
+          [[ "$(uname -s)/$(uname -m)" == "Linux/x86_64" ]] || { echo "Unsupported kubeconform platform" >&2; exit 1; }
+          curl -fsSL "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" -o /tmp/kubeconform.tgz
+          echo "${KUBECONFORM_SHA256}  /tmp/kubeconform.tgz" | sha256sum --check --status
           tar -xzf /tmp/kubeconform.tgz -C /tmp
           sudo install /tmp/kubeconform /usr/local/bin/kubeconform
           kubeconform -v
@@ -503,9 +519,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 🐍 Set Up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version-file: '.python-version'
+        uses: ./.github/actions/setup-python
 
       - name: 🔎 Validate Observability Contracts
         run: python3 dev-tools/observability/validate-observability-contract.py
@@ -546,6 +560,9 @@ jobs:
 
       - name: ⬇️ Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up canonical Python
+        uses: ./.github/actions/setup-python
 
       - name: ⚙️ Set Up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
