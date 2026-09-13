@@ -104,7 +104,7 @@ done
 
 source_root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "run this command inside a Git worktree"
 checker="$source_root/dev-tools/validation/check-coderabbit-review.py"
-[[ -x "$checker" ]] || die "CodeRabbit review checker is not executable: $checker"
+[[ -f "$checker" && -r "$checker" ]] || die "CodeRabbit review checker is not a readable regular file: $checker"
 if [[ -z "$repo" ]]; then
   repo="$(gh repo view --json nameWithOwner --jq .nameWithOwner)" || die "could not infer repository; pass --repo owner/name"
 fi
