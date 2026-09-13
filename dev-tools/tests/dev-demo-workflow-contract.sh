@@ -13,6 +13,7 @@ reconcile_step="$ROOT_DIR/dev-tools/hosted/dev-demo/reconcile-dev-demo.sh"
 requester="$ROOT_DIR/dev-tools/hosted/shared/request-hosted-identity.sh"
 waiter="$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh"
 annotator="$ROOT_DIR/dev-tools/hosted/dev-demo/annotate-dev-demo-namespace.sh"
+target_validator="$ROOT_DIR/dev-tools/hosted/dev-demo/validate-dev-demo-target.sh"
 runtime_rollout_waiter="$ROOT_DIR/dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh"
 [[ -x "$runtime_rollout_waiter" ]] || {
   echo "$runtime_rollout_waiter must be executable" >&2
@@ -65,7 +66,30 @@ expect_invalid_mode $'previewStack:\n  certificateIdentity:\n    mode: standalon
 expect_invalid_mode $'previewStack:\n  certificateIdentity:\n    mode: true\n'
 expect_invalid_mode $'previewStack:\n  certificateIdentity:\n    mode: controller\n'
 
-python3 - "$workflow" "$reconciler" "$requester" "$waiter" "$annotator" "$reconcile_step" "$mode_action" <<'PY'
+valid_head="abcdef1234567890abcdef1234567890abcdef12"
+bash "$target_validator" dev "$valid_head" "$valid_head" 32016
+
+expect_invalid_target() {
+  local expected_diagnostic="$1"
+  shift
+  local validation_output
+  if validation_output="$(bash "$target_validator" "$@" 2>&1)"; then
+    echo "dev-demo target validator accepted an invalid target: $*" >&2
+    exit 1
+  fi
+  if [[ "$validation_output" != *"$expected_diagnostic"* ]]; then
+    echo "dev-demo target validator lacked diagnostic: $expected_diagnostic" >&2
+    exit 1
+  fi
+}
+
+expect_invalid_target "Invalid dev-demo runtime namespace" pr-42 "$valid_head" "$valid_head" 32016
+expect_invalid_target "Invalid dev-demo head SHA" dev "${valid_head^^}" "$valid_head" 32016
+expect_invalid_target "Invalid dev-demo image tag" dev "$valid_head" "" 32016
+expect_invalid_target "Invalid dev-demo image tag" dev "$valid_head" 'invalid/tag' 32016
+expect_invalid_target "Invalid dev-demo Telnet port" dev "$valid_head" "$valid_head" 32017
+
+python3 - "$workflow" "$reconciler" "$requester" "$waiter" "$annotator" "$target_validator" "$reconcile_step" "$mode_action" <<'PY'
 from __future__ import annotations
 
 import os
@@ -76,7 +100,7 @@ from pathlib import Path
 
 import yaml
 
-workflow_path, reconciler_path, requester_path, waiter_path, annotator_path, reconcile_script_path, mode_action_path = map(
+workflow_path, reconciler_path, requester_path, waiter_path, annotator_path, target_validator_path, reconcile_script_path, mode_action_path = map(
     Path, sys.argv[1:]
 )
 workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
@@ -84,6 +108,7 @@ reconciler = yaml.safe_load(reconciler_path.read_text(encoding="utf-8"))
 requester = requester_path.read_text(encoding="utf-8")
 waiter = waiter_path.read_text(encoding="utf-8")
 annotator = annotator_path.read_text(encoding="utf-8")
+target_validator = target_validator_path.read_text(encoding="utf-8")
 reconcile_script = reconcile_script_path.read_text(encoding="utf-8")
 mode_action = yaml.safe_load(mode_action_path.read_text(encoding="utf-8"))
 
@@ -367,14 +392,26 @@ if "steps.deploy-release.outcome == 'success'" not in deployed_head_step.get("if
 if "firemud.dev/last-dev-demo-head-sha=${HEAD_SHA}" not in deployed_head_step["run"]:
     raise SystemExit("successful Helm completion does not record exact deployed-head evidence")
 runtime_target_run = deploy_by_name["Record exact dev-demo runtime target"]["run"]
+target_validator_call = (
+    "bash ./dev-tools/hosted/dev-demo/validate-dev-demo-target.sh \\\n"
+    '  "$RUNTIME_NAMESPACE" "$HEAD_SHA" "$IMAGE_TAG" "$TELNET_PORT"'
+)
+if runtime_target_run.count(target_validator_call) != 1:
+    raise SystemExit("dev-demo runtime target must invoke the shared target validator exactly once")
+if runtime_target_run.index(target_validator_call) > runtime_target_run.index(
+    "bash ./dev-tools/hosted/dev-demo/annotate-dev-demo-namespace.sh"
+):
+    raise SystemExit("dev-demo runtime target mutates namespace metadata before shared validation")
 for diagnostic in (
     "::error title=Invalid dev-demo runtime namespace::Expected the canonical dev namespace.",
     "::error title=Invalid dev-demo head SHA::Expected exactly 40 lowercase hexadecimal characters.",
-    "::error title=Invalid dev-demo image tag::Expected a non-empty image tag.",
+    "::error title=Invalid dev-demo image tag::Expected a non-empty tag of at most 128 safe characters.",
     "::error title=Invalid dev-demo Telnet port::Expected the canonical 32016 port.",
 ):
-    if diagnostic not in runtime_target_run:
-        raise SystemExit(f"dev-demo runtime target validation lacks {diagnostic}")
+    if diagnostic not in target_validator:
+        raise SystemExit(f"shared dev-demo target validation lacks {diagnostic}")
+    if diagnostic in runtime_target_run:
+        raise SystemExit(f"dev-demo runtime target duplicates shared validation: {diagnostic}")
 for diagnostic in (
     "::error title=Invalid dev-demo runtime namespace::Expected the canonical dev namespace.",
     "::error title=Invalid dev-demo head SHA::Expected exactly 40 lowercase hexadecimal characters.",
