@@ -366,6 +366,7 @@ final class HostedIdentityTestFixtures {
         acceptedData,
         validator,
         grpcGenerator,
+        service,
         service.beginMaterialization(secretClient.client(), plan));
   }
 
@@ -461,5 +462,6 @@ final class HostedIdentityTestFixtures {
       Map<String, String> acceptedData,
       SecretMaterialValidator validator,
       GrpcTransportBundleGenerator grpcGenerator,
+      CertificateMaterialService service,
       CertificateMaterialService.MaterializationBatch batch) {}
 }
