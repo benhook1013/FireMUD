@@ -1202,11 +1202,25 @@ certificate_namespace_match = " ".join(
 assert certificate_namespace_match.startswith(
     "request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' ||"
 )
+assert break_glass in certificate_namespace_match
+assert "request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' &&" in certificate_namespace_match
+assert "request.namespace.matches('^(dev-identity|pr-[1-9][0-9]{0,50}-identity)$')" in certificate_namespace_match
 assert "request.namespace == 'dev-identity'" in certificate_namespace_match
 assert "request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')" in certificate_namespace_match
+assert "request.operation == 'DELETE'" in certificate_namespace_match
+assert "request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$')" in certificate_namespace_match
+assert "request.name.startsWith(" in certificate_namespace_match
+assert "request.operation != 'DELETE'" in certificate_namespace_match
+assert "object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$')" in certificate_namespace_match
+assert "object.metadata.name.startsWith(" in certificate_namespace_match
 certificate_match = " ".join(
     certificate_policy["spec"]["validations"][0]["expression"].split()
 )
+assert certificate_match.startswith(f"({break_glass} &&")
+assert "request.subResource == ''" in certificate_match
+assert "request.operation == 'DELETE'" in certificate_match
+assert "request.namespace == 'dev-identity'" in certificate_match
+assert "request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')" in certificate_match
 controller_certificate_expression = certificate_match.split(
     "(request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller'",
     1,
