@@ -2491,6 +2491,22 @@ require_literal "$bootstrap_error" "ca.key must be an unencrypted PKCS8 private 
 if grep -Fxq -- "apply:active" "$encrypted_key_event_log"; then
   fail "bootstrap applied active mode after an encrypted PKCS8 gRPC CA private key"
 fi
+can_i_status_filter_dir="$bootstrap_test_dir/can-i-status-filter"
+mkdir -p "$can_i_status_filter_dir"
+cat >"$can_i_status_filter_dir/tr" <<'SH'
+#!/usr/bin/env bash
+printf 'no\n'
+exit 1
+SH
+chmod +x "$can_i_status_filter_dir/tr"
+if FAKE_CAN_I_ERROR=1 FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$can_i_status_filter_dir:$bootstrap_test_dir:$PATH" \
+  bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted an authorization API error when the output filter failed"
+fi
+require_literal "$bootstrap_error" "failed with status 2"
 if FAKE_CAN_I_ERROR=1 FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
   PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
   --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \

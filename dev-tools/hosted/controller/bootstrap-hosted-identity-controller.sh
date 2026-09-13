@@ -516,11 +516,12 @@ expect_can_i() {
   shift
   local result status command_args
   printf -v command_args '%q ' "$@"
-  if result="$(kubectl auth can-i "$@" | tr -d '\r')"; then
+  if result="$(kubectl auth can-i "$@")"; then
     status=0
   else
     status=$?
   fi
+  result="${result//$'\r'/}"
   if [[ "$status" -ne 0 && ! ( "$status" -eq 1 && "$expected" == "no" ) ]]; then
     fail "auth can-i ${command_args}failed with status $status and output: $result"
   fi
