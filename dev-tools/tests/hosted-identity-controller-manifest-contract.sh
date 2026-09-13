@@ -179,6 +179,26 @@ for break_glass_marker in \
   "not a live admission probe"; do
   require_literal "$MANIFEST_DIR/README.md" "$break_glass_marker"
 done
+for prerequisite_break_glass_marker in \
+  "## Invalid-prerequisite break-glass pause" \
+  'FIREMUD_HOSTED_IDENTITY_TRUSTED_CONTEXT' \
+  "kubectl config current-context" \
+  "kubectl auth can-i get deployment.apps/firemud-hosted-identity-controller" \
+  "kubectl auth can-i patch deployment.apps/firemud-hosted-identity-controller" \
+  "gh attestation verify \"oci://\$controller_image\"" \
+  "--deny-self-hosted-runners" \
+  'kubectl -n firemud-system set env deployment/firemud-hosted-identity-controller' \
+  "FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE=paused" \
+  "kubectl -n firemud-system rollout status deployment/firemud-hosted-identity-controller" \
+  "[[ \"\$readback_image\" == \"\$controller_image\" ]]" \
+  "[[ \"\$readback_grpc_trust_anchor_sha256\" == \"\$grpc_trust_anchor_sha256\" ]]" \
+  "[[ \"\$readback_activation_mode\" == paused ]]" \
+  "repair or reprovision \`firemud-grpc-ca\`" \
+  "repair \`ghcr-preview-pull\`" \
+  "patches only \`FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE\`" \
+  "never authorizes deleting the Secret admission binding"; do
+  require_literal "$MANIFEST_DIR/README.md" "$prerequisite_break_glass_marker"
+done
 for pull_secret_marker in \
   "ghcr-preview-pull" \
   "ensure-ghcr-pull-secret.sh firemud-system" \
@@ -211,6 +231,41 @@ if any(position < 0 for position in positions) or positions != sorted(positions)
     raise SystemExit(
         "Secret admission break-glass recovery is missing its authorization-first, pause-first, "
         "repair, immediate restore, or configured-state-only ordering"
+    )
+PY
+python3 - "$MANIFEST_DIR/README.md" <<'PY'
+import sys
+from pathlib import Path
+
+readme = Path(sys.argv[1]).read_text(encoding="utf-8")
+prerequisite_break_glass = readme.split(
+    "## Invalid-prerequisite break-glass pause", maxsplit=1
+)[-1].split("## Secret admission break-glass recovery", maxsplit=1)[0]
+ordered_markers = [
+    "kubectl config current-context",
+    "kubectl auth whoami -o jsonpath=",
+    "| grep -Fx system:masters",
+    "kubectl auth can-i get deployment.apps/firemud-hosted-identity-controller",
+    "kubectl auth can-i patch deployment.apps/firemud-hosted-identity-controller",
+    'controller_image="$(kubectl',
+    'gh attestation verify "oci://$controller_image"',
+    'grpc_trust_anchor_sha256="$(kubectl',
+    "FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE=paused",
+    "rollout status deployment/firemud-hosted-identity-controller",
+    '[[ "$readback_image" == "$controller_image" ]]',
+    '[[ "$readback_grpc_trust_anchor_sha256" == "$grpc_trust_anchor_sha256" ]]',
+    '[[ "$readback_activation_mode" == paused ]]',
+    "repair or reprovision `firemud-grpc-ca`",
+    "repair `ghcr-preview-pull`",
+    "bootstrap-hosted-identity-controller.sh",
+    "--activation-mode paused",
+]
+positions = [prerequisite_break_glass.find(marker) for marker in ordered_markers]
+if any(position < 0 for position in positions) or positions != sorted(positions):
+    raise SystemExit(
+        "Invalid-prerequisite break-glass recovery is missing its context/auth checks, "
+        "attested configuration preservation, activation-only pause, exact readback, "
+        "prerequisite repair, or full paused-bootstrap ordering"
     )
 PY
 
@@ -1596,6 +1651,9 @@ first_cluster_write = source.index(
 )
 assert ca_verification < first_cluster_write
 assert source.count("\nverify_grpc_ca_prerequisite\n") == 1
+assert 'openssl_verify_help="$(LC_ALL=C openssl verify -help 2>&1)"' in source
+assert "<<<\"$openssl_verify_help\"" in source
+assert "openssl verify -help 2>&1 |" not in source
 assert (
     'expect_can_i yes --as="$controller_sa" --namespace="$CONTROL_NAMESPACE" \\\n'
     '  patch hostedenvironmentidentities.platform.firemud.dev'
@@ -1971,6 +2029,30 @@ if ! FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 PATH="$bootstrap_test_dir:$PATH"
   --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \
   >"$bootstrap_output" 2>"$bootstrap_error"; then
   fail "bootstrap rejected expected auth can-i no results: $(cat "$bootstrap_error")"
+fi
+require_literal "$bootstrap_output" "activation=paused"
+verbose_openssl_dir="$bootstrap_test_dir/verbose-openssl"
+mkdir -p "$verbose_openssl_dir"
+cat >"$verbose_openssl_dir/openssl" <<'SH'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+if [[ "${1:-}" == "verify" && "${2:-}" == "-help" ]]; then
+  printf '%s\n' 'Usage: verify [options]' ' -no-CAstore'
+  for ((line = 0; line < 20000; line++)); do
+    printf ' additional-help-line-%05d\n' "$line"
+  done
+  exit 0
+fi
+exec "$REAL_OPENSSL" "$@"
+SH
+chmod +x "$verbose_openssl_dir/openssl"
+if ! REAL_OPENSSL="$(command -v openssl)" \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$verbose_openssl_dir:$bootstrap_test_dir:$PATH" \
+  bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap rejected supported OpenSSL after reading verbose help: $(cat "$bootstrap_error")"
 fi
 require_literal "$bootstrap_output" "activation=paused"
 legacy_attestation_count="$(wc -l <"$attestation_log")"

@@ -121,16 +121,18 @@ namespace_guard_policy_manifest="$(mktemp)"
 namespace_guard_binding_manifest="$(mktemp)"
 
 verify_grpc_ca_prerequisite() {
-  command -v base64 >/dev/null 2>&1 || fail "base64 is required to validate the gRPC CA"
-  command -v openssl >/dev/null 2>&1 || fail "openssl is required to validate the gRPC CA"
-  command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required to validate the gRPC CA"
-  if ! LC_ALL=C openssl verify -help 2>&1 |
-    grep -Eq -- '(^|[[:space:]])-no-CAstore([[:space:]]|$)'; then
-    fail "openssl verify must support -no-CAstore to validate the gRPC CA"
-  fi
+  local openssl_verify_help
   local secret_type ca_keys encoded_certificate encoded_key actual_fingerprint
   local ca_basic_constraints ca_key_usage
   local certificate_public_key_sha256 private_key_public_key_sha256
+  command -v base64 >/dev/null 2>&1 || fail "base64 is required to validate the gRPC CA"
+  command -v openssl >/dev/null 2>&1 || fail "openssl is required to validate the gRPC CA"
+  command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required to validate the gRPC CA"
+  openssl_verify_help="$(LC_ALL=C openssl verify -help 2>&1)" || \
+    fail "openssl verify help could not be read to validate -no-CAstore support"
+  if ! grep -Eq -- '(^|[[:space:]])-no-CAstore([[:space:]]|$)' <<<"$openssl_verify_help"; then
+    fail "openssl verify must support -no-CAstore to validate the gRPC CA"
+  fi
   secret_type="$(kubectl -n "$CONTROL_NAMESPACE" get secret firemud-grpc-ca \
     -o jsonpath='{.type}' 2>/dev/null)" || fail "missing trusted firemud-system/firemud-grpc-ca prerequisite"
   [[ "$secret_type" == "Opaque" ]] || fail "firemud-grpc-ca must be an Opaque Secret"

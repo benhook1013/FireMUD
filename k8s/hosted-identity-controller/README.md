@@ -66,6 +66,84 @@ FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
 
 Supply the CA and registry values through the operator's secret mechanism; the placeholders above are sequencing documentation, not literal values. A missing or invalid CA prerequisite in any activation mode, or a missing, wrong-type, invalidly encoded, or credential-empty pull Secret, stops bootstrap before the namespace guard or controller Deployment is applied. Rotate the credential by rerunning the shared helper, then rerun paused bootstrap before considering `observe` or `active` mode.
 
+## Invalid-prerequisite break-glass pause
+
+Use this recovery only to stop an already deployed controller when either `firemud-system/firemud-grpc-ca` or `firemud-system/ghcr-preview-pull` is invalid and normal bootstrap therefore correctly refuses every cluster write. This procedure cannot install a missing controller. It is distinct from the Secret admission-boundary break-glass below: do not delete or modify any ValidatingAdmissionPolicy or ValidatingAdmissionPolicyBinding. From a trusted repository checkout, explicitly select the approved context, verify the authenticated identity and its `system:masters` membership, and verify read/patch authorization before changing the Deployment:
+
+```bash
+set -euo pipefail
+
+trusted_context="${FIREMUD_HOSTED_IDENTITY_TRUSTED_CONTEXT:?set the approved Kubernetes context}"
+current_context="$(kubectl config current-context)"
+[[ "$current_context" == "$trusted_context" ]] || {
+  echo "current Kubernetes context is not the explicitly approved context" >&2
+  exit 1
+}
+operator_identity="$(kubectl auth whoami -o jsonpath='{.status.userInfo.username}')"
+[[ -n "$operator_identity" ]] || {
+  echo "failed to read the current Kubernetes operator identity" >&2
+  exit 1
+}
+kubectl auth whoami -o jsonpath='{range .status.userInfo.groups[*]}{.}{"\n"}{end}' \
+  | grep -Fx system:masters >/dev/null
+kubectl auth can-i get deployment.apps/firemud-hosted-identity-controller \
+  --namespace firemud-system | grep -Fx yes >/dev/null
+kubectl auth can-i patch deployment.apps/firemud-hosted-identity-controller \
+  --namespace firemud-system | grep -Fx yes >/dev/null
+
+controller_image="$(kubectl -n firemud-system get deployment firemud-hosted-identity-controller -o jsonpath='{.spec.template.spec.containers[?(@.name=="controller")].image}')"
+[[ "$controller_image" =~ ^ghcr\.io/benhook1013/firemud-hosted-identity-controller@sha256:[0-9a-f]{64}$ ]] || {
+  echo "deployed controller image is not the approved digest-pinned repository" >&2
+  exit 1
+}
+attestation_verified=false
+for trusted_source_ref in refs/heads/develop refs/heads/main; do
+  if gh attestation verify "oci://$controller_image" \
+    --repo benhook1013/FireMUD \
+    --bundle-from-oci \
+    --signer-workflow github.com/benhook1013/FireMUD/.github/workflows/runtime-images.yml \
+    --source-ref "$trusted_source_ref" \
+    --cert-identity "https://github.com/benhook1013/FireMUD/.github/workflows/runtime-images.yml@$trusted_source_ref" \
+    --predicate-type https://slsa.dev/provenance/v1 \
+    --deny-self-hosted-runners >/dev/null 2>&1; then
+    attestation_verified=true
+    break
+  fi
+done
+[[ "$attestation_verified" == true ]] || {
+  echo "deployed controller image lacks trusted develop/main runtime-images.yml provenance" >&2
+  exit 1
+}
+grpc_trust_anchor_sha256="$(kubectl -n firemud-system get deployment firemud-hosted-identity-controller -o jsonpath='{.spec.template.spec.containers[?(@.name=="controller")].env[?(@.name=="FIREMUD_HOSTED_IDENTITY_GRPC_TRUST_ANCHOR_SHA256")].value}')"
+[[ "$grpc_trust_anchor_sha256" =~ ^[0-9a-f]{64}$ ]] || {
+  echo "deployed controller gRPC trust anchor is not a lowercase SHA-256 fingerprint" >&2
+  exit 1
+}
+
+kubectl -n firemud-system set env deployment/firemud-hosted-identity-controller \
+  FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE=paused
+kubectl -n firemud-system rollout status deployment/firemud-hosted-identity-controller --timeout=480s
+
+readback_image="$(kubectl -n firemud-system get deployment firemud-hosted-identity-controller -o jsonpath='{.spec.template.spec.containers[?(@.name=="controller")].image}')"
+readback_grpc_trust_anchor_sha256="$(kubectl -n firemud-system get deployment firemud-hosted-identity-controller -o jsonpath='{.spec.template.spec.containers[?(@.name=="controller")].env[?(@.name=="FIREMUD_HOSTED_IDENTITY_GRPC_TRUST_ANCHOR_SHA256")].value}')"
+readback_activation_mode="$(kubectl -n firemud-system get deployment firemud-hosted-identity-controller -o jsonpath='{.spec.template.spec.containers[?(@.name=="controller")].env[?(@.name=="FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE")].value}')"
+[[ "$readback_image" == "$controller_image" ]]
+[[ "$readback_grpc_trust_anchor_sha256" == "$grpc_trust_anchor_sha256" ]]
+[[ "$readback_activation_mode" == paused ]]
+```
+
+The `set env` command is the only cluster mutation in this pause procedure: it patches only `FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE`. If the rollout or any exact readback fails, treat the controller as not proven paused and do not weaken admission. Once the readback proves exactly paused, repair or reprovision `firemud-grpc-ca` through the trusted secret mechanism so it matches the preserved fingerprint, and repair `ghcr-preview-pull` with `ensure-ghcr-pull-secret.sh firemud-system`. Verify both prerequisites even when only one was reported invalid. Then, in the same trusted context, rerun the full bootstrap with the preserved image and trust anchor in paused mode:
+
+```bash
+FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  dev-tools/hosted/controller/bootstrap-hosted-identity-controller.sh \
+  --image "$controller_image" \
+  --grpc-trust-anchor-sha256 "$grpc_trust_anchor_sha256" \
+  --activation-mode paused
+```
+
+The normal paused bootstrap must complete before `observe` or `active` is considered. This prerequisite recovery never authorizes deleting the Secret admission binding; use the separate procedure below only when that binding itself blocks the reviewed repair.
+
 ## Secret admission break-glass recovery
 
 Use this recovery only when the `firemud-hosted-identity-secret-boundary` binding itself is incorrectly denying Secret writes needed to repair the hosted identity installation. From the repository root at a trusted commit, first select a trusted Kubernetes context and verify that the authenticated user belongs to `system:masters`. Only then reapply the currently deployed, attested controller image and configured gRPC trust anchor in `paused` mode. Bootstrap waits for that paused Deployment rollout; the final readback must also return exactly `paused` before admission state changes:
