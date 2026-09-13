@@ -1536,7 +1536,7 @@ for text_value in \
   'https://slsa.dev/provenance/v1' \
   '--repo' \
   '--signer-workflow' \
-  '--cert-identity' \
+  '--source-ref' \
   --server-side \
   --field-manager \
   'kubectl kustomize' \
@@ -1561,7 +1561,7 @@ assert "--deny-self-hosted-runners" in source[verify:]
 assert "--predicate-type" in source[verify:]
 assert "--repo" in source[verify:]
 assert "--signer-workflow" in source[verify:]
-assert "--cert-identity" in source[verify:]
+assert "--source-ref" in source[verify:]
 assert "@sha256:" in source[verify:]
 policy_apply = source.index('-f "$namespace_guard_policy_manifest"')
 binding_apply = source.index('-f "$namespace_guard_binding_manifest"', policy_apply)
@@ -2073,12 +2073,15 @@ for attestation_argument in \
   "--bundle-from-oci" \
   "--signer-workflow github.com/benhook1013/FireMUD/.github/workflows/runtime-images.yml" \
   "--source-ref refs/heads/develop" \
-  "--cert-identity https://github.com/benhook1013/FireMUD/.github/workflows/runtime-images.yml@refs/heads/develop" \
   "--predicate-type https://slsa.dev/provenance/v1" \
   "--deny-self-hosted-runners"; do
   [[ "$attestation_event" == *"$attestation_argument"* ]] || \
     fail "bootstrap attestation verification omitted $attestation_argument"
 done
+if [[ "$attestation_event" == *"--signer-workflow"* &&
+  "$attestation_event" == *"--cert-identity"* ]]; then
+  fail "bootstrap attestation verification combined mutually exclusive --cert-identity with --signer-workflow"
+fi
 develop_failure_events="$bootstrap_test_dir/develop-failure-events"
 if ! FAKE_ATTESTATION_DEVELOP_FAIL=1 FAKE_EVENT_LOG="$develop_failure_events" \
   FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 PATH="$bootstrap_test_dir:$PATH" \
