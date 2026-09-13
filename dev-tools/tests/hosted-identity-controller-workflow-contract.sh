@@ -213,8 +213,8 @@ done
 # shellcheck disable=SC2016 # These assertions intentionally match literal action source.
 for required in \
   'using: composite' \
-  "echo 'version=v3.20.1'" \
-  "echo 'sha256=0165ee4a2db012cc657381001e593e981f42aa5707acdd50658326790c9d0dc3'" \
+  "echo 'version=v3.20.2'" \
+  "echo 'sha256=258e830a9e613c8a7a302d6059b4bb3b9758f2f3e1bb8ea0d707ce10a9a72fea'" \
   'uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9' \
   'path: ${{ runner.temp }}/firemud-helm/${{ steps.pinned-release.outputs.version }}/helm.tar.gz' \
   'key: firemud-helm-${{ runner.os }}-${{ runner.arch }}-${{ steps.pinned-release.outputs.version }}-${{ steps.pinned-release.outputs.sha256 }}' \
