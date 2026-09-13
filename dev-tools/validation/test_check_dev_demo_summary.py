@@ -374,6 +374,19 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
                 ):
                     self.validator.validate_workflow(root)
 
+    def test_validate_workflow_accepts_not_equal_smoke_condition(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(
+                root,
+                self._bootstrap_manifest_fixture(),
+                smoke_condition=(
+                    "${{ success() && "
+                    "steps.cluster-access.outputs.available != 'true' }}"
+                ),
+            )
+            self.validator.validate_workflow(root)
+
     def test_validate_workflow_rejects_negated_smoke_success_guard(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

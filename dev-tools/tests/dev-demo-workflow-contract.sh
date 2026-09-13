@@ -371,7 +371,7 @@ if deploy_requester_cleanup.get("if") != (
     "${{ always() && steps.certificate-identity.outputs.mode == 'hosted-controller' }}"
 ):
     raise SystemExit(
-        "dev-demo deploy requester credential cleanup must run after failures only in hosted-controller mode"
+        "dev-demo deploy requester credential cleanup must always run in hosted-controller mode"
     )
 if deploy_requester_cleanup.get("run") != (
     'rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"'
@@ -447,7 +447,7 @@ smoke_match = re.fullmatch(
     r"\$\{\{\s*success\(\)\s*(?:(&&)\s*.+)?\s*\}\}",
     smoke_condition,
 )
-if smoke_match is None or "||" in smoke_condition or "!" in smoke_condition:
+if smoke_match is None or "||" in smoke_condition or re.search(r"!(?!=)", smoke_condition):
     raise SystemExit(
         "dev-demo smoke must use success() as a mandatory leading && guard"
     )

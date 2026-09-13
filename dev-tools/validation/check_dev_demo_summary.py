@@ -955,7 +955,7 @@ def _validate_smoke_condition(condition: object) -> None:
             "dev-demo TCP smoke must use success() as a mandatory leading && guard"
         )
     continuation = remainder[2:].strip()
-    if not continuation or "||" in continuation or "!" in body:
+    if not continuation or "||" in continuation or re.search(r"!(?!=)", body):
         raise AssertionError(
             "dev-demo TCP smoke must use success() as a mandatory leading && guard"
         )
