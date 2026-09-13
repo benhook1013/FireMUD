@@ -192,9 +192,11 @@ if deploy_by_name["Resolve certificate identity mode"] != expected_mode_step:
     raise SystemExit("dev-demo deploy must use the shared certificate identity action exactly")
 ordered = (
     "Check Hosted identity requester credentials",
+    "Require Hosted identity requester credentials",
     "Record exact dev-demo runtime target",
     "Write hosted identity requester kubeconfig",
     "Discover HostedEnvironmentIdentity API",
+    "Require HostedEnvironmentIdentity API",
     "Apply fixed dev-demo Active request",
     "Remove hosted identity requester kubeconfig",
     "Wait for all controller identity projections",
@@ -245,6 +247,15 @@ for required in (
 ):
     if required not in requester_check["run"]:
         raise SystemExit(f"dev-demo deploy requester credential guard lacks {required}")
+credential_requirement = deploy_by_name["Require Hosted identity requester credentials"]
+if "steps.requester-credentials.outputs.available != 'true'" not in credential_requirement.get("if", ""):
+    raise SystemExit("dev-demo deploy must fail when requester credentials are unavailable")
+if "Missing Hosted identity requester credentials" not in credential_requirement.get("run", ""):
+    raise SystemExit("dev-demo deploy requester credential failure lacks a specific diagnostic")
+if deploy_names.index("Require Hosted identity requester credentials") != deploy_names.index(
+    "Check Hosted identity requester credentials"
+) + 1:
+    raise SystemExit("dev-demo deploy must fail on missing requester credentials before runtime mutation")
 expected_deploy_identity_guard = (
     "${{ steps.cluster-access.outputs.available == 'true' && "
     "steps.certificate-identity.outputs.mode == 'hosted-controller' && "
@@ -260,6 +271,7 @@ if identity_api.get("env") != {
 }:
     raise SystemExit("dev-demo deploy API discovery does not use the requester kubeconfig")
 for required in (
+    "--discover-api",
     "kubectl api-resources",
     "--api-group=platform.firemud.dev",
     "--namespaced=true",
@@ -270,10 +282,24 @@ for required in (
     "expected_resource_count <= 1",
     "served=false",
     "served=true",
-    "API is not served",
 ):
-    if required not in identity_api["run"]:
-        raise SystemExit(f"dev-demo deploy API discovery lacks {required}")
+    if required not in requester:
+        raise SystemExit(f"shared HostedEnvironmentIdentity helper lacks {required}")
+if identity_api["run"] != (
+    'set -euo pipefail\n'
+    'bash ./dev-tools/hosted/shared/request-hosted-identity.sh --discover-api \\\n'
+    '  >> "$GITHUB_OUTPUT"\n'
+):
+    raise SystemExit("dev-demo deploy must use the shared API discovery helper")
+api_requirement = deploy_by_name["Require HostedEnvironmentIdentity API"]
+if "steps.identity-api.outputs.served != 'true'" not in api_requirement.get("if", ""):
+    raise SystemExit("dev-demo deploy must fail when the HostedEnvironmentIdentity API is absent")
+if "HostedEnvironmentIdentity API unavailable" not in api_requirement.get("run", ""):
+    raise SystemExit("dev-demo deploy API failure lacks a specific diagnostic")
+if deploy_names.index("Require HostedEnvironmentIdentity API") != deploy_names.index(
+    "Discover HostedEnvironmentIdentity API"
+) + 1:
+    raise SystemExit("dev-demo deploy must fail on absent API before requesting identity activation")
 readiness_run = deploy_by_name["Wait for exact dev-demo controller readiness"]["run"]
 if (
     'dev-demo "${{ needs.dev-demo-plan.outputs.head_sha }}" \\\n'
@@ -473,6 +499,7 @@ if destroy_identity_api.get("env") != {
 }:
     raise SystemExit("dev-demo destroy API discovery does not use the requester kubeconfig")
 for required in (
+    "--discover-api",
     "kubectl api-resources",
     "--api-group=platform.firemud.dev",
     "--namespaced=true",
@@ -483,10 +510,15 @@ for required in (
     "expected_resource_count <= 1",
     "served=false",
     "served=true",
-    "API is not served",
 ):
-    if required not in destroy_identity_api["run"]:
-        raise SystemExit(f"dev-demo destroy API discovery lacks {required}")
+    if required not in requester:
+        raise SystemExit(f"shared HostedEnvironmentIdentity helper lacks {required}")
+if destroy_identity_api["run"] != (
+    'set -euo pipefail\n'
+    'bash ./dev-tools/hosted/shared/request-hosted-identity.sh --discover-api \\\n'
+    '  >> "$GITHUB_OUTPUT"\n'
+):
+    raise SystemExit("dev-demo destroy must use the shared API discovery helper")
 destroy_requester_writer = destroy_by_name["Write hosted identity requester kubeconfig"]
 expected_destroy_requester_guard = (
     "${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && "

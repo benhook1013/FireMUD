@@ -432,6 +432,20 @@ contains "$dev_demo" '--projections dev-demo "${{ needs.dev-demo-plan.outputs.na
 contains "$dev_demo" 'wait-for-hosted-identity.sh'
 contains "$dev_demo" 'ensure-grpc-tls-secret.sh'
 contains "$dev_demo" "steps.certificate-identity.outputs.mode == 'standalone'"
+for required in \
+  '--discover-api' \
+  'kubectl api-resources' \
+  '--api-group=platform.firemud.dev' \
+  '--namespaced=true' \
+  '--cached=false' \
+  '-o name' \
+  'hostedenvironmentidentities.platform.firemud.dev' \
+  'malformed resource output' \
+  'expected_resource_count <= 1' \
+  'served=false' \
+  'served=true'; do
+  contains "$requester" "$required"
+done
 
 python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" "$janitor" "$mode_action" "$runtime" <<'PY'
 import os
@@ -1476,7 +1490,9 @@ operator_step = dev_demo_by_name["Validate controller-projected dev-demo identit
 assert operator_step["if"] == (
     "${{ steps.cluster-access.outputs.available == 'true' && "
     "steps.deploy-release.outcome == 'success' && "
-    "steps.certificate-identity.outputs.mode == 'hosted-controller' }}"
+    "steps.certificate-identity.outputs.mode == 'hosted-controller' && "
+    "steps.requester-credentials.outputs.available == 'true' && "
+    "steps.identity-api.outputs.served == 'true' }}"
 )
 operator_run = operator_step["run"]
 assert "FIREMUD_PREFLIGHT_CONTEXT=operator" in operator_run
@@ -1817,20 +1833,11 @@ assert identity_api["if"] == "${{ steps.requester-credentials.outputs.available 
 assert identity_api["env"] == {
     "KUBECONFIG": "${{ runner.temp }}/hosted-identity-requester.kubeconfig"
 }
-for required in (
-    "kubectl api-resources",
-    "--api-group=platform.firemud.dev",
-    "--namespaced=true",
-    "--cached=false",
-    "-o name",
-    "hostedenvironmentidentities.platform.firemud.dev",
-    "malformed resource output",
-    "expected_resource_count <= 1",
-    "served=false",
-    "served=true",
-    "API is not served",
-):
-    assert required in identity_api["run"], required
+assert identity_api["run"] == (
+    'set -euo pipefail\n'
+    'bash ./dev-tools/hosted/shared/request-hosted-identity.sh --discover-api \\\n'
+    '  >> "$GITHUB_OUTPUT"\n'
+)
 revalidate_cleanup = retire_by_name[
     "Revalidate preview cleanup target before identity retirement"
 ]
