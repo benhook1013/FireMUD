@@ -964,6 +964,25 @@ with open(sys.argv[2], "w", encoding="utf-8") as destination:
     json.dump(payload, destination)
 PY
 
+python3 - "$TMP_DIR/review-not-finished.json" "$TMP_DIR/review-failed.json" <<'PY'
+import json
+import sys
+
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    payload = json.load(source)
+payload["data"]["repository"]["pullRequest"]["comments"]["nodes"].append(
+    {
+        "author": {"login": "coderabbitai"},
+        "body": "The full review failed because of an internal error.",
+        "createdAt": "2026-07-03T02:40:05Z",
+        "url": "https://example.test/review-failed",
+    }
+)
+with open(sys.argv[2], "w", encoding="utf-8") as destination:
+    json.dump(payload, destination)
+PY
+
 EXPECT_FAILURE_STATUS=0
 
 expect_failure_output() {
@@ -1073,6 +1092,12 @@ grep -q "retrigger_review_allowed=false" "$TMP_DIR/review-not-finished.out"
 grep -q "manual_thread_resolution_required=false" "$TMP_DIR/review-not-finished.out"
 grep -q "reason=no substantive CodeRabbit review summary found after the latest explicit review request" "$TMP_DIR/review-not-finished.out"
 
+expect_failure_output "$TMP_DIR/review-failed.json" "$TMP_DIR/review-failed.out"
+[[ $EXPECT_FAILURE_STATUS -ne 0 ]]
+grep -q "latest_review_request_failed=true" "$TMP_DIR/review-failed.out"
+grep -q "retrigger_review_allowed=true" "$TMP_DIR/review-failed.out"
+grep -q "reason=latest explicit CodeRabbit review request failed" "$TMP_DIR/review-failed.out"
+
 expect_failure_output "$TMP_DIR/review-command-noop.json" "$TMP_DIR/review-command-noop.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]
 grep -q "review_finished_after_latest_request=false" "$TMP_DIR/review-command-noop.out"
@@ -1092,7 +1117,7 @@ grep -q "manual_thread_resolution_required=false" "$TMP_DIR/review-rate-limited.
 expect_failure_output "$TMP_DIR/edited-review-rate-limited.json" "$TMP_DIR/edited-review-rate-limited.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]
 grep -q "latest_review_request_rate_limited=true" "$TMP_DIR/edited-review-rate-limited.out"
-grep -q "review_rate_limit_until=2099-07-03T03:16:05+00:00" "$TMP_DIR/edited-review-rate-limited.out"
+grep -q "review_rate_limit_until=2099-07-03T03:16:01+00:00" "$TMP_DIR/edited-review-rate-limited.out"
 grep -q "retrigger_review_allowed=false" "$TMP_DIR/edited-review-rate-limited.out"
 
 python3 - "$TMP_DIR" <<'PY'
@@ -1132,7 +1157,7 @@ grep -q "ok=true" <<<"$inline_window_output"
 expect_failure_output "$TMP_DIR/marker-quoted-window-rate-limit.json" "$TMP_DIR/marker-quoted-window-rate-limit.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]
 grep -q "latest_review_request_rate_limited=true" "$TMP_DIR/marker-quoted-window-rate-limit.out"
-grep -q "review_rate_limit_until=2099-07-03T03:16:05+00:00" "$TMP_DIR/marker-quoted-window-rate-limit.out"
+grep -q "review_rate_limit_until=2099-07-03T03:16:01+00:00" "$TMP_DIR/marker-quoted-window-rate-limit.out"
 
 substantive_quoted_rate_limit_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/substantive-quoted-rate-limit.json")"
 grep -q "latest_review_request_rate_limited=false" <<<"$substantive_quoted_rate_limit_output"
