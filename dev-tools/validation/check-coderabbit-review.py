@@ -40,14 +40,15 @@ REVIEW_LIMIT_MARKER = (
     "<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->"
 )
 REVIEW_LIMIT_STATUS_PATTERN = re.compile(
-    r"^[ \t]*(?:[*_`#-]+[ \t]*)*review\s+rate\s+limited\b", re.IGNORECASE
+    r"^[ \t]*(?:[*_`#-]+[ \t]*)*review\s+rate\s+limited\b",
+    re.IGNORECASE | re.MULTILINE,
 )
 REVIEW_LIMIT_COMPLETE_MESSAGE_PATTERN = re.compile(
     r"^[ \t]*(?:full\s+review\s+finished\.\s*)?"
     r"(?:(?:your\s+)?next\s+(?:included\s+)?reviews?\s+(?:will\s+be\s+)?available\s+in"
     r"|more\s+reviews\s+will\s+be\s+available\s+in"
     r"|next\s+review\s+available\s+in)\b",
-    re.IGNORECASE,
+    re.IGNORECASE | re.MULTILINE,
 )
 REVIEW_LIMIT_WINDOW_PATTERN = re.compile(
     r"(?:(?:your\s+)?next\s+(?:included\s+)?reviews?\s+(?:will\s+be\s+)?available\s+in"
