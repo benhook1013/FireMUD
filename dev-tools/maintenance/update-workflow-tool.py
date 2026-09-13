@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
+import tempfile
 import urllib.request
 from pathlib import Path
 
@@ -29,6 +31,13 @@ def replace(text: str, key: str, value: str) -> str:
     if count != 1:
         raise SystemExit(f"expected exactly one {key} assignment")
     return updated
+
+
+def atomic_write(path: Path, text: str) -> None:
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+        handle.write(text)
+        temporary = Path(handle.name)
+    os.replace(temporary, path)
 
 
 def main() -> None:
@@ -58,14 +67,15 @@ def main() -> None:
     stem = CHECKSUM_STEMS[prefix]
     authority = replace(authority, f"{stem}_CHECKSUM_VERSION", args.version)
     authority = replace(authority, f"{stem}_SHA256", matches[0])
-    args.authority.write_text(authority, encoding="utf-8")
-
+    manifest = None
     if args.tool == "velero":
         manifest = args.velero_manifest.read_text(encoding="utf-8")
         manifest, count = re.subn(r"image: velero/velero:v\d+\.\d+\.\d+", f"image: velero/velero:v{args.version}", manifest)
         if count != 1:
             raise SystemExit("expected one Velero image projection")
-        args.velero_manifest.write_text(manifest, encoding="utf-8")
+    atomic_write(args.authority, authority)
+    if manifest is not None:
+        atomic_write(args.velero_manifest, manifest)
 
 
 if __name__ == "__main__":
