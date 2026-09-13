@@ -1487,27 +1487,14 @@ def validate_metadata(
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv if argv is None else argv
     command = args[1] if len(args) > 1 else None
-    if command == "sanitize":
-        if len(args) != 4:
-            print(
-                "usage: validate-preview-artifact.py sanitize <render> <output>",
-                file=sys.stderr,
-            )
-            return 2
+    if command == "sanitize" and len(args) == 4:
         try:
             sanitize(Path(args[2]), Path(args[3]))
         except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:
             print(f"preview artifact rejected: {exc}", file=sys.stderr)
             return 1
         return 0
-    if command == "inject":
-        if len(args) != 6:
-            print(
-                "usage: validate-preview-artifact.py inject "
-                "<render> <output> <namespace> <port>",
-                file=sys.stderr,
-            )
-            return 2
+    if command == "inject" and len(args) == 6:
         try:
             inject_telnet_port(
                 source=Path(args[2]),
@@ -1519,14 +1506,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"preview Telnet port injection rejected: {exc}", file=sys.stderr)
             return 1
         return 0
-    if command == "runtime-target":
-        if len(args) != 5:
-            print(
-                "usage: validate-preview-artifact.py runtime-target "
-                "<render> <namespace> <port>",
-                file=sys.stderr,
-            )
-            return 2
+    if command == "runtime-target" and len(args) == 5:
         try:
             validate_runtime_target(Path(args[2]), args[3], int(args[4]))
         except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:

@@ -1800,6 +1800,12 @@ for explicit_result_flow in (
     'validate_diagnostic_jwks "$signing_key_sha256" "$jwt_jwks_json"',
 ):
     assert explicit_result_flow in credential_source_text, explicit_result_flow
+assert credential_source_text.count('decode_secret_key ') == 7
+assert credential_source_text.count('" || return 1') >= 7
+assert credential_source_text.count('load_firemud_secret "$firemud_secret_json" || exit 1') == 2
+assert credential_source_text.count('load_minio_secret "$minio_secret_json" || exit 1') == 2
+assert credential_source_text.count('load_jwt_signing_secret "$jwt_signing_secret_json" || exit 1') == 2
+assert 'report_existing_secret_rejection "$secret_name" "key ${key} is empty or malformed"' in credential_source_text
 for ambient_result_flow in (
     "if read_secret_if_present",
     "if read_configmap_if_present",
@@ -2620,6 +2626,75 @@ run_credential_step() {
     RUNNER_TEMP="$state_dir" \
     bash "$credential_script" >"$output" 2>"$error"
 }
+
+credential_function_library="$TEMP_DIR/provision-runtime-credential-functions.sh"
+awk '/^firemud_secret_exists=false$/ { exit } { print }' \
+  "$credential_script" >"$credential_function_library"
+valid_postgres_user="$(printf firemud | base64 --wrap=0)"
+valid_access_key="$(printf strong-access | base64 --wrap=0)"
+valid_secret_key="$(printf strong-secret | base64 --wrap=0)"
+conditional_firemud_json="$(
+  jq -nc \
+    --arg user "$valid_postgres_user" \
+    --arg password '%%%' \
+    --arg access "$valid_access_key" \
+    --arg secret "$valid_secret_key" \
+    '{apiVersion:"v1",kind:"Secret",metadata:{name:"firemud-secret",namespace:"pr-42"},type:"Opaque",data:{FIREMUD_POSTGRES_USER:$user,FIREMUD_POSTGRES_PASSWORD:$password,ASSET_STORE_ACCESS_KEY:$access,ASSET_STORE_SECRET_KEY:$secret}}'
+)"
+conditional_minio_json="$(
+  jq -nc \
+    --arg access '%%%' \
+    --arg secret "$valid_secret_key" \
+    '{apiVersion:"v1",kind:"Secret",metadata:{name:"minio-credentials",namespace:"pr-42"},type:"Opaque",data:{accessKey:$access,secretKey:$secret}}'
+)"
+conditional_jwt_json="$(
+  jq -nc \
+    --arg key '%%%' \
+    '{apiVersion:"v1",kind:"Secret",metadata:{name:"jwt-signing-keys",namespace:"pr-42"},type:"Opaque",data:{"current.key":$key}}'
+)"
+
+assert_loader_rejects_in_conditional() {
+  local loader="$1"
+  local secret_json="$2"
+  local secret_name="$3"
+  local state_dir="$credential_state_root/conditional-${loader}"
+  local output="$TEMP_DIR/conditional-${loader}.output"
+  local error="$TEMP_DIR/conditional-${loader}.error"
+  local status
+  mkdir -p "$state_dir"
+  # shellcheck disable=SC2016 # The child shell expands the explicitly exported fixture values.
+  if env \
+    PATH="$credential_stub_dir:$PATH" \
+    RUNTIME_NAMESPACE=pr-42 \
+    RUNNER_TEMP="$state_dir" \
+    CREDENTIAL_FUNCTION_LIBRARY="$credential_function_library" \
+    LOADER="$loader" \
+    SECRET_JSON="$secret_json" \
+    bash -c '
+      source "$CREDENTIAL_FUNCTION_LIBRARY"
+      if "$LOADER" "$SECRET_JSON"; then
+        exit 0
+      fi
+      exit 42
+    ' >"$output" 2>"$error"; then
+    echo "$loader accepted a malformed secret in conditional context" >&2
+    exit 1
+  else
+    status=$?
+  fi
+  if [[ "$status" -ne 42 ]]; then
+    echo "$loader did not propagate its decode status to the conditional caller" >&2
+    exit 1
+  fi
+  grep -Fq "Existing Secret pr-42/${secret_name} is invalid" "$error"
+}
+
+assert_loader_rejects_in_conditional \
+  load_firemud_secret "$conditional_firemud_json" firemud-secret
+assert_loader_rejects_in_conditional \
+  load_minio_secret "$conditional_minio_json" minio-credentials
+assert_loader_rejects_in_conditional \
+  load_jwt_signing_secret "$conditional_jwt_json" jwt-signing-keys
 
 assert_credential_files_removed() {
   local state_dir="$1"

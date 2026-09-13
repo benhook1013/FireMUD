@@ -847,35 +847,43 @@ class PreviewArtifactCommandLineTest(unittest.TestCase):
                         f"could not load trusted chart metadata: {chart_metadata}\n",
                     )
 
-    def test_subcommand_wrong_arity_reports_subcommand_usage(self):
-        cases = (
-            (
-                "sanitize",
-                "usage: validate-preview-artifact.py sanitize <render> <output>\n",
-            ),
-            (
-                "inject",
-                (
-                    "usage: validate-preview-artifact.py inject "
-                    "<render> <output> <namespace> <port>\n"
-                ),
-            ),
-            (
-                "runtime-target",
-                (
-                    "usage: validate-preview-artifact.py runtime-target "
-                    "<render> <namespace> <port>\n"
-                ),
-            ),
-        )
-        for command, expected_usage in cases:
+    def test_subcommand_names_with_wrong_arity_report_general_usage(self):
+        for command in ("sanitize", "inject", "runtime-target"):
             stderr = io.StringIO()
             with (
                 self.subTest(command=command),
                 redirect_stderr(stderr),
             ):
                 self.assertEqual(self.validator.main([str(SCRIPT), command]), 2)
-            self.assertEqual(stderr.getvalue(), expected_usage)
+            self.assertTrue(
+                stderr.getvalue().startswith(
+                    "usage: validate-preview-artifact.py <metadata> <manifest>"
+                )
+            )
+
+    def test_subcommand_named_metadata_paths_use_default_validation(self):
+        for metadata_path in ("sanitize", "inject", "runtime-target"):
+            argv = [
+                str(SCRIPT),
+                metadata_path,
+                "manifest.yaml",
+                "example/FireMUD",
+                "123",
+                "42",
+                "a" * 40,
+                "b" * 40,
+                "c" * 40,
+                "head-tag",
+                "pr-42.preview.example.test",
+            ]
+            with (
+                self.subTest(metadata_path=metadata_path),
+                patch.object(self.validator, "validate_metadata") as validate_metadata,
+            ):
+                self.assertEqual(self.validator.main(argv), 0)
+                validate_metadata.assert_called_once_with(
+                    Path(metadata_path), Path("manifest.yaml"), *argv[3:]
+                )
 
 
 class PreviewArtifactConfigMapSanitizerTest(unittest.TestCase):

@@ -137,85 +137,51 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       scopeService.ensure(client, plan);
       CertificateMaterialService.MaterializationBatch materialization =
           certificateMaterialService.beginMaterialization(client, plan);
-
-      CertificateMaterialService.RoleMaterial ingress = materialization.ingress();
-      if (!ingress.ready()) {
-        return status(
-            resource,
-            HostedEnvironmentIdentityStatus.Phase.WaitingForCertificate,
-            ingress.state().statusValue(),
-            ingress.state().statusValue(),
-            false,
-            runtimeProfile,
-            RoleMaterials.of(ingress));
-      }
-      validateSourceProgress(ingress, previousRole(resource, HostedIdentityContract.INGRESS_ROLE));
-      CertificateMaterialService.RoleMaterial telnet = materialization.telnet();
-      if (!telnet.ready()) {
-        return status(
-            resource,
-            HostedEnvironmentIdentityStatus.Phase.WaitingForCertificate,
-            telnet.state().statusValue(),
-            telnet.state().statusValue(),
-            false,
-            runtimeProfile,
-            RoleMaterials.of(ingress, telnet));
-      }
-      validateSourceProgress(telnet, previousRole(resource, HostedIdentityContract.TELNET_ROLE));
-      CertificateMaterialService.RoleMaterial gatewayInternalWs =
-          materialization.gatewayInternalWs();
-      if (!gatewayInternalWs.ready()) {
-        return status(
-            resource,
-            HostedEnvironmentIdentityStatus.Phase.WaitingForCertificate,
-            gatewayInternalWs.state().statusValue(),
-            gatewayInternalWs.state().statusValue(),
-            false,
-            runtimeProfile,
-            RoleMaterials.of(ingress, telnet, gatewayInternalWs));
-      }
-      validateSourceProgress(
-          gatewayInternalWs,
-          previousRole(resource, HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE));
-      CertificateMaterialService.RoleMaterial tcpProxyBridge = materialization.tcpProxyBridge();
-      if (!tcpProxyBridge.ready()) {
-        return status(
-            resource,
-            HostedEnvironmentIdentityStatus.Phase.WaitingForCertificate,
-            tcpProxyBridge.state().statusValue(),
-            tcpProxyBridge.state().statusValue(),
-            false,
-            runtimeProfile,
-            RoleMaterials.of(ingress, telnet, gatewayInternalWs, tcpProxyBridge));
-      }
-      validateSourceProgress(
-          tcpProxyBridge, previousRole(resource, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE));
       Long acceptedGrpcGeneration =
           resource.getStatus() == null || resource.getStatus().getGrpc() == null
               ? null
               : resource.getStatus().getGrpc().getSourceGeneration();
-      CertificateMaterialService.RoleMaterial grpc = materialization.grpc(acceptedGrpcGeneration);
-      if (!grpc.ready()) {
-        return status(
-            resource,
-            HostedEnvironmentIdentityStatus.Phase.WaitingForCertificate,
-            grpc.state().statusValue(),
-            grpc.state().statusValue(),
-            false,
-            runtimeProfile,
-            RoleMaterials.of(ingress, telnet, gatewayInternalWs, tcpProxyBridge, grpc));
-      }
-      validateSourceProgress(grpc, previousRole(resource, HostedIdentityContract.GRPC_ROLE));
-      validateDistinctIdentities(ingress, telnet, gatewayInternalWs, tcpProxyBridge, grpc);
-
-      List<RoleMaterialBinding> rolePipeline =
+      List<RoleMaterialRequest> materialRequests =
           List.of(
-              new RoleMaterialBinding(HostedIdentityContract.INGRESS_ROLE, ingress),
-              new RoleMaterialBinding(HostedIdentityContract.TELNET_ROLE, telnet),
-              new RoleMaterialBinding(
-                  HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE, gatewayInternalWs),
-              new RoleMaterialBinding(HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE, tcpProxyBridge),
-              new RoleMaterialBinding(HostedIdentityContract.GRPC_ROLE, grpc));
+              new RoleMaterialRequest(
+                  HostedIdentityContract.INGRESS_ROLE, materialization::ingress),
+              new RoleMaterialRequest(HostedIdentityContract.TELNET_ROLE, materialization::telnet),
+              new RoleMaterialRequest(
+                  HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE,
+                  materialization::gatewayInternalWs),
+              new RoleMaterialRequest(
+                  HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE, materialization::tcpProxyBridge),
+              new RoleMaterialRequest(
+                  HostedIdentityContract.GRPC_ROLE,
+                  () -> materialization.grpc(acceptedGrpcGeneration)));
+      List<RoleMaterialBinding> rolePipeline = new ArrayList<>();
+      for (RoleMaterialRequest request : materialRequests) {
+        CertificateMaterialService.RoleMaterial material = request.material().get();
+        rolePipeline.add(new RoleMaterialBinding(request.role(), material));
+        if (!material.ready()) {
+          return status(
+              resource,
+              HostedEnvironmentIdentityStatus.Phase.WaitingForCertificate,
+              material.state().statusValue(),
+              material.state().statusValue(),
+              false,
+              runtimeProfile,
+              RoleMaterials.ofBindings(rolePipeline));
+        }
+        validateSourceProgress(material, previousRole(resource, request.role()));
+      }
+      RoleMaterials roleMaterials = RoleMaterials.ofBindings(rolePipeline);
+      CertificateMaterialService.RoleMaterial ingress =
+          roleMaterials.material(HostedIdentityContract.INGRESS_ROLE);
+      CertificateMaterialService.RoleMaterial telnet =
+          roleMaterials.material(HostedIdentityContract.TELNET_ROLE);
+      CertificateMaterialService.RoleMaterial gatewayInternalWs =
+          roleMaterials.material(HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE);
+      CertificateMaterialService.RoleMaterial tcpProxyBridge =
+          roleMaterials.material(HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE);
+      CertificateMaterialService.RoleMaterial grpc =
+          roleMaterials.material(HostedIdentityContract.GRPC_ROLE);
+      validateDistinctIdentities(ingress, telnet, gatewayInternalWs, tcpProxyBridge, grpc);
       Map<String, SecretProjectionService.ProjectionResult> projections = new LinkedHashMap<>();
       for (RoleMaterialBinding binding : rolePipeline) {
         SecretProjectionService.ProjectionResult projection =
@@ -452,6 +418,9 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
   record ReadinessStatus(
       HostedEnvironmentIdentityStatus.Phase phase, String reason, String message, boolean ready) {}
 
+  private record RoleMaterialRequest(
+      String role, Supplier<CertificateMaterialService.RoleMaterial> material) {}
+
   private record RoleMaterialBinding(
       String role, CertificateMaterialService.RoleMaterial material) {
     private RoleMaterialBinding {
@@ -488,6 +457,13 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
         }
       }
       return new RoleMaterials(materialsByRole);
+    }
+
+    private static RoleMaterials ofBindings(List<RoleMaterialBinding> bindings) {
+      return of(
+          bindings.stream()
+              .map(RoleMaterialBinding::material)
+              .toArray(CertificateMaterialService.RoleMaterial[]::new));
     }
 
     private CertificateMaterialService.RoleMaterial material(String role) {

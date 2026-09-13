@@ -1,5 +1,6 @@
 package net.firedevops.firemud.hostedidentity.reconcile;
 
+import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.CERTIFICATE_PENDING;
 import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SERIALIZED_DEFERRED;
 import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SERIALIZED_DEFERRED_DRIFT;
 import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SOURCE_READY;
@@ -297,6 +298,33 @@ class HostedIdentityReconcilerSafetyTest {
             anyString(),
             any());
     verifyNoInteractions(aligned.probes);
+  }
+
+  @Test
+  void materializationPipelineStopsAtFirstPendingRoleAndRetainsReadyPredecessors() {
+    DeploymentHeadGateFixture fixture =
+        new DeploymentHeadGateFixture(
+            new RuntimeProfileService.RuntimeProfile(
+                "uid", "a".repeat(40), "a".repeat(40), 32016, true));
+    when(fixture.batch.telnet())
+        .thenReturn(
+            new CertificateMaterialService.RoleMaterial(
+                HostedIdentityContract.TELNET_ROLE, null, null, 0, 0, "", CERTIFICATE_PENDING));
+
+    UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
+
+    HostedEnvironmentIdentityStatus status = result.getResource().orElseThrow().getStatus();
+    assertEquals(HostedEnvironmentIdentityStatus.Phase.WaitingForCertificate, status.getPhase());
+    assertEquals("certificate-pending", status.getConditions().get(0).getReason());
+    assertEquals("1".repeat(64), status.getIngress().getSpkiSha256());
+    assertNull(status.getTelnet());
+    var orderedMaterialization = inOrder(fixture.batch);
+    orderedMaterialization.verify(fixture.batch).ingress();
+    orderedMaterialization.verify(fixture.batch).telnet();
+    verify(fixture.batch, never()).gatewayInternalWs();
+    verify(fixture.batch, never()).tcpProxyBridge();
+    verify(fixture.batch, never()).grpc(any());
+    verifyNoInteractions(fixture.projections, fixture.rollout, fixture.probes);
   }
 
   @Test

@@ -45,10 +45,13 @@ write_credential_file() {
   printf '%s' "$value" >"$credential_files_dir/$file_name"
   chmod 600 "$credential_files_dir/$file_name"
 }
-reject_existing_secret() {
+report_existing_secret_rejection() {
   local secret_name="$1"
   local reason="$2"
   echo "::error::Existing Secret ${RUNTIME_NAMESPACE}/${secret_name} is invalid (${reason}). Recycle the disposable preview namespace before retrying; credentials were not changed." >&2
+}
+reject_existing_secret() {
+  report_existing_secret_rejection "$@"
   exit 1
 }
 reject_secret_create_failure() {
@@ -108,18 +111,18 @@ decode_secret_key() {
   local key="$2"
   local secret_json="$3"
   local encoded_value decoded_secret_value canonical_encoded_value
-  # Callers use assignment command substitutions: rejection exits that subshell,
-  # and the failed assignment reaches the caller's set -e.
   if ! encoded_value="$(jq -er --arg key "$key" '.data[$key] | select(type == "string" and length > 0)' <<<"$secret_json")" ||
     ! decoded_secret_value="$(printf '%s' "$encoded_value" | base64 --decode 2>/dev/null)" ||
     [[ -z "$decoded_secret_value" ]]; then
-    reject_existing_secret "$secret_name" "key ${key} is empty or malformed"
+    report_existing_secret_rejection "$secret_name" "key ${key} is empty or malformed"
+    return 1
   fi
   # Bash command substitution strips trailing newlines and cannot preserve NUL bytes;
   # canonical re-encoding therefore rejects those decoded values as well as noncanonical Base64.
   canonical_encoded_value="$(printf '%s' "$decoded_secret_value" | base64 --wrap=0)"
   if [[ "$canonical_encoded_value" != "$encoded_value" ]]; then
-    reject_existing_secret "$secret_name" "key ${key} is empty or malformed"
+    report_existing_secret_rejection "$secret_name" "key ${key} is empty or malformed"
+    return 1
   fi
   printf '%s' "$decoded_secret_value"
 }
@@ -163,13 +166,13 @@ load_firemud_secret() {
   validate_secret_shape firemud-secret \
     '["FIREMUD_POSTGRES_USER","FIREMUD_POSTGRES_PASSWORD","ASSET_STORE_ACCESS_KEY","ASSET_STORE_SECRET_KEY"]' \
     "$secret_json"
-  postgres_user="$(decode_secret_key firemud-secret FIREMUD_POSTGRES_USER "$secret_json")"
+  postgres_user="$(decode_secret_key firemud-secret FIREMUD_POSTGRES_USER "$secret_json")" || return 1
   if [[ "$postgres_user" != firemud ]]; then
     reject_existing_secret firemud-secret "PostgreSQL user is not canonical"
   fi
-  postgres_password="$(decode_secret_key firemud-secret FIREMUD_POSTGRES_PASSWORD "$secret_json")"
-  asset_store_access_key="$(decode_secret_key firemud-secret ASSET_STORE_ACCESS_KEY "$secret_json")"
-  asset_store_secret_key="$(decode_secret_key firemud-secret ASSET_STORE_SECRET_KEY "$secret_json")"
+  postgres_password="$(decode_secret_key firemud-secret FIREMUD_POSTGRES_PASSWORD "$secret_json")" || return 1
+  asset_store_access_key="$(decode_secret_key firemud-secret ASSET_STORE_ACCESS_KEY "$secret_json")" || return 1
+  asset_store_secret_key="$(decode_secret_key firemud-secret ASSET_STORE_SECRET_KEY "$secret_json")" || return 1
   if [[ "$postgres_password" == firemud ||
     "$asset_store_access_key" == minio ||
     "$asset_store_secret_key" == minio123 ]]; then
@@ -179,8 +182,8 @@ load_firemud_secret() {
 load_minio_secret() {
   local secret_json="$1"
   validate_secret_shape minio-credentials '["accessKey","secretKey"]' "$secret_json"
-  minio_access_key="$(decode_secret_key minio-credentials accessKey "$secret_json")"
-  minio_secret_key="$(decode_secret_key minio-credentials secretKey "$secret_json")"
+  minio_access_key="$(decode_secret_key minio-credentials accessKey "$secret_json")" || return 1
+  minio_secret_key="$(decode_secret_key minio-credentials secretKey "$secret_json")" || return 1
   if [[ "$minio_access_key" == minio || "$minio_secret_key" == minio123 ]]; then
     reject_existing_secret minio-credentials "legacy weak credential value"
   fi
@@ -188,7 +191,7 @@ load_minio_secret() {
 load_jwt_signing_secret() {
   local secret_json="$1"
   validate_secret_shape jwt-signing-keys '["current.key"]' "$secret_json"
-  signing_key="$(decode_secret_key jwt-signing-keys current.key "$secret_json")"
+  signing_key="$(decode_secret_key jwt-signing-keys current.key "$secret_json")" || return 1
   if [[ ! "$signing_key" =~ ^[0-9a-f]{64}$ ]]; then
     reject_existing_secret jwt-signing-keys "current.key is not canonical"
   fi
@@ -204,14 +207,14 @@ firemud_secret_exists=false
 firemud_secret_json="$(read_secret_if_present firemud-secret)"
 if [[ -n "$firemud_secret_json" ]]; then
   firemud_secret_exists=true
-  load_firemud_secret "$firemud_secret_json"
+  load_firemud_secret "$firemud_secret_json" || exit 1
 fi
 
 minio_secret_exists=false
 minio_secret_json="$(read_secret_if_present minio-credentials)"
 if [[ -n "$minio_secret_json" ]]; then
   minio_secret_exists=true
-  load_minio_secret "$minio_secret_json"
+  load_minio_secret "$minio_secret_json" || exit 1
 fi
 
 if [[ "$firemud_secret_exists" == true && "$minio_secret_exists" == true ]]; then
@@ -222,7 +225,7 @@ jwt_signing_secret_exists=false
 jwt_signing_secret_json="$(read_secret_if_present jwt-signing-keys)"
 if [[ -n "$jwt_signing_secret_json" ]]; then
   jwt_signing_secret_exists=true
-  load_jwt_signing_secret "$jwt_signing_secret_json"
+  load_jwt_signing_secret "$jwt_signing_secret_json" || exit 1
 fi
 
 jwt_jwks_exists=false
@@ -283,7 +286,7 @@ if [[ "$firemud_secret_exists" != true ]]; then
     --from-file="ASSET_STORE_SECRET_KEY=${credential_files_dir}/ASSET_STORE_SECRET_KEY"; then
     firemud_secret_json="$(read_secret_if_present firemud-secret)" || exit 1
     [[ -n "$firemud_secret_json" ]] || reject_secret_create_failure firemud-secret
-    load_firemud_secret "$firemud_secret_json"
+    load_firemud_secret "$firemud_secret_json" || exit 1
     if [[ "$minio_secret_exists" != true ]]; then
       minio_access_key="$asset_store_access_key"
       minio_secret_key="$asset_store_secret_key"
@@ -299,7 +302,7 @@ if [[ "$minio_secret_exists" != true ]]; then
     --from-file="secretKey=${credential_files_dir}/secretKey"; then
     minio_secret_json="$(read_secret_if_present minio-credentials)" || exit 1
     [[ -n "$minio_secret_json" ]] || reject_secret_create_failure minio-credentials
-    load_minio_secret "$minio_secret_json"
+    load_minio_secret "$minio_secret_json" || exit 1
   fi
   minio_secret_exists=true
 fi
@@ -309,7 +312,7 @@ if [[ "$jwt_signing_secret_exists" != true ]]; then
     --from-file="current.key=${credential_files_dir}/current.key"; then
     jwt_signing_secret_json="$(read_secret_if_present jwt-signing-keys)" || exit 1
     [[ -n "$jwt_signing_secret_json" ]] || reject_secret_create_failure jwt-signing-keys
-    load_jwt_signing_secret "$jwt_signing_secret_json"
+    load_jwt_signing_secret "$jwt_signing_secret_json" || exit 1
     signing_key_sha256="$(printf '%s' "$signing_key" | sha256sum | awk '{print $1}')"
     diagnostic_jwks="$(jq -nc --arg fingerprint "$signing_key_sha256" \
       '{keys:[],firemudDiagnostic:{purpose:"shared-hmac-secret-path-fingerprint",sha256:$fingerprint}}')"
