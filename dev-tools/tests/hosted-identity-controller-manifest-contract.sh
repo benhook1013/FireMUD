@@ -213,6 +213,8 @@ from pathlib import Path
 readme = Path(sys.argv[1]).read_text(encoding="utf-8")
 break_glass = readme.split("## Secret admission break-glass recovery", maxsplit=1)[-1]
 ordered_markers = [
+    "If either `firemud-system/firemud-grpc-ca` or `firemud-system/ghcr-preview-pull` is missing or invalid",
+    "successful paused-mode readback and prerequisite repair",
     "kubectl auth whoami -o jsonpath=",
     "| grep -Fx system:masters",
     "bootstrap-hosted-identity-controller.sh",

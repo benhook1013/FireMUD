@@ -147,6 +147,8 @@ The normal paused bootstrap must complete before `observe` or `active` is consid
 
 Use this recovery only when the `firemud-hosted-identity-secret-boundary` binding itself is incorrectly denying Secret writes needed to repair the hosted identity installation. From the repository root at a trusted commit, first select a trusted Kubernetes context and verify that the authenticated user belongs to `system:masters`. Only then reapply the currently deployed, attested controller image and configured gRPC trust anchor in `paused` mode. Bootstrap waits for that paused Deployment rollout; the final readback must also return exactly `paused` before admission state changes:
 
+If either `firemud-system/firemud-grpc-ca` or `firemud-system/ghcr-preview-pull` is missing or invalid, complete the preceding Invalid-prerequisite break-glass pause, including its successful paused-mode readback and prerequisite repair, before returning to this sequence. A bootstrap that exits before any write cannot justify removing this binding. When both prerequisites already validate, retain the normal paused bootstrap below and require its successful rollout and readback before removing the binding.
+
 ```bash
 set -euo pipefail
 
