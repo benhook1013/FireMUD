@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -68,7 +69,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 
-public class SecretMaterialValidatorTest {
+class SecretMaterialValidatorTest {
   static {
     if (Security.getProvider("BC") == null) {
       Security.addProvider(new BouncyCastleProvider());
@@ -112,7 +113,7 @@ public class SecretMaterialValidatorTest {
     assertArrayEquals(rootSubjectKeyIdentifier, authorityKeyIdentifier(leaf));
     assertFalse(java.util.Arrays.equals(rootSubjectKeyIdentifier, leafSubjectKeyIdentifier));
     var subjectAlternativeNames = leaf.getSubjectAlternativeNames();
-    assertTrue(subjectAlternativeNames != null);
+    assertNotNull(subjectAlternativeNames);
     assertTrue(
         subjectAlternativeNames.stream()
             .allMatch(
@@ -293,14 +294,14 @@ public class SecretMaterialValidatorTest {
     Secret source = generatedGrpcBundle(plan);
     Map<String, String> missingLeafData = new LinkedHashMap<>(source.getData());
     missingLeafData.remove("tls.crt");
-    source.setData(missingLeafData);
+    Secret missingLeaf = new SecretBuilder(source).withData(missingLeafData).build();
 
     IllegalStateException failure =
         assertThrows(
             IllegalStateException.class,
             () ->
                 GrpcTransportBundleGenerator.renewalRequired(
-                    source, Duration.ofDays(7), Instant.now()));
+                    missingLeaf, Duration.ofDays(7), Instant.now()));
 
     assertEquals("gRPC source has invalid leaf certificate", failure.getMessage());
     assertEquals(
@@ -1430,28 +1431,9 @@ public class SecretMaterialValidatorTest {
     return new SecretBuilder(bundle).withData(data).build();
   }
 
-  /** Compile-time test seam for cross-package probe coverage of generated transport material. */
-  public static final class GrpcMaterialFixture {
-    private GrpcMaterialFixture() {}
-
-    public static Secret generate(EnvironmentIdentityPlan plan) {
-      return generatedGrpcBundle(plan);
-    }
-  }
-
   private static Secret generatedGrpcBundle(EnvironmentIdentityPlan plan) {
-    try {
-      Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
-      Secret caSource = generatedCa(now, Duration.ofDays(60));
-      String trustAnchor = SecretMaterialValidator.trustAnchorFingerprint(caSource);
-      GrpcTransportBundleGenerator.validateCa(caSource, trustAnchor);
-      return new GrpcTransportBundleGenerator()
-          .generate(plan, caSource, 1, Duration.ofDays(7), now);
-    } catch (Exception exception) {
-      throw new AssertionError("unable to create configured-CA gRPC test fixture", exception);
-    }
+    return GrpcMaterialFixture.generate(plan);
   }
-
   private static X509Certificate certificate(String encoded) throws Exception {
     return (X509Certificate)
         CertificateFactory.getInstance("X.509")

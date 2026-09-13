@@ -170,7 +170,6 @@ jobs:
           KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh \
             "$RUNNER_TEMP/dev-demo-runtime.kubeconfig")"
           bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
-          echo "DEV_DEMO_RUNTIME_KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Verify cluster access
@@ -816,7 +815,7 @@ jobs:
 
       - name: Smoke dev-demo over TCP
         id: smoke
-        if: ${{ !cancelled() && success() && steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
+        if: ${{ success() && steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
         env:
           PREVIEW_BASE_URL: https://${{ needs.dev-demo-plan.outputs.hostname }}
           SMOKE_TELNET_HOST: ${{ needs.dev-demo-plan.outputs.hostname }}
@@ -833,7 +832,7 @@ jobs:
           fi
 
       - name: Summarize dev-demo access
-        if: ${{ success() && steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' && steps.smoke.outcome == 'success' }}
+        if: ${{ success() && steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
         run: |
           bash ./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh \
             success \

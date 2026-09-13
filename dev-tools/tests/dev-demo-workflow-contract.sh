@@ -228,7 +228,6 @@ if (
     raise SystemExit("dev-demo readiness wait does not use the derived runtime namespace")
 runtime_kubeconfig = deploy_by_name["Write dev-demo runtime kubeconfig"]
 for required in (
-    'DEV_DEMO_RUNTIME_KUBECONFIG=$KUBECONFIG_PATH',
     'KUBECONFIG=$KUBECONFIG_PATH',
 ):
     if required not in runtime_kubeconfig["run"]:
@@ -309,12 +308,18 @@ for bare_assertion in (
 ):
     if bare_assertion in runtime_target_run or bare_assertion in deployed_head_step["run"]:
         raise SystemExit(f"dev-demo validation retained opaque assertion {bare_assertion}")
-if "success()" not in deploy_by_name["Smoke dev-demo over TCP"].get("if", ""):
+smoke_condition = deploy_by_name["Smoke dev-demo over TCP"].get("if", "")
+if "success()" not in smoke_condition:
     raise SystemExit("dev-demo smoke must not bypass an earlier identity/preflight failure")
+if "!cancelled()" in smoke_condition:
+    raise SystemExit("dev-demo smoke redundantly combines !cancelled() with success()")
 success_condition = deploy_by_name["Summarize dev-demo access"].get("if", "")
-for required in ("success()", "steps.smoke.outcome == 'success'"):
-    if required not in success_condition:
-        raise SystemExit(f"dev-demo success publication lacks {required}")
+expected_success_condition = (
+    "${{ success() && steps.cluster-access.outputs.available == 'true' && "
+    "steps.deploy-release.outcome == 'success' }}"
+)
+if success_condition != expected_success_condition:
+    raise SystemExit("dev-demo success publication condition is not minimal and fail-closed")
 
 destroy_steps = workflow["jobs"]["dev-demo-destroy"]["steps"]
 destroy_by_name = {step.get("name"): step for step in destroy_steps if isinstance(step, dict)}
@@ -508,6 +513,7 @@ for required in (
     "max_failed_attempts=3",
     "max_unaligned_completed_attempts=3",
     "max_history_pages=10",
+    "page_size_limit=100",
     'failed_attempts >= max_failed_attempts',
     "Dev-demo retry budget exhausted",
     "automatic redispatch is stopped",
@@ -521,7 +527,7 @@ for required in (
     "Dev-demo history bootstrap invalid",
     "bootstrap_failed_attempts",
     "bootstrap_exact_run_count",
-    'if (( bootstrap_page_size < 100 )); then',
+    'if (( bootstrap_page_size < page_size_limit )); then',
     'if (( bootstrap_exact_run_count == 0 )); then',
     'history_not_before="1970-01-01T00:00:00Z"',
     "retained history is complete and dispatch may proceed",
@@ -532,7 +538,7 @@ for required in (
     "refusing a history-blind dispatch",
     "-f event=push",
     "-F branch=develop",
-    "-F per_page=100",
+    '-F "per_page=${page_size_limit}"',
     '.status != "completed"',
     ".head_sha == $head",
     ".display_title == $title",
@@ -551,6 +557,8 @@ for required in (
         raise SystemExit(f"dev-demo reconciler lacks {required}")
 if "repair_requested_head_if_aligned" in reconcile_run:
     raise SystemExit("dev-demo requested-head repair retained its misleading old name")
+if reconcile_run.count("page_size < page_size_limit") != 3:
+    raise SystemExit("dev-demo reconciler does not use one page-size limit for every short-page check")
 aligned_guard = 'if [[ "${current_head_sha}" == "${desired_head_sha}" ]]; then'
 if reconcile_run.index(aligned_guard) > reconcile_run.index("develop_push_run="):
     raise SystemExit("dev-demo alignment must short-circuit before retry history is consumed")

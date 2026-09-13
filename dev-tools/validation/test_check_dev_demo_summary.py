@@ -70,7 +70,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
         root: Path,
         bootstrap_manifest: str,
         summary_run: str = 'echo "safe summary" >> "$GITHUB_STEP_SUMMARY"',
-        smoke_condition: str = "${{ !cancelled() }}",
+        smoke_condition: str = "${{ success() }}",
     ) -> None:
         workflow = {
             "jobs": {
@@ -354,17 +354,17 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             ):
                 self.validator.validate_workflow(root)
 
-    def test_validate_workflow_rejects_smoke_condition_without_cancellation_guard(self):
+    def test_validate_workflow_rejects_redundant_smoke_cancellation_guard(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(
                 root,
                 self._bootstrap_manifest_fixture(),
-                smoke_condition="${{ success() }}",
+                smoke_condition="${{ !cancelled() && success() }}",
             )
             with self.assertRaisesRegex(
                 AssertionError,
-                "dev-demo TCP smoke must still run after a non-cancellation bootstrap failure",
+                r"dev-demo TCP smoke must not redundantly combine !cancelled\(\) with success\(\)",
             ):
                 self.validator.validate_workflow(root)
 

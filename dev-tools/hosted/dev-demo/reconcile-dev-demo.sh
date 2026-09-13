@@ -48,6 +48,7 @@ fi
 max_failed_attempts=3
 max_unaligned_completed_attempts=3
 max_history_pages=10
+page_size_limit=100
 expected_deploy_title="Develop Dev Demo Environment deploy head-${desired_head_sha}"
 workflow_runs_api="repos/${GITHUB_REPOSITORY}/actions/workflows/dev-demo.yml/runs"
 declare -A run_page_cache=()
@@ -63,7 +64,7 @@ list_run_page() {
     --method GET
     "${workflow_runs_api}"
     -F branch=develop
-    -F per_page=100
+    -F "per_page=${page_size_limit}"
     -F "page=${page}"
   )
   local page_body
@@ -145,7 +146,7 @@ if [[ -z "$history_not_before" ]]; then
       bootstrap_complete=true
       break
     fi
-    if (( bootstrap_page_size < 100 )); then
+    if (( bootstrap_page_size < page_size_limit )); then
       bootstrap_complete=true
       break
     fi
@@ -184,7 +185,7 @@ while (( page <= max_history_pages )); do
     break
   fi
   page_size="$(jq -r '.workflow_runs | length' <<<"${run_page}")"
-  if (( page_size < 100 )); then
+  if (( page_size < page_size_limit )); then
     break
   fi
   oldest_page_created_at="$(jq -r '.workflow_runs[-1].created_at // empty' <<<"${run_page}")"
@@ -253,7 +254,7 @@ while (( page <= max_history_pages )); do
     break
   fi
   page_size="$(jq -r '.workflow_runs | length' <<<"${run_page}")"
-  if (( page_size < 100 )); then
+  if (( page_size < page_size_limit )); then
     break
   fi
   oldest_page_created_at="$(jq -r '.workflow_runs[-1].created_at // empty' <<<"${run_page}")"

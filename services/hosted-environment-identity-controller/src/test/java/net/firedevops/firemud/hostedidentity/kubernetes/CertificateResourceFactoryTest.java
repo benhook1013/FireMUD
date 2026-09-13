@@ -1,4 +1,4 @@
-package net.firedevops.firemud.hostedidentity.security;
+package net.firedevops.firemud.hostedidentity.kubernetes;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -10,8 +10,8 @@ import java.time.Duration;
 import java.util.Map;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
-import net.firedevops.firemud.hostedidentity.kubernetes.CertificateResourceFactory;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
+import net.firedevops.firemud.hostedidentity.security.EnvironmentIdentityPlanner;
 import org.junit.jupiter.api.Test;
 
 class CertificateResourceFactoryTest {
@@ -105,16 +105,12 @@ class CertificateResourceFactoryTest {
   }
 
   @Test
-  void certificateFactoryHasNoGrpcCertificateFactoryMethod() {
+  void certificateFactoryPublicSurfaceContainsOnlyMaterialFactories() {
     var declaredMethods =
         java.util.Arrays.stream(CertificateResourceFactory.class.getDeclaredMethods())
             .filter(method -> !method.isSynthetic())
             .toList();
 
-    assertTrue(
-        declaredMethods.stream()
-            .noneMatch(
-                method -> method.getName().toLowerCase(java.util.Locale.ROOT).contains("grpc")));
     assertEquals(
         java.util.Set.of("ingress", "telnet", "gatewayInternalWs", "tcpProxyBridge"),
         declaredMethods.stream()
