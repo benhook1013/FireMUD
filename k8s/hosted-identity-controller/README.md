@@ -152,6 +152,12 @@ If either `firemud-system/firemud-grpc-ca` or `firemud-system/ghcr-preview-pull`
 ```bash
 set -euo pipefail
 
+trusted_context="${FIREMUD_HOSTED_IDENTITY_TRUSTED_CONTEXT:?set the approved Kubernetes context}"
+current_context="$(kubectl config current-context)"
+[[ "$current_context" == "$trusted_context" ]] || {
+  echo "current Kubernetes context is not the explicitly approved context" >&2
+  exit 1
+}
 kubectl auth whoami -o jsonpath='{range .status.userInfo.groups[*]}{.}{"\n"}{end}' \
   | grep -Fx system:masters >/dev/null
 controller_image="$(kubectl -n firemud-system get deployment firemud-hosted-identity-controller -o jsonpath='{.spec.template.spec.containers[?(@.name=="controller")].image}')"

@@ -215,6 +215,9 @@ break_glass = readme.split("## Secret admission break-glass recovery", maxsplit=
 ordered_markers = [
     "If either `firemud-system/firemud-grpc-ca` or `firemud-system/ghcr-preview-pull` is missing or invalid",
     "successful paused-mode readback and prerequisite repair",
+    'trusted_context="${FIREMUD_HOSTED_IDENTITY_TRUSTED_CONTEXT:?set the approved Kubernetes context}"',
+    'current_context="$(kubectl config current-context)"',
+    '[[ "$current_context" == "$trusted_context" ]] || {',
     "kubectl auth whoami -o jsonpath=",
     "| grep -Fx system:masters",
     "bootstrap-hosted-identity-controller.sh",

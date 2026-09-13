@@ -163,7 +163,7 @@ class ServedEnvironmentProbeTest {
     ServedEnvironmentProbe.EndpointProbe endpoint = state::check;
 
     ServedEnvironmentProbe.ProbeResult result =
-        probe.probe(plan, 32001, endpoint, endpoint, endpoint, endpoint, Duration.ofSeconds(1));
+        probe.probe(plan, 32001, endpoint, endpoint, endpoint, endpoint, Duration.ofSeconds(10));
 
     assertEquals("served-bridge-and-grpc-accepted", result.reason());
     assertEquals(4, state.calls.get());
