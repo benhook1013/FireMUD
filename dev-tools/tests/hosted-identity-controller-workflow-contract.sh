@@ -1784,12 +1784,55 @@ retirement_wait = next(
     if step.get("name") == "Observe terminal retirement and delete request"
 )
 assert '--retired "$IDENTITY_NAME" 600' in retirement_wait
+requester_credentials = retire_by_name["Check Hosted identity requester credentials"]
+assert requester_credentials["id"] == "requester-credentials"
+assert requester_credentials["env"] == {
+    "REQUESTER_KUBECONFIG": "${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}"
+}
+for required in (
+    '[[ -z "$REQUESTER_KUBECONFIG" ]]',
+    'available=false',
+    'available=true',
+    "skipping identity retirement",
+):
+    assert required in requester_credentials["run"]
+requester_writer = retire_by_name["Write requester kubeconfig"]
+assert requester_writer["if"] == "${{ steps.requester-credentials.outputs.available == 'true' }}"
+assert requester_writer["with"]["export-to-github-env"] == "false"
+identity_api = retire_by_name["Discover HostedEnvironmentIdentity API"]
+assert identity_api["id"] == "identity-api"
+assert identity_api["if"] == "${{ steps.requester-credentials.outputs.available == 'true' }}"
+assert identity_api["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/hosted-identity-requester.kubeconfig"
+}
+for required in (
+    "kubectl api-resources",
+    "--api-group=platform.firemud.dev",
+    "--namespaced=true",
+    "--cached=false",
+    "-o name",
+    "hostedenvironmentidentities.platform.firemud.dev",
+    "malformed resource output",
+    "expected_resource_count <= 1",
+    "served=false",
+    "served=true",
+    "API is not served",
+):
+    assert required in identity_api["run"], required
+revalidate_cleanup = retire_by_name[
+    "Revalidate preview cleanup target before identity retirement"
+]
+assert revalidate_cleanup["if"] == "${{ steps.identity-api.outputs.served == 'true' }}"
 identity_existence = next(
     step
     for step in jobs["retire-identity"]["steps"]
     if step.get("name") == "Check HostedEnvironmentIdentity existence before retirement"
 )
 assert identity_existence["id"] == "identity-existence"
+assert identity_existence["if"] == "${{ steps.identity-api.outputs.served == 'true' }}"
+assert identity_existence["env"]["KUBECONFIG"] == (
+    "${{ runner.temp }}/hosted-identity-requester.kubeconfig"
+)
 assert '--ignore-not-found -o json' in identity_existence["run"]
 assert 'exists=false' in identity_existence["run"]
 assert 'exists=true' in identity_existence["run"]
@@ -1797,7 +1840,13 @@ for step_name in ("Apply canonical Retired request", "Observe terminal retiremen
     gated_step = next(
         step for step in jobs["retire-identity"]["steps"] if step.get("name") == step_name
     )
-    assert gated_step["if"] == "${{ steps.identity-existence.outputs.exists == 'true' }}"
+    assert gated_step["if"] == (
+        "${{ steps.identity-api.outputs.served == 'true' && "
+        "steps.identity-existence.outputs.exists == 'true' }}"
+    )
+    assert gated_step["env"]["KUBECONFIG"] == (
+        "${{ runner.temp }}/hosted-identity-requester.kubeconfig"
+    )
 retired_request = next(
     step
     for step in jobs["retire-identity"]["steps"]
