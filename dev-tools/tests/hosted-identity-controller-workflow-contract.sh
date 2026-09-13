@@ -188,13 +188,31 @@ controller_steps_by_name = {
 }
 controller_checkout = controller_steps_by_name["Checkout PR merge"]
 assert controller_checkout["with"]["persist-credentials"] is False
+buildx_step = controller_steps_by_name["Set up Docker Buildx"]
 base_step = controller_steps_by_name["Build exact local runtime base image"]
 build_step = controller_steps_by_name[
     "Build controller image for credential-free local validation"
 ]
 smoke_step = controller_steps_by_name["Smoke controller image entrypoint and paused health"]
+assert controller_steps.index(buildx_step) < controller_steps.index(base_step)
 assert controller_steps.index(base_step) < controller_steps.index(build_step) < controller_steps.index(smoke_step)
-assert base_step["run"] == 'docker build --file docker/base.Dockerfile --tag "$BASE_IMAGE" .'
+assert buildx_step["uses"] == (
+    "docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5"
+)
+assert base_step["uses"] == (
+    "docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf"
+)
+assert base_step["with"] == {
+    "context": ".",
+    "file": "docker/base.Dockerfile",
+    "push": False,
+    "load": True,
+    "tags": "${{ env.BASE_IMAGE }}",
+    "cache-from": "type=gha,scope=pr-controller-smoke",
+    "cache-to": "type=gha,mode=max,scope=pr-controller-smoke",
+}
+assert "docker/login-action@" not in str(controller_job)
+assert "GITHUB_TOKEN" not in str(controller_job)
 assert '--build-arg BASE_IMAGE="$BASE_IMAGE"' in build_step["run"]
 smoke_run = smoke_step["run"]
 assert smoke_run == (
