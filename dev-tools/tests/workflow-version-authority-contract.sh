@@ -143,6 +143,18 @@ for manager in renovate['customManagers']:
  pattern=re.compile(manager['matchStrings'][0].replace('(?<','(?P<'))
  matched += [m.group('currentValue') for m in pattern.finditer(ap.read_text())]
 if set(matched)!={a[f'{x}_VERSION'] for x in versions}: fail('Renovate does not discover every workflow tool authority')
+rules=renovate.get('packageRules',[])
+infra_rule=next((rule for rule in rules if rule.get('groupName')=='infrastructure non-major updates'),None)
+velero_rule=next((rule for rule in rules if rule.get('description')=='Production Velero image changes require promotion evidence'),None)
+if infra_rule is None or velero_rule is None or rules.index(velero_rule)<=rules.index(infra_rule):
+ fail('production Velero Renovate exception must follow infrastructure automerge')
+if velero_rule.get('matchManagers')!=['kubernetes'] \
+ or velero_rule.get('matchFileNames')!=['k8s/velero/verify-backups-cronjob.yaml'] \
+ or velero_rule.get('matchPackageNames')!=['velero/velero'] \
+ or velero_rule.get('pinDigests') is not False \
+ or velero_rule.get('automerge') is not False \
+ or velero_rule.get('enabled') is not False:
+ fail('production Velero Renovate exception must disable automated digest projection and merge')
 
 proto=(root/'gradle/proto-convention.gradle').read_text()
 if 'protobuf-gradle-plugin 0.10.0' in proto or 'libs.plugins.protobuf' not in proto or '${gradle.gradleVersion}' not in proto: fail('protobuf diagnostic must derive both canonical versions')
