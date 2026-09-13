@@ -75,18 +75,22 @@ import yaml
 workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
 publisher_workflow = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
 image_meta = workflow["jobs"]["image-meta"]
+assert image_meta["outputs"]["runtime_smoke_required"] == (
+    "${{ steps.smoke_scope.outputs.runtime_smoke_required }}"
+)
 assert image_meta["outputs"]["controller_smoke_required"] == (
-    "${{ steps.controller_scope.outputs.controller_smoke_required }}"
+    "${{ steps.smoke_scope.outputs.controller_smoke_required }}"
 )
 assert image_meta["permissions"]["pull-requests"] == "read"
-controller_scope = next(
+smoke_scope = next(
     step
     for step in image_meta["steps"]
-    if step.get("name") == "Detect controller image changes"
+    if step.get("name") == "Detect PR smoke scopes"
 )
-assert controller_scope["id"] == "controller_scope"
-controller_scope_script = controller_scope["with"]["script"]
+assert smoke_scope["id"] == "smoke_scope"
+smoke_scope_script = smoke_scope["with"]["script"]
 for required in (
+    "let runtimeSmokeRequired = true;",
     "let controllerSmokeRequired = true;",
     "github.rest.pulls.listFiles",
     "context.payload.pull_request.changed_files",
@@ -95,11 +99,30 @@ for required in (
     "docker/base.Dockerfile",
     "dev-tools/hosted/controller/smoke-paused-controller-image.sh",
     ".github/workflows/runtime-images.yml",
-    "Controller change detection was incomplete; running its local smoke.",
-    "Controller change detection failed; running its local smoke:",
+    "PR smoke scope detection was incomplete; running both local smokes.",
+    "PR smoke scope detection failed; running both local smokes:",
+    'core.setOutput("runtime_smoke_required", String(runtimeSmokeRequired))',
     'core.setOutput("controller_smoke_required", String(controllerSmokeRequired))',
 ):
-    assert required in controller_scope_script, required
+    assert required in smoke_scope_script, required
+
+runtime_scope_script = smoke_scope_script[
+    smoke_scope_script.index("const runtimePrefixes"):
+    smoke_scope_script.index("const controllerPrefixes")
+]
+for runtime_service in (
+    "services/account-service/",
+    "services/game-session-service/",
+    "services/tcp-proxy-service/",
+):
+    assert runtime_service in runtime_scope_script
+assert "services/hosted-environment-identity-controller/" not in runtime_scope_script
+
+controller_scope_script = smoke_scope_script[
+    smoke_scope_script.index("const controllerPrefixes"):
+    smoke_scope_script.index("runtimeSmokeRequired = paths.some")
+]
+assert "services/hosted-environment-identity-controller/" in controller_scope_script
 for unrelated_service in (
     "services/account-service/",
     "services/game-session-service/",
@@ -107,32 +130,51 @@ for unrelated_service in (
 ):
     assert unrelated_service not in controller_scope_script
 
-steps = workflow["jobs"]["pr-local-smoke"]["steps"]
-steps_by_name = {
-    step.get("name"): step for step in steps if isinstance(step, dict)
+runtime_job = workflow["jobs"]["pr-local-smoke"]
+assert "needs.image-meta.outputs.runtime_smoke_required == 'true'" in runtime_job["if"]
+runtime_steps = runtime_job["steps"]
+runtime_steps_by_name = {
+    step.get("name"): step for step in runtime_steps if isinstance(step, dict)
 }
-build_step = steps_by_name["Build controller image for credential-free local validation"]
-smoke_step = steps_by_name["Smoke controller image entrypoint and paused health"]
-export_step = steps_by_name["Export fixed-tag preview image artifact"]
-upload_step = steps_by_name["Upload preview image artifact"]
-assert steps.index(build_step) < steps.index(smoke_step) < steps.index(export_step)
-controller_condition = (
-    "${{ needs.image-meta.outputs.controller_smoke_required == 'true' }}"
-)
-assert build_step["if"] == controller_condition
-assert smoke_step["if"] == controller_condition
+export_step = runtime_steps_by_name["Export fixed-tag preview image artifact"]
+upload_step = runtime_steps_by_name["Upload preview image artifact"]
+assert "Build controller image for credential-free local validation" not in runtime_steps_by_name
+assert "Smoke controller image entrypoint and paused health" not in runtime_steps_by_name
 assert "if" not in export_step
 assert "if" not in upload_step
-assert smoke_step["env"]["CONTROLLER_IMAGE"] == (
+
+controller_job = workflow["jobs"]["pr-controller-smoke"]
+assert controller_job["needs"] == ["image-meta"]
+assert "needs.image-meta.outputs.controller_smoke_required == 'true'" in (
+    controller_job["if"]
+)
+assert controller_job["permissions"] == {"contents": "read"}
+assert controller_job["env"]["BASE_IMAGE"] == "${{ needs.image-meta.outputs.base_image }}"
+assert controller_job["env"]["CONTROLLER_IMAGE"] == (
     "firemud-hosted-identity-controller-local:"
     "${{ needs.image-meta.outputs.image_tag }}"
 )
+controller_steps = controller_job["steps"]
+controller_steps_by_name = {
+    step.get("name"): step for step in controller_steps if isinstance(step, dict)
+}
+controller_checkout = controller_steps_by_name["Checkout PR merge"]
+assert controller_checkout["with"]["persist-credentials"] is False
+base_step = controller_steps_by_name["Build exact local runtime base image"]
+build_step = controller_steps_by_name[
+    "Build controller image for credential-free local validation"
+]
+smoke_step = controller_steps_by_name["Smoke controller image entrypoint and paused health"]
+assert controller_steps.index(base_step) < controller_steps.index(build_step) < controller_steps.index(smoke_step)
+assert base_step["run"] == 'docker build --file docker/base.Dockerfile --tag "$BASE_IMAGE" .'
+assert '--build-arg BASE_IMAGE="$BASE_IMAGE"' in build_step["run"]
 smoke_run = smoke_step["run"]
 assert smoke_run == (
     "set -euo pipefail\n"
     "bash ./dev-tools/hosted/controller/smoke-paused-controller-image.sh "
     '"$CONTROLLER_IMAGE" >/dev/null\n'
 )
+assert "actions/upload-artifact@" not in str(controller_job)
 export_run = export_step["run"]
 assert "hosted-environment-identity-controller" not in export_run
 assert "account-service" in export_run
