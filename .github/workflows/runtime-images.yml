@@ -39,6 +39,7 @@ on:
       - 'dev-tools/build-local-smoke-images.sh'
       - 'dev-tools/certs/generate-dev-certs.sh'
       - 'dev-tools/hosted/controller/smoke-paused-controller-image.sh'
+      - 'dev-tools/smoke/**'
       - 'dev-tools/verify-compose-health.sh'
       - 'dev-tools/verify-fresh-bootstrap.sh'
       - 'dev-tools/verify-restart-state.sh'
@@ -128,26 +129,9 @@ jobs:
                   const runtimePrefixes = [
                     "buildSrc/",
                     "docker/",
+                    "dev-tools/smoke/",
                     "gradle/",
                     "protos/",
-                    "services/account-service/",
-                    "services/automation-scripting-service/",
-                    "services/common-data-runtime/",
-                    "services/common-library/",
-                    "services/common-platform-core/",
-                    "services/common-saga/",
-                    "services/common-security/",
-                    "services/common-test-support/",
-                    "services/common-web-support/",
-                    "services/entity-management-service/",
-                    "services/game-design-service/",
-                    "services/game-logic-service/",
-                    "services/game-session-service/",
-                    "services/logging-admin-service/",
-                    "services/social-groups-service/",
-                    "services/spring-cloud-gateway/",
-                    "services/tcp-proxy-service/",
-                    "services/world-management-service/",
                   ];
                   const runtimeFiles = new Set([
                     ".dockerignore",
@@ -187,7 +171,11 @@ jobs:
                   runtimeSmokeRequired = paths.some(
                     (path) =>
                       runtimeFiles.has(path) ||
-                      runtimePrefixes.some((prefix) => path.startsWith(prefix))
+                      runtimePrefixes.some((prefix) => path.startsWith(prefix)) ||
+                      (path.startsWith("services/") &&
+                        !path.startsWith(
+                          "services/hosted-environment-identity-controller/"
+                        ))
                   );
                   controllerSmokeRequired = paths.some(
                     (path) =>
@@ -600,7 +588,7 @@ jobs:
   pr-local-smoke:
     name: PR Full-Stack Smoke
     needs: [image-meta]
-    if: ${{ github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.image-meta.outputs.runtime_smoke_required == 'true' }}
+    if: ${{ github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -624,6 +612,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up canonical Python
+        if: ${{ needs.image-meta.outputs.runtime_smoke_required == 'true' }}
         uses: ./.github/actions/setup-python
         with:
           requirements: smoke
@@ -646,6 +635,7 @@ jobs:
         run: bash ./dev-tools/build-local-smoke-images.sh "${SMOKE_IMAGE_TAG}"
 
       - name: Run credential-free full-stack smoke
+        if: ${{ needs.image-meta.outputs.runtime_smoke_required == 'true' }}
         run: bash ./dev-tools/verify-smoke-images.sh
 
       - name: Export fixed-tag preview image artifact
@@ -689,19 +679,19 @@ jobs:
           ARTIFACT_NAME: pr-runtime-images-${{ needs.image-meta.outputs.image_tag }}
         run: |
           {
-            echo "### PR runtime images and full-stack smoke"
+            echo "### PR runtime images and applicable full-stack smoke"
             echo
             echo "- Pull request: #${PR_NUMBER}"
             echo "- Base SHA: \`${BASE_SHA}\`"
             echo "- PR head SHA and fixed publication tag: \`${HEAD_SHA}\`"
-            echo "- Built and smoke-tested PR merge SHA: \`${MERGE_SHA}\`"
+            echo "- Built PR merge SHA (full-stack smoke runs when required): \`${MERGE_SHA}\`"
             echo "- Artifact: \`${ARTIFACT_NAME}\`"
             echo
-            echo "This read-only PR workflow built and smoke-tested the PR merge commit. The trusted default-branch publisher uploads the preview service images in that successful artifact under the fixed PR head-SHA tag used by preview deployment."
+            echo "This read-only PR workflow built the PR merge commit and runs full-stack smoke when required by change scope. The trusted default-branch publisher uploads the preview service images in that successful artifact under the fixed PR head-SHA tag used by preview deployment."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Dump Docker Compose logs on failure
-        if: failure()
+        if: ${{ failure() && needs.image-meta.outputs.runtime_smoke_required == 'true' }}
         run: |
           docker compose \
             -f docker/docker-compose.yml \
@@ -710,7 +700,7 @@ jobs:
             logs || true
 
       - name: Stop smoke stack
-        if: always()
+        if: ${{ always() && needs.image-meta.outputs.runtime_smoke_required == 'true' }}
         run: |
           source ./dev-tools/smoke/run-owned-compose.sh
           if ! stop_run_owned_compose_project \
@@ -759,8 +749,19 @@ jobs:
           build-scan-terms-of-use-agree: 'yes'
           cache-read-only: true
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5
+
       - name: Build exact local runtime base image
-        run: docker build --file docker/base.Dockerfile --tag "$BASE_IMAGE" .
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf
+        with:
+          context: .
+          file: docker/base.Dockerfile
+          push: false
+          load: true
+          tags: ${{ env.BASE_IMAGE }}
+          cache-from: type=gha,scope=pr-controller-smoke
+          cache-to: type=gha,mode=max,scope=pr-controller-smoke
 
       - name: Build controller image for credential-free local validation
         run: |

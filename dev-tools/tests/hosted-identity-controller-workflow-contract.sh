@@ -76,6 +76,8 @@ import yaml
 
 workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
 publisher_workflow = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
+pull_request = workflow[True]["pull_request"]
+assert "dev-tools/smoke/**" in pull_request["paths"]
 image_meta = workflow["jobs"]["image-meta"]
 assert image_meta["outputs"]["runtime_smoke_required"] == (
     "${{ steps.smoke_scope.outputs.runtime_smoke_required }}"
@@ -108,42 +110,58 @@ for required in (
 ):
     assert required in smoke_scope_script, required
 
-runtime_scope_script = smoke_scope_script[
+runtime_prefixes_script = smoke_scope_script[
     smoke_scope_script.index("const runtimePrefixes"):
-    smoke_scope_script.index("const controllerPrefixes")
+    smoke_scope_script.index("const runtimeFiles")
 ]
-for runtime_service in (
-    "services/account-service/",
-    "services/game-session-service/",
-    "services/tcp-proxy-service/",
-):
-    assert runtime_service in runtime_scope_script
-assert "services/hosted-environment-identity-controller/" not in runtime_scope_script
+assert not re.search(r'"services/[^"]+/"', runtime_prefixes_script)
+assert "dev-tools/smoke/" in runtime_prefixes_script
+runtime_scope_predicate = smoke_scope_script[
+    smoke_scope_script.index("runtimeSmokeRequired = paths.some"):
+    smoke_scope_script.index("controllerSmokeRequired = paths.some")
+]
+normalized_runtime_scope_predicate = "".join(runtime_scope_predicate.split())
+assert 'path.startsWith("services/")' in normalized_runtime_scope_predicate
+assert (
+    '!path.startsWith("services/hosted-environment-identity-controller/")'
+    in normalized_runtime_scope_predicate
+)
 
 controller_scope_script = smoke_scope_script[
     smoke_scope_script.index("const controllerPrefixes"):
     smoke_scope_script.index("runtimeSmokeRequired = paths.some")
 ]
 assert "services/hosted-environment-identity-controller/" in controller_scope_script
-for unrelated_service in (
-    "services/account-service/",
-    "services/game-session-service/",
-    "services/tcp-proxy-service/",
-):
-    assert unrelated_service not in controller_scope_script
 
 runtime_job = workflow["jobs"]["pr-local-smoke"]
-assert "needs.image-meta.outputs.runtime_smoke_required == 'true'" in runtime_job["if"]
+assert "needs.image-meta.outputs.runtime_smoke_required" not in runtime_job["if"]
 runtime_steps = runtime_job["steps"]
 runtime_steps_by_name = {
     step.get("name"): step for step in runtime_steps if isinstance(step, dict)
 }
 export_step = runtime_steps_by_name["Export fixed-tag preview image artifact"]
 upload_step = runtime_steps_by_name["Upload preview image artifact"]
+build_runtime_step = runtime_steps_by_name["Build local PR runtime images"]
+setup_smoke_python_step = runtime_steps_by_name["Set up canonical Python"]
+run_smoke_step = runtime_steps_by_name["Run credential-free full-stack smoke"]
+dump_logs_step = runtime_steps_by_name["Dump Docker Compose logs on failure"]
+stop_smoke_step = runtime_steps_by_name["Stop smoke stack"]
 assert "Build controller image for credential-free local validation" not in runtime_steps_by_name
 assert "Smoke controller image entrypoint and paused health" not in runtime_steps_by_name
+assert "if" not in build_runtime_step
 assert "if" not in export_step
 assert "if" not in upload_step
+smoke_gate = "${{ needs.image-meta.outputs.runtime_smoke_required == 'true' }}"
+assert setup_smoke_python_step["if"] == smoke_gate
+assert setup_smoke_python_step["uses"] == "./.github/actions/setup-python"
+assert setup_smoke_python_step["with"] == {"requirements": "smoke"}
+assert run_smoke_step["if"] == smoke_gate
+assert dump_logs_step["if"] == (
+    "${{ failure() && needs.image-meta.outputs.runtime_smoke_required == 'true' }}"
+)
+assert stop_smoke_step["if"] == (
+    "${{ always() && needs.image-meta.outputs.runtime_smoke_required == 'true' }}"
+)
 
 controller_job = workflow["jobs"]["pr-controller-smoke"]
 assert controller_job["needs"] == ["image-meta"]
@@ -162,13 +180,31 @@ controller_steps_by_name = {
 }
 controller_checkout = controller_steps_by_name["Checkout PR merge"]
 assert controller_checkout["with"]["persist-credentials"] is False
+buildx_step = controller_steps_by_name["Set up Docker Buildx"]
 base_step = controller_steps_by_name["Build exact local runtime base image"]
 build_step = controller_steps_by_name[
     "Build controller image for credential-free local validation"
 ]
 smoke_step = controller_steps_by_name["Smoke controller image entrypoint and paused health"]
+assert controller_steps.index(buildx_step) < controller_steps.index(base_step)
 assert controller_steps.index(base_step) < controller_steps.index(build_step) < controller_steps.index(smoke_step)
-assert base_step["run"] == 'docker build --file docker/base.Dockerfile --tag "$BASE_IMAGE" .'
+assert buildx_step["uses"] == (
+    "docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5"
+)
+assert base_step["uses"] == (
+    "docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf"
+)
+assert base_step["with"] == {
+    "context": ".",
+    "file": "docker/base.Dockerfile",
+    "push": False,
+    "load": True,
+    "tags": "${{ env.BASE_IMAGE }}",
+    "cache-from": "type=gha,scope=pr-controller-smoke",
+    "cache-to": "type=gha,mode=max,scope=pr-controller-smoke",
+}
+assert "docker/login-action@" not in str(controller_job)
+assert "GITHUB_TOKEN" not in str(controller_job)
 assert '--build-arg BASE_IMAGE="$BASE_IMAGE"' in build_step["run"]
 smoke_run = smoke_step["run"]
 assert smoke_run == (
@@ -193,6 +229,7 @@ runtime_services = [
     line.removesuffix(" \\").strip()
     for line in runtime_services_match.group("services").splitlines()
 ]
+assert "hosted-environment-identity-controller" not in runtime_services
 publisher_steps = publisher_workflow["jobs"]["publish"]["steps"]
 publisher_run = next(
     step["run"]
@@ -228,7 +265,7 @@ for required in \
   "docker inspect --format '{{.Image}}'"; do
   contains "$controller_smoke" "$required"
 done
-for forbidden in GITHUB_TOKEN GHCR docker.login 'docker push' kubectl KUBECONFIG; do
+for forbidden in GITHUB_TOKEN GHCR 'docker login' 'docker push' kubectl KUBECONFIG; do
   if grep -Fq -- "$forbidden" "$controller_smoke"; then
     echo "$controller_smoke must remain credential-free: $forbidden" >&2
     exit 1

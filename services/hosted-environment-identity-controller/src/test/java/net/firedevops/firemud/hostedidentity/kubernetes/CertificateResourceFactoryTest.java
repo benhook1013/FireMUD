@@ -110,11 +110,15 @@ class CertificateResourceFactoryTest {
         java.util.Arrays.stream(CertificateResourceFactory.class.getDeclaredMethods())
             .filter(method -> !method.isSynthetic())
             .toList();
-
-    assertEquals(
-        java.util.Set.of("ingress", "telnet", "gatewayInternalWs", "tcpProxyBridge"),
+    var publicMethods =
         declaredMethods.stream()
             .filter(method -> java.lang.reflect.Modifier.isPublic(method.getModifiers()))
+            .toList();
+
+    assertEquals(4, publicMethods.size());
+    assertEquals(
+        java.util.Set.of("ingress", "telnet", "gatewayInternalWs", "tcpProxyBridge"),
+        publicMethods.stream()
             .map(java.lang.reflect.Method::getName)
             .collect(java.util.stream.Collectors.toUnmodifiableSet()));
   }

@@ -101,9 +101,10 @@ expect_invalid_target "Invalid dev-demo image tag" dev "$valid_head" "" 32016
 expect_invalid_target "Invalid dev-demo image tag" dev "$valid_head" 'invalid/tag' 32016
 expect_invalid_target "Invalid dev-demo Telnet port" dev "$valid_head" "$valid_head" 32017
 
-python3 - "$workflow" "$reconciler" "$requester" "$waiter" "$annotator" "$target_validator" "$reconcile_step" "$mode_action" <<'PY'
+python3 - "$workflow" "$reconciler" "$requester" "$waiter" "$annotator" "$target_validator" "$reconcile_step" "$mode_action" "$ROOT_DIR/dev-tools/validation/check_dev_demo_summary.py" <<'PY'
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -112,9 +113,17 @@ from pathlib import Path
 
 import yaml
 
-workflow_path, reconciler_path, requester_path, waiter_path, annotator_path, target_validator_path, reconcile_script_path, mode_action_path = map(
+workflow_path, reconciler_path, requester_path, waiter_path, annotator_path, target_validator_path, reconcile_script_path, mode_action_path, validator_script_path = map(
     Path, sys.argv[1:]
 )
+validator_spec = importlib.util.spec_from_file_location(
+    "dev_demo_summary_validator_contract", validator_script_path
+)
+if validator_spec is None or validator_spec.loader is None:
+    raise SystemExit(f"could not load dev-demo summary validator: {validator_script_path}")
+validator = importlib.util.module_from_spec(validator_spec)
+sys.modules[validator_spec.name] = validator
+validator_spec.loader.exec_module(validator)
 workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
 reconciler = yaml.safe_load(reconciler_path.read_text(encoding="utf-8"))
 requester = requester_path.read_text(encoding="utf-8")
@@ -370,7 +379,7 @@ if deploy_requester_cleanup.get("if") != (
     "${{ always() && steps.certificate-identity.outputs.mode == 'hosted-controller' }}"
 ):
     raise SystemExit(
-        "dev-demo deploy requester credential cleanup must run after failures only in hosted-controller mode"
+        "dev-demo deploy requester credential cleanup must always run in hosted-controller mode"
     )
 if deploy_requester_cleanup.get("run") != (
     'rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"'
@@ -441,11 +450,9 @@ for bare_assertion in (
 ):
     if bare_assertion in runtime_target_run or bare_assertion in deployed_head_step["run"]:
         raise SystemExit(f"dev-demo validation retained opaque assertion {bare_assertion}")
-smoke_condition = deploy_by_name["Smoke dev-demo over TCP"].get("if", "")
-if "success()" not in smoke_condition:
-    raise SystemExit("dev-demo smoke must not bypass an earlier identity/preflight failure")
-if "!cancelled()" in smoke_condition:
-    raise SystemExit("dev-demo smoke redundantly combines !cancelled() with success()")
+validator._validate_smoke_condition(
+    deploy_by_name["Smoke dev-demo over TCP"].get("if")
+)
 success_condition = deploy_by_name["Summarize dev-demo access"].get("if", "")
 expected_success_condition = (
     "${{ success() && steps.cluster-access.outputs.available == 'true' && "
