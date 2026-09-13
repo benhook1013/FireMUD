@@ -22,6 +22,7 @@ build_gradle="$ROOT_DIR/build.gradle.kts"
 controller_build_gradle="$ROOT_DIR/services/hosted-environment-identity-controller/build.gradle.kts"
 controller_dockerfile="$ROOT_DIR/services/hosted-environment-identity-controller/Dockerfile"
 bootstrap="$ROOT_DIR/dev-tools/hosted/controller/bootstrap-hosted-identity-controller.sh"
+controller_smoke="$ROOT_DIR/dev-tools/hosted/controller/smoke-paused-controller-image.sh"
 waiter="$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh"
 mode_resolver="$ROOT_DIR/dev-tools/hosted/shared/resolve-certificate-identity-mode.py"
 mode_action="$ROOT_DIR/.github/actions/resolve-certificate-identity-mode/action.yml"
@@ -92,6 +93,7 @@ for required in (
     "file.previous_filename",
     "services/hosted-environment-identity-controller/",
     "docker/base.Dockerfile",
+    "dev-tools/hosted/controller/smoke-paused-controller-image.sh",
     ".github/workflows/runtime-images.yml",
     "Controller change detection was incomplete; running its local smoke.",
     "Controller change detection failed; running its local smoke:",
@@ -126,27 +128,11 @@ assert smoke_step["env"]["CONTROLLER_IMAGE"] == (
     "${{ needs.image-meta.outputs.image_tag }}"
 )
 smoke_run = smoke_step["run"]
-exact_health_predicate = 'jq -e \'.status == "UP"\' <<<"$health" >/dev/null 2>&1'
-for required in (
-    'trap \'docker rm --force "$container_name" >/dev/null 2>&1 || true\' EXIT',
-    'docker run --detach',
-    '--env FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE=paused',
-    '"$CONTROLLER_IMAGE"',
-    'deadline=$((SECONDS + 300))',
-    'while (( SECONDS < deadline )); do',
-    'request_timeout=$((deadline - SECONDS))',
-    '(( request_timeout > 0 )) || break',
-    '(( request_timeout <= 5 )) || request_timeout=5',
-    '--connect-timeout 2 --max-time "$request_timeout"',
-    '(( SECONDS < deadline )) && sleep 1',
-    "http://127.0.0.1:8081/actuator/health/liveness",
-    exact_health_predicate,
-    'docker rm --force "$container_name"',
-):
-    assert required in smoke_run, required
-assert "--entrypoint" not in smoke_run
-assert 'for _ in {1..300}; do' not in smoke_run
-assert '[[ "$health" == *' not in smoke_run
+assert smoke_run == (
+    "set -euo pipefail\n"
+    "bash ./dev-tools/hosted/controller/smoke-paused-controller-image.sh "
+    '"$CONTROLLER_IMAGE" >/dev/null\n'
+)
 export_run = export_step["run"]
 assert "hosted-environment-identity-controller" not in export_run
 assert "account-service" in export_run
@@ -182,6 +168,33 @@ assert publisher_services == runtime_services, (
     runtime_services,
 )
 PY
+
+# shellcheck disable=SC2016 # These assertions intentionally match literal helper shell.
+for required in \
+  'readonly timeout_seconds="${FIREMUD_CONTROLLER_SMOKE_TIMEOUT_SECONDS:-300}"' \
+  'container_name="hosted-identity-controller-smoke-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-$$-${RANDOM}"' \
+  'trap cleanup EXIT' \
+  'docker run --detach' \
+  '--env FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE=paused' \
+  'deadline=$((SECONDS + timeout_seconds))' \
+  'while ((SECONDS < deadline)); do' \
+  "docker inspect --format '{{.State.Running}}'" \
+  'request_timeout=$((deadline - SECONDS))' \
+  '((request_timeout <= 5)) || request_timeout=5' \
+  '--connect-timeout 2 --max-time "$request_timeout"' \
+  'http://127.0.0.1:8081/actuator/health/liveness' \
+  'jq -e '\''.status == "UP"'\'' <<<"$health"' \
+  'docker logs "$container_name" >&2 || true' \
+  'docker rm --force "$container_name"' \
+  "docker inspect --format '{{.Image}}'"; do
+  contains "$controller_smoke" "$required"
+done
+for forbidden in GITHUB_TOKEN GHCR docker.login 'docker push' kubectl KUBECONFIG; do
+  if grep -Fq -- "$forbidden" "$controller_smoke"; then
+    echo "$controller_smoke must remain credential-free: $forbidden" >&2
+    exit 1
+  fi
+done
 
 nested_status_health='{"components":{"controller":{"status":"UP"}}}'
 if jq -e '.status == "UP"' <<<"$nested_status_health" >/dev/null 2>&1; then
@@ -824,20 +837,15 @@ assert build_index < smoke_index < export_index < upload_index
 assert "--tag \"$CONTROLLER_IMAGE\"" in controller_build_steps[build_index]["run"]
 assert "ghcr.io/benhook1013/firemud-base@${{ needs.build-base-image.outputs.digest }}" in controller_build_steps[build_index]["run"]
 trusted_smoke_run = controller_build_steps[smoke_index]["run"]
-exact_health_predicate = 'jq -e \'.status == "UP"\' <<<"$health" >/dev/null 2>&1'
 for required in (
-    'deadline=$((SECONDS + 300))',
-    'while (( SECONDS < deadline )); do',
-    'request_timeout=$((deadline - SECONDS))',
-    '(( request_timeout > 0 )) || break',
-    '(( request_timeout <= 5 )) || request_timeout=5',
-    '--connect-timeout 2 --max-time "$request_timeout"',
-    '(( SECONDS < deadline )) && sleep 1',
-    exact_health_predicate,
+    'smoked_image_id="$(bash ./dev-tools/hosted/controller/smoke-paused-controller-image.sh "$CONTROLLER_IMAGE")"',
+    'local_image_id="$(docker image inspect --format',
+    '[[ "$smoked_image_id" == "$local_image_id" ]]',
+    'echo "image_id=$local_image_id" >> "$GITHUB_OUTPUT"',
 ):
     assert required in trusted_smoke_run, required
-assert 'for _ in {1..300}; do' not in trusted_smoke_run
-assert '[[ "$health" == *' not in trusted_smoke_run
+assert "docker run" not in trusted_smoke_run
+assert "health/liveness" not in trusted_smoke_run
 assert "docker/login-action@" not in str(controller_build_job)
 assert "docker push" not in str(controller_build_job)
 assert "actions/attest@" not in str(controller_build_job)
@@ -1931,6 +1939,107 @@ PY
 # successful workflow run with no validated artifact. It must emit only no-op.
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT
+
+controller_smoke_stub_dir="$TEMP_DIR/controller-smoke-stubs"
+controller_smoke_docker_log="$TEMP_DIR/controller-smoke-docker.log"
+mkdir -p "$controller_smoke_stub_dir"
+cat >"$controller_smoke_stub_dir/docker" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf '%s\n' "$*" >>"${CONTROLLER_SMOKE_DOCKER_LOG:?}"
+case "$1" in
+  run)
+    printf '%s\n' fake-container-id
+    ;;
+  inspect)
+    case "$3" in
+      '{{.State.Running}}')
+        if [[ "${CONTROLLER_SMOKE_MODE:?}" == early-exit ]]; then
+          printf '%s\n' false
+        else
+          printf '%s\n' true
+        fi
+        ;;
+      '{{.Image}}')
+        printf '%s\n' sha256:smoked-controller
+        ;;
+      *)
+        echo "unexpected controller smoke inspect format: $3" >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  exec)
+    if [[ "${CONTROLLER_SMOKE_MODE:?}" == success ]]; then
+      printf '%s\n' '{"status":"UP"}'
+    else
+      exit 22
+    fi
+    ;;
+  logs)
+    printf 'fixture controller logs: %s\n' "${CONTROLLER_SMOKE_MODE:?}"
+    ;;
+  rm)
+    ;;
+  *)
+    echo "unexpected controller smoke docker invocation: $*" >&2
+    exit 2
+    ;;
+esac
+SH
+chmod +x "$controller_smoke_stub_dir/docker"
+
+run_controller_smoke_fixture() {
+  local mode="$1"
+  shift
+  env \
+    PATH="$controller_smoke_stub_dir:$PATH" \
+    CONTROLLER_SMOKE_DOCKER_LOG="$controller_smoke_docker_log" \
+    CONTROLLER_SMOKE_MODE="$mode" \
+    GITHUB_RUN_ID=123 \
+    GITHUB_RUN_ATTEMPT=2 \
+    "$@" \
+    bash "$controller_smoke" ghcr.io/example/controller:test
+}
+
+: >"$controller_smoke_docker_log"
+controller_smoke_success_output="$(run_controller_smoke_fixture success env)"
+[[ "$controller_smoke_success_output" == sha256:smoked-controller ]]
+grep -Eq '^run --detach --name hosted-identity-controller-smoke-123-2-[0-9]+-[0-9]+ --env FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE=paused ghcr.io/example/controller:test$' \
+  "$controller_smoke_docker_log"
+grep -Fq 'exec hosted-identity-controller-smoke-123-2-' "$controller_smoke_docker_log"
+grep -Fq 'curl --fail --silent --show-error --connect-timeout 2 --max-time ' \
+  "$controller_smoke_docker_log"
+grep -Fq 'http://127.0.0.1:8081/actuator/health/liveness' \
+  "$controller_smoke_docker_log"
+grep -Eq '^rm --force hosted-identity-controller-smoke-123-2-[0-9]+-[0-9]+$' \
+  "$controller_smoke_docker_log"
+
+: >"$controller_smoke_docker_log"
+if run_controller_smoke_fixture early-exit env \
+  >"$TEMP_DIR/controller-smoke-early.output" \
+  2>"$TEMP_DIR/controller-smoke-early.error"; then
+  echo "controller smoke accepted a container that exited before becoming healthy" >&2
+  exit 1
+fi
+grep -Fq 'fixture controller logs: early-exit' "$TEMP_DIR/controller-smoke-early.error"
+grep -Fq 'exited before its paused-mode health endpoint became available' \
+  "$TEMP_DIR/controller-smoke-early.error"
+grep -Eq '^rm --force hosted-identity-controller-smoke-123-2-[0-9]+-[0-9]+$' \
+  "$controller_smoke_docker_log"
+
+: >"$controller_smoke_docker_log"
+if run_controller_smoke_fixture timeout env FIREMUD_CONTROLLER_SMOKE_TIMEOUT_SECONDS=1 \
+  >"$TEMP_DIR/controller-smoke-timeout.output" \
+  2>"$TEMP_DIR/controller-smoke-timeout.error"; then
+  echo "controller smoke accepted a liveness endpoint that never became healthy" >&2
+  exit 1
+fi
+grep -Fq 'fixture controller logs: timeout' "$TEMP_DIR/controller-smoke-timeout.error"
+grep -Fq 'paused-mode health check timed out' "$TEMP_DIR/controller-smoke-timeout.error"
+grep -Eq '^rm --force hosted-identity-controller-smoke-123-2-[0-9]+-[0-9]+$' \
+  "$controller_smoke_docker_log"
 
 preview_annotator_stub_dir="$TEMP_DIR/preview-annotator-stubs"
 preview_annotator_log="$TEMP_DIR/preview-annotator-kubectl.log"

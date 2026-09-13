@@ -38,6 +38,7 @@ on:
       - 'dev-tools/build-compose-service-jars.sh'
       - 'dev-tools/build-local-smoke-images.sh'
       - 'dev-tools/certs/generate-dev-certs.sh'
+      - 'dev-tools/hosted/controller/smoke-paused-controller-image.sh'
       - 'dev-tools/verify-compose-health.sh'
       - 'dev-tools/verify-fresh-bootstrap.sh'
       - 'dev-tools/verify-restart-state.sh'
@@ -132,6 +133,7 @@ jobs:
                     ".github/workflows/runtime-images.yml",
                     "build.gradle.kts",
                     "dev-tools/build-local-smoke-images.sh",
+                    "dev-tools/hosted/controller/smoke-paused-controller-image.sh",
                     "docker/base.Dockerfile",
                     "gradle.properties",
                     "gradlew",
@@ -404,41 +406,7 @@ jobs:
         id: smoke
         run: |
           set -euo pipefail
-          container_name="hosted-identity-controller-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          trap 'docker rm --force "$container_name" >/dev/null 2>&1 || true' EXIT
-
-          docker run --detach \
-            --name "$container_name" \
-            --env FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE=paused \
-            "$CONTROLLER_IMAGE"
-
-          healthy=false
-          deadline=$((SECONDS + 300))
-          while (( SECONDS < deadline )); do
-            if [[ "$(docker inspect --format '{{.State.Running}}' "$container_name")" != true ]]; then
-              docker logs "$container_name"
-              echo "Hosted identity controller exited before its paused-mode health endpoint became available." >&2
-              exit 1
-            fi
-            request_timeout=$((deadline - SECONDS))
-            (( request_timeout > 0 )) || break
-            (( request_timeout <= 5 )) || request_timeout=5
-            if health="$(docker exec "$container_name" \
-              curl --fail --silent --show-error --connect-timeout 2 --max-time "$request_timeout" \
-                http://127.0.0.1:8081/actuator/health/liveness 2>/dev/null)" \
-              && jq -e '.status == "UP"' <<<"$health" >/dev/null 2>&1; then
-              healthy=true
-              break
-            fi
-            (( SECONDS < deadline )) && sleep 1
-          done
-
-          if [[ "$healthy" != true ]]; then
-            docker logs "$container_name"
-            echo "Hosted identity controller paused-mode health check timed out." >&2
-            exit 1
-          fi
-          smoked_image_id="$(docker inspect --format '{{.Image}}' "$container_name")"
+          smoked_image_id="$(bash ./dev-tools/hosted/controller/smoke-paused-controller-image.sh "$CONTROLLER_IMAGE")"
           local_image_id="$(docker image inspect --format '{{.Id}}' "$CONTROLLER_IMAGE")"
           [[ "$smoked_image_id" == "$local_image_id" ]] || {
             echo "Controller smoke did not execute the exact locally tagged image." >&2
@@ -639,36 +607,7 @@ jobs:
           CONTROLLER_IMAGE: firemud-hosted-identity-controller-local:${{ needs.image-meta.outputs.image_tag }}
         run: |
           set -euo pipefail
-          container_name="hosted-identity-controller-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          trap 'docker rm --force "$container_name" >/dev/null 2>&1 || true' EXIT
-
-          docker run --detach \
-            --name "$container_name" \
-            --env FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE=paused \
-            "$CONTROLLER_IMAGE"
-
-          deadline=$((SECONDS + 300))
-          while (( SECONDS < deadline )); do
-            if [[ "$(docker inspect --format '{{.State.Running}}' "$container_name")" != true ]]; then
-              docker logs "$container_name"
-              echo "Hosted identity controller exited before its paused-mode health endpoint became available." >&2
-              exit 1
-            fi
-            request_timeout=$((deadline - SECONDS))
-            (( request_timeout > 0 )) || break
-            (( request_timeout <= 5 )) || request_timeout=5
-            if health="$(docker exec "$container_name" \
-              curl --fail --silent --show-error --connect-timeout 2 --max-time "$request_timeout" \
-                http://127.0.0.1:8081/actuator/health/liveness 2>/dev/null)" \
-              && jq -e '.status == "UP"' <<<"$health" >/dev/null 2>&1; then
-              exit 0
-            fi
-            (( SECONDS < deadline )) && sleep 1
-          done
-
-          docker logs "$container_name"
-          echo "Hosted identity controller paused-mode health check timed out." >&2
-          exit 1
+          bash ./dev-tools/hosted/controller/smoke-paused-controller-image.sh "$CONTROLLER_IMAGE" >/dev/null
 
       - name: Export fixed-tag preview image artifact
         run: |
