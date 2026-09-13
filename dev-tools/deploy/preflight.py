@@ -6759,8 +6759,10 @@ def main() -> int:
     if len(sys.argv) > 1 and sys.argv[1] == "hosted-bridge":
         if len(sys.argv) not in {5, 7}:
             fail(
-                "malformed hosted-bridge invocation: expected 3 or 5 arguments "
-                "after hosted-bridge"
+                "malformed hosted-bridge invocation: expected 3 required positional "
+                "arguments (<render-path> <namespace> <release-name>) after "
+                "hosted-bridge, optionally followed by "
+                "--expected-hosted-telnet-node-port <port>"
             )
         expected_hosted_telnet_node_port = None
         if len(sys.argv) == 7:

@@ -191,8 +191,10 @@ deploy_names = [step.get("name") for step in deploy_steps if isinstance(step, di
 if deploy_by_name["Resolve certificate identity mode"] != expected_mode_step:
     raise SystemExit("dev-demo deploy must use the shared certificate identity action exactly")
 ordered = (
+    "Check Hosted identity requester credentials",
     "Record exact dev-demo runtime target",
     "Write hosted identity requester kubeconfig",
+    "Discover HostedEnvironmentIdentity API",
     "Apply fixed dev-demo Active request",
     "Remove hosted identity requester kubeconfig",
     "Wait for all controller identity projections",
@@ -208,18 +210,70 @@ positions = [deploy_names.index(name) for name in ordered]
 if positions != sorted(positions):
     raise SystemExit(f"dev-demo hosted-controller lifecycle order is invalid: {ordered}")
 
-controller_steps = (
-    "Write hosted identity requester kubeconfig",
+identity_steps = (
     "Apply fixed dev-demo Active request",
     "Wait for all controller identity projections",
-    "Wait for dev-demo runtime rollouts",
     "Wait for exact dev-demo controller readiness",
     "Validate controller-projected dev-demo identity",
 )
-for name in controller_steps:
+for name in identity_steps:
     condition = deploy_by_name[name].get("if", "")
-    if "steps.certificate-identity.outputs.mode == 'hosted-controller'" not in condition:
-        raise SystemExit(f"{name} is not fail-closed behind hosted-controller mode")
+    for required in (
+        "steps.certificate-identity.outputs.mode == 'hosted-controller'",
+        "steps.requester-credentials.outputs.available == 'true'",
+        "steps.identity-api.outputs.served == 'true'",
+    ):
+        if required not in condition:
+            raise SystemExit(f"{name} is not fail-closed behind {required}")
+runtime_rollout_condition = deploy_by_name["Wait for dev-demo runtime rollouts"].get("if", "")
+if "steps.certificate-identity.outputs.mode == 'hosted-controller'" not in runtime_rollout_condition:
+    raise SystemExit("dev-demo runtime rollout wait is not fail-closed behind hosted-controller mode")
+if "steps.requester-credentials.outputs.available" in runtime_rollout_condition or "steps.identity-api.outputs.served" in runtime_rollout_condition:
+    raise SystemExit("dev-demo runtime rollout wait must remain independent of optional identity operations")
+requester_check = deploy_by_name["Check Hosted identity requester credentials"]
+if requester_check.get("id") != "requester-credentials":
+    raise SystemExit("dev-demo deploy requester credential check must publish a stable step output")
+if requester_check.get("env") != {
+    "REQUESTER_KUBECONFIG": "${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}"
+}:
+    raise SystemExit("dev-demo deploy requester credential check reads the wrong secret")
+for required in (
+    'if [[ -z "$REQUESTER_KUBECONFIG" ]]',
+    "available=false",
+    "available=true",
+    "skipping identity activation",
+):
+    if required not in requester_check["run"]:
+        raise SystemExit(f"dev-demo deploy requester credential guard lacks {required}")
+expected_deploy_identity_guard = (
+    "${{ steps.cluster-access.outputs.available == 'true' && "
+    "steps.certificate-identity.outputs.mode == 'hosted-controller' && "
+    "steps.requester-credentials.outputs.available == 'true' }}"
+)
+if deploy_by_name["Write hosted identity requester kubeconfig"].get("if") != expected_deploy_identity_guard:
+    raise SystemExit("dev-demo deploy requester writer is not gated on credential availability")
+identity_api = deploy_by_name["Discover HostedEnvironmentIdentity API"]
+if identity_api.get("id") != "identity-api" or identity_api.get("if") != expected_deploy_identity_guard:
+    raise SystemExit("dev-demo deploy API discovery is not gated on requester availability")
+if identity_api.get("env") != {
+    "KUBECONFIG": "${{ runner.temp }}/hosted-identity-requester.kubeconfig"
+}:
+    raise SystemExit("dev-demo deploy API discovery does not use the requester kubeconfig")
+for required in (
+    "kubectl api-resources",
+    "--api-group=platform.firemud.dev",
+    "--namespaced=true",
+    "--cached=false",
+    "-o name",
+    "hostedenvironmentidentities.platform.firemud.dev",
+    "malformed resource output",
+    "expected_resource_count <= 1",
+    "served=false",
+    "served=true",
+    "API is not served",
+):
+    if required not in identity_api["run"]:
+        raise SystemExit(f"dev-demo deploy API discovery lacks {required}")
 readiness_run = deploy_by_name["Wait for exact dev-demo controller readiness"]["run"]
 if (
     'dev-demo "${{ needs.dev-demo-plan.outputs.head_sha }}" \\\n'
@@ -325,7 +379,9 @@ destroy_order = (
     "Write dev-demo runtime kubeconfig",
     "Delete dev-demo namespace and release",
     "Confirm exact dev-demo runtime NotFound",
+    "Check Hosted identity requester credentials",
     "Write hosted identity requester kubeconfig",
+    "Discover HostedEnvironmentIdentity API",
     "Check HostedEnvironmentIdentity existence before retirement",
     "Apply fixed dev-demo Retired request",
     "Observe terminal dev-demo retirement and delete request",
@@ -337,14 +393,25 @@ if destroy_positions != sorted(destroy_positions):
     raise SystemExit(f"dev-demo retirement order is invalid: {destroy_order}")
 if "--ignore-not-found" not in destroy_by_name["Confirm exact dev-demo runtime NotFound"]["run"]:
     raise SystemExit("dev-demo retirement lacks an exact runtime NotFound observation")
-identity_existence = destroy_by_name[
-    "Check HostedEnvironmentIdentity existence before retirement"
-]
+runtime_delete = destroy_by_name["Delete dev-demo namespace and release"]
+if "if" in runtime_delete:
+    raise SystemExit("dev-demo runtime cleanup must remain available when hosted identity operations are skipped")
 expected_hosted_controller_condition = (
     "${{ steps.certificate-identity.outputs.mode == 'hosted-controller' }}"
 )
-if identity_existence.get("if") != expected_hosted_controller_condition:
-    raise SystemExit("dev-demo identity existence check must remain hosted-controller-only")
+runtime_not_found = destroy_by_name["Confirm exact dev-demo runtime NotFound"]
+if runtime_not_found.get("if") != expected_hosted_controller_condition:
+    raise SystemExit("dev-demo runtime absence proof must remain independent of requester/API availability")
+identity_existence = destroy_by_name[
+    "Check HostedEnvironmentIdentity existence before retirement"
+]
+expected_destroy_identity_guard = (
+    "${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && "
+    "steps.requester-credentials.outputs.available == 'true' && "
+    "steps.identity-api.outputs.served == 'true' }}"
+)
+if identity_existence.get("if") != expected_destroy_identity_guard:
+    raise SystemExit("dev-demo identity existence check is not gated on requester/API availability")
 if identity_existence.get("id") != "identity-existence":
     raise SystemExit("dev-demo identity existence check must publish a stable step output")
 requester_kubeconfig_env = {
@@ -374,8 +441,59 @@ for required in (
         raise SystemExit(f"dev-demo identity existence check lacks {required}")
 expected_existing_identity_condition = (
     "${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && "
+    "steps.requester-credentials.outputs.available == 'true' && "
+    "steps.identity-api.outputs.served == 'true' && "
     "steps.identity-existence.outputs.exists == 'true' }}"
 )
+destroy_requester_check = destroy_by_name["Check Hosted identity requester credentials"]
+if destroy_requester_check.get("id") != "requester-credentials":
+    raise SystemExit("dev-demo destroy requester credential check must publish a stable step output")
+if destroy_requester_check.get("env") != {
+    "REQUESTER_KUBECONFIG": "${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}"
+}:
+    raise SystemExit("dev-demo destroy requester credential check reads the wrong secret")
+for required in (
+    'if [[ -z "$REQUESTER_KUBECONFIG" ]]',
+    "available=false",
+    "available=true",
+    "skipping identity retirement",
+):
+    if required not in destroy_requester_check["run"]:
+        raise SystemExit(f"dev-demo destroy requester credential guard lacks {required}")
+destroy_identity_api = destroy_by_name["Discover HostedEnvironmentIdentity API"]
+if destroy_identity_api.get("id") != "identity-api":
+    raise SystemExit("dev-demo destroy API discovery must publish a stable step output")
+if destroy_identity_api.get("if") != (
+    "${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && "
+    "steps.requester-credentials.outputs.available == 'true' }}"
+):
+    raise SystemExit("dev-demo destroy API discovery is not gated on requester availability")
+if destroy_identity_api.get("env") != {
+    "KUBECONFIG": "${{ runner.temp }}/hosted-identity-requester.kubeconfig"
+}:
+    raise SystemExit("dev-demo destroy API discovery does not use the requester kubeconfig")
+for required in (
+    "kubectl api-resources",
+    "--api-group=platform.firemud.dev",
+    "--namespaced=true",
+    "--cached=false",
+    "-o name",
+    "hostedenvironmentidentities.platform.firemud.dev",
+    "malformed resource output",
+    "expected_resource_count <= 1",
+    "served=false",
+    "served=true",
+    "API is not served",
+):
+    if required not in destroy_identity_api["run"]:
+        raise SystemExit(f"dev-demo destroy API discovery lacks {required}")
+destroy_requester_writer = destroy_by_name["Write hosted identity requester kubeconfig"]
+expected_destroy_requester_guard = (
+    "${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && "
+    "steps.requester-credentials.outputs.available == 'true' }}"
+)
+if destroy_requester_writer.get("if") != expected_destroy_requester_guard:
+    raise SystemExit("dev-demo destroy requester writer is not gated on credential availability")
 retired_request = destroy_by_name["Apply fixed dev-demo Retired request"]
 retirement_observer = destroy_by_name[
     "Observe terminal dev-demo retirement and delete request"

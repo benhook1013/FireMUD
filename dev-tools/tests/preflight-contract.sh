@@ -9290,7 +9290,9 @@ malformed_invocation = subprocess.run(
     check=False,
 )
 if malformed_invocation.returncode == 0 or malformed_invocation.stderr.strip() != (
-    "malformed hosted-bridge invocation: expected 3 or 5 arguments after hosted-bridge"
+    "malformed hosted-bridge invocation: expected 3 required positional arguments "
+    "(<render-path> <namespace> <release-name>) after hosted-bridge, optionally "
+    "followed by --expected-hosted-telnet-node-port <port>"
 ):
     raise SystemExit(
         "hosted-bridge malformed invocation did not receive its specific error: "

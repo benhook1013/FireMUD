@@ -192,6 +192,20 @@ jobs:
           echo "available=false" >> "$GITHUB_OUTPUT"
           echo "DEV_DEMO_STAGE=cluster-access" >> "$GITHUB_ENV"
 
+      - name: Check Hosted identity requester credentials
+        id: requester-credentials
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
+        env:
+          REQUESTER_KUBECONFIG: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$REQUESTER_KUBECONFIG" ]]; then
+            echo "Hosted identity requester credentials are unavailable; skipping identity activation."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Reset dev-demo namespace for clean deploy
         if: ${{ steps.cluster-access.outputs.available == 'true' }}
         run: |
@@ -214,35 +228,57 @@ jobs:
           TELNET_PORT: ${{ needs.dev-demo-plan.outputs.telnet_port }}
         run: |
           set -euo pipefail
-          if [[ "$RUNTIME_NAMESPACE" != dev ]]; then
-            echo "::error title=Invalid dev-demo runtime namespace::Expected the canonical dev namespace." >&2
-            exit 1
-          fi
-          if [[ ! "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error title=Invalid dev-demo head SHA::Expected exactly 40 lowercase hexadecimal characters." >&2
-            exit 1
-          fi
-          if [[ -z "$IMAGE_TAG" ]]; then
-            echo "::error title=Invalid dev-demo image tag::Expected a non-empty image tag." >&2
-            exit 1
-          fi
-          if [[ "$TELNET_PORT" != 32016 ]]; then
-            echo "::error title=Invalid dev-demo Telnet port::Expected the canonical 32016 port." >&2
-            exit 1
-          fi
+          bash ./dev-tools/hosted/dev-demo/validate-dev-demo-target.sh \
+            "$RUNTIME_NAMESPACE" "$HEAD_SHA" "$IMAGE_TAG" "$TELNET_PORT"
           bash ./dev-tools/hosted/dev-demo/annotate-dev-demo-namespace.sh \
             "$RUNTIME_NAMESPACE" "$HEAD_SHA" "$IMAGE_TAG" "$TELNET_PORT"
 
       - name: Write hosted identity requester kubeconfig
-        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available == 'true' }}
         uses: ./.github/actions/write-kubeconfig
         with:
           content: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
           path: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
           export-to-github-env: 'false'
 
+      - name: Discover HostedEnvironmentIdentity API
+        id: identity-api
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available == 'true' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
+        run: |
+          set -euo pipefail
+          expected_resource='hostedenvironmentidentities.platform.firemud.dev'
+          discovery_output="$(kubectl api-resources \
+            --api-group=platform.firemud.dev \
+            --namespaced=true \
+            --no-headers \
+            --cached=false \
+            -o name)"
+          expected_resource_count=0
+          while IFS= read -r resource; do
+            [[ -z "$resource" ]] && continue
+            [[ "$resource" =~ ^[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9.-]*$ ]] || {
+              echo "Hosted identity API discovery returned malformed resource output: ${resource@Q}." >&2
+              exit 1
+            }
+            if [[ "$resource" == "$expected_resource" ]]; then
+              ((expected_resource_count += 1))
+            fi
+          done <<< "$discovery_output"
+          (( expected_resource_count <= 1 )) || {
+            echo "Hosted identity API discovery returned duplicate ${expected_resource} resources." >&2
+            exit 1
+          }
+          if (( expected_resource_count == 0 )); then
+            echo "HostedEnvironmentIdentity API is not served; skipping identity activation."
+            echo "served=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "served=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Apply fixed dev-demo Active request
-        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available == 'true' && steps.identity-api.outputs.served == 'true' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
         run: bash ./dev-tools/hosted/shared/request-hosted-identity.sh dev-demo Active
@@ -252,7 +288,7 @@ jobs:
         run: rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"
 
       - name: Wait for all controller identity projections
-        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available == 'true' && steps.identity-api.outputs.served == 'true' }}
         run: |
           echo "DEV_DEMO_STAGE=identity-projections" >> "$GITHUB_ENV"
           bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
@@ -392,7 +428,7 @@ jobs:
             "$RUNTIME_NAMESPACE" 120
 
       - name: Wait for exact dev-demo controller readiness
-        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' && steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available == 'true' && steps.identity-api.outputs.served == 'true' }}
         run: |
           echo "DEV_DEMO_STAGE=identity-ready" >> "$GITHUB_ENV"
           bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
@@ -400,7 +436,7 @@ jobs:
             "${{ needs.dev-demo-plan.outputs.namespace }}" 900
 
       - name: Validate controller-projected dev-demo identity
-        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' && steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available == 'true' && steps.identity-api.outputs.served == 'true' }}
         env:
           RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
           RELEASE_NAME: ${{ needs.dev-demo-plan.outputs.release_name }}
@@ -924,17 +960,67 @@ jobs:
             exit 1
           fi
 
-      - name: Write hosted identity requester kubeconfig
+      - name: Check Hosted identity requester credentials
+        id: requester-credentials
         if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' }}
+        env:
+          REQUESTER_KUBECONFIG: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$REQUESTER_KUBECONFIG" ]]; then
+            echo "Hosted identity requester credentials are unavailable; skipping identity retirement."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Write hosted identity requester kubeconfig
+        if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available == 'true' }}
         uses: ./.github/actions/write-kubeconfig
         with:
           content: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
           path: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
           export-to-github-env: 'false'
 
+      - name: Discover HostedEnvironmentIdentity API
+        id: identity-api
+        if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available == 'true' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
+        run: |
+          set -euo pipefail
+          expected_resource='hostedenvironmentidentities.platform.firemud.dev'
+          discovery_output="$(kubectl api-resources \
+            --api-group=platform.firemud.dev \
+            --namespaced=true \
+            --no-headers \
+            --cached=false \
+            -o name)"
+          expected_resource_count=0
+          while IFS= read -r resource; do
+            [[ -z "$resource" ]] && continue
+            [[ "$resource" =~ ^[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9.-]*$ ]] || {
+              echo "Hosted identity API discovery returned malformed resource output: ${resource@Q}." >&2
+              exit 1
+            }
+            if [[ "$resource" == "$expected_resource" ]]; then
+              ((expected_resource_count += 1))
+            fi
+          done <<< "$discovery_output"
+          (( expected_resource_count <= 1 )) || {
+            echo "Hosted identity API discovery returned duplicate ${expected_resource} resources." >&2
+            exit 1
+          }
+          if (( expected_resource_count == 0 )); then
+            echo "HostedEnvironmentIdentity API is not served; skipping identity retirement."
+            echo "served=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "served=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Check HostedEnvironmentIdentity existence before retirement
         id: identity-existence
-        if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' }}
+        if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available == 'true' && steps.identity-api.outputs.served == 'true' }}
         env:
           IDENTITY_NAME: dev-demo
           KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
@@ -960,13 +1046,13 @@ jobs:
           echo "exists=true" >> "$GITHUB_OUTPUT"
 
       - name: Apply fixed dev-demo Retired request
-        if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.identity-existence.outputs.exists == 'true' }}
+        if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available == 'true' && steps.identity-api.outputs.served == 'true' && steps.identity-existence.outputs.exists == 'true' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
         run: bash ./dev-tools/hosted/shared/request-hosted-identity.sh dev-demo Retired
 
       - name: Observe terminal dev-demo retirement and delete request
-        if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.identity-existence.outputs.exists == 'true' }}
+        if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available == 'true' && steps.identity-api.outputs.served == 'true' && steps.identity-existence.outputs.exists == 'true' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
         run: |
