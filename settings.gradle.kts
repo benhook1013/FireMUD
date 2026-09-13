@@ -60,7 +60,7 @@ project(":world-management-service").projectDir = File("services/world-managemen
 
 include("hosted-environment-identity-controller")
 project(":hosted-environment-identity-controller").projectDir =
-    File("services/hosted-environment-identity-controller")
+    file("services/hosted-environment-identity-controller")
 
 val includeLoadTesting = providers.gradleProperty("includeLoadTesting")
     .map(String::toBooleanStrictOrNull)

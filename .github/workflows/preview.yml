@@ -129,7 +129,7 @@ jobs:
             ACTION="$INPUT_ACTION"
             IMAGE_TAG="$INPUT_IMAGE_TAG"
           fi
-          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]{0,50}$ ]]; then
             echo "::error title=Invalid preview PR number::Expected a canonical positive decimal integer." >&2
             exit 1
           fi
@@ -652,7 +652,7 @@ jobs:
           PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
         run: |
           set -euo pipefail
-          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]{0,50}$ ]]; then
             echo "::error title=Invalid preview PR number::Expected a canonical positive decimal integer." >&2
             exit 1
           fi

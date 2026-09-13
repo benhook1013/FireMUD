@@ -2585,6 +2585,19 @@ preview = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
 reconciler = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
 assert preview["jobs"]["preview-destroy"]["timeout-minutes"] == 60
 assert reconciler["jobs"]["reconcile-previews"]["timeout-minutes"] == 60
+preview_run_scripts = [
+    step["run"]
+    for job in preview["jobs"].values()
+    for step in job.get("steps", [])
+    if isinstance(step.get("run"), str)
+]
+canonical_pr_number_pattern = '"$PR_NUMBER" =~ ^[1-9][0-9]{0,50}$'
+assert sum(
+    script.count(canonical_pr_number_pattern) for script in preview_run_scripts
+) == 3
+assert not any(
+    '"$PR_NUMBER" =~ ^[1-9][0-9]*$' in script for script in preview_run_scripts
+)
 PY
 grep -q -- '--retire-terminal-identities' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 grep -q 'Skipping ordinary PR #' "$reconciler_workflow"
