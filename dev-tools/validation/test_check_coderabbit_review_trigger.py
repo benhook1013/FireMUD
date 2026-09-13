@@ -161,6 +161,27 @@ class TriggerStateTests(unittest.TestCase):
                 if expected == "rate_limited":
                     self.assertEqual(state.cooldown_until, "2026-09-14T01:57:01+00:00")
 
+    def test_rate_limit_after_generated_reply_marker_is_terminal(self) -> None:
+        body = """<!-- This is an auto-generated reply by CodeRabbit -->
+<!-- CodeRabbit review command invocation: v2:example -->
+<details>
+<summary>⚠️ Action not completed</summary>
+
+Review rate limited.
+
+Your next included review will be available in 39 minutes.
+</details>"""
+        state = self.state(
+            [
+                trigger_comment(),
+                comment(11, "coderabbitai", body, "2026-09-14T01:00:07Z"),
+            ]
+        )
+        self.assertEqual(state.state, "rate_limited")
+        self.assertTrue(state.terminal)
+        self.assertTrue(state.attributed)
+        self.assertEqual(state.cooldown_until, "2026-09-14T01:39:07+00:00")
+
     def test_empty_rate_limit_snapshot_does_not_qualify(self) -> None:
         state = self.state(
             [
