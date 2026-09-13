@@ -2473,6 +2473,66 @@ try:
             f"{mixed_secret_issues}"
         )
 
+    non_retryable_lookup_calls = []
+
+    def mixed_retryable_non_retryable_lookup(
+        secret_name, namespace, required_keys, timeout_seconds
+    ):
+        non_retryable_lookup_calls.append(secret_name)
+        if secret_name == "retryable-first":
+            return (
+                f"Required Secret {namespace}/{secret_name} is missing keys: tls.crt",
+                True,
+                False,
+            )
+        if secret_name == "non-retryable-second":
+            return (
+                f"Secret lookup could not be verified for {namespace}/{secret_name}: kubectl denied",
+                False,
+                False,
+            )
+        raise SystemExit(f"unperformed Secret lookup was invented: {secret_name}")
+
+    non_retryable_clock = SequencedClock((0.0, 1.25, 1.25))
+    with (
+        patch.object(
+            module,
+            "secret_keys_lookup_failure",
+            mixed_retryable_non_retryable_lookup,
+        ),
+        patch.object(module.time, "monotonic", non_retryable_clock),
+    ):
+        mixed_non_retryable_issues = module.wait_for_secret_key_requirements(
+            [
+                ("retryable-first", {"tls.crt"}),
+                ("non-retryable-second", {"tls.crt"}),
+                ("unperformed-third", {"tls.crt"}),
+            ],
+            "pr-42",
+            ready_attempts=3,
+            ready_timeout_seconds=35,
+        )
+    if non_retryable_lookup_calls != ["retryable-first", "non-retryable-second"]:
+        raise SystemExit(
+            "non-retryable Secret lookup did not stop without probing later Secrets: "
+            f"{non_retryable_lookup_calls}"
+        )
+    if (
+        len(mixed_non_retryable_issues) != 2
+        or "pr-42/retryable-first" not in mixed_non_retryable_issues[0]
+        or "still not ready after 1 attempts" not in mixed_non_retryable_issues[0]
+        or "elapsed 1.2s of 35s readiness budget" not in mixed_non_retryable_issues[0]
+        or "pr-42/non-retryable-second" not in mixed_non_retryable_issues[1]
+        or "kubectl denied" not in mixed_non_retryable_issues[1]
+        or "still not ready after 1 attempts" not in mixed_non_retryable_issues[1]
+        or "elapsed 1.2s of 35s readiness budget" not in mixed_non_retryable_issues[1]
+        or "unperformed-third" in " ".join(mixed_non_retryable_issues)
+    ):
+        raise SystemExit(
+            "non-retryable Secret lookup discarded or invented pending diagnostics: "
+            f"{mixed_non_retryable_issues}"
+        )
+
     immediate_deadline_clock = SequencedClock((0.0, 5.0, 5.0))
 
     def immediate_deadline_lookup(*args, **kwargs):

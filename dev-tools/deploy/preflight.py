@@ -6548,6 +6548,25 @@ def wait_for_secret_key_requirements(
                 f"lookup window before lookup for {namespace}/{skipped_name}"
             )
 
+    def format_known_issues(
+        requirements: list[tuple[str, set[str]]],
+    ) -> list[str]:
+        elapsed = max(0.0, time.monotonic() - readiness_started_at)
+        return [
+            (
+                f"{latest_issues[secret_name]} ("
+                + (
+                    f"still not ready after {lookup_attempts[secret_name]} attempts"
+                    if lookup_attempts.get(secret_name, 0)
+                    else "no Secret lookups attempted"
+                )
+                + "; elapsed "
+                f"{elapsed:.1f}s of {ready_timeout_seconds}s readiness budget)"
+            )
+            for secret_name, _ in requirements
+            if secret_name in latest_issues
+        ]
+
     for attempt in range(ready_attempts):
         if (
             deadline - time.monotonic()
@@ -6579,7 +6598,8 @@ def wait_for_secret_key_requirements(
             if issue is None:
                 continue
             if not retryable:
-                return [issue]
+                latest_issues[secret_name] = issue
+                return format_known_issues(pending)
             latest_issues[secret_name] = issue
             retry_pending.append((secret_name, required_keys))
         if not retry_pending:
@@ -6594,20 +6614,7 @@ def wait_for_secret_key_requirements(
                 record_unusable_deadline_window(pending)
                 break
             time.sleep(min(HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS, remaining_seconds))
-    return [
-        (
-            f"{latest_issues[secret_name]} ("
-            + (
-                f"still not ready after {lookup_attempts[secret_name]} attempts"
-                if lookup_attempts.get(secret_name, 0)
-                else "no Secret lookups attempted"
-            )
-            + "; elapsed "
-            f"{max(0.0, time.monotonic() - readiness_started_at):.1f}s of "
-            f"{ready_timeout_seconds}s readiness budget)"
-        )
-        for secret_name, _ in pending
-    ]
+    return format_known_issues(pending)
 
 
 def hosted_bridge_expected_bindings(
