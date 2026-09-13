@@ -2274,7 +2274,6 @@ mapfile -t active_events <"$active_event_log"
   fail "active bootstrap did not verify the operator identity first"
 [[ "${active_events[1]:-}" == "pull-secret-read" ]] || \
   fail "active bootstrap did not verify the controller pull Secret before apply"
-first_apply_index=-1
 [[ "${active_events[-2]:-}" == "apply:active" ]] || \
   fail "active bootstrap did not replace paused mode with active"
 [[ "${active_events[-1]:-}" == "rollout" ]] || \
@@ -2282,6 +2281,7 @@ first_apply_index=-1
 auth_checks=0
 first_ca_index=-1
 active_apply_index=-1
+first_apply_index=-1
 for index in "${!active_events[@]}"; do
   case "${active_events[$index]}" in
     auth-check)

@@ -448,6 +448,7 @@ preview_workflow = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
 preview_annotator = Path(sys.argv[3]).read_text(encoding="utf-8")
 dev_demo_workflow = yaml.safe_load(Path(sys.argv[4]).read_text(encoding="utf-8"))
 publisher_workflow = yaml.safe_load(Path(sys.argv[5]).read_text(encoding="utf-8"))
+credential_source_text = Path(sys.argv[6]).read_text(encoding="utf-8")
 janitor_workflow = yaml.safe_load(Path(sys.argv[7]).read_text(encoding="utf-8"))
 mode_action = yaml.safe_load(Path(sys.argv[8]).read_text(encoding="utf-8"))
 runtime_workflow = yaml.safe_load(Path(sys.argv[9]).read_text(encoding="utf-8"))
@@ -1236,14 +1237,14 @@ for fragment in (
 runtime_rollout_call = (
     'bash ./dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh'
 )
-for rollout_steps, step_name in (
-    (jobs["verify-runtime"]["steps"], "Wait for runtime rollouts"),
-):
-    rollout_step = next(step for step in rollout_steps if step.get("name") == step_name)
-    assert rollout_step["run"].count(runtime_rollout_call) == 1, step_name
-    assert '"$RUNTIME_NAMESPACE" 120' in rollout_step["run"], step_name
-    assert "for deployment in" not in rollout_step["run"], step_name
-    assert "rollout status" not in rollout_step["run"], step_name
+rollout_steps = jobs["verify-runtime"]["steps"]
+rollout_step = next(
+    step for step in rollout_steps if step.get("name") == "Wait for runtime rollouts"
+)
+assert rollout_step["run"].count(runtime_rollout_call) == 1
+assert '"$RUNTIME_NAMESPACE" 120' in rollout_step["run"]
+assert "for deployment in" not in rollout_step["run"]
+assert "rollout status" not in rollout_step["run"]
 
 assert "concurrency" not in jobs["prepare-runtime"]
 assert "concurrency" not in jobs["verify-runtime"]
@@ -1822,7 +1823,6 @@ credential_step = next(
 assert credential_step["run"] == (
     "bash ./dev-tools/hosted/preview/provision-runtime-credentials.sh"
 )
-credential_source_text = Path(sys.argv[6]).read_text(encoding="utf-8")
 for fragment in (
     'read_secret_if_present firemud-secret',
     'read_secret_if_present minio-credentials',
