@@ -157,8 +157,12 @@ jobs:
                   fi
                   echo
                   echo "Unpublished fixed tags:"
-                  # shellcheck disable=SC2016 # Backticks are literal Markdown delimiters.
-                  printf -- '- `%s`\n' "${unpublished_services[@]}"
+                  if ((${#unpublished_services[@]} == 0)); then
+                    echo "- None"
+                  else
+                    # shellcheck disable=SC2016 # Backticks are literal Markdown delimiters.
+                    printf -- '- `%s`\n' "${unpublished_services[@]}"
+                  fi
                 } >> "$GITHUB_STEP_SUMMARY"
                 exit 1
               fi

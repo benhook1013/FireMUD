@@ -706,6 +706,67 @@ exit 99
     assert "`world-management-service`" in unpublished_section
     assert "`entity-management-service`" not in unpublished_section
 
+with tempfile.TemporaryDirectory() as publication_race_fixture_dir:
+    fixture_root = Path(publication_race_fixture_dir)
+    docker_calls = fixture_root / "docker-calls"
+    manifest_calls = fixture_root / "manifest-calls"
+    summary = fixture_root / "summary"
+    fake_docker = fixture_root / "docker"
+    fake_sleep = fixture_root / "sleep"
+    fake_docker.write_text(
+        """#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$DOCKER_CALLS"
+if [[ "$1 $2" == "image inspect" ]]; then
+  exit 0
+fi
+if [[ "$1 $2" == "manifest inspect" ]]; then
+  count=0
+  if [[ -f "$MANIFEST_CALLS" ]]; then
+    count="$(<"$MANIFEST_CALLS")"
+  fi
+  count=$((count + 1))
+  printf '%s' "$count" > "$MANIFEST_CALLS"
+  if ((count <= 4)); then
+    exit 1
+  fi
+  exit 0
+fi
+if [[ "$1" == push ]]; then
+  exit 1
+fi
+exit 99
+""",
+        encoding="utf-8",
+    )
+    fake_sleep.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    fake_docker.chmod(0o755)
+    fake_sleep.chmod(0o755)
+    fixture_env = os.environ.copy()
+    fixture_env.update(
+        DOCKER_CALLS=str(docker_calls),
+        GITHUB_STEP_SUMMARY=str(summary),
+        IMAGE_TAG="fixture-head",
+        MANIFEST_CALLS=str(manifest_calls),
+        PATH=f"{fixture_root}:{fixture_env['PATH']}",
+    )
+    result = subprocess.run(
+        ["bash", "-c", publisher_script],
+        check=False,
+        env=fixture_env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert result.returncode == 1, result
+    assert "Failed to publish" in result.stderr
+    summary_text = summary.read_text(encoding="utf-8")
+    available_section, unpublished_section = summary_text.split(
+        "Unpublished fixed tags:", maxsplit=1
+    )
+    assert "`account-service`" in available_section
+    assert unpublished_section.strip() == "- None"
+    assert "- ``" not in unpublished_section
+
 runtime_jobs = runtime_workflow["jobs"]
 trusted_build = runtime_jobs["build-runtime-images"]
 base_job = runtime_jobs["build-base-image"]

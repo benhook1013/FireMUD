@@ -141,9 +141,12 @@ find_unsatisfied_priority_pr() {
     if [[ -z "$page_rows" ]]; then
       break
     fi
-    if ! awk -F '\t' '
-      NF != 7 || $1 == "" || $2 == "" || $3 == "" ||
-        $4 == "" || $5 == "" || $6 == "" || $7 == "" { invalid = 1 }
+    if ! awk -F '\t' -v expected_repository="$GITHUB_REPOSITORY" '
+      NF != 7 { invalid = 1; next }
+      $3 == expected_repository &&
+        ($1 == "" || $2 == "" || $4 == "" || $5 == "" || $6 == "" || $7 == "") {
+          invalid = 1
+        }
       END { exit invalid }
     ' <<<"$page_rows"; then
       echo "Open pull request metadata is missing required identity fields" >&2

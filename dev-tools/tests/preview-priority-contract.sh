@@ -420,6 +420,9 @@ case "$resource" in
     printf '%s\t%s\t%s\n' "${FAKE_TARGET_STATE:-open}" "$FAKE_TARGET_HEAD" "$(fake_labels_json "$priority" "$labels_valid" | base64 | tr -d '\n')"
     ;;
   */pulls/101)
+    if [[ -n "${FAKE_PRUNE_QUERY_LOG:-}" ]]; then
+      printf '%s\n' "$resource" >> "$FAKE_PRUNE_QUERY_LOG"
+    fi
     if [[ "${FAKE_PRUNE_QUERY_FAIL:-false}" == "true" ]]; then
       exit 1
     fi
@@ -454,6 +457,9 @@ case "$resource" in
     printf 'open\thead-101\t%s\n' "$(fake_labels_json "$priority" "$labels_valid" | base64 | tr -d '\n')"
   ;;
   */pulls/102)
+    if [[ -n "${FAKE_PRUNE_QUERY_LOG:-}" ]]; then
+      printf '%s\n' "$resource" >> "$FAKE_PRUNE_QUERY_LOG"
+    fi
     if [[ "${FAKE_PRUNE_MULTI_TEST:-false}" == true ]]; then
       printf 'open\tfeature/stack\thuman\t%s\n' "$(fake_labels_json "${FAKE_PR_102_PRIORITY:-true}" valid | base64 | tr -d '\n')"
     else
@@ -607,6 +613,7 @@ export FAKE_COMMENT_TARGET_LOG="$TEMP_DIR/comment-target.log"
 export FAKE_PREVIOUS_COMMENT_ID_LOG="$TEMP_DIR/previous-comment-id.log"
 export FAKE_TARGET_CALLS="$TEMP_DIR/target-calls"
 export FAKE_PR_101_CALLS="$TEMP_DIR/pr-101-calls"
+export FAKE_PRUNE_QUERY_LOG="$TEMP_DIR/prune-query.log"
 export FAKE_PRIORITY_QUERY_LOG="$TEMP_DIR/priority-query.log"
 export FAKE_NAMESPACE_JSON_CALLS="$TEMP_DIR/namespace-json-calls"
 export FAKE_NAMESPACE_SNAPSHOT_LOG="$TEMP_DIR/namespace-snapshot.log"
@@ -634,7 +641,7 @@ adversarial_labels_base64="$(printf '%s' '[{"name":"custom:label"},{"name":"quot
 invalid_json_labels_base64="$(printf '%s' '{invalid-json' | base64 | tr -d '\n')"
 
 reset_case() {
-  rm -f "$FAKE_DELETE_LOG" "$FAKE_DELETE_TIMEOUT_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_ANNOTATE_FAILURE_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_PRIORITY_QUERY_LOG" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_NAMESPACE_SNAPSHOT_LOG" "$FAKE_NAMESPACE_SNAPSHOT_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_DELETE_UID_LOG" "$FAKE_RUNTIME_NAMESPACE_DELETED_MARKER" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$FAKE_IDENTITY_LOG" "$FAKE_IDENTITY_LIST_KUBECONFIG_LOG" "$FAKE_IDENTITY_REQUEST_LOG" "$FAKE_IDENTITY_WAIT_LOG" "$FAKE_OPERATION_SEQUENCE" "$TEMP_DIR/output"
+  rm -f "$FAKE_DELETE_LOG" "$FAKE_DELETE_TIMEOUT_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_ANNOTATE_FAILURE_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_PRUNE_QUERY_LOG" "$FAKE_PRIORITY_QUERY_LOG" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_NAMESPACE_SNAPSHOT_LOG" "$FAKE_NAMESPACE_SNAPSHOT_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_DELETE_UID_LOG" "$FAKE_RUNTIME_NAMESPACE_DELETED_MARKER" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$FAKE_IDENTITY_LOG" "$FAKE_IDENTITY_LIST_KUBECONFIG_LOG" "$FAKE_IDENTITY_REQUEST_LOG" "$FAKE_IDENTITY_WAIT_LOG" "$FAKE_OPERATION_SEQUENCE" "$TEMP_DIR/output"
   export GITHUB_OUTPUT="$TEMP_DIR/output"
   export FAKE_TARGET_PRIORITY=true
   export FAKE_TARGET_LABELS_VALID=valid
@@ -1096,7 +1103,7 @@ do
 done
 
 valid_open_pr_row="901"$'\t'"${priority_candidate_head}"$'\t'"example/FireMUD"$'\t'"human"$'\t'"develop"$'\t'"open"$'\t'"${priority_labels_base64}"
-for missing_identity_field in 1 2 3 4 5 6 7; do
+for missing_identity_field in 1 2 4 5 6 7; do
   reset_case
   export FAKE_TARGET_PRIORITY=false
   FAKE_OPEN_PRIORITY_ROWS="$(
@@ -1112,6 +1119,29 @@ for missing_identity_field in 1 2 3 4 5 6 7; do
     "$TEMP_DIR/missing-open-pr-field-${missing_identity_field}.output"
   test ! -e "$FAKE_DELETE_LOG"
 done
+
+for ignored_untrusted_row in \
+  $'901\t\tother/FireMUD\t\t\t\t{malformed-label-transport}\n' \
+  "901\t\t\thuman\tdevelop\topen\t${priority_labels_base64}\n"
+do
+  reset_case
+  export FAKE_TARGET_PRIORITY=false
+  export FAKE_OPEN_PRIORITY_ROWS="$ignored_untrusted_row"
+  bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"
+  test ! -e "$FAKE_DELETE_LOG"
+done
+
+reset_case
+export FAKE_TARGET_PRIORITY=false
+export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\textra\n"
+if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD" \
+  >"$TEMP_DIR/malformed-open-pr-framing.output" 2>&1; then
+  echo "ordinary allocation accepted malformed open PR row framing" >&2
+  exit 1
+fi
+grep -Fxq 'Open pull request metadata is missing required identity fields' \
+  "$TEMP_DIR/malformed-open-pr-framing.output"
+test ! -e "$FAKE_DELETE_LOG"
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
@@ -1216,14 +1246,32 @@ grep -Fqx -- '-n firemud-system delete hostedenvironmentidentity pr-101 --ignore
 # The terminal janitor also rediscovers stranded identity requests after their
 # runtime namespace is already gone. Every recoverable phase is revalidated
 # against current PR eligibility and then uses the same exact-absence retirement path.
-identity_recovery_source="$(sed -n '/^recover_stranded_hosted_identities()/,/^}/p' "$PRUNER")"
-# shellcheck disable=SC2016 # Match the literal source expression.
-identity_pr_capture_line="$(grep -nF 'pr_number="${BASH_REMATCH[1]}"' <<<"$identity_recovery_source" | cut -d: -f1)"
-# shellcheck disable=SC2016 # Match the literal source expression.
-identity_runtime_seen_line="$(grep -nF 'if [[ -n "${runtime_names_seen[$identity_name]:-}" ]]; then' <<<"$identity_recovery_source" | cut -d: -f1)"
-test -n "$identity_pr_capture_line"
-test -n "$identity_runtime_seen_line"
-test "$identity_pr_capture_line" -lt "$identity_runtime_seen_line"
+reset_case
+export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+export FAKE_PRUNE_METADATA="open\tdevelop\thuman\t${adversarial_labels_base64}\n"
+export FAKE_PRUNE_MULTI_TEST=true
+export FAKE_PR_102_PRIORITY=false
+export HOSTED_IDENTITY_MODE=hosted-controller
+export FAKE_RUNTIME_NAMESPACE_PRESENT=false
+export FAKE_RECORD_RUNTIME_CHECK=true
+export FAKE_IDENTITY_JSON='{"apiVersion":"platform.firemud.dev/v1alpha1","kind":"HostedEnvironmentIdentity","metadata":{"namespace":"firemud-system","name":"pr-102"}}'
+export FAKE_IDENTITY_LIST_JSON='{"apiVersion":"platform.firemud.dev/v1alpha1","kind":"HostedEnvironmentIdentityList","items":[{"apiVersion":"platform.firemud.dev/v1alpha1","kind":"HostedEnvironmentIdentity","metadata":{"namespace":"firemud-system","name":"pr-101"},"spec":{"desiredState":"Active"},"status":{"phase":"RuntimeAbsent"}},{"apiVersion":"platform.firemud.dev/v1alpha1","kind":"HostedEnvironmentIdentity","metadata":{"namespace":"firemud-system","name":"pr-102"},"spec":{"desiredState":"Active"},"status":{"phase":"RuntimeAbsent"}}]}'
+bash "$PRUNER" --apply --retire-terminal-identities \
+  >"$TEMP_DIR/recover-observed-and-absent.out"
+# PR #101 is evaluated once by the namespace loop; stranded recovery must skip
+# that observed runtime without a second eligibility query.
+test "$(grep -Fxc 'repos/example/FireMUD/pulls/101' "$FAKE_PRUNE_QUERY_LOG")" -eq 1
+test "$(grep -Fxc 'repos/example/FireMUD/pulls/102' "$FAKE_PRUNE_QUERY_LOG")" -eq 1
+test "$(<"$FAKE_OPERATION_SEQUENCE")" = $'runtime-check\nidentity-request\nidentity-wait\nidentity-delete'
+grep -Fqx 'pr-102 Retired' "$FAKE_IDENTITY_REQUEST_LOG"
+if grep -Fq 'pr-101' "$FAKE_IDENTITY_REQUEST_LOG"; then
+  echo "stranded recovery reconsidered an identity with an observed runtime" >&2
+  exit 1
+fi
+grep -Fq 'Keeping pr-101: PR #101 remains preview-eligible' \
+  "$TEMP_DIR/recover-observed-and-absent.out"
+grep -Fq 'Recovering HostedEnvironmentIdentity/pr-102 from phase RuntimeAbsent: PR #102 is not preview-eligible' \
+  "$TEMP_DIR/recover-observed-and-absent.out"
 for stranded_phase in RuntimeAbsent Retiring Retired; do
   reset_case
   export FAKE_NAMESPACE_ROWS=''

@@ -476,6 +476,13 @@ public class CertificateMaterialService {
             : RoleMaterialState.SERIALIZED_DEFERRED);
   }
 
+  /**
+   * Validates material recorded as accepted during serialized internal CA rotation. The accepted
+   * shared gRPC-family path intentionally skips the configured trust-anchor pin because its
+   * predecessor may still use the prior internal CA; newly selected material remains pinned. The
+   * accepted gRPC projection is stored as {@code Opaque}, so a copy is normalized to the TLS Secret
+   * type before validation.
+   */
   private SecretMaterialValidator.MaterialSummary validateAcceptedMaterial(
       Secret accepted, String role, RoleExpectation current) {
     boolean sharedGrpcTrust =
