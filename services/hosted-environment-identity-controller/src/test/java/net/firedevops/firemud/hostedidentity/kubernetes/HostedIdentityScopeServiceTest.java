@@ -244,13 +244,26 @@ class HostedIdentityScopeServiceTest {
   }
 
   @Test
-  void retainedIdentityNamespaceRejectsUnrelatedAnnotations() {
+  void retainedIdentityNamespaceAllowsUnrelatedAnnotations() {
     EnvironmentIdentityPlan plan = plan();
     Namespace exact = identityNamespace(plan);
     Namespace annotated =
         new NamespaceBuilder(exact)
             .editMetadata()
             .addToAnnotations("tooling.example/managed-by", "cluster-tool")
+            .endMetadata()
+            .build();
+    assertTrue(HostedIdentityScopeService.isExpectedIdentityNamespace(annotated, plan));
+  }
+
+  @Test
+  void retainedIdentityNamespaceRejectsControllerOwnedAnnotations() {
+    EnvironmentIdentityPlan plan = plan();
+    Namespace exact = identityNamespace(plan);
+    Namespace annotated =
+        new NamespaceBuilder(exact)
+            .editMetadata()
+            .addToAnnotations("firemud.dev/unexpected", "controller-drift")
             .endMetadata()
             .build();
     assertFalse(HostedIdentityScopeService.isExpectedIdentityNamespace(annotated, plan));

@@ -90,10 +90,7 @@ SECRET_LOOKUP_TIMEOUT_SECONDS = 30
 HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS = 300
 HOSTED_BRIDGE_SECRET_READY_MAX_TIMEOUT_SECONDS = 900
 HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS = 2
-HOSTED_BRIDGE_SECRET_MIN_LOOKUP_TIMEOUT_SECONDS = min(
-    SECRET_LOOKUP_TIMEOUT_SECONDS,
-    HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS,
-)
+HOSTED_BRIDGE_SECRET_MIN_LOOKUP_TIMEOUT_SECONDS = SECRET_LOOKUP_TIMEOUT_SECONDS
 
 
 def _hosted_bridge_secret_ready_attempts_for_timeout(timeout_seconds: int) -> int:
@@ -6377,8 +6374,8 @@ def secret_keys_lookup_failure(
     namespace: str,
     required_keys: set[str],
     timeout_seconds: float | None = None,
-) -> tuple[str | None, bool]:
-    """Return a Secret-key issue and whether controller convergence may resolve it."""
+) -> tuple[str | None, bool, bool]:
+    """Return a Secret-key issue, retryability, and whether lookup timed out."""
     if timeout_seconds is None:
         timeout_seconds = SECRET_LOOKUP_TIMEOUT_SECONDS
     try:
@@ -6402,10 +6399,12 @@ def secret_keys_lookup_failure(
         return (
             f"Secret lookup could not be verified for {namespace}/{secret_name}: {exc}",
             True,
+            True,
         )
     except (OSError, UnicodeError) as exc:
         return (
             f"Secret lookup could not be verified for {namespace}/{secret_name}: {exc}",
+            False,
             False,
         )
     if result.returncode != 0:
@@ -6414,12 +6413,14 @@ def secret_keys_lookup_failure(
             return (
                 f"Missing required Secret in cluster: {namespace}/{secret_name}",
                 True,
+                False,
             )
         return (
             (
                 f"Secret lookup could not be verified for {namespace}/{secret_name}: "
                 + (stderr or "kubectl returned a non-zero status without stderr")
             ),
+            False,
             False,
         )
     try:
@@ -6428,16 +6429,19 @@ def secret_keys_lookup_failure(
         return (
             f"Secret lookup returned malformed JSON for {namespace}/{secret_name}",
             False,
+            False,
         )
     if not isinstance(payload, dict):
         return (
             f"Secret lookup returned malformed JSON for {namespace}/{secret_name}",
+            False,
             False,
         )
     data = payload.get("data")
     if data is not None and not isinstance(data, dict):
         return (
             f"Secret lookup returned malformed data for {namespace}/{secret_name}",
+            False,
             False,
         )
     actual_keys = set(data or {})
@@ -6449,6 +6453,7 @@ def secret_keys_lookup_failure(
                 + ", ".join(missing_keys)
             ),
             True,
+            False,
         )
     invalid_value_keys = sorted(
         key
@@ -6462,8 +6467,9 @@ def secret_keys_lookup_failure(
                 + ", ".join(invalid_value_keys)
             ),
             True,
+            False,
         )
-    return None, False
+    return None, False, False
 
 
 def hosted_bridge_secret_ready_timeout_seconds() -> int:
@@ -6528,11 +6534,14 @@ def wait_for_secret_key_requirements(
     pending = list(secret_requirements)
     latest_issues: dict[str, str] = {}
     lookup_attempts: dict[str, int] = {}
+    lookup_timed_out: set[str] = set()
 
     def record_unusable_deadline_window(
         skipped_requirements: list[tuple[str, set[str]]],
     ) -> None:
         for skipped_name, _ in skipped_requirements:
+            if skipped_name in lookup_timed_out:
+                continue
             latest_issues[skipped_name] = (
                 "Secret readiness deadline left less than the "
                 f"{usable_lookup_timeout_floor_seconds}s minimum "
@@ -6558,12 +6567,15 @@ def wait_for_secret_key_requirements(
                 retry_pending.extend(skipped_requirements)
                 break
             lookup_attempts[secret_name] = lookup_attempts.get(secret_name, 0) + 1
-            issue, retryable = secret_keys_lookup_failure(
+            lookup_timed_out.discard(secret_name)
+            issue, retryable, timed_out = secret_keys_lookup_failure(
                 secret_name,
                 namespace,
                 required_keys,
                 min(SECRET_LOOKUP_TIMEOUT_SECONDS, remaining_seconds),
             )
+            if timed_out:
+                lookup_timed_out.add(secret_name)
             if issue is None:
                 continue
             if not retryable:

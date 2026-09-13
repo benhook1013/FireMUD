@@ -56,6 +56,74 @@ class DeploymentRolloutServiceTest {
   }
 
   @Test
+  void gatewayInternalWsOnlyRevisionRollsOnlyGatewayAndPreservesReadinessSemantics() {
+    EnvironmentIdentityPlan plan = planWithConsumers("spring-cloud-gateway", "account-service");
+    DeploymentClientGraph graph =
+        deploymentClient(plan, "tcp-proxy-service", "spring-cloud-gateway", "account-service");
+    KubernetesClient client = graph.client();
+    RollableScalableResource<Deployment> proxy = graph.resources().get("tcp-proxy-service");
+    RollableScalableResource<Deployment> gateway = graph.resources().get("spring-cloud-gateway");
+    RollableScalableResource<Deployment> account = graph.resources().get("account-service");
+    when(proxy.get())
+        .thenReturn(
+            readyDeployment(
+                "tcp-proxy-service",
+                Map.of(HostedIdentityContract.TELNET_REVISION_ANNOTATION, "telnet-current"),
+                3L));
+    when(gateway.get())
+        .thenReturn(
+            readyDeployment(
+                "spring-cloud-gateway",
+                Map.of(
+                    HostedIdentityContract.GATEWAY_INTERNAL_WS_REVISION_ANNOTATION,
+                    "gateway-old",
+                    HostedIdentityContract.GRPC_REVISION_ANNOTATION,
+                    "grpc-current"),
+                3L));
+    when(account.get())
+        .thenReturn(
+            readyDeployment(
+                "account-service",
+                Map.of(HostedIdentityContract.GRPC_REVISION_ANNOTATION, "grpc-current"),
+                3L));
+    ReplaceDeletable<Deployment> lockedGateway = mock(ReplaceDeletable.class);
+    when(gateway.lockResourceVersion("rv-3")).thenReturn(lockedGateway);
+
+    DeploymentRolloutService service = new DeploymentRolloutService();
+    DeploymentRolloutService.RolloutResult first =
+        service.sync(client, plan, "telnet-current", "gateway-new", "grpc-current", () -> {});
+
+    assertEquals(false, first.ready());
+    assertEquals(true, first.telnetReady());
+    assertEquals(false, first.grpcReady());
+    ArgumentCaptor<Deployment> replacement = ArgumentCaptor.forClass(Deployment.class);
+    verify(lockedGateway).replace(replacement.capture());
+    Map<String, String> annotations =
+        replacement.getValue().getSpec().getTemplate().getMetadata().getAnnotations();
+    assertEquals(
+        "gateway-new",
+        annotations.get(HostedIdentityContract.GATEWAY_INTERNAL_WS_REVISION_ANNOTATION));
+    assertEquals("grpc-current", annotations.get(HostedIdentityContract.GRPC_REVISION_ANNOTATION));
+    verify(proxy, never()).lockResourceVersion(anyString());
+    verify(account, never()).lockResourceVersion(anyString());
+
+    Deployment converged = replacement.getValue();
+    converged.getMetadata().setGeneration(4L);
+    converged.getStatus().setObservedGeneration(4L);
+    when(gateway.get()).thenReturn(converged);
+    DeploymentRolloutService.RolloutResult second =
+        service.sync(client, plan, "telnet-current", "gateway-new", "grpc-current", () -> {});
+
+    assertEquals(true, second.ready());
+    assertEquals(true, second.telnetReady());
+    assertEquals(true, second.grpcReady());
+    verify(lockedGateway, times(1)).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    verify(proxy, times(2)).get();
+    verify(gateway, times(2)).get();
+    verify(account, times(2)).get();
+  }
+
+  @Test
   void syncRejectsNullRevisionsAtTheBoundary() {
     EnvironmentIdentityPlan plan = planWithConsumers("account-service");
     KubernetesClient client = mock(KubernetesClient.class);
@@ -64,13 +132,19 @@ class DeploymentRolloutServiceTest {
     IllegalArgumentException telnetFailure =
         assertThrows(
             IllegalArgumentException.class,
-            () -> service.sync(client, plan, null, "grpc-revision", () -> {}));
+            () -> service.sync(client, plan, null, "gateway-revision", "grpc-revision", () -> {}));
+    IllegalArgumentException gatewayFailure =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.sync(client, plan, "telnet-revision", null, "grpc-revision", () -> {}));
     IllegalArgumentException grpcFailure =
         assertThrows(
             IllegalArgumentException.class,
-            () -> service.sync(client, plan, "telnet-revision", null, () -> {}));
+            () ->
+                service.sync(client, plan, "telnet-revision", "gateway-revision", null, () -> {}));
 
     assertEquals("telnet revision is required", telnetFailure.getMessage());
+    assertEquals("gateway internal WebSocket revision is required", gatewayFailure.getMessage());
     assertEquals("gRPC revision is required", grpcFailure.getMessage());
     org.mockito.Mockito.verifyNoInteractions(client);
   }
@@ -115,8 +189,7 @@ class DeploymentRolloutServiceTest {
   @Test
   void tcpProxyTelnetAndGrpcChangesUseOneCasReplaceAndConvergeTogether() {
     EnvironmentIdentityPlan plan = planWithConsumers("tcp-proxy-service", "account-service");
-    DeploymentClientGraph graph =
-        deploymentClient(plan, "tcp-proxy-service", "account-service");
+    DeploymentClientGraph graph = deploymentClient(plan, "tcp-proxy-service", "account-service");
     KubernetesClient client = graph.client();
     RollableScalableResource<Deployment> proxy = graph.resources().get("tcp-proxy-service");
     RollableScalableResource<Deployment> account = graph.resources().get("account-service");
@@ -133,7 +206,7 @@ class DeploymentRolloutServiceTest {
     DeploymentRolloutService service = new DeploymentRolloutService();
 
     DeploymentRolloutService.RolloutResult first =
-        service.sync(client, plan, "telnet-new", "grpc-new", () -> {});
+        service.sync(client, plan, "telnet-new", "gateway-new", "grpc-new", () -> {});
 
     assertEquals(false, first.ready());
     assertEquals(false, first.telnetReady());
@@ -154,7 +227,7 @@ class DeploymentRolloutServiceTest {
     converged.getStatus().setObservedGeneration(3L);
     when(proxy.get()).thenReturn(converged);
     DeploymentRolloutService.RolloutResult staleObservedGeneration =
-        service.sync(client, plan, "telnet-new", "grpc-new", () -> {});
+        service.sync(client, plan, "telnet-new", "gateway-new", "grpc-new", () -> {});
 
     assertEquals(false, staleObservedGeneration.ready());
     assertEquals(false, staleObservedGeneration.telnetReady());
@@ -162,7 +235,7 @@ class DeploymentRolloutServiceTest {
 
     converged.getStatus().setObservedGeneration(4L);
     DeploymentRolloutService.RolloutResult second =
-        service.sync(client, plan, "telnet-new", "grpc-new", () -> {});
+        service.sync(client, plan, "telnet-new", "gateway-new", "grpc-new", () -> {});
 
     assertEquals(true, second.ready());
     assertEquals(true, second.telnetReady());
@@ -174,8 +247,7 @@ class DeploymentRolloutServiceTest {
   @Test
   void revisionCasConflictIsRetryableAndKeepsGuardPassed() {
     EnvironmentIdentityPlan plan = planWithConsumers("account-service");
-    DeploymentClientGraph graph =
-        deploymentClient(plan, "tcp-proxy-service", "account-service");
+    DeploymentClientGraph graph = deploymentClient(plan, "tcp-proxy-service", "account-service");
     KubernetesClient client = graph.client();
     RollableScalableResource<Deployment> proxy = graph.resources().get("tcp-proxy-service");
     RollableScalableResource<Deployment> account = graph.resources().get("account-service");
@@ -194,7 +266,8 @@ class DeploymentRolloutServiceTest {
         .replace(org.mockito.ArgumentMatchers.any(Deployment.class));
 
     DeploymentRolloutService.RolloutResult result =
-        new DeploymentRolloutService().sync(client, plan, "telnet-new", "grpc-new", () -> {});
+        new DeploymentRolloutService()
+            .sync(client, plan, "telnet-new", "gateway-new", "grpc-new", () -> {});
 
     assertEquals(false, result.ready());
     assertEquals(false, result.telnetReady());
@@ -225,7 +298,7 @@ class DeploymentRolloutServiceTest {
             IllegalStateException.class,
             () ->
                 new DeploymentRolloutService()
-                    .sync(client, plan, "telnet-new", "grpc-new", () -> {}));
+                    .sync(client, plan, "telnet-new", "gateway-new", "grpc-new", () -> {}));
 
     assertEquals("Deployment has no resourceVersion for CAS", failure.getMessage());
     verify(proxy, never()).lockResourceVersion(anyString());
@@ -234,8 +307,7 @@ class DeploymentRolloutServiceTest {
   @Test
   void readinessRemainsIndependentAcrossTelnetAndGrpcConsumers() {
     EnvironmentIdentityPlan plan = planWithConsumers("tcp-proxy-service", "account-service");
-    DeploymentClientGraph graph =
-        deploymentClient(plan, "tcp-proxy-service", "account-service");
+    DeploymentClientGraph graph = deploymentClient(plan, "tcp-proxy-service", "account-service");
     KubernetesClient client = graph.client();
     RollableScalableResource<Deployment> proxy = graph.resources().get("tcp-proxy-service");
     RollableScalableResource<Deployment> account = graph.resources().get("account-service");
@@ -253,7 +325,7 @@ class DeploymentRolloutServiceTest {
 
     DeploymentRolloutService.RolloutResult result =
         new DeploymentRolloutService()
-            .sync(client, plan, "telnet-current", "grpc-current", () -> {});
+            .sync(client, plan, "telnet-current", "gateway-current", "grpc-current", () -> {});
 
     assertEquals(false, result.ready());
     assertEquals(true, result.telnetReady());
@@ -265,8 +337,7 @@ class DeploymentRolloutServiceTest {
   @Test
   void readinessRequiresTelnetEvenWhenGrpcConsumerIsReady() {
     EnvironmentIdentityPlan plan = planWithConsumers("tcp-proxy-service", "account-service");
-    DeploymentClientGraph graph =
-        deploymentClient(plan, "tcp-proxy-service", "account-service");
+    DeploymentClientGraph graph = deploymentClient(plan, "tcp-proxy-service", "account-service");
     KubernetesClient client = graph.client();
     RollableScalableResource<Deployment> proxy = graph.resources().get("tcp-proxy-service");
     RollableScalableResource<Deployment> account = graph.resources().get("account-service");
@@ -280,7 +351,7 @@ class DeploymentRolloutServiceTest {
 
     DeploymentRolloutService.RolloutResult result =
         new DeploymentRolloutService()
-            .sync(client, plan, "telnet-current", "grpc-current", () -> {});
+            .sync(client, plan, "telnet-current", "gateway-current", "grpc-current", () -> {});
 
     assertEquals(false, result.ready());
     assertEquals(false, result.telnetReady());
@@ -292,8 +363,7 @@ class DeploymentRolloutServiceTest {
   @Test
   void runtimeProfileFenceExceptionStopsSyncBeforeEditAndLaterDeploymentReads() {
     EnvironmentIdentityPlan plan = planWithConsumers("tcp-proxy-service", "account-service");
-    DeploymentClientGraph graph =
-        deploymentClient(plan, "tcp-proxy-service", "account-service");
+    DeploymentClientGraph graph = deploymentClient(plan, "tcp-proxy-service", "account-service");
     KubernetesClient client = graph.client();
     RollableScalableResource<Deployment> proxy = graph.resources().get("tcp-proxy-service");
     RollableScalableResource<Deployment> account = graph.resources().get("account-service");
@@ -310,6 +380,7 @@ class DeploymentRolloutServiceTest {
                         client,
                         plan,
                         "telnet-new",
+                        "gateway-new",
                         "grpc-new",
                         () -> {
                           if (guardCalls.getAndIncrement() > 0) {
@@ -352,8 +423,7 @@ class DeploymentRolloutServiceTest {
     DeploymentClientGraph graph =
         deploymentClient(plan, "spring-cloud-gateway", "tcp-proxy-service");
     KubernetesClient client = graph.client();
-    RollableScalableResource<Deployment> gateway =
-        graph.resources().get("spring-cloud-gateway");
+    RollableScalableResource<Deployment> gateway = graph.resources().get("spring-cloud-gateway");
     RollableScalableResource<Deployment> proxy = graph.resources().get("tcp-proxy-service");
     when(gateway.get()).thenReturn(readyDeployment("spring-cloud-gateway", Map.of(), 3L));
     java.util.concurrent.atomic.AtomicInteger guardCalls =
@@ -386,8 +456,7 @@ class DeploymentRolloutServiceTest {
     DeploymentClientGraph graph =
         deploymentClient(plan, "spring-cloud-gateway", "tcp-proxy-service");
     KubernetesClient client = graph.client();
-    RollableScalableResource<Deployment> gateway =
-        graph.resources().get("spring-cloud-gateway");
+    RollableScalableResource<Deployment> gateway = graph.resources().get("spring-cloud-gateway");
     RollableScalableResource<Deployment> proxy = graph.resources().get("tcp-proxy-service");
     Deployment observed = readyDeployment("spring-cloud-gateway", Map.of(), 3L);
     observed.getMetadata().setResourceVersion(null);
@@ -411,8 +480,7 @@ class DeploymentRolloutServiceTest {
     DeploymentClientGraph graph =
         deploymentClient(plan, "spring-cloud-gateway", "tcp-proxy-service");
     KubernetesClient client = graph.client();
-    RollableScalableResource<Deployment> gateway =
-        graph.resources().get("spring-cloud-gateway");
+    RollableScalableResource<Deployment> gateway = graph.resources().get("spring-cloud-gateway");
     RollableScalableResource<Deployment> proxy = graph.resources().get("tcp-proxy-service");
     Deployment runningGateway = readyDeployment("spring-cloud-gateway", Map.of(), 3L);
     Deployment runningProxy = readyDeployment("tcp-proxy-service", Map.of(), 3L);
@@ -468,8 +536,7 @@ class DeploymentRolloutServiceTest {
     DeploymentClientGraph graph =
         deploymentClient(plan, "spring-cloud-gateway", "tcp-proxy-service");
     KubernetesClient client = graph.client();
-    RollableScalableResource<Deployment> gateway =
-        graph.resources().get("spring-cloud-gateway");
+    RollableScalableResource<Deployment> gateway = graph.resources().get("spring-cloud-gateway");
     RollableScalableResource<Deployment> proxy = graph.resources().get("tcp-proxy-service");
     when(gateway.get()).thenReturn(readyDeployment("spring-cloud-gateway", Map.of(), 3L));
     when(proxy.get()).thenReturn(null);

@@ -17,8 +17,7 @@ public final class HostedIdentityContract {
   public static final String GRPC_CA_SECRET_NAME = "firemud-grpc-ca";
   public static final String PREVIEW_REQUESTED_HEAD_ANNOTATION =
       "firemud.dev/requested-preview-head-sha";
-  public static final String PREVIEW_DEPLOYED_HEAD_ANNOTATION =
-      "firemud.dev/last-preview-head-sha";
+  public static final String PREVIEW_DEPLOYED_HEAD_ANNOTATION = "firemud.dev/last-preview-head-sha";
   public static final String DEV_DEMO_REQUESTED_HEAD_ANNOTATION =
       "firemud.dev/requested-dev-demo-head-sha";
   public static final String DEV_DEMO_DEPLOYED_HEAD_ANNOTATION =
@@ -51,6 +50,8 @@ public final class HostedIdentityContract {
   public static final String ISSUANCE_GENERATION_ANNOTATION = "firemud.dev/issuance-generation";
   public static final String CONVERGENCE_STATE_ANNOTATION = "firemud.dev/convergence-state";
   public static final String TELNET_REVISION_ANNOTATION = "firemud.dev/telnet-revision";
+  public static final String GATEWAY_INTERNAL_WS_REVISION_ANNOTATION =
+      "firemud.dev/gateway-internal-ws-revision";
   public static final String GRPC_REVISION_ANNOTATION = "firemud.dev/grpc-revision";
   public static final String INGRESS_ROLE = "ingress";
   public static final String TELNET_ROLE = "telnet";

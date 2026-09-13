@@ -14,7 +14,7 @@ import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import org.springframework.stereotype.Component;
 
-/** Applies one deterministic pod-template revision to the Telnet proxy and all gRPC consumers. */
+/** Applies one deterministic pod-template revision to hosted identity consumers. */
 @Component
 public class DeploymentRolloutService {
   static final String GATEWAY_DEPLOYMENT = "spring-cloud-gateway";
@@ -25,6 +25,7 @@ public class DeploymentRolloutService {
       KubernetesClient client,
       EnvironmentIdentityPlan plan,
       String telnetRevision,
+      String gatewayInternalWsRevision,
       String grpcRevision,
       Runnable runtimeProfileFence) {
     if (runtimeProfileFence == null) {
@@ -33,6 +34,9 @@ public class DeploymentRolloutService {
     if (telnetRevision == null) {
       throw new IllegalArgumentException("telnet revision is required");
     }
+    if (gatewayInternalWsRevision == null) {
+      throw new IllegalArgumentException("gateway internal WebSocket revision is required");
+    }
     if (grpcRevision == null) {
       throw new IllegalArgumentException("gRPC revision is required");
     }
@@ -40,6 +44,13 @@ public class DeploymentRolloutService {
     revisionsByDeployment
         .computeIfAbsent(TCP_PROXY_DEPLOYMENT, ignored -> new LinkedHashMap<>())
         .put(HostedIdentityContract.TELNET_REVISION_ANNOTATION, telnetRevision);
+    if (plan.grpcConsumers().contains(GATEWAY_DEPLOYMENT)) {
+      revisionsByDeployment
+          .computeIfAbsent(GATEWAY_DEPLOYMENT, ignored -> new LinkedHashMap<>())
+          .put(
+              HostedIdentityContract.GATEWAY_INTERNAL_WS_REVISION_ANNOTATION,
+              gatewayInternalWsRevision);
+    }
     for (String consumer : plan.grpcConsumers()) {
       revisionsByDeployment
           .computeIfAbsent(consumer, ignored -> new LinkedHashMap<>())

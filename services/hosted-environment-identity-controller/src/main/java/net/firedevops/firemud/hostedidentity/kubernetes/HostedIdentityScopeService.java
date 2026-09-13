@@ -99,12 +99,13 @@ public class HostedIdentityScopeService {
         || !labelsMatch) {
       return false;
     }
+    Map<String, String> annotations = namespace.getMetadata().getAnnotations();
     return (namespace.getMetadata().getOwnerReferences() == null
             || namespace.getMetadata().getOwnerReferences().isEmpty())
         && (namespace.getMetadata().getFinalizers() == null
             || namespace.getMetadata().getFinalizers().isEmpty())
-        && (namespace.getMetadata().getAnnotations() == null
-            || namespace.getMetadata().getAnnotations().isEmpty());
+        && (annotations == null
+            || annotations.keySet().stream().noneMatch(key -> key.startsWith("firemud.dev/")));
   }
 
   private static Map<String, String> identityNamespaceLabels(EnvironmentIdentityPlan plan) {

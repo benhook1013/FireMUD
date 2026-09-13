@@ -216,6 +216,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
               client,
               plan,
               projections.get(HostedIdentityContract.TELNET_ROLE).revision(),
+              projections.get(HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE).revision(),
               projections.get(HostedIdentityContract.GRPC_ROLE).revision(),
               () -> assertRuntimeProfileCurrent(plan, runtimeProfile, "rollout mutation"));
       ServedEnvironmentProbe.ProbeResult probes;

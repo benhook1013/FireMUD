@@ -103,7 +103,6 @@ for trusted_source_ref in refs/heads/develop refs/heads/main; do
     --bundle-from-oci \
     --signer-workflow github.com/benhook1013/FireMUD/.github/workflows/runtime-images.yml \
     --source-ref "$trusted_source_ref" \
-    --cert-identity "https://github.com/benhook1013/FireMUD/.github/workflows/runtime-images.yml@$trusted_source_ref" \
     --predicate-type https://slsa.dev/provenance/v1 \
     --deny-self-hosted-runners >/dev/null 2>&1; then
     attestation_verified=true

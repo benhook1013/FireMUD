@@ -74,6 +74,7 @@ import net.firedevops.firemud.hostedidentity.security.EnvironmentIdentityPlanner
 import net.firedevops.firemud.hostedidentity.security.SecretMaterialValidator;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
@@ -279,6 +280,7 @@ class HostedIdentityReconcilerSafetyTest {
             org.mockito.ArgumentMatchers.eq(aligned.plan),
             anyString(),
             anyString(),
+            anyString(),
             any()))
         .thenThrow(new IllegalStateException("downstream-rollout-boundary"));
 
@@ -294,6 +296,7 @@ class HostedIdentityReconcilerSafetyTest {
         .sync(
             org.mockito.ArgumentMatchers.eq(aligned.client),
             org.mockito.ArgumentMatchers.eq(aligned.plan),
+            anyString(),
             anyString(),
             anyString(),
             any());
@@ -340,6 +343,7 @@ class HostedIdentityReconcilerSafetyTest {
     when(fixture.rollout.sync(
             org.mockito.ArgumentMatchers.eq(fixture.client),
             org.mockito.ArgumentMatchers.eq(fixture.plan),
+            anyString(),
             anyString(),
             anyString(),
             any()))
@@ -389,6 +393,7 @@ class HostedIdentityReconcilerSafetyTest {
     when(fixture.rollout.sync(
             org.mockito.ArgumentMatchers.eq(fixture.client),
             org.mockito.ArgumentMatchers.eq(fixture.plan),
+            anyString(),
             anyString(),
             anyString(),
             any()))
@@ -560,7 +565,7 @@ class HostedIdentityReconcilerSafetyTest {
     when(fixture.runtime.read(fixture.client, fixture.plan))
         .thenReturn(expected, expected, expected)
         .thenThrow(new IllegalStateException("invalid runtime profile"));
-    when(fixture.rollout.sync(any(), any(), anyString(), anyString(), any()))
+    when(fixture.rollout.sync(any(), any(), anyString(), anyString(), anyString(), any()))
         .thenReturn(new DeploymentRolloutService.RolloutResult(true, true, true));
     when(fixture.probes.probe(
             any(),
@@ -1346,7 +1351,7 @@ class HostedIdentityReconcilerSafetyTest {
         .thenReturn(
             DeploymentHeadGateFixture.material(
                 fixture.plan, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE, "4"));
-    when(fixture.rollout.sync(any(), any(), anyString(), anyString(), any()))
+    when(fixture.rollout.sync(any(), any(), anyString(), anyString(), anyString(), any()))
         .thenReturn(new DeploymentRolloutService.RolloutResult(true, true, true));
     MixedOperation<Secret, SecretList, Resource<Secret>> secrets = mock(MixedOperation.class);
     NonNamespaceOperation<Secret, SecretList, Resource<Secret>> runtimeSecrets =
@@ -1385,7 +1390,7 @@ class HostedIdentityReconcilerSafetyTest {
         new RuntimeProfileService.RuntimeProfile(
             "uid", "a".repeat(40), "a".repeat(40), 32016, true);
     DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(expected);
-    when(fixture.rollout.sync(any(), any(), anyString(), anyString(), any()))
+    when(fixture.rollout.sync(any(), any(), anyString(), anyString(), anyString(), any()))
         .thenReturn(new DeploymentRolloutService.RolloutResult(false, false, false));
 
     HostedEnvironmentIdentityStatus status =
@@ -1396,6 +1401,11 @@ class HostedIdentityReconcilerSafetyTest {
     assertEquals("3".repeat(64), status.getGatewayInternalWs().getSpkiSha256());
     assertEquals("4".repeat(64), status.getTcpProxyBridge().getSpkiSha256());
     assertEquals("5".repeat(64), status.getGrpc().getSpkiSha256());
+    ArgumentCaptor<String> gatewayRevision = ArgumentCaptor.forClass(String.class);
+    verify(fixture.rollout)
+        .sync(any(), any(), anyString(), gatewayRevision.capture(), anyString(), any());
+    assertEquals(
+        "revision-" + HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE, gatewayRevision.getValue());
   }
 
   @Test

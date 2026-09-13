@@ -2262,29 +2262,44 @@ try:
         "run",
         secret_lookup({"data": {"tls.crt": "encoded"}}),
     ):
-        ready_issue, ready_retryable = module.secret_keys_lookup_failure(
+        ready_issue, ready_retryable, ready_timed_out = module.secret_keys_lookup_failure(
             "ready", "pr-42", {"tls.crt"}
         )
-    if ready_issue is not None or ready_retryable:
-        raise SystemExit(f"non-empty Secret data was not accepted: {ready_issue}, {ready_retryable}")
+    if ready_issue is not None or ready_retryable or ready_timed_out:
+        raise SystemExit(
+            "non-empty Secret data was not accepted: "
+            f"{ready_issue}, {ready_retryable}, {ready_timed_out}"
+        )
 
     with patch.object(module.subprocess, "run", secret_lookup({"data": {}})):
-        missing_issue, missing_retryable = module.secret_keys_lookup_failure(
+        missing_issue, missing_retryable, missing_timed_out = module.secret_keys_lookup_failure(
             "missing-key", "pr-42", {"tls.crt"}
         )
-    if missing_retryable is not True or "missing keys" not in missing_issue:
-        raise SystemExit(f"missing Secret data key was not retryable: {missing_issue}, {missing_retryable}")
+    if (
+        missing_retryable is not True
+        or missing_timed_out
+        or "missing keys" not in missing_issue
+    ):
+        raise SystemExit(
+            "missing Secret data key was not retryable: "
+            f"{missing_issue}, {missing_retryable}, {missing_timed_out}"
+        )
 
     def timeout_secret_lookup(args, **kwargs):
         raise module.subprocess.TimeoutExpired(args, kwargs["timeout"])
 
     with patch.object(module.subprocess, "run", timeout_secret_lookup):
-        timeout_issue, timeout_retryable = module.secret_keys_lookup_failure(
+        timeout_issue, timeout_retryable, timeout_timed_out = module.secret_keys_lookup_failure(
             "timed-out", "pr-42", {"tls.crt"}
         )
-    if timeout_retryable is not True or "timed out" not in timeout_issue:
+    if (
+        timeout_retryable is not True
+        or timeout_timed_out is not True
+        or "timed out" not in timeout_issue
+    ):
         raise SystemExit(
-            f"timed-out Secret-key lookup was not retryable: {timeout_issue}, {timeout_retryable}"
+            "timed-out Secret-key lookup was not retryable or marked timed out: "
+            f"{timeout_issue}, {timeout_retryable}, {timeout_timed_out}"
         )
 
     for lookup_error in (
@@ -2295,13 +2310,17 @@ try:
             raise lookup_error
 
         with patch.object(module.subprocess, "run", failed_secret_lookup):
-            failed_issue, failed_retryable = module.secret_keys_lookup_failure(
+            failed_issue, failed_retryable, failed_timed_out = module.secret_keys_lookup_failure(
                 "failed", "pr-42", {"tls.crt"}
             )
-        if failed_retryable or "could not be verified" not in failed_issue:
+        if (
+            failed_retryable
+            or failed_timed_out
+            or "could not be verified" not in failed_issue
+        ):
             raise SystemExit(
                 "non-timeout Secret-key lookup failure became retryable: "
-                f"{failed_issue}, {failed_retryable}"
+                f"{failed_issue}, {failed_retryable}, {failed_timed_out}"
             )
 
     for invalid_value in ("", 123):
@@ -2310,12 +2329,17 @@ try:
             "run",
             secret_lookup({"data": {"tls.crt": invalid_value}}),
         ):
-            invalid_issue, invalid_retryable = module.secret_keys_lookup_failure(
+            invalid_issue, invalid_retryable, invalid_timed_out = module.secret_keys_lookup_failure(
                 "not-ready", "pr-42", {"tls.crt"}
             )
-        if invalid_retryable is not True or "empty or non-string values" not in invalid_issue:
+        if (
+            invalid_retryable is not True
+            or invalid_timed_out
+            or "empty or non-string values" not in invalid_issue
+        ):
             raise SystemExit(
-                f"invalid Secret data value was not retryable: {invalid_issue}, {invalid_retryable}"
+                "invalid Secret data value was not retryable: "
+                f"{invalid_issue}, {invalid_retryable}, {invalid_timed_out}"
             )
 
     module.HOSTED_BRIDGE_SECRET_READY_ATTEMPTS = 2
@@ -2417,10 +2441,11 @@ try:
     def mixed_secret_lookup(secret_name, namespace, required_keys, timeout_seconds):
         mixed_lookup_calls.append(secret_name)
         if secret_name == "already-ready":
-            return None, False
+            return None, False, False
         return (
             f"Required Secret {namespace}/{secret_name} is missing keys: tls.crt",
             True,
+            False,
         )
 
     with patch.object(module, "secret_keys_lookup_failure", mixed_secret_lookup), patch.object(
@@ -2430,7 +2455,7 @@ try:
             [("already-ready", {"tls.crt"}), ("still-missing", {"tls.crt"})],
             "pr-42",
             ready_attempts=2,
-            ready_timeout_seconds=5,
+            ready_timeout_seconds=35,
         )
     if mixed_lookup_calls != ["already-ready", "still-missing", "still-missing"]:
         raise SystemExit(
@@ -2470,7 +2495,7 @@ try:
         len(immediate_deadline_issues) != 1
         or "Secret readiness deadline left less than the"
         not in immediate_deadline_issues[0]
-        or "2s minimum lookup window" not in immediate_deadline_issues[0]
+        or "5s minimum lookup window" not in immediate_deadline_issues[0]
         or "no Secret lookups attempted" not in immediate_deadline_issues[0]
         or "still not ready after" in immediate_deadline_issues[0]
         or "elapsed 5.0s of 5s readiness budget" not in immediate_deadline_issues[0]
@@ -2501,7 +2526,7 @@ try:
         raise SystemExit("Secret readiness performed a lookup below its usable timeout floor")
     if (
         len(below_floor_issues) != 1
-        or "2s minimum lookup window" not in below_floor_issues[0]
+        or "5s minimum lookup window" not in below_floor_issues[0]
         or "no Secret lookups attempted" not in below_floor_issues[0]
         or "elapsed 4.0s of 5s readiness budget" not in below_floor_issues[0]
     ):
@@ -2509,12 +2534,12 @@ try:
             f"Secret readiness did not report its below-floor deadline: {below_floor_issues}"
         )
 
-    exact_floor_clock = SequencedClock((0.0, 3.0, 3.0))
+    exact_floor_clock = SequencedClock((0.0, 5.0, 5.0))
     exact_floor_lookup_calls = [0]
 
     def exact_floor_lookup(args, **kwargs):
         exact_floor_lookup_calls[0] += 1
-        if kwargs.get("timeout") != 2.0:
+        if kwargs.get("timeout") != 30.0:
             raise SystemExit("Secret readiness did not preserve the exact usable timeout floor")
         return module.subprocess.CompletedProcess(
             args, 0, json.dumps({"data": {"tls.crt": "encoded"}}), ""
@@ -2528,12 +2553,60 @@ try:
             [("exact-floor", {"tls.crt"})],
             "pr-42",
             ready_attempts=3,
-            ready_timeout_seconds=5,
+            ready_timeout_seconds=35,
         )
     if exact_floor_lookup_calls[0] != 1 or exact_floor_issues:
         raise SystemExit(
             "Secret readiness did not allow a lookup at the exact usable timeout floor: "
             f"{exact_floor_issues}"
+        )
+
+    final_lookup_timeout_now = [0.0]
+    final_lookup_timeout_calls = [0]
+
+    def final_lookup_timeout(args, **kwargs):
+        final_lookup_timeout_calls[0] += 1
+        if kwargs.get("timeout") != 30.0:
+            raise SystemExit("final Secret lookup did not receive the full lookup timeout")
+        if final_lookup_timeout_calls[0] == 1:
+            return module.subprocess.CompletedProcess(args, 0, json.dumps({"data": {}}), "")
+        final_lookup_timeout_now[0] = 35.0
+        raise module.subprocess.TimeoutExpired(args, kwargs["timeout"])
+
+    def final_lookup_retry_sleep(_):
+        final_lookup_timeout_now[0] = 5.0
+
+    with (
+        patch.object(module.subprocess, "run", final_lookup_timeout),
+        patch.object(module.time, "sleep", final_lookup_retry_sleep),
+        patch.object(
+            module.time,
+            "monotonic",
+            lambda: final_lookup_timeout_now[0],
+        ),
+    ):
+        final_lookup_timeout_issues = module.wait_for_secret_key_requirements(
+            [("final-timeout", {"tls.crt"})],
+            "pr-42",
+            ready_attempts=2,
+            ready_timeout_seconds=35,
+        )
+    if final_lookup_timeout_calls[0] != 2:
+        raise SystemExit(
+            "Secret readiness did not perform its final lookup before deadline: "
+            f"{final_lookup_timeout_calls}"
+        )
+    if (
+        len(final_lookup_timeout_issues) != 1
+        or "Secret lookup could not be verified" not in final_lookup_timeout_issues[0]
+        or "timed out after 30 seconds" not in final_lookup_timeout_issues[0]
+        or "Secret readiness deadline left less than the" in final_lookup_timeout_issues[0]
+        or "still not ready after 2 attempts" not in final_lookup_timeout_issues[0]
+        or "elapsed 35.0s of 35s readiness budget" not in final_lookup_timeout_issues[0]
+    ):
+        raise SystemExit(
+            "final timed-out Secret lookup lost its timeout-specific diagnostic: "
+            f"{final_lookup_timeout_issues}"
         )
 
     one_second_floor_clock = SequencedClock((0.0, 0.0, 0.0))
@@ -2622,7 +2695,7 @@ try:
         raise SystemExit("Secret readiness retried after losing its usable timeout window")
     if (
         len(authoritative_deadline_issues) != 1
-        or "2s minimum lookup window" not in authoritative_deadline_issues[0]
+        or "5s minimum lookup window" not in authoritative_deadline_issues[0]
         or "missing keys" in authoritative_deadline_issues[0]
         or "still not ready after 1 attempts" not in authoritative_deadline_issues[0]
         or "elapsed 4.0s of 5s readiness budget"
@@ -2685,7 +2758,9 @@ try:
     if (
         timeout_deadline_calls[0] != 1
         or len(timeout_deadline_issues) != 1
-        or "Secret readiness deadline left less than the" not in timeout_deadline_issues[0]
+        or "Secret lookup could not be verified" not in timeout_deadline_issues[0]
+        or "timed out after 5.0 seconds" not in timeout_deadline_issues[0]
+        or "Secret readiness deadline left less than the" in timeout_deadline_issues[0]
         or "still not ready after 1 attempts" not in timeout_deadline_issues[0]
         or "elapsed 6.0s of 5s readiness budget" not in timeout_deadline_issues[0]
     ):
@@ -2726,7 +2801,7 @@ try:
     )
     if (
         "Secret readiness deadline left less than the" not in skipped_issue
-        or "2s minimum lookup window" not in skipped_issue
+        or "5s minimum lookup window" not in skipped_issue
         or "no Secret lookups attempted" not in skipped_issue
         or "still not ready after" in skipped_issue
         or "elapsed 6.0s of 5s readiness budget" not in skipped_issue

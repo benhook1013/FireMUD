@@ -311,11 +311,24 @@ for required in \
   FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR \
   --server-side \
   --field-manager \
+  --bundle-from-oci \
+  --signer-workflow \
+  --source-ref \
+  --predicate-type \
+  --deny-self-hosted-runners \
   --grpc-trust-anchor-sha256 \
   'ACTIVATION_MODE="paused"' \
   'paused|observe|active' \
   '@sha256:[0-9a-f]{64}'; do
   contains "$bootstrap" "$required"
+done
+for attestation_source in \
+  "$bootstrap" \
+  "$ROOT_DIR/k8s/hosted-identity-controller/README.md"; do
+  if grep -Fq -- '--cert-identity' "$attestation_source"; then
+    echo "$attestation_source must not combine --cert-identity with --signer-workflow" >&2
+    exit 1
+  fi
 done
 python3 - "$bootstrap" <<'PY'
 import sys
