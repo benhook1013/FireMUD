@@ -1521,7 +1521,7 @@ for input_name, env_name in (
     assert preview_derive_step["env"][env_name] == f"${{{{ inputs.{input_name} }}}}"
 assert "${{ inputs." not in preview_derive_run
 assert "set -euo pipefail" in preview_derive_run
-pr_number_validation = '[[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]'
+pr_number_validation = '[[ ! "$PR_NUMBER" =~ ^[1-9][0-9]{0,50}$ ]]'
 action_validation = '[[ "$ACTION" != deploy && "$ACTION" != destroy ]]'
 assert pr_number_validation in preview_derive_run
 assert action_validation in preview_derive_run
@@ -1727,7 +1727,7 @@ preview_deployed_step = preview_steps[preview_deployed_index]
 assert "steps.deploy-release.outcome == 'success'" in preview_deployed_step["if"]
 preview_deployed_guards = (
     (
-        '[[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]',
+        '[[ ! "$PR_NUMBER" =~ ^[1-9][0-9]{0,50}$ ]]',
         "::error title=Invalid preview PR number::Expected a canonical positive decimal integer.",
     ),
     (
