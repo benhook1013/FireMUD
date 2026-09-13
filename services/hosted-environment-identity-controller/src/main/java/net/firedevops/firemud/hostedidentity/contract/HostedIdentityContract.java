@@ -15,6 +15,18 @@ public final class HostedIdentityContract {
   public static final String DEV_DEMO_ENVIRONMENT_CLASS = "dev-demo-cluster";
   public static final String PREVIEW_ENVIRONMENT_CLASS = "pr-preview";
   public static final String GRPC_CA_SECRET_NAME = "firemud-grpc-ca";
+  public static final String PREVIEW_REQUESTED_HEAD_ANNOTATION =
+      "firemud.dev/requested-preview-head-sha";
+  public static final String PREVIEW_DEPLOYED_HEAD_ANNOTATION =
+      "firemud.dev/last-preview-head-sha";
+  public static final String DEV_DEMO_REQUESTED_HEAD_ANNOTATION =
+      "firemud.dev/requested-dev-demo-head-sha";
+  public static final String DEV_DEMO_DEPLOYED_HEAD_ANNOTATION =
+      "firemud.dev/last-dev-demo-head-sha";
+  public static final String PREVIEW_TELNET_PORT_ANNOTATION =
+      "firemud.dev/last-preview-telnet-port";
+  public static final String DEV_DEMO_TELNET_PORT_ANNOTATION =
+      "firemud.dev/last-dev-demo-telnet-port";
 
   public static final String MANAGED_BY_LABEL = "firemud.dev/managed-by";
   public static final String ENVIRONMENT_LABEL = "firemud.dev/identity-name";

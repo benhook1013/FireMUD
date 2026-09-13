@@ -68,6 +68,52 @@ class HostedIdentityPropertiesTest {
   }
 
   @Test
+  void usesCanonicalWorkflowAnnotationDefaults() {
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+
+    assertEquals(
+        HostedIdentityContract.PREVIEW_REQUESTED_HEAD_ANNOTATION,
+        properties.getPreviewRequestedHeadAnnotation());
+    assertEquals(
+        HostedIdentityContract.PREVIEW_DEPLOYED_HEAD_ANNOTATION,
+        properties.getPreviewDeployedHeadAnnotation());
+    assertEquals(
+        HostedIdentityContract.PREVIEW_TELNET_PORT_ANNOTATION,
+        properties.getPreviewTelnetPortAnnotation());
+    assertEquals(
+        HostedIdentityContract.DEV_DEMO_REQUESTED_HEAD_ANNOTATION,
+        properties.getDevDemoRequestedHeadAnnotation());
+    assertEquals(
+        HostedIdentityContract.DEV_DEMO_DEPLOYED_HEAD_ANNOTATION,
+        properties.getDevDemoHeadAnnotation());
+    assertEquals(
+        HostedIdentityContract.DEV_DEMO_TELNET_PORT_ANNOTATION,
+        properties.getDevDemoTelnetPortAnnotation());
+    assertDoesNotThrow(properties::afterPropertiesSet);
+  }
+
+  @Test
+  void rejectsWorkflowAnnotationOverrides() {
+    HostedIdentityProperties requestedHead = new HostedIdentityProperties();
+    requestedHead.setPreviewRequestedHeadAnnotation("example.invalid/requested-head");
+    IllegalStateException requestedHeadFailure =
+        assertThrows(IllegalStateException.class, requestedHead::afterPropertiesSet);
+    assertEquals(
+        "preview requested head annotation must be "
+            + HostedIdentityContract.PREVIEW_REQUESTED_HEAD_ANNOTATION,
+        requestedHeadFailure.getMessage());
+
+    HostedIdentityProperties telnetPort = new HostedIdentityProperties();
+    telnetPort.setDevDemoTelnetPortAnnotation("example.invalid/telnet-port");
+    IllegalStateException telnetPortFailure =
+        assertThrows(IllegalStateException.class, telnetPort::afterPropertiesSet);
+    assertEquals(
+        "dev-demo Telnet port annotation must be "
+            + HostedIdentityContract.DEV_DEMO_TELNET_PORT_ANNOTATION,
+        telnetPortFailure.getMessage());
+  }
+
+  @Test
   void requiresNonblankDistinctLifecycleAnnotations() {
     List<BiConsumer<HostedIdentityProperties, String>> annotationSetters =
         List.of(

@@ -41,12 +41,17 @@ public class HostedIdentityProperties implements InitializingBean {
   private String grpcTrustAnchorSha256 = "";
   private String ingressLeafSha256 = "";
   private String telnetLeafSha256 = "";
-  private String previewRequestedHeadAnnotation = "firemud.dev/requested-preview-head-sha";
-  private String previewDeployedHeadAnnotation = "firemud.dev/last-preview-head-sha";
-  private String devDemoRequestedHeadAnnotation = "firemud.dev/requested-dev-demo-head-sha";
-  private String devDemoHeadAnnotation = "firemud.dev/last-dev-demo-head-sha";
-  private String previewTelnetPortAnnotation = "firemud.dev/last-preview-telnet-port";
-  private String devDemoTelnetPortAnnotation = "firemud.dev/last-dev-demo-telnet-port";
+  private String previewRequestedHeadAnnotation =
+      HostedIdentityContract.PREVIEW_REQUESTED_HEAD_ANNOTATION;
+  private String previewDeployedHeadAnnotation =
+      HostedIdentityContract.PREVIEW_DEPLOYED_HEAD_ANNOTATION;
+  private String devDemoRequestedHeadAnnotation =
+      HostedIdentityContract.DEV_DEMO_REQUESTED_HEAD_ANNOTATION;
+  private String devDemoHeadAnnotation = HostedIdentityContract.DEV_DEMO_DEPLOYED_HEAD_ANNOTATION;
+  private String previewTelnetPortAnnotation =
+      HostedIdentityContract.PREVIEW_TELNET_PORT_ANNOTATION;
+  private String devDemoTelnetPortAnnotation =
+      HostedIdentityContract.DEV_DEMO_TELNET_PORT_ANNOTATION;
   private int previewTelnetPortBase = CANONICAL_PREVIEW_TELNET_PORT_BASE;
   private int devDemoTelnetPort = CANONICAL_DEV_DEMO_TELNET_PORT;
   private Duration reconcileInterval = Duration.ofSeconds(30);
@@ -85,6 +90,30 @@ public class HostedIdentityProperties implements InitializingBean {
         devDemoRequestedHeadAnnotation,
         devDemoHeadAnnotation,
         devDemoTelnetPortAnnotation);
+    requireCanonicalAnnotation(
+        "preview requested head annotation",
+        previewRequestedHeadAnnotation,
+        HostedIdentityContract.PREVIEW_REQUESTED_HEAD_ANNOTATION);
+    requireCanonicalAnnotation(
+        "preview deployed head annotation",
+        previewDeployedHeadAnnotation,
+        HostedIdentityContract.PREVIEW_DEPLOYED_HEAD_ANNOTATION);
+    requireCanonicalAnnotation(
+        "preview Telnet port annotation",
+        previewTelnetPortAnnotation,
+        HostedIdentityContract.PREVIEW_TELNET_PORT_ANNOTATION);
+    requireCanonicalAnnotation(
+        "dev-demo requested head annotation",
+        devDemoRequestedHeadAnnotation,
+        HostedIdentityContract.DEV_DEMO_REQUESTED_HEAD_ANNOTATION);
+    requireCanonicalAnnotation(
+        "dev-demo deployed head annotation",
+        devDemoHeadAnnotation,
+        HostedIdentityContract.DEV_DEMO_DEPLOYED_HEAD_ANNOTATION);
+    requireCanonicalAnnotation(
+        "dev-demo Telnet port annotation",
+        devDemoTelnetPortAnnotation,
+        HostedIdentityContract.DEV_DEMO_TELNET_PORT_ANNOTATION);
     requireCanonicalTelnetPort(
         "preview Telnet port base", previewTelnetPortBase, CANONICAL_PREVIEW_TELNET_PORT_BASE);
     requireCanonicalTelnetPort(
@@ -151,6 +180,13 @@ public class HostedIdentityProperties implements InitializingBean {
         throw new IllegalStateException(
             "preview and dev-demo lifecycle annotations must be globally distinct");
       }
+    }
+  }
+
+  private static void requireCanonicalAnnotation(
+      String propertyName, String actualAnnotation, String canonicalAnnotation) {
+    if (!canonicalAnnotation.equals(actualAnnotation)) {
+      throw new IllegalStateException(propertyName + " must be " + canonicalAnnotation);
     }
   }
 
