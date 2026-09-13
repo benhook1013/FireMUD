@@ -39,6 +39,7 @@ on:
       - 'dev-tools/build-local-smoke-images.sh'
       - 'dev-tools/certs/generate-dev-certs.sh'
       - 'dev-tools/hosted/controller/smoke-paused-controller-image.sh'
+      - 'dev-tools/smoke/**'
       - 'dev-tools/verify-compose-health.sh'
       - 'dev-tools/verify-fresh-bootstrap.sh'
       - 'dev-tools/verify-restart-state.sh'
@@ -128,6 +129,7 @@ jobs:
                   const runtimePrefixes = [
                     "buildSrc/",
                     "docker/",
+                    "dev-tools/smoke/",
                     "gradle/",
                     "protos/",
                     "services/account-service/",
@@ -600,7 +602,7 @@ jobs:
   pr-local-smoke:
     name: PR Full-Stack Smoke
     needs: [image-meta]
-    if: ${{ github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.image-meta.outputs.runtime_smoke_required == 'true' }}
+    if: ${{ github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -641,9 +643,11 @@ jobs:
         run: bash ./dev-tools/build-local-smoke-images.sh "${SMOKE_IMAGE_TAG}"
 
       - name: Install WebSocket smoke dependency
+        if: ${{ needs.image-meta.outputs.runtime_smoke_required == 'true' }}
         run: python3 -m pip install --disable-pip-version-check websocket-client
 
       - name: Run credential-free full-stack smoke
+        if: ${{ needs.image-meta.outputs.runtime_smoke_required == 'true' }}
         run: bash ./dev-tools/verify-smoke-images.sh
 
       - name: Export fixed-tag preview image artifact
@@ -687,19 +691,19 @@ jobs:
           ARTIFACT_NAME: pr-runtime-images-${{ needs.image-meta.outputs.image_tag }}
         run: |
           {
-            echo "### PR runtime images and full-stack smoke"
+            echo "### PR runtime images and applicable full-stack smoke"
             echo
             echo "- Pull request: #${PR_NUMBER}"
             echo "- Base SHA: \`${BASE_SHA}\`"
             echo "- PR head SHA and fixed publication tag: \`${HEAD_SHA}\`"
-            echo "- Built and smoke-tested PR merge SHA: \`${MERGE_SHA}\`"
+            echo "- Built PR merge SHA (full-stack smoke runs when required): \`${MERGE_SHA}\`"
             echo "- Artifact: \`${ARTIFACT_NAME}\`"
             echo
-            echo "This read-only PR workflow built and smoke-tested the PR merge commit. The trusted default-branch publisher uploads the preview service images in that successful artifact under the fixed PR head-SHA tag used by preview deployment."
+            echo "This read-only PR workflow built the PR merge commit and runs full-stack smoke when required by change scope. The trusted default-branch publisher uploads the preview service images in that successful artifact under the fixed PR head-SHA tag used by preview deployment."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Dump Docker Compose logs on failure
-        if: failure()
+        if: ${{ failure() && needs.image-meta.outputs.runtime_smoke_required == 'true' }}
         run: |
           docker compose \
             -f docker/docker-compose.yml \
@@ -708,7 +712,7 @@ jobs:
             logs || true
 
       - name: Stop smoke stack
-        if: always()
+        if: ${{ always() && needs.image-meta.outputs.runtime_smoke_required == 'true' }}
         run: |
           source ./dev-tools/smoke/run-owned-compose.sh
           if ! stop_run_owned_compose_project \

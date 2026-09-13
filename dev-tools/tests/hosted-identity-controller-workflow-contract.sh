@@ -75,6 +75,8 @@ import yaml
 
 workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
 publisher_workflow = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
+pull_request = workflow[True]["pull_request"]
+assert "dev-tools/smoke/**" in pull_request["paths"]
 image_meta = workflow["jobs"]["image-meta"]
 assert image_meta["outputs"]["runtime_smoke_required"] == (
     "${{ steps.smoke_scope.outputs.runtime_smoke_required }}"
@@ -117,6 +119,7 @@ for runtime_service in (
     "services/tcp-proxy-service/",
 ):
     assert runtime_service in runtime_scope_script
+assert "dev-tools/smoke/" in runtime_scope_script
 assert "services/hosted-environment-identity-controller/" not in runtime_scope_script
 
 controller_scope_script = smoke_scope_script[
@@ -132,17 +135,32 @@ for unrelated_service in (
     assert unrelated_service not in controller_scope_script
 
 runtime_job = workflow["jobs"]["pr-local-smoke"]
-assert "needs.image-meta.outputs.runtime_smoke_required == 'true'" in runtime_job["if"]
+assert "needs.image-meta.outputs.runtime_smoke_required" not in runtime_job["if"]
 runtime_steps = runtime_job["steps"]
 runtime_steps_by_name = {
     step.get("name"): step for step in runtime_steps if isinstance(step, dict)
 }
 export_step = runtime_steps_by_name["Export fixed-tag preview image artifact"]
 upload_step = runtime_steps_by_name["Upload preview image artifact"]
+build_runtime_step = runtime_steps_by_name["Build local PR runtime images"]
+install_smoke_step = runtime_steps_by_name["Install WebSocket smoke dependency"]
+run_smoke_step = runtime_steps_by_name["Run credential-free full-stack smoke"]
+dump_logs_step = runtime_steps_by_name["Dump Docker Compose logs on failure"]
+stop_smoke_step = runtime_steps_by_name["Stop smoke stack"]
 assert "Build controller image for credential-free local validation" not in runtime_steps_by_name
 assert "Smoke controller image entrypoint and paused health" not in runtime_steps_by_name
+assert "if" not in build_runtime_step
 assert "if" not in export_step
 assert "if" not in upload_step
+smoke_gate = "${{ needs.image-meta.outputs.runtime_smoke_required == 'true' }}"
+assert install_smoke_step["if"] == smoke_gate
+assert run_smoke_step["if"] == smoke_gate
+assert dump_logs_step["if"] == (
+    "${{ failure() && needs.image-meta.outputs.runtime_smoke_required == 'true' }}"
+)
+assert stop_smoke_step["if"] == (
+    "${{ always() && needs.image-meta.outputs.runtime_smoke_required == 'true' }}"
+)
 
 controller_job = workflow["jobs"]["pr-controller-smoke"]
 assert controller_job["needs"] == ["image-meta"]
@@ -192,6 +210,7 @@ runtime_services = [
     line.removesuffix(" \\").strip()
     for line in runtime_services_match.group("services").splitlines()
 ]
+assert "hosted-environment-identity-controller" not in runtime_services
 publisher_steps = publisher_workflow["jobs"]["publish"]["steps"]
 publisher_run = next(
     step["run"]
