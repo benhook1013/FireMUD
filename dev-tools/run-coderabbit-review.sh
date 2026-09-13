@@ -131,7 +131,7 @@ git -C "$source_root" status --porcelain >"$log_dir/source-status" || die "could
 candidate_sha="$(git -C "$source_root" rev-parse 'HEAD^{commit}')" || die "could not resolve committed HEAD"
 
 gh pr view "$pr_number" --repo "$repo" \
-  --json state,baseRefName,baseRefOid,headRefName,headRefOid,changedFiles,files \
+  --json state,baseRefName,baseRefOid,headRefName,headRefOid,changedFiles \
   >"$log_dir/pull-request.json" 2>"$log_dir/pull-request.stderr" ||
   die "could not read pull request metadata"
 
@@ -146,7 +146,25 @@ pr_head_sha="$(jq -er '.headRefOid | select(type == "string" and test("^[0-9a-fA
   die "pull request metadata has no full head commit"
 expected_files="$(jq -er '.changedFiles | select(type == "number" and floor == . and . >= 0)' "$log_dir/pull-request.json")" ||
   die "pull request metadata has no changed-file count"
-jq -jr '.files[]? | (.path, "\u0000")' "$log_dir/pull-request.json" | sort -z >"$log_dir/expected-files.nul" ||
+
+gh api --paginate --slurp \
+  "repos/$repo/pulls/$pr_number/files?per_page=100" \
+  >"$log_dir/pull-request-files-pages.json" 2>"$log_dir/pull-request-files.stderr" ||
+  die "could not read pull request file list"
+jq -e -c '
+  if (type != "array") or any(.[]; type != "array") then
+    error("expected an array of paginated file-list responses")
+  else
+    add
+  end
+  | if any(.[]; (type != "object") or ((.filename | type) != "string")) then
+      error("file-list response contains a non-object or missing filename")
+    else
+      .
+    end
+' "$log_dir/pull-request-files-pages.json" >"$log_dir/pull-request-files.json" ||
+  die "pull request metadata has no readable paginated file list"
+jq -jr '.[] | (.filename, "\u0000")' "$log_dir/pull-request-files.json" | sort -z >"$log_dir/expected-files.nul" ||
   die "pull request metadata has no readable file list"
 expected_path_count="$(count_nul_paths "$log_dir/expected-files.nul")"
 [[ "$expected_path_count" == "$expected_files" ]] ||
