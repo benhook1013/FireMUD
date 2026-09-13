@@ -1120,6 +1120,12 @@ for missing_identity_field in 1 2 4 5 6 7; do
   test ! -e "$FAKE_DELETE_LOG"
 done
 
+reset_case
+export FAKE_TARGET_PRIORITY=false
+export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\t\thuman\tdevelop\topen\t${priority_labels_base64}\n"
+bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"
+test ! -e "$FAKE_DELETE_LOG"
+
 for ignored_untrusted_row in \
   $'901\t\tother/FireMUD\t\t\t\t{malformed-label-transport}\n' \
   "901\t\t\thuman\tdevelop\topen\t${priority_labels_base64}\n"
