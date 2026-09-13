@@ -549,9 +549,12 @@ class CertificateMaterialServiceTest {
             mock(GrpcTransportBundleGenerator.class),
             properties);
 
-    assertThrows(
-        IllegalStateException.class,
-        () -> service.beginMaterialization(secretClient.client(), plan).ingress());
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () -> service.beginMaterialization(secretClient.client(), plan).ingress());
+
+    assertEquals(mutation.expectedMessage(), failure.getMessage());
 
     verifyNoInteractions(validator);
     verify(secretClient.runtimeSecrets(), never())
@@ -2295,20 +2298,30 @@ class CertificateMaterialServiceTest {
   }
 
   private enum CertManagerSourceMutation {
-    MANAGED_BY,
-    ENVIRONMENT,
-    ROLE,
-    RETENTION,
-    PROVENANCE,
-    CONVERGENCE_STATE,
-    CERTIFICATE_NAME,
-    ISSUER_NAME,
-    ISSUER_KIND,
-    ISSUER_GROUP,
-    OWNER_API_VERSION,
-    OWNER_KIND,
-    OWNER_NAME,
-    OWNER_UID;
+    MANAGED_BY("identity source Secret is not controller-owned"),
+    ENVIRONMENT("identity source Secret is not controller-owned"),
+    ROLE("identity source Secret is not controller-owned"),
+    RETENTION("identity source Secret is not controller-owned"),
+    PROVENANCE("identity source Secret has an invalid cert-manager binding"),
+    CONVERGENCE_STATE("identity source Secret has an invalid cert-manager binding"),
+    CERTIFICATE_NAME("identity source Secret has an invalid cert-manager binding"),
+    ISSUER_NAME("identity source Secret has an invalid cert-manager binding"),
+    ISSUER_KIND("identity source Secret has an invalid cert-manager binding"),
+    ISSUER_GROUP("identity source Secret has an invalid cert-manager binding"),
+    OWNER_API_VERSION("identity source Secret has an invalid Certificate owner"),
+    OWNER_KIND("identity source Secret has an invalid Certificate owner"),
+    OWNER_NAME("identity source Secret has an invalid Certificate owner"),
+    OWNER_UID("identity source Secret has an invalid Certificate owner");
+
+    private final String expectedMessage;
+
+    CertManagerSourceMutation(String expectedMessage) {
+      this.expectedMessage = expectedMessage;
+    }
+
+    String expectedMessage() {
+      return expectedMessage;
+    }
 
     void apply(Secret source) {
       switch (this) {
