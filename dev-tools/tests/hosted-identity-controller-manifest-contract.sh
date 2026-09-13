@@ -13,6 +13,11 @@ fail() {
   exit 1
 }
 
+for required_command in base64 kubectl openssl python3 sha256sum; do
+  command -v "$required_command" >/dev/null 2>&1 || \
+    fail "$required_command is required"
+done
+
 require_file() {
   [[ -f "$1" ]] || fail "missing file: $1"
 }

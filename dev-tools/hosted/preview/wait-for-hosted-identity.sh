@@ -64,6 +64,38 @@ is_retryable_kubectl_transport_failure() {
   [[ "${error_text,,}" =~ $transport_pattern ]]
 }
 
+read_kubectl_json() {
+  local -n output_ref="$1"
+  local -n transport_retries_ref="$2"
+  local resource_label="$3"
+  local failure_diagnostic="$4"
+  shift 4
+
+  : >"$kubectl_error_file"
+  # shellcheck disable=SC2034 # The assignment targets the caller's nameref.
+  if output_ref="$(kubectl "$@" 2>"$kubectl_error_file")"; then
+    transport_retries_ref=0
+    return 0
+  else
+    local kubectl_status=$?
+  fi
+
+  local kubectl_error
+  kubectl_error="$(<"$kubectl_error_file")"
+  if [[ -n "$kubectl_error" ]]; then
+    printf '%s\n' "$kubectl_error" >&2
+  fi
+  if is_retryable_kubectl_transport_failure "$kubectl_error" &&
+    ((transport_retries_ref < max_transport_retries)); then
+    ((transport_retries_ref += 1))
+    echo "Transient kubectl transport failure reading ${resource_label}; retry ${transport_retries_ref}/${max_transport_retries}." >&2
+    sleep 5
+    return 1
+  fi
+  echo "${failure_diagnostic}; kubectl get failed (exit ${kubectl_status})." >&2
+  exit "$kubectl_status"
+}
+
 if [[ "${1:-}" == "--projections" ]]; then
   if [[ $# -lt 2 || $# -gt 4 ]]; then
     echo "usage: $0 --projections <identity_name> [runtime_namespace] [timeout_seconds]" >&2
@@ -108,44 +140,33 @@ if [[ "${1:-}" == "--projections" ]]; then
     transport_retries=0
     while (( SECONDS < deadline )); do
       projection_attempted=true
-      : >"$kubectl_error_file"
-      if secret_json="$(kubectl -n "$runtime_namespace" get secret "$secret_name" --ignore-not-found -o json 2>"$kubectl_error_file")"; then
-        transport_retries=0
-        if [[ -z "$secret_json" ]]; then
-          echo "Waiting for controller projection ${runtime_namespace}/${secret_name} to appear."
-        elif jq -e \
-            --arg name "$secret_name" \
-            --arg identity "$identity_name" \
-            --arg role "$role" \
-            --arg keys "$required_keys" '
-              .metadata.name == $name and
-              .metadata.labels["firemud.dev/managed-by"] == "hosted-identity-controller" and
-              .metadata.labels["firemud.dev/identity-name"] == $identity and
-              .metadata.labels["firemud.dev/role"] == $role and
-              .metadata.labels["firemud.dev/retention"] == "retained" and
-              (. as $secret | ($keys | split(",")) as $required |
-                all($required[]; . as $key | $secret.data[$key] | type == "string" and length > 0))
-            ' <<<"$secret_json" >/dev/null; then
-          projection_ready=true
-          break
-        else
-          echo "Controller projection ${runtime_namespace}/${secret_name} is incomplete; retrying."
-        fi
+      if ! read_kubectl_json \
+        secret_json \
+        transport_retries \
+        "${runtime_namespace}/${secret_name}" \
+        "Unable to determine controller projection ${runtime_namespace}/${secret_name}" \
+        -n "$runtime_namespace" get secret "$secret_name" --ignore-not-found -o json; then
+        continue
+      fi
+      if [[ -z "$secret_json" ]]; then
+        echo "Waiting for controller projection ${runtime_namespace}/${secret_name} to appear."
+      elif jq -e \
+          --arg name "$secret_name" \
+          --arg identity "$identity_name" \
+          --arg role "$role" \
+          --arg keys "$required_keys" '
+            .metadata.name == $name and
+            .metadata.labels["firemud.dev/managed-by"] == "hosted-identity-controller" and
+            .metadata.labels["firemud.dev/identity-name"] == $identity and
+            .metadata.labels["firemud.dev/role"] == $role and
+            .metadata.labels["firemud.dev/retention"] == "retained" and
+            (. as $secret | ($keys | split(",")) as $required |
+              all($required[]; . as $key | $secret.data[$key] | type == "string" and length > 0))
+          ' <<<"$secret_json" >/dev/null; then
+        projection_ready=true
+        break
       else
-        kubectl_status=$?
-        kubectl_error="$(<"$kubectl_error_file")"
-        if [[ -n "$kubectl_error" ]]; then
-          printf '%s\n' "$kubectl_error" >&2
-        fi
-        if is_retryable_kubectl_transport_failure "$kubectl_error" &&
-          ((transport_retries < max_transport_retries)); then
-          ((transport_retries += 1))
-          echo "Transient kubectl transport failure reading ${runtime_namespace}/${secret_name}; retry ${transport_retries}/${max_transport_retries}." >&2
-          sleep 5
-          continue
-        fi
-        echo "Unable to determine controller projection ${runtime_namespace}/${secret_name}; kubectl get failed (exit ${kubectl_status})." >&2
-        exit "$kubectl_status"
+        echo "Controller projection ${runtime_namespace}/${secret_name} is incomplete; retrying."
       fi
       sleep 5
     done
@@ -178,6 +199,7 @@ if [[ "${1:-}" == "--retired" ]]; then
 
   deadline=$((SECONDS + timeout_seconds))
   max_transport_retries=2
+  # shellcheck disable=SC2034 # Mutated through read_kubectl_json's nameref.
   transport_retries=0
   kubectl_error_file="$(mktemp)"
   # shellcheck disable=SC2317 # ShellCheck does not follow EXIT trap callbacks.
@@ -186,40 +208,29 @@ if [[ "${1:-}" == "--retired" ]]; then
   }
   trap cleanup_kubectl_error_file EXIT
   while (( SECONDS < deadline )); do
-    : >"$kubectl_error_file"
-    if identity_json="$(kubectl -n firemud-system get hostedenvironmentidentity "$identity_name" --ignore-not-found -o json 2>"$kubectl_error_file")"; then
-      transport_retries=0
-      if [[ -z "$identity_json" ]]; then
-        printf 'identity=%s\nphase=Retired\n' "$identity_name"
-        exit 0
-      else
-        generation="$(jq -r '.metadata.generation // empty' <<<"$identity_json")"
-        observed_generation="$(jq -r '.status.observedGeneration // empty' <<<"$identity_json")"
-        phase="$(jq -r '.status.phase // empty' <<<"$identity_json")"
-        ready_status="$(jq -r 'first(.status.conditions[]? | select(.type == "Ready") | .status) // empty' <<<"$identity_json")"
-        ready_generation="$(jq -r 'first(.status.conditions[]? | select(.type == "Ready") | .observedGeneration) // empty' <<<"$identity_json")"
-        if [[ "$phase" == "Retired" && "$observed_generation" == "$generation" && "$ready_status" == "False" && "$ready_generation" == "$generation" ]]; then
-          printf 'identity=%s\nphase=%s\nobservedGeneration=%s\n' \
-            "$identity_name" "$phase" "$observed_generation"
-          exit 0
-        fi
-        echo "Waiting for HostedEnvironmentIdentity/${identity_name} generation ${generation:-missing} Retired/Ready=False (phase=${phase:-missing}, observed=${observed_generation:-missing})."
-      fi
+    if ! read_kubectl_json \
+      identity_json \
+      transport_retries \
+      "HostedEnvironmentIdentity/${identity_name}" \
+      "Unable to determine retirement state for HostedEnvironmentIdentity/${identity_name}" \
+      -n firemud-system get hostedenvironmentidentity "$identity_name" --ignore-not-found -o json; then
+      continue
+    fi
+    if [[ -z "$identity_json" ]]; then
+      printf 'identity=%s\nphase=Retired\n' "$identity_name"
+      exit 0
     else
-      kubectl_status=$?
-      kubectl_error="$(<"$kubectl_error_file")"
-      if [[ -n "$kubectl_error" ]]; then
-        printf '%s\n' "$kubectl_error" >&2
+      generation="$(jq -r '.metadata.generation // empty' <<<"$identity_json")"
+      observed_generation="$(jq -r '.status.observedGeneration // empty' <<<"$identity_json")"
+      phase="$(jq -r '.status.phase // empty' <<<"$identity_json")"
+      ready_status="$(jq -r 'first(.status.conditions[]? | select(.type == "Ready") | .status) // empty' <<<"$identity_json")"
+      ready_generation="$(jq -r 'first(.status.conditions[]? | select(.type == "Ready") | .observedGeneration) // empty' <<<"$identity_json")"
+      if [[ "$phase" == "Retired" && "$observed_generation" == "$generation" && "$ready_status" == "False" && "$ready_generation" == "$generation" ]]; then
+        printf 'identity=%s\nphase=%s\nobservedGeneration=%s\n' \
+          "$identity_name" "$phase" "$observed_generation"
+        exit 0
       fi
-      if is_retryable_kubectl_transport_failure "$kubectl_error" &&
-        ((transport_retries < max_transport_retries)); then
-        ((transport_retries += 1))
-        echo "Transient kubectl transport failure reading HostedEnvironmentIdentity/${identity_name}; retry ${transport_retries}/${max_transport_retries}." >&2
-        sleep 5
-        continue
-      fi
-      echo "Unable to determine retirement state for HostedEnvironmentIdentity/${identity_name}; kubectl get failed (exit ${kubectl_status})." >&2
-      exit "$kubectl_status"
+      echo "Waiting for HostedEnvironmentIdentity/${identity_name} generation ${generation:-missing} Retired/Ready=False (phase=${phase:-missing}, observed=${observed_generation:-missing})."
     fi
     sleep 5
   done
@@ -257,7 +268,9 @@ validate_identity_runtime_pairing "$identity_name" "$runtime_namespace"
 
 deadline=$((SECONDS + timeout_seconds))
 max_transport_retries=2
+# shellcheck disable=SC2034 # Mutated through read_kubectl_json's nameref.
 namespace_transport_retries=0
+# shellcheck disable=SC2034 # Mutated through read_kubectl_json's nameref.
 identity_transport_retries=0
 kubectl_error_file="$(mktemp)"
 # shellcheck disable=SC2317 # ShellCheck does not follow EXIT trap callbacks.
@@ -266,29 +279,18 @@ cleanup_kubectl_error_file() {
 }
 trap cleanup_kubectl_error_file EXIT
 while (( SECONDS < deadline )); do
-  : >"$kubectl_error_file"
-  if namespace_json="$(kubectl get namespace "$runtime_namespace" --ignore-not-found -o json 2>"$kubectl_error_file")"; then
-    namespace_transport_retries=0
-    if [[ -z "$namespace_json" ]]; then
-      echo "Waiting for runtime namespace ${runtime_namespace} to appear..."
-      sleep 5
-      continue
-    fi
-  else
-    kubectl_status=$?
-    kubectl_error="$(<"$kubectl_error_file")"
-    if [[ -n "$kubectl_error" ]]; then
-      printf '%s\n' "$kubectl_error" >&2
-    fi
-    if is_retryable_kubectl_transport_failure "$kubectl_error" &&
-      ((namespace_transport_retries < max_transport_retries)); then
-      ((namespace_transport_retries += 1))
-      echo "Transient kubectl transport failure reading namespace/${runtime_namespace}; retry ${namespace_transport_retries}/${max_transport_retries}." >&2
-      sleep 5
-      continue
-    fi
-    echo "Unable to determine runtime namespace ${runtime_namespace}; kubectl get failed (exit ${kubectl_status})." >&2
-    exit "$kubectl_status"
+  if ! read_kubectl_json \
+    namespace_json \
+    namespace_transport_retries \
+    "namespace/${runtime_namespace}" \
+    "Unable to determine runtime namespace ${runtime_namespace}" \
+    get namespace "$runtime_namespace" --ignore-not-found -o json; then
+    continue
+  fi
+  if [[ -z "$namespace_json" ]]; then
+    echo "Waiting for runtime namespace ${runtime_namespace} to appear..."
+    sleep 5
+    continue
   fi
 
   namespace_uid="$(jq -r '.metadata.uid // empty' <<<"$namespace_json")"
@@ -336,29 +338,18 @@ while (( SECONDS < deadline )); do
     continue
   fi
 
-  : >"$kubectl_error_file"
-  if identity_json="$(kubectl -n firemud-system get hostedenvironmentidentity "$identity_name" --ignore-not-found -o json 2>"$kubectl_error_file")"; then
-    identity_transport_retries=0
-    if [[ -z "$identity_json" ]]; then
-      echo "Waiting for HostedEnvironmentIdentity/${identity_name} to appear..."
-      sleep 5
-      continue
-    fi
-  else
-    kubectl_status=$?
-    kubectl_error="$(<"$kubectl_error_file")"
-    if [[ -n "$kubectl_error" ]]; then
-      printf '%s\n' "$kubectl_error" >&2
-    fi
-    if is_retryable_kubectl_transport_failure "$kubectl_error" &&
-      ((identity_transport_retries < max_transport_retries)); then
-      ((identity_transport_retries += 1))
-      echo "Transient kubectl transport failure reading HostedEnvironmentIdentity/${identity_name}; retry ${identity_transport_retries}/${max_transport_retries}." >&2
-      sleep 5
-      continue
-    fi
-    echo "Unable to determine HostedEnvironmentIdentity/${identity_name}; kubectl get failed (exit ${kubectl_status})." >&2
-    exit "$kubectl_status"
+  if ! read_kubectl_json \
+    identity_json \
+    identity_transport_retries \
+    "HostedEnvironmentIdentity/${identity_name}" \
+    "Unable to determine HostedEnvironmentIdentity/${identity_name}" \
+    -n firemud-system get hostedenvironmentidentity "$identity_name" --ignore-not-found -o json; then
+    continue
+  fi
+  if [[ -z "$identity_json" ]]; then
+    echo "Waiting for HostedEnvironmentIdentity/${identity_name} to appear..."
+    sleep 5
+    continue
   fi
 
   generation="$(jq -r '.metadata.generation // empty' <<<"$identity_json")"

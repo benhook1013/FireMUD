@@ -376,7 +376,7 @@ contains "$waiter" 'tls.crt,tls.key,ca.crt,client.crt,client.key'
 # shellcheck disable=SC2016 # Match literal shell source in the waiter.
 contains "$waiter" 'get secret "$secret_name" --ignore-not-found -o json'
 # shellcheck disable=SC2016 # Match literal shell source in the waiter.
-contains "$waiter" 'kubectl get namespace "$runtime_namespace" --ignore-not-found -o json'
+contains "$waiter" 'get namespace "$runtime_namespace" --ignore-not-found -o json'
 # shellcheck disable=SC2016 # Match literal shell source in the waiter.
 contains "$waiter" 'get hostedenvironmentidentity "$identity_name" --ignore-not-found -o json'
 contains "$waiter" 'Unable to determine controller projection'
