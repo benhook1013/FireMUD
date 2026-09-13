@@ -262,7 +262,7 @@ for required in \
   "docker inspect --format '{{.Image}}'"; do
   contains "$controller_smoke" "$required"
 done
-for forbidden in GITHUB_TOKEN GHCR docker.login 'docker push' kubectl KUBECONFIG; do
+for forbidden in GITHUB_TOKEN GHCR 'docker login' 'docker push' kubectl KUBECONFIG; do
   if grep -Fq -- "$forbidden" "$controller_smoke"; then
     echo "$controller_smoke must remain credential-free: $forbidden" >&2
     exit 1
