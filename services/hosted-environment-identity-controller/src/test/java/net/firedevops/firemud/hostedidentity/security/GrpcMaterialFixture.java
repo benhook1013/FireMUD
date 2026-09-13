@@ -43,7 +43,7 @@ public final class GrpcMaterialFixture {
       Secret caSource = generatedCa(now, Duration.ofDays(60));
       String trustAnchor = SecretMaterialValidator.trustAnchorFingerprint(caSource);
       GrpcTransportBundleGenerator.validateCa(caSource, trustAnchor);
-      return new GrpcTransportBundleGenerator()
+      return new GrpcTransportBundleGenerator(new SecretMaterialValidator())
           .generate(plan, caSource, 1, Duration.ofDays(7), now);
     } catch (Exception exception) {
       throw new AssertionError("unable to create configured-CA gRPC test fixture", exception);
