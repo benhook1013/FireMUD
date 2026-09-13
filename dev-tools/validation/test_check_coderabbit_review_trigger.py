@@ -217,6 +217,28 @@ class TriggerStateTests(unittest.TestCase):
                 )
                 self.assertEqual((state.state, state.attributed), ("ambiguous", False))
 
+    def test_later_trigger_does_not_invalidate_completed_bounded_response(self) -> None:
+        body = f"<!-- walkthrough_start -->\nReviewing files that changed from the base of the PR and between {'b' * 40} and {HEAD}\nFiles selected for processing (2)"
+        state = self.state(
+            [
+                trigger_comment(),
+                comment(11, "coderabbitai", body, "2026-09-14T01:00:01Z"),
+                comment(
+                    12,
+                    "other",
+                    "@coderabbitai full review",
+                    "2026-09-14T01:00:02Z",
+                ),
+                comment(
+                    13,
+                    "coderabbitai",
+                    "The full review failed.",
+                    "2026-09-14T01:00:03Z",
+                ),
+            ]
+        )
+        self.assertEqual((state.state, state.response_id), ("completed", 11))
+
     def test_late_response_to_unfinished_prior_trigger_is_ambiguous(self) -> None:
         comments = [
             comment(8, "owner", "@coderabbitai full review", "2026-09-14T00:58:00Z"),
@@ -247,6 +269,12 @@ class TriggerStateTests(unittest.TestCase):
         posting.pop("trigger")
         state = self.state(trigger_record=posting)
         self.assertEqual((state.state, state.terminal), ("unattributed", True))
+
+    def test_changed_posting_boundary_is_ambiguous(self) -> None:
+        changed = record()
+        changed["status"] = "posted_boundary_changed"
+        state = self.state(trigger_record=changed)
+        self.assertEqual((state.state, state.attributed), ("ambiguous", False))
 
     def test_same_time_terminal_responses_are_ambiguous(self) -> None:
         state = self.state(
@@ -304,6 +332,35 @@ class TriggerStateTests(unittest.TestCase):
         self.assertEqual(output["trigger_state"]["state"], "timed_out")
         self.assertTrue(output["trigger_state"]["terminal"])
         self.assertTrue(output["trigger_state"]["attributed"])
+
+    def test_direct_wait_rejects_nonfinite_and_unbounded_values_before_loading(self) -> None:
+        for option, value in (
+            ("--timeout", "inf"),
+            ("--timeout", "86401"),
+            ("--poll-interval", "nan"),
+            ("--poll-interval", "301"),
+        ):
+            with self.subTest(option=option, value=value):
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        str(SCRIPT),
+                        "--repo",
+                        REPO,
+                        "--pr",
+                        str(PR),
+                        "--trigger-record",
+                        "/does/not/exist",
+                        "--wait",
+                        option,
+                        value,
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(completed.returncode, 2)
+                self.assertIn("invalid bounded wait values", completed.stderr)
 
 
 if __name__ == "__main__":

@@ -30,7 +30,21 @@ if [[ "$1 $2" == "repo view" ]]; then
   exit 0
 fi
 if [[ "$1 $2" == "pr view" ]]; then
-  printf '%s\n' '{"state":"OPEN","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
+  count=0
+  [[ ! -f "$MOCK_STATE/pr-view-count" ]] || count="$(<"$MOCK_STATE/pr-view-count")"
+  count="$((count + 1))"
+  printf '%s\n' "$count" >"$MOCK_STATE/pr-view-count"
+  head_sha='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  state='OPEN'
+  if [[ -f "$MOCK_STATE/pr-heads" ]]; then
+    head_sha="$(sed -n "${count}p" "$MOCK_STATE/pr-heads")"
+    [[ -n "$head_sha" ]] || head_sha="$(tail -n 1 "$MOCK_STATE/pr-heads")"
+  fi
+  if [[ -f "$MOCK_STATE/pr-states" ]]; then
+    state="$(sed -n "${count}p" "$MOCK_STATE/pr-states")"
+    [[ -n "$state" ]] || state="$(tail -n 1 "$MOCK_STATE/pr-states")"
+  fi
+  jq -n --arg state "$state" --arg headRefOid "$head_sha" '{state:$state,headRefOid:$headRefOid}'
   exit 0
 fi
 if [[ "$1 $2" == "api graphql" ]]; then
@@ -57,6 +71,24 @@ EOF
 chmod +x "$MOCK_BIN/gh"
 
 export MOCK_STATE
+expect_invalid_wait() {
+  if (cd "$TEST_REPO" && PATH="$MOCK_BIN:$PATH" dev-tools/request-coderabbit-review.sh 42 --repo owner/repo "$@") >"$TMP_DIR/invalid-wait.out" 2>&1; then
+    exit 1
+  fi
+}
+
+expect_invalid_wait --timeout 10
+expect_invalid_wait --wait --timeout nan
+expect_invalid_wait --wait --timeout inf
+expect_invalid_wait --wait --timeout 0
+expect_invalid_wait --wait --timeout 86401
+expect_invalid_wait --wait --poll-interval 0
+expect_invalid_wait --wait --poll-interval 301
+expect_invalid_wait --wait --timeout 2 --poll-interval 3
+expect_invalid_wait --wait --timeout 2 --timeout 3 --poll-interval 1
+expect_invalid_wait --wait --poll-interval 1 --poll-interval 2
+[[ ! -f "$MOCK_STATE/count" ]]
+
 (cd "$TEST_REPO" && PATH="$MOCK_BIN:$PATH" dev-tools/request-coderabbit-review.sh 42 --repo owner/repo) >"$TMP_DIR/first.out"
 record="$TEST_REPO/.git/coderabbit-review-logs/hosted/owner_repo/pr-42/trigger.json"
 [[ "$(<"$MOCK_STATE/count")" == "1" ]]
@@ -86,10 +118,42 @@ printf '%s\n' '{"id":101,"created_at":"2026-09-14T01:00:00Z","html_url":"https:/
 if (cd "$TEST_REPO" && PATH="$MOCK_BIN:$PATH" dev-tools/request-coderabbit-review.sh 42 --repo owner/repo) >"$TMP_DIR/reconcile.out" 2>&1; then
   exit 1
 fi
-grep -q 'state: awaiting_response' "$TMP_DIR/reconcile.out"
-[[ "$(jq -r '.status' "$record")" == "posted" ]]
+grep -q 'state: ambiguous' "$TMP_DIR/reconcile.out"
+[[ "$(jq -r '.status' "$record")" == "posted_boundary_unverified" ]]
 [[ "$(jq -r '.trigger.id' "$record")" == "101" ]]
 [[ "$(<"$MOCK_STATE/count")" == "1" ]]
+
+rm -f "$record" "$record_dir/post-response.pending.json" "$MOCK_STATE/posted" \
+  "$MOCK_STATE/count" "$MOCK_STATE/pr-view-count"
+printf '%s\n' 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' >"$MOCK_STATE/pr-heads"
+if (cd "$TEST_REPO" && PATH="$MOCK_BIN:$PATH" dev-tools/request-coderabbit-review.sh 42 --repo owner/repo) >"$TMP_DIR/pre-post-head-race.out" 2>&1; then
+  exit 1
+fi
+grep -q 'head changed after the review-state gate' "$TMP_DIR/pre-post-head-race.out"
+[[ ! -f "$MOCK_STATE/count" ]]
+
+rm -f "$MOCK_STATE/pr-view-count"
+printf '%s\n' 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' >"$MOCK_STATE/pr-heads"
+printf '%s\n' 'CLOSED' >"$MOCK_STATE/pr-states"
+if (cd "$TEST_REPO" && PATH="$MOCK_BIN:$PATH" dev-tools/request-coderabbit-review.sh 42 --repo owner/repo) >"$TMP_DIR/pre-post-close-race.out" 2>&1; then
+  exit 1
+fi
+grep -q 'closed before the posting boundary' "$TMP_DIR/pre-post-close-race.out"
+[[ ! -f "$MOCK_STATE/count" ]]
+
+rm -f "$MOCK_STATE/pr-view-count"
+rm -f "$MOCK_STATE/pr-states"
+printf '%s\n' \
+  'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+  'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' >"$MOCK_STATE/pr-heads"
+if (cd "$TEST_REPO" && PATH="$MOCK_BIN:$PATH" dev-tools/request-coderabbit-review.sh 42 --repo owner/repo) >"$TMP_DIR/post-head-race.out" 2>&1; then
+  exit 1
+fi
+grep -q 'changed across the posting boundary' "$TMP_DIR/post-head-race.out"
+[[ "$(<"$MOCK_STATE/count")" == "1" ]]
+[[ "$(jq -r '.status' "$record")" == "posted_boundary_changed" ]]
+[[ "$(jq -r '.head_sha' "$record")" == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ]]
+[[ "$(jq -r '.posting_boundary.observed_head_sha' "$record")" == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" ]]
 
 exec {held_fd}>"$record_dir/request.lock"
 flock -n "$held_fd"

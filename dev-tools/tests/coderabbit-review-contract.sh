@@ -964,6 +964,25 @@ with open(sys.argv[2], "w", encoding="utf-8") as destination:
     json.dump(payload, destination)
 PY
 
+python3 - "$TMP_DIR/review-not-finished.json" "$TMP_DIR/review-failed.json" <<'PY'
+import json
+import sys
+
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    payload = json.load(source)
+payload["data"]["repository"]["pullRequest"]["comments"]["nodes"].append(
+    {
+        "author": {"login": "coderabbitai"},
+        "body": "The full review failed because of an internal error.",
+        "createdAt": "2026-07-03T02:40:05Z",
+        "url": "https://example.test/review-failed",
+    }
+)
+with open(sys.argv[2], "w", encoding="utf-8") as destination:
+    json.dump(payload, destination)
+PY
+
 EXPECT_FAILURE_STATUS=0
 
 expect_failure_output() {
@@ -1072,6 +1091,12 @@ grep -q "review_finished_after_latest_request=false" "$TMP_DIR/review-not-finish
 grep -q "retrigger_review_allowed=false" "$TMP_DIR/review-not-finished.out"
 grep -q "manual_thread_resolution_required=false" "$TMP_DIR/review-not-finished.out"
 grep -q "reason=no substantive CodeRabbit review summary found after the latest explicit review request" "$TMP_DIR/review-not-finished.out"
+
+expect_failure_output "$TMP_DIR/review-failed.json" "$TMP_DIR/review-failed.out"
+[[ $EXPECT_FAILURE_STATUS -ne 0 ]]
+grep -q "latest_review_request_failed=true" "$TMP_DIR/review-failed.out"
+grep -q "retrigger_review_allowed=true" "$TMP_DIR/review-failed.out"
+grep -q "reason=latest explicit CodeRabbit review request failed" "$TMP_DIR/review-failed.out"
 
 expect_failure_output "$TMP_DIR/review-command-noop.json" "$TMP_DIR/review-command-noop.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]

@@ -25,7 +25,12 @@ fi
 pr_number="$1"
 shift
 repo=""
-wait_args=()
+wait_requested=false
+wait_tuning_requested=false
+timeout_seconds="1800"
+poll_interval_seconds="20"
+timeout_set=false
+poll_interval_set=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo)
@@ -34,12 +39,24 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --wait)
-      wait_args+=("--wait")
+      [[ "$wait_requested" == "false" ]] || die "--wait may be specified only once"
+      wait_requested=true
       shift
       ;;
-    --timeout|--poll-interval)
+    --timeout)
       [[ $# -ge 2 ]] || { usage >&2; exit 2; }
-      wait_args+=("$1" "$2")
+      [[ "$timeout_set" == "false" ]] || die "--timeout may be specified only once"
+      timeout_seconds="$2"
+      timeout_set=true
+      wait_tuning_requested=true
+      shift 2
+      ;;
+    --poll-interval)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      [[ "$poll_interval_set" == "false" ]] || die "--poll-interval may be specified only once"
+      poll_interval_seconds="$2"
+      poll_interval_set=true
+      wait_tuning_requested=true
       shift 2
       ;;
     --help|-h)
@@ -53,6 +70,34 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ "$pr_number" =~ ^[1-9][0-9]*$ ]] || die "pull request number must be a positive integer"
+if [[ "$wait_tuning_requested" == "true" && "$wait_requested" != "true" ]]; then
+  die "--timeout and --poll-interval require --wait"
+fi
+if ! python3 - "$timeout_seconds" "$poll_interval_seconds" <<'PY'
+import math
+import sys
+
+try:
+    timeout = float(sys.argv[1])
+    poll_interval = float(sys.argv[2])
+except ValueError:
+    raise SystemExit(1) from None
+valid = (
+    math.isfinite(timeout)
+    and math.isfinite(poll_interval)
+    and 1 <= timeout <= 86400
+    and 0.1 <= poll_interval <= 300
+    and poll_interval <= timeout
+)
+raise SystemExit(0 if valid else 1)
+PY
+then
+  die "wait values must be finite numbers with timeout in [1, 86400], poll interval in [0.1, 300], and poll interval no greater than timeout"
+fi
+wait_args=()
+if [[ "$wait_requested" == "true" ]]; then
+  wait_args=("--wait" "--timeout" "$timeout_seconds" "--poll-interval" "$poll_interval_seconds")
+fi
 for dependency in git gh jq flock mktemp python3; do
   command -v "$dependency" >/dev/null 2>&1 || die "required executable not found: $dependency"
 done
@@ -90,7 +135,7 @@ finalize_post_response() {
   local finalized_tmp
   finalized_tmp="$(mktemp "$record_dir/.trigger.XXXXXX")"
   jq --slurpfile response "$response_pending" '
-    .status = "posted" |
+    .status = "posted_boundary_unverified" |
     .trigger = {
       id: $response[0].id,
       created_at: $response[0].created_at,
@@ -101,6 +146,20 @@ finalize_post_response() {
   ' "$record" >"$finalized_tmp"
   chmod 600 "$finalized_tmp"
   mv "$finalized_tmp" "$record"
+}
+
+mark_posting_boundary() {
+  local status="$1"
+  local observed_state="$2"
+  local observed_head="$3"
+  local boundary_tmp
+  boundary_tmp="$(mktemp "$record_dir/.trigger.XXXXXX")"
+  jq --arg status "$status" --arg observed_state "$observed_state" \
+    --arg observed_head "$observed_head" \
+    '.status = $status | .posting_boundary = {observed_state: $observed_state, observed_head_sha: $observed_head}' \
+    "$record" >"$boundary_tmp"
+  chmod 600 "$boundary_tmp"
+  mv "$boundary_tmp" "$record"
 }
 
 if [[ -f "$record" ]]; then
@@ -132,14 +191,19 @@ PY
   rm -f "$response_pending"
 fi
 
-pr_json="$(gh pr view "$pr_number" --repo "$repo" --json state,headRefOid)" || die "could not read pull request metadata"
-[[ "$(jq -r '.state' <<<"$pr_json")" == "OPEN" ]] || die "pull request is not open"
-head_sha="$(jq -er '.headRefOid | select(type == "string" and test("^[0-9a-fA-F]{40}$"))' <<<"$pr_json")" ||
-  die "pull request metadata has no exact head SHA"
-
 gate_json="$(python3 "$checker" --repo "$repo" --pr "$pr_number" --json 2>/dev/null)" || true
 [[ "$(jq -r '.retrigger_review_allowed // false' <<<"${gate_json:-}")" == "true" ]] ||
   die "live review state does not permit another hosted review request"
+gate_head_sha="$(jq -er '.head_sha | select(type == "string" and test("^[0-9a-fA-F]{40}$"))' <<<"$gate_json")" ||
+  die "live review state has no exact head SHA"
+
+pr_json="$(gh pr view "$pr_number" --repo "$repo" --json state,headRefOid)" || die "could not refresh pull request metadata at the posting boundary"
+[[ "$(jq -r '.state' <<<"$pr_json")" == "OPEN" ]] || die "pull request closed before the posting boundary"
+posting_head_sha="$(jq -er '.headRefOid | select(type == "string" and test("^[0-9a-fA-F]{40}$"))' <<<"$pr_json")" ||
+  die "pull request metadata has no exact head SHA"
+[[ "${posting_head_sha,,}" == "${gate_head_sha,,}" ]] ||
+  die "pull request head changed after the review-state gate; rerun against the new head"
+head_sha="$gate_head_sha"
 
 reservation_tmp="$(mktemp "$record_dir/.trigger.XXXXXX")"
 request_started_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
@@ -163,6 +227,19 @@ trigger_created_at="$(jq -er '.created_at | select(type == "string" and length >
 trigger_url="$(jq -er '.html_url | select(type == "string" and length > 0)' "$response_pending")" ||
   die "GitHub response has no comment URL; reservation retained at $record"
 finalize_post_response || die "GitHub response could not be persisted; reservation retained at $record"
+if ! post_pr_json="$(gh pr view "$pr_number" --repo "$repo" --json state,headRefOid)"; then
+  mark_posting_boundary "posted_boundary_unverified" "unknown" "unknown"
+  rm -f "$response_pending"
+  die "could not verify pull request state after posting; trigger retained for adjudication at $record"
+fi
+post_state="$(jq -r '.state // "unknown"' <<<"$post_pr_json")"
+post_head_sha="$(jq -r '.headRefOid // "unknown"' <<<"$post_pr_json")"
+if [[ "$post_state" != "OPEN" || "${post_head_sha,,}" != "${head_sha,,}" ]]; then
+  mark_posting_boundary "posted_boundary_changed" "$post_state" "$post_head_sha"
+  rm -f "$response_pending"
+  die "pull request state or head changed across the posting boundary; trigger retained for adjudication at $record"
+fi
+mark_posting_boundary "posted" "$post_state" "$post_head_sha"
 rm -f "$response_pending"
 
 printf 'trigger_record=%s\n' "$record"

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import subprocess
 import sys
@@ -103,6 +104,7 @@ class ReviewSummary:
     latest_review_request_rate_limited: bool
     review_rate_limit_until: str | None
     latest_review_request_noop: bool
+    latest_review_request_failed: bool
     retrigger_review_allowed: bool
     manual_thread_resolution_required: bool
     must_resolve_outdated_threads: bool
@@ -744,6 +746,12 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
             and NOOP_REVIEW_MARKER in body
         ):
             outcome = "noop"
+        elif (
+            latest_explicit_review_request_dt is not None
+            and created_at_dt >= latest_explicit_review_request_dt
+            and FAILED_REVIEW_PATTERN.search(unquoted_body(body))
+        ):
+            outcome = "failed"
 
         if outcome is not None and (
             latest_review_outcome_dt is None
@@ -768,6 +776,7 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         )
     )
     latest_review_request_noop = latest_review_outcome == "noop"
+    latest_review_request_failed = latest_review_outcome == "failed"
     actionable_items = [
         (
             (comment.get("author") or {}).get("login", ""),
@@ -815,6 +824,7 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         and not review_finished_after_latest_request
         and latest_rate_limit_at_dt is None
         and not latest_review_request_noop
+        and not latest_review_request_failed
     )
     retrigger_review_allowed = (
         unresolved_total == 0
@@ -868,6 +878,8 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         reasons.append(
             "latest explicit CodeRabbit review request was acknowledged without reviewing commits"
         )
+    if latest_review_request_failed:
+        reasons.append("latest explicit CodeRabbit review request failed")
     if (
         latest_explicit_review_request_type == "incremental"
         and not incremental_review_exception_allowed
@@ -899,6 +911,7 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
             else None
         ),
         latest_review_request_noop=latest_review_request_noop,
+        latest_review_request_failed=latest_review_request_failed,
         retrigger_review_allowed=retrigger_review_allowed,
         manual_thread_resolution_required=manual_thread_resolution_required,
         must_resolve_outdated_threads=must_resolve_outdated_threads,
@@ -988,7 +1001,7 @@ def trigger_state(
 
     comments = pr["comments"]["nodes"]
     captured_comment: dict[str, Any] | None = None
-    other_triggers: list[dict[str, Any]] = []
+    other_triggers: list[tuple[datetime, dict[str, Any]]] = []
     prior_triggers: list[tuple[datetime, dict[str, Any]]] = []
     for comment in comments:
         comment_id = immutable_database_id(comment)
@@ -1006,7 +1019,7 @@ def trigger_state(
             and created_dt >= trigger_dt
             and comment_id != trigger_id
         ):
-            other_triggers.append(comment)
+            other_triggers.append((created_dt, comment))
         if (
             author != "coderabbitai"
             and command_type is not None
@@ -1025,6 +1038,21 @@ def trigger_state(
         "trigger_url": trigger_url,
         "trigger_type": trigger_type,
     }
+    if record.get("status") in {
+        "posted_boundary_changed",
+        "posted_boundary_unverified",
+    }:
+        return TriggerState(
+            "ambiguous",
+            True,
+            False,
+            **base,
+            response_id=None,
+            response_created_at=None,
+            response_url=None,
+            cooldown_until=None,
+            reason="the pull request state or head could not be held stable across the posting boundary",
+        )
     if captured_comment is None:
         return TriggerState(
             "unattributed",
@@ -1057,7 +1085,7 @@ def trigger_state(
             cooldown_until=None,
             reason="the captured trigger comment no longer matches its immutable record",
         )
-    if other_triggers:
+    if any(created_dt == trigger_dt for created_dt, _ in other_triggers):
         return TriggerState(
             "ambiguous",
             True,
@@ -1067,8 +1095,12 @@ def trigger_state(
             response_created_at=None,
             response_url=None,
             cooldown_until=None,
-            reason="an intervening or concurrent review trigger prevents unique response attribution",
+            reason="a concurrent review trigger prevents unique response attribution",
         )
+    next_trigger_dt = min(
+        (created_dt for created_dt, _ in other_triggers if created_dt > trigger_dt),
+        default=None,
+    )
 
     if prior_triggers:
         prior_dt = max(prior_triggers, key=lambda item: item[0])[0]
@@ -1119,7 +1151,11 @@ def trigger_state(
         if (comment.get("author") or {}).get("login", "") != "coderabbitai":
             continue
         created_dt = parse_timestamp(comment.get("createdAt"))
-        if created_dt is None or created_dt <= trigger_dt:
+        if (
+            created_dt is None
+            or created_dt <= trigger_dt
+            or (next_trigger_dt is not None and created_dt >= next_trigger_dt)
+        ):
             continue
         body = comment.get("body") or ""
         detection_body = body if REVIEW_LIMIT_MARKER in body else unquoted_body(body)
@@ -1161,6 +1197,7 @@ def trigger_state(
         if (
             submitted_dt is None
             or submitted_dt <= trigger_dt
+            or (next_trigger_dt is not None and submitted_dt >= next_trigger_dt)
             or not is_substantive_review_body(body)
         ):
             continue
@@ -1175,6 +1212,18 @@ def trigger_state(
         )
 
     if not candidates:
+        if next_trigger_dt is not None:
+            return TriggerState(
+                "ambiguous",
+                True,
+                False,
+                **base,
+                response_id=None,
+                response_created_at=None,
+                response_url=None,
+                cooldown_until=None,
+                reason="a later review trigger arrived before an attributable response",
+            )
         return TriggerState(
             "awaiting_response",
             False,
@@ -1190,6 +1239,18 @@ def trigger_state(
     terminal_candidates = [
         candidate for candidate in candidates if candidate[1] != "active"
     ]
+    if not terminal_candidates and next_trigger_dt is not None:
+        return TriggerState(
+            "ambiguous",
+            True,
+            False,
+            **base,
+            response_id=None,
+            response_created_at=None,
+            response_url=None,
+            cooldown_until=None,
+            reason="a later review trigger arrived while the captured request was active",
+        )
     relevant = terminal_candidates or candidates
     latest_dt = max(candidate[0] for candidate in relevant)
     latest = [candidate for candidate in relevant if candidate[0] == latest_dt]
@@ -1283,6 +1344,9 @@ def emit_text(summary: ReviewSummary) -> None:
     print(
         f"latest_review_request_noop={str(summary.latest_review_request_noop).lower()}"
     )
+    print(
+        f"latest_review_request_failed={str(summary.latest_review_request_failed).lower()}"
+    )
     print(f"retrigger_review_allowed={str(summary.retrigger_review_allowed).lower()}")
     print(
         f"manual_thread_resolution_required={str(summary.manual_thread_resolution_required).lower()}"
@@ -1351,11 +1415,15 @@ def main() -> int:
     if args.wait and not args.trigger_record:
         print("error=--wait requires --trigger-record", file=sys.stderr)
         return 2
-    if args.timeout < 0 or args.poll_interval <= 0:
-        print(
-            "error=--timeout must be non-negative and --poll-interval must be positive",
-            file=sys.stderr,
-        )
+    valid_wait_values = (
+        math.isfinite(args.timeout)
+        and math.isfinite(args.poll_interval)
+        and 0 <= args.timeout <= 86400
+        and 0.1 <= args.poll_interval <= 300
+        and (args.timeout == 0 or args.poll_interval <= args.timeout)
+    )
+    if not valid_wait_values:
+        print("error=invalid bounded wait values", file=sys.stderr)
         return 2
     try:
         record = (
