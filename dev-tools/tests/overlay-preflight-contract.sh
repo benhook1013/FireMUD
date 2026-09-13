@@ -1,9 +1,132 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# shellcheck disable=SC2016 # Assertions intentionally match literal workflow and shell source.
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 OUTPUT_FILE="$(mktemp)"
 trap 'rm -f "$OUTPUT_FILE"' EXIT
+
+WORKFLOW="$REPO_ROOT/.github/workflows/validate-kustomize-overlays.yml"
+VALIDATOR="$REPO_ROOT/dev-tools/deploy/validate-kustomize-overlays.sh"
+
+assert_workflow_contains() {
+  local expected="$1"
+  if ! grep -Fq -- "$expected" "$WORKFLOW"; then
+    echo "Overlay validation workflow is missing required contract: $expected" >&2
+    exit 1
+  fi
+}
+
+assert_workflow_absent() {
+  local forbidden="$1"
+  if grep -Fq -- "$forbidden" "$WORKFLOW"; then
+    echo "Overlay validation workflow retains redundant build contract: $forbidden" >&2
+    exit 1
+  fi
+}
+
+# The checked-in overlays are digest-pinned, so PR validation must inspect those
+# registry references directly. The local image fast path remains a capability of
+# the generic validator for local developer workflows.
+for forbidden in \
+  'actions/setup-java@' \
+  'gradle/actions/setup-gradle@' \
+  'Build service jars for overlay validation' \
+  'Build PR images for overlay validation' \
+  'bootJar' \
+  'docker build' \
+  ':latest'; do
+  assert_workflow_absent "$forbidden"
+done
+
+# shellcheck disable=SC2016
+for required in \
+  'uses: actions/checkout@' \
+  'fetch-depth: 0' \
+  'uses: ./.github/actions/setup-python' \
+  'requirements: yaml' \
+  'uses: ./.github/actions/setup-kubectl' \
+  'uses: docker/setup-buildx-action@' \
+  'uses: docker/login-action@' \
+  'registry: ghcr.io' \
+  'password: ${{ secrets.GITHUB_TOKEN }}' \
+  'run: bash dev-tools/deploy/validate-kustomize-overlays.sh'; do
+  assert_workflow_contains "$required"
+done
+
+# shellcheck disable=SC2016
+for required in \
+  'kubectl kustomize "$overlay"' \
+  'docker buildx imagetools inspect "$image"' \
+  'FIREMUD_PREFLIGHT_CONTEXT=ci-static' \
+  'python3 "$ROOT_DIR/dev-tools/deploy/preflight.py" production'; do
+  if ! grep -Fq -- "$required" "$VALIDATOR"; then
+    echo "Overlay validator is missing required correctness contract: $required" >&2
+    exit 1
+  fi
+done
+
+for overlay in stage prod; do
+  rendered_overlay="$(kubectl kustomize "$REPO_ROOT/k8s/overlays/$overlay")"
+  while IFS= read -r image; do
+    case "$image" in
+      ghcr.io/benhook1013/*)
+        if [[ ! "$image" =~ @sha256:[0-9a-f]{64}$ ]]; then
+          echo "$overlay overlay contains a mutable FireMUD image reference: $image" >&2
+          exit 1
+        fi
+        ;;
+    esac
+  done < <(printf '%s\n' "$rendered_overlay" | sed -n 's/^[[:space:]]*image:[[:space:]]*//p' | awk '{print $1}')
+done
+
+(
+  # shellcheck disable=SC1091
+  # shellcheck disable=SC1090
+  source "$VALIDATOR"
+  render_overlay() {
+    printf '%s\n' 'image: ghcr.io/benhook1013/example-service@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  }
+  docker() {
+    if [[ "${1:-}" = image && "${2:-}" = inspect ]]; then
+      return 1
+    fi
+    if [[ "${1:-}" = buildx && "${2:-}" = imagetools && "${3:-}" = inspect ]]; then
+      [[ "${4:-}" = ghcr.io/benhook1013/example-service@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ]]
+      return
+    fi
+    echo "unexpected docker invocation: $*" >&2
+    return 1
+  }
+  check_images_exist "contract" "$REPO_ROOT/k8s/overlays/stage"
+)
+
+set +e
+(
+  set -e
+  # shellcheck disable=SC1091
+  # shellcheck disable=SC1090
+  source "$VALIDATOR"
+  render_overlay() {
+    printf '%s\n' 'image: ghcr.io/benhook1013/example-service@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  }
+  docker() {
+    if [[ "${1:-}" = image && "${2:-}" = inspect ]]; then
+      return 1
+    fi
+    if [[ "${1:-}" = buildx && "${2:-}" = imagetools && "${3:-}" = inspect ]]; then
+      return 1
+    fi
+    return 1
+  }
+  check_images_exist "contract" "$REPO_ROOT/k8s/overlays/stage"
+)
+registry_validation_status=$?
+set -e
+if [[ "$registry_validation_status" -eq 0 ]]; then
+  echo "Overlay image validation did not fail closed when registry inspection failed" >&2
+  exit 1
+fi
 
 assert_production_change_requires_attestation() {
   if (
