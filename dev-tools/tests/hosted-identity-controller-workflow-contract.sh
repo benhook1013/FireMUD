@@ -587,6 +587,7 @@ assert artifact_action["runs"]["using"] == "composite"
 artifact_action_steps = artifact_action["runs"]["steps"]
 assert [step["name"] for step in artifact_action_steps] == [
     "Download exact source render artifact",
+    "Set up canonical Python",
     "Verify artifact provenance, checksum, and closed object set",
 ]
 artifact_download = artifact_action_steps[0]
@@ -599,7 +600,13 @@ assert artifact_download["with"] == {
     "github-token": "${{ inputs['github-token'] }}",
     "run-id": "${{ inputs['source-run-id'] }}",
 }
-artifact_validation = artifact_action_steps[1]
+artifact_setup_python = artifact_action_steps[1]
+assert artifact_setup_python == {
+    "name": "Set up canonical Python",
+    "uses": "./.github/actions/setup-python",
+    "with": {"requirements": "yaml"},
+}
+artifact_validation = artifact_action_steps[2]
 assert artifact_validation["shell"] == "bash"
 assert artifact_validation["env"] == {
     "ARTIFACT_DIRECTORY": "${{ inputs['artifact-directory'] }}",
