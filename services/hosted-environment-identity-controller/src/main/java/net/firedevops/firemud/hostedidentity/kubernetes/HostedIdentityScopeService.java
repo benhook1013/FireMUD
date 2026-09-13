@@ -104,8 +104,7 @@ public class HostedIdentityScopeService {
             || namespace.getMetadata().getOwnerReferences().isEmpty())
         && (namespace.getMetadata().getFinalizers() == null
             || namespace.getMetadata().getFinalizers().isEmpty())
-        && (annotations == null
-            || annotations.keySet().stream().noneMatch(key -> key.startsWith("firemud.dev/")));
+        && (annotations == null || annotations.isEmpty());
   }
 
   private static Map<String, String> identityNamespaceLabels(EnvironmentIdentityPlan plan) {

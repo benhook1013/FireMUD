@@ -244,7 +244,7 @@ class HostedIdentityScopeServiceTest {
   }
 
   @Test
-  void retainedIdentityNamespaceAllowsUnrelatedAnnotations() {
+  void retainedIdentityNamespaceRejectsUnrelatedAnnotations() {
     EnvironmentIdentityPlan plan = plan();
     Namespace exact = identityNamespace(plan);
     Namespace annotated =
@@ -253,7 +253,7 @@ class HostedIdentityScopeServiceTest {
             .addToAnnotations("tooling.example/managed-by", "cluster-tool")
             .endMetadata()
             .build();
-    assertTrue(HostedIdentityScopeService.isExpectedIdentityNamespace(annotated, plan));
+    assertFalse(HostedIdentityScopeService.isExpectedIdentityNamespace(annotated, plan));
   }
 
   @Test
