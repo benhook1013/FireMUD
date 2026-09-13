@@ -204,7 +204,7 @@ jobs:
       - name: 🐍 Set Up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
-          python-version: '3.14'
+          python-version-file: '.python-version'
 
       - name: 📦 Install Ruff
         run: python3 -m pip install --disable-pip-version-check ruff==0.16.0
@@ -235,12 +235,12 @@ jobs:
 
       - name: 🧰 Set up kubectl
         if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
-        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
+        uses: ./.github/actions/setup-kubectl
 
       - name: 🐍 Set Up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
-          python-version: '3.14'
+          python-version-file: '.python-version'
 
       - name: 📦 Install cloc
         if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
@@ -260,6 +260,7 @@ jobs:
         run: |
           bash ./dev-tools/tests/cloc-report-contract.sh
           bash ./dev-tools/tests/ci-lightweight-scope-contract.sh
+          bash ./dev-tools/tests/workflow-version-authority-contract.sh
           bash ./dev-tools/tests/coderabbit-cli-wrapper-contract.sh
           bash ./dev-tools/tests/coderabbit-review-contract.sh
           bash ./dev-tools/tests/pr-retarget-workflow-contract.sh
@@ -311,7 +312,7 @@ jobs:
       - name: 🐍 Set Up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
-          python-version: '3.14'
+          python-version-file: '.python-version'
 
       - name: 📦 Install yamllint
         run: python3 -m pip install --disable-pip-version-check yamllint
@@ -336,7 +337,7 @@ jobs:
       - name: 🐍 Set Up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
-          python-version: '3.14'
+          python-version-file: '.python-version'
 
       - name: 📏 Validate metric label policy
         run: python3 dev-tools/observability/check-metrics-cardinality.py
@@ -364,7 +365,7 @@ jobs:
       - name: ⚙️ Set Up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: '24.20.0'
+          node-version-file: '.node-version'
 
       - name: ⚙️ Set Up Gradle
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
@@ -400,7 +401,7 @@ jobs:
       - name: ⚙️ Set Up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: '24.20.0'
+          node-version-file: '.node-version'
 
       - name: ⚙️ Set Up Gradle
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
@@ -504,7 +505,7 @@ jobs:
       - name: 🐍 Set Up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
-          python-version: '3.14'
+          python-version-file: '.python-version'
 
       - name: 🔎 Validate Observability Contracts
         run: python3 dev-tools/observability/validate-observability-contract.py
@@ -512,14 +513,14 @@ jobs:
       - name: ⚙️ Set Up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: '24.20.0'
+          node-version-file: '.node-version'
           cache: npm
           cache-dependency-path: config/openapi/package-lock.json
 
       - name: 📦 Install documentation dependencies
         run: |
           npm ci --prefix config/openapi
-          python3 -m pip install --disable-pip-version-check mkdocs==1.6.1 mkdocs-material==9.6.5
+          python3 -m pip install --disable-pip-version-check -r config/docs/requirements.txt
 
       - name: 🧹 Lint Markdown and links
         run: |
@@ -549,7 +550,7 @@ jobs:
       - name: ⚙️ Set Up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 24
+          node-version-file: '.node-version'
           cache: npm
           cache-dependency-path: |
             web-client/package-lock.json

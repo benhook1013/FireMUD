@@ -17,6 +17,7 @@ runtime="$ROOT_DIR/.github/workflows/runtime-images.yml"
 publisher="$ROOT_DIR/.github/workflows/publish-pr-runtime-images.yml"
 kubeconfig_action="$ROOT_DIR/.github/actions/write-kubeconfig/action.yml"
 helm_action="$ROOT_DIR/.github/actions/setup-helm/action.yml"
+workflow_tool_authority="$ROOT_DIR/config/workflow-tool-versions.env"
 janitor="$ROOT_DIR/.github/workflows/preview-janitor.yml"
 build_gradle="$ROOT_DIR/build.gradle.kts"
 controller_build_gradle="$ROOT_DIR/services/hosted-environment-identity-controller/build.gradle.kts"
@@ -264,13 +265,12 @@ done
 # shellcheck disable=SC2016 # These assertions intentionally match literal action source.
 for required in \
   'using: composite' \
-  "echo 'version=v3.20.2'" \
-  "echo 'sha256=258e830a9e613c8a7a302d6059b4bb3b9758f2f3e1bb8ea0d707ce10a9a72fea'" \
+  'uses: ./.github/actions/load-workflow-tool-versions' \
   'uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9' \
-  'path: ${{ runner.temp }}/firemud-helm/${{ steps.pinned-release.outputs.version }}/helm.tar.gz' \
-  'key: firemud-helm-${{ runner.os }}-${{ runner.arch }}-${{ steps.pinned-release.outputs.version }}-${{ steps.pinned-release.outputs.sha256 }}' \
-  'HELM_VERSION: ${{ steps.pinned-release.outputs.version }}' \
-  'HELM_SHA256: ${{ steps.pinned-release.outputs.sha256 }}' \
+  'path: ${{ runner.temp }}/firemud-helm/v${{ steps.versions.outputs.helm-version }}/helm.tar.gz' \
+  'key: firemud-helm-${{ runner.os }}-${{ runner.arch }}-v${{ steps.versions.outputs.helm-version }}-${{ steps.versions.outputs.helm-linux-amd64-sha256 }}' \
+  'HELM_VERSION: v${{ steps.versions.outputs.helm-version }}' \
+  'HELM_SHA256: ${{ steps.versions.outputs.helm-linux-amd64-sha256 }}' \
   'RUNNER_OS' \
   'RUNNER_ARCH' \
   'RUNNER_TEMP' \
@@ -286,6 +286,8 @@ for required in \
   'Expected ${helm_version}, but the installed Helm binary reported ${reported_version}.'; do
   contains "$helm_action" "$required"
 done
+contains "$workflow_tool_authority" 'HELM_VERSION='
+contains "$workflow_tool_authority" 'HELM_LINUX_AMD64_SHA256='
 if [[ "$(grep -Fc 'sha256sum --check --status' "$helm_action")" -lt 2 ]]; then
   echo "$helm_action must verify both restored and downloaded Helm archives" >&2
   exit 1

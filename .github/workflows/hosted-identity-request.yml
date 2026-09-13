@@ -303,9 +303,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up kubectl
-        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
-        with:
-          version: v1.33.4
+        uses: ./.github/actions/setup-kubectl
 
       - name: Write runtime kubeconfig
         uses: ./.github/actions/write-kubeconfig
@@ -540,9 +538,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up kubectl
-        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
-        with:
-          version: v1.33.4
+        uses: ./.github/actions/setup-kubectl
 
       - name: Write runtime kubeconfig
         uses: ./.github/actions/write-kubeconfig
@@ -706,9 +702,7 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
       - name: Set up kubectl
-        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
-        with:
-          version: v1.33.4
+        uses: ./.github/actions/setup-kubectl
       - name: Write runtime kubeconfig
         uses: ./.github/actions/write-kubeconfig
         with:
@@ -804,9 +798,7 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
       - name: Set up kubectl
-        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
-        with:
-          version: v1.33.4
+        uses: ./.github/actions/setup-kubectl
       - name: Check Hosted identity requester credentials
         id: requester-credentials
         env:

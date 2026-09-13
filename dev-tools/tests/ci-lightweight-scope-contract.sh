@@ -200,8 +200,8 @@ require_contains(
 docs_node_step = find_step(ci, "docs-check", "Set Up Node", "ci workflow")
 require_equal(
     docs_node_step,
-    ("with", "node-version"),
-    "24.20.0",
+    ("with", "node-version-file"),
+    ".node-version",
     "ci workflow",
 )
 require_equal(
@@ -222,7 +222,7 @@ require_contains(
 require_contains(
     docs_dependencies_step,
     ("run",),
-    "python3 -m pip install --disable-pip-version-check mkdocs==1.6.1 mkdocs-material==9.6.5",
+    "python3 -m pip install --disable-pip-version-check -r config/docs/requirements.txt",
     "ci workflow",
 )
 docs_links_step = find_step(ci, "docs-check", "Lint Markdown and links", "ci workflow")

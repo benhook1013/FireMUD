@@ -1,0 +1,50 @@
+name: Set up GitHub CLI
+description: Install and verify the repository-pinned GitHub CLI release for FireMUD workflows.
+runs:
+  using: composite
+  steps:
+    - name: Load workflow tool versions
+      id: versions
+      uses: ./.github/actions/load-workflow-tool-versions
+
+    - name: Install pinned GitHub CLI
+      shell: bash
+      env:
+        GH_VERSION: ${{ steps.versions.outputs.gh-version }}
+        GH_SHA256: ${{ steps.versions.outputs.gh-linux-amd64-sha256 }}
+      run: |
+        set -euo pipefail
+        gh_version="${GH_VERSION:?}"
+        gh_sha256="${GH_SHA256:?}"
+        install_root="${RUNNER_TEMP:?}/firemud-gh/${gh_version}"
+        archive_path="${install_root}/gh.tar.gz"
+        extraction_dir="${install_root}/extracted"
+        install_dir="${install_root}/bin"
+
+        mkdir -p -- "$install_root" "$install_dir"
+        if [[ ! -f "$archive_path" ]] \
+          || ! printf '%s  %s\n' "$gh_sha256" "$archive_path" \
+            | sha256sum --check --status; then
+          temporary_archive="$(mktemp -- "${install_root}/gh.tar.gz.XXXXXX")"
+          trap 'rm -f -- "$temporary_archive"' EXIT
+          curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
+            "https://github.com/cli/cli/releases/download/v${gh_version}/gh_${gh_version}_linux_amd64.tar.gz" \
+            -o "$temporary_archive"
+          printf '%s  %s\n' "$gh_sha256" "$temporary_archive" \
+            | sha256sum --check --status
+          mv -fT -- "$temporary_archive" "$archive_path"
+          trap - EXIT
+        fi
+        rm -rf -- "$extraction_dir"
+        mkdir -p -- "$extraction_dir"
+        tar -xzf "$archive_path" -C "$extraction_dir" -- "gh_${gh_version}_linux_amd64/bin/gh"
+        install -m 0755 "$extraction_dir/gh_${gh_version}_linux_amd64/bin/gh" "$install_dir/gh"
+
+        printf '%s  %s\n' "$gh_sha256" "$archive_path" \
+          | sha256sum --check --status
+        reported_version="$("$install_dir/gh" --version | awk 'NR == 1 { print $3 }')"
+        if [[ "$reported_version" != "$gh_version" ]]; then
+          echo "::error title=GitHub CLI version mismatch::Expected ${gh_version}, but the installed binary reported ${reported_version}." >&2
+          exit 1
+        fi
+        echo "$install_dir" >> "$GITHUB_PATH"

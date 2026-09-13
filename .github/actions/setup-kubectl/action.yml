@@ -1,0 +1,13 @@
+name: Set up kubectl
+description: Install the repository-pinned kubectl release for FireMUD workflows.
+runs:
+  using: composite
+  steps:
+    - name: Load workflow tool versions
+      id: versions
+      uses: ./.github/actions/load-workflow-tool-versions
+
+    - name: Install pinned kubectl
+      uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
+      with:
+        version: v${{ steps.versions.outputs.kubectl-version }}

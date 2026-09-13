@@ -348,26 +348,13 @@ jobs:
             });
 
       - name: Set up kubectl
-        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
-        with:
-          version: v1.33.4
+        uses: ./.github/actions/setup-kubectl
 
       - name: Set up Helm
         uses: ./.github/actions/setup-helm
 
       - name: Set up GitHub CLI
-        run: |
-          if ! command -v gh >/dev/null 2>&1; then
-            GH_VERSION="2.76.2"
-            INSTALL_DIR="$HOME/.local/bin"
-            mkdir -p "$INSTALL_DIR"
-            curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" -o /tmp/gh.tgz
-            tar -xzf /tmp/gh.tgz -C /tmp
-            install "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" "$INSTALL_DIR/gh"
-          fi
-          export PATH="$HOME/.local/bin:$PATH"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          gh --version
+        uses: ./.github/actions/setup-gh
 
       - name: Write preview kubeconfig
         env:
@@ -873,9 +860,7 @@ jobs:
             });
 
       - name: Set up kubectl
-        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
-        with:
-          version: v1.33.4
+        uses: ./.github/actions/setup-kubectl
 
       - name: Set up Helm
         uses: ./.github/actions/setup-helm

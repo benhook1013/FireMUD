@@ -18,7 +18,22 @@
     "helmv3",
     "kubernetes",
     "kustomize",
-    "npm"
+    "nodenv",
+    "npm",
+    "pip_requirements",
+    "pyenv",
+    "custom.regex"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^config/workflow-tool-versions\\.env$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\n[A-Z][A-Z0-9_]*_VERSION=(?<currentValue>\\S+)"
+      ]
+    }
   ],
   "vulnerabilityAlerts": {
     "enabled": true

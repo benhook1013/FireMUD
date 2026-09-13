@@ -30,7 +30,12 @@ plugins {
 }
 
 node {
-    version.set("24.18.0")
+    version.set(
+        providers.fileContents(layout.projectDirectory.file(".node-version"))
+            .asText
+            .get()
+            .trim()
+    )
     // Don't download Node in CI; use the version provided by the environment
     download.set(System.getenv("CI") == null)
 }

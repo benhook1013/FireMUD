@@ -12,9 +12,6 @@ permissions:
   contents: read
   pull-requests: write
 
-env:
-  ORT_DOCKER_IMAGE: ghcr.io/oss-review-toolkit/ort:89.2.0
-
 concurrency:
   group: license-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required' }}
   cancel-in-progress: true
@@ -95,7 +92,7 @@ jobs:
       - name: ⚙️ Set Up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: '24'
+          node-version-file: '.node-version'
           cache: npm
           cache-dependency-path: |
             package-lock.json
@@ -110,11 +107,15 @@ jobs:
           build-scan-terms-of-use-agree: 'yes'
           cache-read-only: false
 
+      - name: Load workflow tool versions
+        id: workflow-tool-versions
+        uses: ./.github/actions/load-workflow-tool-versions
+
       - name: Run ORT License Scan
         id: ort
         uses: oss-review-toolkit/ort-ci-github-action@086d928d24ef1653dc0777296b312fda5faaaf52 # v1
         with:
-          image: ${{ env.ORT_DOCKER_IMAGE }}
+          image: ${{ steps.workflow-tool-versions.outputs.ort-image }}
           ort-cli-args: '-P ort.analyzer.enabledPackageManagers=Gradle'
           run: 'cache-dependencies,labels,analyzer,evaluator,reporter'
           fail-on: policy-violation
@@ -163,7 +164,7 @@ jobs:
       - name: ⚙️ Set Up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: '24'
+          node-version-file: '.node-version'
           cache: npm
           cache-dependency-path: |
             package-lock.json
@@ -178,11 +179,15 @@ jobs:
           build-scan-terms-of-use-agree: 'yes'
           cache-read-only: false
 
+      - name: Load workflow tool versions
+        id: workflow-tool-versions
+        uses: ./.github/actions/load-workflow-tool-versions
+
       - name: Run ORT License Scan
         id: ort
         uses: oss-review-toolkit/ort-ci-github-action@086d928d24ef1653dc0777296b312fda5faaaf52 # v1
         with:
-          image: ${{ env.ORT_DOCKER_IMAGE }}
+          image: ${{ steps.workflow-tool-versions.outputs.ort-image }}
           ort-cli-args: '-P ort.analyzer.enabledPackageManagers=NPM'
           run: 'cache-dependencies,labels,analyzer,evaluator,reporter'
           fail-on: policy-violation

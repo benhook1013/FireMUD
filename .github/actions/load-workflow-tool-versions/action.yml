@@ -1,0 +1,66 @@
+name: Load workflow tool versions
+description: Validate and expose the repository-pinned operational workflow tool versions.
+outputs:
+  kubectl-version:
+    description: Exact kubectl version without a leading v.
+    value: ${{ steps.versions.outputs.kubectl-version }}
+  helm-version:
+    description: Exact Helm version without a leading v.
+    value: ${{ steps.versions.outputs.helm-version }}
+  helm-linux-amd64-sha256:
+    description: SHA-256 for the pinned Helm Linux AMD64 archive.
+    value: ${{ steps.versions.outputs.helm-linux-amd64-sha256 }}
+  gh-version:
+    description: Exact GitHub CLI version without a leading v.
+    value: ${{ steps.versions.outputs.gh-version }}
+  gh-linux-amd64-sha256:
+    description: SHA-256 for the pinned GitHub CLI Linux AMD64 archive.
+    value: ${{ steps.versions.outputs.gh-linux-amd64-sha256 }}
+  ort-image:
+    description: Exact ORT container image reference.
+    value: ${{ steps.versions.outputs.ort-image }}
+runs:
+  using: composite
+  steps:
+    - name: Validate workflow tool authority
+      id: versions
+      shell: bash
+      run: |
+        set -euo pipefail
+        authority="${GITHUB_WORKSPACE:?}/config/workflow-tool-versions.env"
+        if [[ ! -f "$authority" ]]; then
+          echo "::error title=Workflow tool authority unavailable::Checkout must run before loading workflow tool versions." >&2
+          exit 1
+        fi
+
+        # The authority contains assignments and Renovate comments only. Reject any
+        # other shell syntax before sourcing it into this trusted action.
+        if grep -Ev '^(#.*|[A-Z][A-Z0-9_]*=[A-Za-z0-9._-]+|[[:space:]]*)$' "$authority"; then
+          echo "::error title=Invalid workflow tool authority::Unexpected syntax in ${authority}." >&2
+          exit 1
+        fi
+        # shellcheck disable=SC1090
+        source "$authority"
+
+        version_pattern='^[0-9]+\.[0-9]+\.[0-9]+$'
+        for value in "${KUBECTL_VERSION:-}" "${HELM_VERSION:-}" "${GH_VERSION:-}" "${ORT_VERSION:-}"; do
+          if [[ ! "$value" =~ $version_pattern ]]; then
+            echo "::error title=Invalid workflow tool version::Expected an exact three-part version, got ${value:-<empty>}." >&2
+            exit 1
+          fi
+        done
+        for checksum in "${HELM_LINUX_AMD64_SHA256:-}" "${GH_LINUX_AMD64_SHA256:-}"; do
+          if [[ ! "$checksum" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error title=Invalid workflow tool checksum::Expected a lowercase SHA-256 digest." >&2
+            exit 1
+          fi
+        done
+
+        {
+          echo "kubectl-version=${KUBECTL_VERSION}"
+          echo "helm-version=${HELM_VERSION}"
+          echo "helm-linux-amd64-sha256=${HELM_LINUX_AMD64_SHA256}"
+          echo "gh-version=${GH_VERSION}"
+          echo "gh-linux-amd64-sha256=${GH_LINUX_AMD64_SHA256}"
+          echo "ort-image=ghcr.io/oss-review-toolkit/ort:${ORT_VERSION}"
+        } >> "$GITHUB_OUTPUT"

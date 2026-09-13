@@ -7,7 +7,7 @@ This guide explains how to configure a local development environment for the Fir
 Install the following tools before building the services:
 
 - **Java 21+** – required for all Spring Boot microservices.
-- **Node.js 24 LTS** – needed if you plan to build the React frontend. Use Node 24; the Gradle-managed version is declared in [`build.gradle.kts`](build.gradle.kts) and the CI version in the [CI workflow](.github/workflows/ci.yml), which are the exact-version authorities.
+- **Node.js 24 LTS** – needed if you plan to build the React frontend. The repository's exact Node version is declared once in [`.node-version`](.node-version) and consumed by both Gradle and CI.
 - **Docker** and **Docker Compose** – run the full stack locally.
 - **Git** – version control for cloning and contributing.
 - **Gradle** – optional; only needed for an intentional wrapper upgrade.

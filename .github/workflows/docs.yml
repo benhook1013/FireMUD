@@ -27,7 +27,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
-          python-version: '3.14'
+          python-version-file: '.python-version'
       - name: Cache link check results
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
@@ -45,7 +45,7 @@ jobs:
           jobSummary: true
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
       - name: Install MkDocs
-        run: python3 -m pip install --disable-pip-version-check mkdocs mkdocs-material
+        run: python3 -m pip install --disable-pip-version-check -r config/docs/requirements.txt
       - name: Build documentation
         run: |
           python3 dev-tools/docs/build_pages_site.py
