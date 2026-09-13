@@ -82,6 +82,10 @@ public class SecretMaterialValidatorTest {
   private static final KeyPair DISTINCT_CA_KEY_PAIR_ONE = RSA_KEY_FIXTURES.get(1);
   private static final KeyPair DISTINCT_CA_KEY_PAIR_TWO = RSA_KEY_FIXTURES.get(2);
 
+  private static GrpcTransportBundleGenerator generator() {
+    return new GrpcTransportBundleGenerator(new SecretMaterialValidator());
+  }
+
   @Test
   void generatedGrpcBundleHasTransportUsagesAndNoPerWorkloadIdentityClaim() throws Exception {
     EnvironmentIdentityPlan plan =
@@ -436,7 +440,7 @@ public class SecretMaterialValidatorTest {
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
     Secret validCa = generatedCa(now, Duration.ofDays(60));
     Secret generated =
-        new GrpcTransportBundleGenerator().generate(plan, validCa, 2, Duration.ofDays(7), now);
+        generator().generate(plan, validCa, 2, Duration.ofDays(7), now);
     Secret invalidCa = generatedCaWithoutKeyCertSign(now, Duration.ofDays(60));
     Map<String, String> data = new LinkedHashMap<>(generated.getData());
     data.put("ca.crt", invalidCa.getData().get("ca.crt"));
@@ -490,7 +494,7 @@ public class SecretMaterialValidatorTest {
     GrpcTransportBundleGenerator.validateCa(caSource, trustAnchor);
 
     Secret generated =
-        new GrpcTransportBundleGenerator().generate(plan, caSource, 17, Duration.ofDays(7), now);
+        generator().generate(plan, caSource, 17, Duration.ofDays(7), now);
     X509Certificate ca = certificate(caSource.getData().get("ca.crt"));
     X509Certificate leaf = certificate(generated.getData().get("tls.crt"));
 
@@ -525,7 +529,7 @@ public class SecretMaterialValidatorTest {
     Duration renewBefore = Duration.ofDays(7);
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
-    GrpcTransportBundleGenerator generator = new GrpcTransportBundleGenerator();
+    GrpcTransportBundleGenerator generator = generator();
     Secret oldCa = generatedCa(now, Duration.ofDays(60));
     Secret existing = generator.generate(plan, oldCa, 4, renewBefore, now);
     existing.getMetadata().setResourceVersion("7");
@@ -551,7 +555,7 @@ public class SecretMaterialValidatorTest {
     Duration renewBefore = Duration.ofDays(7);
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
-    GrpcTransportBundleGenerator generator = new GrpcTransportBundleGenerator();
+    GrpcTransportBundleGenerator generator = generator();
     Secret ca = generatedCa(now, Duration.ofDays(60));
     Secret existing = generator.generate(plan, ca, 4, renewBefore, now);
     existing.getMetadata().setResourceVersion(resourceVersion);
@@ -571,7 +575,7 @@ public class SecretMaterialValidatorTest {
     Duration renewBefore = Duration.ofDays(7);
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
-    GrpcTransportBundleGenerator generator = new GrpcTransportBundleGenerator();
+    GrpcTransportBundleGenerator generator = generator();
     Secret ca =
         generatedCaWithDistinctKeyPair(now, Duration.ofDays(60), DISTINCT_CA_KEY_PAIR_ONE);
     Secret existing = generator.generate(plan, ca, 4, renewBefore, now);
@@ -598,7 +602,7 @@ public class SecretMaterialValidatorTest {
     Duration renewBefore = Duration.ofDays(7);
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
-    GrpcTransportBundleGenerator generator = new GrpcTransportBundleGenerator();
+    GrpcTransportBundleGenerator generator = generator();
     Secret ca = generatedCa(now, Duration.ofDays(60));
     Secret existing = generator.generate(plan, ca, 4, renewBefore, now);
     Secret unrelated = generator.generate(plan, ca, 9, renewBefore, now);
@@ -622,7 +626,7 @@ public class SecretMaterialValidatorTest {
     Instant now = Instant.parse("2026-01-01T00:00:00Z");
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
-    GrpcTransportBundleGenerator generator = new GrpcTransportBundleGenerator();
+    GrpcTransportBundleGenerator generator = generator();
     Secret generated =
         generator.generate(plan, generatedCa(now, Duration.ofDays(60)), 4, Duration.ofDays(7), now);
     Instant leafNotAfter =
@@ -642,7 +646,7 @@ public class SecretMaterialValidatorTest {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
     EnvironmentIdentityPlan wrongDnsPlan = withGrpcConsumers(plan, "unexpected-service");
-    GrpcTransportBundleGenerator generator = new GrpcTransportBundleGenerator();
+    GrpcTransportBundleGenerator generator = generator();
     Secret ca = generatedCa(now, Duration.ofDays(60));
     Secret existing = generator.generate(wrongDnsPlan, ca, 4, renewBefore, now);
     existing.getMetadata().setResourceVersion("7");
@@ -677,7 +681,7 @@ public class SecretMaterialValidatorTest {
     Duration renewBefore = Duration.ofDays(7);
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
-    GrpcTransportBundleGenerator generator = new GrpcTransportBundleGenerator();
+    GrpcTransportBundleGenerator generator = generator();
     Secret ca = generatedCa(now, Duration.ofDays(60));
     Secret existing = generator.generate(plan, ca, 4, renewBefore, now);
     existing.getMetadata().setResourceVersion("7");
@@ -712,7 +716,7 @@ public class SecretMaterialValidatorTest {
     Duration renewBefore = Duration.ofDays(7);
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
-    GrpcTransportBundleGenerator generator = new GrpcTransportBundleGenerator();
+    GrpcTransportBundleGenerator generator = generator();
     Secret ca = generatedCa(now, Duration.ofDays(60));
     Secret existing = generator.generate(plan, ca, 4, renewBefore, now);
     existing.getMetadata().setResourceVersion("7");
@@ -747,7 +751,7 @@ public class SecretMaterialValidatorTest {
     Duration renewBefore = Duration.ofDays(7);
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
-    GrpcTransportBundleGenerator generator = new GrpcTransportBundleGenerator();
+    GrpcTransportBundleGenerator generator = generator();
     Secret oldCa =
         generatedCaWithDistinctKeyPair(now, Duration.ofDays(60), DISTINCT_CA_KEY_PAIR_ONE);
     Secret existing = generator.generate(plan, oldCa, 4, renewBefore, now);
@@ -776,7 +780,7 @@ public class SecretMaterialValidatorTest {
     Duration renewBefore = Duration.ofDays(7);
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
-    GrpcTransportBundleGenerator generator = new GrpcTransportBundleGenerator();
+    GrpcTransportBundleGenerator generator = generator();
     Secret oldCa =
         generatedCaWithDistinctKeyPair(now, Duration.ofDays(60), DISTINCT_CA_KEY_PAIR_ONE);
     Secret existing = generator.generate(plan, oldCa, 4, renewBefore, now);
@@ -830,7 +834,7 @@ public class SecretMaterialValidatorTest {
         assertThrows(
             IllegalStateException.class,
             () ->
-                new GrpcTransportBundleGenerator()
+                generator()
                     .ensure(client, plan, 1L, Duration.ofDays(7), "0".repeat(64)));
 
     assertEquals("identity source Secret is not controller-owned", failure.getMessage());
@@ -847,7 +851,7 @@ public class SecretMaterialValidatorTest {
     Secret caSource = generatedCa(now, Duration.ofDays(10));
 
     Secret generated =
-        new GrpcTransportBundleGenerator().generate(plan, caSource, 2, Duration.ofDays(7), now);
+        generator().generate(plan, caSource, 2, Duration.ofDays(7), now);
 
     assertEquals(
         certificate(caSource.getData().get("ca.crt")).getNotAfter(),
@@ -865,7 +869,7 @@ public class SecretMaterialValidatorTest {
         assertThrows(
             IllegalStateException.class,
             () ->
-                new GrpcTransportBundleGenerator()
+                generator()
                     .generate(plan, caSource, 2, Duration.ofDays(7), now));
 
     assertTrue(failure.getMessage().contains("expires within the gRPC renewal window"));
@@ -883,7 +887,7 @@ public class SecretMaterialValidatorTest {
     Secret caSource = generatedCa(now, caLifetime);
 
     Secret generated =
-        new GrpcTransportBundleGenerator().generate(plan, caSource, 2, renewBefore, now);
+        generator().generate(plan, caSource, 2, renewBefore, now);
 
     assertEquals(
         certificate(caSource.getData().get("ca.crt")).getNotAfter(),
@@ -905,7 +909,7 @@ public class SecretMaterialValidatorTest {
     IllegalStateException failure =
         assertThrows(
             IllegalStateException.class,
-            () -> new GrpcTransportBundleGenerator().generate(plan, caSource, 2, renewBefore, now));
+            () -> generator().generate(plan, caSource, 2, renewBefore, now));
 
     assertTrue(failure.getMessage().contains("expires within the gRPC renewal window"));
   }
@@ -921,7 +925,7 @@ public class SecretMaterialValidatorTest {
         assertThrows(
             IllegalStateException.class,
             () ->
-                new GrpcTransportBundleGenerator()
+                generator()
                     .generate(plan, caSource, 2, Duration.ofMinutes(5).minusNanos(1), now));
 
     assertEquals(
@@ -940,7 +944,7 @@ public class SecretMaterialValidatorTest {
         assertThrows(
             IllegalStateException.class,
             () ->
-                new GrpcTransportBundleGenerator()
+                generator()
                     .generate(plan, caSource, 2, Duration.ofDays(30), now));
 
     assertEquals(
@@ -954,7 +958,7 @@ public class SecretMaterialValidatorTest {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
     Secret caSource = generatedCa(now, Duration.ofDays(60));
-    GrpcTransportBundleGenerator generator = new GrpcTransportBundleGenerator();
+    GrpcTransportBundleGenerator generator = generator();
 
     for (Duration renewBefore :
         java.util.List.of(
@@ -1455,7 +1459,7 @@ public class SecretMaterialValidatorTest {
       Secret caSource = generatedCa(now, Duration.ofDays(60));
       String trustAnchor = SecretMaterialValidator.trustAnchorFingerprint(caSource);
       GrpcTransportBundleGenerator.validateCa(caSource, trustAnchor);
-      return new GrpcTransportBundleGenerator()
+      return generator()
           .generate(plan, caSource, 1, Duration.ofDays(7), now);
     } catch (Exception exception) {
       throw new AssertionError("unable to create configured-CA gRPC test fixture", exception);

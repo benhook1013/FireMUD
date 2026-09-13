@@ -54,8 +54,7 @@ public class GrpcTransportBundleGenerator {
   private static final String TYPE = "Opaque";
   private static final boolean GRPC_REQUIRES_SERVER_AUTH = true;
   private static final boolean GRPC_REQUIRES_CLIENT_AUTH = true;
-  private static final SecretMaterialValidator MATERIAL_VALIDATOR =
-      new SecretMaterialValidator();
+  private final SecretMaterialValidator materialValidator;
   private static final SecureRandom SERIAL_RANDOM = new SecureRandom();
   private static final Pattern CERTIFICATE_PEM =
       Pattern.compile(
@@ -70,6 +69,10 @@ public class GrpcTransportBundleGenerator {
     if (Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null) {
       Security.addProvider(new BouncyCastleProvider());
     }
+  }
+
+  public GrpcTransportBundleGenerator(SecretMaterialValidator materialValidator) {
+    this.materialValidator = materialValidator;
   }
 
   public Secret ensure(
@@ -280,14 +283,14 @@ public class GrpcTransportBundleGenerator {
         .isAfter(plus(now, renewBefore, "gRPC renewal threshold is out of range"));
   }
 
-  private static boolean leafIsReusable(
+  private boolean leafIsReusable(
       Secret secret,
       EnvironmentIdentityPlan plan,
       Duration renewBefore,
       Instant now,
       String expectedTrustAnchorSha256) {
     try {
-      MATERIAL_VALIDATOR.validateIdentity(
+      materialValidator.validateIdentity(
           secret,
           grpcDnsNames(plan),
           List.of(),
