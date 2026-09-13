@@ -1338,8 +1338,8 @@ class SecretMaterialValidatorTest {
                 "ca.key", pem("PRIVATE KEY", PresentedChainKeys.ROOT.getPrivate().getEncoded()),
                 "tls.crt",
                     encode(
-                        pemText(pem("CERTIFICATE", leaf.getEncoded()))
-                            + pemText(pem("CERTIFICATE", intermediate.getEncoded()))),
+                        rawPem("CERTIFICATE", leaf.getEncoded())
+                            + rawPem("CERTIFICATE", intermediate.getEncoded())),
                 "tls.key", pem("PRIVATE KEY", PresentedChainKeys.LEAF.getPrivate().getEncoded())))
         .build();
   }
@@ -1382,6 +1382,9 @@ class SecretMaterialValidatorTest {
                 ? KeyUsage.keyCertSign | KeyUsage.cRLSign
                 : KeyUsage.digitalSignature | KeyUsage.keyEncipherment));
     if (!ca) {
+      String requiredDnsName =
+          java.util.Objects.requireNonNull(
+              dnsName, "dnsName is required for non-CA certificates");
       builder.addExtension(
           Extension.extendedKeyUsage,
           false,
@@ -1390,7 +1393,7 @@ class SecretMaterialValidatorTest {
       builder.addExtension(
           Extension.subjectAlternativeName,
           false,
-          new GeneralNames(new GeneralName(GeneralName.dNSName, dnsName)));
+          new GeneralNames(new GeneralName(GeneralName.dNSName, requiredDnsName)));
     }
     var signer = new JcaContentSignerBuilder("SHA256withRSA").build(issuerKeyPair.getPrivate());
     return new JcaX509CertificateConverter()
@@ -1555,7 +1558,11 @@ class SecretMaterialValidatorTest {
   }
 
   private static String pem(String label, byte[] der) {
+    return encode(rawPem(label, der));
+  }
+
+  private static String rawPem(String label, byte[] der) {
     String body = Base64.getMimeEncoder(64, new byte[] {'\n'}).encodeToString(der);
-    return encode("-----BEGIN " + label + "-----\n" + body + "\n-----END " + label + "-----\n");
+    return "-----BEGIN " + label + "-----\n" + body + "\n-----END " + label + "-----\n";
   }
 }

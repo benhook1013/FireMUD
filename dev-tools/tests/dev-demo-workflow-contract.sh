@@ -2,6 +2,18 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+real_jq="$(command -v jq)" || {
+  echo "jq is required for the dev-demo workflow contract." >&2
+  exit 1
+}
+command -v python3 >/dev/null 2>&1 || {
+  echo "python3 with PyYAML is required for the dev-demo workflow contract." >&2
+  exit 1
+}
+python3 -c 'import yaml' >/dev/null 2>&1 || {
+  echo "python3 with PyYAML is required for the dev-demo workflow contract." >&2
+  exit 1
+}
 python3 "$ROOT_DIR/dev-tools/validation/check_dev_demo_summary.py" "$ROOT_DIR"
 python3 "$ROOT_DIR/dev-tools/validation/test_check_dev_demo_summary.py"
 
@@ -1221,7 +1233,6 @@ run_deployment_evidence_fixture success
 # behaviorally required, rather than merely present as source fragments.
 waiter_stub_dir="$fixture_dir/waiter-stubs"
 mkdir -p "$waiter_stub_dir"
-real_jq="$(command -v jq)"
 
 cat >"$waiter_stub_dir/sleep" <<'SH'
 #!/usr/bin/env bash
