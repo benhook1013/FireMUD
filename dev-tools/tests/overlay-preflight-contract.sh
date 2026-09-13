@@ -41,6 +41,11 @@ done
 
 # shellcheck disable=SC2016
 for required in \
+  'permissions:' \
+  'contents: read' \
+  'packages: read' \
+  'uses: step-security/harden-runner@' \
+  'egress-policy: audit' \
   'uses: actions/checkout@' \
   'fetch-depth: 0' \
   'uses: ./.github/actions/setup-python' \
