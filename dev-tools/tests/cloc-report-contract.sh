@@ -671,9 +671,13 @@ try:
     rendered_impact = cloc_report.render_pr_report(impact)
     assert cloc_report.PR_REPORT_START in rendered_impact
     assert cloc_report.PR_REPORT_END in rendered_impact
-    assert "| Overall | 10 | 12 | +2 | +20.0% |" in rendered_impact
-    assert "| ↳ Production | 5 | 5 | 0 | 0.0% |" in rendered_impact
-    assert "| ↳ Architecture | 0 | 1 | +1 | new |" in rendered_impact
+    assert "| **Overall** | 10 | 12 | +2 | +20.0% |" in rendered_impact
+    assert "| &emsp;**Source** | 8 | 7 | -1 | -12.5% |" in rendered_impact
+    assert "| &emsp;&emsp;↳ Production | 5 | 5 | 0 | 0.0% |" in rendered_impact
+    assert "| &emsp;&emsp;↳ Tests | 3 | 2 | -1 | -33.3% |" in rendered_impact
+    assert "| &emsp;**Markdown** | 2 | 2 | 0 | 0.0% |" in rendered_impact
+    assert "| &emsp;**Design** | 0 | 1 | +1 | new |" in rendered_impact
+    assert "| &emsp;&emsp;↳ Architecture | 0 | 1 | +1 | new |" in rendered_impact
 finally:
     (
         cloc_report.resolve_pull_request,
