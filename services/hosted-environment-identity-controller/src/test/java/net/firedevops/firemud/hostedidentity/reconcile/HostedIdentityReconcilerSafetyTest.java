@@ -367,7 +367,7 @@ class HostedIdentityReconcilerSafetyTest {
     assertEquals(
         "RuntimeIdentityChanged",
         result.getResource().orElseThrow().getStatus().getConditions().get(0).getReason());
-    org.junit.jupiter.api.Assertions.assertTrue(
+    assertTrue(
         result
             .getResource()
             .orElseThrow()
@@ -825,7 +825,8 @@ class HostedIdentityReconcilerSafetyTest {
             new RuntimeProfileService.RuntimeProfile(
                 "replacement-uid", "a".repeat(40), "a".repeat(40), 32000, true),
             RuntimeProfileService.RuntimeProfile.absent());
-    when(fixture.identityNamespace.get()).thenReturn(fixture.identityNamespace(false), null, null);
+    when(fixture.identityNamespace.get())
+        .thenReturn(fixture.buildIdentityNamespace(false), null, null);
     HostedEnvironmentIdentity resource = resource();
     resource.getSpec().setDesiredState(HostedEnvironmentIdentitySpec.DesiredState.Retired);
     HostedEnvironmentIdentityStatus priorStatus = new HostedEnvironmentIdentityStatus();
@@ -939,9 +940,9 @@ class HostedIdentityReconcilerSafetyTest {
   @Test
   void retirementObservesNamespaceTerminationBeforeDeletingScopeObjects() {
     RetirementDeletionFixture fixture = new RetirementDeletionFixture();
-    Namespace terminating = fixture.identityNamespace(true);
+    Namespace terminating = fixture.buildIdentityNamespace(true);
     when(fixture.identityNamespace.get())
-        .thenReturn(fixture.identityNamespace(false), terminating, terminating);
+        .thenReturn(fixture.buildIdentityNamespace(false), terminating, terminating);
 
     UpdateControl<HostedEnvironmentIdentity> result = fixture.retire();
 
@@ -972,7 +973,7 @@ class HostedIdentityReconcilerSafetyTest {
   @Test
   void terminatingNamespaceResumesCleanupWhenOneScopeObjectIsAlreadyMissing() {
     RetirementDeletionFixture fixture = new RetirementDeletionFixture();
-    Namespace terminating = fixture.identityNamespace(true);
+    Namespace terminating = fixture.buildIdentityNamespace(true);
     when(fixture.identityNamespace.get()).thenReturn(terminating);
     when(fixture.identityRole.get()).thenReturn(null);
 
@@ -987,7 +988,7 @@ class HostedIdentityReconcilerSafetyTest {
   @Test
   void terminatingNamespaceResumesCleanupWhenBothScopeObjectsAreAlreadyMissing() {
     RetirementDeletionFixture fixture = new RetirementDeletionFixture();
-    Namespace terminating = fixture.identityNamespace(true);
+    Namespace terminating = fixture.buildIdentityNamespace(true);
     when(fixture.identityNamespace.get()).thenReturn(terminating);
     when(fixture.identityRole.get()).thenReturn(null);
     when(fixture.identityBinding.get()).thenReturn(null);
@@ -1003,7 +1004,7 @@ class HostedIdentityReconcilerSafetyTest {
   @Test
   void terminatingNamespaceRejectsMismatchedRemainingScopeOwnership() {
     RetirementDeletionFixture fixture = new RetirementDeletionFixture();
-    when(fixture.identityNamespace.get()).thenReturn(fixture.identityNamespace(true));
+    when(fixture.identityNamespace.get()).thenReturn(fixture.buildIdentityNamespace(true));
     when(fixture.identityRole.get()).thenReturn(null);
     when(fixture.identityBinding.get())
         .thenReturn(
@@ -1116,7 +1117,7 @@ class HostedIdentityReconcilerSafetyTest {
     UpdateControl<HostedEnvironmentIdentity> result = reconciler.reconcile(resource(), context);
 
     verifyNoInteractions(certificates, projections, scope, runtime, rollout, probes, context);
-    org.junit.jupiter.api.Assertions.assertEquals(
+    assertEquals(
         HostedEnvironmentIdentityStatus.Phase.Blocked,
         result.getResource().orElseThrow().getStatus().getPhase());
   }
@@ -1149,7 +1150,7 @@ class HostedIdentityReconcilerSafetyTest {
     UpdateControl<HostedEnvironmentIdentity> result = reconciler.reconcile(resource(), context);
 
     verifyNoInteractions(certificates, projections, scope, runtime, rollout, probes, context);
-    org.junit.jupiter.api.Assertions.assertEquals(
+    assertEquals(
         HostedEnvironmentIdentityStatus.Phase.Pending,
         result.getResource().orElseThrow().getStatus().getPhase());
   }
@@ -1184,7 +1185,7 @@ class HostedIdentityReconcilerSafetyTest {
     UpdateControl<HostedEnvironmentIdentity> result = reconciler.reconcile(resource(), context);
 
     verifyNoInteractions(certificates, projections, scope, rollout, probes, context);
-    org.junit.jupiter.api.Assertions.assertEquals(
+    assertEquals(
         HostedEnvironmentIdentityStatus.Phase.RuntimeAbsent,
         result.getResource().orElseThrow().getStatus().getPhase());
   }
@@ -1644,7 +1645,7 @@ class HostedIdentityReconcilerSafetyTest {
       when(namespaces.withName("pr-42")).thenReturn(runtimeNamespace);
       when(runtimeNamespace.get()).thenReturn(null);
       when(namespaces.withName("pr-42-identity")).thenReturn(identityNamespace);
-      when(identityNamespace.get()).thenReturn(identityNamespace(false));
+      when(identityNamespace.get()).thenReturn(buildIdentityNamespace(false));
       when(runtime.read(any(), any())).thenReturn(RuntimeProfileService.RuntimeProfile.absent());
 
       stubOwnedScope();
@@ -1693,7 +1694,7 @@ class HostedIdentityReconcilerSafetyTest {
               new RoleBindingBuilder().withNewMetadata().withLabels(labels).endMetadata().build());
     }
 
-    private Namespace identityNamespace(boolean terminating) {
+    private Namespace buildIdentityNamespace(boolean terminating) {
       Namespace namespace =
           new NamespaceBuilder()
               .withNewMetadata()

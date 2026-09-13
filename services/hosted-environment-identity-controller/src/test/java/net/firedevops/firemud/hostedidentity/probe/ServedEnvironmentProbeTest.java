@@ -290,7 +290,7 @@ class ServedEnvironmentProbeTest {
 
   @Test
   void malformedGrpcTrustAnchorIsRejectedBeforeAbsentOrMalformedMaterial() {
-    IllegalArgumentException absentMaterial =
+    IllegalArgumentException nullSecret =
         assertThrows(
             IllegalArgumentException.class,
             () -> ServedEnvironmentProbe.grpcSslContext(null, "not-a-trust-anchor"));
@@ -307,7 +307,7 @@ class ServedEnvironmentProbeTest {
             IllegalArgumentException.class,
             () -> ServedEnvironmentProbe.grpcSslContext(malformedMaterial, "not-a-trust-anchor"));
 
-    assertEquals("configured gRPC trust anchor is invalid", absentMaterial.getMessage());
+    assertEquals("configured gRPC trust anchor is invalid", nullSecret.getMessage());
     assertEquals("configured gRPC trust anchor is invalid", unreadableMaterial.getMessage());
   }
 
