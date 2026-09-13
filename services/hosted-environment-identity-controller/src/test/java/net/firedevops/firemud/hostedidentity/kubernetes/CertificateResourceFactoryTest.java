@@ -105,16 +105,12 @@ class CertificateResourceFactoryTest {
   }
 
   @Test
-  void certificateFactoryHasNoGrpcCertificateFactoryMethod() {
+  void certificateFactoryPublicSurfaceContainsOnlyMaterialFactories() {
     var declaredMethods =
         java.util.Arrays.stream(CertificateResourceFactory.class.getDeclaredMethods())
             .filter(method -> !method.isSynthetic())
             .toList();
 
-    assertTrue(
-        declaredMethods.stream()
-            .noneMatch(
-                method -> method.getName().toLowerCase(java.util.Locale.ROOT).contains("grpc")));
     assertEquals(
         java.util.Set.of("ingress", "telnet", "gatewayInternalWs", "tcpProxyBridge"),
         declaredMethods.stream()

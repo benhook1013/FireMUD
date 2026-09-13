@@ -1387,9 +1387,7 @@ dev_demo_kubeconfig_step = dev_demo_by_name["Write dev-demo runtime kubeconfig"]
 assert '"$RUNNER_TEMP/dev-demo-runtime.kubeconfig"' in dev_demo_kubeconfig_step[
     "run"
 ]
-assert 'echo "DEV_DEMO_RUNTIME_KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"' in (
-    dev_demo_kubeconfig_step["run"]
-)
+assert "DEV_DEMO_RUNTIME_KUBECONFIG" not in dev_demo_kubeconfig_step["run"]
 assert 'echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"' in (
     dev_demo_kubeconfig_step["run"]
 )

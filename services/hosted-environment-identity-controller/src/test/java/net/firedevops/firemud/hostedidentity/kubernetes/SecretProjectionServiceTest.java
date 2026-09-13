@@ -2,6 +2,7 @@ package net.firedevops.firemud.hostedidentity.kubernetes;
 
 import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.acceptedAnnotations;
 import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.certManagerSource;
+import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.certificateRequest;
 import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.encoded;
 import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.ownedSecret;
 import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.plan;
@@ -9,6 +10,7 @@ import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTes
 import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.secretName;
 import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.stableBatchFixture;
 import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.stubCertificate;
+import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.stubCertificateRequests;
 import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.stubProjectionAndSource;
 import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SERIALIZED_DEFERRED;
 import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SERIALIZED_DEFERRED_DRIFT;

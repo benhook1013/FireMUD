@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -112,7 +113,7 @@ class SecretMaterialValidatorTest {
     assertArrayEquals(rootSubjectKeyIdentifier, authorityKeyIdentifier(leaf));
     assertFalse(java.util.Arrays.equals(rootSubjectKeyIdentifier, leafSubjectKeyIdentifier));
     var subjectAlternativeNames = leaf.getSubjectAlternativeNames();
-    assertTrue(subjectAlternativeNames != null);
+    assertNotNull(subjectAlternativeNames);
     assertTrue(
         subjectAlternativeNames.stream()
             .allMatch(
