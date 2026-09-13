@@ -2110,7 +2110,7 @@ for pull_secret_mode in missing wrong-type invalid-data empty-auth; do
     "required Secret firemud-system/ghcr-preview-pull is missing or is not a usable kubernetes.io/dockerconfigjson credential for ghcr.io"
   grep -Fxq pull-secret-read "$pull_secret_events" || \
     fail "bootstrap did not inspect the ${pull_secret_mode} controller pull Secret"
-  if grep -Eq '^(guard-policy|guard-binding|apply:|rollout)$' "$pull_secret_events"; then
+  if grep -Eq '^(guard-policy|guard-binding|apply:.*|rollout)$' "$pull_secret_events"; then
     fail "bootstrap installed resources after rejecting the ${pull_secret_mode} controller pull Secret"
   fi
 done
