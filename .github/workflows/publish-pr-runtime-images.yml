@@ -82,19 +82,30 @@ jobs:
         run: |
           set -euo pipefail
 
-          services=(
-            account-service
-            automation-scripting-service
-            entity-management-service
-            game-design-service
-            game-logic-service
-            game-session-service
-            logging-admin-service
-            social-groups-service
-            spring-cloud-gateway
-            tcp-proxy-service
-            world-management-service
-          )
+          service_manifest=/tmp/pr-runtime-images/pr-runtime-services.txt
+          if [[ ! -f "$service_manifest" ]]; then
+            echo "Required PR runtime service inventory is missing from the downloaded artifact." >&2
+            exit 1
+          fi
+          services=()
+          declare -A seen_services=()
+          while IFS= read -r image || [[ -n "$image" ]]; do
+            service="$image"
+            if [[ -z "$service" || ! "$service" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+              echo "Malformed PR runtime service inventory entry: $service." >&2
+              exit 1
+            fi
+            if [[ -n "${seen_services[$service]+x}" ]]; then
+              echo "Duplicate PR runtime service inventory entry: $service." >&2
+              exit 1
+            fi
+            seen_services["$service"]=1
+            services+=("$service")
+          done < "$service_manifest"
+          if (( ${#services[@]} == 0 )); then
+            echo "PR runtime service inventory is empty; nothing was published." >&2
+            exit 1
+          fi
 
           missing_source_images=()
           for service in "${services[@]}"; do

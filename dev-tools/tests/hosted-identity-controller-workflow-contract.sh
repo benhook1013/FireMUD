@@ -150,6 +150,9 @@ assert '[[ "$health" == *' not in smoke_run
 export_run = export_step["run"]
 assert "hosted-environment-identity-controller" not in export_run
 assert "account-service" in export_run
+assert 'service_manifest=/tmp/pr-runtime-services.txt' in export_run
+assert 'printf \'%s\\n\' "$service" >> "$service_manifest"' in export_run
+assert '/tmp/pr-runtime-services.txt' in upload_step["with"]["path"]
 
 runtime_services_match = re.search(
     r"for service in \\\n(?P<services>(?:\s+[a-z0-9-]+ \\\n)*\s+[a-z0-9-]+); do",
@@ -166,21 +169,13 @@ publisher_run = next(
     for step in publisher_steps
     if step.get("name") == "Publish fixed PR image tags"
 )
-publisher_services_match = re.search(
+assert 'services=()' in publisher_run
+assert not re.search(
     r"^\s*services=\(\n(?P<services>(?:\s+[a-z0-9-]+\n)+)\s*\)$",
     publisher_run,
     re.MULTILINE,
 )
-assert publisher_services_match, "trusted publisher service allowlist is not parseable"
-publisher_services = [
-    line.strip()
-    for line in publisher_services_match.group("services").splitlines()
-]
-assert publisher_services == runtime_services, (
-    "trusted publisher service allowlist must exactly match the PR runtime artifact list",
-    publisher_services,
-    runtime_services,
-)
+assert 'docker image ls --format' not in publisher_run
 PY
 
 nested_status_health='{"components":{"controller":{"status":"UP"}}}'
@@ -449,6 +444,7 @@ done
 
 python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" "$janitor" "$mode_action" "$runtime" <<'PY'
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -616,6 +612,12 @@ publisher_script = next(
     if step.get("name") == "Publish fixed PR image tags"
 )
 missing_image_check = 'if ! docker image inspect "$image" >/dev/null 2>&1; then'
+assert 'service_manifest=/tmp/pr-runtime-images/pr-runtime-services.txt' in publisher_script
+assert 'declare -A seen_services=()' in publisher_script
+assert 'Malformed PR runtime service inventory entry' in publisher_script
+assert 'Duplicate PR runtime service inventory entry' in publisher_script
+assert 'PR runtime service inventory is empty; nothing was published.' in publisher_script
+assert re.search(r"services=\(\s+account-service", publisher_script) is None
 assert missing_image_check in publisher_script
 assert publisher_script.count(
     'echo "Required source artifact image for $service is missing: $image." >&2'
@@ -623,13 +625,16 @@ assert publisher_script.count(
 assert 'missing_source_images+=("$image")' in publisher_script
 assert 'if (( ${#missing_source_images[@]} > 0 )); then' in publisher_script
 preflight_index = publisher_script.index(missing_image_check)
+inventory_index = publisher_script.index(
+    'service_manifest=/tmp/pr-runtime-images/pr-runtime-services.txt'
+)
 failure_index = publisher_script.index(
     'echo "Required source artifact is incomplete; ${#missing_source_images[@]} runtime image(s) are missing. Nothing was published." >&2'
 )
 publish_index = publisher_script.index(
     'if docker manifest inspect "$image" >/dev/null 2>&1; then'
 )
-assert preflight_index < failure_index < publish_index
+assert inventory_index < preflight_index < failure_index < publish_index
 for obsolete_optional_controller_fragment in (
     "hosted-environment-identity-controller; do",
     "hosted-environment-identity-controller\\n",
@@ -640,9 +645,63 @@ for obsolete_optional_controller_fragment in (
 ):
     assert obsolete_optional_controller_fragment not in publisher_script
 
+def run_inventory_rejection(service_inventory, expected_message):
+    with tempfile.TemporaryDirectory() as inventory_fixture_dir:
+        fixture_root = Path(inventory_fixture_dir)
+        docker_calls = fixture_root / "docker-calls"
+        fake_docker = fixture_root / "docker"
+        manifest_path = fixture_root / "pr-runtime-services.txt"
+        manifest_path.write_text(service_inventory, encoding="utf-8")
+        fake_docker.write_text(
+            """#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$DOCKER_CALLS"
+exit 99
+""",
+            encoding="utf-8",
+        )
+        fake_docker.chmod(0o755)
+        fixture_env = os.environ.copy()
+        fixture_env.update(
+            DOCKER_CALLS=str(docker_calls),
+            IMAGE_TAG="fixture-head",
+            PATH=f"{fixture_root}:{fixture_env['PATH']}",
+        )
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                publisher_script.replace(
+                    "/tmp/pr-runtime-images/pr-runtime-services.txt", str(manifest_path)
+                ),
+            ],
+            check=False,
+            env=fixture_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        assert result.returncode == 1, result
+        assert expected_message in result.stderr
+        assert not docker_calls.exists()
+
+run_inventory_rejection(
+    "account-service\naccount-service\n",
+    "Duplicate PR runtime service inventory entry",
+)
+run_inventory_rejection(
+    "Bad_Service\n",
+    "Malformed PR runtime service inventory entry",
+)
+run_inventory_rejection(
+    "",
+    "PR runtime service inventory is empty; nothing was published.",
+)
+
 with tempfile.TemporaryDirectory() as publisher_fixture_dir:
     fixture_root = Path(publisher_fixture_dir)
     docker_calls = fixture_root / "docker-calls"
+    manifest_path = fixture_root / "pr-runtime-services.txt"
+    manifest_path.write_text("account-service\ntcp-proxy-service\n", encoding="utf-8")
     fake_docker = fixture_root / "docker"
     fake_docker.write_text(
         """#!/usr/bin/env bash
@@ -671,7 +730,13 @@ exit 99
         PATH=f"{fixture_root}:{fixture_env['PATH']}",
     )
     result = subprocess.run(
-        ["bash", "-c", publisher_script],
+        [
+            "bash",
+            "-c",
+            publisher_script.replace(
+                "/tmp/pr-runtime-images/pr-runtime-services.txt", str(manifest_path)
+            ),
+        ],
         check=False,
         env=fixture_env,
         stdout=subprocess.PIPE,
@@ -683,7 +748,7 @@ exit 99
     assert "tcp-proxy-service is missing" in result.stderr
     assert "2 runtime image(s) are missing. Nothing was published." in result.stderr
     calls = docker_calls.read_text(encoding="utf-8").splitlines()
-    assert len([call for call in calls if call.startswith("image inspect ")]) == 11
+    assert len([call for call in calls if call.startswith("image inspect ")]) == 2
     assert not any(call.startswith("manifest inspect ") for call in calls)
     assert not any(call.startswith("push ") for call in calls)
 
@@ -691,6 +756,11 @@ with tempfile.TemporaryDirectory() as partial_publish_fixture_dir:
     fixture_root = Path(partial_publish_fixture_dir)
     docker_calls = fixture_root / "docker-calls"
     summary = fixture_root / "summary"
+    manifest_path = fixture_root / "pr-runtime-services.txt"
+    manifest_path.write_text(
+        "account-service\nentity-management-service\nsocial-groups-service\n",
+        encoding="utf-8",
+    )
     fake_docker = fixture_root / "docker"
     fake_sleep = fixture_root / "sleep"
     fake_docker.write_text(
@@ -723,7 +793,13 @@ exit 99
         PATH=f"{fixture_root}:{fixture_env['PATH']}",
     )
     result = subprocess.run(
-        ["bash", "-c", publisher_script],
+        [
+            "bash",
+            "-c",
+            publisher_script.replace(
+                "/tmp/pr-runtime-images/pr-runtime-services.txt", str(manifest_path)
+            ),
+        ],
         check=False,
         env=fixture_env,
         stdout=subprocess.PIPE,
@@ -738,9 +814,9 @@ exit 99
     )
     assert "`account-service`" in available_section
     assert "`entity-management-service`" in available_section
-    assert "`automation-scripting-service`" not in available_section
-    assert "`automation-scripting-service`" in unpublished_section
-    assert "`world-management-service`" in unpublished_section
+    assert "`social-groups-service`" not in available_section
+    assert "`social-groups-service`" in unpublished_section
+    assert "`world-management-service`" not in unpublished_section
     assert "`entity-management-service`" not in unpublished_section
 
 with tempfile.TemporaryDirectory() as publication_race_fixture_dir:
@@ -748,6 +824,8 @@ with tempfile.TemporaryDirectory() as publication_race_fixture_dir:
     docker_calls = fixture_root / "docker-calls"
     manifest_calls = fixture_root / "manifest-calls"
     summary = fixture_root / "summary"
+    manifest_path = fixture_root / "pr-runtime-services.txt"
+    manifest_path.write_text("account-service\n", encoding="utf-8")
     fake_docker = fixture_root / "docker"
     fake_sleep = fixture_root / "sleep"
     fake_docker.write_text(
@@ -787,7 +865,13 @@ exit 99
         PATH=f"{fixture_root}:{fixture_env['PATH']}",
     )
     result = subprocess.run(
-        ["bash", "-c", publisher_script],
+        [
+            "bash",
+            "-c",
+            publisher_script.replace(
+                "/tmp/pr-runtime-images/pr-runtime-services.txt", str(manifest_path)
+            ),
+        ],
         check=False,
         env=fixture_env,
         stdout=subprocess.PIPE,

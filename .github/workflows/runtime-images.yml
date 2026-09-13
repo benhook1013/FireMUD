@@ -680,6 +680,8 @@ jobs:
 
       - name: Export fixed-tag preview image artifact
         run: |
+          service_manifest=/tmp/pr-runtime-services.txt
+          : > "$service_manifest"
           images=()
           for service in \
             account-service \
@@ -693,6 +695,7 @@ jobs:
             spring-cloud-gateway \
             tcp-proxy-service \
             world-management-service; do
+            printf '%s\n' "$service" >> "$service_manifest"
             images+=("ghcr.io/benhook1013/${service}:${SMOKE_IMAGE_TAG}")
           done
           docker save "${images[@]}" | gzip -1 > /tmp/pr-runtime-images.tar.gz
@@ -701,7 +704,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: pr-runtime-images-${{ needs.image-meta.outputs.image_tag }}
-          path: /tmp/pr-runtime-images.tar.gz
+          path: |
+            /tmp/pr-runtime-images.tar.gz
+            /tmp/pr-runtime-services.txt
           if-no-files-found: error
           retention-days: 1
 
