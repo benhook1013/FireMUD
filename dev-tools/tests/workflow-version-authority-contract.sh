@@ -31,7 +31,7 @@ for req in ('config/docs/requirements.txt','config/python/ci-requirements.txt','
 ap=root/'config/workflow-tool-versions.env'; a=authority(ap)
 versions=['KUBECTL','HELM','GH','BUF','KUBECONFORM','VELERO','ACTIONLINT','TRIVY','LYCHEE','ORT','ZAP']
 if any(not re.fullmatch(r'\d+\.\d+\.\d+',a.get(f'{x}_VERSION','')) for x in versions): fail('all workflow tools must have exact versions')
-pairs={'HELM':'HELM_LINUX_AMD64','GH':'GH_LINUX_AMD64','BUF':'BUF_LINUX_X86_64','KUBECONFORM':'KUBECONFORM_LINUX_AMD64','VELERO':'VELERO_LINUX_AMD64','LYCHEE':'LYCHEE_LINUX_X86_64'}
+pairs={'HELM':'HELM_LINUX_AMD64','GH':'GH_LINUX_AMD64','BUF':'BUF_LINUX_X86_64','KUBECONFORM':'KUBECONFORM_LINUX_AMD64','VELERO':'VELERO_LINUX_AMD64','LYCHEE':'LYCHEE_LINUX_X86_64_MUSL'}
 for tool,stem in pairs.items():
  if a.get(f'{stem}_CHECKSUM_VERSION') != a[f'{tool}_VERSION']: fail(f'{tool} checksum version is stale')
  if not re.fullmatch(r'[0-9a-f]{64}',a.get(f'{stem}_SHA256','')): fail(f'{tool} checksum is invalid')
@@ -115,5 +115,8 @@ for action in ('setup-gh','setup-helm'):
  data=(actions/action/'action.yml').read_text()
  if 'sha256sum --check --status' not in data: fail(f'{action} must verify its archive')
 if 'RUNNER_OS' not in (actions/'setup-gh/action.yml').read_text() or 'RUNNER_ARCH' not in (actions/'setup-gh/action.yml').read_text(): fail('setup-gh must reject unsupported platforms')
+lychee=(root/'dev-tools/docs/link-check.sh').read_text()
+for required in ('source "$ROOT_DIR/config/workflow-tool-versions.env"','/lychee/${LYCHEE_VERSION}','LYCHEE_LINUX_X86_64_MUSL_SHA256','sha256sum --check --status'):
+ if required not in lychee: fail(f'local Lychee installer does not consume its authority: {required}')
 print('Workflow version authority contract passed')
 PY

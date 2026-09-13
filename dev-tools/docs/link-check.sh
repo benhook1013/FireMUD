@@ -8,18 +8,18 @@ source "$ROOT_DIR/config/workflow-tool-versions.env"
   echo "The pinned Lychee archive supports Linux x86_64 only." >&2
   exit 1
 }
-CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/lychee"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/lychee/${LYCHEE_VERSION}/x86_64-unknown-linux-musl"
 BIN="$CACHE_DIR/lychee"
-URL="https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}/lychee-x86_64-unknown-linux-gnu.tar.gz"
+URL="https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}/lychee-x86_64-unknown-linux-musl.tar.gz"
 
 if [ ! -x "$BIN" ]; then
   mkdir -p "$CACHE_DIR"
   archive="$CACHE_DIR/lychee.tar.gz"
   curl -fsSL "$URL" -o "$archive"
-  echo "${LYCHEE_LINUX_X86_64_SHA256}  ${archive}" | sha256sum --check --status
+  echo "${LYCHEE_LINUX_X86_64_MUSL_SHA256}  ${archive}" | sha256sum --check --status
   tar -xzf "$archive" -C "$CACHE_DIR"
   rm "$archive"
-  chmod +x "$BIN"
+  install -m 0755 "$CACHE_DIR/lychee-x86_64-unknown-linux-musl/lychee" "$BIN"
 fi
 
 # Run link check on documentation files only

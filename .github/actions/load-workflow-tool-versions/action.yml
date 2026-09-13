@@ -15,7 +15,7 @@ outputs:
   actionlint-version: {value: '${{ steps.versions.outputs.actionlint-version }}'}
   trivy-version: {value: '${{ steps.versions.outputs.trivy-version }}'}
   lychee-version: {value: '${{ steps.versions.outputs.lychee-version }}'}
-  lychee-linux-x86-64-sha256: {value: '${{ steps.versions.outputs.lychee-linux-x86-64-sha256 }}'}
+  lychee-linux-x86-64-musl-sha256: {value: '${{ steps.versions.outputs.lychee-linux-x86-64-musl-sha256 }}'}
   ort-image: {value: '${{ steps.versions.outputs.ort-image }}'}
   zap-image: {value: '${{ steps.versions.outputs.zap-image }}'}
 runs:
@@ -39,12 +39,12 @@ runs:
           value="${!key:-}"
           [[ "$value" =~ $version_pattern ]] || { echo "::error title=Invalid workflow tool version::${key} must be an exact three-part version." >&2; exit 1; }
         done
-        pairs=(HELM_VERSION:HELM_LINUX_AMD64_CHECKSUM_VERSION GH_VERSION:GH_LINUX_AMD64_CHECKSUM_VERSION BUF_VERSION:BUF_LINUX_X86_64_CHECKSUM_VERSION KUBECONFORM_VERSION:KUBECONFORM_LINUX_AMD64_CHECKSUM_VERSION VELERO_VERSION:VELERO_LINUX_AMD64_CHECKSUM_VERSION LYCHEE_VERSION:LYCHEE_LINUX_X86_64_CHECKSUM_VERSION)
+        pairs=(HELM_VERSION:HELM_LINUX_AMD64_CHECKSUM_VERSION GH_VERSION:GH_LINUX_AMD64_CHECKSUM_VERSION BUF_VERSION:BUF_LINUX_X86_64_CHECKSUM_VERSION KUBECONFORM_VERSION:KUBECONFORM_LINUX_AMD64_CHECKSUM_VERSION VELERO_VERSION:VELERO_LINUX_AMD64_CHECKSUM_VERSION LYCHEE_VERSION:LYCHEE_LINUX_X86_64_MUSL_CHECKSUM_VERSION)
         for pair in "${pairs[@]}"; do
           version_key="${pair%%:*}"; checksum_version_key="${pair##*:}"
           [[ "${!version_key}" == "${!checksum_version_key:-}" ]] || { echo "::error title=Stale workflow tool checksum::${checksum_version_key} must match ${version_key}." >&2; exit 1; }
         done
-        checksum_keys=(HELM_LINUX_AMD64_SHA256 GH_LINUX_AMD64_SHA256 BUF_LINUX_X86_64_SHA256 KUBECONFORM_LINUX_AMD64_SHA256 VELERO_LINUX_AMD64_SHA256 LYCHEE_LINUX_X86_64_SHA256)
+        checksum_keys=(HELM_LINUX_AMD64_SHA256 GH_LINUX_AMD64_SHA256 BUF_LINUX_X86_64_SHA256 KUBECONFORM_LINUX_AMD64_SHA256 VELERO_LINUX_AMD64_SHA256 LYCHEE_LINUX_X86_64_MUSL_SHA256)
         for key in "${checksum_keys[@]}"; do
           [[ "${!key:-}" =~ ^[0-9a-f]{64}$ ]] || { echo "::error title=Invalid workflow tool checksum::${key} must be a lowercase SHA-256." >&2; exit 1; }
         done
@@ -66,7 +66,7 @@ runs:
           echo "actionlint-version=${ACTIONLINT_VERSION}"
           echo "trivy-version=${TRIVY_VERSION}"
           echo "lychee-version=${LYCHEE_VERSION}"
-          echo "lychee-linux-x86-64-sha256=${LYCHEE_LINUX_X86_64_SHA256}"
+          echo "lychee-linux-x86-64-musl-sha256=${LYCHEE_LINUX_X86_64_MUSL_SHA256}"
           echo "ort-image=ghcr.io/oss-review-toolkit/ort:${ORT_VERSION}@${ORT_DIGEST}"
           echo "zap-image=ghcr.io/zaproxy/zaproxy:${ZAP_VERSION}@${ZAP_DIGEST}"
         } >> "$GITHUB_OUTPUT"
