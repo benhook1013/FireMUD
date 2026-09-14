@@ -913,13 +913,9 @@ def main() -> int:
         fail("setup-python must not install dependencies into ambient Python")
     if "rm -rf" in setup_source:
         fail("setup-python must not broadly delete runner files while refreshing its environment")
-    for profile, path in {
-        "yaml": "config/python/yaml-requirements.txt",
-        "ci": "config/python/ci-requirements.txt",
-        "smoke": "config/python/smoke-requirements.txt",
-        "docs": "config/docs/requirements.txt",
-    }.items():
-        if f"{profile}) requirements_file={path}" not in setup_source:
+    for profile, requirements_path in requirements_profiles.items():
+        relative_path = requirements_path.relative_to(root)
+        if f"{profile}) requirements_file={relative_path}" not in setup_source:
             fail(f"setup-python does not own {profile} requirements")
     print("Workflow version authority contract passed")
     return 0
