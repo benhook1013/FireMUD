@@ -202,8 +202,8 @@ def transactional_write(updates: list[tuple[Path, str]], authority: Path | None 
         atomic_text_replace(journal, recovery_payload("prepared", originals))
         for path, _ in resolved_updates:
             os.replace(staged[path], path)
-            fsync_directory(path.parent)
             replaced.append(path)
+            fsync_directory(path.parent)
     except OSError as replacement_error:
         try:
             for path in reversed(replaced):

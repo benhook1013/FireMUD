@@ -17,7 +17,18 @@ grep -Fx 'VELERO_LINUX_AMD64_CHECKSUM_VERSION=9.8.7' "$tmp/authority.env" >/dev/
 grep -Fx "VELERO_LINUX_AMD64_SHA256=$checksum" "$tmp/authority.env" >/dev/null
 grep -Fx "VELERO_IMAGE_DIGEST=$image_digest" "$tmp/authority.env" >/dev/null
 grep -F "image: velero/velero:v9.8.7@$image_digest" "$tmp/velero.yaml" >/dev/null
-test ! -e "$tmp/.authority.env.recovery.json"
+python3 - "$ROOT_DIR" "$tmp/authority.env" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+root, authority = map(Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+if module.recovery_journal_path(authority).exists():
+    raise SystemExit("successful transaction left recovery state")
+PY
 
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/unchanged.env"
 cp "$tmp/unchanged.env" "$tmp/before.env"
@@ -107,6 +118,55 @@ if module.recovery_journal_path(authority).exists():
 PY
 cmp "$tmp/transaction-authority-before.env" "$tmp/transaction-authority.env"
 cmp "$tmp/transaction-velero-before.yaml" "$tmp/transaction-velero.yaml"
+
+cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/fsync-authority.env"
+cp "$ROOT_DIR/k8s/velero/verify-backups-cronjob.yaml" "$tmp/fsync-velero.yaml"
+cp "$tmp/fsync-authority.env" "$tmp/fsync-authority-before.env"
+cp "$tmp/fsync-velero.yaml" "$tmp/fsync-velero-before.yaml"
+python3 - "$ROOT_DIR" "$tmp/fsync-authority.env" "$tmp/fsync-velero.yaml" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+root, authority, manifest = map(Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+real_fsync = module.fsync_directory
+real_replace = module.os.replace
+authority = authority.resolve()
+authority_replaced = False
+phase = "forward"
+
+def track_authority_replacement(source, destination):
+    global authority_replaced
+    real_replace(source, destination)
+    if Path(destination).resolve() == authority:
+        authority_replaced = True
+
+def fail_forward_fsync(path):
+    global phase
+    if phase == "forward" and authority_replaced:
+        phase = "rollback"
+        raise OSError("simulated forward directory fsync failure")
+    real_fsync(path)
+
+module.os.replace = track_authority_replacement
+module.fsync_directory = fail_forward_fsync
+authority_before = authority.read_text(encoding="utf-8")
+try:
+    module.transactional_write([(authority, "changed authority\n"), (manifest, "changed manifest\n")])
+except OSError:
+    pass
+else:
+    raise SystemExit("transaction accepted a failed forward directory fsync")
+if authority.read_text(encoding="utf-8") != authority_before:
+    raise SystemExit("forward fsync failure did not roll back the replaced authority")
+if module.recovery_journal_path(authority).exists():
+    raise SystemExit("successful rollback left recovery state")
+PY
+cmp "$tmp/fsync-authority-before.env" "$tmp/fsync-authority.env"
+cmp "$tmp/fsync-velero-before.yaml" "$tmp/fsync-velero.yaml"
 
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/recovery-authority.env"
 cp "$ROOT_DIR/k8s/velero/verify-backups-cronjob.yaml" "$tmp/recovery-velero.yaml"

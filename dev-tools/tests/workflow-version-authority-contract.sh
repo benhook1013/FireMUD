@@ -4,7 +4,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 export FIREMUD_REPO_ROOT="$ROOT_DIR"
 python3 - <<'PY'
 from __future__ import annotations
-import json, os, re
+import json, os, re, subprocess, tempfile
 from collections import Counter
 from pathlib import Path
 import yaml
@@ -41,6 +41,24 @@ for tool in ('VELERO_IMAGE','ORT','ZAP'):
  if not re.fullmatch(r'sha256:[0-9a-f]{64}',a.get(f'{tool}_DIGEST','')): fail(f'{tool} digest is invalid')
 expected={f'{x}_VERSION' for x in versions}|{f'{s}_{suffix}' for s in pairs.values() for suffix in ('CHECKSUM_VERSION','SHA256')}|{'VELERO_IMAGE_DIGEST','ORT_DIGEST','ZAP_DIGEST'}
 if set(a)!=expected: fail('workflow tool authority has unexpected or missing keys')
+
+loader=yaml.safe_load((actions/'load-workflow-tool-versions/action.yml').read_text())
+loader_runs=[step.get('run') for step in loader.get('runs',{}).get('steps',[]) if isinstance(step,dict) and isinstance(step.get('run'),str)]
+if len(loader_runs)!=1: fail('workflow authority loader must define exactly one validation script')
+loader_run=loader_runs[0]
+with tempfile.TemporaryDirectory() as temporary:
+ workspace=Path(temporary)/'workspace'; workspace.mkdir()
+ authority_path=workspace/'config'; authority_path.mkdir()
+ output_path=Path(temporary)/'github-output'; output_path.write_text('sentinel\n')
+ env={**os.environ,'GITHUB_WORKSPACE':str(workspace),'GITHUB_OUTPUT':str(output_path)}
+ (authority_path/'workflow-tool-versions.env').write_text(ap.read_text())
+ canonical=subprocess.run(['bash','-c',loader_run],cwd=temporary,env=env,capture_output=True,text=True)
+ if canonical.returncode!=0: fail(f'workflow authority loader rejects canonical authority: {canonical.stderr.strip()}')
+ (authority_path/'workflow-tool-versions.env').write_text(ap.read_text()+'GITHUB_OUTPUT=redirected.output\n')
+ output_path.write_text('sentinel\n')
+ unsupported=subprocess.run(['bash','-c',loader_run],cwd=temporary,env=env,capture_output=True,text=True)
+ if unsupported.returncode==0: fail('workflow authority loader accepts unsupported assignments')
+ if output_path.read_text()!='sentinel\n' or (Path(temporary)/'redirected.output').exists(): fail('unsupported authority assignment can redirect workflow outputs')
 
 def load(path):
  d=yaml.safe_load(path.read_text()); return d if isinstance(d,dict) else {}
@@ -250,9 +268,19 @@ expected_image_dep_names={
 expected=Counter((expected_dep_names[x],a[f'{x}_VERSION']) for x in expected_dep_names)
 expected.update((expected_image_dep_names[x],a[f'{x}_VERSION']) for x in expected_image_dep_names)
 matched=Counter()
-for manager in renovate['customManagers']:
- pattern=re.compile(manager['matchStrings'][0].replace('(?<','(?P<'))
- matched.update((m.group('depName'),m.group('currentValue')) for m in pattern.finditer(ap.read_text()))
+for manager_index,manager in enumerate(renovate['customManagers']):
+ patterns=manager.get('matchStrings') if isinstance(manager,dict) else None
+ if not isinstance(patterns,list) or not patterns: fail(f'Renovate custom manager {manager_index} must define a non-empty matchStrings list')
+ for pattern_index,pattern_source in enumerate(patterns):
+  if not isinstance(pattern_source,str) or not pattern_source: fail(f'Renovate custom manager {manager_index} matchStrings[{pattern_index}] must be a non-empty string')
+  try:
+   pattern=re.compile(pattern_source.replace('(?<','(?P<'))
+  except re.error as error:
+   fail(f'Renovate custom manager {manager_index} matchStrings[{pattern_index}] is invalid: {error}')
+  try:
+   matched.update((m.group('depName'),m.group('currentValue')) for m in pattern.finditer(ap.read_text()))
+  except (IndexError,KeyError) as error:
+   fail(f'Renovate custom manager {manager_index} matchStrings[{pattern_index}] lacks required capture groups: {error}')
 if matched != expected: fail('Renovate does not discover every workflow tool authority exactly once')
 rules=renovate.get('packageRules',[])
 runtime_major_rule=next((rule for rule in rules if rule.get('description')=='Keep canonical Node and Python runtime majors'),None)

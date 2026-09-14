@@ -31,6 +31,26 @@ runs:
         if grep -Ev '^(#.*|[A-Z][A-Z0-9_]*=[A-Za-z0-9._:-]+|[[:space:]]*)$' "$authority"; then
           echo "::error title=Invalid workflow tool authority::Unexpected syntax in ${authority}." >&2; exit 1
         fi
+        supported_keys=(
+          KUBECTL_VERSION
+          HELM_VERSION HELM_LINUX_AMD64_CHECKSUM_VERSION HELM_LINUX_AMD64_SHA256
+          GH_VERSION GH_LINUX_AMD64_CHECKSUM_VERSION GH_LINUX_AMD64_SHA256
+          BUF_VERSION BUF_LINUX_X86_64_CHECKSUM_VERSION BUF_LINUX_X86_64_SHA256
+          KUBECONFORM_VERSION KUBECONFORM_LINUX_AMD64_CHECKSUM_VERSION KUBECONFORM_LINUX_AMD64_SHA256
+          VELERO_VERSION VELERO_LINUX_AMD64_CHECKSUM_VERSION VELERO_LINUX_AMD64_SHA256 VELERO_IMAGE_DIGEST
+          ACTIONLINT_VERSION
+          TRIVY_VERSION
+          LYCHEE_VERSION LYCHEE_LINUX_X86_64_MUSL_CHECKSUM_VERSION LYCHEE_LINUX_X86_64_MUSL_SHA256
+          ORT_VERSION ORT_DIGEST
+          ZAP_VERSION ZAP_DIGEST
+        )
+        while IFS= read -r line; do
+          [[ -z "$line" || "$line" == \#* ]] && continue
+          key="${line%%=*}"
+          if [[ ! " ${supported_keys[*]} " == *" ${key} "* ]]; then
+            echo "::error title=Unsupported workflow tool authority key::${key} is not supported." >&2; exit 1
+          fi
+        done < "$authority"
         # shellcheck disable=SC1090
         source "$authority"
         version_pattern='^[0-9]+\.[0-9]+\.[0-9]+$'
