@@ -62,9 +62,9 @@ grep -Fq 'yamllint is required. Install the pinned CI tools into an isolated env
 grep -Fq -- 'python3 -m venv --clear' "$MISSING_YAMLLINT_OUTPUT"
 grep -Fq -- '--require-hashes' "$MISSING_YAMLLINT_OUTPUT"
 grep -Fq -- "$ROOT_DIR/config/python/ci-requirements.txt" "$MISSING_YAMLLINT_OUTPUT"
-grep -Fq -- "$ROOT_DIR/.venv" "$MISSING_YAMLLINT_OUTPUT"
-grep -Fq -- 'source '"$ROOT_DIR"'/.venv/bin/activate && ' "$MISSING_YAMLLINT_OUTPUT"
-grep -Fxq '/.venv/' "$ROOT_DIR/.gitignore"
+grep -Fq -- "$ROOT_DIR/.venv-ci" "$MISSING_YAMLLINT_OUTPUT"
+grep -Fq -- 'source '"$ROOT_DIR"'/.venv-ci/bin/activate && ' "$MISSING_YAMLLINT_OUTPUT"
+grep -Fxq '/.venv-ci/' "$ROOT_DIR/.gitignore"
 
 cat > "$TEMP_DIR/expected-yamllint-args" <<'EOF'
 .github/workflows/ci.yml

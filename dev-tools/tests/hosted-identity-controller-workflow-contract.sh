@@ -316,6 +316,7 @@ done
 for required in \
   'using: composite' \
   'uses: ./.github/actions/load-workflow-tool-versions' \
+  'id: versions' \
   'uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9' \
   'path: ${{ runner.temp }}/firemud-helm/v${{ steps.versions.outputs.helm-version }}/helm.tar.gz' \
   'key: firemud-helm-${{ runner.os }}-${{ runner.arch }}-v${{ steps.versions.outputs.helm-version }}-${{ steps.versions.outputs.helm-linux-amd64-sha256 }}' \

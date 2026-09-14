@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 if ! command -v yamllint >/dev/null 2>&1; then
-  venv_directory="$ROOT_DIR/.venv"
+  venv_directory="$ROOT_DIR/.venv-ci"
   requirements_file="$ROOT_DIR/config/python/ci-requirements.txt"
   printf -v install_command 'python3 -m venv --clear %q && %q -m pip install --disable-pip-version-check --require-hashes -r %q' \
     "$venv_directory" "$venv_directory/bin/python" "$requirements_file"

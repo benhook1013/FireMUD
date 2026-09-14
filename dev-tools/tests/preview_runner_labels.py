@@ -18,9 +18,9 @@ def normalize_runs_on(runs_on: object) -> set[str]:
     if isinstance(runs_on, Mapping):
         runs_on = runs_on.get("labels")
     if isinstance(runs_on, str):
-        return {runs_on}
+        return {runs_on.lower()}
     if isinstance(runs_on, list):
-        return {label for label in runs_on if isinstance(label, str)}
+        return {label.lower() for label in runs_on if isinstance(label, str)}
     return set()
 
 
@@ -48,6 +48,8 @@ def validate_workflow(path: Path) -> None:
 def _run_fixtures() -> None:
     """Exercise positive and negative list/mapping runner fixtures."""
     complete_labels = ["self-hosted", "preview", "linux", "x64"]
+    mixed_case_labels = ["SELF-HOSTED", "Preview", "LiNuX", "X64"]
+    mixed_case_missing_platform = ["SeLf-HoStEd", "pReViEw", "LiNuX"]
     fixtures = (
         (
             "list-valid",
@@ -57,6 +59,16 @@ def _run_fixtures() -> None:
         (
             "list-invalid",
             {"jobs": {"preview": {"runs-on": ["self-hosted", "preview", "linux"]}}},
+            False,
+        ),
+        (
+            "list-mixed-case-valid",
+            {"jobs": {"preview": {"runs-on": mixed_case_labels}}},
+            True,
+        ),
+        (
+            "list-mixed-case-invalid",
+            {"jobs": {"preview": {"runs-on": mixed_case_missing_platform}}},
             False,
         ),
         (
@@ -70,13 +82,25 @@ def _run_fixtures() -> None:
             False,
         ),
         (
+            "mapping-list-mixed-case-valid",
+            {"jobs": {"preview": {"runs-on": {"labels": mixed_case_labels}}}},
+            True,
+        ),
+        (
+            "mapping-list-mixed-case-invalid",
+            {"jobs": {"preview": {"runs-on": {"labels": mixed_case_missing_platform}}}},
+            False,
+        ),
+        (
             "mapping-scalar-non-preview",
-            {"jobs": {"other": {"runs-on": {"labels": "self-hosted"}}}},
+            {"jobs": {"other": {"runs-on": {"labels": "SeLf-HoStEd"}}}},
             True,
         ),
     )
-    if normalize_runs_on({"labels": "preview"}) != {"preview"}:
-        raise AssertionError("mapping scalar labels were not normalized")
+    if normalize_runs_on({"labels": "PrEvIeW"}) != {"preview"}:
+        raise AssertionError("mapping scalar labels were not lowercased")
+    if normalize_runs_on(["SELF-HOSTED", 17, None]) != {"self-hosted"}:
+        raise AssertionError("non-string list labels were not ignored")
     for name, fixture, expected_valid in fixtures:
         try:
             validate_preview_runner_labels(fixture, Path(f"{name}.yml"))
