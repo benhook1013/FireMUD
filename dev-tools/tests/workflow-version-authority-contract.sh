@@ -144,6 +144,14 @@ for manager in renovate['customManagers']:
  matched += [m.group('currentValue') for m in pattern.finditer(ap.read_text())]
 if set(matched)!={a[f'{x}_VERSION'] for x in versions}: fail('Renovate does not discover every workflow tool authority')
 rules=renovate.get('packageRules',[])
+runtime_major_rule=next((rule for rule in rules if rule.get('description')=='Keep canonical Node and Python runtime majors'),None)
+if runtime_major_rule != {
+ 'description':'Keep canonical Node and Python runtime majors',
+ 'matchManagers':['nodenv','pyenv'],
+ 'matchUpdateTypes':['major'],
+ 'enabled':False,
+}:
+ fail('Renovate must disable only major Node and Python runtime authority updates')
 infra_rule=next((rule for rule in rules if rule.get('groupName')=='infrastructure non-major updates'),None)
 velero_rule=next((rule for rule in rules if rule.get('description')=='Production Velero image changes require promotion evidence'),None)
 if infra_rule is None or velero_rule is None or rules.index(velero_rule)<=rules.index(infra_rule):

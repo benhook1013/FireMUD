@@ -87,6 +87,17 @@
       "groupName": "npm non-major updates"
     },
     {
+      "description": "Keep canonical Node and Python runtime majors",
+      "matchManagers": [
+        "nodenv",
+        "pyenv"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "enabled": false
+    },
+    {
       "matchManagers": [
         "github-actions"
       ],

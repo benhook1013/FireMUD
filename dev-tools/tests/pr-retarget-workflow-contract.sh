@@ -523,8 +523,8 @@ require_contains "$pr_image_publisher_path" 'backoff_seconds=$((5 * 2 ** (push_a
 # shellcheck disable=SC2016 # This assertion intentionally matches unevaluated publisher shell.
 require_contains "$pr_image_publisher_path" 'sleep "$backoff_seconds"'
 # shellcheck disable=SC2016 # This assertion intentionally matches a literal GitHub expression.
-require_contains "$pr_image_publisher_path" 'ref: ${{ github.event.repository.default_branch }}'
-require_contains "$pr_image_publisher_path" 'persist-credentials: false'
+assert_job_contains publish-pr-runtime-images.yml publish 'ref: ${{ github.event.repository.default_branch }}'
+assert_job_contains publish-pr-runtime-images.yml publish 'persist-credentials: false'
 
 python3 - "$pr_image_publisher_path" <<'PY'
 import os

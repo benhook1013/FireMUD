@@ -241,6 +241,7 @@ jobs:
         uses: ./.github/actions/setup-kubectl
 
       - name: Set up canonical GitHub CLI
+        if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
         uses: ./.github/actions/setup-gh
 
       - name: 🐍 Set Up Python
