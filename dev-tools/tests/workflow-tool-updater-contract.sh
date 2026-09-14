@@ -5,6 +5,8 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/authority.env"
 cp "$ROOT_DIR/k8s/velero/verify-backups-cronjob.yaml" "$tmp/velero.yaml"
+chmod 0640 "$tmp/authority.env"
+chmod 0600 "$tmp/velero.yaml"
 checksum=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 image_digest=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 echo "$checksum  velero-v9.8.7-linux-amd64.tar.gz" > "$tmp/checksums"
@@ -17,6 +19,8 @@ grep -Fx 'VELERO_LINUX_AMD64_CHECKSUM_VERSION=9.8.7' "$tmp/authority.env" >/dev/
 grep -Fx "VELERO_LINUX_AMD64_SHA256=$checksum" "$tmp/authority.env" >/dev/null
 grep -Fx "VELERO_IMAGE_DIGEST=$image_digest" "$tmp/authority.env" >/dev/null
 grep -F "image: velero/velero:v9.8.7@$image_digest" "$tmp/velero.yaml" >/dev/null
+test "$(stat -c '%a' "$tmp/authority.env")" = 640
+test "$(stat -c '%a' "$tmp/velero.yaml")" = 600
 python3 - "$ROOT_DIR" "$tmp/authority.env" <<'PY'
 import importlib.util
 import sys
@@ -170,9 +174,12 @@ cmp "$tmp/fsync-velero-before.yaml" "$tmp/fsync-velero.yaml"
 
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/recovery-authority.env"
 cp "$ROOT_DIR/k8s/velero/verify-backups-cronjob.yaml" "$tmp/recovery-velero.yaml"
+chmod 0640 "$tmp/recovery-authority.env"
+chmod 0600 "$tmp/recovery-velero.yaml"
 python3 - "$ROOT_DIR" "$tmp/recovery-authority.env" "$tmp/recovery-velero.yaml" <<'PY'
 import importlib.util
 import json
+import stat
 import sys
 from pathlib import Path
 
@@ -214,6 +221,8 @@ if payload.get("state") != "prepared":
     raise SystemExit("failed rollback did not retain prepared recovery state")
 if {entry.get("path") for entry in payload.get("targets", [])} != {str(authority), str(manifest)}:
     raise SystemExit("recovery state target set is incomplete")
+if journal.stat().st_mode & 0o077:
+    raise SystemExit("prepared recovery journal is accessible to group or world")
 
 module.os.replace = real_replace
 checksum_file = authority.with_name("helm-checksum")
@@ -234,6 +243,10 @@ if "HELM_VERSION=9.8.7" not in authority.read_text(encoding="utf-8"):
     raise SystemExit("later one-target transaction did not produce the authority update")
 if manifest.read_text(encoding="utf-8") != manifest_before:
     raise SystemExit("later one-target transaction did not restore the manifest")
+if stat.S_IMODE(authority.stat().st_mode) != 0o640:
+    raise SystemExit("recovery restore changed the authority mode")
+if stat.S_IMODE(manifest.stat().st_mode) != 0o600:
+    raise SystemExit("recovery restore changed the manifest mode")
 if journal.exists():
     raise SystemExit("later transaction did not clear recovered state")
 

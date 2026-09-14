@@ -37,8 +37,16 @@ def replace(text: str, key: str, value: str) -> str:
     return updated
 
 
-def staged_file(path: Path, text: str) -> Path:
+def staged_file(path: Path, text: str, *, preserve_mode: bool = False) -> Path:
+    existing_mode = None
+    if preserve_mode:
+        try:
+            existing_mode = stat.S_IMODE(path.stat().st_mode)
+        except FileNotFoundError:
+            pass
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+        if existing_mode is not None:
+            os.fchmod(handle.fileno(), existing_mode)
         handle.write(text)
         handle.flush()
         os.fsync(handle.fileno())
@@ -161,7 +169,7 @@ def restore_recovery_journal(path: Path, allowed_target_sets: list[frozenset[Pat
     staged: dict[Path, Path] = {}
     try:
         for target in sorted(originals, key=str):
-            staged[target] = staged_file(target, originals[target])
+            staged[target] = staged_file(target, originals[target], preserve_mode=True)
         for target in sorted(staged, key=str, reverse=True):
             os.replace(staged[target], target)
             fsync_directory(target.parent)
@@ -196,7 +204,7 @@ def transactional_write(updates: list[tuple[Path, str]], authority: Path | None 
     reconcile_recovery_journal(authority_path, [frozenset(expected_targets)])
     originals = {path: path.read_text(encoding="utf-8") for path, _ in resolved_updates}
     journal = recovery_journal_path(authority_path)
-    staged = {path: staged_file(path, text) for path, text in resolved_updates}
+    staged = {path: staged_file(path, text, preserve_mode=True) for path, text in resolved_updates}
     replaced: list[Path] = []
     try:
         atomic_text_replace(journal, recovery_payload("prepared", originals))
@@ -207,7 +215,7 @@ def transactional_write(updates: list[tuple[Path, str]], authority: Path | None 
     except OSError as replacement_error:
         try:
             for path in reversed(replaced):
-                rollback = staged_file(path, originals[path])
+                rollback = staged_file(path, originals[path], preserve_mode=True)
                 try:
                     os.replace(rollback, path)
                     fsync_directory(path.parent)
