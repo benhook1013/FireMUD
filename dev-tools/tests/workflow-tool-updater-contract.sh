@@ -309,6 +309,7 @@ cmp "$tmp/unchanged.yaml" "$tmp/no-image-evidence.yaml"
 assert_rejected_evidence() {
   local name="$1"
   local evidence="$2"
+  local expected_diagnostic="$3"
   local authority="$tmp/${name}.env"
   local manifest="$tmp/${name}.yaml"
   local evidence_file="$tmp/${name}.evidence"
@@ -318,24 +319,31 @@ assert_rejected_evidence() {
   printf '%s\n' "$evidence" > "$evidence_file"
   if python3 "$ROOT_DIR/dev-tools/maintenance/update-workflow-tool.py" velero 9.8.7 \
     --checksum-file "$tmp/checksums" --image-evidence-file "$evidence_file" \
-    --authority "$authority" --velero-manifest "$manifest"; then
+    --authority "$authority" --velero-manifest "$manifest" \
+    2>"$tmp/${name}.stderr"; then
     echo "updater accepted invalid Velero image evidence: $name" >&2
     exit 1
   fi
   cmp "$tmp/before.env" "$authority"
   cmp "$tmp/unchanged.yaml" "$manifest"
+  grep -F -- "$expected_diagnostic" "$tmp/${name}.stderr" >/dev/null
 }
 
-assert_rejected_evidence missing-entry ""
+assert_rejected_evidence missing-entry "" \
+  "Velero image evidence must contain exactly one immutable image reference"
 assert_rejected_evidence mismatched-version \
-  "velero/velero:v9.8.8@$image_digest"
+  "velero/velero:v9.8.8@$image_digest" \
+  "Velero image evidence must reference the exact tag v9.8.7"
 assert_rejected_evidence mismatched-repository \
-  "example/velero:v9.8.7@$image_digest"
+  "example/velero:v9.8.7@$image_digest" \
+  "Velero image evidence must reference the exact repository velero/velero"
 assert_rejected_evidence malformed-digest \
-  "velero/velero:v9.8.7@sha256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+  "velero/velero:v9.8.7@sha256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB" \
+  "Velero image evidence must be a full immutable image reference with a lowercase SHA-256"
 assert_rejected_evidence duplicate-entry \
   "velero/velero:v9.8.7@$image_digest
-velero/velero:v9.8.7@$image_digest"
+velero/velero:v9.8.7@$image_digest" \
+  "Velero image evidence must contain exactly one immutable image reference"
 
 cp "$tmp/before.env" "$tmp/mismatched-digest.env"
 cp "$tmp/unchanged.yaml" "$tmp/mismatched-digest.yaml"
@@ -828,5 +836,32 @@ if authority.read_text(encoding="utf-8") != authority_before or manifest.read_te
     raise SystemExit("symlink recovery state changed a target")
 if not journal.is_symlink():
     raise SystemExit("symlink recovery state was discarded")
+
+journal.unlink()
+journal_target.unlink()
+real_staged_file = module.staged_file
+staged_paths = []
+
+def fail_second_staging(path, text, preserve_mode=False):
+    if len(staged_paths) == 1:
+        raise OSError("simulated second staging failure")
+    staged = real_staged_file(path, text, preserve_mode=preserve_mode)
+    if not staged_paths:
+        staged_paths.append(staged)
+    return staged
+
+module.staged_file = fail_second_staging
+try:
+    module.transactional_write([(authority, "must not apply\n"), (manifest, "must not apply\n")])
+except OSError:
+    pass
+else:
+    raise SystemExit("updater accepted a second staging failure")
+if staged_paths[0].exists():
+    raise SystemExit("second staging failure left the first temporary file")
+if authority.read_text(encoding="utf-8") != authority_before or manifest.read_text(encoding="utf-8") != manifest_before:
+    raise SystemExit("second staging failure changed a target")
+if journal.exists():
+    raise SystemExit("second staging failure left recovery state")
 PY
 echo 'Workflow tool updater contract passed'

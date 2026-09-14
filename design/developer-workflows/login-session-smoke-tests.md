@@ -21,6 +21,7 @@ The fresh-bootstrap step establishes the claim and running stack; the standalone
 1. The Python version in [`.python-version`](../../.python-version) and the exact packages in [`config/python/smoke-requirements.txt`](../../config/python/smoke-requirements.txt) are required by the canonical scripted clients. From any directory inside the checkout, activate the interpreter pinned by `.python-version`, verify that its patch matches that pin, and create and use an isolated repository-root virtual environment before installing the unchanged smoke requirements profile:
 
    ```bash
+   set -euo pipefail
    REPO_ROOT="$(git rev-parse --show-toplevel)"
    cd "$REPO_ROOT"
    PYTHON_VERSION="$(< "$REPO_ROOT/.python-version")"
@@ -36,7 +37,7 @@ The fresh-bootstrap step establishes the claim and running stack; the standalone
        echo "The smoke virtual environment does not use the interpreter pinned by .python-version." >&2
        exit 1
    fi
-   python3 -m pip install \
+   "$REPO_ROOT/.venv-smoke/bin/python" -m pip install \
        --disable-pip-version-check --require-hashes \
        -r "$REPO_ROOT/config/python/smoke-requirements.txt"
    ```

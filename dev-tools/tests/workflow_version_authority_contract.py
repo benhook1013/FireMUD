@@ -68,6 +68,8 @@ def main() -> int:
             match = requirement_line.fullmatch(line)
             if match:
                 current = match.group(1).lower()
+                if current in entries:
+                    fail(f"{path}: duplicate pinned dependency: {current}")
                 entries[current] = [match.group(2), 0]
                 continue
             if hash_line.fullmatch(line):

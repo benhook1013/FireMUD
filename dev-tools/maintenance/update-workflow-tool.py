@@ -251,9 +251,11 @@ def transactional_write(updates: list[tuple[Path, str]], authority: Path | None 
     reconcile_recovery_journal(authority_path, [frozenset(expected_targets)])
     originals = {path: path.read_text(encoding="utf-8") for path, _ in resolved_updates}
     journal = recovery_journal_path(authority_path)
-    staged = {path: staged_file(path, text, preserve_mode=True) for path, text in resolved_updates}
+    staged: dict[Path, Path] = {}
     replaced: list[Path] = []
     try:
+        for path, text in resolved_updates:
+            staged[path] = staged_file(path, text, preserve_mode=True)
         atomic_text_replace(journal, recovery_payload("prepared", originals))
         for path, _ in resolved_updates:
             os.replace(staged[path], path)
