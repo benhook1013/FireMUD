@@ -98,6 +98,10 @@ for tool, (_, asset_template, _) in module.SPECS.items():
     positive.write_text(f"version=9.8.7\n{'a' * 64}  {asset}\n", encoding="utf-8")
     if not module.checksum_text_from_evidence(positive, "9.8.7").startswith("a" * 64):
         raise SystemExit(f"{tool} checksum evidence metadata was not removed before extraction")
+    if module.checksum_matches(f"{'a' * 64}\n{asset}\n", asset):
+        raise SystemExit(f"{tool} accepted a checksum and asset separated by a newline")
+    if module.checksum_matches(f"{'a' * 64}  {asset}\n", asset) != ["a" * 64]:
+        raise SystemExit(f"{tool} rejected a valid same-line checksum manifest")
 
     for name, contents, diagnostic in (
         (

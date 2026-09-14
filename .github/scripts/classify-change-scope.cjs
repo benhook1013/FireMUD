@@ -60,7 +60,7 @@ function isValidationTooling(file) {
 }
 
 function isPythonDependency(file) {
-  return file.startsWith("config/python/") || file === "config/docs/requirements.txt";
+  return file.startsWith("config/python/");
 }
 
 function isLightweightEligible(file) {

@@ -92,11 +92,11 @@ test("Python dependency inputs request the normal validation path", () => {
   assert.equal(result.pythonChanged, true);
 });
 
-test("documentation Python requirements are docs and Python changes", () => {
+test("documentation requirements are docs but not Python dependencies", () => {
   const result = classifyChangeScope(["config/docs/requirements.txt"]);
 
   assert.equal(result.docsChanged, true);
-  assert.equal(result.pythonChanged, true);
+  assert.equal(result.pythonChanged, false);
   assert.equal(result.lightweightOnly, true);
 });
 

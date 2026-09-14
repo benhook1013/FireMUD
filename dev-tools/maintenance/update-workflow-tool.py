@@ -358,6 +358,12 @@ def checksum_text_from_evidence(path: Path, version: str) -> str:
     return "\n".join(lines[1:])
 
 
+def checksum_matches(checksum_text: str, asset: str) -> list[str]:
+    """Return checksums whose manifest asset is on the same line."""
+
+    return re.findall(rf"(?m)^([0-9a-f]{{64}})[ \t]+\*?{re.escape(asset)}$", checksum_text)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("tool", choices=SPECS)
@@ -418,7 +424,7 @@ def main() -> None:
             else []
         )
     else:
-        matches = re.findall(rf"(?m)^([0-9a-f]{{64}})\s+\*?{re.escape(asset)}$", checksum_text)
+        matches = checksum_matches(checksum_text, asset)
     if len(matches) != 1:
         raise SystemExit(f"could not identify exactly one checksum for {asset}")
 
