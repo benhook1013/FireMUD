@@ -40,3 +40,4 @@ design/erd/
 
 # Repository-local scratch space
 /tmp/
+/.lycheecache

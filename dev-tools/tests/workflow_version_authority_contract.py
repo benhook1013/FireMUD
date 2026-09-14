@@ -936,6 +936,7 @@ def main() -> int:
         "ARCHIVE=",
         "marker_binary_sha",
         "extracted_sha",
+        '"$BIN" --no-progress --cache .lycheecache',
         'mv -f "$staging/lychee" "$BIN"',
         'mv -f "$staged_archive" "$ARCHIVE"',
     ):
@@ -949,7 +950,15 @@ def main() -> int:
     if len(re.findall(r"(?m)^\s*curl\b", lychee)) != 1 or len(re.findall(lychee_curl_pattern, lychee)) != 1:
         fail("local Lychee installer must define exactly one curl with canonical bounded retries and timeouts")
     docs = (workflows / "docs.yml").read_text()
-    if "lycheeverse/lychee-action@" in docs or "run: bash ./dev-tools/docs/link-check.sh" not in docs:
+    gitignore = (root / ".gitignore").read_text()
+    if (
+        "lycheeverse/lychee-action@" in docs
+        or "run: bash ./dev-tools/docs/link-check.sh" not in docs
+        or "path: .lycheecache" not in docs
+        or "path: .lychee_cache" in docs
+        or "LYCHEE_CACHE" in docs
+        or "/.lycheecache\n" not in gitignore
+    ):
         fail("docs workflow must use the checksum-verifying Lychee installer")
     for identity in ("outputs.lychee-version", "outputs.lychee-linux-x86-64-musl-sha256"):
         if identity not in docs:
