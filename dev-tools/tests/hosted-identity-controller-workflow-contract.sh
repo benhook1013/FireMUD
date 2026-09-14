@@ -573,6 +573,22 @@ mode_action = yaml.safe_load(Path(sys.argv[8]).read_text(encoding="utf-8"))
 runtime_workflow = yaml.safe_load(Path(sys.argv[9]).read_text(encoding="utf-8"))
 artifact_action = yaml.safe_load(Path(sys.argv[10]).read_text(encoding="utf-8"))
 
+for job_name in ("validate-target", "prepare-runtime", "deploy-runtime"):
+    caller_python_steps = [
+        step for step in workflow["jobs"][job_name]["steps"]
+        if step.get("uses") == "./.github/actions/setup-python"
+    ]
+    assert not caller_python_steps, (job_name, caller_python_steps)
+assert any(
+    step.get("uses") == "./.github/actions/resolve-certificate-identity-mode"
+    for step in workflow["jobs"]["validate-target"]["steps"]
+)
+for job_name in ("prepare-runtime", "deploy-runtime"):
+    assert any(
+        step.get("uses") == "./.github/actions/download-validated-preview-artifact"
+        for step in workflow["jobs"][job_name]["steps"]
+    )
+
 expected_mode_step = {
     "name": "Resolve certificate identity mode",
     "id": "certificate-identity",

@@ -127,6 +127,8 @@ if checkout_job != "publish":
 checkout_with = checkout.get("with")
 if not isinstance(checkout_with, dict):
     raise SystemExit("publish checkout must define a with mapping")
+if set(checkout_with) != {"ref", "persist-credentials"}:
+    raise SystemExit("publish checkout must define exactly ref and persist-credentials")
 if checkout_with.get("ref") != "${{ github.event.repository.default_branch }}":
     raise SystemExit("publish checkout must use the repository default branch")
 if type(checkout_with.get("persist-credentials")) is not bool or checkout_with["persist-credentials"] is not False:
@@ -688,6 +690,26 @@ if (assert_publish_checkout_configuration \
 fi
 require_contains "$contract_fixture_dir/publisher-checkout-string-persist-credentials.error" \
   'publish checkout must disable persisted credentials with boolean false'
+for unexpected_key in repository submodules fetch-depth; do
+  cat >"$contract_fixture_dir/publisher-checkout-$unexpected_key.yml" <<EOF
+jobs:
+  publish:
+    steps:
+      - uses: actions/checkout@fixture
+        with:
+          ref: \${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          $unexpected_key: fixture
+EOF
+  if (assert_publish_checkout_configuration \
+    "$contract_fixture_dir/publisher-checkout-$unexpected_key.yml" \
+    ) 2>"$contract_fixture_dir/publisher-checkout-$unexpected_key.error"; then
+    echo "assert_publish_checkout_configuration must reject $unexpected_key" >&2
+    exit 1
+  fi
+  require_contains "$contract_fixture_dir/publisher-checkout-$unexpected_key.error" \
+    'publish checkout must define exactly ref and persist-credentials'
+done
 cat >"$contract_fixture_dir/ordered-sequence.txt" <<'EOF'
 prefix first second suffix
 third
