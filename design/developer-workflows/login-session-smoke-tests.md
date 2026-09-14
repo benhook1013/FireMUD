@@ -122,7 +122,7 @@ cd services/game-session-service
 bash ./websocket-login-look-smoke.sh
 ```
 
-This direct WebSocket smoke uses the Game Session HTTP/WebSocket listener directly (`ws://localhost:8086/ws/game` by default), not the Gateway route. It also requires Python plus the `websocket-client` package because the canonical script is implemented as a small Python client rather than `websocat`.
+This direct WebSocket smoke uses the Game Session HTTP/WebSocket listener directly (`ws://localhost:8086/ws/game` by default), not the Gateway route. It also requires the interpreter pinned by [`.python-version`](../../.python-version) and the hash-verified smoke requirements profile from Requirement 1 because the canonical script is implemented as a small Python client rather than `websocat`.
 
 ## 2. Telnet Smoke Flow via TCP Proxy + Gateway
 
