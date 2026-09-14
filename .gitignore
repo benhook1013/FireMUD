@@ -27,6 +27,7 @@ docker/backups/
 # Python bytecode
 __pycache__/
 *.pyc
+/.venv/
 
 # Terraform
 **/.terraform/
