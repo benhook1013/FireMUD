@@ -817,11 +817,14 @@ def main() -> int:
         fail("Velero image manager must match the authority image digest")
     new_velero_value = "v9.9.9"
     new_velero_digest = "sha256:" + "b" * 64
-    replacement = (
-        "# renovate-image: datasource=docker depName=velero/velero\n"
-        f"VELERO_VERSION={re.sub(r'^v', '', new_velero_value)}\n"
-        f"VELERO_IMAGE_DIGEST={new_velero_digest}"
-    )
+    def render_velero_template(template):
+        rendered = template.replace("\\n", "\n").replace("{{{newDigest}}}", new_velero_digest)
+        rendered = rendered.replace(
+            "{{{replace '^v' '' newValue}}}", re.sub(r"^v", "", new_velero_value)
+        )
+        return rendered
+
+    replacement = render_velero_template(velero_image_manager["autoReplaceStringTemplate"])
     expected_replacement = velero_match.group(0).replace(
         f"VELERO_VERSION={a['VELERO_VERSION']}", "VELERO_VERSION=9.9.9"
     ).replace(a["VELERO_IMAGE_DIGEST"], new_velero_digest)

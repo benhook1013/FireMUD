@@ -44,6 +44,7 @@ function isDocumentation(file) {
   return (
     file === "AGENTS.md" ||
     file === "mkdocs.yml" ||
+    file === "config/docs/requirements.txt" ||
     file.startsWith("design/") ||
     file.startsWith("dev-tools/docs/") ||
     file.endsWith(".md")

@@ -110,4 +110,23 @@ read -r installed_archive_sha installed_binary_sha < "$CACHE_DIR/verified.sha256
 [[ "$installed_archive_sha" == "$LYCHEE_LINUX_X86_64_MUSL_SHA256" ]]
 [[ "$installed_binary_sha" == "binary-sha" ]]
 
+REUSE_CACHE_ROOT="$TEMP_DIR/reuse-cache"
+REUSE_CACHE_DIR="$REUSE_CACHE_ROOT/lychee/$LYCHEE_VERSION/x86_64-unknown-linux-musl"
+mkdir -p "$REUSE_CACHE_DIR"
+printf '#!/bin/sh\nexit 0\n' > "$REUSE_CACHE_DIR/lychee"
+chmod +x "$REUSE_CACHE_DIR/lychee"
+printf 'valid archive\n' > "$REUSE_CACHE_DIR/lychee.tar.gz"
+printf '%s binary-sha\n' "$LYCHEE_LINUX_X86_64_MUSL_SHA256" > "$REUSE_CACHE_DIR/verified.sha256"
+printf '#!/usr/bin/env bash\necho "curl must not run for a trusted cache" >&2\nexit 1\n' > "$FAKE_BIN/curl"
+chmod +x "$FAKE_BIN/curl"
+if ! PATH="$FAKE_BIN:$PATH" XDG_CACHE_HOME="$REUSE_CACHE_ROOT" \
+  "$LINK_CHECK" >"$TEMP_DIR/reuse.out" 2>&1; then
+  cat "$TEMP_DIR/reuse.out" >&2
+  exit 1
+fi
+if grep -Fq 'curl must not run for a trusted cache' "$TEMP_DIR/reuse.out"; then
+  echo "trusted cache unexpectedly invoked curl" >&2
+  exit 1
+fi
+
 echo "link-check contract: PASS"
