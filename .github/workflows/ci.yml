@@ -126,7 +126,9 @@ jobs:
           BUF_SHA256: ${{ steps.workflow-tool-versions.outputs.buf-linux-x86-64-sha256 }}
         run: |
           [[ "$(uname -s)/$(uname -m)" == "Linux/x86_64" ]] || { echo "Unsupported Buf platform" >&2; exit 1; }
-          curl -fsSL "https://github.com/bufbuild/buf/releases/download/v${BUF_VERSION}/buf-Linux-x86_64" -o /tmp/buf
+          curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
+            "https://github.com/bufbuild/buf/releases/download/v${BUF_VERSION}/buf-Linux-x86_64" \
+            -o /tmp/buf
           echo "${BUF_SHA256}  /tmp/buf" | sha256sum --check --status
           sudo install -m 0755 /tmp/buf /usr/local/bin/buf
           buf --version

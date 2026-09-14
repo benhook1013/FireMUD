@@ -151,6 +151,20 @@ for name,needles in required.items():
  data=(workflows/name).read_text()
  if any(n not in data for n in needles): fail(f'{name} does not consume all canonical tool outputs')
 
+ci_text=(workflows/'ci.yml').read_text()
+buf_curl_pattern=(
+ r'(?m)^\s*curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \\\n'
+ r'\s*"https://github\.com/bufbuild/buf/releases/download/v\$\{BUF_VERSION\}/buf-Linux-x86_64" \\\n'
+ r'\s*-o /tmp/buf$')
+if not re.search(buf_curl_pattern,ci_text):
+ fail('ci.yml Buf installer must use the canonical bounded transient curl retries')
+for required in (
+ 'BUF_VERSION: ${{ steps.workflow-tool-versions.outputs.buf-version }}',
+ 'BUF_SHA256: ${{ steps.workflow-tool-versions.outputs.buf-linux-x86-64-sha256 }}',
+ 'echo "${BUF_SHA256}  /tmp/buf" | sha256sum --check --status',
+):
+ if required not in ci_text: fail(f'ci.yml Buf installer does not consume canonical authority: {required}')
+
 ci_jobs=load(workflows/'ci.yml').get('jobs') or {}
 frontend_checks=ci_jobs.get('frontend-checks')
 if not isinstance(frontend_checks,dict): fail('ci.yml frontend-checks job is missing')
