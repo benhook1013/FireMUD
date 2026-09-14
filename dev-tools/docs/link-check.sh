@@ -99,4 +99,4 @@ if [[ "${CHECK_EXTERNAL_LINKS:-}" == 1 ]]; then
 fi
 
 # Lychee automatically reads repository-root .lycheeignore entries for link exclusions.
-"$BIN" --no-progress --cache .lycheecache "${OPTIONS[@]}" "${FILES[@]}"
+"$BIN" --no-progress --cache "${OPTIONS[@]}" "${FILES[@]}"

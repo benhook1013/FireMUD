@@ -936,7 +936,7 @@ def main() -> int:
         "ARCHIVE=",
         "marker_binary_sha",
         "extracted_sha",
-        '"$BIN" --no-progress --cache .lycheecache',
+        '"$BIN" --no-progress --cache "${OPTIONS[@]}"',
         'mv -f "$staging/lychee" "$BIN"',
         'mv -f "$staged_archive" "$ARCHIVE"',
     ):
