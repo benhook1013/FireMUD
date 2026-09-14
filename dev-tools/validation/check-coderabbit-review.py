@@ -67,6 +67,7 @@ RECENT_REVIEW_MARKER = "<!-- recent_review_start -->"
 NO_ACTIONABLE_REVIEW_MARKER = (
     "No actionable comments were generated in the recent review."
 )
+FINAL_REVIEW_RISK_COVERAGE_MARKER = "final_review_risk_coverage"
 FAILED_REVIEW_PATTERN = re.compile(
     r"(?:\breview\b.{0,80}\b(?:failed|failure)\b|\b(?:failed|unable)\b.{0,80}\breview\b|"
     r"\bsomething went wrong\b)",
@@ -463,7 +464,14 @@ def actionable_summary_candidate(
 ) -> tuple[datetime, str | None, int, int] | None:
     if state == "DISMISSED":
         return None
-    if author != "coderabbitai" or ACTIONABLE_COMMENTS_MARKER not in body:
+    if author != "coderabbitai" or not any(
+        marker in body
+        for marker in (
+            ACTIONABLE_COMMENTS_MARKER,
+            OUTSIDE_DIFF_MARKER,
+            DUPLICATE_COMMENTS_MARKER,
+        )
+    ):
         return None
     timestamp_dt = parse_timestamp(timestamp)
     if timestamp_dt is None:
@@ -499,7 +507,16 @@ def unquoted_body(body: str) -> str:
 
 
 def is_substantive_review_body(body: str) -> bool:
-    return SUBSTANTIVE_REVIEW_MARKER in body or ACTIONABLE_COMMENTS_MARKER in body
+    return any(
+        marker in body
+        for marker in (
+            SUBSTANTIVE_REVIEW_MARKER,
+            ACTIONABLE_COMMENTS_MARKER,
+            OUTSIDE_DIFF_MARKER,
+            DUPLICATE_COMMENTS_MARKER,
+            FINAL_REVIEW_RISK_COVERAGE_MARKER,
+        )
+    )
 
 
 def review_scope(body: str) -> tuple[str, str, int] | None:
@@ -536,9 +553,19 @@ def matching_zero_finding_summary(
         if (comment.get("author") or {}).get("login", "") != "coderabbitai":
             continue
         body = comment.get("body") or ""
+        legacy_zero_layout = (
+            RECENT_REVIEW_MARKER in body
+            and NO_ACTIONABLE_REVIEW_MARKER in body
+        )
+        risk_coverage_zero_layout = (
+            SUBSTANTIVE_REVIEW_MARKER in body
+            and FINAL_REVIEW_RISK_COVERAGE_MARKER in body
+        )
+        if not (legacy_zero_layout or risk_coverage_zero_layout):
+            continue
         if (
-            RECENT_REVIEW_MARKER not in body
-            or NO_ACTIONABLE_REVIEW_MARKER not in body
+            extract_section_count(body, OUTSIDE_DIFF_MARKER) > 0
+            or extract_section_count(body, DUPLICATE_COMMENTS_MARKER) > 0
         ):
             continue
         updated_dt = parse_timestamp(comment.get("updatedAt"))
