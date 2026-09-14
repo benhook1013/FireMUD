@@ -742,10 +742,26 @@ def main() -> int:
     def translate_renovate_pattern(pattern_source):
         return re.sub(r"\(\?<([A-Za-z_])", r"(?P<\1", pattern_source)
 
-    synthetic_pattern = re.compile(translate_renovate_pattern(r"(?<=a)(?<!b)(?<capture>[A-Z])"))
-    if "(?<=a)" not in synthetic_pattern.pattern or "(?<!b)" not in synthetic_pattern.pattern:
-        fail("Renovate pattern translation must preserve lookbehinds")
-    synthetic_match = synthetic_pattern.search("aA")
+    unsupported_re2_tokens = ("(?<=", "(?<!", "(?=", "(?!")
+
+    def uses_unsupported_re2_lookaround(pattern_source):
+        return any(token in pattern_source for token in unsupported_re2_tokens)
+
+    def compile_re2_pattern(pattern_source):
+        if uses_unsupported_re2_lookaround(pattern_source):
+            fail("Renovate custom manager matchStrings uses unsupported RE2 lookaround")
+        return re.compile(translate_renovate_pattern(pattern_source))
+
+    for token in unsupported_re2_tokens:
+        try:
+            compile_re2_pattern(f"{token}a")
+        except SystemExit as error:
+            if "unsupported RE2 lookaround" not in str(error):
+                fail(f"Renovate contract rejected {token} with an unexpected diagnostic")
+        else:
+            fail(f"Renovate contract accepted unsupported RE2 token: {token}")
+    synthetic_pattern = compile_re2_pattern(r"prefix-(?<capture>[A-Z]+)")
+    synthetic_match = synthetic_pattern.search("prefix-A")
     if synthetic_match is None or synthetic_match.group("capture") != "A":
         fail("Renovate pattern translation must preserve named captures")
     expected_dep_names = {
@@ -804,7 +820,7 @@ def main() -> int:
     if len(velero_pattern_sources) != 1:
         fail("Velero image manager must define one atomic version-and-digest match pattern")
     try:
-        velero_pattern = re.compile(translate_renovate_pattern(velero_pattern_sources[0]))
+        velero_pattern = compile_re2_pattern(velero_pattern_sources[0])
     except (re.error, TypeError) as error:
         fail(f"Velero image manager pattern is invalid: {error}")
     velero_matches = list(velero_pattern.finditer(authority_text))
@@ -842,7 +858,7 @@ def main() -> int:
     if len(ort_zap_pattern_sources) != 1:
         fail("ORT/ZAP image manager must define one match pattern")
     try:
-        ort_zap_pattern = re.compile(translate_renovate_pattern(ort_zap_pattern_sources[0]))
+        ort_zap_pattern = compile_re2_pattern(ort_zap_pattern_sources[0])
     except (re.error, TypeError) as error:
         fail(f"ORT/ZAP image manager pattern is invalid: {error}")
     ort_zap_matches = list(ort_zap_pattern.finditer(authority_text))
@@ -862,7 +878,7 @@ def main() -> int:
                     f"Renovate custom manager {manager_index} matchStrings[{pattern_index}] must be a non-empty string"
                 )
             try:
-                pattern = re.compile(translate_renovate_pattern(pattern_source))
+                pattern = compile_re2_pattern(pattern_source)
             except re.error as error:
                 fail(f"Renovate custom manager {manager_index} matchStrings[{pattern_index}] is invalid: {error}")
             for match in pattern.finditer(authority_text):
