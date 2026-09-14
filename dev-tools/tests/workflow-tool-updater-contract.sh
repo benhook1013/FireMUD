@@ -17,6 +17,7 @@ grep -Fx 'VELERO_LINUX_AMD64_CHECKSUM_VERSION=9.8.7' "$tmp/authority.env" >/dev/
 grep -Fx "VELERO_LINUX_AMD64_SHA256=$checksum" "$tmp/authority.env" >/dev/null
 grep -Fx "VELERO_IMAGE_DIGEST=$image_digest" "$tmp/authority.env" >/dev/null
 grep -F "image: velero/velero:v9.8.7@$image_digest" "$tmp/velero.yaml" >/dev/null
+test ! -e "$tmp/.authority.env.recovery.json"
 
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/unchanged.env"
 cp "$tmp/unchanged.env" "$tmp/before.env"
@@ -87,23 +88,205 @@ spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maint
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 real_replace = module.os.replace
-calls = 0
+manifest = manifest.resolve()
 
-def fail_between(source, destination):
-    global calls
-    calls += 1
-    if calls == 2:
+def fail_second_target(source, destination):
+    if Path(destination).resolve() == manifest:
         raise OSError("simulated second replacement failure")
     real_replace(source, destination)
 
-module.os.replace = fail_between
+module.os.replace = fail_second_target
 try:
     module.transactional_write([(authority, "changed authority\n"), (manifest, "changed manifest\n")])
 except OSError:
     pass
 else:
     raise SystemExit("transaction accepted a failed second replacement")
+if module.recovery_journal_path(authority).exists():
+    raise SystemExit("successful rollback left recovery state")
 PY
 cmp "$tmp/transaction-authority-before.env" "$tmp/transaction-authority.env"
 cmp "$tmp/transaction-velero-before.yaml" "$tmp/transaction-velero.yaml"
+
+cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/recovery-authority.env"
+cp "$ROOT_DIR/k8s/velero/verify-backups-cronjob.yaml" "$tmp/recovery-velero.yaml"
+python3 - "$ROOT_DIR" "$tmp/recovery-authority.env" "$tmp/recovery-velero.yaml" <<'PY'
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+root, authority, manifest = map(Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+real_replace = module.os.replace
+phase = "forward"
+manifest = manifest.resolve()
+authority = authority.resolve()
+manifest_before = manifest.read_text(encoding="utf-8")
+
+def fail_forward_and_rollback(source, destination):
+    global phase
+    destination = Path(destination).resolve()
+    if destination == manifest and phase == "forward":
+        phase = "rollback"
+        raise OSError("simulated second replacement failure")
+    if destination == authority and phase == "rollback":
+        raise OSError("simulated rollback replacement failure")
+    real_replace(source, destination)
+
+module.os.replace = fail_forward_and_rollback
+try:
+    module.transactional_write([(authority, "changed authority\n"), (manifest, "changed manifest\n")])
+except OSError:
+    pass
+else:
+    raise SystemExit("transaction accepted a failed rollback")
+
+journal = module.recovery_journal_path(authority)
+if not journal.exists():
+    raise SystemExit("failed rollback did not retain recovery state")
+payload = json.loads(journal.read_text(encoding="utf-8"))
+if payload.get("schema") != module.RECOVERY_SCHEMA or payload.get("version") != module.RECOVERY_VERSION:
+    raise SystemExit("recovery state schema is not durable")
+if payload.get("state") != "prepared":
+    raise SystemExit("failed rollback did not retain prepared recovery state")
+if {entry.get("path") for entry in payload.get("targets", [])} != {str(authority), str(manifest)}:
+    raise SystemExit("recovery state target set is incomplete")
+
+module.os.replace = real_replace
+checksum_file = authority.with_name("helm-checksum")
+checksum_file.write_text("c" * 64 + "  helm-v9.8.7-linux-amd64.tar.gz\n", encoding="utf-8")
+sys.argv = [
+    str(root / "dev-tools/maintenance/update-workflow-tool.py"),
+    "helm",
+    "9.8.7",
+    "--checksum-file",
+    str(checksum_file),
+    "--authority",
+    str(authority),
+    "--velero-manifest",
+    str(manifest),
+]
+module.main()
+if "HELM_VERSION=9.8.7" not in authority.read_text(encoding="utf-8"):
+    raise SystemExit("later one-target transaction did not produce the authority update")
+if manifest.read_text(encoding="utf-8") != manifest_before:
+    raise SystemExit("later one-target transaction did not restore the manifest")
+if journal.exists():
+    raise SystemExit("later transaction did not clear recovered state")
+
+real_remove = module.remove_recovery_journal
+
+def fail_cleanup(path):
+    raise OSError("simulated committed journal cleanup failure")
+
+module.remove_recovery_journal = fail_cleanup
+try:
+    module.transactional_write([(authority, "committed authority\n"), (manifest, "committed manifest\n")])
+except OSError:
+    pass
+else:
+    raise SystemExit("transaction hid a committed journal cleanup failure")
+payload = json.loads(journal.read_text(encoding="utf-8"))
+if payload.get("state") != "committed":
+    raise SystemExit("committed cleanup failure did not retain committed state")
+if authority.read_text(encoding="utf-8") != "committed authority\n" or manifest.read_text(encoding="utf-8") != "committed manifest\n":
+    raise SystemExit("committed cleanup failure rolled back the update")
+
+module.remove_recovery_journal = real_remove
+module.transactional_write([(authority, "final authority\n"), (manifest, "final manifest\n")])
+if authority.read_text(encoding="utf-8") != "final authority\n":
+    raise SystemExit("committed recovery changed the authority unexpectedly")
+if manifest.read_text(encoding="utf-8") != "final manifest\n":
+    raise SystemExit("committed recovery changed the manifest unexpectedly")
+if journal.exists():
+    raise SystemExit("committed recovery did not clear state")
+PY
+
+cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/state-authority.env"
+cp "$ROOT_DIR/k8s/velero/verify-backups-cronjob.yaml" "$tmp/state-velero.yaml"
+python3 - "$ROOT_DIR" "$tmp/state-authority.env" "$tmp/state-velero.yaml" <<'PY'
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+root, authority, manifest = map(Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+authority = authority.resolve()
+manifest = manifest.resolve()
+journal = module.recovery_journal_path(authority)
+authority_before = authority.read_text(encoding="utf-8")
+manifest_before = manifest.read_text(encoding="utf-8")
+
+journal.write_text("{malformed", encoding="utf-8")
+try:
+    module.transactional_write([(authority, "must not apply\n"), (manifest, "must not apply\n")])
+except OSError:
+    pass
+else:
+    raise SystemExit("updater accepted malformed recovery state")
+if authority.read_text(encoding="utf-8") != authority_before or manifest.read_text(encoding="utf-8") != manifest_before:
+    raise SystemExit("malformed recovery state changed a target")
+if not journal.exists():
+    raise SystemExit("malformed recovery state was discarded")
+
+journal.unlink()
+journal.write_text(
+    json.dumps(
+        {
+            "schema": module.RECOVERY_SCHEMA,
+            "version": module.RECOVERY_VERSION,
+            "state": "prepared",
+            "targets": [
+                {"path": str(authority), "contents": authority_before},
+                {"path": str(authority.with_name("unexpected-target")), "contents": manifest_before},
+            ],
+        }
+    ),
+    encoding="utf-8",
+)
+try:
+    module.transactional_write([(authority, "must not apply\n"), (manifest, "must not apply\n")])
+except OSError:
+    pass
+else:
+    raise SystemExit("updater accepted a mismatched recovery target set")
+if authority.read_text(encoding="utf-8") != authority_before or manifest.read_text(encoding="utf-8") != manifest_before:
+    raise SystemExit("mismatched recovery state changed a target")
+if not journal.exists():
+    raise SystemExit("mismatched recovery state was discarded")
+
+journal.unlink()
+journal_target = authority.with_name("journal-target")
+journal_target.write_text(
+    json.dumps(
+        {
+            "schema": module.RECOVERY_SCHEMA,
+            "version": module.RECOVERY_VERSION,
+            "state": "prepared",
+            "targets": [
+                {"path": str(authority), "contents": authority_before},
+                {"path": str(manifest), "contents": manifest_before},
+            ],
+        }
+    ),
+    encoding="utf-8",
+)
+journal.symlink_to(journal_target)
+try:
+    module.transactional_write([(authority, "must not apply\n"), (manifest, "must not apply\n")])
+except OSError:
+    pass
+else:
+    raise SystemExit("updater accepted a symlink recovery state")
+if authority.read_text(encoding="utf-8") != authority_before or manifest.read_text(encoding="utf-8") != manifest_before:
+    raise SystemExit("symlink recovery state changed a target")
+if not journal.is_symlink():
+    raise SystemExit("symlink recovery state was discarded")
+PY
 echo 'Workflow tool updater contract passed'
