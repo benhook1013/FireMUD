@@ -93,3 +93,14 @@ After compaction, Gameplay replaced the intended wake-capable Hosted sentinel wi
 ## Process correction — unchanged Hosted/CI polling (2026-09-14 NZST)
 
 Gameplay and Overseer/root each spent main-lane turns polling unchanged external Hosted/CI state despite the existing lifecycle guidance. Root corrected its own PR #2759 wait by stopping the native parent watcher and delegating a Luna read-only sentinel. This was execution noncompliance, not a repository-guidance gap. Future waits should immediately delegate a low-cost read-only sentinel when a slot exists, with the sentinel returning only on terminal, failure, or timeout state.
+
+## Parked tooling-maintenance programme (2026-09-14)
+
+After the current Gameplay queue, unless reprioritized, the owning worker may take these bounded tooling improvements:
+
+- Improve discoverability for `dev-tools/validation/` and `dev-tools/tests/`; document omitted root entrypoints `build-local-smoke-images.sh` and `ensure-local-compose-env.sh`, and omitted `hosted/shared` helpers `request-hosted-identity.sh`, `resolve-certificate-identity-mode.py`, and `wait-for-hosted-runtime-rollouts.sh`.
+- Consolidate similar preview/dev-demo value renderers behind shared mechanics while keeping lane-specific data. Document the ownership and guarantee boundary between `hosted/shared/write-kubeconfig.sh` and `.github/actions/write-kubeconfig/action.yml`; do not assume those surfaces should be consolidated.
+- Later modularize the roughly 7,100-line `deploy/preflight.py` behind its existing facade. Preserve intentional thin shell-to-Python facades and the preview rollout-diagnostics alias.
+- After inventorying actual callers, the owning worker decides and applies one consistent executable-bit versus explicit-interpreter policy for direct entrypoints.
+
+Future CodeRabbit CLI review should use complete coherent partitions rather than one undifferentiated review of the roughly 43,000-line production tool corpus: (A) review/validation/maintenance plus support/tests; (B) hosted/deploy/backup/restore/certificate plus related Actions/tests; and (C) local Compose/smoke/observability/docs/release/seed/load-testing plus support/tests. This is planned review topology, not quota authorization. Independent Luna inventories agreed on 158 tracked dev-tools files, 42 tests/contracts, 8 READMEs, and 5 reusable Actions; the 93-versus-99 entrypoint count is definitional.
