@@ -171,6 +171,17 @@ def main() -> int:
         )
         if canonical.returncode != 0:
             fail(f"workflow authority loader rejects canonical authority: {canonical.stderr.strip()}")
+        (authority_path / "workflow-tool-versions.env").write_bytes(
+            ap.read_bytes().rstrip(b"\r\n") + b"\nACTIONLINT_VERSION=0.0.0"
+        )
+        output_path.write_text("sentinel\n")
+        eof_duplicate = subprocess.run(
+            ["bash", "-c", loader_run], cwd=temporary, env=env, capture_output=True, text=True, check=False
+        )
+        if eof_duplicate.returncode == 0:
+            fail("workflow authority loader accepts a duplicate final line without a newline")
+        if output_path.read_text() != "sentinel\n":
+            fail("duplicate final authority assignment can mutate workflow outputs")
         (authority_path / "workflow-tool-versions.env").write_text(ap.read_text() + " \t  \n# harmless comment\n")
         whitespace = subprocess.run(
             ["bash", "-c", loader_run], cwd=temporary, env=env, capture_output=True, text=True, check=False
@@ -801,7 +812,7 @@ def main() -> int:
             except re.error as error:
                 fail(f"Renovate custom manager {manager_index} matchStrings[{pattern_index}] is invalid: {error}")
             try:
-                matched.update((m.group("depName"), m.group("currentValue")) for m in pattern.finditer(ap.read_text()))
+                matched.update((m.group("depName"), m.group("currentValue")) for m in pattern.finditer(authority_text))
             except (IndexError, KeyError) as error:
                 fail(
                     f"Renovate custom manager {manager_index} matchStrings[{pattern_index}] lacks required capture groups: {error}"

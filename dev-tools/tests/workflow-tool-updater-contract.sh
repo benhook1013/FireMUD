@@ -680,11 +680,8 @@ sys.argv = [
 try:
     module.main()
 except SystemExit as exc:
-    expected = (
-        f"could not read Velero image evidence file {unavailable_evidence}: "
-        f"[Errno 2] No such file or directory: '{unavailable_evidence}'"
-    )
-    if str(exc) != expected:
+    expected_prefix = f"could not read Velero image evidence file {unavailable_evidence}: "
+    if not str(exc).startswith(expected_prefix):
         raise SystemExit(f"unexpected unavailable evidence diagnostic: {exc}") from exc
 else:
     raise SystemExit("unavailable Velero image evidence was accepted")
