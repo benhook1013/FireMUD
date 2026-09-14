@@ -34,6 +34,80 @@ if module.recovery_journal_path(authority).exists():
     raise SystemExit("successful transaction left recovery state")
 PY
 
+cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/lock-authority.env"
+lock_checksum=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+echo "$lock_checksum  helm-v9.8.7-linux-amd64.tar.gz" > "$tmp/lock-checksum"
+python3 - "$ROOT_DIR" "$tmp/lock-authority.env" "$tmp/lock-checksum" <<'PY'
+import importlib.util
+import subprocess
+import sys
+from pathlib import Path
+
+root, authority, checksum_file = map(Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+lock_attempt_code = """
+import fcntl
+import os
+import sys
+fd = os.open(sys.argv[1], os.O_RDONLY)
+try:
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        raise SystemExit(1)
+    raise SystemExit(0)
+finally:
+    os.close(fd)
+"""
+
+def lock_attempt(parent):
+    return subprocess.run(
+        [sys.executable, "-c", lock_attempt_code, str(parent)],
+        check=False,
+    ).returncode
+
+with module.authority_lock(authority):
+    if lock_attempt(authority.resolve().parent) != 1:
+        raise SystemExit("competing process acquired the held authority lock")
+if lock_attempt(authority.resolve().parent) != 0:
+    raise SystemExit("competing process could not acquire the released authority lock")
+
+real_reconcile = module.reconcile_recovery_journal
+real_transaction = module.transactional_write
+events = []
+
+def instrumented_reconcile(lock_authority, allowed_target_sets):
+    if lock_attempt(Path(lock_authority).resolve().parent) != 1:
+        raise SystemExit("main reached recovery reconciliation without the authority lock")
+    events.append("reconcile")
+    return real_reconcile(lock_authority, allowed_target_sets)
+
+def instrumented_transaction(*args, **kwargs):
+    updates = args[0]
+    if lock_attempt(Path(updates[0][0]).resolve().parent) != 1:
+        raise SystemExit("main reached transaction without the authority lock")
+    events.append("transaction")
+    return real_transaction(*args, **kwargs)
+
+module.reconcile_recovery_journal = instrumented_reconcile
+module.transactional_write = instrumented_transaction
+sys.argv = [
+    str(root / "dev-tools/maintenance/update-workflow-tool.py"),
+    "helm",
+    "9.8.7",
+    "--checksum-file",
+    str(checksum_file),
+    "--authority",
+    str(authority),
+]
+module.main()
+if "reconcile" not in events or "transaction" not in events:
+    raise SystemExit("main did not reach both lock-protected phases")
+PY
+grep -Fx "HELM_LINUX_AMD64_SHA256=$lock_checksum" "$tmp/lock-authority.env" >/dev/null
+
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/unchanged.env"
 cp "$tmp/unchanged.env" "$tmp/before.env"
 echo 'no Velero image projection' > "$tmp/invalid-velero.yaml"

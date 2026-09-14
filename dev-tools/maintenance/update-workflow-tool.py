@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import re
 import stat
 import tempfile
 import urllib.request
+from contextlib import contextmanager
 from pathlib import Path
 
 SPECS = {
@@ -64,6 +66,24 @@ def fsync_directory(path: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+@contextmanager
+def authority_lock(authority: Path):
+    """Serialize updates with an exclusive lock on the authority parent directory."""
+
+    descriptor = os.open(authority.resolve().parent, os.O_RDONLY)
+    acquired = False
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        acquired = True
+        yield
+    finally:
+        try:
+            if acquired:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
 
 
 def atomic_text_replace(path: Path, text: str) -> None:
@@ -299,16 +319,6 @@ def main() -> None:
     if args.image_evidence_file and args.tool != "velero":
         parser.error("--image-evidence-file is only valid for velero")
 
-    resolved_authority = args.authority.resolve()
-    resolved_velero_manifest = args.velero_manifest.resolve()
-    reconcile_recovery_journal(
-        args.authority,
-        [
-            frozenset((resolved_authority,)),
-            frozenset((resolved_authority, resolved_velero_manifest)),
-        ],
-    )
-
     image_digest = None
     if args.tool == "velero" and args.image_evidence_file:
         image_digest = velero_image_digest_from_evidence(args.image_evidence_file, args.version)
@@ -327,28 +337,39 @@ def main() -> None:
     if args.tool == "velero" and image_digest is None:
         image_digest = dockerhub_digest("velero/velero", f"v{args.version}")
 
-    authority = args.authority.read_text(encoding="utf-8")
-    authority = replace(authority, f"{prefix}_VERSION", args.version)
-    stem = CHECKSUM_STEMS[prefix]
-    authority = replace(authority, f"{stem}_CHECKSUM_VERSION", args.version)
-    authority = replace(authority, f"{stem}_SHA256", matches[0])
-    manifest = None
-    if args.tool == "velero":
-        if image_digest is None:
-            raise SystemExit("Velero image digest could not be resolved")
-        authority = replace(authority, "VELERO_IMAGE_DIGEST", image_digest)
-        manifest = args.velero_manifest.read_text(encoding="utf-8")
-        manifest, count = re.subn(
-            r"image: velero/velero:v\d+\.\d+\.\d+(?:@sha256:[0-9a-f]{64})?",
-            f"image: velero/velero:v{args.version}@{image_digest}",
-            manifest,
+    resolved_authority = args.authority.resolve()
+    resolved_velero_manifest = args.velero_manifest.resolve()
+    with authority_lock(args.authority):
+        reconcile_recovery_journal(
+            args.authority,
+            [
+                frozenset((resolved_authority,)),
+                frozenset((resolved_authority, resolved_velero_manifest)),
+            ],
         )
-        if count != 1:
-            raise SystemExit("expected one Velero image projection")
-    updates = [(args.authority, authority)]
-    if manifest is not None:
-        updates.append((args.velero_manifest, manifest))
-    transactional_write(updates, authority=args.authority)
+
+        authority = args.authority.read_text(encoding="utf-8")
+        authority = replace(authority, f"{prefix}_VERSION", args.version)
+        stem = CHECKSUM_STEMS[prefix]
+        authority = replace(authority, f"{stem}_CHECKSUM_VERSION", args.version)
+        authority = replace(authority, f"{stem}_SHA256", matches[0])
+        manifest = None
+        if args.tool == "velero":
+            if image_digest is None:
+                raise SystemExit("Velero image digest could not be resolved")
+            authority = replace(authority, "VELERO_IMAGE_DIGEST", image_digest)
+            manifest = args.velero_manifest.read_text(encoding="utf-8")
+            manifest, count = re.subn(
+                r"image: velero/velero:v\d+\.\d+\.\d+(?:@sha256:[0-9a-f]{64})?",
+                f"image: velero/velero:v{args.version}@{image_digest}",
+                manifest,
+            )
+            if count != 1:
+                raise SystemExit("expected one Velero image projection")
+        updates = [(args.authority, authority)]
+        if manifest is not None:
+            updates.append((args.velero_manifest, manifest))
+        transactional_write(updates, authority=args.authority)
 
 
 if __name__ == "__main__":
