@@ -4,6 +4,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck disable=SC1091
 source "$ROOT_DIR/config/workflow-tool-versions.env"
+[[ "$LYCHEE_LINUX_X86_64_MUSL_CHECKSUM_VERSION" == "$LYCHEE_VERSION" ]] || {
+  echo "Lychee checksum authority must match the release version." >&2
+  exit 1
+}
 [[ "$(uname -s)/$(uname -m)" == "Linux/x86_64" ]] || {
   echo "The pinned Lychee archive supports Linux x86_64 only." >&2
   exit 1
@@ -15,6 +19,27 @@ VERIFIED_MARKER="$CACHE_DIR/verified.sha256"
 URL="https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}/lychee-x86_64-unknown-linux-musl.tar.gz"
 
 trusted=false
+verify_cached_install() {
+  local verification extracted_sha
+  trusted=false
+  verification="$(mktemp -d "$CACHE_DIR/verify.XXXXXX")" || return 0
+  if ! tar -xzf "$ARCHIVE" -C "$verification"; then
+    rm -rf "$verification" || true
+    return 0
+  fi
+  if ! extracted_sha="$(sha256sum \
+      "$verification/lychee-x86_64-unknown-linux-musl/lychee" | awk '{print $1}')"; then
+    rm -rf "$verification" || true
+    return 0
+  fi
+  if [[ "$extracted_sha" != "$marker_binary_sha" ]]; then
+    rm -rf "$verification" || true
+    return 0
+  fi
+  trusted=true
+  rm -rf "$verification" || trusted=false
+}
+
 if [[ -x "$BIN" && -f "$ARCHIVE" && -f "$VERIFIED_MARKER" ]]; then
   marker_archive_sha=
   marker_binary_sha=
@@ -22,13 +47,7 @@ if [[ -x "$BIN" && -f "$ARCHIVE" && -f "$VERIFIED_MARKER" ]]; then
   if [[ "$marker_archive_sha" == "$LYCHEE_LINUX_X86_64_MUSL_SHA256" ]] \
     && printf '%s  %s\n' "$LYCHEE_LINUX_X86_64_MUSL_SHA256" "$ARCHIVE" | sha256sum --check --status \
     && printf '%s  %s\n' "$marker_binary_sha" "$BIN" | sha256sum --check --status; then
-    verification="$(mktemp -d "$CACHE_DIR/verify.XXXXXX")"
-    trap 'rm -rf "$verification"' EXIT
-    tar -xzf "$ARCHIVE" -C "$verification"
-    extracted_sha="$(sha256sum "$verification/lychee-x86_64-unknown-linux-musl/lychee" | awk '{print $1}')"
-    [[ "$extracted_sha" == "$marker_binary_sha" ]] && trusted=true
-    rm -rf "$verification"
-    trap - EXIT
+    verify_cached_install
   fi
 fi
 
