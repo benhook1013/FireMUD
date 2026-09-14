@@ -16,8 +16,10 @@ make_fixture() {
 
 MISMATCH_ROOT="$TEMP_DIR/mismatch"
 make_fixture "$MISMATCH_ROOT"
-sed -i 's/^LYCHEE_LINUX_X86_64_MUSL_CHECKSUM_VERSION=.*/LYCHEE_LINUX_X86_64_MUSL_CHECKSUM_VERSION=0.0.0/' \
-  "$MISMATCH_ROOT/config/workflow-tool-versions.env"
+mismatch_authority="$MISMATCH_ROOT/config/workflow-tool-versions.env"
+sed 's/^LYCHEE_LINUX_X86_64_MUSL_CHECKSUM_VERSION=.*/LYCHEE_LINUX_X86_64_MUSL_CHECKSUM_VERSION=0.0.0/' \
+  "$mismatch_authority" >"$mismatch_authority.tmp"
+mv -f "$mismatch_authority.tmp" "$mismatch_authority"
 if XDG_CACHE_HOME="$TEMP_DIR/mismatch-cache" "$MISMATCH_ROOT/dev-tools/docs/link-check.sh" \
   >"$TEMP_DIR/mismatch.out" 2>&1; then
   echo "Lychee checksum-version mismatch unexpectedly passed" >&2

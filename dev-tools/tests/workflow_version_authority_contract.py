@@ -340,7 +340,7 @@ def main() -> int:
             if not isinstance(job, dict):
                 continue
             checkout = py = gh_setup_seen = loader = False
-            python_profile = None
+            python_profiles = set()
             for step in job.get("steps", []):
                 if not isinstance(step, dict):
                     continue
@@ -367,16 +367,17 @@ def main() -> int:
                     if not checkout:
                         fail(f"{path.name}:{job_name}: Python setup before checkout")
                     py = True
-                    python_profile = step.get("with", {}).get("requirements", "none")
+                    selected_profile = step.get("with", {}).get("requirements", "none")
+                    python_profiles.add(selected_profile)
                     valid_profiles = {"none", "yaml", "ci", "smoke", "docs"}
                     if path.name == "ci.yml" and job_name == "dev-tool-contract-checks":
                         valid_profiles.add(conditional_contract_profile)
-                    if python_profile not in valid_profiles:
+                    if selected_profile not in valid_profiles:
                         fail(f"{path.name}:{job_name}: invalid Python dependency profile")
                 composite_profile = composite_python_profile(uses)
                 if composite_profile is not None:
                     py = True
-                    python_profile = composite_profile
+                    python_profiles.add(composite_profile)
                 if uses == "./.github/actions/setup-gh":
                     gh_count += 1
                     if not checkout:
@@ -386,12 +387,12 @@ def main() -> int:
                 need = python_needs(expanded_text)
                 if need is not None and not py:
                     fail(f"{path.name}:{job_name}: direct or helper Python consumer uses ambient runner Python")
-                if need == "yaml" and python_profile not in {"yaml", "ci", conditional_contract_profile}:
+                if need == "yaml" and not python_profiles.intersection({"yaml", "ci", conditional_contract_profile}):
                     fail(f"{path.name}:{job_name}: PyYAML helper lacks its pinned dependency profile")
                 if (
                     need in {"smoke", "ci", "docs"}
-                    and python_profile != need
-                    and python_profile != conditional_contract_profile
+                    and need not in python_profiles
+                    and conditional_contract_profile not in python_profiles
                 ):
                     fail(f"{path.name}:{job_name}: {need} helper lacks its pinned dependency profile")
                 if has_gh_consumer(expanded_text) and not gh_setup_seen:
