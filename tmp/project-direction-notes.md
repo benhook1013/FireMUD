@@ -104,3 +104,7 @@ After the current Gameplay queue, unless reprioritized, the owning worker may ta
 - After inventorying actual callers, the owning worker decides and applies one consistent executable-bit versus explicit-interpreter policy for direct entrypoints.
 
 Future CodeRabbit CLI review should use complete coherent partitions rather than one undifferentiated review of the roughly 43,000-line production tool corpus: (A) review/validation/maintenance plus support/tests; (B) hosted/deploy/backup/restore/certificate plus related Actions/tests; and (C) local Compose/smoke/observability/docs/release/seed/load-testing plus support/tests. This is planned review topology, not quota authorization. Independent Luna inventories agreed on 158 tracked dev-tools files, 42 tests/contracts, 8 READMEs, and 5 reusable Actions; the 93-versus-99 entrypoint count is definitional.
+
+## Parked CodeRabbit CLI evidence retention (2026-09-14)
+
+CLI run evidence is shared under the Git common directory `.git/coderabbit-review-logs`: 243 runs covering 5,091 files occupy roughly 26.5 MB of contents (about 37 MB allocated) over 4.8 days, projecting roughly 165 MB/month or 2 GB/year. Duplicated PR-file inventories dominate the footprint, and eight directories are incomplete. Park a lightweight future retention/maintenance policy that preserves active and recent evidence while pruning old completed runs. The obsolete per-worktree `tmp/coderabbit-reviews` captures total only about 250 KB; leave them untouched until their linkage value is checked.
