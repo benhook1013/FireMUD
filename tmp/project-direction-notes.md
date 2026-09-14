@@ -108,3 +108,7 @@ Future CodeRabbit CLI review should use complete coherent partitions rather than
 ## Parked CodeRabbit CLI evidence retention (2026-09-14)
 
 CLI run evidence is shared under the Git common directory `.git/coderabbit-review-logs`: 243 runs covering 5,091 files occupy roughly 26.5 MB of contents (about 37 MB allocated) over 4.8 days, projecting roughly 165 MB/month or 2 GB/year. Duplicated PR-file inventories dominate the footprint, and eight directories are incomplete. Park a lightweight future retention/maintenance policy that preserves active and recent evidence while pruning old completed runs. The obsolete per-worktree `tmp/coderabbit-reviews` captures total only about 250 KB; leave them untouched until their linkage value is checked.
+
+## Process incident — stale Hosted conclusion after publication (2026-09-14)
+
+Gameplay published #2750 at head `2980fd5` but retained a stale Hosted-blocked conclusion for over two hours because its low-frequency Luna watcher was between checks and the orchestrator did not perform an immediate post-publication checker read. For the next process-document bundle, publishing a stable candidate invalidates cached Hosted eligibility: immediately read current checker state and, if allowed, request Hosted through the canonical wrapper. A sentinel watches only an established active or cooldown transition and must not delay the initial post-publication eligibility decision.
