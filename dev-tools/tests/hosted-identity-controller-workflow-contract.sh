@@ -78,6 +78,12 @@ workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
 publisher_workflow = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
 pull_request = workflow[True]["pull_request"]
 assert "dev-tools/smoke/**" in pull_request["paths"]
+for required_path in (
+    ".github/actions/setup-python/**",
+    ".python-version",
+    "config/python/smoke-requirements.txt",
+):
+    assert required_path in pull_request["paths"], required_path
 image_meta = workflow["jobs"]["image-meta"]
 assert image_meta["outputs"]["runtime_smoke_required"] == (
     "${{ steps.smoke_scope.outputs.runtime_smoke_required }}"
@@ -103,6 +109,8 @@ for required in (
     "docker/base.Dockerfile",
     "dev-tools/hosted/controller/smoke-paused-controller-image.sh",
     ".github/workflows/runtime-images.yml",
+    ".python-version",
+    "config/python/smoke-requirements.txt",
     "PR smoke scope detection was incomplete; running both local smokes.",
     "PR smoke scope detection failed; running both local smokes:",
     'core.setOutput("runtime_smoke_required", String(runtimeSmokeRequired))',
@@ -116,6 +124,7 @@ runtime_prefixes_script = smoke_scope_script[
 ]
 assert not re.search(r'"services/[^"]+/"', runtime_prefixes_script)
 assert "dev-tools/smoke/" in runtime_prefixes_script
+assert ".github/actions/setup-python/" in runtime_prefixes_script
 runtime_scope_predicate = smoke_scope_script[
     smoke_scope_script.index("runtimeSmokeRequired = paths.some"):
     smoke_scope_script.index("controllerSmokeRequired = paths.some")

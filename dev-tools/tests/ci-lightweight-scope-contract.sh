@@ -331,6 +331,42 @@ require_equal(
     "security workflow",
 )
 
+security_scan_steps = value_at(
+    security, ("jobs", "trivy-scan", "steps"), "security workflow"
+)
+for cache_id, lockfile in (
+    ("cache-openapi", "config/openapi/package-lock.json"),
+    ("cache-web-client", "web-client/package-lock.json"),
+):
+    cache_steps = [
+        step
+        for step in security_scan_steps
+        if isinstance(step, dict) and step.get("id") == cache_id
+    ]
+    if len(cache_steps) != 1:
+        raise SystemExit(
+            f"security workflow: expected one {cache_id} cache step, found {len(cache_steps)}"
+        )
+    cache_with = cache_steps[0].get("with")
+    if not isinstance(cache_with, dict):
+        raise SystemExit(f"security workflow: {cache_id} cache step lacks with mapping")
+    expected_key = (
+        f"{cache_id.removeprefix('cache-')}-node-modules-${{{{ runner.os }}}}-"
+        f"${{{{ hashFiles('.node-version', '{lockfile}') }}}}"
+    )
+    expected_restore_key = (
+        f"{cache_id.removeprefix('cache-')}-node-modules-${{{{ runner.os }}}}-"
+        "${{ hashFiles('.node-version') }}-"
+    )
+    if cache_with.get("key") != expected_key:
+        raise SystemExit(
+            f"security workflow: {cache_id} key must include Node and lockfile hashes"
+        )
+    if cache_with.get("restore-keys") != expected_restore_key:
+        raise SystemExit(
+            f"security workflow: {cache_id} restore key must be scoped to Node version"
+        )
+
 for path_item in (
     "**/*.md",
     "mkdocs.yml",

@@ -35,6 +35,9 @@ on:
       - 'services/tcp-proxy-service/**'
       - 'services/world-management-service/**'
       - 'services/hosted-environment-identity-controller/**'
+      - '.github/actions/setup-python/**'
+      - '.python-version'
+      - 'config/python/smoke-requirements.txt'
       - 'dev-tools/build-compose-service-jars.sh'
       - 'dev-tools/build-local-smoke-images.sh'
       - 'dev-tools/certs/generate-dev-certs.sh'
@@ -132,6 +135,7 @@ jobs:
                     "dev-tools/smoke/",
                     "gradle/",
                     "protos/",
+                    ".github/actions/setup-python/",
                   ];
                   const runtimeFiles = new Set([
                     ".dockerignore",
@@ -139,7 +143,9 @@ jobs:
                     ".github/workflows/runtime-images.yml",
                     ".github/workflows/smoke-full.yml",
                     ".github/workflows/smoke.yml",
+                    ".python-version",
                     "build.gradle.kts",
+                    "config/python/smoke-requirements.txt",
                     "dev-tools/build-compose-service-jars.sh",
                     "dev-tools/build-local-smoke-images.sh",
                     "dev-tools/certs/generate-dev-certs.sh",
