@@ -527,6 +527,84 @@ PY
 cmp "$tmp/fsync-authority-before.env" "$tmp/fsync-authority.env"
 cmp "$tmp/fsync-velero-before.yaml" "$tmp/fsync-velero.yaml"
 
+cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/commit-fsync-authority.env"
+cp "$ROOT_DIR/k8s/velero/verify-backups-cronjob.yaml" "$tmp/commit-fsync-velero.yaml"
+python3 - "$ROOT_DIR" "$tmp/commit-fsync-authority.env" "$tmp/commit-fsync-velero.yaml" <<'PY'
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+root, authority, manifest = map(Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+authority = authority.resolve()
+manifest = manifest.resolve()
+journal = module.recovery_journal_path(authority)
+authority_before = authority.read_text(encoding="utf-8")
+manifest_before = manifest.read_text(encoding="utf-8")
+real_atomic_text_replace = module.atomic_text_replace
+real_fsync = module.fsync_directory
+real_replace = module.os.replace
+phase = "forward"
+commit_fsync_failed = False
+
+def track_atomic_text_replace(path, text):
+    global phase
+    if Path(path).resolve() == journal and '"state":"committed"' in text:
+        phase = "committing"
+    return real_atomic_text_replace(path, text)
+
+def fail_commit_fsync(path):
+    global commit_fsync_failed, phase
+    if phase == "committing" and not commit_fsync_failed:
+        commit_fsync_failed = True
+        phase = "rollback"
+        raise OSError("simulated committed marker fsync failure")
+    return real_fsync(path)
+
+def fail_first_rollback(source, destination):
+    if phase == "rollback" and Path(destination).resolve() == authority:
+        raise OSError("simulated rollback replacement failure")
+    return real_replace(source, destination)
+
+module.atomic_text_replace = track_atomic_text_replace
+module.fsync_directory = fail_commit_fsync
+module.os.replace = fail_first_rollback
+try:
+    module.transactional_write(
+        [(authority, "mixed authority\n"), (manifest, "mixed manifest\n")]
+    )
+except OSError as exc:
+    if str(exc) != "simulated rollback replacement failure":
+        raise SystemExit(f"unexpected commit-fsync rollback diagnostic: {exc}") from exc
+else:
+    raise SystemExit("transaction accepted a failed rollback after committed marker fsync failure")
+if authority.read_text(encoding="utf-8") != "mixed authority\n":
+    raise SystemExit("commit-fsync failure did not leave the failed rollback target observable")
+if manifest.read_text(encoding="utf-8") != manifest_before:
+    raise SystemExit("commit-fsync failure did not restore the successful rollback target")
+if not journal.exists():
+    raise SystemExit("commit-fsync rollback failure discarded recovery state")
+payload = json.loads(journal.read_text(encoding="utf-8"))
+if payload.get("state") != "prepared":
+    raise SystemExit("commit-fsync rollback failure left a committed recovery journal")
+
+module.atomic_text_replace = real_atomic_text_replace
+module.fsync_directory = real_fsync
+module.os.replace = real_replace
+module.transactional_write(
+    [(authority, "converged authority\n"), (manifest, "converged manifest\n")]
+)
+if authority.read_text(encoding="utf-8") != "converged authority\n":
+    raise SystemExit("next invocation did not converge the authority after recovery")
+if manifest.read_text(encoding="utf-8") != "converged manifest\n":
+    raise SystemExit("next invocation did not converge the manifest after recovery")
+if journal.exists():
+    raise SystemExit("recovered commit-fsync transaction left recovery state")
+PY
+
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/recovery-authority.env"
 cp "$ROOT_DIR/k8s/velero/verify-backups-cronjob.yaml" "$tmp/recovery-velero.yaml"
 chmod 0640 "$tmp/recovery-authority.env"

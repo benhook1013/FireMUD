@@ -214,6 +214,30 @@ def reconcile_recovery_journal(authority: Path, allowed_target_sets: list[frozen
         restore_recovery_journal(journal, allowed_target_sets)
 
 
+def ensure_prepared_recovery_journal(
+    path: Path,
+    originals: dict[Path, str],
+    allowed_target_sets: list[frozenset[Path]],
+) -> None:
+    """Make rollback safe by proving the journal describes an uncommitted transaction."""
+
+    expected_payload = recovery_payload("prepared", originals)
+    try:
+        atomic_text_replace(path, expected_payload)
+        return
+    except OSError as exc:
+        try:
+            state, journal_originals = read_recovery_journal(path, allowed_target_sets)
+        except OSError as verify_exc:
+            raise OSError(
+                f"could not preserve prepared workflow updater recovery journal {path}"
+            ) from verify_exc
+        if state != "prepared" or journal_originals != originals:
+            raise OSError(
+                f"workflow updater recovery journal is not prepared for rollback: {path}"
+            ) from exc
+
+
 def transactional_write(updates: list[tuple[Path, str]], authority: Path | None = None) -> None:
     if not updates:
         raise ValueError("workflow updater transaction requires at least one target")
@@ -237,6 +261,11 @@ def transactional_write(updates: list[tuple[Path, str]], authority: Path | None 
             fsync_directory(path.parent)
         atomic_text_replace(journal, recovery_payload("committed", originals))
     except OSError:
+        ensure_prepared_recovery_journal(
+            journal,
+            originals,
+            [frozenset(expected_targets)],
+        )
         for path in reversed(replaced):
             rollback = staged_file(path, originals[path], preserve_mode=True)
             try:

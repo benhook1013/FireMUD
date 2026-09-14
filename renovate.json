@@ -40,11 +40,11 @@
         "/^config/workflow-tool-versions\\.env$/"
       ],
       "matchStrings": [
-        "(?<authorityPrefix># renovate-image: datasource=(?<datasource>docker) depName=(?<depName>velero/velero)\\nVELERO_VERSION=)(?<currentValue>\\S+)(?<authoritySuffix>\\n(?:[A-Z][A-Z0-9_]*=[^\\n]+\\n)*VELERO_IMAGE_DIGEST=(?<currentDigest>sha256:[0-9a-f]{64}))"
+        "(?<authorityPrefix># renovate-image: datasource=(?<datasource>docker) depName=(?<depName>velero/velero)\\nVELERO_VERSION=)(?<currentValue>\\S+)(?<authoritySuffix>\\n(?:[A-Z][A-Z0-9_]*=[^\\n]+\\n)*VELERO_IMAGE_DIGEST=)(?<currentDigest>sha256:[0-9a-f]{64})"
       ],
       "versioningTemplate": "docker",
       "currentValueTemplate": "v{{{currentValue}}}",
-      "autoReplaceStringTemplate": "{{{authorityPrefix}}}{{{replace '^v' '' newValue}}}{{{authoritySuffix}}}"
+      "autoReplaceStringTemplate": "{{{authorityPrefix}}}{{{replace '^v' '' newValue}}}{{{authoritySuffix}}}{{{newDigest}}}"
     },
     {
       "customType": "regex",

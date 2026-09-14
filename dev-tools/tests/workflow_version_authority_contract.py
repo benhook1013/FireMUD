@@ -224,17 +224,40 @@ def main() -> int:
             parts.extend(helper_text(source, seen))
         return parts
 
+    def composite_python_profile(uses):
+        if not uses.startswith("./.github/actions/"):
+            return None
+        action_path = root / uses[2:] / "action.yml"
+        if not action_path.is_file():
+            return None
+        action = yaml.safe_load(action_path.read_text(encoding="utf-8")) or {}
+        for step in action.get("runs", {}).get("steps", []):
+            if (
+                isinstance(step, dict)
+                and step.get("uses") == "./.github/actions/setup-python"
+                and step.get("with", {}).get("requirements") in {"yaml", "ci", "smoke", "docs", "none"}
+            ):
+                return step["with"]["requirements"]
+        return None
+
+    for composite in (
+        "./.github/actions/download-validated-preview-artifact",
+        "./.github/actions/resolve-certificate-identity-mode",
+    ):
+        if composite_python_profile(composite) != "yaml":
+            fail(f"{composite} must expose its canonical YAML Python profile")
+
     def python_needs(text):
         sources = helper_text(text)
         combined = "\n".join(sources)
         if "python3" not in combined:
             return None
-        if re.search(r"(^|\n)\s*(?:import|from) yaml\b", combined):
-            return "yaml"
         if re.search(r"(^|\n)\s*import websocket\b", combined):
             return "smoke"
         if re.search(r"(^|[;&|\s])(ruff|yamllint)(?:\s|$)", combined):
             return "ci"
+        if re.search(r"(^|\n)\s*(?:import|from) yaml\b", combined):
+            return "yaml"
         if re.search(r"(^|[;&|\s])(?:python3 -m )?mkdocs(?:\s|$)", combined):
             return "docs"
         return "none"
@@ -328,9 +351,10 @@ def main() -> int:
                         valid_profiles.add(conditional_contract_profile)
                     if python_profile not in valid_profiles:
                         fail(f"{path.name}:{job_name}: invalid Python dependency profile")
-                if uses == "./.github/actions/resolve-certificate-identity-mode":
+                composite_profile = composite_python_profile(uses)
+                if composite_profile is not None:
                     py = True
-                    python_profile = "yaml"
+                    python_profile = composite_profile
                 if uses == "./.github/actions/setup-gh":
                     gh_count += 1
                     if not checkout:
@@ -341,7 +365,7 @@ def main() -> int:
                     fail(f"{path.name}:{job_name}: direct or helper Python consumer uses ambient runner Python")
                 if need == "yaml" and python_profile not in {"yaml", "ci", conditional_contract_profile}:
                     fail(f"{path.name}:{job_name}: PyYAML helper lacks its pinned dependency profile")
-                if need in {"smoke", "ci", "docs"} and python_profile != need:
+                if need in {"smoke", "ci", "docs"} and python_profile != need and python_profile != conditional_contract_profile:
                     fail(f"{path.name}:{job_name}: {need} helper lacks its pinned dependency profile")
                 if has_gh_consumer(run) and not gh_setup_seen:
                     fail(f"{path.name}:{job_name}: direct or helper gh consumer is not preceded by canonical setup-gh")
@@ -684,10 +708,10 @@ def main() -> int:
     velero_image_manager = velero_image_managers[0]
     if (
         velero_image_manager.get("autoReplaceStringTemplate")
-        != "{{{authorityPrefix}}}{{{replace '^v' '' newValue}}}{{{authoritySuffix}}}"
+        != "{{{authorityPrefix}}}{{{replace '^v' '' newValue}}}{{{authoritySuffix}}}{{{newDigest}}}"
     ):
         fail(
-            "Velero image manager must preserve its authority block while removing the Docker tag v prefix on replacement"
+            "Velero image manager must preserve its authority block, remove the Docker tag v prefix, and write the new digest"
         )
     docker_managers = [manager for manager in custom_managers if manager.get("versioningTemplate") == "docker"]
     if len(docker_managers) != 2:
@@ -719,12 +743,14 @@ def main() -> int:
     replacement = replacement.replace("{{{authorityPrefix}}}", velero_match.group("authorityPrefix"))
     replacement = replacement.replace("{{{replace '^v' '' newValue}}}", re.sub(r"^v", "", new_velero_value))
     replacement = replacement.replace("{{{authoritySuffix}}}", velero_match.group("authoritySuffix"))
+    new_velero_digest = "sha256:" + "b" * 64
+    replacement = replacement.replace("{{{newDigest}}}", new_velero_digest)
     expected_replacement = velero_match.group(0).replace(
         f"VELERO_VERSION={a['VELERO_VERSION']}", "VELERO_VERSION=9.9.9"
-    )
+    ).replace(a["VELERO_IMAGE_DIGEST"], new_velero_digest)
     if replacement != expected_replacement:
         fail(
-            "Velero image manager replacement must preserve the complete authority block and write an unprefixed version"
+            "Velero image manager replacement must preserve the complete authority block and write the new digest"
         )
     ort_zap_pattern_sources = ort_zap_image_manager.get("matchStrings", [None])
     if len(ort_zap_pattern_sources) != 1:

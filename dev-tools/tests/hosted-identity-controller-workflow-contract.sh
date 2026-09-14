@@ -35,6 +35,20 @@ preview_annotator="$ROOT_DIR/dev-tools/hosted/preview/annotate-preview-namespace
 runtime_rollout_waiter="$ROOT_DIR/dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh"
 credential_source="$ROOT_DIR/dev-tools/hosted/preview/provision-runtime-credentials.sh"
 
+python3 - "$trusted" <<'PY'
+import sys
+from pathlib import Path
+import yaml
+
+path = Path(sys.argv[1])
+data = yaml.safe_load(path.read_text(encoding="utf-8"))
+for job_name, job in (data.get("jobs") or {}).items():
+    labels = job.get("runs-on") if isinstance(job, dict) else None
+    if isinstance(labels, list) and {"self-hosted", "preview"}.issubset(labels):
+        if not {"linux", "x64"}.issubset(labels):
+            raise SystemExit(f"{path.name}:{job_name} preview runner must require linux and x64 labels")
+PY
+
 contains() {
   grep -Fq -- "$2" "$1" || {
     echo "$1 must contain: $2" >&2

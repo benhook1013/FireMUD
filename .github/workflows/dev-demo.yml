@@ -142,6 +142,8 @@ jobs:
     runs-on:
       - self-hosted
       - preview
+      - linux
+      - x64
     needs: dev-demo-plan
     if: ${{ needs.dev-demo-plan.outputs.action == 'deploy' }}
     environment: dev-demo-cluster
@@ -899,6 +901,8 @@ jobs:
     runs-on:
       - self-hosted
       - preview
+      - linux
+      - x64
     needs: dev-demo-plan
     if: ${{ needs.dev-demo-plan.outputs.action == 'destroy' }}
     environment: dev-demo-cluster

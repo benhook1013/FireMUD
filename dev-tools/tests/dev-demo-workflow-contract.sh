@@ -27,6 +27,20 @@ waiter="$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh"
 annotator="$ROOT_DIR/dev-tools/hosted/dev-demo/annotate-dev-demo-namespace.sh"
 target_validator="$ROOT_DIR/dev-tools/hosted/dev-demo/validate-dev-demo-target.sh"
 runtime_rollout_waiter="$ROOT_DIR/dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh"
+python3 - "$workflow" "$reconciler" <<'PY'
+import sys
+from pathlib import Path
+import yaml
+
+for path_text in sys.argv[1:]:
+    path = Path(path_text)
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    for job_name, job in (data.get("jobs") or {}).items():
+        labels = job.get("runs-on") if isinstance(job, dict) else None
+        if isinstance(labels, list) and {"self-hosted", "preview"}.issubset(labels):
+            if not {"linux", "x64"}.issubset(labels):
+                raise SystemExit(f"{path.name}:{job_name} preview runner must require linux and x64 labels")
+PY
 [[ -x "$runtime_rollout_waiter" ]] || {
   echo "$runtime_rollout_waiter must be executable" >&2
   exit 1

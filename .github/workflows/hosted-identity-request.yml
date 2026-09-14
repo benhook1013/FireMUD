@@ -213,6 +213,8 @@ jobs:
     runs-on:
       - self-hosted
       - preview
+      - linux
+      - x64
     needs: validate-target
     if: ${{ needs.validate-target.outputs.action == 'deploy' && needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
     environment: pr-preview
@@ -297,6 +299,8 @@ jobs:
     runs-on:
       - self-hosted
       - preview
+      - linux
+      - x64
     needs: [validate-target, prepare-runtime]
     if: ${{ needs.validate-target.outputs.action == 'deploy' && needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' && needs.prepare-runtime.result == 'success' }}
     environment: pr-preview
@@ -545,6 +549,8 @@ jobs:
     runs-on:
       - self-hosted
       - preview
+      - linux
+      - x64
     needs: [validate-target, deploy-runtime]
     if: ${{ needs.validate-target.outputs.action == 'deploy' && needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' && needs.deploy-runtime.result == 'success' }}
     environment: pr-preview
@@ -710,6 +716,8 @@ jobs:
     runs-on:
       - self-hosted
       - preview
+      - linux
+      - x64
     needs: validate-target
     # Close cleanup is mode-independent: a retained identity may have been created
     # before the default-branch certificate identity mode changed.
@@ -813,6 +821,8 @@ jobs:
     runs-on:
       - self-hosted
       - preview
+      - linux
+      - x64
     needs: [validate-target, destroy-runtime]
     if: ${{ needs.validate-target.outputs.action == 'destroy' && needs.destroy-runtime.result == 'success' }}
     environment: pr-preview
