@@ -366,6 +366,14 @@ def checksum_text_from_evidence(path: Path, version: str) -> str:
     return "\n".join(lines[1:])
 
 
+def download_checksum_manifest(url: str) -> str:
+    try:
+        with urllib.request.urlopen(url, timeout=30) as response:
+            return response.read().decode("utf-8")
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, UnicodeError) as exc:
+        raise SystemExit(f"could not download checksum manifest {url}: {exc}") from exc
+
+
 def checksum_matches(checksum_text: str, asset: str) -> list[str]:
     """Return checksums whose manifest asset is on the same line."""
 
@@ -422,8 +430,7 @@ def main() -> None:
     if args.checksum_file:
         checksum_text = checksum_text_from_evidence(args.checksum_file, args.version)
     else:
-        with urllib.request.urlopen(url_template.format(v=args.version), timeout=30) as response:
-            checksum_text = response.read().decode("utf-8")
+        checksum_text = download_checksum_manifest(url_template.format(v=args.version))
     if args.tool == "kubectl":
         checksum_lines = checksum_text.splitlines()
         matches = (

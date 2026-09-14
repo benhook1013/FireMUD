@@ -117,6 +117,37 @@ for failing_request in (1, 2):
                 raise SystemExit("Docker Hub failure diagnostic discarded its transport cause") from exc
         else:
             raise SystemExit(f"Docker Hub request {failing_request} transport failure escaped")
+
+checksum_url = "https://example.invalid/checksums"
+module.urllib.request.urlopen = lambda request, timeout: Response(b"trusted manifest")
+if module.download_checksum_manifest(checksum_url) != "trusted manifest":
+    raise SystemExit("checksum manifest download changed successful decoding")
+
+for failure_factory in failure_factories:
+    def failing_urlopen(request, timeout):
+        raise failure_factory()
+
+    module.urllib.request.urlopen = failing_urlopen
+    try:
+        module.download_checksum_manifest(checksum_url)
+    except SystemExit as exc:
+        if not str(exc).startswith(f"could not download checksum manifest {checksum_url}:"):
+            raise SystemExit(f"unexpected checksum download diagnostic: {exc}") from exc
+        if not isinstance(exc.__cause__, (urllib.error.HTTPError, urllib.error.URLError, TimeoutError)):
+            raise SystemExit("checksum download diagnostic discarded its transport cause") from exc
+    else:
+        raise SystemExit("checksum manifest transport failure escaped")
+
+module.urllib.request.urlopen = lambda request, timeout: Response(b"\xff")
+try:
+    module.download_checksum_manifest(checksum_url)
+except SystemExit as exc:
+    if not str(exc).startswith(f"could not download checksum manifest {checksum_url}:"):
+        raise SystemExit(f"unexpected checksum decoding diagnostic: {exc}") from exc
+    if not isinstance(exc.__cause__, UnicodeError):
+        raise SystemExit("checksum download diagnostic discarded its decoding cause") from exc
+else:
+    raise SystemExit("invalid checksum manifest UTF-8 escaped")
 PY
 printf 'version=9.8.8\n' > "$tmp/outside-invalid-checksum"
 authority_digest_before=$(sha256sum "$ROOT_DIR/config/workflow-tool-versions.env" | awk '{print $1}')
