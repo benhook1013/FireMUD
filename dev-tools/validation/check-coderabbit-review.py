@@ -54,7 +54,7 @@ REVIEW_LIMIT_WINDOW_PATTERN = re.compile(
     r"(?:(?:your\s+)?next\s+(?:included\s+)?reviews?\s+(?:will\s+be\s+)?available\s+in"
     r"|more\s+reviews\s+will\s+be\s+available\s+in"
     r"|next\s+review\s+available\s+in)\s*:?[\s*]*"
-    r"(\d+)\s+(minutes?|hours?)(?:\*\*)?",
+    r"(\d+)\s+(seconds?|minutes?|hours?)(?:\*\*)?",
     re.IGNORECASE,
 )
 NOOP_REVIEW_MARKER = "does not re-review already reviewed commits"
@@ -496,7 +496,13 @@ def parse_review_rate_limit_until(body: str, created_at: datetime) -> datetime |
     amount = int(match.group(1))
     unit = match.group(2).lower()
     return created_at + timedelta(
-        **{"minutes" if unit.startswith("minute") else "hours": amount}
+        **{
+            "seconds"
+            if unit.startswith("second")
+            else "minutes"
+            if unit.startswith("minute")
+            else "hours": amount
+        }
     )
 
 
