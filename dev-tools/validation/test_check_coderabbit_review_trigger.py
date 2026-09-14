@@ -214,6 +214,30 @@ Your next included review will be available in 39 minutes.
         self.assertTrue(state.attributed)
         self.assertEqual(state.cooldown_until, "2026-09-14T01:39:07+00:00")
 
+    def test_rate_limit_reply_with_seconds_window_is_terminal(self) -> None:
+        body = """<!-- This is an auto-generated reply by CodeRabbit -->
+<!-- CodeRabbit review command invocation: v2:c736cf9d8435ec67afe240228552056b7fa78ca9fbb13f4b52a32d90e181670e -->
+<details>
+<summary>⚠️ Action not completed</summary>
+
+Review rate limited.
+
+---
+
+Your included review limit is currently reached under our [Fair Usage Limits Policy](https://docs.coderabbit.ai/management/plans#fair-usage-limits-policy). This review may still proceed through usage-based billing if eligible. Your next included review will be available in 19 seconds.
+
+</details>"""
+        state = self.state(
+            [
+                trigger_comment(),
+                comment(11, "coderabbitai", body, "2026-09-14T01:00:07Z"),
+            ]
+        )
+        self.assertEqual(state.state, "rate_limited")
+        self.assertTrue(state.terminal)
+        self.assertTrue(state.attributed)
+        self.assertEqual(state.cooldown_until, "2026-09-14T01:00:26+00:00")
+
     def test_finished_reply_uses_exact_head_zero_finding_summary(self) -> None:
         comments = [trigger_comment(), finished_reply(), zero_finding_summary()]
         state = self.state(comments)
@@ -404,12 +428,41 @@ Your next included review will be available in 39 minutes.
                 capture_output=True,
                 text=True,
             )
+            text_completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--repo",
+                    REPO,
+                    "--pr",
+                    str(PR),
+                    "--input",
+                    str(payload_path),
+                    "--trigger-record",
+                    str(record_path),
+                    "--wait",
+                    "--timeout",
+                    "0",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
         output = json.loads(completed.stdout)
         self.assertEqual(completed.returncode, 1)
         self.assertFalse(output["ok"])
         self.assertEqual(output["trigger_state"]["state"], "timed_out")
         self.assertTrue(output["trigger_state"]["terminal"])
         self.assertTrue(output["trigger_state"]["attributed"])
+        self.assertEqual(output["trigger_state"]["trigger_comment_id"], 10)
+        self.assertGreaterEqual(output["trigger_state"]["age_seconds"], 0)
+        self.assertTrue(output["trigger_state"]["manual_adjudication_required"])
+        self.assertEqual(text_completed.returncode, 1)
+        self.assertRegex(
+            text_completed.stdout,
+            r"warning=HOSTED CODERABBIT TRIGGER 10 HAS NO ATTRIBUTABLE TERMINAL RESPONSE; "
+            r"AGE=\d+ SECONDS; MANUAL OVERSEER ADJUDICATION REQUIRED BEFORE RETRYING",
+        )
 
     def test_direct_wait_rejects_nonfinite_and_unbounded_values_before_loading(self) -> None:
         for option, value in (

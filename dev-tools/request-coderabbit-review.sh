@@ -168,8 +168,16 @@ if [[ -f "$record" ]]; then
   fi
   existing_json="$(python3 "$checker" --repo "$repo" --pr "$pr_number" --trigger-record "$record" --json 2>/dev/null)" || true
   existing_state="$(jq -er '.trigger_state.state' <<<"${existing_json:-}" 2>/dev/null || true)"
-  if [[ "$existing_state" == "awaiting_response" || "$existing_state" == "active" || \
-        "$existing_state" == "ambiguous" || "$existing_state" == "unattributed" || -z "$existing_state" ]]; then
+  if [[ "$existing_state" == "awaiting_response" ]]; then
+    trigger_id="$(jq -r '.trigger_state.trigger_comment_id // "unknown"' <<<"$existing_json")"
+    trigger_created_at="$(jq -r '.trigger_state.trigger_created_at // "unknown"' <<<"$existing_json")"
+    trigger_age_seconds="$(jq -r '.trigger_state.age_seconds // "unknown"' <<<"$existing_json")"
+    printf 'WARNING: Hosted CodeRabbit trigger %s has no attributable terminal response; age %s seconds (created %s). Manual Overseer adjudication required before retrying.\n' \
+      "$trigger_id" "$trigger_age_seconds" "$trigger_created_at" >&2
+    die "existing hosted review trigger requires completion or adjudication (state: $existing_state; record: $record)"
+  fi
+  if [[ "$existing_state" == "active" || "$existing_state" == "ambiguous" || \
+        "$existing_state" == "unattributed" || -z "$existing_state" ]]; then
     die "existing hosted review trigger requires completion or adjudication (state: ${existing_state:-unreadable}; record: $record)"
   fi
   if [[ "$existing_state" == "rate_limited" ]]; then

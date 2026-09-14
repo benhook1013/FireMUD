@@ -52,6 +52,12 @@ if [[ "$1 $2" == "api graphql" ]]; then
   comments='[]'
   if [[ -f "$MOCK_STATE/posted" ]]; then
     comments='[{"id":"IC_test","databaseId":101,"author":{"login":"owner"},"body":"@coderabbitai full review","createdAt":"2026-09-14T01:00:00Z","updatedAt":"2026-09-14T01:00:00Z","url":"https://example.test/comments/101"}]'
+    if [[ -f "$MOCK_STATE/rate-limited-seconds" ]]; then
+      comments='[{"id":"IC_test","databaseId":101,"author":{"login":"owner"},"body":"@coderabbitai full review","createdAt":"2026-09-14T01:00:00Z","updatedAt":"2026-09-14T01:00:00Z","url":"https://example.test/comments/101"},{"id":"IC_response","databaseId":102,"author":{"login":"coderabbitai"},"body":"<!-- This is an auto-generated reply by CodeRabbit -->\n<!-- CodeRabbit review command invocation: v2:example -->\n<details>\n<summary>Action not completed</summary>\n\nReview rate limited.\n\nYour included review limit is currently reached. Your next included review will be available in 19 seconds.\n\n</details>","createdAt":"2026-09-14T01:00:01Z","updatedAt":"2026-09-14T01:00:27Z","url":"https://example.test/comments/102"}]'
+      if [[ -f "$MOCK_STATE/second-posted" ]]; then
+        comments='[{"id":"IC_test","databaseId":101,"author":{"login":"owner"},"body":"@coderabbitai full review","createdAt":"2026-09-14T01:00:00Z","updatedAt":"2026-09-14T01:00:00Z","url":"https://example.test/comments/101"},{"id":"IC_response","databaseId":102,"author":{"login":"coderabbitai"},"body":"<!-- This is an auto-generated reply by CodeRabbit -->\n<!-- CodeRabbit review command invocation: v2:example -->\n<details>\n<summary>Action not completed</summary>\n\nReview rate limited.\n\nYour included review limit is currently reached. Your next included review will be available in 19 seconds.\n\n</details>","createdAt":"2026-09-14T01:00:01Z","updatedAt":"2026-09-14T01:00:27Z","url":"https://example.test/comments/102"},{"id":"IC_test_followup","databaseId":103,"author":{"login":"owner"},"body":"@coderabbitai full review","createdAt":"2026-09-14T01:01:00Z","updatedAt":"2026-09-14T01:01:00Z","url":"https://example.test/comments/103"},{"id":"IC_response_followup","databaseId":104,"author":{"login":"coderabbitai"},"body":"<!-- This is an auto-generated reply by CodeRabbit -->\n<!-- CodeRabbit review command invocation: v2:followup -->\n<details>\n<summary>Action not completed</summary>\n\nReview rate limited.\n\nYour included review limit is currently reached. Your next included review will be available in 19 seconds.\n\n</details>","createdAt":"2026-09-14T01:01:01Z","updatedAt":"2026-09-14T01:01:27Z","url":"https://example.test/comments/104"}]'
+      fi
+    fi
   fi
   jq -n --argjson comments "$comments" '{data:{repository:{pullRequest:{headRefOid:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",commits:{nodes:[{commit:{oid:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",committedDate:"2026-09-14T00:00:00Z"}}]},reviewThreads:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}},comments:{nodes:$comments,pageInfo:{hasNextPage:false,endCursor:null}},reviews:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}}}}}}'
   exit 0
@@ -61,9 +67,17 @@ if [[ "$1" == "api" && "$2" == "repos/owner/repo/issues/42/comments" ]]; then
   [[ "$*" == *"body=@coderabbitai full review"* ]]
   count=0
   [[ ! -f "$MOCK_STATE/count" ]] || count="$(<"$MOCK_STATE/count")"
-  printf '%s\n' "$((count + 1))" >"$MOCK_STATE/count"
+  count="$((count + 1))"
+  printf '%s\n' "$count" >"$MOCK_STATE/count"
   touch "$MOCK_STATE/posted"
-  printf '%s\n' '{"id":101,"created_at":"2026-09-14T01:00:00Z","html_url":"https://example.test/comments/101"}'
+  id=101
+  created_at='2026-09-14T01:00:00Z'
+  if [[ "$count" == "2" ]]; then
+    id=103
+    created_at='2026-09-14T01:01:00Z'
+    touch "$MOCK_STATE/second-posted"
+  fi
+  jq -n --argjson id "$id" --arg created_at "$created_at" --arg html_url "https://example.test/comments/$id" '{id:$id,created_at:$created_at,html_url:$html_url}'
   exit 0
 fi
 printf 'unexpected gh arguments: %s\n' "$*" >&2
@@ -121,6 +135,9 @@ if (cd "$TEST_REPO" && PATH="$MOCK_BIN:$PATH" dev-tools/request-coderabbit-revie
   exit 1
 fi
 grep -q 'state: awaiting_response' "$TMP_DIR/second.out"
+grep -q 'WARNING: Hosted CodeRabbit trigger 101 has no attributable terminal response' "$TMP_DIR/second.out"
+grep -Eq 'age [0-9]+ seconds \(created 2026-09-14T01:00:00Z\)' "$TMP_DIR/second.out"
+grep -q 'Manual Overseer adjudication required before retrying' "$TMP_DIR/second.out"
 [[ "$(<"$MOCK_STATE/count")" == "1" ]]
 
 record_dir="$(dirname "$record")"
@@ -181,5 +198,24 @@ if (cd "$TEST_REPO" && PATH="$MOCK_BIN:$PATH" dev-tools/request-coderabbit-revie
 fi
 grep -q 'another hosted CodeRabbit request operation is in progress' "$TMP_DIR/lock.out"
 [[ "$(<"$MOCK_STATE/count")" == "1" ]]
+flock -u "$held_fd"
+exec {held_fd}>&-
+
+rm -f "$record" "$record_dir"/trigger-* "$MOCK_STATE/posted" "$MOCK_STATE/second-posted" "$MOCK_STATE/count" \
+  "$MOCK_STATE/pr-view-count" "$MOCK_STATE/pr-heads" "$MOCK_STATE/pr-states"
+touch "$MOCK_STATE/rate-limited-seconds"
+(cd "$TEST_REPO" && PATH="$MOCK_BIN:$PATH" dev-tools/request-coderabbit-review.sh 42 --repo owner/repo) >"$TMP_DIR/rate-limited-first.out"
+(cd "$TEST_REPO" && PATH="$MOCK_BIN:$PATH" dev-tools/request-coderabbit-review.sh 42 --repo owner/repo) >"$TMP_DIR/rate-limited-second.out"
+[[ "$(<"$MOCK_STATE/count")" == "2" ]]
+[[ "$(jq -r '.trigger.id' "$record_dir/trigger-101.json")" == "101" ]]
+[[ "$(jq -r '.trigger.id' "$record")" == "103" ]]
+if (cd "$TEST_REPO" && PATH="$MOCK_BIN:$PATH" python3 dev-tools/validation/check-coderabbit-review.py \
+  --repo owner/repo --pr 42 --trigger-record "$record" --json) >"$TMP_DIR/rate-limited-followup-check.out"; then
+  exit 1
+fi
+[[ "$(jq -r '.trigger_state.trigger_comment_id' "$TMP_DIR/rate-limited-followup-check.out")" == "103" ]]
+[[ "$(jq -r '.trigger_state.response_id' "$TMP_DIR/rate-limited-followup-check.out")" == "104" ]]
+[[ "$(jq -r '.trigger_state.state' "$TMP_DIR/rate-limited-followup-check.out")" == "rate_limited" ]]
+[[ "$(jq -r '.trigger_state.attributed' "$TMP_DIR/rate-limited-followup-check.out")" == "true" ]]
 
 echo "hosted CodeRabbit trigger wrapper contract checks passed"
