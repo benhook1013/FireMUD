@@ -167,11 +167,11 @@ for required in (
  if required not in ci_text: fail(f'ci.yml Buf installer does not consume canonical authority: {required}')
 
 kubeconform_curl_pattern=(
- r'(?m)^\s*curl -fsSL --connect-timeout 10 --max-time 60 '
+ r'(?m)^\s*curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 --connect-timeout 10 --max-time 60 '
  r'"https://github\.com/yannh/kubeconform/releases/download/v\$\{KUBECONFORM_VERSION\}/kubeconform-linux-amd64\.tar\.gz" '
  r'-o /tmp/kubeconform\.tgz$')
 if len(re.findall(kubeconform_curl_pattern,ci_text)) != 1:
- fail('ci.yml must define exactly one kubeconform installer with canonical bounded timeouts')
+ fail('ci.yml must define exactly one kubeconform installer with canonical bounded retries and timeouts')
 for required in (
  'KUBECONFORM_VERSION: ${{ steps.workflow-tool-versions.outputs.kubeconform-version }}',
  'KUBECONFORM_SHA256: ${{ steps.workflow-tool-versions.outputs.kubeconform-linux-amd64-sha256 }}',

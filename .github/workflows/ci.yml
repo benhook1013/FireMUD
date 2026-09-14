@@ -505,7 +505,7 @@ jobs:
           KUBECONFORM_SHA256: ${{ steps.workflow-tool-versions.outputs.kubeconform-linux-amd64-sha256 }}
         run: |
           [[ "$(uname -s)/$(uname -m)" == "Linux/x86_64" ]] || { echo "Unsupported kubeconform platform" >&2; exit 1; }
-          curl -fsSL --connect-timeout 10 --max-time 60 "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" -o /tmp/kubeconform.tgz
+          curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 --connect-timeout 10 --max-time 60 "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" -o /tmp/kubeconform.tgz
           echo "${KUBECONFORM_SHA256}  /tmp/kubeconform.tgz" | sha256sum --check --status
           tar -xzf /tmp/kubeconform.tgz -C /tmp
           sudo install /tmp/kubeconform /usr/local/bin/kubeconform
