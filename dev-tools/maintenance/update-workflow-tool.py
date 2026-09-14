@@ -321,6 +321,15 @@ def main() -> None:
     if args.image_evidence_file and args.tool != "velero":
         parser.error("--image-evidence-file is only valid for velero")
 
+    resolved_authority = args.authority.resolve()
+    resolved_velero_manifest = args.velero_manifest.resolve()
+    allowed_target_sets = [
+        frozenset((resolved_authority,)),
+        frozenset((resolved_authority, resolved_velero_manifest)),
+    ]
+    with authority_lock(args.authority):
+        reconcile_recovery_journal(args.authority, allowed_target_sets)
+
     image_digest = None
     if args.tool == "velero" and args.image_evidence_file:
         image_digest = velero_image_digest_from_evidence(args.image_evidence_file, args.version)
@@ -347,16 +356,8 @@ def main() -> None:
     if args.tool == "velero" and image_digest is None:
         image_digest = dockerhub_digest("velero/velero", f"v{args.version}")
 
-    resolved_authority = args.authority.resolve()
-    resolved_velero_manifest = args.velero_manifest.resolve()
     with authority_lock(args.authority):
-        reconcile_recovery_journal(
-            args.authority,
-            [
-                frozenset((resolved_authority,)),
-                frozenset((resolved_authority, resolved_velero_manifest)),
-            ],
-        )
+        reconcile_recovery_journal(args.authority, allowed_target_sets)
 
         authority = args.authority.read_text(encoding="utf-8")
         authority = replace(authority, f"{prefix}_VERSION", args.version)

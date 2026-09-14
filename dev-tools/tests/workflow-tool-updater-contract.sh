@@ -44,15 +44,18 @@ grep -Fx 'KUBECTL_LINUX_AMD64_CHECKSUM_VERSION=9.8.7' "$tmp/kubectl-authority.en
 grep -Fx "KUBECTL_LINUX_AMD64_SHA256=$kubectl_checksum" "$tmp/kubectl-authority.env" >/dev/null
 
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/lock-authority.env"
+cp "$ROOT_DIR/k8s/velero/verify-backups-cronjob.yaml" "$tmp/lock-velero.yaml"
 lock_checksum=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
-echo "$lock_checksum  helm-v9.8.7-linux-amd64.tar.gz" > "$tmp/lock-checksum"
-python3 - "$ROOT_DIR" "$tmp/lock-authority.env" "$tmp/lock-checksum" <<'PY'
+lock_image_digest=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+echo "$lock_checksum  velero-v9.8.7-linux-amd64.tar.gz" > "$tmp/lock-checksum"
+echo "velero/velero:v9.8.7@$lock_image_digest" > "$tmp/lock-image-evidence"
+python3 - "$ROOT_DIR" "$tmp/lock-authority.env" "$tmp/lock-checksum" "$tmp/lock-image-evidence" "$tmp/lock-velero.yaml" <<'PY'
 import importlib.util
 import subprocess
 import sys
 from pathlib import Path
 
-root, authority, checksum_file = map(Path, sys.argv[1:])
+root, authority, checksum_file, evidence_file, manifest = map(Path, sys.argv[1:])
 spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -85,6 +88,8 @@ if lock_attempt(authority.resolve().parent) != 0:
 
 real_reconcile = module.reconcile_recovery_journal
 real_transaction = module.transactional_write
+real_read_text = module.Path.read_text
+real_image_evidence = module.velero_image_digest_from_evidence
 events = []
 
 def instrumented_reconcile(lock_authority, allowed_target_sets):
@@ -93,29 +98,52 @@ def instrumented_reconcile(lock_authority, allowed_target_sets):
     events.append("reconcile")
     return real_reconcile(lock_authority, allowed_target_sets)
 
+def instrumented_read_text(path, *args, **kwargs):
+    if Path(path).resolve() == checksum_file.resolve():
+        if lock_attempt(authority.resolve().parent) != 0:
+            raise SystemExit("main read the checksum file while the authority lock was held")
+        events.append("checksum")
+    return real_read_text(path, *args, **kwargs)
+
+def instrumented_image_evidence(path, version):
+    if lock_attempt(authority.resolve().parent) != 0:
+        raise SystemExit("main read Velero image evidence while the authority lock was held")
+    events.append("evidence")
+    return real_image_evidence(path, version)
+
 def instrumented_transaction(*args, **kwargs):
     updates = args[0]
     if lock_attempt(Path(updates[0][0]).resolve().parent) != 1:
         raise SystemExit("main reached transaction without the authority lock")
+    if not events or events[-1] != "reconcile":
+        raise SystemExit("main did not reconcile immediately before the final transaction")
     events.append("transaction")
     return real_transaction(*args, **kwargs)
 
 module.reconcile_recovery_journal = instrumented_reconcile
+module.Path.read_text = instrumented_read_text
+module.velero_image_digest_from_evidence = instrumented_image_evidence
 module.transactional_write = instrumented_transaction
 sys.argv = [
     str(root / "dev-tools/maintenance/update-workflow-tool.py"),
-    "helm",
+    "velero",
     "9.8.7",
     "--checksum-file",
     str(checksum_file),
+    "--image-evidence-file",
+    str(evidence_file),
     "--authority",
     str(authority),
+    "--velero-manifest",
+    str(manifest),
 ]
 module.main()
-if "reconcile" not in events or "transaction" not in events:
-    raise SystemExit("main did not reach both lock-protected phases")
+if events[:5] != ["reconcile", "evidence", "checksum", "reconcile", "transaction"]:
+    raise SystemExit(f"unexpected lock and resolution order: {events}")
 PY
-grep -Fx "HELM_LINUX_AMD64_SHA256=$lock_checksum" "$tmp/lock-authority.env" >/dev/null
+grep -Fx "VELERO_LINUX_AMD64_SHA256=$lock_checksum" "$tmp/lock-authority.env" >/dev/null
+grep -Fx "VELERO_IMAGE_DIGEST=$lock_image_digest" "$tmp/lock-authority.env" >/dev/null
+grep -F "image: velero/velero:v9.8.7@$lock_image_digest" "$tmp/lock-velero.yaml" >/dev/null
 
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/unchanged.env"
 cp "$tmp/unchanged.env" "$tmp/before.env"
@@ -274,6 +302,7 @@ real_replace = module.os.replace
 phase = "forward"
 manifest = manifest.resolve()
 authority = authority.resolve()
+authority_before = authority.read_text(encoding="utf-8")
 manifest_before = manifest.read_text(encoding="utf-8")
 
 def fail_forward_and_rollback(source, destination):
@@ -308,6 +337,35 @@ if journal.stat().st_mode & 0o077:
     raise SystemExit("prepared recovery journal is accessible to group or world")
 
 module.os.replace = real_replace
+unavailable_evidence = authority.with_name("unavailable-evidence")
+velero_checksum_file = authority.with_name("velero-checksum")
+velero_checksum_file.write_text(
+    "d" * 64 + "  velero-v9.8.7-linux-amd64.tar.gz\n", encoding="utf-8"
+)
+sys.argv = [
+    str(root / "dev-tools/maintenance/update-workflow-tool.py"),
+    "velero",
+    "9.8.7",
+    "--checksum-file",
+    str(velero_checksum_file),
+    "--image-evidence-file",
+    str(unavailable_evidence),
+    "--authority",
+    str(authority),
+    "--velero-manifest",
+    str(manifest),
+]
+try:
+    module.main()
+except SystemExit:
+    pass
+else:
+    raise SystemExit("unavailable Velero image evidence was accepted")
+if authority.read_text(encoding="utf-8") != authority_before or manifest.read_text(encoding="utf-8") != manifest_before:
+    raise SystemExit("unavailable later evidence left recovered targets inconsistent")
+if journal.exists():
+    raise SystemExit("initial recovery did not clear the prepared journal before evidence failure")
+
 checksum_file = authority.with_name("helm-checksum")
 checksum_file.write_text("c" * 64 + "  helm-v9.8.7-linux-amd64.tar.gz\n", encoding="utf-8")
 sys.argv = [

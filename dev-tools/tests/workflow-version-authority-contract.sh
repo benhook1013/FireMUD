@@ -133,7 +133,7 @@ node_count=python_count=gh_count=0
 for path in workflow_paths:
  for job_name,job in (load(path).get('jobs') or {}).items():
   if not isinstance(job,dict): continue
-  checkout=py=gh=loader=False; python_profile=None
+  checkout=py=gh_setup_seen=loader=False; python_profile=None
   for step in job.get('steps',[]):
    if not isinstance(step,dict): continue
    uses=str(step.get('uses','')); run=str(step.get('run',''))
@@ -155,15 +155,34 @@ for path in workflow_paths:
    if uses=='./.github/actions/setup-gh':
     gh_count+=1
     if not checkout: fail(f'{path.name}:{job_name}: gh setup before checkout')
-    gh=True
+    gh_setup_seen=True
    need=python_needs(run)
    if need is not None and not py: fail(f'{path.name}:{job_name}: direct or helper Python consumer uses ambient runner Python')
    if need=='yaml' and python_profile not in {'yaml','ci'}: fail(f'{path.name}:{job_name}: PyYAML helper lacks its pinned dependency profile')
    if need in {'smoke','ci','docs'} and python_profile!=need: fail(f'{path.name}:{job_name}: {need} helper lacks its pinned dependency profile')
-   if has_gh_consumer(run) and not gh: fail(f'{path.name}:{job_name}: direct or helper gh consumer is not preceded by canonical setup-gh')
+   if has_gh_consumer(run) and not gh_setup_seen: fail(f'{path.name}:{job_name}: direct or helper gh consumer is not preceded by canonical setup-gh')
    if uses.startswith('oss-review-toolkit/ort-ci-github-action@'):
     if not loader or step.get('with',{}).get('image')!='${{ steps.workflow-tool-versions.outputs.ort-image }}': fail(f'{path.name}:{job_name}: ORT bypasses authority')
 if not min(node_count,python_count,gh_count): fail('expected Node, Python, and gh consumers')
+
+dev_demo=load(workflows/'dev-demo.yml')
+deploy_steps=(dev_demo.get('jobs') or {}).get('dev-demo-deploy',{}).get('steps',[])
+cluster_access_indexes=[
+ index for index,step in enumerate(deploy_steps)
+ if isinstance(step,dict) and step.get('id')=='cluster-access'
+]
+gh_setup_indexes=[
+ index for index,step in enumerate(deploy_steps)
+ if isinstance(step,dict) and step.get('name')=='Set up canonical GitHub CLI'
+]
+if len(cluster_access_indexes)!=1 or len(gh_setup_indexes)!=1: fail('dev-demo must define exactly one cluster access check and canonical gh setup')
+cluster_access_index=cluster_access_indexes[0]; gh_setup_index=gh_setup_indexes[0]
+if gh_setup_index != cluster_access_index + 1: fail('dev-demo canonical gh setup must immediately follow cluster access verification')
+gh_setup=deploy_steps[gh_setup_index]
+if gh_setup.get('if') != "${{ steps.cluster-access.outputs.available == 'true' }}": fail('dev-demo canonical gh setup must require available cluster access')
+for index,step in enumerate(deploy_steps):
+ if isinstance(step,dict) and has_gh_consumer(str(step.get('run',''))) and index <= gh_setup_index:
+  fail('dev-demo gh consumer must follow canonical gh setup')
 
 publisher=load(workflows/'publish-pr-runtime-images.yml')['jobs']['publish']
 if publisher.get('permissions',{}).get('contents')!='read': fail('trusted publisher checkout requires contents: read')
@@ -181,11 +200,11 @@ for path in sorted(actions.glob('*/action.yml')):
 text='\n'.join(p.read_text() for p in workflow_paths)
 for forbidden in ('python-version:','ruff==','PyYAML\n','websocket-client\n','aquasecurity/trivy/main','zaproxy:stable','VELERO_VERSION=v','KUBECONFORM_VERSION="v','BUF_VERSION: \'1.30.0\''):
  if forbidden in text: fail(f'workflow contains stale or duplicated authority: {forbidden}')
-required={
+workflow_authority_requirements={
  'ci.yml':('buf-version','buf-linux-x86-64-sha256','kubeconform-version','kubeconform-linux-amd64-sha256','actionlint-version'),
  'docs.yml':('lychee-version',), 'manual-backup-restore.yml':('velero-version','velero-linux-amd64-sha256'),
  'security.yml':('trivy-version',), 'weekly-security-scan.yml':('trivy-version',), 'zap-baseline.yml':('zap-image',)}
-for name,needles in required.items():
+for name,needles in workflow_authority_requirements.items():
  data=(workflows/name).read_text()
  if any(n not in data for n in needles): fail(f'{name} does not consume all canonical tool outputs')
 
@@ -197,12 +216,12 @@ buf_curl_pattern=(
  r'\s*-o /tmp/buf$')
 if len(re.findall(buf_curl_pattern,ci_text)) != 1:
  fail('ci.yml must define exactly one Buf installer with canonical bounded retries and timeouts')
-for required in (
+for required_buf_fragment in (
  'BUF_VERSION: ${{ steps.workflow-tool-versions.outputs.buf-version }}',
  'BUF_SHA256: ${{ steps.workflow-tool-versions.outputs.buf-linux-x86-64-sha256 }}',
  'echo "${BUF_SHA256}  /tmp/buf" | sha256sum --check --status',
 ):
- if required not in ci_text: fail(f'ci.yml Buf installer does not consume canonical authority: {required}')
+ if required_buf_fragment not in ci_text: fail(f'ci.yml Buf installer does not consume canonical authority: {required_buf_fragment}')
 
 kubeconform_curl_pattern=(
  r'(?m)^\s*curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 --connect-timeout 10 --max-time 60 '
@@ -210,12 +229,12 @@ kubeconform_curl_pattern=(
  r'-o /tmp/kubeconform\.tgz$')
 if len(re.findall(kubeconform_curl_pattern,ci_text)) != 1:
  fail('ci.yml must define exactly one kubeconform installer with canonical bounded retries and timeouts')
-for required in (
+for required_kubeconform_fragment in (
  'KUBECONFORM_VERSION: ${{ steps.workflow-tool-versions.outputs.kubeconform-version }}',
  'KUBECONFORM_SHA256: ${{ steps.workflow-tool-versions.outputs.kubeconform-linux-amd64-sha256 }}',
  'echo "${KUBECONFORM_SHA256}  /tmp/kubeconform.tgz" | sha256sum --check --status',
 ):
- if required not in ci_text: fail(f'ci.yml kubeconform installer does not consume canonical authority: {required}')
+ if required_kubeconform_fragment not in ci_text: fail(f'ci.yml kubeconform installer does not consume canonical authority: {required_kubeconform_fragment}')
 
 setup_gh_text=(actions/'setup-gh/action.yml').read_text()
 setup_gh_curl_pattern=(
@@ -225,13 +244,13 @@ setup_gh_curl_pattern=(
  r'\s*-o "\$temporary_archive"$')
 if len(re.findall(setup_gh_curl_pattern,setup_gh_text)) != 1:
  fail('setup-gh must define exactly one installer with canonical bounded retries and timeouts')
-for required in (
+for required_setup_gh_fragment in (
  'GH_VERSION: ${{ steps.versions.outputs.gh-version }}',
  'GH_SHA256: ${{ steps.versions.outputs.gh-linux-amd64-sha256 }}',
  'printf \'%s  %s\\n\' "$gh_sha256" "$temporary_archive"',
  'printf \'%s  %s\\n\' "$gh_sha256" "$archive_path"',
 ):
- if required not in setup_gh_text: fail(f'setup-gh installer does not consume canonical authority: {required}')
+ if required_setup_gh_fragment not in setup_gh_text: fail(f'setup-gh installer does not consume canonical authority: {required_setup_gh_fragment}')
 
 setup_kubectl_text=(actions/'setup-kubectl/action.yml').read_text()
 if 'azure/setup-kubectl@' in setup_kubectl_text or 'actions/cache@' in setup_kubectl_text: fail('setup-kubectl must use a direct, non-cached installer')
@@ -241,14 +260,14 @@ kubectl_curl_pattern=(
  r'\s*"https://dl\.k8s\.io/release/v\$\{kubectl_version\}/bin/linux/amd64/kubectl" \\\n'
  r'\s*-o "\$temporary_binary"$')
 if len(re.findall(kubectl_curl_pattern,setup_kubectl_text)) != 1: fail('setup-kubectl must define exactly one direct installer with canonical bounded retries and timeouts')
-for required in (
+for required_setup_kubectl_fragment in (
  'KUBECTL_VERSION: ${{ steps.versions.outputs.kubectl-version }}',
  'KUBECTL_SHA256: ${{ steps.versions.outputs.kubectl-linux-amd64-sha256 }}',
  'RUNNER_OS','RUNNER_ARCH','requires a Linux X64 runner',
  'printf \'%s  %s\\n\' "$kubectl_sha256" "$temporary_binary"',
  'sha256sum --check --status','install -m 0755','GITHUB_PATH',
 ):
- if required not in setup_kubectl_text: fail(f'setup-kubectl installer does not consume canonical authority safely: {required}')
+ if required_setup_kubectl_fragment not in setup_kubectl_text: fail(f'setup-kubectl installer does not consume canonical authority safely: {required_setup_kubectl_fragment}')
 
 release=load(workflows/'release-notes.yml')
 if release.get('permissions') != {'contents':'read'}: fail('release-notes.yml must define read-only top-level permissions')
@@ -277,8 +296,8 @@ for step in generator_steps:
  if isinstance(step,dict) and mutation.search(str(step.get('run',''))): fail('release mutation must not run in the read-only generator')
 if not any(mutation.search(str(step.get('run',''))) for step in publisher_steps if isinstance(step,dict)): fail('release publisher must own gh release mutation')
 generator_text='\n'.join(str(step.get('run','')) for step in generator_steps if isinstance(step,dict))
-for required in ('generate_notice.py','assemble_licenses_dir.py','zip -r','gh release view','publishedAt'):
- if required not in generator_text: fail(f'release generator lost existing behavior: {required}')
+for required_release_behavior in ('generate_notice.py','assemble_licenses_dir.py','zip -r','gh release view','publishedAt'):
+ if required_release_behavior not in generator_text: fail(f'release generator lost existing behavior: {required_release_behavior}')
 publisher_text='\n'.join(str(step.get('run','')) for step in publisher_steps if isinstance(step,dict))
 for asset in ('firemud-${{ github.ref_name }}-licenses.zip','firemud-${{ github.ref_name }}-release-compliance.zip','build/release-assets/NOTICE.md#NOTICE.md'):
  if asset not in publisher_text: fail(f'release publisher lost asset name: {asset}')
@@ -310,6 +329,13 @@ if len(velero_images)!=1 or velero_images[0] not in allowed_velero_images:
 renovate=json.loads((root/'renovate.json').read_text())
 if not {'nodenv','pyenv','pip_requirements','custom.regex'} <= set(renovate['enabledManagers']): fail('Renovate managers incomplete')
 if len(renovate.get('customManagers',[]))!=2: fail('Renovate must define version and image authority managers')
+def translate_renovate_pattern(pattern_source):
+ return re.sub(r'\(\?<([A-Za-z_])', r'(?P<\1', pattern_source)
+
+synthetic_pattern=re.compile(translate_renovate_pattern(r'(?<=a)(?<!b)(?<capture>[A-Z])'))
+if '(?<=a)' not in synthetic_pattern.pattern or '(?<!b)' not in synthetic_pattern.pattern: fail('Renovate pattern translation must preserve lookbehinds')
+synthetic_match=synthetic_pattern.search('aA')
+if synthetic_match is None or synthetic_match.group('capture')!='A': fail('Renovate pattern translation must preserve named captures')
 expected_dep_names={
  'KUBECTL':'kubernetes/kubernetes',
  'HELM':'helm/helm',
@@ -335,7 +361,7 @@ for manager_index,manager in enumerate(renovate['customManagers']):
  for pattern_index,pattern_source in enumerate(patterns):
   if not isinstance(pattern_source,str) or not pattern_source: fail(f'Renovate custom manager {manager_index} matchStrings[{pattern_index}] must be a non-empty string')
   try:
-   pattern=re.compile(pattern_source.replace('(?<','(?P<'))
+   pattern=re.compile(translate_renovate_pattern(pattern_source))
   except re.error as error:
    fail(f'Renovate custom manager {manager_index} matchStrings[{pattern_index}] is invalid: {error}')
   try:
@@ -371,8 +397,8 @@ for action in ('setup-gh','setup-helm'):
  if 'sha256sum --check --status' not in data: fail(f'{action} must verify its archive')
 if 'RUNNER_OS' not in (actions/'setup-gh/action.yml').read_text() or 'RUNNER_ARCH' not in (actions/'setup-gh/action.yml').read_text(): fail('setup-gh must reject unsupported platforms')
 lychee=(root/'dev-tools/docs/link-check.sh').read_text()
-for required in ('source "$ROOT_DIR/config/workflow-tool-versions.env"','/lychee/${LYCHEE_VERSION}','LYCHEE_LINUX_X86_64_MUSL_SHA256','sha256sum --check --status','VERIFIED_MARKER','ARCHIVE=','marker_binary_sha','extracted_sha','mv -f "$staging/lychee" "$BIN"','mv -f "$staged_archive" "$ARCHIVE"'):
- if required not in lychee: fail(f'local Lychee installer does not consume its authority: {required}')
+for required_lychee_fragment in ('source "$ROOT_DIR/config/workflow-tool-versions.env"','/lychee/${LYCHEE_VERSION}','LYCHEE_LINUX_X86_64_MUSL_SHA256','sha256sum --check --status','VERIFIED_MARKER','ARCHIVE=','marker_binary_sha','extracted_sha','mv -f "$staging/lychee" "$BIN"','mv -f "$staged_archive" "$ARCHIVE"'):
+ if required_lychee_fragment not in lychee: fail(f'local Lychee installer does not consume its authority: {required_lychee_fragment}')
 lychee_curl_pattern=(
  r'(?m)^\s*curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \\\n'
  r'\s*--connect-timeout 10 --max-time 60 \\\n'

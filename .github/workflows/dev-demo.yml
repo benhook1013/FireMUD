@@ -148,9 +148,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Set up canonical GitHub CLI
-        uses: ./.github/actions/setup-gh
-
       - name: Resolve certificate identity mode
         id: certificate-identity
         uses: ./.github/actions/resolve-certificate-identity-mode
@@ -191,6 +188,10 @@ jobs:
           echo "::warning::Dev-demo cluster access unavailable; skipping hosted deploy for this run."
           echo "available=false" >> "$GITHUB_OUTPUT"
           echo "DEV_DEMO_STAGE=cluster-access" >> "$GITHUB_ENV"
+
+      - name: Set up canonical GitHub CLI
+        if: ${{ steps.cluster-access.outputs.available == 'true' }}
+        uses: ./.github/actions/setup-gh
 
       - name: Check Hosted identity requester credentials
         id: requester-credentials

@@ -646,6 +646,40 @@ if (assert_publish_checkout_configuration "$contract_fixture_dir/publisher-check
   echo "assert_publish_checkout_configuration must require the checkout in the publish job" >&2
   exit 1
 fi
+cat >"$contract_fixture_dir/publisher-checkout-wrong-ref.yml" <<'EOF'
+jobs:
+  publish:
+    steps:
+      - uses: actions/checkout@fixture
+        with:
+          ref: refs/heads/main
+          persist-credentials: false
+EOF
+if (assert_publish_checkout_configuration \
+  "$contract_fixture_dir/publisher-checkout-wrong-ref.yml" \
+  ) 2>"$contract_fixture_dir/publisher-checkout-wrong-ref.error"; then
+  echo "assert_publish_checkout_configuration must reject a non-default checkout ref" >&2
+  exit 1
+fi
+require_contains "$contract_fixture_dir/publisher-checkout-wrong-ref.error" \
+  'publish checkout must use the repository default branch'
+cat >"$contract_fixture_dir/publisher-checkout-string-persist-credentials.yml" <<'EOF'
+jobs:
+  publish:
+    steps:
+      - uses: actions/checkout@fixture
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: 'false'
+EOF
+if (assert_publish_checkout_configuration \
+  "$contract_fixture_dir/publisher-checkout-string-persist-credentials.yml" \
+  ) 2>"$contract_fixture_dir/publisher-checkout-string-persist-credentials.error"; then
+  echo "assert_publish_checkout_configuration must reject string false persisted credentials" >&2
+  exit 1
+fi
+require_contains "$contract_fixture_dir/publisher-checkout-string-persist-credentials.error" \
+  'publish checkout must disable persisted credentials with boolean false'
 cat >"$contract_fixture_dir/ordered-sequence.txt" <<'EOF'
 prefix first second suffix
 third
