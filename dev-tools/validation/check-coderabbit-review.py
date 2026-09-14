@@ -147,6 +147,8 @@ class TriggerState:
     response_url: str | None
     cooldown_until: str | None
     reason: str
+    age_seconds: int | None = None
+    manual_adjudication_required: bool = False
 
 
 def parse_args() -> argparse.Namespace:
@@ -443,6 +445,10 @@ def parse_timestamp(value: str | None) -> datetime | None:
     if not value:
         return None
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+
+
+def age_seconds(created_at: datetime) -> int:
+    return max(0, int((datetime.now(timezone.utc) - created_at).total_seconds()))
 
 
 def normalize_command(body: str) -> str:
@@ -1344,6 +1350,7 @@ def trigger_state(
             response_url=None,
             cooldown_until=None,
             reason="no qualifying CodeRabbit response is strictly newer than the captured trigger",
+            age_seconds=age_seconds(trigger_dt),
         )
 
     terminal_candidates = [
@@ -1409,10 +1416,23 @@ def trigger_state(
         response_url=response.get("url"),
         cooldown_until=cooldown,
         reason=reason,
+        age_seconds=age_seconds(trigger_dt),
     )
 
 
 def emit_trigger_text(state: TriggerState) -> None:
+    if state.manual_adjudication_required:
+        trigger_id = state.trigger_comment_id or "unknown"
+        age = (
+            f"{state.age_seconds} seconds"
+            if state.age_seconds is not None
+            else "unknown age"
+        )
+        print(
+            "warning=HOSTED CODERABBIT TRIGGER "
+            f"{trigger_id} HAS NO ATTRIBUTABLE TERMINAL RESPONSE; "
+            f"AGE={age.upper()}; MANUAL OVERSEER ADJUDICATION REQUIRED BEFORE RETRYING"
+        )
     for key, value in state.__dict__.items():
         if isinstance(value, bool):
             value = str(value).lower()
@@ -1554,6 +1574,7 @@ def main() -> int:
             if remaining <= 0:
                 state.state = "timed_out"
                 state.terminal = True
+                state.manual_adjudication_required = True
                 state.reason = (
                     "bounded wait expired before a terminal CodeRabbit response"
                 )

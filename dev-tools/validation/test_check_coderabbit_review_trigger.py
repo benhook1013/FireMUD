@@ -428,12 +428,41 @@ Your included review limit is currently reached under our [Fair Usage Limits Pol
                 capture_output=True,
                 text=True,
             )
+            text_completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--repo",
+                    REPO,
+                    "--pr",
+                    str(PR),
+                    "--input",
+                    str(payload_path),
+                    "--trigger-record",
+                    str(record_path),
+                    "--wait",
+                    "--timeout",
+                    "0",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
         output = json.loads(completed.stdout)
         self.assertEqual(completed.returncode, 1)
         self.assertFalse(output["ok"])
         self.assertEqual(output["trigger_state"]["state"], "timed_out")
         self.assertTrue(output["trigger_state"]["terminal"])
         self.assertTrue(output["trigger_state"]["attributed"])
+        self.assertEqual(output["trigger_state"]["trigger_comment_id"], 10)
+        self.assertGreaterEqual(output["trigger_state"]["age_seconds"], 0)
+        self.assertTrue(output["trigger_state"]["manual_adjudication_required"])
+        self.assertEqual(text_completed.returncode, 1)
+        self.assertRegex(
+            text_completed.stdout,
+            r"warning=HOSTED CODERABBIT TRIGGER 10 HAS NO ATTRIBUTABLE TERMINAL RESPONSE; "
+            r"AGE=\d+ SECONDS; MANUAL OVERSEER ADJUDICATION REQUIRED BEFORE RETRYING",
+        )
 
     def test_direct_wait_rejects_nonfinite_and_unbounded_values_before_loading(self) -> None:
         for option, value in (

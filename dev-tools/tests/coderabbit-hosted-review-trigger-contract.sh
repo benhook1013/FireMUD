@@ -135,6 +135,9 @@ if (cd "$TEST_REPO" && PATH="$MOCK_BIN:$PATH" dev-tools/request-coderabbit-revie
   exit 1
 fi
 grep -q 'state: awaiting_response' "$TMP_DIR/second.out"
+grep -q 'WARNING: Hosted CodeRabbit trigger 101 has no attributable terminal response' "$TMP_DIR/second.out"
+grep -Eq 'age [0-9]+ seconds \(created 2026-09-14T01:00:00Z\)' "$TMP_DIR/second.out"
+grep -q 'Manual Overseer adjudication required before retrying' "$TMP_DIR/second.out"
 [[ "$(<"$MOCK_STATE/count")" == "1" ]]
 
 record_dir="$(dirname "$record")"
