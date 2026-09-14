@@ -67,8 +67,9 @@ def python_needs(text):
  return 'none'
 def has_gh_consumer(text): return any(run_has_gh(source) for source in helper_text(text))
 
+workflow_paths=sorted((*workflows.glob('*.yml'), *workflows.glob('*.yaml')))
 node_count=python_count=gh_count=0
-for path in sorted(workflows.glob('*.yml')):
+for path in workflow_paths:
  for job_name,job in (load(path).get('jobs') or {}).items():
   if not isinstance(job,dict): continue
   checkout=py=gh=loader=False; python_profile=None
@@ -116,7 +117,7 @@ for path in sorted(actions.glob('*/action.yml')):
   if 'python3' in run and not setup_py: fail(f'{path}: Python consumer lacks setup')
   if run_has_gh(run) and not setup_gh: fail(f'{path}: gh consumer lacks setup')
 
-text='\n'.join(p.read_text() for p in workflows.glob('*.yml'))
+text='\n'.join(p.read_text() for p in workflow_paths)
 for forbidden in ('python-version:','ruff==','PyYAML\n','websocket-client\n','aquasecurity/trivy/main','zaproxy:stable','VELERO_VERSION=v','KUBECONFORM_VERSION="v','BUF_VERSION: \'1.30.0\''):
  if forbidden in text: fail(f'workflow contains stale or duplicated authority: {forbidden}')
 required={

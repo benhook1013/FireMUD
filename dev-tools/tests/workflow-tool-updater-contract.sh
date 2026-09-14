@@ -65,10 +65,11 @@ cp "$tmp/before.env" "$tmp/raw-digest.env"
 cp "$tmp/unchanged.yaml" "$tmp/raw-digest.yaml"
 if python3 "$ROOT_DIR/dev-tools/maintenance/update-workflow-tool.py" velero 9.8.7 \
   --checksum-file "$tmp/checksums" --image-digest "$image_digest" \
-  --authority "$tmp/raw-digest.env" --velero-manifest "$tmp/raw-digest.yaml" 2>/dev/null; then
+  --authority "$tmp/raw-digest.env" --velero-manifest "$tmp/raw-digest.yaml" 2>"$tmp/raw-digest.stderr"; then
   echo 'updater retained the raw --image-digest override' >&2
   exit 1
 fi
+grep -F -- 'unrecognized arguments: --image-digest' "$tmp/raw-digest.stderr" >/dev/null
 cmp "$tmp/before.env" "$tmp/raw-digest.env"
 cmp "$tmp/unchanged.yaml" "$tmp/raw-digest.yaml"
 
