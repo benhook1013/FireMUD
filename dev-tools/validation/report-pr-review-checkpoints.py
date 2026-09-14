@@ -750,47 +750,7 @@ def _capture_round(
 def collect_hosted_rounds(repo: str, pr_number: int, count: int, disposition: str = "all") -> dict[str, Any]:
     completed = _completed_hosted_reviews(fetch_hosted_reviews(repo, pr_number))
     selected = completed[-count:]
-    rounds: list[dict[str, Any]] = []
-    for review in selected:
-        review_id = review["id"]
-        round_result: dict[str, Any] = {
-            "review_id": review_id,
-            "submitted_at": review.get("submitted_at"),
-            "commit_id": review.get("commit_id"),
-            "findings": [],
-            "limitations": ["main inline findings are covered; summary-only items are not normalized"],
-        }
-        try:
-            capture = load_hosted_capture(repo, pr_number, review_id, completed)
-        except CaptureUnavailable as exc:
-            round_result.update({"status": "unavailable", "message": str(exc)})
-            rounds.append(round_result)
-            continue
-        except CaptureInvalid as exc:
-            round_result.update({"status": "invalid", "message": str(exc)})
-            rounds.append(round_result)
-            continue
-        rows = _hosted_decision_rows(capture.comments, capture.decisions, disposition)
-        all_rows = _hosted_decision_rows(capture.comments, capture.decisions, "all")
-        round_result.update(
-            {
-                "status": "linked",
-                "message": (
-                    "linked Hosted review loaded"
-                    if capture.decision_file_present
-                    else "linked Hosted review loaded; dispositions are unknown because decisions are not recorded"
-                ),
-                "findings": rows,
-                "references": [
-                    reference
-                    for reference in capture.unlinked_decisions
-                    if _reference_matches_disposition(reference, disposition)
-                ],
-                "limitations": ["main inline findings are covered; summary-only items are not normalized"],
-                "coverage_gap": sum(row["disposition"] == "unknown" for row in all_rows),
-            }
-        )
-        rounds.append(round_result)
+    rounds = [_collect_hosted_round(review, repo, pr_number, completed, disposition) for review in selected]
     return {
         "matched_hosted_reviews": len(completed),
         "returned_reviews": len(rounds),
@@ -1119,12 +1079,84 @@ def collect_detail(comments: list[dict[str, Any]], comment_id: int, repo: str, p
     return result
 
 
+def _collect_cli_round(
+    checkpoint: Checkpoint,
+    repo: str,
+    pr_number: int,
+    disposition: str,
+) -> dict[str, Any]:
+    round_result: dict[str, Any] = {
+        "comment_id": checkpoint.comment_id,
+        "created_at": checkpoint.created_at,
+        "reviewed_sha": checkpoint.reviewed_sha,
+        "raw_found": checkpoint.raw_found,
+        "accepted": checkpoint.accepted,
+        "file_count": checkpoint.file_count,
+        "run_id": checkpoint.run_id,
+        "findings": [],
+    }
+    try:
+        capture = load_capture(checkpoint, repo, pr_number)
+    except CaptureUnavailable as exc:
+        round_result.update({"status": "unavailable", "message": str(exc)})
+        return round_result
+    except CaptureInvalid as exc:
+        round_result.update({"status": "invalid", "message": str(exc)})
+        return round_result
+    return _capture_round(checkpoint, capture, disposition)
+
+
+def _collect_hosted_round(
+    review: dict[str, Any],
+    repo: str,
+    pr_number: int,
+    reviews: list[dict[str, Any]],
+    disposition: str,
+) -> dict[str, Any]:
+    review_id = review["id"]
+    round_result: dict[str, Any] = {
+        "review_id": review_id,
+        "submitted_at": review.get("submitted_at"),
+        "commit_id": review.get("commit_id"),
+        "findings": [],
+        "limitations": ["main inline findings are covered; summary-only items are not normalized"],
+    }
+    try:
+        capture = load_hosted_capture(repo, pr_number, review_id, reviews)
+    except CaptureUnavailable as exc:
+        round_result.update({"status": "unavailable", "message": str(exc)})
+        return round_result
+    except CaptureInvalid as exc:
+        round_result.update({"status": "invalid", "message": str(exc)})
+        return round_result
+    rows = _hosted_decision_rows(capture.comments, capture.decisions, disposition)
+    all_rows = _hosted_decision_rows(capture.comments, capture.decisions, "all")
+    round_result.update(
+        {
+            "status": "linked",
+            "message": (
+                "linked Hosted review loaded"
+                if capture.decision_file_present
+                else "linked Hosted review loaded; dispositions are unknown because decisions are not recorded"
+            ),
+            "findings": rows,
+            "references": [
+                reference
+                for reference in capture.unlinked_decisions
+                if _reference_matches_disposition(reference, disposition)
+            ],
+            "coverage_gap": sum(row["disposition"] == "unknown" for row in all_rows),
+        }
+    )
+    return round_result
+
+
 def collect_rejections(
     comments: list[dict[str, Any]],
     count: int,
     repo: str,
     pr_number: int,
-    source: str = "cli",
+    source: str = "combined",
     disposition: str = "rejected",
 ) -> dict[str, Any]:
     if disposition not in {"all", "accepted", "rejected"}:
@@ -1133,38 +1165,45 @@ def collect_rejections(
         report = collect_hosted_rounds(repo, pr_number, count, disposition)
         report["unparsed_candidates"] = 0
         return report
+    if source == "combined":
+        checkpoints, unparsed_candidates = parse_checkpoint_comments(comments)
+        cli_checkpoints = [checkpoint for checkpoint in checkpoints if checkpoint.type == "CLI"]
+        completed = _completed_hosted_reviews(fetch_hosted_reviews(repo, pr_number))
+        candidates = [
+            (checkpoint.created_at, "CLI", checkpoint.comment_id or 0, checkpoint)
+            for checkpoint in cli_checkpoints
+        ] + [(review["submitted_at"], "Hosted", review["id"], review) for review in completed]
+        candidates.sort(key=lambda candidate: candidate[:3])
+        selected = candidates[-count:]
+        rounds = [
+            (
+                _collect_cli_round(item, repo, pr_number, disposition)
+                if source_type == "CLI"
+                else _collect_hosted_round(item, repo, pr_number, completed, disposition)
+            )
+            for _, source_type, _, item in selected
+        ]
+        return {
+            "matched_rounds": len(candidates),
+            "matched_cli_rounds": len(cli_checkpoints),
+            "matched_hosted_reviews": len(completed),
+            "returned_rounds": len(rounds),
+            "omitted_rounds": len(candidates) - len(rounds),
+            "requested_rounds": count,
+            "source": "combined",
+            "disposition": disposition,
+            "unparsed_candidates": unparsed_candidates,
+            "rounds": rounds,
+        }
     if source != "cli":
-        raise CheckpointError("source must be cli or hosted")
+        raise CheckpointError("source must be cli, hosted, or combined")
     checkpoints, unparsed_candidates = parse_checkpoint_comments(comments)
     cli_checkpoints = sorted(
         (checkpoint for checkpoint in checkpoints if checkpoint.type == "CLI"),
         key=lambda checkpoint: checkpoint.created_at,
     )
     selected = cli_checkpoints[-count:]
-    rounds: list[dict[str, Any]] = []
-    for checkpoint in selected:
-        round_result: dict[str, Any] = {
-            "comment_id": checkpoint.comment_id,
-            "created_at": checkpoint.created_at,
-            "reviewed_sha": checkpoint.reviewed_sha,
-            "raw_found": checkpoint.raw_found,
-            "accepted": checkpoint.accepted,
-            "file_count": checkpoint.file_count,
-            "run_id": checkpoint.run_id,
-            "findings": [],
-        }
-        try:
-            capture = load_capture(checkpoint, repo, pr_number)
-        except CaptureUnavailable as exc:
-            round_result.update({"status": "unavailable", "message": str(exc)})
-            rounds.append(round_result)
-            continue
-        except CaptureInvalid as exc:
-            round_result.update({"status": "invalid", "message": str(exc)})
-            rounds.append(round_result)
-            continue
-        round_result = _capture_round(checkpoint, capture, disposition)
-        rounds.append(round_result)
+    rounds = [_collect_cli_round(checkpoint, repo, pr_number, disposition) for checkpoint in selected]
     return {
         "matched_cli_rounds": len(cli_checkpoints),
         "returned_rounds": len(rounds),
@@ -1322,7 +1361,10 @@ def emit_hosted_text(report: dict[str, Any]) -> None:
 
 
 def emit_rejections_text(report: dict[str, Any]) -> None:
-    matched_key = "matched_cli_rounds" if "matched_cli_rounds" in report else "matched_hosted_reviews"
+    if report.get("source") == "combined":
+        matched_key = "matched_rounds"
+    else:
+        matched_key = "matched_cli_rounds" if "matched_cli_rounds" in report else "matched_hosted_reviews"
     print(
         f"matched={report[matched_key]} returned={report['returned_rounds' if 'returned_rounds' in report else 'returned_reviews']} "
         f"omitted={report['omitted_rounds' if 'omitted_rounds' in report else 'omitted_reviews']} "
@@ -1403,7 +1445,7 @@ def parse_args() -> argparse.Namespace:
         "--rounds",
         type=parse_positive_limit,
         metavar="N",
-        help="Show dispositions from the latest N CLI or Hosted rounds",
+        help="Show dispositions from the latest N combined rounds (or an explicit --source)",
     )
     detail_or_rejections.add_argument(
         "--hosted",
@@ -1416,8 +1458,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--source",
         choices=("cli", "hosted"),
-        default="cli",
-        help="Evidence source for --rounds/--rejections (default: cli)",
+        default="combined",
+        help="Explicit evidence source for --rounds; omitted uses combined Hosted and CLI rounds (default)",
     )
     parser.add_argument(
         "--disposition",
@@ -1434,7 +1476,7 @@ def main() -> int:
     if args.pr <= 0:
         print("error: --pr must be a positive integer", file=sys.stderr)
         return 2
-    if args.source != "cli" and args.rounds is None and args.rejections is None:
+    if args.source == "hosted" and args.rounds is None and args.rejections is None:
         print("error: --source requires --rounds or --rejections", file=sys.stderr)
         return 2
     if args.source == "hosted" and args.rejections is not None:
@@ -1452,9 +1494,10 @@ def main() -> int:
         elif args.rounds is not None or args.rejections is not None:
             count = args.rounds if args.rounds is not None else args.rejections
             disposition = "rejected" if args.rejections is not None else args.disposition
-            comments = fetch_comments(args.repo, args.pr) if args.source == "cli" else []
+            source = "cli" if args.rejections is not None else args.source
+            comments = fetch_comments(args.repo, args.pr) if source in {"cli", "combined"} else []
             report = collect_rejections(
-                comments, count, args.repo, args.pr, source=args.source, disposition=disposition
+                comments, count, args.repo, args.pr, source=source, disposition=disposition
             )
         else:
             comments = fetch_comments(args.repo, args.pr)

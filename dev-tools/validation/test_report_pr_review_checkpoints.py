@@ -956,11 +956,95 @@ class CheckpointReporterTest(unittest.TestCase):
             },
         ]
 
-        report = self.reporter.collect_rejections(comments, 2, "owner/repo", 42)
+        report = self.reporter.collect_rejections(comments, 2, "owner/repo", 42, source="cli")
 
         self.assertEqual([round_result["comment_id"] for round_result in report["rounds"]], [801, 802])
         self.assertTrue(all(round_result["status"] == "unavailable" for round_result in report["rounds"]))
         self.assertEqual(report["omitted_rounds"], 0)
+
+    def test_rounds_default_selects_latest_combined_rounds_chronologically(self) -> None:
+        comments = [
+            {
+                "id": 811,
+                "body": "**CLI: 1 found / 0 accepted** · `abc1234`",
+                "created_at": "2026-09-10T01:00:00Z",
+            },
+            {
+                "id": 812,
+                "body": "**CLI: 1 found / 1 accepted** · `def5678`",
+                "created_at": "2026-09-10T02:00:00Z",
+            },
+            {
+                "id": 813,
+                "body": "**CLI: 1 found / 1 accepted** · `fedcba9`",
+                "created_at": "2026-09-10T04:00:00Z",
+            },
+        ]
+        hosted_reviews = [
+            {
+                "id": 911,
+                "user": {"login": "coderabbitai[bot]"},
+                "state": "COMMENTED",
+                "submitted_at": "2026-09-10T01:30:00Z",
+                "commit_id": "a" * 40,
+            },
+            {
+                "id": 912,
+                "user": {"login": "coderabbitai[bot]"},
+                "state": "COMMENTED",
+                "submitted_at": "2026-09-10T03:00:00Z",
+                "commit_id": "b" * 40,
+            },
+        ]
+        hosted_capture = self.reporter.HostedCapture(
+            "owner/repo", 42, hosted_reviews[0], [], {}, [], False
+        )
+        with (
+            patch.object(self.reporter, "fetch_hosted_reviews", return_value=hosted_reviews),
+            patch.object(self.reporter, "load_hosted_capture", return_value=hosted_capture),
+            patch.object(self.reporter, "load_capture", side_effect=self.reporter.CaptureUnavailable("missing")),
+        ):
+            report = self.reporter.collect_rejections(comments, 3, "owner/repo", 42, disposition="all")
+
+        self.assertEqual(report["source"], "combined")
+        self.assertEqual(report["matched_rounds"], 5)
+        self.assertEqual(report["omitted_rounds"], 2)
+        self.assertEqual(
+            [
+                (
+                    "Hosted" if "review_id" in result else "CLI",
+                    result["review_id"] if "review_id" in result else result["comment_id"],
+                )
+                for result in report["rounds"]
+            ],
+            [("CLI", 812), ("Hosted", 912), ("CLI", 813)],
+        )
+
+    def test_parse_args_rounds_source_defaults_to_combined(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            ["reporter", "--repo", "owner/repo", "--pr", "42", "--rounds", "2"],
+        ):
+            arguments = self.reporter.parse_args()
+
+        self.assertEqual(arguments.source, "combined")
+
+    def test_rejections_shorthand_forces_cli_source_when_default_is_combined(self) -> None:
+        arguments = self._arguments(source="combined", rejections=2, json=True)
+        with (
+            patch.object(self.reporter, "parse_args", return_value=arguments),
+            patch.object(self.reporter, "fetch_comments", return_value=[]),
+            patch.object(self.reporter, "collect_rejections", return_value={}) as collect_rejections,
+            redirect_stdout(io.StringIO()),
+            redirect_stderr(io.StringIO()),
+        ):
+            result = self.reporter.main()
+
+        self.assertEqual(result, 0)
+        collect_rejections.assert_called_once_with(
+            [], 2, "owner/repo", 42, source="cli", disposition="rejected"
+        )
 
     def test_rejections_render_only_recorded_findings_and_legacy_references(self) -> None:
         comment = {
@@ -986,7 +1070,7 @@ class CheckpointReporterTest(unittest.TestCase):
             decision_file_present=True,
         )
         with patch.object(self.reporter, "load_capture", return_value=capture):
-            report = self.reporter.collect_rejections([comment], 1, "owner/repo", 42)
+            report = self.reporter.collect_rejections([comment], 1, "owner/repo", 42, source="cli")
 
         round_result = report["rounds"][0]
         self.assertEqual(len(round_result["findings"]), 1)
@@ -1330,9 +1414,11 @@ class CheckpointReporterTest(unittest.TestCase):
             decision_file_present=True,
         )
         with patch.object(self.reporter, "load_capture", return_value=capture):
-            report = self.reporter.collect_rejections(comments, 1, "owner/repo", 42, disposition="all")
+            report = self.reporter.collect_rejections(
+                comments, 1, "owner/repo", 42, source="cli", disposition="all"
+            )
             accepted = self.reporter.collect_rejections(
-                comments, 1, "owner/repo", 42, disposition="accepted"
+                comments, 1, "owner/repo", 42, source="cli", disposition="accepted"
             )
 
         self.assertEqual(report["matched_cli_rounds"], 1)
