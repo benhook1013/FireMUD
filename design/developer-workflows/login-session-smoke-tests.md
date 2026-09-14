@@ -29,7 +29,7 @@ The fresh-bootstrap step establishes the claim and running stack; the standalone
        echo "Activate the interpreter pinned by .python-version before installing smoke requirements." >&2
        exit 1
    fi
-   python3 -m venv "$REPO_ROOT/.venv"
+   python3 -m venv --clear "$REPO_ROOT/.venv"
    # shellcheck disable=SC1091
    source "$REPO_ROOT/.venv/bin/activate"
    if [ "$(python3 -c 'import platform; print(platform.python_version())')" != "$PYTHON_VERSION" ]; then
