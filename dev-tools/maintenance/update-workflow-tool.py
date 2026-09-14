@@ -10,6 +10,7 @@ import os
 import re
 import stat
 import tempfile
+import urllib.error
 import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
@@ -292,18 +293,23 @@ def dockerhub_digest(repository: str, tag: str) -> str:
         "https://auth.docker.io/token?service=registry.docker.io&scope="
         f"repository:{repository}:pull"
     )
-    with urllib.request.urlopen(token_url, timeout=30) as response:
-        token = json.load(response)["token"]
-    request = urllib.request.Request(
-        f"https://registry-1.docker.io/v2/{repository}/manifests/{tag}",
-        method="HEAD",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json",
-        },
-    )
-    with urllib.request.urlopen(request, timeout=30) as response:
-        digest = response.headers.get("Docker-Content-Digest", "")
+    try:
+        with urllib.request.urlopen(token_url, timeout=30) as response:
+            token = json.load(response)["token"]
+        request = urllib.request.Request(
+            f"https://registry-1.docker.io/v2/{repository}/manifests/{tag}",
+            method="HEAD",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            digest = response.headers.get("Docker-Content-Digest", "")
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
+        raise SystemExit(
+            f"could not resolve Docker Hub digest for {repository}:{tag}: {exc}"
+        ) from exc
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
         raise SystemExit("registry did not return a valid Velero image digest")
     return digest

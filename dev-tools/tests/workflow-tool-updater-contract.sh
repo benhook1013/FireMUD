@@ -62,6 +62,62 @@ spec.loader.exec_module(module)
 if module.recovery_journal_path(authority).exists():
     raise SystemExit("successful transaction left recovery state")
 PY
+python3 - "$ROOT_DIR" <<'PY'
+import importlib.util
+import io
+import sys
+import urllib.error
+from pathlib import Path
+
+root = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+
+class Response:
+    def __init__(self, body=b"", headers=None):
+        self._body = io.BytesIO(body)
+        self.headers = headers or {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def read(self, *args, **kwargs):
+        return self._body.read(*args, **kwargs)
+
+
+failure_factories = (
+    lambda: urllib.error.HTTPError("https://example.invalid", 503, "unavailable", {}, None),
+    lambda: urllib.error.URLError("unreachable"),
+    lambda: TimeoutError("timed out"),
+)
+for failing_request in (1, 2):
+    for failure_factory in failure_factories:
+        calls = 0
+
+        def urlopen(request, timeout):
+            global calls
+            calls += 1
+            if calls == failing_request:
+                raise failure_factory()
+            return Response(b'{"token":"test-token"}')
+
+        module.urllib.request.urlopen = urlopen
+        try:
+            module.dockerhub_digest("velero/velero", "v9.8.7")
+        except SystemExit as exc:
+            expected = "could not resolve Docker Hub digest for velero/velero:v9.8.7:"
+            if not str(exc).startswith(expected):
+                raise SystemExit(f"unexpected Docker Hub failure diagnostic: {exc}") from exc
+            if not isinstance(exc.__cause__, (urllib.error.HTTPError, urllib.error.URLError, TimeoutError)):
+                raise SystemExit("Docker Hub failure diagnostic discarded its transport cause") from exc
+        else:
+            raise SystemExit(f"Docker Hub request {failing_request} transport failure escaped")
+PY
 printf 'version=9.8.8\n' > "$tmp/outside-invalid-checksum"
 authority_digest_before=$(sha256sum "$ROOT_DIR/config/workflow-tool-versions.env" | awk '{print $1}')
 if (cd "$tmp" && python3 "$ROOT_DIR/dev-tools/maintenance/update-workflow-tool.py" kubectl 9.8.7 \
