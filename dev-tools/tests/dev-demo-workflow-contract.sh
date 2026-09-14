@@ -681,6 +681,15 @@ if projection_waiter.count("deadline=$((SECONDS + timeout_seconds))") != 1:
     raise SystemExit("projection waiter must preserve one shared deadline")
 
 reconcile_steps = reconciler["jobs"]["reconcile-dev-demo"]["steps"]
+reconcile_checkouts = [
+    step
+    for step in reconcile_steps
+    if str(step.get("uses", "")).startswith("actions/checkout@")
+]
+if len(reconcile_checkouts) != 1:
+    raise SystemExit("dev-demo reconciler must define exactly one checkout")
+if reconcile_checkouts[0].get("with", {}).get("persist-credentials") is not False:
+    raise SystemExit("dev-demo reconciler checkout must not persist credentials")
 reconcile_step_run = next(
     step["run"]
     for step in reconcile_steps
