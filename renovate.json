@@ -36,15 +36,18 @@
     },
     {
       "customType": "regex",
+      "description": "Update the Velero image tag and digest without rewriting adjacent CLI authority",
       "managerFilePatterns": [
         "/^config/workflow-tool-versions\\.env$/"
       ],
       "matchStrings": [
-        "(?<authorityPrefix># renovate-image: datasource=(?<datasource>docker) depName=(?<depName>velero/velero)\\nVELERO_VERSION=)(?<currentValue>\\S+)(?<authoritySuffix>\\n(?:[A-Z][A-Z0-9_]*=[^\\n]+\\n)*VELERO_IMAGE_DIGEST=)(?<currentDigest>sha256:[0-9a-f]{64})"
+        "# renovate-image: datasource=docker depName=velero/velero\\nVELERO_VERSION=(?<currentValue>\\S+)\\nVELERO_IMAGE_DIGEST=(?<currentDigest>sha256:[0-9a-f]{64})"
       ],
+      "depNameTemplate": "velero/velero",
+      "datasourceTemplate": "docker",
       "versioningTemplate": "docker",
       "currentValueTemplate": "v{{{currentValue}}}",
-      "autoReplaceStringTemplate": "{{{authorityPrefix}}}{{{replace '^v' '' newValue}}}{{{authoritySuffix}}}{{{newDigest}}}"
+      "autoReplaceStringTemplate": "# renovate-image: datasource=docker depName=velero/velero\\nVELERO_VERSION={{{replace '^v' '' newValue}}}\\nVELERO_IMAGE_DIGEST={{{newDigest}}}"
     },
     {
       "customType": "regex",

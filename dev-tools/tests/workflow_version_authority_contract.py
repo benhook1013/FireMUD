@@ -738,18 +738,25 @@ def main() -> int:
     expected.update((expected_image_dep_names[x], a[f"{x}_VERSION"]) for x in expected_image_dep_names)
     matched = Counter()
     velero_image_managers = [
-        manager for manager in custom_managers if manager.get("currentValueTemplate") == "v{{{currentValue}}}"
+        manager for manager in custom_managers if manager.get("depNameTemplate") == "velero/velero"
     ]
     if len(velero_image_managers) != 1:
-        fail("Renovate must define exactly one Velero image manager with a v-prefixed current value")
+        fail("Renovate must define exactly one Velero image manager")
     velero_image_manager = velero_image_managers[0]
     if (
         velero_image_manager.get("autoReplaceStringTemplate")
-        != "{{{authorityPrefix}}}{{{replace '^v' '' newValue}}}{{{authoritySuffix}}}{{{newDigest}}}"
+        != "# renovate-image: datasource=docker depName=velero/velero\\nVELERO_VERSION={{{replace '^v' '' newValue}}}\\nVELERO_IMAGE_DIGEST={{{newDigest}}}"
     ):
-        fail(
-            "Velero image manager must preserve its authority block, remove the Docker tag v prefix, and write the new digest"
-        )
+        fail("Velero image manager must atomically replace its version and digest using supported fields")
+    if velero_image_manager.get("matchStringsStrategy", "any") != "any":
+        fail("Velero image manager must expose one complete authority-block match")
+    if velero_image_manager.get("currentValueTemplate") != "v{{{currentValue}}}":
+        fail("Velero image manager must expose a v-prefixed current value")
+    if any(
+        unsupported in velero_image_manager["autoReplaceStringTemplate"]
+        for unsupported in ("authorityPrefix", "authoritySuffix")
+    ):
+        fail("Velero image manager must not reference unsupported custom capture groups")
     docker_managers = [manager for manager in custom_managers if manager.get("versioningTemplate") == "docker"]
     if len(docker_managers) != 2:
         fail("Renovate must define separate Velero and ORT/ZAP Docker managers")
@@ -762,36 +769,37 @@ def main() -> int:
     authority_text = ap.read_text()
     velero_pattern_sources = velero_image_manager.get("matchStrings") or []
     if len(velero_pattern_sources) != 1:
-        fail("Velero image manager must define one match pattern")
-    velero_pattern_source = velero_pattern_sources[0]
+        fail("Velero image manager must define one atomic version-and-digest match pattern")
     try:
-        velero_pattern = re.compile(translate_renovate_pattern(velero_pattern_source))
+        velero_pattern = re.compile(translate_renovate_pattern(velero_pattern_sources[0]))
     except (re.error, TypeError) as error:
         fail(f"Velero image manager pattern is invalid: {error}")
     velero_matches = list(velero_pattern.finditer(authority_text))
     if len(velero_matches) != 1:
-        fail("Velero image manager must match exactly one complete authority block")
+        fail("Velero image manager must match exactly one atomic version-and-digest block")
     velero_match = velero_matches[0]
-    if velero_match.group("depName") != "velero/velero" or velero_match.group("currentValue") != a["VELERO_VERSION"]:
-        fail("Velero image manager must match the authority image and unprefixed version")
+    if velero_match.group("currentValue") != a["VELERO_VERSION"]:
+        fail("Velero image manager must match the authority image version")
     if velero_match.group("currentDigest") != a["VELERO_IMAGE_DIGEST"]:
-        fail("Velero image manager must preserve the authority image digest capture")
-    if velero_image_manager.get("currentValueTemplate") != "v{{{currentValue}}}":
-        fail("Velero image manager currentValueTemplate must present the Docker datasource with a v-prefixed version")
+        fail("Velero image manager must match the authority image digest")
     new_velero_value = "v9.9.9"
-    replacement = velero_image_manager["autoReplaceStringTemplate"]
-    replacement = replacement.replace("{{{authorityPrefix}}}", velero_match.group("authorityPrefix"))
-    replacement = replacement.replace("{{{replace '^v' '' newValue}}}", re.sub(r"^v", "", new_velero_value))
-    replacement = replacement.replace("{{{authoritySuffix}}}", velero_match.group("authoritySuffix"))
     new_velero_digest = "sha256:" + "b" * 64
-    replacement = replacement.replace("{{{newDigest}}}", new_velero_digest)
-    expected_replacement = (
-        velero_match.group(0)
-        .replace(f"VELERO_VERSION={a['VELERO_VERSION']}", "VELERO_VERSION=9.9.9")
-        .replace(a["VELERO_IMAGE_DIGEST"], new_velero_digest)
+    replacement = (
+        "# renovate-image: datasource=docker depName=velero/velero\n"
+        f"VELERO_VERSION={re.sub(r'^v', '', new_velero_value)}\n"
+        f"VELERO_IMAGE_DIGEST={new_velero_digest}"
     )
+    expected_replacement = velero_match.group(0).replace(
+        f"VELERO_VERSION={a['VELERO_VERSION']}", "VELERO_VERSION=9.9.9"
+    ).replace(a["VELERO_IMAGE_DIGEST"], new_velero_digest)
     if replacement != expected_replacement:
-        fail("Velero image manager replacement must preserve the complete authority block and write the new digest")
+        fail("Velero image manager replacement must atomically update the complete image authority block")
+    updated_authority = authority_text.replace(velero_match.group(0), replacement, 1)
+    expected_authority = authority_text.replace(
+        f"VELERO_VERSION={a['VELERO_VERSION']}", "VELERO_VERSION=9.9.9", 1
+    ).replace(a["VELERO_IMAGE_DIGEST"], new_velero_digest, 1)
+    if updated_authority != expected_authority:
+        fail("Velero image manager replacement must preserve adjacent checksum authority")
     ort_zap_pattern_sources = ort_zap_image_manager.get("matchStrings", [None])
     if len(ort_zap_pattern_sources) != 1:
         fail("ORT/ZAP image manager must define one match pattern")
@@ -819,12 +827,17 @@ def main() -> int:
                 pattern = re.compile(translate_renovate_pattern(pattern_source))
             except re.error as error:
                 fail(f"Renovate custom manager {manager_index} matchStrings[{pattern_index}] is invalid: {error}")
-            try:
-                matched.update((m.group("depName"), m.group("currentValue")) for m in pattern.finditer(authority_text))
-            except (IndexError, KeyError) as error:
-                fail(
-                    f"Renovate custom manager {manager_index} matchStrings[{pattern_index}] lacks required capture groups: {error}"
-                )
+            for match in pattern.finditer(authority_text):
+                groups = match.groupdict()
+                dep_name = groups.get("depName") or manager.get("depNameTemplate")
+                current_value = groups.get("currentValue")
+                current_digest = groups.get("currentDigest")
+                if not dep_name or not (current_value or current_digest):
+                    fail(
+                        f"Renovate custom manager {manager_index} matchStrings[{pattern_index}] lacks required dependency fields"
+                    )
+                if current_value:
+                    matched.update(((dep_name, current_value),))
     if matched != expected:
         fail("Renovate does not discover every workflow tool authority exactly once")
     rules = renovate.get("packageRules", [])
