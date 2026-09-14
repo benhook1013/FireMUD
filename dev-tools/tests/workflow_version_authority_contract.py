@@ -585,17 +585,17 @@ def main() -> int:
         fail("release-notes.yml must define read-only top-level permissions")
     release_jobs = release.get("jobs") or {}
     generator = release_jobs.get("generate-release-notes")
-    publisher = release_jobs.get("publish-release")
-    if not isinstance(generator, dict) or not isinstance(publisher, dict):
+    release_publisher = release_jobs.get("publish-release")
+    if not isinstance(generator, dict) or not isinstance(release_publisher, dict):
         fail("release-notes.yml must define generator and publish jobs")
     if generator.get("permissions") != {"contents": "read"}:
         fail("release generator must remain contents read-only")
-    if publisher.get("permissions") != {"contents": "write"}:
+    if release_publisher.get("permissions") != {"contents": "write"}:
         fail("release publisher must have only contents write")
-    if publisher.get("needs") != "generate-release-notes":
+    if release_publisher.get("needs") != "generate-release-notes":
         fail("release publisher must depend on generated assets")
     generator_steps = generator.get("steps", [])
-    publisher_steps = publisher.get("steps", [])
+    publisher_steps = release_publisher.get("steps", [])
     upload_steps = [
         step
         for step in generator_steps
@@ -734,8 +734,12 @@ def main() -> int:
         "ORT": "ghcr.io/oss-review-toolkit/ort",
         "ZAP": "ghcr.io/zaproxy/zaproxy",
     }
-    expected = Counter((expected_dep_names[x], a[f"{x}_VERSION"]) for x in expected_dep_names)
-    expected.update((expected_image_dep_names[x], a[f"{x}_VERSION"]) for x in expected_image_dep_names)
+    expected_renovate_dependencies = Counter(
+        (expected_dep_names[x], a[f"{x}_VERSION"]) for x in expected_dep_names
+    )
+    expected_renovate_dependencies.update(
+        (expected_image_dep_names[x], a[f"{x}_VERSION"]) for x in expected_image_dep_names
+    )
     matched = Counter()
     velero_image_managers = [
         manager for manager in custom_managers if manager.get("depNameTemplate") == "velero/velero"
@@ -838,7 +842,7 @@ def main() -> int:
                     )
                 if current_value:
                     matched.update(((dep_name, current_value),))
-    if matched != expected:
+    if matched != expected_renovate_dependencies:
         fail("Renovate does not discover every workflow tool authority exactly once")
     rules = renovate.get("packageRules", [])
     runtime_major_rule = next(

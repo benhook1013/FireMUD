@@ -20,6 +20,7 @@ URL="https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VE
 
 trusted=false
 verify_cached_install() {
+  local expected_binary_sha="$1"
   local verification extracted_sha
   trusted=false
   verification="$(mktemp -d "$CACHE_DIR/verify.XXXXXX")" || return 0
@@ -32,7 +33,7 @@ verify_cached_install() {
     rm -rf "$verification" || true
     return 0
   fi
-  if [[ "$extracted_sha" != "$marker_binary_sha" ]]; then
+  if [[ "$extracted_sha" != "$expected_binary_sha" ]]; then
     rm -rf "$verification" || true
     return 0
   fi
@@ -47,7 +48,7 @@ if [[ -x "$BIN" && -f "$ARCHIVE" && -f "$VERIFIED_MARKER" ]]; then
   if [[ "$marker_archive_sha" == "$LYCHEE_LINUX_X86_64_MUSL_SHA256" ]] \
     && printf '%s  %s\n' "$LYCHEE_LINUX_X86_64_MUSL_SHA256" "$ARCHIVE" | sha256sum --check --status \
     && printf '%s  %s\n' "$marker_binary_sha" "$BIN" | sha256sum --check --status; then
-    verify_cached_install
+    verify_cached_install "$marker_binary_sha"
   fi
 fi
 
