@@ -213,6 +213,8 @@ def main() -> int:
                 result.add(path)
         return result
 
+    referenced_file_cache = {}
+
     def helper_text(text, seen=None):
         seen = set() if seen is None else seen
         parts = [text]
@@ -220,9 +222,18 @@ def main() -> int:
             if path in seen:
                 continue
             seen.add(path)
-            source = path.read_text(errors="ignore")
+            if path not in referenced_file_cache:
+                referenced_file_cache[path] = path.read_text(errors="ignore")
+            source = referenced_file_cache[path]
             parts.extend(helper_text(source, seen))
         return parts
+
+    workflow_expansion_cache = {}
+
+    def expand_text(text):
+        if text not in workflow_expansion_cache:
+            workflow_expansion_cache[text] = "\n".join(helper_text(text))
+        return workflow_expansion_cache[text]
 
     def composite_python_profile(uses):
         if not uses.startswith("./.github/actions/"):
@@ -247,23 +258,21 @@ def main() -> int:
         if composite_python_profile(composite) != "yaml":
             fail(f"{composite} must expose its canonical YAML Python profile")
 
-    def python_needs(text):
-        sources = helper_text(text)
-        combined = "\n".join(sources)
-        if "python3" not in combined:
+    def python_needs(expanded_text):
+        if "python3" not in expanded_text:
             return None
-        if re.search(r"(^|\n)\s*import websocket\b", combined):
+        if re.search(r"(^|\n)\s*import websocket\b", expanded_text):
             return "smoke"
-        if re.search(r"(^|[;&|\s])(ruff|yamllint)(?:\s|$)", combined):
+        if re.search(r"(^|[;&|\s])(ruff|yamllint)(?:\s|$)", expanded_text):
             return "ci"
-        if re.search(r"(^|\n)\s*(?:import|from) yaml\b", combined):
+        if re.search(r"(^|\n)\s*(?:import|from) yaml\b", expanded_text):
             return "yaml"
-        if re.search(r"(^|[;&|\s])(?:python3 -m )?mkdocs(?:\s|$)", combined):
+        if re.search(r"(^|[;&|\s])(?:python3 -m )?mkdocs(?:\s|$)", expanded_text):
             return "docs"
         return "none"
 
-    def has_gh_consumer(text):
-        return any(run_has_gh(source) for source in helper_text(text))
+    def has_gh_consumer(expanded_text):
+        return run_has_gh(expanded_text)
 
     workflow_paths = sorted((*workflows.glob("*.yml"), *workflows.glob("*.yaml")))
 
@@ -360,14 +369,19 @@ def main() -> int:
                     if not checkout:
                         fail(f"{path.name}:{job_name}: gh setup before checkout")
                     gh_setup_seen = True
-                need = python_needs(run)
+                expanded_text = expand_text(run)
+                need = python_needs(expanded_text)
                 if need is not None and not py:
                     fail(f"{path.name}:{job_name}: direct or helper Python consumer uses ambient runner Python")
                 if need == "yaml" and python_profile not in {"yaml", "ci", conditional_contract_profile}:
                     fail(f"{path.name}:{job_name}: PyYAML helper lacks its pinned dependency profile")
-                if need in {"smoke", "ci", "docs"} and python_profile != need and python_profile != conditional_contract_profile:
+                if (
+                    need in {"smoke", "ci", "docs"}
+                    and python_profile != need
+                    and python_profile != conditional_contract_profile
+                ):
                     fail(f"{path.name}:{job_name}: {need} helper lacks its pinned dependency profile")
-                if has_gh_consumer(run) and not gh_setup_seen:
+                if has_gh_consumer(expanded_text) and not gh_setup_seen:
                     fail(f"{path.name}:{job_name}: direct or helper gh consumer is not preceded by canonical setup-gh")
                 if uses.startswith("oss-review-toolkit/ort-ci-github-action@") and (
                     not loader
@@ -399,7 +413,11 @@ def main() -> int:
     if gh_setup.get("if") != "${{ steps.cluster-access.outputs.available == 'true' }}":
         fail("dev-demo canonical gh setup must require available cluster access")
     for index, step in enumerate(deploy_steps):
-        if isinstance(step, dict) and has_gh_consumer(str(step.get("run", ""))) and index <= gh_setup_index:
+        if (
+            isinstance(step, dict)
+            and has_gh_consumer(expand_text(str(step.get("run", ""))))
+            and index <= gh_setup_index
+        ):
             fail("dev-demo gh consumer must follow canonical gh setup")
 
     publisher = load(workflows / "publish-pr-runtime-images.yml")["jobs"]["publish"]
@@ -723,7 +741,10 @@ def main() -> int:
     if "currentValueTemplate" in ort_zap_image_manager or "autoReplaceStringTemplate" in ort_zap_image_manager:
         fail("ORT/ZAP image manager must not inherit Velero value or replacement templates")
     authority_text = ap.read_text()
-    velero_pattern_source = velero_image_manager.get("matchStrings", [None])[0]
+    velero_pattern_sources = velero_image_manager.get("matchStrings") or []
+    if len(velero_pattern_sources) != 1:
+        fail("Velero image manager must define one match pattern")
+    velero_pattern_source = velero_pattern_sources[0]
     try:
         velero_pattern = re.compile(translate_renovate_pattern(velero_pattern_source))
     except (re.error, TypeError) as error:
@@ -745,13 +766,13 @@ def main() -> int:
     replacement = replacement.replace("{{{authoritySuffix}}}", velero_match.group("authoritySuffix"))
     new_velero_digest = "sha256:" + "b" * 64
     replacement = replacement.replace("{{{newDigest}}}", new_velero_digest)
-    expected_replacement = velero_match.group(0).replace(
-        f"VELERO_VERSION={a['VELERO_VERSION']}", "VELERO_VERSION=9.9.9"
-    ).replace(a["VELERO_IMAGE_DIGEST"], new_velero_digest)
+    expected_replacement = (
+        velero_match.group(0)
+        .replace(f"VELERO_VERSION={a['VELERO_VERSION']}", "VELERO_VERSION=9.9.9")
+        .replace(a["VELERO_IMAGE_DIGEST"], new_velero_digest)
+    )
     if replacement != expected_replacement:
-        fail(
-            "Velero image manager replacement must preserve the complete authority block and write the new digest"
-        )
+        fail("Velero image manager replacement must preserve the complete authority block and write the new digest")
     ort_zap_pattern_sources = ort_zap_image_manager.get("matchStrings", [None])
     if len(ort_zap_pattern_sources) != 1:
         fail("ORT/ZAP image manager must define one match pattern")

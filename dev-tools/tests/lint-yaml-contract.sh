@@ -59,6 +59,7 @@ fi
 test -L "$MISSING_BIN_DIR/dirname"
 test "$(find "$MISSING_BIN_DIR" -mindepth 1 -maxdepth 1 -type l | wc -l)" -eq 1
 grep -Fq 'yamllint is required. Install the pinned CI tools into an isolated environment with:' "$MISSING_YAMLLINT_OUTPUT"
+grep -Fq -- 'python3 -m venv --clear' "$MISSING_YAMLLINT_OUTPUT"
 grep -Fq -- '--require-hashes' "$MISSING_YAMLLINT_OUTPUT"
 grep -Fq -- "$ROOT_DIR/config/python/ci-requirements.txt" "$MISSING_YAMLLINT_OUTPUT"
 grep -Fq -- "$ROOT_DIR/.venv" "$MISSING_YAMLLINT_OUTPUT"
