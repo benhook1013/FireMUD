@@ -261,6 +261,51 @@ else:
 PY
 cmp "$tmp/before.env" "$tmp/unchanged.env"
 
+cp "$ROOT_DIR/k8s/velero/verify-backups-cronjob.yaml" "$tmp/unchanged.yaml"
+cp "$tmp/before.env" "$tmp/no-image-evidence.env"
+cp "$tmp/unchanged.yaml" "$tmp/no-image-evidence.yaml"
+python3 - "$ROOT_DIR" "$tmp/no-image-evidence.env" "$tmp/checksums" "$tmp/no-image-evidence.yaml" <<'PY'
+import contextlib
+import importlib.util
+import io
+import sys
+from pathlib import Path
+
+root, authority, checksum_file, manifest = map(Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+def unexpected_resolution(repository, tag):
+    raise SystemExit(f"no-evidence update resolved Docker Hub tag: {repository}:{tag}")
+
+module.dockerhub_digest = unexpected_resolution
+sys.argv = [
+    str(root / "dev-tools/maintenance/update-workflow-tool.py"),
+    "velero",
+    "9.8.7",
+    "--checksum-file",
+    str(checksum_file),
+    "--authority",
+    str(authority),
+    "--velero-manifest",
+    str(manifest),
+]
+stderr = io.StringIO()
+with contextlib.redirect_stderr(stderr):
+    try:
+        module.main()
+    except SystemExit as exc:
+        if exc.code != 2:
+            raise SystemExit(f"missing Velero evidence had unexpected exit code: {exc.code}") from exc
+    else:
+        raise SystemExit("updater accepted a Velero update without image evidence")
+if "--image-evidence-file is required for velero updates" not in stderr.getvalue():
+    raise SystemExit(f"missing Velero evidence had unexpected diagnostic: {stderr.getvalue()}")
+PY
+cmp "$tmp/before.env" "$tmp/no-image-evidence.env"
+cmp "$tmp/unchanged.yaml" "$tmp/no-image-evidence.yaml"
+
 assert_rejected_evidence() {
   local name="$1"
   local evidence="$2"
@@ -281,7 +326,6 @@ assert_rejected_evidence() {
   cmp "$tmp/unchanged.yaml" "$manifest"
 }
 
-cp "$ROOT_DIR/k8s/velero/verify-backups-cronjob.yaml" "$tmp/unchanged.yaml"
 assert_rejected_evidence missing-entry ""
 assert_rejected_evidence mismatched-version \
   "velero/velero:v9.8.8@$image_digest"

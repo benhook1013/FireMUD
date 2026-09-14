@@ -344,15 +344,17 @@ def main() -> None:
         "--image-evidence-file",
         type=Path,
         help=(
-            "Velero image evidence containing one full immutable image reference, "
+            "required for Velero; image evidence must contain one full immutable image reference, "
             "verified against the exact Docker Hub tag"
         ),
     )
     args = parser.parse_args()
     if not re.fullmatch(r"\d+\.\d+\.\d+", args.version):
         parser.error("version must have exactly three numeric parts")
-    if args.image_evidence_file and args.tool != "velero":
+    if args.image_evidence_file is not None and args.tool != "velero":
         parser.error("--image-evidence-file is only valid for velero")
+    if args.tool == "velero" and args.image_evidence_file is None:
+        parser.error("--image-evidence-file is required for velero updates")
 
     resolved_authority = args.authority.resolve()
     resolved_velero_manifest = args.velero_manifest.resolve()
@@ -364,7 +366,7 @@ def main() -> None:
         reconcile_recovery_journal(args.authority, allowed_target_sets)
 
     image_digest = None
-    if args.tool == "velero" and args.image_evidence_file:
+    if args.tool == "velero" and args.image_evidence_file is not None:
         image_digest = velero_image_digest_from_evidence(args.image_evidence_file, args.version)
 
     prefix, asset_template, url_template = SPECS[args.tool]
@@ -385,9 +387,6 @@ def main() -> None:
         matches = re.findall(rf"(?m)^([0-9a-f]{{64}})\s+\*?{re.escape(asset)}$", checksum_text)
     if len(matches) != 1:
         raise SystemExit(f"could not identify exactly one checksum for {asset}")
-
-    if args.tool == "velero" and image_digest is None:
-        image_digest = dockerhub_digest("velero/velero", f"v{args.version}")
 
     with authority_lock(args.authority):
         reconcile_recovery_journal(args.authority, allowed_target_sets)
