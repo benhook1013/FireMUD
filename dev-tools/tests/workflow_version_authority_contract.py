@@ -360,9 +360,11 @@ def main() -> int:
         paths = license_filter_data.get(group)
         if not isinstance(paths, list):
             fail(f"license-scan.yml {group} filter must be a path list")
-        for authority_path in (".node-version", "config/workflow-tool-versions.env"):
+        for authority_path in (".node-version",):
             if paths.count(authority_path) != 1:
                 fail(f"license-scan.yml {group} filter must contain exactly one {authority_path}")
+        if "config/workflow-tool-versions.env" in paths:
+            fail(f"license-scan.yml {group} filter must not match the entire tool authority file")
 
     conditional_contract_profile = (
         "${{ (needs.changes.outputs.lightweight_only == 'true' && "
@@ -979,6 +981,38 @@ def main() -> int:
     for identity in ("outputs.lychee-version", "outputs.lychee-linux-x86-64-musl-sha256"):
         if identity not in docs:
             fail(f"docs Lychee cache omits tool identity: {identity}")
+    license_scan = load(workflows / "license-scan.yml")
+    license_changes = license_scan.get("jobs", {}).get("changes", {})
+    license_outputs = license_changes.get("outputs", {})
+    if license_outputs.get("run_gradle_ort") != (
+        "${{ steps.filter.outputs.gradle == 'true' || steps.ort_authority.outputs.changed == 'true' }}"
+    ) or license_outputs.get("run_npm_ort") != (
+        "${{ steps.filter.outputs.npm == 'true' || steps.ort_authority.outputs.changed == 'true' }}"
+    ):
+        fail("license-scan ORT outputs must include only actual ORT authority changes")
+    license_steps = license_changes.get("steps", [])
+    ort_authority_steps = [
+        step for step in license_steps if isinstance(step, dict) and step.get("id") == "ort_authority"
+    ]
+    if len(ort_authority_steps) != 1:
+        fail("license-scan must define exactly one ORT authority detector")
+    ort_authority_step = ort_authority_steps[0]
+    if ort_authority_step.get("env", {}).get("BASE_SHA") != (
+        "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}"
+    ):
+        fail("license-scan ORT authority detector must receive BASE_SHA from GitHub event expressions")
+    ort_authority_script = ort_authority_step.get("run", "")
+    for required in (
+        "config/workflow-tool-versions.env",
+        "ghcr\\.io/oss-review-toolkit/ort",
+        "ORT_VERSION=",
+        "ORT_DIGEST=",
+        "git diff --unified=0",
+        '[[ -z "$BASE_SHA" || "$BASE_SHA" == 0000000000000000000000000000000000000000 ]]',
+        'git diff --unified=0 "$BASE_SHA" "$GITHUB_SHA"',
+    ):
+        if required not in ort_authority_script:
+            fail(f"license-scan ORT authority detector missing: {required}")
     setup_python = load(actions / "setup-python/action.yml")
     if set(setup_python.get("inputs", {})) != {"requirements"}:
         fail("setup-python must expose one canonical requirements profile input")
