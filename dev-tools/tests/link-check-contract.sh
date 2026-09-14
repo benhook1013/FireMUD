@@ -43,7 +43,10 @@ if [[ "$1" == "-s" ]]; then echo Linux; else echo x86_64; fi
 EOF
 cat > "$FAKE_BIN/sha256sum" <<'EOF'
 #!/usr/bin/env bash
-if [[ "${1:-}" == "--check" ]]; then exit 0; fi
+if [[ "${1:-}" == "--check" ]]; then
+  # Fixture-only control for exercising a failed checksum verification.
+  exit "${FAKE_SHA256SUM_CHECK_STATUS:-0}"
+fi
 printf 'binary-sha %s\n' "${1:?}"
 EOF
 cat > "$FAKE_BIN/tar" <<'EOF'
@@ -66,6 +69,23 @@ cp "${@: -2:1}" "${@: -1}"
 chmod 0755 "${@: -1}"
 EOF
 chmod +x "$FAKE_BIN"/*
+
+CHECKSUM_FAILURE_ROOT="$TEMP_DIR/checksum-failure"
+make_fixture "$CHECKSUM_FAILURE_ROOT"
+CHECKSUM_FAILURE_CACHE_ROOT="$TEMP_DIR/checksum-failure-cache"
+CHECKSUM_FAILURE_CACHE_DIR="$CHECKSUM_FAILURE_CACHE_ROOT/lychee/$LYCHEE_VERSION/x86_64-unknown-linux-musl"
+if ! PATH="$FAKE_BIN:$PATH" XDG_CACHE_HOME="$CHECKSUM_FAILURE_CACHE_ROOT" \
+  FAKE_SHA256SUM_CHECK_STATUS=1 \
+  "$CHECKSUM_FAILURE_ROOT/dev-tools/docs/link-check.sh" \
+  >"$TEMP_DIR/checksum-failure.out" 2>&1; then
+  :
+else
+  echo "Lychee checksum failure unexpectedly passed" >&2
+  exit 1
+fi
+test ! -e "$CHECKSUM_FAILURE_CACHE_DIR/lychee"
+test ! -e "$CHECKSUM_FAILURE_CACHE_DIR/verified.sha256"
+test ! -e "$CHECKSUM_FAILURE_CACHE_DIR/lychee.tar.gz"
 
 if ! PATH="$FAKE_BIN:$PATH" XDG_CACHE_HOME="$CACHE_ROOT" \
   "$LINK_CHECK" >"$TEMP_DIR/cache.out" 2>&1; then
