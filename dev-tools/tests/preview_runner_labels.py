@@ -37,10 +37,18 @@ def validate_preview_runner_labels(data: object, path: Path) -> int:
     for job_name, job in jobs.items():
         if not isinstance(job, Mapping):
             continue
-        labels = normalize_runs_on(job.get("runs-on"))
-        if not _PREVIEW_LABELS.issubset(labels):
+        runs_on = job.get("runs-on")
+        labels = normalize_runs_on(runs_on)
+        if isinstance(runs_on, Mapping) and "group" in runs_on:
+            if "labels" not in runs_on or not labels:
+                raise ValueError(f"{path.name}:{job_name} self-hosted runner group must define labels")
+            if "self-hosted" not in labels:
+                raise ValueError(f"{path.name}:{job_name} self-hosted runner group must include the self-hosted label")
+        if "self-hosted" not in labels:
             continue
         inspected += 1
+        if not _PREVIEW_LABELS.issubset(labels):
+            raise ValueError(f"{path.name}:{job_name} self-hosted preview runner must require the preview label")
         if not _PLATFORM_LABELS.issubset(labels):
             raise ValueError(f"{path.name}:{job_name} preview runner must require linux and x64 labels")
     return inspected
@@ -101,11 +109,26 @@ def _run_fixtures() -> None:
         (
             "mapping-scalar-non-preview",
             {"jobs": {"other": {"runs-on": {"labels": "SeLf-HoStEd"}}}},
+            False,
+        ),
+        (
+            "mapping-group-without-labels",
+            {"jobs": {"preview": {"runs-on": {"group": "preview-runners"}}}},
+            False,
+        ),
+        (
+            "mapping-group-valid",
+            {"jobs": {"preview": {"runs-on": {"group": "preview-runners", "labels": complete_labels}}}},
             True,
         ),
         (
+            "list-self-hosted-wrong-label",
+            {"jobs": {"preview": {"runs-on": ["self-hosted", "other", "linux", "x64"]}}},
+            False,
+        ),
+        (
             "no-preview-jobs",
-            {"jobs": {"hosted": {"runs-on": ["self-hosted", "linux", "x64"]}}},
+            {"jobs": {"hosted": {"runs-on": "ubuntu-latest"}}},
             True,
         ),
     )
@@ -127,7 +150,7 @@ def _run_fixtures() -> None:
     with TemporaryDirectory() as temporary:
         no_preview = Path(temporary) / "no-preview.yml"
         no_preview.write_text(
-            "jobs:\n  hosted:\n    runs-on: [self-hosted, linux, x64]\n",
+            "jobs:\n  hosted:\n    runs-on: ubuntu-latest\n",
             encoding="utf-8",
         )
         try:
