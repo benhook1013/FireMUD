@@ -58,9 +58,6 @@ jobs:
         with:
           values-file: k8s/helm/firemud/values-hosted-shared.example.yaml
 
-      - name: Set up GitHub CLI
-        run: gh --version
-
       - name: Verify workflow source and immutable PR metadata
         id: target
         env:
