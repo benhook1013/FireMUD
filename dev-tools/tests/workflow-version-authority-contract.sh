@@ -97,6 +97,11 @@ with tempfile.TemporaryDirectory() as temporary:
  unsupported=subprocess.run(['bash','-c',loader_run],cwd=temporary,env=env,capture_output=True,text=True)
  if unsupported.returncode==0: fail('workflow authority loader accepts unsupported assignments')
  if output_path.read_text()!='sentinel\n' or (Path(temporary)/'redirected.output').exists(): fail('unsupported authority assignment can redirect workflow outputs')
+ (authority_path/'workflow-tool-versions.env').write_text(ap.read_text()+'KUBECTL_VERSION=0.0.0\n')
+ output_path.write_text('sentinel\n')
+ duplicate=subprocess.run(['bash','-c',loader_run],cwd=temporary,env=env,capture_output=True,text=True)
+ if duplicate.returncode==0: fail('workflow authority loader accepts duplicate supported assignments')
+ if output_path.read_text()!='sentinel\n': fail('duplicate supported authority assignment can mutate workflow outputs')
 
 def load(path):
  d=yaml.safe_load(path.read_text()); return d if isinstance(d,dict) else {}

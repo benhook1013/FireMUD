@@ -45,12 +45,17 @@ runs:
           ORT_VERSION ORT_DIGEST
           ZAP_VERSION ZAP_DIGEST
         )
+        declare -A seen_keys=()
         while IFS= read -r line; do
           [[ -z "$line" || "$line" == \#* ]] && continue
           key="${line%%=*}"
           if [[ ! " ${supported_keys[*]} " == *" ${key} "* ]]; then
             echo "::error title=Unsupported workflow tool authority key::${key} is not supported." >&2; exit 1
           fi
+          if [[ -n "${seen_keys[$key]+x}" ]]; then
+            echo "::error title=Duplicate workflow tool authority key::${key} must be defined exactly once." >&2; exit 1
+          fi
+          seen_keys[$key]=1
         done < "$authority"
         # shellcheck disable=SC1090
         source "$authority"
