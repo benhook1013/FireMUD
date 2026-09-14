@@ -89,3 +89,7 @@ Gameplay again paused or proposed pausing CodeRabbit review cycles for CI issues
 ## Hosted waiter process correction (2026-09-13 23:49:09 NZST, Pacific/Auckland)
 
 After compaction, Gameplay replaced the intended wake-capable Hosted sentinel with a background shell waiter and polled its empty output every 45 seconds; the shell waiter could not wake the task, and the first delegated replacement incorrectly returned while state was still pending. Ben corrected that CLI can be awaited directly, while Hosted needs a delegated visible sentinel or mailbox wake when the main lane remains active. Required invariant under assessment: use a foreground waiter only when the lane can block; otherwise a delegated sentinel must remain alive until a trigger-specific terminal state or meaningful timeout, never ordinary pending. A background shell requiring parent polling is not a watcher. Existing guidance is partially ambiguous; a durable tooling or skill remedy is being assessed.
+
+## Process correction — unchanged Hosted/CI polling (2026-09-14 NZST)
+
+Gameplay and Overseer/root each spent main-lane turns polling unchanged external Hosted/CI state despite the existing lifecycle guidance. Root corrected its own PR #2759 wait by stopping the native parent watcher and delegating a Luna read-only sentinel. This was execution noncompliance, not a repository-guidance gap. Future waits should immediately delegate a low-cost read-only sentinel when a slot exists, with the sentinel returning only on terminal, failure, or timeout state.
