@@ -50,11 +50,19 @@ EOF
 cat > "$FAKE_BIN/sha256sum" <<'EOF'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "--check" ]]; then
-  # Fixture-only control for exercising a failed checksum verification.
-  if [[ "${FAKE_SHA256SUM_CHECK_STATUS:-0}" != 0 ]]; then
+  check_input="$(cat)"
+  check_target="${check_input##*  }"
+  check_target="${check_target//$'\n'/}"
+  # Fixture-only control for exercising a failed checksum verification.  A
+  # suffix narrows the failure to one checksum target so cache recovery can
+  # be tested independently from staged-archive verification.
+  if [[ "${FAKE_SHA256SUM_CHECK_STATUS:-0}" != 0 ]] &&
+    [[ -z "${FAKE_SHA256SUM_FAIL_SUFFIX:-}" ||
+      "$check_target" == *"${FAKE_SHA256SUM_FAIL_SUFFIX}" ]]; then
     echo "sha256sum: checksum verification failed" >&2
+    exit "${FAKE_SHA256SUM_CHECK_STATUS:-0}"
   fi
-  exit "${FAKE_SHA256SUM_CHECK_STATUS:-0}"
+  exit 0
 fi
 printf 'binary-sha %s\n' "${1:?}"
 EOF
@@ -97,6 +105,26 @@ grep -Fq 'Downloaded Lychee archive checksum verification failed:' "$TEMP_DIR/ch
 test ! -e "$CHECKSUM_FAILURE_CACHE_DIR/lychee"
 test ! -e "$CHECKSUM_FAILURE_CACHE_DIR/verified.sha256"
 test ! -e "$CHECKSUM_FAILURE_CACHE_DIR/lychee.tar.gz"
+
+BINARY_FAILURE_ROOT="$TEMP_DIR/binary-failure"
+make_fixture "$BINARY_FAILURE_ROOT"
+BINARY_FAILURE_CACHE_ROOT="$TEMP_DIR/binary-failure-cache"
+BINARY_FAILURE_CACHE_DIR="$BINARY_FAILURE_CACHE_ROOT/lychee/$LYCHEE_VERSION/x86_64-unknown-linux-musl"
+mkdir -p "$BINARY_FAILURE_CACHE_DIR"
+printf '#!/bin/sh\nexit 0\n' > "$BINARY_FAILURE_CACHE_DIR/lychee"
+chmod +x "$BINARY_FAILURE_CACHE_DIR/lychee"
+printf 'valid archive\n' > "$BINARY_FAILURE_CACHE_DIR/lychee.tar.gz"
+printf '%s binary-sha\n' "$LYCHEE_LINUX_X86_64_MUSL_SHA256" > "$BINARY_FAILURE_CACHE_DIR/verified.sha256"
+if ! PATH="$FAKE_BIN:$PATH" XDG_CACHE_HOME="$BINARY_FAILURE_CACHE_ROOT" \
+  FAKE_SHA256SUM_CHECK_STATUS=1 FAKE_SHA256SUM_FAIL_SUFFIX=/lychee \
+  "$BINARY_FAILURE_ROOT/dev-tools/docs/link-check.sh" \
+  >"$TEMP_DIR/binary-failure.out" 2>&1; then
+  cat "$TEMP_DIR/binary-failure.out" >&2
+  exit 1
+fi
+grep -Fq 'Cached Lychee binary checksum verification failed:' "$TEMP_DIR/binary-failure.out"
+grep -Fq 'downloaded archive' "$BINARY_FAILURE_CACHE_DIR/lychee.tar.gz"
+test -x "$BINARY_FAILURE_CACHE_DIR/lychee"
 
 if ! PATH="$FAKE_BIN:$PATH" XDG_CACHE_HOME="$CACHE_ROOT" \
   "$LINK_CHECK" >"$TEMP_DIR/cache.out" 2>&1; then

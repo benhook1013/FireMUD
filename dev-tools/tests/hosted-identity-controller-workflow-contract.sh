@@ -39,6 +39,22 @@ runner_label_validator="$ROOT_DIR/dev-tools/tests/preview_runner_labels.py"
 
 python3 "$runner_label_validator" --self-test
 python3 "$runner_label_validator" "$trusted" "$preview" "$preview_reconciler" "$janitor"
+python3 - "$preview_reconciler" "$janitor" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+for workflow_path in map(Path, sys.argv[1:]):
+    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    checkouts = [
+        step
+        for step in workflow["jobs"][next(iter(workflow["jobs"]))]["steps"]
+        if step.get("uses", "").startswith("actions/checkout@")
+    ]
+    if len(checkouts) != 1 or checkouts[0].get("with", {}).get("persist-credentials") is not False:
+        raise SystemExit(f"{workflow_path.name} preview checkout must disable persisted credentials")
+PY
 
 contains() {
   grep -Fq -- "$2" "$1" || {

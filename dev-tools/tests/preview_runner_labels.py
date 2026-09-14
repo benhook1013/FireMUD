@@ -6,6 +6,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import yaml
 
@@ -25,25 +26,30 @@ def normalize_runs_on(runs_on: object) -> set[str]:
     return set()
 
 
-def validate_preview_runner_labels(data: object, path: Path) -> None:
-    """Require Linux x64 labels for self-hosted preview jobs."""
+def validate_preview_runner_labels(data: object, path: Path) -> int:
+    """Require Linux x64 labels and return matching preview jobs inspected."""
     if not isinstance(data, Mapping):
-        return
+        return 0
     jobs = data.get("jobs")
     if not isinstance(jobs, Mapping):
-        return
+        return 0
+    inspected = 0
     for job_name, job in jobs.items():
         if not isinstance(job, Mapping):
             continue
         labels = normalize_runs_on(job.get("runs-on"))
-        if _PREVIEW_LABELS.issubset(labels) and not _PLATFORM_LABELS.issubset(labels):
+        if not _PREVIEW_LABELS.issubset(labels):
+            continue
+        inspected += 1
+        if not _PLATFORM_LABELS.issubset(labels):
             raise ValueError(f"{path.name}:{job_name} preview runner must require linux and x64 labels")
+    return inspected
 
 
-def validate_workflow(path: Path) -> None:
+def validate_workflow(path: Path) -> int:
     """Load and validate one workflow file."""
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    validate_preview_runner_labels(data, path)
+    return validate_preview_runner_labels(data, path)
 
 
 def _run_fixtures() -> None:
@@ -97,6 +103,11 @@ def _run_fixtures() -> None:
             {"jobs": {"other": {"runs-on": {"labels": "SeLf-HoStEd"}}}},
             True,
         ),
+        (
+            "no-preview-jobs",
+            {"jobs": {"hosted": {"runs-on": ["self-hosted", "linux", "x64"]}}},
+            True,
+        ),
     )
     if normalize_runs_on({"labels": "PrEvIeW"}) != {"preview"}:
         raise AssertionError("mapping scalar labels were not lowercased")
@@ -104,13 +115,28 @@ def _run_fixtures() -> None:
         raise AssertionError("non-string list labels were not ignored")
     for name, fixture, expected_valid in fixtures:
         try:
-            validate_preview_runner_labels(fixture, Path(f"{name}.yml"))
+            inspected = validate_preview_runner_labels(fixture, Path(f"{name}.yml"))
+            if name == "no-preview-jobs" and inspected != 0:
+                raise AssertionError("no-preview-jobs fixture inspected an unexpected job")
         except ValueError:
             if expected_valid:
                 raise
         else:
             if not expected_valid:
                 raise AssertionError(f"{name} fixture was accepted")
+    with TemporaryDirectory() as temporary:
+        no_preview = Path(temporary) / "no-preview.yml"
+        no_preview.write_text(
+            "jobs:\n  hosted:\n    runs-on: [self-hosted, linux, x64]\n",
+            encoding="utf-8",
+        )
+        try:
+            main((str(no_preview),))
+        except ValueError as error:
+            if str(error) != "no preview runner jobs found":
+                raise AssertionError(f"no-preview aggregate had unexpected diagnostic: {error}") from error
+        else:
+            raise AssertionError("no-preview aggregate was accepted")
     for invalid_arguments in (("--unknown",), ("workflow.yml", "--self-test")):
         try:
             main(invalid_arguments)
@@ -128,8 +154,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
         return 0
     if not args or any(argument.startswith("--") for argument in args):
         raise SystemExit(_USAGE)
-    for path_text in args:
-        validate_workflow(Path(path_text))
+    inspected = sum(validate_workflow(Path(path_text)) for path_text in args)
+    if inspected == 0:
+        raise ValueError("no preview runner jobs found")
     return 0
 
 
