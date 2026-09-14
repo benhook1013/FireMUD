@@ -64,7 +64,7 @@ if [[ "${1:-}" == "--check" ]]; then
   fi
   exit 0
 fi
-printf 'binary-sha %s\n' "${1:?}"
+printf '%s %s\n' "${FAKE_SHA256SUM_BINARY_SHA:-binary-sha}" "${1:?}"
 EOF
 cat > "$FAKE_BIN/tar" <<'EOF'
 #!/usr/bin/env bash
@@ -125,6 +125,28 @@ fi
 grep -Fq 'Cached Lychee binary checksum verification failed:' "$TEMP_DIR/binary-failure.out"
 grep -Fq 'downloaded archive' "$BINARY_FAILURE_CACHE_DIR/lychee.tar.gz"
 test -x "$BINARY_FAILURE_CACHE_DIR/lychee"
+
+ARCHIVE_BINARY_FAILURE_ROOT="$TEMP_DIR/archive-binary-failure"
+make_fixture "$ARCHIVE_BINARY_FAILURE_ROOT"
+ARCHIVE_BINARY_FAILURE_CACHE_ROOT="$TEMP_DIR/archive-binary-failure-cache"
+ARCHIVE_BINARY_FAILURE_CACHE_DIR="$ARCHIVE_BINARY_FAILURE_CACHE_ROOT/lychee/$LYCHEE_VERSION/x86_64-unknown-linux-musl"
+mkdir -p "$ARCHIVE_BINARY_FAILURE_CACHE_DIR"
+printf '#!/bin/sh\nexit 0\n' > "$ARCHIVE_BINARY_FAILURE_CACHE_DIR/lychee"
+chmod +x "$ARCHIVE_BINARY_FAILURE_CACHE_DIR/lychee"
+printf 'valid archive\n' > "$ARCHIVE_BINARY_FAILURE_CACHE_DIR/lychee.tar.gz"
+printf '%s binary-sha\n' "$LYCHEE_LINUX_X86_64_MUSL_SHA256" > "$ARCHIVE_BINARY_FAILURE_CACHE_DIR/verified.sha256"
+if ! PATH="$FAKE_BIN:$PATH" XDG_CACHE_HOME="$ARCHIVE_BINARY_FAILURE_CACHE_ROOT" \
+  FAKE_SHA256SUM_BINARY_SHA=archive-binary-sha \
+  "$ARCHIVE_BINARY_FAILURE_ROOT/dev-tools/docs/link-check.sh" \
+  >"$TEMP_DIR/archive-binary-failure.out" 2>&1; then
+  cat "$TEMP_DIR/archive-binary-failure.out" >&2
+  exit 1
+fi
+grep -Fq 'downloaded archive' "$ARCHIVE_BINARY_FAILURE_CACHE_DIR/lychee.tar.gz"
+read -r archive_binary_failure_sha _ < "$ARCHIVE_BINARY_FAILURE_CACHE_DIR/verified.sha256"
+[[ "$archive_binary_failure_sha" == "$LYCHEE_LINUX_X86_64_MUSL_SHA256" ]]
+read -r _ reinstalled_binary_sha < "$ARCHIVE_BINARY_FAILURE_CACHE_DIR/verified.sha256"
+[[ "$reinstalled_binary_sha" == "archive-binary-sha" ]]
 
 if ! PATH="$FAKE_BIN:$PATH" XDG_CACHE_HOME="$CACHE_ROOT" \
   "$LINK_CHECK" >"$TEMP_DIR/cache.out" 2>&1; then
