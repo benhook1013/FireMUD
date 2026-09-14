@@ -47,6 +47,9 @@ cat > "$FAKE_BIN/sha256sum" <<'EOF'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "--check" ]]; then
   # Fixture-only control for exercising a failed checksum verification.
+  if [[ "${FAKE_SHA256SUM_CHECK_STATUS:-0}" != 0 ]]; then
+    echo "sha256sum: checksum verification failed" >&2
+  fi
   exit "${FAKE_SHA256SUM_CHECK_STATUS:-0}"
 fi
 printf 'binary-sha %s\n' "${1:?}"
@@ -85,6 +88,7 @@ else
   echo "Lychee checksum failure unexpectedly passed" >&2
   exit 1
 fi
+grep -Fqx 'sha256sum: checksum verification failed' "$TEMP_DIR/checksum-failure.out"
 test ! -e "$CHECKSUM_FAILURE_CACHE_DIR/lychee"
 test ! -e "$CHECKSUM_FAILURE_CACHE_DIR/verified.sha256"
 test ! -e "$CHECKSUM_FAILURE_CACHE_DIR/lychee.tar.gz"

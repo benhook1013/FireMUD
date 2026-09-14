@@ -1,24 +1,60 @@
 name: Load workflow tool versions
 description: Validate and expose repository-pinned operational workflow tools.
 outputs:
-  kubectl-version: {value: '${{ steps.versions.outputs.kubectl-version }}'}
-  kubectl-linux-amd64-sha256: {value: '${{ steps.versions.outputs.kubectl-linux-amd64-sha256 }}'}
-  helm-version: {value: '${{ steps.versions.outputs.helm-version }}'}
-  helm-linux-amd64-sha256: {value: '${{ steps.versions.outputs.helm-linux-amd64-sha256 }}'}
-  gh-version: {value: '${{ steps.versions.outputs.gh-version }}'}
-  gh-linux-amd64-sha256: {value: '${{ steps.versions.outputs.gh-linux-amd64-sha256 }}'}
-  buf-version: {value: '${{ steps.versions.outputs.buf-version }}'}
-  buf-linux-x86-64-sha256: {value: '${{ steps.versions.outputs.buf-linux-x86-64-sha256 }}'}
-  kubeconform-version: {value: '${{ steps.versions.outputs.kubeconform-version }}'}
-  kubeconform-linux-amd64-sha256: {value: '${{ steps.versions.outputs.kubeconform-linux-amd64-sha256 }}'}
-  velero-version: {value: '${{ steps.versions.outputs.velero-version }}'}
-  velero-linux-amd64-sha256: {value: '${{ steps.versions.outputs.velero-linux-amd64-sha256 }}'}
-  actionlint-version: {value: '${{ steps.versions.outputs.actionlint-version }}'}
-  trivy-version: {value: '${{ steps.versions.outputs.trivy-version }}'}
-  lychee-version: {value: '${{ steps.versions.outputs.lychee-version }}'}
-  lychee-linux-x86-64-musl-sha256: {value: '${{ steps.versions.outputs.lychee-linux-x86-64-musl-sha256 }}'}
-  ort-image: {value: '${{ steps.versions.outputs.ort-image }}'}
-  zap-image: {value: '${{ steps.versions.outputs.zap-image }}'}
+  kubectl-version:
+    description: Pinned kubectl release version
+    value: '${{ steps.versions.outputs.kubectl-version }}'
+  kubectl-linux-amd64-sha256:
+    description: SHA-256 checksum for the pinned Linux amd64 kubectl archive
+    value: '${{ steps.versions.outputs.kubectl-linux-amd64-sha256 }}'
+  helm-version:
+    description: Pinned Helm release version
+    value: '${{ steps.versions.outputs.helm-version }}'
+  helm-linux-amd64-sha256:
+    description: SHA-256 checksum for the pinned Linux amd64 Helm archive
+    value: '${{ steps.versions.outputs.helm-linux-amd64-sha256 }}'
+  gh-version:
+    description: Pinned GitHub CLI release version
+    value: '${{ steps.versions.outputs.gh-version }}'
+  gh-linux-amd64-sha256:
+    description: SHA-256 checksum for the pinned Linux amd64 GitHub CLI archive
+    value: '${{ steps.versions.outputs.gh-linux-amd64-sha256 }}'
+  buf-version:
+    description: Pinned Buf release version
+    value: '${{ steps.versions.outputs.buf-version }}'
+  buf-linux-x86-64-sha256:
+    description: SHA-256 checksum for the pinned Linux x86-64 Buf archive
+    value: '${{ steps.versions.outputs.buf-linux-x86-64-sha256 }}'
+  kubeconform-version:
+    description: Pinned kubeconform release version
+    value: '${{ steps.versions.outputs.kubeconform-version }}'
+  kubeconform-linux-amd64-sha256:
+    description: SHA-256 checksum for the pinned Linux amd64 kubeconform archive
+    value: '${{ steps.versions.outputs.kubeconform-linux-amd64-sha256 }}'
+  velero-version:
+    description: Pinned Velero release version
+    value: '${{ steps.versions.outputs.velero-version }}'
+  velero-linux-amd64-sha256:
+    description: SHA-256 checksum for the pinned Linux amd64 Velero archive
+    value: '${{ steps.versions.outputs.velero-linux-amd64-sha256 }}'
+  actionlint-version:
+    description: Pinned actionlint release version
+    value: '${{ steps.versions.outputs.actionlint-version }}'
+  trivy-version:
+    description: Pinned Trivy release version
+    value: '${{ steps.versions.outputs.trivy-version }}'
+  lychee-version:
+    description: Pinned Lychee release version
+    value: '${{ steps.versions.outputs.lychee-version }}'
+  lychee-linux-x86-64-musl-sha256:
+    description: SHA-256 checksum for the pinned x86-64 musl Lychee archive
+    value: '${{ steps.versions.outputs.lychee-linux-x86-64-musl-sha256 }}'
+  ort-image:
+    description: Immutable ORT container image reference
+    value: '${{ steps.versions.outputs.ort-image }}'
+  zap-image:
+    description: Immutable ZAP container image reference
+    value: '${{ steps.versions.outputs.zap-image }}'
 runs:
   using: composite
   steps:

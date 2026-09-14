@@ -156,7 +156,12 @@ def main() -> int:
     if set(loader.get("outputs", {})) != expected_loader_outputs:
         fail("workflow authority loader outputs are unexpected or incomplete")
     for output in expected_loader_outputs:
-        value = (loader["outputs"][output] or {}).get("value") if isinstance(loader["outputs"][output], dict) else None
+        output_definition = loader["outputs"][output]
+        if not isinstance(output_definition, dict) or not isinstance(output_definition.get("description"), str):
+            fail(f"workflow authority loader output is missing a description: {output}")
+        if not output_definition["description"].strip():
+            fail(f"workflow authority loader output description is empty: {output}")
+        value = output_definition.get("value") if isinstance(output_definition, dict) else None
         if value != "${{ steps.versions.outputs." + output + " }}":
             fail(f"workflow authority loader output is not sourced from validation: {output}")
     with tempfile.TemporaryDirectory() as temporary:
