@@ -72,16 +72,16 @@ from smoke_common import (
 try:
     import websocket
 except ImportError as exc:
-    venv_directory = repo_root / ".venv"
+    venv_directory = repo_root / ".venv-smoke"
     venv_python = venv_directory / "bin" / "python"
     requirements_file = repo_root / "config" / "python" / "smoke-requirements.txt"
     raise SystemExit(
         "The python 'websocket-client' package is required. "
         "Create the canonical virtual environment and install it with: "
-        f"python3 -m venv {shlex.quote(str(venv_directory))} && "
+        f"python3 -m venv --clear {shlex.quote(str(venv_directory))} && "
         f"{shlex.quote(str(venv_python))} -m pip install "
         "--disable-pip-version-check --require-hashes "
-        f"-r {shlex.quote(str(requirements_file))}. "
+        f"-r {shlex.quote(str(requirements_file))}\n"
         "Activate that environment before rerunning this smoke test."
     ) from exc
 

@@ -171,7 +171,15 @@ def main() -> int:
         )
         if canonical.returncode != 0:
             fail(f"workflow authority loader rejects canonical authority: {canonical.stderr.strip()}")
-        (authority_path / "workflow-tool-versions.env").write_text(ap.read_text() + "GITHUB_OUTPUT=redirected.output\n")
+        (authority_path / "workflow-tool-versions.env").write_text(ap.read_text() + " \t  \n# harmless comment\n")
+        whitespace = subprocess.run(
+            ["bash", "-c", loader_run], cwd=temporary, env=env, capture_output=True, text=True, check=False
+        )
+        if whitespace.returncode != 0:
+            fail(f"workflow authority loader rejects whitespace-only lines: {whitespace.stderr.strip()}")
+        (authority_path / "workflow-tool-versions.env").write_text(
+            ap.read_text() + "GITHUB_OUTPUT=redirected.output\nnot a key=value\n"
+        )
         output_path.write_text("sentinel\n")
         unsupported = subprocess.run(
             ["bash", "-c", loader_run], cwd=temporary, env=env, capture_output=True, text=True, check=False
@@ -276,6 +284,11 @@ def main() -> int:
             if paths.count(authority_path) != 1:
                 fail(f"license-scan.yml {group} filter must contain exactly one {authority_path}")
 
+    conditional_contract_profile = (
+        "${{ (needs.changes.outputs.lightweight_only == 'true' && "
+        "needs.changes.outputs.design_docs_changed == 'true' && "
+        "needs.changes.outputs.validation_python_changed != 'true') && 'none' || 'ci' }}"
+    )
     node_count = python_count = gh_count = 0
     for path in workflow_paths:
         for job_name, job in (load(path).get("jobs") or {}).items():
@@ -310,7 +323,10 @@ def main() -> int:
                         fail(f"{path.name}:{job_name}: Python setup before checkout")
                     py = True
                     python_profile = step.get("with", {}).get("requirements", "none")
-                    if python_profile not in {"none", "yaml", "ci", "smoke", "docs"}:
+                    valid_profiles = {"none", "yaml", "ci", "smoke", "docs"}
+                    if path.name == "ci.yml" and job_name == "dev-tool-contract-checks":
+                        valid_profiles.add(conditional_contract_profile)
+                    if python_profile not in valid_profiles:
                         fail(f"{path.name}:{job_name}: invalid Python dependency profile")
                 if uses == "./.github/actions/resolve-certificate-identity-mode":
                     py = True
@@ -323,7 +339,7 @@ def main() -> int:
                 need = python_needs(run)
                 if need is not None and not py:
                     fail(f"{path.name}:{job_name}: direct or helper Python consumer uses ambient runner Python")
-                if need == "yaml" and python_profile not in {"yaml", "ci"}:
+                if need == "yaml" and python_profile not in {"yaml", "ci", conditional_contract_profile}:
                     fail(f"{path.name}:{job_name}: PyYAML helper lacks its pinned dependency profile")
                 if need in {"smoke", "ci", "docs"} and python_profile != need:
                     fail(f"{path.name}:{job_name}: {need} helper lacks its pinned dependency profile")

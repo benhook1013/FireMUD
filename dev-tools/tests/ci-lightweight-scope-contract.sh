@@ -254,6 +254,21 @@ for expected in (
 complete_contract_step = find_step(
     ci, "dev-tool-contract-checks", "Validate dev tool contracts", "ci workflow"
 )
+contract_python_step = find_step(ci, "dev-tool-contract-checks", "🐍 Set Up Python", "ci workflow")
+require_equal(
+    contract_python_step,
+    ("with", "requirements"),
+    "${{ (needs.changes.outputs.lightweight_only == 'true' && needs.changes.outputs.design_docs_changed == 'true' && needs.changes.outputs.validation_python_changed != 'true') && 'none' || 'ci' }}",
+    "ci workflow",
+)
+for case, lightweight, design_docs, validation_python, expected in (
+    ("lightweight design-doc-only", True, True, False, "none"),
+    ("full validation", False, True, False, "ci"),
+    ("lightweight validation-Python", True, True, True, "ci"),
+):
+    actual = "none" if lightweight and design_docs and not validation_python else "ci"
+    if actual != expected:
+        raise SystemExit(f"ci workflow setup-python profile case {case} expected {expected}, got {actual}")
 require_contains(
     complete_contract_step,
     ("run",),

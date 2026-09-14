@@ -28,6 +28,7 @@ docker/backups/
 __pycache__/
 *.pyc
 /.venv/
+/.venv-smoke/
 
 # Terraform
 **/.terraform/

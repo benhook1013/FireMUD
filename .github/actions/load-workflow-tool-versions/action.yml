@@ -47,7 +47,7 @@ runs:
         )
         declare -A seen_keys=()
         while IFS= read -r line; do
-          [[ -z "$line" || "$line" == \#* ]] && continue
+          [[ -z "${line//[[:space:]]/}" || "$line" == \#* ]] && continue
           key="${line%%=*}"
           if [[ ! " ${supported_keys[*]} " == *" ${key} "* ]]; then
             echo "::error title=Unsupported workflow tool authority key::${key} is not supported." >&2; exit 1

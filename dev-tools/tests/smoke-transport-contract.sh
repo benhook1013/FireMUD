@@ -327,13 +327,13 @@ for script in \
   grep -q 'login_play_look_steps' "$script"
   grep -q 'gameplay_item_container_equipment_steps' "$script"
   if [[ "$script" == *"game-session-service/websocket-login-look-smoke.sh" ]]; then
-    grep -q 'venv_directory = repo_root / ".venv"' "$script" ||
+    grep -q 'venv_directory = repo_root / ".venv-smoke"' "$script" ||
       { echo "$script must use the canonical repository virtual environment" >&2; exit 1; }
     grep -q 'venv_python = venv_directory / "bin" / "python"' "$script" ||
       { echo "$script must install through the virtual environment interpreter" >&2; exit 1; }
     grep -q 'requirements_file = repo_root / "config" / "python" / "smoke-requirements.txt"' "$script" ||
       { echo "$script must resolve the canonical smoke requirements file" >&2; exit 1; }
-    grep -q 'python3 -m venv {shlex.quote(str(venv_directory))}' "$script" ||
+    grep -q 'python3 -m venv --clear {shlex.quote(str(venv_directory))}' "$script" ||
       { echo "$script must create the canonical virtual environment in its install hint" >&2; exit 1; }
     grep -q 'shlex.quote(str(venv_python))' "$script" ||
       { echo "$script must quote the canonical virtual environment interpreter" >&2; exit 1; }
@@ -341,6 +341,8 @@ for script in \
       { echo "$script must use the pinned hash-locked smoke requirements profile" >&2; exit 1; }
     grep -q 'shlex.quote(str(requirements_file))' "$script" ||
       { echo "$script must quote the absolute requirements file" >&2; exit 1; }
+    grep -Fq 'f"-r {shlex.quote(str(requirements_file))}\n"' "$script" ||
+      { echo "$script must keep prose punctuation outside the copyable requirements command" >&2; exit 1; }
     if grep -q 'shlex.quote(sys.executable)' "$script"; then
       echo "$script must not recommend installing into the ambient interpreter" >&2
       exit 1
