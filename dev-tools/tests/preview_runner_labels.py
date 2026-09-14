@@ -137,6 +137,18 @@ def _run_fixtures() -> None:
                 raise AssertionError(f"no-preview aggregate had unexpected diagnostic: {error}") from error
         else:
             raise AssertionError("no-preview aggregate was accepted")
+        valid_preview = Path(temporary) / "valid-preview.yml"
+        valid_preview.write_text(
+            "jobs:\n  preview:\n    runs-on: [self-hosted, preview, linux, x64]\n",
+            encoding="utf-8",
+        )
+        try:
+            main((str(valid_preview), str(no_preview)))
+        except ValueError as error:
+            if str(error) != "no preview runner jobs found":
+                raise AssertionError(f"mixed workflow arguments had unexpected diagnostic: {error}") from error
+        else:
+            raise AssertionError("workflow with no preview jobs was accepted alongside a valid workflow")
     for invalid_arguments in (("--unknown",), ("workflow.yml", "--self-test")):
         try:
             main(invalid_arguments)
@@ -154,9 +166,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
         return 0
     if not args or any(argument.startswith("--") for argument in args):
         raise SystemExit(_USAGE)
-    inspected = sum(validate_workflow(Path(path_text)) for path_text in args)
-    if inspected == 0:
-        raise ValueError("no preview runner jobs found")
+    for path_text in args:
+        if validate_workflow(Path(path_text)) == 0:
+            raise ValueError("no preview runner jobs found")
     return 0
 
 

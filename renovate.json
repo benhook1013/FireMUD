@@ -67,19 +67,6 @@
   "prConcurrentLimit": 10,
   "packageRules": [
     {
-      "description": "Keep the Velero CLI, image authority, and evidence-gated production projection in one update",
-      "matchManagers": [
-        "custom.regex",
-        "kubernetes"
-      ],
-      "matchPackageNames": [
-        "vmware-tanzu/velero",
-        "velero/velero"
-      ],
-      "groupName": "velero tool and image",
-      "minimumGroupSize": 2
-    },
-    {
       "matchManagers": [
         "gradle"
       ],

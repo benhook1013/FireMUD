@@ -49,8 +49,9 @@ for workflow_path in map(Path, sys.argv[1:]):
     workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
     checkouts = [
         step
-        for step in workflow["jobs"][next(iter(workflow["jobs"]))]["steps"]
-        if step.get("uses", "").startswith("actions/checkout@")
+        for job in workflow["jobs"].values()
+        for step in (job.get("steps") or [])
+        if isinstance(step, dict) and step.get("uses", "").startswith("actions/checkout@")
     ]
     if len(checkouts) != 1 or checkouts[0].get("with", {}).get("persist-credentials") is not False:
         raise SystemExit(f"{workflow_path.name} preview checkout must disable persisted credentials")

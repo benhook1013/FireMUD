@@ -811,6 +811,8 @@ def main() -> int:
     if len(velero_matches) != 1:
         fail("Velero image manager must match exactly one atomic version-and-digest block")
     velero_match = velero_matches[0]
+    if "vmware-tanzu/velero" in authority_text:
+        fail("workflow tool authority must not retain the stale vmware-tanzu/velero marker")
     if velero_match.group("currentValue") != a["VELERO_VERSION"]:
         fail("Velero image manager must match the authority image version")
     if velero_match.group("currentDigest") != a["VELERO_IMAGE_DIGEST"]:
@@ -898,9 +900,6 @@ def main() -> int:
     )
     if infra_rule is None or velero_rule is None or rules.index(velero_rule) <= rules.index(infra_rule):
         fail("production Velero Renovate exception must follow infrastructure automerge")
-    velero_group_rule = next((rule for rule in rules if rule.get("groupName") == "velero tool and image"), None)
-    if velero_group_rule is None or velero_group_rule.get("minimumGroupSize") != 2:
-        fail("Velero tool and image updates must remain grouped as one pair")
     if (
         velero_rule.get("matchManagers") != ["kubernetes"]
         or velero_rule.get("matchFileNames") != ["k8s/velero/verify-backups-cronjob.yaml"]
