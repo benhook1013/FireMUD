@@ -94,6 +94,45 @@ require_exact_line() {
   fi
 }
 
+assert_publish_checkout_configuration() {
+  local path="$1"
+
+  if ! python3 - "$path" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+
+path = Path(sys.argv[1])
+workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+jobs = workflow.get("jobs") if isinstance(workflow, dict) else None
+publish = jobs.get("publish") if isinstance(jobs, dict) else None
+steps = publish.get("steps") if isinstance(publish, dict) else None
+checkouts = [
+    step
+    for step in steps or []
+    if isinstance(step, dict)
+    and isinstance(step.get("uses"), str)
+    and step["uses"].startswith("actions/checkout@")
+]
+if len(checkouts) != 1:
+    raise SystemExit("publish job must contain exactly one actions/checkout step")
+
+checkout_with = checkouts[0].get("with")
+if not isinstance(checkout_with, dict):
+    raise SystemExit("publish checkout must define a with mapping")
+if checkout_with.get("ref") != "${{ github.event.repository.default_branch }}":
+    raise SystemExit("publish checkout must use the repository default branch")
+if type(checkout_with.get("persist-credentials")) is not bool or checkout_with["persist-credentials"] is not False:
+    raise SystemExit("publish checkout must disable persisted credentials with boolean false")
+PY
+  then
+    echo "$path publish job must have one default-branch, non-persisting checkout" >&2
+    exit 1
+  fi
+}
+
 require_ordered_sequence() {
   local path="$1"
   shift
@@ -522,9 +561,7 @@ require_contains "$pr_image_publisher_path" 'max_push_attempts=3'
 require_contains "$pr_image_publisher_path" 'backoff_seconds=$((5 * 2 ** (push_attempt - 1)))'
 # shellcheck disable=SC2016 # This assertion intentionally matches unevaluated publisher shell.
 require_contains "$pr_image_publisher_path" 'sleep "$backoff_seconds"'
-# shellcheck disable=SC2016 # This assertion intentionally matches a literal GitHub expression.
-assert_job_contains publish-pr-runtime-images.yml publish 'ref: ${{ github.event.repository.default_branch }}'
-assert_job_contains publish-pr-runtime-images.yml publish 'persist-credentials: false'
+assert_publish_checkout_configuration "$pr_image_publisher_path"
 
 python3 - "$pr_image_publisher_path" <<'PY'
 import os

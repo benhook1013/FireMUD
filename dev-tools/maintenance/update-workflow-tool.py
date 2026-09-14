@@ -81,6 +81,32 @@ def dockerhub_digest(repository: str, tag: str) -> str:
     return digest
 
 
+def velero_image_digest_from_evidence(path: Path, version: str) -> str:
+    try:
+        evidence = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise SystemExit(f"could not read Velero image evidence file {path}: {exc}") from exc
+
+    lines = evidence.splitlines()
+    if len(lines) != 1 or not lines[0].strip():
+        raise SystemExit("Velero image evidence must contain exactly one immutable image reference")
+
+    reference = lines[0].strip()
+    match = re.fullmatch(
+        r"(?P<repository>[^:\s]+/[^:\s]+):(?P<tag>[^@\s]+)@(?P<digest>sha256:[0-9a-f]{64})",
+        reference,
+    )
+    if match is None:
+        raise SystemExit(
+            "Velero image evidence must be a full immutable image reference with a lowercase SHA-256"
+        )
+    if match.group("repository") != "velero/velero":
+        raise SystemExit("Velero image evidence must reference the exact repository velero/velero")
+    if match.group("tag") != f"v{version}":
+        raise SystemExit(f"Velero image evidence must reference the exact tag v{version}")
+    return match.group("digest")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("tool", choices=SPECS)
@@ -88,10 +114,20 @@ def main() -> None:
     parser.add_argument("--checksum-file", type=Path, help="offline checksum manifest")
     parser.add_argument("--authority", type=Path, default=Path("config/workflow-tool-versions.env"))
     parser.add_argument("--velero-manifest", type=Path, default=Path("k8s/velero/verify-backups-cronjob.yaml"))
-    parser.add_argument("--image-digest", help="verified Velero image digest (offline/test override)")
+    parser.add_argument(
+        "--image-evidence-file",
+        type=Path,
+        help="offline Velero image evidence containing one full immutable image reference",
+    )
     args = parser.parse_args()
     if not re.fullmatch(r"\d+\.\d+\.\d+", args.version):
         parser.error("version must have exactly three numeric parts")
+    if args.image_evidence_file and args.tool != "velero":
+        parser.error("--image-evidence-file is only valid for velero")
+
+    image_digest = None
+    if args.tool == "velero" and args.image_evidence_file:
+        image_digest = velero_image_digest_from_evidence(args.image_evidence_file, args.version)
 
     prefix, asset_template, url_template = SPECS[args.tool]
     asset = asset_template.format(v=args.version)
@@ -104,6 +140,9 @@ def main() -> None:
     if len(matches) != 1:
         raise SystemExit(f"could not identify exactly one checksum for {asset}")
 
+    if args.tool == "velero" and image_digest is None:
+        image_digest = dockerhub_digest("velero/velero", f"v{args.version}")
+
     authority = args.authority.read_text(encoding="utf-8")
     authority = replace(authority, f"{prefix}_VERSION", args.version)
     stem = CHECKSUM_STEMS[prefix]
@@ -111,9 +150,8 @@ def main() -> None:
     authority = replace(authority, f"{stem}_SHA256", matches[0])
     manifest = None
     if args.tool == "velero":
-        image_digest = args.image_digest or dockerhub_digest("velero/velero", f"v{args.version}")
-        if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_digest):
-            raise SystemExit("Velero image digest must be a lowercase SHA-256")
+        if image_digest is None:
+            raise SystemExit("Velero image digest could not be resolved")
         authority = replace(authority, "VELERO_IMAGE_DIGEST", image_digest)
         manifest = args.velero_manifest.read_text(encoding="utf-8")
         manifest, count = re.subn(

@@ -126,6 +126,22 @@ required={
 for name,needles in required.items():
  data=(workflows/name).read_text()
  if any(n not in data for n in needles): fail(f'{name} does not consume all canonical tool outputs')
+
+ci_jobs=load(workflows/'ci.yml').get('jobs') or {}
+frontend_checks=ci_jobs.get('frontend-checks')
+if not isinstance(frontend_checks,dict): fail('ci.yml frontend-checks job is missing')
+frontend_steps=frontend_checks.get('steps')
+if not isinstance(frontend_steps,list): fail('ci.yml frontend-checks steps are missing')
+cache_lockfiles={'cache-openapi':'config/openapi/package-lock.json','cache-web-client':'web-client/package-lock.json'}
+for cache_id,lockfile in cache_lockfiles.items():
+ matches=[step for step in frontend_steps if isinstance(step,dict) and step.get('id')==cache_id]
+ if len(matches)!=1: fail(f'ci.yml frontend-checks must define exactly one {cache_id} step')
+ with_data=matches[0].get('with')
+ key=with_data.get('key') if isinstance(with_data,dict) else None
+ hash_match=re.search(r'hashFiles\(([^)]*)\)',key) if isinstance(key,str) else None
+ paths=re.findall(r"['\"]([^'\"]+)['\"]",hash_match.group(1)) if hash_match else []
+ if set(paths)!={'.node-version',lockfile}: fail(f'ci.yml {cache_id} key must hash .node-version and {lockfile}')
+
 velero_manifest=(root/'k8s/velero/verify-backups-cronjob.yaml').read_text()
 velero_images=re.findall(r'image: velero/velero:[^\s]+',velero_manifest)
 allowed_velero_images={

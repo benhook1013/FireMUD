@@ -18,7 +18,16 @@ The fresh-bootstrap step establishes the claim and running stack; the standalone
 
 ## Requirements
 
-1. The Python version in [`.python-version`](../../.python-version) and the exact packages in [`config/python/smoke-requirements.txt`](../../config/python/smoke-requirements.txt) are required by the canonical scripted clients. Install them with `python3 -m pip install -r config/python/smoke-requirements.txt` when they are not already available.
+1. The Python version in [`.python-version`](../../.python-version) and the exact packages in [`config/python/smoke-requirements.txt`](../../config/python/smoke-requirements.txt) are required by the canonical scripted clients. Activate the interpreter pinned by `.python-version`, then verify that the active `python3` patch matches that pin before installing the requirements:
+
+   ```bash
+   PYTHON_VERSION="$(< .python-version)"
+   python3 --version
+   test "$(python3 -c 'import platform; print(platform.python_version())')" = "$PYTHON_VERSION"
+   python3 -m pip install -r config/python/smoke-requirements.txt
+   ```
+
+   If the version check fails, stop and activate the pinned interpreter before continuing.
 2. Account Service must be running, and the canonical Compose-backed scripts require the local PostgreSQL schema to be available because `wait_for_account_schema` checks the `<COMPOSE_PROJECT_NAME>-postgres-1` container before the HTTP smoke preflight. The smoke client then verifies credentials with `POST ${SMOKE_ACCOUNT_API_BASE}/auth/login`; this HTTP preflight is separate from Game Session's internal Account Service gRPC dependency.
 3. For the Telnet-via-Gateway path, Game Session Service, Spring Cloud Gateway, and TCP Proxy must be running with the same tenant. The client controls are `SMOKE_TELNET_HOST` and `TCP_PROXY_PORT` for the Telnet endpoint, plus `SMOKE_ACCOUNT_API_BASE`, `SMOKE_GAME_LOGIC_API_BASE`, `SMOKE_GAME_SESSION_API_BASE`, `SMOKE_GATEWAY_API_BASE`, and `SMOKE_TCP_PROXY_API_BASE` for readiness and HTTP checks. For the direct backend WebSocket path, Gateway and TCP Proxy are not prerequisites: Account Service, Game Logic Service, and Game Session Service are sufficient. Its controls are `SMOKE_GAME_SESSION_WS_URL`, `SMOKE_ACCOUNT_API_BASE`, `SMOKE_GAME_LOGIC_API_BASE`, and `SMOKE_GAME_SESSION_API_BASE`. Service-to-service bridge variables such as `GATEWAY_WS_URL` configure the running services and are separate from these client controls. The current direct smoke requires positive numeric tenant and game-instance identifiers; a separate positive session identifier is not required because the direct listener derives its transport session ID from an optional `X-Firemud-Transport-Session-Id` header and otherwise uses `X-Game-Instance-Id`. UUID identifiers are target-state only until the current backend wire parsers are migrated.
 4. Before running the flow, wait for the canonical readiness endpoints of the path you are exercising. For the Telnet path, that means Account Service, Game Logic Service, Game Session Service, Spring Cloud Gateway, and TCP Proxy must all report `UP` from `/actuator/health/readiness`.

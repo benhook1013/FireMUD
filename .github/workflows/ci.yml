@@ -587,7 +587,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: config/openapi/node_modules
-          key: openapi-node-${{ hashFiles('config/openapi/package-lock.json') }}
+          key: openapi-node-${{ hashFiles('.node-version', 'config/openapi/package-lock.json') }}
 
       - name: 📦 Install OpenAPI Dependencies
         if: steps.cache-openapi.outputs.cache-hit != 'true'
@@ -601,7 +601,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: web-client/node_modules
-          key: web-client-node-${{ hashFiles('web-client/package-lock.json') }}
+          key: web-client-node-${{ hashFiles('.node-version', 'web-client/package-lock.json') }}
 
       - name: 📦 Install Frontend Dependencies
         if: steps.cache-web-client.outputs.cache-hit != 'true'
