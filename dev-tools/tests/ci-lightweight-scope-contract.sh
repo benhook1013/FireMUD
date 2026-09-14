@@ -22,7 +22,10 @@ require_contains() {
 for expected in \
   'function isDocumentation(file)' \
   'function isValidationPython(file)' \
-  'function isValidationTooling(file)'; do
+  'function isValidationTooling(file)' \
+  'function isRuntimeAuthority(file)' \
+  '.node-version' \
+  '.python-version'; do
   require_contains "$CLASSIFIER" "$expected"
 done
 

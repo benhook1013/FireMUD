@@ -59,6 +59,10 @@ function isValidationTooling(file) {
   return /^\.github\/scripts\/[^/]+\.test\.cjs$/.test(file);
 }
 
+function isRuntimeAuthority(file) {
+  return file === ".node-version" || file === ".python-version";
+}
+
 function isPythonDependency(file) {
   return file.startsWith("config/python/");
 }
@@ -66,7 +70,8 @@ function isPythonDependency(file) {
 function isLightweightEligible(file) {
   return (
     (isDocumentation(file) || isValidationPython(file)) &&
-    file !== "dev-tools/docs/generate-erd.sh"
+    file !== "dev-tools/docs/generate-erd.sh" &&
+    !isRuntimeAuthority(file)
   );
 }
 
@@ -112,8 +117,8 @@ function classifyChangeScope(inputFiles, options = {}) {
   return {
     runAll,
     affectedServices: [...affectedServices],
-    docsChanged: runAll || files.some(isDocumentation),
-    frontendChanged: runAll || files.some(isFrontend),
+    docsChanged: runAll || files.some((file) => isDocumentation(file) || isRuntimeAuthority(file)),
+    frontendChanged: runAll || files.some((file) => isFrontend(file) || file === ".node-version"),
     pythonChanged: forceAll || pythonFiles.length > 0,
     designDocsChanged,
     validationPythonChanged,
