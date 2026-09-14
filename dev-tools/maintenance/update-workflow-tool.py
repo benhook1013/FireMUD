@@ -21,12 +21,14 @@ SPECS = {
     "buf": ("BUF", "buf-Linux-x86_64", "https://github.com/bufbuild/buf/releases/download/v{v}/sha256.txt"),
     "kubeconform": ("KUBECONFORM", "kubeconform-linux-amd64.tar.gz", "https://github.com/yannh/kubeconform/releases/download/v{v}/CHECKSUMS"),
     "velero": ("VELERO", "velero-v{v}-linux-amd64.tar.gz", "https://github.com/vmware-tanzu/velero/releases/download/v{v}/CHECKSUM"),
+    "trivy": ("TRIVY", "trivy_{v}_Linux-64bit.tar.gz", "https://github.com/aquasecurity/trivy/releases/download/v{v}/trivy_{v}_checksums.txt"),
     "lychee": ("LYCHEE", "lychee-x86_64-unknown-linux-musl.tar.gz", "https://github.com/lycheeverse/lychee/releases/download/lychee-v{v}/lychee-x86_64-unknown-linux-musl.tar.gz.sha256"),
 }
 CHECKSUM_STEMS = {
     "KUBECTL": "KUBECTL_LINUX_AMD64",
     "HELM": "HELM_LINUX_AMD64", "GH": "GH_LINUX_AMD64", "BUF": "BUF_LINUX_X86_64",
     "KUBECONFORM": "KUBECONFORM_LINUX_AMD64", "VELERO": "VELERO_LINUX_AMD64",
+    "TRIVY": "TRIVY_LINUX_AMD64",
     "LYCHEE": "LYCHEE_LINUX_X86_64_MUSL",
 }
 RECOVERY_SCHEMA = "firemud-workflow-tool-update-recovery"

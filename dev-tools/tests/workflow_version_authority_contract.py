@@ -136,6 +136,7 @@ def main() -> int:
         "BUF": "BUF_LINUX_X86_64",
         "KUBECONFORM": "KUBECONFORM_LINUX_AMD64",
         "VELERO": "VELERO_LINUX_AMD64",
+        "TRIVY": "TRIVY_LINUX_AMD64",
         "LYCHEE": "LYCHEE_LINUX_X86_64_MUSL",
     }
     for tool, stem in pairs.items():
@@ -178,6 +179,7 @@ def main() -> int:
         "velero-linux-amd64-sha256",
         "actionlint-version",
         "trivy-version",
+        "trivy-linux-amd64-sha256",
         "lychee-version",
         "lychee-linux-x86-64-musl-sha256",
         "ort-image",
@@ -516,6 +518,8 @@ def main() -> int:
         "PyYAML\n",
         "websocket-client\n",
         "aquasecurity/trivy/main",
+        "aquasecurity/setup-trivy@",
+        "aquasecurity/trivy-action@",
         "zaproxy:stable",
         "VELERO_VERSION=v",
         'KUBECONFORM_VERSION="v',
@@ -533,8 +537,8 @@ def main() -> int:
         ),
         "docs.yml": ("lychee-version",),
         "manual-backup-restore.yml": ("velero-version", "velero-linux-amd64-sha256"),
-        "security.yml": ("trivy-version",),
-        "weekly-security-scan.yml": ("trivy-version",),
+        "security.yml": ("uses: ./.github/actions/setup-trivy",),
+        "weekly-security-scan.yml": ("uses: ./.github/actions/setup-trivy",),
         "zap-baseline.yml": ("zap-image",),
     }
     for name, needles in workflow_authority_requirements.items():
@@ -629,6 +633,27 @@ def main() -> int:
         fail("setup-kubectl must atomically replace the verified binary")
     if "trap cleanup EXIT" not in setup_kubectl_text or 'rm -rf -- "$temporary_directory"' not in setup_kubectl_text:
         fail("setup-kubectl must clean only its exact temporary directory")
+
+    setup_trivy_text = (actions / "setup-trivy/action.yml").read_text()
+    if "aquasecurity/setup-trivy@" in setup_trivy_text or "aquasecurity/trivy-action@" in setup_trivy_text:
+        fail("setup-trivy must use a repository-owned direct installer")
+    for required_setup_trivy_fragment in (
+        "TRIVY_VERSION: ${{ steps.versions.outputs.trivy-version }}",
+        "TRIVY_SHA256: ${{ steps.versions.outputs.trivy-linux-amd64-sha256 }}",
+        "RUNNER_OS",
+        "RUNNER_ARCH",
+        "requires a Linux X64 runner",
+        "https://github.com/aquasecurity/trivy/releases/download/",
+        "trivy_${trivy_version}_Linux-64bit.tar.gz",
+        "sha256sum --check --status",
+        'tar -xzf "$archive" -C "$temporary_directory" trivy',
+        "install -m 0755",
+        "GITHUB_PATH",
+    ):
+        if required_setup_trivy_fragment not in setup_trivy_text:
+            fail(
+                f"setup-trivy installer does not consume canonical authority safely: {required_setup_trivy_fragment}"
+            )
 
     release = load(workflows / "release-notes.yml")
     if release.get("permissions") != {"contents": "read"}:

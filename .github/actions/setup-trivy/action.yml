@@ -1,0 +1,47 @@
+name: Set up Trivy
+description: Install the repository-pinned Trivy release for FireMUD workflows.
+runs:
+  using: composite
+  steps:
+    - name: Load workflow tool versions
+      id: versions
+      uses: ./.github/actions/load-workflow-tool-versions
+
+    - name: Install pinned Trivy
+      shell: bash
+      env:
+        TRIVY_VERSION: ${{ steps.versions.outputs.trivy-version }}
+        TRIVY_SHA256: ${{ steps.versions.outputs.trivy-linux-amd64-sha256 }}
+      run: |
+        set -euo pipefail
+        if [[ "${RUNNER_OS:-}" != Linux || "${RUNNER_ARCH:-}" != X64 ]]; then
+          echo "pinned Trivy installer requires a Linux X64 runner" >&2
+          exit 1
+        fi
+        trivy_version="${TRIVY_VERSION:?}"
+        trivy_sha256="${TRIVY_SHA256:?}"
+        trivy_root="${RUNNER_TEMP:?}/firemud-trivy"
+        installation_directory="$trivy_root/$trivy_version"
+        installed_binary="$installation_directory/trivy"
+        mkdir -p -- "$installation_directory"
+        temporary_directory="$(mktemp -d "$trivy_root/.tmp.XXXXXX")"
+        cleanup() {
+          if [[ -n "${temporary_directory:-}" && -d "$temporary_directory" ]]; then
+            rm -rf -- "$temporary_directory"
+          fi
+        }
+        trap cleanup EXIT
+        archive="$temporary_directory/trivy_${trivy_version}_Linux-64bit.tar.gz"
+        extracted_binary="$temporary_directory/trivy"
+        staged_binary="$temporary_directory/trivy.staged"
+
+        curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
+          --connect-timeout 10 --max-time 120 \
+          "https://github.com/aquasecurity/trivy/releases/download/v${trivy_version}/trivy_${trivy_version}_Linux-64bit.tar.gz" \
+          -o "$archive"
+        printf '%s  %s\n' "$trivy_sha256" "$archive" \
+          | sha256sum --check --status
+        tar -xzf "$archive" -C "$temporary_directory" trivy
+        install -m 0755 "$extracted_binary" "$staged_binary"
+        mv -fT -- "$staged_binary" "$installed_binary"
+        echo "$installation_directory" >> "$GITHUB_PATH"
