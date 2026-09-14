@@ -32,6 +32,7 @@ runs:
           temporary_archive="$(mktemp -- "${install_root}/gh.tar.gz.XXXXXX")"
           trap 'rm -f -- "$temporary_archive"' EXIT
           curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
+            --connect-timeout 10 --max-time 60 \
             "https://github.com/cli/cli/releases/download/v${gh_version}/gh_${gh_version}_linux_amd64.tar.gz" \
             -o "$temporary_archive"
           printf '%s  %s\n' "$gh_sha256" "$temporary_archive" \

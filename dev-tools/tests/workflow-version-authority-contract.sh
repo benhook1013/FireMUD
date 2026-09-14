@@ -154,16 +154,46 @@ for name,needles in required.items():
 ci_text=(workflows/'ci.yml').read_text()
 buf_curl_pattern=(
  r'(?m)^\s*curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \\\n'
+ r'\s*--connect-timeout 10 --max-time 60 \\\n'
  r'\s*"https://github\.com/bufbuild/buf/releases/download/v\$\{BUF_VERSION\}/buf-Linux-x86_64" \\\n'
  r'\s*-o /tmp/buf$')
-if not re.search(buf_curl_pattern,ci_text):
- fail('ci.yml Buf installer must use the canonical bounded transient curl retries')
+if len(re.findall(buf_curl_pattern,ci_text)) != 1:
+ fail('ci.yml must define exactly one Buf installer with canonical bounded retries and timeouts')
 for required in (
  'BUF_VERSION: ${{ steps.workflow-tool-versions.outputs.buf-version }}',
  'BUF_SHA256: ${{ steps.workflow-tool-versions.outputs.buf-linux-x86-64-sha256 }}',
  'echo "${BUF_SHA256}  /tmp/buf" | sha256sum --check --status',
 ):
  if required not in ci_text: fail(f'ci.yml Buf installer does not consume canonical authority: {required}')
+
+kubeconform_curl_pattern=(
+ r'(?m)^\s*curl -fsSL --connect-timeout 10 --max-time 60 '
+ r'"https://github\.com/yannh/kubeconform/releases/download/v\$\{KUBECONFORM_VERSION\}/kubeconform-linux-amd64\.tar\.gz" '
+ r'-o /tmp/kubeconform\.tgz$')
+if len(re.findall(kubeconform_curl_pattern,ci_text)) != 1:
+ fail('ci.yml must define exactly one kubeconform installer with canonical bounded timeouts')
+for required in (
+ 'KUBECONFORM_VERSION: ${{ steps.workflow-tool-versions.outputs.kubeconform-version }}',
+ 'KUBECONFORM_SHA256: ${{ steps.workflow-tool-versions.outputs.kubeconform-linux-amd64-sha256 }}',
+ 'echo "${KUBECONFORM_SHA256}  /tmp/kubeconform.tgz" | sha256sum --check --status',
+):
+ if required not in ci_text: fail(f'ci.yml kubeconform installer does not consume canonical authority: {required}')
+
+setup_gh_text=(actions/'setup-gh/action.yml').read_text()
+setup_gh_curl_pattern=(
+ r'(?m)^\s*curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \\\n'
+ r'\s*--connect-timeout 10 --max-time 60 \\\n'
+ r'\s*"https://github\.com/cli/cli/releases/download/v\$\{gh_version\}/gh_\$\{gh_version\}_linux_amd64\.tar\.gz" \\\n'
+ r'\s*-o "\$temporary_archive"$')
+if len(re.findall(setup_gh_curl_pattern,setup_gh_text)) != 1:
+ fail('setup-gh must define exactly one installer with canonical bounded retries and timeouts')
+for required in (
+ 'GH_VERSION: ${{ steps.versions.outputs.gh-version }}',
+ 'GH_SHA256: ${{ steps.versions.outputs.gh-linux-amd64-sha256 }}',
+ 'printf \'%s  %s\\n\' "$gh_sha256" "$temporary_archive"',
+ 'printf \'%s  %s\\n\' "$gh_sha256" "$archive_path"',
+):
+ if required not in setup_gh_text: fail(f'setup-gh installer does not consume canonical authority: {required}')
 
 ci_jobs=load(workflows/'ci.yml').get('jobs') or {}
 frontend_checks=ci_jobs.get('frontend-checks')
