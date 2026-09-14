@@ -636,6 +636,16 @@ if (assert_publish_checkout_configuration "$contract_fixture_dir/publisher-check
   echo "assert_publish_checkout_configuration must reject checkout steps in another job" >&2
   exit 1
 fi
+cat >"$contract_fixture_dir/publisher-checkout-only-other-job.yml" <<'EOF'
+jobs:
+  other:
+    steps:
+      - uses: actions/checkout@fixture
+EOF
+if (assert_publish_checkout_configuration "$contract_fixture_dir/publisher-checkout-only-other-job.yml") 2>/dev/null; then
+  echo "assert_publish_checkout_configuration must require the checkout in the publish job" >&2
+  exit 1
+fi
 cat >"$contract_fixture_dir/ordered-sequence.txt" <<'EOF'
 prefix first second suffix
 third
