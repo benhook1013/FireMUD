@@ -86,6 +86,7 @@ for required_path in (
     ".github/actions/setup-python/**",
     ".python-version",
     "config/python/smoke-requirements.txt",
+    "config/python/smoke-requirements.in",
 ):
     assert required_path in pull_request["paths"], required_path
 image_meta = workflow["jobs"]["image-meta"]
@@ -115,6 +116,7 @@ for required in (
     ".github/workflows/runtime-images.yml",
     ".python-version",
     "config/python/smoke-requirements.txt",
+    "config/python/smoke-requirements.in",
     "PR smoke scope detection was incomplete; running both local smokes.",
     "PR smoke scope detection failed; running both local smokes:",
     'core.setOutput("runtime_smoke_required", String(runtimeSmokeRequired))',

@@ -58,6 +58,10 @@ function isValidationTooling(file) {
   return /^\.github\/scripts\/[^/]+\.test\.cjs$/.test(file);
 }
 
+function isPythonDependency(file) {
+  return file.startsWith("config/python/") || file === "config/docs/requirements.txt";
+}
+
 function isLightweightEligible(file) {
   return (
     (isDocumentation(file) || isValidationPython(file)) &&
@@ -100,7 +104,7 @@ function classifyChangeScope(inputFiles, options = {}) {
     }
   }
 
-  const pythonFiles = files.filter((file) => file.endsWith(".py"));
+  const pythonFiles = files.filter((file) => file.endsWith(".py") || isPythonDependency(file));
   const designDocsChanged = files.some((file) => file.startsWith("design/"));
   const validationPythonChanged = files.some(isValidationPython);
 

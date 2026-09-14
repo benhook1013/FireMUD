@@ -85,6 +85,13 @@ test("operational Python forces the normal validation path", () => {
   assert.equal(result.pythonChanged, true);
 });
 
+test("Python dependency inputs request the normal validation path", () => {
+  const result = classifyChangeScope(["config/python/smoke-requirements.in"]);
+
+  assert.equal(result.lightweightOnly, false);
+  assert.equal(result.pythonChanged, true);
+});
+
 test("workflow changes force all service validation", () => {
   for (const path of [
     ".github/workflows/ci.yml",

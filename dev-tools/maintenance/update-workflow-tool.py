@@ -33,6 +33,7 @@ RECOVERY_SCHEMA = "firemud-workflow-tool-update-recovery"
 RECOVERY_VERSION = 1
 RECOVERY_STATES = frozenset(("prepared", "committed"))
 CHECKSUM_EVIDENCE_VERSION_PREFIX = "version="
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 def replace(text: str, key: str, value: str) -> str:
@@ -369,8 +370,10 @@ def main() -> None:
             "publisher checksum manifest"
         ),
     )
-    parser.add_argument("--authority", type=Path, default=Path("config/workflow-tool-versions.env"))
-    parser.add_argument("--velero-manifest", type=Path, default=Path("k8s/velero/verify-backups-cronjob.yaml"))
+    parser.add_argument("--authority", type=Path, default=REPOSITORY_ROOT / "config/workflow-tool-versions.env")
+    parser.add_argument(
+        "--velero-manifest", type=Path, default=REPOSITORY_ROOT / "k8s/velero/verify-backups-cronjob.yaml"
+    )
     parser.add_argument(
         "--image-evidence-file",
         type=Path,

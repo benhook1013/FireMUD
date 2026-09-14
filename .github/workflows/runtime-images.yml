@@ -38,6 +38,7 @@ on:
       - '.github/actions/setup-python/**'
       - '.python-version'
       - 'config/python/smoke-requirements.txt'
+      - 'config/python/smoke-requirements.in'
       - 'dev-tools/build-compose-service-jars.sh'
       - 'dev-tools/build-local-smoke-images.sh'
       - 'dev-tools/certs/generate-dev-certs.sh'
@@ -146,6 +147,7 @@ jobs:
                     ".python-version",
                     "build.gradle.kts",
                     "config/python/smoke-requirements.txt",
+                    "config/python/smoke-requirements.in",
                     "dev-tools/build-compose-service-jars.sh",
                     "dev-tools/build-local-smoke-images.sh",
                     "dev-tools/certs/generate-dev-certs.sh",

@@ -62,6 +62,16 @@ spec.loader.exec_module(module)
 if module.recovery_journal_path(authority).exists():
     raise SystemExit("successful transaction left recovery state")
 PY
+printf 'version=9.8.8\n' > "$tmp/outside-invalid-checksum"
+authority_digest_before=$(sha256sum "$ROOT_DIR/config/workflow-tool-versions.env" | awk '{print $1}')
+if (cd "$tmp" && python3 "$ROOT_DIR/dev-tools/maintenance/update-workflow-tool.py" kubectl 9.8.7 \
+  --checksum-file "$tmp/outside-invalid-checksum") >"$tmp/outside-defaults.out" 2>&1; then
+  echo "updater unexpectedly accepted invalid outside-repository invocation" >&2
+  exit 1
+fi
+grep -Fq 'checksum evidence version does not match requested version 9.8.7' "$tmp/outside-defaults.out"
+authority_digest_after=$(sha256sum "$ROOT_DIR/config/workflow-tool-versions.env" | awk '{print $1}')
+[[ "$authority_digest_before" == "$authority_digest_after" ]]
 
 kubectl_checksum=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
 printf 'version=9.8.7\n%s\n' "$kubectl_checksum" > "$tmp/kubectl-checksum"

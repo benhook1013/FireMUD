@@ -14,6 +14,10 @@ make_fixture() {
   chmod +x "$fixture_root/dev-tools/docs/link-check.sh"
 }
 
+grep -Fq 'Cached Lychee archive checksum verification failed:' "$LINK_CHECK"
+grep -Fq 'Cached Lychee binary checksum verification failed:' "$LINK_CHECK"
+grep -Fq 'Downloaded Lychee archive checksum verification failed:' "$LINK_CHECK"
+
 MISMATCH_ROOT="$TEMP_DIR/mismatch"
 make_fixture "$MISMATCH_ROOT"
 mismatch_authority="$MISMATCH_ROOT/config/workflow-tool-versions.env"
@@ -89,6 +93,7 @@ else
   exit 1
 fi
 grep -Fqx 'sha256sum: checksum verification failed' "$TEMP_DIR/checksum-failure.out"
+grep -Fq 'Downloaded Lychee archive checksum verification failed:' "$TEMP_DIR/checksum-failure.out"
 test ! -e "$CHECKSUM_FAILURE_CACHE_DIR/lychee"
 test ! -e "$CHECKSUM_FAILURE_CACHE_DIR/verified.sha256"
 test ! -e "$CHECKSUM_FAILURE_CACHE_DIR/lychee.tar.gz"

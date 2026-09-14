@@ -76,7 +76,8 @@
         "vmware-tanzu/velero",
         "velero/velero"
       ],
-      "groupName": "velero tool and image"
+      "groupName": "velero tool and image",
+      "minimumGroupSize": 2
     },
     {
       "matchManagers": [

@@ -45,9 +45,12 @@ if [[ -x "$BIN" && -f "$ARCHIVE" && -f "$VERIFIED_MARKER" ]]; then
   marker_archive_sha=
   marker_binary_sha=
   read -r marker_archive_sha marker_binary_sha < "$VERIFIED_MARKER" || true
-  if [[ "$marker_archive_sha" == "$LYCHEE_LINUX_X86_64_MUSL_SHA256" ]] \
-    && printf '%s  %s\n' "$LYCHEE_LINUX_X86_64_MUSL_SHA256" "$ARCHIVE" | sha256sum --check --status \
-    && printf '%s  %s\n' "$marker_binary_sha" "$BIN" | sha256sum --check --status; then
+  if [[ "$marker_archive_sha" != "$LYCHEE_LINUX_X86_64_MUSL_SHA256" ]] \
+    || ! printf '%s  %s\n' "$LYCHEE_LINUX_X86_64_MUSL_SHA256" "$ARCHIVE" | sha256sum --check --status; then
+    echo "Cached Lychee archive checksum verification failed: $ARCHIVE" >&2
+  elif ! printf '%s  %s\n' "$marker_binary_sha" "$BIN" | sha256sum --check --status; then
+    echo "Cached Lychee binary checksum verification failed: $BIN" >&2
+  else
     verify_cached_install "$marker_binary_sha"
   fi
 fi
@@ -60,7 +63,10 @@ if [[ "$trusted" != true ]]; then
   curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
     --connect-timeout 10 --max-time 60 \
     "$URL" -o "$staged_archive"
-  echo "${LYCHEE_LINUX_X86_64_MUSL_SHA256}  ${staged_archive}" | sha256sum --check --status
+  if ! echo "${LYCHEE_LINUX_X86_64_MUSL_SHA256}  ${staged_archive}" | sha256sum --check --status; then
+    echo "Downloaded Lychee archive checksum verification failed: $staged_archive" >&2
+    exit 1
+  fi
   tar -xzf "$staged_archive" -C "$staging"
   install -m 0755 "$staging/lychee-x86_64-unknown-linux-musl/lychee" "$staging/lychee"
   binary_sha="$(sha256sum "$staging/lychee" | awk '{print $1}')"
