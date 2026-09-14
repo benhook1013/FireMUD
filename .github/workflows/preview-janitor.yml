@@ -16,6 +16,8 @@ jobs:
     runs-on:
       - self-hosted
       - preview
+      - linux
+      - x64
     environment: pr-preview
     concurrency:
       group: preview-allocation-lifecycle

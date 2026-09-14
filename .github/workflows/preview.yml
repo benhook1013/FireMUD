@@ -313,6 +313,8 @@ jobs:
     runs-on:
       - self-hosted
       - preview
+      - linux
+      - x64
     needs: preview-plan
     if: ${{ needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'deploy' }}
     environment: pr-preview
@@ -830,6 +832,8 @@ jobs:
     runs-on:
       - self-hosted
       - preview
+      - linux
+      - x64
     needs: preview-plan
     # Preserve standalone cleanup here. The trusted pull_request_target lifecycle independently
     # removes the runtime and retires any retained identity, regardless of the current mode.

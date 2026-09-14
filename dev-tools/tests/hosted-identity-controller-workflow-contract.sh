@@ -12,6 +12,7 @@ done
 
 trusted="$ROOT_DIR/.github/workflows/hosted-identity-request.yml"
 preview="$ROOT_DIR/.github/workflows/preview.yml"
+preview_reconciler="$ROOT_DIR/.github/workflows/preview-reconciler.yml"
 dev_demo="$ROOT_DIR/.github/workflows/dev-demo.yml"
 runtime="$ROOT_DIR/.github/workflows/runtime-images.yml"
 publisher="$ROOT_DIR/.github/workflows/publish-pr-runtime-images.yml"
@@ -37,7 +38,7 @@ credential_source="$ROOT_DIR/dev-tools/hosted/preview/provision-runtime-credenti
 runner_label_validator="$ROOT_DIR/dev-tools/tests/preview_runner_labels.py"
 
 python3 "$runner_label_validator" --self-test
-python3 "$runner_label_validator" "$trusted"
+python3 "$runner_label_validator" "$trusted" "$preview" "$preview_reconciler" "$janitor"
 
 contains() {
   grep -Fq -- "$2" "$1" || {

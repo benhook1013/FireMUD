@@ -754,7 +754,6 @@ def main() -> int:
         "GH": "cli/cli",
         "BUF": "bufbuild/buf",
         "KUBECONFORM": "yannh/kubeconform",
-        "VELERO": "vmware-tanzu/velero",
         "ACTIONLINT": "rhysd/actionlint",
         "TRIVY": "aquasecurity/trivy",
         "LYCHEE": "lycheeverse/lychee",
