@@ -11,6 +11,8 @@ if ! command -v yamllint >/dev/null 2>&1; then
     "$venv_directory" "$venv_directory/bin/python" "$requirements_file"
   echo "yamllint is required. Install the pinned CI tools into an isolated environment with:" >&2
   printf '  %s\n' "$install_command" >&2
+  echo "After installation, activate that environment and rerun this lint command:" >&2
+  printf '  source %q/bin/activate && %q\n' "$venv_directory" "$0" >&2
   exit 1
 fi
 
