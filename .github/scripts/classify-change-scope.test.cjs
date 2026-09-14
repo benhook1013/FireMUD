@@ -95,7 +95,7 @@ test("Python dependency inputs request the normal validation path", () => {
 test("runtime authorities select their documentation and frontend consumers", async () => {
   const pythonResult = classifyChangeScope([".python-version"]);
   assert.equal(pythonResult.docsChanged, true);
-  assert.equal(pythonResult.frontendChanged, false);
+  assert.equal(pythonResult.frontendChanged, true);
   assert.equal(pythonResult.lightweightOnly, false);
   assert.equal(pythonResult.pythonChanged, false);
   assert.deepEqual(pythonResult.affectedServices, []);
@@ -108,7 +108,7 @@ test("runtime authorities select their documentation and frontend consumers", as
   assert.deepEqual(nodeResult.affectedServices, []);
 
   for (const [path, docsChanged, frontendChanged] of [
-    [".python-version", true, false],
+    [".python-version", true, true],
     [".node-version", true, true],
   ]) {
     const result = await classifyGithubFiles([path], 1);

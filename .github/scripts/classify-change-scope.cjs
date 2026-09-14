@@ -118,7 +118,11 @@ function classifyChangeScope(inputFiles, options = {}) {
     runAll,
     affectedServices: [...affectedServices],
     docsChanged: runAll || files.some((file) => isDocumentation(file) || isRuntimeAuthority(file)),
-    frontendChanged: runAll || files.some((file) => isFrontend(file) || file === ".node-version"),
+    frontendChanged:
+      runAll ||
+      files.some(
+        (file) => isFrontend(file) || file === ".node-version" || file === ".python-version",
+      ),
     pythonChanged: forceAll || pythonFiles.length > 0,
     designDocsChanged,
     validationPythonChanged,
