@@ -20,10 +20,19 @@ runs:
         fi
         kubectl_version="${KUBECTL_VERSION:?}"
         kubectl_sha256="${KUBECTL_SHA256:?}"
-        temporary_directory="$(mktemp -d)"
-        trap 'rm -rf -- "$temporary_directory"' EXIT
+        kubectl_root="${RUNNER_TEMP:?}/firemud-kubectl"
+        installation_directory="$kubectl_root/$kubectl_version"
+        installed_binary="$installation_directory/kubectl"
+        mkdir -p -- "$installation_directory"
+        temporary_directory="$(mktemp -d "$kubectl_root/.tmp.XXXXXX")"
+        cleanup() {
+          if [[ -n "${temporary_directory:-}" && -d "$temporary_directory" ]]; then
+            rm -rf -- "$temporary_directory"
+          fi
+        }
+        trap cleanup EXIT
         temporary_binary="$temporary_directory/kubectl"
-        installation_directory="$(mktemp -d "${RUNNER_TEMP:?}/firemud-kubectl.XXXXXX")"
+        staged_binary="$temporary_directory/kubectl.staged"
 
         curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
           --connect-timeout 10 --max-time 60 \
@@ -31,5 +40,6 @@ runs:
           -o "$temporary_binary"
         printf '%s  %s\n' "$kubectl_sha256" "$temporary_binary" \
           | sha256sum --check --status
-        install -m 0755 "$temporary_binary" "$installation_directory/kubectl"
+        install -m 0755 "$temporary_binary" "$staged_binary"
+        mv -fT -- "$staged_binary" "$installed_binary"
         echo "$installation_directory" >> "$GITHUB_PATH"

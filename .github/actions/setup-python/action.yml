@@ -13,7 +13,7 @@ runs:
       with:
         python-version-file: '.python-version'
 
-    - name: Install pinned Python dependencies
+    - name: Create isolated Python environment
       if: ${{ inputs.requirements != 'none' }}
       shell: bash
       env:
@@ -27,4 +27,9 @@ runs:
           docs) requirements_file=config/docs/requirements.txt ;;
           *) echo "Unsupported Python requirements profile: $REQUIREMENTS_PROFILE" >&2; exit 1 ;;
         esac
-        python3 -m pip install --disable-pip-version-check --require-hashes -r "$requirements_file"
+        venv_directory="$(mktemp -d "${RUNNER_TEMP:?}/firemud-python.XXXXXX")"
+        python3 -m venv "$venv_directory"
+        venv_python="$venv_directory/bin/python"
+        "$venv_python" -m pip install \
+          --disable-pip-version-check --require-hashes -r "$requirements_file"
+        printf '%s\n' "$venv_directory/bin" >> "$GITHUB_PATH"

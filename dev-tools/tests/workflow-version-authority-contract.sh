@@ -295,6 +295,14 @@ for required_setup_kubectl_fragment in (
  'sha256sum --check --status','install -m 0755','GITHUB_PATH',
 ):
  if required_setup_kubectl_fragment not in setup_kubectl_text: fail(f'setup-kubectl installer does not consume canonical authority safely: {required_setup_kubectl_fragment}')
+if 'kubectl_root="${RUNNER_TEMP:?}/firemud-kubectl"' not in setup_kubectl_text or 'installation_directory="$kubectl_root/$kubectl_version"' not in setup_kubectl_text:
+ fail('setup-kubectl must use a stable versioned installation directory under RUNNER_TEMP')
+if 'temporary_directory="$(mktemp -d "$kubectl_root/.tmp.XXXXXX")"' not in setup_kubectl_text:
+ fail('setup-kubectl must keep per-invocation temporary files under its stable root')
+if 'mv -fT -- "$staged_binary" "$installed_binary"' not in setup_kubectl_text:
+ fail('setup-kubectl must atomically replace the verified binary')
+if 'trap cleanup EXIT' not in setup_kubectl_text or 'rm -rf -- "$temporary_directory"' not in setup_kubectl_text:
+ fail('setup-kubectl must clean only its exact temporary directory')
 
 release=load(workflows/'release-notes.yml')
 if release.get('permissions') != {'contents':'read'}: fail('release-notes.yml must define read-only top-level permissions')
@@ -305,16 +313,16 @@ if generator.get('permissions') != {'contents':'read'}: fail('release generator 
 if publisher.get('permissions') != {'contents':'write'}: fail('release publisher must have only contents write')
 if publisher.get('needs') != 'generate-release-notes': fail('release publisher must depend on generated assets')
 generator_steps=generator.get('steps',[]); publisher_steps=publisher.get('steps',[])
-upload_steps=[step for step in generator_steps if isinstance(step,dict) and step.get('uses')=='actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a']
+upload_steps=[step for step in generator_steps if isinstance(step,dict) and re.fullmatch(r'actions/upload-artifact@[0-9a-f]{40}',str(step.get('uses','')))]
 if len(upload_steps)!=1: fail('release generator must upload exactly one release artifact')
 upload_with=upload_steps[0].get('with') or {}
 if upload_with.get('name')!='release-assets' or upload_with.get('path')!='build/release-assets': fail('release generator must upload only build/release-assets')
-download_steps=[step for step in publisher_steps if isinstance(step,dict) and step.get('uses')=='actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c']
+download_steps=[step for step in publisher_steps if isinstance(step,dict) and re.fullmatch(r'actions/download-artifact@[0-9a-f]{40}',str(step.get('uses','')))]
 if len(download_steps)!=1: fail('release publisher must download exactly one pinned release artifact')
 download_with=download_steps[0].get('with') or {}
 if download_with.get('name')!='release-assets' or download_with.get('path')!='build/release-assets': fail('release publisher must consume the release-assets handoff')
-publisher_uses={str(step.get('uses')) for step in publisher_steps if isinstance(step,dict)}
-if 'step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5' not in publisher_uses: fail('release publisher must harden its runner')
+harden_steps=[step for step in publisher_steps if isinstance(step,dict) and re.fullmatch(r'step-security/harden-runner@[0-9a-f]{40}',str(step.get('uses','')))]
+if len(harden_steps)!=1: fail('release publisher must define exactly one pinned harden-runner action')
 checkout_steps=[step for step in publisher_steps if isinstance(step,dict) and str(step.get('uses','')).startswith('actions/checkout@')]
 if len(checkout_steps)!=1 or (checkout_steps[0].get('with') or {}).get('persist-credentials') is not False: fail('release publisher checkout must disable persisted credentials')
 if sum(step.get('uses')=='./.github/actions/setup-gh' for step in publisher_steps if isinstance(step,dict)) != 1: fail('release publisher must use canonical setup-gh')
@@ -486,6 +494,12 @@ setup_python=load(actions/'setup-python/action.yml')
 if set(setup_python.get('inputs',{}))!={'requirements'}: fail('setup-python must expose one canonical requirements profile input')
 setup_source=(actions/'setup-python/action.yml').read_text()
 if '--require-hashes' not in setup_source: fail('setup-python must install selected profiles with pip hash verification')
+if 'venv_directory="$(mktemp -d "${RUNNER_TEMP:?}/firemud-python.XXXXXX")"' not in setup_source: fail('setup-python must create a fresh runner-temp virtual environment')
+if 'python3 -m venv "$venv_directory"' not in setup_source: fail('setup-python must create its isolated environment with the pinned interpreter')
+if '"$venv_python" -m pip install' not in setup_source: fail('setup-python must install dependencies through the isolated interpreter')
+if 'printf \'%s\\n\' "$venv_directory/bin" >> "$GITHUB_PATH"' not in setup_source: fail('setup-python must expose the isolated interpreter to later steps')
+if re.search(r'(?m)^\s*python3\s+-m\s+pip\s+install\b',setup_source): fail('setup-python must not install dependencies into ambient Python')
+if 'rm -rf' in setup_source: fail('setup-python must not broadly delete runner files while refreshing its environment')
 for profile,path in {'yaml':'config/python/yaml-requirements.txt','ci':'config/python/ci-requirements.txt','smoke':'config/python/smoke-requirements.txt','docs':'config/docs/requirements.txt'}.items():
  if f'{profile}) requirements_file={path}' not in setup_source: fail(f'setup-python does not own {profile} requirements')
 print('Workflow version authority contract passed')
