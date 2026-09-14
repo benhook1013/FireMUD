@@ -326,6 +326,11 @@ for script in \
   grep -q 'run-owned-compose' "$script"
   grep -q 'login_play_look_steps' "$script"
   grep -q 'gameplay_item_container_equipment_steps' "$script"
+  if [[ "$script" == *"game-session-service/websocket-login-look-smoke.sh" ]]; then
+    grep -q 'requirements_file = repo_root / "config" / "python" / "smoke-requirements.txt"' "$script"
+    grep -q 'shlex.quote(sys.executable)' "$script"
+    grep -q 'pip install -r {shlex.quote(str(requirements_file))}' "$script"
+  fi
   if grep -q 'COMPOSE_PROJECT_NAME:-.*=~' "$script"; then
     echo "inline COMPOSE_PROJECT_NAME validator remains in $script" >&2
     exit 1

@@ -27,4 +27,4 @@ runs:
           docs) requirements_file=config/docs/requirements.txt ;;
           *) echo "Unsupported Python requirements profile: $REQUIREMENTS_PROFILE" >&2; exit 1 ;;
         esac
-        python3 -m pip install --disable-pip-version-check -r "$requirements_file"
+        python3 -m pip install --disable-pip-version-check --require-hashes -r "$requirements_file"

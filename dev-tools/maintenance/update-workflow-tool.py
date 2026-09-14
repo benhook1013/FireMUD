@@ -234,19 +234,16 @@ def transactional_write(updates: list[tuple[Path, str]], authority: Path | None 
             os.replace(staged[path], path)
             replaced.append(path)
             fsync_directory(path.parent)
-    except OSError as replacement_error:
-        try:
-            for path in reversed(replaced):
-                rollback = staged_file(path, originals[path], preserve_mode=True)
-                try:
-                    os.replace(rollback, path)
-                    fsync_directory(path.parent)
-                finally:
-                    rollback.unlink(missing_ok=True)
-        except OSError:
-            raise
+    except OSError:
+        for path in reversed(replaced):
+            rollback = staged_file(path, originals[path], preserve_mode=True)
+            try:
+                os.replace(rollback, path)
+                fsync_directory(path.parent)
+            finally:
+                rollback.unlink(missing_ok=True)
         remove_recovery_journal(journal)
-        raise replacement_error
+        raise
     else:
         atomic_text_replace(journal, recovery_payload("committed", originals))
         remove_recovery_journal(journal)

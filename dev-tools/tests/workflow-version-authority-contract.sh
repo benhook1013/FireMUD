@@ -25,10 +25,37 @@ node=(root/'.node-version').read_text().strip()
 if not re.fullmatch(r'24\.\d+\.\d+',node): fail('.node-version must pin an exact Node 24 release')
 python=(root/'.python-version').read_text().strip()
 if not re.fullmatch(r'3\.14\.\d+',python): fail('.python-version must pin an exact Python 3.14 release')
-for req in ('config/docs/requirements.txt','config/python/ci-requirements.txt','config/python/smoke-requirements.txt','config/python/yaml-requirements.txt'):
- lines=(root/req).read_text().splitlines()
- if not lines or any(not (re.fullmatch(r'[A-Za-z0-9_-]+==[^=\s]+',x) or (req.endswith('ci-requirements.txt') and x=='-r yaml-requirements.txt')) for x in lines): fail(f'{req} must contain only exact pins or its canonical YAML include')
-if 'PyYAML==' in (root/'config/python/ci-requirements.txt').read_text(): fail('PyYAML must have one canonical requirements authority')
+requirements_profiles={
+ 'yaml':root/'config/python/yaml-requirements.txt',
+ 'ci':root/'config/python/ci-requirements.txt',
+ 'smoke':root/'config/python/smoke-requirements.txt',
+ 'docs':root/'config/docs/requirements.txt',
+}
+requirement_line=re.compile(r'(?i)^([a-z0-9][a-z0-9_.-]*)==([^=\s\\]+)\s*\\?$')
+hash_line=re.compile(r'^--hash=sha256:[0-9a-f]{64}\s*\\?$')
+def read_lock(path):
+ entries={}; current=None; includes=[]
+ for raw in path.read_text().splitlines():
+  line=raw.strip()
+  if not line or line.startswith('#'): continue
+  if line.startswith('-r '):
+   includes.append(line[3:]); continue
+  match=requirement_line.fullmatch(line)
+  if match:
+   current=match.group(1).lower(); entries[current]=[match.group(2),0]; continue
+  if hash_line.fullmatch(line):
+   if current is None: fail(f'{path}: hash is not attached to a pinned dependency')
+   entries[current][1]+=1; continue
+  fail(f'{path}: invalid hashed lock line: {raw}')
+ if not entries: fail(f'{path} must contain at least one pinned dependency')
+ missing=[name for name,(version,hashes) in entries.items() if hashes == 0]
+ if missing: fail(f'{path}: dependencies lack hashes: {", ".join(sorted(missing))}')
+ return entries,includes
+locks={name:read_lock(path) for name,path in requirements_profiles.items()}
+for name,(entries,includes) in locks.items():
+ if name=='ci' and includes != ['yaml-requirements.txt']: fail('ci requirements must include its canonical YAML lock exactly once')
+ if name!='ci' and includes: fail(f'{name} requirements must not include another profile')
+if 'pyyaml' in locks['ci'][0]: fail('PyYAML must have one canonical requirements authority')
 
 ap=root/'config/workflow-tool-versions.env'; a=authority(ap)
 versions=['KUBECTL','HELM','GH','BUF','KUBECONFORM','VELERO','ACTIONLINT','TRIVY','LYCHEE','ORT','ZAP']
@@ -198,7 +225,7 @@ for path in sorted(actions.glob('*/action.yml')):
   if run_has_gh(run) and not setup_gh: fail(f'{path}: gh consumer lacks setup')
 
 text='\n'.join(p.read_text() for p in workflow_paths)
-for forbidden in ('python-version:','ruff==','PyYAML\n','websocket-client\n','aquasecurity/trivy/main','zaproxy:stable','VELERO_VERSION=v','KUBECONFORM_VERSION="v','BUF_VERSION: \'1.30.0\''):
+for forbidden in ('python-version:','ruff==','PyYAML\n','websocket-client\n','aquasecurity/trivy/main','zaproxy:stable','VELERO_VERSION=v','KUBECONFORM_VERSION="v',f'BUF_VERSION: \'{a["BUF_VERSION"]}\''):
  if forbidden in text: fail(f'workflow contains stale or duplicated authority: {forbidden}')
 workflow_authority_requirements={
  'ci.yml':('buf-version','buf-linux-x86-64-sha256','kubeconform-version','kubeconform-linux-amd64-sha256','actionlint-version'),
@@ -328,7 +355,8 @@ if len(velero_images)!=1 or velero_images[0] not in allowed_velero_images:
 
 renovate=json.loads((root/'renovate.json').read_text())
 if not {'nodenv','pyenv','pip_requirements','custom.regex'} <= set(renovate['enabledManagers']): fail('Renovate managers incomplete')
-if len(renovate.get('customManagers',[]))!=2: fail('Renovate must define version and image authority managers')
+custom_managers=renovate.get('customManagers',[])
+if len(custom_managers)!=3: fail('Renovate must define version, Velero image, and ORT/ZAP image authority managers')
 def translate_renovate_pattern(pattern_source):
  return re.sub(r'\(\?<([A-Za-z_])', r'(?P<\1', pattern_source)
 
@@ -355,7 +383,52 @@ expected_image_dep_names={
 expected=Counter((expected_dep_names[x],a[f'{x}_VERSION']) for x in expected_dep_names)
 expected.update((expected_image_dep_names[x],a[f'{x}_VERSION']) for x in expected_image_dep_names)
 matched=Counter()
-for manager_index,manager in enumerate(renovate['customManagers']):
+velero_image_managers=[manager for manager in custom_managers if manager.get('currentValueTemplate')=='v{{{currentValue}}}']
+if len(velero_image_managers)!=1: fail('Renovate must define exactly one Velero image manager with a v-prefixed current value')
+velero_image_manager=velero_image_managers[0]
+if velero_image_manager.get('autoReplaceStringTemplate') != "{{{authorityPrefix}}}{{{replace '^v' '' newValue}}}{{{authoritySuffix}}}":
+ fail('Velero image manager must preserve its authority block while removing the Docker tag v prefix on replacement')
+docker_managers=[manager for manager in custom_managers if manager.get('versioningTemplate')=='docker']
+if len(docker_managers)!=2: fail('Renovate must define separate Velero and ORT/ZAP Docker managers')
+ort_zap_image_managers=[manager for manager in docker_managers if manager is not velero_image_manager]
+if len(ort_zap_image_managers)!=1: fail('Renovate must define exactly one ORT/ZAP image manager')
+ort_zap_image_manager=ort_zap_image_managers[0]
+if 'currentValueTemplate' in ort_zap_image_manager or 'autoReplaceStringTemplate' in ort_zap_image_manager:
+ fail('ORT/ZAP image manager must not inherit Velero value or replacement templates')
+authority_text=ap.read_text()
+velero_pattern_source=velero_image_manager.get('matchStrings',[None])[0]
+try:
+ velero_pattern=re.compile(translate_renovate_pattern(velero_pattern_source))
+except (re.error,TypeError) as error:
+ fail(f'Velero image manager pattern is invalid: {error}')
+velero_matches=list(velero_pattern.finditer(authority_text))
+if len(velero_matches)!=1: fail('Velero image manager must match exactly one complete authority block')
+velero_match=velero_matches[0]
+if velero_match.group('depName')!='velero/velero' or velero_match.group('currentValue')!=a['VELERO_VERSION']:
+ fail('Velero image manager must match the authority image and unprefixed version')
+if velero_match.group('currentDigest')!=a['VELERO_IMAGE_DIGEST']:
+ fail('Velero image manager must preserve the authority image digest capture')
+if f"v{velero_match.group('currentValue')}" != f"v{a['VELERO_VERSION']}":
+ fail('Velero image manager currentValueTemplate must present the Docker datasource with a v-prefixed version')
+new_velero_value='v9.9.9'
+replacement=velero_image_manager['autoReplaceStringTemplate']
+replacement=replacement.replace('{{{authorityPrefix}}}',velero_match.group('authorityPrefix'))
+replacement=replacement.replace("{{{replace '^v' '' newValue}}}",re.sub(r'^v','',new_velero_value))
+replacement=replacement.replace('{{{authoritySuffix}}}',velero_match.group('authoritySuffix'))
+expected_replacement=velero_match.group(0).replace(f"VELERO_VERSION={a['VELERO_VERSION']}",'VELERO_VERSION=9.9.9')
+if replacement!=expected_replacement: fail('Velero image manager replacement must preserve the complete authority block and write an unprefixed version')
+ort_zap_pattern_sources=ort_zap_image_manager.get('matchStrings',[None])
+if len(ort_zap_pattern_sources)!=1: fail('ORT/ZAP image manager must define one match pattern')
+try:
+ ort_zap_pattern=re.compile(translate_renovate_pattern(ort_zap_pattern_sources[0]))
+except (re.error,TypeError) as error:
+ fail(f'ORT/ZAP image manager pattern is invalid: {error}')
+ort_zap_matches=list(ort_zap_pattern.finditer(authority_text))
+if Counter(match.group('depName') for match in ort_zap_matches)!=Counter(expected_image_dep_names[x] for x in ('ORT','ZAP')):
+ fail('ORT/ZAP image manager must match each GHCR image exactly once and exclude Velero')
+if any(match.group('depName')=='velero/velero' for match in ort_zap_matches):
+ fail('ORT/ZAP image manager must not match the Velero authority block')
+for manager_index,manager in enumerate(custom_managers):
  patterns=manager.get('matchStrings') if isinstance(manager,dict) else None
  if not isinstance(patterns,list) or not patterns: fail(f'Renovate custom manager {manager_index} must define a non-empty matchStrings list')
  for pattern_index,pattern_source in enumerate(patterns):
@@ -412,6 +485,7 @@ for identity in ('outputs.lychee-version','outputs.lychee-linux-x86-64-musl-sha2
 setup_python=load(actions/'setup-python/action.yml')
 if set(setup_python.get('inputs',{}))!={'requirements'}: fail('setup-python must expose one canonical requirements profile input')
 setup_source=(actions/'setup-python/action.yml').read_text()
+if '--require-hashes' not in setup_source: fail('setup-python must install selected profiles with pip hash verification')
 for profile,path in {'yaml':'config/python/yaml-requirements.txt','ci':'config/python/ci-requirements.txt','smoke':'config/python/smoke-requirements.txt','docs':'config/docs/requirements.txt'}.items():
  if f'{profile}) requirements_file={path}' not in setup_source: fail(f'setup-python does not own {profile} requirements')
 print('Workflow version authority contract passed')

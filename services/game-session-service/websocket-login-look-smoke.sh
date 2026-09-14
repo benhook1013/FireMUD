@@ -53,6 +53,7 @@ echo "Using session='${SMOKE_SESSION_ID}' tenant='${SMOKE_TENANT_ID}'"
 
 "$PYTHON" - <<'PYTHON'
 import os
+import shlex
 import sys
 from pathlib import Path
 
@@ -71,9 +72,11 @@ from smoke_common import (
 try:
     import websocket
 except ImportError as exc:
+    requirements_file = repo_root / "config" / "python" / "smoke-requirements.txt"
     raise SystemExit(
         "The python 'websocket-client' package is required. "
-        "Install it with 'python3 -m pip install -r config/python/smoke-requirements.txt'."
+        "Install it with "
+        f"{shlex.quote(sys.executable)} -m pip install -r {shlex.quote(str(requirements_file))}."
     ) from exc
 
 websocket_url = os.environ.get("SMOKE_GAME_SESSION_WS_URL", "ws://localhost:8086/ws/game")
