@@ -11,9 +11,38 @@ checksum=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 image_digest=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 echo "$checksum  velero-v9.8.7-linux-amd64.tar.gz" > "$tmp/checksums"
 echo "velero/velero:v9.8.7@$image_digest" > "$tmp/image-evidence"
-python3 "$ROOT_DIR/dev-tools/maintenance/update-workflow-tool.py" velero 9.8.7 \
-  --checksum-file "$tmp/checksums" --image-evidence-file "$tmp/image-evidence" \
-  --authority "$tmp/authority.env" --velero-manifest "$tmp/velero.yaml"
+python3 - "$ROOT_DIR" "$tmp/authority.env" "$tmp/checksums" "$tmp/image-evidence" "$tmp/velero.yaml" "$image_digest" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+root, authority, checksum_file, evidence_file, manifest = map(Path, sys.argv[1:6])
+expected_digest = sys.argv[6]
+spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+def resolve(repository, tag):
+    if (repository, tag) != ("velero/velero", "v9.8.7"):
+        raise SystemExit(f"unexpected Docker Hub lookup: {repository}:{tag}")
+    return expected_digest
+
+module.dockerhub_digest = resolve
+sys.argv = [
+    str(root / "dev-tools/maintenance/update-workflow-tool.py"),
+    "velero",
+    "9.8.7",
+    "--checksum-file",
+    str(checksum_file),
+    "--image-evidence-file",
+    str(evidence_file),
+    "--authority",
+    str(authority),
+    "--velero-manifest",
+    str(manifest),
+]
+module.main()
+PY
 grep -Fx 'VELERO_VERSION=9.8.7' "$tmp/authority.env" >/dev/null
 grep -Fx 'VELERO_LINUX_AMD64_CHECKSUM_VERSION=9.8.7' "$tmp/authority.env" >/dev/null
 grep -Fx "VELERO_LINUX_AMD64_SHA256=$checksum" "$tmp/authority.env" >/dev/null
@@ -49,13 +78,14 @@ lock_checksum=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 lock_image_digest=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 echo "$lock_checksum  velero-v9.8.7-linux-amd64.tar.gz" > "$tmp/lock-checksum"
 echo "velero/velero:v9.8.7@$lock_image_digest" > "$tmp/lock-image-evidence"
-python3 - "$ROOT_DIR" "$tmp/lock-authority.env" "$tmp/lock-checksum" "$tmp/lock-image-evidence" "$tmp/lock-velero.yaml" <<'PY'
+python3 - "$ROOT_DIR" "$tmp/lock-authority.env" "$tmp/lock-checksum" "$tmp/lock-image-evidence" "$tmp/lock-velero.yaml" "$lock_image_digest" <<'PY'
 import importlib.util
 import subprocess
 import sys
 from pathlib import Path
 
-root, authority, checksum_file, evidence_file, manifest = map(Path, sys.argv[1:])
+root, authority, checksum_file, evidence_file, manifest = map(Path, sys.argv[1:6])
+expected_digest = sys.argv[6]
 spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -111,6 +141,14 @@ def instrumented_image_evidence(path, version):
     events.append("evidence")
     return real_image_evidence(path, version)
 
+def instrumented_dockerhub_digest(repository, tag):
+    if lock_attempt(authority.resolve().parent) != 0:
+        raise SystemExit("main resolved Docker Hub image while the authority lock was held")
+    if (repository, tag) != ("velero/velero", "v9.8.7"):
+        raise SystemExit(f"unexpected Docker Hub lookup: {repository}:{tag}")
+    events.append("resolve")
+    return expected_digest
+
 def instrumented_transaction(*args, **kwargs):
     updates = args[0]
     if lock_attempt(Path(updates[0][0]).resolve().parent) != 1:
@@ -123,6 +161,7 @@ def instrumented_transaction(*args, **kwargs):
 module.reconcile_recovery_journal = instrumented_reconcile
 module.Path.read_text = instrumented_read_text
 module.velero_image_digest_from_evidence = instrumented_image_evidence
+module.dockerhub_digest = instrumented_dockerhub_digest
 module.transactional_write = instrumented_transaction
 sys.argv = [
     str(root / "dev-tools/maintenance/update-workflow-tool.py"),
@@ -138,7 +177,7 @@ sys.argv = [
     str(manifest),
 ]
 module.main()
-if events[:5] != ["reconcile", "evidence", "checksum", "reconcile", "transaction"]:
+if events[:6] != ["reconcile", "evidence", "resolve", "checksum", "reconcile", "transaction"]:
     raise SystemExit(f"unexpected lock and resolution order: {events}")
 PY
 grep -Fx "VELERO_LINUX_AMD64_SHA256=$lock_checksum" "$tmp/lock-authority.env" >/dev/null
@@ -148,12 +187,38 @@ grep -F "image: velero/velero:v9.8.7@$lock_image_digest" "$tmp/lock-velero.yaml"
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/unchanged.env"
 cp "$tmp/unchanged.env" "$tmp/before.env"
 echo 'no Velero image projection' > "$tmp/invalid-velero.yaml"
-if python3 "$ROOT_DIR/dev-tools/maintenance/update-workflow-tool.py" velero 9.8.7 \
-  --checksum-file "$tmp/checksums" --image-evidence-file "$tmp/image-evidence" \
-  --authority "$tmp/unchanged.env" --velero-manifest "$tmp/invalid-velero.yaml"; then
-  echo 'updater accepted a missing Velero image projection' >&2
-  exit 1
-fi
+python3 - "$ROOT_DIR" "$tmp/unchanged.env" "$tmp/checksums" "$tmp/image-evidence" "$tmp/invalid-velero.yaml" "$image_digest" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+root, authority, checksum_file, evidence_file, manifest = map(Path, sys.argv[1:6])
+expected_digest = sys.argv[6]
+spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module.dockerhub_digest = lambda repository, tag: expected_digest
+sys.argv = [
+    str(root / "dev-tools/maintenance/update-workflow-tool.py"),
+    "velero",
+    "9.8.7",
+    "--checksum-file",
+    str(checksum_file),
+    "--image-evidence-file",
+    str(evidence_file),
+    "--authority",
+    str(authority),
+    "--velero-manifest",
+    str(manifest),
+]
+try:
+    module.main()
+except SystemExit as exc:
+    if "expected one Velero image projection" not in str(exc):
+        raise SystemExit(f"unexpected missing projection diagnostic: {exc}") from exc
+else:
+    raise SystemExit("updater accepted a missing Velero image projection")
+PY
 cmp "$tmp/before.env" "$tmp/unchanged.env"
 
 assert_rejected_evidence() {
@@ -187,6 +252,49 @@ assert_rejected_evidence malformed-digest \
 assert_rejected_evidence duplicate-entry \
   "velero/velero:v9.8.7@$image_digest
 velero/velero:v9.8.7@$image_digest"
+
+cp "$tmp/before.env" "$tmp/mismatched-digest.env"
+cp "$tmp/unchanged.yaml" "$tmp/mismatched-digest.yaml"
+printf '%s\n' "velero/velero:v9.8.7@$image_digest" > "$tmp/mismatched-digest.evidence"
+python3 - "$ROOT_DIR" "$tmp/mismatched-digest.env" "$tmp/checksums" "$tmp/mismatched-digest.evidence" "$tmp/mismatched-digest.yaml" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+root, authority, checksum_file, evidence_file, manifest = map(Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+def resolve(repository, tag):
+    if (repository, tag) != ("velero/velero", "v9.8.7"):
+        raise SystemExit(f"unexpected Docker Hub lookup: {repository}:{tag}")
+    return "sha256:" + "c" * 64
+
+module.dockerhub_digest = resolve
+sys.argv = [
+    str(root / "dev-tools/maintenance/update-workflow-tool.py"),
+    "velero",
+    "9.8.7",
+    "--checksum-file",
+    str(checksum_file),
+    "--image-evidence-file",
+    str(evidence_file),
+    "--authority",
+    str(authority),
+    "--velero-manifest",
+    str(manifest),
+]
+try:
+    module.main()
+except SystemExit as exc:
+    if "does not match Docker Hub tag v9.8.7" not in str(exc):
+        raise SystemExit(f"unexpected digest mismatch diagnostic: {exc}") from exc
+else:
+    raise SystemExit("updater accepted a Velero evidence digest for the wrong Docker Hub tag")
+PY
+cmp "$tmp/before.env" "$tmp/mismatched-digest.env"
+cmp "$tmp/unchanged.yaml" "$tmp/mismatched-digest.yaml"
 
 cp "$tmp/before.env" "$tmp/raw-digest.env"
 cp "$tmp/unchanged.yaml" "$tmp/raw-digest.yaml"

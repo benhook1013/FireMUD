@@ -327,9 +327,12 @@ for script in \
   grep -q 'login_play_look_steps' "$script"
   grep -q 'gameplay_item_container_equipment_steps' "$script"
   if [[ "$script" == *"game-session-service/websocket-login-look-smoke.sh" ]]; then
-    grep -q 'requirements_file = repo_root / "config" / "python" / "smoke-requirements.txt"' "$script"
-    grep -q 'shlex.quote(sys.executable)' "$script"
-    grep -q 'pip install -r {shlex.quote(str(requirements_file))}' "$script"
+    grep -q 'requirements_file = repo_root / "config" / "python" / "smoke-requirements.txt"' "$script" ||
+      { echo "$script must resolve the canonical smoke requirements file" >&2; exit 1; }
+    grep -q 'shlex.quote(sys.executable)' "$script" ||
+      { echo "$script must quote the current interpreter in the install hint" >&2; exit 1; }
+    grep -q 'pip install -r {shlex.quote(str(requirements_file))}' "$script" ||
+      { echo "$script must install the quoted requirements file" >&2; exit 1; }
   fi
   if grep -q 'COMPOSE_PROJECT_NAME:-.*=~' "$script"; then
     echo "inline COMPOSE_PROJECT_NAME validator remains in $script" >&2

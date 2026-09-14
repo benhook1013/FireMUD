@@ -408,7 +408,7 @@ if velero_match.group('depName')!='velero/velero' or velero_match.group('current
  fail('Velero image manager must match the authority image and unprefixed version')
 if velero_match.group('currentDigest')!=a['VELERO_IMAGE_DIGEST']:
  fail('Velero image manager must preserve the authority image digest capture')
-if f"v{velero_match.group('currentValue')}" != f"v{a['VELERO_VERSION']}":
+if velero_image_manager.get('currentValueTemplate') != 'v{{{currentValue}}}':
  fail('Velero image manager currentValueTemplate must present the Docker datasource with a v-prefixed version')
 new_velero_value='v9.9.9'
 replacement=velero_image_manager['autoReplaceStringTemplate']

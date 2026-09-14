@@ -297,7 +297,13 @@ def velero_image_digest_from_evidence(path: Path, version: str) -> str:
         raise SystemExit("Velero image evidence must reference the exact repository velero/velero")
     if match.group("tag") != f"v{version}":
         raise SystemExit(f"Velero image evidence must reference the exact tag v{version}")
-    return match.group("digest")
+    evidence_digest = match.group("digest")
+    resolved_digest = dockerhub_digest("velero/velero", f"v{version}")
+    if evidence_digest != resolved_digest:
+        raise SystemExit(
+            f"Velero image evidence digest does not match Docker Hub tag v{version}"
+        )
+    return evidence_digest
 
 
 def main() -> None:
@@ -310,7 +316,10 @@ def main() -> None:
     parser.add_argument(
         "--image-evidence-file",
         type=Path,
-        help="offline Velero image evidence containing one full immutable image reference",
+        help=(
+            "Velero image evidence containing one full immutable image reference, "
+            "verified against the exact Docker Hub tag"
+        ),
     )
     args = parser.parse_args()
     if not re.fullmatch(r"\d+\.\d+\.\d+", args.version):

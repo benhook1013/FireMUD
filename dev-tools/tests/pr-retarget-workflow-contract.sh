@@ -632,20 +632,28 @@ jobs:
     steps:
       - uses: actions/checkout@fixture
 EOF
-if (assert_publish_checkout_configuration "$contract_fixture_dir/publisher-checkout-other-job.yml") 2>/dev/null; then
+if (assert_publish_checkout_configuration \
+  "$contract_fixture_dir/publisher-checkout-other-job.yml" \
+  ) 2>"$contract_fixture_dir/publisher-checkout-other-job.error"; then
   echo "assert_publish_checkout_configuration must reject checkout steps in another job" >&2
   exit 1
 fi
+require_contains "$contract_fixture_dir/publisher-checkout-other-job.error" \
+  'workflow must contain exactly one actions/checkout step'
 cat >"$contract_fixture_dir/publisher-checkout-only-other-job.yml" <<'EOF'
 jobs:
   other:
     steps:
       - uses: actions/checkout@fixture
 EOF
-if (assert_publish_checkout_configuration "$contract_fixture_dir/publisher-checkout-only-other-job.yml") 2>/dev/null; then
+if (assert_publish_checkout_configuration \
+  "$contract_fixture_dir/publisher-checkout-only-other-job.yml" \
+  ) 2>"$contract_fixture_dir/publisher-checkout-only-other-job.error"; then
   echo "assert_publish_checkout_configuration must require the checkout in the publish job" >&2
   exit 1
 fi
+require_contains "$contract_fixture_dir/publisher-checkout-only-other-job.error" \
+  'the workflow checkout must belong to the publish job'
 cat >"$contract_fixture_dir/publisher-checkout-wrong-ref.yml" <<'EOF'
 jobs:
   publish:
