@@ -85,7 +85,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: config/openapi/node_modules
-          key: openapi-node-modules-${{ runner.os }}-${{ hashFiles('.node-version', 'config/openapi/package-lock.json') }}
+          key: openapi-node-modules-${{ runner.os }}-${{ hashFiles('.node-version') }}-${{ hashFiles('config/openapi/package-lock.json') }}
           restore-keys: openapi-node-modules-${{ runner.os }}-${{ hashFiles('.node-version') }}-
 
       - name: 📦 Install OpenAPI Dependencies
@@ -97,7 +97,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: web-client/node_modules
-          key: web-client-node-modules-${{ runner.os }}-${{ hashFiles('.node-version', 'web-client/package-lock.json') }}
+          key: web-client-node-modules-${{ runner.os }}-${{ hashFiles('.node-version') }}-${{ hashFiles('web-client/package-lock.json') }}
           restore-keys: web-client-node-modules-${{ runner.os }}-${{ hashFiles('.node-version') }}-
 
       - name: 📦 Install Web Client Dependencies

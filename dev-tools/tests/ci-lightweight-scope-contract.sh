@@ -261,14 +261,6 @@ require_equal(
     "${{ (needs.changes.outputs.lightweight_only == 'true' && needs.changes.outputs.design_docs_changed == 'true' && needs.changes.outputs.validation_python_changed != 'true') && 'none' || 'ci' }}",
     "ci workflow",
 )
-for case, lightweight, design_docs, validation_python, expected in (
-    ("lightweight design-doc-only", True, True, False, "none"),
-    ("full validation", False, True, False, "ci"),
-    ("lightweight validation-Python", True, True, True, "ci"),
-):
-    actual = "none" if lightweight and design_docs and not validation_python else "ci"
-    if actual != expected:
-        raise SystemExit(f"ci workflow setup-python profile case {case} expected {expected}, got {actual}")
 require_contains(
     complete_contract_step,
     ("run",),
@@ -367,7 +359,8 @@ for cache_id, lockfile in (
         raise SystemExit(f"security workflow: {cache_id} cache step lacks with mapping")
     expected_key = (
         f"{cache_id.removeprefix('cache-')}-node-modules-${{{{ runner.os }}}}-"
-        f"${{{{ hashFiles('.node-version', '{lockfile}') }}}}"
+        f"${{{{ hashFiles('.node-version') }}}}-"
+        f"${{{{ hashFiles('{lockfile}') }}}}"
     )
     expected_restore_key = (
         f"{cache_id.removeprefix('cache-')}-node-modules-${{{{ runner.os }}}}-"
