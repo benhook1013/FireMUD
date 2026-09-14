@@ -9,7 +9,7 @@ chmod 0640 "$tmp/authority.env"
 chmod 0600 "$tmp/velero.yaml"
 checksum=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 image_digest=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-echo "$checksum  velero-v9.8.7-linux-amd64.tar.gz" > "$tmp/checksums"
+printf 'version=9.8.7\n%s  velero-v9.8.7-linux-amd64.tar.gz\n' "$checksum" > "$tmp/checksums"
 echo "velero/velero:v9.8.7@$image_digest" > "$tmp/image-evidence"
 python3 - "$ROOT_DIR" "$tmp/authority.env" "$tmp/checksums" "$tmp/image-evidence" "$tmp/velero.yaml" "$image_digest" <<'PY'
 import importlib.util
@@ -64,7 +64,7 @@ if module.recovery_journal_path(authority).exists():
 PY
 
 kubectl_checksum=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
-printf '%s\n' "$kubectl_checksum" > "$tmp/kubectl-checksum"
+printf 'version=9.8.7\n%s\n' "$kubectl_checksum" > "$tmp/kubectl-checksum"
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/kubectl-authority.env"
 python3 "$ROOT_DIR/dev-tools/maintenance/update-workflow-tool.py" kubectl 9.8.7 \
   --checksum-file "$tmp/kubectl-checksum" --authority "$tmp/kubectl-authority.env"
@@ -72,11 +72,51 @@ grep -Fx 'KUBECTL_VERSION=9.8.7' "$tmp/kubectl-authority.env" >/dev/null
 grep -Fx 'KUBECTL_LINUX_AMD64_CHECKSUM_VERSION=9.8.7' "$tmp/kubectl-authority.env" >/dev/null
 grep -Fx "KUBECTL_LINUX_AMD64_SHA256=$kubectl_checksum" "$tmp/kubectl-authority.env" >/dev/null
 
+python3 - "$ROOT_DIR" "$tmp" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+root, tmp = map(Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+for tool, (_, asset_template, _) in module.SPECS.items():
+    asset = asset_template.format(v="9.8.7")
+    positive = tmp / f"{tool}-versioned-checksum"
+    positive.write_text(f"version=9.8.7\n{'a' * 64}  {asset}\n", encoding="utf-8")
+    if not module.checksum_text_from_evidence(positive, "9.8.7").startswith("a" * 64):
+        raise SystemExit(f"{tool} checksum evidence metadata was not removed before extraction")
+
+    for name, contents, diagnostic in (
+        (
+            "checksum-only",
+            f"{'a' * 64}  {asset}\n",
+            "checksum evidence must begin with exact version metadata: version=9.8.7",
+        ),
+        (
+            "mismatched-version",
+            f"version=9.8.8\n{'a' * 64}  {asset}\n",
+            "checksum evidence version does not match requested version 9.8.7",
+        ),
+    ):
+        invalid = tmp / f"{tool}-{name}"
+        invalid.write_text(contents, encoding="utf-8")
+        try:
+            module.checksum_text_from_evidence(invalid, "9.8.7")
+        except SystemExit as exc:
+            if str(exc) != diagnostic:
+                raise SystemExit(f"{tool} {name} had unexpected diagnostic: {exc}") from exc
+        else:
+            raise SystemExit(f"{tool} {name} checksum evidence was accepted")
+PY
+
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/lock-authority.env"
 cp "$ROOT_DIR/k8s/velero/verify-backups-cronjob.yaml" "$tmp/lock-velero.yaml"
 lock_checksum=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 lock_image_digest=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-echo "$lock_checksum  velero-v9.8.7-linux-amd64.tar.gz" > "$tmp/lock-checksum"
+printf 'version=9.8.7\n%s  velero-v9.8.7-linux-amd64.tar.gz\n' "$lock_checksum" > "$tmp/lock-checksum"
 echo "velero/velero:v9.8.7@$lock_image_digest" > "$tmp/lock-image-evidence"
 python3 - "$ROOT_DIR" "$tmp/lock-authority.env" "$tmp/lock-checksum" "$tmp/lock-image-evidence" "$tmp/lock-velero.yaml" "$lock_image_digest" <<'PY'
 import importlib.util
@@ -448,7 +488,7 @@ module.os.replace = real_replace
 unavailable_evidence = authority.with_name("unavailable-evidence")
 velero_checksum_file = authority.with_name("velero-checksum")
 velero_checksum_file.write_text(
-    "d" * 64 + "  velero-v9.8.7-linux-amd64.tar.gz\n", encoding="utf-8"
+    "version=9.8.7\n" + "d" * 64 + "  velero-v9.8.7-linux-amd64.tar.gz\n", encoding="utf-8"
 )
 sys.argv = [
     str(root / "dev-tools/maintenance/update-workflow-tool.py"),
@@ -465,8 +505,13 @@ sys.argv = [
 ]
 try:
     module.main()
-except SystemExit:
-    pass
+except SystemExit as exc:
+    expected = (
+        f"could not read Velero image evidence file {unavailable_evidence}: "
+        f"[Errno 2] No such file or directory: '{unavailable_evidence}'"
+    )
+    if str(exc) != expected:
+        raise SystemExit(f"unexpected unavailable evidence diagnostic: {exc}") from exc
 else:
     raise SystemExit("unavailable Velero image evidence was accepted")
 if authority.read_text(encoding="utf-8") != authority_before or manifest.read_text(encoding="utf-8") != manifest_before:
@@ -475,7 +520,9 @@ if journal.exists():
     raise SystemExit("initial recovery did not clear the prepared journal before evidence failure")
 
 checksum_file = authority.with_name("helm-checksum")
-checksum_file.write_text("c" * 64 + "  helm-v9.8.7-linux-amd64.tar.gz\n", encoding="utf-8")
+checksum_file.write_text(
+    "version=9.8.7\n" + "c" * 64 + "  helm-v9.8.7-linux-amd64.tar.gz\n", encoding="utf-8"
+)
 sys.argv = [
     str(root / "dev-tools/maintenance/update-workflow-tool.py"),
     "helm",

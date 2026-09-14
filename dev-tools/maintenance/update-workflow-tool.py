@@ -32,6 +32,7 @@ CHECKSUM_STEMS = {
 RECOVERY_SCHEMA = "firemud-workflow-tool-update-recovery"
 RECOVERY_VERSION = 1
 RECOVERY_STATES = frozenset(("prepared", "committed"))
+CHECKSUM_EVIDENCE_VERSION_PREFIX = "version="
 
 
 def replace(text: str, key: str, value: str) -> str:
@@ -306,11 +307,37 @@ def velero_image_digest_from_evidence(path: Path, version: str) -> str:
     return evidence_digest
 
 
+def checksum_text_from_evidence(path: Path, version: str) -> str:
+    """Read an offline checksum manifest with its requested version attestation."""
+
+    try:
+        evidence = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise SystemExit(f"could not read checksum evidence file {path}: {exc}") from exc
+
+    lines = evidence.splitlines()
+    if not lines or not lines[0].startswith(CHECKSUM_EVIDENCE_VERSION_PREFIX):
+        raise SystemExit(
+            "checksum evidence must begin with exact version metadata: "
+            f"{CHECKSUM_EVIDENCE_VERSION_PREFIX}{version}"
+        )
+    if lines[0] != f"{CHECKSUM_EVIDENCE_VERSION_PREFIX}{version}":
+        raise SystemExit(f"checksum evidence version does not match requested version {version}")
+    return "\n".join(lines[1:])
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("tool", choices=SPECS)
     parser.add_argument("version", help="exact three-part version, without v")
-    parser.add_argument("--checksum-file", type=Path, help="offline checksum manifest")
+    parser.add_argument(
+        "--checksum-file",
+        type=Path,
+        help=(
+            "offline checksum evidence beginning with version=<version>, followed by the "
+            "publisher checksum manifest"
+        ),
+    )
     parser.add_argument("--authority", type=Path, default=Path("config/workflow-tool-versions.env"))
     parser.add_argument("--velero-manifest", type=Path, default=Path("k8s/velero/verify-backups-cronjob.yaml"))
     parser.add_argument(
@@ -343,7 +370,7 @@ def main() -> None:
     prefix, asset_template, url_template = SPECS[args.tool]
     asset = asset_template.format(v=args.version)
     if args.checksum_file:
-        checksum_text = args.checksum_file.read_text(encoding="utf-8")
+        checksum_text = checksum_text_from_evidence(args.checksum_file, args.version)
     else:
         with urllib.request.urlopen(url_template.format(v=args.version), timeout=30) as response:
             checksum_text = response.read().decode("utf-8")
