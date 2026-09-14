@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 SPECS = {
+    "kubectl": ("KUBECTL", "kubectl", "https://dl.k8s.io/release/v{v}/bin/linux/amd64/kubectl.sha256"),
     "helm": ("HELM", "helm-v{v}-linux-amd64.tar.gz", "https://get.helm.sh/helm-v{v}-linux-amd64.tar.gz.sha256sum"),
     "gh": ("GH", "gh_{v}_linux_amd64.tar.gz", "https://github.com/cli/cli/releases/download/v{v}/gh_{v}_checksums.txt"),
     "buf": ("BUF", "buf-Linux-x86_64", "https://github.com/bufbuild/buf/releases/download/v{v}/sha256.txt"),
@@ -23,6 +24,7 @@ SPECS = {
     "lychee": ("LYCHEE", "lychee-x86_64-unknown-linux-musl.tar.gz", "https://github.com/lycheeverse/lychee/releases/download/lychee-v{v}/lychee-x86_64-unknown-linux-musl.tar.gz.sha256"),
 }
 CHECKSUM_STEMS = {
+    "KUBECTL": "KUBECTL_LINUX_AMD64",
     "HELM": "HELM_LINUX_AMD64", "GH": "GH_LINUX_AMD64", "BUF": "BUF_LINUX_X86_64",
     "KUBECONFORM": "KUBECONFORM_LINUX_AMD64", "VELERO": "VELERO_LINUX_AMD64",
     "LYCHEE": "LYCHEE_LINUX_X86_64_MUSL",
@@ -330,7 +332,15 @@ def main() -> None:
     else:
         with urllib.request.urlopen(url_template.format(v=args.version), timeout=30) as response:
             checksum_text = response.read().decode("utf-8")
-    matches = re.findall(rf"(?m)^([0-9a-f]{{64}})\s+\*?{re.escape(asset)}$", checksum_text)
+    if args.tool == "kubectl":
+        checksum_lines = checksum_text.splitlines()
+        matches = (
+            [checksum_lines[0].strip()]
+            if len(checksum_lines) == 1 and re.fullmatch(r"[0-9a-f]{64}", checksum_lines[0].strip())
+            else []
+        )
+    else:
+        matches = re.findall(rf"(?m)^([0-9a-f]{{64}})\s+\*?{re.escape(asset)}$", checksum_text)
     if len(matches) != 1:
         raise SystemExit(f"could not identify exactly one checksum for {asset}")
 

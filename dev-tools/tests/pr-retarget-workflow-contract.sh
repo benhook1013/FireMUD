@@ -107,19 +107,24 @@ import yaml
 path = Path(sys.argv[1])
 workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
 jobs = workflow.get("jobs") if isinstance(workflow, dict) else None
-publish = jobs.get("publish") if isinstance(jobs, dict) else None
-steps = publish.get("steps") if isinstance(publish, dict) else None
-checkouts = [
-    step
-    for step in steps or []
-    if isinstance(step, dict)
-    and isinstance(step.get("uses"), str)
-    and step["uses"].startswith("actions/checkout@")
-]
+checkouts = []
+for job_name, job in (jobs.items() if isinstance(jobs, dict) else []):
+    steps = job.get("steps") if isinstance(job, dict) else None
+    for step in steps or []:
+        if (
+            isinstance(step, dict)
+            and isinstance(step.get("uses"), str)
+            and step["uses"].startswith("actions/checkout@")
+        ):
+            checkouts.append((job_name, step))
 if len(checkouts) != 1:
-    raise SystemExit("publish job must contain exactly one actions/checkout step")
+    raise SystemExit("workflow must contain exactly one actions/checkout step")
 
-checkout_with = checkouts[0].get("with")
+checkout_job, checkout = checkouts[0]
+if checkout_job != "publish":
+    raise SystemExit("the workflow checkout must belong to the publish job")
+
+checkout_with = checkout.get("with")
 if not isinstance(checkout_with, dict):
     raise SystemExit("publish checkout must define a with mapping")
 if checkout_with.get("ref") != "${{ github.event.repository.default_branch }}":
@@ -615,6 +620,22 @@ require_contains "$image_wait_path" 'local publisher_deadline=$((SECONDS + publi
 
 contract_fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$contract_fixture_dir"' EXIT
+cat >"$contract_fixture_dir/publisher-checkout-other-job.yml" <<'EOF'
+jobs:
+  publish:
+    steps:
+      - uses: actions/checkout@fixture
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+  other:
+    steps:
+      - uses: actions/checkout@fixture
+EOF
+if (assert_publish_checkout_configuration "$contract_fixture_dir/publisher-checkout-other-job.yml") 2>/dev/null; then
+  echo "assert_publish_checkout_configuration must reject checkout steps in another job" >&2
+  exit 1
+fi
 cat >"$contract_fixture_dir/ordered-sequence.txt" <<'EOF'
 prefix first second suffix
 third

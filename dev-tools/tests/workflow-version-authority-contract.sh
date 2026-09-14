@@ -33,7 +33,7 @@ if 'PyYAML==' in (root/'config/python/ci-requirements.txt').read_text(): fail('P
 ap=root/'config/workflow-tool-versions.env'; a=authority(ap)
 versions=['KUBECTL','HELM','GH','BUF','KUBECONFORM','VELERO','ACTIONLINT','TRIVY','LYCHEE','ORT','ZAP']
 if any(not re.fullmatch(r'\d+\.\d+\.\d+',a.get(f'{x}_VERSION','')) for x in versions): fail('all workflow tools must have exact versions')
-pairs={'HELM':'HELM_LINUX_AMD64','GH':'GH_LINUX_AMD64','BUF':'BUF_LINUX_X86_64','KUBECONFORM':'KUBECONFORM_LINUX_AMD64','VELERO':'VELERO_LINUX_AMD64','LYCHEE':'LYCHEE_LINUX_X86_64_MUSL'}
+pairs={'KUBECTL':'KUBECTL_LINUX_AMD64','HELM':'HELM_LINUX_AMD64','GH':'GH_LINUX_AMD64','BUF':'BUF_LINUX_X86_64','KUBECONFORM':'KUBECONFORM_LINUX_AMD64','VELERO':'VELERO_LINUX_AMD64','LYCHEE':'LYCHEE_LINUX_X86_64_MUSL'}
 for tool,stem in pairs.items():
  if a.get(f'{stem}_CHECKSUM_VERSION') != a[f'{tool}_VERSION']: fail(f'{tool} checksum version is stale')
  if not re.fullmatch(r'[0-9a-f]{64}',a.get(f'{stem}_SHA256','')): fail(f'{tool} checksum is invalid')
@@ -46,6 +46,17 @@ loader=yaml.safe_load((actions/'load-workflow-tool-versions/action.yml').read_te
 loader_runs=[step.get('run') for step in loader.get('runs',{}).get('steps',[]) if isinstance(step,dict) and isinstance(step.get('run'),str)]
 if len(loader_runs)!=1: fail('workflow authority loader must define exactly one validation script')
 loader_run=loader_runs[0]
+expected_loader_outputs={
+ 'kubectl-version','kubectl-linux-amd64-sha256','helm-version','helm-linux-amd64-sha256',
+ 'gh-version','gh-linux-amd64-sha256','buf-version','buf-linux-x86-64-sha256',
+ 'kubeconform-version','kubeconform-linux-amd64-sha256','velero-version','velero-linux-amd64-sha256',
+ 'actionlint-version','trivy-version','lychee-version','lychee-linux-x86-64-musl-sha256',
+ 'ort-image','zap-image',
+}
+if set(loader.get('outputs',{})) != expected_loader_outputs: fail('workflow authority loader outputs are unexpected or incomplete')
+for output in expected_loader_outputs:
+ value=(loader['outputs'][output] or {}).get('value') if isinstance(loader['outputs'][output],dict) else None
+ if value != '${{ steps.versions.outputs.'+output+' }}': fail(f'workflow authority loader output is not sourced from validation: {output}')
 with tempfile.TemporaryDirectory() as temporary:
  workspace=Path(temporary)/'workspace'; workspace.mkdir()
  authority_path=workspace/'config'; authority_path.mkdir()
@@ -91,7 +102,7 @@ workflow_paths=sorted((*workflows.glob('*.yml'), *workflows.glob('*.yaml')))
 expected_permissions={
  'weekly-security-scan.yml':{'contents':'read'},
  'manual-backup-restore.yml':{'contents':'read'},
- 'release-notes.yml':{'contents':'write'},
+ 'release-notes.yml':{'contents':'read'},
 }
 for name, permissions in expected_permissions.items():
  workflow=load(workflows/name)
@@ -222,6 +233,56 @@ for required in (
 ):
  if required not in setup_gh_text: fail(f'setup-gh installer does not consume canonical authority: {required}')
 
+setup_kubectl_text=(actions/'setup-kubectl/action.yml').read_text()
+if 'azure/setup-kubectl@' in setup_kubectl_text or 'actions/cache@' in setup_kubectl_text: fail('setup-kubectl must use a direct, non-cached installer')
+kubectl_curl_pattern=(
+ r'(?m)^\s*curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \\\n'
+ r'\s*--connect-timeout 10 --max-time 60 \\\n'
+ r'\s*"https://dl\.k8s\.io/release/v\$\{kubectl_version\}/bin/linux/amd64/kubectl" \\\n'
+ r'\s*-o "\$temporary_binary"$')
+if len(re.findall(kubectl_curl_pattern,setup_kubectl_text)) != 1: fail('setup-kubectl must define exactly one direct installer with canonical bounded retries and timeouts')
+for required in (
+ 'KUBECTL_VERSION: ${{ steps.versions.outputs.kubectl-version }}',
+ 'KUBECTL_SHA256: ${{ steps.versions.outputs.kubectl-linux-amd64-sha256 }}',
+ 'RUNNER_OS','RUNNER_ARCH','requires a Linux X64 runner',
+ 'printf \'%s  %s\\n\' "$kubectl_sha256" "$temporary_binary"',
+ 'sha256sum --check --status','install -m 0755','GITHUB_PATH',
+):
+ if required not in setup_kubectl_text: fail(f'setup-kubectl installer does not consume canonical authority safely: {required}')
+
+release=load(workflows/'release-notes.yml')
+if release.get('permissions') != {'contents':'read'}: fail('release-notes.yml must define read-only top-level permissions')
+release_jobs=release.get('jobs') or {}
+generator=release_jobs.get('generate-release-notes'); publisher=release_jobs.get('publish-release')
+if not isinstance(generator,dict) or not isinstance(publisher,dict): fail('release-notes.yml must define generator and publish jobs')
+if generator.get('permissions') != {'contents':'read'}: fail('release generator must remain contents read-only')
+if publisher.get('permissions') != {'contents':'write'}: fail('release publisher must have only contents write')
+if publisher.get('needs') != 'generate-release-notes': fail('release publisher must depend on generated assets')
+generator_steps=generator.get('steps',[]); publisher_steps=publisher.get('steps',[])
+upload_steps=[step for step in generator_steps if isinstance(step,dict) and step.get('uses')=='actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a']
+if len(upload_steps)!=1: fail('release generator must upload exactly one release artifact')
+upload_with=upload_steps[0].get('with') or {}
+if upload_with.get('name')!='release-assets' or upload_with.get('path')!='build/release-assets': fail('release generator must upload only build/release-assets')
+download_steps=[step for step in publisher_steps if isinstance(step,dict) and step.get('uses')=='actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c']
+if len(download_steps)!=1: fail('release publisher must download exactly one pinned release artifact')
+download_with=download_steps[0].get('with') or {}
+if download_with.get('name')!='release-assets' or download_with.get('path')!='build/release-assets': fail('release publisher must consume the release-assets handoff')
+publisher_uses={str(step.get('uses')) for step in publisher_steps if isinstance(step,dict)}
+if 'step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5' not in publisher_uses: fail('release publisher must harden its runner')
+checkout_steps=[step for step in publisher_steps if isinstance(step,dict) and str(step.get('uses','')).startswith('actions/checkout@')]
+if len(checkout_steps)!=1 or (checkout_steps[0].get('with') or {}).get('persist-credentials') is not False: fail('release publisher checkout must disable persisted credentials')
+if sum(step.get('uses')=='./.github/actions/setup-gh' for step in publisher_steps if isinstance(step,dict)) != 1: fail('release publisher must use canonical setup-gh')
+mutation=re.compile(r'\bgh\s+release\s+(?:create|edit|upload)\b')
+for step in generator_steps:
+ if isinstance(step,dict) and mutation.search(str(step.get('run',''))): fail('release mutation must not run in the read-only generator')
+if not any(mutation.search(str(step.get('run',''))) for step in publisher_steps if isinstance(step,dict)): fail('release publisher must own gh release mutation')
+generator_text='\n'.join(str(step.get('run','')) for step in generator_steps if isinstance(step,dict))
+for required in ('generate_notice.py','assemble_licenses_dir.py','zip -r','gh release view','publishedAt'):
+ if required not in generator_text: fail(f'release generator lost existing behavior: {required}')
+publisher_text='\n'.join(str(step.get('run','')) for step in publisher_steps if isinstance(step,dict))
+for asset in ('firemud-${{ github.ref_name }}-licenses.zip','firemud-${{ github.ref_name }}-release-compliance.zip','build/release-assets/NOTICE.md#NOTICE.md'):
+ if asset not in publisher_text: fail(f'release publisher lost asset name: {asset}')
+
 ci_jobs=load(workflows/'ci.yml').get('jobs') or {}
 frontend_checks=ci_jobs.get('frontend-checks')
 if not isinstance(frontend_checks,dict): fail('ci.yml frontend-checks job is missing')
@@ -312,6 +373,12 @@ if 'RUNNER_OS' not in (actions/'setup-gh/action.yml').read_text() or 'RUNNER_ARC
 lychee=(root/'dev-tools/docs/link-check.sh').read_text()
 for required in ('source "$ROOT_DIR/config/workflow-tool-versions.env"','/lychee/${LYCHEE_VERSION}','LYCHEE_LINUX_X86_64_MUSL_SHA256','sha256sum --check --status','VERIFIED_MARKER','ARCHIVE=','marker_binary_sha','extracted_sha','mv -f "$staging/lychee" "$BIN"','mv -f "$staged_archive" "$ARCHIVE"'):
  if required not in lychee: fail(f'local Lychee installer does not consume its authority: {required}')
+lychee_curl_pattern=(
+ r'(?m)^\s*curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \\\n'
+ r'\s*--connect-timeout 10 --max-time 60 \\\n'
+ r'\s*"\$URL" -o "\$staged_archive"$')
+if len(re.findall(r'(?m)^\s*curl\b',lychee)) != 1 or len(re.findall(lychee_curl_pattern,lychee)) != 1:
+ fail('local Lychee installer must define exactly one curl with canonical bounded retries and timeouts')
 docs=(workflows/'docs.yml').read_text()
 if 'lycheeverse/lychee-action@' in docs or 'run: bash ./dev-tools/docs/link-check.sh' not in docs: fail('docs workflow must use the checksum-verifying Lychee installer')
 for identity in ('outputs.lychee-version','outputs.lychee-linux-x86-64-musl-sha256'):

@@ -37,7 +37,9 @@ if [[ "$trusted" != true ]]; then
   staging="$(mktemp -d "$CACHE_DIR/install.XXXXXX")"
   trap 'rm -rf "$staging"' EXIT
   staged_archive="$staging/lychee.tar.gz"
-  curl -fsSL "$URL" -o "$staged_archive"
+  curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
+    --connect-timeout 10 --max-time 60 \
+    "$URL" -o "$staged_archive"
   echo "${LYCHEE_LINUX_X86_64_MUSL_SHA256}  ${staged_archive}" | sha256sum --check --status
   tar -xzf "$staged_archive" -C "$staging"
   install -m 0755 "$staging/lychee-x86_64-unknown-linux-musl/lychee" "$staging/lychee"

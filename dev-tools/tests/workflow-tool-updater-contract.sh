@@ -34,6 +34,15 @@ if module.recovery_journal_path(authority).exists():
     raise SystemExit("successful transaction left recovery state")
 PY
 
+kubectl_checksum=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+printf '%s\n' "$kubectl_checksum" > "$tmp/kubectl-checksum"
+cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/kubectl-authority.env"
+python3 "$ROOT_DIR/dev-tools/maintenance/update-workflow-tool.py" kubectl 9.8.7 \
+  --checksum-file "$tmp/kubectl-checksum" --authority "$tmp/kubectl-authority.env"
+grep -Fx 'KUBECTL_VERSION=9.8.7' "$tmp/kubectl-authority.env" >/dev/null
+grep -Fx 'KUBECTL_LINUX_AMD64_CHECKSUM_VERSION=9.8.7' "$tmp/kubectl-authority.env" >/dev/null
+grep -Fx "KUBECTL_LINUX_AMD64_SHA256=$kubectl_checksum" "$tmp/kubectl-authority.env" >/dev/null
+
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/lock-authority.env"
 lock_checksum=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 echo "$lock_checksum  helm-v9.8.7-linux-amd64.tar.gz" > "$tmp/lock-checksum"

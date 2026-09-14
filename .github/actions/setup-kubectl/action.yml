@@ -8,6 +8,28 @@ runs:
       uses: ./.github/actions/load-workflow-tool-versions
 
     - name: Install pinned kubectl
-      uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
-      with:
-        version: v${{ steps.versions.outputs.kubectl-version }}
+      shell: bash
+      env:
+        KUBECTL_VERSION: ${{ steps.versions.outputs.kubectl-version }}
+        KUBECTL_SHA256: ${{ steps.versions.outputs.kubectl-linux-amd64-sha256 }}
+      run: |
+        set -euo pipefail
+        if [[ "${RUNNER_OS:-}" != Linux || "${RUNNER_ARCH:-}" != X64 ]]; then
+          echo "pinned kubectl installer requires a Linux X64 runner" >&2
+          exit 1
+        fi
+        kubectl_version="${KUBECTL_VERSION:?}"
+        kubectl_sha256="${KUBECTL_SHA256:?}"
+        temporary_directory="$(mktemp -d)"
+        trap 'rm -rf -- "$temporary_directory"' EXIT
+        temporary_binary="$temporary_directory/kubectl"
+        installation_directory="$(mktemp -d "${RUNNER_TEMP:?}/firemud-kubectl.XXXXXX")"
+
+        curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
+          --connect-timeout 10 --max-time 60 \
+          "https://dl.k8s.io/release/v${kubectl_version}/bin/linux/amd64/kubectl" \
+          -o "$temporary_binary"
+        printf '%s  %s\n' "$kubectl_sha256" "$temporary_binary" \
+          | sha256sum --check --status
+        install -m 0755 "$temporary_binary" "$installation_directory/kubectl"
+        echo "$installation_directory" >> "$GITHUB_PATH"

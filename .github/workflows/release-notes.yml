@@ -6,11 +6,13 @@ on:
       - 'v*.*.*'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   generate-release-notes:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Harden runner
@@ -97,6 +99,39 @@ jobs:
           cd build/release-assets
           zip -r "firemud-${{ github.ref_name }}-licenses.zip" licenses
           zip -r "firemud-${{ github.ref_name }}-release-compliance.zip" NOTICE.md licenses
+
+      - name: 📤 Upload release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-assets
+          path: build/release-assets
+          if-no-files-found: error
+
+  publish-release:
+    needs: generate-release-notes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
+      - name: ⬇️ Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up canonical GitHub CLI
+        uses: ./.github/actions/setup-gh
+
+      - name: 📥 Download release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-assets
+          path: build/release-assets
 
       - name: 📝 Create GitHub Release with Notes
         env:
