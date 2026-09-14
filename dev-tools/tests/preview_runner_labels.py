@@ -11,6 +11,7 @@ import yaml
 
 _PREVIEW_LABELS = frozenset({"self-hosted", "preview"})
 _PLATFORM_LABELS = frozenset({"linux", "x64"})
+_USAGE = "usage: preview_runner_labels.py [--self-test] WORKFLOW..."
 
 
 def normalize_runs_on(runs_on: object) -> set[str]:
@@ -110,6 +111,14 @@ def _run_fixtures() -> None:
         else:
             if not expected_valid:
                 raise AssertionError(f"{name} fixture was accepted")
+    for invalid_arguments in (("--unknown",), ("workflow.yml", "--self-test")):
+        try:
+            main(invalid_arguments)
+        except SystemExit as error:
+            if str(error) != _USAGE:
+                raise AssertionError(f"invalid arguments returned unexpected usage: {error}") from error
+        else:
+            raise AssertionError(f"invalid arguments were accepted: {invalid_arguments}")
 
 
 def main(arguments: Sequence[str] | None = None) -> int:
@@ -117,8 +126,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
     if args == ["--self-test"]:
         _run_fixtures()
         return 0
-    if not args:
-        raise SystemExit("usage: preview_runner_labels.py [--self-test] WORKFLOW...")
+    if not args or any(argument.startswith("--") for argument in args):
+        raise SystemExit(_USAGE)
     for path_text in args:
         validate_workflow(Path(path_text))
     return 0
