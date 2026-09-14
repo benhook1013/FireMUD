@@ -39,6 +39,8 @@ def validate_preview_runner_labels(data: object, path: Path) -> int:
             continue
         runs_on = job.get("runs-on")
         labels = normalize_runs_on(runs_on)
+        if any("${{" in label for label in labels):
+            raise ValueError(f"{path.name}:{job_name} runner labels must be literal, not an expression")
         if isinstance(runs_on, Mapping) and "group" in runs_on:
             if "labels" not in runs_on or not labels:
                 raise ValueError(f"{path.name}:{job_name} self-hosted runner group must define labels")
@@ -124,6 +126,11 @@ def _run_fixtures() -> None:
         (
             "list-self-hosted-wrong-label",
             {"jobs": {"preview": {"runs-on": ["self-hosted", "other", "linux", "x64"]}}},
+            False,
+        ),
+        (
+            "expression-runner-label",
+            {"jobs": {"preview": {"runs-on": "${{ inputs.runner-labels }}"}}},
             False,
         ),
         (

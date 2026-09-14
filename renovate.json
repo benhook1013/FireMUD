@@ -47,7 +47,7 @@
       "datasourceTemplate": "docker",
       "versioningTemplate": "docker",
       "currentValueTemplate": "v{{{currentValue}}}",
-      "autoReplaceStringTemplate": "# renovate-image: datasource=docker depName=velero/velero\\nVELERO_VERSION={{{replace '^v' '' newValue}}}\\nVELERO_IMAGE_DIGEST={{{newDigest}}}"
+      "autoReplaceStringTemplate": "# renovate-image: datasource=docker depName=velero/velero\nVELERO_VERSION={{{replace '^v' '' newValue}}}\nVELERO_IMAGE_DIGEST={{{newDigest}}}"
     },
     {
       "customType": "regex",

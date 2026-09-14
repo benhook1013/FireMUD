@@ -93,6 +93,12 @@ runs:
           fi
           seen_keys[$key]=1
         done < "$authority"
+        for key in "${supported_keys[@]}"; do
+          if [[ -z "${seen_keys[$key]+x}" ]]; then
+            echo "::error title=Missing workflow tool authority key::${key} must be defined exactly once." >&2
+            exit 1
+          fi
+        done
         # shellcheck disable=SC1090
         source "$authority"
         version_pattern='^[0-9]+\.[0-9]+\.[0-9]+$'

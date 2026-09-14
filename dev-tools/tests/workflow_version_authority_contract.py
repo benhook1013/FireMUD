@@ -245,6 +245,24 @@ def main() -> int:
             fail("workflow authority loader accepts duplicate supported assignments")
         if output_path.read_text() != "sentinel\n":
             fail("duplicate supported authority assignment can mutate workflow outputs")
+        missing_key_text = "\n".join(
+            line for line in ap.read_text().splitlines() if not line.startswith("ACTIONLINT_VERSION=")
+        )
+        (authority_path / "workflow-tool-versions.env").write_text(missing_key_text + "\n")
+        output_path.write_text("sentinel\n")
+        missing_key_env = {**env, "ACTIONLINT_VERSION": a["ACTIONLINT_VERSION"]}
+        missing_key = subprocess.run(
+            ["bash", "-c", loader_run],
+            cwd=temporary,
+            env=missing_key_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if missing_key.returncode == 0:
+            fail("workflow authority loader accepts a missing key supplied by the ambient environment")
+        if output_path.read_text() != "sentinel\n":
+            fail("missing workflow authority key can mutate workflow outputs")
 
     def load(path):
         d = yaml.safe_load(path.read_text())
@@ -796,7 +814,7 @@ def main() -> int:
     velero_image_manager = velero_image_managers[0]
     if (
         velero_image_manager.get("autoReplaceStringTemplate")
-        != "# renovate-image: datasource=docker depName=velero/velero\\nVELERO_VERSION={{{replace '^v' '' newValue}}}\\nVELERO_IMAGE_DIGEST={{{newDigest}}}"
+        != "# renovate-image: datasource=docker depName=velero/velero\nVELERO_VERSION={{{replace '^v' '' newValue}}}\nVELERO_IMAGE_DIGEST={{{newDigest}}}"
     ):
         fail("Velero image manager must atomically replace its version and digest using supported fields")
     if velero_image_manager.get("matchStringsStrategy", "any") != "any":
@@ -838,7 +856,7 @@ def main() -> int:
     new_velero_value = "v9.9.9"
     new_velero_digest = "sha256:" + "b" * 64
     def render_velero_template(template):
-        rendered = template.replace("\\n", "\n").replace("{{{newDigest}}}", new_velero_digest)
+        rendered = template.replace("{{{newDigest}}}", new_velero_digest)
         rendered = rendered.replace(
             "{{{replace '^v' '' newValue}}}", re.sub(r"^v", "", new_velero_value)
         )
