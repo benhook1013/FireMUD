@@ -70,6 +70,15 @@ def has_gh_consumer(text): return any(run_has_gh(source) for source in helper_te
 
 workflow_paths=sorted((*workflows.glob('*.yml'), *workflows.glob('*.yaml')))
 
+expected_permissions={
+ 'weekly-security-scan.yml':{'contents':'read'},
+ 'manual-backup-restore.yml':{'contents':'read'},
+ 'release-notes.yml':{'contents':'write'},
+}
+for name, permissions in expected_permissions.items():
+ workflow=load(workflows/name)
+ if workflow.get('permissions') != permissions: fail(f'{name} must define exact top-level permissions: {permissions}')
+
 license_workflow=load(workflows/'license-scan.yml')
 license_changes=(license_workflow.get('jobs') or {}).get('changes')
 if not isinstance(license_changes,dict): fail('license-scan.yml changes job is missing')

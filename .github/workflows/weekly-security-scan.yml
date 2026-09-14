@@ -5,6 +5,9 @@ on:
     - cron: '0 3 * * 0'  # Weekly on Sundays at 03:00 UTC
   workflow_dispatch:      # Enables manual trigger from GitHub Actions UI
 
+permissions:
+  contents: read
+
 jobs:
   trivy-scan:
     name: Trivy Scan for ${{ matrix.service }}
