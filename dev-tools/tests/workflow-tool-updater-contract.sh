@@ -426,6 +426,58 @@ PY
 cmp "$tmp/transaction-authority-before.env" "$tmp/transaction-authority.env"
 cmp "$tmp/transaction-velero-before.yaml" "$tmp/transaction-velero.yaml"
 
+cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/commit-marker-authority.env"
+cp "$ROOT_DIR/k8s/velero/verify-backups-cronjob.yaml" "$tmp/commit-marker-velero.yaml"
+python3 - "$ROOT_DIR" "$tmp/commit-marker-authority.env" "$tmp/commit-marker-velero.yaml" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+root, authority, manifest = map(Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+authority = authority.resolve()
+manifest = manifest.resolve()
+journal = module.recovery_journal_path(authority)
+authority_before = authority.read_text(encoding="utf-8")
+manifest_before = manifest.read_text(encoding="utf-8")
+real_atomic_text_replace = module.atomic_text_replace
+
+def fail_committed_marker(path, text):
+    if Path(path).resolve() == journal and '"state":"committed"' in text:
+        raise OSError("simulated committed marker write failure")
+    real_atomic_text_replace(path, text)
+
+module.atomic_text_replace = fail_committed_marker
+try:
+    module.transactional_write(
+        [(authority, "committed-marker authority\n"), (manifest, "committed-marker manifest\n")]
+    )
+except OSError as exc:
+    if str(exc) != "simulated committed marker write failure":
+        raise SystemExit(f"unexpected committed marker failure: {exc}") from exc
+else:
+    raise SystemExit("transaction accepted a failed committed marker write")
+if authority.read_text(encoding="utf-8") != authority_before:
+    raise SystemExit("committed marker failure did not restore the authority")
+if manifest.read_text(encoding="utf-8") != manifest_before:
+    raise SystemExit("committed marker failure did not restore the manifest")
+if journal.exists():
+    raise SystemExit("committed marker failure left recovery state")
+
+module.atomic_text_replace = real_atomic_text_replace
+module.transactional_write(
+    [(authority, "recovered authority\n"), (manifest, "recovered manifest\n")]
+)
+if authority.read_text(encoding="utf-8") != "recovered authority\n":
+    raise SystemExit("transaction did not remain recoverable after committed marker failure")
+if manifest.read_text(encoding="utf-8") != "recovered manifest\n":
+    raise SystemExit("manifest transaction did not remain recoverable after committed marker failure")
+if journal.exists():
+    raise SystemExit("recoverable transaction left recovery state")
+PY
+
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/fsync-authority.env"
 cp "$ROOT_DIR/k8s/velero/verify-backups-cronjob.yaml" "$tmp/fsync-velero.yaml"
 cp "$tmp/fsync-authority.env" "$tmp/fsync-authority-before.env"
