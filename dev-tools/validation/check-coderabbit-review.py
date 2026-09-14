@@ -931,8 +931,6 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
     )
     retrigger_review_allowed = (
         unresolved_total == 0
-        and outside_diff_actionable_comments == 0
-        and duplicate_actionable_comments == 0
         and not latest_review_request_still_running
         and not latest_review_request_rate_limited
         and not latest_review_request_noop
