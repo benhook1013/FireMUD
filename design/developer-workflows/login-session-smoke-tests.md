@@ -23,7 +23,10 @@ The fresh-bootstrap step establishes the claim and running stack; the standalone
    ```bash
    PYTHON_VERSION="$(< .python-version)"
    python3 --version
-   test "$(python3 -c 'import platform; print(platform.python_version())')" = "$PYTHON_VERSION"
+   if [ "$(python3 -c 'import platform; print(platform.python_version())')" != "$PYTHON_VERSION" ]; then
+       echo "Activate the interpreter pinned by .python-version before installing smoke requirements." >&2
+       exit 1
+   fi
    python3 -m pip install -r config/python/smoke-requirements.txt
    ```
 

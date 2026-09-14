@@ -5,6 +5,7 @@ export FIREMUD_REPO_ROOT="$ROOT_DIR"
 python3 - <<'PY'
 from __future__ import annotations
 import json, os, re
+from collections import Counter
 from pathlib import Path
 import yaml
 
@@ -68,6 +69,28 @@ def python_needs(text):
 def has_gh_consumer(text): return any(run_has_gh(source) for source in helper_text(text))
 
 workflow_paths=sorted((*workflows.glob('*.yml'), *workflows.glob('*.yaml')))
+
+license_workflow=load(workflows/'license-scan.yml')
+license_changes=(license_workflow.get('jobs') or {}).get('changes')
+if not isinstance(license_changes,dict): fail('license-scan.yml changes job is missing')
+license_filter_steps=[
+ step for step in license_changes.get('steps',[])
+ if isinstance(step,dict) and step.get('id')=='filter'
+ and str(step.get('uses','')).startswith('dorny/paths-filter@')
+]
+if len(license_filter_steps)!=1: fail('license-scan.yml must define exactly one dorny paths filter step')
+license_filter_with=license_filter_steps[0].get('with')
+if not isinstance(license_filter_with,dict): fail('license-scan.yml dorny paths filter must define with mapping')
+license_filter=license_filter_with.get('filters')
+if not isinstance(license_filter,str): fail('license-scan.yml dorny paths filter must define filters YAML')
+license_filter_data=yaml.safe_load(license_filter)
+if not isinstance(license_filter_data,dict): fail('license-scan.yml dorny filters YAML must be a mapping')
+for group in ('gradle','npm'):
+ paths=license_filter_data.get(group)
+ if not isinstance(paths,list): fail(f'license-scan.yml {group} filter must be a path list')
+ for authority_path in ('.node-version','config/workflow-tool-versions.env'):
+  if paths.count(authority_path)!=1: fail(f'license-scan.yml {group} filter must contain exactly one {authority_path}')
+
 node_count=python_count=gh_count=0
 for path in workflow_paths:
  for job_name,job in (load(path).get('jobs') or {}).items():
@@ -155,11 +178,29 @@ if len(velero_images)!=1 or velero_images[0] not in allowed_velero_images:
 renovate=json.loads((root/'renovate.json').read_text())
 if not {'nodenv','pyenv','pip_requirements','custom.regex'} <= set(renovate['enabledManagers']): fail('Renovate managers incomplete')
 if len(renovate.get('customManagers',[]))!=2: fail('Renovate must define version and image authority managers')
-matched=[]
+expected_dep_names={
+ 'KUBECTL':'kubernetes/kubernetes',
+ 'HELM':'helm/helm',
+ 'GH':'cli/cli',
+ 'BUF':'bufbuild/buf',
+ 'KUBECONFORM':'yannh/kubeconform',
+ 'VELERO':'vmware-tanzu/velero',
+ 'ACTIONLINT':'rhysd/actionlint',
+ 'TRIVY':'aquasecurity/trivy',
+ 'LYCHEE':'lycheeverse/lychee',
+}
+expected_image_dep_names={
+ 'VELERO':'velero/velero',
+ 'ORT':'ghcr.io/oss-review-toolkit/ort',
+ 'ZAP':'ghcr.io/zaproxy/zaproxy',
+}
+expected=Counter((expected_dep_names[x],a[f'{x}_VERSION']) for x in expected_dep_names)
+expected.update((expected_image_dep_names[x],a[f'{x}_VERSION']) for x in expected_image_dep_names)
+matched=Counter()
 for manager in renovate['customManagers']:
  pattern=re.compile(manager['matchStrings'][0].replace('(?<','(?P<'))
- matched += [m.group('currentValue') for m in pattern.finditer(ap.read_text())]
-if set(matched)!={a[f'{x}_VERSION'] for x in versions}: fail('Renovate does not discover every workflow tool authority')
+ matched.update((m.group('depName'),m.group('currentValue')) for m in pattern.finditer(ap.read_text()))
+if matched != expected: fail('Renovate does not discover every workflow tool authority exactly once')
 rules=renovate.get('packageRules',[])
 runtime_major_rule=next((rule for rule in rules if rule.get('description')=='Keep canonical Node and Python runtime majors'),None)
 if runtime_major_rule != {
