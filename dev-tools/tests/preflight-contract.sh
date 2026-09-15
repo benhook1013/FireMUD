@@ -4020,6 +4020,29 @@ invalid_listener_expected["internalBindings"]["certificates"]["gatewayInternalWs
 _, invalid_listener_issues = module.validate_gateway_ws_values(rendered_documents, invalid_listener_expected)
 if not any("gatewayInternalWsListenerRef must be a cert-manager binding" in issue for issue in invalid_listener_issues):
     raise SystemExit(f"malformed Gateway listener binding was not rejected explicitly: {invalid_listener_issues}")
+invalid_listener_container_documents = copy.deepcopy(rendered_documents)
+invalid_listener_gateway = next(
+    document
+    for document in invalid_listener_container_documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "spring-cloud-gateway"
+)
+invalid_listener_gateway["spec"]["strategy"] = {"type": "Recreate"}
+invalid_listener_gateway["spec"]["template"]["spec"]["containers"] = []
+_, invalid_listener_container_issues = module.validate_gateway_ws_listener(
+    invalid_listener_container_documents,
+    yaml.safe_load(current_expected_path.read_text(encoding="utf-8")),
+)
+if (
+    "Gateway bridge Deployment strategy must be RollingUpdate or omitted so Kubernetes uses its default for ordinary availability-preserving replacement; emergency identity withdrawal requires controller termination and is not proven by this rendered strategy"
+    not in invalid_listener_container_issues
+    or "Gateway Deployment must contain one spring-cloud-gateway container"
+    not in invalid_listener_container_issues
+):
+    raise SystemExit(
+        "invalid Gateway strategy was lost when the listener container count was invalid: "
+        f"{invalid_listener_container_issues}"
+    )
 bridge_mutation = copy.deepcopy(rendered_documents)
 for document in bridge_mutation:
     if document.get("kind") == "Deployment" and document.get("metadata", {}).get("name") == "tcp-proxy-service":

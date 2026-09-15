@@ -2,6 +2,8 @@ package net.firedevops.firemud.springcloudgateway.filter;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.net.Inet6Address;
+import java.net.InetAddress;
 import org.junit.jupiter.api.Test;
 
 class CidrBlockTest {
@@ -19,5 +21,57 @@ class CidrBlockTest {
     assertThat(CidrBlock.normalizeIpLiteral("fe80::1%eth0")).isNull();
     assertThat(CidrBlock.parse("192.0.2.0/24")).isNotNull();
     assertThat(CidrBlock.parse("192.0.2.0/33")).isNull();
+  }
+
+  @Test
+  void matchesIpv4MappedAddressesAgainstIpv4Blocks() throws Exception {
+    CidrBlock block = CidrBlock.parse("192.0.2.0/24");
+
+    assertThat(block.contains(mappedAddress(192, 0, 2, 42))).isTrue();
+    assertThat(block.contains(mappedAddress(198, 51, 100, 42))).isFalse();
+  }
+
+  @Test
+  void mapsRepresentableIpv4MappedCidrsAndRejectsWiderRanges() throws Exception {
+    CidrBlock block = CidrBlock.parse("::ffff:192.0.2.0/120");
+
+    assertThat(block).isNotNull();
+    assertThat(block.contains(mappedAddress(192, 0, 2, 42))).isTrue();
+    assertThat(block.contains(mappedAddress(192, 0, 3, 42))).isFalse();
+    assertThat(CidrBlock.parse("::ffff:192.0.2.0/95")).isNull();
+  }
+
+  @Test
+  void preservesOrdinaryIpv6Matching() throws Exception {
+    CidrBlock block = CidrBlock.parse("2001:db8::/32");
+
+    assertThat(block.contains(InetAddress.getByName("2001:db8::42"))).isTrue();
+    assertThat(block.contains(InetAddress.getByName("2001:db9::42"))).isFalse();
+    assertThat(block.contains(InetAddress.getByName("192.0.2.42"))).isFalse();
+  }
+
+  private static InetAddress mappedAddress(int first, int second, int third, int fourth)
+      throws Exception {
+    return Inet6Address.getByAddress(
+        null,
+        new byte[] {
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          (byte) 0xff,
+          (byte) 0xff,
+          (byte) first,
+          (byte) second,
+          (byte) third,
+          (byte) fourth
+        },
+        -1);
   }
 }

@@ -907,6 +907,23 @@ class GatewayWebSocketClientTest {
   }
 
   @Test
+  void classifiesMissingClientCertificateMessageVariantsBeforeInvalidCertificateFallback() {
+    for (String message :
+        List.of(
+            "certificate_required",
+            "client certificate required",
+            "empty client certificate chain",
+            "peer did not return a certificate")) {
+      assertEquals(
+          "client_cert_missing",
+          GatewayWebSocketClient.classifyFailure(new SSLHandshakeException(message)));
+    }
+    assertEquals(
+        "client_cert_invalid",
+        GatewayWebSocketClient.classifyFailure(new SSLHandshakeException("bad_certificate")));
+  }
+
+  @Test
   void onlyExplicitHandshakePolicyStatusesArePolicyFailures() {
     for (int statusCode : List.of(400, 401, 403, 429)) {
       HttpResponse<Void> response = mock(HttpResponse.class);

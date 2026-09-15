@@ -676,11 +676,14 @@ public final class GatewayWebSocketClient implements AutoCloseable {
     }
     if (cause instanceof SSLException) {
       String message = String.valueOf(cause.getMessage()).toLowerCase(Locale.ROOT);
+      if (message.contains("certificate_required")
+          || message.contains("client certificate required")
+          || message.contains("empty client certificate chain")
+          || message.contains("peer did not return a certificate")) {
+        return CLIENT_CERT_MISSING_REASON;
+      }
       if (message.contains("bad_certificate") || message.contains("client certificate")) {
         return CLIENT_CERT_INVALID_REASON;
-      }
-      if (message.contains("certificate_required")) {
-        return CLIENT_CERT_MISSING_REASON;
       }
       if (message.contains("pkix")
           || message.contains("certpath")

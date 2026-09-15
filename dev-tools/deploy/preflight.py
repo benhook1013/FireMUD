@@ -4185,7 +4185,9 @@ def validate_gateway_ws_listener(
         if isinstance(container, dict) and container.get("name") == "spring-cloud-gateway"
     ]
     if len(containers) != 1:
-        return set(), ["Gateway Deployment must contain one spring-cloud-gateway container"]
+        return set(), issues + [
+            "Gateway Deployment must contain one spring-cloud-gateway container"
+        ]
     container = containers[0]
     listener_prefixes = (
         "FIREMUD_GATEWAY_TCP_PROXY_TLS_",

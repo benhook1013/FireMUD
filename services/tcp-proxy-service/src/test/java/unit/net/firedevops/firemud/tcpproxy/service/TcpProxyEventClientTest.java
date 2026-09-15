@@ -304,6 +304,15 @@ class TcpProxyEventClientTest {
       var method = TcpProxyEventClient.class.getDeclaredMethod("reloadChannel");
       method.setAccessible(true);
       method.invoke(client);
+    } catch (InvocationTargetException e) {
+      Throwable cause = e.getCause();
+      if (cause instanceof RuntimeException runtimeException) {
+        throw runtimeException;
+      }
+      if (cause instanceof Error error) {
+        throw error;
+      }
+      throw new IllegalStateException("reloadChannel failed", cause);
     } catch (ReflectiveOperationException e) {
       throw new IllegalStateException("Failed to invoke reloadChannel", e);
     }

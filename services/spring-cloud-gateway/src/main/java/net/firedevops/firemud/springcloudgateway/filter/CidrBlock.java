@@ -28,6 +28,14 @@ record CidrBlock(byte[] network, int prefixBits) {
       return null;
     }
     try {
+      boolean ipv4Mapped = isIpv4MappedIpv6(addressBytes);
+      if (ipv4Mapped) {
+        if (prefix < 96) {
+          return null;
+        }
+        addressBytes = ipv4MappedAddressBytes(addressBytes);
+        prefix -= 96;
+      }
       int max = addressBytes.length * 8;
       if (prefix < 0 || prefix > max) {
         return null;
@@ -51,6 +59,9 @@ record CidrBlock(byte[] network, int prefixBits) {
     byte[] addressBytes = parseIpLiteral(trimmed);
     if (addressBytes == null) {
       return null;
+    }
+    if (isIpv4MappedIpv6(addressBytes)) {
+      addressBytes = ipv4MappedAddressBytes(addressBytes);
     }
     try {
       return InetAddress.getByAddress(addressBytes).getHostAddress();
@@ -106,6 +117,9 @@ record CidrBlock(byte[] network, int prefixBits) {
 
   boolean contains(InetAddress address) {
     byte[] bytes = address.getAddress();
+    if (network.length == 4 && isIpv4MappedIpv6(bytes)) {
+      bytes = ipv4MappedAddressBytes(bytes);
+    }
     if (bytes.length != network.length) {
       return false;
     }
@@ -134,5 +148,21 @@ record CidrBlock(byte[] network, int prefixBits) {
     }
     int mask = 0xFF << (8 - remainingBits);
     bytes[fullBytes] = (byte) (bytes[fullBytes] & mask);
+  }
+
+  private static boolean isIpv4MappedIpv6(byte[] bytes) {
+    if (bytes.length != 16) {
+      return false;
+    }
+    for (int i = 0; i < 10; i++) {
+      if (bytes[i] != 0) {
+        return false;
+      }
+    }
+    return bytes[10] == (byte) 0xFF && bytes[11] == (byte) 0xFF;
+  }
+
+  private static byte[] ipv4MappedAddressBytes(byte[] bytes) {
+    return java.util.Arrays.copyOfRange(bytes, 12, 16);
   }
 }
