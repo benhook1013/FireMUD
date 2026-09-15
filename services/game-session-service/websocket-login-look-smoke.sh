@@ -53,6 +53,7 @@ echo "Using session='${SMOKE_SESSION_ID}' tenant='${SMOKE_TENANT_ID}'"
 
 "$PYTHON" - <<'PYTHON'
 import os
+import shlex
 import sys
 from pathlib import Path
 
@@ -71,9 +72,17 @@ from smoke_common import (
 try:
     import websocket
 except ImportError as exc:
+    venv_directory = repo_root / ".venv-smoke"
+    venv_python = venv_directory / "bin" / "python"
+    requirements_file = repo_root / "config" / "python" / "smoke-requirements.txt"
     raise SystemExit(
         "The python 'websocket-client' package is required. "
-        "Install it with 'python3 -m pip install websocket-client'."
+        "Create the canonical virtual environment and install it with: "
+        f"python3 -m venv --clear {shlex.quote(str(venv_directory))} && "
+        f"{shlex.quote(str(venv_python))} -m pip install "
+        "--disable-pip-version-check --require-hashes "
+        f"-r {shlex.quote(str(requirements_file))}\n"
+        "Activate that environment before rerunning this smoke test."
     ) from exc
 
 websocket_url = os.environ.get("SMOKE_GAME_SESSION_WS_URL", "ws://localhost:8086/ws/game")

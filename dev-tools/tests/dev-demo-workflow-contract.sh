@@ -21,12 +21,15 @@ mode_resolver="$ROOT_DIR/dev-tools/hosted/shared/resolve-certificate-identity-mo
 mode_action="$ROOT_DIR/.github/actions/resolve-certificate-identity-mode/action.yml"
 workflow="$ROOT_DIR/.github/workflows/dev-demo.yml"
 reconciler="$ROOT_DIR/.github/workflows/dev-demo-reconciler.yml"
+runner_label_validator="$ROOT_DIR/dev-tools/tests/preview_runner_labels.py"
 reconcile_step="$ROOT_DIR/dev-tools/hosted/dev-demo/reconcile-dev-demo.sh"
 requester="$ROOT_DIR/dev-tools/hosted/shared/request-hosted-identity.sh"
 waiter="$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh"
 annotator="$ROOT_DIR/dev-tools/hosted/dev-demo/annotate-dev-demo-namespace.sh"
 target_validator="$ROOT_DIR/dev-tools/hosted/dev-demo/validate-dev-demo-target.sh"
 runtime_rollout_waiter="$ROOT_DIR/dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh"
+python3 "$runner_label_validator" --self-test
+python3 "$runner_label_validator" "$workflow" "$reconciler"
 [[ -x "$runtime_rollout_waiter" ]] || {
   echo "$runtime_rollout_waiter must be executable" >&2
   exit 1
@@ -678,6 +681,15 @@ if projection_waiter.count("deadline=$((SECONDS + timeout_seconds))") != 1:
     raise SystemExit("projection waiter must preserve one shared deadline")
 
 reconcile_steps = reconciler["jobs"]["reconcile-dev-demo"]["steps"]
+reconcile_checkouts = [
+    step
+    for step in reconcile_steps
+    if str(step.get("uses", "")).startswith("actions/checkout@")
+]
+if len(reconcile_checkouts) != 1:
+    raise SystemExit("dev-demo reconciler must define exactly one checkout")
+if reconcile_checkouts[0].get("with", {}).get("persist-credentials") is not False:
+    raise SystemExit("dev-demo reconciler checkout must not persist credentials")
 reconcile_step_run = next(
     step["run"]
     for step in reconcile_steps

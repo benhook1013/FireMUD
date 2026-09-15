@@ -45,6 +45,11 @@ runs:
         github-token: ${{ inputs['github-token'] }}
         run-id: ${{ inputs['source-run-id'] }}
 
+    - name: Set up canonical Python
+      uses: ./.github/actions/setup-python
+      with:
+        requirements: yaml
+
     - name: Verify artifact provenance, checksum, and closed object set
       shell: bash
       env:

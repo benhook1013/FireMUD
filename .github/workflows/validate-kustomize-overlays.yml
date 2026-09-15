@@ -38,8 +38,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up canonical Python dependencies
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: yaml
+
       - name: 🧰 Set up kubectl
-        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
+        uses: ./.github/actions/setup-kubectl
 
       - name: 🐳 Set up Docker
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4

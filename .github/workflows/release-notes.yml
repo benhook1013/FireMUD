@@ -5,12 +5,14 @@ on:
     tags:
       - 'v*.*.*'
 
-env:
-  ORT_DOCKER_IMAGE: ghcr.io/oss-review-toolkit/ort:89.2.0
+permissions:
+  contents: read
 
 jobs:
   generate-release-notes:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Harden runner
@@ -22,9 +24,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 🐍 Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version: '3.x'
+        uses: ./.github/actions/setup-python
+
+      - name: Set up canonical GitHub CLI
+        uses: ./.github/actions/setup-gh
 
       - name: ⚙️ Set Up Java
         uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6
@@ -35,7 +38,7 @@ jobs:
       - name: ⚙️ Set Up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: '24'
+          node-version-file: '.node-version'
           cache: npm
           cache-dependency-path: |
             package-lock.json
@@ -70,11 +73,15 @@ jobs:
             --release-date "${{ steps.release_dates.outputs.release_date }}" \
             --output build/release-assets/NOTICE.md
 
+      - name: Load workflow tool versions
+        id: workflow-tool-versions
+        uses: ./.github/actions/load-workflow-tool-versions
+
       - name: 📚 Generate release license notices
         id: ort
         uses: oss-review-toolkit/ort-ci-github-action@086d928d24ef1653dc0777296b312fda5faaaf52 # v1
         with:
-          image: ${{ env.ORT_DOCKER_IMAGE }}
+          image: ${{ steps.workflow-tool-versions.outputs.ort-image }}
           ort-cli-args: '-P ort.analyzer.enabledPackageManagers=Gradle,NPM'
           run: 'cache-dependencies,labels,analyzer,evaluator,reporter,upload-results'
           fail-on: policy-violation
@@ -92,6 +99,40 @@ jobs:
           cd build/release-assets
           zip -r "firemud-${{ github.ref_name }}-licenses.zip" licenses
           zip -r "firemud-${{ github.ref_name }}-release-compliance.zip" NOTICE.md licenses
+
+      - name: 📤 Upload release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-assets
+          path: build/release-assets
+          if-no-files-found: error
+
+  publish-release:
+    needs: generate-release-notes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
+      - name: ⬇️ Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Set up canonical GitHub CLI
+        uses: ./.github/actions/setup-gh
+
+      - name: 📥 Download release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-assets
+          path: build/release-assets
 
       - name: 📝 Create GitHub Release with Notes
         env:

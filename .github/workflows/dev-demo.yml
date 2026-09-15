@@ -142,6 +142,8 @@ jobs:
     runs-on:
       - self-hosted
       - preview
+      - linux
+      - x64
     needs: dev-demo-plan
     if: ${{ needs.dev-demo-plan.outputs.action == 'deploy' }}
     environment: dev-demo-cluster
@@ -155,9 +157,7 @@ jobs:
           values-file: k8s/helm/firemud/values-hosted-shared.example.yaml
 
       - name: Set up kubectl
-        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
-        with:
-          version: v1.33.4
+        uses: ./.github/actions/setup-kubectl
 
       - name: Set up Helm
         uses: ./.github/actions/setup-helm
@@ -190,6 +190,10 @@ jobs:
           echo "::warning::Dev-demo cluster access unavailable; skipping hosted deploy for this run."
           echo "available=false" >> "$GITHUB_OUTPUT"
           echo "DEV_DEMO_STAGE=cluster-access" >> "$GITHUB_ENV"
+
+      - name: Set up canonical GitHub CLI
+        if: ${{ steps.cluster-access.outputs.available == 'true' }}
+        uses: ./.github/actions/setup-gh
 
       - name: Check Hosted identity requester credentials
         id: requester-credentials
@@ -897,6 +901,8 @@ jobs:
     runs-on:
       - self-hosted
       - preview
+      - linux
+      - x64
     needs: dev-demo-plan
     if: ${{ needs.dev-demo-plan.outputs.action == 'destroy' }}
     environment: dev-demo-cluster
@@ -910,9 +916,7 @@ jobs:
           values-file: k8s/helm/firemud/values-hosted-shared.example.yaml
 
       - name: Set up kubectl
-        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
-        with:
-          version: v1.33.4
+        uses: ./.github/actions/setup-kubectl
 
       - name: Set up Helm
         uses: ./.github/actions/setup-helm

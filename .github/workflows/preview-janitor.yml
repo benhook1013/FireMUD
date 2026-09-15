@@ -16,6 +16,8 @@ jobs:
     runs-on:
       - self-hosted
       - preview
+      - linux
+      - x64
     environment: pr-preview
     concurrency:
       group: preview-allocation-lifecycle
@@ -23,6 +25,11 @@ jobs:
       queue: max
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up canonical GitHub CLI
+        uses: ./.github/actions/setup-gh
 
       - name: Resolve certificate identity mode
         id: certificate-identity
@@ -31,9 +38,7 @@ jobs:
           values-file: k8s/helm/firemud/values-hosted-shared.example.yaml
 
       - name: Set up kubectl
-        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
-        with:
-          version: v1.33.4
+        uses: ./.github/actions/setup-kubectl
 
       - name: Set up Helm
         uses: ./.github/actions/setup-helm

@@ -70,6 +70,11 @@ jobs:
           ref: ${{ env.CHECKOUT_REF }}
           persist-credentials: false
 
+      - name: Set up canonical Python
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: smoke
+
       - name: Generate Dev Certificates
         run: ./dev-tools/certs/generate-dev-certs.sh
 
@@ -79,9 +84,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 📦 Install WebSocket smoke dependency
-        run: python3 -m pip install --disable-pip-version-check websocket-client
 
       - name: 🧪 Run Canonical Image Smoke Proof
         run: SMOKE_IMAGE_TAG="${{ inputs.image_tag }}" bash ./dev-tools/verify-smoke-images.sh

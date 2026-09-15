@@ -35,6 +35,10 @@ on:
       - 'services/tcp-proxy-service/**'
       - 'services/world-management-service/**'
       - 'services/hosted-environment-identity-controller/**'
+      - '.github/actions/setup-python/**'
+      - '.python-version'
+      - 'config/python/smoke-requirements.txt'
+      - 'config/python/smoke-requirements.in'
       - 'dev-tools/build-compose-service-jars.sh'
       - 'dev-tools/build-local-smoke-images.sh'
       - 'dev-tools/certs/generate-dev-certs.sh'
@@ -132,6 +136,7 @@ jobs:
                     "dev-tools/smoke/",
                     "gradle/",
                     "protos/",
+                    ".github/actions/setup-python/",
                   ];
                   const runtimeFiles = new Set([
                     ".dockerignore",
@@ -139,7 +144,10 @@ jobs:
                     ".github/workflows/runtime-images.yml",
                     ".github/workflows/smoke-full.yml",
                     ".github/workflows/smoke.yml",
+                    ".python-version",
                     "build.gradle.kts",
+                    "config/python/smoke-requirements.txt",
+                    "config/python/smoke-requirements.in",
                     "dev-tools/build-compose-service-jars.sh",
                     "dev-tools/build-local-smoke-images.sh",
                     "dev-tools/certs/generate-dev-certs.sh",
@@ -611,6 +619,12 @@ jobs:
           ref: ${{ needs.image-meta.outputs.checkout_ref }}
           persist-credentials: false
 
+      - name: Set up canonical Python
+        if: ${{ needs.image-meta.outputs.runtime_smoke_required == 'true' }}
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: smoke
+
       - name: Set up Java
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654
         with:
@@ -627,10 +641,6 @@ jobs:
 
       - name: Build local PR runtime images
         run: bash ./dev-tools/build-local-smoke-images.sh "${SMOKE_IMAGE_TAG}"
-
-      - name: Install WebSocket smoke dependency
-        if: ${{ needs.image-meta.outputs.runtime_smoke_required == 'true' }}
-        run: python3 -m pip install --disable-pip-version-check websocket-client
 
       - name: Run credential-free full-stack smoke
         if: ${{ needs.image-meta.outputs.runtime_smoke_required == 'true' }}

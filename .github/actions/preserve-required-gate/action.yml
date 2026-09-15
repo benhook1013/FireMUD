@@ -7,6 +7,8 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Set up canonical GitHub CLI
+      uses: ./.github/actions/setup-gh
     - name: Poll prior required gate
       shell: bash
       env:

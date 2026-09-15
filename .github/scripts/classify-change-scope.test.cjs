@@ -85,6 +85,48 @@ test("operational Python forces the normal validation path", () => {
   assert.equal(result.pythonChanged, true);
 });
 
+test("Python dependency inputs request the normal validation path", () => {
+  const result = classifyChangeScope(["config/python/smoke-requirements.in"]);
+
+  assert.equal(result.lightweightOnly, false);
+  assert.equal(result.pythonChanged, true);
+});
+
+test("runtime authorities select their documentation and frontend consumers", async () => {
+  const pythonResult = classifyChangeScope([".python-version"]);
+  assert.equal(pythonResult.docsChanged, true);
+  assert.equal(pythonResult.frontendChanged, true);
+  assert.equal(pythonResult.lightweightOnly, false);
+  assert.equal(pythonResult.pythonChanged, false);
+  assert.deepEqual(pythonResult.affectedServices, []);
+
+  const nodeResult = classifyChangeScope([".node-version"]);
+  assert.equal(nodeResult.docsChanged, true);
+  assert.equal(nodeResult.frontendChanged, true);
+  assert.equal(nodeResult.lightweightOnly, false);
+  assert.equal(nodeResult.pythonChanged, false);
+  assert.deepEqual(nodeResult.affectedServices, []);
+
+  for (const [path, docsChanged, frontendChanged] of [
+    [".python-version", true, true],
+    [".node-version", true, true],
+  ]) {
+    const result = await classifyGithubFiles([path], 1);
+    assert.equal(result.docsChanged, docsChanged, path);
+    assert.equal(result.frontendChanged, frontendChanged, path);
+    assert.equal(result.lightweightOnly, false, path);
+    assert.deepEqual(result.affectedServices, [], path);
+  }
+});
+
+test("documentation requirements are docs but not Python dependencies", () => {
+  const result = classifyChangeScope(["config/docs/requirements.txt"]);
+
+  assert.equal(result.docsChanged, true);
+  assert.equal(result.pythonChanged, false);
+  assert.equal(result.lightweightOnly, true);
+});
+
 test("workflow changes force all service validation", () => {
   for (const path of [
     ".github/workflows/ci.yml",

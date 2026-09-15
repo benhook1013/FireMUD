@@ -44,6 +44,7 @@ function isDocumentation(file) {
   return (
     file === "AGENTS.md" ||
     file === "mkdocs.yml" ||
+    file === "config/docs/requirements.txt" ||
     file.startsWith("design/") ||
     file.startsWith("dev-tools/docs/") ||
     file.endsWith(".md")
@@ -58,10 +59,19 @@ function isValidationTooling(file) {
   return /^\.github\/scripts\/[^/]+\.test\.cjs$/.test(file);
 }
 
+function isRuntimeAuthority(file) {
+  return file === ".node-version" || file === ".python-version";
+}
+
+function isPythonDependency(file) {
+  return file.startsWith("config/python/");
+}
+
 function isLightweightEligible(file) {
   return (
     (isDocumentation(file) || isValidationPython(file)) &&
-    file !== "dev-tools/docs/generate-erd.sh"
+    file !== "dev-tools/docs/generate-erd.sh" &&
+    !isRuntimeAuthority(file)
   );
 }
 
@@ -100,15 +110,19 @@ function classifyChangeScope(inputFiles, options = {}) {
     }
   }
 
-  const pythonFiles = files.filter((file) => file.endsWith(".py"));
+  const pythonFiles = files.filter((file) => file.endsWith(".py") || isPythonDependency(file));
   const designDocsChanged = files.some((file) => file.startsWith("design/"));
   const validationPythonChanged = files.some(isValidationPython);
 
   return {
     runAll,
     affectedServices: [...affectedServices],
-    docsChanged: runAll || files.some(isDocumentation),
-    frontendChanged: runAll || files.some(isFrontend),
+    docsChanged: runAll || files.some((file) => isDocumentation(file) || isRuntimeAuthority(file)),
+    frontendChanged:
+      runAll ||
+      files.some(
+        (file) => isFrontend(file) || file === ".node-version" || file === ".python-version",
+      ),
     pythonChanged: forceAll || pythonFiles.length > 0,
     designDocsChanged,
     validationPythonChanged,

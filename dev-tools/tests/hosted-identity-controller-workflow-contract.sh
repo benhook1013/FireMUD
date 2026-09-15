@@ -12,11 +12,13 @@ done
 
 trusted="$ROOT_DIR/.github/workflows/hosted-identity-request.yml"
 preview="$ROOT_DIR/.github/workflows/preview.yml"
+preview_reconciler="$ROOT_DIR/.github/workflows/preview-reconciler.yml"
 dev_demo="$ROOT_DIR/.github/workflows/dev-demo.yml"
 runtime="$ROOT_DIR/.github/workflows/runtime-images.yml"
 publisher="$ROOT_DIR/.github/workflows/publish-pr-runtime-images.yml"
 kubeconfig_action="$ROOT_DIR/.github/actions/write-kubeconfig/action.yml"
 helm_action="$ROOT_DIR/.github/actions/setup-helm/action.yml"
+workflow_tool_authority="$ROOT_DIR/config/workflow-tool-versions.env"
 janitor="$ROOT_DIR/.github/workflows/preview-janitor.yml"
 build_gradle="$ROOT_DIR/build.gradle.kts"
 controller_build_gradle="$ROOT_DIR/services/hosted-environment-identity-controller/build.gradle.kts"
@@ -33,6 +35,27 @@ render_preview_values="$ROOT_DIR/dev-tools/hosted/preview/render-preview-values.
 preview_annotator="$ROOT_DIR/dev-tools/hosted/preview/annotate-preview-namespace.sh"
 runtime_rollout_waiter="$ROOT_DIR/dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh"
 credential_source="$ROOT_DIR/dev-tools/hosted/preview/provision-runtime-credentials.sh"
+runner_label_validator="$ROOT_DIR/dev-tools/tests/preview_runner_labels.py"
+
+python3 "$runner_label_validator" --self-test
+python3 "$runner_label_validator" "$trusted" "$preview" "$preview_reconciler" "$janitor"
+python3 - "$preview_reconciler" "$janitor" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+for workflow_path in map(Path, sys.argv[1:]):
+    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    checkouts = [
+        step
+        for job in workflow["jobs"].values()
+        for step in (job.get("steps") or [])
+        if isinstance(step, dict) and step.get("uses", "").startswith("actions/checkout@")
+    ]
+    if len(checkouts) != 1 or checkouts[0].get("with", {}).get("persist-credentials") is not False:
+        raise SystemExit(f"{workflow_path.name} preview checkout must disable persisted credentials")
+PY
 
 contains() {
   grep -Fq -- "$2" "$1" || {
@@ -77,6 +100,13 @@ workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
 publisher_workflow = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
 pull_request = workflow[True]["pull_request"]
 assert "dev-tools/smoke/**" in pull_request["paths"]
+for required_path in (
+    ".github/actions/setup-python/**",
+    ".python-version",
+    "config/python/smoke-requirements.txt",
+    "config/python/smoke-requirements.in",
+):
+    assert required_path in pull_request["paths"], required_path
 image_meta = workflow["jobs"]["image-meta"]
 assert image_meta["outputs"]["runtime_smoke_required"] == (
     "${{ steps.smoke_scope.outputs.runtime_smoke_required }}"
@@ -102,6 +132,9 @@ for required in (
     "docker/base.Dockerfile",
     "dev-tools/hosted/controller/smoke-paused-controller-image.sh",
     ".github/workflows/runtime-images.yml",
+    ".python-version",
+    "config/python/smoke-requirements.txt",
+    "config/python/smoke-requirements.in",
     "PR smoke scope detection was incomplete; running both local smokes.",
     "PR smoke scope detection failed; running both local smokes:",
     'core.setOutput("runtime_smoke_required", String(runtimeSmokeRequired))',
@@ -115,6 +148,7 @@ runtime_prefixes_script = smoke_scope_script[
 ]
 assert not re.search(r'"services/[^"]+/"', runtime_prefixes_script)
 assert "dev-tools/smoke/" in runtime_prefixes_script
+assert ".github/actions/setup-python/" in runtime_prefixes_script
 runtime_scope_predicate = smoke_scope_script[
     smoke_scope_script.index("runtimeSmokeRequired = paths.some"):
     smoke_scope_script.index("controllerSmokeRequired = paths.some")
@@ -141,7 +175,7 @@ runtime_steps_by_name = {
 export_step = runtime_steps_by_name["Export fixed-tag preview image artifact"]
 upload_step = runtime_steps_by_name["Upload preview image artifact"]
 build_runtime_step = runtime_steps_by_name["Build local PR runtime images"]
-install_smoke_step = runtime_steps_by_name["Install WebSocket smoke dependency"]
+setup_smoke_python_step = runtime_steps_by_name["Set up canonical Python"]
 run_smoke_step = runtime_steps_by_name["Run credential-free full-stack smoke"]
 dump_logs_step = runtime_steps_by_name["Dump Docker Compose logs on failure"]
 stop_smoke_step = runtime_steps_by_name["Stop smoke stack"]
@@ -151,7 +185,9 @@ assert "if" not in build_runtime_step
 assert "if" not in export_step
 assert "if" not in upload_step
 smoke_gate = "${{ needs.image-meta.outputs.runtime_smoke_required == 'true' }}"
-assert install_smoke_step["if"] == smoke_gate
+assert setup_smoke_python_step["if"] == smoke_gate
+assert setup_smoke_python_step["uses"] == "./.github/actions/setup-python"
+assert setup_smoke_python_step["with"] == {"requirements": "smoke"}
 assert run_smoke_step["if"] == smoke_gate
 assert dump_logs_step["if"] == (
     "${{ failure() && needs.image-meta.outputs.runtime_smoke_required == 'true' }}"
@@ -299,13 +335,13 @@ done
 # shellcheck disable=SC2016 # These assertions intentionally match literal action source.
 for required in \
   'using: composite' \
-  "echo 'version=v3.20.2'" \
-  "echo 'sha256=258e830a9e613c8a7a302d6059b4bb3b9758f2f3e1bb8ea0d707ce10a9a72fea'" \
+  'uses: ./.github/actions/load-workflow-tool-versions' \
+  'id: versions' \
   'uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9' \
-  'path: ${{ runner.temp }}/firemud-helm/${{ steps.pinned-release.outputs.version }}/helm.tar.gz' \
-  'key: firemud-helm-${{ runner.os }}-${{ runner.arch }}-${{ steps.pinned-release.outputs.version }}-${{ steps.pinned-release.outputs.sha256 }}' \
-  'HELM_VERSION: ${{ steps.pinned-release.outputs.version }}' \
-  'HELM_SHA256: ${{ steps.pinned-release.outputs.sha256 }}' \
+  'path: ${{ runner.temp }}/firemud-helm/v${{ steps.versions.outputs.helm-version }}/helm.tar.gz' \
+  'key: firemud-helm-${{ runner.os }}-${{ runner.arch }}-v${{ steps.versions.outputs.helm-version }}-${{ steps.versions.outputs.helm-linux-amd64-sha256 }}' \
+  'HELM_VERSION: v${{ steps.versions.outputs.helm-version }}' \
+  'HELM_SHA256: ${{ steps.versions.outputs.helm-linux-amd64-sha256 }}' \
   'RUNNER_OS' \
   'RUNNER_ARCH' \
   'RUNNER_TEMP' \
@@ -321,6 +357,8 @@ for required in \
   'Expected ${helm_version}, but the installed Helm binary reported ${reported_version}.'; do
   contains "$helm_action" "$required"
 done
+contains "$workflow_tool_authority" 'HELM_VERSION='
+contains "$workflow_tool_authority" 'HELM_LINUX_AMD64_SHA256='
 if [[ "$(grep -Fc 'sha256sum --check --status' "$helm_action")" -lt 2 ]]; then
   echo "$helm_action must verify both restored and downloaded Helm archives" >&2
   exit 1
@@ -555,6 +593,22 @@ mode_action = yaml.safe_load(Path(sys.argv[8]).read_text(encoding="utf-8"))
 runtime_workflow = yaml.safe_load(Path(sys.argv[9]).read_text(encoding="utf-8"))
 artifact_action = yaml.safe_load(Path(sys.argv[10]).read_text(encoding="utf-8"))
 
+for job_name in ("validate-target", "prepare-runtime", "deploy-runtime"):
+    caller_python_steps = [
+        step for step in workflow["jobs"][job_name]["steps"]
+        if step.get("uses") == "./.github/actions/setup-python"
+    ]
+    assert not caller_python_steps, (job_name, caller_python_steps)
+assert any(
+    step.get("uses") == "./.github/actions/resolve-certificate-identity-mode"
+    for step in workflow["jobs"]["validate-target"]["steps"]
+)
+for job_name in ("prepare-runtime", "deploy-runtime"):
+    assert any(
+        step.get("uses") == "./.github/actions/download-validated-preview-artifact"
+        for step in workflow["jobs"][job_name]["steps"]
+    )
+
 expected_mode_step = {
     "name": "Resolve certificate identity mode",
     "id": "certificate-identity",
@@ -574,8 +628,13 @@ assert mode_action["inputs"]["values-file"]["required"] is True
 assert set(mode_action["outputs"]) == {"mode"}
 assert mode_action["outputs"]["mode"]["value"] == "${{ steps.resolve.outputs.mode }}"
 assert mode_action["runs"]["using"] == "composite"
-assert len(mode_action["runs"]["steps"]) == 1
-resolve_step = mode_action["runs"]["steps"][0]
+assert len(mode_action["runs"]["steps"]) == 2
+assert mode_action["runs"]["steps"][0] == {
+    "name": "Set up canonical Python",
+    "uses": "./.github/actions/setup-python",
+    "with": {"requirements": "yaml"},
+}
+resolve_step = mode_action["runs"]["steps"][1]
 assert resolve_step["id"] == "resolve"
 assert resolve_step["shell"] == "bash"
 assert resolve_step["env"] == {"VALUES_FILE": "${{ inputs['values-file'] }}"}
@@ -615,6 +674,7 @@ assert artifact_action["runs"]["using"] == "composite"
 artifact_action_steps = artifact_action["runs"]["steps"]
 assert [step["name"] for step in artifact_action_steps] == [
     "Download exact source render artifact",
+    "Set up canonical Python",
     "Verify artifact provenance, checksum, and closed object set",
 ]
 artifact_download = artifact_action_steps[0]
@@ -627,7 +687,13 @@ assert artifact_download["with"] == {
     "github-token": "${{ inputs['github-token'] }}",
     "run-id": "${{ inputs['source-run-id'] }}",
 }
-artifact_validation = artifact_action_steps[1]
+artifact_setup_python = artifact_action_steps[1]
+assert artifact_setup_python == {
+    "name": "Set up canonical Python",
+    "uses": "./.github/actions/setup-python",
+    "with": {"requirements": "yaml"},
+}
+artifact_validation = artifact_action_steps[2]
 assert artifact_validation["shell"] == "bash"
 assert artifact_validation["env"] == {
     "ARTIFACT_DIRECTORY": "${{ inputs['artifact-directory'] }}",

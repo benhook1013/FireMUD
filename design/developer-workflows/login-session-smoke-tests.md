@@ -18,7 +18,39 @@ The fresh-bootstrap step establishes the claim and running stack; the standalone
 
 ## Requirements
 
-1. Python 3 and the `websocket-client` package are required by the canonical scripted clients. Install the package with `python3 -m pip install websocket-client` when it is not already available.
+1. The Python version in [`.python-version`](../../.python-version) and the exact packages in [`config/python/smoke-requirements.txt`](../../config/python/smoke-requirements.txt) are required by the canonical scripted clients. From any directory inside the checkout, run this self-contained installation block with the interpreter pinned by `.python-version`; it verifies that interpreter, creates a fresh isolated repository-root virtual environment, verifies the virtual environment, and installs the unchanged smoke requirements profile without changing or exiting your interactive shell:
+
+   ```bash
+   (
+       set -euo pipefail
+       REPO_ROOT="$(git rev-parse --show-toplevel)"
+       cd "$REPO_ROOT"
+       PYTHON_VERSION="$(< "$REPO_ROOT/.python-version")"
+       python3 --version
+       if [ "$(python3 -c 'import platform; print(platform.python_version())')" != "$PYTHON_VERSION" ]; then
+           echo "Activate the interpreter pinned by .python-version before installing smoke requirements." >&2
+           exit 1
+       fi
+       python3 -m venv --clear "$REPO_ROOT/.venv-smoke"
+       VENV_PYTHON="$REPO_ROOT/.venv-smoke/bin/python"
+       if [ "$("$VENV_PYTHON" -c 'import platform; print(platform.python_version())')" != "$PYTHON_VERSION" ]; then
+           echo "The smoke virtual environment does not use the interpreter pinned by .python-version." >&2
+           exit 1
+       fi
+       "$VENV_PYTHON" -m pip install \
+           --disable-pip-version-check --require-hashes \
+           -r "$REPO_ROOT/config/python/smoke-requirements.txt"
+   )
+   ```
+
+   If either version check fails, stop and activate the pinned interpreter before rerunning the block. The `.venv-smoke` directory is ignored by Git and keeps smoke dependencies isolated from the host interpreter. After the block succeeds, activate the prepared environment in your own shell before running later Python commands:
+
+   ```bash
+   REPO_ROOT="$(git rev-parse --show-toplevel)"
+   # shellcheck disable=SC1091
+   source "$REPO_ROOT/.venv-smoke/bin/activate"
+   ```
+
 2. Account Service must be running, and the canonical Compose-backed scripts require the local PostgreSQL schema to be available because `wait_for_account_schema` checks the `<COMPOSE_PROJECT_NAME>-postgres-1` container before the HTTP smoke preflight. The smoke client then verifies credentials with `POST ${SMOKE_ACCOUNT_API_BASE}/auth/login`; this HTTP preflight is separate from Game Session's internal Account Service gRPC dependency.
 3. For the Telnet-via-Gateway path, Game Session Service, Spring Cloud Gateway, and TCP Proxy must be running with the same tenant. The client controls are `SMOKE_TELNET_HOST` and `TCP_PROXY_PORT` for the Telnet endpoint, plus `SMOKE_ACCOUNT_API_BASE`, `SMOKE_GAME_LOGIC_API_BASE`, `SMOKE_GAME_SESSION_API_BASE`, `SMOKE_GATEWAY_API_BASE`, and `SMOKE_TCP_PROXY_API_BASE` for readiness and HTTP checks. For the direct backend WebSocket path, Gateway and TCP Proxy are not prerequisites: Account Service, Game Logic Service, and Game Session Service are sufficient. Its controls are `SMOKE_GAME_SESSION_WS_URL`, `SMOKE_ACCOUNT_API_BASE`, `SMOKE_GAME_LOGIC_API_BASE`, and `SMOKE_GAME_SESSION_API_BASE`. Service-to-service bridge variables such as `GATEWAY_WS_URL` configure the running services and are separate from these client controls. The current direct smoke requires positive numeric tenant and game-instance identifiers; a separate positive session identifier is not required because the direct listener derives its transport session ID from an optional `X-Firemud-Transport-Session-Id` header and otherwise uses `X-Game-Instance-Id`. UUID identifiers are target-state only until the current backend wire parsers are migrated.
 4. Before running the flow, wait for the canonical readiness endpoints of the path you are exercising. For the Telnet path, that means Account Service, Game Logic Service, Game Session Service, Spring Cloud Gateway, and TCP Proxy must all report `UP` from `/actuator/health/readiness`.
@@ -99,7 +131,7 @@ cd services/game-session-service
 bash ./websocket-login-look-smoke.sh
 ```
 
-This direct WebSocket smoke uses the Game Session HTTP/WebSocket listener directly (`ws://localhost:8086/ws/game` by default), not the Gateway route. It also requires Python plus the `websocket-client` package because the canonical script is implemented as a small Python client rather than `websocat`.
+This direct WebSocket smoke uses the Game Session HTTP/WebSocket listener directly (`ws://localhost:8086/ws/game` by default), not the Gateway route. It also requires the interpreter pinned by [`.python-version`](../../.python-version) and the hash-verified smoke requirements profile from Requirement 1 because the canonical script is implemented as a small Python client rather than `websocat`.
 
 ## 2. Telnet Smoke Flow via TCP Proxy + Gateway
 

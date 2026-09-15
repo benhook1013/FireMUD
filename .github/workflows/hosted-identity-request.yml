@@ -44,14 +44,14 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
+      - name: Set up canonical GitHub CLI
+        uses: ./.github/actions/setup-gh
+
       - name: Resolve certificate identity mode
         id: certificate-identity
         uses: ./.github/actions/resolve-certificate-identity-mode
         with:
           values-file: k8s/helm/firemud/values-hosted-shared.example.yaml
-
-      - name: Set up GitHub CLI
-        run: gh --version
 
       - name: Verify workflow source and immutable PR metadata
         id: target
@@ -208,6 +208,8 @@ jobs:
     runs-on:
       - self-hosted
       - preview
+      - linux
+      - x64
     needs: validate-target
     if: ${{ needs.validate-target.outputs.action == 'deploy' && needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
     environment: pr-preview
@@ -221,6 +223,9 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
+
+      - name: Set up canonical GitHub CLI
+        uses: ./.github/actions/setup-gh
 
       - name: Download and validate source render artifact
         uses: ./.github/actions/download-validated-preview-artifact
@@ -284,6 +289,8 @@ jobs:
     runs-on:
       - self-hosted
       - preview
+      - linux
+      - x64
     needs: [validate-target, prepare-runtime]
     if: ${{ needs.validate-target.outputs.action == 'deploy' && needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' && needs.prepare-runtime.result == 'success' }}
     environment: pr-preview
@@ -302,10 +309,11 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
+      - name: Set up canonical GitHub CLI
+        uses: ./.github/actions/setup-gh
+
       - name: Set up kubectl
-        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
-        with:
-          version: v1.33.4
+        uses: ./.github/actions/setup-kubectl
 
       - name: Write runtime kubeconfig
         uses: ./.github/actions/write-kubeconfig
@@ -526,6 +534,8 @@ jobs:
     runs-on:
       - self-hosted
       - preview
+      - linux
+      - x64
     needs: [validate-target, deploy-runtime]
     if: ${{ needs.validate-target.outputs.action == 'deploy' && needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' && needs.deploy-runtime.result == 'success' }}
     environment: pr-preview
@@ -539,10 +549,14 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
+      - name: Set up canonical GitHub CLI
+        uses: ./.github/actions/setup-gh
+
+      - name: Set up canonical Python dependencies
+        uses: ./.github/actions/setup-python
+
       - name: Set up kubectl
-        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
-        with:
-          version: v1.33.4
+        uses: ./.github/actions/setup-kubectl
 
       - name: Write runtime kubeconfig
         uses: ./.github/actions/write-kubeconfig
@@ -687,6 +701,8 @@ jobs:
     runs-on:
       - self-hosted
       - preview
+      - linux
+      - x64
     needs: validate-target
     # Close cleanup is mode-independent: a retained identity may have been created
     # before the default-branch certificate identity mode changed.
@@ -705,10 +721,14 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
+      - name: Set up canonical GitHub CLI
+        uses: ./.github/actions/setup-gh
+      - name: Set up canonical Python dependencies
+        uses: ./.github/actions/setup-python
         with:
-          version: v1.33.4
+          requirements: yaml
+      - name: Set up kubectl
+        uses: ./.github/actions/setup-kubectl
       - name: Write runtime kubeconfig
         uses: ./.github/actions/write-kubeconfig
         with:
@@ -786,6 +806,8 @@ jobs:
     runs-on:
       - self-hosted
       - preview
+      - linux
+      - x64
     needs: [validate-target, destroy-runtime]
     if: ${{ needs.validate-target.outputs.action == 'destroy' && needs.destroy-runtime.result == 'success' }}
     environment: pr-preview
@@ -803,10 +825,12 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
+      - name: Set up canonical GitHub CLI
+        uses: ./.github/actions/setup-gh
+      - name: Set up canonical Python dependencies
+        uses: ./.github/actions/setup-python
       - name: Set up kubectl
-        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
-        with:
-          version: v1.33.4
+        uses: ./.github/actions/setup-kubectl
       - name: Check Hosted identity requester credentials
         id: requester-credentials
         env:
