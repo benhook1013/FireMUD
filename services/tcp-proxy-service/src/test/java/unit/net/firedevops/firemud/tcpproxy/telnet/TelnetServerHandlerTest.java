@@ -28,7 +28,9 @@ import io.netty.util.concurrent.EventExecutor;
 import io.netty.util.concurrent.ScheduledFuture;
 import java.lang.reflect.Field;
 import java.net.InetSocketAddress;
+import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
+import java.net.http.WebSocketHandshakeException;
 import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -132,6 +134,94 @@ class TelnetServerHandlerTest {
 
     verify(ws, times(2)).sendText(anyString(), eq(true));
     assertEquals(0, handler.getBufferedSize());
+  }
+
+  @Test
+  void noSanitizedPlayerLineIsSentUntilGatewayHandshakeOpens() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    AtomicReference<WebSocket.Listener> listenerRef = new AtomicReference<>();
+    CompletableFuture<WebSocket> pendingConnection = new CompletableFuture<>();
+    TelnetServerHandler handler =
+        newHandler(
+            registry,
+            false,
+            (ip,
+                proxyConnectionId,
+                gameInstanceId,
+                tenantId,
+                worldSlug,
+                realmSlug,
+                pointerVersion,
+                listener) -> {
+              listenerRef.set(listener);
+              return pendingConnection;
+            });
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    when(ctx.channel()).thenReturn(channel);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+
+    List<String> lines =
+        List.of("WORLDS", "LOGIN player@example.com secret", "PLAY demo", "opaque extension");
+    for (String line : lines) {
+      handler.channelRead0(ctx, line);
+    }
+
+    assertEquals(lines.size(), handler.getBufferedSize());
+    RecordingWebSocket webSocket = new RecordingWebSocket();
+    assertTrue(webSocket.sentTexts.isEmpty());
+    listenerRef.get().onOpen(webSocket);
+
+    assertEquals(lines, webSocket.sentTexts);
+    assertEquals(0, handler.getBufferedSize());
+  }
+
+  @Test
+  void failedGatewayHandshakeDropsBufferedLinesAndUsesPolicyOrAvailabilityOutcome() {
+    for (int statusCode : List.of(403, 503)) {
+      SimpleMeterRegistry registry = new SimpleMeterRegistry();
+      AtomicReference<WebSocket.Listener> listenerRef = new AtomicReference<>();
+      CompletableFuture<WebSocket> pendingConnection = new CompletableFuture<>();
+      TelnetServerHandler handler =
+          newHandler(
+              registry,
+              false,
+              (ip,
+                  proxyConnectionId,
+                  gameInstanceId,
+                  tenantId,
+                  worldSlug,
+                  realmSlug,
+                  pointerVersion,
+                  listener) -> {
+                listenerRef.set(listener);
+                return pendingConnection;
+              });
+      ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+      ChannelFuture closeFuture = mock(ChannelFuture.class);
+      Channel channel = mock(Channel.class);
+      DefaultEventExecutor executor = new DefaultEventExecutor();
+      when(ctx.channel()).thenReturn(channel);
+      when(ctx.executor()).thenReturn(executor);
+      when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+      when(ctx.writeAndFlush(any())).thenReturn(closeFuture);
+      when(closeFuture.addListener(any(ChannelFutureListener.class))).thenReturn(closeFuture);
+
+      handler.channelActive(ctx);
+      handler.channelRead0(ctx, "WORLDS");
+      handler.channelRead0(ctx, "LOGIN player@example.com secret");
+      assertEquals(2, handler.getBufferedSize());
+
+      HttpResponse<Void> response = mock(HttpResponse.class);
+      when(response.statusCode()).thenReturn(statusCode);
+      pendingConnection.completeExceptionally(new WebSocketHandshakeException(response));
+
+      String reason = statusCode == 403 ? "policy_violation" : "backend_unavailable";
+      verify(ctx).writeAndFlush(startsWith("DISCONNECT " + reason + " "));
+      verify(closeFuture).addListener(ChannelFutureListener.CLOSE);
+      assertEquals(0, handler.getBufferedSize());
+      executor.shutdownGracefully();
+    }
   }
 
   @Test

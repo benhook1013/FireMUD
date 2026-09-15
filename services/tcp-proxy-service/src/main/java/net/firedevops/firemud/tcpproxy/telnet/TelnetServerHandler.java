@@ -551,7 +551,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     } catch (RuntimeException error) {
       try (CombinedLoggingContext ignored = openLoggingContext()) {
         logger.error("WebSocket connection to {} failed", gatewayWsUrl, error);
-        failCloseBackendUnavailable("Gateway link unavailable; please reconnect");
+        handleGatewaySetupFailure(error);
       }
       return;
     }
@@ -568,7 +568,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
           }
           try (CombinedLoggingContext ignored = openLoggingContext()) {
             logger.error("WebSocket connection to {} failed", gatewayWsUrl, error);
-            failCloseBackendUnavailable("Gateway link unavailable; please reconnect");
+            handleGatewaySetupFailure(error);
           }
         });
   }
@@ -600,6 +600,18 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     failClose("backend_unavailable", message);
   }
 
+  private void handleGatewaySetupFailure(Throwable error) {
+    handleGatewaySetupFailure(error, "Gateway link unavailable; please reconnect");
+  }
+
+  private void handleGatewaySetupFailure(Throwable error, String availabilityMessage) {
+    if (GatewayWebSocketClient.isPolicyFailure(error)) {
+      failClose("policy_violation", "Gateway link rejected by policy; please reconnect");
+      return;
+    }
+    failCloseBackendUnavailable(availabilityMessage);
+  }
+
   private void failClose(String reasonToken, String message) {
     if (closing) {
       return;
@@ -607,6 +619,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     closing = true;
     reconnecting = false;
     cancelInFlightGatewayConnection();
+    buffer.clear();
+    updateBufferDepthGauge();
     if (context != null) {
       context
           .writeAndFlush("DISCONNECT " + reasonToken + " " + message + "\n")
@@ -886,7 +900,11 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
             return;
           }
           logger.error("WebSocket error for {}", gatewayWsUrl, error);
-          handleGatewayDisconnect();
+          if (connectedOnce) {
+            handleGatewayDisconnect();
+          } else {
+            handleGatewaySetupFailure(error, "Gateway link dropped; please reconnect");
+          }
         }
       }
     };

@@ -29,6 +29,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
+import java.net.http.WebSocketHandshakeException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -772,6 +773,7 @@ class GatewayWebSocketClientTest {
       assertNotNull(failure.getCause());
       assertTrue(failure.getCause().getMessage().contains("reason=bad_header"));
       assertEquals("bad_header", GatewayWebSocketClient.classifyFailure(failure));
+      assertTrue(GatewayWebSocketClient.isPolicyFailure(failure));
     }
 
     assertEquals(
@@ -895,6 +897,39 @@ class GatewayWebSocketClientTest {
         "cert_validation",
         GatewayWebSocketClient.classifyFailure(
             new SSLHandshakeException("PKIX path building failed")));
+  }
+
+  @Test
+  void onlyExplicitHandshakePolicyStatusesArePolicyFailures() {
+    for (int statusCode : List.of(400, 401, 403, 429)) {
+      HttpResponse<Void> response = mock(HttpResponse.class);
+      when(response.statusCode()).thenReturn(statusCode);
+      WebSocketHandshakeException failure = new WebSocketHandshakeException(response);
+
+      assertEquals("handshake_protocol", GatewayWebSocketClient.classifyFailure(failure));
+      assertTrue(GatewayWebSocketClient.isPolicyFailure(failure));
+    }
+
+    for (int statusCode : List.of(404, 408, 409, 500, 502, 503, 504)) {
+      HttpResponse<Void> response = mock(HttpResponse.class);
+      when(response.statusCode()).thenReturn(statusCode);
+      WebSocketHandshakeException failure = new WebSocketHandshakeException(response);
+
+      assertFalse(GatewayWebSocketClient.isPolicyFailure(failure));
+    }
+
+    assertTrue(
+        GatewayWebSocketClient.isPolicyFailure(
+            new SSLHandshakeException("PKIX path building failed")));
+    assertTrue(
+        GatewayWebSocketClient.isPolicyFailure(
+            new SSLHandshakeException("Received fatal alert: certificate_required")));
+    assertTrue(
+        GatewayWebSocketClient.isPolicyFailure(
+            new SSLHandshakeException("Received fatal alert: bad_certificate")));
+    assertFalse(
+        GatewayWebSocketClient.isPolicyFailure(
+            new SSLHandshakeException("Received fatal alert: protocol_version")));
   }
 
   @Test

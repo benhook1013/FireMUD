@@ -4106,7 +4106,9 @@ def validate_gateway_ws_listener(
 
 def path_is_under_mount(path: str, mount_path: str) -> bool:
     """Return whether a path is the mount itself or one of its descendants."""
-    return path == mount_path or path.startswith(mount_path.rstrip("/") + "/")
+    return bool(mount_path) and (
+        path == mount_path or path.startswith(mount_path.rstrip("/") + "/")
+    )
 
 
 def validate_gateway_ws_values(
@@ -4471,14 +4473,6 @@ def validate_gateway_ws_network_policy(
         ]:
             issues.append(f"{label} listener rule must be exactly TCP 8443")
     return issues
-
-
-
-def path_is_under_mount(path: str, mount_path: str) -> bool:
-    """Return whether a path is the mount itself or one of its descendants."""
-    return bool(mount_path) and (
-        path == mount_path or path.startswith(mount_path.rstrip("/") + "/")
-    )
 
 
 def validate_hosted_telnet_tls_values(

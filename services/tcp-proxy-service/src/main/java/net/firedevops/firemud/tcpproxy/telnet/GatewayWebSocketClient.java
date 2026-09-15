@@ -62,6 +62,10 @@ public final class GatewayWebSocketClient implements AutoCloseable {
   private static final String CLIENT_AUTH_EKU = "1.3.6.1.5.5.7.3.2";
   private static final String GAMEPLAY_WEBSOCKET_ROUTE = "/ws/game";
   private static final String BAD_HEADER_REASON = "bad_header";
+  private static final String CERT_VALIDATION_REASON = "cert_validation";
+  private static final String CLIENT_CERT_MISSING_REASON = "client_cert_missing";
+  private static final String CLIENT_CERT_INVALID_REASON = "client_cert_invalid";
+  private static final Set<Integer> POLICY_HANDSHAKE_STATUS_CODES = Set.of(400, 401, 403, 429);
   private static final List<String> LOCAL_PROFILES = List.of("dev", "local", "test");
 
   private final URI gatewayUri;
@@ -186,9 +190,9 @@ public final class GatewayWebSocketClient implements AutoCloseable {
         reason = "unknown";
       }
       recordFailure(reason);
+      String diagnostic = "Gateway WebSocket TLS client is unavailable; reason=" + reason;
       return CompletableFuture.failedFuture(
-          new IllegalStateException(
-              "Gateway WebSocket TLS client is unavailable; reason=" + reason));
+          new TlsConfigurationException(reason, diagnostic, null));
     }
 
     ReleasingWebSocketListener releasingListener = null;
@@ -627,10 +631,11 @@ public final class GatewayWebSocketClient implements AutoCloseable {
     }
     if (cause instanceof SSLException) {
       String message = String.valueOf(cause.getMessage()).toLowerCase(Locale.ROOT);
-      if (message.contains("bad_certificate")
-          || message.contains("certificate_required")
-          || message.contains("client certificate")) {
-        return "client_cert_invalid";
+      if (message.contains("bad_certificate") || message.contains("client certificate")) {
+        return CLIENT_CERT_INVALID_REASON;
+      }
+      if (message.contains("certificate_required")) {
+        return CLIENT_CERT_MISSING_REASON;
       }
       if (message.contains("pkix")
           || message.contains("certpath")
@@ -646,6 +651,38 @@ public final class GatewayWebSocketClient implements AutoCloseable {
       return "handshake_protocol";
     }
     return "unknown";
+  }
+
+  /**
+   * Returns whether a bridge establishment failure has positive trust or policy evidence.
+   *
+   * <p>This deliberately does not treat generic TLS/WebSocket protocol failures as policy failures.
+   * The caller uses this only while the bridge is still being established; an error after {@code
+   * onOpen} is an established-session loss and has its own fallback taxonomy.
+   */
+  static boolean isPolicyFailure(Throwable error) {
+    Throwable cause = unwrap(error);
+    if (cause instanceof TlsConfigurationException tlsFailure) {
+      return switch (tlsFailure.reason()) {
+        case BAD_HEADER_REASON,
+            CERT_VALIDATION_REASON,
+            CLIENT_CERT_MISSING_REASON,
+            CLIENT_CERT_INVALID_REASON ->
+            true;
+        default -> false;
+      };
+    }
+    String reason = classifyFailure(cause);
+    if (CERT_VALIDATION_REASON.equals(reason)
+        || CLIENT_CERT_MISSING_REASON.equals(reason)
+        || CLIENT_CERT_INVALID_REASON.equals(reason)) {
+      return true;
+    }
+    if (cause instanceof WebSocketHandshakeException handshakeFailure) {
+      HttpResponse<?> response = handshakeFailure.getResponse();
+      return response != null && POLICY_HANDSHAKE_STATUS_CODES.contains(response.statusCode());
+    }
+    return false;
   }
 
   private static Throwable unwrap(Throwable error) {
