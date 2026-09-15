@@ -177,7 +177,8 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
           .hasMessageContaining("403 Forbidden");
       assertThat(admittedConnections).hasValue(1);
       assertThat(applicationRequests)
-          .as("wrong-workload certificate reaches the application handler before admission rejection")
+          .as(
+              "wrong-workload certificate reaches the application handler before admission rejection")
           .hasValue(2);
 
       HttpHeaders noFrameHeaders = bridgeHeaders();

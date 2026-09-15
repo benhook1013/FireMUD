@@ -72,10 +72,10 @@ public final class TcpProxyTlsListener implements SmartLifecycle {
           new ReactorHttpHandlerAdapter(new InternalOnlyHttpHandler(httpHandler));
       server =
           HttpServer.create()
-              .channelGroup(channels)
               .host(bindAddress)
               .port(properties.getPort())
               .secure(spec -> spec.sslContext(sslContext))
+              .doOnConnection(connection -> channels.add(connection.channel()))
               .handle(adapter)
               .bindNow();
       LOG.info(
@@ -167,13 +167,24 @@ public final class TcpProxyTlsListener implements SmartLifecycle {
     }
     DisposableServer current = server;
     server = null;
-    if (current != null) {
-      current.disposeNow(SHUTDOWN_TIMEOUT);
-    }
     ChannelGroup channels = acceptedChannels;
-    acceptedChannels = null;
-    if (channels != null) {
-      channels.close().awaitUninterruptibly(SHUTDOWN_TIMEOUT.toMillis());
+    try {
+      if (current != null) {
+        current.disposeNow(SHUTDOWN_TIMEOUT);
+      }
+    } catch (RuntimeException ex) {
+      LOG.error("TCP Proxy internal TLS listener failed during server shutdown", ex);
+      throw ex;
+    } finally {
+      if (channels != null) {
+        try {
+          channels.close().awaitUninterruptibly(SHUTDOWN_TIMEOUT.toMillis());
+        } finally {
+          if (acceptedChannels == channels) {
+            acceptedChannels = null;
+          }
+        }
+      }
     }
   }
 

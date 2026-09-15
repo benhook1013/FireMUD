@@ -2,30 +2,44 @@ package net.firedevops.firemud.springcloudgateway.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.netty.channel.group.ChannelGroup;
+import io.netty.channel.group.ChannelGroupFuture;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
+import java.lang.reflect.Field;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.springcloudgateway.filter.TcpProxyTrustPolicy;
 import net.firedevops.firemud.test.TlsTestSupport;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.support.GenericApplicationContext;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.reactive.HttpHandler;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.http.server.reactive.MockServerHttpResponse;
-import reactor.netty.Connection;
+import org.springframework.web.reactive.DispatcherHandler;
+import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
+import org.springframework.web.reactive.socket.WebSocketHandler;
+import org.springframework.web.reactive.socket.client.ReactorNettyWebSocketClient;
+import org.springframework.web.reactive.socket.server.support.WebSocketHandlerAdapter;
+import org.springframework.web.server.adapter.WebHttpHandlerBuilder;
+import reactor.core.Disposable;
+import reactor.netty.DisposableServer;
 import reactor.netty.http.client.HttpClient;
-import reactor.netty.tcp.TcpClient;
 
 class TcpProxyTlsListenerTest {
   private static final String FIXTURE_FINGERPRINT =
@@ -50,7 +64,6 @@ class TcpProxyTlsListenerTest {
       assertThat(listener.isRunning()).isTrue();
       int port = listener.boundPort();
       assertThat(port).isPositive();
-
       assertThat(requestStatus(port, clientContext(true), "/actuator/health/liveness"))
           .isEqualTo(HttpStatus.NO_CONTENT.value());
       assertThat(requestStatus(port, clientContext(true), "/actuator/health/readiness"))
@@ -177,24 +190,47 @@ class TcpProxyTlsListenerTest {
     when(policy.requiresClientCertificate()).thenReturn(true);
     when(policy.profileName()).thenReturn("breakglass_fingerprint");
     when(policy.timeUntilProfileExpiry()).thenReturn(Duration.ofSeconds(3));
-    HttpHandler handler = (request, response) -> response.setComplete();
+    GenericApplicationContext appContext = new GenericApplicationContext();
+    SimpleUrlHandlerMapping mapping = new SimpleUrlHandlerMapping();
+    AtomicBoolean websocketOpened = new AtomicBoolean();
+    CountDownLatch serverBridgeClosed = new CountDownLatch(1);
+    WebSocketHandler websocketHandler =
+        session -> {
+          websocketOpened.set(true);
+          return session.receive().then().doFinally(signal -> serverBridgeClosed.countDown());
+        };
+    WebSocketHandler clientHandler = session -> session.receive().then();
+    mapping.setOrder(-1);
+    mapping.setUrlMap(Map.of("/ws/game", websocketHandler));
+    appContext.getBeanFactory().registerSingleton("gameplayMapping", mapping);
+    appContext
+        .getBeanFactory()
+        .registerSingleton("gameplayWebSocketHandlerAdapter", new WebSocketHandlerAdapter());
+    appContext.refresh();
+    mapping.setApplicationContext(appContext);
+    HttpHandler handler =
+        WebHttpHandlerBuilder.webHandler(new DispatcherHandler(appContext)).build();
     TcpProxyTlsListener listener = new TcpProxyTlsListener(properties, policy, handler);
-    Connection connection = null;
+    Disposable websocket = null;
 
     try {
       listener.start();
       assertThat(listener.isRunning()).isTrue();
       int port = listener.boundPort();
       assertThat(port).isPositive();
-      SslContext context = clientContext(true);
-      connection =
-          TcpClient.create()
-              .host("127.0.0.1")
-              .port(port)
-              .secure(spec -> spec.sslContext(context))
-              .connectNow();
+      SslContext sslContext = clientContext(true);
+      websocket =
+          new ReactorNettyWebSocketClient(
+                  HttpClient.create().secure(spec -> spec.sslContext(sslContext)))
+              .execute(URI.create("wss://127.0.0.1:" + port + "/ws/game"), clientHandler)
+              .subscribe();
+      Instant websocketDeadline = Instant.now().plusSeconds(5);
+      while (!websocketOpened.get() && Instant.now().isBefore(websocketDeadline)) {
+        Thread.sleep(25);
+      }
+      assertThat(websocketOpened).isTrue();
       waitForAcceptedConnection(listener);
-      assertThat(connection.isDisposed()).isFalse();
+      assertThat(websocket.isDisposed()).isFalse();
 
       Instant deadline = Instant.now().plusSeconds(10);
       while (listener.isRunning() && Instant.now().isBefore(deadline)) {
@@ -202,14 +238,43 @@ class TcpProxyTlsListenerTest {
       }
 
       assertThat(listener.isRunning()).isFalse();
-      waitForConnectionDisposal(connection);
-      assertThat(connection.isDisposed()).isTrue();
+      assertThat(serverBridgeClosed.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
     } finally {
-      if (connection != null) {
-        connection.disposeNow();
+      if (websocket != null) {
+        websocket.dispose();
       }
       listener.stop();
+      appContext.close();
     }
+  }
+
+  @Test
+  void stopClosesAcceptedChannelsWhenServerDisposalFails() throws Exception {
+    TcpProxyTlsListener listener =
+        new TcpProxyTlsListener(
+            tlsProperties(0), mock(TcpProxyTrustPolicy.class), mock(HttpHandler.class));
+    DisposableServer server = mock(DisposableServer.class);
+    ChannelGroup channels = mock(ChannelGroup.class);
+    ChannelGroupFuture closeFuture = mock(ChannelGroupFuture.class);
+    RuntimeException failure = new RuntimeException("server disposal failed");
+    doThrow(failure).when(server).disposeNow(org.mockito.ArgumentMatchers.any(Duration.class));
+    when(channels.close()).thenReturn(closeFuture);
+    when(closeFuture.awaitUninterruptibly(org.mockito.ArgumentMatchers.anyLong())).thenReturn(true);
+
+    Field serverField = TcpProxyTlsListener.class.getDeclaredField("server");
+    Field channelsField = TcpProxyTlsListener.class.getDeclaredField("acceptedChannels");
+    serverField.setAccessible(true);
+    channelsField.setAccessible(true);
+    serverField.set(listener, server);
+    channelsField.set(listener, channels);
+
+    Throwable thrown = catchThrowable(listener::stop);
+
+    assertThat(thrown).isSameAs(failure);
+    verify(server).disposeNow(org.mockito.ArgumentMatchers.any(Duration.class));
+    verify(channels).close();
+    verify(closeFuture).awaitUninterruptibly(org.mockito.ArgumentMatchers.anyLong());
+    assertThat(channelsField.get(listener)).isNull();
   }
 
   private static void waitForAcceptedConnection(TcpProxyTlsListener listener)
@@ -219,13 +284,6 @@ class TcpProxyTlsListenerTest {
       Thread.sleep(25);
     }
     assertThat(listener.acceptedConnectionCount()).isPositive();
-  }
-
-  private static void waitForConnectionDisposal(Connection connection) throws InterruptedException {
-    Instant deadline = Instant.now().plusSeconds(5);
-    while (!connection.isDisposed() && Instant.now().isBefore(deadline)) {
-      Thread.sleep(25);
-    }
   }
 
   private static int requestStatus(int port, SslContext context, String path) {

@@ -2,6 +2,7 @@ package net.firedevops.firemud.tcpproxy.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
@@ -41,7 +42,7 @@ class TcpProxyEventClientTest {
             BlockingGrpcStubCustomizer.noop());
 
     RuntimeException uninitialized =
-        org.junit.jupiter.api.Assertions.assertThrows(
+        assertThrows(
             RuntimeException.class, () -> client.notifyDisconnect("42", "7", "proxy-1", 9L));
     assertEquals(Status.Code.UNAVAILABLE, Status.fromThrowable(uninitialized).getCode());
     assertEquals(
@@ -50,7 +51,7 @@ class TcpProxyEventClientTest {
 
     client.close();
     RuntimeException closed =
-        org.junit.jupiter.api.Assertions.assertThrows(
+        assertThrows(
             RuntimeException.class, () -> client.notifyDisconnect("42", "7", "proxy-1", 9L));
     assertInstanceOf(io.grpc.StatusRuntimeException.class, closed);
     assertEquals(Status.Code.UNAVAILABLE, Status.fromThrowable(closed).getCode());
@@ -155,7 +156,7 @@ class TcpProxyEventClientTest {
     setField(client, "channel", previousChannel);
     setField(client, "stub", previousStub);
 
-    org.junit.jupiter.api.Assertions.assertThrows(
+    assertThrows(
         IllegalStateException.class, () -> invokeReloadChannel(client));
 
     org.junit.jupiter.api.Assertions.assertSame(previousChannel, getField(client, "channel"));
