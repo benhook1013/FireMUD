@@ -153,8 +153,7 @@ done
   check_images_exist "contract" "$REPO_ROOT/k8s/overlays/stage"
 )
 
-set +e
-(
+if (
   set -e
   # shellcheck disable=SC1091
   # shellcheck disable=SC1090
@@ -171,18 +170,27 @@ set +e
       return 1
     fi
     if [[ "${1:-}" = buildx && "${2:-}" = imagetools && "${3:-}" = inspect ]]; then
-      return 1
+      echo "registry inspection failed" >&2
+      exit 1
     fi
     return 1
   }
   check_images_exist "contract" "$REPO_ROOT/k8s/overlays/stage"
-)
-registry_validation_status=$?
-set -e
+) >"$OUTPUT_FILE" 2>&1; then
+  registry_validation_status=0
+else
+  registry_validation_status=$?
+fi
 if [[ "$registry_validation_status" -eq 0 ]]; then
   echo "Overlay image validation did not fail closed when registry inspection failed" >&2
   exit 1
 fi
+
+grep -q "registry inspection failed" "$OUTPUT_FILE" || {
+  echo "Registry validation failure did not reach the registry inspection boundary" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
+}
 
 assert_production_change_requires_attestation() {
   if (
