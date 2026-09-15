@@ -711,57 +711,67 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   private static synchronized void ensureTestServicesStarted() {
-    if (STACK == null) {
-      GameplayCrossServiceStack stack = null;
-      try {
-        stack =
-            GameplayCrossServiceStack.defaultDemoBuilder(POSTGRES, REDIS, ACCOUNT_ID)
-                .mapAccountId("sora@example.com", SORA_ACCOUNT_ID)
-                .withSocialEnabled(true)
-                .withGameLogicProps(
-                    Map.of(
-                        "spring.autoconfigure.exclude",
-                        "org.springframework.cloud.gateway.config.GatewayRedisAutoConfiguration"))
-                .withGameSessionProps(
-                    Map.of(
-                        "game-session.require-authenticated-commands",
-                        "true",
-                        "spring.main.allow-bean-definition-overriding",
-                        "true",
-                        "firemud.auth.jwt-secret",
-                        CROSS_SERVICE_TEST_JWT_SECRET,
-                        "management.endpoint.health.group.readiness.include",
-                        "readinessState,db,redis,gameplayPathReadiness"))
-                .withGameLogicConfigs(NestedReadinessOverrides.class)
-                .withGameSessionConfigs(
-                    GatewayBackedGameSessionTestOverrides.class, NestedReadinessOverrides.class)
-                .start();
-        long defaultGameInstanceId =
-            stack.freshGameplayBaseline(TENANT_ID, 1L, ACCOUNT_ID, 7L, ACCOUNT_ID);
-        awaitGameSessionReadiness(stack.gameSessionPort());
-        STACK = stack;
-        DEFAULT_GAME_INSTANCE_ID = defaultGameInstanceId;
-      } catch (IOException e) {
-        cleanupFailedStart(stack, e);
-        throw new IllegalStateException("Failed to start shared gameplay stack", e);
-      } catch (RuntimeException | Error e) {
-        cleanupFailedStart(stack, e);
-        throw e;
-      }
+    if (STACK != null && GATEWAY != null) {
+      return;
     }
-    if (GATEWAY == null) {
-      GATEWAY = startGateway(STACK.gameSessionPort());
+
+    GameplayCrossServiceStack stack = null;
+    GatewayHolder gateway = null;
+    try {
+      stack =
+          GameplayCrossServiceStack.defaultDemoBuilder(POSTGRES, REDIS, ACCOUNT_ID)
+              .mapAccountId("sora@example.com", SORA_ACCOUNT_ID)
+              .withSocialEnabled(true)
+              .withGameLogicProps(
+                  Map.of(
+                      "spring.autoconfigure.exclude",
+                      "org.springframework.cloud.gateway.config.GatewayRedisAutoConfiguration"))
+              .withGameSessionProps(
+                  Map.of(
+                      "game-session.require-authenticated-commands",
+                      "true",
+                      "spring.main.allow-bean-definition-overriding",
+                      "true",
+                      "firemud.auth.jwt-secret",
+                      CROSS_SERVICE_TEST_JWT_SECRET,
+                      "management.endpoint.health.group.readiness.include",
+                      "readinessState,db,redis,gameplayPathReadiness"))
+              .withGameLogicConfigs(NestedReadinessOverrides.class)
+              .withGameSessionConfigs(
+                  GatewayBackedGameSessionTestOverrides.class, NestedReadinessOverrides.class)
+              .start();
+      long defaultGameInstanceId =
+          stack.freshGameplayBaseline(TENANT_ID, 1L, ACCOUNT_ID, 7L, ACCOUNT_ID);
+      awaitGameSessionReadiness(stack.gameSessionPort());
+      gateway = startGateway(stack.gameSessionPort());
+
+      STACK = stack;
+      GATEWAY = gateway;
+      DEFAULT_GAME_INSTANCE_ID = defaultGameInstanceId;
+    } catch (IOException e) {
+      cleanupFailedStart(gateway, stack, e);
+      throw new IllegalStateException("Failed to start shared gameplay stack", e);
+    } catch (RuntimeException | Error e) {
+      cleanupFailedStart(gateway, stack, e);
+      throw e;
     }
   }
 
-  private static void cleanupFailedStart(GameplayCrossServiceStack stack, Throwable original) {
-    if (stack == null) {
-      return;
+  private static void cleanupFailedStart(
+      GatewayHolder gateway, GameplayCrossServiceStack stack, Throwable original) {
+    try {
+      if (gateway != null) {
+        gateway.close();
+      }
+    } catch (RuntimeException | Error gatewayCloseFailure) {
+      original.addSuppressed(gatewayCloseFailure);
     }
     try {
-      stack.close();
-    } catch (RuntimeException | Error closeFailure) {
-      original.addSuppressed(closeFailure);
+      if (stack != null) {
+        stack.close();
+      }
+    } catch (RuntimeException | Error stackCloseFailure) {
+      original.addSuppressed(stackCloseFailure);
     }
   }
 
