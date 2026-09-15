@@ -16,6 +16,8 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import java.net.URI;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -329,6 +331,7 @@ class GatewayGameplayReadinessProbeTest {
     private final ListAppender<ILoggingEvent> appender = new ListAppender<>();
 
     private ReadinessLogCapture() {
+      appender.list = Collections.synchronizedList(new ArrayList<>());
       logger.setLevel(Level.DEBUG);
       appender.start();
       logger.addAppender(appender);
@@ -336,7 +339,7 @@ class GatewayGameplayReadinessProbeTest {
 
     private long count(Level level, String message) {
       List<ILoggingEvent> events;
-      synchronized (appender) {
+      synchronized (appender.list) {
         events = List.copyOf(appender.list);
       }
       return events.stream()
