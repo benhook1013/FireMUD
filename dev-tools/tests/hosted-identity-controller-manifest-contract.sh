@@ -2761,9 +2761,13 @@ with tempfile.TemporaryDirectory() as directory:
         "metadata": {
             "name": "tcp-proxy-service",
             "namespace": "pr-42",
-            "labels": validator._expected_object_labels(
-                "Service", "tcp-proxy-service", "pr-42"
-            ),
+            "labels": {
+                "app.kubernetes.io/name": "firemud",
+                "app.kubernetes.io/managed-by": "Helm",
+                "helm.sh/chart": "firemud-0.1.0",
+                "app.kubernetes.io/instance": "pr-42",
+                "firemud.dev/certificate-identity-mode": "hosted-controller",
+            },
         },
         "spec": copy.deepcopy(
             validator.EXPECTED_SERVICE_SPECS["tcp-proxy-service"]

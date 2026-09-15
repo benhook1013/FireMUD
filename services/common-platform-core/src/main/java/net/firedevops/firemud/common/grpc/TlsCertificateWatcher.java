@@ -352,10 +352,18 @@ public class TlsCertificateWatcher implements AutoCloseable {
       }
       allRequiredRegistrationsValid.set(allRequiredDirectoriesRegistered());
       recovered = allRequiredRegistrationsValid.get();
+      if (recovered) {
+        // Re-registering a lost directory restores observation, but the callback must
+        // successfully rebuild credentials before watcher health is restored.
+        reloadCallbackHealthy.set(false);
+      }
     }
     if (recovered) {
       synchronized (retryMonitor) {
         registrationRetryAttempts = 0;
+      }
+      if (!invokeReloadCallback(true)) {
+        scheduleCallbackRetry();
       }
     } else {
       scheduleRegistrationRetry();

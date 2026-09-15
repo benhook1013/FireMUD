@@ -39,8 +39,13 @@ for target, replacement in replacements.items():
     if target not in text:
         raise SystemExit(f"Telnet TLS contract fixture token is missing: {target}")
     text = text.replace(target, replacement)
-text = text.replace("        # __TCP_PROXY_GATEWAY_BASE_URL_LINE__", "")
-text = text.replace("        # __TCP_PROXY_ADDITIONAL_SERVICE_PORTS__", "")
+for marker in (
+    "        # __TCP_PROXY_GATEWAY_BASE_URL_LINE__",
+    "        # __TCP_PROXY_ADDITIONAL_SERVICE_PORTS__",
+):
+    if marker not in text:
+        raise SystemExit(f"Telnet TLS contract fixture marker is missing: {marker.strip()}")
+    text = text.replace(marker, "")
 output_path.write_text(text, encoding="utf-8")
 PY
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \

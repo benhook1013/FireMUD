@@ -372,16 +372,22 @@ public final class GatewayWebSocketClient implements AutoCloseable {
   }
 
   @Override
-  public synchronized void close() throws IOException {
-    if (!closed.compareAndSet(false, true)) {
-      return;
-    }
-    if (certificateWatcher != null) {
-      certificateWatcher.close();
+  public void close() throws IOException {
+    TlsCertificateWatcher watcherToClose;
+    List<ClientGeneration> generationsToShutdown;
+    synchronized (this) {
+      if (!closed.compareAndSet(false, true)) {
+        return;
+      }
+      watcherToClose = certificateWatcher;
       certificateWatcher = null;
+      state = ClientState.unavailable("unknown");
+      generationsToShutdown = List.copyOf(generations);
     }
-    state = ClientState.unavailable("unknown");
-    for (ClientGeneration generation : List.copyOf(generations)) {
+    if (watcherToClose != null) {
+      watcherToClose.close();
+    }
+    for (ClientGeneration generation : generationsToShutdown) {
       generation.shutdownNow();
     }
     shutdownExecutor(retirementExecutor, RETIREMENT_EXECUTOR_SHUTDOWN_TIMEOUT);

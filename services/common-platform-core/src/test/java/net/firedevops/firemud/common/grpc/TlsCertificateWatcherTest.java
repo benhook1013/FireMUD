@@ -174,6 +174,7 @@ class TlsCertificateWatcherTest {
         Files.writeString(replacedDirectory.resolve("tls.crt"), "certificate-1");
     Path retainedCertificate =
         Files.writeString(retainedDirectory.resolve("tls.crt"), "certificate-1");
+    AtomicReference<CountDownLatch> recoveredCallback = new AtomicReference<>();
 
     Logger logger = (Logger) LoggerFactory.getLogger(TlsCertificateWatcher.class);
     ListAppender<ILoggingEvent> appender = new ListAppender<>();
@@ -183,7 +184,13 @@ class TlsCertificateWatcherTest {
     try {
       try (TlsCertificateWatcher watcher =
           TlsCertificateWatcher.createAndStart(
-              List.of(replacedCertificate, retainedCertificate), () -> {})) {
+              List.of(replacedCertificate, retainedCertificate),
+              () -> {
+                CountDownLatch callback = recoveredCallback.get();
+                if (callback != null) {
+                  callback.countDown();
+                }
+              })) {
         Files.delete(replacedCertificate);
         Files.delete(replacedDirectory);
         awaitUnhealthy(watcher);
@@ -191,9 +198,12 @@ class TlsCertificateWatcherTest {
             appender, Level.ERROR, "TLS certificate watcher failed its re-registration retry", 3);
         assertFalse(watcher.isHealthy());
 
+        CountDownLatch postRecoveryCallback = new CountDownLatch(1);
+        recoveredCallback.set(postRecoveryCallback);
         Files.createDirectory(replacedDirectory);
         Files.writeString(replacedCertificate, "certificate-2");
 
+        assertTrue(postRecoveryCallback.await(5, TimeUnit.SECONDS));
         awaitHealthy(watcher);
         assertTrue(watcher.isRunning());
       }
