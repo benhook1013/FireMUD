@@ -131,10 +131,6 @@ tasks.named("check") {
     dependsOn(verifyNoRedisRuntime, verifyNoRedisBootJar)
 }
 
-tasks.named("assemble") {
-    finalizedBy(verifyNoRedisBootJar)
-}
-
 tasks.named<BootRun>("bootRun") {
     val activeProfile =
         System.getProperty("spring.profiles.active") ?: System.getenv("SPRING_PROFILES_ACTIVE")

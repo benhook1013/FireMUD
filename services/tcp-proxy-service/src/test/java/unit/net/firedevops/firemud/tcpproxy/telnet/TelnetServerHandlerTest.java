@@ -1,6 +1,7 @@
 package net.firedevops.firemud.tcpproxy.telnet;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -10,6 +11,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.startsWith;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -38,6 +40,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
@@ -732,10 +735,19 @@ class TelnetServerHandlerTest {
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
+    AtomicBoolean closeWhileHoldingBufferLifecycleLock = new AtomicBoolean();
+    Object bufferLifecycleLock = fieldValue(handler, "bufferLifecycleLock");
     try {
       when(ctx.channel()).thenReturn(channel);
       when(ctx.executor()).thenReturn(executor);
       when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+      doAnswer(
+              invocation -> {
+                closeWhileHoldingBufferLifecycleLock.set(Thread.holdsLock(bufferLifecycleLock));
+                return null;
+              })
+          .when(ctx)
+          .close();
 
       handler.channelActive(ctx);
 
@@ -745,10 +757,21 @@ class TelnetServerHandlerTest {
       }
 
       verify(ctx).close();
+      assertFalse(closeWhileHoldingBufferLifecycleLock.get());
       assertEquals(maxBufferDepth(), handler.getBufferedSize());
       assertEquals(1.0, registry.counter("discarded").count());
     } finally {
       executor.shutdownGracefully();
+    }
+  }
+
+  private static Object fieldValue(Object target, String name) {
+    try {
+      Field field = target.getClass().getDeclaredField(name);
+      field.setAccessible(true);
+      return field.get(target);
+    } catch (ReflectiveOperationException e) {
+      throw new AssertionError("unable to inspect handler lifecycle lock", e);
     }
   }
 

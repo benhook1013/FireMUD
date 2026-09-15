@@ -16,6 +16,8 @@ public final class TlsTestSupport {
             || normalized.contains("empty client certificate chain")
             || normalized.contains("no required ssl certificate was sent")
             || normalized.contains("peer did not return a certificate")
+            || normalized.contains("received fatal alert: unknown_ca")
+            || normalized.contains("received fatal alert: certificate_unknown")
             || normalized.contains("client certificate required")
             || normalized.contains("client certificate rejected")
             || normalized.contains("client certificate unknown")) {

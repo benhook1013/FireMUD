@@ -443,11 +443,19 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
         ensureGatewayConnected();
 
+        boolean bufferOverflow;
         synchronized (bufferLifecycleLock) {
-          if (closing || !canBufferMore()) {
+          if (closing) {
             return;
           }
-          buffer.add(sanitized);
+          bufferOverflow = !canBufferMore();
+          if (!bufferOverflow) {
+            buffer.add(sanitized);
+          }
+        }
+        if (bufferOverflow) {
+          handleBufferOverflow();
+          return;
         }
         updateBufferDepthGauge();
         drainBuffer();
@@ -485,18 +493,22 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     if (depth >= MAX_BUFFER_DEPTH) {
       if (!closing) {
         closing = true;
-        logger.warn(
-            "Telnet buffer depth {} exceeded for {}; closing connection to prevent memory pressure",
-            MAX_BUFFER_DEPTH,
-            gatewayWsUrl);
-        discardedCommandCounter.increment();
-        if (context != null) {
-          context.close();
-        }
       }
       return false;
     }
     return true;
+  }
+
+  private void handleBufferOverflow() {
+    logger.warn(
+        "Telnet buffer depth {} exceeded for {}; closing connection to prevent memory pressure",
+        MAX_BUFFER_DEPTH,
+        gatewayWsUrl);
+    discardedCommandCounter.increment();
+    ChannelHandlerContext closeContext = context;
+    if (closeContext != null) {
+      closeContext.close();
+    }
   }
 
   private void bootstrapDefaultSessionIfConfigured() {

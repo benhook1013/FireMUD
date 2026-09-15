@@ -289,6 +289,9 @@ public class TlsCertificateWatcher implements AutoCloseable {
         if (dir != null) {
           try {
             keys.put(registerDirectory(dir), dir);
+            // A successful inline re-registration after directory replacement is itself a
+            // credential projection change, even when the reset produced no file event.
+            changed = true;
           } catch (IOException | RuntimeException e) {
             if (running.get()) {
               logger.error("TLS certificate watcher failed to re-register directory {}", dir, e);
@@ -382,7 +385,10 @@ public class TlsCertificateWatcher implements AutoCloseable {
       synchronized (retryMonitor) {
         registrationRetryAttempts = 0;
       }
-      if (invokeReloadCallback(true) != CallbackInvocationResult.SUCCEEDED) {
+      // Registration recovery is itself a health transition. Wait for any in-flight callback so
+      // this recovery reload cannot be skipped and then masked by a different callback restoring
+      // health before the recovered credentials have been rebuilt.
+      if (invokeReloadCallback(false) != CallbackInvocationResult.SUCCEEDED) {
         scheduleCallbackRetry();
       }
     } else {

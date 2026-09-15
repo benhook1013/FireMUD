@@ -37,6 +37,8 @@ class TlsTestSupportTest {
         Arguments.of("Empty client certificate chain"),
         Arguments.of("No required SSL certificate was sent"),
         Arguments.of("Peer did not return a certificate"),
+        Arguments.of("Received fatal alert: unknown_ca"),
+        Arguments.of("Received fatal alert: certificate_unknown"),
         Arguments.of("Client certificate required by server"),
         Arguments.of("Client certificate rejected by server"),
         Arguments.of("Client certificate unknown to server"));
@@ -47,8 +49,6 @@ class TlsTestSupportTest {
         Arguments.of("protocol_version"),
         Arguments.of("handshake_failure"),
         Arguments.of("Received fatal alert: internal_error"),
-        Arguments.of("Received fatal alert: unknown_ca"),
-        Arguments.of("Received fatal alert: certificate_unknown"),
         Arguments.of("server certificate validation failed"),
         Arguments.of("hostname verification failed"));
   }

@@ -66,6 +66,17 @@
 {{- end }}
 {{- end }}
 {{- end }}
+{{- range $key, $_ := $service.extraEnv }}
+{{- if and $mountTelnetTls (has $key $managedTelnetEnv) }}
+{{- fail (printf "previewStack.services.%s.extraEnv key %s collides with the managed Telnet TLS environment" $service.name $key) }}
+{{- end }}
+{{- if and $mountGatewayWsServerTls (has $key $managedGatewayWsServerEnv) }}
+{{- fail (printf "previewStack.services.%s.extraEnv key %s collides with the managed Gateway WebSocket server TLS environment" $service.name $key) }}
+{{- end }}
+{{- if and $mountGatewayWsClientTls (has $key $managedGatewayWsClientEnv) }}
+{{- fail (printf "previewStack.services.%s.extraEnv key %s collides with the managed Gateway WebSocket client TLS environment" $service.name $key) }}
+{{- end }}
+{{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment

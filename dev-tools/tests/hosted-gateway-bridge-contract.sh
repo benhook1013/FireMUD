@@ -83,6 +83,43 @@ helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
   --namespace pr-123 \
   >"$RENDERED"
 
+for collision in \
+  "tcp-proxy-service|TCP_PROXY_TLS_ENABLED|Telnet TLS" \
+  "spring-cloud-gateway|FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT|Gateway WebSocket server TLS" \
+  "tcp-proxy-service|GATEWAY_WS_URL|Gateway WebSocket client TLS"; do
+  IFS='|' read -r collision_service collision_key collision_surface <<<"$collision"
+  COLLISION_VALUES="$TMP_DIR/extra-env-${collision_key}.yaml"
+  python3 - "$TMP_DIR/preview-values.yaml" "$COLLISION_VALUES" "$collision_service" "$collision_key" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+source_path, output_path = map(Path, sys.argv[1:3])
+service_name = sys.argv[3]
+key = sys.argv[4]
+values = yaml.safe_load(source_path.read_text(encoding="utf-8"))
+service = next(
+    service for service in values["previewStack"]["services"] if service["name"] == service_name
+)
+service.setdefault("extraEnv", {})[key] = "collision"
+output_path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+  if helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+    -f "$COLLISION_VALUES" \
+    --show-only templates/apps.yaml \
+    --namespace pr-123 >/dev/null 2>"$TMP_DIR/extra-env-${collision_key}.err"; then
+    echo "apps template rendered with a managed $collision_key extraEnv collision" >&2
+    exit 1
+  fi
+  if ! grep -Fq "extraEnv key $collision_key collides with the managed $collision_surface environment" \
+    "$TMP_DIR/extra-env-${collision_key}.err"; then
+    echo "apps template did not diagnose the managed $collision_key extraEnv collision" >&2
+    sed -n '1,20p' "$TMP_DIR/extra-env-${collision_key}.err" >&2
+    exit 1
+  fi
+done
+
 FOREIGN_TLS_MOUNTS_VALUES="$TMP_DIR/foreign-tls-mounts-values.yaml"
 FOREIGN_TLS_MOUNTS_RENDERED="$TMP_DIR/foreign-tls-mounts-rendered.yaml"
 python3 - "$TMP_DIR/preview-values.yaml" "$FOREIGN_TLS_MOUNTS_VALUES" <<'PY'

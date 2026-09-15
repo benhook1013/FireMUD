@@ -15,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardWatchEventKinds;
 import java.nio.file.WatchEvent;
+import java.nio.file.WatchKey;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -168,6 +169,30 @@ class TlsCertificateWatcherTest {
       assertTrue(reloaded.await(5, TimeUnit.SECONDS));
       assertTrue(watcher.isRunning());
       assertTrue(watcher.isHealthy());
+    }
+  }
+
+  @Test
+  void successfulInlineReregistrationRequestsReloadWithoutFileEvents(@TempDir Path directory)
+      throws Exception {
+    Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
+    TlsCertificateWatcher watcher = new TlsCertificateWatcher(List.of(certificate), () -> {});
+    Field keysField = TlsCertificateWatcher.class.getDeclaredField("keys");
+    Method processKeyMethod =
+        TlsCertificateWatcher.class.getDeclaredMethod("processKey", WatchKey.class);
+    keysField.setAccessible(true);
+    processKeyMethod.setAccessible(true);
+    @SuppressWarnings("unchecked")
+    Map<WatchKey, Path> keys = (Map<WatchKey, Path>) keysField.get(watcher);
+    WatchKey originalKey = keys.keySet().iterator().next();
+
+    try {
+      originalKey.cancel();
+      assertTrue((Boolean) processKeyMethod.invoke(watcher, originalKey));
+      assertEquals(1, keys.size());
+      assertTrue(keys.containsValue(directory.toAbsolutePath().normalize()));
+    } finally {
+      watcher.close();
     }
   }
 
@@ -520,7 +545,7 @@ class TlsCertificateWatcherTest {
   }
 
   @Test
-  void registrationRecoveryRetriesWhenReloadCallbackIsSkipped(@TempDir Path directory)
+  void registrationRecoveryWaitsForActiveReloadCallback(@TempDir Path directory)
       throws Exception {
     Path watchedDirectory = Files.createDirectory(directory.resolve("watched"));
     Path certificate = Files.writeString(watchedDirectory.resolve("tls.crt"), "certificate-1");
@@ -543,6 +568,7 @@ class TlsCertificateWatcherTest {
         (java.util.concurrent.locks.ReentrantLock) callbackMonitorField.get(watcher);
     CountDownLatch lockAcquired = new CountDownLatch(1);
     CountDownLatch releaseLock = new CountDownLatch(1);
+    CountDownLatch recoveryStarted = new CountDownLatch(1);
     Thread lockHolder =
         new Thread(
             () -> {
@@ -561,13 +587,26 @@ class TlsCertificateWatcherTest {
     lockHolder.start();
     try {
       assertTrue(lockAcquired.await(5, TimeUnit.SECONDS));
-      retryMethod.invoke(watcher);
-
-      Field retryTaskField = TlsCertificateWatcher.class.getDeclaredField("retryTask");
-      retryTaskField.setAccessible(true);
-      assertTrue(retryTaskField.get(watcher) != null);
+      AtomicBoolean recoveryFinished = new AtomicBoolean();
+      Thread recovery =
+          new Thread(
+              () -> {
+                try {
+                  recoveryStarted.countDown();
+                  retryMethod.invoke(watcher);
+                  recoveryFinished.set(true);
+                } catch (ReflectiveOperationException e) {
+                  throw new AssertionError("failed to invoke registration recovery", e);
+                }
+              });
+      recovery.start();
+      assertTrue(recoveryStarted.await(5, TimeUnit.SECONDS));
+      assertFalse(callbackInvoked.await(100, TimeUnit.MILLISECONDS));
+      assertFalse(recoveryFinished.get());
       releaseLock.countDown();
       assertTrue(callbackInvoked.await(5, TimeUnit.SECONDS));
+      recovery.join(5_000);
+      assertTrue(recoveryFinished.get());
     } finally {
       releaseLock.countDown();
       lockHolder.join(5_000);

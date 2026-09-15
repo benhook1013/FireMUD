@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -52,7 +53,7 @@ class TcpProxyTlsListenerTest {
   private static final String FIXTURE_FINGERPRINT = fixtureFingerprint();
 
   private static String fixtureFingerprint() {
-    try (var input = TcpProxyTlsListenerTest.class.getResourceAsStream("/certs/dev-cert.pem")) {
+    try (var input = Files.newInputStream(fixture("dev-cert.pem"))) {
       X509Certificate certificate =
           (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input);
       byte[] digest = MessageDigest.getInstance("SHA-256").digest(certificate.getEncoded());
@@ -336,7 +337,7 @@ class TcpProxyTlsListenerTest {
   }
 
   @Test
-  void stopClosesAcceptedChannelsWhenServerDisposalFails() throws Exception {
+  void stopClosesAcceptedChannelsAndPreservesServerWhenDisposalFails() throws Exception {
     TcpProxyTlsListener listener =
         new TcpProxyTlsListener(
             tlsProperties(0), mock(TcpProxyTrustPolicy.class), mock(HttpHandler.class));
@@ -361,12 +362,12 @@ class TcpProxyTlsListenerTest {
     verify(server).disposeNow(org.mockito.ArgumentMatchers.any(Duration.class));
     verify(channels).close();
     verify(closeFuture).awaitUninterruptibly(org.mockito.ArgumentMatchers.anyLong());
-    assertThat(serverField.get(listener)).isNull();
+    assertThat(serverField.get(listener)).isSameAs(server);
     assertThat(channelsField.get(listener)).isNull();
   }
 
   @Test
-  void trustProfileExpiryClearsServerHandleWhenDisposalFails() throws Exception {
+  void trustProfileExpiryPreservesServerHandleWhenDisposalFails() throws Exception {
     GatewayTcpProxyListenerProperties properties = tlsProperties(0);
     TcpProxyTrustPolicy policy = mock(TcpProxyTrustPolicy.class);
     when(policy.timeUntilProfileExpiry()).thenReturn(Duration.ofMillis(1));
@@ -383,18 +384,10 @@ class TcpProxyTlsListenerTest {
     var expiryMethod = TcpProxyTlsListener.class.getDeclaredMethod("scheduleProfileExpiry");
     expiryMethod.setAccessible(true);
 
-    try {
-      expiryMethod.invoke(listener);
-      Instant deadline = Instant.now().plusSeconds(5);
-      while (serverField.get(listener) != null && Instant.now().isBefore(deadline)) {
-        Thread.sleep(10);
-      }
-
-      assertThat(serverField.get(listener)).isNull();
-      verify(server).disposeNow(org.mockito.ArgumentMatchers.any(Duration.class));
-    } finally {
-      listener.stop();
-    }
+    expiryMethod.invoke(listener);
+    verify(server, timeout(5_000)).disposeNow(org.mockito.ArgumentMatchers.any(Duration.class));
+    assertThat(serverField.get(listener)).isSameAs(server);
+    assertThat(listener.isRunning()).isTrue();
   }
 
   @Test
