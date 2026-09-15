@@ -714,8 +714,18 @@ volumes = deployment["spec"]["template"]["spec"]["volumes"]
 volume = next(v for v in volumes if v["name"] == mount["name"])
 assert volume["secret"]["secretName"] == "preview-release-telnet-tls"
 
+TELNET_CERTIFICATE_NAME = "preview-release-telnet-tls"
+
+def is_telnet_certificate(document):
+    return (
+        document.get("kind") == "Certificate"
+        and document.get("metadata", {}).get("name") == TELNET_CERTIFICATE_NAME
+    )
+
 omitted_documents = load_yaml_mappings(Path(os.environ["OMITTED_RENDERED"]))
-assert not any(d.get("kind") == "Certificate" for d in omitted_documents), "omitted TLS still renders a Certificate"
+assert not any(is_telnet_certificate(d) for d in omitted_documents), (
+    "omitted TLS still renders the dedicated Telnet Certificate"
+)
 omitted_deployment = next(
     d for d in omitted_documents
     if d.get("kind") == "Deployment" and d["metadata"]["name"] == "tcp-proxy-service"
@@ -751,7 +761,7 @@ for renamed_volume in renamed_grpc_pod_spec["volumes"]:
         renamed_volume["secret"]["secretName"] = renamed_grpc_secret
     elif renamed_volume["name"] == mount["name"]:
         renamed_volume["secret"]["secretName"] = renamed_grpc_secret
-renamed_certificate = next(d for d in renamed_grpc if d.get("kind") == "Certificate")
+renamed_certificate = next(d for d in renamed_grpc if is_telnet_certificate(d))
 renamed_certificate["metadata"]["name"] = renamed_grpc_secret
 renamed_certificate["spec"]["secretName"] = renamed_grpc_secret
 renamed_grpc_issues = preflight.validate_hosted_telnet_tls_values(renamed_grpc)
@@ -759,7 +769,7 @@ assert renamed_grpc_issues == [
     "TCP Proxy Telnet TLS Secret must not reuse the gRPC TLS Secret"
 ], renamed_grpc_issues
 
-certificate = next(d for d in documents if d.get("kind") == "Certificate")
+certificate = next(d for d in documents if is_telnet_certificate(d))
 assert certificate["spec"]["secretName"] == "preview-release-telnet-tls"
 assert certificate["spec"]["privateKey"]["algorithm"] == "RSA"
 assert certificate["spec"]["privateKey"]["encoding"] == "PKCS8"
@@ -770,7 +780,7 @@ assert ingress["spec"]["tls"][0]["secretName"] == "preview-release-tls"
 assert certificate["spec"]["secretName"] != ingress["spec"]["tls"][0]["secretName"]
 
 mismatched = deepcopy(documents)
-mismatched_certificate = next(d for d in mismatched if d.get("kind") == "Certificate")
+mismatched_certificate = next(d for d in mismatched if is_telnet_certificate(d))
 mismatched_certificate["spec"]["secretName"] = "wrong-telnet-secret"
 mismatched_issues = preflight.validate_hosted_telnet_tls_values(mismatched)
 assert mismatched_issues == [
@@ -779,7 +789,7 @@ assert mismatched_issues == [
 ], mismatched_issues
 
 reused = deepcopy(documents)
-reused_certificate = next(d for d in reused if d.get("kind") == "Certificate")
+reused_certificate = next(d for d in reused if is_telnet_certificate(d))
 reused_certificate["spec"]["secretName"] = ingress["spec"]["tls"][0]["secretName"]
 reused_issues = preflight.validate_hosted_telnet_tls_values(reused)
 assert reused_issues == [
@@ -860,7 +870,9 @@ assert ambiguous_certificate_issues == [
 ], ambiguous_certificate_issues
 
 disabled_documents = load_yaml_mappings(Path(os.environ["DISABLED_RENDERED"]))
-assert not any(d.get("kind") == "Certificate" for d in disabled_documents), "disabled TLS still renders a Certificate"
+assert not any(is_telnet_certificate(d) for d in disabled_documents), (
+    "disabled TLS still renders the dedicated Telnet Certificate"
+)
 disabled_deployment = next(d for d in disabled_documents if d.get("kind") == "Deployment" and d["metadata"]["name"] == "tcp-proxy-service")
 disabled_env = {entry["name"]: entry.get("value") for entry in disabled_deployment["spec"]["template"]["spec"]["containers"][0].get("env", [])}
 assert "TCP_PROXY_TLS_ENABLED" not in disabled_env, "disabled TLS still renders enablement"
