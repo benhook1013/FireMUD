@@ -4217,13 +4217,18 @@ def validate_gateway_ws_listener(
     )
     issues.extend(env_issues)
     expected_environment = get(expected, "environment")
+    expected_environment_valid = (
+        isinstance(expected_environment, str) and bool(expected_environment.strip())
+    )
+    if not expected_environment_valid:
+        issues.append("expected environment must be a non-empty string")
     expected_values = {
         "FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED": "true",
         "FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS": "0.0.0.0",
         "FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT": str(GATEWAY_WS_LISTENER_PORT),
         **GATEWAY_WS_SERVER_PATHS,
     }
-    if isinstance(expected_environment, str) and expected_environment:
+    if expected_environment_valid:
         expected_values["FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT"] = expected_environment
     for name, expected_value in expected_values.items():
         if env.get(name) != expected_value:

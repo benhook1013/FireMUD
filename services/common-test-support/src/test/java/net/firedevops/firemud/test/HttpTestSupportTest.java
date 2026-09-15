@@ -53,7 +53,8 @@ class HttpTestSupportTest {
         assertThat(failure)
             .as("readiness body: %s", body)
             .isInstanceOf(AssertionError.class)
-            .hasMessageContaining("Timed out waiting for HTTP readiness");
+            .hasMessageContaining("Timed out waiting for HTTP readiness")
+            .hasMessageContaining("last successful response body: " + body);
       }
     }
   }

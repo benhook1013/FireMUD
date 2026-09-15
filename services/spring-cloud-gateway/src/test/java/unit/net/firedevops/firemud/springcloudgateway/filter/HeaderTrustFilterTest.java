@@ -56,6 +56,8 @@ class HeaderTrustFilterTest {
     MockServerHttpRequest request =
         MockServerHttpRequest.get("/ws/game/test")
             .remoteAddress(new InetSocketAddress("1.2.3.4", 0))
+            .header("X-Game-Instance-Id", "spoofed-game-instance")
+            .header("X-Tenant-Id", "spoofed-tenant")
             .header("X-World-Slug", "spoofed-world")
             .header("X-Realm-Slug", "spoofed-realm")
             .header("X-Pointer-Version", "999")
@@ -67,6 +69,8 @@ class HeaderTrustFilterTest {
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-World-Slug")).isNull();
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Realm-Slug")).isNull();
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Pointer-Version")).isNull();
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Game-Instance-Id")).isNull();
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Tenant-Id")).isNull();
   }
 
   @Test
@@ -121,6 +125,8 @@ class HeaderTrustFilterTest {
             .header("X-Proxy-Connection-Id", "conn-123")
             .header("X-Proxy-Game-Instance-Id", "42")
             .header("X-Proxy-Tenant-Id", "7")
+            .header("X-Game-Instance-Id", "spoofed-game-instance")
+            .header("X-Tenant-Id", "spoofed-tenant")
             .header("X-World-Slug", "demo")
             .header("X-Realm-Slug", "production")
             .header("X-Pointer-Version", "17")

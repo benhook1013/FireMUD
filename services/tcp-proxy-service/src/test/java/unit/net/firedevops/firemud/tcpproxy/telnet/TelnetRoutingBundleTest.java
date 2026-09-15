@@ -78,7 +78,7 @@ class TelnetRoutingBundleTest {
   void configuredDefaultsAllowCompleteFiveFieldBundle() {
     TelnetRoutingBundle routingBundle =
         TelnetRoutingBundle.validateConfiguredDefaults(
-            "game-instance", "tenant", "demo", "production", "17");
+            "42", "7", "demo", "production", "17");
 
     assertEquals("demo", routingBundle.worldSlug());
     assertEquals("production", routingBundle.realmSlug());
@@ -168,7 +168,7 @@ class TelnetRoutingBundleTest {
             IllegalArgumentException.class,
             () ->
                 TelnetRoutingBundle.validateConfiguredDefaults(
-                    "game-instance", "tenant", "demo", "production", "0"));
+                    "42", "7", "demo", "production", "0"));
 
     assertEquals("Malformed routing pointer version: pointerVersion", exception.getMessage());
   }
@@ -180,7 +180,7 @@ class TelnetRoutingBundleTest {
             IllegalArgumentException.class,
             () ->
                 TelnetRoutingBundle.validateConfiguredDefaults(
-                    "game-instance", "tenant", "demo", "production", "not-a-number"));
+                    "42", "7", "demo", "production", "not-a-number"));
 
     assertEquals("Malformed routing pointer version: pointerVersion", exception.getMessage());
   }
@@ -192,7 +192,7 @@ class TelnetRoutingBundleTest {
             IllegalArgumentException.class,
             () ->
                 TelnetRoutingBundle.validateConfiguredDefaults(
-                    "game-instance", "tenant", "Demo", "production", "17"));
+                    "42", "7", "Demo", "production", "17"));
 
     assertEquals("Malformed routing slug: worldSlug", exception.getMessage());
   }
@@ -204,8 +204,44 @@ class TelnetRoutingBundleTest {
             IllegalArgumentException.class,
             () ->
                 TelnetRoutingBundle.validateConfiguredDefaults(
-                    "game-instance", "tenant", "demo", "Production", "17"));
+                    "42", "7", "demo", "Production", "17"));
 
     assertEquals("Malformed routing slug: realmSlug", exception.getMessage());
+  }
+
+  @Test
+  void configuredDefaultsRejectMalformedIdentityIds() {
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                TelnetRoutingBundle.validateConfiguredDefaults(
+                    "not-a-number", "7", "demo", "production", "17"));
+
+    assertEquals("gameInstanceId must be numeric", exception.getMessage());
+  }
+
+  @Test
+  void configuredDefaultsRejectNonPositiveIdentityIds() {
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                TelnetRoutingBundle.validateConfiguredDefaults(
+                    "0", "7", "demo", "production", "17"));
+
+    assertEquals("gameInstanceId must be positive", exception.getMessage());
+  }
+
+  @Test
+  void configuredDefaultsRejectNonPositiveTenantId() {
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                TelnetRoutingBundle.validateConfiguredDefaults(
+                    "42", "-1", "demo", "production", "17"));
+
+    assertEquals("tenantId must be positive", exception.getMessage());
   }
 }

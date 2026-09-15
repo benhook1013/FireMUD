@@ -89,10 +89,17 @@ abstract class VerifyNoRedisBootJar : DefaultTask() {
         val forbiddenEntries =
             ZipFile(bootJar.get().asFile).use { archive ->
                 archive.entries().asSequence()
-                    .map { it.name.substringAfterLast('/') }
+                    .map { it.name }
                     .filter { entry ->
-                        entry == "TelnetRedisConfiguration.class" ||
-                            forbiddenModules.get().any { entry.startsWith("$it-") }
+                        entry == "BOOT-INF/classes/net/firedevops/firemud/tcpproxy/config/TelnetRedisConfiguration.class" ||
+                            entry.startsWith("BOOT-INF/classes/org/springframework/data/redis/") ||
+                            entry.startsWith("BOOT-INF/classes/org/springframework/boot/data/redis/autoconfigure/") ||
+                            entry.startsWith("BOOT-INF/classes/org/springframework/boot/autoconfigure/data/redis/") ||
+                            entry.startsWith("BOOT-INF/classes/io/lettuce/core/") ||
+                            entry.startsWith("BOOT-INF/classes/redis/clients/jedis/") ||
+                            entry.substringAfterLast('/').let { filename ->
+                                forbiddenModules.get().any { filename.startsWith("$it-") }
+                            }
                     }.toList()
             }
         check(forbiddenEntries.isEmpty()) {

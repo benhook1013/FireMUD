@@ -1,6 +1,7 @@
 package net.firedevops.firemud.tcpproxy.telnet;
 
 import net.firedevops.firemud.common.security.GameplayRoutingBundleValidator;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import org.springframework.util.StringUtils;
 
 record TelnetRoutingBundle(String worldSlug, String realmSlug, String pointerVersion) {
@@ -54,6 +55,9 @@ record TelnetRoutingBundle(String worldSlug, String realmSlug, String pointerVer
           "Configured routing defaults must include X-Game-Instance-Id, X-Tenant-Id, "
               + "X-World-Slug, X-Realm-Slug, and X-Pointer-Version together");
     }
+
+    RequestIdValidation.requirePositiveLong(gameInstanceId, "gameInstanceId");
+    RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
 
     String canonicalWorldSlug =
         GameplayRoutingBundleValidator.requireCanonicalSlug(worldSlug, "worldSlug");

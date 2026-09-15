@@ -1615,6 +1615,25 @@ def issues_for(documents):
     return module.validate_gateway_ws_listener(documents, expected)[1]
 
 
+for invalid_environment in (None, 123, ""):
+    invalid_expected = copy.deepcopy(expected)
+    if invalid_environment is None:
+        invalid_expected.pop("environment")
+    else:
+        invalid_expected["environment"] = invalid_environment
+    invalid_issues = module.validate_gateway_ws_listener(
+        base_documents, invalid_expected
+    )[1]
+    if not any(
+        "expected environment must be a non-empty string" in issue
+        for issue in invalid_issues
+    ):
+        raise SystemExit(
+            f"invalid expected environment {invalid_environment!r} was accepted: "
+            + str(invalid_issues)
+        )
+
+
 future = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1)).isoformat()
 production_uri = "spiffe://firemud/ns/firemud/sa/tcp-proxy-service"
 production_documents = with_profile(
