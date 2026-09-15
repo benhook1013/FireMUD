@@ -3799,6 +3799,53 @@ if not any("must not use a named port" in issue for issue in mixed_port_issues):
         f"{mixed_port_issues}"
     )
 
+omitted_protocol_documents = copy.deepcopy(rendered_documents)
+for policy_name, direction in (
+    ("spring-cloud-gateway-ingress", "ingress"),
+    ("tcp-proxy-service-egress", "egress"),
+):
+    policy = next(
+        document
+        for document in omitted_protocol_documents
+        if document.get("kind") == "NetworkPolicy"
+        and document.get("metadata", {}).get("name") == policy_name
+    )
+    del policy["spec"][direction][0]["ports"][0]["protocol"]
+omitted_protocol_issues = module.validate_gateway_ws_network_policy(
+    omitted_protocol_documents, "firemud"
+)
+if omitted_protocol_issues:
+    raise SystemExit(
+        "Kubernetes-default TCP protocol was rejected for the Gateway bridge: "
+        f"{omitted_protocol_issues}"
+    )
+
+end_port_documents = copy.deepcopy(rendered_documents)
+for policy_name, direction in (
+    ("spring-cloud-gateway-ingress", "ingress"),
+    ("tcp-proxy-service-egress", "egress"),
+):
+    policy = next(
+        document
+        for document in end_port_documents
+        if document.get("kind") == "NetworkPolicy"
+        and document.get("metadata", {}).get("name") == policy_name
+    )
+    policy["spec"][direction][0]["ports"][0]["endPort"] = 8443
+end_port_issues = module.validate_gateway_ws_network_policy(
+    end_port_documents, "firemud"
+)
+if end_port_issues.count("Gateway ingress listener rule must be exactly TCP 8443") != 1:
+    raise SystemExit(
+        "Gateway bridge accepted an 8443..8443 endPort range: "
+        f"{end_port_issues}"
+    )
+if end_port_issues.count("TCP Proxy egress listener rule must be exactly TCP 8443") != 1:
+    raise SystemExit(
+        "TCP Proxy bridge accepted an 8443..8443 endPort range: "
+        f"{end_port_issues}"
+    )
+
 invalid_policy_type_documents = copy.deepcopy(rendered_documents)
 invalid_policy_type_documents.append(
     {

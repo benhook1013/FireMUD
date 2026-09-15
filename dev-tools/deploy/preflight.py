@@ -4599,9 +4599,14 @@ def validate_gateway_ws_network_policy(
             )
             continue
         matching_ports = matching[0].get("ports") or []
-        if matching_ports != [
-            {"protocol": "TCP", "port": GATEWAY_WS_LISTENER_PORT}
-        ]:
+        if (
+            len(matching_ports) != 1
+            or not isinstance(matching_ports[0], dict)
+            or set(matching_ports[0]) not in ({"port"}, {"port", "protocol"})
+            or type(matching_ports[0].get("port")) is not int
+            or matching_ports[0]["port"] != GATEWAY_WS_LISTENER_PORT
+            or matching_ports[0].get("protocol", "TCP") != "TCP"
+        ):
             issues.append(f"{label} listener rule must be exactly TCP 8443")
     return issues
 

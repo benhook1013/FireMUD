@@ -707,9 +707,13 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
             self.assertEqual(prepared["spec"]["ports"][0]["nodePort"], 32000)
 
     def test_expected_top_level_label_mismatches_report_expected_and_actual(self):
-        expected_labels = self.validator._expected_object_labels(
-            "Service", "tcp-proxy-service", "pr-42"
-        )
+        expected_labels = {
+            "app.kubernetes.io/name": "firemud",
+            "app.kubernetes.io/managed-by": "Helm",
+            "helm.sh/chart": "firemud-0.1.0",
+            "app.kubernetes.io/instance": "pr-42",
+            "firemud.dev/certificate-identity-mode": "hosted-controller",
+        }
         for label, expected_value in expected_labels.items():
             document = self._tcp_proxy_service({})
             document["metadata"]["labels"] = {
