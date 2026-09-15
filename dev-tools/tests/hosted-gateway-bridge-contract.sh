@@ -458,6 +458,56 @@ PY
   fi
 done
 
+for gateway_ws_mount_service in spring-cloud-gateway tcp-proxy-service; do
+  for gateway_ws_mount_state in missing false; do
+    GATEWAY_WS_MOUNT_VALUES="$TMP_DIR/gateway-ws-$gateway_ws_mount_service-$gateway_ws_mount_state-values.yaml"
+    python3 - "$TMP_DIR/preview-values.yaml" "$GATEWAY_WS_MOUNT_VALUES" \
+      "$gateway_ws_mount_service" "$gateway_ws_mount_state" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+source_path, output_path, service_name, mount_state = sys.argv[1:]
+values = yaml.safe_load(Path(source_path).read_text(encoding="utf-8"))
+service = next(
+    service
+    for service in values["previewStack"]["services"]
+    if service["name"] == service_name
+)
+mount_name = (
+    "mountGatewayWsServerTls"
+    if service_name == "spring-cloud-gateway"
+    else "mountGatewayWsClientTls"
+)
+if mount_state == "missing":
+    service.pop(mount_name, None)
+else:
+    service[mount_name] = False
+Path(output_path).write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+
+    if [[ "$gateway_ws_mount_service" == "spring-cloud-gateway" ]]; then
+      GATEWAY_WS_MOUNT_ERROR="previewStack.services.spring-cloud-gateway.mountGatewayWsServerTls must be true when previewStack.gatewayWsTls.enabled is true"
+    else
+      GATEWAY_WS_MOUNT_ERROR="previewStack.services.tcp-proxy-service.mountGatewayWsClientTls must be true when previewStack.gatewayWsTls.enabled is true"
+    fi
+    GATEWAY_WS_MOUNT_ERROR_FILE="$TMP_DIR/gateway-ws-$gateway_ws_mount_service-$gateway_ws_mount_state.err"
+    if helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+      -f "$GATEWAY_WS_MOUNT_VALUES" \
+      --show-only templates/apps.yaml \
+      --namespace pr-123 >/dev/null 2>"$GATEWAY_WS_MOUNT_ERROR_FILE"; then
+      echo "Gateway WebSocket TLS rendered with $gateway_ws_mount_service $gateway_ws_mount_state mount" >&2
+      exit 1
+    fi
+    if ! grep -Fq "$GATEWAY_WS_MOUNT_ERROR" "$GATEWAY_WS_MOUNT_ERROR_FILE"; then
+      echo "chart did not report the expected $gateway_ws_mount_service $gateway_ws_mount_state mount diagnostic" >&2
+      sed -n '1,20p' "$GATEWAY_WS_MOUNT_ERROR_FILE" >&2
+      exit 1
+    fi
+  done
+done
+
 LEGACY_NODEPORT_RENDERED="$TMP_DIR/legacy-nodeport.yaml"
 python3 - "$TMP_DIR/preview-values.yaml" "$TMP_DIR/legacy-nodeport-values.yaml" <<'PY'
 import sys

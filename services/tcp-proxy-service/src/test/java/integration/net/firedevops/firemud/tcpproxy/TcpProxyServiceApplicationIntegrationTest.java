@@ -11,11 +11,13 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.ApplicationContext;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.test.context.ActiveProfiles;
 
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = TcpProxyServiceApplication.class,
     properties = {"TCP_PROXY_PORT=0", "GATEWAY_WS_URL=ws://localhost/ws/game"})
+@ActiveProfiles("test")
 class TcpProxyServiceApplicationIntegrationTest {
 
   @LocalServerPort private int port;

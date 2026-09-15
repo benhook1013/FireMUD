@@ -361,10 +361,6 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
       }
       return false;
     }
-
-    boolean isEmpty() {
-      return blocks.isEmpty();
-    }
   }
 
   record CidrBlock(byte[] network, int prefixBits) {

@@ -34,21 +34,24 @@ record TelnetRoutingBundle(String worldSlug, String realmSlug, String pointerVer
 
     boolean gameInstanceConfigured = StringUtils.hasText(gameInstanceId);
     boolean tenantConfigured = StringUtils.hasText(tenantId);
-    if (gameInstanceConfigured != tenantConfigured) {
-      throw new IllegalArgumentException(
-          "Configured routing defaults must include X-Game-Instance-Id and X-Tenant-Id together");
-    }
-
     boolean worldConfigured = StringUtils.hasText(worldSlug);
     boolean realmConfigured = StringUtils.hasText(realmSlug);
     boolean pointerConfigured = StringUtils.hasText(pointerVersion);
-    if (!worldConfigured && !realmConfigured && !pointerConfigured) {
+    if (!gameInstanceConfigured
+        && !tenantConfigured
+        && !worldConfigured
+        && !realmConfigured
+        && !pointerConfigured) {
       return null;
     }
-    if (!worldConfigured || !realmConfigured || !pointerConfigured) {
+    if (!gameInstanceConfigured
+        || !tenantConfigured
+        || !worldConfigured
+        || !realmConfigured
+        || !pointerConfigured) {
       throw new IllegalArgumentException(
-          "Configured routing defaults must include X-World-Slug, X-Realm-Slug, and "
-              + "X-Pointer-Version together");
+          "Configured routing defaults must include X-Game-Instance-Id, X-Tenant-Id, "
+              + "X-World-Slug, X-Realm-Slug, and X-Pointer-Version together");
     }
 
     TelnetRoutingBundle routingBundle = normalize(worldSlug, realmSlug, pointerVersion);

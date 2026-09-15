@@ -5,12 +5,20 @@
 {{- $gatewayWsTls := .Values.previewStack.gatewayWsTls | default (dict) }}
 {{- $gatewayWsTlsTargetPort := "" }}
 {{- $gatewayWsTlsServicePort := "" }}
+{{- $gatewayWsServerTlsMountConfigured := false }}
+{{- $gatewayWsClientTlsMountConfigured := false }}
 {{- if $gatewayWsTls.enabled }}
 {{- $gatewayWsTlsTargetPort = required "previewStack.gatewayWsTls.targetPort is required when Gateway WebSocket TLS is enabled" $gatewayWsTls.targetPort }}
 {{- $gatewayWsTlsServicePort = required "previewStack.gatewayWsTls.servicePort is required when Gateway WebSocket TLS is enabled" $gatewayWsTls.servicePort }}
 {{- end }}
 {{- if $gatewayWsTls.enabled }}
 {{- range $service := .Values.previewStack.services }}
+{{- if and (eq $service.name "spring-cloud-gateway") $service.mountGatewayWsServerTls }}
+{{- $gatewayWsServerTlsMountConfigured = true }}
+{{- end }}
+{{- if and (eq $service.name "tcp-proxy-service") $service.mountGatewayWsClientTls }}
+{{- $gatewayWsClientTlsMountConfigured = true }}
+{{- end }}
 {{- if eq $service.name "spring-cloud-gateway" }}
 {{- $gatewayHealthPort := required "previewStack.services.spring-cloud-gateway.healthPort is required when Gateway WebSocket TLS is enabled" $service.healthPort }}
 {{- if eq (toString $gatewayWsTlsTargetPort) (toString $gatewayHealthPort) }}
@@ -25,6 +33,12 @@
 {{- end }}
 {{- end }}
 {{- end }}
+{{- end }}
+{{- if not $gatewayWsServerTlsMountConfigured }}
+{{- fail "previewStack.services.spring-cloud-gateway.mountGatewayWsServerTls must be true when previewStack.gatewayWsTls.enabled is true" }}
+{{- end }}
+{{- if not $gatewayWsClientTlsMountConfigured }}
+{{- fail "previewStack.services.tcp-proxy-service.mountGatewayWsClientTls must be true when previewStack.gatewayWsTls.enabled is true" }}
 {{- end }}
 {{- end }}
 {{- $telnetTlsSecretName := include "firemud.telnetTlsSecretName" . | trim }}

@@ -97,7 +97,8 @@ class TlsCertificateWatcherTest {
       watcher.start();
 
       assertTrue(firstReload.await(5, TimeUnit.SECONDS));
-      secondReload.await(300, TimeUnit.MILLISECONDS);
+      boolean secondReloadObserved = secondReload.await(300, TimeUnit.MILLISECONDS);
+      assertTrue(!secondReloadObserved || reloads.get() >= 2);
       assertTrue(reloads.get() >= 1 && reloads.get() <= 2);
     }
   }

@@ -16,6 +16,7 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest(
@@ -30,6 +31,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
       "management.endpoints.web.exposure.include=health,prometheus",
       "management.endpoint.prometheus.enabled=true"
     })
+@ActiveProfiles("test")
 @Import({
   NoGrpcServerTestConfiguration.class,
   PrometheusMetricsIntegrationTest.MetricsTestConfig.class

@@ -497,6 +497,11 @@ grep -q "invalid production attestation JSON" "$OUTPUT_FILE" || {
   cat "$OUTPUT_FILE" >&2
   exit 1
 }
+if grep -q "Production preflight must not run after invalid attestation parsing" "$OUTPUT_FILE"; then
+  echo "Malformed-attestation failure invoked production preflight after parsing failed" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
+fi
 assert_balanced_preflight_group "Malformed-attestation failure"
 
 if (
@@ -615,7 +620,9 @@ module.canonical_gateway_ws_endpoint = lambda documents, expected: (
     "spring-cloud-gateway-mtls.firemud.svc.cluster.local:443",
     [],
 )
-module.validate_gateway_ws_listener = lambda documents, expected: (set(), [])
+module.validate_gateway_ws_listener = (
+    lambda documents, expected, *, evaluation_time: (set(), [])
+)
 module.validate_gateway_ws_network_policy = lambda documents, secret_name: []
 strategy_issue = (
     "TCP Proxy bridge Deployment strategy must be Recreate for planned identity replacement"

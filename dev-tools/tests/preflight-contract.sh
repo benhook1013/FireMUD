@@ -1664,6 +1664,60 @@ if not any(
 ):
     raise SystemExit(f"expired migration profile was accepted: {expired_migration_issues}")
 
+fixed_evaluation_time = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
+fixed_migration = copy.deepcopy(migration_documents)
+fixed_migration_env = gateway_env(fixed_migration)
+for entry in fixed_migration_env:
+    if entry.get("name") == "FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_EXPIRES_AT":
+        entry["value"] = "2026-01-01T00:00:01Z"
+if module.validate_gateway_ws_listener(
+    fixed_migration,
+    expected,
+    evaluation_time=fixed_evaluation_time,
+)[1]:
+    raise SystemExit("fixed evaluation time did not control migration expiry")
+
+fixed_breakglass = copy.deepcopy(breakglass_documents)
+fixed_breakglass_env = gateway_env(fixed_breakglass)
+for entry in fixed_breakglass_env:
+    if entry.get("name") == "FIREMUD_GATEWAY_TCP_PROXY_TRUST_BREAKGLASS_EXPIRES_AT":
+        entry["value"] = "2026-01-01T00:00:01Z"
+if module.validate_gateway_ws_listener(
+    fixed_breakglass,
+    expected,
+    evaluation_time=fixed_evaluation_time,
+)[1]:
+    raise SystemExit("fixed evaluation time did not control break-glass expiry")
+
+original_datetime = module.dt.datetime
+class WallClockTrapDateTime(original_datetime):
+    @classmethod
+    def now(cls, tz=None):
+        raise AssertionError("Gateway bridge validation sampled wall-clock time")
+
+module.dt.datetime = WallClockTrapDateTime
+try:
+    if module.validate_gateway_ws_listener(
+        fixed_migration,
+        expected,
+        evaluation_time=fixed_evaluation_time,
+    )[1]:
+        raise SystemExit("fixed migration validation failed while wall clock was unavailable")
+finally:
+    module.dt.datetime = original_datetime
+
+try:
+    module.validate_gateway_ws_listener(
+        fixed_migration,
+        expected,
+        evaluation_time=dt.datetime(2026, 1, 1),
+    )
+except ValueError as error:
+    if str(error) != "evaluation time must include a timezone":
+        raise SystemExit(f"naive evaluation time had the wrong diagnostic: {error}")
+else:
+    raise SystemExit("naive Gateway evaluation time did not fail closed")
+
 incomplete_breakglass = copy.deepcopy(breakglass_documents)
 incomplete_breakglass_env = gateway_env(incomplete_breakglass)
 incomplete_breakglass_env[:] = [
@@ -2292,6 +2346,7 @@ PY
 done
 
 python3 - <<'PY' "$ROOT_DIR" "$TMP_DIR"
+import datetime as dt
 import contextlib
 import copy
 import hashlib
@@ -3762,15 +3817,22 @@ if not malformed_secret_issues or any("%%%not-base64%%%" in issue for issue in m
 original_gateway_endpoint = module.canonical_gateway_ws_endpoint
 original_gateway_listener = module.validate_gateway_ws_listener
 original_gateway_network_policy = module.validate_gateway_ws_network_policy
+fixed_evaluation_time = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
+captured_bridge_evaluation_times = []
 module.canonical_gateway_ws_endpoint = lambda documents, expected: (
     "spring-cloud-gateway-mtls.firemud.svc.cluster.local:443",
     [],
 )
-module.validate_gateway_ws_listener = lambda documents, expected: (set(), [])
+module.validate_gateway_ws_listener = lambda documents, expected, **kwargs: (
+    captured_bridge_evaluation_times.append(kwargs.get("evaluation_time"))
+    or (set(), [])
+)
 module.validate_gateway_ws_network_policy = lambda documents, namespace: []
 try:
     bridge_values, bridge_issues = module.validate_gateway_ws_values(
-        rendered_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+        rendered_documents,
+        yaml.safe_load(current_expected_path.read_text(encoding="utf-8")),
+        evaluation_time=fixed_evaluation_time,
     )
 finally:
     module.canonical_gateway_ws_endpoint = original_gateway_endpoint
@@ -3778,6 +3840,11 @@ finally:
     module.validate_gateway_ws_network_policy = original_gateway_network_policy
 if bridge_issues or not bridge_values:
     raise SystemExit(f"canonical bridge fixture did not pass: {bridge_issues}")
+if captured_bridge_evaluation_times != [fixed_evaluation_time]:
+    raise SystemExit(
+        "Gateway bridge validation did not thread its fixed evaluation time: "
+        + repr(captured_bridge_evaluation_times)
+    )
 
 mixed_port_documents = copy.deepcopy(rendered_documents)
 gateway_ingress_policy = next(

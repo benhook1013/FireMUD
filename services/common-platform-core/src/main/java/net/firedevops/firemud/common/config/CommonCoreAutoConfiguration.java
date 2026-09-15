@@ -12,6 +12,7 @@ import net.firedevops.firemud.common.grpc.GrpcTlsMaterialResolver;
 import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
 import net.firedevops.firemud.common.health.HttpEndpointAvailabilityChecker;
 import net.firedevops.firemud.common.health.ReadinessTransitionTracker;
+import net.firedevops.firemud.common.health.TlsCertificateReadinessHealthEndpointGroupsPostProcessor;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.runtime.RuntimeIdentityController;
 import net.firedevops.firemud.common.runtime.RuntimeIdentityFactory;
@@ -32,6 +33,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication.Type;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.health.actuate.endpoint.HealthEndpointGroupsPostProcessor;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.boot.info.BuildProperties;
 import org.springframework.boot.info.GitProperties;
@@ -160,6 +162,12 @@ public class CommonCoreAutoConfiguration {
   @ConditionalOnMissingBean(name = "tlsCertificateReloadHealthIndicator")
   public HealthIndicator tlsCertificateReloadHealthIndicator() {
     return TlsCertificateWatcher::health;
+  }
+
+  @Bean
+  public HealthEndpointGroupsPostProcessor
+      tlsCertificateReadinessHealthEndpointGroupsPostProcessor() {
+    return new TlsCertificateReadinessHealthEndpointGroupsPostProcessor();
   }
 
   @Configuration(proxyBeanMethods = false)

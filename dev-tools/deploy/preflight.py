@@ -4034,9 +4034,14 @@ def secret_volume_mount_issues(
 
 
 def validate_gateway_ws_trust_profile(
-    env: dict[str, str], namespace: str, expected_environment: Any
+    env: dict[str, str],
+    namespace: str,
+    expected_environment: Any,
+    *,
+    evaluation_time: dt.datetime | None = None,
 ) -> list[str]:
     """Validate the one environment-bound trust profile on the Gateway listener."""
+    evaluated_at = normalize_evaluation_time(evaluation_time)
     issues: list[str] = []
     profile_name = "FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE"
     selected_profile = env.get(profile_name)
@@ -4085,7 +4090,7 @@ def validate_gateway_ws_trust_profile(
         except TIMESTAMP_ERRORS:
             issues.append(f"{name} must be an RFC 3339 instant")
             return
-        if not expires_at > dt.datetime.now(dt.timezone.utc):
+        if not expires_at > evaluated_at:
             issues.append(f"{name} must be in the future")
 
     if selected_profile == "production_uri":
@@ -4131,7 +4136,10 @@ def validate_gateway_ws_trust_profile(
 
 
 def validate_gateway_ws_listener(
-    documents: list[dict[str, Any]], expected: dict[str, Any]
+    documents: list[dict[str, Any]],
+    expected: dict[str, Any],
+    *,
+    evaluation_time: dt.datetime | None = None,
 ) -> tuple[set[str], list[str]]:
     listener_ref = parse_binding_ref(
         get(expected, "internalBindings.certificates.gatewayInternalWsListenerRef")
@@ -4212,7 +4220,12 @@ def validate_gateway_ws_listener(
             + ", ".join(unknown_listener_names)
         )
     issues.extend(
-        validate_gateway_ws_trust_profile(env, namespace, expected_environment)
+        validate_gateway_ws_trust_profile(
+            env,
+            namespace,
+            expected_environment,
+            evaluation_time=evaluation_time,
+        )
     )
     if any(name.startswith(legacy_prefix) for name in env):
         issues.append("dedicated Gateway listener must not configure legacy TCP Proxy header trust")
@@ -4243,11 +4256,17 @@ def path_is_under_mount(path: str, mount_path: str) -> bool:
 
 
 def validate_gateway_ws_values(
-    documents: list[dict[str, Any]], expected: dict[str, Any]
+    documents: list[dict[str, Any]],
+    expected: dict[str, Any],
+    *,
+    evaluation_time: dt.datetime | None = None,
 ) -> tuple[list[str], list[str]]:
+    evaluated_at = normalize_evaluation_time(evaluation_time)
     canonical, issues = canonical_gateway_ws_endpoint(documents, expected)
     server_secret_names, listener_issues = validate_gateway_ws_listener(
-        documents, expected
+        documents,
+        expected,
+        evaluation_time=evaluated_at,
     )
     issues.extend(listener_issues)
     listener_ref = parse_binding_ref(

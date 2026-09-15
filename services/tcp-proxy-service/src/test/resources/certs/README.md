@@ -1,3 +1,6 @@
+> [!WARNING]
+> Every key and certificate in this directory is a test-only fixture. Never mount or use them as deployed credentials; production requires separately issued credentials.
+
 # Rotated Gateway Client Test Certificates
 
 These fixtures exercise Gateway WebSocket client-certificate rotation independently of the ordinary development certificates:

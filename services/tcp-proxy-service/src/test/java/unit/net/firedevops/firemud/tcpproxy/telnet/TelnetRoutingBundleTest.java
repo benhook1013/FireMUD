@@ -59,7 +59,7 @@ class TelnetRoutingBundleTest {
   }
 
   @Test
-  void configuredDefaultsAllowCompleteGameInstanceAndTenantPair() {
+  void configuredDefaultsAllowCompleteFiveFieldBundle() {
     TelnetRoutingBundle routingBundle =
         TelnetRoutingBundle.validateConfiguredDefaults(
             "game-instance", "tenant", "demo", "production", "17");
@@ -67,6 +67,36 @@ class TelnetRoutingBundleTest {
     assertEquals("demo", routingBundle.worldSlug());
     assertEquals("production", routingBundle.realmSlug());
     assertEquals("17", routingBundle.pointerVersion());
+  }
+
+  @Test
+  void configuredDefaultsRejectIdentityPairWithoutRoutingGroup() {
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                TelnetRoutingBundle.validateConfiguredDefaults(
+                    "game-instance", "tenant", null, null, null));
+
+    assertEquals(
+        "Configured routing defaults must include X-Game-Instance-Id, X-Tenant-Id, "
+            + "X-World-Slug, X-Realm-Slug, and X-Pointer-Version together",
+        exception.getMessage());
+  }
+
+  @Test
+  void configuredDefaultsRejectRoutingGroupWithoutIdentityPair() {
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                TelnetRoutingBundle.validateConfiguredDefaults(
+                    null, null, "demo", "production", "17"));
+
+    assertEquals(
+        "Configured routing defaults must include X-Game-Instance-Id, X-Tenant-Id, "
+            + "X-World-Slug, X-Realm-Slug, and X-Pointer-Version together",
+        exception.getMessage());
   }
 
   @Test
@@ -107,7 +137,8 @@ class TelnetRoutingBundleTest {
     assertThrows(
         IllegalArgumentException.class,
         () ->
-            TelnetRoutingBundle.validateConfiguredDefaults(null, null, "demo", "production", "0"));
+            TelnetRoutingBundle.validateConfiguredDefaults(
+                "game-instance", "tenant", "demo", "production", "0"));
   }
 
   @Test
@@ -116,6 +147,6 @@ class TelnetRoutingBundleTest {
         IllegalArgumentException.class,
         () ->
             TelnetRoutingBundle.validateConfiguredDefaults(
-                null, null, "demo", "production", "not-a-number"));
+                "game-instance", "tenant", "demo", "production", "not-a-number"));
   }
 }
