@@ -795,24 +795,31 @@ with mock.patch.object(
         stderr="",
     ),
 ):
-    missing_key_issue, missing_key_retryable = module.secret_keys_lookup_failure(
-        "pr-123-tcp-proxy-bridge",
-        "pr-123",
-        {"tls.crt", "tls.key", "ca.crt"},
+    missing_key_issue, missing_key_retryable, missing_key_timed_out = (
+        module.secret_keys_lookup_failure(
+            "pr-123-tcp-proxy-bridge",
+            "pr-123",
+            {"tls.crt", "tls.key", "ca.crt"},
+        )
     )
 if (
     missing_key_issue is None
     or "missing keys: ca.crt" not in missing_key_issue
     or missing_key_retryable is not True
+    or missing_key_timed_out is not False
 ):
     raise SystemExit("operator preflight accepted an incomplete controller-projected Secret")
 
 operator_secret_lookups = []
 
 
-def record_operator_secret_lookup(secret_name, namespace, required_keys):
+def record_operator_secret_lookup(
+    secret_name, namespace, required_keys, timeout_seconds
+):
+    if timeout_seconds != module.SECRET_LOOKUP_TIMEOUT_SECONDS:
+        raise SystemExit("operator bridge Secret lookup did not retain its bounded timeout")
     operator_secret_lookups.append((secret_name, namespace, required_keys))
-    return None, False
+    return None, False, False
 
 
 with mock.patch.object(
@@ -902,29 +909,17 @@ if (
         "hosted preflight accepted artifact-controlled standalone certificate ownership"
     )
 
-forged_operator_lookups = []
-
-
-def record_forged_operator_lookup(secret_name, namespace, required_keys):
-    forged_operator_lookups.append((secret_name, namespace, required_keys))
-    return None, False
-
-
 with mock.patch.object(
     module,
     "secret_keys_lookup_failure",
-    side_effect=record_forged_operator_lookup,
+    side_effect=AssertionError("invalid render reached operator Secret lookup"),
 ), mock.patch.object(module.sys, "stdout", io.StringIO()):
     forged_operator_result = module.hosted_bridge_preflight(
         forged_path, "pr-123", "pr-123", "operator"
     )
-if forged_operator_result != 1 or (
-    "pr-123-telnet-tls",
-    "pr-123",
-    {"tls.crt", "tls.key"},
-) not in forged_operator_lookups:
+if forged_operator_result != 1:
     raise SystemExit(
-        "forged standalone markers bypassed the operator Telnet Secret expectation"
+        "operator preflight accepted artifact-controlled standalone certificate ownership"
     )
 
 resource_kinds = {
