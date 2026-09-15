@@ -1894,6 +1894,7 @@ def called_name(node):
 class MainContractVisitor(ast.NodeVisitor):
     promotion_attestation_reload = False
     recovery_compatibility_evaluations = 0
+    hosted_telnet_target_namespace = False
 
     def visit_Call(self, node):
         if called_name(node.func) == "load_json" and any(
@@ -1904,6 +1905,13 @@ class MainContractVisitor(ast.NodeVisitor):
             self.promotion_attestation_reload = True
         if called_name(node.func) == "recovery_compatibility_check":
             self.recovery_compatibility_evaluations += 1
+        if called_name(node.func) == "validate_hosted_telnet_tls_values" and any(
+            keyword.arg == "target_namespace"
+            and isinstance(keyword.value, ast.Name)
+            and keyword.value.id == "target_namespace"
+            for keyword in node.keywords
+        ):
+            self.hosted_telnet_target_namespace = True
         self.generic_visit(node)
 
 
@@ -1913,6 +1921,10 @@ if main_contract.promotion_attestation_reload:
     raise SystemExit("production preflight reloaded the promotion attestation inside main")
 if main_contract.recovery_compatibility_evaluations:
     raise SystemExit("production preflight duplicated recovery compatibility evaluation inside main")
+if not main_contract.hosted_telnet_target_namespace:
+    raise SystemExit(
+        "production preflight must pass the derived target_namespace to hosted Telnet TLS validation"
+    )
 
 spec = importlib.util.spec_from_file_location("preflight_hobby_contract", root / "dev-tools/deploy/preflight.py")
 module = importlib.util.module_from_spec(spec)
@@ -4455,6 +4467,38 @@ telnet_documents = [
 telnet_issues = module.validate_hosted_telnet_tls_values(telnet_documents)
 if telnet_issues:
     raise SystemExit(f"canonical hosted Telnet TLS fixture did not pass: {telnet_issues}")
+non_default_telnet_documents = copy.deepcopy(telnet_documents)
+for document in non_default_telnet_documents:
+    document.setdefault("metadata", {})["namespace"] = "pr-42"
+    if document.get("kind") in {"Service", "Deployment"}:
+        document["metadata"].setdefault("labels", {})[
+            "firemud.dev/certificate-identity-mode"
+        ] = "standalone"
+non_default_telnet_service = next(
+    document
+    for document in non_default_telnet_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+non_default_telnet_service["spec"]["ports"][0]["targetPort"] = 2324
+derived_namespace = next(
+    (
+        module.workload_namespace(document)
+        for document in non_default_telnet_documents
+        if module.primary_containers(document)
+    ),
+    "firemud",
+)
+if derived_namespace != "pr-42":
+    raise SystemExit(f"general overlay preflight did not derive workload namespace: {derived_namespace}")
+non_default_telnet_issues = module.validate_hosted_telnet_tls_values(
+    non_default_telnet_documents, target_namespace=derived_namespace
+)
+if not any("targetPort 2323" in issue for issue in non_default_telnet_issues):
+    raise SystemExit(
+        "general overlay preflight skipped invalid non-default namespace bridge resources: "
+        f"{non_default_telnet_issues}"
+    )
 telnet_missing_listener = copy.deepcopy(telnet_documents)
 next(
     document

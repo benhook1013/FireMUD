@@ -712,8 +712,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
   private static synchronized void ensureTestServicesStarted() {
     if (STACK == null) {
+      GameplayCrossServiceStack stack = null;
       try {
-        STACK =
+        stack =
             GameplayCrossServiceStack.defaultDemoBuilder(POSTGRES, REDIS, ACCOUNT_ID)
                 .mapAccountId("sora@example.com", SORA_ACCOUNT_ID)
                 .withSocialEnabled(true)
@@ -735,11 +736,22 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                 .withGameSessionConfigs(
                     GatewayBackedGameSessionTestOverrides.class, NestedReadinessOverrides.class)
                 .start();
-        DEFAULT_GAME_INSTANCE_ID =
-            STACK.freshGameplayBaseline(TENANT_ID, 1L, ACCOUNT_ID, 7L, ACCOUNT_ID);
-        awaitGameSessionReadiness(STACK.gameSessionPort());
+        long defaultGameInstanceId =
+            stack.freshGameplayBaseline(TENANT_ID, 1L, ACCOUNT_ID, 7L, ACCOUNT_ID);
+        awaitGameSessionReadiness(stack.gameSessionPort());
+        STACK = stack;
+        DEFAULT_GAME_INSTANCE_ID = defaultGameInstanceId;
       } catch (IOException e) {
         throw new IllegalStateException("Failed to start shared gameplay stack", e);
+      } catch (RuntimeException | Error e) {
+        if (stack != null) {
+          try {
+            stack.close();
+          } catch (RuntimeException | Error closeFailure) {
+            e.addSuppressed(closeFailure);
+          }
+        }
+        throw e;
       }
     }
     if (GATEWAY == null) {

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.springcloudgateway.filter;
 
+import io.netty.util.NetUtil;
 import java.net.InetAddress;
 
 /** Immutable parsed CIDR network block. */
@@ -16,8 +17,8 @@ record CidrBlock(byte[] network, int prefixBits) {
     if (parts.length != 2) {
       return null;
     }
-    String ip = normalizeIpLiteral(parts[0]);
-    if (ip == null) {
+    byte[] addressBytes = parseIpLiteral(parts[0]);
+    if (addressBytes == null) {
       return null;
     }
     int prefix;
@@ -27,12 +28,11 @@ record CidrBlock(byte[] network, int prefixBits) {
       return null;
     }
     try {
-      InetAddress address = InetAddress.getByName(ip);
-      int max = address.getAddress().length * 8;
+      int max = addressBytes.length * 8;
       if (prefix < 0 || prefix > max) {
         return null;
       }
-      byte[] networkBytes = address.getAddress();
+      byte[] networkBytes = addressBytes.clone();
       applyMaskInPlace(networkBytes, prefix);
       return new CidrBlock(networkBytes, prefix);
     } catch (Exception ignored) {
@@ -48,37 +48,60 @@ record CidrBlock(byte[] network, int prefixBits) {
     if (trimmed.isEmpty()) {
       return null;
     }
-    boolean hasHexLetter = false;
-    boolean hasColon = false;
-    for (int i = 0; i < trimmed.length(); i++) {
-      char c = trimmed.charAt(i);
-      boolean hexLetter = (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-      boolean allowed =
-          (c >= '0' && c <= '9')
-              || hexLetter
-              || c == '.'
-              || c == ':'
-              || c == '['
-              || c == ']'
-              || c == '%';
-      if (!allowed) {
-        return null;
-      }
-      hasHexLetter |= hexLetter;
-      hasColon |= c == ':';
-    }
-    if (hasHexLetter && !hasColon) {
+    byte[] addressBytes = parseIpLiteral(trimmed);
+    if (addressBytes == null) {
       return null;
     }
     try {
-      if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-        trimmed = trimmed.substring(1, trimmed.length() - 1);
-      }
-      InetAddress address = InetAddress.getByName(trimmed);
-      return address.getHostAddress();
+      return InetAddress.getByAddress(addressBytes).getHostAddress();
     } catch (Exception ignored) {
       return null;
     }
+  }
+
+  private static byte[] parseIpLiteral(String value) {
+    if (value == null) {
+      return null;
+    }
+    String trimmed = value.trim();
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      trimmed = trimmed.substring(1, trimmed.length() - 1);
+    } else if (trimmed.indexOf('[') >= 0 || trimmed.indexOf(']') >= 0) {
+      return null;
+    }
+    if (trimmed.isEmpty() || trimmed.indexOf('%') >= 0) {
+      return null;
+    }
+    byte[] bytes = NetUtil.createByteArrayFromIpAddressString(trimmed);
+    if (bytes == null) {
+      return null;
+    }
+    // NetUtil intentionally handles only dotted-decimal IPv4 and IPv6 literals;
+    // retain an explicit guard against non-canonical IPv4 shorthand/integer forms.
+    if (bytes.length == 4 && !isCanonicalIpv4Literal(trimmed)) {
+      return null;
+    }
+    return bytes;
+  }
+
+  private static boolean isCanonicalIpv4Literal(String value) {
+    String[] parts = value.split("\\.", -1);
+    if (parts.length != 4) {
+      return false;
+    }
+    for (String part : parts) {
+      if (part.isEmpty() || (part.length() > 1 && part.startsWith("0"))) {
+        return false;
+      }
+      try {
+        if (Integer.parseInt(part) > 255) {
+          return false;
+        }
+      } catch (NumberFormatException ignored) {
+        return false;
+      }
+    }
+    return true;
   }
 
   boolean contains(InetAddress address) {

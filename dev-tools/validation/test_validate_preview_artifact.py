@@ -665,13 +665,9 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
     def _tcp_proxy_service(self, spec, *, namespace=None):
         metadata = {
             "name": "tcp-proxy-service",
-            "labels": {
-                "app.kubernetes.io/name": "firemud",
-                "app.kubernetes.io/managed-by": "Helm",
-                "helm.sh/chart": EXPECTED_HELM_CHART_LABEL,
-                "app.kubernetes.io/instance": "pr-42",
-                "firemud.dev/certificate-identity-mode": "hosted-controller",
-            },
+            "labels": VALIDATOR._expected_object_labels(
+                "Service", "tcp-proxy-service", "pr-42"
+            ),
         }
         if namespace is not None:
             metadata["namespace"] = namespace

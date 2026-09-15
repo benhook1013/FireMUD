@@ -7364,6 +7364,10 @@ def main() -> int:
         rendered = run(["kubectl", "kustomize", str(root_dir / "k8s" / "overlays" / overlay_name)])
 
     documents = parse_documents(rendered)
+    target_namespace = next(
+        (workload_namespace(document) for document in documents if primary_containers(document)),
+        "firemud",
+    )
     default_output = default_preflight_output_path(
         root_dir,
         env_class,
@@ -7509,7 +7513,9 @@ def main() -> int:
             ) or has_required_failure
 
     _, gateway_bridge_issues = validate_gateway_ws_values(documents, expected_bindings)
-    telnet_tls_issues = validate_hosted_telnet_tls_values(documents)
+    telnet_tls_issues = validate_hosted_telnet_tls_values(
+        documents, target_namespace=target_namespace
+    )
     bridge_issues = label_bridge_validation_issues(
         gateway_bridge_issues, telnet_tls_issues
     )
