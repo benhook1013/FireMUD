@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.InputStream;
 import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -189,15 +190,22 @@ class TelnetServerTest {
     SSLContext sslContext = SSLContext.getInstance("TLS");
     sslContext.init(null, trustManagers.getTrustManagers(), null);
 
-    try (SSLSocket socket = (SSLSocket) sslContext.getSocketFactory().createSocket()) {
-      socket.setSoTimeout(TLS_READ_TIMEOUT_MILLIS);
-      socket.connect(
+    try (Socket plainSocket = new Socket()) {
+      plainSocket.setSoTimeout(TLS_READ_TIMEOUT_MILLIS);
+      plainSocket.connect(
           new InetSocketAddress("localhost", server.getPort()), TLS_CONNECT_TIMEOUT_MILLIS);
-      SSLParameters sslParameters = socket.getSSLParameters();
-      sslParameters.setEndpointIdentificationAlgorithm("HTTPS");
-      socket.setSSLParameters(sslParameters);
-      socket.startHandshake();
-      assertTrue(socket.getSession().isValid());
+      try (SSLSocket socket =
+          (SSLSocket)
+              sslContext
+                  .getSocketFactory()
+                  .createSocket(plainSocket, "localhost", server.getPort(), true)) {
+        socket.setSoTimeout(TLS_READ_TIMEOUT_MILLIS);
+        SSLParameters sslParameters = socket.getSSLParameters();
+        sslParameters.setEndpointIdentificationAlgorithm("HTTPS");
+        socket.setSSLParameters(sslParameters);
+        socket.startHandshake();
+        assertTrue(socket.getSession().isValid());
+      }
     }
   }
 

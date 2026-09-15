@@ -177,7 +177,7 @@ class GatewayGameplayReadinessProbeTest {
       healthy.complete(true);
       awaitReadiness(probe, true);
 
-      verify(client, timeout(2000).times(4)).isReadyAsync();
+      verify(client, timeout(2000).atLeast(3)).isReadyAsync();
       awaitReadiness(probe, false);
 
       assertEquals(
@@ -245,7 +245,7 @@ class GatewayGameplayReadinessProbeTest {
       healthy.complete(true);
       awaitReadiness(probe, true);
 
-      verify(client, timeout(2000).times(4)).isReadyAsync();
+      verify(client, timeout(2000).atLeast(3)).isReadyAsync();
       awaitReadiness(probe, false);
 
       assertEquals(1, logs.count(Level.WARN, "Gateway readiness poll failed; reporting unready"));

@@ -9,6 +9,24 @@
 {{- $gatewayWsTlsTargetPort = required "previewStack.gatewayWsTls.targetPort is required when Gateway WebSocket TLS is enabled" $gatewayWsTls.targetPort }}
 {{- $gatewayWsTlsServicePort = required "previewStack.gatewayWsTls.servicePort is required when Gateway WebSocket TLS is enabled" $gatewayWsTls.servicePort }}
 {{- end }}
+{{- if $gatewayWsTls.enabled }}
+{{- range $service := .Values.previewStack.services }}
+{{- if eq $service.name "spring-cloud-gateway" }}
+{{- $gatewayHealthPort := required "previewStack.services.spring-cloud-gateway.healthPort is required when Gateway WebSocket TLS is enabled" $service.healthPort }}
+{{- if eq (toString $gatewayWsTlsTargetPort) (toString $gatewayHealthPort) }}
+{{- fail (printf "previewStack.gatewayWsTls.targetPort %v collides with the Gateway managed health/HTTP listener healthPort %v" $gatewayWsTlsTargetPort $gatewayHealthPort) }}
+{{- end }}
+{{- range $port := $service.ports }}
+{{- if and (eq (toString $port.port) "80") (eq (toString $port.targetPort) (toString $gatewayWsTlsTargetPort)) }}
+{{- fail (printf "previewStack.gatewayWsTls.targetPort %v collides with the Gateway managed health/HTTP listener service port 80 targetPort %v" $gatewayWsTlsTargetPort $port.targetPort) }}
+{{- end }}
+{{- if and (eq (toString $port.port) "6565") (eq (toString $port.targetPort) (toString $gatewayWsTlsTargetPort)) }}
+{{- fail (printf "previewStack.gatewayWsTls.targetPort %v collides with the Gateway managed gRPC listener service port 6565 targetPort %v" $gatewayWsTlsTargetPort $port.targetPort) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- $telnetTlsSecretName := include "firemud.telnetTlsSecretName" . | trim }}
 {{- $managedTelnetEnv := list "TCP_PROXY_TELNET_MODE" "TCP_PROXY_TLS_ENABLED" "TCP_PROXY_TLS_CERT" "TCP_PROXY_TLS_KEY" }}
 {{- $managedGatewayWsServerEnv := list "FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED" "FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS" "FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT" "FIREMUD_GATEWAY_TCP_PROXY_TLS_CERT_CHAIN_PATH" "FIREMUD_GATEWAY_TCP_PROXY_TLS_PRIVATE_KEY_PATH" "FIREMUD_GATEWAY_TCP_PROXY_TLS_CLIENT_CA_PATH" "FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT" "FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE" "FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN" }}

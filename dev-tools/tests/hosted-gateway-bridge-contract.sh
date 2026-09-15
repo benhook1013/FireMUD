@@ -369,6 +369,54 @@ if len(gateway_rules) != 1 or gateway_rules[0].get("ports") != [
     )
 PY
 
+for gateway_listener_collision in health http grpc; do
+  COLLISION_VALUES="$TMP_DIR/gateway-ws-tls-$gateway_listener_collision-collision-values.yaml"
+  python3 - "$TMP_DIR/preview-values.yaml" "$COLLISION_VALUES" "$gateway_listener_collision" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+source_path, output_path = map(Path, sys.argv[1:3])
+collision = sys.argv[3]
+values = yaml.safe_load(source_path.read_text(encoding="utf-8"))
+gateway = next(
+    service
+    for service in values["previewStack"]["services"]
+    if service["name"] == "spring-cloud-gateway"
+)
+if collision == "health":
+    gateway["healthPort"] = 8443
+elif collision == "http":
+    next(port for port in gateway["ports"] if str(port["port"]) == "80")[
+        "targetPort"
+    ] = 8443
+else:
+    next(port for port in gateway["ports"] if str(port["port"]) == "6565")[
+        "targetPort"
+    ] = 8443
+output_path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+  if helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+    -f "$COLLISION_VALUES" \
+    --show-only templates/apps.yaml \
+    --namespace pr-123 >/dev/null 2>"$TMP_DIR/gateway-ws-tls-$gateway_listener_collision-collision.err"; then
+    echo "Gateway WebSocket TLS rendered with a managed $gateway_listener_collision listener collision" >&2
+    exit 1
+  fi
+  if [[ "$gateway_listener_collision" == "grpc" ]]; then
+    EXPECTED_COLLISION_FRAGMENT="collides with the Gateway managed gRPC listener service port 6565 targetPort 8443"
+  else
+    EXPECTED_COLLISION_FRAGMENT="collides with the Gateway managed health/HTTP listener"
+  fi
+  if ! grep -Fq "$EXPECTED_COLLISION_FRAGMENT" \
+    "$TMP_DIR/gateway-ws-tls-$gateway_listener_collision-collision.err"; then
+    echo "chart did not diagnose the Gateway WebSocket TLS $gateway_listener_collision listener collision" >&2
+    sed -n '1,20p' "$TMP_DIR/gateway-ws-tls-$gateway_listener_collision-collision.err" >&2
+    exit 1
+  fi
+done
+
 for invalid_gateway_ports in missing duplicate; do
   INVALID_GATEWAY_PORTS_VALUES="$TMP_DIR/plaintext-gateway-$invalid_gateway_ports-values.yaml"
   python3 - "$TMP_DIR/preview-values.yaml" "$INVALID_GATEWAY_PORTS_VALUES" "$invalid_gateway_ports" <<'PY'
