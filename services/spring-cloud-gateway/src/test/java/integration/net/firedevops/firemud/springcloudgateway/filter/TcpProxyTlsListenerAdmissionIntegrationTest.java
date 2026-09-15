@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -363,12 +364,12 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
         properties.getMigrationDns().setDnsSan("tcp-proxy.internal");
         properties.getMigrationDns().setOwner("platform");
         properties.getMigrationDns().setReason("listener client-auth integration proof");
-        properties.getMigrationDns().setExpiresAt("2999-01-01T00:00:00Z");
+        properties.getMigrationDns().setExpiresAt(Instant.parse("2999-01-01T00:00:00Z"));
       }
       case "breakglass_fingerprint" -> {
         properties.getBreakglassFingerprint().setSha256("0".repeat(64));
         properties.getBreakglassFingerprint().setIncidentReference("INC-TEST");
-        properties.getBreakglassFingerprint().setExpiresAt("2999-01-01T00:00:00Z");
+        properties.getBreakglassFingerprint().setExpiresAt(Instant.parse("2999-01-01T00:00:00Z"));
       }
       case "development_cidr" -> {
         properties.setTrustedClientCaPath(null);

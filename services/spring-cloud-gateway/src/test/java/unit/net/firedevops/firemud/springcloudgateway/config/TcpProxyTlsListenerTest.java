@@ -317,7 +317,7 @@ class TcpProxyTlsListenerTest {
     properties.setTrustProfile("breakglass_fingerprint");
     properties.getBreakglassFingerprint().setSha256(FIXTURE_FINGERPRINT);
     properties.getBreakglassFingerprint().setIncidentReference("TEST-1");
-    properties.getBreakglassFingerprint().setExpiresAt("2100-01-01T00:00:00Z");
+    properties.getBreakglassFingerprint().setExpiresAt(Instant.parse("2100-01-01T00:00:00Z"));
     return properties;
   }
 

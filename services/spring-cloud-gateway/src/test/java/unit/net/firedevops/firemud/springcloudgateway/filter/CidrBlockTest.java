@@ -5,7 +5,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.net.Inet6Address;
 import java.net.InetAddress;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 
+@ExtendWith(OutputCaptureExtension.class)
 class CidrBlockTest {
   @Test
   void normalizesLiteralsWithoutDnsResolution() {
@@ -21,6 +25,17 @@ class CidrBlockTest {
     assertThat(CidrBlock.normalizeIpLiteral("fe80::1%eth0")).isNull();
     assertThat(CidrBlock.parse("192.0.2.0/24")).isNotNull();
     assertThat(CidrBlock.parse("192.0.2.0/33")).isNull();
+  }
+
+  @Test
+  void warnsWithRejectedValueAndRetainsValidBlocks(CapturedOutput output) throws Exception {
+    CidrSet ranges = new CidrSet(java.util.List.of("192.0.2.0/24", "example.com/32"));
+
+    assertThat(ranges.contains(InetAddress.getByName("192.0.2.42"))).isTrue();
+    assertThat(ranges.contains(InetAddress.getByName("203.0.113.42"))).isFalse();
+    assertThat(output)
+        .contains("Ignoring invalid configured CIDR entry")
+        .contains("value=example.com/32");
   }
 
   @Test

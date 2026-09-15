@@ -15,7 +15,6 @@ import java.security.cert.X509Certificate;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
@@ -289,11 +288,11 @@ public final class TcpProxyTrustPolicy {
         StringUtils.hasText(listener.getMigrationDns().getDnsSan())
             || StringUtils.hasText(listener.getMigrationDns().getOwner())
             || StringUtils.hasText(listener.getMigrationDns().getReason())
-            || StringUtils.hasText(listener.getMigrationDns().getExpiresAt());
+            || listener.getMigrationDns().getExpiresAt() != null;
     boolean breakglass =
         StringUtils.hasText(listener.getBreakglassFingerprint().getSha256())
             || StringUtils.hasText(listener.getBreakglassFingerprint().getIncidentReference())
-            || StringUtils.hasText(listener.getBreakglassFingerprint().getExpiresAt());
+            || listener.getBreakglassFingerprint().getExpiresAt() != null;
     boolean development = StringUtils.hasText(listener.getDevelopmentCidr().getTrustedCidr());
 
     if ((selected != TrustProfile.PRODUCTION_URI && production)
@@ -304,22 +303,19 @@ public final class TcpProxyTrustPolicy {
     }
   }
 
-  private void requireFutureExpiry(String value, String name) {
-    String raw = requireText(value, name);
-    try {
-      if (!Instant.parse(raw).isAfter(clock.instant())) {
-        throw invalid(name + " must be in the future");
-      }
-    } catch (DateTimeParseException ex) {
-      throw invalid(name + " must be an RFC 3339 instant");
+  private void requireFutureExpiry(Instant value, String name) {
+    if (value == null) {
+      throw invalid(name + " is required");
+    }
+    if (!value.isAfter(clock.instant())) {
+      throw invalid(name + " must be in the future");
     }
   }
 
   private Instant selectedProfileExpiry() {
     return switch (profile) {
-      case MIGRATION_DNS -> Instant.parse(listener.getMigrationDns().getExpiresAt());
-      case BREAKGLASS_FINGERPRINT ->
-          Instant.parse(listener.getBreakglassFingerprint().getExpiresAt());
+      case MIGRATION_DNS -> listener.getMigrationDns().getExpiresAt();
+      case BREAKGLASS_FINGERPRINT -> listener.getBreakglassFingerprint().getExpiresAt();
       case PRODUCTION_URI, DEVELOPMENT_CIDR -> null;
     };
   }

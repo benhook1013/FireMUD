@@ -1,6 +1,7 @@
 package net.firedevops.firemud.springcloudgateway.config;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.time.Instant;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
@@ -121,7 +122,7 @@ public final class GatewayTcpProxyListenerProperties {
     private String dnsSan;
     private String owner;
     private String reason;
-    private String expiresAt;
+    private Instant expiresAt;
 
     public String getDnsSan() {
       return dnsSan;
@@ -147,11 +148,11 @@ public final class GatewayTcpProxyListenerProperties {
       this.reason = reason;
     }
 
-    public String getExpiresAt() {
+    public Instant getExpiresAt() {
       return expiresAt;
     }
 
-    public void setExpiresAt(String expiresAt) {
+    public void setExpiresAt(Instant expiresAt) {
       this.expiresAt = expiresAt;
     }
   }
@@ -159,7 +160,7 @@ public final class GatewayTcpProxyListenerProperties {
   public static final class BreakglassFingerprint {
     private String sha256;
     private String incidentReference;
-    private String expiresAt;
+    private Instant expiresAt;
 
     public String getSha256() {
       return sha256;
@@ -177,11 +178,11 @@ public final class GatewayTcpProxyListenerProperties {
       this.incidentReference = incidentReference;
     }
 
-    public String getExpiresAt() {
+    public Instant getExpiresAt() {
       return expiresAt;
     }
 
-    public void setExpiresAt(String expiresAt) {
+    public void setExpiresAt(Instant expiresAt) {
       this.expiresAt = expiresAt;
     }
   }

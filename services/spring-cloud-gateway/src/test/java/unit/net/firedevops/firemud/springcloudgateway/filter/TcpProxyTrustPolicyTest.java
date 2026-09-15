@@ -112,7 +112,7 @@ class TcpProxyTrustPolicyTest {
     expired.getMigrationDns().setDnsSan("tcp-proxy.internal");
     expired.getMigrationDns().setOwner("platform");
     expired.getMigrationDns().setReason("issuer migration");
-    expired.getMigrationDns().setExpiresAt("2026-09-07T09:59:59Z");
+    expired.getMigrationDns().setExpiresAt(Instant.parse("2026-09-07T09:59:59Z"));
     assertThatThrownBy(() -> policy(expired, Set.of("prod")))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("must be in the future");
@@ -124,7 +124,7 @@ class TcpProxyTrustPolicyTest {
     properties.getMigrationDns().setDnsSan("tcp-proxy.internal");
     properties.getMigrationDns().setOwner("platform");
     properties.getMigrationDns().setReason("issuer migration");
-    properties.getMigrationDns().setExpiresAt("2026-09-07T10:01:00Z");
+    properties.getMigrationDns().setExpiresAt(Instant.parse("2026-09-07T10:01:00Z"));
     MutableClock clock = new MutableClock(NOW);
     TcpProxyTrustPolicy policy =
         new TcpProxyTrustPolicy(
@@ -142,7 +142,7 @@ class TcpProxyTrustPolicyTest {
     properties.getMigrationDns().setDnsSan("tcp-proxy.internal");
     properties.getMigrationDns().setOwner("platform");
     properties.getMigrationDns().setReason("issuer migration");
-    properties.getMigrationDns().setExpiresAt("2026-09-08T10:00:00Z");
+    properties.getMigrationDns().setExpiresAt(Instant.parse("2026-09-08T10:00:00Z"));
     TcpProxyTrustPolicy policy = policy(properties, Set.of("prod"));
 
     assertThat(
@@ -290,7 +290,7 @@ class TcpProxyTrustPolicyTest {
             .getBreakglassFingerprint()
             .setSha256("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
         properties.getBreakglassFingerprint().setIncidentReference("INC-123");
-        properties.getBreakglassFingerprint().setExpiresAt("2026-09-08T10:00:00Z");
+        properties.getBreakglassFingerprint().setExpiresAt(Instant.parse("2026-09-08T10:00:00Z"));
       }
       case "development_cidr" -> {
         properties.setEnvironment("isolated-test");
