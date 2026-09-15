@@ -143,6 +143,7 @@ class GatewayGameplayReadinessProbeTest {
       verify(client, timeout(1000).times(2)).isReadyAsync();
       awaitExceptionalCompletion(stalled);
       verify(client, timeout(1000).times(3)).isReadyAsync();
+      awaitNonEmpty(retryFutures);
       CompletableFuture<Boolean> retry = retryFutures.get(0);
       assertNotSame(stalled, retry);
       awaitReadiness(probe, false);
@@ -367,6 +368,14 @@ class GatewayGameplayReadinessProbeTest {
       Thread.sleep(5);
     }
     assertTrue(future.isCompletedExceptionally());
+  }
+
+  private static void awaitNonEmpty(List<?> values) throws Exception {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+    while (values.isEmpty() && System.nanoTime() < deadline) {
+      Thread.sleep(5);
+    }
+    assertFalse(values.isEmpty());
   }
 
   private static GatewayGameplayReadinessProbe startedProbe(

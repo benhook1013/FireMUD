@@ -16,6 +16,7 @@ import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.stream.Stream;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSocket;
@@ -26,6 +27,9 @@ import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.Mockito;
 
 class TelnetServerTest {
@@ -136,28 +140,46 @@ class TelnetServerTest {
     assertEquals("gatewayWebSocketClient", ex.getMessage());
   }
 
-  @Test
-  void invalidConfiguredDefaultsFailBeforeAcceptingSessions() {
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("invalidConfiguredDefaultMetadata")
+  void invalidConfiguredDefaultsFailBeforeAcceptingSessions(
+      String label,
+      String gameInstanceId,
+      String tenantId,
+      String worldSlug,
+      String realmSlug,
+      String pointerVersion) {
+    var registry = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+
+    IllegalStateException ex =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                newServerWithDefaults(
+                    registry, gameInstanceId, tenantId, worldSlug, realmSlug, pointerVersion));
+
+    assertEquals(
+        "TCP proxy default bridge metadata is invalid; reason=bad_header", ex.getMessage());
+    assertEquals(1.0, registry.counter("tcpproxy.bridge.metadata.misconfig").count());
+  }
+
+  private static Stream<Arguments> invalidConfiguredDefaultMetadata() {
     String invalid = "safe\r\ninjected";
-    for (int index = 0; index < 6; index++) {
-      String gameInstanceId = index == 0 ? invalid : "instance";
-      String tenantId = index == 1 ? invalid : "tenant";
-      String worldSlug = index == 2 ? invalid : "world";
-      String realmSlug = index == 3 ? invalid : "realm";
-      String pointerVersion = index == 4 ? invalid : (index == 5 ? "0" : "1");
-      var registry = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
-
-      IllegalStateException ex =
-          assertThrows(
-              IllegalStateException.class,
-              () ->
-                  newServerWithDefaults(
-                      registry, gameInstanceId, tenantId, worldSlug, realmSlug, pointerVersion));
-
-      assertEquals(
-          "TCP proxy default bridge metadata is invalid; reason=bad_header", ex.getMessage());
-      assertEquals(1.0, registry.counter("tcpproxy.bridge.metadata.misconfig").count());
-    }
+    return Stream.of(
+        Arguments.of(
+            "gameInstanceId rejects CRLF",
+            invalid,
+            "tenant",
+            "world",
+            "realm",
+            "1"),
+        Arguments.of("tenantId rejects CRLF", "instance", invalid, "world", "realm", "1"),
+        Arguments.of("worldSlug rejects CRLF", "instance", "tenant", invalid, "realm", "1"),
+        Arguments.of("realmSlug rejects CRLF", "instance", "tenant", "world", invalid, "1"),
+        Arguments.of(
+            "pointerVersion rejects CRLF", "instance", "tenant", "world", "realm", invalid),
+        Arguments.of(
+            "pointerVersion rejects zero", "instance", "tenant", "world", "realm", "0"));
   }
 
   @Test

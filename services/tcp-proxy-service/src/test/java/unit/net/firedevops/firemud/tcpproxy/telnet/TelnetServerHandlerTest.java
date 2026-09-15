@@ -43,6 +43,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import net.firedevops.firemud.test.TestAsyncAssertions;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
@@ -169,38 +171,39 @@ class TelnetServerHandlerTest {
 
     assertEquals(lines.size(), handler.getBufferedSize());
     RecordingWebSocket webSocket = new RecordingWebSocket();
-    assertTrue(webSocket.sentTexts.isEmpty());
     listenerRef.get().onOpen(webSocket);
 
     assertEquals(lines, webSocket.sentTexts);
     assertEquals(0, handler.getBufferedSize());
   }
 
-  @Test
-  void failedGatewayHandshakeDropsBufferedLinesAndUsesPolicyOrAvailabilityOutcome() {
-    for (int statusCode : List.of(403, 503)) {
-      SimpleMeterRegistry registry = new SimpleMeterRegistry();
-      AtomicReference<WebSocket.Listener> listenerRef = new AtomicReference<>();
-      CompletableFuture<WebSocket> pendingConnection = new CompletableFuture<>();
-      TelnetServerHandler handler =
-          newHandler(
-              registry,
-              false,
-              (ip,
-                  proxyConnectionId,
-                  gameInstanceId,
-                  tenantId,
-                  worldSlug,
-                  realmSlug,
-                  pointerVersion,
-                  listener) -> {
-                listenerRef.set(listener);
-                return pendingConnection;
-              });
-      ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
-      ChannelFuture closeFuture = mock(ChannelFuture.class);
-      Channel channel = mock(Channel.class);
-      DefaultEventExecutor executor = new DefaultEventExecutor();
+  @ParameterizedTest(name = "HTTP {0}")
+  @ValueSource(ints = {403, 503})
+  void failedGatewayHandshakeDropsBufferedLinesAndUsesPolicyOrAvailabilityOutcome(
+      int statusCode) {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    AtomicReference<WebSocket.Listener> listenerRef = new AtomicReference<>();
+    CompletableFuture<WebSocket> pendingConnection = new CompletableFuture<>();
+    TelnetServerHandler handler =
+        newHandler(
+            registry,
+            false,
+            (ip,
+                proxyConnectionId,
+                gameInstanceId,
+                tenantId,
+                worldSlug,
+                realmSlug,
+                pointerVersion,
+                listener) -> {
+              listenerRef.set(listener);
+              return pendingConnection;
+            });
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    ChannelFuture closeFuture = mock(ChannelFuture.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    try {
       when(ctx.channel()).thenReturn(channel);
       when(ctx.executor()).thenReturn(executor);
       when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
@@ -212,7 +215,7 @@ class TelnetServerHandlerTest {
       handler.channelRead0(ctx, "LOGIN player@example.com secret");
       assertEquals(2, handler.getBufferedSize());
 
-      HttpResponse<Void> response = mock(HttpResponse.class);
+      HttpResponse<Void> response = mockHttpResponse();
       when(response.statusCode()).thenReturn(statusCode);
       pendingConnection.completeExceptionally(new WebSocketHandshakeException(response));
 
@@ -220,6 +223,7 @@ class TelnetServerHandlerTest {
       verify(ctx).writeAndFlush(startsWith("DISCONNECT " + reason + " "));
       verify(closeFuture).addListener(ChannelFutureListener.CLOSE);
       assertEquals(0, handler.getBufferedSize());
+    } finally {
       executor.shutdownGracefully();
     }
   }
@@ -1670,6 +1674,11 @@ class TelnetServerHandlerTest {
   @SuppressWarnings("unchecked")
   private static <V> ScheduledFuture<V> mockScheduledFutureTyped() {
     return mock(ScheduledFuture.class);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static HttpResponse<Void> mockHttpResponse() {
+    return mock(HttpResponse.class);
   }
 
   private static final class RecordingConnector implements TelnetServerHandler.WebSocketConnector {
