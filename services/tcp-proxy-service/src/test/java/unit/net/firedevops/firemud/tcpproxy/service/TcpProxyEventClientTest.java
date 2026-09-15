@@ -156,8 +156,7 @@ class TcpProxyEventClientTest {
     setField(client, "channel", previousChannel);
     setField(client, "stub", previousStub);
 
-    assertThrows(
-        IllegalStateException.class, () -> invokeReloadChannel(client));
+    assertThrows(IllegalStateException.class, () -> invokeReloadChannel(client));
 
     org.junit.jupiter.api.Assertions.assertSame(previousChannel, getField(client, "channel"));
     org.junit.jupiter.api.Assertions.assertSame(previousStub, getField(client, "stub"));

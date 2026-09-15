@@ -742,20 +742,26 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
         STACK = stack;
         DEFAULT_GAME_INSTANCE_ID = defaultGameInstanceId;
       } catch (IOException e) {
+        cleanupFailedStart(stack, e);
         throw new IllegalStateException("Failed to start shared gameplay stack", e);
       } catch (RuntimeException | Error e) {
-        if (stack != null) {
-          try {
-            stack.close();
-          } catch (RuntimeException | Error closeFailure) {
-            e.addSuppressed(closeFailure);
-          }
-        }
+        cleanupFailedStart(stack, e);
         throw e;
       }
     }
     if (GATEWAY == null) {
       GATEWAY = startGateway(STACK.gameSessionPort());
+    }
+  }
+
+  private static void cleanupFailedStart(GameplayCrossServiceStack stack, Throwable original) {
+    if (stack == null) {
+      return;
+    }
+    try {
+      stack.close();
+    } catch (RuntimeException | Error closeFailure) {
+      original.addSuppressed(closeFailure);
     }
   }
 
