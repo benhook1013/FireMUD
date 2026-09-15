@@ -3151,6 +3151,13 @@ def workload_namespace(document: dict[str, Any]) -> str:
     return metadata_namespace(document) or "firemud"
 
 
+def primary_workload_namespace(documents: list[dict[str, Any]]) -> str:
+    return next(
+        (workload_namespace(document) for document in documents if primary_containers(document)),
+        "firemud",
+    )
+
+
 def effective_container_env(
     documents: list[dict[str, Any]],
     document: dict[str, Any],
@@ -5724,10 +5731,7 @@ def expected_binding_checks(
             )
 
     mode = get(data, "serviceDiscovery.mode")
-    target_namespace = next(
-        (workload_namespace(document) for document in documents if primary_containers(document)),
-        "firemud",
-    )
+    target_namespace = primary_workload_namespace(documents)
     override_lines, override_issues = extract_service_discovery_overrides(documents)
     if mode == "kubernetes-dns-default" and (override_lines or override_issues):
         results.append(
@@ -7374,10 +7378,7 @@ def main() -> int:
         rendered = run(["kubectl", "kustomize", str(root_dir / "k8s" / "overlays" / overlay_name)])
 
     documents = parse_documents(rendered)
-    target_namespace = next(
-        (workload_namespace(document) for document in documents if primary_containers(document)),
-        "firemud",
-    )
+    target_namespace = primary_workload_namespace(documents)
     default_output = default_preflight_output_path(
         root_dir,
         env_class,

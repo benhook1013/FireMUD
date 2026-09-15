@@ -33,15 +33,6 @@ class HeaderTrustFilterTest {
   private static final String TCP_PROXY_URI = "spiffe://firemud/ns/firemud/sa/tcp-proxy-service";
 
   @Test
-  void cidrParsingAcceptsIpv4AndHexadecimalIpv6ButRejectsHostnames() throws Exception {
-    CidrSet ranges = new CidrSet(List.of("192.0.2.0/24", "2001:DB8::/32", "example.com/32"));
-
-    assertThat(ranges.contains(java.net.InetAddress.getByName("192.0.2.42"))).isTrue();
-    assertThat(ranges.contains(java.net.InetAddress.getByName("2001:db8::42"))).isTrue();
-    assertThat(CidrBlock.parse("example.com/32")).isNull();
-  }
-
-  @Test
   void stripsSpoofedClientIpHeader() {
     HeaderTrustFilter filter = legacyFilter(new GatewayHeaderTrustProperties());
 

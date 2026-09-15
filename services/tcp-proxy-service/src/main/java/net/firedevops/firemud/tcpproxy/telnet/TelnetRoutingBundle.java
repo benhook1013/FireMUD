@@ -55,12 +55,14 @@ record TelnetRoutingBundle(String worldSlug, String realmSlug, String pointerVer
               + "X-World-Slug, X-Realm-Slug, and X-Pointer-Version together");
     }
 
-    TelnetRoutingBundle routingBundle = normalize(worldSlug, realmSlug, pointerVersion);
-    if (routingBundle == null) {
-      throw new IllegalArgumentException(
-          "Configured routing defaults must use a positive numeric X-Pointer-Version");
-    }
-    return routingBundle;
+    String canonicalWorldSlug =
+        GameplayRoutingBundleValidator.requireCanonicalSlug(worldSlug, "worldSlug");
+    String canonicalRealmSlug =
+        GameplayRoutingBundleValidator.requireCanonicalSlug(realmSlug, "realmSlug");
+    String canonicalPointerVersion =
+        GameplayRoutingBundleValidator.requireCanonicalPointerVersion(
+            pointerVersion, "pointerVersion");
+    return new TelnetRoutingBundle(canonicalWorldSlug, canonicalRealmSlug, canonicalPointerVersion);
   }
 
   static void validateHeaderValue(String headerName, String value) {

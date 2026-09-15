@@ -163,19 +163,49 @@ class TelnetRoutingBundleTest {
 
   @Test
   void configuredDefaultsRejectNonPositivePointerVersion() {
-    assertThrows(
-        IllegalArgumentException.class,
-        () ->
-            TelnetRoutingBundle.validateConfiguredDefaults(
-                "game-instance", "tenant", "demo", "production", "0"));
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                TelnetRoutingBundle.validateConfiguredDefaults(
+                    "game-instance", "tenant", "demo", "production", "0"));
+
+    assertEquals("Malformed routing pointer version: pointerVersion", exception.getMessage());
   }
 
   @Test
   void configuredDefaultsRejectMalformedPointerVersion() {
-    assertThrows(
-        IllegalArgumentException.class,
-        () ->
-            TelnetRoutingBundle.validateConfiguredDefaults(
-                "game-instance", "tenant", "demo", "production", "not-a-number"));
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                TelnetRoutingBundle.validateConfiguredDefaults(
+                    "game-instance", "tenant", "demo", "production", "not-a-number"));
+
+    assertEquals("Malformed routing pointer version: pointerVersion", exception.getMessage());
+  }
+
+  @Test
+  void configuredDefaultsIdentifyMalformedWorldSlug() {
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                TelnetRoutingBundle.validateConfiguredDefaults(
+                    "game-instance", "tenant", "Demo", "production", "17"));
+
+    assertEquals("Malformed routing slug: worldSlug", exception.getMessage());
+  }
+
+  @Test
+  void configuredDefaultsIdentifyMalformedRealmSlug() {
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                TelnetRoutingBundle.validateConfiguredDefaults(
+                    "game-instance", "tenant", "demo", "Production", "17"));
+
+    assertEquals("Malformed routing slug: realmSlug", exception.getMessage());
   }
 }
