@@ -17,16 +17,30 @@ class CommonCoreAutoConfigurationTest {
           .withConfiguration(AutoConfigurations.of(CommonCoreAutoConfiguration.class));
 
   @Test
-  void backsOffReadinessPostProcessorWhenApplicationProvidesOne() {
+  void keepsDefaultReadinessPostProcessorWhenApplicationProvidesUnrelatedOne() {
     contextRunner
         .withUserConfiguration(CustomPostProcessorConfiguration.class)
         .run(
             context -> {
-              assertThat(context).hasSingleBean(HealthEndpointGroupsPostProcessor.class);
+              assertThat(context).hasBean("postProcessor");
               assertThat(context)
-                  .doesNotHaveBean(TlsCertificateReadinessHealthEndpointGroupsPostProcessor.class);
-              assertThat(context.getBean(HealthEndpointGroupsPostProcessor.class))
-                  .isSameAs(context.getBean("postProcessor"));
+                  .hasSingleBean(TlsCertificateReadinessHealthEndpointGroupsPostProcessor.class);
+              assertThat(context.getBeansOfType(HealthEndpointGroupsPostProcessor.class)).hasSize(2);
+              assertThat(context.getBean("tlsCertificateReadinessHealthEndpointGroupsPostProcessor"))
+                  .isNotSameAs(context.getBean("postProcessor"));
+            });
+  }
+
+  @Test
+  void backsOffReadinessPostProcessorWhenApplicationProvidesSameType() {
+    contextRunner
+        .withUserConfiguration(CustomTlsReadinessPostProcessorConfiguration.class)
+        .run(
+            context -> {
+              assertThat(context)
+                  .hasSingleBean(TlsCertificateReadinessHealthEndpointGroupsPostProcessor.class);
+              assertThat(context.getBean(TlsCertificateReadinessHealthEndpointGroupsPostProcessor.class))
+                  .isSameAs(context.getBean("tlsReadinessPostProcessor"));
             });
   }
 
@@ -35,6 +49,14 @@ class CommonCoreAutoConfigurationTest {
     @Bean
     HealthEndpointGroupsPostProcessor postProcessor() {
       return mock(HealthEndpointGroupsPostProcessor.class);
+    }
+  }
+
+  @Configuration(proxyBeanMethods = false)
+  static class CustomTlsReadinessPostProcessorConfiguration {
+    @Bean
+    TlsCertificateReadinessHealthEndpointGroupsPostProcessor tlsReadinessPostProcessor() {
+      return new TlsCertificateReadinessHealthEndpointGroupsPostProcessor("custom-service");
     }
   }
 }
