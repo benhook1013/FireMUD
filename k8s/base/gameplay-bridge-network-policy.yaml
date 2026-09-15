@@ -63,6 +63,13 @@ spec:
     - to:
         - podSelector:
             matchLabels:
+              app: elasticsearch
+      ports:
+        - protocol: TCP
+          port: 9200
+    - to:
+        - podSelector:
+            matchLabels:
               app: spring-cloud-gateway
       ports:
         - protocol: TCP

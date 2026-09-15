@@ -84,6 +84,21 @@ class HttpTestSupportTest {
     }
   }
 
+  @Test
+  void readinessTimeoutPreservesLatestIOExceptionCause() throws Exception {
+    TestHttpServer server = TestHttpServer.responding("{\"status\":\"UP\"}");
+    String url = server.url();
+    server.close();
+
+    Throwable failure =
+        catchThrowable(() -> HttpTestSupport.awaitReadiness(url, Duration.ofMillis(250)));
+
+    assertThat(failure)
+        .isInstanceOf(AssertionError.class)
+        .hasMessageContaining("Timed out waiting for HTTP readiness")
+        .hasCauseInstanceOf(IOException.class);
+  }
+
   private static final class TestHttpServer implements AutoCloseable {
     private final HttpServer server;
     private final ExecutorService executor;

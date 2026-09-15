@@ -11,6 +11,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.net.InetSocketAddress;
 import java.time.Instant;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.springcloudgateway.config.GatewayHeaderTrustProperties;
@@ -572,10 +573,18 @@ class GameplayHandshakeFilterTest {
             .header("X-Proxy-Tenant-Id", "1")
             .header(GameplayHandshakeFilter.WORLD_SLUG_HEADER, "demo")
             .header(GameplayHandshakeFilter.REALM_SLUG_HEADER, "production")
+            .header(GameplayHandshakeFilter.POINTER_VERSION_HEADER, "17")
             .build();
 
     MockServerWebExchange exchange = MockServerWebExchange.from(request);
-    ServerWebExchange trustedExchange = filterThroughChain(headerTrustFilter, exchange);
+    AtomicBoolean headerTrustDelegated = new AtomicBoolean();
+    ServerWebExchange trustedExchange =
+        filterThroughChain(headerTrustFilter, exchange, headerTrustDelegated);
+    assertThat(headerTrustDelegated)
+        .as("HeaderTrustFilter must delegate before GameplayHandshakeFilter rejects the bundle")
+        .isTrue();
+    trustedExchange =
+        withRequestHeader(trustedExchange, GameplayHandshakeFilter.POINTER_VERSION_HEADER, null);
     filter.filter(trustedExchange, e -> Mono.empty()).block();
 
     assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
@@ -605,11 +614,18 @@ class GameplayHandshakeFilterTest {
             .header("X-Proxy-Tenant-Id", "1")
             .header(GameplayHandshakeFilter.WORLD_SLUG_HEADER, "demo")
             .header(GameplayHandshakeFilter.REALM_SLUG_HEADER, "production")
-            .header(GameplayHandshakeFilter.POINTER_VERSION_HEADER, "v17")
+            .header(GameplayHandshakeFilter.POINTER_VERSION_HEADER, "17")
             .build();
 
     MockServerWebExchange exchange = MockServerWebExchange.from(request);
-    ServerWebExchange trustedExchange = filterThroughChain(headerTrustFilter, exchange);
+    AtomicBoolean headerTrustDelegated = new AtomicBoolean();
+    ServerWebExchange trustedExchange =
+        filterThroughChain(headerTrustFilter, exchange, headerTrustDelegated);
+    assertThat(headerTrustDelegated)
+        .as("HeaderTrustFilter must delegate before GameplayHandshakeFilter rejects the bundle")
+        .isTrue();
+    trustedExchange =
+        withRequestHeader(trustedExchange, GameplayHandshakeFilter.POINTER_VERSION_HEADER, "v17");
     filter.filter(trustedExchange, e -> Mono.empty()).block();
 
     assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
@@ -637,13 +653,20 @@ class GameplayHandshakeFilterTest {
             .header("X-Proxy-Connection-Id", "conn-123")
             .header("X-Proxy-Game-Instance-Id", "42")
             .header("X-Proxy-Tenant-Id", "1")
-            .header(GameplayHandshakeFilter.WORLD_SLUG_HEADER, " ")
+            .header(GameplayHandshakeFilter.WORLD_SLUG_HEADER, "demo")
             .header(GameplayHandshakeFilter.REALM_SLUG_HEADER, "production")
             .header(GameplayHandshakeFilter.POINTER_VERSION_HEADER, "17")
             .build();
 
     MockServerWebExchange exchange = MockServerWebExchange.from(request);
-    ServerWebExchange trustedExchange = filterThroughChain(headerTrustFilter, exchange);
+    AtomicBoolean headerTrustDelegated = new AtomicBoolean();
+    ServerWebExchange trustedExchange =
+        filterThroughChain(headerTrustFilter, exchange, headerTrustDelegated);
+    assertThat(headerTrustDelegated)
+        .as("HeaderTrustFilter must delegate before GameplayHandshakeFilter rejects the bundle")
+        .isTrue();
+    trustedExchange =
+        withRequestHeader(trustedExchange, GameplayHandshakeFilter.WORLD_SLUG_HEADER, " ");
     filter.filter(trustedExchange, e -> Mono.empty()).block();
 
     assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
@@ -859,13 +882,35 @@ class GameplayHandshakeFilterTest {
   }
 
   private ServerWebExchange filterThroughChain(WebFilter filter, ServerWebExchange exchange) {
+    return filterThroughChain(filter, exchange, new AtomicBoolean());
+  }
+
+  private ServerWebExchange filterThroughChain(
+      WebFilter filter, ServerWebExchange exchange, AtomicBoolean delegated) {
     ServerWebExchange[] holder = new ServerWebExchange[1];
     WebFilterChain chain =
         e -> {
+          delegated.set(true);
           holder[0] = e;
           return Mono.empty();
         };
     filter.filter(exchange, chain).block();
     return holder[0] == null ? exchange : holder[0];
+  }
+
+  private ServerWebExchange withRequestHeader(
+      ServerWebExchange exchange, String headerName, String headerValue) {
+    return exchange
+        .mutate()
+        .request(
+            request ->
+                request.headers(
+                    headers -> {
+                      headers.remove(headerName);
+                      if (headerValue != null) {
+                        headers.set(headerName, headerValue);
+                      }
+                    }))
+        .build();
   }
 }

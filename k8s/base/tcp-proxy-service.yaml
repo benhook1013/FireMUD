@@ -114,7 +114,7 @@ spec:
             secretName: firemud-grpc-tls
         - name: gateway-ws-client-tls
           secret:
-            secretName: firemud-tcp-proxy-bridge
+            secretName: production-tcp-proxy-bridge
             items:
               - key: tls.crt
                 path: tls.crt

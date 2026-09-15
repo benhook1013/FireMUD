@@ -70,6 +70,40 @@ helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
   --namespace pr-123 \
   >"$RENDERED"
 
+python3 - "$ROOT_DIR/k8s/base/gameplay-bridge-network-policy.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+documents = [
+    document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+policy = next(
+    document
+    for document in documents
+    if document.get("kind") == "NetworkPolicy"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service-egress"
+)
+elasticsearch_rules = [
+    rule
+    for rule in policy["spec"]["egress"]
+    if rule.get("to")
+    == [{"podSelector": {"matchLabels": {"app": "elasticsearch"}}}]
+]
+expected_rule = {
+    "to": [{"podSelector": {"matchLabels": {"app": "elasticsearch"}}}],
+    "ports": [{"protocol": "TCP", "port": 9200}],
+}
+if elasticsearch_rules != [expected_rule]:
+    raise SystemExit(
+        "Kustomize TCP Proxy policy must contain exactly one narrow Elasticsearch TCP/9200 rule: "
+        f"{elasticsearch_rules}"
+    )
+PY
+
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   python3 "$ROOT_DIR/dev-tools/deploy/preflight.py" hosted-bridge \
     "$RENDERED" pr-123 pr-123 >"$TMP_DIR/no-flag-preflight.json"

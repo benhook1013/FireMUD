@@ -44,7 +44,7 @@ spec:
             - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_CLIENT_CA_PATH
               value: /gateway-ws-server-tls/ca.crt
             - name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT
-              value: staging
+              value: production
             - name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE
               value: production_uri
             - name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN
@@ -128,7 +128,7 @@ spec:
             secretName: firemud-grpc-tls
         - name: gateway-ws-server-tls
           secret:
-            secretName: firemud-gateway-internal-ws
+            secretName: production-gateway-internal-ws
             items:
               - key: tls.crt
                 path: tls.crt

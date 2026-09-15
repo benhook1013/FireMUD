@@ -55,6 +55,7 @@ public final class HttpTestSupport {
   /** Waits until a Spring Boot readiness endpoint reports UP or the timeout expires. */
   public static void awaitReadiness(String url, Duration timeout) throws InterruptedException {
     long deadline = System.nanoTime() + timeout.toNanos();
+    IOException lastIOException = null;
     while (true) {
       long remainingNanos = deadline - System.nanoTime();
       if (remainingNanos <= 0) {
@@ -64,8 +65,9 @@ public final class HttpTestSupport {
         if (isReady(getBody(url, Duration.ofNanos(Math.max(1, remainingNanos))))) {
           return;
         }
-      } catch (IOException ignored) {
+      } catch (IOException ex) {
         // The server may not be listening yet.
+        lastIOException = ex;
       } catch (InterruptedException ex) {
         Thread.currentThread().interrupt();
         throw ex;
@@ -85,7 +87,11 @@ public final class HttpTestSupport {
         throw ex;
       }
     }
-    throw new AssertionError("Timed out waiting for HTTP readiness at " + url);
+    AssertionError failure = new AssertionError("Timed out waiting for HTTP readiness at " + url);
+    if (lastIOException != null) {
+      failure.initCause(lastIOException);
+    }
+    throw failure;
   }
 
   private static boolean isReady(String body) {
