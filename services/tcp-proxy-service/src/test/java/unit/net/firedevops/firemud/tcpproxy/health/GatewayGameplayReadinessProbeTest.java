@@ -208,10 +208,10 @@ class GatewayGameplayReadinessProbeTest {
       verify(client, timeout(2000).atLeast(3)).isReadyAsync();
       awaitReadiness(probe, false);
 
-      assertEquals(
-          1, logs.count(Level.WARN, "Gateway readiness poll failed to start; reporting unready"));
-      assertEquals(
-          1, logs.count(Level.DEBUG, "Gateway readiness poll failed to start; reporting unready"));
+      logs.awaitCount(
+          Level.WARN, "Gateway readiness poll failed to start; reporting unready", 1);
+      logs.awaitCount(
+          Level.DEBUG, "Gateway readiness poll failed to start; reporting unready", 1);
     }
   }
 
@@ -273,8 +273,8 @@ class GatewayGameplayReadinessProbeTest {
       verify(client, timeout(2000).atLeast(3)).isReadyAsync();
       awaitReadiness(probe, false);
 
-      assertEquals(1, logs.count(Level.WARN, "Gateway readiness poll failed; reporting unready"));
-      assertEquals(1, logs.count(Level.DEBUG, "Gateway readiness poll failed; reporting unready"));
+      logs.awaitCount(Level.WARN, "Gateway readiness poll failed; reporting unready", 1);
+      logs.awaitCount(Level.DEBUG, "Gateway readiness poll failed; reporting unready", 1);
     }
   }
 
@@ -411,6 +411,14 @@ class GatewayGameplayReadinessProbeTest {
           .filter(event -> event.getLevel().equals(level))
           .filter(event -> event.getFormattedMessage().equals(message))
           .count();
+    }
+
+    private void awaitCount(Level level, String message, long expected) throws Exception {
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+      while (count(level, message) != expected && System.nanoTime() < deadline) {
+        Thread.sleep(5);
+      }
+      assertEquals(expected, count(level, message));
     }
 
     @Override

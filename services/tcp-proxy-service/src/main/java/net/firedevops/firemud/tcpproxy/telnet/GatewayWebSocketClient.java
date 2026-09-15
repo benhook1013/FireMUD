@@ -352,7 +352,9 @@ public final class GatewayWebSocketClient implements AutoCloseable {
   }
 
   void installGenerationForTest(HttpClient client) {
+    ClientState previous = state;
     state = ClientState.available(newGeneration(Objects.requireNonNull(client)));
+    retire(previous);
   }
 
   int generationCount() {

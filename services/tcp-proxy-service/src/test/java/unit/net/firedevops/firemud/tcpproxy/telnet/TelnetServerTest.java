@@ -115,6 +115,28 @@ class TelnetServerTest {
   }
 
   @Test
+  void missingGatewayWebSocketClientFailsBeforeGatewayAccess() {
+    NullPointerException ex =
+        assertThrows(
+            NullPointerException.class,
+            () ->
+                new TelnetServer(
+                    0,
+                    false,
+                    "",
+                    "",
+                    false,
+                    0,
+                    0,
+                    4096,
+                    new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
+                    Mockito.mock(TcpProxyEventService.class),
+                    readyProbe(),
+                    null));
+    assertEquals("gatewayWebSocketClient", ex.getMessage());
+  }
+
+  @Test
   void invalidConfiguredDefaultsFailBeforeAcceptingSessions() {
     String invalid = "safe\r\ninjected";
     for (int index = 0; index < 6; index++) {

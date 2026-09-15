@@ -102,6 +102,8 @@ public final class TelnetServer {
       GatewayGameplayReadinessProbe gatewayGameplayReadinessProbe,
       GatewayWebSocketClient gatewayWebSocketClient,
       RuntimeIdentity runtimeIdentity) {
+    GatewayWebSocketClient requiredGatewayWebSocketClient =
+        Objects.requireNonNull(gatewayWebSocketClient, "gatewayWebSocketClient");
     this.port = port;
     this.boundPort = port;
     this.tlsEnabled = tlsEnabled;
@@ -143,8 +145,9 @@ public final class TelnetServer {
     this.eventService = eventService;
     this.gameplayTrafficReady = gatewayGameplayReadinessProbe::isReady;
     this.gatewayWsUrl =
-        Objects.requireNonNull(gatewayWebSocketClient.gatewayUri(), "gatewayUri").toString();
-    this.webSocketConnector = gatewayWebSocketClient::connect;
+        Objects.requireNonNull(requiredGatewayWebSocketClient.gatewayUri(), "gatewayUri")
+            .toString();
+    this.webSocketConnector = requiredGatewayWebSocketClient::connect;
     this.runtimeIdentity = runtimeIdentity;
     Gauge.builder(
             "tcpproxy.connections.active",

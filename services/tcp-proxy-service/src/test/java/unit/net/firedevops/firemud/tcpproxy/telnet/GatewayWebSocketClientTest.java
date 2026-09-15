@@ -279,11 +279,13 @@ class GatewayWebSocketClientTest {
   void cancelledReadinessDoesNotRecordFailureButHandshakeErrorDoes() throws Exception {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     GatewayWebSocketClient client = newClient("localhost", 8443, caCertificate, registry);
+    HttpClient initialClient = (HttpClient) client.clientIdentity();
     HttpClient replacementClient = mock(HttpClient.class);
     CompletableFuture<HttpResponse<Void>> cancelledResponse = new CompletableFuture<>();
     when(replacementClient.sendAsync(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
         .thenReturn(cancelledResponse);
     client.installGenerationForTest(replacementClient);
+    awaitTermination(initialClient);
 
     CompletableFuture<Boolean> cancelledReadiness = client.isReadyAsync();
     assertTrue(cancelledReadiness.cancel(true));
