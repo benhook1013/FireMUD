@@ -270,6 +270,30 @@ if len(enabled_gateway_listener_rules) != 1 or enabled_gateway_listener_rules[0]
         "enabled Gateway TLS did not use the configured Gateway TLS targetPort for ingress: "
         f"{enabled_gateway_listener_rules}"
     )
+enabled_gateway_ingress = enabled["spring-cloud-gateway-ingress"]["spec"]["ingress"]
+enabled_traefik_rule = next(
+    rule
+    for rule in enabled_gateway_ingress
+    if rule.get("from")
+    == [
+        {
+            "namespaceSelector": {
+                "matchLabels": {"kubernetes.io/metadata.name": "kube-system"}
+            },
+            "podSelector": {"matchLabels": {"app.kubernetes.io/name": "traefik"}},
+        }
+    ]
+)
+enabled_general_rule = next(
+    rule for rule in enabled_gateway_ingress if rule.get("from") == [{"podSelector": {}}]
+)
+if enabled_traefik_rule.get("ports") != [{"protocol": "TCP", "port": 8080}] or enabled_general_rule.get(
+    "ports"
+) != [{"protocol": "TCP", "port": 8080}, {"protocol": "TCP", "port": 6565}]:
+    raise SystemExit(
+        "enabled Gateway TLS did not use the configured Gateway HTTP targetPort for ingress: "
+        f"{[enabled_traefik_rule, enabled_general_rule]}"
+    )
 
 disabled_destinations = proxy_egress_destinations(
     disabled["tcp-proxy-service-egress"]
@@ -369,6 +393,59 @@ if len(gateway_rules) != 1 or gateway_rules[0].get("ports") != [
     )
 PY
 
+TLS_GATEWAY_TARGET_PORT_RENDERED="$TMP_DIR/tls-gateway-target-port.yaml"
+helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/plaintext-gateway-target-port-values.yaml" \
+  --set previewStack.gatewayWsTls.enabled=true \
+  --show-only templates/network-policies.yaml \
+  --namespace pr-123 >"$TLS_GATEWAY_TARGET_PORT_RENDERED"
+python3 - "$TLS_GATEWAY_TARGET_PORT_RENDERED" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+documents = {
+    document["metadata"]["name"]: document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict) and document.get("kind") == "NetworkPolicy"
+}
+gateway_policy = documents["spring-cloud-gateway-ingress"]
+listener_rule = next(
+    rule
+    for rule in gateway_policy["spec"]["ingress"]
+    if rule.get("from")
+    == [{"podSelector": {"matchLabels": {"app": "tcp-proxy-service"}}}]
+)
+if listener_rule.get("ports") != [{"protocol": "TCP", "port": 8443}]:
+    raise SystemExit(f"enabled Gateway TLS changed the TCP Proxy WSS target port: {listener_rule}")
+http_rules = [rule for rule in gateway_policy["spec"]["ingress"] if rule.get("from") in [
+    [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
+      "podSelector": {"matchLabels": {"app.kubernetes.io/name": "traefik"}}}],
+    [{"podSelector": {}}],
+]]
+if len(http_rules) != 2 or any(
+    rule.get("ports") != expected_ports
+    for rule, expected_ports in zip(
+        http_rules,
+        [
+            [{"protocol": "TCP", "port": 8181}],
+            [{"protocol": "TCP", "port": 8181}, {"protocol": "TCP", "port": 6565}],
+        ],
+    )
+):
+    raise SystemExit(f"enabled Gateway TLS did not use the configured HTTP target port: {http_rules}")
+proxy_policy = documents["tcp-proxy-service-egress"]
+proxy_rule = next(
+    rule
+    for rule in proxy_policy["spec"]["egress"]
+    if rule.get("to")
+    == [{"podSelector": {"matchLabels": {"app": "spring-cloud-gateway"}}}]
+)
+if proxy_rule.get("ports") != [{"protocol": "TCP", "port": 8443}]:
+    raise SystemExit(f"enabled Gateway TLS changed the TCP Proxy WSS egress target port: {proxy_rule}")
+PY
+
 for gateway_listener_collision in health http grpc; do
   COLLISION_VALUES="$TMP_DIR/gateway-ws-tls-$gateway_listener_collision-collision-values.yaml"
   python3 - "$TMP_DIR/preview-values.yaml" "$COLLISION_VALUES" "$gateway_listener_collision" <<'PY'
@@ -417,7 +494,8 @@ PY
   fi
 done
 
-for invalid_gateway_ports in missing duplicate; do
+for gateway_ws_tls_enabled in false true; do
+  for invalid_gateway_ports in missing duplicate; do
   INVALID_GATEWAY_PORTS_VALUES="$TMP_DIR/plaintext-gateway-$invalid_gateway_ports-values.yaml"
   python3 - "$TMP_DIR/preview-values.yaml" "$INVALID_GATEWAY_PORTS_VALUES" "$invalid_gateway_ports" <<'PY'
 import sys
@@ -443,19 +521,20 @@ output_path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8"
 PY
   if helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
     -f "$INVALID_GATEWAY_PORTS_VALUES" \
-    --set previewStack.gatewayWsTls.enabled=false \
+    --set previewStack.gatewayWsTls.enabled="$gateway_ws_tls_enabled" \
     --show-only templates/network-policies.yaml \
-    --namespace pr-123 >/dev/null 2>"$TMP_DIR/plaintext-gateway-$invalid_gateway_ports.err"; then
-    echo "disabled Gateway TLS rendered with $invalid_gateway_ports port-80 Gateway service configuration" >&2
+    --namespace pr-123 >/dev/null 2>"$TMP_DIR/gateway-$gateway_ws_tls_enabled-$invalid_gateway_ports.err"; then
+    echo "Gateway WebSocket TLS=$gateway_ws_tls_enabled rendered with $invalid_gateway_ports port-80 Gateway service configuration" >&2
     exit 1
   fi
   if ! grep -Fq \
-    "previewStack.services.spring-cloud-gateway must declare exactly one port: 80 for plaintext Gateway egress" \
-    "$TMP_DIR/plaintext-gateway-$invalid_gateway_ports.err"; then
+    "previewStack.services.spring-cloud-gateway must declare exactly one port: 80 for Gateway HTTP ingress" \
+    "$TMP_DIR/gateway-$gateway_ws_tls_enabled-$invalid_gateway_ports.err"; then
     echo "chart did not reject $invalid_gateway_ports port-80 Gateway service configuration" >&2
-    sed -n '1,20p' "$TMP_DIR/plaintext-gateway-$invalid_gateway_ports.err" >&2
+    sed -n '1,20p' "$TMP_DIR/gateway-$gateway_ws_tls_enabled-$invalid_gateway_ports.err" >&2
     exit 1
-  fi
+    fi
+  done
 done
 
 MISSING_GATEWAY_TARGET_PORT_VALUES="$TMP_DIR/plaintext-gateway-missing-target-port-values.yaml"
@@ -485,10 +564,25 @@ if helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
   exit 1
 fi
 if ! grep -Fq \
-  "previewStack.services.spring-cloud-gateway port: 80 must declare a targetPort for plaintext Gateway egress" \
+  "previewStack.services.spring-cloud-gateway port: 80 must declare a targetPort for Gateway HTTP ingress" \
   "$TMP_DIR/plaintext-gateway-missing-target-port.err"; then
   echo "chart did not reject a missing Gateway service targetPort" >&2
   sed -n '1,20p' "$TMP_DIR/plaintext-gateway-missing-target-port.err" >&2
+  exit 1
+fi
+if helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$MISSING_GATEWAY_TARGET_PORT_VALUES" \
+  --set previewStack.gatewayWsTls.enabled=true \
+  --show-only templates/network-policies.yaml \
+  --namespace pr-123 >/dev/null 2>"$TMP_DIR/tls-gateway-missing-target-port.err"; then
+  echo "enabled Gateway TLS rendered without the Gateway service targetPort" >&2
+  exit 1
+fi
+if ! grep -Fq \
+  "previewStack.services.spring-cloud-gateway port: 80 must declare a targetPort for Gateway HTTP ingress" \
+  "$TMP_DIR/tls-gateway-missing-target-port.err"; then
+  echo "chart did not reject a missing Gateway service targetPort with TLS enabled" >&2
+  sed -n '1,20p' "$TMP_DIR/tls-gateway-missing-target-port.err" >&2
   exit 1
 fi
 

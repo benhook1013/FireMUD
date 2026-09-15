@@ -61,8 +61,17 @@ public class TlsCertificateWatcher implements AutoCloseable {
     this.requiredDirectories = requiredDirectories(this.files);
     this.onChange = onChange;
     this.watchService = FileSystems.getDefault().newWatchService();
-    for (Path directory : requiredDirectories) {
-      keys.put(registerDirectory(directory), directory);
+    try {
+      for (Path directory : requiredDirectories) {
+        keys.put(registerDirectory(directory), directory);
+      }
+    } catch (IOException | RuntimeException e) {
+      try {
+        watchService.close();
+      } catch (IOException closeFailure) {
+        e.addSuppressed(closeFailure);
+      }
+      throw e;
     }
     allRequiredRegistrationsValid.set(allRequiredDirectoriesRegistered());
     thread = new Thread(this::processEvents, "tls-cert-watcher");

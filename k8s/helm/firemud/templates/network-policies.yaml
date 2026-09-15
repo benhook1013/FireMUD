@@ -178,17 +178,16 @@ spec:
           port: 9000
 {{- $gatewayWsTls := .Values.previewStack.gatewayWsTls | default (dict) }}
 {{- $gatewayWsTlsTargetPort := "" }}
-{{- $gatewayPlaintextTargetPort := "" }}
+{{- $gatewayHttpTargetPort := "" }}
 {{- $gatewayServiceCount := 0 }}
-{{- $gatewayPlaintextServicePortCount := 0 }}
-{{- if not $gatewayWsTls.enabled }}
+{{- $gatewayHttpServicePortCount := 0 }}
 {{- range $service := .Values.previewStack.services }}
 {{- if eq $service.name "spring-cloud-gateway" }}
 {{- $gatewayServiceCount = add1 $gatewayServiceCount }}
 {{- range $port := $service.ports }}
 {{- if eq (toString $port.port) "80" }}
-{{- $gatewayPlaintextServicePortCount = add1 $gatewayPlaintextServicePortCount }}
-{{- $gatewayPlaintextTargetPort = required "previewStack.services.spring-cloud-gateway port: 80 must declare a targetPort for plaintext Gateway egress" $port.targetPort }}
+{{- $gatewayHttpServicePortCount = add1 $gatewayHttpServicePortCount }}
+{{- $gatewayHttpTargetPort = required "previewStack.services.spring-cloud-gateway port: 80 must declare a targetPort for Gateway HTTP ingress" $port.targetPort }}
 {{- end }}
 {{- end }}
 {{- end }}
@@ -196,9 +195,8 @@ spec:
 {{- if ne $gatewayServiceCount 1 }}
 {{- fail "previewStack.services must include exactly one spring-cloud-gateway for Gateway egress NetworkPolicy" }}
 {{- end }}
-{{- if ne $gatewayPlaintextServicePortCount 1 }}
-{{- fail "previewStack.services.spring-cloud-gateway must declare exactly one port: 80 for plaintext Gateway egress" }}
-{{- end }}
+{{- if ne $gatewayHttpServicePortCount 1 }}
+{{- fail "previewStack.services.spring-cloud-gateway must declare exactly one port: 80 for Gateway HTTP ingress" }}
 {{- end }}
 {{- if $gatewayWsTls.enabled }}
 {{- $gatewayWsTlsTargetPort = required "previewStack.gatewayWsTls.targetPort is required when Gateway WebSocket TLS is enabled" $gatewayWsTls.targetPort }}
@@ -223,7 +221,7 @@ spec:
               app: tcp-proxy-service
       ports:
         - protocol: TCP
-          port: {{ if $gatewayWsTls.enabled }}{{ $gatewayWsTlsTargetPort }}{{ else }}{{ $gatewayPlaintextTargetPort }}{{ end }}
+          port: {{ if $gatewayWsTls.enabled }}{{ $gatewayWsTlsTargetPort }}{{ else }}{{ $gatewayHttpTargetPort }}{{ end }}
     - from:
         - namespaceSelector:
             matchLabels:
@@ -233,12 +231,12 @@ spec:
               app.kubernetes.io/name: traefik
       ports:
         - protocol: TCP
-          port: 8080
+          port: {{ $gatewayHttpTargetPort }}
     - from:
         - podSelector: {}
       ports:
         - protocol: TCP
-          port: 8080
+          port: {{ $gatewayHttpTargetPort }}
         - protocol: TCP
           port: 6565
 ---
@@ -282,7 +280,7 @@ spec:
               app: spring-cloud-gateway
       ports:
         - protocol: TCP
-          port: {{ $gatewayPlaintextTargetPort }}
+          port: {{ $gatewayHttpTargetPort }}
     {{- end }}
     - to:
         - podSelector:

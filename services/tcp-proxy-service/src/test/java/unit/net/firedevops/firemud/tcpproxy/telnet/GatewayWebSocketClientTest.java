@@ -1481,15 +1481,6 @@ class GatewayWebSocketClientTest {
     assertEquals(expected, client.generationCount());
   }
 
-  private static void awaitCertificateWatcherStopped(GatewayWebSocketClient client)
-      throws Exception {
-    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-    while (client.isCertificateWatcherRunning() && System.nanoTime() < deadline) {
-      Thread.sleep(10);
-    }
-    assertFalse(client.isCertificateWatcherRunning());
-  }
-
   private static void awaitCertificateWatcherUnhealthy(GatewayWebSocketClient client)
       throws Exception {
     long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);

@@ -101,15 +101,28 @@ class TelnetRoutingBundleTest {
 
   @Test
   void configuredDefaultsRejectControlOnlyHeaderValues() {
-    for (String controlOnly : new String[] {"\t", "\r", "\n"}) {
-      assertThrows(
-          IllegalArgumentException.class,
-          () ->
-              TelnetRoutingBundle.validateConfiguredDefaults(controlOnly, null, null, null, null));
-      assertThrows(
-          IllegalArgumentException.class,
-          () ->
-              TelnetRoutingBundle.validateConfiguredDefaults(null, null, controlOnly, null, null));
+    String[] controlOnlyValues = {"\t", "\r", "\n"};
+    String[] headers = {
+      "X-Game-Instance-Id", "X-Tenant-Id", "X-World-Slug", "X-Realm-Slug", "X-Pointer-Version"
+    };
+    for (String controlOnly : controlOnlyValues) {
+      for (int headerIndex = 0; headerIndex < headers.length; headerIndex++) {
+        String[] configuredValues = new String[headers.length];
+        configuredValues[headerIndex] = controlOnly;
+        IllegalArgumentException exception =
+            assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                    TelnetRoutingBundle.validateConfiguredDefaults(
+                        configuredValues[0],
+                        configuredValues[1],
+                        configuredValues[2],
+                        configuredValues[3],
+                        configuredValues[4]));
+        assertEquals(
+            "Header value for " + headers[headerIndex] + " contains a disallowed character",
+            exception.getMessage());
+      }
     }
   }
 
