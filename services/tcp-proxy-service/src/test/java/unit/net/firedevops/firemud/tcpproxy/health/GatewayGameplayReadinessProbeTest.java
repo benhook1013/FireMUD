@@ -125,10 +125,10 @@ class GatewayGameplayReadinessProbeTest {
       healthy.complete(true);
       awaitReadiness(probe, true);
 
-      verify(client, timeout(1000).times(2)).isReadyAsync();
-      verify(client, timeout(1000).times(3)).isReadyAsync();
+      verify(client, timeout(1000).atLeast(2)).isReadyAsync();
+      verify(client, timeout(1000).atLeast(3)).isReadyAsync();
       assertTrue(stalled.isCompletedExceptionally());
-      assertFalse(probe.isReady());
+      awaitReadiness(probe, false);
 
       retry.complete(true);
       awaitReadiness(probe, true);

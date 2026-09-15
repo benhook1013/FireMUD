@@ -125,6 +125,48 @@ class TlsCertificateWatcherTest {
   }
 
   @Test
+  void failedWatchKeyResetReregistersRecreatedDirectory(@TempDir Path directory) throws Exception {
+    Path watchedDirectory = Files.createDirectory(directory.resolve("certificate"));
+    Path certificate = Files.writeString(watchedDirectory.resolve("tls.crt"), "certificate-1");
+    CountDownLatch reloaded = new CountDownLatch(1);
+
+    try (TlsCertificateWatcher watcher =
+        new TlsCertificateWatcher(List.of(certificate), reloaded::countDown)) {
+      Files.writeString(certificate, "certificate-2");
+      Files.delete(certificate);
+      Files.delete(watchedDirectory);
+      Files.createDirectory(watchedDirectory);
+      Files.writeString(certificate, "certificate-3");
+      watcher.start();
+
+      assertTrue(reloaded.await(5, TimeUnit.SECONDS));
+      assertTrue(watcher.isRunning());
+      assertTrue(watcher.hasAllRequiredRegistrations());
+    }
+  }
+
+  @Test
+  void failedWatchKeyResetWhenDirectoryIsGoneRemainsFailClosed(@TempDir Path directory)
+      throws Exception {
+    Path watchedDirectory = Files.createDirectory(directory.resolve("certificate"));
+    Path certificate = Files.writeString(watchedDirectory.resolve("tls.crt"), "certificate-1");
+    WatcherCounts baseline = watcherCounts(TlsCertificateWatcher.health());
+
+    TlsCertificateWatcher watcher =
+        TlsCertificateWatcher.createAndStart(List.of(certificate), () -> {});
+    try {
+      Files.delete(certificate);
+      Files.delete(watchedDirectory);
+      awaitStopped(watcher);
+      assertFalse(watcher.hasAllRequiredRegistrations());
+      assertHealthDelta(baseline, 1, 0, 1, TlsCertificateWatcher.health());
+    } finally {
+      watcher.close();
+    }
+    assertHealthDelta(baseline, 0, 0, 0, TlsCertificateWatcher.health());
+  }
+
+  @Test
   void callbackFailureDoesNotStopWatching(@TempDir Path directory) throws Exception {
     Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
     Path privateKey = Files.writeString(directory.resolve("tls.key"), "key-1");

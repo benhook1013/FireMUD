@@ -31,6 +31,13 @@ def load_validator():
 
 
 VALIDATOR = load_validator()
+TRUSTED_CHART_METADATA = ROOT / "k8s/helm/firemud/Chart.yaml"
+TRUSTED_CHART = yaml.safe_load(
+    TRUSTED_CHART_METADATA.read_text(encoding="utf-8")
+)
+EXPECTED_HELM_CHART_LABEL = (
+    f"{TRUSTED_CHART['name']}-{TRUSTED_CHART['version']}".replace("+", "_")
+)
 
 
 class PreviewArtifactSecretReferenceTest(unittest.TestCase):
@@ -661,7 +668,7 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
             "labels": {
                 "app.kubernetes.io/name": "firemud",
                 "app.kubernetes.io/managed-by": "Helm",
-                "helm.sh/chart": "firemud-0.1.0",
+                "helm.sh/chart": EXPECTED_HELM_CHART_LABEL,
                 "app.kubernetes.io/instance": "pr-42",
                 "firemud.dev/certificate-identity-mode": "hosted-controller",
             },
@@ -714,7 +721,7 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
         expected_labels = {
             "app.kubernetes.io/name": "firemud",
             "app.kubernetes.io/managed-by": "Helm",
-            "helm.sh/chart": "firemud-0.1.0",
+            "helm.sh/chart": EXPECTED_HELM_CHART_LABEL,
             "app.kubernetes.io/instance": "pr-42",
             "firemud.dev/certificate-identity-mode": "hosted-controller",
         }

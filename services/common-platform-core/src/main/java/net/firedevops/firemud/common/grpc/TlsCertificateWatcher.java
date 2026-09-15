@@ -11,6 +11,7 @@ import java.nio.file.WatchKey;
 import java.nio.file.WatchService;
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,6 +37,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
 
   private final WatchService watchService;
   private final Map<WatchKey, Path> keys = new HashMap<>();
+  private final Set<Path> requiredDirectories;
   private final Set<Path> files;
   private final Runnable onChange;
   private final AtomicBoolean running = new AtomicBoolean(true);
@@ -55,23 +57,39 @@ public class TlsCertificateWatcher implements AutoCloseable {
       justification = "Thread started only via start() after constructor")
   public TlsCertificateWatcher(List<Path> files, Runnable onChange) throws IOException {
     this.files = Set.copyOf(files.stream().map(path -> path.toAbsolutePath().normalize()).toList());
+    this.requiredDirectories = requiredDirectories(this.files);
     this.onChange = onChange;
     this.watchService = FileSystems.getDefault().newWatchService();
-    for (Path file : this.files) {
-      Path dir = file.getParent();
-      if (dir == null) {
-        throw new IOException("File path has no parent: " + file);
-      }
-      WatchKey key =
-          dir.register(
-              watchService,
-              StandardWatchEventKinds.ENTRY_MODIFY,
-              StandardWatchEventKinds.ENTRY_CREATE,
-              StandardWatchEventKinds.ENTRY_DELETE);
-      keys.put(key, dir);
+    for (Path directory : requiredDirectories) {
+      keys.put(registerDirectory(directory), directory);
     }
+    allRequiredRegistrationsValid.set(allRequiredDirectoriesRegistered());
     thread = new Thread(this::processEvents, "tls-cert-watcher");
     thread.setDaemon(true);
+  }
+
+  private static Set<Path> requiredDirectories(Set<Path> files) throws IOException {
+    Set<Path> directories = new HashSet<>();
+    for (Path file : files) {
+      Path directory = file.getParent();
+      if (directory == null) {
+        throw new IOException("File path has no parent: " + file);
+      }
+      directories.add(directory);
+    }
+    return Set.copyOf(directories);
+  }
+
+  private WatchKey registerDirectory(Path directory) throws IOException {
+    return directory.register(
+        watchService,
+        StandardWatchEventKinds.ENTRY_MODIFY,
+        StandardWatchEventKinds.ENTRY_CREATE,
+        StandardWatchEventKinds.ENTRY_DELETE);
+  }
+
+  private boolean allRequiredDirectoriesRegistered() {
+    return keys.values().containsAll(requiredDirectories);
   }
 
   public void start() {
@@ -138,8 +156,15 @@ public class TlsCertificateWatcher implements AutoCloseable {
     }
     if (!key.reset()) {
       keys.remove(key);
-      allRequiredRegistrationsValid.set(false);
+      if (dir != null) {
+        try {
+          keys.put(registerDirectory(dir), dir);
+        } catch (IOException | RuntimeException e) {
+          logger.error("TLS certificate watcher failed to re-register directory {}", dir, e);
+        }
+      }
     }
+    allRequiredRegistrationsValid.set(allRequiredDirectoriesRegistered());
     return changed;
   }
 
