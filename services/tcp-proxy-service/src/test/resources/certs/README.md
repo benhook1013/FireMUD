@@ -63,10 +63,9 @@ DNS.5 = game-design-service
 DNS.6 = game-logic-service
 DNS.7 = game-session-service
 DNS.8 = logging-admin-service
-DNS.9 = social-groups-service
-DNS.10 = spring-cloud-gateway
-DNS.11 = tcp-proxy-service
-DNS.12 = world-management-service
+DNS.9 = spring-cloud-gateway
+DNS.10 = tcp-proxy-service
+DNS.11 = world-management-service
 IP.1 = 127.0.0.1
 ```
 
