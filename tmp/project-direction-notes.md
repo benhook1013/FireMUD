@@ -117,3 +117,7 @@ CLI run evidence is shared under the Git common directory `.git/coderabbit-revie
 ## Process incident — stale Hosted conclusion after publication (2026-09-14)
 
 Gameplay published #2750 at head `2980fd5` but retained a stale Hosted-blocked conclusion for over two hours because its low-frequency Luna watcher was between checks and the orchestrator did not perform an immediate post-publication checker read. For the next process-document bundle, publishing a stable candidate invalidates cached Hosted eligibility: immediately read current checker state and, if allowed, request Hosted through the canonical wrapper. A sentinel watches only an established active or cooldown transition and must not delay the initial post-publication eligibility decision.
+
+## Process incident — Hosted waiter lacked wake-capable sentinel (2026-09-15 20:02 NZST)
+
+During #2713 work, Gameplay left the canonical shell waiter armed but omitted the visible Luna sentinel required to notify the main task when Hosted completed or entered cooldown. Ben detected the lapse. Gameplay correctly identified that the shell waiter retained durable review-state responsibility but did not provide the expected task wake signal, and reported spawning the missing Luna sentinel. Treat this as another execution recurrence of the existing watcher rule, not a new design requirement; verify that future Hosted waits have one trigger-specific wake-capable sentinel when the main lane is continuing other work.
