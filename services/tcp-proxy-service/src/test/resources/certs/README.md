@@ -9,9 +9,9 @@ These fixtures exercise Gateway WebSocket client-certificate rotation independen
 - `rotated-gateway-client.crt` is the client leaf signed by that CA.
 - `rotated-gateway-client.key` is the matching leaf private key.
 
-The checked-in CA and leaf expire at `2027-09-15 06:22:09 UTC`. Regenerate the complete set together before the more-than-30-day validity test begins failing at `2027-08-16 06:22:09 UTC`. The generic `dev-tools/certs/generate-dev-certs.sh` workflow does not own these rotated fixture filenames.
+The checked-in CA and leaf expire at `2036-09-12 15:22:19 UTC`. Regenerate the complete set together before the more-than-30-day validity test begins failing at `2036-08-13 15:22:19 UTC`. The generic `dev-tools/certs/generate-dev-certs.sh` workflow does not own these rotated fixture filenames.
 
-From the repository root, use OpenSSL to create a new one-year fixture set:
+From the repository root, use OpenSSL to create a new ten-year fixture set:
 
 Run all shell code blocks in this regeneration procedure in the same interactive shell so that `work_dir` and the `EXIT` trap remain available across blocks.
 
@@ -75,7 +75,7 @@ IP.1 = 127.0.0.1
 Generate the CA, request, and signed leaf:
 
 ```bash
-openssl req -x509 -new -nodes -key "$work_dir/ca.key" -sha256 -days 365 \
+openssl req -x509 -new -nodes -key "$work_dir/ca.key" -sha256 -days 3650 \
   -config "$work_dir/ca.cnf" \
   -out "$work_dir/rotated-gateway-client-ca.crt"
 openssl req -new -key "$work_dir/rotated-gateway-client.key" \
@@ -85,7 +85,7 @@ openssl x509 -req -in "$work_dir/rotated-gateway-client.csr" \
   -CA "$work_dir/rotated-gateway-client-ca.crt" \
   -CAkey "$work_dir/ca.key" \
   -CAserial "$work_dir/rotated-gateway-client-ca.srl" -CAcreateserial \
-  -out "$work_dir/rotated-gateway-client.crt" -days 365 -sha256 \
+  -out "$work_dir/rotated-gateway-client.crt" -days 3650 -sha256 \
   -extensions v3_req -extfile "$work_dir/client.cnf"
 ```
 
