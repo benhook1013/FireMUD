@@ -799,6 +799,80 @@ if telnet_port.get("nodePort") != 30001:
     )
 PY
 
+STANDALONE_GATEWAY_WS_CERT_RENDERED="$TMP_DIR/standalone-gateway-ws-certificates.yaml"
+helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/standalone-nodeport-values.yaml" \
+  --show-only templates/gateway-ws-certificates.yaml \
+  --namespace pr-123 >"$STANDALONE_GATEWAY_WS_CERT_RENDERED"
+python3 - "$STANDALONE_GATEWAY_WS_CERT_RENDERED" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+documents = [
+    document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+certificates = {
+    document["metadata"]["name"]: document
+    for document in documents
+    if document.get("apiVersion") == "cert-manager.io/v1"
+    and document.get("kind") == "Certificate"
+}
+expected_names = {"pr-123-gateway-internal-ws", "pr-123-tcp-proxy-bridge"}
+if set(certificates) != expected_names:
+    raise SystemExit(
+        "standalone mode must render exactly the two chart-owned Gateway bridge Certificates: "
+        f"{set(certificates)!r}"
+    )
+
+common_private_key = {
+    "algorithm": "RSA",
+    "size": 2048,
+    "encoding": "PKCS8",
+    "rotationPolicy": "Always",
+}
+common_issuer_ref = {
+    "name": "firemud-ca-issuer",
+    "kind": "ClusterIssuer",
+    "group": "cert-manager.io",
+}
+for name, certificate in certificates.items():
+    spec = certificate["spec"]
+    if spec.get("secretName") != name:
+        raise SystemExit(f"standalone Certificate {name} must write its exact named Secret")
+    if spec.get("privateKey") != common_private_key:
+        raise SystemExit(f"standalone Certificate {name} has the wrong private-key contract")
+    if spec.get("isCA") is not False or spec.get("revisionHistoryLimit") != 1:
+        raise SystemExit(f"standalone Certificate {name} has the wrong CA/history contract")
+    if spec.get("encodeUsagesInRequest") is not True:
+        raise SystemExit(f"standalone Certificate {name} must encode usages in its request")
+    if spec.get("issuerRef") != common_issuer_ref:
+        raise SystemExit(f"standalone Certificate {name} has the wrong internal ClusterIssuer")
+
+server = certificates["pr-123-gateway-internal-ws"]["spec"]
+if server.get("dnsNames") != ["spring-cloud-gateway-mtls.pr-123.svc.cluster.local"]:
+    raise SystemExit("standalone Gateway server Certificate must use the exact namespace DNS SAN")
+if "uris" in server or server.get("usages") != [
+    "digital signature",
+    "key encipherment",
+    "server auth",
+]:
+    raise SystemExit("standalone Gateway server Certificate has the wrong identity usages")
+
+client = certificates["pr-123-tcp-proxy-bridge"]["spec"]
+if client.get("uris") != ["spiffe://firemud/ns/pr-123/sa/tcp-proxy-service"]:
+    raise SystemExit("standalone bridge client Certificate must use the exact SPIFFE URI SAN")
+if "dnsNames" in client or client.get("usages") != [
+    "digital signature",
+    "key encipherment",
+    "client auth",
+]:
+    raise SystemExit("standalone bridge client Certificate has the wrong identity usages")
+PY
+
 DEV_RENDERED="$TMP_DIR/dev-rendered.yaml"
 render_test_values \
   "$TMP_DIR/dev-values.yaml" \
@@ -871,6 +945,69 @@ if any(document.get("kind") == "Certificate" for document in documents):
         "enabled hosted-controller mode rendered a chart-owned Telnet TLS Certificate"
     )
 PY
+
+HOSTED_CONTROLLER_GATEWAY_WS_CERT_RENDERED="$TMP_DIR/hosted-controller-gateway-ws-certificates.yaml"
+helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/preview-values.yaml" \
+  --set previewStack.certificateIdentity.mode=hosted-controller \
+  --namespace pr-123 >"$HOSTED_CONTROLLER_GATEWAY_WS_CERT_RENDERED"
+python3 - "$HOSTED_CONTROLLER_GATEWAY_WS_CERT_RENDERED" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+documents = [
+    document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+if any(
+    document.get("apiVersion") == "cert-manager.io/v1"
+    and document.get("kind") == "Certificate"
+    and document.get("metadata", {}).get("name")
+    in {"pr-123-gateway-internal-ws", "pr-123-tcp-proxy-bridge"}
+    for document in documents
+):
+    raise SystemExit(
+        "enabled hosted-controller mode rendered chart-owned Gateway bridge Certificates"
+    )
+PY
+
+for gateway_ws_certificate_disabled_case in preview bridge; do
+  DISABLED_GATEWAY_WS_CERT_RENDERED="$TMP_DIR/disabled-$gateway_ws_certificate_disabled_case-gateway-ws-certificates.yaml"
+  if [[ "$gateway_ws_certificate_disabled_case" == "preview" ]]; then
+    DISABLED_GATEWAY_WS_CERT_ARGS=(--set previewStack.enabled=false)
+  else
+    DISABLED_GATEWAY_WS_CERT_ARGS=(--set previewStack.gatewayWsTls.enabled=false)
+  fi
+  helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+    -f "$TMP_DIR/standalone-nodeport-values.yaml" \
+    "${DISABLED_GATEWAY_WS_CERT_ARGS[@]}" \
+    --namespace pr-123 >"$DISABLED_GATEWAY_WS_CERT_RENDERED"
+  python3 - "$DISABLED_GATEWAY_WS_CERT_RENDERED" "$gateway_ws_certificate_disabled_case" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+documents = [
+    document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+if any(
+    document.get("apiVersion") == "cert-manager.io/v1"
+    and document.get("kind") == "Certificate"
+    and document.get("metadata", {}).get("name")
+    in {"pr-123-gateway-internal-ws", "pr-123-tcp-proxy-bridge"}
+    for document in documents
+):
+    raise SystemExit(
+        f"disabled {sys.argv[2]} mode rendered chart-owned Gateway bridge Certificates"
+    )
+PY
+done
 
 OVERRIDE_RENDERED="$TMP_DIR/trust-environment-override.yaml"
 helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
