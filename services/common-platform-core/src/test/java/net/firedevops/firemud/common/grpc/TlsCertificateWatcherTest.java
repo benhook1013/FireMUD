@@ -389,6 +389,46 @@ class TlsCertificateWatcherTest {
   }
 
   @Test
+  void closeFromReloadRetryDoesNotAwaitOrInterruptRetryThread(@TempDir Path directory)
+      throws Exception {
+    Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
+    CountDownLatch firstAttempt = new CountDownLatch(1);
+    CountDownLatch retryClosed = new CountDownLatch(1);
+    AtomicBoolean retryWasInterrupted = new AtomicBoolean();
+    AtomicReference<Throwable> closeFailure = new AtomicReference<>();
+    AtomicReference<TlsCertificateWatcher> watcherReference = new AtomicReference<>();
+
+    TlsCertificateWatcher watcher =
+        TlsCertificateWatcher.createAndStart(
+            List.of(certificate),
+            () -> {
+              if (firstAttempt.getCount() > 0) {
+                firstAttempt.countDown();
+                throw new IllegalStateException("simulated reload failure");
+              }
+              try {
+                watcherReference.get().close();
+                retryWasInterrupted.set(Thread.currentThread().isInterrupted());
+              } catch (Throwable failure) {
+                closeFailure.set(failure);
+              } finally {
+                retryClosed.countDown();
+              }
+            });
+    watcherReference.set(watcher);
+    try {
+      Files.writeString(certificate, "certificate-2");
+      assertTrue(firstAttempt.await(5, TimeUnit.SECONDS));
+      assertTrue(retryClosed.await(5, TimeUnit.SECONDS));
+      assertFalse(retryWasInterrupted.get());
+      assertNull(closeFailure.get());
+      assertFalse(watcher.isRunning());
+    } finally {
+      watcher.close();
+    }
+  }
+
+  @Test
   void failedCallbackRetryIsCancelledWhenWatcherCloses(@TempDir Path directory) throws Exception {
     Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
     AtomicInteger attempts = new AtomicInteger();

@@ -22,6 +22,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 import net.firedevops.firemud.common.LoggingUtil;
 import org.slf4j.Logger;
@@ -56,6 +57,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
   private final AtomicBoolean reloadCallbackHealthy = new AtomicBoolean(true);
   private final AtomicBoolean started = new AtomicBoolean();
   private final ScheduledExecutorService retryExecutor;
+  private final AtomicReference<Thread> retryExecutorThread = new AtomicReference<>();
   private final ReentrantLock callbackMonitor = new ReentrantLock();
   private final Object callbackStateMonitor = new Object();
   private final Object retryMonitor = new Object();
@@ -98,7 +100,15 @@ public class TlsCertificateWatcher implements AutoCloseable {
     allRequiredRegistrationsValid.set(allRequiredDirectoriesRegistered());
     retryExecutor =
         Executors.newSingleThreadScheduledExecutor(
-            Thread.ofPlatform().daemon(true).name("tls-cert-reload-retry", 0).factory());
+            runnable -> {
+              Thread retryThread =
+                  Thread.ofPlatform()
+                      .daemon(true)
+                      .name("tls-cert-reload-retry")
+                      .unstarted(runnable);
+              retryExecutorThread.set(retryThread);
+              return retryThread;
+            });
     thread = new Thread(this::processEvents, "tls-cert-watcher");
     thread.setDaemon(true);
   }
@@ -545,9 +555,11 @@ public class TlsCertificateWatcher implements AutoCloseable {
     }
 
     retryExecutor.shutdown();
-    if (!awaitRetryExecutorTermination(SHUTDOWN_GRACE_PERIOD)) {
-      retryExecutor.shutdownNow();
-      awaitRetryExecutorTermination(SHUTDOWN_FORCE_PERIOD);
+    if (retryExecutorThread.get() != Thread.currentThread()) {
+      if (!awaitRetryExecutorTermination(SHUTDOWN_GRACE_PERIOD)) {
+        retryExecutor.shutdownNow();
+        awaitRetryExecutorTermination(SHUTDOWN_FORCE_PERIOD);
+      }
     }
 
     if (closeFailure != null) {

@@ -649,13 +649,13 @@ class TelnetServerHandlerTest {
     ChannelFuture closeFuture = mock(ChannelFuture.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
-    when(ctx.channel()).thenReturn(channel);
-    when(ctx.executor()).thenReturn(executor);
-    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
-    when(ctx.writeAndFlush(any())).thenReturn(closeFuture);
-    when(closeFuture.addListener(any(ChannelFutureListener.class))).thenReturn(closeFuture);
-
     try {
+      when(ctx.channel()).thenReturn(channel);
+      when(ctx.executor()).thenReturn(executor);
+      when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+      when(ctx.writeAndFlush(any())).thenReturn(closeFuture);
+      when(closeFuture.addListener(any(ChannelFutureListener.class))).thenReturn(closeFuture);
+
       handler.channelActive(ctx);
       handler.channelRead0(ctx, "LOOK");
 
