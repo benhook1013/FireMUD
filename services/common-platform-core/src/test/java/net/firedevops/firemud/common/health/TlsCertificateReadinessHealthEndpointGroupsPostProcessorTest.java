@@ -60,7 +60,10 @@ class TlsCertificateReadinessHealthEndpointGroupsPostProcessorTest {
     assertSame(custom, processed.get("custom"));
     HealthEndpointGroup processedReadiness = processed.get("readiness");
     assertNotNull(processedReadiness);
-    assertTrue(processedReadiness.isMember("tlsCertificateReload"));
+    assertTrue(
+        processedReadiness.isMember(
+            TlsCertificateReadinessHealthEndpointGroupsPostProcessor
+                .TLS_CERTIFICATE_RELOAD_CONTRIBUTOR));
     assertTrue(processedReadiness.isMember("existingContributor"));
     assertTrue(processedReadiness.showComponents(securityContext));
     assertFalse(processedReadiness.showDetails(securityContext));

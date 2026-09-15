@@ -158,8 +158,14 @@ public class CommonCoreAutoConfiguration {
     return new ReadinessTransitionTracker(meterRegistry);
   }
 
-  @Bean
-  @ConditionalOnMissingBean(name = "tlsCertificateReloadHealthIndicator")
+  @Bean(
+      name =
+          TlsCertificateReadinessHealthEndpointGroupsPostProcessor
+              .TLS_CERTIFICATE_RELOAD_CONTRIBUTOR)
+  @ConditionalOnMissingBean(
+      name =
+          TlsCertificateReadinessHealthEndpointGroupsPostProcessor
+              .TLS_CERTIFICATE_RELOAD_CONTRIBUTOR)
   public HealthIndicator tlsCertificateReloadHealthIndicator() {
     return TlsCertificateWatcher::health;
   }

@@ -16,7 +16,7 @@ public final class TlsCertificateReadinessHealthEndpointGroupsPostProcessor
     implements HealthEndpointGroupsPostProcessor {
 
   static final String READINESS_GROUP = "readiness";
-  static final String TLS_CERTIFICATE_RELOAD_CONTRIBUTOR = "tlsCertificateReload";
+  public static final String TLS_CERTIFICATE_RELOAD_CONTRIBUTOR = "tlsCertificateReload";
 
   @Override
   public HealthEndpointGroups postProcessHealthEndpointGroups(HealthEndpointGroups groups) {

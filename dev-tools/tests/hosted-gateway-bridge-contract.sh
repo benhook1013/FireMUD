@@ -458,6 +458,40 @@ PY
   fi
 done
 
+MISSING_GATEWAY_TARGET_PORT_VALUES="$TMP_DIR/plaintext-gateway-missing-target-port-values.yaml"
+python3 - "$TMP_DIR/preview-values.yaml" "$MISSING_GATEWAY_TARGET_PORT_VALUES" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+source_path, output_path = map(Path, sys.argv[1:])
+values = yaml.safe_load(source_path.read_text(encoding="utf-8"))
+gateway = next(
+    service
+    for service in values["previewStack"]["services"]
+    if service["name"] == "spring-cloud-gateway"
+)
+gateway_port = next(port for port in gateway["ports"] if str(port["port"]) == "80")
+gateway_port.pop("targetPort", None)
+output_path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+if helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$MISSING_GATEWAY_TARGET_PORT_VALUES" \
+  --set previewStack.gatewayWsTls.enabled=false \
+  --show-only templates/network-policies.yaml \
+  --namespace pr-123 >/dev/null 2>"$TMP_DIR/plaintext-gateway-missing-target-port.err"; then
+  echo "disabled Gateway TLS rendered without the Gateway service targetPort" >&2
+  exit 1
+fi
+if ! grep -Fq \
+  "previewStack.services.spring-cloud-gateway port: 80 must declare a targetPort for plaintext Gateway egress" \
+  "$TMP_DIR/plaintext-gateway-missing-target-port.err"; then
+  echo "chart did not reject a missing Gateway service targetPort" >&2
+  sed -n '1,20p' "$TMP_DIR/plaintext-gateway-missing-target-port.err" >&2
+  exit 1
+fi
+
 for gateway_ws_mount_service in spring-cloud-gateway tcp-proxy-service; do
   for gateway_ws_mount_state in missing false; do
     GATEWAY_WS_MOUNT_VALUES="$TMP_DIR/gateway-ws-$gateway_ws_mount_service-$gateway_ws_mount_state-values.yaml"

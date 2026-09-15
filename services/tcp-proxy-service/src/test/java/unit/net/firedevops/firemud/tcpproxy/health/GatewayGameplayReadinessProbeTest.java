@@ -64,12 +64,27 @@ class GatewayGameplayReadinessProbeTest {
   }
 
   @Test
+  void constructionDoesNotPollUntilExplicitIdempotentStart() throws Exception {
+    GatewayWebSocketClient client = mock(GatewayWebSocketClient.class);
+    when(client.isReadyAsync()).thenReturn(CompletableFuture.completedFuture(false));
+    try (GatewayGameplayReadinessProbe probe =
+        new GatewayGameplayReadinessProbe(client, Duration.ofHours(1))) {
+      verifyNoInteractions(client);
+
+      probe.start();
+      verify(client, timeout(1000)).isReadyAsync();
+
+      probe.start();
+      verify(client, after(50).times(1)).isReadyAsync();
+    }
+  }
+
+  @Test
   void startsFailClosedWhilePollingImmediately() throws Exception {
     GatewayWebSocketClient client = mock(GatewayWebSocketClient.class);
     CompletableFuture<Boolean> pending = new CompletableFuture<>();
     when(client.isReadyAsync()).thenReturn(pending);
-    try (GatewayGameplayReadinessProbe probe =
-        new GatewayGameplayReadinessProbe(client, Duration.ofHours(1))) {
+    try (GatewayGameplayReadinessProbe probe = startedProbe(client, Duration.ofHours(1))) {
       verify(client, timeout(1000)).isReadyAsync();
       assertFalse(probe.isReady());
       pending.complete(true);
@@ -85,8 +100,7 @@ class GatewayGameplayReadinessProbeTest {
     CompletableFuture<Boolean> pending = new CompletableFuture<>();
     when(client.isReadyAsync()).thenReturn(pending);
     when(client.readinessUri()).thenReturn(readinessUri);
-    try (GatewayGameplayReadinessProbe probe =
-        new GatewayGameplayReadinessProbe(client, Duration.ofMillis(10))) {
+    try (GatewayGameplayReadinessProbe probe = startedProbe(client, Duration.ofMillis(10))) {
       verify(client, timeout(1000)).isReadyAsync();
       assertFalse(probe.isReady());
       verify(client, after(50).times(1)).isReadyAsync();
@@ -106,7 +120,7 @@ class GatewayGameplayReadinessProbeTest {
     CompletableFuture<Boolean> retry = new CompletableFuture<>();
     when(client.isReadyAsync()).thenReturn(healthy, stalled, retry);
     try (GatewayGameplayReadinessProbe probe =
-        new GatewayGameplayReadinessProbe(client, Duration.ofMillis(5), Duration.ofMillis(25))) {
+        startedProbe(client, Duration.ofMillis(5), Duration.ofMillis(25))) {
       verify(client, timeout(1000)).isReadyAsync();
       healthy.complete(true);
       awaitReadiness(probe, true);
@@ -127,8 +141,7 @@ class GatewayGameplayReadinessProbeTest {
     CompletableFuture<Boolean> healthy = new CompletableFuture<>();
     CompletableFuture<Boolean> unhealthy = new CompletableFuture<>();
     when(client.isReadyAsync()).thenReturn(healthy, unhealthy);
-    try (GatewayGameplayReadinessProbe probe =
-        new GatewayGameplayReadinessProbe(client, Duration.ofMillis(10))) {
+    try (GatewayGameplayReadinessProbe probe = startedProbe(client, Duration.ofMillis(10))) {
       verify(client, timeout(1000)).isReadyAsync();
       healthy.complete(true);
       awaitReadiness(probe, true);
@@ -147,8 +160,7 @@ class GatewayGameplayReadinessProbeTest {
         .thenReturn(healthy)
         .thenThrow(new AssertionError("synchronous failure"))
         .thenReturn(retry);
-    try (GatewayGameplayReadinessProbe probe =
-        new GatewayGameplayReadinessProbe(client, Duration.ofMillis(100))) {
+    try (GatewayGameplayReadinessProbe probe = startedProbe(client, Duration.ofMillis(100))) {
       verify(client, timeout(1000)).isReadyAsync();
       healthy.complete(true);
       awaitReadiness(probe, true);
@@ -171,8 +183,7 @@ class GatewayGameplayReadinessProbeTest {
         .thenThrow(new IllegalStateException("repeated synchronous failure"))
         .thenReturn(pending);
     try (ReadinessLogCapture logs = new ReadinessLogCapture();
-        GatewayGameplayReadinessProbe probe =
-            new GatewayGameplayReadinessProbe(client, Duration.ofMillis(25))) {
+        GatewayGameplayReadinessProbe probe = startedProbe(client, Duration.ofMillis(25))) {
       verify(client, timeout(1000)).isReadyAsync();
       healthy.complete(true);
       awaitReadiness(probe, true);
@@ -193,8 +204,7 @@ class GatewayGameplayReadinessProbeTest {
     CompletableFuture<Boolean> healthy = new CompletableFuture<>();
     CompletableFuture<Boolean> retry = new CompletableFuture<>();
     when(client.isReadyAsync()).thenReturn(healthy).thenReturn(null).thenReturn(retry);
-    try (GatewayGameplayReadinessProbe probe =
-        new GatewayGameplayReadinessProbe(client, Duration.ofMillis(100))) {
+    try (GatewayGameplayReadinessProbe probe = startedProbe(client, Duration.ofMillis(100))) {
       verify(client, timeout(1000)).isReadyAsync();
       healthy.complete(true);
       awaitReadiness(probe, true);
@@ -219,8 +229,7 @@ class GatewayGameplayReadinessProbeTest {
           }
         };
     when(client.isReadyAsync()).thenReturn(throwingFuture, retry);
-    try (GatewayGameplayReadinessProbe probe =
-        new GatewayGameplayReadinessProbe(client, Duration.ofMillis(100))) {
+    try (GatewayGameplayReadinessProbe probe = startedProbe(client, Duration.ofMillis(100))) {
       verify(client, timeout(1000)).isReadyAsync();
       assertFalse(probe.isReady());
 
@@ -239,8 +248,7 @@ class GatewayGameplayReadinessProbeTest {
     CompletableFuture<Boolean> pending = new CompletableFuture<>();
     when(client.isReadyAsync()).thenReturn(healthy, firstFailure, repeatedFailure, pending);
     try (ReadinessLogCapture logs = new ReadinessLogCapture();
-        GatewayGameplayReadinessProbe probe =
-            new GatewayGameplayReadinessProbe(client, Duration.ofMillis(25))) {
+        GatewayGameplayReadinessProbe probe = startedProbe(client, Duration.ofMillis(25))) {
       verify(client, timeout(1000)).isReadyAsync();
       healthy.complete(true);
       awaitReadiness(probe, true);
@@ -276,8 +284,7 @@ class GatewayGameplayReadinessProbeTest {
           }
         };
     when(client.isReadyAsync()).thenReturn(throwingFuture);
-    try (GatewayGameplayReadinessProbe probe =
-        new GatewayGameplayReadinessProbe(client, Duration.ofHours(1))) {
+    try (GatewayGameplayReadinessProbe probe = startedProbe(client, Duration.ofHours(1))) {
       verify(client, timeout(1000)).isReadyAsync();
       assertEquals(1, cancellationAttempts.get());
       assertFalse(probe.isReady());
@@ -293,8 +300,7 @@ class GatewayGameplayReadinessProbeTest {
     GatewayWebSocketClient client = mock(GatewayWebSocketClient.class);
     CompletableFuture<Boolean> pending = new CompletableFuture<>();
     when(client.isReadyAsync()).thenReturn(pending);
-    GatewayGameplayReadinessProbe probe =
-        new GatewayGameplayReadinessProbe(client, Duration.ofMillis(10));
+    GatewayGameplayReadinessProbe probe = startedProbe(client, Duration.ofMillis(10));
     verify(client, timeout(1000)).isReadyAsync();
 
     probe.close();
@@ -315,8 +321,7 @@ class GatewayGameplayReadinessProbeTest {
           }
         };
     when(client.isReadyAsync()).thenReturn(pending);
-    GatewayGameplayReadinessProbe probe =
-        new GatewayGameplayReadinessProbe(client, Duration.ofMillis(10));
+    GatewayGameplayReadinessProbe probe = startedProbe(client, Duration.ofMillis(10));
     verify(client, timeout(1000)).isReadyAsync();
 
     try {
@@ -335,6 +340,21 @@ class GatewayGameplayReadinessProbeTest {
       Thread.sleep(5);
     }
     assertEquals(expected, probe.isReady());
+  }
+
+  private static GatewayGameplayReadinessProbe startedProbe(
+      GatewayWebSocketClient client, Duration pollInterval) {
+    GatewayGameplayReadinessProbe probe = new GatewayGameplayReadinessProbe(client, pollInterval);
+    probe.start();
+    return probe;
+  }
+
+  private static GatewayGameplayReadinessProbe startedProbe(
+      GatewayWebSocketClient client, Duration pollInterval, Duration requestTimeout) {
+    GatewayGameplayReadinessProbe probe =
+        new GatewayGameplayReadinessProbe(client, pollInterval, requestTimeout);
+    probe.start();
+    return probe;
   }
 
   private static CompletableFuture<Boolean> callbackRegistrationFailure() {

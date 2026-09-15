@@ -15,6 +15,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -59,13 +60,14 @@ class HttpTestSupportTest {
 
   @Test
   @Timeout(5)
-  void readinessRequestIsBoundByRemainingDeadline() throws Exception {
-    CountDownLatch requestStarted = new CountDownLatch(1);
+  void readinessProbeTimeoutPreservesRetriesWithinOverallDeadline() throws Exception {
+    CountDownLatch requestStarted = new CountDownLatch(2);
     CountDownLatch releaseRequest = new CountDownLatch(1);
-    CountDownLatch requestFinished = new CountDownLatch(1);
+    CountDownLatch requestFinished = new CountDownLatch(2);
+    AtomicInteger requestCount = new AtomicInteger();
     try (TestHttpServer server =
-        TestHttpServer.hanging(requestStarted, releaseRequest, requestFinished)) {
-      Duration timeout = Duration.ofMillis(300);
+        TestHttpServer.hanging(requestStarted, releaseRequest, requestFinished, requestCount)) {
+      Duration timeout = Duration.ofMillis(2_200);
       long startedAt = System.nanoTime();
       Throwable failure;
       try {
@@ -75,10 +77,11 @@ class HttpTestSupportTest {
       }
       long elapsedMillis = (System.nanoTime() - startedAt) / 1_000_000;
 
+      assertThat(requestStarted.await(1, TimeUnit.SECONDS)).isTrue();
       assertThat(failure)
           .isInstanceOf(AssertionError.class)
           .hasMessageContaining("Timed out waiting for HTTP readiness");
-      assertThat(requestStarted.await(1, TimeUnit.SECONDS)).isTrue();
+      assertThat(requestCount.get()).isGreaterThanOrEqualTo(2);
       assertThat(requestFinished.await(1, TimeUnit.SECONDS)).isTrue();
       assertThat(elapsedMillis).isLessThan(timeout.toMillis() + 1_000);
     }
@@ -107,7 +110,7 @@ class HttpTestSupportTest {
       server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
       server.createContext("/actuator/health/readiness", handler);
       executor =
-          Executors.newSingleThreadExecutor(
+          Executors.newCachedThreadPool(
               runnable -> {
                 Thread thread = new Thread(runnable, "http-test-support-test-server");
                 thread.setDaemon(true);
@@ -131,10 +134,12 @@ class HttpTestSupportTest {
     private static TestHttpServer hanging(
         CountDownLatch requestStarted,
         CountDownLatch releaseRequest,
-        CountDownLatch requestFinished)
+        CountDownLatch requestFinished,
+        AtomicInteger requestCount)
         throws IOException {
       return new TestHttpServer(
           exchange -> {
+            requestCount.incrementAndGet();
             requestStarted.countDown();
             try {
               releaseRequest.await();

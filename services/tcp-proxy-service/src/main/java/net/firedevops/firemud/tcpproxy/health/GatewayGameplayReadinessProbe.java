@@ -1,5 +1,6 @@
 package net.firedevops.firemud.tcpproxy.health;
 
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.net.URI;
 import java.time.Duration;
@@ -27,7 +28,11 @@ public final class GatewayGameplayReadinessProbe implements AutoCloseable {
   private final GatewayWebSocketClient gatewayWebSocketClient;
   private final PollState pollState;
   private final ScheduledExecutorService pollExecutor;
-  private final ScheduledFuture<?> pollingTask;
+  private final long pollIntervalNanos;
+  private final Object lifecycleMonitor = new Object();
+  private ScheduledFuture<?> pollingTask;
+  private boolean started;
+  private boolean closed;
 
   @Autowired
   public GatewayGameplayReadinessProbe(GatewayWebSocketClient gatewayWebSocketClient) {
@@ -48,7 +53,7 @@ public final class GatewayGameplayReadinessProbe implements AutoCloseable {
     if (pollInterval.isZero() || pollInterval.isNegative()) {
       throw new IllegalArgumentException("pollInterval must be positive");
     }
-    long pollIntervalNanos = pollInterval.toNanos();
+    pollIntervalNanos = pollInterval.toNanos();
     if (requestTimeout.isZero() || requestTimeout.isNegative()) {
       throw new IllegalArgumentException("requestTimeout must be positive");
     }
@@ -57,21 +62,32 @@ public final class GatewayGameplayReadinessProbe implements AutoCloseable {
     pollExecutor =
         Executors.newSingleThreadScheduledExecutor(
             Thread.ofPlatform().daemon(true).name("gateway-readiness-poll", 0).factory());
-    pollingTask =
-        pollExecutor.scheduleWithFixedDelay(
-            () -> {
-              try {
-                pollState.refresh();
-              } catch (Throwable error) {
-                logRefreshFailure(
-                    pollState.markUnreadyAfterRefreshFailure(),
-                    "Gateway readiness poll failed; reporting unready",
-                    error);
-              }
-            },
-            0L,
-            pollIntervalNanos,
-            TimeUnit.NANOSECONDS);
+  }
+
+  /** Starts readiness polling after the probe has been fully constructed. */
+  @PostConstruct
+  void start() {
+    synchronized (lifecycleMonitor) {
+      if (started || closed) {
+        return;
+      }
+      pollingTask =
+          pollExecutor.scheduleWithFixedDelay(
+              () -> {
+                try {
+                  pollState.refresh();
+                } catch (Throwable error) {
+                  logRefreshFailure(
+                      pollState.markUnreadyAfterRefreshFailure(),
+                      "Gateway readiness poll failed; reporting unready",
+                      error);
+                }
+              },
+              0L,
+              pollIntervalNanos,
+              TimeUnit.NANOSECONDS);
+      started = true;
+    }
   }
 
   public boolean isReady() {
@@ -85,8 +101,19 @@ public final class GatewayGameplayReadinessProbe implements AutoCloseable {
   @Override
   @PreDestroy
   public void close() {
+    ScheduledFuture<?> task;
+    synchronized (lifecycleMonitor) {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      task = pollingTask;
+      pollingTask = null;
+    }
     pollState.close();
-    pollingTask.cancel(true);
+    if (task != null) {
+      task.cancel(true);
+    }
     pollExecutor.shutdownNow();
   }
 

@@ -179,7 +179,6 @@ spec:
 {{- $gatewayWsTls := .Values.previewStack.gatewayWsTls | default (dict) }}
 {{- $gatewayWsTlsTargetPort := "" }}
 {{- $gatewayPlaintextTargetPort := "" }}
-{{- $gatewayPlaintextTargetPortSet := false }}
 {{- $gatewayServiceCount := 0 }}
 {{- $gatewayPlaintextServicePortCount := 0 }}
 {{- if not $gatewayWsTls.enabled }}
@@ -189,6 +188,7 @@ spec:
 {{- range $port := $service.ports }}
 {{- if eq (toString $port.port) "80" }}
 {{- $gatewayPlaintextServicePortCount = add1 $gatewayPlaintextServicePortCount }}
+{{- $gatewayPlaintextTargetPort = required "previewStack.services.spring-cloud-gateway port: 80 must declare a targetPort for plaintext Gateway egress" $port.targetPort }}
 {{- end }}
 {{- end }}
 {{- end }}
@@ -198,19 +198,6 @@ spec:
 {{- end }}
 {{- if ne $gatewayPlaintextServicePortCount 1 }}
 {{- fail "previewStack.services.spring-cloud-gateway must declare exactly one port: 80 for plaintext Gateway egress" }}
-{{- end }}
-{{- range $service := .Values.previewStack.services }}
-{{- if eq $service.name "spring-cloud-gateway" }}
-{{- range $port := $service.ports }}
-{{- if eq (toString $port.port) "80" }}
-{{- $gatewayPlaintextTargetPort = required "previewStack.services.spring-cloud-gateway port: 80 must declare a targetPort for plaintext Gateway egress" $port.targetPort }}
-{{- $gatewayPlaintextTargetPortSet = true }}
-{{- end }}
-{{- end }}
-{{- end }}
-{{- end }}
-{{- if not $gatewayPlaintextTargetPortSet }}
-{{- fail "previewStack.services.spring-cloud-gateway port: 80 must declare a targetPort for plaintext Gateway egress" }}
 {{- end }}
 {{- end }}
 {{- if $gatewayWsTls.enabled }}
