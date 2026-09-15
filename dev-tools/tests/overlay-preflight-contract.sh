@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# shellcheck disable=SC2016 # Assertions intentionally match literal workflow and shell source.
+# shellcheck disable=SC2016,SC2317 # Assertions match literal source; test stubs are invoked indirectly.
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 OUTPUT_FILE="$(mktemp)"
@@ -128,10 +128,11 @@ for overlay in stage prod; do
   done < <(printf '%s\n' "$rendered_overlay" | sed -E -n 's/^[[:space:]]*(-[[:space:]]*)?image:[[:space:]]*//p' | awk '{print $1}')
 done
 
-(
+if bash -s "$VALIDATOR" <<'BASH'
   # shellcheck disable=SC1091
   # shellcheck disable=SC1090
-  source "$VALIDATOR"
+  set -e
+  source "$1"
   render_overlay() {
     printf '%s\n' \
       'images:' \
@@ -144,20 +145,29 @@ done
       return 1
     fi
     if [[ "${1:-}" = buildx && "${2:-}" = imagetools && "${3:-}" = inspect ]]; then
-      [[ "${4:-}" = ghcr.io/benhook1013/example-service@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ]]
-      return
+      if [[ "${4:-}" = ghcr.io/benhook1013/example-service@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ]]; then
+        return 0
+      fi
+      echo "unexpected docker image: ${4:-}" >&2
+      return 1
     fi
     echo "unexpected docker invocation: $*" >&2
     return 1
   }
-  check_images_exist "contract" "$REPO_ROOT/k8s/overlays/stage"
-)
+  check_images_exist "contract" "$ROOT_DIR/k8s/overlays/stage"
+BASH
+then
+  :
+else
+  echo "Digest-pinned stage overlay image validation failed unexpectedly" >&2
+  exit 1
+fi
 
-if (
+if bash -s "$VALIDATOR" >"$OUTPUT_FILE" 2>&1 <<'BASH'
   set -e
   # shellcheck disable=SC1091
   # shellcheck disable=SC1090
-  source "$VALIDATOR"
+  source "$1"
   render_overlay() {
     printf '%s\n' \
       'images:' \
@@ -171,12 +181,13 @@ if (
     fi
     if [[ "${1:-}" = buildx && "${2:-}" = imagetools && "${3:-}" = inspect ]]; then
       echo "registry inspection failed" >&2
-      exit 1
+      return 1
     fi
     return 1
   }
-  check_images_exist "contract" "$REPO_ROOT/k8s/overlays/stage"
-) >"$OUTPUT_FILE" 2>&1; then
+  check_images_exist "contract" "$ROOT_DIR/k8s/overlays/stage"
+BASH
+then
   registry_validation_status=0
 else
   registry_validation_status=$?
