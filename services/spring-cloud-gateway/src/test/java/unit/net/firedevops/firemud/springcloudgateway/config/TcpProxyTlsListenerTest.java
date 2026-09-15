@@ -274,7 +274,25 @@ class TcpProxyTlsListenerTest {
     verify(server).disposeNow(org.mockito.ArgumentMatchers.any(Duration.class));
     verify(channels).close();
     verify(closeFuture).awaitUninterruptibly(org.mockito.ArgumentMatchers.anyLong());
+    assertThat(serverField.get(listener)).isSameAs(server);
     assertThat(channelsField.get(listener)).isNull();
+  }
+
+  @Test
+  void stopClearsServerHandleAfterSuccessfulDisposal() throws Exception {
+    TcpProxyTlsListener listener =
+        new TcpProxyTlsListener(
+            tlsProperties(0), mock(TcpProxyTrustPolicy.class), mock(HttpHandler.class));
+    DisposableServer server = mock(DisposableServer.class);
+
+    Field serverField = TcpProxyTlsListener.class.getDeclaredField("server");
+    serverField.setAccessible(true);
+    serverField.set(listener, server);
+
+    listener.stop();
+
+    verify(server).disposeNow(org.mockito.ArgumentMatchers.any(Duration.class));
+    assertThat(serverField.get(listener)).isNull();
   }
 
   private static void waitForAcceptedConnection(TcpProxyTlsListener listener)

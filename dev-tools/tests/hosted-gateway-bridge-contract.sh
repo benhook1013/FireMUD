@@ -873,6 +873,53 @@ if "dnsNames" in client or client.get("usages") != [
     raise SystemExit("standalone bridge client Certificate has the wrong identity usages")
 PY
 
+OVERRIDE_GATEWAY_WS_CERT_RENDERED="$TMP_DIR/override-gateway-ws-certificates.yaml"
+helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/standalone-nodeport-values.yaml" \
+  --set-string previewStack.gatewayWsTls.clusterIssuer=custom-bridge-ca-issuer \
+  --show-only templates/gateway-ws-certificates.yaml \
+  --namespace pr-123 >"$OVERRIDE_GATEWAY_WS_CERT_RENDERED"
+python3 - "$STANDALONE_GATEWAY_WS_CERT_RENDERED" "$OVERRIDE_GATEWAY_WS_CERT_RENDERED" <<'PY'
+import copy
+import sys
+from pathlib import Path
+
+import yaml
+
+
+def certificates(path):
+    documents = [
+        document
+        for document in yaml.safe_load_all(Path(path).read_text(encoding="utf-8"))
+        if isinstance(document, dict)
+    ]
+    return {
+        document["metadata"]["name"]: document
+        for document in documents
+        if document.get("apiVersion") == "cert-manager.io/v1"
+        and document.get("kind") == "Certificate"
+    }
+
+
+default_certificates = certificates(sys.argv[1])
+override_certificates = certificates(sys.argv[2])
+if set(override_certificates) != set(default_certificates):
+    raise SystemExit("ClusterIssuer override changed the standalone Certificate set")
+for name, default_certificate in default_certificates.items():
+    expected = copy.deepcopy(default_certificate)
+    expected["spec"]["issuerRef"]["name"] = "custom-bridge-ca-issuer"
+    if override_certificates[name] != expected:
+        raise SystemExit(
+            f"ClusterIssuer override changed standalone Certificate {name} beyond issuerRef.name"
+        )
+    if override_certificates[name]["spec"]["issuerRef"] != {
+        "name": "custom-bridge-ca-issuer",
+        "kind": "ClusterIssuer",
+        "group": "cert-manager.io",
+    }:
+        raise SystemExit(f"standalone Certificate {name} lost its ClusterIssuer contract")
+PY
+
 DEV_RENDERED="$TMP_DIR/dev-rendered.yaml"
 render_test_values \
   "$TMP_DIR/dev-values.yaml" \

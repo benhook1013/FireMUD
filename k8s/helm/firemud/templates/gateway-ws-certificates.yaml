@@ -1,4 +1,5 @@
 {{- $gatewayWsTls := .Values.previewStack.gatewayWsTls | default (dict) }}
+{{- $clusterIssuer := $gatewayWsTls.clusterIssuer | default "firemud-ca-issuer" }}
 {{- $certificateIdentityMode := include "firemud.certificateIdentityMode" . | trim }}
 {{- if and .Values.previewStack.enabled $gatewayWsTls.enabled (eq $certificateIdentityMode "standalone") }}
 apiVersion: cert-manager.io/v1
@@ -24,7 +25,7 @@ spec:
     - server auth
   encodeUsagesInRequest: true
   issuerRef:
-    name: firemud-ca-issuer
+    name: {{ $clusterIssuer | quote }}
     kind: ClusterIssuer
     group: cert-manager.io
 ---
@@ -51,7 +52,7 @@ spec:
     - client auth
   encodeUsagesInRequest: true
   issuerRef:
-    name: firemud-ca-issuer
+    name: {{ $clusterIssuer | quote }}
     kind: ClusterIssuer
     group: cert-manager.io
 {{- end }}
