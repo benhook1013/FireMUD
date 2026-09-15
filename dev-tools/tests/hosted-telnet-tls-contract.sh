@@ -160,8 +160,16 @@ else:
 path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
 PY
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
-  -f "$TMP_DIR/values-configured-mode.yaml" --namespace pr-42 >"$TMP_DIR/rendered-configured-enabled.yaml"
-cp "$TMP_DIR/values-configured-mode.yaml" "$TMP_DIR/values-managed-env.yaml"
+  -f "$TMP_DIR/values-configured-mode.yaml" --namespace pr-42 >/dev/null 2>"$TMP_DIR/configured-mode.err" && {
+    echo "chart rendered with a configured TCP_PROXY_TELNET_MODE collision" >&2
+    exit 1
+  }
+if ! grep -Fq "extraEnv key TCP_PROXY_TELNET_MODE collides with the managed Telnet TLS environment" "$TMP_DIR/configured-mode.err"; then
+  echo "chart did not diagnose the configured Telnet mode collision" >&2
+  sed -n '1,20p' "$TMP_DIR/configured-mode.err" >&2
+  exit 1
+fi
+cp "$TMP_DIR/values.yaml" "$TMP_DIR/values-managed-env.yaml"
 python3 - "$TMP_DIR/values-managed-env.yaml" <<'PY'
 import sys
 from pathlib import Path
@@ -185,8 +193,33 @@ else:
     raise SystemExit("tcp-proxy-service fixture is missing")
 path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
 PY
-helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
-  -f "$TMP_DIR/values-managed-env.yaml" --namespace pr-42 >"$TMP_DIR/rendered-managed-env.yaml"
+if helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/values-managed-env.yaml" --namespace pr-42 >/dev/null 2>"$TMP_DIR/managed-env.err"; then
+  echo "chart rendered with managed Telnet TLS extraEnv collisions" >&2
+  exit 1
+fi
+if ! grep -Fq "extraEnv key TCP_PROXY_TLS_CERT collides with the managed Telnet TLS environment" "$TMP_DIR/managed-env.err"; then
+  echo "chart did not diagnose the managed Telnet TLS collision" >&2
+  sed -n '1,20p' "$TMP_DIR/managed-env.err" >&2
+  exit 1
+fi
+cp "$TMP_DIR/values.yaml" "$TMP_DIR/values-passthrough.yaml"
+python3 - "$TMP_DIR/values-passthrough.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+values = yaml.safe_load(path.read_text(encoding="utf-8"))
+for service in values["previewStack"]["services"]:
+    if service["name"] == "tcp-proxy-service":
+        service.setdefault("extraEnv", {})["TELNET_CONTRACT_PASSTHROUGH"] = "preserved"
+        break
+else:
+    raise SystemExit("tcp-proxy-service fixture is missing")
+path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values-configured-mode.yaml" \
   --set previewStack.telnetTls.enabled=false \
@@ -195,7 +228,7 @@ helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   --namespace pr-42 >"$TMP_DIR/rendered-disabled.yaml"
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values.yaml" --set-json 'previewStack.imagePullSecrets=[]' --namespace pr-42 >"$TMP_DIR/rendered-empty-pull-secrets.yaml"
-cp "$TMP_DIR/values-managed-env.yaml" "$TMP_DIR/values-spring-profile.yaml"
+cp "$TMP_DIR/values-passthrough.yaml" "$TMP_DIR/values-spring-profile.yaml"
 python3 - "$TMP_DIR/values-spring-profile.yaml" <<'PY'
 import sys
 from pathlib import Path
@@ -339,7 +372,7 @@ if ! grep -Fq "$PREVIEW_HOSTNAME_ERROR" "$TMP_DIR/missing-preview-hostname.err";
   exit 1
 fi
 
-ROOT_DIR="$ROOT_DIR" RENDERED="$TMP_DIR/rendered.yaml" CONTROLLER_RENDERED="$TMP_DIR/rendered-controller.yaml" NULL_IDENTITY_RENDERED="$TMP_DIR/rendered-null-certificate-identity.yaml" OMITTED_RENDERED="$TMP_DIR/rendered-omitted.yaml" CONFIGURED_ENABLED_RENDERED="$TMP_DIR/rendered-configured-enabled.yaml" MANAGED_ENV_RENDERED="$TMP_DIR/rendered-managed-env.yaml" DISABLED_RENDERED="$TMP_DIR/rendered-disabled.yaml" EMPTY_PULL_SECRETS_RENDERED="$TMP_DIR/rendered-empty-pull-secrets.yaml" SPRING_PROFILE_RENDERED="$TMP_DIR/rendered-spring-profile.yaml" python3 - <<'PY'
+ROOT_DIR="$ROOT_DIR" RENDERED="$TMP_DIR/rendered.yaml" CONTROLLER_RENDERED="$TMP_DIR/rendered-controller.yaml" NULL_IDENTITY_RENDERED="$TMP_DIR/rendered-null-certificate-identity.yaml" OMITTED_RENDERED="$TMP_DIR/rendered-omitted.yaml" DISABLED_RENDERED="$TMP_DIR/rendered-disabled.yaml" EMPTY_PULL_SECRETS_RENDERED="$TMP_DIR/rendered-empty-pull-secrets.yaml" SPRING_PROFILE_RENDERED="$TMP_DIR/rendered-spring-profile.yaml" python3 - <<'PY'
 import os
 import sys
 from copy import deepcopy
@@ -882,29 +915,6 @@ disabled_deployment = next(d for d in disabled_documents if d.get("kind") == "De
 disabled_env = {entry["name"]: entry.get("value") for entry in disabled_deployment["spec"]["template"]["spec"]["containers"][0].get("env", [])}
 assert "TCP_PROXY_TLS_ENABLED" not in disabled_env, "disabled TLS still renders enablement"
 assert disabled_env["TCP_PROXY_TELNET_MODE"] == "PLAINTEXT", "disabled TLS discarded the configured Telnet mode"
-configured_enabled_documents = load_yaml_mappings(
-    Path(os.environ["CONFIGURED_ENABLED_RENDERED"])
-)
-configured_enabled_deployment = next(d for d in configured_enabled_documents if d.get("kind") == "Deployment" and d["metadata"]["name"] == "tcp-proxy-service")
-configured_enabled_env = {entry["name"]: entry.get("value") for entry in configured_enabled_deployment["spec"]["template"]["spec"]["containers"][0].get("env", [])}
-assert configured_enabled_env["TCP_PROXY_TELNET_MODE"] == "DIRECT_TLS", "enabled TLS did not enforce canonical direct mode"
-managed_env_documents = load_yaml_mappings(Path(os.environ["MANAGED_ENV_RENDERED"]))
-managed_env_deployment = next(
-    d for d in managed_env_documents
-    if d.get("kind") == "Deployment" and d["metadata"]["name"] == "tcp-proxy-service"
-)
-managed_env_entries = managed_env_deployment["spec"]["template"]["spec"]["containers"][0].get("env", [])
-managed_env_names = [entry.get("name") for entry in managed_env_entries]
-for managed_name in expected_telnet_env_order:
-    assert managed_env_names.count(managed_name) == 1, (
-        f"controller-managed {managed_name} was shadowed by extraEnv"
-    )
-managed_env = {entry["name"]: entry.get("value") for entry in managed_env_entries}
-assert managed_env["TCP_PROXY_TLS_ENABLED"] == "true"
-assert managed_env["TCP_PROXY_TLS_CERT"] == "/telnet-tls/tls.crt"
-assert managed_env["TCP_PROXY_TLS_KEY"] == "/telnet-tls/tls.key"
-assert managed_env["TCP_PROXY_TELNET_MODE"] == "DIRECT_TLS"
-assert managed_env["TELNET_CONTRACT_PASSTHROUGH"] == "preserved", "unrelated extraEnv entry was filtered"
 empty_pull_secret_documents = load_yaml_mappings(
     Path(os.environ["EMPTY_PULL_SECRETS_RENDERED"])
 )

@@ -2764,7 +2764,9 @@ with tempfile.TemporaryDirectory() as directory:
             "labels": {
                 "app.kubernetes.io/name": "firemud",
                 "app.kubernetes.io/managed-by": "Helm",
-                "helm.sh/chart": "firemud-0.1.0",
+                "helm.sh/chart": validator._expected_chart_label(
+                    validator.TRUSTED_CHART_METADATA
+                ),
                 "app.kubernetes.io/instance": "pr-42",
                 "firemud.dev/certificate-identity-mode": "hosted-controller",
             },

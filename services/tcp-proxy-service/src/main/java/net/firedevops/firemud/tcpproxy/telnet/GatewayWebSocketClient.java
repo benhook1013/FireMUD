@@ -384,13 +384,25 @@ public final class GatewayWebSocketClient implements AutoCloseable {
       state = ClientState.unavailable("unknown");
       generationsToShutdown = List.copyOf(generations);
     }
-    if (watcherToClose != null) {
-      watcherToClose.close();
+    IOException closeFailure = null;
+    try {
+      if (watcherToClose != null) {
+        watcherToClose.close();
+      }
+    } catch (IOException e) {
+      closeFailure = e;
+    } finally {
+      try {
+        for (ClientGeneration generation : generationsToShutdown) {
+          generation.shutdownNow();
+        }
+      } finally {
+        shutdownExecutor(retirementExecutor, RETIREMENT_EXECUTOR_SHUTDOWN_TIMEOUT);
+      }
     }
-    for (ClientGeneration generation : generationsToShutdown) {
-      generation.shutdownNow();
+    if (closeFailure != null) {
+      throw closeFailure;
     }
-    shutdownExecutor(retirementExecutor, RETIREMENT_EXECUTOR_SHUTDOWN_TIMEOUT);
   }
 
   static void shutdownExecutor(ExecutorService executor, Duration timeout) {

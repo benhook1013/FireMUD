@@ -23,6 +23,7 @@ import io.netty.handler.ssl.JdkSslContext;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.SslProvider;
+import java.io.IOException;
 import java.net.InetAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -50,6 +51,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.net.ssl.SSLHandshakeException;
+import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
 import okhttp3.Response;
 import okhttp3.mockwebserver.Dispatcher;
 import okhttp3.mockwebserver.MockResponse;
@@ -1173,6 +1175,37 @@ class GatewayWebSocketClientTest {
     awaitTermination(initialGeneration);
     awaitTermination(currentGeneration);
     assertEquals(0, client.generationCount());
+  }
+
+  @Test
+  void watcherCloseFailureStillShutsDownClientGenerationsAndExecutor() throws Exception {
+    ExecutorService retirementExecutor = mock(ExecutorService.class);
+    GatewayWebSocketClient client =
+        new GatewayWebSocketClient(
+            "wss://localhost:8443/ws/game",
+            certificate.toString(),
+            privateKey.toString(),
+            caCertificate.toString(),
+            certificate.toString(),
+            false,
+            "",
+            new String[] {"dev"},
+            new SimpleMeterRegistry(),
+            false,
+            retirementExecutor);
+    clients.add(client);
+    HttpClient generation = (HttpClient) client.clientIdentity();
+    TlsCertificateWatcher watcher = mock(TlsCertificateWatcher.class);
+    IOException failure = new IOException("watcher close failed");
+    doThrow(failure).when(watcher).close();
+    var watcherField = GatewayWebSocketClient.class.getDeclaredField("certificateWatcher");
+    watcherField.setAccessible(true);
+    watcherField.set(client, watcher);
+
+    assertSame(failure, assertThrows(IOException.class, client::close));
+    awaitTermination(generation);
+    verify(watcher).close();
+    verify(retirementExecutor).shutdownNow();
   }
 
   @Test
