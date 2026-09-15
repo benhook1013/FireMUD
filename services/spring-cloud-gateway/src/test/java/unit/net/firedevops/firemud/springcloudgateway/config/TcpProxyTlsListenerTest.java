@@ -15,6 +15,9 @@ import java.lang.reflect.Field;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
@@ -42,8 +45,18 @@ import reactor.netty.DisposableServer;
 import reactor.netty.http.client.HttpClient;
 
 class TcpProxyTlsListenerTest {
-  private static final String FIXTURE_FINGERPRINT =
-      "d7c0609a0ded595525c734876e104ca0aa4072308c6d89fdc0e30c50f80b5c9a";
+  private static final String FIXTURE_FINGERPRINT = fixtureFingerprint();
+
+  private static String fixtureFingerprint() {
+    try (var input = TcpProxyTlsListenerTest.class.getResourceAsStream("/certs/dev-cert.pem")) {
+      X509Certificate certificate =
+          (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input);
+      byte[] digest = MessageDigest.getInstance("SHA-256").digest(certificate.getEncoded());
+      return java.util.HexFormat.of().formatHex(digest);
+    } catch (Exception ex) {
+      throw new ExceptionInInitializerError(ex);
+    }
+  }
 
   @Test
   void internalListenerRequiresClientCertificate() throws Exception {

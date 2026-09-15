@@ -36,6 +36,11 @@ production_promotion_applies_to_changes() {
   return 1
 }
 
+production_rendered_paths_changed() {
+  local changed_files="$1"
+  grep -qE '^(k8s/base|k8s/postgres|k8s/velero)(/|$)' <<<"$changed_files"
+}
+
 render_overlay() {
   local overlay="$1"
   kubectl kustomize "$overlay"
@@ -159,6 +164,13 @@ PY
       FIREMUD_PREFLIGHT_OUTPUT=/tmp/firemud-preflight-production.json \
       FIREMUD_PROMOTION_ATTESTATION="$promotion_attestation" \
       FIREMUD_BACKUP_READINESS_EVIDENCE="$backup_readiness" \
+      python3 "$ROOT_DIR/dev-tools/deploy/preflight.py" production; then
+      return 1
+    fi
+  elif [[ "${GITHUB_EVENT_NAME:-}" = "pull_request" ]] && production_rendered_paths_changed "${changed_files:-}"; then
+    if ! FIREMUD_PREFLIGHT_CONTEXT=ci-static \
+      FIREMUD_DEPLOYMENT_REF="$(git rev-parse HEAD)" \
+      FIREMUD_PREFLIGHT_OUTPUT=/tmp/firemud-preflight-production.json \
       python3 "$ROOT_DIR/dev-tools/deploy/preflight.py" production; then
       return 1
     fi

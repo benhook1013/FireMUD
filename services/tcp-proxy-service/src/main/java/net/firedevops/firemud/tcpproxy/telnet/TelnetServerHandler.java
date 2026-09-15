@@ -241,13 +241,22 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private boolean setWebSocket(WebSocket webSocket, boolean reconnected) {
+    boolean abort = false;
     synchronized (webSocketLifecycleLock) {
       if (closing) {
-        webSocket.abort();
         reconnecting = false;
-        return false;
+        abort = true;
+      } else {
+        this.webSocket.set(webSocket);
+        if (closing && this.webSocket.compareAndSet(webSocket, null)) {
+          reconnecting = false;
+          abort = true;
+        }
       }
-      this.webSocket.set(webSocket);
+    }
+    if (abort) {
+      webSocket.abort();
+      return false;
     }
     reconnecting = false;
     startHeartbeat();

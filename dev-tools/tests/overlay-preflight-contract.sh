@@ -253,7 +253,7 @@ assert_production_change_requires_attestation() {
   assert_balanced_preflight_group "Missing-attestation failure for $fixture_path"
 }
 
-assert_shared_change_skips_promotion_preflight() {
+assert_shared_rendered_path_runs_production_preflight() {
   local fixture_path="$1"
   (
     # shellcheck disable=SC1091
@@ -261,15 +261,28 @@ assert_shared_change_skips_promotion_preflight() {
     changed_files_between_base_and_head() {
       printf '%s\n' "$fixture_path"
     }
+    python3() {
+      if [[ "$#" -eq 2 && "$1" = "$REPO_ROOT/dev-tools/deploy/preflight.py" && "$2" = production \
+        && "${FIREMUD_PREFLIGHT_CONTEXT:-}" = ci-static \
+        && "${FIREMUD_DEPLOYMENT_REF:-}" = "$(git rev-parse HEAD)" \
+        && "${FIREMUD_PREFLIGHT_OUTPUT:-}" = /tmp/firemud-preflight-production.json \
+        && -z "${FIREMUD_PROMOTION_ATTESTATION:-}" \
+        && -z "${FIREMUD_BACKUP_READINESS_EVIDENCE:-}" ]]; then
+        printf 'validated shared production preflight\n'
+        return 0
+      fi
+      echo "Production preflight received incorrect arguments or environment" >&2
+      return 1
+    }
     GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop run_preflight_policy_checks
   ) >"$OUTPUT_FILE" 2>&1
 
-  grep -q "Skipping production promotion preflight" "$OUTPUT_FILE" || {
-    echo "Shared/static Kubernetes change incorrectly entered production promotion preflight: $fixture_path" >&2
+  grep -q "validated shared production preflight" "$OUTPUT_FILE" || {
+    echo "Shared/static Kubernetes change did not enter production rendered-manifest preflight: $fixture_path" >&2
     cat "$OUTPUT_FILE" >&2
     exit 1
   }
-  assert_balanced_preflight_group "Policy skip for $fixture_path"
+  assert_balanced_preflight_group "Shared rendered production preflight for $fixture_path"
 }
 
 assert_shared_change_runs_ordinary_overlay_checks() {
@@ -283,6 +296,12 @@ assert_shared_change_runs_ordinary_overlay_checks() {
     }
     changed_files_between_base_and_head() {
       printf '%s\n' "$fixture_path"
+    }
+    python3() {
+      if [[ "$#" -eq 2 && "$2" = production ]]; then
+        return 0
+      fi
+      command python3 "$@"
     }
     check_images_exist() {
       printf 'checked-images:%s:%s\n' "$1" "$2"
@@ -304,6 +323,13 @@ assert_shared_change_runs_ordinary_overlay_checks() {
     cat "$OUTPUT_FILE" >&2
     exit 1
   }
+  if [[ "$fixture_path" = k8s/overlays/stage/kustomization.yaml ]]; then
+    grep -Fqx 'Skipping production promotion preflight because no production promotion inputs are present.' "$OUTPUT_FILE" || {
+      echo "Non-rendering change did not skip production promotion preflight: $fixture_path" >&2
+      cat "$OUTPUT_FILE" >&2
+      exit 1
+    }
+  fi
   assert_balanced_preflight_group "Ordinary overlay validation for $fixture_path"
 }
 
@@ -323,7 +349,7 @@ for changed_file in \
   'k8s/base/account-service.yaml' \
   'k8s/postgres/pg-dump-cronjob.yaml' \
   'k8s/velero/schedule.yaml'; do
-  assert_shared_change_skips_promotion_preflight "$changed_file"
+  assert_shared_rendered_path_runs_production_preflight "$changed_file"
 done
 
 if (
