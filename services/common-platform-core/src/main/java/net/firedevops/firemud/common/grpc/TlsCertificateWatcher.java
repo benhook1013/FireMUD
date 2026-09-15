@@ -120,6 +120,9 @@ public class TlsCertificateWatcher implements AutoCloseable {
         }
       }
     } finally {
+      if (running.get()) {
+        logger.error("TLS certificate watcher worker exited unexpectedly");
+      }
       running.set(false);
     }
   }

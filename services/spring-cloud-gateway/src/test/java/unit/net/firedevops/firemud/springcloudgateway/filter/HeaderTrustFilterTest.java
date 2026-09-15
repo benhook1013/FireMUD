@@ -9,6 +9,8 @@ import java.net.InetSocketAddress;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -25,6 +27,9 @@ import org.springframework.web.server.WebFilterChain;
 import reactor.core.publisher.Mono;
 
 class HeaderTrustFilterTest {
+  private static final Clock TCP_PROXY_CERTIFICATE_CLOCK =
+      Clock.fixed(Instant.parse("2026-09-15T00:00:00Z"), ZoneOffset.UTC);
+
   private static final String TCP_PROXY_URI = "spiffe://firemud/ns/firemud/sa/tcp-proxy-service";
 
   @Test
@@ -148,7 +153,11 @@ class HeaderTrustFilterTest {
     GatewayTcpProxyListenerProperties listenerProperties = certificateListenerProperties();
     TcpProxyTrustPolicy policy =
         new TcpProxyTrustPolicy(
-            listenerProperties, headerProperties, 8080, Clock.systemUTC(), Set.of("test"));
+            listenerProperties,
+            headerProperties,
+            8080,
+            TCP_PROXY_CERTIFICATE_CLOCK,
+            Set.of("test"));
     HeaderTrustFilter filter = new HeaderTrustFilter(headerProperties, policy);
     SslInfo authenticatedPeer = authenticatedTcpProxyPeer();
 
@@ -189,7 +198,11 @@ class HeaderTrustFilterTest {
     GatewayTcpProxyListenerProperties listenerProperties = certificateListenerProperties();
     TcpProxyTrustPolicy policy =
         new TcpProxyTrustPolicy(
-            listenerProperties, headerProperties, 8080, Clock.systemUTC(), Set.of("test"));
+            listenerProperties,
+            headerProperties,
+            8080,
+            TCP_PROXY_CERTIFICATE_CLOCK,
+            Set.of("test"));
     HeaderTrustFilter filter = new HeaderTrustFilter(headerProperties, policy);
     SslInfo authenticatedPeer = authenticatedTcpProxyPeer();
 
