@@ -193,7 +193,7 @@ spec:
 {{- end }}
 {{- end }}
 {{- if ne $gatewayServiceCount 1 }}
-{{- fail "previewStack.services must include exactly one spring-cloud-gateway for Gateway egress NetworkPolicy" }}
+{{- fail "previewStack.services must include exactly one spring-cloud-gateway for the gameplay-bridge NetworkPolicies" }}
 {{- end }}
 {{- if ne $gatewayHttpServicePortCount 1 }}
 {{- fail "previewStack.services.spring-cloud-gateway must declare exactly one port: 80 for Gateway HTTP ingress" }}
@@ -265,23 +265,13 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-    {{- if $gatewayWsTls.enabled }}
     - to:
         - podSelector:
             matchLabels:
               app: spring-cloud-gateway
       ports:
         - protocol: TCP
-          port: {{ $gatewayWsTlsTargetPort }}
-    {{- else }}
-    - to:
-        - podSelector:
-            matchLabels:
-              app: spring-cloud-gateway
-      ports:
-        - protocol: TCP
-          port: {{ $gatewayHttpTargetPort }}
-    {{- end }}
+          port: {{ if $gatewayWsTls.enabled }}{{ $gatewayWsTlsTargetPort }}{{ else }}{{ $gatewayHttpTargetPort }}{{ end }}
     - to:
         - podSelector:
             matchLabels:

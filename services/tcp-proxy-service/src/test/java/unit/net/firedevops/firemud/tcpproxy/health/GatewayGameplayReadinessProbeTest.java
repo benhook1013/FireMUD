@@ -316,13 +316,17 @@ class GatewayGameplayReadinessProbeTest {
     CompletableFuture<Boolean> pending = new CompletableFuture<>();
     when(client.isReadyAsync()).thenReturn(pending);
     GatewayGameplayReadinessProbe probe = startedProbe(client, Duration.ofMillis(10));
-    verify(client, timeout(1000)).isReadyAsync();
+    try {
+      verify(client, timeout(1000)).isReadyAsync();
 
-    probe.close();
+      probe.close();
 
-    assertTrue(pending.isCancelled());
-    assertFalse(probe.isReady());
-    verify(client, after(50).times(1)).isReadyAsync();
+      assertTrue(pending.isCancelled());
+      assertFalse(probe.isReady());
+      verify(client, after(50).times(1)).isReadyAsync();
+    } finally {
+      probe.close();
+    }
   }
 
   @Test

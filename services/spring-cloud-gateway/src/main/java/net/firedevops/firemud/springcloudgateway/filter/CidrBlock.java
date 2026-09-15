@@ -48,13 +48,27 @@ record CidrBlock(byte[] network, int prefixBits) {
     if (trimmed.isEmpty()) {
       return null;
     }
+    boolean hasHexLetter = false;
+    boolean hasColon = false;
     for (int i = 0; i < trimmed.length(); i++) {
       char c = trimmed.charAt(i);
+      boolean hexLetter = (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
       boolean allowed =
-          (c >= '0' && c <= '9') || c == '.' || c == ':' || c == '[' || c == ']' || c == '%';
+          (c >= '0' && c <= '9')
+              || hexLetter
+              || c == '.'
+              || c == ':'
+              || c == '['
+              || c == ']'
+              || c == '%';
       if (!allowed) {
         return null;
       }
+      hasHexLetter |= hexLetter;
+      hasColon |= c == ':';
+    }
+    if (hasHexLetter && !hasColon) {
+      return null;
     }
     try {
       if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
