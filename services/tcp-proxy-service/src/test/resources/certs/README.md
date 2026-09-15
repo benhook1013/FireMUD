@@ -107,7 +107,7 @@ openssl x509 -in "$work_dir/rotated-gateway-client.crt" \
   -noout -ext extendedKeyUsage
 ```
 
-The two public-key SHA-256 values must match, `openssl verify` must report `OK`, the CA must be self-issued as `CN = FireMUD-CA`, and the leaf issuer must be that same CA. Update the expiry date recorded above whenever the fixtures are regenerated.
+The two public-key SHA-256 values must match, `openssl verify` must report `OK`, the CA must be self-issued as `CN = FireMUD-CA`, and the leaf issuer must be that same CA. Update both the recorded expiry date and the recorded 30-day validity threshold date above whenever the fixtures are regenerated.
 
 Only after every verification passes, install the staged fixtures with their final filenames and modes:
 

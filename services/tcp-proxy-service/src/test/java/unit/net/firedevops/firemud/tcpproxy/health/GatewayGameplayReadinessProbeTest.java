@@ -2,6 +2,7 @@ package net.firedevops.firemud.tcpproxy.health;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.after;
@@ -117,17 +118,33 @@ class GatewayGameplayReadinessProbeTest {
     GatewayWebSocketClient client = mock(GatewayWebSocketClient.class);
     CompletableFuture<Boolean> healthy = new CompletableFuture<>();
     CompletableFuture<Boolean> stalled = new CompletableFuture<>();
-    CompletableFuture<Boolean> retry = new CompletableFuture<>();
-    when(client.isReadyAsync()).thenReturn(healthy, stalled, retry);
+    AtomicInteger invocationCount = new AtomicInteger();
+    CopyOnWriteArrayList<CompletableFuture<Boolean>> retryFutures = new CopyOnWriteArrayList<>();
+    when(client.isReadyAsync())
+        .thenAnswer(
+            invocation -> {
+              int invocationNumber = invocationCount.incrementAndGet();
+              if (invocationNumber == 1) {
+                return healthy;
+              }
+              if (invocationNumber == 2) {
+                return stalled;
+              }
+              CompletableFuture<Boolean> freshRetry = new CompletableFuture<>();
+              retryFutures.add(freshRetry);
+              return freshRetry;
+            });
     try (GatewayGameplayReadinessProbe probe =
-        startedProbe(client, Duration.ofMillis(5), Duration.ofMillis(25))) {
+        startedProbe(client, Duration.ofMillis(20), Duration.ofMillis(100))) {
       verify(client, timeout(1000)).isReadyAsync();
       healthy.complete(true);
       awaitReadiness(probe, true);
 
-      verify(client, timeout(1000).atLeast(2)).isReadyAsync();
-      verify(client, timeout(1000).atLeast(3)).isReadyAsync();
-      assertTrue(stalled.isCompletedExceptionally());
+      verify(client, timeout(1000).times(2)).isReadyAsync();
+      awaitExceptionalCompletion(stalled);
+      verify(client, timeout(1000).times(3)).isReadyAsync();
+      CompletableFuture<Boolean> retry = retryFutures.get(0);
+      assertNotSame(stalled, retry);
       awaitReadiness(probe, false);
 
       retry.complete(true);
@@ -340,6 +357,14 @@ class GatewayGameplayReadinessProbeTest {
       Thread.sleep(5);
     }
     assertEquals(expected, probe.isReady());
+  }
+
+  private static void awaitExceptionalCompletion(CompletableFuture<?> future) throws Exception {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+    while (!future.isCompletedExceptionally() && System.nanoTime() < deadline) {
+      Thread.sleep(5);
+    }
+    assertTrue(future.isCompletedExceptionally());
   }
 
   private static GatewayGameplayReadinessProbe startedProbe(

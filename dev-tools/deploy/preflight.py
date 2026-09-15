@@ -4003,8 +4003,9 @@ def secret_volume_mount_issues(
     mount = matching_mounts[0]
     if mount.get("readOnly") is not True:
         issues.append(f"{label} {mount_path} mount must be read-only")
-    if "subPath" in mount:
-        issues.append(f"{label} Secret mount must not use subPath")
+    for field in ("subPath", "subPathExpr"):
+        if field in mount:
+            issues.append(f"{label} Secret mount must not use {field}")
     volume = volume_definitions.get(mount.get("name")) or {}
     secret = volume.get("secret") if isinstance(volume, dict) else None
     actual_secret = secret.get("secretName") if isinstance(secret, dict) else None
@@ -4166,7 +4167,13 @@ def validate_gateway_ws_listener(
         return set(), ["exactly one rendered spring-cloud-gateway Deployment is required"]
     document = deployments[0]
     gateway_strategy = (document.get("spec") or {}).get("strategy")
-    if gateway_strategy is not None and gateway_strategy != {"type": "RollingUpdate"}:
+    if (
+        gateway_strategy is not None
+        and (
+            not isinstance(gateway_strategy, dict)
+            or gateway_strategy.get("type") != "RollingUpdate"
+        )
+    ):
         issues = [
             "Gateway bridge Deployment strategy must be RollingUpdate or omitted so Kubernetes uses its default for ordinary availability-preserving replacement; emergency identity withdrawal requires controller termination and is not proven by this rendered strategy"
         ]
@@ -4937,8 +4944,9 @@ def validate_hosted_telnet_tls_values(
         issues.append("hosted TCP Proxy TLS requires exactly one /telnet-tls mount")
     else:
         mount = telnet_mounts[0]
-        if "subPath" in mount:
-            issues.append("/telnet-tls must not use subPath")
+        for field in ("subPath", "subPathExpr"):
+            if field in mount:
+                issues.append(f"/telnet-tls must not use {field}")
         if mount.get("readOnly") is not True:
             issues.append("hosted TCP Proxy TLS requires a read-only /telnet-tls mount")
         volume = volumes.get(mount.get("name")) or {}

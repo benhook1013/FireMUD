@@ -146,6 +146,61 @@ class TlsCertificateWatcherTest {
   }
 
   @Test
+  void failedInitialReregistrationRetriesAfterDirectoryIsRecreated(@TempDir Path directory)
+      throws Exception {
+    Path replacedDirectory = Files.createDirectory(directory.resolve("replaced"));
+    Path retainedDirectory = Files.createDirectory(directory.resolve("retained"));
+    Path replacedCertificate =
+        Files.writeString(replacedDirectory.resolve("tls.crt"), "certificate-1");
+    Path retainedCertificate =
+        Files.writeString(retainedDirectory.resolve("tls.crt"), "certificate-1");
+
+    try (TlsCertificateWatcher watcher =
+        TlsCertificateWatcher.createAndStart(
+            List.of(replacedCertificate, retainedCertificate), () -> {})) {
+      Files.delete(replacedCertificate);
+      Files.delete(replacedDirectory);
+      awaitUnhealthy(watcher);
+
+      Files.createDirectory(replacedDirectory);
+      Files.writeString(replacedCertificate, "certificate-2");
+
+      awaitHealthy(watcher);
+      assertTrue(watcher.isRunning());
+    }
+  }
+
+  @Test
+  void failedInitialReregistrationRemainsFailClosedAndCloseCancelsRetry(@TempDir Path directory)
+      throws Exception {
+    Path missingDirectory = Files.createDirectory(directory.resolve("missing"));
+    Path retainedDirectory = Files.createDirectory(directory.resolve("retained"));
+    Path missingCertificate =
+        Files.writeString(missingDirectory.resolve("tls.crt"), "certificate-1");
+    Path retainedCertificate =
+        Files.writeString(retainedDirectory.resolve("tls.crt"), "certificate-1");
+    WatcherCounts baseline = watcherCounts(TlsCertificateWatcher.health());
+
+    TlsCertificateWatcher watcher =
+        TlsCertificateWatcher.createAndStart(
+            List.of(missingCertificate, retainedCertificate), () -> {});
+    try {
+      Files.delete(missingCertificate);
+      Files.delete(missingDirectory);
+      awaitUnhealthy(watcher);
+      Thread.sleep(300);
+      assertFalse(watcher.hasAllRequiredRegistrations());
+      assertHealthDelta(baseline, 1, 0, 1, TlsCertificateWatcher.health());
+    } finally {
+      watcher.close();
+    }
+
+    Files.createDirectory(missingDirectory);
+    assertFalse(watcher.isRunning());
+    assertHealthDelta(baseline, 0, 0, 0, TlsCertificateWatcher.health());
+  }
+
+  @Test
   void failedWatchKeyResetWhenDirectoryIsGoneRemainsFailClosed(@TempDir Path directory)
       throws Exception {
     Path watchedDirectory = Files.createDirectory(directory.resolve("certificate"));
@@ -191,11 +246,59 @@ class TlsCertificateWatcherTest {
       awaitUnhealthy(watcher);
       assertHealthDelta(baseline, 1, 0, 1, TlsCertificateWatcher.health());
 
-      Files.writeString(privateKey, "key-2");
       assertTrue(successfulRetry.await(5, TimeUnit.SECONDS));
       assertTrue(attempts.get() >= 2);
       awaitHealthy(watcher);
       assertHealthDelta(baseline, 1, 1, 0, TlsCertificateWatcher.health());
+    }
+  }
+
+  @Test
+  void failedCallbackRetryIsCancelledWhenWatcherCloses(@TempDir Path directory) throws Exception {
+    Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
+    AtomicInteger attempts = new AtomicInteger();
+    CountDownLatch firstAttempt = new CountDownLatch(1);
+
+    TlsCertificateWatcher watcher =
+        TlsCertificateWatcher.createAndStart(
+            List.of(certificate),
+            () -> {
+              attempts.incrementAndGet();
+              firstAttempt.countDown();
+              throw new IllegalStateException("simulated reload failure");
+            });
+    try {
+      Files.writeString(certificate, "certificate-2");
+      assertTrue(firstAttempt.await(5, TimeUnit.SECONDS));
+    } finally {
+      watcher.close();
+    }
+
+    Thread.sleep(300);
+    assertEquals(1, attempts.get());
+  }
+
+  @Test
+  void failedCallbackRetryIsBoundedUntilAnotherCertificateEvent(@TempDir Path directory)
+      throws Exception {
+    Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
+    AtomicInteger attempts = new AtomicInteger();
+    CountDownLatch retryAttempt = new CountDownLatch(1);
+
+    try (TlsCertificateWatcher watcher =
+        TlsCertificateWatcher.createAndStart(
+            List.of(certificate),
+            () -> {
+              if (attempts.incrementAndGet() == 2) {
+                retryAttempt.countDown();
+              }
+              throw new IllegalStateException("simulated reload failure");
+            })) {
+      Files.writeString(certificate, "certificate-2");
+      assertTrue(retryAttempt.await(5, TimeUnit.SECONDS));
+      Thread.sleep(300);
+      assertEquals(2, attempts.get());
+      assertFalse(watcher.hasAllRequiredRegistrations());
     }
   }
 

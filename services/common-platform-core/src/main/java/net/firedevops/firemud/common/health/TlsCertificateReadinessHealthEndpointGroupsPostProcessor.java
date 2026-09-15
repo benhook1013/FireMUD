@@ -1,7 +1,9 @@
 package net.firedevops.firemud.common.health;
 
 import java.util.LinkedHashSet;
+import java.util.Objects;
 import java.util.Set;
+import net.firedevops.firemud.common.LoggingUtil;
 import org.springframework.boot.actuate.endpoint.SecurityContext;
 import org.springframework.boot.actuate.endpoint.web.WebServerNamespace;
 import org.springframework.boot.health.actuate.endpoint.AdditionalHealthEndpointPath;
@@ -15,13 +17,29 @@ import org.springframework.boot.health.actuate.endpoint.StatusAggregator;
 public final class TlsCertificateReadinessHealthEndpointGroupsPostProcessor
     implements HealthEndpointGroupsPostProcessor {
 
+  private static final org.slf4j.Logger logger =
+      LoggingUtil.getLogger(TlsCertificateReadinessHealthEndpointGroupsPostProcessor.class);
+  static final String TCP_PROXY_SERVICE_NAME = "tcp-proxy-service";
   static final String READINESS_GROUP = "readiness";
   public static final String TLS_CERTIFICATE_RELOAD_CONTRIBUTOR = "tlsCertificateReload";
 
+  private final String serviceName;
+
+  public TlsCertificateReadinessHealthEndpointGroupsPostProcessor(String serviceName) {
+    this.serviceName = Objects.requireNonNull(serviceName, "serviceName");
+  }
+
   @Override
   public HealthEndpointGroups postProcessHealthEndpointGroups(HealthEndpointGroups groups) {
+    if (TCP_PROXY_SERVICE_NAME.equals(serviceName)) {
+      return groups;
+    }
     HealthEndpointGroup readiness = groups.get(READINESS_GROUP);
-    if (readiness == null || readiness.isMember(TLS_CERTIFICATE_RELOAD_CONTRIBUTOR)) {
+    if (readiness == null) {
+      logger.warn("Actuator readiness health group is absent; TLS certificate reload is not gated");
+      return groups;
+    }
+    if (readiness.isMember(TLS_CERTIFICATE_RELOAD_CONTRIBUTOR)) {
       return groups;
     }
     return new DelegatingHealthEndpointGroups(

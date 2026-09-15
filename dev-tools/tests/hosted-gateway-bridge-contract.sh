@@ -1498,10 +1498,32 @@ proxy = next(
     and document.get("metadata", {}).get("name") == "tcp-proxy-service"
 )
 gateway_strategy = gateway.get("spec", {}).get("strategy")
-if gateway_strategy is not None and gateway_strategy != {"type": "RollingUpdate"}:
+if gateway_strategy is not None and (
+    not isinstance(gateway_strategy, dict)
+    or gateway_strategy.get("type") != "RollingUpdate"
+):
     raise SystemExit("Gateway Deployment must retain Kubernetes' RollingUpdate default")
 if proxy.get("spec", {}).get("strategy") != {"type": "Recreate"}:
     raise SystemExit("TCP Proxy identity withdrawal can retain a stale rolling-update pod")
+
+gateway_omitted_documents = copy.deepcopy(documents)
+gateway_omitted = next(
+    document
+    for document in gateway_omitted_documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "spring-cloud-gateway"
+)
+gateway_omitted["spec"].pop("strategy", None)
+_, omitted_strategy_issues = module.validate_gateway_ws_values(
+    gateway_omitted_documents, expected
+)
+if any(
+    "Gateway bridge Deployment strategy must be RollingUpdate or omitted" in issue
+    for issue in omitted_strategy_issues
+):
+    raise SystemExit(
+        f"Omitted Gateway Deployment strategy was incorrectly rejected: {omitted_strategy_issues}"
+    )
 
 gateway_strategy_documents = copy.deepcopy(documents)
 gateway_copy = next(
@@ -1523,6 +1545,46 @@ if not any(
         "Gateway Recreate strategy was accepted for the bridge listener: "
         f"{gateway_strategy_issues}"
     )
+
+gateway_tuned_documents = copy.deepcopy(documents)
+gateway_tuned = next(
+    document
+    for document in gateway_tuned_documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "spring-cloud-gateway"
+)
+gateway_tuned["spec"]["strategy"] = {
+    "type": "RollingUpdate",
+    "rollingUpdate": {"maxUnavailable": 0, "maxSurge": 1},
+}
+_, tuned_strategy_issues = module.validate_gateway_ws_values(gateway_tuned_documents, expected)
+if any(
+    "Gateway bridge Deployment strategy must be RollingUpdate or omitted" in issue
+    for issue in tuned_strategy_issues
+):
+    raise SystemExit(
+        f"Gateway RollingUpdate tuning fields were incorrectly rejected: {tuned_strategy_issues}"
+    )
+
+for invalid_strategy in ("RollingUpdate", {"type": "Recreate"}, {"rollingUpdate": {}}):
+    invalid_strategy_documents = copy.deepcopy(documents)
+    invalid_strategy_gateway = next(
+        document
+        for document in invalid_strategy_documents
+        if document.get("kind") == "Deployment"
+        and document.get("metadata", {}).get("name") == "spring-cloud-gateway"
+    )
+    invalid_strategy_gateway["spec"]["strategy"] = invalid_strategy
+    _, invalid_strategy_issues = module.validate_gateway_ws_values(
+        invalid_strategy_documents, expected
+    )
+    if not any(
+        "Gateway bridge Deployment strategy must be RollingUpdate or omitted" in issue
+        for issue in invalid_strategy_issues
+    ):
+        raise SystemExit(
+            f"Invalid Gateway Deployment strategy was accepted: {invalid_strategy!r}"
+        )
 
 strategy_issue = (
     "TCP Proxy bridge Deployment strategy must be Recreate for planned identity replacement"

@@ -190,12 +190,22 @@ if ! grep -Fq "$TELNET_TLS_SECRET_NAME_ERROR" "$TMP_DIR/missing-secret.err"; the
   exit 1
 fi
 
-TELNET_TLS_SECRET_SUFFIX_ERROR="previewStack.telnetTls.secretName must end with -telnet-tls when Telnet TLS is enabled"
-helm template raw-hosted-sentinel "$ROOT_DIR/k8s/helm/firemud" \
+TELNET_TLS_SECRET_RESOLUTION_ERROR="previewStack.telnetTls.secretName must be resolved before rendering when Telnet TLS is enabled"
+if helm template raw-hosted-sentinel "$ROOT_DIR/k8s/helm/firemud" \
   -f "$ROOT_DIR/k8s/helm/firemud/values-hosted-shared.example.yaml" \
   --set-string preview.prNumber=42 \
   --set previewStack.certificateIdentity.mode=standalone \
-  --namespace pr-42 >/dev/null
+  --namespace pr-42 >/dev/null 2>"$TMP_DIR/raw-sentinel.err"; then
+  echo "chart rendered with an unresolved standalone Telnet TLS Secret sentinel" >&2
+  exit 1
+fi
+if ! grep -Fq "$TELNET_TLS_SECRET_RESOLUTION_ERROR" "$TMP_DIR/raw-sentinel.err"; then
+  echo "chart did not report the unresolved Telnet TLS Secret sentinel" >&2
+  sed -n '1,20p' "$TMP_DIR/raw-sentinel.err" >&2
+  exit 1
+fi
+
+TELNET_TLS_SECRET_SUFFIX_ERROR="previewStack.telnetTls.secretName must end with -telnet-tls when Telnet TLS is enabled"
 for invalid_secret_name in \
   '__TELNET_TLS_SECRET_NAME_' \
   '_TELNET_TLS_SECRET_NAME__' \

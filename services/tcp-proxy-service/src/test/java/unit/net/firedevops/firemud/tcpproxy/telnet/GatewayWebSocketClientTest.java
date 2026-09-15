@@ -395,7 +395,7 @@ class GatewayWebSocketClientTest {
   }
 
   @Test
-  void replacingWatchedDirectoryRestoresInFlightAndSubsequentReadiness() throws Exception {
+  void losingFinalWatchKeyFailsInFlightAndSubsequentReadiness() throws Exception {
     CountDownLatch releaseResponse = new CountDownLatch(1);
     MockWebServer server = startMutualTlsServer(InetAddress.getByName("127.0.0.1"));
     server.setDispatcher(
@@ -429,18 +429,17 @@ class GatewayWebSocketClientTest {
 
     try {
       assertNotNull(server.takeRequest(5, TimeUnit.SECONDS));
-      Object initialClient = client.clientIdentity();
-      replaceWatchedDirectory(watchedDirectory);
-      Object reloadedClient = awaitClientIdentityChange(client, initialClient);
-      assertClientIdentityRemainsStable(client, reloadedClient);
-      assertTrue(client.isCertificateWatcherRunning());
-      awaitCertificateWatcherHealthy(client);
+      Files.delete(watchedDirectory.resolve("client.crt"));
+      Files.delete(watchedDirectory.resolve("client.key"));
+      Files.delete(watchedDirectory.resolve("ca.crt"));
+      Files.delete(watchedDirectory);
+      awaitCertificateWatcherStopped(client);
       releaseResponse.countDown();
 
-      assertTrue(readiness.get(5, TimeUnit.SECONDS));
+      assertFalse(readiness.get(5, TimeUnit.SECONDS));
       int completedRequests = server.getRequestCount();
-      assertTrue(client.isReadyAsync().get(5, TimeUnit.SECONDS));
-      assertEquals(completedRequests + 1, server.getRequestCount());
+      assertFalse(client.isReadyAsync().get(5, TimeUnit.SECONDS));
+      assertEquals(completedRequests, server.getRequestCount());
     } finally {
       releaseResponse.countDown();
     }
@@ -1479,6 +1478,15 @@ class GatewayWebSocketClientTest {
       Thread.sleep(10);
     }
     assertEquals(expected, client.generationCount());
+  }
+
+  private static void awaitCertificateWatcherStopped(GatewayWebSocketClient client)
+      throws Exception {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    while (client.isCertificateWatcherRunning() && System.nanoTime() < deadline) {
+      Thread.sleep(10);
+    }
+    assertFalse(client.isCertificateWatcherRunning());
   }
 
   private static void awaitCertificateWatcherUnhealthy(GatewayWebSocketClient client)

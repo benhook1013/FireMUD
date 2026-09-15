@@ -4190,6 +4190,23 @@ _, bridge_subpath_issues = module.validate_gateway_ws_values(
 if not any("must not use subPath" in issue for issue in bridge_subpath_issues):
     raise SystemExit(f"bridge Secret subPath was accepted: {bridge_subpath_issues}")
 
+bridge_subpath_expr_documents = copy.deepcopy(rendered_documents)
+bridge_subpath_expr_container = next(
+    container
+    for document in bridge_subpath_expr_documents
+    if document.get("kind") == "Deployment" and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    for container in document["spec"]["template"]["spec"]["containers"]
+    if container.get("name") == "tcp-proxy-service"
+)
+next(
+    mount for mount in bridge_subpath_expr_container["volumeMounts"] if mount.get("name") == "hobby-tcp-proxy-bridge"
+)["subPathExpr"] = "$(POD_NAME).crt"
+_, bridge_subpath_expr_issues = module.validate_gateway_ws_values(
+    bridge_subpath_expr_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+)
+if not any("must not use subPathExpr" in issue for issue in bridge_subpath_expr_issues):
+    raise SystemExit(f"bridge Secret subPathExpr was accepted: {bridge_subpath_expr_issues}")
+
 bridge_items_documents = copy.deepcopy(rendered_documents)
 bridge_items_volume = next(
     volume
@@ -10251,6 +10268,29 @@ subpath_telnet_issues = module.validate_hosted_telnet_tls_values(
 )
 if "/telnet-tls must not use subPath" not in subpath_telnet_issues:
     raise SystemExit(f"hosted-bridge accepted a /telnet-tls subPath mount: {subpath_telnet_issues}")
+
+subpath_expr_telnet_documents = list(yaml.safe_load_all(render_path.read_text(encoding="utf-8")))
+subpath_expr_telnet_mount = next(
+    mount
+    for mount in next(
+        document
+        for document in subpath_expr_telnet_documents
+        if document.get("kind") == "Deployment"
+        and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    )["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]
+    if mount.get("mountPath") == "/telnet-tls"
+)
+subpath_expr_telnet_mount["subPathExpr"] = "$(POD_NAME).crt"
+subpath_expr_telnet_issues = module.validate_hosted_telnet_tls_values(
+    subpath_expr_telnet_documents,
+    required_identity_mode="hosted-controller",
+    expected_hosted_telnet_node_port=node_port,
+    target_namespace=namespace,
+)
+if "/telnet-tls must not use subPathExpr" not in subpath_expr_telnet_issues:
+    raise SystemExit(
+        f"hosted-bridge accepted a /telnet-tls subPathExpr mount: {subpath_expr_telnet_issues}"
+    )
 
 invalid_telnet_items_documents = list(
     yaml.safe_load_all(render_path.read_text(encoding="utf-8"))

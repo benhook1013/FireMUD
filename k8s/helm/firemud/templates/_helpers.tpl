@@ -64,7 +64,10 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- printf "%s-telnet-tls" .Release.Name -}}
 {{- else -}}
 {{- $secretName := required "previewStack.telnetTls.secretName is required when Telnet TLS is enabled" $telnetTls.secretName -}}
-{{- if and (ne $secretName "__TELNET_TLS_SECRET_NAME__") (not (hasSuffix "-telnet-tls" $secretName)) -}}
+{{- if eq $secretName "__TELNET_TLS_SECRET_NAME__" -}}
+{{- fail "previewStack.telnetTls.secretName must be resolved before rendering when Telnet TLS is enabled" -}}
+{{- end -}}
+{{- if not (hasSuffix "-telnet-tls" $secretName) -}}
 {{- fail "previewStack.telnetTls.secretName must end with -telnet-tls when Telnet TLS is enabled" -}}
 {{- end -}}
 {{- $secretName -}}

@@ -171,9 +171,9 @@ public class CommonCoreAutoConfiguration {
   }
 
   @Bean
-  public HealthEndpointGroupsPostProcessor
-      tlsCertificateReadinessHealthEndpointGroupsPostProcessor() {
-    return new TlsCertificateReadinessHealthEndpointGroupsPostProcessor();
+  public HealthEndpointGroupsPostProcessor tlsCertificateReadinessHealthEndpointGroupsPostProcessor(
+      @Value("${spring.application.name:unknown}") String serviceName) {
+    return new TlsCertificateReadinessHealthEndpointGroupsPostProcessor(serviceName);
   }
 
   @Configuration(proxyBeanMethods = false)

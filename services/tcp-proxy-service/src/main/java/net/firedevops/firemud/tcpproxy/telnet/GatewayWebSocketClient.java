@@ -155,12 +155,13 @@ public final class GatewayWebSocketClient implements AutoCloseable {
       throw e;
     }
     this.readinessUri = readinessUri(gatewayUri);
-    this.clientCertPath = pathOf(clientCertPath, "client_cert_missing", "client certificate chain");
-    this.clientKeyPath = pathOf(clientKeyPath, "client_cert_missing", "client private key");
-    this.caCertPath = pathOf(caCertPath, "cert_validation", "Gateway CA bundle");
-    this.grpcCertPath = pathOf(grpcCertPath, "client_cert_invalid", "gRPC server certificate");
+    this.clientCertPath =
+        pathOf(clientCertPath, CLIENT_CERT_MISSING_REASON, "client certificate chain");
+    this.clientKeyPath = pathOf(clientKeyPath, CLIENT_CERT_MISSING_REASON, "client private key");
+    this.caCertPath = pathOf(caCertPath, CERT_VALIDATION_REASON, "Gateway CA bundle");
+    this.grpcCertPath = pathOf(grpcCertPath, CLIENT_CERT_INVALID_REASON, "gRPC server certificate");
     this.telnetTlsEnabled = telnetTlsEnabled;
-    this.telnetCertPath = pathOf(telnetCertPath, "client_cert_invalid", "Telnet certificate");
+    this.telnetCertPath = pathOf(telnetCertPath, CLIENT_CERT_INVALID_REASON, "Telnet certificate");
     this.sharedEnvironment = isSharedEnvironment(activeProfiles);
 
     if ("ws".equals(gatewayUri.getScheme())) {
@@ -178,7 +179,7 @@ public final class GatewayWebSocketClient implements AutoCloseable {
         startCertificateWatcher();
       } catch (RuntimeException e) {
         closed.set(true);
-        state = ClientState.unavailable("client_cert_invalid");
+        state = ClientState.unavailable(CLIENT_CERT_INVALID_REASON);
         for (ClientGeneration generation : List.copyOf(generations)) {
           generation.shutdownNow();
         }
@@ -400,11 +401,12 @@ public final class GatewayWebSocketClient implements AutoCloseable {
   }
 
   private ClientState loadTlsClient() {
-    requireReadable(clientCertPath, "client_cert_missing", "client certificate chain");
-    requireReadable(clientKeyPath, "client_cert_missing", "client private key");
-    requireReadable(caCertPath, "cert_validation", "Gateway CA bundle");
+    requireReadable(clientCertPath, CLIENT_CERT_MISSING_REASON, "client certificate chain");
+    requireReadable(clientKeyPath, CLIENT_CERT_MISSING_REASON, "client private key");
+    requireReadable(caCertPath, CERT_VALIDATION_REASON, "Gateway CA bundle");
 
-    X509Certificate clientCertificate = readLeafCertificate(clientCertPath, "client_cert_invalid");
+    X509Certificate clientCertificate =
+        readLeafCertificate(clientCertPath, CLIENT_CERT_INVALID_REASON);
     validateClientCertificate(clientCertificate);
     validateCaBundle(caCertPath);
     if (sharedEnvironment) {
@@ -422,12 +424,12 @@ public final class GatewayWebSocketClient implements AutoCloseable {
               .trustManager(caCertPath.toFile())
               .build();
       if (!(nettyContext instanceof JdkSslContext jdkContext)) {
-        throw configurationFailure("client_cert_invalid", "JDK TLS context was not available");
+        throw configurationFailure(CLIENT_CERT_INVALID_REASON, "JDK TLS context was not available");
       }
       return ClientState.available(newGeneration(newHttpClient(jdkContext.context())));
     } catch (SSLException | IllegalArgumentException e) {
       throw configurationFailure(
-          "client_cert_invalid", "Gateway WebSocket client certificate or key is invalid", e);
+          CLIENT_CERT_INVALID_REASON, "Gateway WebSocket client certificate or key is invalid", e);
     }
   }
 
@@ -461,7 +463,7 @@ public final class GatewayWebSocketClient implements AutoCloseable {
           TlsCertificateWatcher.createAndStart(watchedPaths, this::reloadFromWatcher);
     } catch (IOException e) {
       throw configurationFailure(
-          "client_cert_invalid", "Gateway WebSocket TLS files could not be watched", e);
+          CLIENT_CERT_INVALID_REASON, "Gateway WebSocket TLS files could not be watched", e);
     }
   }
 
@@ -504,11 +506,14 @@ public final class GatewayWebSocketClient implements AutoCloseable {
       List<String> extendedKeyUsage = certificate.getExtendedKeyUsage();
       if (extendedKeyUsage == null || !extendedKeyUsage.contains(CLIENT_AUTH_EKU)) {
         throw configurationFailure(
-            "client_cert_invalid", "Gateway WebSocket client certificate lacks clientAuth EKU");
+            CLIENT_CERT_INVALID_REASON,
+            "Gateway WebSocket client certificate lacks clientAuth EKU");
       }
     } catch (CertificateException e) {
       throw configurationFailure(
-          "client_cert_invalid", "Gateway WebSocket client certificate is not currently valid", e);
+          CLIENT_CERT_INVALID_REASON,
+          "Gateway WebSocket client certificate is not currently valid",
+          e);
     }
   }
 
@@ -521,21 +526,21 @@ public final class GatewayWebSocketClient implements AutoCloseable {
               .anyMatch(certificate -> certificate.getBasicConstraints() >= 0);
       if (!containsCa) {
         throw configurationFailure(
-            "cert_validation", "Gateway CA bundle does not contain a CA certificate");
+            CERT_VALIDATION_REASON, "Gateway CA bundle does not contain a CA certificate");
       }
     } catch (IOException | CertificateException e) {
-      throw configurationFailure("cert_validation", "Gateway CA bundle is invalid", e);
+      throw configurationFailure(CERT_VALIDATION_REASON, "Gateway CA bundle is invalid", e);
     }
   }
 
   private void validateDistinctIdentity(
       X509Certificate clientCertificate, Path otherCertificatePath, String surface) {
-    requireReadable(otherCertificatePath, "client_cert_invalid", surface + " certificate");
+    requireReadable(otherCertificatePath, CLIENT_CERT_INVALID_REASON, surface + " certificate");
     X509Certificate otherCertificate =
-        readLeafCertificate(otherCertificatePath, "client_cert_invalid");
+        readLeafCertificate(otherCertificatePath, CLIENT_CERT_INVALID_REASON);
     if (samePublicKey(clientCertificate, otherCertificate)) {
       throw configurationFailure(
-          "client_cert_invalid",
+          CLIENT_CERT_INVALID_REASON,
           "Gateway WebSocket client identity must be distinct from the " + surface + " identity");
     }
   }
@@ -681,7 +686,7 @@ public final class GatewayWebSocketClient implements AutoCloseable {
           || message.contains("unable to find valid certification path")
           || message.contains("subject alternative")
           || message.contains("no name matching")) {
-        return "cert_validation";
+        return CERT_VALIDATION_REASON;
       }
       return "handshake_protocol";
     }

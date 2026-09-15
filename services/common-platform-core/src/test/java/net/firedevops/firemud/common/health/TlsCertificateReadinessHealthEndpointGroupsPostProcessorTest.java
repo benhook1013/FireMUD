@@ -8,11 +8,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.core.read.ListAppender;
 import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.actuate.endpoint.SecurityContext;
 import org.springframework.boot.actuate.endpoint.web.WebServerNamespace;
 import org.springframework.boot.health.actuate.endpoint.AdditionalHealthEndpointPath;
@@ -24,7 +29,19 @@ import org.springframework.boot.health.actuate.endpoint.StatusAggregator;
 class TlsCertificateReadinessHealthEndpointGroupsPostProcessorTest {
 
   private final TlsCertificateReadinessHealthEndpointGroupsPostProcessor processor =
-      new TlsCertificateReadinessHealthEndpointGroupsPostProcessor();
+      new TlsCertificateReadinessHealthEndpointGroupsPostProcessor("game-session-service");
+
+  @Test
+  void leavesTcpProxyReadinessGroupsUnchanged() {
+    HealthEndpointGroups original = mock(HealthEndpointGroups.class);
+
+    assertSame(
+        original,
+        new TlsCertificateReadinessHealthEndpointGroupsPostProcessor(
+                TlsCertificateReadinessHealthEndpointGroupsPostProcessor.TCP_PROXY_SERVICE_NAME)
+            .postProcessHealthEndpointGroups(original));
+    verifyNoInteractions(original);
+  }
 
   @Test
   void addsTlsCertificateReloadToReadinessWithoutChangingOtherGroupBehavior() {
@@ -84,6 +101,22 @@ class TlsCertificateReadinessHealthEndpointGroupsPostProcessorTest {
     HealthEndpointGroups original =
         HealthEndpointGroups.of(primary, Map.of("custom", mock(HealthEndpointGroup.class)));
 
-    assertSame(original, processor.postProcessHealthEndpointGroups(original));
+    Logger logger =
+        (Logger)
+            LoggerFactory.getLogger(TlsCertificateReadinessHealthEndpointGroupsPostProcessor.class);
+    ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      assertSame(original, processor.postProcessHealthEndpointGroups(original));
+      assertEquals(1, appender.list.size());
+      assertEquals(Level.WARN, appender.list.get(0).getLevel());
+      assertEquals(
+          "Actuator readiness health group is absent; TLS certificate reload is not gated",
+          appender.list.get(0).getFormattedMessage());
+    } finally {
+      logger.detachAppender(appender);
+      appender.stop();
+    }
   }
 }
