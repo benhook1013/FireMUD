@@ -1,10 +1,13 @@
 package net.firedevops.firemud.tcpproxy.service;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.grpc.Status;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.util.concurrent.TimeUnit;
@@ -36,20 +39,25 @@ class TcpProxyEventClientTest {
             mock(GrpcTlsMaterialResolver.class),
             BlockingGrpcStubCustomizer.noop());
 
-    IllegalStateException uninitialized =
+    RuntimeException uninitialized =
         org.junit.jupiter.api.Assertions.assertThrows(
-            IllegalStateException.class,
+            RuntimeException.class,
             () -> client.notifyDisconnect("42", "7", "proxy-1", 9L));
-    org.junit.jupiter.api.Assertions.assertEquals(
-        "TcpProxyEventClient is closed or not initialized", uninitialized.getMessage());
+    assertEquals(Status.Code.UNAVAILABLE, Status.fromThrowable(uninitialized).getCode());
+    assertEquals(
+        "TcpProxyEventClient is closed or not initialized",
+        Status.fromThrowable(uninitialized).getDescription());
 
     client.close();
-    IllegalStateException closed =
+    RuntimeException closed =
         org.junit.jupiter.api.Assertions.assertThrows(
-            IllegalStateException.class,
+            RuntimeException.class,
             () -> client.notifyDisconnect("42", "7", "proxy-1", 9L));
-    org.junit.jupiter.api.Assertions.assertEquals(
-        "TcpProxyEventClient is closed or not initialized", closed.getMessage());
+    assertInstanceOf(io.grpc.StatusRuntimeException.class, closed);
+    assertEquals(Status.Code.UNAVAILABLE, Status.fromThrowable(closed).getCode());
+    assertEquals(
+        "TcpProxyEventClient is closed or not initialized",
+        Status.fromThrowable(closed).getDescription());
   }
 
   @Test

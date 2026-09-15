@@ -1,6 +1,7 @@
 package net.firedevops.firemud.tcpproxy.service;
 
 import io.grpc.ManagedChannel;
+import io.grpc.Status;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.io.IOException;
@@ -86,7 +87,9 @@ public class TcpProxyEventClient implements AutoCloseable {
     NotifyDisconnectRequest request = builder.build();
     TcpProxyServiceGrpc.TcpProxyServiceBlockingStub currentStub = stub;
     if (closing.get() || currentStub == null) {
-      throw new IllegalStateException("TcpProxyEventClient is closed or not initialized");
+      throw Status.UNAVAILABLE
+          .withDescription("TcpProxyEventClient is closed or not initialized")
+          .asRuntimeException();
     }
     return currentStub.withDeadlineAfter(DISCONNECT_NOTIFY_DEADLINE_MS, TimeUnit.MILLISECONDS)
         .notifyDisconnect(request);

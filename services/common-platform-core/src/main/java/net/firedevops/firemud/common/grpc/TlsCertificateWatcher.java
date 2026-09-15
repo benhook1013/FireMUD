@@ -268,7 +268,14 @@ public class TlsCertificateWatcher implements AutoCloseable {
           try {
             keys.put(registerDirectory(dir), dir);
           } catch (IOException | RuntimeException e) {
-            logger.error("TLS certificate watcher failed to re-register directory {}", dir, e);
+            if (running.get()) {
+              logger.error("TLS certificate watcher failed to re-register directory {}", dir, e);
+            } else {
+              logger.debug(
+                  "TLS certificate watcher did not re-register directory {}; shutdown has begun",
+                  dir,
+                  e);
+            }
           }
         }
       }

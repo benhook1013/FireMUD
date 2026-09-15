@@ -5,6 +5,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardWatchEventKinds;
@@ -12,6 +16,7 @@ import java.nio.file.WatchEvent;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -19,6 +24,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.config.CommonCoreAutoConfiguration;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
 
@@ -157,19 +163,34 @@ class TlsCertificateWatcherTest {
     Path retainedCertificate =
         Files.writeString(retainedDirectory.resolve("tls.crt"), "certificate-1");
 
-    try (TlsCertificateWatcher watcher =
-        TlsCertificateWatcher.createAndStart(
-            List.of(replacedCertificate, retainedCertificate), () -> {})) {
-      Files.delete(replacedCertificate);
-      Files.delete(replacedDirectory);
-      awaitUnhealthy(watcher);
-      Thread.sleep(250);
+    Logger logger = (Logger) LoggerFactory.getLogger(TlsCertificateWatcher.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.list = new CopyOnWriteArrayList<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      try (TlsCertificateWatcher watcher =
+          TlsCertificateWatcher.createAndStart(
+              List.of(replacedCertificate, retainedCertificate), () -> {})) {
+        Files.delete(replacedCertificate);
+        Files.delete(replacedDirectory);
+        awaitUnhealthy(watcher);
+        awaitLogCount(
+            appender,
+            Level.ERROR,
+            "TLS certificate watcher failed its bounded re-registration retry",
+            2);
+        assertFalse(watcher.hasAllRequiredRegistrations());
 
-      Files.createDirectory(replacedDirectory);
-      Files.writeString(replacedCertificate, "certificate-2");
+        Files.createDirectory(replacedDirectory);
+        Files.writeString(replacedCertificate, "certificate-2");
 
-      awaitHealthy(watcher);
-      assertTrue(watcher.isRunning());
+        awaitHealthy(watcher);
+        assertTrue(watcher.isRunning());
+      }
+    } finally {
+      logger.detachAppender(appender);
+      appender.stop();
     }
   }
 
@@ -543,6 +564,29 @@ class TlsCertificateWatcherTest {
       Thread.sleep(10);
     }
     assertTrue(watcher.hasAllRequiredRegistrations());
+  }
+
+  private static void awaitLogCount(
+      ListAppender<ILoggingEvent> appender, Level level, String message, int expectedCount)
+      throws Exception {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    while (System.nanoTime() < deadline) {
+      long count =
+          appender.list.stream()
+              .filter(event -> event.getLevel() == level)
+              .filter(event -> event.getFormattedMessage().contains(message))
+              .count();
+      if (count >= expectedCount) {
+        return;
+      }
+      Thread.sleep(10);
+    }
+    long count =
+        appender.list.stream()
+            .filter(event -> event.getLevel() == level)
+            .filter(event -> event.getFormattedMessage().contains(message))
+            .count();
+    assertTrue(count >= expectedCount, "Expected at least " + expectedCount + " matching logs");
   }
 
   private static WatchEvent<Path> pathEvent(WatchEvent.Kind<Path> kind, Path context) {

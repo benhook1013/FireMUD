@@ -116,6 +116,6 @@ install -m 644 "$work_dir/rotated-gateway-client-ca.crt" \
   "$fixture_dir/rotated-gateway-client-ca.crt"
 install -m 644 "$work_dir/rotated-gateway-client.crt" \
   "$fixture_dir/rotated-gateway-client.crt"
-install -m 644 "$work_dir/rotated-gateway-client.key" \
+install -m 600 "$work_dir/rotated-gateway-client.key" \
   "$fixture_dir/rotated-gateway-client.key"
 ```
