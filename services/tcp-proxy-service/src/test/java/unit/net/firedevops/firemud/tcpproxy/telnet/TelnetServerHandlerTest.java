@@ -10,6 +10,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.startsWith;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -221,6 +222,49 @@ class TelnetServerHandlerTest {
       assertEquals(0, handler.getBufferedSize());
       executor.shutdownGracefully();
     }
+  }
+
+  @Test
+  void failedGatewayConnectionDoesNotRetainCommandWhenClosingInline() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    ChannelFuture closeFuture = mock(ChannelFuture.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+    when(ctx.writeAndFlush(any())).thenReturn(closeFuture);
+    when(closeFuture.addListener(any(ChannelFutureListener.class))).thenReturn(closeFuture);
+    TelnetServerHandler handler =
+        new TelnetServerHandler(
+            "ws://localhost/ws",
+            () -> {},
+            () -> {},
+            registry.counter("test"),
+            registry.counter("discarded"),
+            false,
+            registry,
+            () -> true,
+            (ip,
+                proxyConnectionId,
+                session,
+                tenant,
+                worldSlug,
+                realmSlug,
+                pointerVersion,
+                listener) -> CompletableFuture.failedFuture(new IllegalStateException("failed")),
+            Mockito.mock(TcpProxyEventService.class),
+            new AtomicInteger());
+
+    handler.channelActive(ctx);
+    verify(ctx, never()).writeAndFlush(startsWith("DISCONNECT "));
+    handler.channelRead0(ctx, "LOOK");
+
+    assertEquals(0, handler.getBufferedSize());
+    verify(ctx).writeAndFlush(startsWith("DISCONNECT backend_unavailable "));
+    verify(closeFuture).addListener(ChannelFutureListener.CLOSE);
+    executor.shutdownGracefully();
   }
 
   @Test

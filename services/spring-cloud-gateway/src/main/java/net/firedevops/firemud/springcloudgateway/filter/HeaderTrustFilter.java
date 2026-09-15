@@ -3,7 +3,6 @@ package net.firedevops.firemud.springcloudgateway.filter;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -79,7 +78,7 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
     String incomingProxyClientIp = exchange.getRequest().getHeaders().getFirst(HDR_PROXY_CLIENT_IP);
     String canonicalClientIp =
         trustedTcpProxy && isSessionRoute
-            ? normalizeIpLiteral(incomingProxyClientIp)
+            ? CidrBlock.normalizeIpLiteral(incomingProxyClientIp)
             : deriveClientIpFromForwardedHeaders(exchange.getRequest().getHeaders(), remoteAddress);
 
     if (trustedTcpProxy && isSessionRoute && canonicalClientIp == null) {
@@ -240,18 +239,18 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
       HttpHeaders headers, InetAddress remoteAddress) {
     if (remoteAddress != null && trustedForwardedProxies.contains(remoteAddress)) {
       String forwarded = parseForwardedFor(headers.getFirst("Forwarded"));
-      String normalized = normalizeIpLiteral(forwarded);
+      String normalized = CidrBlock.normalizeIpLiteral(forwarded);
       if (normalized != null) {
         return normalized;
       }
 
       String xff = parseXForwardedFor(headers.getFirst("X-Forwarded-For"));
-      normalized = normalizeIpLiteral(xff);
+      normalized = CidrBlock.normalizeIpLiteral(xff);
       if (normalized != null) {
         return normalized;
       }
 
-      normalized = normalizeIpLiteral(headers.getFirst("X-Real-IP"));
+      normalized = CidrBlock.normalizeIpLiteral(headers.getFirst("X-Real-IP"));
       if (normalized != null) {
         return normalized;
       }
@@ -297,33 +296,6 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
     return null;
   }
 
-  private static String normalizeIpLiteral(String value) {
-    if (value == null) {
-      return null;
-    }
-    String trimmed = value.trim();
-    if (trimmed.isEmpty()) {
-      return null;
-    }
-    for (int i = 0; i < trimmed.length(); i++) {
-      char c = trimmed.charAt(i);
-      boolean allowed =
-          (c >= '0' && c <= '9') || c == '.' || c == ':' || c == '[' || c == ']' || c == '%';
-      if (!allowed) {
-        return null;
-      }
-    }
-    try {
-      if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-        trimmed = trimmed.substring(1, trimmed.length() - 1);
-      }
-      InetAddress address = InetAddress.getByName(trimmed);
-      return address.getHostAddress();
-    } catch (Exception ignored) {
-      return null;
-    }
-  }
-
   private InetAddress remoteInetAddress(ServerWebExchange exchange) {
     InetSocketAddress remote = exchange.getRequest().getRemoteAddress();
     return remote != null ? remote.getAddress() : null;
@@ -332,104 +304,5 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
   @Override
   public int getOrder() {
     return -4;
-  }
-
-  static final class CidrSet {
-    private final List<CidrBlock> blocks;
-
-    CidrSet(List<String> cidrs) {
-      List<CidrBlock> parsed = new ArrayList<>();
-      if (cidrs != null) {
-        for (String cidr : cidrs) {
-          CidrBlock block = CidrBlock.parse(cidr);
-          if (block != null) {
-            parsed.add(block);
-          }
-        }
-      }
-      this.blocks = List.copyOf(parsed);
-    }
-
-    boolean contains(InetAddress address) {
-      if (address == null) {
-        return false;
-      }
-      for (CidrBlock block : blocks) {
-        if (block.contains(address)) {
-          return true;
-        }
-      }
-      return false;
-    }
-  }
-
-  record CidrBlock(byte[] network, int prefixBits) {
-    static CidrBlock parse(String cidr) {
-      if (cidr == null) {
-        return null;
-      }
-      String trimmed = cidr.trim();
-      if (trimmed.isEmpty()) {
-        return null;
-      }
-      String[] parts = trimmed.split("/");
-      if (parts.length != 2) {
-        return null;
-      }
-      String ip = normalizeIpLiteral(parts[0]);
-      if (ip == null) {
-        return null;
-      }
-      int prefix;
-      try {
-        prefix = Integer.parseInt(parts[1].trim());
-      } catch (Exception ignored) {
-        return null;
-      }
-      try {
-        InetAddress address = InetAddress.getByName(ip);
-        int max = address.getAddress().length * 8;
-        if (prefix < 0 || prefix > max) {
-          return null;
-        }
-        byte[] networkBytes = address.getAddress();
-        applyMaskInPlace(networkBytes, prefix);
-        return new CidrBlock(networkBytes, prefix);
-      } catch (Exception ignored) {
-        return null;
-      }
-    }
-
-    boolean contains(InetAddress address) {
-      byte[] bytes = address.getAddress();
-      if (bytes.length != network.length) {
-        return false;
-      }
-      int fullBytes = prefixBits / 8;
-      int remainingBits = prefixBits % 8;
-      for (int i = 0; i < fullBytes; i++) {
-        if (bytes[i] != network[i]) {
-          return false;
-        }
-      }
-      if (remainingBits == 0) {
-        return true;
-      }
-      int mask = 0xFF << (8 - remainingBits);
-      return (bytes[fullBytes] & mask) == (network[fullBytes] & mask);
-    }
-
-    private static void applyMaskInPlace(byte[] bytes, int prefixBits) {
-      int fullBytes = prefixBits / 8;
-      int remainingBits = prefixBits % 8;
-      for (int i = fullBytes + (remainingBits > 0 ? 1 : 0); i < bytes.length; i++) {
-        bytes[i] = 0;
-      }
-      if (remainingBits == 0 || fullBytes >= bytes.length) {
-        return;
-      }
-      int mask = 0xFF << (8 - remainingBits);
-      bytes[fullBytes] = (byte) (bytes[fullBytes] & mask);
-    }
   }
 }

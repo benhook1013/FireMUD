@@ -163,22 +163,18 @@ public class TcpProxyEventClient implements AutoCloseable {
       shutdownChannel(newChannel);
       throw ex;
     }
-    ManagedChannel previousChannel;
+    ManagedChannel channelToShutdown;
     synchronized (this) {
       if (closing.get()) {
-        previousChannel = null;
+        channelToShutdown = newChannel;
       } else {
-        previousChannel = channel;
+        channelToShutdown = channel;
         channel = newChannel;
         stub = newStub;
         tlsMaterial = resolved;
       }
     }
-    if (closing.get()) {
-      shutdownChannel(newChannel);
-      return;
-    }
-    shutdownChannel(previousChannel);
+    shutdownChannel(channelToShutdown);
   }
 
   private static void shutdownChannel(ManagedChannel channel) {

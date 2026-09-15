@@ -57,8 +57,8 @@ public final class TcpProxyTrustPolicy {
 
   private final GatewayTcpProxyListenerProperties listener;
   private final GatewayHeaderTrustProperties legacy;
-  private final HeaderTrustFilter.CidrSet legacyCidrs;
-  private final HeaderTrustFilter.CidrSet developmentCidrs;
+  private final CidrSet legacyCidrs;
+  private final CidrSet developmentCidrs;
   private final Clock clock;
   private final int publicPort;
   private final TrustProfile profile;
@@ -87,8 +87,7 @@ public final class TcpProxyTrustPolicy {
     this.legacy = Objects.requireNonNull(legacy);
     this.publicPort = publicPort;
     this.clock = Objects.requireNonNull(clock);
-    this.legacyCidrs =
-        new HeaderTrustFilter.CidrSet(legacy.getTcpProxy().getInsecureTrustedCidrs());
+    this.legacyCidrs = new CidrSet(legacy.getTcpProxy().getInsecureTrustedCidrs());
 
     if (!listener.isEnabled()) {
       rejectLegacyCertificateMatchers();
@@ -96,7 +95,7 @@ public final class TcpProxyTrustPolicy {
       this.profile = null;
       this.expectedIdentity = null;
       this.profileExpiresAt = null;
-      this.developmentCidrs = new HeaderTrustFilter.CidrSet(List.of());
+      this.developmentCidrs = new CidrSet(List.of());
       return;
     }
 
@@ -111,9 +110,8 @@ public final class TcpProxyTrustPolicy {
     this.profileExpiresAt = selectedProfileExpiry();
     this.developmentCidrs =
         profile == TrustProfile.DEVELOPMENT_CIDR
-            ? new HeaderTrustFilter.CidrSet(
-                List.of(listener.getDevelopmentCidr().getTrustedCidr().trim()))
-            : new HeaderTrustFilter.CidrSet(List.of());
+            ? new CidrSet(List.of(listener.getDevelopmentCidr().getTrustedCidr().trim()))
+            : new CidrSet(List.of());
   }
 
   boolean isTrusted(ServerWebExchange exchange, InetAddress remoteAddress) {
@@ -220,7 +218,7 @@ public final class TcpProxyTrustPolicy {
       throw invalid("legacy insecure header trust requires at least one source CIDR");
     }
     for (String cidr : legacy.getTcpProxy().getInsecureTrustedCidrs()) {
-      HeaderTrustFilter.CidrBlock parsed = HeaderTrustFilter.CidrBlock.parse(cidr);
+      CidrBlock parsed = CidrBlock.parse(cidr);
       if (parsed == null || parsed.prefixBits() == 0) {
         throw invalid("legacy insecure header trust contains an invalid source CIDR");
       }
@@ -272,7 +270,7 @@ public final class TcpProxyTrustPolicy {
         String cidr =
             requireText(
                 listener.getDevelopmentCidr().getTrustedCidr(), "development-cidr.trusted-cidr");
-        HeaderTrustFilter.CidrBlock parsed = HeaderTrustFilter.CidrBlock.parse(cidr);
+        CidrBlock parsed = CidrBlock.parse(cidr);
         if (parsed == null || parsed.prefixBits() == 0) {
           throw invalid("development-cidr.trusted-cidr is invalid");
         }

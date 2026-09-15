@@ -103,6 +103,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private final AtomicReference<CompletableFuture<WebSocket>> inFlightGatewayConnection =
       new AtomicReference<>();
   private final Object webSocketLifecycleLock = new Object();
+  private final Object bufferLifecycleLock = new Object();
   private volatile CompletableFuture<WebSocket> inFlightSend;
   private String clientIp;
   private boolean connectEventRecorded;
@@ -431,11 +432,12 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
         ensureGatewayConnected();
 
-        if (!canBufferMore()) {
-          return;
+        synchronized (bufferLifecycleLock) {
+          if (closing || !canBufferMore()) {
+            return;
+          }
+          buffer.add(sanitized);
         }
-
-        buffer.add(sanitized);
         updateBufferDepthGauge();
         drainBuffer();
       } finally {
@@ -613,16 +615,20 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private void failClose(String reasonToken, String message) {
-    if (closing) {
-      return;
+    ChannelHandlerContext closeContext;
+    synchronized (bufferLifecycleLock) {
+      if (closing) {
+        return;
+      }
+      closing = true;
+      reconnecting = false;
+      buffer.clear();
+      updateBufferDepthGauge();
+      closeContext = context;
     }
-    closing = true;
-    reconnecting = false;
     cancelInFlightGatewayConnection();
-    buffer.clear();
-    updateBufferDepthGauge();
-    if (context != null) {
-      context
+    if (closeContext != null) {
+      closeContext
           .writeAndFlush("DISCONNECT " + reasonToken + " " + message + "\n")
           .addListener(ChannelFutureListener.CLOSE);
     }

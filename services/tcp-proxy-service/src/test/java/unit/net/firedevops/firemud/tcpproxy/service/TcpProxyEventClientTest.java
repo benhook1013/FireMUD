@@ -3,6 +3,7 @@ package net.firedevops.firemud.tcpproxy.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -216,6 +217,40 @@ class TcpProxyEventClientTest {
     org.junit.jupiter.api.Assertions.assertNull(getField(client, "stub"));
     verify(previousChannel).shutdown();
     verify(replacementChannel).shutdown();
+  }
+
+  @Test
+  void closeAfterReloadPublicationShutsDownBothChannels() throws Exception {
+    ServiceEndpointsProperties endpoints = mock(ServiceEndpointsProperties.class);
+    when(endpoints.copy()).thenReturn(endpoints);
+    CommonGrpcClientProperties tlsProps = mock(CommonGrpcClientProperties.class);
+    when(tlsProps.copy()).thenReturn(tlsProps);
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    io.grpc.ManagedChannel previousChannel = mock(io.grpc.ManagedChannel.class);
+    io.grpc.ManagedChannel replacementChannel = mock(io.grpc.ManagedChannel.class);
+    when(channelFactory.buildChannel(any(), any(Integer.class), any(), any(Boolean.class), any()))
+        .thenReturn(replacementChannel);
+    TcpProxyEventClient client =
+        new TcpProxyEventClient(
+            endpoints,
+            tlsProps,
+            channelFactory,
+            mock(GrpcTlsMaterialResolver.class),
+            BlockingGrpcStubCustomizer.noop());
+    setField(client, "channel", previousChannel);
+    doAnswer(
+            ignored -> {
+              client.close();
+              return null;
+            })
+        .when(previousChannel)
+        .shutdown();
+
+    invokeReloadChannel(client);
+
+    verify(previousChannel).shutdown();
+    verify(replacementChannel).shutdown();
+    org.junit.jupiter.api.Assertions.assertNull(getField(client, "channel"));
   }
 
   @Test
