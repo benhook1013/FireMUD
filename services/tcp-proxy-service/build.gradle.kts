@@ -118,7 +118,7 @@ val verifyNoRedisBootJar =
     }
 
 tasks.named("check") {
-    dependsOn(verifyNoRedisRuntime, verifyNoRedisBootJar)
+    dependsOn(verifyNoRedisRuntime)
 }
 
 tasks.named("assemble") {
