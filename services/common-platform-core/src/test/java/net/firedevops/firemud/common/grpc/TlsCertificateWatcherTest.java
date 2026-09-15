@@ -16,6 +16,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardWatchEventKinds;
 import java.nio.file.WatchEvent;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -442,6 +443,62 @@ class TlsCertificateWatcherTest {
       }
       retry.get(5, TimeUnit.SECONDS);
       assertEquals(2, attempts.get());
+    }
+  }
+
+  @Test
+  void registrationRecoveryRetriesWhenReloadCallbackIsSkipped(@TempDir Path directory)
+      throws Exception {
+    Path watchedDirectory = Files.createDirectory(directory.resolve("watched"));
+    Path certificate = Files.writeString(watchedDirectory.resolve("tls.crt"), "certificate-1");
+    CountDownLatch callbackInvoked = new CountDownLatch(1);
+
+    TlsCertificateWatcher watcher =
+        new TlsCertificateWatcher(List.of(certificate), callbackInvoked::countDown);
+    Field keysField = TlsCertificateWatcher.class.getDeclaredField("keys");
+    Field callbackMonitorField = TlsCertificateWatcher.class.getDeclaredField("callbackMonitor");
+    Method retryMethod = TlsCertificateWatcher.class.getDeclaredMethod("retryMissingRegistrations");
+    keysField.setAccessible(true);
+    callbackMonitorField.setAccessible(true);
+    retryMethod.setAccessible(true);
+    @SuppressWarnings("unchecked")
+    Map<Object, Path> keys = (Map<Object, Path>) keysField.get(watcher);
+    Object watchKey = keys.entrySet().iterator().next().getKey();
+    keys.remove(watchKey);
+
+    java.util.concurrent.locks.ReentrantLock callbackMonitor =
+        (java.util.concurrent.locks.ReentrantLock) callbackMonitorField.get(watcher);
+    CountDownLatch lockAcquired = new CountDownLatch(1);
+    CountDownLatch releaseLock = new CountDownLatch(1);
+    Thread lockHolder =
+        new Thread(
+            () -> {
+              callbackMonitor.lock();
+              try {
+                lockAcquired.countDown();
+                try {
+                  releaseLock.await();
+                } catch (InterruptedException e) {
+                  Thread.currentThread().interrupt();
+                }
+              } finally {
+                callbackMonitor.unlock();
+              }
+            });
+    lockHolder.start();
+    try {
+      assertTrue(lockAcquired.await(5, TimeUnit.SECONDS));
+      retryMethod.invoke(watcher);
+
+      Field retryTaskField = TlsCertificateWatcher.class.getDeclaredField("retryTask");
+      retryTaskField.setAccessible(true);
+      assertTrue(retryTaskField.get(watcher) != null);
+      releaseLock.countDown();
+      assertTrue(callbackInvoked.await(5, TimeUnit.SECONDS));
+    } finally {
+      releaseLock.countDown();
+      lockHolder.join(5_000);
+      watcher.close();
     }
   }
 

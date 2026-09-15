@@ -287,8 +287,40 @@ class TcpProxyTlsListenerTest {
     verify(server).disposeNow(org.mockito.ArgumentMatchers.any(Duration.class));
     verify(channels).close();
     verify(closeFuture).awaitUninterruptibly(org.mockito.ArgumentMatchers.anyLong());
-    assertThat(serverField.get(listener)).isSameAs(server);
+    assertThat(serverField.get(listener)).isNull();
     assertThat(channelsField.get(listener)).isNull();
+  }
+
+  @Test
+  void trustProfileExpiryClearsServerHandleWhenDisposalFails() throws Exception {
+    GatewayTcpProxyListenerProperties properties = tlsProperties(0);
+    TcpProxyTrustPolicy policy = mock(TcpProxyTrustPolicy.class);
+    when(policy.timeUntilProfileExpiry()).thenReturn(Duration.ofMillis(1));
+    when(policy.profileName()).thenReturn("breakglass_fingerprint");
+    TcpProxyTlsListener listener =
+        new TcpProxyTlsListener(properties, policy, mock(HttpHandler.class));
+    DisposableServer server = mock(DisposableServer.class);
+    RuntimeException failure = new RuntimeException("server disposal failed");
+    doThrow(failure).when(server).disposeNow(org.mockito.ArgumentMatchers.any(Duration.class));
+
+    Field serverField = TcpProxyTlsListener.class.getDeclaredField("server");
+    serverField.setAccessible(true);
+    serverField.set(listener, server);
+    var expiryMethod = TcpProxyTlsListener.class.getDeclaredMethod("scheduleProfileExpiry");
+    expiryMethod.setAccessible(true);
+
+    try {
+      expiryMethod.invoke(listener);
+      Instant deadline = Instant.now().plusSeconds(5);
+      while (serverField.get(listener) != null && Instant.now().isBefore(deadline)) {
+        Thread.sleep(10);
+      }
+
+      assertThat(serverField.get(listener)).isNull();
+      verify(server).disposeNow(org.mockito.ArgumentMatchers.any(Duration.class));
+    } finally {
+      listener.stop();
+    }
   }
 
   @Test

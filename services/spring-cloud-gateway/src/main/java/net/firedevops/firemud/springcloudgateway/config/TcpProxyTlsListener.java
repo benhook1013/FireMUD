@@ -170,12 +170,14 @@ public final class TcpProxyTlsListener implements SmartLifecycle {
     try {
       if (current != null) {
         current.disposeNow(SHUTDOWN_TIMEOUT);
-        server = null;
       }
     } catch (RuntimeException ex) {
       LOG.error("TCP Proxy internal TLS listener failed during server shutdown", ex);
       throw ex;
     } finally {
+      if (server == current) {
+        server = null;
+      }
       if (channels != null) {
         try {
           channels.close().awaitUninterruptibly(SHUTDOWN_TIMEOUT.toMillis());

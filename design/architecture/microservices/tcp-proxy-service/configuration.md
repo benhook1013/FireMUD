@@ -121,7 +121,7 @@ The local environment consequence is:
 - Proxy -> Gateway gameplay traffic uses mTLS in all shared and player-facing environments.
 - Shared and player-facing environments must use `wss://` to the internal-only Gateway mTLS listener; they must not serve player-facing traffic over `ws://`.
 - Player-facing environments must fail startup or admission if Proxy -> Gateway mTLS identity verification is unavailable.
-- Gateway trust uses exactly one profile from [ADR 0169](../../decisions/adr-0169-exclusive-environment-bound-tcp-proxy-trust.md). Steady-state player-facing deployments require an exact environment-specific URI SAN identity; DNS migration and fingerprint break-glass profiles are explicit and expiring, while insecure CIDR trust is `dev`/`test`-only.
+- Gateway trust uses exactly one profile from [ADR 0169](../../decisions/adr-0169-exclusive-environment-bound-tcp-proxy-trust.md). Steady-state player-facing deployments require an exact environment-specific URI SAN identity; DNS migration and fingerprint break-glass profiles are explicit and expiring. The `development_cidr` profile is reserved for the canonical `local-dev` and `isolated-test` environment classes, and permits insecure source-CIDR trust only there; these environment classes are distinct from Spring active profile names such as `local`, `dev`, and `test`. Hosted, hobby/self-hosted player-facing, staging, and production environments must not use `development_cidr`.
 
 ## Connection Limits and Abuse Protection
 

@@ -372,7 +372,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
       synchronized (retryMonitor) {
         registrationRetryAttempts = 0;
       }
-      if (invokeReloadCallback(true) == CallbackInvocationResult.FAILED) {
+      if (invokeReloadCallback(true) != CallbackInvocationResult.SUCCEEDED) {
         scheduleCallbackRetry();
       }
     } else {
