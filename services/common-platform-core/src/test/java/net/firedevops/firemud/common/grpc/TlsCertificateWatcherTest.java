@@ -356,6 +356,39 @@ class TlsCertificateWatcherTest {
   }
 
   @Test
+  void closeFromReloadCallbackDoesNotInterruptWorker(@TempDir Path directory) throws Exception {
+    Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
+    CountDownLatch callbackClosed = new CountDownLatch(1);
+    AtomicBoolean callbackWasInterrupted = new AtomicBoolean();
+    AtomicReference<Throwable> closeFailure = new AtomicReference<>();
+    AtomicReference<TlsCertificateWatcher> watcherReference = new AtomicReference<>();
+
+    TlsCertificateWatcher watcher =
+        TlsCertificateWatcher.createAndStart(
+            List.of(certificate),
+            () -> {
+              try {
+                watcherReference.get().close();
+                callbackWasInterrupted.set(Thread.currentThread().isInterrupted());
+              } catch (Throwable failure) {
+                closeFailure.set(failure);
+              } finally {
+                callbackClosed.countDown();
+              }
+            });
+    watcherReference.set(watcher);
+    try {
+      Files.writeString(certificate, "certificate-2");
+      assertTrue(callbackClosed.await(5, TimeUnit.SECONDS));
+      assertFalse(watcher.isRunning());
+      assertFalse(callbackWasInterrupted.get());
+      assertNull(closeFailure.get());
+    } finally {
+      watcher.close();
+    }
+  }
+
+  @Test
   void failedCallbackRetryIsCancelledWhenWatcherCloses(@TempDir Path directory) throws Exception {
     Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
     AtomicInteger attempts = new AtomicInteger();

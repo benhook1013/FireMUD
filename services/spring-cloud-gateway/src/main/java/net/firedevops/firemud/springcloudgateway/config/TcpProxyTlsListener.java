@@ -85,11 +85,19 @@ public final class TcpProxyTlsListener implements SmartLifecycle {
           trustPolicy.profileName());
       scheduleProfileExpiry();
     } catch (RuntimeException ex) {
-      stop();
+      stopAfterStartupFailure(ex);
       throw ex;
     } catch (Exception ex) {
-      stop();
+      stopAfterStartupFailure(ex);
       throw new IllegalStateException("Unable to start TCP Proxy internal TLS listener", ex);
+    }
+  }
+
+  private void stopAfterStartupFailure(Throwable startupFailure) {
+    try {
+      stop();
+    } catch (RuntimeException cleanupFailure) {
+      startupFailure.addSuppressed(cleanupFailure);
     }
   }
 

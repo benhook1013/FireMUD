@@ -43,6 +43,21 @@ class HttpTestSupportTest {
   }
 
   @Test
+  void rootUpStatusWithNonSuccessHttpStatusDoesNotSatisfyReadiness() throws Exception {
+    String body = "{\"status\":\"UP\"}";
+    try (TestHttpServer server = TestHttpServer.responding(503, body)) {
+      Throwable failure =
+          catchThrowable(
+              () -> HttpTestSupport.awaitReadiness(server.url(), Duration.ofMillis(250)));
+
+      assertThat(failure)
+          .isInstanceOf(AssertionError.class)
+          .hasMessageContaining("Timed out waiting for HTTP readiness")
+          .hasMessageContaining("last successful response body: " + body);
+    }
+  }
+
+  @Test
   void malformedAndNonObjectBodiesDoNotSatisfyReadiness() throws Exception {
     for (String body : List.of("not-json", "[]", "\"UP\"")) {
       try (TestHttpServer server = TestHttpServer.responding(body)) {
@@ -125,10 +140,14 @@ class HttpTestSupportTest {
     }
 
     private static TestHttpServer responding(String body) throws IOException {
+      return responding(200, body);
+    }
+
+    private static TestHttpServer responding(int statusCode, String body) throws IOException {
       return new TestHttpServer(
           exchange -> {
             byte[] response = body.getBytes(StandardCharsets.UTF_8);
-            exchange.sendResponseHeaders(200, response.length);
+            exchange.sendResponseHeaders(statusCode, response.length);
             try (OutputStream output = exchange.getResponseBody()) {
               output.write(response);
             }

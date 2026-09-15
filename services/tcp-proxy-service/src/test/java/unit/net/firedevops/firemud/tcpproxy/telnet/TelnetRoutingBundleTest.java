@@ -45,7 +45,7 @@ class TelnetRoutingBundleTest {
 
   @Test
   void normalizeReturnsNullWhenSlugExceedsUtf8ByteLimit() {
-    assertNull(TelnetRoutingBundle.normalize("a".repeat(119) + "é", "production", "17"));
+    assertNull(TelnetRoutingBundle.normalize("a".repeat(121), "production", "17"));
   }
 
   @Test

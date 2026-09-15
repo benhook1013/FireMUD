@@ -744,7 +744,7 @@ class TelnetServerHandlerTest {
       }
 
       verify(ctx).close();
-      assertEquals(512, handler.getBufferedSize());
+      assertEquals(maxBufferDepth(), handler.getBufferedSize());
       assertEquals(1.0, registry.counter("discarded").count());
     } finally {
       executor.shutdownGracefully();

@@ -129,7 +129,7 @@ tasks.named<BootJar>("bootJar") {
 }
 
 tasks.named("check") {
-    dependsOn(verifyNoRedisRuntime)
+    dependsOn(verifyNoRedisRuntime, verifyNoRedisBootJar)
 }
 
 tasks.named("assemble") {

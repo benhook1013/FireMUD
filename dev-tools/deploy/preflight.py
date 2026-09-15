@@ -4118,7 +4118,15 @@ def validate_gateway_ws_trust_profile(
                 f"{expected_uri!r}"
             )
     elif selected_profile == "migration_dns":
-        dns_san = required_value("FIREMUD_GATEWAY_TCP_PROXY_TRUST_DNS_SAN")
+        dns_san_name = "FIREMUD_GATEWAY_TCP_PROXY_TRUST_DNS_SAN"
+        raw_dns_san = env.get(dns_san_name)
+        dns_san = required_value(dns_san_name)
+        if (
+            dns_san is not None
+            and isinstance(raw_dns_san, str)
+            and raw_dns_san != dns_san
+        ):
+            issues.append(f"{dns_san_name} must not contain surrounding whitespace")
         if dns_san is not None:
             normalized_dns_san = dns_san.lower()
             if (

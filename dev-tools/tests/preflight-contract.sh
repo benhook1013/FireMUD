@@ -1558,6 +1558,7 @@ import datetime as dt
 import importlib.util
 import pathlib
 import sys
+from types import SimpleNamespace
 
 import yaml
 
@@ -1673,6 +1674,22 @@ if issues_for(migration_documents):
         + "; ".join(issues_for(migration_documents))
     )
 
+padded_migration = copy.deepcopy(migration_documents)
+padded_migration_env = gateway_env(padded_migration)
+for entry in padded_migration_env:
+    if entry.get("name") == "FIREMUD_GATEWAY_TCP_PROXY_TRUST_DNS_SAN":
+        entry["value"] = " tcp-proxy.internal "
+padded_migration_issues = issues_for(padded_migration)
+if not any(
+    "FIREMUD_GATEWAY_TCP_PROXY_TRUST_DNS_SAN must not contain surrounding whitespace"
+    in issue
+    for issue in padded_migration_issues
+):
+    raise SystemExit(
+        "surrounding-whitespace migration_dns profile was accepted: "
+        + str(padded_migration_issues)
+    )
+
 breakglass_documents = with_profile(
     "breakglass_fingerprint",
     FIREMUD_GATEWAY_TCP_PROXY_TRUST_FINGERPRINT_SHA256="a" * 64,
@@ -1733,13 +1750,18 @@ if module.validate_gateway_ws_listener(
 )[1]:
     raise SystemExit("fixed evaluation time did not control break-glass expiry")
 
-original_datetime = module.dt.datetime
+original_datetime_dependency = module.dt
+original_datetime = original_datetime_dependency.datetime
 class WallClockTrapDateTime(original_datetime):
     @classmethod
     def now(cls, tz=None):
         raise AssertionError("Gateway bridge validation sampled wall-clock time")
 
-module.dt.datetime = WallClockTrapDateTime
+module.dt = SimpleNamespace(
+    datetime=WallClockTrapDateTime,
+    timezone=original_datetime_dependency.timezone,
+    timedelta=original_datetime_dependency.timedelta,
+)
 try:
     if module.validate_gateway_ws_listener(
         fixed_migration,
@@ -1748,7 +1770,7 @@ try:
     )[1]:
         raise SystemExit("fixed migration validation failed while wall clock was unavailable")
 finally:
-    module.dt.datetime = original_datetime
+    module.dt = original_datetime_dependency
 
 try:
     module.validate_gateway_ws_listener(

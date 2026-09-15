@@ -539,7 +539,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
     }
 
     boolean threadStopped = awaitThreadTermination(thread, SHUTDOWN_GRACE_PERIOD);
-    if (!threadStopped) {
+    if (!threadStopped && thread != Thread.currentThread()) {
       thread.interrupt();
       awaitThreadTermination(thread, SHUTDOWN_FORCE_PERIOD);
     }

@@ -55,9 +55,22 @@ replacements = {
 for target, replacement in replacements.items():
     if target not in text:
         raise SystemExit(f"bridge contract fixture token is missing: {target}")
+
+required_markers = (
+    "# __TCP_PROXY_GATEWAY_BASE_URL_LINE__",
+    "# __TCP_PROXY_ADDITIONAL_SERVICE_PORTS__",
+)
+missing_markers = [marker for marker in required_markers if marker not in text]
+if missing_markers:
+    raise SystemExit(
+        "bridge contract fixture replacement markers are missing before any replacement: "
+        + ", ".join(missing_markers)
+    )
+
+for target, replacement in replacements.items():
     text = text.replace(target, replacement)
-text = text.replace("        # __TCP_PROXY_GATEWAY_BASE_URL_LINE__", "")
-text = text.replace("        # __TCP_PROXY_ADDITIONAL_SERVICE_PORTS__", "")
+for marker in required_markers:
+    text = text.replace("        " + marker, "")
 output_path.write_text(text, encoding="utf-8")
 PY
 }

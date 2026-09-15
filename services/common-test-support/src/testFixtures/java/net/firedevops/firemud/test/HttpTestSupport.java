@@ -64,12 +64,12 @@ public final class HttpTestSupport {
         break;
       }
       try {
-        String responseBody =
-            getBody(
+        HttpResponse<String> response =
+            getResponse(
                 url,
                 Duration.ofNanos(Math.min(Math.max(1, remainingNanos), PROBE_TIMEOUT.toNanos())));
-        lastSuccessfulResponseBody = responseBody;
-        if (isReady(responseBody)) {
+        lastSuccessfulResponseBody = response.body();
+        if (isReady(response)) {
           return;
         }
       } catch (IOException ex) {
@@ -105,6 +105,10 @@ public final class HttpTestSupport {
     throw failure;
   }
 
+  private static boolean isReady(HttpResponse<String> response) {
+    return response.statusCode() >= 200 && response.statusCode() < 300 && isReady(response.body());
+  }
+
   private static boolean isReady(String body) {
     try {
       JsonNode root = JSON_MAPPER.readTree(body);
@@ -126,13 +130,11 @@ public final class HttpTestSupport {
     return HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString(charset)).body();
   }
 
-  private static String getBody(String url, Duration requestTimeout)
+  private static HttpResponse<String> getResponse(String url, Duration requestTimeout)
       throws IOException, InterruptedException {
     HttpRequest request =
         HttpRequest.newBuilder(URI.create(url)).timeout(requestTimeout).GET().build();
-    return HTTP_CLIENT
-        .send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
-        .body();
+    return HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
   }
 
   public static String postJsonBody(String url, String requestBody)

@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 
 import io.netty.channel.group.ChannelGroup;
 import io.netty.channel.group.ChannelGroupFuture;
+import io.netty.handler.ssl.ClientAuth;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import java.lang.reflect.Field;
@@ -24,9 +25,12 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
+import javax.net.ssl.SSLException;
 import net.firedevops.firemud.springcloudgateway.filter.TcpProxyTrustPolicy;
 import net.firedevops.firemud.test.TlsTestSupport;
 import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
+import org.mockito.Mockito;
 import org.springframework.context.support.GenericApplicationContext;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -126,6 +130,76 @@ class TcpProxyTlsListenerTest {
     assertThat(failure)
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("TCP Proxy listener bind address must be configured and non-blank");
+  }
+
+  @Test
+  void startupPreservesRuntimeFailureWhenCleanupFails() throws Exception {
+    GatewayTcpProxyListenerProperties properties = tlsProperties(0);
+    properties.setBindAddress(" ");
+    TcpProxyTlsListener listener =
+        new TcpProxyTlsListener(
+            properties, mock(TcpProxyTrustPolicy.class), mock(HttpHandler.class));
+    DisposableServer server = mock(DisposableServer.class);
+    RuntimeException cleanupFailure = new RuntimeException("server disposal failed");
+    when(server.isDisposed()).thenReturn(true);
+    doThrow(cleanupFailure)
+        .when(server)
+        .disposeNow(org.mockito.ArgumentMatchers.any(Duration.class));
+    Field serverField = TcpProxyTlsListener.class.getDeclaredField("server");
+    serverField.setAccessible(true);
+    serverField.set(listener, server);
+
+    Throwable startupFailure = catchThrowable(listener::start);
+
+    assertThat(startupFailure)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("TCP Proxy listener bind address must be configured and non-blank")
+        .satisfies(failure -> assertThat(failure.getSuppressed()).containsExactly(cleanupFailure));
+  }
+
+  @Test
+  void startupPreservesCheckedFailureWhenCleanupFails() throws Exception {
+    GatewayTcpProxyListenerProperties properties = tlsProperties(0);
+    properties.setCertificateChainPath(fixture("dev-cert.pem").toString());
+    TcpProxyTrustPolicy policy = mock(TcpProxyTrustPolicy.class);
+    when(policy.requiresClientCertificate()).thenReturn(false);
+    TcpProxyTlsListener listener =
+        new TcpProxyTlsListener(properties, policy, mock(HttpHandler.class));
+    SslContextBuilder builder = mock(SslContextBuilder.class);
+    SSLException startupCause = new SSLException("context build failed");
+    when(builder.clientAuth(ClientAuth.NONE)).thenReturn(builder);
+    when(builder.protocols("TLSv1.3", "TLSv1.2")).thenReturn(builder);
+    when(builder.build()).thenThrow(startupCause);
+    DisposableServer server = mock(DisposableServer.class);
+    RuntimeException cleanupFailure = new RuntimeException("server disposal failed");
+    when(server.isDisposed()).thenReturn(true);
+    doThrow(cleanupFailure)
+        .when(server)
+        .disposeNow(org.mockito.ArgumentMatchers.any(Duration.class));
+    Field serverField = TcpProxyTlsListener.class.getDeclaredField("server");
+    serverField.setAccessible(true);
+    serverField.set(listener, server);
+
+    Throwable startupFailure;
+    try (MockedStatic<SslContextBuilder> mocked = Mockito.mockStatic(SslContextBuilder.class)) {
+      mocked
+          .when(
+              () ->
+                  SslContextBuilder.forServer(
+                      Path.of(properties.getCertificateChainPath()).toFile(),
+                      Path.of(properties.getPrivateKeyPath()).toFile()))
+          .thenReturn(builder);
+      startupFailure = catchThrowable(listener::start);
+    }
+
+    assertThat(startupFailure)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Unable to start TCP Proxy internal TLS listener")
+        .satisfies(
+            failure -> {
+              assertThat(failure.getCause()).isNotNull();
+              assertThat(failure.getCause().getSuppressed()).containsExactly(cleanupFailure);
+            });
   }
 
   @Test
