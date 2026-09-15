@@ -422,15 +422,144 @@ class HeaderTrustFilterTest {
 
   @Test
   void acceptsAbsentRoutingBundleFromTrustedTcpProxy() {
-    ServerWebExchange mutatedExchange = filterTrustedTcpProxyRoutingBundle(null, null, null);
+    ServerWebExchange mutatedExchange = filterTrustedTcpProxyRoutingBundle();
 
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-World-Slug")).isNull();
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Realm-Slug")).isNull();
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Pointer-Version")).isNull();
   }
 
-  private ServerWebExchange filterTrustedTcpProxyRoutingBundle(
-      String worldSlug, String realmSlug, String pointerVersion) {
+  @Test
+  void acceptsAbsentRoutingBundleFromTrustedTcpProxyApiRoute() {
+    ServerWebExchange mutatedExchange =
+        filterTrustedTcpProxyRoutingBundleForRoute("/api/session/ping", null, null, null);
+
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-World-Slug")).isNull();
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Realm-Slug")).isNull();
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Pointer-Version")).isNull();
+  }
+
+  @Test
+  void promotesValidFullRoutingBundleOnTrustedSessionAndApiRoutes() {
+    for (String path : new String[] {"/ws/game/test", "/api/session/ping"}) {
+      ServerWebExchange mutatedExchange =
+          filterTrustedTcpProxyRoutingBundleForRoute(path, "demo-world", "production-realm", "17");
+
+      assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-World-Slug"))
+          .isEqualTo("demo-world");
+      assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Realm-Slug"))
+          .isEqualTo("production-realm");
+      assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Pointer-Version"))
+          .isEqualTo("17");
+    }
+  }
+
+  @Test
+  void rejectsInvalidRoutingBundleOnTrustedSessionAndApiRoutes() {
+    String[][] invalidBundles = {
+      {"demo-world", null, "17"},
+      {" ", "production-realm", "17"},
+      {"demo_world", "production-realm", "17"},
+      {"demo-world", "production-realm", "not-a-number"},
+      {"demo-world", "production-realm", "0"},
+      {"demo-world", "production-realm", "-1"}
+    };
+
+    for (String path : new String[] {"/ws/game/test", "/api/session/ping"}) {
+      for (String[] bundle : invalidBundles) {
+        assertThatRejectedRoutingBundle(path, bundle[0], bundle[1], bundle[2]);
+      }
+    }
+  }
+
+  @Test
+  void enforcesCanonicalRoutingBundleBoundariesOnTrustedSessionAndApiRoutes() {
+    String maxLengthSlug = "a".repeat(120);
+
+    for (String path : new String[] {"/ws/game/test", "/api/session/ping"}) {
+      ServerWebExchange promoted =
+          filterTrustedTcpProxyRoutingBundleForRoute(path, maxLengthSlug, "production-realm", "17");
+      assertThat(promoted.getRequest().getHeaders().getFirst("X-World-Slug"))
+          .isEqualTo(maxLengthSlug);
+
+      assertThatRejectedRoutingBundle(path, maxLengthSlug + "a", "production-realm", "17");
+      assertThatRejectedRoutingBundle(path, "demo-world", "production-realm", "017");
+      assertThatRejectedRoutingBundle(
+          path, "demo-world", "production-realm", "9223372036854775808");
+    }
+  }
+
+  @Test
+  void rejectsDuplicateTrustedRoutingHeaderOnSessionAndApiRoutes() {
+    for (String path : new String[] {"/ws/game/test", "/api/session/ping"}) {
+      GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
+      props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
+      props.getTcpProxy().setInsecureTrustedCidrs(List.of("10.0.0.0/8"));
+      HeaderTrustFilter filter = legacyFilter(props);
+
+      MockServerHttpRequest request =
+          MockServerHttpRequest.get(path)
+              .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
+              .header("X-Proxy-Client-IP", "203.0.113.99")
+              .header("X-World-Slug", "demo-world")
+              .header("X-World-Slug", "other-world")
+              .header("X-Realm-Slug", "production-realm")
+              .header("X-Pointer-Version", "17")
+              .build();
+      MockServerWebExchange exchange = MockServerWebExchange.from(request);
+      AtomicReference<ServerWebExchange> delegated = new AtomicReference<>();
+
+      filter
+          .filter(
+              exchange,
+              candidate -> {
+                delegated.set(candidate);
+                return Mono.empty();
+              })
+          .block();
+
+      assertThat(delegated.get()).isNull();
+      assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+  }
+
+  private void assertThatRejectedRoutingBundle(
+      String path, String worldSlug, String realmSlug, String pointerVersion) {
+    GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
+    props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
+    props.getTcpProxy().setInsecureTrustedCidrs(List.of("10.0.0.0/8"));
+    HeaderTrustFilter filter = legacyFilter(props);
+
+    MockServerHttpRequest.BaseBuilder<?> requestBuilder =
+        MockServerHttpRequest.get(path)
+            .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
+            .header("X-Proxy-Client-IP", "203.0.113.99");
+    if (worldSlug != null) {
+      requestBuilder.header("X-World-Slug", worldSlug);
+    }
+    if (realmSlug != null) {
+      requestBuilder.header("X-Realm-Slug", realmSlug);
+    }
+    if (pointerVersion != null) {
+      requestBuilder.header("X-Pointer-Version", pointerVersion);
+    }
+
+    MockServerWebExchange exchange = MockServerWebExchange.from(requestBuilder.build());
+    AtomicReference<ServerWebExchange> delegated = new AtomicReference<>();
+    filter
+        .filter(
+            exchange,
+            candidate -> {
+              delegated.set(candidate);
+              return Mono.empty();
+            })
+        .block();
+
+    assertThat(delegated.get()).isNull();
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+  }
+
+  private ServerWebExchange filterTrustedTcpProxyRoutingBundle() {
     GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
     props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
     props.getTcpProxy().setInsecureTrustedCidrs(List.of("10.0.0.0/8"));
@@ -438,6 +567,20 @@ class HeaderTrustFilterTest {
 
     MockServerHttpRequest.BaseBuilder<?> requestBuilder =
         MockServerHttpRequest.get("/ws/game/test")
+            .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
+            .header("X-Proxy-Client-IP", "203.0.113.99");
+    return filterThroughChain(filter, MockServerWebExchange.from(requestBuilder.build()));
+  }
+
+  private ServerWebExchange filterTrustedTcpProxyRoutingBundleForRoute(
+      String path, String worldSlug, String realmSlug, String pointerVersion) {
+    GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
+    props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
+    props.getTcpProxy().setInsecureTrustedCidrs(List.of("10.0.0.0/8"));
+    HeaderTrustFilter filter = legacyFilter(props);
+
+    MockServerHttpRequest.BaseBuilder<?> requestBuilder =
+        MockServerHttpRequest.get(path)
             .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
             .header("X-Proxy-Client-IP", "203.0.113.99");
     if (worldSlug != null) {

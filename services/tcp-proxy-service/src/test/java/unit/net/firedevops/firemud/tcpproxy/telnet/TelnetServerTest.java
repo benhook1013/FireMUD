@@ -222,7 +222,7 @@ class TelnetServerTest {
 
   private GatewayWebSocketClient gatewayClient() {
     GatewayWebSocketClient client = Mockito.mock(GatewayWebSocketClient.class);
-    Mockito.when(client.gatewayUri()).thenReturn(URI.create("ws://localhost/ws"));
+    Mockito.when(client.gatewayUri()).thenReturn(URI.create("ws://localhost/ws/game"));
     return client;
   }
 

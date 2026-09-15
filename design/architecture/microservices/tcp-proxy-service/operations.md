@@ -59,7 +59,7 @@ For `tcpproxy.gateway.handshake.failures{reason="..."}`, the canonical bounded `
 
 Per-value meanings:
 
-- `bad_header` – invalid per-connection bridge metadata was rejected before the Gateway handshake; this does not increment the TLS-startup `tcpproxy.tls.misconfig` counter
+- `bad_header` – invalid per-connection bridge metadata is rejected before the Gateway handshake and increments only `tcpproxy.gateway.handshake.failures{reason="bad_header"}`; invalid startup default metadata also increments the TLS-startup `tcpproxy.tls.misconfig` counter
 - `bad_url` – invalid `GATEWAY_WS_URL` configuration
 - `dns` – host resolution failure
 - `connect_refused` – target actively refused the TCP connection

@@ -2761,10 +2761,9 @@ with tempfile.TemporaryDirectory() as directory:
         "metadata": {
             "name": "tcp-proxy-service",
             "namespace": "pr-42",
-            "labels": {
-                **validator._expected_top_level_labels(),
-                "app.kubernetes.io/instance": "pr-42",
-            },
+            "labels": validator._expected_object_labels(
+                "Service", "tcp-proxy-service", "pr-42"
+            ),
         },
         "spec": copy.deepcopy(
             validator.EXPECTED_SERVICE_SPECS["tcp-proxy-service"]

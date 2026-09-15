@@ -105,6 +105,9 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- if or (not (hasKey $preview "prNumber")) (and (empty $prNumber) (ne (toString $prNumber) "0")) -}}
 {{- fail "preview.prNumber is required when Gateway WebSocket TLS is enabled" -}}
 {{- end -}}
+{{- if eq (toString $prNumber) "__PR_NUMBER__" -}}
+{{- fail "preview.prNumber must be resolved before Gateway WebSocket TLS trust-environment inference" -}}
+{{- end -}}
 {{- $inferredTrustEnvironment := ternary "dev-demo-cluster" "pr-preview" (eq (toString $prNumber) "0") -}}
 {{- if and (hasKey $gatewayWsTls "trustEnvironment") (not (empty $gatewayWsTls.trustEnvironment)) -}}
 {{- $configuredTrustEnvironment := $gatewayWsTls.trustEnvironment | toString -}}

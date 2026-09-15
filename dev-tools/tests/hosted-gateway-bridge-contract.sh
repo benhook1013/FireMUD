@@ -191,11 +191,123 @@ if not required_base_egress.issubset(disabled_destinations):
         "disabled Gateway TLS omitted required TCP Proxy base egress: "
         f"{disabled_destinations}"
     )
-if any(destination == "spring-cloud-gateway" for destination, _ in disabled_destinations):
-    raise SystemExit("disabled Gateway TLS retained TCP Proxy Gateway listener egress")
+if ("spring-cloud-gateway", (8080,)) not in disabled_destinations:
+    raise SystemExit(
+        "disabled Gateway TLS omitted plaintext TCP Proxy Gateway egress: "
+        f"{disabled_destinations}"
+    )
+if any(
+    destination == "spring-cloud-gateway" and ports != (8080,)
+    for destination, ports in disabled_destinations
+):
+    raise SystemExit(
+        "disabled Gateway TLS rendered a non-exact plaintext TCP Proxy Gateway egress rule: "
+        f"{disabled_destinations}"
+    )
 if "spring-cloud-gateway-ingress" in disabled:
     raise SystemExit("disabled Gateway TLS retained the Gateway listener ingress policy")
 PY
+
+PLAINTEXT_GATEWAY_TARGET_PORT_RENDERED="$TMP_DIR/plaintext-gateway-target-port.yaml"
+python3 - "$TMP_DIR/preview-values.yaml" "$TMP_DIR/plaintext-gateway-target-port-values.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+source_path, output_path = map(Path, sys.argv[1:])
+values = yaml.safe_load(source_path.read_text(encoding="utf-8"))
+gateway = next(
+    service
+    for service in values["previewStack"]["services"]
+    if service["name"] == "spring-cloud-gateway"
+)
+gateway["ports"][0]["targetPort"] = 8181
+gateway["ports"] = [
+    gateway["ports"][1],
+    gateway["ports"][0],
+    {"port": 8081, "targetPort": 8281},
+]
+output_path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/plaintext-gateway-target-port-values.yaml" \
+  --set previewStack.gatewayWsTls.enabled=false \
+  --show-only templates/network-policies.yaml \
+  --namespace pr-123 >"$PLAINTEXT_GATEWAY_TARGET_PORT_RENDERED"
+python3 - "$PLAINTEXT_GATEWAY_TARGET_PORT_RENDERED" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+documents = [
+    document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+policy = next(
+    document
+    for document in documents
+    if document.get("kind") == "NetworkPolicy"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service-egress"
+)
+gateway_rules = [
+    rule
+    for rule in policy["spec"]["egress"]
+    if rule.get("to")
+    == [{"podSelector": {"matchLabels": {"app": "spring-cloud-gateway"}}}]
+]
+if len(gateway_rules) != 1 or gateway_rules[0].get("ports") != [
+    {"protocol": "TCP", "port": 8181}
+]:
+    raise SystemExit(
+        "disabled Gateway TLS did not use the configured Gateway service targetPort "
+        "for its exact plaintext egress rule: "
+        f"{gateway_rules}"
+    )
+PY
+
+for invalid_gateway_ports in missing duplicate; do
+  INVALID_GATEWAY_PORTS_VALUES="$TMP_DIR/plaintext-gateway-$invalid_gateway_ports-values.yaml"
+  python3 - "$TMP_DIR/preview-values.yaml" "$INVALID_GATEWAY_PORTS_VALUES" "$invalid_gateway_ports" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+source_path, output_path = map(Path, sys.argv[1:3])
+mutation = sys.argv[3]
+values = yaml.safe_load(source_path.read_text(encoding="utf-8"))
+gateway = next(
+    service
+    for service in values["previewStack"]["services"]
+    if service["name"] == "spring-cloud-gateway"
+)
+if mutation == "missing":
+    gateway["ports"] = [
+        port for port in gateway["ports"] if str(port.get("port")) != "80"
+    ]
+else:
+    gateway["ports"].append({"port": 80, "targetPort": 8282})
+output_path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+  if helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+    -f "$INVALID_GATEWAY_PORTS_VALUES" \
+    --set previewStack.gatewayWsTls.enabled=false \
+    --show-only templates/network-policies.yaml \
+    --namespace pr-123 >/dev/null 2>"$TMP_DIR/plaintext-gateway-$invalid_gateway_ports.err"; then
+    echo "disabled Gateway TLS rendered with $invalid_gateway_ports port-80 Gateway service configuration" >&2
+    exit 1
+  fi
+  if ! grep -Fq \
+    "previewStack.services.spring-cloud-gateway must declare exactly one port: 80 for plaintext Gateway egress" \
+    "$TMP_DIR/plaintext-gateway-$invalid_gateway_ports.err"; then
+    echo "chart did not reject $invalid_gateway_ports port-80 Gateway service configuration" >&2
+    sed -n '1,20p' "$TMP_DIR/plaintext-gateway-$invalid_gateway_ports.err" >&2
+    exit 1
+  fi
+done
 
 LEGACY_NODEPORT_RENDERED="$TMP_DIR/legacy-nodeport.yaml"
 python3 - "$TMP_DIR/preview-values.yaml" "$TMP_DIR/legacy-nodeport-values.yaml" <<'PY'
@@ -412,6 +524,67 @@ assert trust_environment(sys.argv[1]) == "pr-preview"
 assert trust_environment(sys.argv[2]) == "dev-demo-cluster"
 assert trust_environment(sys.argv[3]) == "staging"
 PY
+
+STRING_ZERO_RENDERED="$TMP_DIR/string-zero-preview-pr-number.yaml"
+helm template dev "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/dev-values.yaml" \
+  --set-string preview.prNumber=0 \
+  --show-only templates/apps.yaml \
+  --namespace dev >"$STRING_ZERO_RENDERED"
+python3 - "$STRING_ZERO_RENDERED" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+documents = [
+    document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+gateway = next(
+    document
+    for document in documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "spring-cloud-gateway"
+)
+trust_environment = next(
+    entry["value"]
+    for entry in gateway["spec"]["template"]["spec"]["containers"][0]["env"]
+    if entry.get("name") == "FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT"
+)
+if trust_environment != "dev-demo-cluster":
+    raise SystemExit(
+        "string zero preview.prNumber did not infer dev-demo-cluster: "
+        f"{trust_environment!r}"
+    )
+PY
+
+UNRESOLVED_PR_NUMBER_VALUES="$TMP_DIR/unresolved-pr-number-values.yaml"
+python3 - "$TMP_DIR/preview-values.yaml" "$UNRESOLVED_PR_NUMBER_VALUES" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+source_path, output_path = map(Path, sys.argv[1:])
+values = yaml.safe_load(source_path.read_text(encoding="utf-8"))
+values["preview"]["prNumber"] = "__PR_NUMBER__"
+output_path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+UNRESOLVED_PR_NUMBER_ERROR="preview.prNumber must be resolved before Gateway WebSocket TLS trust-environment inference"
+if helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$UNRESOLVED_PR_NUMBER_VALUES" \
+  --show-only templates/apps.yaml \
+  --namespace pr-123 >/dev/null 2>"$TMP_DIR/unresolved-pr-number.err"; then
+  echo "Gateway WebSocket TLS inferred pr-preview from unresolved preview.prNumber" >&2
+  exit 1
+fi
+if ! grep -Fq "$UNRESOLVED_PR_NUMBER_ERROR" "$TMP_DIR/unresolved-pr-number.err"; then
+  echo "chart did not reject unresolved preview.prNumber before trust-environment inference" >&2
+  sed -n '1,20p' "$TMP_DIR/unresolved-pr-number.err" >&2
+  exit 1
+fi
 
 TRUST_ENVIRONMENT_ERROR="previewStack.gatewayWsTls.trustEnvironment must be one of the canonical environments"
 if helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
