@@ -47,6 +47,25 @@ PATH="$BIN_DIR:$PATH" \
   YAMLLINT_ARGS_FILE="$ARGS_FILE" \
   bash "$SCRIPT"
 
+MISSING_YAMLLINT_OUTPUT="$TEMP_DIR/missing-yamllint-output"
+MISSING_BIN_DIR="$TEMP_DIR/missing-bin"
+mkdir -p "$MISSING_BIN_DIR"
+dirname_binary="$(command -v dirname)"
+ln -s "$dirname_binary" "$MISSING_BIN_DIR/dirname"
+if PATH="$MISSING_BIN_DIR" /bin/bash "$SCRIPT" >"$MISSING_YAMLLINT_OUTPUT" 2>&1; then
+  echo "lint-yaml should fail with a distinct missing-yamllint diagnostic" >&2
+  exit 1
+fi
+test -L "$MISSING_BIN_DIR/dirname"
+test "$(find "$MISSING_BIN_DIR" -mindepth 1 -maxdepth 1 -type l | wc -l)" -eq 1
+grep -Fq 'yamllint is required. Install the pinned CI tools into an isolated environment with:' "$MISSING_YAMLLINT_OUTPUT"
+grep -Fq -- 'python3 -m venv --clear' "$MISSING_YAMLLINT_OUTPUT"
+grep -Fq -- '--require-hashes' "$MISSING_YAMLLINT_OUTPUT"
+grep -Fq -- "$ROOT_DIR/config/python/ci-requirements.txt" "$MISSING_YAMLLINT_OUTPUT"
+grep -Fq -- "$ROOT_DIR/.venv-ci" "$MISSING_YAMLLINT_OUTPUT"
+grep -Fq -- 'source '"$ROOT_DIR"'/.venv-ci/bin/activate && ' "$MISSING_YAMLLINT_OUTPUT"
+grep -Fxq '/.venv-ci/' "$ROOT_DIR/.gitignore"
+
 cat > "$TEMP_DIR/expected-yamllint-args" <<'EOF'
 .github/workflows/ci.yml
 services/account-service/src/main/resources/application.yml

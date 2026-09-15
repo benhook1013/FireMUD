@@ -6,9 +6,11 @@ Use this guide when selecting or reporting formatting, checks, documentation val
 
 - The lane orchestrator selects required proof by changed boundary: use focused affected formatting and tests during iteration, and an appropriate broader integration or merge gate when contract or runtime impact requires it. Independent lanes and helper handoffs alone do not broaden proof.
 - Use canonical commands as relevant: `./gradlew spotlessApply` with the relevant `spotlessCheck` or `spotlessJavaCheck` for formatting-sensitive files; `./gradlew :<service>:check -PfullCheck` or `./gradlew check` for an appropriate broader gate; and `dev-tools/validation/run-locked-gradle.sh` for heavy local service checks.
+- For focused shell-script checks, from the repository root run `shellcheck -x <scripts>` so sourced repository helpers are followed.
 - Markdown or design documentation changes require `./gradlew linkCheck lintMarkdown` and fixes for hygiene failures, including pre-existing failures in the changed scope.
 - If CI exposes multiple related failures in one area, stop relying on incremental remote feedback and run fuller affected proof. After branch reconciliation changes the local head or validated scope, re-run the affected canonical proof and record any unavailable or partial local validation.
 - Matching exact-head and exact-scope CI evidence can supply an unavailable local gate when the local limitation is reported. Publishing to obtain missing hosted proof is permitted, but completion or merge-ready status waits for the required proof. Preserve fresh-build, cross-service, runtime, and shared-environment mutation and reset safeguards owned by the linked contracts.
+- When required proof cannot be produced truthfully, do not fabricate evidence or weaken or bypass its check. Missing required proof blocks completion and merge readiness for work in the merged scope. Only work explicitly excluded from the merged scope may be deferred; record its owner, missing evidence, and reconsideration trigger.
 
 ## Runtime And Smoke Changes
 

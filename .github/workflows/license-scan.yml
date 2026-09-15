@@ -12,9 +12,6 @@ permissions:
   contents: read
   pull-requests: write
 
-env:
-  ORT_DOCKER_IMAGE: ghcr.io/oss-review-toolkit/ort:89.2.0
-
 concurrency:
   group: license-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required' }}
   cancel-in-progress: true
@@ -25,9 +22,9 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
     outputs:
-      run_gradle_ort: ${{ steps.filter.outputs.gradle }}
-      run_npm_ort: ${{ steps.filter.outputs.npm }}
-      run_any_ort: ${{ steps.filter.outputs.gradle == 'true' || steps.filter.outputs.npm == 'true' }}
+      run_gradle_ort: ${{ steps.filter.outputs.gradle == 'true' || steps.ort_authority.outputs.changed == 'true' }}
+      run_npm_ort: ${{ steps.filter.outputs.npm == 'true' || steps.ort_authority.outputs.changed == 'true' }}
+      run_any_ort: ${{ steps.filter.outputs.gradle == 'true' || steps.filter.outputs.npm == 'true' || steps.ort_authority.outputs.changed == 'true' }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
@@ -55,6 +52,7 @@ jobs:
               - '**/gradle.properties'
               - '**/gradle-wrapper.properties'
               - '**/gradle-wrapper.jar'
+              - '.node-version'
               - '.github/workflows/license-scan.yml'
               - '.github/workflows/release-notes.yml'
               - '.github/workflows/ort-advisory.yml'
@@ -65,9 +63,26 @@ jobs:
               - 'config/openapi/package-lock.json'
               - 'web-client/package.json'
               - 'web-client/package-lock.json'
+              - '.node-version'
               - '.github/workflows/license-scan.yml'
               - '.github/workflows/release-notes.yml'
               - '.github/workflows/ort-advisory.yml'
+
+      - name: Detect ORT image authority changes
+        id: ort_authority
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$BASE_SHA" || "$BASE_SHA" == 0000000000000000000000000000000000000000 ]]; then
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          elif git diff --unified=0 "$BASE_SHA" "$GITHUB_SHA" -- config/workflow-tool-versions.env \
+            | grep -Eq '^[+-](# renovate-image: datasource=docker depName=ghcr\.io/oss-review-toolkit/ort|ORT_VERSION=|ORT_DIGEST=)'; then
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          fi
 
   ort-gradle:
     name: License Gate (Gradle)
@@ -95,7 +110,7 @@ jobs:
       - name: ⚙️ Set Up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: '24'
+          node-version-file: '.node-version'
           cache: npm
           cache-dependency-path: |
             package-lock.json
@@ -110,11 +125,15 @@ jobs:
           build-scan-terms-of-use-agree: 'yes'
           cache-read-only: false
 
+      - name: Load workflow tool versions
+        id: workflow-tool-versions
+        uses: ./.github/actions/load-workflow-tool-versions
+
       - name: Run ORT License Scan
         id: ort
         uses: oss-review-toolkit/ort-ci-github-action@086d928d24ef1653dc0777296b312fda5faaaf52 # v1
         with:
-          image: ${{ env.ORT_DOCKER_IMAGE }}
+          image: ${{ steps.workflow-tool-versions.outputs.ort-image }}
           ort-cli-args: '-P ort.analyzer.enabledPackageManagers=Gradle'
           run: 'cache-dependencies,labels,analyzer,evaluator,reporter'
           fail-on: policy-violation
@@ -163,7 +182,7 @@ jobs:
       - name: ⚙️ Set Up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: '24'
+          node-version-file: '.node-version'
           cache: npm
           cache-dependency-path: |
             package-lock.json
@@ -178,11 +197,15 @@ jobs:
           build-scan-terms-of-use-agree: 'yes'
           cache-read-only: false
 
+      - name: Load workflow tool versions
+        id: workflow-tool-versions
+        uses: ./.github/actions/load-workflow-tool-versions
+
       - name: Run ORT License Scan
         id: ort
         uses: oss-review-toolkit/ort-ci-github-action@086d928d24ef1653dc0777296b312fda5faaaf52 # v1
         with:
-          image: ${{ env.ORT_DOCKER_IMAGE }}
+          image: ${{ steps.workflow-tool-versions.outputs.ort-image }}
           ort-cli-args: '-P ort.analyzer.enabledPackageManagers=NPM'
           run: 'cache-dependencies,labels,analyzer,evaluator,reporter'
           fail-on: policy-violation

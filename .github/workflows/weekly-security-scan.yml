@@ -5,6 +5,9 @@ on:
     - cron: '0 3 * * 0'  # Weekly on Sundays at 03:00 UTC
   workflow_dispatch:      # Enables manual trigger from GitHub Actions UI
 
+permissions:
+  contents: read
+
 jobs:
   trivy-scan:
     name: Trivy Scan for ${{ matrix.service }}
@@ -40,11 +43,14 @@ jobs:
           key: trivy-db-${{ runner.os }}-${{ hashFiles('**/build.gradle*', '**/package-lock.json') }}
           restore-keys: trivy-db-${{ runner.os }}-
 
+      - name: 🛡️ Install Trivy
+        uses: ./.github/actions/setup-trivy
+
       - name: 🛡️ Trivy container and dependency scan
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: ghcr.io/benhook1013/${{ matrix.service }}:latest
-          format: 'table'
-          output: 'trivy-report.txt'
-          exit-code: '1'
-          severity: 'HIGH,CRITICAL'
+        run: >-
+          trivy image
+          --format table
+          --output trivy-report.txt
+          --exit-code 1
+          --severity HIGH,CRITICAL
+          "ghcr.io/benhook1013/${{ matrix.service }}:latest"

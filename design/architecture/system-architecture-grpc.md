@@ -123,13 +123,14 @@ private ErrorDetail error(String code, String message) {
 ## Example Code Generation (Java)
 
 Services use **Buf** for linting and schema enforcement, while source generation
-is handled by the Gradle `com.google.protobuf` plugin:
+is handled by the Gradle `com.google.protobuf` plugin. The convention reads the
+current protoc and gRPC Java generator versions from `gradle/libs.versions.toml`:
 
 ```kotlin
 protobuf {
-  protoc { artifact = "com.google.protobuf:protoc:4.31.1" }
+  protoc { artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.get()}" }
   plugins {
-    id("grpc") { artifact = "io.grpc:protoc-gen-grpc-java:1.74.0" }
+    id("grpc") { artifact = "io.grpc:protoc-gen-grpc-java:${libs.versions.grpc.get()}" }
   }
   generateProtoTasks {
     ofSourceSet("main").forEach { it.plugins { id("grpc") } }

@@ -49,6 +49,9 @@ Environment variables:
   FIREMUD_PROMOTION_ATTESTATION      Required in operator production context; path to attestation JSON
   FIREMUD_BACKUP_READINESS_EVIDENCE  Required for production roll-forward-only promotions; path to backup-readiness JSON
   FIREMUD_TRAFFIC_OPEN_EVENT         Optional traffic-open gate: first-live or reopen
+  FIREMUD_HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS
+                                     Optional bounded operator hosted-bridge Secret
+                                     readiness budget (default: 300, maximum: 900)
 
 The hosted-bridge form reuses PREFLIGHT-BRIDGE-001 before preview/dev-demo
 apply. The optional expected port adds an exact trusted post-render Telnet
@@ -85,8 +88,29 @@ RECOVERY_JSON_READ_ERRORS = JSON_READ_ERRORS + (ValueError,)
 YAML_READ_ERRORS = (OSError, UnicodeError, yaml.YAMLError)
 TIMESTAMP_ERRORS = (TypeError, ValueError, AttributeError, OverflowError)
 SECRET_LOOKUP_TIMEOUT_SECONDS = 30
-HOSTED_BRIDGE_SECRET_READY_ATTEMPTS = 15
+HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS = 300
+HOSTED_BRIDGE_SECRET_READY_MAX_TIMEOUT_SECONDS = 900
 HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS = 2
+
+
+def _hosted_bridge_secret_ready_attempts_for_timeout(timeout_seconds: int) -> int:
+    """Convert a wall-clock readiness timeout to a polling-attempt budget."""
+    return max(
+        1,
+        (
+            timeout_seconds
+            + HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS
+            - 1
+        )
+        // HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS,
+    )
+
+
+HOSTED_BRIDGE_SECRET_READY_ATTEMPTS = (
+    _hosted_bridge_secret_ready_attempts_for_timeout(
+        HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS
+    )
+)
 JWT_CUSTODY_MODES = (
     "LEGACY_SECRET_DIAGNOSTIC",
     "INTERIM_ACCOUNT_ONLY_MOUNTED_FALLBACK",
@@ -113,6 +137,10 @@ GATEWAY_WS_SERVER_SECRET_ITEM_PATHS = BRIDGE_WS_SECRET_ITEM_PATHS
 GATEWAY_WS_LISTENER_PORT = 8443
 GATEWAY_WS_SERVICE_PORT = 443
 TCP_PROXY_TELNET_SERVICE_PORT = 2323
+TELNET_TLS_REQUIRED_PATHS = {
+    "TCP_PROXY_TLS_CERT": "/telnet-tls/tls.crt",
+    "TCP_PROXY_TLS_KEY": "/telnet-tls/tls.key",
+}
 GRPC_TLS_PATH_NAMES = (
     "FIREMUD_GRPC_CERT_CHAIN_PATH",
     "FIREMUD_GRPC_PRIVATE_KEY_PATH",
@@ -4445,6 +4473,14 @@ def validate_gateway_ws_network_policy(
     return issues
 
 
+
+def path_is_under_mount(path: str, mount_path: str) -> bool:
+    """Return whether a path is the mount itself or one of its descendants."""
+    return bool(mount_path) and (
+        path == mount_path or path.startswith(mount_path.rstrip("/") + "/")
+    )
+
+
 def validate_hosted_telnet_tls_values(
     documents: list[dict[str, Any]],
     required_identity_mode: str | None = None,
@@ -4464,6 +4500,9 @@ def validate_hosted_telnet_tls_values(
         "hosted-controller",
     }:
         raise ValueError("required certificate identity mode is invalid")
+    if not isinstance(target_namespace, str) or not target_namespace:
+        raise ValueError("target namespace is required")
+
     issues: list[str] = []
     tcp_services = [
         document
@@ -4502,7 +4541,7 @@ def validate_hosted_telnet_tls_values(
         if document.get("kind") == "Deployment"
         and metadata_name(document) == "tcp-proxy-service"
         and rendered_namespace_matches(
-            document, tcp_namespace, default_namespace="firemud"
+            document, tcp_namespace, default_namespace=tcp_namespace
         )
     ]
     if len(deployments) != 1:
@@ -4562,6 +4601,7 @@ def validate_hosted_telnet_tls_values(
                 f"hosted TCP Proxy certificate identity mode must be {required_identity_mode}"
             )
         identity_mode = required_identity_mode
+
     service_ports = (tcp_service.get("spec") or {}).get("ports") or []
     telnet_ports = [
         port
@@ -4569,7 +4609,7 @@ def validate_hosted_telnet_tls_values(
         if isinstance(port, dict)
         and port.get("port") == TCP_PROXY_TELNET_SERVICE_PORT
         and port.get("targetPort") == TCP_PROXY_TELNET_SERVICE_PORT
-        and port.get("protocol") == "TCP"
+        and port.get("protocol", "TCP") == "TCP"
     ]
     if len(telnet_ports) != 1:
         issues.append(
@@ -4583,51 +4623,65 @@ def validate_hosted_telnet_tls_values(
             if isinstance(annotations, dict)
             else None
         )
-        if not isinstance(allocated_port, str) or not re.fullmatch(
-            r"[1-9][0-9]*", allocated_port
-        ):
+        allocated_port_value = (
+            int(allocated_port)
+            if isinstance(allocated_port, str)
+            and re.fullmatch(r"[1-9][0-9]*", allocated_port)
+            else None
+        )
+        if allocated_port_value is None or not 1 <= allocated_port_value <= 65535:
             issues.append(
                 "hosted-controller TCP Proxy Service requires an allocated Telnet port annotation"
             )
-        if len(telnet_ports) != 1 or "nodePort" not in telnet_ports[0]:
+        if len(telnet_ports) == 1 and "nodePort" not in telnet_ports[0]:
             issues.append(
                 "hosted-controller TCP Proxy Service requires exactly one explicit allocated nodePort"
             )
-        elif (
-            isinstance(allocated_port, str)
-            and re.fullmatch(r"[1-9][0-9]*", allocated_port)
-            and telnet_ports[0]["nodePort"] != int(allocated_port)
-        ):
-            issues.append(
-                "hosted-controller TCP Proxy Service nodePort must match its allocated Telnet port"
-            )
-        if expected_hosted_telnet_node_port is not None:
+        elif len(telnet_ports) == 1:
+            telnet_node_port = telnet_ports[0]["nodePort"]
+            if not isinstance(telnet_node_port, int) or isinstance(
+                telnet_node_port, bool
+            ):
+                issues.append(
+                    "hosted-controller TCP Proxy Service nodePort must be an integer"
+                )
+            elif (
+                allocated_port_value is not None
+                and telnet_node_port != allocated_port_value
+            ):
+                issues.append(
+                    "hosted-controller TCP Proxy Service nodePort must match its allocated Telnet port"
+                )
+        if expected_hosted_telnet_node_port is not None and len(telnet_ports) == 1:
             explicit_node_port_entries = [
                 port
                 for port in service_ports
                 if isinstance(port, dict) and "nodePort" in port
             ]
-            if len(telnet_ports) != 1 or telnet_ports[0].get(
-                "nodePort"
-            ) != expected_hosted_telnet_node_port:
+            if (
+                isinstance(telnet_ports[0].get("nodePort"), int)
+                and not isinstance(telnet_ports[0].get("nodePort"), bool)
+                and telnet_ports[0]["nodePort"] != expected_hosted_telnet_node_port
+            ):
                 issues.append(
                     "trusted hosted-controller TCP Proxy Telnet nodePort must equal "
                     f"{expected_hosted_telnet_node_port}"
                 )
-            if len(explicit_node_port_entries) != 1 or (
-                len(telnet_ports) != 1
+            if "nodePort" in telnet_ports[0] and (
+                len(explicit_node_port_entries) != 1
                 or explicit_node_port_entries[0] is not telnet_ports[0]
             ):
                 issues.append(
                     "trusted hosted-controller TCP Proxy Service must not declare any other explicit nodePorts"
                 )
+
     certificates = {
         metadata_name(document): document
         for document in documents
         if document.get("kind") == "Certificate"
         and metadata_name(document)
         and rendered_namespace_matches(
-            document, tcp_namespace, default_namespace="firemud"
+            document, tcp_namespace, default_namespace=tcp_namespace
         )
     }
     ingress_secrets = {
@@ -4635,7 +4689,7 @@ def validate_hosted_telnet_tls_values(
         for document in documents
         if document.get("kind") == "Ingress"
         and rendered_namespace_matches(
-            document, tcp_namespace, default_namespace="firemud"
+            document, tcp_namespace, default_namespace=tcp_namespace
         )
         for tls_entry in ((document.get("spec") or {}).get("tls") or [])
         if isinstance(tls_entry, dict)
@@ -4691,8 +4745,12 @@ def validate_hosted_telnet_tls_values(
             return issues
     if certificate_secret in ingress_secrets or telnet_secret in ingress_secrets:
         issues.append("TCP Proxy Telnet TLS Secret must not reuse the HTTP Ingress TLS Secret")
+
     pod_spec = (((deployment.get("spec") or {}).get("template") or {}).get("spec") or {})
-    containers = [container for container in pod_spec.get("containers") or [] if isinstance(container, dict)]
+    containers = [
+        container for container in pod_spec.get("containers") or []
+        if isinstance(container, dict)
+    ]
     if len(containers) != 1:
         issues.append("hosted TCP Proxy TLS requires one primary tcp-proxy-service container")
         return issues
@@ -4703,9 +4761,8 @@ def validate_hosted_telnet_tls_values(
         container,
         relevant_names={
             "TCP_PROXY_TLS_ENABLED",
-            "TCP_PROXY_TLS_CERT",
-            "TCP_PROXY_TLS_KEY",
             "TCP_PROXY_TELNET_MODE",
+            *TELNET_TLS_REQUIRED_PATHS,
             *GRPC_TLS_PATH_NAMES,
         },
     )
@@ -4714,33 +4771,58 @@ def validate_hosted_telnet_tls_values(
         issues.append("hosted TCP Proxy TLS requires TCP_PROXY_TLS_ENABLED=true")
     if env.get("TCP_PROXY_TELNET_MODE") != "DIRECT_TLS":
         issues.append("hosted TCP Proxy TLS requires TCP_PROXY_TELNET_MODE=DIRECT_TLS")
-    if env.get("TCP_PROXY_TLS_CERT") != "/telnet-tls/tls.crt":
-        issues.append("TCP_PROXY_TLS_CERT must be /telnet-tls/tls.crt")
-    if env.get("TCP_PROXY_TLS_KEY") != "/telnet-tls/tls.key":
-        issues.append("TCP_PROXY_TLS_KEY must be /telnet-tls/tls.key")
+    for path_name, required_path in TELNET_TLS_REQUIRED_PATHS.items():
+        if env.get(path_name) != required_path:
+            issues.append(f"{path_name} must be {required_path}")
     volumes = {
         volume.get("name"): volume
         for volume in pod_spec.get("volumes") or []
         if isinstance(volume, dict) and volume.get("name")
     }
-    mount = next(
-        (mount for mount in container.get("volumeMounts") or []
-         if isinstance(mount, dict) and mount.get("mountPath") == "/telnet-tls"),
-        None,
-    )
-    if not mount or mount.get("readOnly") is not True:
-        issues.append("hosted TCP Proxy TLS requires a read-only /telnet-tls mount")
+    telnet_mounts = [
+        mount
+        for mount in container.get("volumeMounts") or []
+        if isinstance(mount, dict) and mount.get("mountPath") == "/telnet-tls"
+    ]
+    if len(telnet_mounts) != 1:
+        issues.append("hosted TCP Proxy TLS requires exactly one /telnet-tls mount")
     else:
+        mount = telnet_mounts[0]
+        if "subPath" in mount:
+            issues.append("/telnet-tls must not use subPath")
+        if mount.get("readOnly") is not True:
+            issues.append("hosted TCP Proxy TLS requires a read-only /telnet-tls mount")
         volume = volumes.get(mount.get("name")) or {}
-        secret_name = ((volume.get("secret") or {}).get("secretName"))
+        secret = volume.get("secret") if isinstance(volume, dict) else None
+        secret_name = (secret or {}).get("secretName") if isinstance(secret, dict) else None
         if secret_name != certificate_secret:
             issues.append("/telnet-tls must reference the dedicated Telnet TLS Secret")
+        if isinstance(secret, dict) and "items" in secret:
+            items = secret.get("items")
+            expected_items = {("tls.crt", "tls.crt"), ("tls.key", "tls.key")}
+            actual_items = {
+                (item.get("key"), item.get("path"))
+                for item in items
+                if isinstance(item, dict)
+            } if isinstance(items, list) else set()
+            if (
+                not isinstance(items, list)
+                or len(items) != len(expected_items)
+                or actual_items != expected_items
+                or any(
+                    not isinstance(item, dict)
+                    or set(item) != {"key", "path"}
+                    for item in items
+                )
+            ):
+                issues.append(
+                    "/telnet-tls Secret items must map exactly tls.crt to tls.crt and tls.key to tls.key"
+                )
     grpc_paths = {
         path
         for path in (env.get(name) for name in GRPC_TLS_PATH_NAMES)
         if isinstance(path, str) and path.startswith("/")
     }
-
     grpc_secret_names: set[str] = set()
     for mount in container.get("volumeMounts") or []:
         if (
@@ -4774,7 +4856,7 @@ def label_bridge_validation_issues(
 
 
 def bridge_validation_failure_message(bridge_issues: list[str]) -> str:
-    """Describe either transport without making a Telnet-only failure look like Gateway-only."""
+    """Describe either transport without making a Telnet-only failure look Gateway-only."""
     return "Bridge and Telnet transport validation failed: " + "; ".join(bridge_issues)
 
 
@@ -4783,6 +4865,19 @@ def bridge_validation_result(bridge_issues: list[str]) -> tuple[str, str]:
     if bridge_issues:
         return "fail", bridge_validation_failure_message(bridge_issues)
     return "pass", "Gateway bridge and direct Telnet TLS alignment is valid"
+
+
+def hosted_bridge_success_message(context: str) -> str:
+    """Distinguish static manifest proof from live controller-projection proof."""
+    if context == "operator":
+        return (
+            "Gateway bridge and direct Telnet TLS alignment is valid; "
+            "controller-projected Secret readiness is confirmed"
+        )
+    return (
+        "Gateway bridge and direct Telnet TLS alignment is valid; "
+        "ci-static did not check controller-projected Secret readiness"
+    )
 
 
 def primary_containers(document: dict[str, Any]) -> list[tuple[str | None, dict[str, Any], dict[str, str | None]]]:
@@ -6660,9 +6755,14 @@ def write_report(
 
 
 def secret_keys_lookup_failure(
-    secret_name: str, namespace: str, required_keys: set[str]
-) -> tuple[str | None, bool]:
-    """Return a Secret-key issue and whether controller convergence may resolve it."""
+    secret_name: str,
+    namespace: str,
+    required_keys: set[str],
+    timeout_seconds: float | None = None,
+) -> tuple[str | None, bool, bool]:
+    """Return a Secret-key issue, retryability, and whether lookup timed out."""
+    if timeout_seconds is None:
+        timeout_seconds = SECRET_LOOKUP_TIMEOUT_SECONDS
     try:
         result = subprocess.run(
             [
@@ -6678,11 +6778,18 @@ def secret_keys_lookup_failure(
             check=False,
             capture_output=True,
             text=True,
-            timeout=SECRET_LOOKUP_TIMEOUT_SECONDS,
+            timeout=timeout_seconds,
         )
-    except (OSError, subprocess.TimeoutExpired, UnicodeError) as exc:
+    except subprocess.TimeoutExpired as exc:
         return (
             f"Secret lookup could not be verified for {namespace}/{secret_name}: {exc}",
+            True,
+            True,
+        )
+    except (OSError, UnicodeError) as exc:
+        return (
+            f"Secret lookup could not be verified for {namespace}/{secret_name}: {exc}",
+            False,
             False,
         )
     if result.returncode != 0:
@@ -6691,12 +6798,14 @@ def secret_keys_lookup_failure(
             return (
                 f"Missing required Secret in cluster: {namespace}/{secret_name}",
                 True,
+                False,
             )
         return (
             (
                 f"Secret lookup could not be verified for {namespace}/{secret_name}: "
                 + (stderr or "kubectl returned a non-zero status without stderr")
             ),
+            False,
             False,
         )
     try:
@@ -6705,16 +6814,19 @@ def secret_keys_lookup_failure(
         return (
             f"Secret lookup returned malformed JSON for {namespace}/{secret_name}",
             False,
+            False,
         )
     if not isinstance(payload, dict):
         return (
             f"Secret lookup returned malformed JSON for {namespace}/{secret_name}",
+            False,
             False,
         )
     data = payload.get("data")
     if data is not None and not isinstance(data, dict):
         return (
             f"Secret lookup returned malformed data for {namespace}/{secret_name}",
+            False,
             False,
         )
     actual_keys = set(data or {})
@@ -6726,68 +6838,173 @@ def secret_keys_lookup_failure(
                 + ", ".join(missing_keys)
             ),
             True,
+            False,
         )
-    return None, False
+    invalid_value_keys = sorted(
+        key
+        for key in required_keys
+        if not isinstance(data[key], str) or not data[key]
+    )
+    if invalid_value_keys:
+        return (
+            (
+                f"Required Secret {namespace}/{secret_name} has empty or non-string values for keys: "
+                + ", ".join(invalid_value_keys)
+            ),
+            True,
+            False,
+        )
+    return None, False, False
+
+
+def hosted_bridge_secret_ready_timeout_seconds() -> int:
+    """Resolve the validated hosted-bridge Secret readiness wall-clock budget."""
+    configured_timeout = os.environ.get(
+        "FIREMUD_HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS"
+    )
+    if configured_timeout is None:
+        return HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS
+    if not re.fullmatch(r"[1-9][0-9]*", configured_timeout):
+        raise ValueError(
+            "FIREMUD_HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS must be an integer "
+            f"between 1 and {HOSTED_BRIDGE_SECRET_READY_MAX_TIMEOUT_SECONDS}"
+        )
+    timeout_seconds = int(configured_timeout)
+    if timeout_seconds > HOSTED_BRIDGE_SECRET_READY_MAX_TIMEOUT_SECONDS:
+        raise ValueError(
+            "FIREMUD_HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS must be an integer "
+            f"between 1 and {HOSTED_BRIDGE_SECRET_READY_MAX_TIMEOUT_SECONDS}"
+        )
+    return timeout_seconds
+
+
+def hosted_bridge_secret_ready_attempts(timeout_seconds: int | None = None) -> int:
+    """Resolve the bounded hosted-bridge Secret readiness retry budget."""
+    if timeout_seconds is None:
+        if (
+            os.environ.get("FIREMUD_HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS")
+            is None
+        ):
+            return HOSTED_BRIDGE_SECRET_READY_ATTEMPTS
+        timeout_seconds = hosted_bridge_secret_ready_timeout_seconds()
+    if not 1 <= timeout_seconds <= HOSTED_BRIDGE_SECRET_READY_MAX_TIMEOUT_SECONDS:
+        raise ValueError(
+            "FIREMUD_HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS must be an integer "
+            f"between 1 and {HOSTED_BRIDGE_SECRET_READY_MAX_TIMEOUT_SECONDS}"
+        )
+    if HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS <= 0:
+        raise ValueError("HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS must be positive")
+    return _hosted_bridge_secret_ready_attempts_for_timeout(timeout_seconds)
 
 
 def wait_for_secret_key_requirements(
-    secret_requirements: list[tuple[str, set[str]]], namespace: str
+    secret_requirements: list[tuple[str, set[str]]],
+    namespace: str,
+    ready_attempts: int | None = None,
+    ready_timeout_seconds: int | None = None,
 ) -> list[str]:
     """Bound one controller-projection wait across all required Secrets."""
+    if ready_attempts is None:
+        ready_attempts = HOSTED_BRIDGE_SECRET_READY_ATTEMPTS
+    if ready_attempts <= 0:
+        raise ValueError("ready_attempts must be positive")
+    if ready_timeout_seconds is None:
+        ready_timeout_seconds = HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS
+    readiness_started_at = time.monotonic()
+    deadline = readiness_started_at + ready_timeout_seconds
     pending = list(secret_requirements)
     latest_issues: dict[str, str] = {}
-    for attempt in range(HOSTED_BRIDGE_SECRET_READY_ATTEMPTS):
-        if attempt:
-            pending_names = ", ".join(
-                secret_name for secret_name, _ in pending
+    lookup_attempts: dict[str, int] = {}
+    lookup_timed_out: set[str] = set()
+
+    def record_expired_deadline_window(
+        skipped_requirements: list[tuple[str, set[str]]],
+    ) -> None:
+        for skipped_name, _ in skipped_requirements:
+            if skipped_name in lookup_timed_out or skipped_name in latest_issues:
+                continue
+            latest_issues[skipped_name] = (
+                "Secret readiness deadline expired before lookup for "
+                f"{namespace}/{skipped_name}"
             )
-            print(
-                "Hosted bridge Secret projection retry "
-                f"attempt {attempt + 1}/{HOSTED_BRIDGE_SECRET_READY_ATTEMPTS}; "
-                f"pending Secrets: {pending_names}",
-                file=sys.stderr,
-                flush=True,
+
+    def format_known_issues(
+        requirements: list[tuple[str, set[str]]],
+    ) -> list[str]:
+        elapsed = max(0.0, time.monotonic() - readiness_started_at)
+        return [
+            (
+                f"{latest_issues[secret_name]} ("
+                + (
+                    f"still not ready after {lookup_attempts[secret_name]} attempts"
+                    if lookup_attempts.get(secret_name, 0)
+                    else "no Secret lookups attempted"
+                )
+                + "; elapsed "
+                f"{elapsed:.1f}s of {ready_timeout_seconds}s readiness budget)"
             )
+            for secret_name, _ in requirements
+            if secret_name in latest_issues
+        ]
+
+    for attempt in range(ready_attempts):
+        if deadline - time.monotonic() <= 0:
+            record_expired_deadline_window(pending)
+            break
         retry_pending: list[tuple[str, set[str]]] = []
-        for secret_name, required_keys in pending:
-            issue, retryable = secret_keys_lookup_failure(
-                secret_name, namespace, required_keys
+        for pending_index, (secret_name, required_keys) in enumerate(pending):
+            remaining_seconds = deadline - time.monotonic()
+            if remaining_seconds <= 0:
+                skipped_requirements = pending[pending_index:]
+                record_expired_deadline_window(skipped_requirements)
+                retry_pending.extend(skipped_requirements)
+                break
+            lookup_attempts[secret_name] = lookup_attempts.get(secret_name, 0) + 1
+            lookup_timed_out.discard(secret_name)
+            issue, retryable, timed_out = secret_keys_lookup_failure(
+                secret_name,
+                namespace,
+                required_keys,
+                min(SECRET_LOOKUP_TIMEOUT_SECONDS, remaining_seconds),
             )
+            if timed_out:
+                lookup_timed_out.add(secret_name)
             if issue is None:
+                latest_issues.pop(secret_name, None)
                 continue
             if not retryable:
-                return [issue]
+                latest_issues[secret_name] = issue
+                return format_known_issues(pending)
             latest_issues[secret_name] = issue
             retry_pending.append((secret_name, required_keys))
         if not retry_pending:
             return []
         pending = retry_pending
-        if attempt + 1 < HOSTED_BRIDGE_SECRET_READY_ATTEMPTS:
-            time.sleep(HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS)
-    return [
-        (
-            f"{latest_issues[secret_name]} (still not ready after "
-            f"{HOSTED_BRIDGE_SECRET_READY_ATTEMPTS} attempts)"
-        )
-        for secret_name, _ in pending
-    ]
+        if attempt + 1 < ready_attempts:
+            remaining_seconds = deadline - time.monotonic()
+            if remaining_seconds <= 0:
+                record_expired_deadline_window(pending)
+                break
+            time.sleep(min(HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS, remaining_seconds))
+    return format_known_issues(pending)
 
 
 def hosted_bridge_expected_bindings(
     namespace: str, release_name: str
 ) -> dict[str, Any]:
+    """Build the synthetic expected bindings for a hosted render target."""
     if namespace == "dev" and release_name == "dev":
         environment = "dev-demo-cluster"
     elif (
         release_name == namespace
         and len(namespace) <= 63
-        and re.fullmatch(r"pr-[1-9][0-9]*", namespace)
+        and re.fullmatch(r"pr-[1-9][0-9]{0,50}", namespace)
     ):
         environment = "pr-preview"
     else:
         raise ValueError(
             "hosted bridge identity must be exactly dev/dev or a matching "
-            "numeric pr-[1-9][0-9]* namespace/release"
+            "numeric pr-[1-9][0-9]{0,50} namespace/release"
         )
     return {
         "environment": environment,
@@ -6811,12 +7028,13 @@ def hosted_bridge_preflight(
     context: str,
     expected_hosted_telnet_node_port: int | None = None,
 ) -> int:
+    """Validate a hosted controller render before Helm apply or smoke proof."""
+    if context not in {"operator", "ci-static"}:
+        fail(f"Invalid FIREMUD_PREFLIGHT_CONTEXT: {context}")
     try:
         expected = hosted_bridge_expected_bindings(namespace, release_name)
     except ValueError as exc:
         fail(str(exc))
-    if context not in {"operator", "ci-static"}:
-        fail(f"Invalid FIREMUD_PREFLIGHT_CONTEXT: {context}")
     if not render_path.is_file():
         fail(f"Hosted bridge render does not exist: {render_path}")
     try:
@@ -6827,6 +7045,21 @@ def hosted_bridge_preflight(
         metadata = document.get("metadata")
         if isinstance(metadata, dict) and not metadata.get("namespace"):
             metadata["namespace"] = namespace
+
+    release_identity_issues: list[str] = []
+    for document in documents:
+        metadata = document.get("metadata")
+        labels = metadata.get("labels") if isinstance(metadata, dict) else None
+        if not isinstance(labels, dict) or "app.kubernetes.io/instance" not in labels:
+            continue
+        rendered_release_name = labels["app.kubernetes.io/instance"]
+        if rendered_release_name != release_name:
+            release_identity_issues.append(
+                "rendered Helm release identity for "
+                f"{document.get('kind', 'resource')}/{metadata.get('name') or '<unnamed>'} "
+                f"{rendered_release_name!r} does not match trusted release {release_name!r}"
+            )
+
     _, gateway_issues = validate_gateway_ws_values(documents, expected)
     telnet_issues = validate_hosted_telnet_tls_values(
         documents,
@@ -6834,8 +7067,18 @@ def hosted_bridge_preflight(
         expected_hosted_telnet_node_port=expected_hosted_telnet_node_port,
         target_namespace=namespace,
     )
-    issues = label_bridge_validation_issues(gateway_issues, telnet_issues)
-    if context == "operator":
+    issues = [
+        *release_identity_issues,
+        *label_bridge_validation_issues(gateway_issues, telnet_issues),
+    ]
+    if context == "operator" and not issues:
+        try:
+            secret_ready_timeout_seconds = hosted_bridge_secret_ready_timeout_seconds()
+            secret_ready_attempts = hosted_bridge_secret_ready_attempts(
+                secret_ready_timeout_seconds
+            )
+        except ValueError as exc:
+            fail(str(exc))
         secret_requirements = [
             (
                 f"{release_name}-gateway-internal-ws",
@@ -6845,20 +7088,20 @@ def hosted_bridge_preflight(
                 f"{release_name}-tcp-proxy-bridge",
                 {"tls.crt", "tls.key", "ca.crt"},
             ),
+            (f"{release_name}-telnet-tls", {"tls.crt", "tls.key"}),
         ]
-        # Hosted CLI identities are controller-owned regardless of mutable
-        # artifact labels. Public ACME TLS Secrets may carry their complete
-        # chain in tls.crt without a separate ca.crt entry.
-        secret_requirements.append(
-            (f"{release_name}-telnet-tls", {"tls.crt", "tls.key"})
-        )
         issues.extend(
             f"Controller projection: {issue}"
             for issue in wait_for_secret_key_requirements(
-                secret_requirements, namespace
+                secret_requirements,
+                namespace,
+                secret_ready_attempts,
+                secret_ready_timeout_seconds,
             )
         )
     status, message = bridge_validation_result(issues)
+    if status == "pass":
+        message = hosted_bridge_success_message(context)
     print(
         json.dumps(
             {
@@ -6875,13 +7118,30 @@ def hosted_bridge_preflight(
 
 
 def main() -> int:
-    if len(sys.argv) in {5, 7} and sys.argv[1] == "hosted-bridge":
+    if len(sys.argv) > 1 and sys.argv[1] == "hosted-bridge":
+        if len(sys.argv) not in {5, 7}:
+            fail(
+                "malformed hosted-bridge invocation: expected 3 required positional "
+                "arguments (<render-path> <namespace> <release-name>) after "
+                "hosted-bridge, optionally followed by "
+                "--expected-hosted-telnet-node-port <port>"
+            )
         expected_hosted_telnet_node_port = None
         if len(sys.argv) == 7:
             if sys.argv[5] != "--expected-hosted-telnet-node-port":
-                usage()
-            if not re.fullmatch(r"[1-9][0-9]*", sys.argv[6]):
-                fail("--expected-hosted-telnet-node-port must be a positive integer")
+                fail(
+                    "hosted-bridge optional flag must be "
+                    "--expected-hosted-telnet-node-port"
+                )
+            if (
+                not re.fullmatch(r"[1-9][0-9]*", sys.argv[6])
+                or len(sys.argv[6]) > 5
+                or int(sys.argv[6]) > 65535
+            ):
+                fail(
+                    "--expected-hosted-telnet-node-port must be an integer "
+                    "between 1 and 65535"
+                )
             expected_hosted_telnet_node_port = int(sys.argv[6])
         return hosted_bridge_preflight(
             Path(sys.argv[2]),

@@ -18,7 +18,47 @@
     "helmv3",
     "kubernetes",
     "kustomize",
-    "npm"
+    "nodenv",
+    "npm",
+    "pip_requirements",
+    "pyenv",
+    "custom.regex"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^config/workflow-tool-versions\\.env$/"
+      ],
+      "matchStrings": [
+        "# renovate-version: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\n[A-Z][A-Z0-9_]*_VERSION=(?<currentValue>\\S+)"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Update the Velero image tag and digest without rewriting adjacent CLI authority",
+      "managerFilePatterns": [
+        "/^config/workflow-tool-versions\\.env$/"
+      ],
+      "matchStrings": [
+        "# renovate-image: datasource=docker depName=velero/velero\\nVELERO_VERSION=(?<currentValue>\\S+)\\nVELERO_IMAGE_DIGEST=(?<currentDigest>sha256:[0-9a-f]{64})"
+      ],
+      "depNameTemplate": "velero/velero",
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker",
+      "currentValueTemplate": "v{{{currentValue}}}",
+      "autoReplaceStringTemplate": "# renovate-image: datasource=docker depName=velero/velero\nVELERO_VERSION={{{replace '^v' '' newValue}}}\nVELERO_IMAGE_DIGEST={{{newDigest}}}"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^config/workflow-tool-versions\\.env$/"
+      ],
+      "matchStrings": [
+        "# renovate-image: datasource=(?<datasource>docker) depName=(?<depName>ghcr\\.io/(?:oss-review-toolkit/ort|zaproxy/zaproxy))\\n[A-Z][A-Z0-9_]*_VERSION=(?<currentValue>\\S+)\\n(?:[A-Z][A-Z0-9_]*=[^\\n]+\\n)*?[A-Z][A-Z0-9_]*_DIGEST=(?<currentDigest>sha256:[0-9a-f]{64})"
+      ],
+      "versioningTemplate": "docker"
+    }
   ],
   "vulnerabilityAlerts": {
     "enabled": true
@@ -48,6 +88,17 @@
         "patch"
       ],
       "groupName": "npm non-major updates"
+    },
+    {
+      "description": "Keep canonical Node and Python runtime majors",
+      "matchManagers": [
+        "nodenv",
+        "pyenv"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "enabled": false
     },
     {
       "matchManagers": [
@@ -91,6 +142,21 @@
       "automerge": true,
       "automergeType": "pr",
       "platformAutomerge": false
+    },
+    {
+      "description": "Production Velero image changes require promotion evidence",
+      "matchManagers": [
+        "kubernetes"
+      ],
+      "matchFileNames": [
+        "k8s/velero/verify-backups-cronjob.yaml"
+      ],
+      "matchPackageNames": [
+        "velero/velero"
+      ],
+      "pinDigests": false,
+      "automerge": false,
+      "enabled": false
     }
   ],
   "lockFileMaintenance": {

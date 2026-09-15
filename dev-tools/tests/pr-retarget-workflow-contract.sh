@@ -64,12 +64,78 @@ require_contains() {
   fi
 }
 
+require_contains_block() {
+  local path="$1"
+  local expected="$2"
+
+  if ! python3 - "$path" "$expected" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+expected = sys.argv[2]
+if expected not in path.read_text(encoding="utf-8"):
+    raise SystemExit(1)
+PY
+  then
+    echo "$path must contain the complete block:" >&2
+    printf '%s\n' "$expected" >&2
+    exit 1
+  fi
+}
+
 require_exact_line() {
   local path="$1"
   local expected="$2"
 
   if ! grep -Fxq -- "$expected" "$path"; then
     echo "$path must contain the exact line: $expected" >&2
+    exit 1
+  fi
+}
+
+assert_publish_checkout_configuration() {
+  local path="$1"
+
+  if ! python3 - "$path" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+
+path = Path(sys.argv[1])
+workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+jobs = workflow.get("jobs") if isinstance(workflow, dict) else None
+checkouts = []
+for job_name, job in (jobs.items() if isinstance(jobs, dict) else []):
+    steps = job.get("steps") if isinstance(job, dict) else None
+    for step in steps or []:
+        if (
+            isinstance(step, dict)
+            and isinstance(step.get("uses"), str)
+            and step["uses"].startswith("actions/checkout@")
+        ):
+            checkouts.append((job_name, step))
+if len(checkouts) != 1:
+    raise SystemExit("workflow must contain exactly one actions/checkout step")
+
+checkout_job, checkout = checkouts[0]
+if checkout_job != "publish":
+    raise SystemExit("the workflow checkout must belong to the publish job")
+
+checkout_with = checkout.get("with")
+if not isinstance(checkout_with, dict):
+    raise SystemExit("publish checkout must define a with mapping")
+if set(checkout_with) != {"ref", "persist-credentials"}:
+    raise SystemExit("publish checkout must define exactly ref and persist-credentials")
+if checkout_with.get("ref") != "${{ github.event.repository.default_branch }}":
+    raise SystemExit("publish checkout must use the repository default branch")
+if type(checkout_with.get("persist-credentials")) is not bool or checkout_with["persist-credentials"] is not False:
+    raise SystemExit("publish checkout must disable persisted credentials with boolean false")
+PY
+  then
+    echo "$path publish job must have one default-branch, non-persisting checkout" >&2
     exit 1
   fi
 }
@@ -325,8 +391,8 @@ require_contains "$runtime_images_path" 'github.event.pull_request.base.sha'
 require_contains "$runtime_images_path" 'github.event.pull_request.head.sha'
 require_contains "$runtime_images_path" 'github.sha'
 require_contains "$runtime_images_path" 'mode-{4}'
-require_contains "$runtime_images_path" '### PR runtime images and full-stack smoke'
-require_contains "$runtime_images_path" 'built and smoke-tested the PR merge commit'
+require_contains "$runtime_images_path" '### PR runtime images and applicable full-stack smoke'
+require_contains "$runtime_images_path" 'built the PR merge commit and runs full-stack smoke when required by change scope'
 require_contains "$image_wait_path" 'display_title = run.get("display_title", "")'
 require_contains "$image_wait_path" 'display_title.startswith("Build Runtime Images secure-pr-artifact ")'
 require_contains "$image_wait_path" 'and f" head-{head_sha} " in display_title'
@@ -436,7 +502,18 @@ require_contains "$preview_reconciler_path" '--workflow "${preview_workflow_name
 require_contains "$preview_reconciler_path" '--branch "${head_ref}"'
 require_contains "$preview_reconciler_path" "gh api --paginate \"repos/\${GITHUB_REPOSITORY}/pulls?state=open&per_page=100\""
 require_contains "$preview_reconciler_path" "sort -t \$'\\t' -k1,1n -k2,2n"
-require_contains "$preview_reconciler_path" "--jq '.[] | select(.status == \"queued\" or .status == \"in_progress\") | .databaseId'"
+require_contains "$preview_reconciler_path" '--json databaseId,status,headSha'
+# shellcheck disable=SC2016 # These assertions intentionally match literal shell and jq source.
+require_contains "$preview_reconciler_path" '--arg head_sha "${head_sha}"'
+# shellcheck disable=SC2016 # This assertion intentionally matches literal jq source.
+require_contains_block "$preview_reconciler_path" '                          .headSha == $head_sha
+                          and (
+                            .status == "requested"
+                            or .status == "queued"
+                            or .status == "in_progress"
+                            or .status == "waiting"
+                            or .status == "pending"
+                          )'
 # shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.
 if grep -Fq 'available_slots=$((available_slots - 1))' "$preview_reconciler_path"; then
   echo "Preview reconciler must not decrement capacity after dispatching its single repair" >&2
@@ -478,7 +555,7 @@ require_contains "$pr_image_publisher_path" 'GitHub displays this run in the def
 require_contains "$pr_image_publisher_path" 'markdown_code(os.environ['
 require_contains "$pr_image_publisher_path" 'from html import escape'
 require_contains "$pr_image_publisher_path" '<code>{markdown_code(os.environ['
-assert_job_excludes publish-pr-runtime-images.yml publish 'contents: read'
+assert_job_contains publish-pr-runtime-images.yml publish 'contents: read'
 # shellcheck disable=SC2016 # These are literal GitHub expression and shell source contracts.
 require_contains "$pr_image_publisher_path" 'pr-runtime-images-${{ github.event.workflow_run.head_sha }}'
 # shellcheck disable=SC2016 # This assertion intentionally matches the unevaluated publisher script.
@@ -491,10 +568,7 @@ require_contains "$pr_image_publisher_path" 'max_push_attempts=3'
 require_contains "$pr_image_publisher_path" 'backoff_seconds=$((5 * 2 ** (push_attempt - 1)))'
 # shellcheck disable=SC2016 # This assertion intentionally matches unevaluated publisher shell.
 require_contains "$pr_image_publisher_path" 'sleep "$backoff_seconds"'
-if grep -Fq 'actions/checkout@' "$pr_image_publisher_path"; then
-  echo "trusted PR image publisher must not checkout or execute PR source" >&2
-  exit 1
-fi
+assert_publish_checkout_configuration "$pr_image_publisher_path"
 
 python3 - "$pr_image_publisher_path" <<'PY'
 import os
@@ -548,6 +622,94 @@ require_contains "$image_wait_path" 'local publisher_deadline=$((SECONDS + publi
 
 contract_fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$contract_fixture_dir"' EXIT
+cat >"$contract_fixture_dir/publisher-checkout-other-job.yml" <<'EOF'
+jobs:
+  publish:
+    steps:
+      - uses: actions/checkout@fixture
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+  other:
+    steps:
+      - uses: actions/checkout@fixture
+EOF
+if (assert_publish_checkout_configuration \
+  "$contract_fixture_dir/publisher-checkout-other-job.yml" \
+  ) 2>"$contract_fixture_dir/publisher-checkout-other-job.error"; then
+  echo "assert_publish_checkout_configuration must reject checkout steps in another job" >&2
+  exit 1
+fi
+require_contains "$contract_fixture_dir/publisher-checkout-other-job.error" \
+  'workflow must contain exactly one actions/checkout step'
+cat >"$contract_fixture_dir/publisher-checkout-only-other-job.yml" <<'EOF'
+jobs:
+  other:
+    steps:
+      - uses: actions/checkout@fixture
+EOF
+if (assert_publish_checkout_configuration \
+  "$contract_fixture_dir/publisher-checkout-only-other-job.yml" \
+  ) 2>"$contract_fixture_dir/publisher-checkout-only-other-job.error"; then
+  echo "assert_publish_checkout_configuration must require the checkout in the publish job" >&2
+  exit 1
+fi
+require_contains "$contract_fixture_dir/publisher-checkout-only-other-job.error" \
+  'the workflow checkout must belong to the publish job'
+cat >"$contract_fixture_dir/publisher-checkout-wrong-ref.yml" <<'EOF'
+jobs:
+  publish:
+    steps:
+      - uses: actions/checkout@fixture
+        with:
+          ref: refs/heads/main
+          persist-credentials: false
+EOF
+if (assert_publish_checkout_configuration \
+  "$contract_fixture_dir/publisher-checkout-wrong-ref.yml" \
+  ) 2>"$contract_fixture_dir/publisher-checkout-wrong-ref.error"; then
+  echo "assert_publish_checkout_configuration must reject a non-default checkout ref" >&2
+  exit 1
+fi
+require_contains "$contract_fixture_dir/publisher-checkout-wrong-ref.error" \
+  'publish checkout must use the repository default branch'
+cat >"$contract_fixture_dir/publisher-checkout-string-persist-credentials.yml" <<'EOF'
+jobs:
+  publish:
+    steps:
+      - uses: actions/checkout@fixture
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: 'false'
+EOF
+if (assert_publish_checkout_configuration \
+  "$contract_fixture_dir/publisher-checkout-string-persist-credentials.yml" \
+  ) 2>"$contract_fixture_dir/publisher-checkout-string-persist-credentials.error"; then
+  echo "assert_publish_checkout_configuration must reject string false persisted credentials" >&2
+  exit 1
+fi
+require_contains "$contract_fixture_dir/publisher-checkout-string-persist-credentials.error" \
+  'publish checkout must disable persisted credentials with boolean false'
+for unexpected_key in repository submodules fetch-depth; do
+  cat >"$contract_fixture_dir/publisher-checkout-$unexpected_key.yml" <<EOF
+jobs:
+  publish:
+    steps:
+      - uses: actions/checkout@fixture
+        with:
+          ref: \${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          $unexpected_key: fixture
+EOF
+  if (assert_publish_checkout_configuration \
+    "$contract_fixture_dir/publisher-checkout-$unexpected_key.yml" \
+    ) 2>"$contract_fixture_dir/publisher-checkout-$unexpected_key.error"; then
+    echo "assert_publish_checkout_configuration must reject $unexpected_key" >&2
+    exit 1
+  fi
+  require_contains "$contract_fixture_dir/publisher-checkout-$unexpected_key.error" \
+    'publish checkout must define exactly ref and persist-credentials'
+done
 cat >"$contract_fixture_dir/ordered-sequence.txt" <<'EOF'
 prefix first second suffix
 third

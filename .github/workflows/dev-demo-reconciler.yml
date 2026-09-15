@@ -11,22 +11,30 @@ permissions:
 
 concurrency:
   group: dev-demo-reconciler-${{ github.workflow }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   reconcile-dev-demo:
     name: Reconcile Develop Dev Demo
+    timeout-minutes: 9
     runs-on:
       - self-hosted
       - preview
+      - linux
+      - x64
     environment: dev-demo-cluster
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up canonical Python dependencies
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: yaml
 
       - name: Set up kubectl
-        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
-        with:
-          version: v1.33.4
+        uses: ./.github/actions/setup-kubectl
 
       - name: Write preview kubeconfig
         env:
@@ -43,60 +51,10 @@ jobs:
           kubectl auth can-i list namespaces --all-namespaces
 
       - name: Ensure GitHub CLI is available
-        run: |
-          if command -v gh >/dev/null 2>&1; then
-            gh --version
-            exit 0
-          fi
-
-          GH_VERSION="2.76.2"
-          INSTALL_DIR="$HOME/.local/bin"
-          mkdir -p "$INSTALL_DIR"
-          curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" -o /tmp/gh.tgz
-          tar -xzf /tmp/gh.tgz -C /tmp
-          install "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" "$INSTALL_DIR/gh"
-          export PATH="$HOME/.local/bin:$PATH"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          gh --version
+        uses: ./.github/actions/setup-gh
 
       - name: Dispatch dev-demo deploy when stale or missing
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          workflow_name="Develop Dev Demo Environment"
-          namespace="dev"
-          desired_head_sha="$(
-            gh api "repos/${GITHUB_REPOSITORY}/branches/develop" --jq '.commit.sha'
-          )"
-          current_head_sha="$(kubectl get namespace "${namespace}" -o jsonpath='{.metadata.annotations.firemud\.dev/last-dev-demo-head-sha}' 2>/dev/null || true)"
-
-          if [[ "${current_head_sha}" == "${desired_head_sha}" ]]; then
-            echo "Dev demo already aligned to develop head ${desired_head_sha}"
-            exit 0
-          fi
-
-          active_run_id="$(
-            gh run list \
-              --workflow "${workflow_name}" \
-              --branch develop \
-              --limit 20 \
-              --json databaseId,status,displayTitle \
-              --jq '.[] | select(.displayTitle == "Develop Dev Demo Environment" and (.status == "queued" or .status == "in_progress")) | .databaseId' \
-              | head -n 1
-          )"
-
-          if [[ -n "${active_run_id}" ]]; then
-            echo "Skipping dispatch: dev-demo run ${active_run_id} is already queued or in progress."
-            exit 0
-          fi
-
-          echo "Dispatching dev-demo deploy for develop head ${desired_head_sha}"
-          gh api \
-            --method POST \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/dev-demo.yml/dispatches" \
-            -f ref="develop" \
-            -f 'inputs[action]=deploy' \
-            -f "inputs[image_tag]=${desired_head_sha}" \
-            -f "inputs[head_sha]=${desired_head_sha}" \
-            -f 'inputs[hostname]=dev.preview.firedevops.net' \
-            -f 'inputs[telnet_port]=32016'
+          bash ./dev-tools/hosted/dev-demo/reconcile-dev-demo.sh

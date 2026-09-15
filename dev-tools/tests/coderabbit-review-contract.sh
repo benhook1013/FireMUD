@@ -61,6 +61,143 @@ cat >"$TMP_DIR/pass.json" <<'JSON'
 }
 JSON
 
+cat >"$TMP_DIR/final-risk-coverage-zero.json" <<'JSON'
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "commits": {
+          "nodes": [
+            {
+              "commit": {
+                "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "committedDate": "2026-09-14T00:00:00Z"
+              }
+            }
+          ]
+        },
+        "reviewThreads": {"nodes": []},
+        "comments": {
+          "nodes": [
+            {
+              "databaseId": 501,
+              "author": {"login": "benhook1013"},
+              "body": "@coderabbitai full review",
+              "createdAt": "2026-09-14T01:00:00Z",
+              "updatedAt": "2026-09-14T01:00:00Z",
+              "url": "https://example.test/final-risk-coverage-trigger"
+            },
+            {
+              "databaseId": 502,
+              "author": {"login": "coderabbitai"},
+              "body": "<!-- CodeRabbit review command invocation: v2:final-risk-coverage -->\nFull review finished.",
+              "createdAt": "2026-09-14T01:10:00Z",
+              "updatedAt": "2026-09-14T01:10:00Z",
+              "url": "https://example.test/final-risk-coverage-finished"
+            },
+            {
+              "databaseId": 503,
+              "author": {"login": "coderabbitai"},
+              "body": "<!-- walkthrough_start -->\nReviewing files that changed from the base of the PR and between `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb` and `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\nFiles selected for processing (24)\n<!-- final_review_risk_coverage -->",
+              "createdAt": "2026-09-14T00:59:00Z",
+              "updatedAt": "2026-09-14T01:11:00Z",
+              "url": "https://example.test/final-risk-coverage-summary"
+            }
+          ]
+        },
+        "reviews": {
+          "nodes": [
+            {
+              "databaseId": 504,
+              "author": {"login": "coderabbitai"},
+              "body": "<!-- final_review_risk_coverage -->",
+              "state": "COMMENTED",
+              "submittedAt": "2026-09-14T01:11:00Z",
+              "url": "https://example.test/final-risk-coverage-review",
+              "commit": {"oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+JSON
+
+cat >"$TMP_DIR/exact-head-outside-diff-review.json" <<'JSON'
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "commits": {
+          "nodes": [
+            {
+              "commit": {
+                "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "committedDate": "2026-09-14T00:00:00Z"
+              }
+            }
+          ]
+        },
+        "reviewThreads": {"nodes": []},
+        "comments": {
+          "nodes": [
+            {
+              "databaseId": 511,
+              "author": {"login": "benhook1013"},
+              "body": "@coderabbitai full review",
+              "createdAt": "2026-09-14T01:00:00Z",
+              "updatedAt": "2026-09-14T01:00:00Z",
+              "url": "https://example.test/exact-head-outside-diff-trigger"
+            },
+            {
+              "databaseId": 512,
+              "author": {"login": "coderabbitai"},
+              "body": "<!-- CodeRabbit review command invocation: v2:exact-head-outside-diff -->\nFull review finished.",
+              "createdAt": "2026-09-14T01:10:00Z",
+              "updatedAt": "2026-09-14T01:10:00Z",
+              "url": "https://example.test/exact-head-outside-diff-finished"
+            }
+          ]
+        },
+        "reviews": {
+          "nodes": [
+            {
+              "databaseId": 513,
+              "author": {"login": "coderabbitai"},
+              "body": "<!-- final_review_risk_coverage -->\n<summary>Outside diff range comments (1)</summary>",
+              "state": "COMMENTED",
+              "submittedAt": "2026-09-14T01:11:00Z",
+              "url": "https://example.test/exact-head-outside-diff-review",
+              "commit": {"oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+JSON
+
+cat >"$TMP_DIR/final-risk-coverage-record.json" <<'JSON'
+{
+  "schema_version": 1,
+  "status": "posted",
+  "repository": "benhook1013/FireMUD",
+  "pr_number": 2364,
+  "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "trigger": {
+    "id": 501,
+    "created_at": "2026-09-14T01:00:00Z",
+    "url": "https://example.test/final-risk-coverage-trigger",
+    "type": "full",
+    "command": "@coderabbitai full review"
+  }
+}
+JSON
+
 cat >"$TMP_DIR/submitted-review.json" <<'JSON'
 {
   "data": {
@@ -414,9 +551,190 @@ cat >"$TMP_DIR/review-rate-limited.json" <<'JSON'
               "author": {
                 "login": "coderabbitai"
               },
-              "body": "<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->",
-              "createdAt": "2026-07-03T02:40:05Z",
+              "body": "Review rate limited\nYour next included review will be available in 36 minutes",
+              "createdAt": "2026-07-03T02:39:55Z",
+              "updatedAt": "2026-07-03T02:40:05Z",
               "url": "https://example.test/rate-limited"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+JSON
+
+cat >"$TMP_DIR/edited-review-rate-limited.json" <<'JSON'
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "abc123",
+        "commits": {
+          "nodes": [
+            {
+              "commit": {
+                "oid": "abc123",
+                "committedDate": "2026-07-03T02:31:07Z"
+              }
+            }
+          ]
+        },
+        "reviewThreads": {"nodes": []},
+        "comments": {
+          "nodes": [
+            {
+              "author": {"login": "benhook1013"},
+              "body": "@coderabbitai review",
+              "createdAt": "2026-07-03T02:40:00Z",
+              "url": "https://example.test/edited-review"
+            },
+            {
+              "author": {"login": "coderabbitai"},
+              "body": "Review rate limited\nYour next included review will be available in 36 minutes",
+              "createdAt": "2099-07-03T02:40:01Z",
+              "updatedAt": "2099-07-03T02:40:05Z",
+              "url": "https://example.test/edited-rate-limited"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+JSON
+
+cat >"$TMP_DIR/substantive-quoted-rate-limit.json" <<'JSON'
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "abc123",
+        "commits": {
+          "nodes": [{"commit": {"oid": "abc123", "committedDate": "2026-07-03T02:31:07Z"}}]
+        },
+        "reviewThreads": {"nodes": []},
+        "comments": {
+          "nodes": [
+            {
+              "author": {"login": "benhook1013"},
+              "body": "@coderabbitai full review",
+              "createdAt": "2026-07-03T02:40:00Z",
+              "url": "https://example.test/substantive-request"
+            },
+            {
+              "author": {"login": "coderabbitai"},
+              "body": "<!-- walkthrough_start -->\nThe report quotes: More reviews will be available in 36 minutes",
+              "createdAt": "2026-07-03T02:40:05Z",
+              "url": "https://example.test/substantive-quoted-rate-limit"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+JSON
+
+cat >"$TMP_DIR/actionable-quoted-rate-limit.json" <<'JSON'
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "abc123",
+        "commits": {
+          "nodes": [{"commit": {"oid": "abc123", "committedDate": "2026-07-03T02:31:07Z"}}]
+        },
+        "reviewThreads": {"nodes": []},
+        "comments": {
+          "nodes": [
+            {
+              "author": {"login": "benhook1013"},
+              "body": "@coderabbitai full review",
+              "createdAt": "2026-07-03T02:40:00Z",
+              "url": "https://example.test/actionable-request"
+            },
+            {
+              "author": {"login": "coderabbitai"},
+              "body": "<!-- walkthrough_start -->\n**Actionable comments posted: 1**\n\nThe report quotes: Review rate limited",
+              "createdAt": "2026-07-03T02:40:05Z",
+              "url": "https://example.test/actionable-quoted-rate-limit"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+JSON
+
+cat >"$TMP_DIR/quoted-rate-limit.json" <<'JSON'
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "abc123",
+        "commits": {
+          "nodes": [{"commit": {"oid": "abc123", "committedDate": "2099-07-03T02:31:07Z"}}]
+        },
+        "reviewThreads": {"nodes": []},
+        "comments": {
+          "nodes": [
+            {
+              "author": {"login": "benhook1013"},
+              "body": "@coderabbitai full review",
+              "createdAt": "2099-07-03T02:40:00Z",
+              "url": "https://example.test/quoted-request"
+            },
+            {
+              "author": {"login": "coderabbitai"},
+              "body": "<!-- walkthrough_start -->\nReview completed.",
+              "createdAt": "2099-07-03T02:40:02Z",
+              "url": "https://example.test/quoted-completion"
+            },
+            {
+              "author": {"login": "coderabbitai"},
+              "body": "The report quotes: review rate limited",
+              "createdAt": "2099-07-03T02:40:05Z",
+              "url": "https://example.test/quoted-rate-limit"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+JSON
+
+cat >"$TMP_DIR/blockquote-quoted-rate-limit.json" <<'JSON'
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "abc123",
+        "commits": {
+          "nodes": [{"commit": {"oid": "abc123", "committedDate": "2099-07-03T02:31:07Z"}}]
+        },
+        "reviewThreads": {"nodes": []},
+        "comments": {
+          "nodes": [
+            {
+              "author": {"login": "benhook1013"},
+              "body": "@coderabbitai full review",
+              "createdAt": "2099-07-03T02:40:00Z",
+              "url": "https://example.test/blockquote-request"
+            },
+            {
+              "author": {"login": "coderabbitai"},
+              "body": "<!-- walkthrough_start -->\nReview completed.",
+              "createdAt": "2099-07-03T02:40:02Z",
+              "url": "https://example.test/blockquote-completion"
+            },
+            {
+              "author": {"login": "coderabbitai"},
+              "body": "> Review rate limited",
+              "createdAt": "2099-07-03T02:40:05Z",
+              "url": "https://example.test/blockquote-rate-limit"
             }
           ]
         }
@@ -783,6 +1101,25 @@ with open(sys.argv[2], "w", encoding="utf-8") as destination:
     json.dump(payload, destination)
 PY
 
+python3 - "$TMP_DIR/review-not-finished.json" "$TMP_DIR/review-failed.json" <<'PY'
+import json
+import sys
+
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    payload = json.load(source)
+payload["data"]["repository"]["pullRequest"]["comments"]["nodes"].append(
+    {
+        "author": {"login": "coderabbitai"},
+        "body": "The full review failed because of an internal error.",
+        "createdAt": "2026-07-03T02:40:05Z",
+        "url": "https://example.test/review-failed",
+    }
+)
+with open(sys.argv[2], "w", encoding="utf-8") as destination:
+    json.dump(payload, destination)
+PY
+
 EXPECT_FAILURE_STATUS=0
 
 expect_failure_output() {
@@ -856,6 +1193,7 @@ grep -q "outside_diff_actionable_comments=0" "$TMP_DIR/submitted-review.out"
 grep -q "duplicate_actionable_comments=4" "$TMP_DIR/submitted-review.out"
 grep -q "latest_actionable_comment_url=https://example.test/submitted-review" "$TMP_DIR/submitted-review.out"
 grep -q "reason=4 top-level duplicate CodeRabbit comment(s) remain from the latest review; verify and fix them before calling the PR review-clean" "$TMP_DIR/submitted-review.out"
+grep -q "retrigger_review_allowed=true" "$TMP_DIR/submitted-review.out"
 grep -q "ok=false" "$TMP_DIR/submitted-review.out"
 
 expect_failure_output "$TMP_DIR/unresolved-outdated.json" "$TMP_DIR/unresolved-outdated.out"
@@ -892,6 +1230,12 @@ grep -q "retrigger_review_allowed=false" "$TMP_DIR/review-not-finished.out"
 grep -q "manual_thread_resolution_required=false" "$TMP_DIR/review-not-finished.out"
 grep -q "reason=no substantive CodeRabbit review summary found after the latest explicit review request" "$TMP_DIR/review-not-finished.out"
 
+expect_failure_output "$TMP_DIR/review-failed.json" "$TMP_DIR/review-failed.out"
+[[ $EXPECT_FAILURE_STATUS -ne 0 ]]
+grep -q "latest_review_request_failed=true" "$TMP_DIR/review-failed.out"
+grep -q "retrigger_review_allowed=true" "$TMP_DIR/review-failed.out"
+grep -q "reason=latest explicit CodeRabbit review request failed" "$TMP_DIR/review-failed.out"
+
 expect_failure_output "$TMP_DIR/review-command-noop.json" "$TMP_DIR/review-command-noop.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]
 grep -q "review_finished_after_latest_request=false" "$TMP_DIR/review-command-noop.out"
@@ -904,10 +1248,71 @@ grep -q "reason=latest explicit CodeRabbit review request was acknowledged witho
 expect_failure_output "$TMP_DIR/review-rate-limited.json" "$TMP_DIR/review-rate-limited.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]
 grep -q "explicit_review_after_latest_commit=true" "$TMP_DIR/review-rate-limited.out"
-grep -q "latest_review_request_rate_limited=true" "$TMP_DIR/review-rate-limited.out"
+grep -q "latest_review_request_rate_limited=false" "$TMP_DIR/review-rate-limited.out"
 grep -q "retrigger_review_allowed=false" "$TMP_DIR/review-rate-limited.out"
 grep -q "manual_thread_resolution_required=false" "$TMP_DIR/review-rate-limited.out"
-grep -q "reason=latest CodeRabbit review attempt after the PR commit was rate limited; do not retrigger yet" "$TMP_DIR/review-rate-limited.out"
+
+expect_failure_output "$TMP_DIR/edited-review-rate-limited.json" "$TMP_DIR/edited-review-rate-limited.out"
+[[ $EXPECT_FAILURE_STATUS -ne 0 ]]
+grep -q "latest_review_request_rate_limited=true" "$TMP_DIR/edited-review-rate-limited.out"
+grep -q "review_rate_limit_until=2099-07-03T03:16:01+00:00" "$TMP_DIR/edited-review-rate-limited.out"
+grep -q "retrigger_review_allowed=false" "$TMP_DIR/edited-review-rate-limited.out"
+
+python3 - "$TMP_DIR" <<'PY'
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+base = json.loads((root / "quoted-rate-limit.json").read_text())
+comments = base["data"]["repository"]["pullRequest"]["comments"]["nodes"]
+comments[-1]["body"] = "Review completed.\n> Next review available in: 36 minutes"
+(root / "quoted-window-rate-limit.json").write_text(json.dumps(base))
+
+inline = json.loads((root / "quoted-rate-limit.json").read_text())
+inline_comments = inline["data"]["repository"]["pullRequest"]["comments"]["nodes"]
+inline_comments[-1]["body"] = "The report quotes: More reviews will be available in 36 minutes"
+(root / "inline-window-rate-limit.json").write_text(json.dumps(inline))
+
+marker = json.loads((root / "edited-review-rate-limited.json").read_text())
+marker_comments = marker["data"]["repository"]["pullRequest"]["comments"]["nodes"]
+marker_comments[-1]["body"] = (
+    "<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->\n"
+    "> Next review available in: 36 minutes"
+)
+(root / "marker-quoted-window-rate-limit.json").write_text(json.dumps(marker))
+PY
+
+quoted_window_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/quoted-window-rate-limit.json")"
+grep -q "latest_review_request_rate_limited=false" <<<"$quoted_window_output"
+grep -q "retrigger_review_allowed=true" <<<"$quoted_window_output"
+
+inline_window_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/inline-window-rate-limit.json")"
+grep -q "latest_review_request_rate_limited=false" <<<"$inline_window_output"
+grep -q "retrigger_review_allowed=true" <<<"$inline_window_output"
+grep -q "ok=true" <<<"$inline_window_output"
+
+expect_failure_output "$TMP_DIR/marker-quoted-window-rate-limit.json" "$TMP_DIR/marker-quoted-window-rate-limit.out"
+[[ $EXPECT_FAILURE_STATUS -ne 0 ]]
+grep -q "latest_review_request_rate_limited=true" "$TMP_DIR/marker-quoted-window-rate-limit.out"
+grep -q "review_rate_limit_until=2099-07-03T03:16:01+00:00" "$TMP_DIR/marker-quoted-window-rate-limit.out"
+
+substantive_quoted_rate_limit_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/substantive-quoted-rate-limit.json")"
+grep -q "latest_review_request_rate_limited=false" <<<"$substantive_quoted_rate_limit_output"
+grep -q "retrigger_review_allowed=true" <<<"$substantive_quoted_rate_limit_output"
+
+actionable_quoted_rate_limit_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/actionable-quoted-rate-limit.json")"
+grep -q "latest_review_request_rate_limited=false" <<<"$actionable_quoted_rate_limit_output"
+grep -q "retrigger_review_allowed=true" <<<"$actionable_quoted_rate_limit_output"
+
+quoted_rate_limit_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/quoted-rate-limit.json")"
+grep -q "latest_review_request_rate_limited=false" <<<"$quoted_rate_limit_output"
+grep -q "retrigger_review_allowed=true" <<<"$quoted_rate_limit_output"
+grep -q "ok=true" <<<"$quoted_rate_limit_output"
+
+blockquote_quoted_rate_limit_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/blockquote-quoted-rate-limit.json")"
+grep -q "latest_review_request_rate_limited=false" <<<"$blockquote_quoted_rate_limit_output"
+grep -q "retrigger_review_allowed=true" <<<"$blockquote_quoted_rate_limit_output"
 
 expect_failure_output "$TMP_DIR/automatic-review-rate-limited.json" "$TMP_DIR/automatic-review-rate-limited.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]
@@ -958,5 +1363,24 @@ grep -q "duplicate_actionable_comments=0" "$TMP_DIR/outside-diff-actionable.out"
 grep -q "latest_actionable_comment_url=https://example.test/actionable" "$TMP_DIR/outside-diff-actionable.out"
 grep -q "warning=TOP-LEVEL CODERABBIT ACTIONABLE COMMENTS CAN EXIST OUTSIDE INLINE REVIEW THREADS; VERIFY THE LATEST CODERABBIT SUMMARY COMMENT BEFORE CALLING THE PR REVIEW-CLEAN" "$TMP_DIR/outside-diff-actionable.out"
 grep -q "reason=1 top-level outside-diff CodeRabbit comment(s) remain from the latest review; verify and fix them before calling the PR review-clean" "$TMP_DIR/outside-diff-actionable.out"
+grep -q "retrigger_review_allowed=true" "$TMP_DIR/outside-diff-actionable.out"
+grep -q "ok=false" "$TMP_DIR/outside-diff-actionable.out"
+
+final_risk_coverage_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/final-risk-coverage-zero.json")"
+grep -q "review_finished_after_latest_request=true" <<<"$final_risk_coverage_output"
+grep -q "substantive_review_after_latest_commit=true" <<<"$final_risk_coverage_output"
+grep -q "outside_diff_actionable_comments=0" <<<"$final_risk_coverage_output"
+grep -q "ok=true" <<<"$final_risk_coverage_output"
+
+final_risk_coverage_wait_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/final-risk-coverage-zero.json" --trigger-record "$TMP_DIR/final-risk-coverage-record.json" --wait --timeout 0)"
+grep -q "trigger_state=completed" <<<"$final_risk_coverage_wait_output"
+
+expect_failure_output "$TMP_DIR/exact-head-outside-diff-review.json" "$TMP_DIR/exact-head-outside-diff-review.out"
+[[ $EXPECT_FAILURE_STATUS -ne 0 ]]
+grep -q "review_finished_after_latest_request=true" "$TMP_DIR/exact-head-outside-diff-review.out"
+grep -q "substantive_review_after_latest_commit=true" "$TMP_DIR/exact-head-outside-diff-review.out"
+grep -q "outside_diff_actionable_comments=1" "$TMP_DIR/exact-head-outside-diff-review.out"
+grep -q "latest_actionable_comment_url=https://example.test/exact-head-outside-diff-review" "$TMP_DIR/exact-head-outside-diff-review.out"
+grep -q "ok=false" "$TMP_DIR/exact-head-outside-diff-review.out"
 
 echo "coderabbitai review contract checks passed"

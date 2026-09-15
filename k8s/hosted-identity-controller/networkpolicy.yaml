@@ -1,0 +1,127 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: firemud-hosted-identity-controller-egress
+  namespace: firemud-system
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: hosted-environment-identity-controller
+      app.kubernetes.io/component: controller
+  policyTypes:
+    - Ingress
+    - Egress
+  # No pod-originated ingress is accepted. Kubernetes node traffic remains
+  # outside NetworkPolicy isolation, so kubelet actuator probes still work.
+  ingress: []
+  egress:
+    # Cluster DNS is the only in-cluster name-resolution dependency.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # A NetworkPolicy cannot select the apiserver or a public hostname.  The
+    # hosted k3s kubernetes.default Service is exposed on ClusterIP :443 and
+    # DNATs to the hosted node API endpoint :6443; kube-router evaluates the
+    # post-DNAT port.
+    # The controller therefore needs TCP/443 and TCP/6443 to the API endpoint,
+    # while retaining 443 for the fixed, derived public HTTPS identity endpoint.
+    # This destination-broad 443 allowance also carries the exact Gateway TLS
+    # probe; a later selector rule could not narrow the union. The application
+    # must still enforce its exact SNI/SAN/issuer allowlist; this is intentionally
+    # not presented as unrestricted destination trust.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.0.0/16
+        - ipBlock:
+            cidr: ::/0
+            except:
+              - fe80::/10
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6443
+    # Hosted Telnet uses preview allocator NodePorts 32000-32015 plus the fixed
+    # dev-demo NodePort 32016.
+    # The controller probes only the port derived from the canonical identity;
+    # Keep each NodePort explicit because the deployed policy enforcement
+    # version's support for NetworkPolicy endPort ranges is not guaranteed.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.0.0/16
+        - ipBlock:
+            cidr: ::/0
+            except:
+              - fe80::/10
+      ports:
+        - protocol: TCP
+          port: 32000
+        - protocol: TCP
+          port: 32001
+        - protocol: TCP
+          port: 32002
+        - protocol: TCP
+          port: 32003
+        - protocol: TCP
+          port: 32004
+        - protocol: TCP
+          port: 32005
+        - protocol: TCP
+          port: 32006
+        - protocol: TCP
+          port: 32007
+        - protocol: TCP
+          port: 32008
+        - protocol: TCP
+          port: 32009
+        - protocol: TCP
+          port: 32010
+        - protocol: TCP
+          port: 32011
+        - protocol: TCP
+          port: 32012
+        - protocol: TCP
+          port: 32013
+        - protocol: TCP
+          port: 32014
+        - protocol: TCP
+          port: 32015
+        - protocol: TCP
+          port: 32016
+    # Ready additionally requires an mTLS handshake to the fixed Account gRPC
+    # Service using the current projected leaf. Runtime Namespace labels are
+    # externally owned and validated before the controller reaches this probe.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              firemud.dev/preview: "true"
+          podSelector:
+            matchLabels:
+              app: account-service
+        - namespaceSelector:
+            matchLabels:
+              firemud.dev/dev-demo: "true"
+          podSelector:
+            matchLabels:
+              app: account-service
+      ports:
+        - protocol: TCP
+          port: 6565

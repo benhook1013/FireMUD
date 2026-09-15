@@ -12,7 +12,7 @@ buildscript {
     dependencies {
         // The Flyway Gradle plugin resolves database support from the buildscript classpath,
         // not from each service's runtime dependencies.
-        classpath("org.flywaydb:flyway-database-postgresql:13.5.0")
+        classpath("org.flywaydb:flyway-database-postgresql:13.6.0")
         classpath("org.postgresql:postgresql:42.7.13")
     }
 }
@@ -30,7 +30,12 @@ plugins {
 }
 
 node {
-    version.set("24.18.0")
+    version.set(
+        providers.fileContents(layout.projectDirectory.file(".node-version"))
+            .asText
+            .get()
+            .trim()
+    )
     // Don't download Node in CI; use the version provided by the environment
     download.set(System.getenv("CI") == null)
 }
@@ -180,7 +185,9 @@ subprojects {
         }
     }
 
-    if (projectDir.parentFile.name == "services" && !name.startsWith("common-")) {
+    if (projectDir.parentFile.name == "services" &&
+        !name.startsWith("common-") &&
+        name != "hosted-environment-identity-controller") {
         apply(plugin = "org.springframework.boot")
         apply(plugin = "org.flywaydb.flyway")
 
@@ -455,6 +462,7 @@ tasks.register("buildDockerImages") {
     dependsOn(
         "buildBaseImage",
         "buildPgDumpCronImage",
+        "buildHostedEnvironmentIdentityControllerImage",
         ":account-service:bootBuildImage",
         ":automation-scripting-service:bootBuildImage",
         ":entity-management-service:bootBuildImage",
@@ -467,6 +475,12 @@ tasks.register("buildDockerImages") {
         ":tcp-proxy-service:bootBuildImage",
         ":world-management-service:bootBuildImage"
     )
+}
+
+tasks.register("buildHostedEnvironmentIdentityControllerImage") {
+    group = "build"
+    description = "Builds the Kubernetes hosted-environment identity controller image."
+    dependsOn(":hosted-environment-identity-controller:bootBuildImage")
 }
 
 tasks.register("buildDockerImagesSmoke") {

@@ -22,7 +22,10 @@ require_contains() {
 for expected in \
   'function isDocumentation(file)' \
   'function isValidationPython(file)' \
-  'function isValidationTooling(file)'; do
+  'function isValidationTooling(file)' \
+  'function isRuntimeAuthority(file)' \
+  '.node-version' \
+  '.python-version'; do
   require_contains "$CLASSIFIER" "$expected"
 done
 
@@ -241,8 +244,8 @@ require_contains(
 docs_node_step = find_step(ci, "docs-check", "Set Up Node", "ci workflow")
 require_equal(
     docs_node_step,
-    ("with", "node-version"),
-    "24.20.0",
+    ("with", "node-version-file"),
+    ".node-version",
     "ci workflow",
 )
 require_equal(
@@ -260,12 +263,8 @@ require_contains(
     "npm ci --prefix config/openapi",
     "ci workflow",
 )
-require_contains(
-    docs_dependencies_step,
-    ("run",),
-    "python3 -m pip install --disable-pip-version-check mkdocs==1.6.1 mkdocs-material==9.6.5",
-    "ci workflow",
-)
+docs_python_step = find_step(ci, "docs-check", "🐍 Set Up Python", "ci workflow")
+require_equal(docs_python_step, ("with", "requirements"), "docs", "ci workflow")
 docs_links_step = find_step(ci, "docs-check", "Lint Markdown and links", "ci workflow")
 require_contains(
     docs_links_step,
@@ -298,6 +297,13 @@ for expected in (
 
 complete_contract_step = find_step(
     ci, "dev-tool-contract-checks", "Validate dev tool contracts", "ci workflow"
+)
+contract_python_step = find_step(ci, "dev-tool-contract-checks", "🐍 Set Up Python", "ci workflow")
+require_equal(
+    contract_python_step,
+    ("with", "requirements"),
+    "${{ (needs.changes.outputs.lightweight_only == 'true' && needs.changes.outputs.design_docs_changed == 'true' && needs.changes.outputs.validation_python_changed != 'true') && 'none' || 'ci' }}",
+    "ci workflow",
 )
 validate_ci_script_execution(ci)
 for job_id, name_suffix, command in CI_GATING_STEPS:
@@ -392,6 +398,43 @@ require_equal(
     "${{ needs.changes.outputs.lightweight_only }}",
     "security workflow",
 )
+
+security_scan_steps = value_at(
+    security, ("jobs", "trivy-scan", "steps"), "security workflow"
+)
+for cache_id, lockfile in (
+    ("cache-openapi", "config/openapi/package-lock.json"),
+    ("cache-web-client", "web-client/package-lock.json"),
+):
+    cache_steps = [
+        step
+        for step in security_scan_steps
+        if isinstance(step, dict) and step.get("id") == cache_id
+    ]
+    if len(cache_steps) != 1:
+        raise SystemExit(
+            f"security workflow: expected one {cache_id} cache step, found {len(cache_steps)}"
+        )
+    cache_with = cache_steps[0].get("with")
+    if not isinstance(cache_with, dict):
+        raise SystemExit(f"security workflow: {cache_id} cache step lacks with mapping")
+    expected_key = (
+        f"{cache_id.removeprefix('cache-')}-node-modules-${{{{ runner.os }}}}-"
+        f"${{{{ hashFiles('.node-version') }}}}-"
+        f"${{{{ hashFiles('{lockfile}') }}}}"
+    )
+    expected_restore_key = (
+        f"{cache_id.removeprefix('cache-')}-node-modules-${{{{ runner.os }}}}-"
+        "${{ hashFiles('.node-version') }}-"
+    )
+    if cache_with.get("key") != expected_key:
+        raise SystemExit(
+            f"security workflow: {cache_id} key must include Node and lockfile hashes"
+        )
+    if cache_with.get("restore-keys") != expected_restore_key:
+        raise SystemExit(
+            f"security workflow: {cache_id} restore key must be scoped to Node version"
+        )
 
 for path_item in (
     "**/*.md",

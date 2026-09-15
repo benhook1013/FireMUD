@@ -115,14 +115,23 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Load workflow tool versions
+        id: workflow-tool-versions
+        uses: ./.github/actions/load-workflow-tool-versions
+
       - name: 🧰 Install Buf CLI
+        id: install-buf
         env:
-          BUF_VERSION: '1.30.0'
+          BUF_VERSION: ${{ steps.workflow-tool-versions.outputs.buf-version }}
+          BUF_SHA256: ${{ steps.workflow-tool-versions.outputs.buf-linux-x86-64-sha256 }}
         run: |
-          sudo curl -sSL \
-            "https://github.com/bufbuild/buf/releases/download/v${BUF_VERSION}/buf-$(uname -s)-$(uname -m)" \
-            -o /usr/local/bin/buf
-          sudo chmod +x /usr/local/bin/buf
+          [[ "$(uname -s)/$(uname -m)" == "Linux/x86_64" ]] || { echo "Unsupported Buf platform" >&2; exit 1; }
+          curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
+            --connect-timeout 10 --max-time 60 \
+            "https://github.com/bufbuild/buf/releases/download/v${BUF_VERSION}/buf-Linux-x86_64" \
+            -o /tmp/buf
+          echo "${BUF_SHA256}  /tmp/buf" | sha256sum --check --status
+          sudo install -m 0755 /tmp/buf /usr/local/bin/buf
           buf --version
 
       - name: 💾 Cache Buf modules
@@ -202,12 +211,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 🐍 Set Up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        uses: ./.github/actions/setup-python
         with:
-          python-version: '3.14'
-
-      - name: 📦 Install Ruff
-        run: python3 -m pip install --disable-pip-version-check ruff==0.16.0
+          requirements: ci
 
       - name: 🧪 Validate tracked Python scripts
         run: |
@@ -235,12 +241,16 @@ jobs:
 
       - name: 🧰 Set up kubectl
         if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
-        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
+        uses: ./.github/actions/setup-kubectl
+
+      - name: Set up canonical GitHub CLI
+        if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
+        uses: ./.github/actions/setup-gh
 
       - name: 🐍 Set Up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        uses: ./.github/actions/setup-python
         with:
-          python-version: '3.14'
+          requirements: ${{ (needs.changes.outputs.lightweight_only == 'true' && needs.changes.outputs.design_docs_changed == 'true' && needs.changes.outputs.validation_python_changed != 'true') && 'none' || 'ci' }}
 
       - name: 📦 Install cloc
         if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
@@ -248,14 +258,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cloc
 
-      - name: 📦 Install Python script dependencies
-        run: python3 -m pip install --disable-pip-version-check --require-hashes -r .github/requirements/ci.txt
+      - name: Set up Helm
+        if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
+        uses: ./.github/actions/setup-helm
 
       - name: 🧪 Validate dev tool contracts
         if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
         run: |
           bash ./dev-tools/tests/cloc-report-contract.sh
           bash ./dev-tools/tests/ci-lightweight-scope-contract.sh
+          bash ./dev-tools/tests/workflow-version-authority-contract.sh
+          bash ./dev-tools/tests/workflow-tool-updater-contract.sh
+          bash ./dev-tools/tests/coderabbit-cli-wrapper-contract.sh
           bash ./dev-tools/tests/coderabbit-review-contract.sh
           bash ./dev-tools/tests/pr-retarget-workflow-contract.sh
           bash ./dev-tools/tests/static-analysis-summary-contract.sh
@@ -266,6 +280,8 @@ jobs:
           bash ./dev-tools/tests/reset-service-db-contract.sh
           bash ./dev-tools/tests/preview-eligibility-contract.sh
           bash ./dev-tools/tests/preview-priority-contract.sh
+          bash ./dev-tools/tests/hosted-identity-controller-manifest-contract.sh
+          bash ./dev-tools/tests/hosted-identity-controller-workflow-contract.sh
           bash ./dev-tools/tests/worktree-topology-contract.sh
           bash ./dev-tools/tests/preflight-contract.sh
           bash ./dev-tools/tests/verify-backups-velero-contract.sh
@@ -302,12 +318,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 🐍 Set Up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        uses: ./.github/actions/setup-python
         with:
-          python-version: '3.14'
-
-      - name: 📦 Install yamllint
-        run: python3 -m pip install --disable-pip-version-check yamllint
+          requirements: ci
 
       - name: 🧪 Lint tracked YAML
         run: bash ./dev-tools/validation/lint-yaml.sh
@@ -327,9 +340,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 🐍 Set Up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version: '3.14'
+        uses: ./.github/actions/setup-python
 
       - name: 📏 Validate metric label policy
         run: python3 dev-tools/observability/check-metrics-cardinality.py
@@ -357,7 +368,7 @@ jobs:
       - name: ⚙️ Set Up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: '24.20.0'
+          node-version-file: '.node-version'
 
       - name: ⚙️ Set Up Gradle
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
@@ -393,7 +404,7 @@ jobs:
       - name: ⚙️ Set Up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: '24.20.0'
+          node-version-file: '.node-version'
 
       - name: ⚙️ Set Up Gradle
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
@@ -420,6 +431,10 @@ jobs:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Load workflow tool versions
+        id: workflow-tool-versions
+        uses: ./.github/actions/load-workflow-tool-versions
+
       - name: ⚙️ Set Up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
@@ -427,8 +442,10 @@ jobs:
           cache: false
 
       - name: 🧪 Validate GitHub Actions Workflows
+        env:
+          ACTIONLINT_VERSION: ${{ steps.workflow-tool-versions.outputs.actionlint-version }}
         run: |
-          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
+          go install "github.com/rhysd/actionlint/cmd/actionlint@v${ACTIONLINT_VERSION}"
           "$(go env GOPATH)/bin/actionlint" -config-file .github/actionlint.yaml
 
   helm-lint:
@@ -446,14 +463,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Helm
-        run: |
-          if ! command -v helm >/dev/null 2>&1; then
-            HELM_VERSION="v3.20.1"
-            curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o /tmp/helm.tgz
-            tar -xzf /tmp/helm.tgz -C /tmp
-            sudo install /tmp/linux-amd64/helm /usr/local/bin/helm
-          fi
-          helm version
+        uses: ./.github/actions/setup-helm
+
+      - name: Set up canonical Python dependencies
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: yaml
 
       - name: 🧪 Lint tracked Helm charts
         run: bash ./dev-tools/validation/validate-helm.sh lint
@@ -473,33 +488,31 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Helm
-        run: |
-          if ! command -v helm >/dev/null 2>&1; then
-            HELM_VERSION="v3.20.1"
-            curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o /tmp/helm.tgz
-            tar -xzf /tmp/helm.tgz -C /tmp
-            sudo install /tmp/linux-amd64/helm /usr/local/bin/helm
-          fi
-          helm version
+        uses: ./.github/actions/setup-helm
+
+      - name: Set up canonical Python dependencies
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: yaml
+
+      - name: Load workflow tool versions
+        id: workflow-tool-versions
+        uses: ./.github/actions/load-workflow-tool-versions
 
       - name: Set up kubeconform
+        env:
+          KUBECONFORM_VERSION: ${{ steps.workflow-tool-versions.outputs.kubeconform-version }}
+          KUBECONFORM_SHA256: ${{ steps.workflow-tool-versions.outputs.kubeconform-linux-amd64-sha256 }}
         run: |
-          KUBECONFORM_VERSION="v0.6.7"
-          curl -fsSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" -o /tmp/kubeconform.tgz
+          [[ "$(uname -s)/$(uname -m)" == "Linux/x86_64" ]] || { echo "Unsupported kubeconform platform" >&2; exit 1; }
+          curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 --connect-timeout 10 --max-time 60 "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" -o /tmp/kubeconform.tgz
+          echo "${KUBECONFORM_SHA256}  /tmp/kubeconform.tgz" | sha256sum --check --status
           tar -xzf /tmp/kubeconform.tgz -C /tmp
           sudo install /tmp/kubeconform /usr/local/bin/kubeconform
           kubeconform -v
 
       - name: 🧪 Validate rendered Helm manifests
         run: bash ./dev-tools/validation/validate-helm.sh render
-
-      - name: 🐍 Set Up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version: '3.14'
-
-      - name: 📦 Install Python script dependencies
-        run: python3 -m pip install --disable-pip-version-check --require-hashes -r .github/requirements/ci.txt
 
       - name: 🧪 Validate hosted Telnet TLS contract
         run: bash ./dev-tools/tests/hosted-telnet-tls-contract.sh
@@ -523,9 +536,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 🐍 Set Up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        uses: ./.github/actions/setup-python
         with:
-          python-version: '3.14'
+          requirements: docs
 
       - name: 🔎 Validate Observability Contracts
         run: python3 dev-tools/observability/validate-observability-contract.py
@@ -533,14 +546,13 @@ jobs:
       - name: ⚙️ Set Up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: '24.20.0'
+          node-version-file: '.node-version'
           cache: npm
           cache-dependency-path: config/openapi/package-lock.json
 
       - name: 📦 Install documentation dependencies
         run: |
           npm ci --prefix config/openapi
-          python3 -m pip install --disable-pip-version-check mkdocs==1.6.1 mkdocs-material==9.6.5
 
       - name: 🧹 Lint Markdown and links
         run: |
@@ -567,10 +579,13 @@ jobs:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Set up canonical Python
+        uses: ./.github/actions/setup-python
+
       - name: ⚙️ Set Up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 24
+          node-version-file: '.node-version'
           cache: npm
           cache-dependency-path: |
             web-client/package-lock.json
@@ -581,7 +596,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: config/openapi/node_modules
-          key: openapi-node-${{ hashFiles('config/openapi/package-lock.json') }}
+          key: openapi-node-${{ hashFiles('.node-version', 'config/openapi/package-lock.json') }}
 
       - name: 📦 Install OpenAPI Dependencies
         if: steps.cache-openapi.outputs.cache-hit != 'true'
@@ -595,7 +610,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: web-client/node_modules
-          key: web-client-node-${{ hashFiles('web-client/package-lock.json') }}
+          key: web-client-node-${{ hashFiles('.node-version', 'web-client/package-lock.json') }}
 
       - name: 📦 Install Frontend Dependencies
         if: steps.cache-web-client.outputs.cache-hit != 'true'
