@@ -364,6 +364,28 @@ Your included review limit is currently reached under our [Fair Usage Limits Pol
         ]
         self.assertEqual(self.state(comments).state, "active")
 
+    def test_prior_zero_finding_trigger_does_not_poison_rate_limit_attribution(
+        self,
+    ) -> None:
+        prior_finished = finished_reply()
+        prior_finished["databaseId"] = 8
+        prior_finished["createdAt"] = "2026-09-14T00:58:00Z"
+        prior_finished["updatedAt"] = "2026-09-14T00:58:00Z"
+        comments = [
+            comment(7, "owner", "@coderabbitai full review", "2026-09-14T00:57:00Z"),
+            prior_finished,
+            trigger_comment(),
+            comment(
+                11,
+                "coderabbitai",
+                "Review rate limited\nMore reviews will be available in 5 minutes.",
+                "2026-09-14T01:00:01Z",
+            ),
+        ]
+        state = self.state(comments)
+        self.assertEqual((state.state, state.response_id), ("rate_limited", 11))
+        self.assertTrue(state.attributed)
+
     def test_missing_trigger_and_posting_reservation_are_unattributed(self) -> None:
         missing = self.state([])
         self.assertEqual((missing.state, missing.attributed), ("unattributed", False))
