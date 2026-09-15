@@ -102,6 +102,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private final Set<CompletableFuture<WebSocket>> outstandingSends = ConcurrentHashMap.newKeySet();
   private final AtomicReference<CompletableFuture<WebSocket>> inFlightGatewayConnection =
       new AtomicReference<>();
+  // These locks are intentionally non-nested: code holding the intrinsic monitor,
+  // bufferLifecycleLock, or webSocketLifecycleLock must not acquire another.
   private final Object webSocketLifecycleLock = new Object();
   private final Object bufferLifecycleLock = new Object();
   private volatile CompletableFuture<WebSocket> inFlightSend;

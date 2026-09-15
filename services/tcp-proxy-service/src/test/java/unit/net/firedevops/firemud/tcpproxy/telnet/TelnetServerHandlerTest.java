@@ -739,7 +739,8 @@ class TelnetServerHandlerTest {
 
       handler.channelActive(ctx);
 
-      for (int i = 0; i < 600; i++) {
+      int maxDepth = maxBufferDepth();
+      for (int i = 0; i <= maxDepth; i++) {
         handler.channelRead0(ctx, "cmd" + i);
       }
 

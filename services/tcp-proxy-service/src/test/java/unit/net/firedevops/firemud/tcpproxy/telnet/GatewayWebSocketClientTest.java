@@ -1559,11 +1559,31 @@ class GatewayWebSocketClientTest {
 
   private static void assertClientIdentityRemainsStable(
       GatewayWebSocketClient client, Object expectedIdentity) throws Exception {
-    long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(300);
-    do {
-      assertSame(expectedIdentity, client.clientIdentity());
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    long stableSince = System.nanoTime();
+    int additionalReloads = 0;
+    while (System.nanoTime() < deadline) {
+      Object currentIdentity = client.clientIdentity();
+      assertNotNull(currentIdentity);
+      if (currentIdentity != expectedIdentity) {
+        // Directory replacement can first reload from the file events and then reload once more
+        // when the watcher re-registers the recreated directory and restores its health.
+        expectedIdentity = currentIdentity;
+        additionalReloads++;
+        assertTrue(
+            additionalReloads <= 1,
+            "Gateway WebSocket TLS client identity kept reloading after directory recovery");
+        stableSince = System.nanoTime();
+      }
+      if (!client.isCertificateWatcherHealthy()) {
+        stableSince = System.nanoTime();
+      } else if (System.nanoTime() - stableSince >= TimeUnit.MILLISECONDS.toNanos(500)) {
+        assertSame(expectedIdentity, client.clientIdentity());
+        return;
+      }
       Thread.sleep(10);
-    } while (System.nanoTime() < deadline);
+    }
+    assertTrue(client.isCertificateWatcherHealthy());
     assertSame(expectedIdentity, client.clientIdentity());
   }
 
