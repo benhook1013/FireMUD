@@ -137,6 +137,40 @@ GATEWAY_WS_SERVER_SECRET_ITEM_PATHS = BRIDGE_WS_SECRET_ITEM_PATHS
 GATEWAY_WS_LISTENER_PORT = 8443
 GATEWAY_WS_SERVICE_PORT = 443
 TCP_PROXY_TELNET_SERVICE_PORT = 2323
+GATEWAY_WS_APPROVED_TRUST_PROFILES = frozenset(
+    {"production_uri", "migration_dns", "breakglass_fingerprint"}
+)
+GATEWAY_WS_TRUST_PROFILE_SETTING_NAMES = {
+    "production_uri": frozenset(
+        {"FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN"}
+    ),
+    "migration_dns": frozenset(
+        {
+            "FIREMUD_GATEWAY_TCP_PROXY_TRUST_DNS_SAN",
+            "FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_OWNER",
+            "FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_REASON",
+            "FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_EXPIRES_AT",
+        }
+    ),
+    "breakglass_fingerprint": frozenset(
+        {
+            "FIREMUD_GATEWAY_TCP_PROXY_TRUST_FINGERPRINT_SHA256",
+            "FIREMUD_GATEWAY_TCP_PROXY_TRUST_INCIDENT_REFERENCE",
+            "FIREMUD_GATEWAY_TCP_PROXY_TRUST_BREAKGLASS_EXPIRES_AT",
+        }
+    ),
+    "development_cidr": frozenset(
+        {"FIREMUD_GATEWAY_TCP_PROXY_TRUST_DEVELOPMENT_CIDR"}
+    ),
+}
+GATEWAY_WS_TRUST_PROFILE_SETTING_NAMES_ALL = frozenset().union(
+    *GATEWAY_WS_TRUST_PROFILE_SETTING_NAMES.values()
+)
+GATEWAY_WS_TRUST_DNS_RE = re.compile(
+    r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)"
+    r"(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*"
+)
+GATEWAY_WS_TRUST_FINGERPRINT_RE = re.compile(r"[0-9a-f]{64}")
 TELNET_TLS_REQUIRED_PATHS = {
     "TCP_PROXY_TLS_CERT": "/telnet-tls/tls.crt",
     "TCP_PROXY_TLS_KEY": "/telnet-tls/tls.key",
@@ -3999,6 +4033,103 @@ def secret_volume_mount_issues(
     return referenced_secrets, issues
 
 
+def validate_gateway_ws_trust_profile(
+    env: dict[str, str], namespace: str, expected_environment: Any
+) -> list[str]:
+    """Validate the one environment-bound trust profile on the Gateway listener."""
+    issues: list[str] = []
+    profile_name = "FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE"
+    selected_profile = env.get(profile_name)
+    if selected_profile not in GATEWAY_WS_APPROVED_TRUST_PROFILES:
+        if selected_profile == "development_cidr":
+            issues.append(
+                "development_cidr is forbidden for hosted/player-facing Gateway "
+                f"environment {expected_environment!r}"
+            )
+        else:
+            approved = ", ".join(sorted(GATEWAY_WS_APPROVED_TRUST_PROFILES))
+            issues.append(
+                f"{profile_name} must select exactly one approved non-development "
+                f"profile: {approved}"
+            )
+        return issues
+
+    selected_settings = GATEWAY_WS_TRUST_PROFILE_SETTING_NAMES[selected_profile]
+    inactive_settings = sorted(
+        name
+        for name in GATEWAY_WS_TRUST_PROFILE_SETTING_NAMES_ALL
+        if name not in selected_settings
+        and isinstance(env.get(name), str)
+        and env[name].strip()
+    )
+    if inactive_settings:
+        issues.append(
+            f"{selected_profile} listener must not configure inactive trust-profile "
+            "settings: "
+            + ", ".join(inactive_settings)
+        )
+
+    def required_value(name: str) -> str | None:
+        value = env.get(name)
+        if not isinstance(value, str) or not value.strip():
+            issues.append(f"{name} is required for {selected_profile}")
+            return None
+        return value.strip()
+
+    def validate_expiry(name: str) -> None:
+        value = required_value(name)
+        if value is None:
+            return
+        try:
+            expires_at = parse_timestamp(value, name)
+        except TIMESTAMP_ERRORS:
+            issues.append(f"{name} must be an RFC 3339 instant")
+            return
+        if not expires_at > dt.datetime.now(dt.timezone.utc):
+            issues.append(f"{name} must be in the future")
+
+    if selected_profile == "production_uri":
+        expected_uri = f"spiffe://firemud/ns/{namespace}/sa/tcp-proxy-service"
+        uri_san = required_value("FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN")
+        if uri_san is not None and uri_san != expected_uri:
+            issues.append(
+                "FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN must be exactly "
+                f"{expected_uri!r}"
+            )
+    elif selected_profile == "migration_dns":
+        dns_san = required_value("FIREMUD_GATEWAY_TCP_PROXY_TRUST_DNS_SAN")
+        if dns_san is not None:
+            normalized_dns_san = dns_san.lower()
+            if (
+                normalized_dns_san != dns_san
+                or not GATEWAY_WS_TRUST_DNS_RE.fullmatch(normalized_dns_san)
+            ):
+                issues.append(
+                    "FIREMUD_GATEWAY_TCP_PROXY_TRUST_DNS_SAN must be one exact "
+                    "lowercase ASCII DNS name"
+                )
+        required_value("FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_OWNER")
+        required_value("FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_REASON")
+        validate_expiry("FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_EXPIRES_AT")
+    else:
+        fingerprint = required_value(
+            "FIREMUD_GATEWAY_TCP_PROXY_TRUST_FINGERPRINT_SHA256"
+        )
+        if fingerprint is not None:
+            normalized_fingerprint = fingerprint.lower().replace(":", "")
+            if not GATEWAY_WS_TRUST_FINGERPRINT_RE.fullmatch(
+                normalized_fingerprint
+            ):
+                issues.append(
+                    "FIREMUD_GATEWAY_TCP_PROXY_TRUST_FINGERPRINT_SHA256 must be "
+                    "one exact SHA-256 leaf fingerprint"
+                )
+        required_value("FIREMUD_GATEWAY_TCP_PROXY_TRUST_INCIDENT_REFERENCE")
+        validate_expiry("FIREMUD_GATEWAY_TCP_PROXY_TRUST_BREAKGLASS_EXPIRES_AT")
+
+    return issues
+
+
 def validate_gateway_ws_listener(
     documents: list[dict[str, Any]], expected: dict[str, Any]
 ) -> tuple[set[str], list[str]]:
@@ -4058,10 +4189,6 @@ def validate_gateway_ws_listener(
         "FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED": "true",
         "FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS": "0.0.0.0",
         "FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT": str(GATEWAY_WS_LISTENER_PORT),
-        "FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE": "production_uri",
-        "FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN": (
-            f"spiffe://firemud/ns/{namespace}/sa/tcp-proxy-service"
-        ),
         **GATEWAY_WS_SERVER_PATHS,
     }
     if isinstance(expected_environment, str) and expected_environment:
@@ -4069,22 +4196,26 @@ def validate_gateway_ws_listener(
     for name, expected_value in expected_values.items():
         if env.get(name) != expected_value:
             issues.append(f"{name} must be exactly {expected_value!r}")
-    if any(name.startswith(legacy_prefix) for name in env):
-        issues.append("dedicated Gateway listener must not configure legacy TCP Proxy header trust")
-    allowed_listener_names = {
+    known_listener_names = {
         *expected_values,
-        "FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT",
+        "FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE",
+        *GATEWAY_WS_TRUST_PROFILE_SETTING_NAMES_ALL,
     }
-    unexpected_listener_names = sorted(
+    unknown_listener_names = sorted(
         name
         for name in env
-        if name.startswith(listener_prefixes) and name not in allowed_listener_names
+        if name.startswith(listener_prefixes) and name not in known_listener_names
     )
-    if unexpected_listener_names:
+    if unknown_listener_names:
         issues.append(
-            "production_uri listener must not configure inactive trust-profile settings: "
-            + ", ".join(unexpected_listener_names)
+            "Gateway listener must not configure unknown trust-profile settings: "
+            + ", ".join(unknown_listener_names)
         )
+    issues.extend(
+        validate_gateway_ws_trust_profile(env, namespace, expected_environment)
+    )
+    if any(name.startswith(legacy_prefix) for name in env):
+        issues.append("dedicated Gateway listener must not configure legacy TCP Proxy header trust")
     mounted_secrets, mount_issues = secret_volume_mount_issues(
         document,
         container,

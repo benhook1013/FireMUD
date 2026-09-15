@@ -99,6 +99,29 @@ class GatewayGameplayReadinessProbeTest {
   }
 
   @Test
+  void timedOutPollClearsInFlightAndLaterPollingRetries() throws Exception {
+    GatewayWebSocketClient client = mock(GatewayWebSocketClient.class);
+    CompletableFuture<Boolean> healthy = new CompletableFuture<>();
+    CompletableFuture<Boolean> stalled = new CompletableFuture<>();
+    CompletableFuture<Boolean> retry = new CompletableFuture<>();
+    when(client.isReadyAsync()).thenReturn(healthy, stalled, retry);
+    try (GatewayGameplayReadinessProbe probe =
+        new GatewayGameplayReadinessProbe(client, Duration.ofMillis(5), Duration.ofMillis(25))) {
+      verify(client, timeout(1000)).isReadyAsync();
+      healthy.complete(true);
+      awaitReadiness(probe, true);
+
+      verify(client, timeout(1000).times(2)).isReadyAsync();
+      verify(client, timeout(1000).times(3)).isReadyAsync();
+      assertTrue(stalled.isCompletedExceptionally());
+      assertFalse(probe.isReady());
+
+      retry.complete(true);
+      awaitReadiness(probe, true);
+    }
+  }
+
+  @Test
   void completedPollTransitionsTheCachedValueFailClosed() throws Exception {
     GatewayWebSocketClient client = mock(GatewayWebSocketClient.class);
     CompletableFuture<Boolean> healthy = new CompletableFuture<>();

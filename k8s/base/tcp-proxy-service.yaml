@@ -6,6 +6,7 @@ metadata:
   name: tcp-proxy-service
 spec:
   strategy:
+    # Recreate withdraws the old TCP Proxy identity before replacement, causing a deliberate rollout admission outage.
     type: Recreate
   replicas: 2
   selector:

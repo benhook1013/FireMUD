@@ -257,6 +257,19 @@ if not required_base_egress.issubset(enabled_destinations) or (
     )
 if "spring-cloud-gateway-ingress" not in enabled:
     raise SystemExit("enabled Gateway TLS omitted the Gateway listener ingress policy")
+enabled_gateway_listener_rules = [
+    rule
+    for rule in enabled["spring-cloud-gateway-ingress"]["spec"]["ingress"]
+    if rule.get("from")
+    == [{"podSelector": {"matchLabels": {"app": "tcp-proxy-service"}}}]
+]
+if len(enabled_gateway_listener_rules) != 1 or enabled_gateway_listener_rules[0].get(
+    "ports"
+) != [{"protocol": "TCP", "port": 8443}]:
+    raise SystemExit(
+        "enabled Gateway TLS did not use the configured Gateway TLS targetPort for ingress: "
+        f"{enabled_gateway_listener_rules}"
+    )
 
 disabled_destinations = proxy_egress_destinations(
     disabled["tcp-proxy-service-egress"]
@@ -279,8 +292,21 @@ if any(
         "disabled Gateway TLS rendered a non-exact plaintext TCP Proxy Gateway egress rule: "
         f"{disabled_destinations}"
     )
-if "spring-cloud-gateway-ingress" in disabled:
-    raise SystemExit("disabled Gateway TLS retained the Gateway listener ingress policy")
+if "spring-cloud-gateway-ingress" not in disabled:
+    raise SystemExit("disabled Gateway TLS omitted the Gateway listener ingress policy")
+disabled_gateway_listener_rules = [
+    rule
+    for rule in disabled["spring-cloud-gateway-ingress"]["spec"]["ingress"]
+    if rule.get("from")
+    == [{"podSelector": {"matchLabels": {"app": "tcp-proxy-service"}}}]
+]
+if len(disabled_gateway_listener_rules) != 1 or disabled_gateway_listener_rules[0].get(
+    "ports"
+) != [{"protocol": "TCP", "port": 8080}]:
+    raise SystemExit(
+        "disabled Gateway TLS did not use the validated plaintext Gateway targetPort for ingress: "
+        f"{disabled_gateway_listener_rules}"
+    )
 PY
 
 PLAINTEXT_GATEWAY_TARGET_PORT_RENDERED="$TMP_DIR/plaintext-gateway-target-port.yaml"
@@ -1360,7 +1386,7 @@ for label, mutation, expected_fragment in (
             "FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE",
             "development_cidr",
         ),
-        "TRUST_PROFILE must be exactly 'production_uri'",
+        "development_cidr is forbidden",
     ),
     (
         "legacy-cidr-fallback",

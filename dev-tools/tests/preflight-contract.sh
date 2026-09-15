@@ -1550,6 +1550,166 @@ for policy_id in ("PREFLIGHT-JWT-001", "PREFLIGHT-JWKS-001"):
         raise SystemExit(f"{policy_id} diagnostic was incorrectly apply-blocking: {diagnostic}")
 PY
 
+# PREFLIGHT-BRIDGE-001 accepts each approved certificate-bound trust profile and
+# rejects incomplete, expired, inactive, or development-only profile settings.
+python3 - <<'PY' "$ROOT_DIR" "$RENDERED_MANIFEST"
+import copy
+import datetime as dt
+import importlib.util
+import pathlib
+import sys
+
+import yaml
+
+root = pathlib.Path(sys.argv[1])
+render_path = pathlib.Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location(
+    "preflight_trust_profile_contract", root / "dev-tools/deploy/preflight.py"
+)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+base_documents = list(yaml.safe_load_all(render_path.read_text(encoding="utf-8")))
+expected = {
+    "environment": "hobby-self-hosted",
+    "internalBindings": {
+        "certificates": {
+            "gatewayInternalWsListenerRef": (
+                "cert-manager://firemud/hobby-gateway-internal-ws"
+            )
+        }
+    },
+}
+
+
+def gateway_env(documents):
+    deployment = next(
+        document
+        for document in documents
+        if document.get("kind") == "Deployment"
+        and document.get("metadata", {}).get("name") == "spring-cloud-gateway"
+    )
+    return next(
+        container
+        for container in deployment["spec"]["template"]["spec"]["containers"]
+        if container.get("name") == "spring-cloud-gateway"
+    )["env"]
+
+
+def with_profile(profile, **settings):
+    documents = copy.deepcopy(base_documents)
+    env = gateway_env(documents)
+    for entry in env:
+        if entry.get("name") == "FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE":
+            entry["value"] = profile
+    for name in module.GATEWAY_WS_TRUST_PROFILE_SETTING_NAMES_ALL:
+        env[:] = [entry for entry in env if entry.get("name") != name]
+    for name, value in settings.items():
+        env.append({"name": name, "value": value})
+    return documents
+
+
+def issues_for(documents):
+    return module.validate_gateway_ws_listener(documents, expected)[1]
+
+
+future = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1)).isoformat()
+migration_documents = with_profile(
+    "migration_dns",
+    FIREMUD_GATEWAY_TCP_PROXY_TRUST_DNS_SAN="tcp-proxy.internal",
+    FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_OWNER="platform",
+    FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_REASON="issuer migration",
+    FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_EXPIRES_AT=future,
+)
+if issues_for(migration_documents):
+    raise SystemExit(
+        "complete migration_dns profile was rejected: "
+        + "; ".join(issues_for(migration_documents))
+    )
+
+breakglass_documents = with_profile(
+    "breakglass_fingerprint",
+    FIREMUD_GATEWAY_TCP_PROXY_TRUST_FINGERPRINT_SHA256="a" * 64,
+    FIREMUD_GATEWAY_TCP_PROXY_TRUST_INCIDENT_REFERENCE="INC-2713",
+    FIREMUD_GATEWAY_TCP_PROXY_TRUST_BREAKGLASS_EXPIRES_AT=future,
+)
+if issues_for(breakglass_documents):
+    raise SystemExit(
+        "complete breakglass_fingerprint profile was rejected: "
+        + "; ".join(issues_for(breakglass_documents))
+    )
+
+incomplete_migration = copy.deepcopy(migration_documents)
+incomplete_env = gateway_env(incomplete_migration)
+incomplete_env[:] = [
+    entry
+    for entry in incomplete_env
+    if entry.get("name") != "FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_OWNER"
+]
+incomplete_issues = issues_for(incomplete_migration)
+if not any("MIGRATION_OWNER is required" in issue for issue in incomplete_issues):
+    raise SystemExit(f"incomplete migration profile was accepted: {incomplete_issues}")
+
+expired_migration = copy.deepcopy(migration_documents)
+expired_migration_env = gateway_env(expired_migration)
+for entry in expired_migration_env:
+    if entry.get("name") == "FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_EXPIRES_AT":
+        entry["value"] = "2020-01-01T00:00:00Z"
+expired_migration_issues = issues_for(expired_migration)
+if not any(
+    "MIGRATION_EXPIRES_AT must be in the future" in issue
+    for issue in expired_migration_issues
+):
+    raise SystemExit(f"expired migration profile was accepted: {expired_migration_issues}")
+
+incomplete_breakglass = copy.deepcopy(breakglass_documents)
+incomplete_breakglass_env = gateway_env(incomplete_breakglass)
+incomplete_breakglass_env[:] = [
+    entry
+    for entry in incomplete_breakglass_env
+    if entry.get("name") != "FIREMUD_GATEWAY_TCP_PROXY_TRUST_INCIDENT_REFERENCE"
+]
+incomplete_breakglass_issues = issues_for(incomplete_breakglass)
+if not any(
+    "INCIDENT_REFERENCE is required" in issue
+    for issue in incomplete_breakglass_issues
+):
+    raise SystemExit(
+        "incomplete breakglass profile was accepted: "
+        + str(incomplete_breakglass_issues)
+    )
+
+expired_breakglass = copy.deepcopy(breakglass_documents)
+expired_env = gateway_env(expired_breakglass)
+for entry in expired_env:
+    if entry.get("name") == "FIREMUD_GATEWAY_TCP_PROXY_TRUST_BREAKGLASS_EXPIRES_AT":
+        entry["value"] = "2020-01-01T00:00:00Z"
+expired_issues = issues_for(expired_breakglass)
+if not any("BREAKGLASS_EXPIRES_AT must be in the future" in issue for issue in expired_issues):
+    raise SystemExit(f"expired breakglass profile was accepted: {expired_issues}")
+
+inactive_migration = copy.deepcopy(migration_documents)
+gateway_env(inactive_migration).append(
+    {
+        "name": "FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN",
+        "value": "spiffe://firemud/ns/firemud/sa/tcp-proxy-service",
+    }
+)
+inactive_issues = issues_for(inactive_migration)
+if not any("inactive trust-profile settings" in issue for issue in inactive_issues):
+    raise SystemExit(f"inactive production URI setting was accepted: {inactive_issues}")
+
+development_documents = with_profile(
+    "development_cidr",
+    FIREMUD_GATEWAY_TCP_PROXY_TRUST_DEVELOPMENT_CIDR="10.20.0.0/16",
+)
+development_issues = issues_for(development_documents)
+if not any("development_cidr is forbidden" in issue for issue in development_issues):
+    raise SystemExit(f"development_cidr profile was accepted: {development_issues}")
+PY
+
 # A ConfigMap-backed player-facing fixture remains deferred and must fail required binding checks.
 set +e
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \

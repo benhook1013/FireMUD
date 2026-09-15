@@ -22,6 +22,7 @@ import org.springframework.stereotype.Component;
 public final class GatewayGameplayReadinessProbe implements AutoCloseable {
   private static final Logger logger = LoggerFactory.getLogger(GatewayGameplayReadinessProbe.class);
   private static final Duration POLL_INTERVAL = Duration.ofSeconds(1);
+  private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(2);
 
   private final GatewayWebSocketClient gatewayWebSocketClient;
   private final PollState pollState;
@@ -30,18 +31,29 @@ public final class GatewayGameplayReadinessProbe implements AutoCloseable {
 
   @Autowired
   public GatewayGameplayReadinessProbe(GatewayWebSocketClient gatewayWebSocketClient) {
-    this(gatewayWebSocketClient, POLL_INTERVAL);
+    this(gatewayWebSocketClient, POLL_INTERVAL, REQUEST_TIMEOUT);
   }
 
   GatewayGameplayReadinessProbe(
       GatewayWebSocketClient gatewayWebSocketClient, Duration pollInterval) {
+    this(gatewayWebSocketClient, pollInterval, REQUEST_TIMEOUT);
+  }
+
+  GatewayGameplayReadinessProbe(
+      GatewayWebSocketClient gatewayWebSocketClient,
+      Duration pollInterval,
+      Duration requestTimeout) {
     this.gatewayWebSocketClient =
         Objects.requireNonNull(gatewayWebSocketClient, "gatewayWebSocketClient");
     if (pollInterval.isZero() || pollInterval.isNegative()) {
       throw new IllegalArgumentException("pollInterval must be positive");
     }
     long pollIntervalNanos = pollInterval.toNanos();
-    pollState = new PollState(this.gatewayWebSocketClient);
+    if (requestTimeout.isZero() || requestTimeout.isNegative()) {
+      throw new IllegalArgumentException("requestTimeout must be positive");
+    }
+    long requestTimeoutNanos = requestTimeout.toNanos();
+    pollState = new PollState(this.gatewayWebSocketClient, requestTimeoutNanos);
     pollExecutor =
         Executors.newSingleThreadScheduledExecutor(
             Thread.ofPlatform().daemon(true).name("gateway-readiness-poll", 0).factory());
@@ -89,12 +101,14 @@ public final class GatewayGameplayReadinessProbe implements AutoCloseable {
 
   private static final class PollState {
     private final GatewayWebSocketClient gatewayWebSocketClient;
+    private final long requestTimeoutNanos;
     private final AtomicBoolean ready = new AtomicBoolean();
     private final AtomicBoolean closed = new AtomicBoolean();
     private final AtomicReference<CompletableFuture<Boolean>> inFlight = new AtomicReference<>();
 
-    private PollState(GatewayWebSocketClient gatewayWebSocketClient) {
+    private PollState(GatewayWebSocketClient gatewayWebSocketClient, long requestTimeoutNanos) {
       this.gatewayWebSocketClient = gatewayWebSocketClient;
+      this.requestTimeoutNanos = requestTimeoutNanos;
     }
 
     private boolean isReady() {
@@ -125,14 +139,18 @@ public final class GatewayGameplayReadinessProbe implements AutoCloseable {
         return;
       }
       inFlight.set(request);
-      request.whenComplete(
-          (result, error) -> {
-            synchronized (this) {
-              if (inFlight.compareAndSet(request, null) && !closed.get()) {
-                ready.set(error == null && Boolean.TRUE.equals(result));
-              }
-            }
-          });
+      // Bound the probe independently of the client's transport timeout so a misbehaving future
+      // cannot suppress every later readiness poll indefinitely.
+      request
+          .orTimeout(requestTimeoutNanos, TimeUnit.NANOSECONDS)
+          .whenComplete(
+              (result, error) -> {
+                synchronized (this) {
+                  if (inFlight.compareAndSet(request, null) && !closed.get()) {
+                    ready.set(error == null && Boolean.TRUE.equals(result));
+                  }
+                }
+              });
     }
 
     private synchronized void close() {

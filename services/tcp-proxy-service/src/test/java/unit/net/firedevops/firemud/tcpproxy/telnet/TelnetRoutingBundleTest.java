@@ -43,6 +43,33 @@ class TelnetRoutingBundleTest {
   }
 
   @Test
+  void configuredDefaultsRejectGameInstanceIdWithoutTenantId() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            TelnetRoutingBundle.validateConfiguredDefaults(
+                "game-instance", null, null, null, null));
+  }
+
+  @Test
+  void configuredDefaultsRejectTenantIdWithoutGameInstanceId() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> TelnetRoutingBundle.validateConfiguredDefaults(null, "tenant", null, null, null));
+  }
+
+  @Test
+  void configuredDefaultsAllowCompleteGameInstanceAndTenantPair() {
+    TelnetRoutingBundle routingBundle =
+        TelnetRoutingBundle.validateConfiguredDefaults(
+            "game-instance", "tenant", "demo", "production", "17");
+
+    assertEquals("demo", routingBundle.worldSlug());
+    assertEquals("production", routingBundle.realmSlug());
+    assertEquals("17", routingBundle.pointerVersion());
+  }
+
+  @Test
   void configuredDefaultsRejectControlOnlyHeaderValues() {
     for (String controlOnly : new String[] {"\t", "\r", "\n"}) {
       assertThrows(
