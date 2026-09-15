@@ -56,38 +56,5 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: ⚙️ Set Up Java
-        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6
-        with:
-          distribution: temurin
-          java-version: '21'
-
-      - name: ⚙️ Set Up Gradle
-        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
-        with:
-          build-scan-publish: true
-          build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
-          build-scan-terms-of-use-agree: 'yes'
-
-      - name: 🏗️ Build service jars for overlay validation
-        run: ./gradlew -PincludeLoadTesting=false :account-service:bootJar :automation-scripting-service:bootJar :entity-management-service:bootJar :game-design-service:bootJar :game-logic-service:bootJar :game-session-service:bootJar :logging-admin-service:bootJar :social-groups-service:bootJar :spring-cloud-gateway:bootJar :tcp-proxy-service:bootJar :world-management-service:bootJar
-
-      - name: 🏗️ Build PR images for overlay validation
-        run: |
-          docker build \
-            -f docker/base.Dockerfile \
-            -t ghcr.io/benhook1013/firemud-base:latest \
-            .
-
-          services="account-service automation-scripting-service entity-management-service game-design-service game-logic-service game-session-service logging-admin-service social-groups-service spring-cloud-gateway tcp-proxy-service world-management-service"
-          for service in $services; do
-            docker build \
-              --build-context repo_root=. \
-              --build-arg BASE_IMAGE=ghcr.io/benhook1013/firemud-base:latest \
-              -t "ghcr.io/benhook1013/${service}:latest" \
-              -f "./services/${service}/Dockerfile" \
-              "./services/${service}/build/libs"
-          done
-
       - name: ✅ Validate overlays and image availability
         run: bash dev-tools/deploy/validate-kustomize-overlays.sh
