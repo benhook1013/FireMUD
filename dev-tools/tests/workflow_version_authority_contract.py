@@ -546,6 +546,18 @@ def main() -> int:
         if any(n not in data for n in needles):
             fail(f"{name} does not consume all canonical tool outputs")
 
+    manual_backup_restore_text = (workflows / "manual-backup-restore.yml").read_text()
+    velero_curl_pattern = (
+        r"(?m)^\s*curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \\\n"
+        r"\s*--connect-timeout 10 --max-time 60 \\\n"
+        r'\s*"https://github\.com/vmware-tanzu/velero/releases/download/v\$\{VELERO_VERSION\}/\$\{archive\}" \\\n'
+        r'\s*-o "\$archive"$'
+    )
+    if len(re.findall(velero_curl_pattern, manual_backup_restore_text)) != 1:
+        fail(
+            "manual-backup-restore.yml must define exactly one Velero installer with canonical bounded retries and timeouts"
+        )
+
     ci_text = (workflows / "ci.yml").read_text()
     buf_curl_pattern = (
         r"(?m)^\s*curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \\\n"
@@ -911,6 +923,12 @@ def main() -> int:
         expected_image_dep_names[x] for x in ("ORT", "ZAP")
     ):
         fail("ORT/ZAP image manager must match each GHCR image exactly once and exclude Velero")
+    expected_ort_zap_digests = {
+        expected_image_dep_names[key]: a[f"{key}_DIGEST"] for key in ("ORT", "ZAP")
+    }
+    for match in ort_zap_matches:
+        if match.group("currentDigest") != expected_ort_zap_digests[match.group("depName")]:
+            fail("ORT/ZAP image manager must pair each GHCR image with its own authority digest")
     if any(match.group("depName") == "velero/velero" for match in ort_zap_matches):
         fail("ORT/ZAP image manager must not match the Velero authority block")
     for manager_index, manager in enumerate(custom_managers):

@@ -150,14 +150,19 @@ else:
     raise SystemExit("invalid checksum manifest UTF-8 escaped")
 PY
 printf 'version=9.8.8\n' > "$tmp/outside-invalid-checksum"
+default_authority_backup="$tmp/default-authority-backup"
+cp "$ROOT_DIR/config/workflow-tool-versions.env" "$default_authority_backup"
+trap 'cp "$default_authority_backup" "$ROOT_DIR/config/workflow-tool-versions.env"; rm -rf "$tmp"' EXIT
 authority_digest_before=$(sha256sum "$ROOT_DIR/config/workflow-tool-versions.env" | awk '{print $1}')
 if (cd "$tmp" && python3 "$ROOT_DIR/dev-tools/maintenance/update-workflow-tool.py" kubectl 9.8.7 \
   --checksum-file "$tmp/outside-invalid-checksum") >"$tmp/outside-defaults.out" 2>&1; then
   echo "updater unexpectedly accepted invalid outside-repository invocation" >&2
   exit 1
 fi
-grep -Fq 'checksum evidence version does not match requested version 9.8.7' "$tmp/outside-defaults.out"
 authority_digest_after=$(sha256sum "$ROOT_DIR/config/workflow-tool-versions.env" | awk '{print $1}')
+cp "$default_authority_backup" "$ROOT_DIR/config/workflow-tool-versions.env"
+trap 'rm -rf "$tmp"' EXIT
+grep -Fq 'checksum evidence version does not match requested version 9.8.7' "$tmp/outside-defaults.out"
 [[ "$authority_digest_before" == "$authority_digest_after" ]]
 
 kubectl_checksum=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd

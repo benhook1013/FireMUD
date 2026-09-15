@@ -108,7 +108,10 @@ jobs:
         run: |
           [[ "$(uname -s)/$(uname -m)" == "Linux/x86_64" ]] || { echo "Unsupported Velero platform" >&2; exit 1; }
           archive="velero-v${VELERO_VERSION}-linux-amd64.tar.gz"
-          curl -fsSL "https://github.com/vmware-tanzu/velero/releases/download/v${VELERO_VERSION}/${archive}" -o "$archive"
+          curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
+            --connect-timeout 10 --max-time 60 \
+            "https://github.com/vmware-tanzu/velero/releases/download/v${VELERO_VERSION}/${archive}" \
+            -o "$archive"
           echo "${VELERO_SHA256}  ${archive}" | sha256sum --check --status
           tar -xzf "$archive"
           sudo install -m 0755 "velero-v${VELERO_VERSION}-linux-amd64/velero" /usr/local/bin/velero
