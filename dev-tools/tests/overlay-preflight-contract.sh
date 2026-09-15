@@ -9,14 +9,6 @@ trap 'rm -f "$OUTPUT_FILE"' EXIT
 WORKFLOW="$REPO_ROOT/.github/workflows/validate-kustomize-overlays.yml"
 VALIDATOR="$REPO_ROOT/dev-tools/deploy/validate-kustomize-overlays.sh"
 
-assert_workflow_contains() {
-  local expected="$1"
-  if ! grep -Fq -- "$expected" "$WORKFLOW"; then
-    echo "Overlay validation workflow is missing required contract: $expected" >&2
-    exit 1
-  fi
-}
-
 assert_workflow_absent() {
   local forbidden="$1"
   if grep -Fq -- "$forbidden" "$WORKFLOW"; then
@@ -39,25 +31,76 @@ for forbidden in \
   assert_workflow_absent "$forbidden"
 done
 
-# shellcheck disable=SC2016
-for required in \
-  'permissions:' \
-  'contents: read' \
-  'packages: read' \
-  'uses: step-security/harden-runner@' \
-  'egress-policy: audit' \
-  'uses: actions/checkout@' \
-  'fetch-depth: 0' \
-  'uses: ./.github/actions/setup-python' \
-  'requirements: yaml' \
-  'uses: ./.github/actions/setup-kubectl' \
-  'uses: docker/setup-buildx-action@' \
-  'uses: docker/login-action@' \
-  'registry: ghcr.io' \
-  'password: ${{ secrets.GITHUB_TOKEN }}' \
-  'run: bash dev-tools/deploy/validate-kustomize-overlays.sh'; do
-  assert_workflow_contains "$required"
-done
+python3 - "$WORKFLOW" <<'PY'
+import pathlib
+import sys
+
+import yaml
+
+workflow_path = pathlib.Path(sys.argv[1])
+workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+job = workflow.get("jobs", {}).get("validate-overlays")
+if not isinstance(job, dict):
+    raise SystemExit("Overlay validation workflow is missing jobs.validate-overlays")
+
+effective_permissions = job.get("permissions", workflow.get("permissions"))
+expected_permissions = {"contents": "read", "packages": "read"}
+if effective_permissions != expected_permissions:
+    raise SystemExit(
+        "Overlay validation job permissions changed: "
+        f"expected {expected_permissions!r}, got {effective_permissions!r}"
+    )
+
+expected_steps = {
+    "Harden runner": {
+        "uses": "step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5",
+        "with": {"egress-policy": "audit"},
+    },
+    "⬇️ Checkout Code": {
+        "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+        "with": {"fetch-depth": 0},
+    },
+    "Set up canonical Python dependencies": {
+        "uses": "./.github/actions/setup-python",
+        "with": {"requirements": "yaml"},
+    },
+    "🧰 Set up kubectl": {"uses": "./.github/actions/setup-kubectl"},
+    "🐳 Set up Docker": {
+        "uses": "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e",
+    },
+    "🔐 Login to GHCR": {
+        "uses": "docker/login-action@dbcb813823bdd20940b903addbd779551569679f",
+        "with": {
+            "registry": "ghcr.io",
+            "username": "${{ github.actor }}",
+            "password": "${{ secrets.GITHUB_TOKEN }}",
+        },
+    },
+    "✅ Validate overlays and image availability": {
+        "run": "bash dev-tools/deploy/validate-kustomize-overlays.sh",
+    },
+}
+
+steps_by_name = {}
+for step in job.get("steps", []):
+    name = step.get("name")
+    if name in expected_steps:
+        steps_by_name.setdefault(name, []).append(step)
+
+for name, expected in expected_steps.items():
+    matching_steps = steps_by_name.get(name, [])
+    if len(matching_steps) != 1:
+        raise SystemExit(
+            f"Overlay validation workflow must contain exactly one {name!r} step"
+        )
+    actual = matching_steps[0]
+    for field, expected_value in expected.items():
+        if actual.get(field) != expected_value:
+            raise SystemExit(
+                f"Overlay validation {name!r} step changed its {field} contract: "
+                f"expected {expected_value!r}, got {actual.get(field)!r}"
+            )
+PY
 
 # shellcheck disable=SC2016
 for required in \
@@ -82,7 +125,7 @@ for overlay in stage prod; do
         fi
         ;;
     esac
-  done < <(printf '%s\n' "$rendered_overlay" | sed -n 's/^[[:space:]]*image:[[:space:]]*//p' | awk '{print $1}')
+  done < <(printf '%s\n' "$rendered_overlay" | sed -E -n 's/^[[:space:]]*(-[[:space:]]*)?image:[[:space:]]*//p' | awk '{print $1}')
 done
 
 (
@@ -90,7 +133,11 @@ done
   # shellcheck disable=SC1090
   source "$VALIDATOR"
   render_overlay() {
-    printf '%s\n' 'image: ghcr.io/benhook1013/example-service@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    printf '%s\n' \
+      'images:' \
+      '  - image: ghcr.io/benhook1013/example-service@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+      'container:' \
+      '  image: ghcr.io/benhook1013/example-service@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
   }
   docker() {
     if [[ "${1:-}" = image && "${2:-}" = inspect ]]; then
@@ -113,7 +160,11 @@ set +e
   # shellcheck disable=SC1090
   source "$VALIDATOR"
   render_overlay() {
-    printf '%s\n' 'image: ghcr.io/benhook1013/example-service@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    printf '%s\n' \
+      'images:' \
+      '  - image: ghcr.io/benhook1013/example-service@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+      'container:' \
+      '  image: ghcr.io/benhook1013/example-service@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
   }
   docker() {
     if [[ "${1:-}" = image && "${2:-}" = inspect ]]; then
@@ -225,5 +276,45 @@ grep -q "Skipping static preflight policy enforcement" "$OUTPUT_FILE" || {
   cat "$OUTPUT_FILE" >&2
   exit 1
 }
+
+(
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/dev-tools/deploy/validate-kustomize-overlays.sh"
+  require_cmd() {
+    :
+  }
+  check_stage_has_no_backup_schedules_unless_enabled() {
+    :
+  }
+  check_images_exist() {
+    :
+  }
+  changed_files_between_base_and_head() {
+    printf '%s\n' \
+      'k8s/overlays/prod/kustomization.yaml' \
+      'design/operations/deployments/production/attestations/deploy-123.json'
+  }
+  production_preflight_invoked="false"
+  python3() {
+    if [[ "${1:-}" == "-" ]]; then
+      printf 'rollback-compatible\n'
+      return 0
+    fi
+    if [[ "${1:-}" == "$REPO_ROOT/dev-tools/deploy/preflight.py" && "${2:-}" == "production" ]]; then
+      [[ "${FIREMUD_PREFLIGHT_CONTEXT:-}" == "ci-static" ]]
+      production_preflight_invoked="true"
+      return 0
+    fi
+    echo "unexpected python3 invocation: $*" >&2
+    return 1
+  }
+  export GITHUB_EVENT_NAME=pull_request
+  export GITHUB_BASE_REF=develop
+  main
+  if [[ "$production_preflight_invoked" != "true" ]]; then
+    echo "Validator main did not invoke canonical production preflight" >&2
+    exit 1
+  fi
+)
 
 echo "overlay preflight contract checks passed"
