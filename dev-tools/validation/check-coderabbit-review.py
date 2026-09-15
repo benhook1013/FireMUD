@@ -1234,6 +1234,7 @@ def trigger_state(
                 or NOOP_REVIEW_MARKER in body
                 or FAILED_REVIEW_PATTERN.search(unquoted_body(body))
                 or cooldown is not None
+                or is_finished_review_reply(body)
             ):
                 prior_terminal = True
         for review in (pr.get("reviews") or {}).get("nodes", []):
