@@ -179,8 +179,7 @@ class TelnetServerHandlerTest {
 
   @ParameterizedTest(name = "HTTP {0}")
   @ValueSource(ints = {403, 503})
-  void failedGatewayHandshakeDropsBufferedLinesAndUsesPolicyOrAvailabilityOutcome(
-      int statusCode) {
+  void failedGatewayHandshakeDropsBufferedLinesAndUsesPolicyOrAvailabilityOutcome(int statusCode) {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     AtomicReference<WebSocket.Listener> listenerRef = new AtomicReference<>();
     CompletableFuture<WebSocket> pendingConnection = new CompletableFuture<>();
@@ -596,6 +595,56 @@ class TelnetServerHandlerTest {
         .writeAndFlush("DISCONNECT backend_unavailable Gateway link dropped; please reconnect\n");
     verify(closeFuture).addListener(any(ChannelFutureListener.class));
     executor.shutdownGracefully();
+  }
+
+  @Test
+  void failCloseClosesGatewayWebSocketInstalledBeforeClosing() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    AtomicReference<WebSocket.Listener> listenerRef = new AtomicReference<>();
+    CompletableFuture<WebSocket> pendingConnection = new CompletableFuture<>();
+    TelnetServerHandler handler =
+        newHandler(
+            registry,
+            false,
+            (ip,
+                proxyConnectionId,
+                session,
+                tenant,
+                worldSlug,
+                realmSlug,
+                pointerVersion,
+                listener) -> {
+              listenerRef.set(listener);
+              return pendingConnection;
+            });
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    ChannelFuture closeFuture = mock(ChannelFuture.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+    when(ctx.writeAndFlush(any())).thenReturn(closeFuture);
+    when(closeFuture.addListener(any(ChannelFutureListener.class))).thenReturn(closeFuture);
+
+    try {
+      handler.channelActive(ctx);
+      handler.channelRead0(ctx, "LOOK");
+
+      WebSocket gatewayWebSocket = mock(WebSocket.class);
+      when(gatewayWebSocket.sendText(anyString(), eq(true)))
+          .thenReturn(CompletableFuture.completedFuture(gatewayWebSocket));
+      handler.setWebSocket(gatewayWebSocket);
+
+      listenerRef.get().onError(gatewayWebSocket, new IllegalStateException("bridge failed"));
+
+      assertTrue(pendingConnection.isCancelled());
+      verify(gatewayWebSocket).sendClose(WebSocket.NORMAL_CLOSURE, "bye");
+      verify(ctx).writeAndFlush(startsWith("DISCONNECT backend_unavailable "));
+      verify(closeFuture).addListener(ChannelFutureListener.CLOSE);
+    } finally {
+      executor.shutdownGracefully();
+    }
   }
 
   @Test

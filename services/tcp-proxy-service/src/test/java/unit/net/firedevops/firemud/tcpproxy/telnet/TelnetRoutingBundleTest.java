@@ -38,6 +38,22 @@ class TelnetRoutingBundleTest {
   }
 
   @Test
+  void normalizeReturnsNullWhenSlugIsNotCanonical() {
+    assertNull(TelnetRoutingBundle.normalize("Demo", "production", "17"));
+    assertNull(TelnetRoutingBundle.normalize("demo_world", "production", "17"));
+  }
+
+  @Test
+  void normalizeReturnsNullWhenSlugExceedsUtf8ByteLimit() {
+    assertNull(TelnetRoutingBundle.normalize("a".repeat(119) + "é", "production", "17"));
+  }
+
+  @Test
+  void normalizeReturnsNullWhenPointerVersionOverflowsLong() {
+    assertNull(TelnetRoutingBundle.normalize("demo", "production", "9223372036854775808"));
+  }
+
+  @Test
   void configuredDefaultsPreserveOptionalEmptyBundle() {
     assertNull(TelnetRoutingBundle.validateConfiguredDefaults(null, null, null, "", " "));
   }

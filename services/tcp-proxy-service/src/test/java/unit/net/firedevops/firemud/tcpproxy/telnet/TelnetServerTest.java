@@ -166,20 +166,13 @@ class TelnetServerTest {
   private static Stream<Arguments> invalidConfiguredDefaultMetadata() {
     String invalid = "safe\r\ninjected";
     return Stream.of(
-        Arguments.of(
-            "gameInstanceId rejects CRLF",
-            invalid,
-            "tenant",
-            "world",
-            "realm",
-            "1"),
+        Arguments.of("gameInstanceId rejects CRLF", invalid, "tenant", "world", "realm", "1"),
         Arguments.of("tenantId rejects CRLF", "instance", invalid, "world", "realm", "1"),
         Arguments.of("worldSlug rejects CRLF", "instance", "tenant", invalid, "realm", "1"),
         Arguments.of("realmSlug rejects CRLF", "instance", "tenant", "world", invalid, "1"),
         Arguments.of(
             "pointerVersion rejects CRLF", "instance", "tenant", "world", "realm", invalid),
-        Arguments.of(
-            "pointerVersion rejects zero", "instance", "tenant", "world", "realm", "0"));
+        Arguments.of("pointerVersion rejects zero", "instance", "tenant", "world", "realm", "0"));
   }
 
   @Test

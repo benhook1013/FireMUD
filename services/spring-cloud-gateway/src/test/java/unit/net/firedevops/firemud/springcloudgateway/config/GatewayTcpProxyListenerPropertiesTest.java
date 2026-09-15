@@ -27,6 +27,21 @@ class GatewayTcpProxyListenerPropertiesTest {
   }
 
   @Test
+  void bindsEmptyMigrationDnsExpiryAsNull() {
+    StandardEnvironment environment = environmentWithExpiry("");
+
+    assertThat(
+            Binder.get(environment)
+                .bind(
+                    "firemud.gateway.tcp-proxy-listener",
+                    Bindable.ofInstance(new GatewayTcpProxyListenerProperties()))
+                .get()
+                .getMigrationDns()
+                .getExpiresAt())
+        .isNull();
+  }
+
+  @Test
   void rejectsMalformedInstantDuringBinding() {
     StandardEnvironment environment = environmentWithExpiry("not-an-instant");
 
@@ -46,7 +61,15 @@ class GatewayTcpProxyListenerPropertiesTest {
         .addFirst(
             new MapPropertySource(
                 "test",
-                Map.of("firemud.gateway.tcp-proxy-listener.migration-dns.expires-at", expiry)));
+                Map.of(
+                    "firemud.gateway.tcp-proxy-listener.migration-dns.dns-san",
+                    "tcp-proxy.internal",
+                    "firemud.gateway.tcp-proxy-listener.migration-dns.owner",
+                    "platform",
+                    "firemud.gateway.tcp-proxy-listener.migration-dns.reason",
+                    "binding test",
+                    "firemud.gateway.tcp-proxy-listener.migration-dns.expires-at",
+                    expiry)));
     return environment;
   }
 }

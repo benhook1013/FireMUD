@@ -4096,7 +4096,15 @@ def validate_gateway_ws_trust_profile(
 
     if selected_profile == "production_uri":
         expected_uri = f"spiffe://firemud/ns/{namespace}/sa/tcp-proxy-service"
-        uri_san = required_value("FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN")
+        uri_san_name = "FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN"
+        raw_uri_san = env.get(uri_san_name)
+        uri_san = required_value(uri_san_name)
+        if (
+            uri_san is not None
+            and isinstance(raw_uri_san, str)
+            and raw_uri_san != uri_san
+        ):
+            issues.append(f"{uri_san_name} must not contain surrounding whitespace")
         if uri_san is not None and uri_san != expected_uri:
             issues.append(
                 "FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN must be exactly "

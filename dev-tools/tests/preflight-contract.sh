@@ -1616,6 +1616,31 @@ def issues_for(documents):
 
 
 future = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1)).isoformat()
+production_uri = "spiffe://firemud/ns/firemud/sa/tcp-proxy-service"
+production_documents = with_profile(
+    "production_uri",
+    FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN=production_uri,
+)
+if issues_for(production_documents):
+    raise SystemExit(
+        "canonical production_uri profile was rejected: "
+        + "; ".join(issues_for(production_documents))
+    )
+
+padded_production_uri = copy.deepcopy(production_documents)
+for entry in gateway_env(padded_production_uri):
+    if entry.get("name") == "FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN":
+        entry["value"] = f" {production_uri} "
+padded_production_uri_issues = issues_for(padded_production_uri)
+if not any(
+    "TRUST_URI_SAN must not contain surrounding whitespace" in issue
+    for issue in padded_production_uri_issues
+):
+    raise SystemExit(
+        "surrounding-whitespace production_uri profile was accepted: "
+        + str(padded_production_uri_issues)
+    )
+
 migration_documents = with_profile(
     "migration_dns",
     FIREMUD_GATEWAY_TCP_PROXY_TRUST_DNS_SAN="tcp-proxy.internal",

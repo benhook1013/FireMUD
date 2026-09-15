@@ -1,6 +1,6 @@
 package net.firedevops.firemud.tcpproxy.telnet;
 
-import net.firedevops.firemud.common.security.JwtClaims;
+import net.firedevops.firemud.common.security.GameplayRoutingBundleValidator;
 import org.springframework.util.StringUtils;
 
 record TelnetRoutingBundle(String worldSlug, String realmSlug, String pointerVersion) {
@@ -12,9 +12,10 @@ record TelnetRoutingBundle(String worldSlug, String realmSlug, String pointerVer
     }
     try {
       return new TelnetRoutingBundle(
-          worldSlug,
-          realmSlug,
-          Long.toString(JwtClaims.requireLong(pointerVersion, "pointerVersion", false)));
+          GameplayRoutingBundleValidator.requireCanonicalSlug(worldSlug, "worldSlug"),
+          GameplayRoutingBundleValidator.requireCanonicalSlug(realmSlug, "realmSlug"),
+          GameplayRoutingBundleValidator.requireCanonicalPointerVersion(
+              pointerVersion, "pointerVersion"));
     } catch (IllegalArgumentException ex) {
       return null;
     }

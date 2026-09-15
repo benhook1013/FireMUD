@@ -468,10 +468,13 @@ class HeaderTrustFilterTest {
           filterTrustedTcpProxyRoutingBundleForRoute(path, "demo-world", "production-realm", "17");
 
       assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-World-Slug"))
+          .as(routingBundleDescription(path, "demo-world", "production-realm", "17"))
           .isEqualTo("demo-world");
       assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Realm-Slug"))
+          .as(routingBundleDescription(path, "demo-world", "production-realm", "17"))
           .isEqualTo("production-realm");
       assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Pointer-Version"))
+          .as(routingBundleDescription(path, "demo-world", "production-realm", "17"))
           .isEqualTo("17");
     }
   }
@@ -546,21 +549,10 @@ class HeaderTrustFilterTest {
       String path, String worldSlug, String realmSlug, String pointerVersion) {
     HeaderTrustFilter filter = legacyTrustedProxyFilter();
 
-    MockServerHttpRequest.BaseBuilder<?> requestBuilder =
-        MockServerHttpRequest.get(path)
-            .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
-            .header("X-Proxy-Client-IP", "203.0.113.99");
-    if (worldSlug != null) {
-      requestBuilder.header("X-World-Slug", worldSlug);
-    }
-    if (realmSlug != null) {
-      requestBuilder.header("X-Realm-Slug", realmSlug);
-    }
-    if (pointerVersion != null) {
-      requestBuilder.header("X-Pointer-Version", pointerVersion);
-    }
-
-    MockServerWebExchange exchange = MockServerWebExchange.from(requestBuilder.build());
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(
+            trustedTcpProxyRoutingBundleRequest(path, worldSlug, realmSlug, pointerVersion)
+                .build());
     AtomicReference<ServerWebExchange> delegated = new AtomicReference<>();
     filter
         .filter(
@@ -571,8 +563,11 @@ class HeaderTrustFilterTest {
             })
         .block();
 
-    assertThat(delegated.get()).isNull();
-    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    String description = routingBundleDescription(path, worldSlug, realmSlug, pointerVersion);
+    assertThat(delegated.get()).as(description).isNull();
+    assertThat(exchange.getResponse().getStatusCode())
+        .as(description)
+        .isEqualTo(HttpStatus.FORBIDDEN);
   }
 
   private ServerWebExchange filterTrustedTcpProxyRoutingBundle() {
@@ -589,6 +584,15 @@ class HeaderTrustFilterTest {
       String path, String worldSlug, String realmSlug, String pointerVersion) {
     HeaderTrustFilter filter = legacyTrustedProxyFilter();
 
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(
+            trustedTcpProxyRoutingBundleRequest(path, worldSlug, realmSlug, pointerVersion)
+                .build());
+    return filterThroughChain(filter, exchange);
+  }
+
+  private MockServerHttpRequest.BaseBuilder<?> trustedTcpProxyRoutingBundleRequest(
+      String path, String worldSlug, String realmSlug, String pointerVersion) {
     MockServerHttpRequest.BaseBuilder<?> requestBuilder =
         MockServerHttpRequest.get(path)
             .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
@@ -602,7 +606,13 @@ class HeaderTrustFilterTest {
     if (pointerVersion != null) {
       requestBuilder.header("X-Pointer-Version", pointerVersion);
     }
-    return filterThroughChain(filter, MockServerWebExchange.from(requestBuilder.build()));
+    return requestBuilder;
+  }
+
+  private static String routingBundleDescription(
+      String path, String worldSlug, String realmSlug, String pointerVersion) {
+    return "routing bundle path=%s worldSlug=%s realmSlug=%s pointerVersion=%s"
+        .formatted(path, worldSlug, realmSlug, pointerVersion);
   }
 
   private ServerWebExchange filterThroughChain(

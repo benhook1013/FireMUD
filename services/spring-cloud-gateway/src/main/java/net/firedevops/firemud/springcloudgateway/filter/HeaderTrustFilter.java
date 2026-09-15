@@ -2,12 +2,10 @@ package net.firedevops.firemud.springcloudgateway.filter;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
-import java.util.regex.Pattern;
-import net.firedevops.firemud.common.security.JwtClaims;
+import net.firedevops.firemud.common.security.GameplayRoutingBundleValidator;
 import net.firedevops.firemud.springcloudgateway.config.GatewayHeaderTrustProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,9 +29,6 @@ import reactor.core.publisher.Mono;
 @Component
 public final class HeaderTrustFilter implements WebFilter, Ordered {
   private static final Logger LOG = LoggerFactory.getLogger(HeaderTrustFilter.class);
-  private static final int MAX_SLUG_BYTES = 120;
-  private static final Pattern CANONICAL_SLUG_PATTERN = Pattern.compile("[a-z0-9]+(?:-[a-z0-9]+)*");
-  private static final Pattern CANONICAL_POINTER_VERSION_PATTERN = Pattern.compile("[1-9][0-9]*");
   private static final String HDR_CLIENT_IP = "X-Client-IP";
   private static final String HDR_GAME_INSTANCE_ID = "X-Game-Instance-Id";
   private static final String HDR_TENANT_ID = "X-Tenant-Id";
@@ -114,7 +109,7 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
 
     if (trustedTcpProxy && isSessionRoute) {
       try {
-        validateRoutingBundle(exchange.getRequest().getHeaders());
+        incomingPointerVersion = validateRoutingBundle(exchange.getRequest().getHeaders());
       } catch (RuntimeException ex) {
         LOG.debug("Rejecting session route: invalid trusted proxy routing bundle", ex);
         exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
@@ -132,6 +127,7 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
         return exchange.getResponse().setComplete();
       }
     }
+    final String canonicalPointerVersion = incomingPointerVersion;
 
     ServerWebExchange mutated =
         exchange
@@ -165,8 +161,8 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
                               if (incomingRealmSlug != null) {
                                 headers.set(HDR_REALM_SLUG, incomingRealmSlug);
                               }
-                              if (incomingPointerVersion != null) {
-                                headers.set(HDR_POINTER_VERSION, incomingPointerVersion);
+                              if (canonicalPointerVersion != null) {
+                                headers.set(HDR_POINTER_VERSION, canonicalPointerVersion);
                               }
                             }
                           }
@@ -176,12 +172,12 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
     return chain.filter(mutated);
   }
 
-  private static void validateRoutingBundle(HttpHeaders headers) {
+  private static String validateRoutingBundle(HttpHeaders headers) {
     boolean hasWorld = headers.get(HDR_WORLD_SLUG) != null;
     boolean hasRealm = headers.get(HDR_REALM_SLUG) != null;
     boolean hasPointer = headers.get(HDR_POINTER_VERSION) != null;
     if (!hasWorld && !hasRealm && !hasPointer) {
-      return;
+      return null;
     }
     if (!hasWorld || !hasRealm || !hasPointer) {
       throw new IllegalArgumentException("Malformed trusted proxy routing bundle");
@@ -190,12 +186,10 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
     String worldSlug = singleHeaderValue(headers, HDR_WORLD_SLUG);
     String realmSlug = singleHeaderValue(headers, HDR_REALM_SLUG);
     String pointerVersion = singleHeaderValue(headers, HDR_POINTER_VERSION);
-    validateSlug(worldSlug, HDR_WORLD_SLUG);
-    validateSlug(realmSlug, HDR_REALM_SLUG);
-    if (!CANONICAL_POINTER_VERSION_PATTERN.matcher(pointerVersion).matches()) {
-      throw new IllegalArgumentException("Malformed trusted proxy pointer version");
-    }
-    JwtClaims.requireLong(pointerVersion, HDR_POINTER_VERSION, false);
+    GameplayRoutingBundleValidator.requireCanonicalSlug(worldSlug, HDR_WORLD_SLUG);
+    GameplayRoutingBundleValidator.requireCanonicalSlug(realmSlug, HDR_REALM_SLUG);
+    return GameplayRoutingBundleValidator.requireCanonicalPointerVersion(
+        pointerVersion, HDR_POINTER_VERSION);
   }
 
   private static String singleHeaderValue(HttpHeaders headers, String headerName) {
@@ -204,14 +198,6 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
       throw new IllegalArgumentException("Malformed trusted proxy header: " + headerName);
     }
     return values.get(0);
-  }
-
-  private static void validateSlug(String slug, String headerName) {
-    if (slug == null
-        || slug.getBytes(StandardCharsets.UTF_8).length > MAX_SLUG_BYTES
-        || !CANONICAL_SLUG_PATTERN.matcher(slug).matches()) {
-      throw new IllegalArgumentException("Malformed trusted proxy slug: " + headerName);
-    }
   }
 
   private static boolean presentsProxyHeaders(HttpHeaders headers) {

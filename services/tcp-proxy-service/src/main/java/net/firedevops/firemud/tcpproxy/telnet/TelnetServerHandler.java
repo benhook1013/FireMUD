@@ -627,6 +627,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       closeContext = context;
     }
     cancelInFlightGatewayConnection();
+    closeGatewayWebSocket();
     if (closeContext != null) {
       closeContext
           .writeAndFlush("DISCONNECT " + reasonToken + " " + message + "\n")
