@@ -40,6 +40,7 @@ public final class TcpProxyTlsListener implements SmartLifecycle {
   private final TcpProxyTrustPolicy trustPolicy;
   private final HttpHandler httpHandler;
   private volatile DisposableServer server;
+  private volatile boolean running;
   private volatile ChannelGroup acceptedChannels;
   private volatile ScheduledExecutorService expiryExecutor;
   private volatile ScheduledFuture<?> expiryTask;
@@ -62,6 +63,11 @@ public final class TcpProxyTlsListener implements SmartLifecycle {
     if (!properties.isEnabled() || isRunning()) {
       return;
     }
+    DisposableServer retainedServer = server;
+    if (retainedServer != null && !retainedServer.isDisposed()) {
+      LOG.warn("TCP Proxy internal TLS listener has a retained server cleanup handle");
+      return;
+    }
     try {
       String bindAddress = requiredBindAddress(properties.getBindAddress());
       SslContext sslContext = buildSslContext();
@@ -70,7 +76,7 @@ public final class TcpProxyTlsListener implements SmartLifecycle {
       acceptedChannels = channels;
       ReactorHttpHandlerAdapter adapter =
           new ReactorHttpHandlerAdapter(new InternalOnlyHttpHandler(httpHandler));
-      server =
+      DisposableServer boundServer =
           HttpServer.create()
               .host(bindAddress)
               .port(properties.getPort())
@@ -78,10 +84,12 @@ public final class TcpProxyTlsListener implements SmartLifecycle {
               .doOnConnection(connection -> channels.add(connection.channel()))
               .handle(adapter)
               .bindNow();
+      server = boundServer;
+      running = true;
       LOG.info(
           "TCP Proxy internal TLS listener started address={} port={} profile={}",
           bindAddress,
-          server.port(),
+          boundServer.port(),
           trustPolicy.profileName());
       scheduleProfileExpiry();
     } catch (RuntimeException ex) {
@@ -163,6 +171,7 @@ public final class TcpProxyTlsListener implements SmartLifecycle {
 
   @Override
   public synchronized void stop() {
+    running = false;
     ScheduledFuture<?> task = expiryTask;
     expiryTask = null;
     if (task != null) {
@@ -201,7 +210,7 @@ public final class TcpProxyTlsListener implements SmartLifecycle {
   @Override
   public boolean isRunning() {
     DisposableServer current = server;
-    return current != null && !current.isDisposed();
+    return running && current != null && !current.isDisposed();
   }
 
   @Override
@@ -216,7 +225,7 @@ public final class TcpProxyTlsListener implements SmartLifecycle {
 
   public int boundPort() {
     DisposableServer current = server;
-    return current == null ? -1 : current.port();
+    return running && current != null && !current.isDisposed() ? current.port() : -1;
   }
 
   int acceptedConnectionCount() {

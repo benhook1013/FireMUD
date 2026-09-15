@@ -95,10 +95,14 @@ abstract class VerifyNoRedisBootJar : DefaultTask() {
                 archive.entries().asSequence()
                     .map { it.name }
                     .filter { entry ->
-                        entry == "BOOT-INF/classes/net/firedevops/firemud/tcpproxy/config/TelnetRedisConfiguration.class" ||
-                            entry.substringAfterLast('/').let { filename ->
-                                forbiddenModules.get().any { filename.startsWith("$it-") }
-                            }
+                        val filename = entry.substringAfterLast('/')
+                        val isTcpProxyRedisCoupledApplicationClass =
+                            entry.startsWith("BOOT-INF/classes/net/firedevops/firemud/tcpproxy/") &&
+                                filename.endsWith(".class") &&
+                                filename.contains("Redis", ignoreCase = true)
+                        isTcpProxyRedisCoupledApplicationClass ||
+                            (entry.startsWith("BOOT-INF/lib/") &&
+                                forbiddenModules.get().any { filename.startsWith("$it-") })
                     }.toList()
             }
         check(forbiddenEntries.isEmpty()) {

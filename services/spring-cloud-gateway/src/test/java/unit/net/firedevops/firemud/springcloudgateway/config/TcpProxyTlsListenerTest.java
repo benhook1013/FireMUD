@@ -2,6 +2,7 @@ package net.firedevops.firemud.springcloudgateway.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.timeout;
@@ -364,6 +365,11 @@ class TcpProxyTlsListenerTest {
     verify(closeFuture).awaitUninterruptibly(org.mockito.ArgumentMatchers.anyLong());
     assertThat(serverField.get(listener)).isSameAs(server);
     assertThat(channelsField.get(listener)).isNull();
+    assertThat(listener.isRunning()).isFalse();
+
+    doNothing().when(server).disposeNow(org.mockito.ArgumentMatchers.any(Duration.class));
+    listener.stop();
+    assertThat(serverField.get(listener)).isNull();
   }
 
   @Test
@@ -387,7 +393,30 @@ class TcpProxyTlsListenerTest {
     expiryMethod.invoke(listener);
     verify(server, timeout(5_000)).disposeNow(org.mockito.ArgumentMatchers.any(Duration.class));
     assertThat(serverField.get(listener)).isSameAs(server);
-    assertThat(listener.isRunning()).isTrue();
+    assertThat(listener.isRunning()).isFalse();
+
+    doNothing().when(server).disposeNow(org.mockito.ArgumentMatchers.any(Duration.class));
+    listener.stop();
+    assertThat(serverField.get(listener)).isNull();
+  }
+
+  @Test
+  void disposedServerIsUnavailableEvenWhenMarkedRunning() throws Exception {
+    TcpProxyTlsListener listener =
+        new TcpProxyTlsListener(
+            tlsProperties(0), mock(TcpProxyTrustPolicy.class), mock(HttpHandler.class));
+    DisposableServer server = mock(DisposableServer.class);
+    when(server.isDisposed()).thenReturn(true);
+
+    Field serverField = TcpProxyTlsListener.class.getDeclaredField("server");
+    Field runningField = TcpProxyTlsListener.class.getDeclaredField("running");
+    serverField.setAccessible(true);
+    runningField.setAccessible(true);
+    serverField.set(listener, server);
+    runningField.setBoolean(listener, true);
+
+    assertThat(listener.isRunning()).isFalse();
+    assertThat(listener.boundPort()).isEqualTo(-1);
   }
 
   @Test

@@ -15,7 +15,9 @@ spec:
   secretName: {{ $telnetTlsSecretName }}
   privateKey:
     algorithm: RSA
+    size: 2048
     encoding: PKCS8
+    rotationPolicy: Always
   dnsNames:
     - {{ $previewHostname | quote }}
   issuerRef:

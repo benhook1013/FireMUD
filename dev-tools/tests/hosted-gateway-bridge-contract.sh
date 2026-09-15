@@ -1020,6 +1020,39 @@ if documents:
     )
 PY
 
+STANDALONE_TELNET_CERT_RENDERED="$TMP_DIR/standalone-telnet-certificate.yaml"
+helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/standalone-nodeport-values.yaml" \
+  --show-only templates/tcp-proxy-certificate.yaml \
+  --namespace pr-123 >"$STANDALONE_TELNET_CERT_RENDERED"
+python3 - "$STANDALONE_TELNET_CERT_RENDERED" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+documents = [
+    document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+certificates = [
+    document
+    for document in documents
+    if document.get("apiVersion") == "cert-manager.io/v1"
+    and document.get("kind") == "Certificate"
+]
+if len(certificates) != 1:
+    raise SystemExit("standalone Telnet TLS render must contain exactly one Certificate")
+if certificates[0]["spec"].get("privateKey") != {
+    "algorithm": "RSA",
+    "size": 2048,
+    "encoding": "PKCS8",
+    "rotationPolicy": "Always",
+}:
+    raise SystemExit("standalone Telnet TLS Certificate has the wrong private-key contract")
+PY
+
 HOSTED_CONTROLLER_TELNET_CERT_RENDERED="$TMP_DIR/hosted-controller-telnet-certificate.yaml"
 helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/preview-values.yaml" \
