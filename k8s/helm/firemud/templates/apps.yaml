@@ -15,6 +15,7 @@
 {{- $managedGatewayWsClientEnv := list "GATEWAY_WS_URL" "FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH" "FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH" "FIREMUD_GATEWAY_WS_CA_CERT_PATH" }}
 {{- $certificateIdentityMode := include "firemud.certificateIdentityMode" . | trim }}
 {{- range $service := .Values.previewStack.services }}
+{{- $serviceType := default "ClusterIP" $service.serviceType }}
 {{- $mountTelnetTls := and $service.mountTelnetTls $telnetTls.enabled }}
 {{- $mountGatewayWsServerTls := and $service.mountGatewayWsServerTls $gatewayWsTls.enabled }}
 {{- $mountGatewayWsClientTls := and $service.mountGatewayWsClientTls $gatewayWsTls.enabled }}
@@ -240,12 +241,15 @@ spec:
       targetPort: {{ $port.targetPort }}
       protocol: TCP
       {{- if and (eq $certificateIdentityMode "hosted-controller") (eq $service.name "tcp-proxy-service") (eq (int $port.port) 2323) }}
+      {{- if not (or (eq $serviceType "NodePort") (eq $serviceType "LoadBalancer")) }}
+      {{- fail "hosted-controller TCP Proxy nodePort requires serviceType NodePort or LoadBalancer" }}
+      {{- end }}
       nodePort: {{ required "preview.telnetPort is required for hosted-controller TCP Proxy" (get $preview "telnetPort") }}
       {{- else if $port.nodePort }}
       nodePort: {{ $port.nodePort }}
       {{- end }}
     {{- end }}
-  type: {{ default "ClusterIP" $service.serviceType }}
+  type: {{ $serviceType }}
 {{- end }}
 {{- if $gatewayWsTls.enabled }}
 ---

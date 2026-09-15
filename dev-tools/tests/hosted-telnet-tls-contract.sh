@@ -46,6 +46,35 @@ PY
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values-controller.yaml" \
   --namespace pr-42 >"$TMP_DIR/rendered-controller.yaml"
+cp "$TMP_DIR/values-controller.yaml" "$TMP_DIR/values-controller-clusterip.yaml"
+python3 - "$TMP_DIR/values-controller-clusterip.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+values = yaml.safe_load(path.read_text(encoding="utf-8"))
+for service in values["previewStack"]["services"]:
+    if service["name"] == "tcp-proxy-service":
+        service["serviceType"] = "ClusterIP"
+        break
+else:
+    raise SystemExit("tcp-proxy-service fixture is missing")
+path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+SERVICE_TYPE_ERROR="hosted-controller TCP Proxy nodePort requires serviceType NodePort or LoadBalancer"
+if helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/values-controller-clusterip.yaml" \
+  --namespace pr-42 >/dev/null 2>"$TMP_DIR/invalid-service-type.err"; then
+  echo "chart rendered a hosted-controller TCP Proxy nodePort for ClusterIP" >&2
+  exit 1
+fi
+if ! grep -Fq "$SERVICE_TYPE_ERROR" "$TMP_DIR/invalid-service-type.err"; then
+  echo "chart did not report the expected hosted-controller nodePort service type diagnostic" >&2
+  sed -n '1,20p' "$TMP_DIR/invalid-service-type.err" >&2
+  exit 1
+fi
 cp "$TMP_DIR/values-controller.yaml" "$TMP_DIR/values.yaml"
 python3 - "$TMP_DIR/values.yaml" <<'PY'
 import sys

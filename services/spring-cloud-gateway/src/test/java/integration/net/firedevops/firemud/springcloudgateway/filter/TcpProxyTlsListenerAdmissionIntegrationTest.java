@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import java.util.stream.Stream;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.security.JwtUtil;
@@ -44,6 +45,7 @@ import org.springframework.web.reactive.DispatcherHandler;
 import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
 import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketMessage;
+import org.springframework.web.reactive.socket.WebSocketSession;
 import org.springframework.web.reactive.socket.client.ReactorNettyWebSocketClient;
 import org.springframework.web.reactive.socket.server.support.WebSocketHandlerAdapter;
 import org.springframework.web.server.adapter.WebHttpHandlerBuilder;
@@ -121,51 +123,29 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
   void websocketUpgradePromotesOnlyTheConfiguredClientWorkload() throws Exception {
     GatewayTcpProxyListenerProperties listenerProperties = listenerProperties(8443);
     GatewayHeaderTrustProperties headerProperties = new GatewayHeaderTrustProperties();
-    TcpProxyTrustPolicy trustPolicy =
-        new TcpProxyTrustPolicy(
-            listenerProperties, headerProperties, 8080, Clock.systemUTC(), Set.of("prod"));
-    // Validate a non-public port first, then bind ephemerally and write back the exact bound port.
-    listenerProperties.setPort(0);
-    HeaderTrustFilter headerTrustFilter = new HeaderTrustFilter(headerProperties, trustPolicy);
-    GameplayHandshakeFilter handshakeFilter =
-        new GameplayHandshakeFilter(
-            mock(JwtUtil.class),
-            mock(RuntimeIdentity.class),
-            null,
-            new MockEnvironment().withProperty("spring.profiles.active", "test"),
-            GameplayWebSocketObservability.disabled());
     AtomicReference<HttpHeaders> admittedHeaders = new AtomicReference<>();
     AtomicInteger admittedConnections = new AtomicInteger();
+    AtomicInteger applicationRequests = new AtomicInteger();
 
-    WebSocketHandler gameplayHandler =
-        session -> {
-          admittedHeaders.set(session.getHandshakeInfo().getHeaders());
-          admittedConnections.incrementAndGet();
-          if ("no-frame"
-              .equals(session.getHandshakeInfo().getHeaders().getFirst("X-Proxy-Connection-Id"))) {
-            return reactor.core.publisher.Mono.never();
-          }
-          return session.send(reactor.core.publisher.Mono.just(session.textMessage("admitted")));
-        };
-    GenericApplicationContext context = new GenericApplicationContext();
-    SimpleUrlHandlerMapping mapping = new SimpleUrlHandlerMapping();
-    mapping.setOrder(-1);
-    mapping.setUrlMap(Map.of("/ws/game", gameplayHandler));
-    context.getBeanFactory().registerSingleton("gameplayMapping", mapping);
-    context
-        .getBeanFactory()
-        .registerSingleton("gameplayWebSocketHandlerAdapter", new WebSocketHandlerAdapter());
-    context.refresh();
-    mapping.setApplicationContext(context);
-
-    HttpHandler handler =
-        WebHttpHandlerBuilder.webHandler(new DispatcherHandler(context))
-            .filter(headerTrustFilter, handshakeFilter)
-            .build();
-    TcpProxyTlsListener listener =
-        new TcpProxyTlsListener(listenerProperties, trustPolicy, handler);
-
-    try {
+    ListenerFixture fixture =
+        listenerFixture(
+            listenerProperties,
+            headerProperties,
+            Set.of("prod"),
+            applicationRequests,
+            session -> {
+              admittedHeaders.set(session.getHandshakeInfo().getHeaders());
+              admittedConnections.incrementAndGet();
+              if ("no-frame"
+                  .equals(
+                      session.getHandshakeInfo().getHeaders().getFirst("X-Proxy-Connection-Id"))) {
+                return reactor.core.publisher.Mono.never();
+              }
+              return session.send(
+                  reactor.core.publisher.Mono.just(session.textMessage("admitted")));
+            });
+    try (fixture) {
+      TcpProxyTlsListener listener = fixture.listener();
       listener.start();
       assertThat(listener.isRunning()).isTrue();
       int port = listener.boundPort();
@@ -208,9 +188,6 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
                       Duration.ofSeconds(1)))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("Timeout on blocking read");
-    } finally {
-      listener.stop();
-      context.close();
     }
   }
 
@@ -223,52 +200,23 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
     GatewayHeaderTrustProperties headerProperties = new GatewayHeaderTrustProperties();
     Set<String> activeProfiles =
         profile.equals("development_cidr") ? Set.of("test") : Set.of("prod");
-    TcpProxyTrustPolicy trustPolicy =
-        new TcpProxyTrustPolicy(
-            listenerProperties, headerProperties, 8080, Clock.systemUTC(), activeProfiles);
-    // Preserve the same validation-before-bind order used by the workload-identity test above.
-    listenerProperties.setPort(0);
-    HeaderTrustFilter headerTrustFilter = new HeaderTrustFilter(headerProperties, trustPolicy);
-    GameplayHandshakeFilter handshakeFilter =
-        new GameplayHandshakeFilter(
-            mock(JwtUtil.class),
-            mock(RuntimeIdentity.class),
-            null,
-            new MockEnvironment().withProperty("spring.profiles.active", "test"),
-            GameplayWebSocketObservability.disabled());
-
-    WebSocketHandler gameplayHandler =
-        session -> session.send(reactor.core.publisher.Mono.just(session.textMessage("admitted")));
-    GenericApplicationContext context = new GenericApplicationContext();
-    SimpleUrlHandlerMapping mapping = new SimpleUrlHandlerMapping();
-    mapping.setOrder(-1);
-    mapping.setUrlMap(Map.of("/ws/game", gameplayHandler));
-    context.getBeanFactory().registerSingleton("gameplayMapping", mapping);
-    context
-        .getBeanFactory()
-        .registerSingleton("gameplayWebSocketHandlerAdapter", new WebSocketHandlerAdapter());
-    context.refresh();
-    mapping.setApplicationContext(context);
-
-    HttpHandler filteredHandler =
-        WebHttpHandlerBuilder.webHandler(new DispatcherHandler(context))
-            .filter(headerTrustFilter, handshakeFilter)
-            .build();
     AtomicInteger applicationRequests = new AtomicInteger();
-    HttpHandler handler =
-        (request, response) -> {
-          applicationRequests.incrementAndGet();
-          return filteredHandler.handle(request, response);
-        };
-    TcpProxyTlsListener listener =
-        new TcpProxyTlsListener(listenerProperties, trustPolicy, handler);
-
-    try {
+    ListenerFixture fixture =
+        listenerFixture(
+            listenerProperties,
+            headerProperties,
+            activeProfiles,
+            applicationRequests,
+            session ->
+                session.send(reactor.core.publisher.Mono.just(session.textMessage("admitted"))));
+    try (fixture) {
+      TcpProxyTlsListener listener = fixture.listener();
       listener.start();
       assertThat(listener.isRunning()).isTrue();
       int port = listener.boundPort();
       listenerProperties.setPort(port);
-      assertThat(trustPolicy.requiresClientCertificate()).isEqualTo(requiresClientCertificate);
+      assertThat(fixture.trustPolicy().requiresClientCertificate())
+          .isEqualTo(requiresClientCertificate);
       if (requiresClientCertificate) {
         Throwable handshakeFailure =
             catchThrowable(() -> connect(port, bridgeHeaders(), clientContextWithoutIdentity()));
@@ -284,10 +232,52 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
             .isEqualTo("admitted");
         assertThat(applicationRequests).hasValue(1);
       }
-    } finally {
-      listener.stop();
-      context.close();
     }
+  }
+
+  private static ListenerFixture listenerFixture(
+      GatewayTcpProxyListenerProperties listenerProperties,
+      GatewayHeaderTrustProperties headerProperties,
+      Set<String> activeProfiles,
+      AtomicInteger applicationRequests,
+      Function<WebSocketSession, reactor.core.publisher.Mono<Void>> responseBehavior) {
+    TcpProxyTrustPolicy trustPolicy =
+        new TcpProxyTrustPolicy(
+            listenerProperties, headerProperties, 8080, Clock.systemUTC(), activeProfiles);
+    // Preserve the same validation-before-bind order used by both listener tests.
+    listenerProperties.setPort(0);
+    HeaderTrustFilter headerTrustFilter = new HeaderTrustFilter(headerProperties, trustPolicy);
+    GameplayHandshakeFilter handshakeFilter =
+        new GameplayHandshakeFilter(
+            mock(JwtUtil.class),
+            mock(RuntimeIdentity.class),
+            null,
+            new MockEnvironment().withProperty("spring.profiles.active", "test"),
+            GameplayWebSocketObservability.disabled());
+
+    WebSocketHandler gameplayHandler = responseBehavior::apply;
+    GenericApplicationContext context = new GenericApplicationContext();
+    SimpleUrlHandlerMapping mapping = new SimpleUrlHandlerMapping();
+    mapping.setOrder(-1);
+    mapping.setUrlMap(Map.of("/ws/game", gameplayHandler));
+    context.getBeanFactory().registerSingleton("gameplayMapping", mapping);
+    context
+        .getBeanFactory()
+        .registerSingleton("gameplayWebSocketHandlerAdapter", new WebSocketHandlerAdapter());
+    context.refresh();
+    mapping.setApplicationContext(context);
+
+    HttpHandler filteredHandler =
+        WebHttpHandlerBuilder.webHandler(new DispatcherHandler(context))
+            .filter(headerTrustFilter, handshakeFilter)
+            .build();
+    HttpHandler handler =
+        (request, response) -> {
+          applicationRequests.incrementAndGet();
+          return filteredHandler.handle(request, response);
+        };
+    return new ListenerFixture(
+        new TcpProxyTlsListener(listenerProperties, trustPolicy, handler), trustPolicy, context);
   }
 
   private static Stream<Arguments> enabledTrustProfiles() {
@@ -383,6 +373,18 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
       default -> throw new IllegalArgumentException("unsupported test profile " + profile);
     }
     return properties;
+  }
+
+  private record ListenerFixture(
+      TcpProxyTlsListener listener,
+      TcpProxyTrustPolicy trustPolicy,
+      GenericApplicationContext context)
+      implements AutoCloseable {
+    @Override
+    public void close() {
+      listener.stop();
+      context.close();
+    }
   }
 
   private static Path gatewayFixture(String name) {

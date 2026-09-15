@@ -36,6 +36,7 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -80,9 +81,7 @@ public final class GatewayWebSocketClient implements AutoCloseable {
   private final MeterRegistry meterRegistry;
   private final Set<ClientGeneration> generations = ConcurrentHashMap.newKeySet();
   private final AtomicBoolean closed = new AtomicBoolean();
-  private final ExecutorService retirementExecutor =
-      Executors.newSingleThreadExecutor(
-          Thread.ofVirtual().name("gateway-http-client-retirement", 0).factory());
+  private final ExecutorService retirementExecutor;
   private volatile ClientState state;
   private volatile TlsCertificateWatcher certificateWatcher;
 
@@ -121,7 +120,34 @@ public final class GatewayWebSocketClient implements AutoCloseable {
       String[] activeProfiles,
       MeterRegistry meterRegistry,
       boolean watchForRotation) {
+    this(
+        gatewayWsUrl,
+        clientCertPath,
+        clientKeyPath,
+        caCertPath,
+        grpcCertPath,
+        telnetTlsEnabled,
+        telnetCertPath,
+        activeProfiles,
+        meterRegistry,
+        watchForRotation,
+        newRetirementExecutor());
+  }
+
+  GatewayWebSocketClient(
+      String gatewayWsUrl,
+      String clientCertPath,
+      String clientKeyPath,
+      String caCertPath,
+      String grpcCertPath,
+      boolean telnetTlsEnabled,
+      String telnetCertPath,
+      String[] activeProfiles,
+      MeterRegistry meterRegistry,
+      boolean watchForRotation,
+      ExecutorService retirementExecutor) {
     this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry");
+    this.retirementExecutor = Objects.requireNonNull(retirementExecutor, "retirementExecutor");
     try {
       this.gatewayUri = parseGatewayUri(gatewayWsUrl);
     } catch (IllegalStateException e) {
@@ -160,6 +186,11 @@ public final class GatewayWebSocketClient implements AutoCloseable {
         throw e;
       }
     }
+  }
+
+  private static ExecutorService newRetirementExecutor() {
+    return Executors.newSingleThreadExecutor(
+        Thread.ofVirtual().name("gateway-http-client-retirement", 0).factory());
   }
 
   public CompletableFuture<WebSocket> connect(
@@ -762,7 +793,7 @@ public final class GatewayWebSocketClient implements AutoCloseable {
         return;
       }
       closing = true;
-      retirementExecutor.execute(
+      Runnable closeAction =
           () -> {
             try {
               client.close();
@@ -772,7 +803,12 @@ public final class GatewayWebSocketClient implements AutoCloseable {
                 generations.remove(this);
               }
             }
-          });
+          };
+      try {
+        retirementExecutor.execute(closeAction);
+      } catch (RejectedExecutionException rejected) {
+        closeAction.run();
+      }
     }
 
     private synchronized void shutdownNow() {

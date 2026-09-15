@@ -45,6 +45,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -979,6 +980,35 @@ class GatewayWebSocketClientTest {
     assertTrue(clientClosed.await(5, TimeUnit.SECONDS));
     awaitTermination(oldGeneration);
     awaitGenerationCount(client, 1);
+  }
+
+  @Test
+  void rejectedRetirementSchedulingClosesAndRemovesGenerationSynchronously() throws Exception {
+    ExecutorService rejectedExecutor = mock(ExecutorService.class);
+    doThrow(new RejectedExecutionException("retirement executor is closed"))
+        .when(rejectedExecutor)
+        .execute(any(Runnable.class));
+    GatewayWebSocketClient client =
+        new GatewayWebSocketClient(
+            "wss://localhost:8443/ws/game",
+            certificate.toString(),
+            privateKey.toString(),
+            caCertificate.toString(),
+            certificate.toString(),
+            false,
+            "",
+            new String[] {"dev"},
+            new SimpleMeterRegistry(),
+            false,
+            rejectedExecutor);
+    clients.add(client);
+    HttpClient retiredClient = (HttpClient) client.clientIdentity();
+
+    assertTrue(client.reloadNow());
+
+    verify(rejectedExecutor).execute(any(Runnable.class));
+    assertTrue(retiredClient.isTerminated());
+    assertEquals(1, client.generationCount());
   }
 
   @Test

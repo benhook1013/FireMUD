@@ -505,10 +505,7 @@ class HeaderTrustFilterTest {
   @Test
   void rejectsDuplicateTrustedRoutingHeaderOnSessionAndApiRoutes() {
     for (String path : new String[] {"/ws/game/test", "/api/session/ping"}) {
-      GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
-      props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
-      props.getTcpProxy().setInsecureTrustedCidrs(List.of("10.0.0.0/8"));
-      HeaderTrustFilter filter = legacyFilter(props);
+      HeaderTrustFilter filter = legacyTrustedProxyFilter();
 
       MockServerHttpRequest request =
           MockServerHttpRequest.get(path)
@@ -538,10 +535,7 @@ class HeaderTrustFilterTest {
 
   private void assertThatRejectedRoutingBundle(
       String path, String worldSlug, String realmSlug, String pointerVersion) {
-    GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
-    props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
-    props.getTcpProxy().setInsecureTrustedCidrs(List.of("10.0.0.0/8"));
-    HeaderTrustFilter filter = legacyFilter(props);
+    HeaderTrustFilter filter = legacyTrustedProxyFilter();
 
     MockServerHttpRequest.BaseBuilder<?> requestBuilder =
         MockServerHttpRequest.get(path)
@@ -573,10 +567,7 @@ class HeaderTrustFilterTest {
   }
 
   private ServerWebExchange filterTrustedTcpProxyRoutingBundle() {
-    GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
-    props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
-    props.getTcpProxy().setInsecureTrustedCidrs(List.of("10.0.0.0/8"));
-    HeaderTrustFilter filter = legacyFilter(props);
+    HeaderTrustFilter filter = legacyTrustedProxyFilter();
 
     MockServerHttpRequest.BaseBuilder<?> requestBuilder =
         MockServerHttpRequest.get("/ws/game/test")
@@ -587,10 +578,7 @@ class HeaderTrustFilterTest {
 
   private ServerWebExchange filterTrustedTcpProxyRoutingBundleForRoute(
       String path, String worldSlug, String realmSlug, String pointerVersion) {
-    GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
-    props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
-    props.getTcpProxy().setInsecureTrustedCidrs(List.of("10.0.0.0/8"));
-    HeaderTrustFilter filter = legacyFilter(props);
+    HeaderTrustFilter filter = legacyTrustedProxyFilter();
 
     MockServerHttpRequest.BaseBuilder<?> requestBuilder =
         MockServerHttpRequest.get(path)
@@ -618,6 +606,13 @@ class HeaderTrustFilterTest {
         };
     filter.filter(exchange, chain).block();
     return ref.get();
+  }
+
+  private static HeaderTrustFilter legacyTrustedProxyFilter() {
+    GatewayHeaderTrustProperties properties = new GatewayHeaderTrustProperties();
+    properties.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
+    properties.getTcpProxy().setInsecureTrustedCidrs(List.of("10.0.0.0/8"));
+    return legacyFilter(properties);
   }
 
   static HeaderTrustFilter legacyFilter(GatewayHeaderTrustProperties properties) {

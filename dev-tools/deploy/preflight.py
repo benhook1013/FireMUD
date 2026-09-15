@@ -4330,7 +4330,7 @@ def kubernetes_selector_matches(
         values = expression.get("values") or []
         if operator == "In" and labels.get(key) not in values:
             return False
-        if operator == "NotIn" and (key not in labels or labels.get(key) in values):
+        if operator == "NotIn" and key in labels and labels.get(key) in values:
             return False
         if operator == "Exists" and key not in labels:
             return False

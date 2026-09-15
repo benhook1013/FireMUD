@@ -580,6 +580,24 @@ if not module.kubernetes_selector_matches(
     selector_labels,
 ):
     raise SystemExit("valid Kubernetes selector unexpectedly failed to match")
+if not module.kubernetes_selector_matches(
+    {
+        "matchExpressions": [
+            {"key": "role", "operator": "NotIn", "values": ["blocked"]}
+        ]
+    },
+    selector_labels,
+):
+    raise SystemExit("Kubernetes NotIn selector unexpectedly rejected an absent label key")
+if module.kubernetes_selector_matches(
+    {
+        "matchExpressions": [
+            {"key": "role", "operator": "NotIn", "values": ["blocked"]}
+        ]
+    },
+    {**selector_labels, "role": "blocked"},
+):
+    raise SystemExit("Kubernetes NotIn selector unexpectedly matched an included label value")
 for malformed_selector in (
     {"matchLabels": []},
     {"matchLabels": None},

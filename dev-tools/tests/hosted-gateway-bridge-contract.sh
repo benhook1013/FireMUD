@@ -102,6 +102,47 @@ if elasticsearch_rules != [expected_rule]:
         "Kustomize TCP Proxy policy must contain exactly one narrow Elasticsearch TCP/9200 rule: "
         f"{elasticsearch_rules}"
     )
+
+gateway_policy = next(
+    document
+    for document in documents
+    if document.get("kind") == "NetworkPolicy"
+    and document.get("metadata", {}).get("name") == "spring-cloud-gateway-ingress"
+)
+public_gateway_rules = [
+    rule
+    for rule in gateway_policy["spec"]["ingress"]
+    if rule.get("from")
+    == [
+        {"ipBlock": {"cidr": "0.0.0.0/0"}},
+        {"ipBlock": {"cidr": "::/0"}},
+    ]
+]
+expected_public_gateway_rule = {
+    "from": [
+        {"ipBlock": {"cidr": "0.0.0.0/0"}},
+        {"ipBlock": {"cidr": "::/0"}},
+    ],
+    "ports": [{"protocol": "TCP", "port": 8080}],
+}
+if public_gateway_rules != [expected_public_gateway_rule]:
+    raise SystemExit(
+        "Kustomize Gateway policy must contain exactly one dual-stack public TCP/8080 rule: "
+        f"{public_gateway_rules}"
+    )
+ip_block_rules = [
+    rule
+    for rule in gateway_policy["spec"]["ingress"]
+    if any("ipBlock" in peer for peer in rule.get("from", []))
+]
+if any(
+    rule.get("ports") != [{"protocol": "TCP", "port": 8080}]
+    for rule in ip_block_rules
+):
+    raise SystemExit(
+        "Kustomize Gateway public ipBlock peers must be restricted to TCP/8080: "
+        f"{ip_block_rules}"
+    )
 PY
 
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
