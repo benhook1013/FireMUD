@@ -48,9 +48,9 @@
 {{- $certificateIdentityMode := include "firemud.certificateIdentityMode" . | trim }}
 {{- range $service := .Values.previewStack.services }}
 {{- $serviceType := default "ClusterIP" $service.serviceType }}
-{{- $mountTelnetTls := and $service.mountTelnetTls $telnetTls.enabled }}
-{{- $mountGatewayWsServerTls := and $service.mountGatewayWsServerTls $gatewayWsTls.enabled }}
-{{- $mountGatewayWsClientTls := and $service.mountGatewayWsClientTls $gatewayWsTls.enabled }}
+{{- $mountTelnetTls := and (eq $service.name "tcp-proxy-service") $service.mountTelnetTls $telnetTls.enabled }}
+{{- $mountGatewayWsServerTls := and (eq $service.name "spring-cloud-gateway") $service.mountGatewayWsServerTls $gatewayWsTls.enabled }}
+{{- $mountGatewayWsClientTls := and (eq $service.name "tcp-proxy-service") $service.mountGatewayWsClientTls $gatewayWsTls.enabled }}
 {{- $gatewayWsTlsTargetPortDeclared := false }}
 {{- if $mountGatewayWsServerTls }}
 {{- range $port := $service.ports }}

@@ -23,6 +23,36 @@ import org.mockito.ArgumentCaptor;
 class TcpProxyEventClientTest {
 
   @Test
+  void notifyDisconnectFailsClearlyWhenClosedOrUninitialized() throws Exception {
+    ServiceEndpointsProperties endpoints = mock(ServiceEndpointsProperties.class);
+    when(endpoints.copy()).thenReturn(endpoints);
+    CommonGrpcClientProperties tlsProps = mock(CommonGrpcClientProperties.class);
+    when(tlsProps.copy()).thenReturn(tlsProps);
+    TcpProxyEventClient client =
+        new TcpProxyEventClient(
+            endpoints,
+            tlsProps,
+            mock(GrpcChannelFactory.class),
+            mock(GrpcTlsMaterialResolver.class),
+            BlockingGrpcStubCustomizer.noop());
+
+    IllegalStateException uninitialized =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            IllegalStateException.class,
+            () -> client.notifyDisconnect("42", "7", "proxy-1", 9L));
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "TcpProxyEventClient is closed or not initialized", uninitialized.getMessage());
+
+    client.close();
+    IllegalStateException closed =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            IllegalStateException.class,
+            () -> client.notifyDisconnect("42", "7", "proxy-1", 9L));
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "TcpProxyEventClient is closed or not initialized", closed.getMessage());
+  }
+
+  @Test
   void notifyDisconnectUsesBoundedDeadlineAndCanonicalRequestFields() {
     ServiceEndpointsProperties endpoints = mock(ServiceEndpointsProperties.class);
     when(endpoints.copy()).thenReturn(endpoints);

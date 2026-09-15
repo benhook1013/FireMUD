@@ -117,6 +117,10 @@ val verifyNoRedisBootJar =
         forbiddenModules.set(forbiddenRedisRuntimeModules)
     }
 
+tasks.named<BootJar>("bootJar") {
+    finalizedBy(verifyNoRedisBootJar)
+}
+
 tasks.named("check") {
     dependsOn(verifyNoRedisRuntime)
 }

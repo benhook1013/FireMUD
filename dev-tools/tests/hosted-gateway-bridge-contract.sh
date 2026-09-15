@@ -70,6 +70,64 @@ helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
   --namespace pr-123 \
   >"$RENDERED"
 
+FOREIGN_TLS_MOUNTS_VALUES="$TMP_DIR/foreign-tls-mounts-values.yaml"
+FOREIGN_TLS_MOUNTS_RENDERED="$TMP_DIR/foreign-tls-mounts-rendered.yaml"
+python3 - "$TMP_DIR/preview-values.yaml" "$FOREIGN_TLS_MOUNTS_VALUES" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+source_path, output_path = map(Path, sys.argv[1:])
+values = yaml.safe_load(source_path.read_text(encoding="utf-8"))
+for service in values["previewStack"]["services"]:
+    service["mountTelnetTls"] = True
+    service["mountGatewayWsServerTls"] = True
+    service["mountGatewayWsClientTls"] = True
+output_path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$FOREIGN_TLS_MOUNTS_VALUES" \
+  --namespace pr-123 \
+  --show-only templates/apps.yaml \
+  >"$FOREIGN_TLS_MOUNTS_RENDERED"
+python3 - "$FOREIGN_TLS_MOUNTS_RENDERED" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+expected_mounts = {
+    "tcp-proxy-service": {"telnet-tls", "gateway-ws-client-tls"},
+    "spring-cloud-gateway": {"gateway-ws-server-tls"},
+}
+documents = [
+    document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+for deployment in (
+    document for document in documents if document.get("kind") == "Deployment"
+):
+    service = deployment["metadata"]["name"]
+    actual = {
+        mount["name"]
+        for mount in deployment["spec"]["template"]["spec"]["containers"][0].get(
+            "volumeMounts", []
+        )
+        if mount["name"] in {
+            "telnet-tls",
+            "gateway-ws-server-tls",
+            "gateway-ws-client-tls",
+        }
+    }
+    expected = expected_mounts.get(service, set())
+    if actual != expected:
+        raise SystemExit(
+            f"{service} rendered role-specific TLS mounts {actual!r}; expected {expected!r}"
+        )
+PY
+
 python3 - "$ROOT_DIR/k8s/base/gameplay-bridge-network-policy.yaml" <<'PY'
 import sys
 from pathlib import Path

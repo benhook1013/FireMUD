@@ -120,7 +120,7 @@ run_preflight_policy_checks() (
       mapfile -t attestation_files < <(printf '%s\n' "$changed_files" | grep '^design/operations/deployments/production/attestations/.*\.json$' || true)
       if [[ "${#attestation_files[@]}" -ne 1 ]]; then
         echo "Production promotion inputs must include exactly one attestation file under design/operations/deployments/production/attestations/." >&2
-        exit 1
+        return 1
       else
         production_pr_validation="true"
         promotion_attestation="${attestation_files[0]}"
@@ -145,7 +145,7 @@ PY
           mapfile -t backup_files < <(printf '%s\n' "$changed_files" | grep '^design/operations/deployments/production/backup-readiness/.*\.json$' || true)
           if [[ "${#backup_files[@]}" -ne 1 ]]; then
             echo "Roll-forward-only production overlay PRs must include exactly one backup-readiness file under design/operations/deployments/production/backup-readiness/." >&2
-            exit 1
+            return 1
           fi
           backup_readiness="${backup_files[0]}"
         fi

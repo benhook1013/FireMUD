@@ -84,7 +84,11 @@ public class TcpProxyEventClient implements AutoCloseable {
       builder.setTenantId(tenantId);
     }
     NotifyDisconnectRequest request = builder.build();
-    return stub.withDeadlineAfter(DISCONNECT_NOTIFY_DEADLINE_MS, TimeUnit.MILLISECONDS)
+    TcpProxyServiceGrpc.TcpProxyServiceBlockingStub currentStub = stub;
+    if (closing.get() || currentStub == null) {
+      throw new IllegalStateException("TcpProxyEventClient is closed or not initialized");
+    }
+    return currentStub.withDeadlineAfter(DISCONNECT_NOTIFY_DEADLINE_MS, TimeUnit.MILLISECONDS)
         .notifyDisconnect(request);
   }
 
