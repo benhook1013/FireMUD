@@ -13,6 +13,8 @@ public final class TlsTestSupport {
         String normalized = message.toLowerCase(Locale.ROOT);
         if (normalized.contains("certificate_required")
             || normalized.contains("bad_certificate")
+            || normalized.contains("certificate required")
+            || normalized.contains("bad certificate")
             || normalized.contains("empty client certificate chain")
             || normalized.contains("no required ssl certificate was sent")
             || normalized.contains("peer did not return a certificate")

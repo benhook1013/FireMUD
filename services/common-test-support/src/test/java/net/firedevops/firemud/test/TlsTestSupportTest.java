@@ -34,6 +34,8 @@ class TlsTestSupportTest {
     return Stream.of(
         Arguments.of("Received fatal alert: certificate_required"),
         Arguments.of("Received fatal alert: bad_certificate"),
+        Arguments.of("SSL alert: certificate required"),
+        Arguments.of("SSL alert: bad certificate"),
         Arguments.of("Empty client certificate chain"),
         Arguments.of("No required SSL certificate was sent"),
         Arguments.of("Peer did not return a certificate"),
@@ -50,6 +52,7 @@ class TlsTestSupportTest {
         Arguments.of("handshake_failure"),
         Arguments.of("Received fatal alert: internal_error"),
         Arguments.of("server certificate validation failed"),
-        Arguments.of("hostname verification failed"));
+        Arguments.of("hostname verification failed"),
+        Arguments.of("certificate issue while connecting to server"));
   }
 }
