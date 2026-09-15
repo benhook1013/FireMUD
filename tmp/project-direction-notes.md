@@ -35,6 +35,7 @@ The current Gameplay queue is **#2731 → #2750 → #2755 → #2713 → #2686 �
 
 The following work is parked until that queue finishes, unless a later decision explicitly advances an item:
 
+- **Mandatory worktree and branch reconciliation:** before spawning any new workstream or resuming Worker after the current Gameplay PR sequence, inventory every FireMUD worktree, local and remote branch, open/closed PR relationship, dirty file, and external `/tmp` artifact. Classify each item as active, depended-on, uniquely unpublished, historical provenance, or safely disposable. Preserve Worker work and any uncertain or unique content; consume or relocate useful artifacts before cleanup. Deletion requires evidence that no open PR, stacked dependency, retained recovery/corpus material, or uncommitted work relies on the item. Present the proposed cleanup set to Ben before destructive removal.
 - **Worker 5B/5C/5D:** Worker remains human-paused. Preserve #2677 → #2678 → #2679 and #2661; resume only after the Gameplay queue and a fresh base/topology check.
 - **Recovery and Redis:** route the retained 6D/7C recovery/incident seed and the Redis restore/AOF/reset defects to a future Platform Operations/recovery slice. The old branch reports remain provenance; do not port them wholesale.
 - **Retained runtime corrections:** reconcile the parked effect-root/`planOrdinal`, replay, scheduler/Redis-scope, scripting-namespace, and downstream Account/Gateway/player-experience corrections with their current owners before cleanup.
