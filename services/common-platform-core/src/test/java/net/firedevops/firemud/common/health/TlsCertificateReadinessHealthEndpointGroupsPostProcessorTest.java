@@ -6,14 +6,20 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.actuate.endpoint.SecurityContext;
+import org.springframework.boot.actuate.endpoint.web.WebServerNamespace;
+import org.springframework.boot.health.actuate.endpoint.AdditionalHealthEndpointPath;
 import org.springframework.boot.health.actuate.endpoint.HealthEndpointGroup;
 import org.springframework.boot.health.actuate.endpoint.HealthEndpointGroups;
+import org.springframework.boot.health.actuate.endpoint.HttpCodeStatusMapper;
+import org.springframework.boot.health.actuate.endpoint.StatusAggregator;
 
 class TlsCertificateReadinessHealthEndpointGroupsPostProcessorTest {
 
@@ -25,14 +31,28 @@ class TlsCertificateReadinessHealthEndpointGroupsPostProcessorTest {
     HealthEndpointGroup primary = mock(HealthEndpointGroup.class);
     HealthEndpointGroup readiness = mock(HealthEndpointGroup.class);
     HealthEndpointGroup custom = mock(HealthEndpointGroup.class);
+    StatusAggregator statusAggregator = mock(StatusAggregator.class);
+    HttpCodeStatusMapper httpCodeStatusMapper = mock(HttpCodeStatusMapper.class);
+    AdditionalHealthEndpointPath readinessPath = mock(AdditionalHealthEndpointPath.class);
+    AdditionalHealthEndpointPath customPath = mock(AdditionalHealthEndpointPath.class);
     SecurityContext securityContext = SecurityContext.NONE;
     when(readiness.isMember("existingContributor")).thenReturn(true);
     when(readiness.showComponents(securityContext)).thenReturn(true);
     when(readiness.showDetails(securityContext)).thenReturn(false);
-    when(readiness.getAdditionalPath()).thenReturn(null);
+    when(readiness.getStatusAggregator()).thenReturn(statusAggregator);
+    when(readiness.getHttpCodeStatusMapper()).thenReturn(httpCodeStatusMapper);
+    when(readiness.getAdditionalPath()).thenReturn(readinessPath);
+    when(custom.getAdditionalPath()).thenReturn(customPath);
 
-    HealthEndpointGroups original =
-        HealthEndpointGroups.of(primary, Map.of("readiness", readiness, "custom", custom));
+    HealthEndpointGroups original = mock(HealthEndpointGroups.class);
+    when(original.getPrimary()).thenReturn(primary);
+    when(original.getNames()).thenReturn(Set.of("readiness", "custom"));
+    when(original.get("readiness")).thenReturn(readiness);
+    when(original.get("custom")).thenReturn(custom);
+    when(original.get(readinessPath)).thenReturn(readiness);
+    when(original.get(customPath)).thenReturn(custom);
+    when(original.getAllWithAdditionalPath(WebServerNamespace.SERVER))
+        .thenReturn(Set.of(readiness, custom));
     HealthEndpointGroups processed = processor.postProcessHealthEndpointGroups(original);
 
     assertSame(primary, processed.getPrimary());
@@ -44,9 +64,15 @@ class TlsCertificateReadinessHealthEndpointGroupsPostProcessorTest {
     assertTrue(processedReadiness.isMember("existingContributor"));
     assertTrue(processedReadiness.showComponents(securityContext));
     assertFalse(processedReadiness.showDetails(securityContext));
-    assertSame(readiness.getStatusAggregator(), processedReadiness.getStatusAggregator());
-    assertSame(readiness.getHttpCodeStatusMapper(), processedReadiness.getHttpCodeStatusMapper());
-    assertSame(readiness.getAdditionalPath(), processedReadiness.getAdditionalPath());
+    assertSame(statusAggregator, processedReadiness.getStatusAggregator());
+    assertSame(httpCodeStatusMapper, processedReadiness.getHttpCodeStatusMapper());
+    assertSame(readinessPath, processedReadiness.getAdditionalPath());
+    assertSame(processedReadiness, processed.get(readinessPath));
+    assertSame(custom, processed.get(customPath));
+    assertEquals(
+        Set.of(processedReadiness, custom),
+        processed.getAllWithAdditionalPath(WebServerNamespace.SERVER));
+    verify(original, times(1)).get("readiness");
   }
 
   @Test

@@ -24,7 +24,8 @@ public final class TlsCertificateReadinessHealthEndpointGroupsPostProcessor
     if (readiness == null || readiness.isMember(TLS_CERTIFICATE_RELOAD_CONTRIBUTOR)) {
       return groups;
     }
-    return new DelegatingHealthEndpointGroups(groups, new TlsCertificateReadinessGroup(readiness));
+    return new DelegatingHealthEndpointGroups(
+        groups, readiness, new TlsCertificateReadinessGroup(readiness));
   }
 
   private static final class TlsCertificateReadinessGroup implements HealthEndpointGroup {
@@ -67,11 +68,15 @@ public final class TlsCertificateReadinessHealthEndpointGroupsPostProcessor
 
   private static final class DelegatingHealthEndpointGroups implements HealthEndpointGroups {
     private final HealthEndpointGroups delegate;
+    private final HealthEndpointGroup originalReadiness;
     private final HealthEndpointGroup readiness;
 
     private DelegatingHealthEndpointGroups(
-        HealthEndpointGroups delegate, HealthEndpointGroup readiness) {
+        HealthEndpointGroups delegate,
+        HealthEndpointGroup originalReadiness,
+        HealthEndpointGroup readiness) {
       this.delegate = delegate;
+      this.originalReadiness = originalReadiness;
       this.readiness = readiness;
     }
 
@@ -96,18 +101,18 @@ public final class TlsCertificateReadinessHealthEndpointGroupsPostProcessor
     @Override
     public HealthEndpointGroup get(AdditionalHealthEndpointPath path) {
       HealthEndpointGroup group = delegate.get(path);
-      return group == delegate.get(READINESS_GROUP) ? readiness : group;
+      return group == originalReadiness ? readiness : group;
     }
 
     @Override
     public Set<HealthEndpointGroup> getAllWithAdditionalPath(WebServerNamespace namespace) {
       Set<HealthEndpointGroup> groups = delegate.getAllWithAdditionalPath(namespace);
-      if (groups.isEmpty() || !groups.contains(delegate.get(READINESS_GROUP))) {
+      if (groups.isEmpty() || !groups.contains(originalReadiness)) {
         return groups;
       }
       Set<HealthEndpointGroup> wrappedGroups = new LinkedHashSet<>();
       for (HealthEndpointGroup group : groups) {
-        wrappedGroups.add(group == delegate.get(READINESS_GROUP) ? readiness : group);
+        wrappedGroups.add(group == originalReadiness ? readiness : group);
       }
       return wrappedGroups;
     }
