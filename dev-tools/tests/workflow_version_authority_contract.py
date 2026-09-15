@@ -389,7 +389,7 @@ def main() -> int:
     conditional_contract_profile = (
         "${{ (needs.changes.outputs.lightweight_only == 'true' && "
         "needs.changes.outputs.design_docs_changed == 'true' && "
-        "needs.changes.outputs.validation_python_changed != 'true') && 'none' || 'ci' }}"
+        "needs.changes.outputs.validation_python_changed != 'true') && 'yaml' || 'ci' }}"
     )
     node_count = python_count = gh_count = 0
     for path in workflow_paths:
