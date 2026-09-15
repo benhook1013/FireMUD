@@ -100,6 +100,10 @@ public class TcpProxyEventClient implements AutoCloseable {
       reloadChannel();
     } catch (Exception e) {
       logger.error("Failed to reload gRPC channel", e);
+      if (e instanceof RuntimeException runtimeException) {
+        throw runtimeException;
+      }
+      throw new IllegalStateException("Failed to reload gRPC channel", e);
     }
   }
 

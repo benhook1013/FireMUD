@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
@@ -124,6 +125,32 @@ class TcpProxyEventClientTest {
     verify(previousChannel, org.mockito.Mockito.never()).shutdown();
   }
 
+  @Test
+  void watcherReloadPropagatesFailureToCertificateWatcher() throws Exception {
+    ServiceEndpointsProperties endpoints = mock(ServiceEndpointsProperties.class);
+    when(endpoints.copy()).thenReturn(endpoints);
+    CommonGrpcClientProperties tlsProps = mock(CommonGrpcClientProperties.class);
+    when(tlsProps.copy()).thenReturn(tlsProps);
+    GrpcTlsMaterialResolver resolver = mock(GrpcTlsMaterialResolver.class);
+    when(resolver.resolve(tlsProps)).thenThrow(new java.io.IOException("material unavailable"));
+
+    TcpProxyEventClient client =
+        new TcpProxyEventClient(
+            endpoints,
+            tlsProps,
+            mock(GrpcChannelFactory.class),
+            resolver,
+            BlockingGrpcStubCustomizer.noop());
+
+    Throwable failure = invokeSafeReload(client);
+
+    org.junit.jupiter.api.Assertions.assertInstanceOf(IllegalStateException.class, failure);
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "Failed to reload gRPC channel", failure.getMessage());
+    org.junit.jupiter.api.Assertions.assertInstanceOf(
+        java.io.IOException.class, failure.getCause());
+  }
+
   private static void setField(Object target, String fieldName, Object value) {
     try {
       Field field = target.getClass().getDeclaredField(fieldName);
@@ -151,6 +178,19 @@ class TcpProxyEventClientTest {
       method.invoke(client);
     } catch (ReflectiveOperationException e) {
       throw new IllegalStateException("Failed to invoke reloadChannel", e);
+    }
+  }
+
+  private static Throwable invokeSafeReload(TcpProxyEventClient client) {
+    try {
+      var method = TcpProxyEventClient.class.getDeclaredMethod("safeReload");
+      method.setAccessible(true);
+      method.invoke(client);
+      throw new AssertionError("safeReload unexpectedly succeeded");
+    } catch (InvocationTargetException e) {
+      return e.getCause();
+    } catch (ReflectiveOperationException e) {
+      throw new IllegalStateException("Failed to invoke safeReload", e);
     }
   }
 }

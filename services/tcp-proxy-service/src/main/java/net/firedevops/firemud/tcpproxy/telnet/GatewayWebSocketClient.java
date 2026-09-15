@@ -457,10 +457,17 @@ public final class GatewayWebSocketClient implements AutoCloseable {
       // The constructor publishes the initial client state before starting this watcher, so a
       // reloadNow callback can only replace a fully initialized generation and can retire it
       // safely.
-      certificateWatcher = TlsCertificateWatcher.createAndStart(watchedPaths, this::reloadNow);
+      certificateWatcher =
+          TlsCertificateWatcher.createAndStart(watchedPaths, this::reloadFromWatcher);
     } catch (IOException e) {
       throw configurationFailure(
           "client_cert_invalid", "Gateway WebSocket TLS files could not be watched", e);
+    }
+  }
+
+  private void reloadFromWatcher() {
+    if (!reloadNow()) {
+      throw new IllegalStateException("Gateway WebSocket TLS reload failed closed");
     }
   }
 

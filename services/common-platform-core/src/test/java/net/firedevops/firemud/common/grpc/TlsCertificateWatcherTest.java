@@ -173,8 +173,9 @@ class TlsCertificateWatcherTest {
     AtomicInteger attempts = new AtomicInteger();
     CountDownLatch firstAttempt = new CountDownLatch(1);
     CountDownLatch successfulRetry = new CountDownLatch(1);
+    WatcherCounts baseline = watcherCounts(TlsCertificateWatcher.health());
 
-    try (TlsCertificateWatcher ignored =
+    try (TlsCertificateWatcher watcher =
         TlsCertificateWatcher.createAndStart(
             List.of(certificate, privateKey),
             () -> {
@@ -187,10 +188,14 @@ class TlsCertificateWatcherTest {
             })) {
       Files.writeString(certificate, "certificate-2");
       assertTrue(firstAttempt.await(5, TimeUnit.SECONDS));
+      awaitUnhealthy(watcher);
+      assertHealthDelta(baseline, 1, 0, 1, TlsCertificateWatcher.health());
 
       Files.writeString(privateKey, "key-2");
       assertTrue(successfulRetry.await(5, TimeUnit.SECONDS));
       assertTrue(attempts.get() >= 2);
+      awaitHealthy(watcher);
+      assertHealthDelta(baseline, 1, 1, 0, TlsCertificateWatcher.health());
     }
   }
 
@@ -363,6 +368,22 @@ class TlsCertificateWatcherTest {
       Thread.sleep(10);
     }
     assertFalse(watcher.isRunning());
+  }
+
+  private static void awaitUnhealthy(TlsCertificateWatcher watcher) throws Exception {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    while (watcher.hasAllRequiredRegistrations() && System.nanoTime() < deadline) {
+      Thread.sleep(10);
+    }
+    assertFalse(watcher.hasAllRequiredRegistrations());
+  }
+
+  private static void awaitHealthy(TlsCertificateWatcher watcher) throws Exception {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    while (!watcher.hasAllRequiredRegistrations() && System.nanoTime() < deadline) {
+      Thread.sleep(10);
+    }
+    assertTrue(watcher.hasAllRequiredRegistrations());
   }
 
   private static WatchEvent<Path> pathEvent(WatchEvent.Kind<Path> kind, Path context) {

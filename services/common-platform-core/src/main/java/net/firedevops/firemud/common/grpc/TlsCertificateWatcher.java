@@ -42,6 +42,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
   private final Runnable onChange;
   private final AtomicBoolean running = new AtomicBoolean(true);
   private final AtomicBoolean allRequiredRegistrationsValid = new AtomicBoolean(true);
+  private final AtomicBoolean reloadCallbackHealthy = new AtomicBoolean(true);
   private final AtomicBoolean started = new AtomicBoolean();
   private final Thread thread;
 
@@ -132,7 +133,9 @@ public class TlsCertificateWatcher implements AutoCloseable {
           logger.info("TLS certificate projection or file change detected; reloading credentials");
           try {
             onChange.run();
+            reloadCallbackHealthy.set(true);
           } catch (RuntimeException e) {
+            reloadCallbackHealthy.set(false);
             logger.error(
                 "TLS certificate reload callback failed; continuing to watch credentials", e);
           }
@@ -212,7 +215,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
   }
 
   public boolean hasAllRequiredRegistrations() {
-    return running.get() && allRequiredRegistrationsValid.get();
+    return running.get() && allRequiredRegistrationsValid.get() && reloadCallbackHealthy.get();
   }
 
   /** Returns the aggregate health of all successfully started certificate watchers. */
