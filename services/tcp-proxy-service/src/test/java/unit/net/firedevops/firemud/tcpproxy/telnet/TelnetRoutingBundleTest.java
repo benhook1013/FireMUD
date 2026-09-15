@@ -62,23 +62,20 @@ class TelnetRoutingBundleTest {
   void configuredDefaultsRejectGameInstanceIdWithoutTenantId() {
     assertThrows(
         IllegalArgumentException.class,
-        () ->
-            TelnetRoutingBundle.validateConfiguredDefaults(
-                "game-instance", null, null, null, null));
+        () -> TelnetRoutingBundle.validateConfiguredDefaults("42", null, null, null, null));
   }
 
   @Test
   void configuredDefaultsRejectTenantIdWithoutGameInstanceId() {
     assertThrows(
         IllegalArgumentException.class,
-        () -> TelnetRoutingBundle.validateConfiguredDefaults(null, "tenant", null, null, null));
+        () -> TelnetRoutingBundle.validateConfiguredDefaults(null, "7", null, null, null));
   }
 
   @Test
   void configuredDefaultsAllowCompleteFiveFieldBundle() {
     TelnetRoutingBundle routingBundle =
-        TelnetRoutingBundle.validateConfiguredDefaults(
-            "42", "7", "demo", "production", "17");
+        TelnetRoutingBundle.validateConfiguredDefaults("42", "7", "demo", "production", "17");
 
     assertEquals("demo", routingBundle.worldSlug());
     assertEquals("production", routingBundle.realmSlug());
@@ -90,9 +87,7 @@ class TelnetRoutingBundleTest {
     IllegalArgumentException exception =
         assertThrows(
             IllegalArgumentException.class,
-            () ->
-                TelnetRoutingBundle.validateConfiguredDefaults(
-                    "game-instance", "tenant", null, null, null));
+            () -> TelnetRoutingBundle.validateConfiguredDefaults("42", "7", null, null, null));
 
     assertEquals(
         "Configured routing defaults must include X-Game-Instance-Id, X-Tenant-Id, "

@@ -94,22 +94,11 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
         trustedTcpProxy && isSessionRoute
             ? exchange.getRequest().getHeaders().getFirst(HDR_PROXY_TENANT_ID)
             : null;
-    String incomingWorldSlug =
-        trustedTcpProxy && isSessionRoute
-            ? exchange.getRequest().getHeaders().getFirst(HDR_WORLD_SLUG)
-            : null;
-    String incomingRealmSlug =
-        trustedTcpProxy && isSessionRoute
-            ? exchange.getRequest().getHeaders().getFirst(HDR_REALM_SLUG)
-            : null;
-    String incomingPointerVersion =
-        trustedTcpProxy && isSessionRoute
-            ? exchange.getRequest().getHeaders().getFirst(HDR_POINTER_VERSION)
-            : null;
+    RoutingBundle incomingRoutingBundle = null;
 
     if (trustedTcpProxy && isSessionRoute) {
       try {
-        incomingPointerVersion = validateRoutingBundle(exchange.getRequest().getHeaders());
+        incomingRoutingBundle = validateRoutingBundle(exchange.getRequest().getHeaders());
       } catch (RuntimeException ex) {
         LOG.debug("Rejecting session route: invalid trusted proxy routing bundle", ex);
         exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
@@ -127,7 +116,7 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
         return exchange.getResponse().setComplete();
       }
     }
-    final String canonicalPointerVersion = incomingPointerVersion;
+    final RoutingBundle canonicalRoutingBundle = incomingRoutingBundle;
 
     ServerWebExchange mutated =
         exchange
@@ -155,14 +144,11 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
                               headers.set(HDR_TENANT_ID, incomingProxyTenantId);
                             }
                             if (isSessionRoute) {
-                              if (incomingWorldSlug != null) {
-                                headers.set(HDR_WORLD_SLUG, incomingWorldSlug);
-                              }
-                              if (incomingRealmSlug != null) {
-                                headers.set(HDR_REALM_SLUG, incomingRealmSlug);
-                              }
-                              if (canonicalPointerVersion != null) {
-                                headers.set(HDR_POINTER_VERSION, canonicalPointerVersion);
+                              if (canonicalRoutingBundle != null) {
+                                headers.set(HDR_WORLD_SLUG, canonicalRoutingBundle.worldSlug());
+                                headers.set(HDR_REALM_SLUG, canonicalRoutingBundle.realmSlug());
+                                headers.set(
+                                    HDR_POINTER_VERSION, canonicalRoutingBundle.pointerVersion());
                               }
                             }
                           }
@@ -172,7 +158,7 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
     return chain.filter(mutated);
   }
 
-  private static String validateRoutingBundle(HttpHeaders headers) {
+  private static RoutingBundle validateRoutingBundle(HttpHeaders headers) {
     boolean hasWorld = headers.get(HDR_WORLD_SLUG) != null;
     boolean hasRealm = headers.get(HDR_REALM_SLUG) != null;
     boolean hasPointer = headers.get(HDR_POINTER_VERSION) != null;
@@ -186,11 +172,17 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
     String worldSlug = singleHeaderValue(headers, HDR_WORLD_SLUG);
     String realmSlug = singleHeaderValue(headers, HDR_REALM_SLUG);
     String pointerVersion = singleHeaderValue(headers, HDR_POINTER_VERSION);
-    GameplayRoutingBundleValidator.requireCanonicalSlug(worldSlug, HDR_WORLD_SLUG);
-    GameplayRoutingBundleValidator.requireCanonicalSlug(realmSlug, HDR_REALM_SLUG);
-    return GameplayRoutingBundleValidator.requireCanonicalPointerVersion(
-        pointerVersion, HDR_POINTER_VERSION);
+    String canonicalWorldSlug =
+        GameplayRoutingBundleValidator.requireCanonicalSlug(worldSlug, HDR_WORLD_SLUG);
+    String canonicalRealmSlug =
+        GameplayRoutingBundleValidator.requireCanonicalSlug(realmSlug, HDR_REALM_SLUG);
+    String canonicalPointerVersion =
+        GameplayRoutingBundleValidator.requireCanonicalPointerVersion(
+            pointerVersion, HDR_POINTER_VERSION);
+    return new RoutingBundle(canonicalWorldSlug, canonicalRealmSlug, canonicalPointerVersion);
   }
+
+  private record RoutingBundle(String worldSlug, String realmSlug, String pointerVersion) {}
 
   private static String singleHeaderValue(HttpHeaders headers, String headerName) {
     List<String> values = headers.get(headerName);

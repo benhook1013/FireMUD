@@ -22,6 +22,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
 import net.firedevops.firemud.common.LoggingUtil;
 import org.slf4j.Logger;
 import org.springframework.boot.health.contributor.Health;
@@ -55,7 +56,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
   private final AtomicBoolean reloadCallbackHealthy = new AtomicBoolean(true);
   private final AtomicBoolean started = new AtomicBoolean();
   private final ScheduledExecutorService retryExecutor;
-  private final Object callbackMonitor = new Object();
+  private final ReentrantLock callbackMonitor = new ReentrantLock();
   private final Object callbackStateMonitor = new Object();
   private final Object retryMonitor = new Object();
   private final Object registrationMonitor = new Object();
@@ -169,7 +170,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
             return;
           }
           logger.info("TLS certificate projection or file change detected; reloading credentials");
-          if (!invokeReloadCallback(false)) {
+          if (invokeReloadCallback(false) == CallbackInvocationResult.FAILED) {
             scheduleCallbackRetry();
           }
         }
@@ -182,31 +183,40 @@ public class TlsCertificateWatcher implements AutoCloseable {
     }
   }
 
-  private boolean invokeReloadCallback(boolean retryOnlyWhenUnhealthy) {
+  private CallbackInvocationResult invokeReloadCallback(boolean retryOnlyWhenUnhealthy) {
     if (!running.get()) {
-      return false;
+      return CallbackInvocationResult.SKIPPED;
     }
     Thread callbackThread = Thread.currentThread();
     activeCallbacks.add(callbackThread);
     try {
-      synchronized (callbackMonitor) {
+      if (retryOnlyWhenUnhealthy) {
+        if (!callbackMonitor.tryLock()) {
+          return CallbackInvocationResult.SKIPPED;
+        }
+      } else {
+        callbackMonitor.lock();
+      }
+      try {
         if (!running.get()) {
-          return false;
+          return CallbackInvocationResult.SKIPPED;
         }
         if (retryOnlyWhenUnhealthy && reloadCallbackHealthy.get()) {
-          return true;
+          return CallbackInvocationResult.SKIPPED;
         }
         try {
           onChange.run();
           reloadCallbackHealthy.set(true);
           cancelScheduledRetry();
-          return true;
+          return CallbackInvocationResult.SUCCEEDED;
         } catch (RuntimeException e) {
           reloadCallbackHealthy.set(false);
           logger.error(
               "TLS certificate reload callback failed; continuing to watch credentials", e);
-          return false;
+          return CallbackInvocationResult.FAILED;
         }
+      } finally {
+        callbackMonitor.unlock();
       }
     } finally {
       activeCallbacks.remove(callbackThread);
@@ -248,7 +258,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
       retryTask = null;
       retryScheduled = false;
     }
-    if (running.get() && !invokeReloadCallback(true)) {
+    if (running.get() && invokeReloadCallback(true) == CallbackInvocationResult.FAILED) {
       logger.error("TLS certificate reload retry failed; awaiting a future certificate event");
     }
   }
@@ -362,12 +372,18 @@ public class TlsCertificateWatcher implements AutoCloseable {
       synchronized (retryMonitor) {
         registrationRetryAttempts = 0;
       }
-      if (!invokeReloadCallback(true)) {
+      if (invokeReloadCallback(true) == CallbackInvocationResult.FAILED) {
         scheduleCallbackRetry();
       }
     } else {
       scheduleRegistrationRetry();
     }
+  }
+
+  private enum CallbackInvocationResult {
+    SUCCEEDED,
+    SKIPPED,
+    FAILED
   }
 
   private void drainReloadBurst() {

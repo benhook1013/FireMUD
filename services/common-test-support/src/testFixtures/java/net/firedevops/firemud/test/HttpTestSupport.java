@@ -67,8 +67,7 @@ public final class HttpTestSupport {
         String responseBody =
             getBody(
                 url,
-                Duration.ofNanos(
-                    Math.min(Math.max(1, remainingNanos), PROBE_TIMEOUT.toNanos())));
+                Duration.ofNanos(Math.min(Math.max(1, remainingNanos), PROBE_TIMEOUT.toNanos())));
         lastSuccessfulResponseBody = responseBody;
         if (isReady(responseBody)) {
           return;
@@ -113,7 +112,7 @@ public final class HttpTestSupport {
         return false;
       }
       JsonNode status = root.get("status");
-      return status != null && status.isTextual() && "UP".equals(status.textValue());
+      return status != null && status.isString() && "UP".equals(status.stringValue());
     } catch (JacksonException ignored) {
       return false;
     }

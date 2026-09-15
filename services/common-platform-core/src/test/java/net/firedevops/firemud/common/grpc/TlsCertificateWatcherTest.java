@@ -9,6 +9,8 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardWatchEventKinds;
@@ -17,7 +19,10 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -396,6 +401,64 @@ class TlsCertificateWatcherTest {
       assertEquals(2, attempts.get());
       assertFalse(watcher.isHealthy());
     }
+  }
+
+  @Test
+  void callbackRetryDoesNotBlockBehindActiveReloadCallback(@TempDir Path directory)
+      throws Exception {
+    Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
+    AtomicInteger attempts = new AtomicInteger();
+    CountDownLatch failedCallback = new CountDownLatch(1);
+    CountDownLatch blockingCallbackEntered = new CountDownLatch(1);
+    CountDownLatch releaseBlockingCallback = new CountDownLatch(1);
+
+    try (TlsCertificateWatcher watcher =
+        TlsCertificateWatcher.createAndStart(
+            List.of(certificate),
+            () -> {
+              if (attempts.incrementAndGet() == 1) {
+                failedCallback.countDown();
+                throw new IllegalStateException("simulated reload failure");
+              }
+              blockingCallbackEntered.countDown();
+              try {
+                releaseBlockingCallback.await();
+              } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+              }
+            })) {
+      Files.writeString(certificate, "certificate-2");
+      assertTrue(failedCallback.await(5, TimeUnit.SECONDS));
+      Files.writeString(certificate, "certificate-3");
+      assertTrue(blockingCallbackEntered.await(5, TimeUnit.SECONDS));
+
+      Future<?> retry = submitRetryCallback(watcher);
+      try {
+        retry.get(500, TimeUnit.MILLISECONDS);
+      } catch (TimeoutException e) {
+        throw new AssertionError("callback retry blocked behind an active reload callback", e);
+      } finally {
+        releaseBlockingCallback.countDown();
+      }
+      retry.get(5, TimeUnit.SECONDS);
+      assertEquals(2, attempts.get());
+    }
+  }
+
+  private static Future<?> submitRetryCallback(TlsCertificateWatcher watcher) throws Exception {
+    Field executorField = TlsCertificateWatcher.class.getDeclaredField("retryExecutor");
+    executorField.setAccessible(true);
+    ScheduledExecutorService retryExecutor = (ScheduledExecutorService) executorField.get(watcher);
+    Method retryMethod = TlsCertificateWatcher.class.getDeclaredMethod("retryReloadCallback");
+    retryMethod.setAccessible(true);
+    return retryExecutor.submit(
+        () -> {
+          try {
+            retryMethod.invoke(watcher);
+          } catch (ReflectiveOperationException e) {
+            throw new AssertionError("failed to invoke callback retry", e);
+          }
+        });
   }
 
   @Test
