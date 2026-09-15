@@ -91,7 +91,8 @@ public class TcpProxyEventClient implements AutoCloseable {
           .withDescription("TcpProxyEventClient is closed or not initialized")
           .asRuntimeException();
     }
-    return currentStub.withDeadlineAfter(DISCONNECT_NOTIFY_DEADLINE_MS, TimeUnit.MILLISECONDS)
+    return currentStub
+        .withDeadlineAfter(DISCONNECT_NOTIFY_DEADLINE_MS, TimeUnit.MILLISECONDS)
         .notifyDisconnect(request);
   }
 

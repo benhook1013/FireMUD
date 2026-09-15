@@ -73,6 +73,36 @@ class TcpProxyTlsListenerTest {
   }
 
   @Test
+  void internalListenerRejectsMissingBindAddress() {
+    GatewayTcpProxyListenerProperties properties = tlsProperties(0);
+    properties.setBindAddress(null);
+    TcpProxyTlsListener listener =
+        new TcpProxyTlsListener(
+            properties, mock(TcpProxyTrustPolicy.class), mock(HttpHandler.class));
+
+    Throwable failure = catchThrowable(listener::start);
+
+    assertThat(failure)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("TCP Proxy listener bind address must be configured and non-blank");
+  }
+
+  @Test
+  void internalListenerRejectsBlankBindAddress() {
+    GatewayTcpProxyListenerProperties properties = tlsProperties(0);
+    properties.setBindAddress("  \t ");
+    TcpProxyTlsListener listener =
+        new TcpProxyTlsListener(
+            properties, mock(TcpProxyTrustPolicy.class), mock(HttpHandler.class));
+
+    Throwable failure = catchThrowable(listener::start);
+
+    assertThat(failure)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("TCP Proxy listener bind address must be configured and non-blank");
+  }
+
+  @Test
   void internalHandlerExposesOnlyGameplayAndHealthPaths() {
     AtomicBoolean delegated = new AtomicBoolean();
     HttpHandler delegate =

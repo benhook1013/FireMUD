@@ -10,8 +10,8 @@ import static org.mockito.Mockito.when;
 import io.grpc.Status;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
@@ -41,8 +41,7 @@ class TcpProxyEventClientTest {
 
     RuntimeException uninitialized =
         org.junit.jupiter.api.Assertions.assertThrows(
-            RuntimeException.class,
-            () -> client.notifyDisconnect("42", "7", "proxy-1", 9L));
+            RuntimeException.class, () -> client.notifyDisconnect("42", "7", "proxy-1", 9L));
     assertEquals(Status.Code.UNAVAILABLE, Status.fromThrowable(uninitialized).getCode());
     assertEquals(
         "TcpProxyEventClient is closed or not initialized",
@@ -51,8 +50,7 @@ class TcpProxyEventClientTest {
     client.close();
     RuntimeException closed =
         org.junit.jupiter.api.Assertions.assertThrows(
-            RuntimeException.class,
-            () -> client.notifyDisconnect("42", "7", "proxy-1", 9L));
+            RuntimeException.class, () -> client.notifyDisconnect("42", "7", "proxy-1", 9L));
     assertInstanceOf(io.grpc.StatusRuntimeException.class, closed);
     assertEquals(Status.Code.UNAVAILABLE, Status.fromThrowable(closed).getCode());
     assertEquals(

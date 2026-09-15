@@ -96,6 +96,24 @@ class TlsCertificateReadinessHealthEndpointGroupsPostProcessorTest {
   }
 
   @Test
+  void leavesAlreadyGatedReadinessGroupsUnchanged() {
+    HealthEndpointGroups original = mock(HealthEndpointGroups.class);
+    HealthEndpointGroup readiness = mock(HealthEndpointGroup.class);
+    when(original.get("readiness")).thenReturn(readiness);
+    when(readiness.isMember(
+            TlsCertificateReadinessHealthEndpointGroupsPostProcessor
+                .TLS_CERTIFICATE_RELOAD_CONTRIBUTOR))
+        .thenReturn(true);
+
+    assertSame(original, processor.postProcessHealthEndpointGroups(original));
+    verify(original, times(1)).get("readiness");
+    verify(readiness, times(1))
+        .isMember(
+            TlsCertificateReadinessHealthEndpointGroupsPostProcessor
+                .TLS_CERTIFICATE_RELOAD_CONTRIBUTOR);
+  }
+
+  @Test
   void leavesGroupsUnchangedWhenReadinessDoesNotExist() {
     HealthEndpointGroup primary = mock(HealthEndpointGroup.class);
     HealthEndpointGroups original =

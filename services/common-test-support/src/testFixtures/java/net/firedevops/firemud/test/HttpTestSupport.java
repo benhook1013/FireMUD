@@ -18,7 +18,7 @@ import tools.jackson.databind.json.JsonMapper;
 /** Shared HTTP helpers for integration tests that should not depend on TestRestTemplate beans. */
 public final class HttpTestSupport {
   private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
-  private static final Duration PROBE_TIMEOUT = Duration.ofSeconds(1);
+  static final Duration PROBE_TIMEOUT = Duration.ofSeconds(1);
   private static final ObjectMapper JSON_MAPPER =
       JsonMapper.builder().enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).build();
 

@@ -171,6 +171,7 @@ public class CommonCoreAutoConfiguration {
   }
 
   @Bean
+  @ConditionalOnMissingBean(HealthEndpointGroupsPostProcessor.class)
   public HealthEndpointGroupsPostProcessor tlsCertificateReadinessHealthEndpointGroupsPostProcessor(
       @Value("${spring.application.name:unknown}") String serviceName) {
     return new TlsCertificateReadinessHealthEndpointGroupsPostProcessor(serviceName);

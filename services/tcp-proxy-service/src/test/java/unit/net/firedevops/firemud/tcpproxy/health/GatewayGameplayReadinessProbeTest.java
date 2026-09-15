@@ -208,10 +208,8 @@ class GatewayGameplayReadinessProbeTest {
       verify(client, timeout(2000).atLeast(3)).isReadyAsync();
       awaitReadiness(probe, false);
 
-      logs.awaitCount(
-          Level.WARN, "Gateway readiness poll failed to start; reporting unready", 1);
-      logs.awaitCount(
-          Level.DEBUG, "Gateway readiness poll failed to start; reporting unready", 1);
+      logs.awaitCount(Level.WARN, "Gateway readiness poll failed to start; reporting unready", 1);
+      logs.awaitCount(Level.DEBUG, "Gateway readiness poll failed to start; reporting unready", 1);
     }
   }
 

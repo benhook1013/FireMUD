@@ -67,7 +67,10 @@ class HttpTestSupportTest {
     AtomicInteger requestCount = new AtomicInteger();
     try (TestHttpServer server =
         TestHttpServer.hanging(requestStarted, releaseRequest, requestFinished, requestCount)) {
-      Duration timeout = Duration.ofMillis(2_200);
+      Duration timeout =
+          HttpTestSupport.PROBE_TIMEOUT
+              .multipliedBy(2)
+              .plus(TestAsyncAssertions.DEFAULT_POLL_INTERVAL);
       long startedAt = System.nanoTime();
       Throwable failure;
       try {

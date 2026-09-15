@@ -46,6 +46,40 @@ PY
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values-controller.yaml" \
   --namespace pr-42 >"$TMP_DIR/rendered-controller.yaml"
+python3 - "$TMP_DIR/rendered-controller.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+documents = list(yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8")))
+service = next(
+    document
+    for document in documents
+    if document.get("kind") == "Service" and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+assert service["metadata"]["annotations"]["firemud.dev/allocated-telnet-port"] == "32042"
+assert next(port for port in service["spec"]["ports"] if port["port"] == 2323)["nodePort"] == 32042
+PY
+python3 - "$TMP_DIR/values-controller.yaml" "$TMP_DIR/values-controller-sentinel.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+Path(sys.argv[2]).write_text(source.replace("telnetPort: 32042", "telnetPort: __TELNET_PORT__"), encoding="utf-8")
+PY
+TELNET_PORT_RESOLUTION_ERROR="preview.telnetPort must be resolved before rendering hosted-controller TCP Proxy"
+if helm template raw-hosted-telnet-port "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/values-controller-sentinel.yaml" \
+  --namespace pr-42 >/dev/null 2>"$TMP_DIR/raw-telnet-port.err"; then
+  echo "chart rendered hosted-controller TCP Proxy with unresolved Telnet port sentinel" >&2
+  exit 1
+fi
+if ! grep -Fq "$TELNET_PORT_RESOLUTION_ERROR" "$TMP_DIR/raw-telnet-port.err"; then
+  echo "chart did not report the unresolved Telnet port sentinel" >&2
+  sed -n '1,20p' "$TMP_DIR/raw-telnet-port.err" >&2
+  exit 1
+fi
 cp "$TMP_DIR/values-controller.yaml" "$TMP_DIR/values-controller-clusterip.yaml"
 python3 - "$TMP_DIR/values-controller-clusterip.yaml" <<'PY'
 import sys

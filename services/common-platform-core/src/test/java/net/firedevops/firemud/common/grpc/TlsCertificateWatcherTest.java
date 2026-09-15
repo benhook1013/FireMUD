@@ -15,8 +15,8 @@ import java.nio.file.StandardWatchEventKinds;
 import java.nio.file.WatchEvent;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -32,6 +32,18 @@ class TlsCertificateWatcherTest {
   @Test
   void aggregateHealthMatchesCurrentRegistryCounts() {
     assertAggregateHealth(TlsCertificateWatcher.health());
+  }
+
+  @Test
+  void registrationRetryBackoffGrowsAndCaps() {
+    assertEquals(100, TlsCertificateWatcher.registrationRetryDelay(1).toMillis());
+    assertEquals(200, TlsCertificateWatcher.registrationRetryDelay(2).toMillis());
+    assertEquals(400, TlsCertificateWatcher.registrationRetryDelay(3).toMillis());
+    assertEquals(800, TlsCertificateWatcher.registrationRetryDelay(4).toMillis());
+    assertEquals(1_600, TlsCertificateWatcher.registrationRetryDelay(5).toMillis());
+    assertEquals(25_600, TlsCertificateWatcher.registrationRetryDelay(9).toMillis());
+    assertEquals(30_000, TlsCertificateWatcher.registrationRetryDelay(10).toMillis());
+    assertEquals(30_000, TlsCertificateWatcher.registrationRetryDelay(20).toMillis());
   }
 
   @Test
@@ -149,7 +161,7 @@ class TlsCertificateWatcherTest {
 
       assertTrue(reloaded.await(5, TimeUnit.SECONDS));
       assertTrue(watcher.isRunning());
-      assertTrue(watcher.hasAllRequiredRegistrations());
+      assertTrue(watcher.isHealthy());
     }
   }
 
@@ -176,11 +188,8 @@ class TlsCertificateWatcherTest {
         Files.delete(replacedDirectory);
         awaitUnhealthy(watcher);
         awaitLogCount(
-            appender,
-            Level.ERROR,
-            "TLS certificate watcher failed its bounded re-registration retry",
-            2);
-        assertFalse(watcher.hasAllRequiredRegistrations());
+            appender, Level.ERROR, "TLS certificate watcher failed its re-registration retry", 3);
+        assertFalse(watcher.isHealthy());
 
         Files.createDirectory(replacedDirectory);
         Files.writeString(replacedCertificate, "certificate-2");
@@ -213,7 +222,7 @@ class TlsCertificateWatcherTest {
       Files.delete(missingDirectory);
       awaitUnhealthy(watcher);
       Thread.sleep(700);
-      assertFalse(watcher.hasAllRequiredRegistrations());
+      assertFalse(watcher.isHealthy());
       assertHealthDelta(baseline, 1, 0, 1, TlsCertificateWatcher.health());
     } finally {
       watcher.close();
@@ -237,7 +246,7 @@ class TlsCertificateWatcherTest {
       Files.delete(certificate);
       Files.delete(watchedDirectory);
       awaitStopped(watcher);
-      assertFalse(watcher.hasAllRequiredRegistrations());
+      assertFalse(watcher.isHealthy());
       assertHealthDelta(baseline, 1, 0, 1, TlsCertificateWatcher.health());
     } finally {
       watcher.close();
@@ -375,7 +384,7 @@ class TlsCertificateWatcherTest {
       assertTrue(retryAttempt.await(5, TimeUnit.SECONDS));
       Thread.sleep(300);
       assertEquals(2, attempts.get());
-      assertFalse(watcher.hasAllRequiredRegistrations());
+      assertFalse(watcher.isHealthy());
     }
   }
 
@@ -397,7 +406,7 @@ class TlsCertificateWatcherTest {
       Files.writeString(certificate, "certificate-2");
       assertTrue(callbackInvoked.await(5, TimeUnit.SECONDS));
       awaitStopped(watcher);
-      assertFalse(watcher.hasAllRequiredRegistrations());
+      assertFalse(watcher.isHealthy());
       assertHealthDelta(baseline, 1, 0, 1, TlsCertificateWatcher.health());
     } finally {
       watcher.close();
@@ -446,13 +455,13 @@ class TlsCertificateWatcherTest {
                 }
               }
             })) {
-      assertTrue(watcher.hasAllRequiredRegistrations());
+      assertTrue(watcher.isHealthy());
       Files.delete(retiredCertificate);
       Files.delete(retiredDirectory);
       watcher.start();
       assertTrue(retiredReload.await(5, TimeUnit.SECONDS));
       assertTrue(watcher.isRunning());
-      assertFalse(watcher.hasAllRequiredRegistrations());
+      assertFalse(watcher.isHealthy());
       assertHealthDelta(baseline, 1, 0, 1, TlsCertificateWatcher.health());
 
       synchronized (reloadPhase) {
@@ -461,7 +470,7 @@ class TlsCertificateWatcherTest {
       }
       assertTrue(retainedReload.await(5, TimeUnit.SECONDS));
       assertTrue(watcher.isRunning());
-      assertFalse(watcher.hasAllRequiredRegistrations());
+      assertFalse(watcher.isHealthy());
       assertHealthDelta(baseline, 1, 0, 1, TlsCertificateWatcher.health());
     }
   }
@@ -552,18 +561,18 @@ class TlsCertificateWatcherTest {
 
   private static void awaitUnhealthy(TlsCertificateWatcher watcher) throws Exception {
     long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-    while (watcher.hasAllRequiredRegistrations() && System.nanoTime() < deadline) {
+    while (watcher.isHealthy() && System.nanoTime() < deadline) {
       Thread.sleep(10);
     }
-    assertFalse(watcher.hasAllRequiredRegistrations());
+    assertFalse(watcher.isHealthy());
   }
 
   private static void awaitHealthy(TlsCertificateWatcher watcher) throws Exception {
     long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-    while (!watcher.hasAllRequiredRegistrations() && System.nanoTime() < deadline) {
+    while (!watcher.isHealthy() && System.nanoTime() < deadline) {
       Thread.sleep(10);
     }
-    assertTrue(watcher.hasAllRequiredRegistrations());
+    assertTrue(watcher.isHealthy());
   }
 
   private static void awaitLogCount(

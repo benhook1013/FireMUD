@@ -368,7 +368,7 @@ public final class GatewayWebSocketClient implements AutoCloseable {
 
   boolean isCertificateWatcherHealthy() {
     TlsCertificateWatcher watcher = certificateWatcher;
-    return watcher != null && watcher.hasAllRequiredRegistrations();
+    return watcher != null && watcher.isHealthy();
   }
 
   @Override

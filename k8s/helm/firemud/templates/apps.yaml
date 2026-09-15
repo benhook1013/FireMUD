@@ -48,6 +48,13 @@
 {{- $certificateIdentityMode := include "firemud.certificateIdentityMode" . | trim }}
 {{- range $service := .Values.previewStack.services }}
 {{- $serviceType := default "ClusterIP" $service.serviceType }}
+{{- $telnetPort := "" }}
+{{- if and (eq $service.name "tcp-proxy-service") (eq $certificateIdentityMode "hosted-controller") }}
+{{- $telnetPort = required "preview.telnetPort is required for hosted-controller TCP Proxy" (get $preview "telnetPort") }}
+{{- if eq (toString $telnetPort) "__TELNET_PORT__" }}
+{{- fail "preview.telnetPort must be resolved before rendering hosted-controller TCP Proxy" }}
+{{- end }}
+{{- end }}
 {{- $mountTelnetTls := and (eq $service.name "tcp-proxy-service") $service.mountTelnetTls $telnetTls.enabled }}
 {{- $mountGatewayWsServerTls := and (eq $service.name "spring-cloud-gateway") $service.mountGatewayWsServerTls $gatewayWsTls.enabled }}
 {{- $mountGatewayWsClientTls := and (eq $service.name "tcp-proxy-service") $service.mountGatewayWsClientTls $gatewayWsTls.enabled }}
@@ -255,7 +262,7 @@ metadata:
   name: {{ $service.name }}
   {{- if and (eq $service.name "tcp-proxy-service") (eq $certificateIdentityMode "hosted-controller") }}
   annotations:
-    firemud.dev/allocated-telnet-port: {{ required "preview.telnetPort is required for hosted-controller TCP Proxy" (get $preview "telnetPort") | quote }}
+    firemud.dev/allocated-telnet-port: {{ $telnetPort | quote }}
   {{- end }}
   labels:
 {{ include "firemud.commonLabels" $ | indent 4 }}
@@ -276,7 +283,7 @@ spec:
       {{- if not (or (eq $serviceType "NodePort") (eq $serviceType "LoadBalancer")) }}
       {{- fail "hosted-controller TCP Proxy nodePort requires serviceType NodePort or LoadBalancer" }}
       {{- end }}
-      nodePort: {{ required "preview.telnetPort is required for hosted-controller TCP Proxy" (get $preview "telnetPort") }}
+      nodePort: {{ $telnetPort }}
       {{- else if $port.nodePort }}
       nodePort: {{ $port.nodePort }}
       {{- end }}

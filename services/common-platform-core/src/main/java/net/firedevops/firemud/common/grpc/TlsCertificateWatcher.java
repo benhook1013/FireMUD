@@ -37,10 +37,11 @@ public class TlsCertificateWatcher implements AutoCloseable {
   private static final Duration MAX_RELOAD_DELAY = Duration.ofSeconds(1);
   // Let the worker's bounded event-debounce window flush any recovery event before retrying.
   private static final Duration CALLBACK_RETRY_DELAY = MAX_RELOAD_DELAY.plus(RELOAD_DEBOUNCE);
-  private static final Duration REGISTRATION_RETRY_DELAY = Duration.ofMillis(100);
+  private static final Duration INITIAL_REGISTRATION_RETRY_DELAY = Duration.ofMillis(100);
+  private static final Duration MAX_REGISTRATION_RETRY_DELAY = Duration.ofSeconds(30);
+  private static final int MAX_REGISTRATION_RETRY_ATTEMPT = 10;
   private static final Duration SHUTDOWN_GRACE_PERIOD = Duration.ofSeconds(5);
   private static final Duration SHUTDOWN_FORCE_PERIOD = Duration.ofMillis(100);
-  private static final int MAX_REGISTRATION_RETRY_ATTEMPTS = 5;
   private static final Path PROJECTED_DATA_LINK = Path.of("..data");
   private static final Set<TlsCertificateWatcher> ACTIVE_WATCHERS = ConcurrentHashMap.newKeySet();
 
@@ -202,7 +203,8 @@ public class TlsCertificateWatcher implements AutoCloseable {
           return true;
         } catch (RuntimeException e) {
           reloadCallbackHealthy.set(false);
-          logger.error("TLS certificate reload callback failed; continuing to watch credentials", e);
+          logger.error(
+              "TLS certificate reload callback failed; continuing to watch credentials", e);
           return false;
         }
       }
@@ -280,7 +282,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
         }
       }
       allRequiredRegistrationsValid.set(allRequiredDirectoriesRegistered());
-      // A bounded retry can keep a watcher alive only when another watch key remains active.
+      // A delayed retry can keep a watcher alive only when another watch key remains active.
       // With the final key gone, processEvents must stop fail closed instead of reviving it.
       missingRegistration = !allRequiredRegistrationsValid.get() && !keys.isEmpty();
     }
@@ -296,24 +298,32 @@ public class TlsCertificateWatcher implements AutoCloseable {
 
   private void scheduleRegistrationRetry() {
     synchronized (retryMonitor) {
-      if (!running.get()
-          || registrationRetryScheduled
-          || registrationRetryAttempts >= MAX_REGISTRATION_RETRY_ATTEMPTS) {
+      if (!running.get() || registrationRetryScheduled) {
         return;
       }
-      registrationRetryAttempts++;
+      int retryAttempt = Math.min(MAX_REGISTRATION_RETRY_ATTEMPT, registrationRetryAttempts + 1);
+      Duration retryDelay = registrationRetryDelay(retryAttempt);
+      registrationRetryAttempts = retryAttempt;
       registrationRetryScheduled = true;
       try {
         registrationRetryTask =
             retryExecutor.schedule(
-                this::retryMissingRegistrations,
-                REGISTRATION_RETRY_DELAY.toNanos(),
-                TimeUnit.NANOSECONDS);
+                this::retryMissingRegistrations, retryDelay.toNanos(), TimeUnit.NANOSECONDS);
       } catch (RuntimeException e) {
         registrationRetryScheduled = false;
-        logger.error("TLS certificate watcher could not schedule a bounded registration retry", e);
+        logger.error("TLS certificate watcher could not schedule a registration retry", e);
       }
     }
+  }
+
+  static Duration registrationRetryDelay(int attempt) {
+    long delayNanos = INITIAL_REGISTRATION_RETRY_DELAY.toNanos();
+    long maximumNanos = MAX_REGISTRATION_RETRY_DELAY.toNanos();
+    for (int i = 1; i < attempt && delayNanos < maximumNanos; i++) {
+      delayNanos =
+          Math.min(maximumNanos, delayNanos > maximumNanos / 2 ? maximumNanos : delayNanos * 2);
+    }
+    return Duration.ofNanos(delayNanos);
   }
 
   private void retryMissingRegistrations() {
@@ -337,9 +347,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
           keys.put(registerDirectory(directory), directory);
         } catch (IOException | RuntimeException e) {
           logger.error(
-              "TLS certificate watcher failed its bounded re-registration retry for {}",
-              directory,
-              e);
+              "TLS certificate watcher failed its re-registration retry for {}", directory, e);
         }
       }
       allRequiredRegistrationsValid.set(allRequiredDirectoriesRegistered());
@@ -397,7 +405,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
     return running.get();
   }
 
-  public boolean hasAllRequiredRegistrations() {
+  public boolean isHealthy() {
     return running.get() && allRequiredRegistrationsValid.get() && reloadCallbackHealthy.get();
   }
 
@@ -406,10 +414,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
     List<TlsCertificateWatcher> activeWatcherSnapshot = List.copyOf(ACTIVE_WATCHERS);
     int activeWatchers = activeWatcherSnapshot.size();
     int healthyWatchers =
-        (int)
-            activeWatcherSnapshot.stream()
-                .filter(TlsCertificateWatcher::hasAllRequiredRegistrations)
-                .count();
+        (int) activeWatcherSnapshot.stream().filter(TlsCertificateWatcher::isHealthy).count();
     int unhealthyWatchers = activeWatchers - healthyWatchers;
     Map<String, Object> details = new LinkedHashMap<>();
     details.put("activeWatchers", activeWatchers);
@@ -453,9 +458,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
 
   private void interruptActiveCallbacks() {
     Thread caller = Thread.currentThread();
-    activeCallbacks.stream()
-        .filter(thread -> thread != caller)
-        .forEach(Thread::interrupt);
+    activeCallbacks.stream().filter(thread -> thread != caller).forEach(Thread::interrupt);
   }
 
   private static boolean awaitThreadTermination(Thread thread, Duration timeout) {

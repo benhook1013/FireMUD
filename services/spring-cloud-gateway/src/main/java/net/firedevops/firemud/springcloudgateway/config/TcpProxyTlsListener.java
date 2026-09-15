@@ -63,6 +63,7 @@ public final class TcpProxyTlsListener implements SmartLifecycle {
       return;
     }
     try {
+      String bindAddress = requiredBindAddress(properties.getBindAddress());
       SslContext sslContext = buildSslContext();
       ChannelGroup channels =
           new DefaultChannelGroup("tcp-proxy-internal-tls", GlobalEventExecutor.INSTANCE, true);
@@ -72,14 +73,14 @@ public final class TcpProxyTlsListener implements SmartLifecycle {
       server =
           HttpServer.create()
               .channelGroup(channels)
-              .host(properties.getBindAddress().trim())
+              .host(bindAddress)
               .port(properties.getPort())
               .secure(spec -> spec.sslContext(sslContext))
               .handle(adapter)
               .bindNow();
       LOG.info(
           "TCP Proxy internal TLS listener started address={} port={} profile={}",
-          properties.getBindAddress(),
+          bindAddress,
           server.port(),
           trustPolicy.profileName());
       scheduleProfileExpiry();
@@ -142,6 +143,14 @@ public final class TcpProxyTlsListener implements SmartLifecycle {
           "TCP Proxy listener " + label + " is missing or unreadable: " + path);
     }
     return path.toFile();
+  }
+
+  private static String requiredBindAddress(String configuredAddress) {
+    if (configuredAddress == null || configuredAddress.isBlank()) {
+      throw new IllegalStateException(
+          "TCP Proxy listener bind address must be configured and non-blank");
+    }
+    return configuredAddress.trim();
   }
 
   @Override
