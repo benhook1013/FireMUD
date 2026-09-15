@@ -93,6 +93,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
         if (keys.isEmpty()) {
           logger.error(
               "TLS certificate watcher lost all registered directories; stopping credential reloads");
+          running.set(false);
           return;
         }
 

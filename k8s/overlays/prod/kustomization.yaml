@@ -8,6 +8,7 @@ resources:
 
 patchesStrategicMerge:
   - firemud-app-image-pull-secret.yaml
+  - gameplay-bridge-identity.yaml
 
 images:
   - name: ghcr.io/benhook1013/account-service

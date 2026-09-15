@@ -31,9 +31,30 @@ spec:
               value: /tls/client.key
             - name: FIREMUD_GRPC_CA_CERT_PATH
               value: /tls/ca.crt
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED
+              value: "true"
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS
+              value: "0.0.0.0"
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT
+              value: "8443"
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_CERT_CHAIN_PATH
+              value: /gateway-ws-server-tls/tls.crt
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_PRIVATE_KEY_PATH
+              value: /gateway-ws-server-tls/tls.key
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_CLIENT_CA_PATH
+              value: /gateway-ws-server-tls/ca.crt
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT
+              value: staging
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE
+              value: production_uri
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN
+              value: spiffe://firemud/ns/firemud/sa/tcp-proxy-service
           volumeMounts:
             - name: grpc-tls
               mountPath: /tls
+              readOnly: true
+            - name: gateway-ws-server-tls
+              mountPath: /gateway-ws-server-tls
               readOnly: true
             - name: jwt-signing-keys
               mountPath: /var/run/secrets/firemud/jwt
@@ -54,6 +75,8 @@ spec:
           ports:
             - containerPort: 8080
             - containerPort: 6565
+            - containerPort: 8443
+              name: gateway-ws-mtls
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness
@@ -103,6 +126,16 @@ spec:
         - name: grpc-tls
           secret:
             secretName: firemud-grpc-tls
+        - name: gateway-ws-server-tls
+          secret:
+            secretName: firemud-gateway-internal-ws
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+              - key: ca.crt
+                path: ca.crt
         - name: jwt-signing-keys
           secret:
             secretName: jwt-signing-keys
@@ -123,7 +156,7 @@ spec:
     app: spring-cloud-gateway
   ports:
     - port: 443
-      targetPort: 8080
+      targetPort: 8443
       protocol: TCP
 ---
 apiVersion: v1

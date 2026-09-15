@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spring-cloud-gateway
+  namespace: firemud
+spec:
+  template:
+    spec:
+      containers:
+        - name: spring-cloud-gateway
+          env:
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT
+              value: production
+      volumes:
+        - name: gateway-ws-server-tls
+          secret:
+            secretName: production-gateway-internal-ws
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tcp-proxy-service
+  namespace: firemud
+spec:
+  template:
+    spec:
+      volumes:
+        - name: gateway-ws-client-tls
+          secret:
+            secretName: production-tcp-proxy-bridge

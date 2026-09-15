@@ -737,12 +737,23 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                 .start();
         DEFAULT_GAME_INSTANCE_ID =
             STACK.freshGameplayBaseline(TENANT_ID, 1L, ACCOUNT_ID, 7L, ACCOUNT_ID);
+        awaitGameSessionReadiness(STACK.gameSessionPort());
       } catch (IOException e) {
         throw new IllegalStateException("Failed to start shared gameplay stack", e);
       }
     }
     if (GATEWAY == null) {
       GATEWAY = startGateway(STACK.gameSessionPort());
+    }
+  }
+
+  private static void awaitGameSessionReadiness(int gameSessionPort) {
+    try {
+      HttpTestSupport.awaitReadiness(
+          "http://localhost:" + gameSessionPort + "/actuator/health/readiness", COMMAND_WAIT);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("Interrupted waiting for Game Session readiness", e);
     }
   }
 

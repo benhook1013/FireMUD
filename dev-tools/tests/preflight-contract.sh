@@ -1961,19 +1961,12 @@ if not_applicable_status != "fail" or "non-passing required policy IDs" not in n
 
 PY
 
-# The checked-in production overlay lacks the dedicated bridge client wiring,
-# so static preflight must fail closed rather than authorize URL-only wiring.
-set +e
+# The checked-in production overlay includes the complete dedicated bridge
+# client wiring, so static preflight must pass its bridge contract.
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF="$CHECKED_OUT_SHA" \
   FIREMUD_PREFLIGHT_OUTPUT="$PRODUCTION_REPORT" \
   python3 "$SCRIPT" production >"$LEGACY_PRODUCTION_PREFLIGHT_OUTPUT"
-production_preflight_status=$?
-set -e
-if [ "$production_preflight_status" -eq 0 ]; then
-  echo "production preflight unexpectedly authorized URL-only bridge wiring" >&2
-  exit 1
-fi
 python3 - "$PRODUCTION_REPORT" <<'PY'
 import json
 import pathlib
@@ -1981,8 +1974,8 @@ import sys
 
 report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 bridge = next(check for check in report["checkResults"] if check["policyId"] == "PREFLIGHT-BRIDGE-001")
-if bridge["status"] != "fail" or bridge["required"] is not True:
-    raise SystemExit(f"production bridge gap was not an explicit required failure: {bridge}")
+if bridge["status"] != "pass" or bridge["required"] is not True:
+    raise SystemExit(f"production bridge contract did not pass as required: {bridge}")
 PY
 
 cat >"$LEGACY_PRODUCTION_TRAFFIC_EVIDENCE" <<'JSON'
@@ -2079,19 +2072,12 @@ fi
 
 for env in staging production; do
   REPORT="$TMP_DIR/preflight-$env.json"
-  # These checked-in overlays lack the dedicated bridge client wiring; static
-  # CI must record that required gap rather than authorize URL-only wiring.
-  set +e
+  # Checked-in overlays include the complete dedicated bridge client wiring;
+  # static CI must pass the required bridge contract.
   FIREMUD_PREFLIGHT_CONTEXT=ci-static \
     FIREMUD_DEPLOYMENT_REF="$CHECKED_OUT_SHA" \
     FIREMUD_PREFLIGHT_OUTPUT="$REPORT" \
     python3 "$SCRIPT" "$env" >"$TMP_DIR/firemud-preflight-contract-$env.out"
-  preflight_status=$?
-  set -e
-  if [ "$preflight_status" -eq 0 ]; then
-    echo "$env: URL-only bridge wiring unexpectedly passed static CI" >&2
-    exit 1
-  fi
 
   python3 - <<'PY' "$REPORT" "$env"
 import json
@@ -2106,13 +2092,13 @@ if report.get("expectedBindingsRef") != expected_ref:
 failures = [
     check
     for check in report["checkResults"]
-    if check["status"] == "fail" and check["policyId"] not in {"PREFLIGHT-JWT-001", "PREFLIGHT-JWKS-001", "PREFLIGHT-BRIDGE-001", "PREFLIGHT-SERVICES-001", "PREFLIGHT-REDIS-001"}
+    if check["status"] == "fail" and check["policyId"] not in {"PREFLIGHT-JWT-001", "PREFLIGHT-JWKS-001", "PREFLIGHT-SERVICES-001", "PREFLIGHT-REDIS-001"}
 ]
 if failures:
     raise SystemExit(f"{env}: unexpected preflight failures: {failures}")
 bridge = [check for check in report["checkResults"] if check["policyId"] == "PREFLIGHT-BRIDGE-001"]
-if len(bridge) != 1 or bridge[0]["status"] != "fail" or bridge[0]["required"] is not True:
-    raise SystemExit(f"{env}: missing explicit required bridge-client failure: {bridge}")
+if len(bridge) != 1 or bridge[0]["status"] != "pass" or bridge[0]["required"] is not True:
+    raise SystemExit(f"{env}: bridge-client contract did not pass as required: {bridge}")
 for policy_id in ("PREFLIGHT-SERVICES-001", "PREFLIGHT-REDIS-001"):
     effective_check = [check for check in report["checkResults"] if check["policyId"] == policy_id]
     if len(effective_check) != 1 or effective_check[0]["status"] != "pass" or effective_check[0]["required"] is not True:

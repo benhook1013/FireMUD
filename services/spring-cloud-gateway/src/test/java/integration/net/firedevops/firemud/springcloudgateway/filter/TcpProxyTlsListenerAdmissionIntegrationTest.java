@@ -100,9 +100,19 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
           .isEqualTo("OUT_OF_SERVICE")
           .jsonPath("$.components.gameplayRouteReadiness.status")
           .isEqualTo("OUT_OF_SERVICE")
-          .jsonPath("$.components.tcpProxyTlsListenerReadiness.status")
+          .jsonPath("$.components.tcpProxyTlsListenerReadiness")
+          .doesNotExist();
+      client
+          .get()
+          .uri("/actuator/health/tcpProxyTlsListenerReadiness")
+          .accept(MediaType.APPLICATION_JSON)
+          .exchange()
+          .expectStatus()
+          .is2xxSuccessful()
+          .expectBody()
+          .jsonPath("$.status")
           .isEqualTo("UP")
-          .jsonPath("$.components.tcpProxyTlsListenerReadiness.details.listener")
+          .jsonPath("$.details.listener")
           .isEqualTo("disabled");
     }
   }

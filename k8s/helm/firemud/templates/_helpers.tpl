@@ -101,16 +101,10 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- $root := .root -}}
 {{- $preview := $root.Values.preview | default (dict) -}}
 {{- $gatewayWsTls := $root.Values.previewStack.gatewayWsTls | default (dict) -}}
-{{- $prNumber := get $preview "prNumber" -}}
-{{- if or (not (hasKey $preview "prNumber")) (and (empty $prNumber) (ne (toString $prNumber) "0")) -}}
-{{- fail "preview.prNumber is required when Gateway WebSocket TLS is enabled" -}}
-{{- end -}}
-{{- if eq (toString $prNumber) "__PR_NUMBER__" -}}
-{{- fail "preview.prNumber must be resolved before Gateway WebSocket TLS trust-environment inference" -}}
-{{- end -}}
-{{- $inferredTrustEnvironment := ternary "dev-demo-cluster" "pr-preview" (eq (toString $prNumber) "0") -}}
-{{- if and (hasKey $gatewayWsTls "trustEnvironment") (not (empty $gatewayWsTls.trustEnvironment)) -}}
-{{- $configuredTrustEnvironment := $gatewayWsTls.trustEnvironment | toString -}}
+{{- $configuredTrustEnvironment := get $gatewayWsTls "trustEnvironment" | default "" | toString -}}
+{{- $hasConfiguredTrustEnvironment := ne $configuredTrustEnvironment "" -}}
+{{- $trustEnvironment := "" -}}
+{{- if $hasConfiguredTrustEnvironment -}}
 {{- if not (or
   (eq $configuredTrustEnvironment "local-dev")
   (eq $configuredTrustEnvironment "pr-preview")
@@ -121,8 +115,17 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 ) -}}
 {{- fail (printf "previewStack.gatewayWsTls.trustEnvironment must be one of the canonical environments (got %q)" $configuredTrustEnvironment) -}}
 {{- end -}}
+{{- $trustEnvironment = $configuredTrustEnvironment -}}
+{{- else -}}
+{{- $prNumber := get $preview "prNumber" -}}
+{{- if or (not (hasKey $preview "prNumber")) (and (empty $prNumber) (ne (toString $prNumber) "0")) -}}
+{{- fail "preview.prNumber is required when Gateway WebSocket TLS is enabled" -}}
 {{- end -}}
-{{- $trustEnvironment := $gatewayWsTls.trustEnvironment | default $inferredTrustEnvironment -}}
+{{- if eq (toString $prNumber) "__PR_NUMBER__" -}}
+{{- fail "preview.prNumber must be resolved before Gateway WebSocket TLS trust-environment inference" -}}
+{{- end -}}
+{{- $trustEnvironment = ternary "dev-demo-cluster" "pr-preview" (eq (toString $prNumber) "0") -}}
+{{- end -}}
 - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED
   value: "true"
 - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS

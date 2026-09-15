@@ -49,6 +49,9 @@ dependencies {
 configurations.named("runtimeClasspath") {
     // TCP Proxy is a stateless edge and must not activate Redis auto-configuration at runtime.
     exclude(group = "org.springframework.boot", module = "spring-boot-starter-data-redis")
+    exclude(group = "org.springframework.boot", module = "spring-boot-data-redis")
+    exclude(group = "org.springframework.data", module = "spring-data-redis")
+    exclude(group = "io.lettuce", module = "lettuce-core")
 }
 
 val forbiddenRedisRuntimeModules =

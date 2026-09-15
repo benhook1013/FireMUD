@@ -48,7 +48,8 @@ class PrometheusMetricsIntegrationTest {
         .contains("tcpproxy_buffer_depth")
         .contains("tcpproxy_websocket_reconnects_total")
         .contains("tcpproxy_connection_duration_seconds")
-        .contains("tcpproxy_tls_misconfig_total");
+        .contains("tcpproxy_tls_misconfig_total")
+        .contains("tcpproxy_bridge_metadata_misconfig_total");
   }
 
   @TestConfiguration(proxyBeanMethods = false)

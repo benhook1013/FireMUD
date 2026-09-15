@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -70,7 +71,7 @@ class GatewayGameplayReadinessProbeTest {
     when(client.isReadyAsync()).thenReturn(pending);
     try (GatewayGameplayReadinessProbe probe =
         new GatewayGameplayReadinessProbe(client, Duration.ofHours(1))) {
-      verify(client, org.mockito.Mockito.timeout(1000)).isReadyAsync();
+      verify(client, timeout(1000)).isReadyAsync();
       assertFalse(probe.isReady());
       pending.complete(true);
       awaitReadiness(probe, true);
@@ -87,7 +88,7 @@ class GatewayGameplayReadinessProbeTest {
     when(client.readinessUri()).thenReturn(readinessUri);
     try (GatewayGameplayReadinessProbe probe =
         new GatewayGameplayReadinessProbe(client, Duration.ofMillis(10))) {
-      verify(client, org.mockito.Mockito.timeout(1000)).isReadyAsync();
+      verify(client, timeout(1000)).isReadyAsync();
       assertFalse(probe.isReady());
       verify(client, after(50).times(1)).isReadyAsync();
 
@@ -106,10 +107,10 @@ class GatewayGameplayReadinessProbeTest {
     when(client.isReadyAsync()).thenReturn(healthy, unhealthy);
     try (GatewayGameplayReadinessProbe probe =
         new GatewayGameplayReadinessProbe(client, Duration.ofMillis(10))) {
-      verify(client, org.mockito.Mockito.timeout(1000)).isReadyAsync();
+      verify(client, timeout(1000)).isReadyAsync();
       healthy.complete(true);
       awaitReadiness(probe, true);
-      verify(client, org.mockito.Mockito.timeout(1000).times(2)).isReadyAsync();
+      verify(client, timeout(1000).times(2)).isReadyAsync();
       unhealthy.complete(false);
       awaitReadiness(probe, false);
     }
@@ -126,13 +127,13 @@ class GatewayGameplayReadinessProbeTest {
         .thenReturn(retry);
     try (GatewayGameplayReadinessProbe probe =
         new GatewayGameplayReadinessProbe(client, Duration.ofMillis(100))) {
-      verify(client, org.mockito.Mockito.timeout(1000)).isReadyAsync();
+      verify(client, timeout(1000)).isReadyAsync();
       healthy.complete(true);
       awaitReadiness(probe, true);
 
-      verify(client, org.mockito.Mockito.timeout(1000).times(2)).isReadyAsync();
+      verify(client, timeout(1000).times(2)).isReadyAsync();
       awaitReadiness(probe, false);
-      verify(client, org.mockito.Mockito.timeout(1000).times(3)).isReadyAsync();
+      verify(client, timeout(1000).times(3)).isReadyAsync();
       assertFalse(probe.isReady());
     }
   }
@@ -150,11 +151,11 @@ class GatewayGameplayReadinessProbeTest {
     try (ReadinessLogCapture logs = new ReadinessLogCapture();
         GatewayGameplayReadinessProbe probe =
             new GatewayGameplayReadinessProbe(client, Duration.ofMillis(25))) {
-      verify(client, org.mockito.Mockito.timeout(1000)).isReadyAsync();
+      verify(client, timeout(1000)).isReadyAsync();
       healthy.complete(true);
       awaitReadiness(probe, true);
 
-      verify(client, org.mockito.Mockito.timeout(2000).times(4)).isReadyAsync();
+      verify(client, timeout(2000).times(4)).isReadyAsync();
       awaitReadiness(probe, false);
 
       assertEquals(
@@ -172,13 +173,13 @@ class GatewayGameplayReadinessProbeTest {
     when(client.isReadyAsync()).thenReturn(healthy).thenReturn(null).thenReturn(retry);
     try (GatewayGameplayReadinessProbe probe =
         new GatewayGameplayReadinessProbe(client, Duration.ofMillis(100))) {
-      verify(client, org.mockito.Mockito.timeout(1000)).isReadyAsync();
+      verify(client, timeout(1000)).isReadyAsync();
       healthy.complete(true);
       awaitReadiness(probe, true);
 
-      verify(client, org.mockito.Mockito.timeout(1000).times(2)).isReadyAsync();
+      verify(client, timeout(1000).times(2)).isReadyAsync();
       awaitReadiness(probe, false);
-      verify(client, org.mockito.Mockito.timeout(1000).times(3)).isReadyAsync();
+      verify(client, timeout(1000).times(3)).isReadyAsync();
       assertFalse(probe.isReady());
     }
   }
@@ -198,10 +199,10 @@ class GatewayGameplayReadinessProbeTest {
     when(client.isReadyAsync()).thenReturn(throwingFuture, retry);
     try (GatewayGameplayReadinessProbe probe =
         new GatewayGameplayReadinessProbe(client, Duration.ofMillis(100))) {
-      verify(client, org.mockito.Mockito.timeout(1000)).isReadyAsync();
+      verify(client, timeout(1000)).isReadyAsync();
       assertFalse(probe.isReady());
 
-      verify(client, org.mockito.Mockito.timeout(1000).times(2)).isReadyAsync();
+      verify(client, timeout(1000).times(2)).isReadyAsync();
       retry.complete(true);
       awaitReadiness(probe, true);
     }
@@ -218,11 +219,11 @@ class GatewayGameplayReadinessProbeTest {
     try (ReadinessLogCapture logs = new ReadinessLogCapture();
         GatewayGameplayReadinessProbe probe =
             new GatewayGameplayReadinessProbe(client, Duration.ofMillis(25))) {
-      verify(client, org.mockito.Mockito.timeout(1000)).isReadyAsync();
+      verify(client, timeout(1000)).isReadyAsync();
       healthy.complete(true);
       awaitReadiness(probe, true);
 
-      verify(client, org.mockito.Mockito.timeout(2000).times(4)).isReadyAsync();
+      verify(client, timeout(2000).times(4)).isReadyAsync();
       awaitReadiness(probe, false);
 
       assertEquals(1, logs.count(Level.WARN, "Gateway readiness poll failed; reporting unready"));
@@ -255,7 +256,7 @@ class GatewayGameplayReadinessProbeTest {
     when(client.isReadyAsync()).thenReturn(throwingFuture);
     try (GatewayGameplayReadinessProbe probe =
         new GatewayGameplayReadinessProbe(client, Duration.ofHours(1))) {
-      verify(client, org.mockito.Mockito.timeout(1000)).isReadyAsync();
+      verify(client, timeout(1000)).isReadyAsync();
       assertEquals(1, cancellationAttempts.get());
       assertFalse(probe.isReady());
 
@@ -272,7 +273,7 @@ class GatewayGameplayReadinessProbeTest {
     when(client.isReadyAsync()).thenReturn(pending);
     GatewayGameplayReadinessProbe probe =
         new GatewayGameplayReadinessProbe(client, Duration.ofMillis(10));
-    verify(client, org.mockito.Mockito.timeout(1000)).isReadyAsync();
+    verify(client, timeout(1000)).isReadyAsync();
 
     probe.close();
 
@@ -294,7 +295,7 @@ class GatewayGameplayReadinessProbeTest {
     when(client.isReadyAsync()).thenReturn(pending);
     GatewayGameplayReadinessProbe probe =
         new GatewayGameplayReadinessProbe(client, Duration.ofMillis(10));
-    verify(client, org.mockito.Mockito.timeout(1000)).isReadyAsync();
+    verify(client, timeout(1000)).isReadyAsync();
 
     try {
       probe.close();

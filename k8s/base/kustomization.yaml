@@ -17,3 +17,4 @@ resources:
   - world-management-service.yaml
   - internal-services-network-policy.yaml
   - internal-services-egress-network-policy.yaml
+  - gameplay-bridge-network-policy.yaml

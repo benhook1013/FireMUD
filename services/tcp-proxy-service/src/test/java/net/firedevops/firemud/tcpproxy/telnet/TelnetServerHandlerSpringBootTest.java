@@ -7,6 +7,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.netty.channel.embedded.EmbeddedChannel;
 import java.net.InetSocketAddress;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import org.junit.jupiter.api.Test;
@@ -39,7 +40,7 @@ class TelnetServerHandlerSpringBootTest {
                 worldSlug,
                 realmSlug,
                 pointerVersion,
-                listener) -> new java.util.concurrent.CompletableFuture<>(),
+                listener) -> new CompletableFuture<>(),
             eventService,
             bufferDepth,
             sessionId,

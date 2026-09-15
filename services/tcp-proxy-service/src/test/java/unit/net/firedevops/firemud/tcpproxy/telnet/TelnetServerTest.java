@@ -1,6 +1,7 @@
 package net.firedevops.firemud.tcpproxy.telnet;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -115,12 +116,12 @@ class TelnetServerTest {
   @Test
   void invalidConfiguredDefaultsFailBeforeAcceptingSessions() {
     String invalid = "safe\r\ninjected";
-    for (int index = 0; index < 5; index++) {
+    for (int index = 0; index < 6; index++) {
       String gameInstanceId = index == 0 ? invalid : "instance";
       String tenantId = index == 1 ? invalid : "tenant";
       String worldSlug = index == 2 ? invalid : "world";
       String realmSlug = index == 3 ? invalid : "realm";
-      String pointerVersion = index == 4 ? invalid : "1";
+      String pointerVersion = index == 4 ? invalid : (index == 5 ? "0" : "1");
       var registry = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
 
       IllegalStateException ex =
@@ -132,22 +133,8 @@ class TelnetServerTest {
 
       assertEquals(
           "TCP proxy default bridge metadata is invalid; reason=bad_header", ex.getMessage());
-      assertEquals(1.0, registry.counter("tcpproxy.tls.misconfig").count());
+      assertEquals(1.0, registry.counter("tcpproxy.bridge.metadata.misconfig").count());
     }
-  }
-
-  @Test
-  void invalidConfiguredRoutingDefaultsFailWithStableReason() {
-    var registry = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
-
-    IllegalStateException ex =
-        assertThrows(
-            IllegalStateException.class,
-            () -> newServerWithDefaults(registry, "instance", "tenant", "world", "realm", "0"));
-
-    assertEquals(
-        "TCP proxy default bridge metadata is invalid; reason=bad_header", ex.getMessage());
-    assertEquals(1.0, registry.counter("tcpproxy.tls.misconfig").count());
   }
 
   @Test
@@ -156,8 +143,8 @@ class TelnetServerTest {
     Path keyPath = tempDir.resolve("dev-key.pem");
     try (InputStream certificate = getClass().getResourceAsStream("/certs/dev-cert.pem");
         InputStream key = getClass().getResourceAsStream("/certs/dev-key.pem")) {
-      assertTrue(certificate != null);
-      assertTrue(key != null);
+      assertNotNull(certificate);
+      assertNotNull(key);
       Files.copy(certificate, certificatePath);
       Files.copy(key, keyPath);
     }
@@ -181,7 +168,7 @@ class TelnetServerTest {
     KeyStore trustStore = KeyStore.getInstance(KeyStore.getDefaultType());
     trustStore.load(null, null);
     try (InputStream certificate = getClass().getResourceAsStream("/certs/dev-cert.pem")) {
-      assertTrue(certificate != null);
+      assertNotNull(certificate);
       X509Certificate devCertificate =
           (X509Certificate)
               CertificateFactory.getInstance("X.509").generateCertificate(certificate);

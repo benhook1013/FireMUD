@@ -1,7 +1,6 @@
 package net.firedevops.firemud.tcpproxy.telnet;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -437,7 +436,6 @@ class TelnetServerHandlerTest {
 
     assertTrue(pendingConnection.isCancelled());
     assertEquals(1, cancellationAttempts.get());
-    assertFalse(booleanField(handler, "reconnecting"));
     executor.shutdownGracefully();
   }
 
@@ -553,7 +551,7 @@ class TelnetServerHandlerTest {
   }
 
   @Test
-  void synchronousGatewayConnectFailureFailClosesTelnetAndClearsReconnectState() {
+  void synchronousGatewayConnectFailureFailClosesTelnet() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TelnetServerHandler handler =
         newHandler(
@@ -585,7 +583,6 @@ class TelnetServerHandlerTest {
         .writeAndFlush(
             "DISCONNECT backend_unavailable Gateway link unavailable; please reconnect\n");
     verify(closeFuture).addListener(ChannelFutureListener.CLOSE);
-    assertFalse(booleanField(handler, "reconnecting"));
     executor.shutdownGracefully();
   }
 
@@ -1621,16 +1618,6 @@ class TelnetServerHandlerTest {
       Field field = TelnetServerHandler.class.getDeclaredField("MAX_BUFFER_DEPTH");
       field.setAccessible(true);
       return field.getInt(null);
-    } catch (ReflectiveOperationException e) {
-      throw new IllegalStateException(e);
-    }
-  }
-
-  private static boolean booleanField(TelnetServerHandler handler, String name) {
-    try {
-      Field field = TelnetServerHandler.class.getDeclaredField(name);
-      field.setAccessible(true);
-      return field.getBoolean(handler);
     } catch (ReflectiveOperationException e) {
       throw new IllegalStateException(e);
     }

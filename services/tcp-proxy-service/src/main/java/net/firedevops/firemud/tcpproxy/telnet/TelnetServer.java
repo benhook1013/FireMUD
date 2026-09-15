@@ -63,6 +63,7 @@ public final class TelnetServer {
   private final Counter connectionCounter;
   private final Counter discardedCommandCounter;
   private final Counter tlsMisconfigCounter;
+  private final Counter bridgeMetadataMisconfigCounter;
   private final Counter connectionLimitExceededCounter;
   private final MeterRegistry meterRegistry;
   private final TcpProxyEventService eventService;
@@ -114,6 +115,8 @@ public final class TelnetServer {
     this.connectionCounter = meterRegistry.counter("tcpproxy.connections.total");
     this.discardedCommandCounter = meterRegistry.counter("tcpproxy.telnet.discarded");
     this.tlsMisconfigCounter = meterRegistry.counter("tcpproxy.tls.misconfig");
+    this.bridgeMetadataMisconfigCounter =
+        meterRegistry.counter("tcpproxy.bridge.metadata.misconfig");
     this.connectionLimitExceededCounter =
         meterRegistry.counter("tcpproxy.connections.limit.exceeded");
     TelnetRoutingBundle defaultRoutingBundle;
@@ -126,7 +129,7 @@ public final class TelnetServer {
               defaultRealmSlug,
               defaultPointerVersion);
     } catch (IllegalArgumentException e) {
-      tlsMisconfigCounter.increment();
+      bridgeMetadataMisconfigCounter.increment();
       String message = "TCP proxy default bridge metadata is invalid; reason=bad_header";
       logger.error(message, e);
       throw new IllegalStateException(message, e);

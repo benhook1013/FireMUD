@@ -32,6 +32,12 @@ spec:
               value: /tls/ca.crt
             - name: GATEWAY_WS_URL
               value: wss://spring-cloud-gateway-mtls.firemud.svc.cluster.local/ws/game
+            - name: FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH
+              value: /gateway-ws-client-tls/tls.crt
+            - name: FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH
+              value: /gateway-ws-client-tls/tls.key
+            - name: FIREMUD_GATEWAY_WS_CA_CERT_PATH
+              value: /gateway-ws-client-tls/ca.crt
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
@@ -50,6 +56,9 @@ spec:
           volumeMounts:
             - name: grpc-tls
               mountPath: /tls
+              readOnly: true
+            - name: gateway-ws-client-tls
+              mountPath: /gateway-ws-client-tls
               readOnly: true
             - name: jwt-signing-keys
               mountPath: /var/run/secrets/firemud/jwt
@@ -103,6 +112,16 @@ spec:
         - name: grpc-tls
           secret:
             secretName: firemud-grpc-tls
+        - name: gateway-ws-client-tls
+          secret:
+            secretName: firemud-tcp-proxy-bridge
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+              - key: ca.crt
+                path: ca.crt
         - name: jwt-signing-keys
           secret:
             secretName: jwt-signing-keys

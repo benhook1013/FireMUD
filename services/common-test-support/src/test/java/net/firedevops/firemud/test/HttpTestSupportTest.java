@@ -69,9 +69,7 @@ class HttpTestSupportTest {
       long startedAt = System.nanoTime();
       Throwable failure;
       try {
-        failure =
-            catchThrowable(
-                () -> HttpTestSupport.awaitReadiness(server.url(), timeout));
+        failure = catchThrowable(() -> HttpTestSupport.awaitReadiness(server.url(), timeout));
       } finally {
         releaseRequest.countDown();
       }

@@ -113,7 +113,8 @@ public final class HttpTestSupport {
       throws IOException, InterruptedException {
     HttpRequest request =
         HttpRequest.newBuilder(URI.create(url)).timeout(requestTimeout).GET().build();
-    return HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
+    return HTTP_CLIENT
+        .send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
         .body();
   }
 

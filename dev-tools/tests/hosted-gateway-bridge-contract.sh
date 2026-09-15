@@ -493,6 +493,26 @@ helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
   --set-string previewStack.gatewayWsTls.trustEnvironment=staging \
   --show-only templates/apps.yaml \
   --namespace pr-123 >"$OVERRIDE_RENDERED"
+
+EXPLICIT_WITHOUT_PR_NUMBER_VALUES="$TMP_DIR/explicit-trust-without-pr-number-values.yaml"
+cp "$TMP_DIR/preview-values.yaml" "$EXPLICIT_WITHOUT_PR_NUMBER_VALUES"
+python3 - "$EXPLICIT_WITHOUT_PR_NUMBER_VALUES" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+values = yaml.safe_load(path.read_text(encoding="utf-8"))
+values["preview"].pop("prNumber")
+values["previewStack"]["gatewayWsTls"]["trustEnvironment"] = "staging"
+path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+EXPLICIT_WITHOUT_PR_NUMBER_RENDERED="$TMP_DIR/explicit-trust-without-pr-number.yaml"
+helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$EXPLICIT_WITHOUT_PR_NUMBER_VALUES" \
+  --show-only templates/apps.yaml \
+  --namespace pr-123 >"$EXPLICIT_WITHOUT_PR_NUMBER_RENDERED"
 python3 - "$RENDERED" "$DEV_RENDERED" "$OVERRIDE_RENDERED" <<'PY'
 import sys
 from pathlib import Path
@@ -523,6 +543,34 @@ def trust_environment(path):
 assert trust_environment(sys.argv[1]) == "pr-preview"
 assert trust_environment(sys.argv[2]) == "dev-demo-cluster"
 assert trust_environment(sys.argv[3]) == "staging"
+PY
+python3 - "$EXPLICIT_WITHOUT_PR_NUMBER_RENDERED" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+documents = [
+    document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+gateway = next(
+    document
+    for document in documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "spring-cloud-gateway"
+)
+trust_environment = next(
+    entry["value"]
+    for entry in gateway["spec"]["template"]["spec"]["containers"][0]["env"]
+    if entry.get("name") == "FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT"
+)
+if trust_environment != "staging":
+    raise SystemExit(
+        "explicit trustEnvironment without preview.prNumber did not render staging: "
+        f"{trust_environment!r}"
+    )
 PY
 
 STRING_ZERO_RENDERED="$TMP_DIR/string-zero-preview-pr-number.yaml"

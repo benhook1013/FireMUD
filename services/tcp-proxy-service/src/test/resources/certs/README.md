@@ -6,7 +6,7 @@ These fixtures exercise Gateway WebSocket client-certificate rotation independen
 - `rotated-gateway-client.crt` is the client leaf signed by that CA.
 - `rotated-gateway-client.key` is the matching leaf private key.
 
-The checked-in CA and leaf expire at `2027-09-06 13:32:58 UTC`. Regenerate the complete set together before the more-than-30-day validity test begins failing at `2027-08-07 13:32:58 UTC`. The generic `dev-tools/certs/generate-dev-certs.sh` workflow does not own these rotated fixture filenames.
+The checked-in CA and leaf expire at `2027-09-15 06:22:09 UTC`. Regenerate the complete set together before the more-than-30-day validity test begins failing at `2027-08-16 06:22:09 UTC`. The generic `dev-tools/certs/generate-dev-certs.sh` workflow does not own these rotated fixture filenames.
 
 From the repository root, use OpenSSL to create a new one-year fixture set:
 
@@ -47,11 +47,11 @@ req_extensions = v3_req
 prompt = no
 
 [distinguished_name]
-CN = firemud-grpc
+CN = firemud-gateway-client
 
 [v3_req]
 subjectAltName = @alt_names
-extendedKeyUsage = serverAuth, clientAuth
+extendedKeyUsage = clientAuth
 keyUsage = digitalSignature, keyEncipherment
 
 [alt_names]
