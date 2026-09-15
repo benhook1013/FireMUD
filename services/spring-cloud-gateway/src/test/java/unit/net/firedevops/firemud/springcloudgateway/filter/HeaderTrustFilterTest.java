@@ -217,19 +217,7 @@ class HeaderTrustFilterTest {
         requestBuilder.header("X-Proxy-Client-IP", clientIp);
       }
       MockServerWebExchange exchange = MockServerWebExchange.from(requestBuilder.build());
-      AtomicReference<ServerWebExchange> delegated = new AtomicReference<>();
-
-      filter
-          .filter(
-              exchange,
-              candidate -> {
-                delegated.set(candidate);
-                return Mono.empty();
-              })
-          .block();
-
-      assertThat(delegated.get()).isNull();
-      assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+      assertForbiddenWithoutDelegation(filter, exchange, "clientIp=" + clientIp);
     }
   }
 
@@ -251,19 +239,7 @@ class HeaderTrustFilterTest {
         requestBuilder.header("X-Proxy-Client-IP", clientIp);
       }
       MockServerWebExchange exchange = MockServerWebExchange.from(requestBuilder.build());
-      AtomicReference<ServerWebExchange> delegated = new AtomicReference<>();
-
-      filter
-          .filter(
-              exchange,
-              candidate -> {
-                delegated.set(candidate);
-                return Mono.empty();
-              })
-          .block();
-
-      assertThat(delegated.get()).isNull();
-      assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+      assertForbiddenWithoutDelegation(filter, exchange, "clientIp=" + clientIp);
     }
   }
 
@@ -279,19 +255,7 @@ class HeaderTrustFilterTest {
             MockServerHttpRequest.get("/ws/game/test")
                 .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
                 .build());
-    AtomicReference<ServerWebExchange> delegated = new AtomicReference<>();
-
-    filter
-        .filter(
-            exchange,
-            candidate -> {
-              delegated.set(candidate);
-              return Mono.empty();
-            })
-        .block();
-
-    assertThat(delegated.get()).isNull();
-    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    assertForbiddenWithoutDelegation(filter, exchange, "missing proxy headers");
   }
 
   @Test
@@ -520,19 +484,7 @@ class HeaderTrustFilterTest {
               .header("X-Pointer-Version", "17")
               .build();
       MockServerWebExchange exchange = MockServerWebExchange.from(request);
-      AtomicReference<ServerWebExchange> delegated = new AtomicReference<>();
-
-      filter
-          .filter(
-              exchange,
-              candidate -> {
-                delegated.set(candidate);
-                return Mono.empty();
-              })
-          .block();
-
-      assertThat(delegated.get()).isNull();
-      assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+      assertForbiddenWithoutDelegation(filter, exchange, "path=" + path);
     }
   }
 
@@ -544,6 +496,12 @@ class HeaderTrustFilterTest {
         MockServerWebExchange.from(
             trustedTcpProxyRoutingBundleRequest(path, worldSlug, realmSlug, pointerVersion)
                 .build());
+    String description = routingBundleDescription(path, worldSlug, realmSlug, pointerVersion);
+    assertForbiddenWithoutDelegation(filter, exchange, description);
+  }
+
+  private void assertForbiddenWithoutDelegation(
+      HeaderTrustFilter filter, MockServerWebExchange exchange, String description) {
     AtomicReference<ServerWebExchange> delegated = new AtomicReference<>();
     filter
         .filter(
@@ -553,8 +511,6 @@ class HeaderTrustFilterTest {
               return Mono.empty();
             })
         .block();
-
-    String description = routingBundleDescription(path, worldSlug, realmSlug, pointerVersion);
     assertThat(delegated.get()).as(description).isNull();
     assertThat(exchange.getResponse().getStatusCode())
         .as(description)

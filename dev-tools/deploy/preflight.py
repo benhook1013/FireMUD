@@ -7386,7 +7386,8 @@ def main() -> int:
         deployment_event_id,
     )
     output_path = Path(os.environ.get("FIREMUD_PREFLIGHT_OUTPUT", str(default_output)))
-    started_at = utc_now()
+    evaluated_at = normalize_evaluation_time().replace(microsecond=0)
+    started_at = evaluated_at.isoformat().replace("+00:00", "Z")
     traffic_open_event = os.environ.get("FIREMUD_TRAFFIC_OPEN_EVENT", "")
     if traffic_open_event not in {"", "first-live", "reopen"}:
         fail(f"Invalid FIREMUD_TRAFFIC_OPEN_EVENT: {traffic_open_event}")
@@ -7523,7 +7524,9 @@ def main() -> int:
                 check.policy_id, check.required, check.status, check.message,
             ) or has_required_failure
 
-    _, gateway_bridge_issues = validate_gateway_ws_values(documents, expected_bindings)
+    _, gateway_bridge_issues = validate_gateway_ws_values(
+        documents, expected_bindings, evaluation_time=evaluated_at
+    )
     telnet_tls_issues = validate_hosted_telnet_tls_values(
         documents, target_namespace=target_namespace
     )
@@ -7576,7 +7579,6 @@ def main() -> int:
             has_required_failure = append_result(check_results, "PREFLIGHT-PROMOTION-001", True, "fail", f"Attestation file not found: {promotion_attestation}") or has_required_failure
             has_required_failure = append_result(check_results, "PREFLIGHT-BACKUP-001", True, "fail", "Recovery compatibility cannot be evaluated because the promotion attestation is missing") or has_required_failure
         else:
-            now_dt = normalize_evaluation_time()
             (
                 promotion_status,
                 recovery_rollback_mode,
@@ -7588,7 +7590,7 @@ def main() -> int:
                 service_images,
                 root_dir,
                 expected_production_overlay_ref=deployment_ref,
-                evaluation_time=now_dt,
+                evaluation_time=evaluated_at,
             )
             has_required_failure = append_result(
                 check_results,
@@ -7604,7 +7606,7 @@ def main() -> int:
                 backup_readiness_evidence,
                 deployment_ref,
                 root_dir,
-                evaluation_time=now_dt,
+                evaluation_time=evaluated_at,
             )
             has_required_failure = append_result(check_results, "PREFLIGHT-BACKUP-001", True, recovery_status, recovery_message) or has_required_failure
 
