@@ -301,7 +301,10 @@ grep -q "Skipping static preflight policy enforcement" "$OUTPUT_FILE" || {
       return 0
     fi
     if [[ "${1:-}" == "$REPO_ROOT/dev-tools/deploy/preflight.py" && "${2:-}" == "production" ]]; then
-      [[ "${FIREMUD_PREFLIGHT_CONTEXT:-}" == "ci-static" ]]
+      if [[ "${FIREMUD_PREFLIGHT_CONTEXT:-}" != "ci-static" ]]; then
+        echo "unexpected preflight context: ${FIREMUD_PREFLIGHT_CONTEXT:-}" >&2
+        return 1
+      fi
       production_preflight_invoked="true"
       return 0
     fi
