@@ -38,6 +38,9 @@ public class TlsCertificateWatcher implements AutoCloseable {
   // Let the worker's bounded event-debounce window flush any recovery event before retrying.
   private static final Duration CALLBACK_RETRY_DELAY = MAX_RELOAD_DELAY.plus(RELOAD_DEBOUNCE);
   private static final Duration REGISTRATION_RETRY_DELAY = Duration.ofMillis(100);
+  private static final Duration SHUTDOWN_GRACE_PERIOD = Duration.ofSeconds(5);
+  private static final Duration SHUTDOWN_FORCE_PERIOD = Duration.ofMillis(100);
+  private static final int MAX_REGISTRATION_RETRY_ATTEMPTS = 5;
   private static final Path PROJECTED_DATA_LINK = Path.of("..data");
   private static final Set<TlsCertificateWatcher> ACTIVE_WATCHERS = ConcurrentHashMap.newKeySet();
 
@@ -52,12 +55,15 @@ public class TlsCertificateWatcher implements AutoCloseable {
   private final AtomicBoolean started = new AtomicBoolean();
   private final ScheduledExecutorService retryExecutor;
   private final Object callbackMonitor = new Object();
+  private final Object callbackStateMonitor = new Object();
   private final Object retryMonitor = new Object();
   private final Object registrationMonitor = new Object();
+  private final Set<Thread> activeCallbacks = ConcurrentHashMap.newKeySet();
   private ScheduledFuture<?> retryTask;
   private boolean retryScheduled;
   private ScheduledFuture<?> registrationRetryTask;
   private boolean registrationRetryScheduled;
+  private int registrationRetryAttempts;
   private final Thread thread;
 
   public static TlsCertificateWatcher createAndStart(List<Path> files, Runnable onChange)
@@ -176,22 +182,34 @@ public class TlsCertificateWatcher implements AutoCloseable {
   }
 
   private boolean invokeReloadCallback(boolean retryOnlyWhenUnhealthy) {
-    synchronized (callbackMonitor) {
-      if (!running.get()) {
-        return false;
+    if (!running.get()) {
+      return false;
+    }
+    Thread callbackThread = Thread.currentThread();
+    activeCallbacks.add(callbackThread);
+    try {
+      synchronized (callbackMonitor) {
+        if (!running.get()) {
+          return false;
+        }
+        if (retryOnlyWhenUnhealthy && reloadCallbackHealthy.get()) {
+          return true;
+        }
+        try {
+          onChange.run();
+          reloadCallbackHealthy.set(true);
+          cancelScheduledRetry();
+          return true;
+        } catch (RuntimeException e) {
+          reloadCallbackHealthy.set(false);
+          logger.error("TLS certificate reload callback failed; continuing to watch credentials", e);
+          return false;
+        }
       }
-      if (retryOnlyWhenUnhealthy && reloadCallbackHealthy.get()) {
-        return true;
-      }
-      try {
-        onChange.run();
-        reloadCallbackHealthy.set(true);
-        cancelScheduledRetry();
-        return true;
-      } catch (RuntimeException e) {
-        reloadCallbackHealthy.set(false);
-        logger.error("TLS certificate reload callback failed; continuing to watch credentials", e);
-        return false;
+    } finally {
+      activeCallbacks.remove(callbackThread);
+      synchronized (callbackStateMonitor) {
+        callbackStateMonitor.notifyAll();
       }
     }
   }
@@ -261,15 +279,22 @@ public class TlsCertificateWatcher implements AutoCloseable {
     }
     if (missingRegistration) {
       scheduleRegistrationRetry();
+    } else {
+      synchronized (retryMonitor) {
+        registrationRetryAttempts = 0;
+      }
     }
     return changed;
   }
 
   private void scheduleRegistrationRetry() {
     synchronized (retryMonitor) {
-      if (!running.get() || registrationRetryScheduled) {
+      if (!running.get()
+          || registrationRetryScheduled
+          || registrationRetryAttempts >= MAX_REGISTRATION_RETRY_ATTEMPTS) {
         return;
       }
+      registrationRetryAttempts++;
       registrationRetryScheduled = true;
       try {
         registrationRetryTask =
@@ -292,6 +317,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
     if (!running.get()) {
       return;
     }
+    boolean recovered;
     synchronized (registrationMonitor) {
       if (!running.get()) {
         return;
@@ -310,6 +336,14 @@ public class TlsCertificateWatcher implements AutoCloseable {
         }
       }
       allRequiredRegistrationsValid.set(allRequiredDirectoriesRegistered());
+      recovered = allRequiredRegistrationsValid.get();
+    }
+    if (recovered) {
+      synchronized (retryMonitor) {
+        registrationRetryAttempts = 0;
+      }
+    } else {
+      scheduleRegistrationRetry();
     }
   }
 
@@ -390,12 +424,62 @@ public class TlsCertificateWatcher implements AutoCloseable {
         .build();
   }
 
+  private boolean awaitActiveCallbacks(Duration timeout) {
+    Thread caller = Thread.currentThread();
+    long deadline = System.nanoTime() + timeout.toNanos();
+    synchronized (callbackStateMonitor) {
+      while (activeCallbacks.stream().anyMatch(thread -> thread != caller)) {
+        long remainingNanos = deadline - System.nanoTime();
+        if (remainingNanos <= 0) {
+          return false;
+        }
+        try {
+          TimeUnit.NANOSECONDS.timedWait(callbackStateMonitor, remainingNanos);
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+          return false;
+        }
+      }
+      return true;
+    }
+  }
+
+  private void interruptActiveCallbacks() {
+    Thread caller = Thread.currentThread();
+    activeCallbacks.stream()
+        .filter(thread -> thread != caller)
+        .forEach(Thread::interrupt);
+  }
+
+  private static boolean awaitThreadTermination(Thread thread, Duration timeout) {
+    if (thread == Thread.currentThread()) {
+      return !thread.isAlive();
+    }
+    try {
+      TimeUnit.NANOSECONDS.timedJoin(thread, timeout.toNanos());
+      return !thread.isAlive();
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return false;
+    }
+  }
+
+  private boolean awaitRetryExecutorTermination(Duration timeout) {
+    try {
+      return retryExecutor.awaitTermination(timeout.toNanos(), TimeUnit.NANOSECONDS);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return false;
+    }
+  }
+
   @Override
   public void close() throws IOException {
     running.set(false);
     synchronized (retryMonitor) {
       retryScheduled = false;
       registrationRetryScheduled = false;
+      registrationRetryAttempts = 0;
       if (retryTask != null) {
         retryTask.cancel(false);
         retryTask = null;
@@ -405,14 +489,35 @@ public class TlsCertificateWatcher implements AutoCloseable {
         registrationRetryTask = null;
       }
     }
+    IOException closeFailure = null;
     try {
       watchService.close();
+    } catch (IOException e) {
+      closeFailure = e;
     } finally {
       ACTIVE_WATCHERS.remove(this);
-      if (thread.isAlive()) {
-        thread.interrupt();
-      }
+    }
+
+    boolean callbacksStopped = awaitActiveCallbacks(SHUTDOWN_GRACE_PERIOD);
+    if (!callbacksStopped) {
+      interruptActiveCallbacks();
+      awaitActiveCallbacks(SHUTDOWN_FORCE_PERIOD);
+    }
+
+    boolean threadStopped = awaitThreadTermination(thread, SHUTDOWN_GRACE_PERIOD);
+    if (!threadStopped) {
+      thread.interrupt();
+      awaitThreadTermination(thread, SHUTDOWN_FORCE_PERIOD);
+    }
+
+    retryExecutor.shutdown();
+    if (!awaitRetryExecutorTermination(SHUTDOWN_GRACE_PERIOD)) {
       retryExecutor.shutdownNow();
+      awaitRetryExecutorTermination(SHUTDOWN_FORCE_PERIOD);
+    }
+
+    if (closeFailure != null) {
+      throw closeFailure;
     }
   }
 }

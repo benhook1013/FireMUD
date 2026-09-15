@@ -2,6 +2,7 @@ package net.firedevops.firemud.common.grpc;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -14,6 +15,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.config.CommonCoreAutoConfiguration;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -161,6 +163,7 @@ class TlsCertificateWatcherTest {
       Files.delete(replacedCertificate);
       Files.delete(replacedDirectory);
       awaitUnhealthy(watcher);
+      Thread.sleep(250);
 
       Files.createDirectory(replacedDirectory);
       Files.writeString(replacedCertificate, "certificate-2");
@@ -188,7 +191,7 @@ class TlsCertificateWatcherTest {
       Files.delete(missingCertificate);
       Files.delete(missingDirectory);
       awaitUnhealthy(watcher);
-      Thread.sleep(300);
+      Thread.sleep(700);
       assertFalse(watcher.hasAllRequiredRegistrations());
       assertHealthDelta(baseline, 1, 0, 1, TlsCertificateWatcher.health());
     } finally {
@@ -250,6 +253,59 @@ class TlsCertificateWatcherTest {
       assertTrue(attempts.get() >= 2);
       awaitHealthy(watcher);
       assertHealthDelta(baseline, 1, 1, 0, TlsCertificateWatcher.health());
+    }
+  }
+
+  @Test
+  void closeWaitsForActiveReloadCallbackBeforeReturning(@TempDir Path directory) throws Exception {
+    Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
+    CountDownLatch callbackEntered = new CountDownLatch(1);
+    CountDownLatch releaseCallback = new CountDownLatch(1);
+    AtomicBoolean callbackExited = new AtomicBoolean();
+    AtomicReference<Throwable> closeFailure = new AtomicReference<>();
+
+    TlsCertificateWatcher watcher =
+        TlsCertificateWatcher.createAndStart(
+            List.of(certificate),
+            () -> {
+              callbackEntered.countDown();
+              try {
+                releaseCallback.await();
+              } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+              } finally {
+                callbackExited.set(true);
+              }
+            });
+    try {
+      Files.writeString(certificate, "certificate-2");
+      assertTrue(callbackEntered.await(5, TimeUnit.SECONDS));
+
+      CountDownLatch closeFinished = new CountDownLatch(1);
+      Thread closeThread =
+          new Thread(
+              () -> {
+                try {
+                  watcher.close();
+                } catch (Throwable e) {
+                  closeFailure.set(e);
+                } finally {
+                  closeFinished.countDown();
+                }
+              });
+      closeThread.start();
+
+      assertFalse(closeFinished.await(200, TimeUnit.MILLISECONDS));
+      assertFalse(callbackExited.get());
+      releaseCallback.countDown();
+      assertTrue(closeFinished.await(5, TimeUnit.SECONDS));
+      closeThread.join(5_000);
+      assertTrue(callbackExited.get());
+      assertFalse(watcher.isRunning());
+      assertNull(closeFailure.get());
+    } finally {
+      releaseCallback.countDown();
+      watcher.close();
     }
   }
 

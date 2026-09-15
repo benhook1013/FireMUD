@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
@@ -36,10 +37,11 @@ public class TcpProxyEventClient implements AutoCloseable {
   private final GrpcTlsMaterialResolver tlsMaterialResolver;
   private final BlockingGrpcStubCustomizer stubCustomizer;
 
-  private ManagedChannel channel;
-  private TcpProxyServiceGrpc.TcpProxyServiceBlockingStub stub;
-  private TlsCertificateWatcher watcher;
-  private ResolvedGrpcTlsMaterial tlsMaterial;
+  private volatile ManagedChannel channel;
+  private volatile TcpProxyServiceGrpc.TcpProxyServiceBlockingStub stub;
+  private volatile TlsCertificateWatcher watcher;
+  private volatile ResolvedGrpcTlsMaterial tlsMaterial;
+  private final AtomicBoolean closing = new AtomicBoolean();
 
   public TcpProxyEventClient(
       ServiceEndpointsProperties endpoints,
@@ -89,13 +91,38 @@ public class TcpProxyEventClient implements AutoCloseable {
   @PreDestroy
   @Override
   public void close() throws IOException {
-    if (watcher != null) {
-      watcher.close();
+    if (!closing.compareAndSet(false, true)) {
+      return;
     }
-    shutdownChannel(channel);
+    TlsCertificateWatcher watcherToClose;
+    ManagedChannel channelToClose;
+    synchronized (this) {
+      watcherToClose = watcher;
+      watcher = null;
+      channelToClose = channel;
+      channel = null;
+      stub = null;
+      tlsMaterial = null;
+    }
+
+    IOException closeFailure = null;
+    if (watcherToClose != null) {
+      try {
+        watcherToClose.close();
+      } catch (IOException e) {
+        closeFailure = e;
+      }
+    }
+    shutdownChannel(channelToClose);
+    if (closeFailure != null) {
+      throw closeFailure;
+    }
   }
 
   private synchronized void safeReload() {
+    if (closing.get()) {
+      return;
+    }
     try {
       reloadChannel();
     } catch (Exception e) {
@@ -108,6 +135,9 @@ public class TcpProxyEventClient implements AutoCloseable {
   }
 
   private void reloadChannel() throws SSLException, IOException {
+    if (closing.get()) {
+      return;
+    }
     String target = endpoints.getGameSessionService();
     if (!StringUtils.hasText(target)) {
       target = DEFAULT_CHANNEL_TARGET;
@@ -125,10 +155,21 @@ public class TcpProxyEventClient implements AutoCloseable {
       shutdownChannel(newChannel);
       throw ex;
     }
-    ManagedChannel previousChannel = channel;
-    channel = newChannel;
-    stub = newStub;
-    tlsMaterial = resolved;
+    ManagedChannel previousChannel;
+    synchronized (this) {
+      if (closing.get()) {
+        previousChannel = null;
+      } else {
+        previousChannel = channel;
+        channel = newChannel;
+        stub = newStub;
+        tlsMaterial = resolved;
+      }
+    }
+    if (closing.get()) {
+      shutdownChannel(newChannel);
+      return;
+    }
     shutdownChannel(previousChannel);
   }
 
