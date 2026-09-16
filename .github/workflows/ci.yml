@@ -912,6 +912,10 @@ jobs:
         uses: ./.github/actions/preserve-required-gate
         with:
           gate-name: Validation Gate
+          workflow-name: CI — Validation
+          workflow-file: ci.yml
+          workflow-path: .github/workflows/ci.yml
+          job-id: validation-gate
 
       - name: Enforce validation success
         if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}

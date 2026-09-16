@@ -398,6 +398,10 @@ jobs:
         uses: ./.github/actions/preserve-required-gate
         with:
           gate-name: Smoke Gate
+          workflow-name: PR Smoke Gate
+          workflow-file: smoke.yml
+          workflow-path: .github/workflows/smoke.yml
+          job-id: smoke-gate
 
       - name: Fail when smoke dependencies did not succeed
         if: ${{ steps.smoke_gate_context.outputs.required == 'true' && steps.smoke_gate_context.outputs.execute != 'true' }}

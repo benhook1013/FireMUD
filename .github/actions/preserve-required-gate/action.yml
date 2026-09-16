@@ -4,6 +4,18 @@ inputs:
   gate-name:
     description: Required check name to preserve.
     required: true
+  workflow-name:
+    description: Exact workflow display name that owns the required gate.
+    required: true
+  workflow-file:
+    description: Workflow filename used to resolve the owning workflow identity.
+    required: true
+  workflow-path:
+    description: Exact workflow path returned by the Actions API.
+    required: true
+  job-id:
+    description: Exact workflow job key that owns the required gate.
+    required: true
 runs:
   using: composite
   steps:
@@ -15,6 +27,10 @@ runs:
         GH_TOKEN: ${{ github.token }}
         HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         REQUIRED_GATE_NAME: ${{ inputs.gate-name }}
+        EXPECTED_WORKFLOW_NAME: ${{ inputs.workflow-name }}
+        EXPECTED_WORKFLOW_FILE: ${{ inputs.workflow-file }}
+        EXPECTED_WORKFLOW_PATH: ${{ inputs.workflow-path }}
+        EXPECTED_JOB_ID: ${{ inputs.job-id }}
       run: |
         set -euo pipefail
 
@@ -22,7 +38,7 @@ runs:
           echo "Required-gate preservation requires pull_request context; refusing to poll." >&2
           exit 1
         fi
-        for required_variable in GH_TOKEN HEAD_SHA REQUIRED_GATE_NAME GITHUB_REPOSITORY GITHUB_RUN_ID; do
+        for required_variable in GH_TOKEN HEAD_SHA REQUIRED_GATE_NAME EXPECTED_WORKFLOW_NAME EXPECTED_WORKFLOW_FILE EXPECTED_WORKFLOW_PATH EXPECTED_JOB_ID GITHUB_REPOSITORY GITHUB_RUN_ID GITHUB_WORKSPACE; do
           if [[ -z "${!required_variable:-}" ]]; then
             echo "Required-gate preservation is missing ${required_variable}; refusing to poll." >&2
             exit 1
@@ -30,6 +46,28 @@ runs:
         done
         if [[ -z "${HEAD_SHA//[[:space:]]/}" ]]; then
           echo "Required-gate preservation requires a nonempty pull request head SHA; refusing to poll." >&2
+          exit 1
+        fi
+        if [[ ! "${EXPECTED_WORKFLOW_FILE}" =~ ^[A-Za-z0-9._-]+\.(yml|yaml)$ ||
+          ! "${EXPECTED_WORKFLOW_PATH}" =~ ^\.github/workflows/[A-Za-z0-9._-]+\.(yml|yaml)$ ||
+          "${EXPECTED_WORKFLOW_PATH}" != ".github/workflows/${EXPECTED_WORKFLOW_FILE}" ||
+          ! "${EXPECTED_JOB_ID}" =~ ^[A-Za-z0-9_-]+$ ]]; then
+          echo "Required-gate preservation received invalid workflow or job identity; refusing to poll." >&2
+          exit 1
+        fi
+        expected_workflow_file_path="${GITHUB_WORKSPACE}/.github/workflows/${EXPECTED_WORKFLOW_FILE}"
+        if [[ ! -f "${expected_workflow_file_path}" ]]; then
+          echo "Required-gate preservation cannot verify the expected workflow job from ${EXPECTED_WORKFLOW_PATH}; refusing to poll." >&2
+          exit 1
+        fi
+        expected_job_block="$(awk -v expected_job_id="${EXPECTED_JOB_ID}" '
+          $0 == "  " expected_job_id ":" { capture = 1; next }
+          capture && /^  [A-Za-z0-9_-]+:$/ { exit }
+          capture { print }
+        ' "${expected_workflow_file_path}")"
+        if [[ -z "${expected_job_block}" ]] ||
+          ! grep -Fxq "    name: ${REQUIRED_GATE_NAME}" <<<"${expected_job_block}"; then
+          echo "Required-gate preservation cannot verify the expected ${REQUIRED_GATE_NAME} job key; refusing to poll." >&2
           exit 1
         fi
 
@@ -50,14 +88,58 @@ runs:
           return 1
         }
 
+        is_github_timestamp() {
+          [[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
+        }
+
         api_error_file="$(mktemp)"
         trap 'rm -f "$api_error_file"' EXIT
         max_attempts=80
+        expected_workflow_id=""
         for attempt in $(seq 1 "${max_attempts}"); do
           # A metadata-only run emits this same gate name. Its preservation step
           # identifies the recursive run; substantive gates skip that step and
           # remain authoritative, including failures.
           : >"${api_error_file}"
+          if [[ -z "${expected_workflow_id}" ]]; then
+            set +e
+            workflow_json="$(gh api --method GET \
+              "/repos/${GITHUB_REPOSITORY}/actions/workflows/${EXPECTED_WORKFLOW_FILE}" \
+              2>"${api_error_file}")"
+            workflow_status=$?
+            set -e
+            if [[ "${workflow_status}" -ne 0 ]]; then
+              api_error="$(<"${api_error_file}")"
+              if ! is_retryable_gh_failure "${workflow_status}" "${api_error}"; then
+                echo "Permanent GitHub API/configuration failure while resolving the expected ${EXPECTED_WORKFLOW_PATH}; refusing to preserve." >&2
+                [[ -z "${api_error}" ]] || printf '%s\n' "${api_error}" >&2
+                exit 1
+              fi
+              echo "Retryable GitHub API failure while resolving the expected ${EXPECTED_WORKFLOW_PATH}; retrying attempt ${attempt}/${max_attempts}." >&2
+              if [ "${attempt}" -eq "${max_attempts}" ]; then
+                echo "Timed out resolving the expected workflow identity for ${REQUIRED_GATE_NAME}." >&2
+                exit 1
+              fi
+              sleep 15
+              continue
+            fi
+            set +e
+            expected_workflow_id="$(jq -r \
+              --arg expected_name "${EXPECTED_WORKFLOW_NAME}" \
+              --arg expected_path "${EXPECTED_WORKFLOW_PATH}" \
+              'if (.id | type) == "number" and
+                  .name == $expected_name and
+                  .path == $expected_path
+                then (.id | tostring) else "__missing__" end' \
+              <<<"${workflow_json}" 2>>"${api_error_file}")"
+            workflow_query_status=$?
+            set -e
+            if [[ "${workflow_query_status}" -ne 0 ||
+              ! "${expected_workflow_id}" =~ ^[0-9]+$ ]]; then
+              echo "GitHub API returned malformed expected workflow identity; refusing to preserve." >&2
+              exit 1
+            fi
+          fi
           set +e
           check_runs_json="$(gh api --method GET \
             "/repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs" \
@@ -86,16 +168,28 @@ runs:
           fi
 
           set +e
+          jq -e '
+            type == "array"
+            and all(.[]; type == "object" and (.check_runs | type) == "array")
+          ' <<<"${check_runs_json}" >/dev/null 2>>"${api_error_file}"
+          check_runs_shape_status=$?
+          set -e
+          if [[ "${check_runs_shape_status}" -ne 0 ]]; then
+            echo "GitHub API returned malformed check-run data for the prior ${REQUIRED_GATE_NAME}; refusing to preserve." >&2
+            exit 1
+          fi
+
+          set +e
           candidate_rows="$(jq -r --arg run_id "${GITHUB_RUN_ID}" '
                 [.[].check_runs[]?
-                  | select(
-                      .app.slug == "github-actions"
-                      and ((.details_url // "") | contains("/actions/runs/\($run_id)/") | not)
-                    )
+                  | select(((.details_url // "") | contains("/actions/runs/\($run_id)/") | not))
                 ] as $candidates
                 | $candidates[]
                 | [
+                    (.app.slug // "__missing__"),
+                    (.name // "__missing__"),
                     (.details_url // "__missing__"),
+                    (if (.id | type) == "number" then (.id | tostring) else "__missing__" end),
                     (.status // "__missing__"),
                     (.conclusion // "__null__"),
                     (.completed_at // "__null__"),
@@ -114,12 +208,17 @@ runs:
           pending_rows=()
           job_lookup_retryable=false
           candidate_ambiguous=false
-          while IFS=$'\t' read -r details_url check_status conclusion completed_at started_at created_at; do
-            if [[ -z "${details_url}${check_status}${conclusion}${completed_at}${started_at}${created_at}" ]]; then
+          while IFS=$'\t' read -r app_slug check_name details_url check_run_id check_status conclusion completed_at started_at created_at; do
+            if [[ -z "${app_slug}${check_name}${details_url}${check_run_id}${check_status}${conclusion}${completed_at}${started_at}${created_at}" ]]; then
               continue
             fi
-            if [[ "${details_url}" == "__missing__" ||
-              "${check_status}" == "__missing__" ]]; then
+            if [[ "${app_slug}" != "github-actions" ||
+              "${check_name}" == "__missing__" ||
+              "${check_name}" != "${REQUIRED_GATE_NAME}" ||
+              "${details_url}" == "__missing__" ||
+              "${check_run_id}" == "__missing__" ||
+              "${check_status}" == "__missing__" ||
+              ! "${check_run_id}" =~ ^[0-9]+$ ]]; then
               candidate_ambiguous=true
               continue
             fi
@@ -127,12 +226,56 @@ runs:
             [[ "${completed_at}" == "__null__" ]] && completed_at=""
             [[ "${started_at}" == "__null__" ]] && started_at=""
             [[ "${created_at}" == "__null__" ]] && created_at=""
-            if [[ "${details_url}" != */actions/runs/*/job/* ]]; then
+            if [[ ! "${details_url}" =~ /actions/runs/([0-9]+)/job/([0-9]+)$ ]]; then
               candidate_ambiguous=true
               continue
             fi
-            job_id="${details_url##*/job/}"
-            [[ "${job_id}" =~ ^[0-9]+$ ]] || continue
+            workflow_run_id="${BASH_REMATCH[1]}"
+            job_id="${BASH_REMATCH[2]}"
+
+            : >"${api_error_file}"
+            set +e
+            workflow_run_json="$(gh api --method GET \
+              "/repos/${GITHUB_REPOSITORY}/actions/runs/${workflow_run_id}" \
+              2>"${api_error_file}")"
+            workflow_run_status=$?
+            set -e
+            if [[ "${workflow_run_status}" -ne 0 ]]; then
+              workflow_run_error="$(<"${api_error_file}")"
+              if is_retryable_gh_failure "${workflow_run_status}" "${workflow_run_error}"; then
+                job_lookup_retryable=true
+                break
+              fi
+              echo "Permanent GitHub API/configuration failure while identifying prior ${REQUIRED_GATE_NAME} workflow run; refusing to preserve." >&2
+              [[ -z "${workflow_run_error}" ]] || printf '%s\n' "${workflow_run_error}" >&2
+              exit 1
+            fi
+            set +e
+            workflow_run_identity_ok="$(jq -r \
+              --arg expected_id "${workflow_run_id}" \
+              --arg expected_workflow_id "${expected_workflow_id}" \
+              --arg expected_name "${EXPECTED_WORKFLOW_NAME}" \
+              --arg expected_path "${EXPECTED_WORKFLOW_PATH}" \
+              --arg expected_head "${HEAD_SHA}" \
+              --arg expected_repository "${GITHUB_REPOSITORY}" \
+              'if (.id | type) == "number" and
+                    (.workflow_id | type) == "number" and
+                    (.id == ($expected_id | tonumber)) and
+                    (.workflow_id == ($expected_workflow_id | tonumber)) and
+                    .name == $expected_name and
+                  .path == $expected_path and
+                  .head_sha == $expected_head and
+                  .head_repository.full_name == $expected_repository and
+                  .event == "pull_request"
+                then "true" else "false" end' \
+              <<<"${workflow_run_json}" 2>>"${api_error_file}")"
+            workflow_run_query_status=$?
+            set -e
+            if [[ "${workflow_run_query_status}" -ne 0 ||
+              "${workflow_run_identity_ok}" != "true" ]]; then
+              candidate_ambiguous=true
+              continue
+            fi
 
             : >"${api_error_file}"
             set +e
@@ -153,6 +296,32 @@ runs:
             fi
 
             set +e
+            job_identity_ok="$(jq -r \
+              --arg expected_job_id "${job_id}" \
+              --arg expected_run_id "${workflow_run_id}" \
+              --arg expected_gate_name "${REQUIRED_GATE_NAME}" \
+              --arg expected_workflow_name "${EXPECTED_WORKFLOW_NAME}" \
+              --arg expected_head "${HEAD_SHA}" \
+              --arg expected_check_run_id "${check_run_id}" \
+              'if (.id | type) == "number" and
+                    (.run_id | type) == "number" and
+                    .id == ($expected_job_id | tonumber) and
+                    .run_id == ($expected_run_id | tonumber) and
+                    .name == $expected_gate_name and
+                    .workflow_name == $expected_workflow_name and
+                    .head_sha == $expected_head and
+                    ((.check_run_url // "") | endswith("/check-runs/\($expected_check_run_id)"))
+                then "true" else "false" end' \
+              <<<"${job_json}" 2>>"${api_error_file}")"
+            job_identity_query_status=$?
+            set -e
+            if [[ "${job_identity_query_status}" -ne 0 ||
+              "${job_identity_ok}" != "true" ]]; then
+              candidate_ambiguous=true
+              continue
+            fi
+
+            set +e
             preserve_step_conclusion="$(jq -r '
               [.steps[]?
                 | select(.name == "Preserve successful required gate on metadata-only edit")
@@ -163,27 +332,50 @@ runs:
             job_query_status=$?
             set -e
             if [[ "${job_query_status}" -ne 0 ||
-              "${preserve_step_conclusion}" == "unknown" ]]; then
+              "${preserve_step_conclusion}" == "unknown" ||
+              -z "${preserve_step_conclusion}" ]]; then
               candidate_ambiguous=true
               continue
             fi
             if [[ "${preserve_step_conclusion}" != "skipped" ]]; then
-              continue
+              case "${preserve_step_conclusion}" in
+                success|failure|neutral|cancelled|timed_out|action_required|stale) continue ;;
+                *) candidate_ambiguous=true; continue ;;
+              esac
             fi
 
-            if [[ "${check_status}" == "completed" && -n "${conclusion}" &&
-              "${conclusion}" != "cancelled" && "${conclusion}" != "skipped" &&
-              "${conclusion}" != "stale" ]]; then
-              sort_key="${completed_at:-${started_at:-${created_at}}}"
-              [[ -n "${sort_key}" ]] || continue
-              authoritative_rows+=("${sort_key}"$'\tcompleted\t'"${conclusion}")
-            elif [[ "${check_status}" == "queued" || "${check_status}" == "in_progress" ||
-              "${check_status}" == "requested" || "${check_status}" == "waiting" ||
-              "${check_status}" == "pending" ]]; then
-              sort_key="${started_at:-${created_at}}"
-              [[ -n "${sort_key}" ]] || continue
-              pending_rows+=("${sort_key}"$'\tpending\t'"${check_status}")
-            fi
+            case "${check_status}" in
+              completed)
+                case "${conclusion}" in
+                  success|failure|neutral|cancelled|skipped|timed_out|action_required|stale) ;;
+                  *) candidate_ambiguous=true; continue ;;
+                esac
+                if [[ -n "${conclusion}" && -n "${completed_at}" &&
+                  -n "${started_at}" && -n "${created_at}" ]] &&
+                  is_github_timestamp "${completed_at}" &&
+                  is_github_timestamp "${started_at}" &&
+                  is_github_timestamp "${created_at}"; then
+                  if [[ "${conclusion}" != "cancelled" &&
+                    "${conclusion}" != "skipped" &&
+                    "${conclusion}" != "stale" ]]; then
+                    authoritative_rows+=("${completed_at}"$'\t'"${workflow_run_id}"$'\t'"${check_run_id}"$'\t'"${job_id}"$'\tcompleted\t'"${conclusion}")
+                  fi
+                else
+                  candidate_ambiguous=true
+                fi
+                ;;
+              queued|in_progress|requested|waiting|pending)
+                if [[ -z "${conclusion}" && -z "${completed_at}" &&
+                  -n "${started_at}" && -n "${created_at}" ]] &&
+                  is_github_timestamp "${started_at}" &&
+                  is_github_timestamp "${created_at}"; then
+                  pending_rows+=("${started_at}"$'\t'"${workflow_run_id}"$'\t'"${check_run_id}"$'\t'"${job_id}"$'\tpending\t'"${check_status}")
+                else
+                  candidate_ambiguous=true
+                fi
+                ;;
+              *) candidate_ambiguous=true ;;
+            esac
           done <<<"${candidate_rows}"
 
           if [[ "${job_lookup_retryable}" == "true" ]]; then
@@ -205,13 +397,13 @@ runs:
           prior_status=""
           prior_conclusion=""
           if ((${#authoritative_rows[@]} > 0)); then
-            prior_row="$(printf '%s\n' "${authoritative_rows[@]}" | LC_ALL=C sort -t $'\t' -k1,1 | tail -n 1)"
+            prior_row="$(printf '%s\n' "${authoritative_rows[@]}" | LC_ALL=C sort -t $'\t' -k1,1 -k2,2n -k3,3n -k4,4n | tail -n 1)"
           elif ((${#pending_rows[@]} > 0)); then
-            prior_row="$(printf '%s\n' "${pending_rows[@]}" | LC_ALL=C sort -t $'\t' -k1,1 | tail -n 1)"
+            prior_row="$(printf '%s\n' "${pending_rows[@]}" | LC_ALL=C sort -t $'\t' -k1,1 -k2,2n -k3,3n -k4,4n | tail -n 1)"
           else
-            prior_row=$'none\tnone\t'
+            prior_row=$'none\tnone\tnone\tnone\tnone\t'
           fi
-          IFS=$'\t' read -r _prior_sort prior_status prior_conclusion <<< "${prior_row}"
+          IFS=$'\t' read -r _prior_sort _prior_run _prior_check _prior_job prior_status prior_conclusion <<< "${prior_row}"
           if [ "${prior_status}" = "completed" ]; then
             if [ "${prior_conclusion}" = "success" ]; then
               exit 0

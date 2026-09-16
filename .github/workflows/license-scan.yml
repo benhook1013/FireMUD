@@ -256,6 +256,10 @@ jobs:
         uses: ./.github/actions/preserve-required-gate
         with:
           gate-name: License Gate
+          workflow-name: License Checks
+          workflow-file: license-scan.yml
+          workflow-path: .github/workflows/license-scan.yml
+          job-id: license-gate
 
       - name: Verify ORT results
         if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}

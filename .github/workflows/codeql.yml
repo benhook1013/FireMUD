@@ -201,6 +201,10 @@ jobs:
         uses: ./.github/actions/preserve-required-gate
         with:
           gate-name: CodeQL Gate
+          workflow-name: CodeQL Analysis
+          workflow-file: codeql.yml
+          workflow-path: .github/workflows/codeql.yml
+          job-id: codeql-gate
 
       - name: Enforce successful CodeQL analysis
         if: ${{ github.event.action != 'edited' || github.event.changes.base.ref != null }}
