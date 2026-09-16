@@ -816,6 +816,35 @@ class PrStatusReporterTest(unittest.TestCase):
             self.assertEqual(report["hosted_trigger"]["state"], "ambiguous")
             self.assertIn("invalid state", report["hosted_trigger"]["reason"])
 
+    def test_trigger_state_pr_number_requires_positive_non_bool_int(self) -> None:
+        for invalid in (42.0, True):
+            checker = self.checker_payload(ok=True)
+            checker["trigger_state"] = {
+                "state": "completed",
+                "repository": "owner/repo",
+                "pr_number": invalid,
+                "head_sha": "0123456789abcdef0123456789abcdef01234567",
+                "current_head_sha": "0123456789abcdef0123456789abcdef01234567",
+            }
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(
+                self.reporter.ReportError, "invalid pr_number"
+            ):
+                self.reporter._validate_trigger_state(checker, "owner/repo", 42)
+
+        checker = self.checker_payload(ok=True)
+        checker["trigger_state"] = {
+            "state": "completed",
+            "repository": "owner/repo",
+            "pr_number": 42,
+            "head_sha": "0123456789abcdef0123456789abcdef01234567",
+            "current_head_sha": "0123456789abcdef0123456789abcdef01234567",
+            "reason": "the captured Hosted review completed",
+        }
+        self.assertEqual(
+            self.reporter._validate_trigger_state(checker, "owner/repo", 42)["pr_number"],
+            42,
+        )
+
     def test_durable_hosted_trigger_record_is_discovered_from_main_and_linked_worktrees(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             fixture_root = Path(directory)

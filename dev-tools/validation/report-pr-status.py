@@ -494,7 +494,10 @@ def _validate_trigger_state(payload: dict[str, Any], repo: str, pr_number: int) 
         raise ReportError(f"{name} evidence has an invalid state")
     if not isinstance(state["repository"], str) or not state["repository"]:
         raise ReportError(f"{name} evidence has an invalid repository")
-    if state["repository"].casefold() != repo.casefold() or state["pr_number"] != pr_number:
+    state_pr_number = state["pr_number"]
+    if isinstance(state_pr_number, bool) or not isinstance(state_pr_number, int) or state_pr_number <= 0:
+        raise ReportError(f"{name} evidence has an invalid pr_number")
+    if state["repository"].casefold() != repo.casefold() or state_pr_number != pr_number:
         raise ReportError(f"{name} evidence does not match the requested PR")
     for key in ("head_sha", "current_head_sha"):
         if not isinstance(state[key], str) or not EXACT_SHA.fullmatch(state[key]):
