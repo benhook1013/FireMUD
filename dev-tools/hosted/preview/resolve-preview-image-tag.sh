@@ -29,14 +29,10 @@ runtime_relevant() {
       return 0
       ;;
     config/python/smoke-requirements.txt | config/python/smoke-requirements.in | \
-      dev-tools/build-compose-service-jars.sh | \
-      dev-tools/build-local-smoke-images.sh | \
-      dev-tools/certs/generate-dev-certs.sh | \
-      dev-tools/hosted/controller/smoke-paused-controller-image.sh | \
-      dev-tools/verify-compose-health.sh | \
-      dev-tools/verify-fresh-bootstrap.sh | \
-      dev-tools/verify-restart-state.sh | \
-      dev-tools/verify-smoke-images.sh)
+      dev-tools/build-*.sh | \
+      dev-tools/certs/generate-*.sh | \
+      dev-tools/hosted/controller/smoke-*.sh | \
+      dev-tools/verify-*.sh)
       return 0
       ;;
   esac
@@ -50,10 +46,17 @@ if [[ -n "${pr_number}" && -n "${base_image_tag}" ]]; then
     exit 1
   fi
 
-  mapfile -t changed_files < <(
+  if ! changed_files_output="$(
     gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}/files?per_page=100" --paginate \
       --jq '.[].filename'
-  )
+  )"; then
+    echo "unable to read changed files for pull request ${pr_number}; refusing to select base images" >&2
+    exit 1
+  fi
+  changed_files=()
+  if [[ -n "${changed_files_output}" ]]; then
+    mapfile -t changed_files <<<"${changed_files_output}"
+  fi
 
   has_runtime_change=false
   for file in "${changed_files[@]}"; do
