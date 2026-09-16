@@ -928,7 +928,7 @@ class TelnetServerHandlerTest {
       field.setAccessible(true);
       return field.get(target);
     } catch (ReflectiveOperationException e) {
-      throw new AssertionError("unable to inspect handler lifecycle lock", e);
+      throw new AssertionError("unable to inspect handler field '" + name + "'", e);
     }
   }
 

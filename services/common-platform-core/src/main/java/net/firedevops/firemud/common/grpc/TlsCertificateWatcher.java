@@ -39,7 +39,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
   private static final Duration MAX_RELOAD_DELAY = Duration.ofSeconds(1);
   private static final Duration INITIAL_REGISTRATION_RETRY_DELAY = Duration.ofMillis(100);
   private static final Duration MAX_REGISTRATION_RETRY_DELAY = Duration.ofSeconds(30);
-  private static final int MAX_REGISTRATION_RETRY_ATTEMPT = 10;
+  private static final int MAX_RETRY_ATTEMPTS = 10;
   private static final Duration SHUTDOWN_GRACE_PERIOD = Duration.ofSeconds(5);
   private static final Duration SHUTDOWN_FORCE_PERIOD = Duration.ofMillis(100);
   private static final Path PROJECTED_DATA_LINK = Path.of("..data");
@@ -244,7 +244,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
       if (!running.get() || retryScheduled) {
         return;
       }
-      if (callbackRetryAttempts >= MAX_REGISTRATION_RETRY_ATTEMPT) {
+      if (callbackRetryAttempts >= MAX_RETRY_ATTEMPTS) {
         if (!callbackRetryExhaustionLogged) {
           callbackRetryExhaustionLogged = true;
           logger.error(
@@ -341,7 +341,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
       if (!running.get() || registrationRetryScheduled) {
         return;
       }
-      int retryAttempt = Math.min(MAX_REGISTRATION_RETRY_ATTEMPT, registrationRetryAttempts + 1);
+      int retryAttempt = Math.min(MAX_RETRY_ATTEMPTS, registrationRetryAttempts + 1);
       Duration retryDelay = registrationRetryDelay(retryAttempt);
       registrationRetryAttempts = retryAttempt;
       registrationRetryScheduled = true;

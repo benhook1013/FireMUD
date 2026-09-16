@@ -5761,7 +5761,15 @@ def expected_binding_checks(
     try:
         target_namespace = primary_workload_namespace(documents)
     except ValueError as exc:
-        fail(str(exc))
+        results.append(
+            CheckResult(
+                "PREFLIGHT-SERVICES-001",
+                True,
+                "fail",
+                str(exc),
+            )
+        )
+        return results
     override_lines, override_issues = extract_service_discovery_overrides(documents)
     if mode == "kubernetes-dns-default" and (override_lines or override_issues):
         results.append(

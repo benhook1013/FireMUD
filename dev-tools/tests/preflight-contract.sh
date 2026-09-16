@@ -2019,17 +2019,16 @@ def has_clean_namespace_failure(function_name):
     return False
 
 
-for guarded_function in ("expected_binding_checks", "main"):
-    if not has_clean_namespace_failure(guarded_function):
-        raise SystemExit(
-            f"{guarded_function} does not route ambiguous workload namespaces through fail()"
-        )
+if not has_clean_namespace_failure("main"):
+    raise SystemExit("main does not retain fail-fast handling for ambiguous workload namespaces")
 
 spec = importlib.util.spec_from_file_location("preflight_hobby_contract", root / "dev-tools/deploy/preflight.py")
 module = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
+expected_bindings_path = root / "design/operations/environments/hobby-self-hosted/expected-bindings.yaml"
+expected_bindings = module.load_yaml(expected_bindings_path)
 
 deployment_event_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 validation_now = module.dt.datetime(2026, 1, 1, 0, 5, tzinfo=module.dt.timezone.utc)
@@ -2053,6 +2052,35 @@ except ValueError as error:
         raise SystemExit(f"ambiguous workload namespace error was not explicit: {error}")
 else:
     raise SystemExit("ambiguous workload namespaces were accepted before hosted checks")
+
+ambiguous_binding_results = module.expected_binding_checks(
+    expected_bindings_path,
+    "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
+    "hobby-self-hosted",
+    ambiguous_workload_documents,
+    expected_bindings=expected_bindings,
+)
+ambiguous_services_result = next(
+    (
+        result
+        for result in ambiguous_binding_results
+        if result.policy_id == "PREFLIGHT-SERVICES-001"
+    ),
+    None,
+)
+if ambiguous_services_result is None:
+    raise SystemExit(
+        "expected_binding_checks did not report ambiguous workload namespaces"
+    )
+if (
+    ambiguous_services_result.status != "fail"
+    or not ambiguous_services_result.required
+    or "primary workload namespace is ambiguous" not in ambiguous_services_result.message
+):
+    raise SystemExit(
+        "expected_binding_checks did not return the required namespace failure report: "
+        f"{ambiguous_services_result}"
+    )
 
 
 def validate_report(report, environment, deployment_ref):
