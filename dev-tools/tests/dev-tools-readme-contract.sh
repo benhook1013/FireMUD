@@ -37,7 +37,22 @@ def github_anchors(markdown: Path) -> set[str]:
     anchors: set[str] = set()
     occurrences: dict[str, int] = {}
     heading_pattern = re.compile(r"^ {0,3}#{1,6}\s+(.+?)\s*$")
+    fence_pattern = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+    fence_marker: tuple[str, int] | None = None
     for line in markdown.read_text(encoding="utf-8").splitlines():
+        fence_match = fence_pattern.match(line)
+        if fence_marker is not None:
+            if (
+                fence_match is not None
+                and fence_match.group(1)[0] == fence_marker[0]
+                and len(fence_match.group(1)) >= fence_marker[1]
+                and not fence_match.group(2).strip()
+            ):
+                fence_marker = None
+            continue
+        if fence_match is not None:
+            fence_marker = (fence_match.group(1)[0], len(fence_match.group(1)))
+            continue
         match = heading_pattern.match(line)
         if match is None:
             continue
@@ -131,7 +146,8 @@ for readme in readmes:
 
     if readme == root / "dev-tools/README.md":
         prerequisite = (
-            "The `report-pr-status.py` and `report-worktree-pr-topology.sh` entrypoints "
+            "The `report-pr-status.py`, `report-worktree-pr-topology.sh`, and "
+            "`maintenance/cloc-report.py pr` entrypoints "
             "require GitHub CLI `gh` >= 2.63.0 "
             "because they request the `baseRefOid` field; the repository workflow pin is "
             "`GH_VERSION=2.76.2`."
@@ -152,11 +168,17 @@ with tempfile.TemporaryDirectory() as fixture_dir:
         "[single](target.md 'Target'), [parenthesized](target.md (Target)), "
         "[angle](<target.md#details> \"Details\"), "
         "[repeated spaces](target.md#double--spaces), "
-        "and [edge hyphens](target.md#--edge--).\n",
+        "[edge hyphens](target.md#--edge--), "
+        "[after backtick fence](target.md#after-backtick-fence), "
+        "and [after tilde fence](target.md#after-tilde-fence).\n",
         encoding="utf-8",
     )
     fixture_target.write_text(
-        "# Target\n\n## Details\n\n## Double  Spaces\n\n## - Edge -\n",
+        "# Target\n\n## Details\n\n## Double  Spaces\n\n## - Edge -\n\n"
+        "```markdown\n# Fake Details\n```\n\n"
+        "## After Backtick Fence\n\n"
+        "~~~text\n# Fake Tilde\n~~~\n\n"
+        "## After Tilde Fence\n",
         encoding="utf-8",
     )
 
@@ -170,7 +192,7 @@ with tempfile.TemporaryDirectory() as fixture_dir:
     extracted_targets = MARKDOWN_LINK_PATTERN.findall(fixture_readme.read_text(encoding="utf-8"))
     for target in extracted_targets:
         link_target(fixture_readme, target)
-    if len(extracted_targets) != 7:
+    if len(extracted_targets) != 9:
         raise SystemExit(f"fixture Markdown link extraction found {len(extracted_targets)} targets")
     link_target(fixture_readme, "target.md#details")
     link_target(fixture_readme, 'target.md "Target"')
@@ -180,6 +202,8 @@ with tempfile.TemporaryDirectory() as fixture_dir:
     link_target(fixture_readme, "#fixture")
     link_target(fixture_readme, "target.md#double--spaces")
     link_target(fixture_readme, "target.md#--edge--")
+    link_target(fixture_readme, "target.md#after-backtick-fence")
+    link_target(fixture_readme, "target.md#after-tilde-fence")
     try:
         link_target(fixture_readme, "target.md#missing")
     except SystemExit as exc:
@@ -187,7 +211,12 @@ with tempfile.TemporaryDirectory() as fixture_dir:
             raise
     else:
         raise SystemExit("missing Markdown anchor fixture did not fail")
-    for target in ("target.md#double-spaces", "target.md#edge"):
+    for target in (
+        "target.md#double-spaces",
+        "target.md#edge",
+        "target.md#fake-details",
+        "target.md#fake-tilde",
+    ):
         try:
             link_target(fixture_readme, target)
         except SystemExit as exc:
