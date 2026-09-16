@@ -389,6 +389,13 @@ if [[ "$*" == *"/actions/jobs/"* ]]; then
     echo "gh: HTTP 503 Service Unavailable" >&2
     exit 1
   fi
+  job_workflow_name='CI — Validation'
+  if [[ "${GH_SCENARIO:-}" == "dynamic-run-name" ||
+    "${GH_SCENARIO:-}" == "dynamic-run-name-fork-empty" ]]; then
+    job_workflow_name="${job_workflow_name} pr-${PR_NUMBER} base-${BASE_SHA} head-${HEAD_SHA}"
+  elif [[ "${GH_SCENARIO:-}" == "wrong-job-workflow-name" ]]; then
+    job_workflow_name='Security Checks'
+  fi
   metadata=false
   if [[ "${GH_SCENARIO:-}" == "multiple-metadata" ]] ||
     [[ "${GH_SCENARIO:-}" == "latest-pending-preferred" && "${job_id}" == "101" ]] ||
@@ -403,7 +410,7 @@ if [[ "$*" == *"/actions/jobs/"* ]]; then
       multiple-metadata:103) preserve_conclusion=cancelled ;;
       *) preserve_conclusion=success ;;
     esac
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"%s"}]}\n' "$job_id" "$run_id" "$job_id" "$preserve_conclusion"
+    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"%s","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"%s"}]}\n' "$job_id" "$run_id" "$job_workflow_name" "$job_id" "$preserve_conclusion"
   elif [[ "${GH_SCENARIO:-}" == "pending-preservation-step-not-concluded" &&
     "${job_id}" == "100" && "$(<"$count_file")" -le 3 ]]; then
     printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
@@ -420,7 +427,7 @@ if [[ "$*" == *"/actions/jobs/"* ]]; then
     "${job_id}" == "100" ]]; then
     printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   else
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"skipped"}]}\n' "$job_id" "$run_id" "$job_id"
+    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"%s","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"skipped"}]}\n' "$job_id" "$run_id" "$job_workflow_name" "$job_id"
   fi
   exit 0
 fi
@@ -440,7 +447,15 @@ if [[ "$*" == *"/actions/runs/"* ]]; then
   head_repository='example/firemud'
   pull_requests='[{"number":123}]'
   display_title="${workflow_name} pr-${PR_NUMBER} base-${BASE_SHA} head-${HEAD_SHA}"
-  if [[ "${GH_SCENARIO:-}" == "fork-empty-association" ]]; then
+  if [[ "${GH_SCENARIO:-}" == "dynamic-run-name" ||
+    "${GH_SCENARIO:-}" == "dynamic-run-name-fork-empty" ]]; then
+    workflow_name="$display_title"
+    display_title="$workflow_name"
+  elif [[ "${GH_SCENARIO:-}" == "wrong-run-name" ]]; then
+    workflow_name='Security Checks'
+  fi
+  if [[ "${GH_SCENARIO:-}" == "fork-empty-association" ||
+    "${GH_SCENARIO:-}" == "dynamic-run-name-fork-empty" ]]; then
     pull_requests='[]'
     head_repository='other-owner/firemud'
   elif [[ "${GH_SCENARIO:-}" == "empty-wrong-pr" ]]; then
@@ -554,7 +569,7 @@ JSON
   same-timestamp-newer-failure)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"completed","conclusion":"failure","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
-  cross-workflow-same-name|fork-empty-association|empty-wrong-pr|empty-wrong-base|empty-wrong-head|empty-wrong-title|empty-malformed-association|other-pr-association)
+  cross-workflow-same-name|fork-empty-association|dynamic-run-name|dynamic-run-name-fork-empty|wrong-run-name|wrong-job-workflow-name|empty-wrong-pr|empty-wrong-base|empty-wrong-head|empty-wrong-title|empty-malformed-association|other-pr-association)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   run-path-ref-suffix|malformed-run-path-ref-suffix)
@@ -1075,6 +1090,20 @@ run_action "$fork_empty_count" none fork-empty-association
   exit 1
 }
 
+dynamic_run_count="$tmp_dir/count-dynamic-run-name"
+run_action "$dynamic_run_count" none dynamic-run-name
+[[ "$(<"$dynamic_run_count")" == "1" ]] || {
+  echo "required-gate action rejected a dynamic workflow run/job name with a populated PR association" >&2
+  exit 1
+}
+
+dynamic_fork_empty_count="$tmp_dir/count-dynamic-run-name-fork-empty"
+run_action "$dynamic_fork_empty_count" none dynamic-run-name-fork-empty
+[[ "$(<"$dynamic_fork_empty_count")" == "1" ]] || {
+  echo "required-gate action rejected a dynamic workflow run/job name with an empty fork association and canonical title" >&2
+  exit 1
+}
+
 run_path_ref_count="$tmp_dir/count-run-path-ref-suffix"
 run_action "$run_path_ref_count" none run-path-ref-suffix
 [[ "$(<"$run_path_ref_count")" == "1" ]] || {
@@ -1082,7 +1111,7 @@ run_action "$run_path_ref_count" none run-path-ref-suffix
   exit 1
 }
 
-for malformed_scenario in cross-workflow-same-name malformed-run-path-ref-suffix wrong-run-repository unknown-app unknown-check-name invalid-job-id missing-job-id unsupported-status missing-timestamp empty-wrong-pr empty-wrong-base empty-wrong-head empty-wrong-title empty-malformed-association other-pr-association; do
+for malformed_scenario in cross-workflow-same-name malformed-run-path-ref-suffix wrong-run-repository wrong-run-name wrong-job-workflow-name unknown-app unknown-check-name invalid-job-id missing-job-id unsupported-status missing-timestamp empty-wrong-pr empty-wrong-base empty-wrong-head empty-wrong-title empty-malformed-association other-pr-association; do
   malformed_output="$tmp_dir/${malformed_scenario}-output"
   set +e
   run_action "$tmp_dir/count-${malformed_scenario}" none "$malformed_scenario" >"$malformed_output" 2>&1

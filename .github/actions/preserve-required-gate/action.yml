@@ -265,7 +265,7 @@ runs:
                     (.workflow_id | type) == "number" and
                     (.id == ($expected_id | tonumber)) and
                     (.workflow_id == ($expected_workflow_id | tonumber)) and
-                  .name == $expected_name and
+                  (.name == $expected_name or .name == $expected_display_title) and
                   (
                     .path == $expected_path or
                     (
@@ -331,6 +331,7 @@ runs:
               --arg expected_run_id "${workflow_run_id}" \
               --arg expected_gate_name "${REQUIRED_GATE_NAME}" \
               --arg expected_workflow_name "${EXPECTED_WORKFLOW_NAME}" \
+              --arg expected_display_title "${expected_display_title}" \
               --arg expected_head "${HEAD_SHA}" \
               --arg expected_check_run_id "${check_run_id}" \
               'if (.id | type) == "number" and
@@ -338,7 +339,8 @@ runs:
                     .id == ($expected_job_id | tonumber) and
                     .run_id == ($expected_run_id | tonumber) and
                     .name == $expected_gate_name and
-                    .workflow_name == $expected_workflow_name and
+                    (.workflow_name == $expected_workflow_name or
+                      .workflow_name == $expected_display_title) and
                     .head_sha == $expected_head and
                     ((.check_run_url // "") | endswith("/check-runs/\($expected_check_run_id)"))
                 then "true" else "false" end' \
