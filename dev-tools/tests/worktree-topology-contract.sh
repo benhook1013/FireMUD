@@ -164,7 +164,7 @@ set -euo pipefail
 
 if [[ "$1 $2" == "pr list" ]]; then
   cat <<'PRS'
-[{"number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"nameWithOwner":"owner/repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false},{"number":43,"headRefName":"feature/dependent","headRefOid":"dddddddddddddddddddddddddddddddddddddddd","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"nameWithOwner":"owner/repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Dependent","url":"https://example.test/pr/43","isDraft":false},{"number":44,"headRefName":"feature/forked","headRefOid":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"nameWithOwner":"fork/repo"},"headRepositoryOwner":{"login":"fork"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Foreign collision","url":"https://example.test/pr/44","isDraft":false}]
+[{"number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"nameWithOwner":"owner/repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false},{"number":43,"headRefName":"feature/dependent","headRefOid":"dddddddddddddddddddddddddddddddddddddddd","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"nameWithOwner":"owner/repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Dependent","url":"https://example.test/pr/43","isDraft":false},{"number":45,"headRefName":"renovate/dependent","headRefOid":"ffffffffffffffffffffffffffffffffffffffff","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"nameWithOwner":"owner/repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Renovate dependent","url":"https://example.test/pr/45","isDraft":false},{"number":44,"headRefName":"feature/forked","headRefOid":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"nameWithOwner":"fork/repo"},"headRepositoryOwner":{"login":"fork"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Foreign collision","url":"https://example.test/pr/44","isDraft":false}]
 PRS
   exit 0
 fi
@@ -187,6 +187,16 @@ jq -e '.chain[0].local_head.status == "published"' <<<"$selected_json" >/dev/nul
 jq -e '.chain[0].worktrees | any(.locked and .status == "clean" and .head_matches)' <<<"$selected_json" >/dev/null
 jq -e '.chain[0].worktrees | all(.head_sha != null)' <<<"$selected_json" >/dev/null
 jq -e '.chain[1].base.sha == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' <<<"$selected_json" >/dev/null
+
+selected_renovate_json="$(cd "$SELECTED_REPO" && PATH="$SELECTED_BIN:$PATH" bash "$SCRIPT" --repo owner/repo --pr 42 --include-renovate --json)"
+jq -e '.status == "ok" and (.chain | map(.number) | index(45) != null)' <<<"$selected_renovate_json" >/dev/null
+
+help_output="$(bash "$SCRIPT" --help)"
+grep -Fq -- '--json' <<<"$help_output"
+grep -Fq -- '--include-renovate' <<<"$help_output"
+grep -Fq -- '--pr N' <<<"$help_output"
+grep -Fq 'report-worktree-pr-topology.sh --json' "$ROOT_DIR/dev-tools/README.md"
+grep -Fq 'report-worktree-pr-topology.sh --pr N --include-renovate --json' "$ROOT_DIR/dev-tools/README.md"
 
 echo "selected worktree topology contract checks passed"
 

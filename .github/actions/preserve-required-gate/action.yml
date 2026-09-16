@@ -96,6 +96,9 @@ runs:
         trap 'rm -f "$api_error_file"' EXIT
         max_attempts=80
         expected_workflow_id=""
+        declare -A workflow_run_cache=()
+        declare -A job_cache=()
+        declare -A terminal_job_cache=()
         for attempt in $(seq 1 "${max_attempts}"); do
           # A metadata-only run emits this same gate name. Its preservation step
           # identifies the recursive run; substantive gates skip that step and
@@ -233,22 +236,25 @@ runs:
             workflow_run_id="${BASH_REMATCH[1]}"
             job_id="${BASH_REMATCH[2]}"
 
-            : >"${api_error_file}"
-            set +e
-            workflow_run_json="$(gh api --method GET \
-              "/repos/${GITHUB_REPOSITORY}/actions/runs/${workflow_run_id}" \
-              2>"${api_error_file}")"
-            workflow_run_status=$?
-            set -e
-            if [[ "${workflow_run_status}" -ne 0 ]]; then
-              workflow_run_error="$(<"${api_error_file}")"
-              if is_retryable_gh_failure "${workflow_run_status}" "${workflow_run_error}"; then
-                job_lookup_retryable=true
-                break
+            workflow_run_json="${workflow_run_cache[${workflow_run_id}]:-}"
+            if [[ -z "${workflow_run_json}" ]]; then
+              : >"${api_error_file}"
+              set +e
+              workflow_run_json="$(gh api --method GET \
+                "/repos/${GITHUB_REPOSITORY}/actions/runs/${workflow_run_id}" \
+                2>"${api_error_file}")"
+              workflow_run_status=$?
+              set -e
+              if [[ "${workflow_run_status}" -ne 0 ]]; then
+                workflow_run_error="$(<"${api_error_file}")"
+                if is_retryable_gh_failure "${workflow_run_status}" "${workflow_run_error}"; then
+                  job_lookup_retryable=true
+                  break
+                fi
+                echo "Permanent GitHub API/configuration failure while identifying prior ${REQUIRED_GATE_NAME} workflow run; refusing to preserve." >&2
+                [[ -z "${workflow_run_error}" ]] || printf '%s\n' "${workflow_run_error}" >&2
+                exit 1
               fi
-              echo "Permanent GitHub API/configuration failure while identifying prior ${REQUIRED_GATE_NAME} workflow run; refusing to preserve." >&2
-              [[ -z "${workflow_run_error}" ]] || printf '%s\n' "${workflow_run_error}" >&2
-              exit 1
             fi
             set +e
             workflow_run_identity_ok="$(jq -r \
@@ -276,23 +282,36 @@ runs:
               candidate_ambiguous=true
               continue
             fi
+            if [[ -z "${workflow_run_cache[${workflow_run_id}]:-}" ]]; then
+              workflow_run_cache["${workflow_run_id}"]="${workflow_run_json}"
+            fi
 
-            : >"${api_error_file}"
-            set +e
-            job_json="$(gh api --method GET \
-              "/repos/${GITHUB_REPOSITORY}/actions/jobs/${job_id}" \
-              2>"${api_error_file}")"
-            job_status=$?
-            set -e
-            if [[ "${job_status}" -ne 0 ]]; then
-              job_error="$(<"${api_error_file}")"
-              if is_retryable_gh_failure "${job_status}" "${job_error}"; then
-                job_lookup_retryable=true
-                break
+            job_json="${job_cache[${job_id}]:-}"
+            job_is_pending=false
+            job_was_fetched=false
+            case "${check_status}" in
+              queued|in_progress|requested|waiting|pending) job_is_pending=true ;;
+            esac
+            if [[ -z "${job_json}" || "${job_is_pending}" == "true" ||
+              "${terminal_job_cache[${job_id}]:-false}" != "true" ]]; then
+              : >"${api_error_file}"
+              set +e
+              job_json="$(gh api --method GET \
+                "/repos/${GITHUB_REPOSITORY}/actions/jobs/${job_id}" \
+                2>"${api_error_file}")"
+              job_was_fetched=true
+              job_status=$?
+              set -e
+              if [[ "${job_status}" -ne 0 ]]; then
+                job_error="$(<"${api_error_file}")"
+                if is_retryable_gh_failure "${job_status}" "${job_error}"; then
+                  job_lookup_retryable=true
+                  break
+                fi
+                echo "Permanent GitHub API/configuration failure while identifying a prior ${REQUIRED_GATE_NAME} run; refusing to preserve." >&2
+                [[ -z "${job_error}" ]] || printf '%s\n' "${job_error}" >&2
+                exit 1
               fi
-              echo "Permanent GitHub API/configuration failure while identifying a prior ${REQUIRED_GATE_NAME} run; refusing to preserve." >&2
-              [[ -z "${job_error}" ]] || printf '%s\n' "${job_error}" >&2
-              exit 1
             fi
 
             set +e
@@ -319,6 +338,12 @@ runs:
               "${job_identity_ok}" != "true" ]]; then
               candidate_ambiguous=true
               continue
+            fi
+            if [[ "${job_was_fetched}" == "true" ]]; then
+              job_cache["${job_id}"]="${job_json}"
+            fi
+            if [[ "${check_status}" == "completed" ]]; then
+              terminal_job_cache["${job_id}"]=true
             fi
 
             set +e

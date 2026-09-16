@@ -35,6 +35,7 @@ TRIGGER_STATES = {
     "failed",
     "noop",
     "rate_limited",
+    "retired",
     "timed_out",
     "unattributed",
 }
@@ -571,10 +572,11 @@ def _checkpoint_summaries(checkpoints: list[dict[str, Any]]) -> dict[str, Any]:
     last_cli_accepted = next((item for item in reversed(cli) if item["accepted"] > 0), None)
 
     hosted = by_type["Hosted"]
+    hosted_completed = [checkpoint for checkpoint in hosted if not checkpoint["correction"]]
 
     def trailing_count(predicate: Any) -> int:
         count = 0
-        for checkpoint in reversed(hosted):
+        for checkpoint in reversed(hosted_completed):
             if not predicate(checkpoint):
                 break
             count += 1
@@ -583,23 +585,20 @@ def _checkpoint_summaries(checkpoints: list[dict[str, Any]]) -> dict[str, Any]:
     hosted_correction_exclusions = sum(1 for checkpoint in hosted if checkpoint["correction"])
     hosted_zero_zero_streak = trailing_count(
         lambda checkpoint: (
-            not checkpoint["correction"]
-            and checkpoint["raw_found"] == 0
+            checkpoint["raw_found"] == 0
             and checkpoint["accepted"] == 0
         )
     )
     hosted_raw_positive_accepted_zero_streak = trailing_count(
         lambda checkpoint: (
-            not checkpoint["correction"]
-            and checkpoint["raw_found"] > 0
+            checkpoint["raw_found"] > 0
             and checkpoint["accepted"] == 0
         )
     )
     hosted_completed_zero_zero_observed = sum(
         1
-        for checkpoint in hosted
-        if not checkpoint["correction"]
-        and checkpoint["raw_found"] == 0
+        for checkpoint in hosted_completed
+        if checkpoint["raw_found"] == 0
         and checkpoint["accepted"] == 0
     )
 

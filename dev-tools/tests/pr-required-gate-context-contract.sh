@@ -161,7 +161,7 @@ while IFS='|' read -r workflow gate_job_id gate workflow_name workflow_file work
     echo "$workflow $gate caller must retain contents: read" >&2
     exit 1
   }
-  python3 - "$path" "$gate_job_id" "$workflow" "$gate" <<'PY'
+  python3 - "$path" "$gate_job_id" "$workflow" "$gate" "$workflow_name" <<'PY'
 from pathlib import Path
 import sys
 
@@ -187,6 +187,7 @@ path = Path(sys.argv[1])
 job_id = sys.argv[2]
 workflow = sys.argv[3]
 gate = sys.argv[4]
+expected_workflow_name = sys.argv[5]
 try:
     data = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     job = data["jobs"][job_id]
@@ -195,6 +196,11 @@ except (KeyError, TypeError, yaml.YAMLError) as exc:
 
 if not isinstance(job, dict):
     raise SystemExit(f"{workflow} {gate} job must be a mapping")
+if data.get("name") != expected_workflow_name:
+    raise SystemExit(
+        f"{workflow} must declare the caller-supplied workflow name {expected_workflow_name!r}; "
+        f"found {data.get('name')!r}"
+    )
 if job_id not in expected_job_if or job_id not in result_step_names:
     raise SystemExit(
         f"{workflow} {gate}: unknown gate job ID {job_id!r}; "
@@ -292,6 +298,9 @@ cat >"$tmp_dir/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 count_file="${GH_RETRY_COUNT_FILE:?}"
+if [[ -n "${GH_CALL_COUNT_DIR:-}" ]]; then
+  mkdir -p "$GH_CALL_COUNT_DIR"
+fi
 if [[ "$*" == *"/actions/workflows/"* ]]; then
   if [[ "$*" != *"/actions/workflows/${EXPECTED_WORKFLOW_FILE}"* ]]; then
     echo "simulated workflow lookup did not target the expected workflow filename" >&2
@@ -306,9 +315,16 @@ if [[ "$*" == *"/actions/jobs/"* ]]; then
   job_endpoint="${!#}"
   job_id="${job_endpoint##*/}"
   run_id="$job_id"
+  if [[ -n "${GH_CALL_COUNT_DIR:-}" ]]; then
+    job_call_file="$GH_CALL_COUNT_DIR/jobs-$job_id"
+    job_call_count=0
+    [[ -f "$job_call_file" ]] && job_call_count="$(<"$job_call_file")"
+    printf '%s' "$((job_call_count + 1))" >"$job_call_file"
+  fi
   metadata=false
   if [[ "${GH_SCENARIO:-}" == "multiple-metadata" ]] ||
-    [[ "${GH_SCENARIO:-}" == "latest-pending-preferred" && "${job_id}" == "101" ]]; then
+    [[ "${GH_SCENARIO:-}" == "latest-pending-preferred" && "${job_id}" == "101" ]] ||
+    [[ "${GH_SCENARIO:-}" == "cache-metadata-across-polls" && "${job_id}" == "100" ]]; then
     metadata=true
   fi
   if [[ "${metadata}" == "true" ]]; then
@@ -322,10 +338,10 @@ if [[ "$*" == *"/actions/jobs/"* ]]; then
     printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"%s"}]}\n' "$job_id" "$run_id" "$job_id" "$preserve_conclusion"
   elif [[ "${GH_SCENARIO:-}" == "pending-preservation-step-not-concluded" &&
     "${job_id}" == "100" && "$(<"$count_file")" -le 2 ]]; then
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[]}\n' "$job_id" "$run_id" "$job_id"
+    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   elif [[ "${GH_SCENARIO:-}" == "pending-missing-step-with-failed-substantive" &&
     "${job_id}" == "101" ]]; then
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[]}\n' "$job_id" "$run_id" "$job_id"
+    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   elif [[ "${GH_SCENARIO:-}" == "missing-preservation-conclusion" && "${job_id}" == "100" ]]; then
     printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   else
@@ -336,6 +352,12 @@ fi
 if [[ "$*" == *"/actions/runs/"* ]]; then
   run_endpoint="${!#}"
   run_id="${run_endpoint##*/}"
+  if [[ -n "${GH_CALL_COUNT_DIR:-}" ]]; then
+    run_call_file="$GH_CALL_COUNT_DIR/runs-$run_id"
+    run_call_count=0
+    [[ -f "$run_call_file" ]] && run_call_count="$(<"$run_call_file")"
+    printf '%s' "$((run_call_count + 1))" >"$run_call_file"
+  fi
   workflow_name='CI — Validation'
   workflow_path='.github/workflows/ci.yml'
   workflow_id=42
@@ -481,6 +503,13 @@ JSON
     fi
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"%s","conclusion":%s,"completed_at":%s,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n' "$status" "$conclusion" "$completed_at"
     ;;
+  cache-metadata-across-polls)
+    if [[ "$count" -eq 1 ]]; then
+      printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"in_progress","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    else
+      printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"completed","conclusion":"success","completed_at":"2026-07-30T03:00:00Z","started_at":"2026-07-30T02:00:00Z","created_at":"2026-07-30T02:00:00Z"}]}]\n'
+    fi
+    ;;
   pending-missing-step-with-failed-substantive)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"in_progress","conclusion":null,"completed_at":null,"started_at":"2026-07-30T02:00:00Z","created_at":"2026-07-30T02:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"failure","completed_at":"2026-07-30T03:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
@@ -568,9 +597,11 @@ run_action() {
   local count_file="$1"
   local failure_mode="$2"
   local scenario="${3:-failure-retry}"
+  local call_count_dir="${4:-}"
   GH_RETRY_COUNT_FILE="$count_file" \
   GH_FAILURE_MODE="$failure_mode" \
   GH_SCENARIO="$scenario" \
+  GH_CALL_COUNT_DIR="$call_count_dir" \
   PATH="$tmp_dir:$PATH" \
   GITHUB_EVENT_NAME=pull_request \
   GITHUB_REPOSITORY=example/firemud \
@@ -668,6 +699,30 @@ pending_step_count="$tmp_dir/count-pending-preservation-step"
 run_action "$pending_step_count" none pending-preservation-step-not-concluded
 [[ "$(<"$pending_step_count")" == "3" ]] || {
   echo "required-gate action did not treat queued/in-progress preservation jobs without a concluded step as pending" >&2
+  exit 1
+}
+
+cache_call_counts="$tmp_dir/cache-call-counts"
+mkdir -p "$cache_call_counts"
+run_action "$tmp_dir/count-cache-metadata" none pending-preservation-step-not-concluded "$cache_call_counts"
+[[ "$(<"$cache_call_counts/runs-100")" == "1" ]] || {
+  echo "required-gate action refetched immutable workflow-run metadata across polls" >&2
+  exit 1
+}
+[[ "$(<"$cache_call_counts/jobs-100")" == "3" ]] || {
+  echo "required-gate action did not refresh the pending job and final job metadata" >&2
+  exit 1
+}
+
+terminal_cache_counts="$tmp_dir/terminal-cache-call-counts"
+mkdir -p "$terminal_cache_counts"
+run_action "$tmp_dir/count-terminal-cache" none cache-metadata-across-polls "$terminal_cache_counts"
+[[ "$(<"$terminal_cache_counts/runs-100")" == "1" && "$(<"$terminal_cache_counts/jobs-100")" == "1" ]] || {
+  echo "required-gate action refetched a verified terminal metadata job across polls" >&2
+  exit 1
+}
+[[ "$(<"$terminal_cache_counts/runs-101")" == "1" && "$(<"$terminal_cache_counts/jobs-101")" == "2" ]] || {
+  echo "required-gate action did not refresh the pending job until it completed" >&2
   exit 1
 }
 

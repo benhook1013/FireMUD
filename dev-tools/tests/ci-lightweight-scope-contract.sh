@@ -246,6 +246,21 @@ require_list_item(
     "dev-tools-readme-contract",
     "ci workflow",
 )
+require_list_item(
+    ci,
+    ("jobs", "validation-summary", "needs"),
+    "dev-tools-readme-contract",
+    "ci workflow",
+)
+readme_checkout_step = find_step(
+    ci, "dev-tools-readme-contract", "⬇️ Checkout Code", "ci workflow"
+)
+require_equal(
+    readme_checkout_step,
+    ("with", "persist-credentials"),
+    "false",
+    "ci workflow",
+)
 require_equal(
     validation_step,
     ("env", "DEV_TOOLS_README_CONTRACT"),
