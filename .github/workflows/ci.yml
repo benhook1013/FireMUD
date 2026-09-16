@@ -550,7 +550,7 @@ jobs:
             --name firemud-helm-proof \
             --publish 6443:6443 \
             rancher/k3s:v1.34.5-k3s1@sha256:998f4db28a13143ada759690b554c5d8c1814ac03f77c1bdd78bbd73875a1379 \
-            server --disable=traefik --disable=servicelb --write-kubeconfig-mode=644
+            server --disable=traefik --disable=servicelb --disable=metrics-server --write-kubeconfig-mode=644
 
       - name: Wait for disposable k3s server
         run: |
