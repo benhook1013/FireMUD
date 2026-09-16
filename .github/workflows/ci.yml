@@ -271,6 +271,7 @@ jobs:
           bash ./dev-tools/tests/workflow-tool-updater-contract.sh
           bash ./dev-tools/tests/coderabbit-cli-wrapper-contract.sh
           bash ./dev-tools/tests/coderabbit-review-contract.sh
+          bash ./dev-tools/tests/coderabbit-trigger-retirement-contract.sh
           bash ./dev-tools/tests/pr-retarget-workflow-contract.sh
           bash ./dev-tools/tests/static-analysis-summary-contract.sh
           bash ./dev-tools/tests/pr-required-gate-context-contract.sh
