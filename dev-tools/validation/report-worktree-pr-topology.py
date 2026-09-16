@@ -13,7 +13,6 @@ from typing import Any
 
 MAX_OPEN_PRS = 1000
 MAX_CHAIN_PRS = 50
-DEFAULT_BRANCHES = {"develop", "main", "master"}
 TERMINAL_CONTROLS = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
 EXACT_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
 REPO = re.compile(r"^[^/\s]+/[^/\s]+$")
@@ -84,6 +83,23 @@ def resolve_repo(root: Path, requested: str | None) -> str:
     if not isinstance(payload, dict) or not isinstance(payload.get("nameWithOwner"), str):
         raise TopologyError("repository lookup has no nameWithOwner")
     return validate_repo(payload["nameWithOwner"])
+
+
+def resolve_default_branch(root: Path, repo: str) -> str:
+    payload = command_json(
+        ["gh", "repo", "view", repo, "--json", "defaultBranchRef"],
+        cwd=root,
+        label="repository default branch lookup",
+    )
+    if not isinstance(payload, dict):
+        raise TopologyError("repository default branch lookup has no defaultBranchRef")
+    default_branch_ref = payload.get("defaultBranchRef")
+    if not isinstance(default_branch_ref, dict):
+        raise TopologyError("repository default branch lookup has no defaultBranchRef")
+    default_branch = default_branch_ref.get("name")
+    if not isinstance(default_branch, str) or not default_branch:
+        raise TopologyError("repository default branch lookup has no valid name")
+    return default_branch
 
 
 def exact_sha(value: Any, label: str) -> str:
@@ -423,6 +439,7 @@ def selected_chain(
     worktrees: list[dict[str, Any]],
     repo: str,
     include_renovate: bool,
+    default_branch: str,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     if selected["head_repository"].casefold() != repo.casefold():
         raise TopologyError(
@@ -462,7 +479,7 @@ def selected_chain(
     pending = [(selected, 0)]
     while pending:
         current, current_depth = pending.pop(0)
-        candidates = [] if current["base_branch"] in DEFAULT_BRANCHES else [
+        candidates = [] if current["base_branch"] == default_branch else [
             pr
             for pr in same_repository_prs
             if pr["number"] != current["number"] and pr["head_branch"] == current["base_branch"]
@@ -537,7 +554,7 @@ def selected_chain(
     discovered_by_number = {pr["number"]: pr for pr in discovered_prs}
     edges: dict[int, set[int]] = {pr["number"]: set() for pr in discovered_prs}
     for current in discovered_prs:
-        if current["base_branch"] not in DEFAULT_BRANCHES:
+        if current["base_branch"] != default_branch:
             base = next(
                 (
                     pr
@@ -734,6 +751,7 @@ def main() -> int:
             }
         else:
             selected = fetch_selected_pr(root, repo, args.pr)
+            default_branch = resolve_default_branch(root, repo)
             chain, errors = selected_chain(
                 root,
                 selected,
@@ -742,6 +760,7 @@ def main() -> int:
                 worktrees,
                 repo,
                 args.include_renovate,
+                default_branch,
             )
             selected_worktrees = [
                 worktree

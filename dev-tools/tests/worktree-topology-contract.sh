@@ -90,6 +90,10 @@ cat > "$BIN_DIR/gh" <<'EOF'
 set -euo pipefail
 
 if [[ "${1:-}" == "repo" && "${2:-}" == "view" ]]; then
+  if [[ "$*" == *"defaultBranchRef"* ]]; then
+    echo "inventory mode must not resolve the default branch" >&2
+    exit 1
+  fi
   printf '%s\n' '{"nameWithOwner":"example/test"}'
   exit 0
 fi
@@ -210,6 +214,15 @@ cat > "$SELECTED_BIN/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "$1 $2" == "repo view" ]]; then
+  [[ "${3:-}" == "owner/repo" && "${4:-}" == "--json" && "${5:-}" == "defaultBranchRef" ]] || {
+    echo "selected default branch lookup must use positional repository syntax" >&2
+    exit 97
+  }
+  printf '%s\n' '{"defaultBranchRef":{"name":"develop"}}'
+  exit 0
+fi
+
 if [[ "${HOSTILE_SELECTED:-false}" == "true" && "$1 $2" == "pr list" ]]; then
   cat <<'HOSTILE_PRS'
 [{"number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false},{"number":100,"headRefName":"hostile\tbranch\n\u001b","headRefOid":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Hostile\tTitle\n\u001b","url":"https://example.test/pr/100\turl\n\u001b","isDraft":false}]
@@ -260,6 +273,63 @@ selected_renovate_json="$(cd "$SELECTED_REPO" && PATH="$SELECTED_BIN:$PATH" bash
 jq -e '.status == "ok" and (.chain | map(.number) | index(45) != null)' <<<"$selected_renovate_json" >/dev/null
 jq -e '.omitted_renovate == []' <<<"$selected_renovate_json" >/dev/null
 
+DEFAULT_BRANCH_BIN="$TEMP_DIR/default-branch-bin"
+mkdir -p "$DEFAULT_BRANCH_BIN"
+cat > "$DEFAULT_BRANCH_BIN/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$1 $2" == "repo view" ]]; then
+  [[ "${3:-}" == "owner/repo" && "${4:-}" == "--json" && "${5:-}" == "defaultBranchRef" ]] || {
+    echo "default branch lookup must use positional repository syntax" >&2
+    exit 97
+  }
+  case "${DEFAULT_BRANCH_MODE:-valid}" in
+    valid)
+      printf '%s\n' '{"defaultBranchRef":{"name":"develop"}}'
+      ;;
+    missing)
+      printf '%s\n' '{}'
+      ;;
+    malformed)
+      printf '%s\n' '{"defaultBranchRef":{"name":""}}'
+      ;;
+    *)
+      echo "unexpected default branch mode: ${DEFAULT_BRANCH_MODE}" >&2
+      exit 1
+      ;;
+  esac
+  exit 0
+fi
+if [[ "$1 $2" == "pr list" ]]; then
+  cat <<'PRS'
+[{"number":41,"headRefName":"main","headRefOid":"cccccccccccccccccccccccccccccccccccccccc","baseRefName":"develop","baseRefOid":"dddddddddddddddddddddddddddddddddddddddd","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Default branch parent","url":"https://example.test/pr/41","isDraft":false},{"number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"main","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false}]
+PRS
+  exit 0
+fi
+if [[ "$1 $2" == "pr view" ]]; then
+  cat <<'PR'
+{"state":"OPEN","number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"main","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false}
+PR
+  exit 0
+fi
+echo "unexpected gh invocation: $*" >&2
+exit 1
+EOF
+chmod +x "$DEFAULT_BRANCH_BIN/gh"
+
+default_branch_parent_json="$(cd "$SELECTED_REPO" && PATH="$DEFAULT_BRANCH_BIN:$SELECTED_BIN:$PATH" bash "$SCRIPT" --repo owner/repo --pr 42 --json)"
+jq -e '.status == "ok" and (.chain | map(.number) == [41, 42])' <<<"$default_branch_parent_json" >/dev/null
+jq -e '.chain[0].head.branch == "main" and .chain[1].base.branch == "main"' <<<"$default_branch_parent_json" >/dev/null
+
+for default_branch_mode in missing malformed; do
+  if default_branch_error="$(cd "$SELECTED_REPO" && DEFAULT_BRANCH_MODE="$default_branch_mode" PATH="$DEFAULT_BRANCH_BIN:$SELECTED_BIN:$PATH" bash "$SCRIPT" --repo owner/repo --pr 42 --json)"; then
+    echo "${default_branch_mode} default branch fixture unexpectedly succeeded" >&2
+    exit 1
+  fi
+  jq -e '.status == "ambiguous" and (.errors | any(contains("repository default branch lookup")))' <<<"$default_branch_error" >/dev/null
+done
+
 help_output="$(bash "$SCRIPT" --help)"
 grep -Fqx 'Usage: report-worktree-pr-topology.sh [--repo OWNER/REPO] [--include-renovate] [--json]' <<<"$help_output"
 grep -Fqx '       report-worktree-pr-topology.sh --pr N [--repo OWNER/REPO] [--include-renovate] [--json]' <<<"$help_output"
@@ -277,6 +347,15 @@ mkdir -p "$LIMIT_BIN"
 cat > "$LIMIT_BIN/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+
+if [[ "$1 $2" == "repo view" ]]; then
+  [[ "${3:-}" == "owner/repo" && "${4:-}" == "--json" && "${5:-}" == "defaultBranchRef" ]] || {
+    echo "limit default branch lookup must use positional repository syntax" >&2
+    exit 97
+  }
+  printf '%s\n' '{"defaultBranchRef":{"name":"develop"}}'
+  exit 0
+fi
 
 if [[ "$1 $2" == "pr list" ]]; then
   [[ " $* " == *" --limit 1000 "* ]] || {
@@ -362,6 +441,15 @@ cat > "$CYCLE_BIN/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "$1 $2" == "repo view" ]]; then
+  [[ "${3:-}" == "owner/repo" && "${4:-}" == "--json" && "${5:-}" == "defaultBranchRef" ]] || {
+    echo "cycle default branch lookup must use positional repository syntax" >&2
+    exit 97
+  }
+  printf '%s\n' '{"defaultBranchRef":{"name":"develop"}}'
+  exit 0
+fi
+
 if [[ "$1 $2" == "pr list" ]]; then
   cat <<'PRS'
 [{"number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"feature/dependent","baseRefOid":"dddddddddddddddddddddddddddddddddddddddd","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false},{"number":100,"headRefName":"feature/dependent","headRefOid":"dddddddddddddddddddddddddddddddddddddddd","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Cyclic dependent","url":"https://example.test/pr/100","isDraft":false}]
@@ -391,6 +479,15 @@ mkdir -p "$FANOUT_BIN"
 cat > "$FANOUT_BIN/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+
+if [[ "$1 $2" == "repo view" ]]; then
+  [[ "${3:-}" == "owner/repo" && "${4:-}" == "--json" && "${5:-}" == "defaultBranchRef" ]] || {
+    echo "fanout default branch lookup must use positional repository syntax" >&2
+    exit 97
+  }
+  printf '%s\n' '{"defaultBranchRef":{"name":"develop"}}'
+  exit 0
+fi
 
 if [[ "$1 $2" == "pr list" ]]; then
   python3 - <<'PY'
