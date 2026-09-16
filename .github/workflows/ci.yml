@@ -552,11 +552,11 @@ jobs:
             rancher/k3s:v1.34.5-k3s1@sha256:998f4db28a13143ada759690b554c5d8c1814ac03f77c1bdd78bbd73875a1379 \
             server --disable=traefik --disable=servicelb --disable=metrics-server --write-kubeconfig-mode=644
 
-      - name: Wait for disposable k3s server
+      - name: Wait for disposable k3s API server
         run: |
           set -euo pipefail
           for attempt in $(seq 1 60); do
-            if docker exec firemud-helm-proof k3s kubectl get --raw='/readyz' --request-timeout=2s >/dev/null 2>&1; then
+            if docker exec firemud-helm-proof k3s kubectl get --raw='/livez' --request-timeout=2s >/dev/null 2>&1; then
               break
             fi
             if [[ "$attempt" == 60 ]]; then

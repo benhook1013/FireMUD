@@ -24,10 +24,10 @@ if "setup-helm" not in "\n".join(str(step) for step in job.get("steps", [])):
     raise SystemExit("Helm transaction proof must use canonical Helm setup")
 if "helm-transaction-proof.sh" not in job_text:
     raise SystemExit("Helm transaction proof job must invoke the canonical proof script")
-if "docker exec firemud-helm-proof k3s kubectl get --raw='/readyz' --request-timeout=2s" not in job_text:
-    raise SystemExit("Helm transaction proof must wait on the disposable server Ready condition")
+if "docker exec firemud-helm-proof k3s kubectl get --raw='/livez' --request-timeout=2s" not in job_text:
+    raise SystemExit("Helm transaction proof must wait on the disposable API server liveness condition")
 if "--disable=metrics-server" not in job_text:
-    raise SystemExit("Helm transaction proof must disable the optional metrics server so readiness is deterministic")
+    raise SystemExit("Helm transaction proof must disable the optional metrics server so optional aggregated API discovery cannot affect the proof")
 script = (root / "dev-tools/validation/helm-transaction-proof.sh").read_text()
 for command in ("helm install", "helm upgrade", "helm history", "helm rollback", "helm status"):
     if command not in script:
