@@ -60,6 +60,10 @@ runs:
           echo "Required-gate preservation cannot verify the expected workflow job from ${EXPECTED_WORKFLOW_PATH}; refusing to poll." >&2
           exit 1
         fi
+        if ! grep -Fxq "name: ${EXPECTED_WORKFLOW_NAME}" "${expected_workflow_file_path}"; then
+          echo "Required-gate preservation cannot verify the expected workflow name ${EXPECTED_WORKFLOW_NAME} from ${EXPECTED_WORKFLOW_PATH}; refusing to poll." >&2
+          exit 1
+        fi
         expected_job_block="$(awk -v expected_job_id="${EXPECTED_JOB_ID}" '
           $0 == "  " expected_job_id ":" { capture = 1; next }
           capture && /^  [A-Za-z0-9_-]+:$/ { exit }

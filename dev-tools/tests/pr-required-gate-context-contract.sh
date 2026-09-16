@@ -35,7 +35,7 @@ assert_required_input_declaration() {
       print
       next
     }
-    capture && /^ {0,2}[A-Za-z0-9_-]+:/ {
+    capture && /^ ? ?[A-Za-z0-9_-]+:/ {
       exit
     }
     capture {
@@ -355,6 +355,9 @@ if [[ "$*" == *"/actions/workflows/"* ]]; then
   if [[ "$*" != *"/actions/workflows/${EXPECTED_WORKFLOW_FILE}"* ]]; then
     echo "simulated workflow lookup did not target the expected workflow filename" >&2
     exit 90
+  fi
+  if [[ "${GH_SCENARIO:-}" == "local-workflow-name-mismatch" ]]; then
+    : >"$count_file"
   fi
   if [[ "${GH_SCENARIO:-}" == "workflow-identity-mismatch" ]]; then
     cat <<'JSON'
@@ -699,6 +702,7 @@ run_action() {
   local failure_mode="$2"
   local scenario="${3:-failure-retry}"
   local call_count_dir="${4:-}"
+  local workspace="${5:-$ROOT_DIR}"
   GH_RETRY_COUNT_FILE="$count_file" \
   GH_FAILURE_MODE="$failure_mode" \
   GH_SCENARIO="$scenario" \
@@ -714,7 +718,7 @@ run_action() {
   EXPECTED_WORKFLOW_FILE=ci.yml \
   EXPECTED_WORKFLOW_PATH=.github/workflows/ci.yml \
   EXPECTED_JOB_ID=validation-gate \
-  GITHUB_WORKSPACE="$ROOT_DIR" \
+  GITHUB_WORKSPACE="$workspace" \
   bash -euo pipefail -c "$action_script"
 }
 
@@ -790,6 +794,28 @@ set -e
 }
 grep -Fxq 'GitHub API returned malformed expected workflow identity; refusing to preserve.' "$workflow_identity_output" || {
   echo "required-gate action did not report the exact initial workflow identity mismatch message" >&2
+  exit 1
+}
+
+local_workflow_name_mismatch_workspace="$tmp_dir/local-workflow-name-mismatch-workspace"
+mkdir -p "$local_workflow_name_mismatch_workspace/.github/workflows"
+cp "$ROOT_DIR/.github/workflows/ci.yml" "$local_workflow_name_mismatch_workspace/.github/workflows/ci.yml"
+sed -i '1cname: CI — Locally Renamed' "$local_workflow_name_mismatch_workspace/.github/workflows/ci.yml"
+local_workflow_name_mismatch_output="$tmp_dir/local-workflow-name-mismatch-output"
+set +e
+run_action "$tmp_dir/count-local-workflow-name-mismatch" none local-workflow-name-mismatch "" "$local_workflow_name_mismatch_workspace" >"$local_workflow_name_mismatch_output" 2>&1
+local_workflow_name_mismatch_status=$?
+set -e
+[[ "$local_workflow_name_mismatch_status" -ne 0 ]] || {
+  echo "required-gate action accepted a locally mismatched workflow display name" >&2
+  exit 1
+}
+[[ ! -e "$tmp_dir/count-local-workflow-name-mismatch" ]] || {
+  echo "required-gate action polled GitHub after a local workflow display-name mismatch" >&2
+  exit 1
+}
+grep -Fxq 'Required-gate preservation cannot verify the expected workflow name CI — Validation from .github/workflows/ci.yml; refusing to poll.' "$local_workflow_name_mismatch_output" || {
+  echo "required-gate action did not report the exact local workflow display-name mismatch message" >&2
   exit 1
 }
 
