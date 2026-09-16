@@ -1068,12 +1068,14 @@ def emit_text(report: dict[str, Any]) -> None:
     print(f"verdict: {report['verdict']}")
     trigger = report["hosted_trigger"]
     if trigger.get("available"):
-        print(
-            "trigger: "
-            f"state={_display(trigger.get('state'))} · "
-            f"id={_display(trigger.get('trigger_comment_id'))} · "
-            f"head={_display(str(trigger.get('head_sha', ''))[:12] or None)}"
-        )
+        trigger_details = [
+            f"state={_display(trigger.get('state'))}",
+            f"id={_display(trigger.get('trigger_comment_id'))}",
+            f"head={_display(str(trigger.get('head_sha', ''))[:12] or None)}",
+        ]
+        if trigger.get("state") == "ambiguous" and trigger.get("reason"):
+            trigger_details.append(f"reason={_display(trigger['reason'])}")
+        print("trigger: " + " · ".join(trigger_details))
     else:
         print("trigger: unavailable (no canonical durable record)")
     taper = counts["taper_evidence"]

@@ -667,6 +667,55 @@ class PrStatusReporterTest(unittest.TestCase):
         self.assertNotIn(str(record), json.dumps(report))
         self.assertEqual(report["verdict"], "READY")
 
+    def test_ambiguous_hosted_trigger_reason_is_visible_in_human_output(self) -> None:
+        trigger = {
+            "trigger_state": {
+                "state": "ambiguous",
+                "terminal": True,
+                "attributed": False,
+                "repository": "owner/repo",
+                "pr_number": 42,
+                "head_sha": "0123456789abcdef0123456789abcdef01234567",
+                "current_head_sha": "fedcba9876543210fedcba9876543210fedcba98",
+                "trigger_comment_id": 101,
+                "trigger_created_at": "2026-09-14T00:05:00Z",
+                "trigger_url": "https://example.test/comments/101",
+                "trigger_type": "full",
+                "response_id": None,
+                "response_created_at": None,
+                "response_url": None,
+                "cooldown_until": None,
+                "reason": "the durable trigger record disagrees with the current PR head",
+            }
+        }
+        checker = self.checker_payload(ok=True)
+        checker.update(trigger)
+        with tempfile.TemporaryDirectory() as directory:
+            record = Path(directory) / "trigger.json"
+            record.write_text("{}", encoding="utf-8")
+            with (
+                patch.object(self.reporter, "hosted_trigger_record_path", return_value=record),
+                patch.object(
+                    self.reporter.subprocess,
+                    "run",
+                    side_effect=self.provider_responses(
+                        checker_ok=True,
+                        checker_exit=1,
+                        checker_payload=checker,
+                    ),
+                ),
+            ):
+                report = self.reporter.build_report("owner/repo", 42)
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.reporter.emit_text(report)
+        rendered = output.getvalue()
+        self.assertIn("trigger: state=ambiguous", rendered)
+        self.assertIn(
+            "reason=Hosted trigger evidence does not match the current GitHub PR head",
+            rendered,
+        )
+
     def test_nonterminal_hosted_trigger_without_response_url_is_preserved(self) -> None:
         trigger = {
             "trigger_state": {

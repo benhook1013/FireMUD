@@ -544,6 +544,7 @@ def main() -> int:
                 "schema_version": 1,
                 "repository": repo,
                 "mode": "inventory",
+                "status": "ok",
                 "worktrees": worktrees,
                 "local_branches": branches,
                 "pull_requests": [

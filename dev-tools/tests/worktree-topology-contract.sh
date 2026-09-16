@@ -115,6 +115,9 @@ grep -Fqx "$PRUNABLE_WORKTREE"$'\tprunable-branch\t33333333333333333333333333333
 grep -Fqx "$BARE_WORKTREE"$'\t(bare)\tbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\tbare' "$output_file"
 [[ ! -s "$error_file" ]]
 
+inventory_json="$(PATH="$BIN_DIR:$PATH" bash "$SCRIPT" --json)"
+jq -e '.mode == "inventory" and .status == "ok"' <<<"$inventory_json" >/dev/null
+
 echo "worktree topology contract checks passed"
 
 SELECTED_REPO="$TEMP_DIR/selected-repo"
