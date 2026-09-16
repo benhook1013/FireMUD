@@ -4,11 +4,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.stream.Stream;
 import javax.net.ssl.SSLException;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 class TlsTestSupportTest {
+  @Test
+  void ignoresSslExceptionsWithNullMessages() {
+    assertThat(TlsTestSupport.isTlsHandshakeRejection(new SSLException((String) null))).isFalse();
+    assertThat(TlsTestSupport.isTlsHandshakeRejection(new SSLException((Throwable) null)))
+        .isFalse();
+  }
+
   @ParameterizedTest
   @MethodSource("knownClientCertificateRejections")
   void recognizesExplicitClientCertificateRejections(String message) {

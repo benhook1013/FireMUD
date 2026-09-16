@@ -5751,7 +5751,10 @@ def expected_binding_checks(
             )
 
     mode = get(data, "serviceDiscovery.mode")
-    target_namespace = primary_workload_namespace(documents)
+    try:
+        target_namespace = primary_workload_namespace(documents)
+    except ValueError as exc:
+        fail(str(exc))
     override_lines, override_issues = extract_service_discovery_overrides(documents)
     if mode == "kubernetes-dns-default" and (override_lines or override_issues):
         results.append(
@@ -7398,7 +7401,10 @@ def main() -> int:
         rendered = run(["kubectl", "kustomize", str(root_dir / "k8s" / "overlays" / overlay_name)])
 
     documents = parse_documents(rendered)
-    target_namespace = primary_workload_namespace(documents)
+    try:
+        target_namespace = primary_workload_namespace(documents)
+    except ValueError as exc:
+        fail(str(exc))
     default_output = default_preflight_output_path(
         root_dir,
         env_class,

@@ -114,6 +114,20 @@ class TlsCertificateReadinessHealthEndpointGroupsPostProcessorTest {
   }
 
   @Test
+  void wrapsPrimaryWhenItIsTheReadinessGroup() {
+    HealthEndpointGroup readiness = mock(HealthEndpointGroup.class);
+    HealthEndpointGroups original = mock(HealthEndpointGroups.class);
+    when(original.get("readiness")).thenReturn(readiness);
+    when(original.getPrimary()).thenReturn(readiness);
+
+    HealthEndpointGroups processed = processor.postProcessHealthEndpointGroups(original);
+
+    assertNotNull(processed);
+    assertTrue(processed.getPrimary().isMember(
+        TlsCertificateReadinessHealthEndpointGroupsPostProcessor.TLS_CERTIFICATE_RELOAD_CONTRIBUTOR));
+  }
+
+  @Test
   void leavesGroupsUnchangedWhenReadinessDoesNotExist() {
     HealthEndpointGroup primary = mock(HealthEndpointGroup.class);
     HealthEndpointGroups original =

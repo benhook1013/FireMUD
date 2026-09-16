@@ -100,7 +100,8 @@ public final class TlsCertificateReadinessHealthEndpointGroupsPostProcessor
 
     @Override
     public HealthEndpointGroup getPrimary() {
-      return delegate.getPrimary();
+      HealthEndpointGroup primary = delegate.getPrimary();
+      return primary == originalReadiness ? readiness : primary;
     }
 
     @Override

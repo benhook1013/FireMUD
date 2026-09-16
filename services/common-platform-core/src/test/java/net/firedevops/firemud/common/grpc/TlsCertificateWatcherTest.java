@@ -255,6 +255,12 @@ class TlsCertificateWatcherTest {
         Files.writeString(retainedDirectory.resolve("tls.crt"), "certificate-1");
     WatcherCounts baseline = watcherCounts(TlsCertificateWatcher.health());
 
+    Logger logger = (Logger) LoggerFactory.getLogger(TlsCertificateWatcher.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.list = new CopyOnWriteArrayList<>();
+    appender.start();
+    logger.addAppender(appender);
+
     TlsCertificateWatcher watcher =
         TlsCertificateWatcher.createAndStart(
             List.of(missingCertificate, retainedCertificate), () -> {});
@@ -262,11 +268,14 @@ class TlsCertificateWatcherTest {
       Files.delete(missingCertificate);
       Files.delete(missingDirectory);
       awaitUnhealthy(watcher);
-      Thread.sleep(700);
+      awaitLogCount(
+          appender, Level.ERROR, "TLS certificate watcher failed its re-registration retry", 3);
       assertFalse(watcher.isHealthy());
       assertHealthDelta(baseline, 1, 0, 1, TlsCertificateWatcher.health());
     } finally {
       watcher.close();
+      logger.detachAppender(appender);
+      appender.stop();
     }
 
     Files.createDirectory(missingDirectory);

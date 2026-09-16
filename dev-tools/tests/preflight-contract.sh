@@ -1992,6 +1992,39 @@ if not main_contract.hosted_telnet_target_namespace:
         "production preflight must pass the derived target_namespace to hosted Telnet TLS validation"
     )
 
+
+def has_clean_namespace_failure(function_name):
+    functions = [
+        node
+        for node in preflight_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == function_name
+    ]
+    if len(functions) != 1:
+        raise SystemExit(f"expected exactly one {function_name} definition")
+    for node in ast.walk(functions[0]):
+        if not isinstance(node, ast.Try):
+            continue
+        for handler in node.handlers:
+            if not isinstance(handler.type, ast.Name) or handler.type.id != "ValueError":
+                continue
+            if any(
+                isinstance(call.func, ast.Name)
+                and call.func.id == "fail"
+                for statement in handler.body
+                for call in ast.walk(statement)
+                if isinstance(call, ast.Call)
+            ):
+                return True
+    return False
+
+
+for guarded_function in ("expected_binding_checks", "main"):
+    if not has_clean_namespace_failure(guarded_function):
+        raise SystemExit(
+            f"{guarded_function} does not route ambiguous workload namespaces through fail()"
+        )
+
 spec = importlib.util.spec_from_file_location("preflight_hobby_contract", root / "dev-tools/deploy/preflight.py")
 module = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
