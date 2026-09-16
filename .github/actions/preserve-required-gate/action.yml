@@ -246,7 +246,7 @@ runs:
             [[ "${conclusion}" == "__null__" ]] && conclusion=""
             [[ "${completed_at}" == "__null__" ]] && completed_at=""
             [[ "${started_at}" == "__null__" ]] && started_at=""
-            if [[ ! "${details_url}" =~ /actions/runs/([0-9]+)/job/([0-9]+)$ ]]; then
+            if [[ ! "${details_url}" =~ /actions/runs/([0-9]+)/job/([0-9]+)([?#].*)?$ ]]; then
               candidate_ambiguous=true
               continue
             fi

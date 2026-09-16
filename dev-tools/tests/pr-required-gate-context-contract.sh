@@ -575,6 +575,12 @@ JSON
   run-path-ref-suffix|malformed-run-path-ref-suffix)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
+  details-url-query|details-url-fragment|malformed-details-url-suffix)
+    details_suffix='?check_suite_focus=true'
+    [[ "${GH_SCENARIO:-}" == "details-url-fragment" ]] && details_suffix='#step:1:2'
+    [[ "${GH_SCENARIO:-}" == "malformed-details-url-suffix" ]] && details_suffix='@evil'
+    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200%s","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n' "$details_suffix"
+    ;;
   fork-head-same-sha)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
@@ -1111,7 +1117,16 @@ run_action "$run_path_ref_count" none run-path-ref-suffix
   exit 1
 }
 
-for malformed_scenario in cross-workflow-same-name malformed-run-path-ref-suffix wrong-run-repository wrong-run-name wrong-job-workflow-name unknown-app unknown-check-name invalid-job-id missing-job-id unsupported-status missing-timestamp empty-wrong-pr empty-wrong-base empty-wrong-head empty-wrong-title empty-malformed-association other-pr-association; do
+for details_url_scenario in details-url-query details-url-fragment; do
+  details_url_count="$tmp_dir/count-${details_url_scenario}"
+  run_action "$details_url_count" none "$details_url_scenario"
+  [[ "$(<"$details_url_count")" == "1" ]] || {
+    echo "required-gate action rejected a valid ${details_url_scenario} check-run URL" >&2
+    exit 1
+  }
+done
+
+for malformed_scenario in cross-workflow-same-name malformed-run-path-ref-suffix malformed-details-url-suffix wrong-run-repository wrong-run-name wrong-job-workflow-name unknown-app unknown-check-name invalid-job-id missing-job-id unsupported-status missing-timestamp empty-wrong-pr empty-wrong-base empty-wrong-head empty-wrong-title empty-malformed-association other-pr-association; do
   malformed_output="$tmp_dir/${malformed_scenario}-output"
   set +e
   run_action "$tmp_dir/count-${malformed_scenario}" none "$malformed_scenario" >"$malformed_output" 2>&1
