@@ -336,6 +336,9 @@ jobs:
           image-tag: ${{ needs.validate-target.outputs.image_tag }}
           preview-hostname: ${{ needs.validate-target.outputs.hostname }}
 
+      - name: Validate kubectl client/server skew
+        run: bash ./dev-tools/hosted/shared/check-kubectl-version-skew.sh
+
       - name: Revalidate open PR before privileged deployment
         env:
           GH_TOKEN: ${{ github.token }}
@@ -734,6 +737,10 @@ jobs:
         with:
           content: ${{ secrets.PREVIEW_RUNTIME_KUBECONFIG }}
           path: ${{ runner.temp }}/preview-runtime.kubeconfig
+
+      - name: Validate kubectl client/server skew
+        run: bash ./dev-tools/hosted/shared/check-kubectl-version-skew.sh
+
       - name: Revalidate preview cleanup target before runtime deletion
         env:
           GH_TOKEN: ${{ github.token }}
@@ -850,6 +857,11 @@ jobs:
           content: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
           path: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
           export-to-github-env: 'false'
+      - name: Validate kubectl client/server skew
+        if: ${{ steps.requester-credentials.outputs.available == 'true' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
+        run: bash ./dev-tools/hosted/shared/check-kubectl-version-skew.sh
       - name: Discover HostedEnvironmentIdentity API
         id: identity-api
         if: ${{ steps.requester-credentials.outputs.available == 'true' }}

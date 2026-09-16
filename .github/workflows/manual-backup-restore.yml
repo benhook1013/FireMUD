@@ -97,6 +97,9 @@ jobs:
       - name: Set up kubectl
         uses: ./.github/actions/setup-kubectl
 
+      - name: Validate kubectl client/server skew
+        run: bash ./dev-tools/hosted/shared/check-kubectl-version-skew.sh
+
       - name: Load workflow tool versions
         id: workflow-tool-versions
         uses: ./.github/actions/load-workflow-tool-versions

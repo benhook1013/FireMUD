@@ -11,7 +11,7 @@ command -v python3 >/dev/null 2>&1 || {
 }
 
 version_json="$(kubectl version --output=json)"
-read -r client_version server_version < <(
+read -r client_major client_minor server_major server_minor client_version server_version < <(
   python3 -c '
 import json
 import re
@@ -25,12 +25,22 @@ client_match = pattern.match(client)
 server_match = pattern.match(server)
 if client_match is None or server_match is None:
     raise SystemExit("kubectl version output lacks parseable client and server gitVersion values")
-print(client, server)
+print(
+    client_match.group("major"),
+    client_match.group("minor"),
+    server_match.group("major"),
+    server_match.group("minor"),
+    client,
+    server,
+)
 ' <<<"$version_json"
 )
 
-client_minor="$(python3 -c 'import re,sys; print(re.match(r"^v[0-9]+\.([0-9]+)", sys.argv[1]).group(1))' "$client_version")"
-server_minor="$(python3 -c 'import re,sys; print(re.match(r"^v[0-9]+\.([0-9]+)", sys.argv[1]).group(1))' "$server_version")"
+if [[ "$client_major" != "$server_major" ]]; then
+  echo "kubectl client/server major version skew is unsupported: client=${client_version}, server=${server_version}" >&2
+  exit 1
+fi
+
 minor_delta=$((client_minor - server_minor))
 if (( minor_delta < -1 || minor_delta > 1 )); then
   echo "kubectl client/server minor skew is unsupported: client=${client_version}, server=${server_version}" >&2

@@ -37,9 +37,10 @@ run_case client-newer pass '{"clientVersion":{"gitVersion":"v1.35.8"},"serverVer
 run_case client-older pass '{"clientVersion":{"gitVersion":"v1.33.9"},"serverVersion":{"gitVersion":"v1.34.5+k3s1"}}'
 run_case too-new fail '{"clientVersion":{"gitVersion":"v1.36.0"},"serverVersion":{"gitVersion":"v1.34.5+k3s1"}}'
 run_case too-old fail '{"clientVersion":{"gitVersion":"v1.32.0"},"serverVersion":{"gitVersion":"v1.34.5+k3s1"}}'
+run_case major-mismatch fail '{"clientVersion":{"gitVersion":"v2.34.0"},"serverVersion":{"gitVersion":"v1.34.5+k3s1"}}'
 run_case missing-server fail '{"clientVersion":{"gitVersion":"v1.34.5"}}'
 
-for workflow in preview.yml dev-demo.yml preview-reconciler.yml dev-demo-reconciler.yml preview-janitor.yml; do
+for workflow in preview.yml dev-demo.yml preview-reconciler.yml dev-demo-reconciler.yml preview-janitor.yml hosted-identity-request.yml manual-backup-restore.yml; do
   if ! grep -Fq 'dev-tools/hosted/shared/check-kubectl-version-skew.sh' "$ROOT_DIR/.github/workflows/$workflow"; then
     echo "$workflow must invoke the shared kubectl version skew preflight" >&2
     exit 1
