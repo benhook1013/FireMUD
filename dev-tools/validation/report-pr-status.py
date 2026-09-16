@@ -24,6 +24,20 @@ TERMINAL_CONTROLS = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
 EXACT_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
 REVIEWED_SHA = re.compile(r"^[0-9a-fA-F]{7,40}$")
 RUN_ID = re.compile(r"^run\.[A-Za-z0-9]{1,32}$")
+LOC_METADATA_LINE = re.compile(
+    r"^<!-- firemud:cloc-report:metadata (?P<payload>\{.*\}) -->$"
+)
+TRIGGER_STATES = {
+    "active",
+    "ambiguous",
+    "awaiting_response",
+    "completed",
+    "failed",
+    "noop",
+    "rate_limited",
+    "timed_out",
+    "unattributed",
+}
 
 SUCCESS_VALUES = {"SUCCESS", "SKIPPED", "NEUTRAL"}
 FAILURE_VALUES = {
@@ -49,7 +63,7 @@ MERGE_STATE_VALUES = {
     "UNSTABLE",
 }
 
-GH_PR_IDENTITY_FIELDS = "number,title,headRefName,headRefOid,baseRefName,changedFiles"
+GH_PR_IDENTITY_FIELDS = "number,title,headRefName,headRefOid,baseRefName,changedFiles,body"
 GH_PR_STATE_FIELDS = "statusCheckRollup,mergeable,mergeStateStatus,isDraft,url"
 GH_PR_FIELDS = f"{GH_PR_IDENTITY_FIELDS},{GH_PR_STATE_FIELDS}"
 
@@ -416,6 +430,215 @@ def _validate_github_evidence(payload: dict[str, Any]) -> None:
         raise ReportError(f"{name} evidence has an invalid mergeStateStatus value")
     _nonnegative_int(payload.get("changedFiles"), f"{name} changedFiles")
     _require(payload, "isDraft", bool, name)
+    _require(payload, "body", str, name)
+
+
+def _git_common_dir() -> Path | None:
+    """Resolve the shared Git directory without invoking a mutating Git command."""
+
+    dot_git = ROOT / ".git"
+    if dot_git.is_dir():
+        return dot_git
+    try:
+        pointer = dot_git.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        return None
+    if not pointer.startswith("gitdir:"):
+        return None
+    worktree_git_dir = Path(pointer.partition(":")[2].strip())
+    if not worktree_git_dir.is_absolute():
+        worktree_git_dir = (ROOT / worktree_git_dir).resolve()
+    try:
+        common_pointer = (worktree_git_dir / "commondir").read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        return None
+    common_dir = Path(common_pointer)
+    if not common_dir.is_absolute():
+        common_dir = (worktree_git_dir / common_dir).resolve()
+    return common_dir if common_dir.is_dir() else None
+
+
+def hosted_trigger_record_path(repo: str, pr_number: int) -> Path | None:
+    common_dir = _git_common_dir()
+    if common_dir is None:
+        return None
+    candidate = (
+        common_dir
+        / "coderabbit-review-logs"
+        / "hosted"
+        / repo.replace("/", "_")
+        / f"pr-{pr_number}"
+        / "trigger.json"
+    )
+    try:
+        return candidate if candidate.is_file() else None
+    except OSError:
+        return None
+
+
+def _validate_trigger_state(payload: dict[str, Any], repo: str, pr_number: int) -> dict[str, Any]:
+    name = "Hosted trigger checker"
+    state = _require(payload, "trigger_state", dict, name)
+    for key in ("state", "repository", "pr_number", "head_sha", "current_head_sha"):
+        if key not in state:
+            raise ReportError(f"{name} evidence is missing a valid {key}")
+    if state["state"] not in TRIGGER_STATES:
+        raise ReportError(f"{name} evidence has an invalid state")
+    if state["repository"] != repo or state["pr_number"] != pr_number:
+        raise ReportError(f"{name} evidence does not match the requested PR")
+    for key in ("head_sha", "current_head_sha"):
+        if not isinstance(state[key], str) or not EXACT_SHA.fullmatch(state[key]):
+            raise ReportError(f"{name} evidence {key} must be exactly 40 hexadecimal characters")
+    for key in ("terminal", "attributed", "manual_adjudication_required"):
+        if key in state and not isinstance(state[key], bool):
+            raise ReportError(f"{name} evidence has an invalid {key}")
+    for key in ("trigger_comment_id", "response_id"):
+        value = state.get(key)
+        if value is not None:
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ReportError(f"{name} evidence has an invalid {key}")
+    for key in ("trigger_created_at", "response_created_at", "cooldown_until"):
+        value = state.get(key)
+        if value is not None:
+            _timestamp(value, f"{name} {key}")
+    for key in ("trigger_url", "response_url", "reason"):
+        value = state.get(key)
+        if not isinstance(value, str) or not value:
+            raise ReportError(f"{name} evidence has an invalid {key}")
+    return state
+
+
+def _hosted_trigger_evidence(repo: str, pr_number: int) -> dict[str, Any]:
+    record_path = hosted_trigger_record_path(repo, pr_number)
+    if record_path is None:
+        return {
+            "available": False,
+            "state": "unavailable",
+            "reason": "no canonical durable Hosted trigger record is present",
+        }
+    try:
+        evidence = _run_json_provider(
+            [
+                sys.executable,
+                str(CODERABBIT_CHECKER),
+                "--repo",
+                repo,
+                "--pr",
+                str(pr_number),
+                "--trigger-record",
+                str(record_path),
+                "--json",
+            ],
+            "Hosted trigger checker",
+            allow_nonzero=True,
+        )
+        state = _validate_trigger_state(evidence.payload, repo, pr_number)
+        return {
+            "available": True,
+            "record_path": str(record_path),
+            "provider_exit_code": evidence.exit_code,
+            **state,
+        }
+    except ReportError as exc:
+        return {
+            "available": True,
+            "record_path": str(record_path),
+            "state": "ambiguous",
+            "reason": str(exc),
+        }
+
+
+def _checkpoint_summaries(checkpoints: list[dict[str, Any]]) -> dict[str, Any]:
+    by_type: dict[str, list[dict[str, Any]]] = {"Hosted": [], "CLI": []}
+    for checkpoint in checkpoints:
+        by_type[checkpoint["type"]].append(checkpoint)
+
+    def summary(items: list[dict[str, Any]]) -> dict[str, Any]:
+        return {
+            "count": len(items),
+            "raw_found": sum(item["raw_found"] for item in items),
+            "accepted": sum(item["accepted"] for item in items),
+            "latest": items[-1] if items else None,
+        }
+
+    cli = by_type["CLI"]
+    cli_zero_streak: list[dict[str, Any]] = []
+    for checkpoint in reversed(cli):
+        if checkpoint["raw_found"] != 0 or checkpoint["accepted"] != 0:
+            break
+        cli_zero_streak.append(checkpoint)
+    last_cli_accepted = next((item for item in reversed(cli) if item["accepted"] > 0), None)
+
+    hosted_zero_accepted_streak = 0
+    for checkpoint in reversed(by_type["Hosted"]):
+        if checkpoint["accepted"] != 0:
+            break
+        hosted_zero_accepted_streak += 1
+
+    return {
+        "observed": len(checkpoints),
+        "by_type": {source: summary(items) for source, items in by_type.items()},
+        "cli_zero_streak": {
+            "count": len(cli_zero_streak),
+            "since": cli_zero_streak[-1]["created_at"] if cli_zero_streak else None,
+            "last_accepted_finding": (
+                {
+                    "comment_id": last_cli_accepted.get("comment_id"),
+                    "created_at": last_cli_accepted["created_at"],
+                    "accepted": last_cli_accepted["accepted"],
+                }
+                if last_cli_accepted
+                else None
+            ),
+        },
+        "taper_evidence": {
+            "hosted_zero_accepted_streak": hosted_zero_accepted_streak,
+            "hosted_checkpoints_observed": len(by_type["Hosted"]),
+        },
+    }
+
+
+def _loc_metadata_freshness(body: str, current_head: str) -> dict[str, Any]:
+    start_marker = "<!-- firemud:cloc-report:start -->"
+    end_marker = "<!-- firemud:cloc-report:end -->"
+    marker_lines = [
+        match for line in body.splitlines() if (match := LOC_METADATA_LINE.fullmatch(line.strip()))
+    ]
+    if not marker_lines:
+        return {"status": "missing", "reason": "PR body has no exact LOC metadata marker"}
+    if len(marker_lines) != 1:
+        return {"status": "ambiguous", "reason": "PR body has multiple LOC metadata markers"}
+    if body.count(start_marker) != 1 or body.count(end_marker) != 1:
+        return {"status": "ambiguous", "reason": "PR body LOC marker block is incomplete or duplicated"}
+    marker_position = body.find(marker_lines[0].group(0))
+    if not (body.find(start_marker) < marker_position < body.find(end_marker)):
+        return {"status": "ambiguous", "reason": "LOC metadata marker is outside the marked report block"}
+    try:
+        metadata = json.loads(marker_lines[0].group("payload"))
+    except json.JSONDecodeError:
+        return {"status": "ambiguous", "reason": "PR body LOC metadata is not valid JSON"}
+    if not isinstance(metadata, dict):
+        return {"status": "ambiguous", "reason": "PR body LOC metadata is not an object"}
+    for key in ("base_oid", "head_oid", "merge_base"):
+        value = metadata.get(key)
+        if not isinstance(value, str) or not EXACT_SHA.fullmatch(value):
+            return {"status": "ambiguous", "reason": f"PR body LOC metadata has no exact {key}"}
+    result = {
+        "status": "fresh" if metadata["head_oid"].casefold() == current_head.casefold() else "stale",
+        "head_oid": metadata["head_oid"],
+        "base_oid": metadata["base_oid"],
+        "merge_base": metadata["merge_base"],
+    }
+    if "classifier_sha256" in metadata:
+        classifier = metadata["classifier_sha256"]
+        if classifier is not None and (
+            not isinstance(classifier, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", classifier)
+        ):
+            return {"status": "ambiguous", "reason": "PR body LOC metadata has an invalid classifier digest"}
+        result["classifier_sha256"] = classifier
+    if result["status"] == "stale":
+        result["reason"] = "PR body LOC metadata head does not match the current PR head"
+    return result
 
 
 def _check_text(check: dict[str, Any], key: str) -> str | None:
@@ -529,6 +752,9 @@ def build_report(repo: str, pr_number: int) -> dict[str, Any]:
         )
     if github_evidence.payload["number"] != pr_number:
         raise ReportError("GitHub PR number does not match the requested PR")
+    loc_metadata = _loc_metadata_freshness(
+        github_evidence.payload["body"], github_evidence.payload["headRefOid"]
+    )
     review_timeline = sorted(
         checkpoint_evidence.payload["timeline"],
         key=lambda event: _timestamp(event["created_at"], "checkpoint timeline timestamp"),
@@ -588,6 +814,9 @@ def build_report(repo: str, pr_number: int) -> dict[str, Any]:
         "coderabbit_review": checker_evidence.payload,
         "review_sequence": checkpoints,
         "review_timeline": review_timeline,
+        "checkpoint_counts": _checkpoint_summaries(checkpoints),
+        "hosted_trigger": _hosted_trigger_evidence(repo, pr_number),
+        "loc_metadata": loc_metadata,
         "threads": {
             "current": checker_evidence.payload["unresolved_non_outdated"],
             "outdated": checker_evidence.payload["unresolved_outdated"],
@@ -702,6 +931,21 @@ def emit_text(report: dict[str, Any]) -> None:
     exact_head = "yes" if coverage["exact_head"] else "no"
     print(f"coverage: exact-head={exact_head} · retrigger={retrigger}")
 
+    counts = report["checkpoint_counts"]
+    hosted_counts = counts["by_type"]["Hosted"]
+    cli_counts = counts["by_type"]["CLI"]
+    print(
+        "checkpoint counts: "
+        f"Hosted={hosted_counts['count']} ({hosted_counts['raw_found']}/{hosted_counts['accepted']}) · "
+        f"CLI={cli_counts['count']} ({cli_counts['raw_found']}/{cli_counts['accepted']})"
+    )
+    cli_zero = counts["cli_zero_streak"]
+    print(
+        "CLI 0/0 streak: "
+        f"{cli_zero['count']} since "
+        f"{format_human_timestamp(cli_zero['since']) if cli_zero['since'] else 'no recorded streak'}"
+    )
+
     ci = report["ci"]
     ci_items = []
     for category in ("pending", "failed"):
@@ -719,6 +963,29 @@ def emit_text(report: dict[str, Any]) -> None:
         f"mergeable={_display(mergeability['mergeable'])}"
     )
     print(f"verdict: {report['verdict']}")
+    trigger = report["hosted_trigger"]
+    if trigger.get("available"):
+        print(
+            "trigger: "
+            f"state={_display(trigger.get('state'))} · "
+            f"id={_display(trigger.get('trigger_comment_id'))} · "
+            f"head={_display(str(trigger.get('head_sha', ''))[:12] or None)}"
+        )
+    else:
+        print("trigger: unavailable (no canonical durable record)")
+    taper = counts["taper_evidence"]
+    print(
+        "taper evidence: "
+        f"Hosted zero-accepted streak={taper['hosted_zero_accepted_streak']} "
+        f"of {taper['hosted_checkpoints_observed']} observed"
+    )
+    loc = report["loc_metadata"]
+    loc_detail = loc.get("reason")
+    print(
+        "LOC metadata: "
+        f"{_display(loc.get('status'))}"
+        + (f" ({_display(loc_detail)})" if loc_detail else "")
+    )
     for reason in report["reasons"]:
         print(f"reason: {_display(reason)}")
 

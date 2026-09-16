@@ -284,6 +284,7 @@ jobs:
           bash ./dev-tools/tests/hosted-identity-controller-manifest-contract.sh
           bash ./dev-tools/tests/hosted-identity-controller-workflow-contract.sh
           bash ./dev-tools/tests/worktree-topology-contract.sh
+          bash ./dev-tools/tests/dev-tools-readme-contract.sh
           bash ./dev-tools/tests/preflight-contract.sh
           bash ./dev-tools/tests/verify-backups-velero-contract.sh
           bash ./dev-tools/tests/overlay-preflight-contract.sh

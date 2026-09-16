@@ -8,6 +8,7 @@ import io
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -144,6 +145,14 @@ class PrStatusReporterTest(unittest.TestCase):
             "mergeStateStatus": merge_state,
             "isDraft": False,
             "url": "https://github.com/owner/repo/pull/42",
+            "body": (
+                "<!-- firemud:cloc-report:start -->\n"
+                '<!-- firemud:cloc-report:metadata {"base_oid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",'
+                '"classifier_sha256":null,"head_oid":"0123456789abcdef0123456789abcdef01234567",'
+                '"merge_base":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"} -->\n'
+                "### FireMUD LOC impact\n"
+                "<!-- firemud:cloc-report:end -->"
+            ),
         }
 
     def provider_responses(
@@ -208,6 +217,7 @@ class PrStatusReporterTest(unittest.TestCase):
         self.assertNotIn("build", rendered)
         self.assertIn("scope-change · comment 103: The report includes the final validation scope.", rendered)
         self.assertIn("mergeStateStatus=CLEAN · mergeable=MERGEABLE", rendered)
+        self.assertIn("LOC metadata: fresh", rendered)
         self.assertIn("2 checkpoint candidate(s) were not parsed", rendered)
         self.assertEqual(report["review_timeline"][0]["kind"], "scope_change")
 
@@ -487,6 +497,97 @@ class PrStatusReporterTest(unittest.TestCase):
         self.assertNotIn("success-build", serialized)
         self.assertNotIn("skipped-docs", serialized)
         self.assertEqual(report["ci"]["observed"], 4)
+
+    def test_checkpoint_counts_streak_taper_and_loc_are_separate_evidence(self) -> None:
+        checkpoint = self.checkpoint_payload()
+        checkpoint["checkpoints"] = [
+            {
+                **checkpoint["checkpoints"][1],
+                "created_at": "2026-09-13T01:00:00Z",
+                "accepted": 1,
+            },
+            {
+                **checkpoint["checkpoints"][0],
+                "created_at": "2026-09-14T01:00:00Z",
+                "raw_found": 0,
+                "accepted": 0,
+            },
+            {
+                **checkpoint["checkpoints"][0],
+                "created_at": "2026-09-15T01:00:00Z",
+                "raw_found": 0,
+                "accepted": 0,
+            },
+        ]
+        checkpoint["timeline"] = [
+            {"kind": "checkpoint", **item} for item in checkpoint["checkpoints"]
+        ]
+        with patch.object(
+            self.reporter.subprocess,
+            "run",
+            side_effect=self.provider_responses(checker_ok=True, checkpoint_payload=checkpoint),
+        ):
+            report = self.reporter.build_report("owner/repo", 42)
+        self.assertEqual(report["checkpoint_counts"]["by_type"]["CLI"]["count"], 2)
+        self.assertEqual(report["checkpoint_counts"]["cli_zero_streak"]["count"], 2)
+        self.assertEqual(report["checkpoint_counts"]["taper_evidence"]["hosted_zero_accepted_streak"], 0)
+        self.assertEqual(report["loc_metadata"]["status"], "fresh")
+        self.assertEqual(report["verdict"], "READY")
+
+    def test_loc_metadata_fails_closed_as_ambiguous_when_marker_is_malformed(self) -> None:
+        github = self.github_payload()
+        github["body"] = (
+            "<!-- firemud:cloc-report:start -->\n"
+            "<!-- firemud:cloc-report:metadata {bad} -->\n"
+            "<!-- firemud:cloc-report:end -->"
+        )
+        with patch.object(
+            self.reporter.subprocess,
+            "run",
+            side_effect=self.provider_responses(checker_ok=True, github_payload=github),
+        ):
+            report = self.reporter.build_report("owner/repo", 42)
+        self.assertEqual(report["loc_metadata"]["status"], "ambiguous")
+
+    def test_durable_hosted_trigger_is_reported_as_separate_transition_evidence(self) -> None:
+        trigger = {
+            "trigger_state": {
+                "state": "completed",
+                "terminal": True,
+                "attributed": True,
+                "repository": "owner/repo",
+                "pr_number": 42,
+                "head_sha": "0123456789abcdef0123456789abcdef01234567",
+                "current_head_sha": "0123456789abcdef0123456789abcdef01234567",
+                "trigger_comment_id": 101,
+                "trigger_created_at": "2026-09-14T00:05:00Z",
+                "trigger_url": "https://example.test/comments/101",
+                "trigger_type": "full",
+                "response_id": 102,
+                "response_created_at": "2026-09-14T00:10:00Z",
+                "response_url": "https://example.test/comments/102",
+                "cooldown_until": None,
+                "reason": "the captured Hosted review completed",
+            }
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            record = Path(directory) / "trigger.json"
+            record.write_text("{}", encoding="utf-8")
+
+            def run(command, **kwargs):
+                if "--trigger-record" in command:
+                    return subprocess.CompletedProcess(command, 0, json.dumps(trigger), "")
+                return self.provider_responses(checker_ok=True)(command, **kwargs)
+
+            with (
+                patch.object(self.reporter, "hosted_trigger_record_path", return_value=record),
+                patch.object(self.reporter.subprocess, "run", side_effect=run),
+            ):
+                report = self.reporter.build_report("owner/repo", 42)
+        self.assertTrue(report["hosted_trigger"]["available"])
+        self.assertEqual(report["hosted_trigger"]["state"], "completed")
+        self.assertEqual(report["hosted_trigger"]["trigger_comment_id"], 101)
+        self.assertEqual(report["verdict"], "READY")
 
 
 if __name__ == "__main__":

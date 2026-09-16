@@ -47,6 +47,8 @@ PR_METADATA_FIELDS = "baseRefName,baseRefOid,headRefName,headRefOid"
 PR_UPDATE_FIELDS = "baseRefOid,headRefOid,body"
 PR_REPORT_START = "<!-- firemud:cloc-report:start -->"
 PR_REPORT_END = "<!-- firemud:cloc-report:end -->"
+PR_REPORT_METADATA_PREFIX = "<!-- firemud:cloc-report:metadata "
+PR_REPORT_METADATA_SUFFIX = " -->"
 GITHUB_PR_BODY_MAX_CHARACTERS = 65_536
 
 
@@ -842,6 +844,18 @@ def render_pr_report(report: dict[str, object]) -> str:
 
     output = [
         PR_REPORT_START,
+        PR_REPORT_METADATA_PREFIX
+        + json.dumps(
+            {
+                "base_oid": base["oid"],
+                "head_oid": head["oid"],
+                "merge_base": base["merge_base"],
+                "classifier_sha256": report.get("classifier_sha256"),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + PR_REPORT_METADATA_SUFFIX,
         "### FireMUD LOC impact",
         "",
         f"Compared `{str(base['merge_base'])[:12]}` → `{str(head['oid'])[:12]}` (PR merge-base → head).",
