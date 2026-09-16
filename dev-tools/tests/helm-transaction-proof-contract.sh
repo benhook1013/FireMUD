@@ -24,7 +24,7 @@ if "setup-helm" not in "\n".join(str(step) for step in job.get("steps", [])):
     raise SystemExit("Helm transaction proof must use canonical Helm setup")
 if "helm-transaction-proof.sh" not in job_text:
     raise SystemExit("Helm transaction proof job must invoke the canonical proof script")
-if "docker exec firemud-helm-proof k3s kubectl get --raw='/readyz'" not in job_text:
+if "docker exec firemud-helm-proof k3s kubectl get --raw='/readyz' --request-timeout=2s" not in job_text:
     raise SystemExit("Helm transaction proof must wait on the disposable server Ready condition")
 if "--disable=metrics-server" not in job_text:
     raise SystemExit("Helm transaction proof must disable the optional metrics server so readiness is deterministic")
