@@ -204,12 +204,14 @@ public final class TcpProxyTrustPolicy {
     if (!legacy.getTcpProxy().isAllowInsecureHeadersFromTrustedCidrs()) {
       return;
     }
-    boolean developmentProfile =
-        activeProfiles.stream()
-            .map(value -> value.toLowerCase(Locale.ROOT))
-            .anyMatch(
-                value -> value.equals("test") || value.equals("dev") || value.equals("local"));
-    if (!developmentProfile) {
+    boolean onlyDevelopmentProfiles =
+        !activeProfiles.isEmpty()
+            && activeProfiles.stream()
+                .map(value -> value.toLowerCase(Locale.ROOT))
+                .allMatch(
+                    value ->
+                        value.equals("test") || value.equals("dev") || value.equals("local"));
+    if (!onlyDevelopmentProfiles) {
       throw invalid(
           "legacy insecure header trust is restricted to explicit test/dev/local profiles");
     }

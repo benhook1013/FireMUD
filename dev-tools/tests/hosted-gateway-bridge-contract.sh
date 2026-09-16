@@ -392,16 +392,17 @@ enabled_traefik_rule = next(
         }
     ]
 )
-enabled_general_rule = next(
-    rule for rule in enabled_gateway_ingress if rule.get("from") == [{"podSelector": {}}]
-)
-if enabled_traefik_rule.get("ports") != [{"protocol": "TCP", "port": 8080}] or enabled_general_rule.get(
-    "ports"
-) != [{"protocol": "TCP", "port": 8080}, {"protocol": "TCP", "port": 6565}]:
+if enabled_traefik_rule.get("ports") != [{"protocol": "TCP", "port": 8080}]:
     raise SystemExit(
         "enabled Gateway TLS did not use the configured Gateway HTTP targetPort for ingress: "
-        f"{[enabled_traefik_rule, enabled_general_rule]}"
+        f"{enabled_traefik_rule}"
     )
+if any(
+    rule.get("from") == [{"podSelector": {}}]
+    or any(port.get("port") == 6565 for port in rule.get("ports", []))
+    for rule in enabled_gateway_ingress
+):
+    raise SystemExit("enabled Gateway ingress has a namespace-wide or 6565 allowance")
 
 disabled_destinations = proxy_egress_destinations(
     disabled["tcp-proxy-service-egress"]
@@ -530,19 +531,23 @@ if listener_rule.get("ports") != [{"protocol": "TCP", "port": 8443}]:
 http_rules = [rule for rule in gateway_policy["spec"]["ingress"] if rule.get("from") in [
     [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
       "podSelector": {"matchLabels": {"app.kubernetes.io/name": "traefik"}}}],
-    [{"podSelector": {}}],
 ]]
-if len(http_rules) != 2 or any(
+if len(http_rules) != 1 or any(
     rule.get("ports") != expected_ports
     for rule, expected_ports in zip(
         http_rules,
         [
             [{"protocol": "TCP", "port": 8181}],
-            [{"protocol": "TCP", "port": 8181}, {"protocol": "TCP", "port": 6565}],
         ],
     )
 ):
     raise SystemExit(f"enabled Gateway TLS did not use the configured HTTP target port: {http_rules}")
+if any(
+    rule.get("from") == [{"podSelector": {}}]
+    or any(port.get("port") == 6565 for port in rule.get("ports", []))
+    for rule in gateway_policy["spec"]["ingress"]
+):
+    raise SystemExit("enabled Gateway ingress has a namespace-wide or 6565 allowance")
 proxy_policy = documents["tcp-proxy-service-egress"]
 proxy_rule = next(
     rule

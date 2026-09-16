@@ -232,13 +232,6 @@ spec:
       ports:
         - protocol: TCP
           port: {{ $gatewayHttpTargetPort }}
-    - from:
-        - podSelector: {}
-      ports:
-        - protocol: TCP
-          port: {{ $gatewayHttpTargetPort }}
-        - protocol: TCP
-          port: 6565
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

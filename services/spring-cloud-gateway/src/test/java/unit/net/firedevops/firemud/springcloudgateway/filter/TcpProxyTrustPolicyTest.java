@@ -241,13 +241,33 @@ class TcpProxyTrustPolicyTest {
   }
 
   @Test
+  void legacyPlaintextTrustRejectsMixedOrEmptyActiveProfiles() {
+    GatewayHeaderTrustProperties legacy = new GatewayHeaderTrustProperties();
+    legacy.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
+    legacy.getTcpProxy().setInsecureTrustedCidrs(List.of("127.0.0.1/32"));
+
+    for (Set<String> activeProfiles : List.of(Set.of("test", "prod"), Set.<String>of())) {
+      assertThatThrownBy(
+              () ->
+                  new TcpProxyTrustPolicy(
+                      new GatewayTcpProxyListenerProperties(),
+                      legacy,
+                      8080,
+                      CLOCK,
+                      activeProfiles))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("restricted to explicit test/dev/local profiles");
+    }
+  }
+
+  @Test
   void legacyPlaintextTrustAllowsOnlyConfiguredSourcesInExplicitTestProfile() throws Exception {
     GatewayHeaderTrustProperties legacy = new GatewayHeaderTrustProperties();
     legacy.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
     legacy.getTcpProxy().setInsecureTrustedCidrs(List.of("10.0.0.0/8"));
     TcpProxyTrustPolicy policy =
         new TcpProxyTrustPolicy(
-            new GatewayTcpProxyListenerProperties(), legacy, 8080, CLOCK, Set.of("test"));
+            new GatewayTcpProxyListenerProperties(), legacy, 8080, CLOCK, Set.of("TeSt"));
 
     assertThat(policy.isTrusted(mock(ServerWebExchange.class), InetAddress.getByName("10.1.2.3")))
         .isTrue();

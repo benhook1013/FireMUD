@@ -398,6 +398,65 @@ class TelnetServerHandlerTest {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
+  void disconnectWaitsForLockProtectedSendInitiation() throws Exception {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    TelnetServerHandler handler = newHandler(registry, false);
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    when(ctx.channel()).thenReturn(channel);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+    WebSocket socket = mock(WebSocket.class);
+    CountDownLatch sendEntered = new CountDownLatch(1);
+    CountDownLatch allowSend = new CountDownLatch(1);
+    CompletableFuture<WebSocket> sendFuture = new CompletableFuture<>();
+    when(socket.sendText(anyString(), eq(true)))
+        .thenAnswer(
+            invocation -> {
+              sendEntered.countDown();
+              assertTrue(allowSend.await(5, TimeUnit.SECONDS));
+              return sendFuture;
+            });
+
+    handler.channelRead0(ctx, "look");
+    assertEquals(1, handler.getBufferedSize());
+    ((AtomicReference<WebSocket>) fieldValue(handler, "webSocket")).set(socket);
+    var drainBuffer = TelnetServerHandler.class.getDeclaredMethod("drainBuffer");
+    drainBuffer.setAccessible(true);
+    AtomicReference<Throwable> drainFailure = new AtomicReference<>();
+    Thread drainThread =
+        new Thread(
+            () -> {
+              try {
+                drainBuffer.invoke(handler);
+              } catch (Throwable error) {
+                drainFailure.set(error);
+              }
+            });
+    drainThread.start();
+    assertTrue(sendEntered.await(5, TimeUnit.SECONDS));
+
+    CountDownLatch disconnectFinished = new CountDownLatch(1);
+    Thread disconnectThread =
+        new Thread(
+            () -> {
+              handler.channelInactive(ctx);
+              disconnectFinished.countDown();
+            });
+    disconnectThread.start();
+    assertFalse(disconnectFinished.await(100, TimeUnit.MILLISECONDS));
+
+    allowSend.countDown();
+    drainThread.join(5_000);
+    disconnectThread.join(5_000);
+
+    assertNull(drainFailure.get());
+    assertEquals(0, disconnectFinished.getCount());
+    verify(socket).sendText("look", true);
+    assertEquals(0, handler.getBufferedSize());
+  }
+
+  @Test
   void channelInactiveCancelsStalledGatewayConnectionAndAbortsLateOpen() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     AtomicInteger cancellationAttempts = new AtomicInteger();

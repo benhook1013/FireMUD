@@ -1224,13 +1224,6 @@ def validate_network_policies(documents: list[dict]) -> None:
                 ],
                 "ports": [{"protocol": "TCP", "port": 8080}],
             },
-            {
-                "from": [{"podSelector": {}}],
-                "ports": [
-                    {"protocol": "TCP", "port": 8080},
-                    {"protocol": "TCP", "port": 6565},
-                ],
-            },
         ],
     }
     if gateway_ingress != expected_gateway_ingress:

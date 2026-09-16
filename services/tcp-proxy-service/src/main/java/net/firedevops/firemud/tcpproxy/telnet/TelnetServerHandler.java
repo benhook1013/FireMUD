@@ -364,17 +364,20 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private synchronized void drainBuffer() {
-    WebSocket socket = webSocket.get();
-    if (socket == null || inFlightSend != null || closing) {
-      return;
+    CompletableFuture<WebSocket> sendFuture;
+    synchronized (bufferLifecycleLock) {
+      WebSocket socket = webSocket.get();
+      if (socket == null || inFlightSend != null || closing) {
+        return;
+      }
+      String next = buffer.peek();
+      if (next == null) {
+        return;
+      }
+      sendFuture = socket.sendText(next, true);
+      inFlightSend = sendFuture;
+      outstandingSends.add(sendFuture);
     }
-    String next = buffer.peek();
-    if (next == null) {
-      return;
-    }
-    CompletableFuture<WebSocket> sendFuture = socket.sendText(next, true);
-    inFlightSend = sendFuture;
-    outstandingSends.add(sendFuture);
     sendFuture.whenComplete(
         (ws, error) -> {
           try (CombinedLoggingContext ignored = openLoggingContext()) {
@@ -471,7 +474,11 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   @Override
   public void channelInactive(ChannelHandlerContext ctx) {
     try (CombinedLoggingContext ignored = openLoggingContext()) {
-      closing = true;
+      synchronized (bufferLifecycleLock) {
+        closing = true;
+        buffer.clear();
+        updateBufferDepthGauge();
+      }
       cancelInFlightGatewayConnection();
       stopHeartbeat();
       cancelIdleCheck();
@@ -484,7 +491,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       eventService.recordDisconnectEvent(
           sessionContext.gameInstanceId(), sessionContext.tenantId(), clientIp, connectionDuration);
       notifyDisconnectAsync();
-      buffer.clear();
       cancelOutstandingSends();
       updateBufferDepthGauge();
     }
