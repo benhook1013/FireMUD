@@ -126,6 +126,18 @@ def record() -> dict[str, object]:
     }
 
 
+def timed_out_record() -> dict[str, object]:
+    timed_out = record()
+    timed_out["status"] = "timed_out"
+    timed_out["timeout"] = {
+        "at": "2026-09-14T01:30:00Z",
+        "observed_state": "awaiting_response",
+        "observed_response_id": None,
+        "reason": "bounded wait expired before a terminal CodeRabbit response",
+    }
+    return timed_out
+
+
 class TriggerStateTests(unittest.TestCase):
     def state(
         self,
@@ -394,6 +406,204 @@ Your included review limit is currently reached under our [Fair Usage Limits Pol
         state = self.state(trigger_record=posting)
         self.assertEqual((state.state, state.terminal), ("unattributed", True))
 
+    def test_persisted_timeout_remains_manual_terminal_state(self) -> None:
+        state = self.state(trigger_record=timed_out_record())
+        self.assertEqual((state.state, state.terminal), ("timed_out", True))
+        self.assertTrue(state.manual_adjudication_required)
+
+    def test_bounded_wait_persists_timeout_even_after_active_ack(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload_path = root / "payload.json"
+            record_path = root / "record.json"
+            active_payload = payload(
+                [
+                    trigger_comment(),
+                    comment(
+                        11,
+                        "coderabbitai",
+                        "Full review triggered",
+                        "2026-09-14T01:00:01Z",
+                    ),
+                ]
+            )
+            payload_path.write_text(json.dumps(active_payload), encoding="utf-8")
+            record_path.write_text(json.dumps(record()), encoding="utf-8")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--repo",
+                    REPO,
+                    "--pr",
+                    str(PR),
+                    "--input",
+                    str(payload_path),
+                    "--trigger-record",
+                    str(record_path),
+                    "--wait",
+                    "--timeout",
+                    "0",
+                    "--json",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            persisted = json.loads(record_path.read_text(encoding="utf-8"))
+
+        output = json.loads(completed.stdout)
+        self.assertEqual(completed.returncode, 1)
+        self.assertEqual(output["trigger_state"]["state"], "timed_out")
+        self.assertEqual(persisted["status"], "timed_out")
+        self.assertEqual(persisted["timeout"]["observed_state"], "active")
+
+    def test_operator_retirement_requires_identity_and_preserves_evidence(self) -> None:
+        current_payload = payload()
+        current_payload["data"]["repository"]["pullRequest"]["commits"]["nodes"][0][
+            "commit"
+        ]["committedDate"] = "2026-09-14T02:00:00Z"
+        with tempfile.TemporaryDirectory() as directory:
+            record_path = Path(directory) / "trigger.json"
+            record_path.write_text(json.dumps(timed_out_record()), encoding="utf-8")
+            result = CHECKER.retire_trigger_record(
+                str(record_path),
+                REPO,
+                PR,
+                10,
+                HEAD,
+                "bounded wait timed out; no current review evidence",
+                current_payload,
+            )
+            persisted = json.loads(record_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result["status"], "retired")
+        self.assertEqual(persisted["status"], "retired")
+        self.assertEqual(persisted["trigger"]["id"], 10)
+        self.assertEqual(persisted["head_sha"], HEAD)
+        self.assertEqual(
+            persisted["retirement"]["expected_head_sha"],
+            HEAD,
+        )
+        self.assertEqual(
+            persisted["retirement"]["reason"],
+            "bounded wait timed out; no current review evidence",
+        )
+        self.assertEqual(persisted["retirement"]["evidence"]["state"], "timed_out")
+
+    def test_operator_retirement_repairs_posted_active_old_head(self) -> None:
+        new_head = "c" * 40
+        current_payload = payload(
+            [
+                trigger_comment(),
+                comment(
+                    11,
+                    "coderabbitai",
+                    "Full review triggered",
+                    "2026-09-14T01:00:01Z",
+                ),
+            ]
+        )
+        pull_request = current_payload["data"]["repository"]["pullRequest"]
+        assert isinstance(pull_request, dict)
+        pull_request["headRefOid"] = new_head
+        pull_request["commits"] = {
+            "nodes": [
+                {
+                    "commit": {
+                        "oid": new_head,
+                        "committedDate": "2026-09-14T02:00:00Z",
+                    }
+                }
+            ]
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            record_path = Path(directory) / "trigger.json"
+            record_path.write_text(json.dumps(record()), encoding="utf-8")
+            result = CHECKER.retire_trigger_record(
+                str(record_path),
+                REPO,
+                PR,
+                10,
+                new_head,
+                "old-head acknowledgement is stale after the PR advanced",
+                current_payload,
+            )
+            persisted = json.loads(record_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result["status"], "retired")
+        self.assertEqual(persisted["status"], "retired")
+        self.assertEqual(persisted["head_sha"], HEAD)
+        self.assertEqual(persisted["retirement"]["evidence"]["state"], "active")
+
+    def test_operator_retirement_refuses_active_ambiguous_and_head_mismatch(
+        self,
+    ) -> None:
+        current_payload = payload()
+        current_payload["data"]["repository"]["pullRequest"]["commits"]["nodes"][0][
+            "commit"
+        ]["committedDate"] = "2026-09-14T02:00:00Z"
+        active_comments = [
+            trigger_comment(),
+            comment(11, "coderabbitai", "Full review triggered", "2026-09-14T01:00:01Z"),
+        ]
+        ambiguous_comments = [
+            trigger_comment(),
+            comment(12, "other", "@coderabbitai full review", TRIGGER_AT),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            record_path = Path(directory) / "trigger.json"
+            record_path.write_text(json.dumps(timed_out_record()), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "active review"):
+                CHECKER.retire_trigger_record(
+                    str(record_path),
+                    REPO,
+                    PR,
+                    10,
+                    HEAD,
+                    "operator adjudication",
+                    payload(active_comments),
+                )
+            with self.assertRaisesRegex(ValueError, "ambiguous"):
+                CHECKER.retire_trigger_record(
+                    str(record_path),
+                    REPO,
+                    PR,
+                    10,
+                    HEAD,
+                    "operator adjudication",
+                    payload(ambiguous_comments),
+                )
+            mismatch_payload = payload()
+            mismatch_payload["data"]["repository"]["pullRequest"]["headRefOid"] = "b" * 40
+            with self.assertRaisesRegex(ValueError, "expected head SHA"):
+                CHECKER.retire_trigger_record(
+                    str(record_path),
+                    REPO,
+                    PR,
+                    10,
+                    HEAD,
+                    "operator adjudication",
+                    mismatch_payload,
+                )
+
+    def test_operator_retirement_refuses_record_identity_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            record_path = Path(directory) / "trigger.json"
+            mismatched = timed_out_record()
+            mismatched["repository"] = "other/repo"
+            record_path.write_text(json.dumps(mismatched), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "repository or pull request"):
+                CHECKER.retire_trigger_record(
+                    str(record_path),
+                    REPO,
+                    PR,
+                    10,
+                    HEAD,
+                    "operator adjudication",
+                    payload(),
+                )
+
     def test_changed_posting_boundary_is_ambiguous(self) -> None:
         changed = record()
         changed["status"] = "posted_boundary_changed"
@@ -470,6 +680,7 @@ Your included review limit is currently reached under our [Fair Usage Limits Pol
                 capture_output=True,
                 text=True,
             )
+            persisted = json.loads(record_path.read_text(encoding="utf-8"))
         output = json.loads(completed.stdout)
         self.assertEqual(completed.returncode, 1)
         self.assertFalse(output["ok"])
@@ -479,6 +690,15 @@ Your included review limit is currently reached under our [Fair Usage Limits Pol
         self.assertEqual(output["trigger_state"]["trigger_comment_id"], 10)
         self.assertGreaterEqual(output["trigger_state"]["age_seconds"], 0)
         self.assertTrue(output["trigger_state"]["manual_adjudication_required"])
+        self.assertEqual(persisted["status"], "timed_out")
+        self.assertEqual(
+            persisted["timeout"]["observed_state"],
+            "awaiting_response",
+        )
+        self.assertEqual(
+            persisted["timeout"]["reason"],
+            "bounded wait expired before a terminal CodeRabbit response",
+        )
         self.assertEqual(text_completed.returncode, 1)
         self.assertRegex(
             text_completed.stdout,

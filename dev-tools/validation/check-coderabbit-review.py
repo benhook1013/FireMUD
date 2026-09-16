@@ -14,9 +14,12 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -184,6 +187,19 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=20,
         help="Seconds between live trigger-state checks (default: 20)",
+    )
+    parser.add_argument(
+        "--retire-trigger",
+        type=int,
+        help="Explicitly retire the identified timed-out trigger record",
+    )
+    parser.add_argument(
+        "--expected-head-sha",
+        help="Exact current pull-request head required for trigger retirement",
+    )
+    parser.add_argument(
+        "--reason",
+        help="Bounded operator reason for trigger retirement",
     )
     return parser.parse_args()
 
@@ -449,6 +465,44 @@ def parse_timestamp(value: str | None) -> datetime | None:
 
 def age_seconds(created_at: datetime) -> int:
     return max(0, int((datetime.now(timezone.utc) - created_at).total_seconds()))
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
+        "+00:00", "Z"
+    )
+
+
+def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    """Replace one private trigger record without exposing a partial JSON file."""
+
+    if path.is_symlink():
+        raise OSError("trigger record must not be a symbolic link")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    file_descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", dir=path.parent
+    )
+    try:
+        os.fchmod(file_descriptor, stat.S_IRUSR | stat.S_IWUSR)
+        with os.fdopen(file_descriptor, "w", encoding="utf-8") as temporary_file:
+            file_descriptor = -1
+            json.dump(payload, temporary_file, indent=2, sort_keys=True)
+            temporary_file.write("\n")
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+        os.replace(temporary_name, path)
+        directory_descriptor = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
+    finally:
+        if file_descriptor != -1:
+            os.close(file_descriptor)
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
 
 
 def normalize_command(body: str) -> str:
@@ -1198,6 +1252,31 @@ def trigger_state(
             cooldown_until=None,
             reason="the captured trigger comment no longer matches its immutable record",
         )
+    if record.get("status") == "retired":
+        retirement = record.get("retirement")
+        if not isinstance(retirement, dict):
+            raise ValueError("retired trigger record has no retirement evidence")
+        retired_at = retirement.get("retired_at")
+        retirement_reason = retirement.get("reason")
+        if (
+            retirement.get("action") != "operator_retire"
+            or parse_timestamp(retired_at) is None
+            or not isinstance(retirement_reason, str)
+            or not retirement_reason
+        ):
+            raise ValueError("retired trigger record has invalid retirement evidence")
+        return TriggerState(
+            "retired",
+            True,
+            True,
+            **base,
+            response_id=None,
+            response_created_at=None,
+            response_url=None,
+            cooldown_until=None,
+            reason="the stale trigger was explicitly retired by an operator",
+            age_seconds=age_seconds(trigger_dt),
+        )
     if any(created_dt == trigger_dt for created_dt, _ in other_triggers):
         return TriggerState(
             "ambiguous",
@@ -1341,6 +1420,38 @@ def trigger_state(
                 cooldown_until=None,
                 reason="a later review trigger arrived before an attributable response",
             )
+        if record.get("status") == "timed_out":
+            timeout = record.get("timeout")
+            if (
+                not isinstance(timeout, dict)
+                or parse_timestamp(timeout.get("at")) is None
+                or timeout.get("observed_state") not in {"awaiting_response", "active"}
+                or timeout.get("reason")
+                != "bounded wait expired before a terminal CodeRabbit response"
+            ):
+                raise ValueError("timed-out trigger record has invalid timeout evidence")
+            timeout_reason = (
+                timeout.get("reason")
+                if isinstance(timeout, dict)
+                else None
+            )
+            return TriggerState(
+                "timed_out",
+                True,
+                True,
+                **base,
+                response_id=None,
+                response_created_at=None,
+                response_url=None,
+                cooldown_until=None,
+                reason=(
+                    timeout_reason
+                    if isinstance(timeout_reason, str) and timeout_reason
+                    else "bounded wait expired before a terminal CodeRabbit response"
+                ),
+                age_seconds=age_seconds(trigger_dt),
+                manual_adjudication_required=True,
+            )
         return TriggerState(
             "awaiting_response",
             False,
@@ -1419,6 +1530,137 @@ def trigger_state(
         reason=reason,
         age_seconds=age_seconds(trigger_dt),
     )
+
+
+RETIREMENT_REASON_MAX_LENGTH = 240
+
+
+def validate_retirement_reason(reason: str) -> None:
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValueError("retirement reason must be non-empty")
+    if len(reason) > RETIREMENT_REASON_MAX_LENGTH:
+        raise ValueError(
+            f"retirement reason must be at most {RETIREMENT_REASON_MAX_LENGTH} characters"
+        )
+    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in reason):
+        raise ValueError("retirement reason must be one line without control characters")
+
+
+def retire_trigger_record(
+    path: str,
+    repo: str,
+    pr_number: int,
+    trigger_id: int,
+    expected_head_sha: str,
+    reason: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Retire one timed-out record after checking its live identity and evidence."""
+
+    if trigger_id <= 0:
+        raise ValueError("trigger identity must be a positive integer")
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", expected_head_sha):
+        raise ValueError("expected head SHA must be exactly 40 hexadecimal characters")
+    validate_retirement_reason(reason)
+
+    record = load_trigger_record(path, repo, pr_number)
+    record_status = record.get("status")
+    if record_status not in {"timed_out", "posted"}:
+        raise ValueError(
+            "trigger record is not a posted or persisted bounded-wait trigger; retirement is manual"
+        )
+    if record_status == "timed_out":
+        timeout = record.get("timeout")
+        if (
+            not isinstance(timeout, dict)
+            or parse_timestamp(timeout.get("at")) is None
+            or timeout.get("observed_state") not in {"awaiting_response", "active"}
+            or timeout.get("reason")
+            != "bounded wait expired before a terminal CodeRabbit response"
+        ):
+            raise ValueError("timed-out trigger record has invalid timeout evidence")
+    summary = summarize(repo, pr_number, payload)
+    state = trigger_state(repo, pr_number, payload, record)
+    if state.trigger_comment_id != trigger_id:
+        raise ValueError("trigger identity does not match the durable record")
+    current_head = payload["data"]["repository"]["pullRequest"].get("headRefOid")
+    if not isinstance(current_head, str) or not re.fullmatch(
+        r"[0-9a-fA-F]{40}", current_head
+    ):
+        raise ValueError("current pull-request head is not an exact SHA")
+    if current_head.casefold() != expected_head_sha.casefold():
+        raise ValueError("expected head SHA does not match the current pull-request head")
+    if state.current_head_sha.casefold() != expected_head_sha.casefold():
+        raise ValueError("checker head evidence does not match the expected head SHA")
+    if (
+        state.state == "active"
+        and state.head_sha.casefold() == expected_head_sha.casefold()
+    ):
+        raise ValueError("cannot retire a trigger with an attributable active review")
+    if state.state == "ambiguous":
+        raise ValueError("cannot retire a trigger with ambiguous response evidence")
+    if state.state not in {"timed_out", "active"}:
+        if record_status == "posted" and state.state == "awaiting_response":
+            raise ValueError(
+                "posted trigger has no active response or persisted timeout evidence"
+            )
+        raise ValueError(
+            f"cannot retire trigger with current evidence state {state.state}"
+        )
+    if not summary.retrigger_review_allowed:
+        raise ValueError(
+            "current pull-request review evidence does not permit a deterministic retry"
+        )
+
+    retired_at = utc_now()
+    retired_record = dict(record)
+    retired_record["status"] = "retired"
+    retired_record["retirement"] = {
+        "action": "operator_retire",
+        "retired_at": retired_at,
+        "reason": reason.strip(),
+        "trigger_comment_id": trigger_id,
+        "expected_head_sha": expected_head_sha,
+        "evidence": {
+            "state": state.state,
+            "captured_head_sha": record["head_sha"],
+            "current_head_sha": state.current_head_sha,
+        },
+    }
+    atomic_write_json(Path(path), retired_record)
+    return {
+        "operation": "retire_trigger",
+        "status": "retired",
+        "repository": repo,
+        "pr_number": pr_number,
+        "trigger_comment_id": trigger_id,
+        "captured_head_sha": record["head_sha"],
+        "expected_head_sha": expected_head_sha,
+        "retired_at": retired_at,
+        "reason": reason.strip(),
+        "trigger_record": str(Path(path).resolve()),
+        "message": (
+            "Hosted CodeRabbit trigger "
+            f"{trigger_id} retired for current head {expected_head_sha}"
+        ),
+    }
+
+
+def emit_retirement_text(result: dict[str, Any]) -> None:
+    for key, value in result.items():
+        print(f"{key}={value}")
+
+
+def persist_timeout(path: str, record: dict[str, Any], state: TriggerState) -> None:
+    timed_out_record = dict(record)
+    timed_out_record["status"] = "timed_out"
+    timed_out_record["timeout"] = {
+        "at": utc_now(),
+        "observed_state": state.state,
+        "observed_response_id": state.response_id,
+        "reason": "bounded wait expired before a terminal CodeRabbit response",
+    }
+    atomic_write_json(Path(path), timed_out_record)
 
 
 def emit_trigger_text(state: TriggerState) -> None:
@@ -1543,6 +1785,23 @@ def emit_text(summary: ReviewSummary) -> None:
 
 def main() -> int:
     args = parse_args()
+    retirement_flags = (
+        args.retire_trigger is not None,
+        args.expected_head_sha is not None,
+        args.reason is not None,
+    )
+    if any(retirement_flags) and not all(retirement_flags):
+        print(
+            "error=--retire-trigger, --expected-head-sha, and --reason must be supplied together",
+            file=sys.stderr,
+        )
+        return 2
+    if args.retire_trigger is not None and not args.trigger_record:
+        print("error=--retire-trigger requires --trigger-record", file=sys.stderr)
+        return 2
+    if args.retire_trigger is not None and args.wait:
+        print("error=--retire-trigger cannot be combined with --wait", file=sys.stderr)
+        return 2
     if args.wait and not args.trigger_record:
         print("error=--wait requires --trigger-record", file=sys.stderr)
         return 2
@@ -1562,6 +1821,22 @@ def main() -> int:
             if args.trigger_record
             else None
         )
+        if args.retire_trigger is not None:
+            payload = load_payload(args.input, args.repo, args.pr)
+            result = retire_trigger_record(
+                args.trigger_record,
+                args.repo,
+                args.pr,
+                args.retire_trigger,
+                args.expected_head_sha,
+                args.reason,
+                payload,
+            )
+            if args.json:
+                print(json.dumps(result, indent=2, sort_keys=True))
+            else:
+                emit_retirement_text(result)
+            return 0
         deadline = time.monotonic() + args.timeout
         while True:
             payload = load_payload(args.input, args.repo, args.pr)
@@ -1573,6 +1848,8 @@ def main() -> int:
                 break
             remaining = deadline - time.monotonic()
             if remaining <= 0:
+                if args.trigger_record and record is not None and state is not None:
+                    persist_timeout(args.trigger_record, record, state)
                 state.state = "timed_out"
                 state.terminal = True
                 state.manual_adjudication_required = True
@@ -1589,6 +1866,18 @@ def main() -> int:
         ValueError,
         json.JSONDecodeError,
     ) as ex:
+        if args.retire_trigger is not None and args.json:
+            print(
+                json.dumps(
+                    {
+                        "operation": "retire_trigger",
+                        "status": "refused",
+                        "error": str(ex),
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 1
         print(f"error={ex}", file=sys.stderr)
         return 1
 

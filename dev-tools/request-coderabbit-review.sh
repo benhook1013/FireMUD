@@ -4,6 +4,8 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage: dev-tools/request-coderabbit-review.sh <pull-request-number> [--repo <owner/name>] [--wait] [--timeout <seconds>] [--poll-interval <seconds>]
+       dev-tools/request-coderabbit-review.sh <pull-request-number> [--repo <owner/name>] \
+         --retire-trigger <comment-id> --expected-head-sha <sha> --reason <one-line-reason>
 
 Posts exactly one included-quota @coderabbitai full review command, records its
 immutable GitHub identity and pull-request head privately under the shared Git
@@ -31,6 +33,10 @@ timeout_seconds="1800"
 poll_interval_seconds="20"
 timeout_set=false
 poll_interval_set=false
+retire_trigger_id=""
+expected_head_sha=""
+retirement_reason=""
+retirement_requested=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo)
@@ -59,6 +65,25 @@ while [[ $# -gt 0 ]]; do
       wait_tuning_requested=true
       shift 2
       ;;
+    --retire-trigger)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      [[ "$retirement_requested" == "false" ]] || die "--retire-trigger may be specified only once"
+      retirement_requested=true
+      retire_trigger_id="$2"
+      shift 2
+      ;;
+    --expected-head-sha|--head-sha)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      [[ -z "$expected_head_sha" ]] || die "--expected-head-sha may be specified only once"
+      expected_head_sha="$2"
+      shift 2
+      ;;
+    --reason)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      [[ -z "$retirement_reason" ]] || die "--reason may be specified only once"
+      retirement_reason="$2"
+      shift 2
+      ;;
     --help|-h)
       usage
       exit 0
@@ -72,6 +97,34 @@ done
 [[ "$pr_number" =~ ^[1-9][0-9]*$ ]] || die "pull request number must be a positive integer"
 if [[ "$wait_tuning_requested" == "true" && "$wait_requested" != "true" ]]; then
   die "--timeout and --poll-interval require --wait"
+fi
+retirement_flags=0
+[[ "$retirement_requested" == "true" ]] && retirement_flags=$((retirement_flags + 1))
+[[ -n "$expected_head_sha" ]] && retirement_flags=$((retirement_flags + 1))
+[[ -n "$retirement_reason" ]] && retirement_flags=$((retirement_flags + 1))
+if [[ "$retirement_flags" != "0" && "$retirement_flags" != "3" ]]; then
+  die "--retire-trigger, --expected-head-sha, and --reason must be supplied together"
+fi
+if [[ "$retirement_requested" == "true" && "$wait_requested" == "true" ]]; then
+  die "--retire-trigger cannot be combined with --wait"
+fi
+if [[ "$retirement_requested" == "true" ]]; then
+  [[ "$retire_trigger_id" =~ ^[1-9][0-9]*$ ]] || die "trigger comment ID must be a positive integer"
+  [[ "$expected_head_sha" =~ ^[0-9a-fA-F]{40}$ ]] || die "expected head SHA must be exactly 40 hexadecimal characters"
+  if ! python3 - "$retirement_reason" <<'PY'
+import sys
+
+reason = sys.argv[1]
+valid = (
+    bool(reason.strip())
+    and len(reason) <= 240
+    and all(ord(character) >= 0x20 and ord(character) != 0x7F for character in reason)
+)
+raise SystemExit(0 if valid else 1)
+PY
+  then
+    die "retirement reason must be non-empty, one line, and at most 240 characters"
+  fi
 fi
 if ! python3 - "$timeout_seconds" "$poll_interval_seconds" <<'PY'
 import math
@@ -125,6 +178,28 @@ exec {lock_fd}>"$lock_file"
 chmod 600 "$lock_file"
 flock -n "$lock_fd" || die "another hosted CodeRabbit request operation is in progress for $repo#$pr_number"
 
+if [[ "$retirement_requested" == "true" ]]; then
+  [[ -f "$record" ]] || die "no current hosted review trigger record exists for $repo#$pr_number"
+  retirement_json="$(python3 "$checker" --repo "$repo" --pr "$pr_number" \
+    --trigger-record "$record" --retire-trigger "$retire_trigger_id" \
+    --expected-head-sha "$expected_head_sha" --reason "$retirement_reason" --json)" || true
+  [[ -n "$retirement_json" ]] || die "trigger retirement evidence could not be read; no record was changed"
+  if ! jq -e '
+    .operation == "retire_trigger" and
+    .status == "retired" and
+    (.trigger_comment_id | type == "number" and floor == . and . > 0) and
+    (.expected_head_sha | type == "string" and test("^[0-9a-fA-F]{40}$"))
+  ' <<<"$retirement_json" >/dev/null; then
+    error_message="$(jq -r '.error // empty' <<<"$retirement_json" 2>/dev/null || true)"
+    if [[ -n "$error_message" ]]; then
+      die "trigger retirement refused: $error_message"
+    fi
+    die "trigger retirement refused"
+  fi
+  jq . <<<"$retirement_json"
+  exit 0
+fi
+
 finalize_post_response() {
   jq -e '
     .id | type == "number" and floor == . and . > 0
@@ -175,6 +250,10 @@ if [[ -f "$record" ]]; then
     printf 'WARNING: Hosted CodeRabbit trigger %s has no attributable terminal response; age %s seconds (created %s). Manual Overseer adjudication required before retrying.\n' \
       "$trigger_id" "$trigger_age_seconds" "$trigger_created_at" >&2
     die "existing hosted review trigger requires completion or adjudication (state: $existing_state; record: $record)"
+  fi
+  if [[ "$existing_state" == "timed_out" ]]; then
+    trigger_id="$(jq -r '.trigger_state.trigger_comment_id // "unknown"' <<<"$existing_json")"
+    die "existing hosted review trigger timed out and requires explicit retirement (trigger: $trigger_id; record: $record)"
   fi
   if [[ "$existing_state" == "active" || "$existing_state" == "ambiguous" || \
         "$existing_state" == "unattributed" || -z "$existing_state" ]]; then
