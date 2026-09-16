@@ -555,7 +555,7 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in $(seq 1 60); do
-            if [[ "$(docker exec firemud-helm-proof k3s kubectl get nodes -o jsonpath='{.items[0].status.conditions[?(@.type==\"Ready\")].status}' 2>/dev/null || true)" == "True" ]]; then
+            if [[ "$(docker exec firemud-helm-proof k3s kubectl get nodes -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)" == "True" ]]; then
               break
             fi
             if [[ "$attempt" == 60 ]]; then
