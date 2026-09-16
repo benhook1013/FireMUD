@@ -116,7 +116,7 @@ def normalize_pr(raw: Any, *, label: str) -> dict[str, Any]:
     return result
 
 
-def fetch_open_prs(root: Path, repo: str, *, include_renovate: bool) -> list[dict[str, Any]]:
+def fetch_open_prs(root: Path, repo: str) -> list[dict[str, Any]]:
     # gh paginates internally up to --limit; a full bounded response is still ambiguous.
     payload = command_json(
         [
@@ -147,8 +147,6 @@ def fetch_open_prs(root: Path, repo: str, *, include_renovate: bool) -> list[dic
         if pr["number"] in numbers:
             raise TopologyError(f"open pull-request inventory contains duplicate PR #{pr['number']}")
         numbers.add(pr["number"])
-    if not include_renovate:
-        prs = [pr for pr in prs if not pr["head_branch"].startswith("renovate/")]
     return prs
 
 
@@ -321,6 +319,47 @@ def worktrees_for_pr(pr: dict[str, Any], worktrees: list[dict[str, Any]]) -> lis
     return selected
 
 
+def omitted_renovate_prs(
+    chain: list[dict[str, Any]], open_prs: list[dict[str, Any]], repo: str
+) -> list[dict[str, Any]]:
+    """Report Renovate heads excluded from the selected stack when their exact link is provable."""
+    chain_numbers = {item["number"] for item in chain}
+    omissions: list[dict[str, Any]] = []
+    for pr in open_prs:
+        if (
+            pr["number"] in chain_numbers
+            or not pr["head_branch"].startswith("renovate/")
+            or pr["head_repository"].casefold() != repo.casefold()
+        ):
+            continue
+        links: list[tuple[str, int]] = []
+        for item in chain:
+            if (
+                pr["base_branch"] == item["head"]["branch"]
+                and pr["base_sha"] == item["head"]["sha"]
+            ):
+                links.append(("dependent", item["number"]))
+            if (
+                pr["head_branch"] == item["base"]["branch"]
+                and pr["head_sha"] == item["base"]["sha"]
+            ):
+                links.append(("base", item["number"]))
+        if not links:
+            continue
+        relations = sorted({relation for relation, _number in links})
+        linked_prs = sorted({number for _relation, number in links})
+        omissions.append(
+            {
+                "number": pr["number"],
+                "relation": relations[0] if len(relations) == 1 else "linked",
+                "linked_prs": linked_prs,
+                "head": {"branch": pr["head_branch"], "sha": pr["head_sha"]},
+                "base": {"branch": pr["base_branch"], "sha": pr["base_sha"]},
+            }
+        )
+    return sorted(omissions, key=lambda item: item["number"])
+
+
 def render_pr(
     pr: dict[str, Any],
     relation: str,
@@ -358,6 +397,7 @@ def selected_chain(
     branches: list[dict[str, Any]],
     worktrees: list[dict[str, Any]],
     repo: str,
+    include_renovate: bool,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     if selected["head_repository"].casefold() != repo.casefold():
         raise TopologyError(
@@ -375,6 +415,7 @@ def selected_chain(
     }
     same_repository_prs = [
         pr for pr in open_prs if pr["head_repository"].casefold() == repo.casefold()
+        and (include_renovate or not pr["head_branch"].startswith("renovate/"))
     ]
     pending = [(selected, 0)]
     while pending:
@@ -488,6 +529,13 @@ def emit_selected_text(report: dict[str, Any]) -> None:
                 )
             )
         )
+    for omission in report.get("omitted_renovate", []):
+        linked = ",".join(f"#{number}" for number in omission["linked_prs"])
+        print(
+            "omitted Renovate PR "
+            f"#{omission['number']} ({omission['relation']} linked to {linked}; "
+            "excluded from the default selected stack; use --include-renovate to include)"
+        )
     if report["errors"]:
         for error in report["errors"]:
             print(f"error: {error}", file=sys.stderr)
@@ -547,8 +595,13 @@ def main() -> int:
         repo = resolve_repo(root, args.repo)
         worktrees = parse_worktrees(root)
         branches = parse_local_branches(root)
-        open_prs = fetch_open_prs(root, repo, include_renovate=args.include_renovate)
+        open_prs = fetch_open_prs(root, repo)
         if args.pr is None:
+            inventory_prs = [
+                pr
+                for pr in open_prs
+                if args.include_renovate or not pr["head_branch"].startswith("renovate/")
+            ]
             report = {
                 "schema_version": 1,
                 "repository": repo,
@@ -571,12 +624,20 @@ def main() -> int:
                         "url": pr["url"],
                         "is_draft": pr["is_draft"],
                     }
-                    for pr in open_prs
+                    for pr in inventory_prs
                 ],
             }
         else:
             selected = fetch_selected_pr(root, repo, args.pr)
-            chain, errors = selected_chain(root, selected, open_prs, branches, worktrees, repo)
+            chain, errors = selected_chain(
+                root,
+                selected,
+                open_prs,
+                branches,
+                worktrees,
+                repo,
+                args.include_renovate,
+            )
             selected_worktrees = [
                 worktree
                 for item in chain
@@ -593,6 +654,11 @@ def main() -> int:
                 "mode": "selected-stack",
                 "selected_pr": args.pr,
                 "chain": chain,
+                "omitted_renovate": (
+                    []
+                    if args.include_renovate
+                    else omitted_renovate_prs(chain, open_prs, repo)
+                ),
                 "worktrees": selected_worktrees,
                 "local_branches": selected_branches,
                 "errors": errors,
