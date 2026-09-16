@@ -290,8 +290,8 @@ def main() -> int:
         explicitly_invoked = {
             root / name.rstrip("\"'")
             for name in re.findall(
-                r"(?:^|[;&|()\s])(?:/usr/bin/)?(?:bash|sh|dash|zsh|ksh|python|python3)"
-                r"(?:\s+-[A-Za-z0-9][A-Za-z0-9_-]*)*\s+(?:\./)?"
+                r"(?:^|[;&|()\s])(?:(?:/usr/bin/)?(?:bash|sh|dash|zsh|ksh|python|python3)"
+                r"(?:\s+-[A-Za-z0-9][A-Za-z0-9_-]*)*|source|\.)\s+(?:\./)?"
                 r"((?:dev-tools|services)/[A-Za-z0-9_./-]+)",
                 text,
                 flags=re.MULTILINE,
@@ -389,6 +389,8 @@ def main() -> int:
         data_reference = f"documentation mentions ./{data.relative_to(root).as_posix()}"
         invoked_reference = f"bash ./{invoked.relative_to(root).as_posix()}"
         invoked_suffix_reference = f"python3 ./{invoked_suffix.relative_to(root).as_posix()}"
+        sourced_reference = f"source ./{invoked.relative_to(root).as_posix()}"
+        dotted_reference = f". ./{invoked_suffix.relative_to(root).as_posix()}"
         executable_data_reference = f"bash ./{executable_data.relative_to(root).as_posix()}"
         if helper not in references(helper_reference):
             fail("extensionless helper with a shebang was not detected")
@@ -404,6 +406,10 @@ def main() -> int:
             fail("extensionless helper passed to an explicit interpreter was not expanded")
         if invoked_suffix not in references(invoked_suffix_reference):
             fail("helper with an unlisted suffix passed to an explicit interpreter was not detected")
+        if invoked not in references(sourced_reference):
+            fail("extensionless helper sourced without a shebang was not detected")
+        if invoked_suffix not in references(dotted_reference):
+            fail("helper with an unlisted suffix dot-sourced without a shebang was not detected")
         if executable_data not in references(executable_data_reference):
             fail("extensionless executable file was not detected")
         if "extensionless executable data" not in expand_text(executable_data_reference):
