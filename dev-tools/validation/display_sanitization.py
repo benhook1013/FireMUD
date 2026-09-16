@@ -8,7 +8,7 @@ from typing import Any
 # Remove terminal controls and invisible formatting characters that can alter
 # the apparent structure or direction of a human-readable report.
 TERMINAL_CONTROLS = re.compile(
-    r"[\x00-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff]+"
+    r"[\x00-\x1f\x7f-\x9f\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff\ufff9-\ufffb]+"
 )
 
 

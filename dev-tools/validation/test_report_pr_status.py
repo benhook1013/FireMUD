@@ -228,7 +228,7 @@ class PrStatusReporterTest(unittest.TestCase):
         self.assertIn("GitHub mergeStateStatus is not CLEAN", report["reasons"])
 
     def test_display_sanitizes_invisible_directional_formatting(self) -> None:
-        untrusted = "safe\u200b\u202evalue\ufeff"
+        untrusted = "safe\u200b\u061c\u202e\ufff9\ufffa\ufffbvalue\ufeff"
         self.assertEqual(self.reporter._display(untrusted), "safe value")
 
     def test_ready_report_orders_hosted_and_cli_sequence_and_formats_mobile_text(self) -> None:
