@@ -209,7 +209,11 @@ class PrStatusReporterTest(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0, json.dumps(checkpoint), "")
             if "check-coderabbit-review.py" in " ".join(command):
                 return subprocess.CompletedProcess(command, checker_exit, json.dumps(checker), "checker blocked")
-            return subprocess.CompletedProcess(command, 0, json.dumps(github), "")
+            if command[:2] == ["git", "merge-base"]:
+                return subprocess.CompletedProcess(command, 0, "b" * 40 + "\n", "")
+            if command and command[0] == "gh":
+                return subprocess.CompletedProcess(command, 0, json.dumps(github), "")
+            raise AssertionError(f"unexpected provider command: {command!r}")
 
         return run
 

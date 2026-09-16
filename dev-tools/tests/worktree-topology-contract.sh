@@ -554,3 +554,97 @@ fi
 jq -e '.status == "ambiguous" and (.chain | length) == 50 and (.errors | index("selected stack exceeds the 50-PR bound") != null)' <<<"$fanout_json" >/dev/null
 
 echo "wide fanout topology bound contract checks passed"
+
+STATUS_REPO="$TEMP_DIR/local-head-status-repo"
+STATUS_BIN="$TEMP_DIR/local-head-status-bin"
+mkdir -p "$STATUS_REPO" "$STATUS_BIN"
+
+cat > "$STATUS_BIN/git" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "\${1:-}" == "rev-parse" && "\${2:-}" == "--show-toplevel" ]]; then
+  printf '%s\n' "$STATUS_REPO"
+  exit 0
+fi
+if [[ "\${1:-}" == "worktree" && "\${2:-}" == "list" && "\${3:-}" == "--porcelain" ]]; then
+  exit 0
+fi
+if [[ "\${1:-}" == "for-each-ref" ]]; then
+  cat <<'BRANCHES'
+status-stale	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	-	2026-09-14T00:00:00Z
+status-unpublished	dddddddddddddddddddddddddddddddddddddddd	-	2026-09-14T00:00:00Z
+status-diverged	ffffffffffffffffffffffffffffffffffffffff	-	2026-09-14T00:00:00Z
+status-unknown	2222222222222222222222222222222222222222	-	2026-09-14T00:00:00Z
+BRANCHES
+  exit 0
+fi
+if [[ "\${1:-}" == "merge-base" && "\${2:-}" == "--is-ancestor" ]]; then
+  case "\${3:-}:\${4:-}" in
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)
+      exit 0
+      ;;
+    dddddddddddddddddddddddddddddddddddddddd:cccccccccccccccccccccccccccccccccccccccc)
+      exit 1
+      ;;
+    cccccccccccccccccccccccccccccccccccccccc:dddddddddddddddddddddddddddddddddddddddd)
+      exit 0
+      ;;
+    ffffffffffffffffffffffffffffffffffffffff:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee)
+      exit 1
+      ;;
+    eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:ffffffffffffffffffffffffffffffffffffffff)
+      exit 1
+      ;;
+    2222222222222222222222222222222222222222:1111111111111111111111111111111111111111)
+      exit 2
+      ;;
+    *)
+      echo "unexpected merge-base fixture: \$*" >&2
+      exit 97
+      ;;
+  esac
+fi
+echo "unexpected git invocation: \$*" >&2
+exit 1
+EOF
+
+cat > "$STATUS_BIN/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$1 $2" == "repo view" ]]; then
+  [[ "${3:-}" == "owner/repo" && "${4:-}" == "--json" && "${5:-}" == "defaultBranchRef" ]] || {
+    echo "local-head status fixture used an unexpected default branch lookup" >&2
+    exit 97
+  }
+  printf '%s\n' '{"defaultBranchRef":{"name":"develop"}}'
+  exit 0
+fi
+if [[ "$1 $2" == "pr list" ]]; then
+  cat <<'PRS'
+[{"number":1,"headRefName":"status-stale","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"develop","baseRefOid":"0000000000000000000000000000000000000000","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Stale local head","url":"https://example.test/pr/1","isDraft":false},{"number":2,"headRefName":"status-unpublished","headRefOid":"cccccccccccccccccccccccccccccccccccccccc","baseRefName":"status-stale","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Unpublished local head","url":"https://example.test/pr/2","isDraft":false},{"number":3,"headRefName":"status-diverged","headRefOid":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","baseRefName":"status-unpublished","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Diverged local head","url":"https://example.test/pr/3","isDraft":false},{"number":4,"headRefName":"status-unknown","headRefOid":"1111111111111111111111111111111111111111","baseRefName":"status-diverged","baseRefOid":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Unknown local head","url":"https://example.test/pr/4","isDraft":false}]
+PRS
+  exit 0
+fi
+if [[ "$1 $2" == "pr view" ]]; then
+  cat <<'PR'
+{"state":"OPEN","number":4,"headRefName":"status-unknown","headRefOid":"1111111111111111111111111111111111111111","baseRefName":"status-diverged","baseRefOid":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Unknown local head","url":"https://example.test/pr/4","isDraft":false}
+PR
+  exit 0
+fi
+echo "unexpected gh invocation: $*" >&2
+exit 1
+EOF
+
+chmod +x "$STATUS_BIN/git" "$STATUS_BIN/gh"
+status_json="$(cd "$STATUS_REPO" && PATH="$STATUS_BIN:$PATH" bash "$SCRIPT" --repo owner/repo --pr 4 --json)"
+jq -e '.status == "ok" and (.chain | map(.number) == [1, 2, 3, 4])' <<<"$status_json" >/dev/null
+jq -e '
+  (.chain | any(.number == 1 and .local_head.status == "stale")) and
+  (.chain | any(.number == 2 and .local_head.status == "unpublished")) and
+  (.chain | any(.number == 3 and .local_head.status == "diverged")) and
+  (.chain | any(.number == 4 and .local_head.status == "unknown"))
+' <<<"$status_json" >/dev/null
+
+echo "local PR head status contract checks passed"

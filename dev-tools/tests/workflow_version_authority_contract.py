@@ -287,15 +287,16 @@ def main() -> int:
             return False
 
     def references(text):
+        explicit_reference_pattern = re.compile(
+            r"(?:^|[;&|()\s])(?:(?:/usr/bin/)?(?:bash|sh|dash|zsh|ksh|python|python3)"
+            r"(?:\s+-[A-Za-z0-9][A-Za-z0-9_-]*)*|source|\.)\s+"
+            r"(?P<quote>['\"])?(?:\./)?"
+            r"(?P<path>(?:dev-tools|services)/[A-Za-z0-9_./-]+)"
+            r"(?(quote)(?P=quote)|(?![A-Za-z0-9_./'\"-]))",
+            flags=re.MULTILINE,
+        )
         explicitly_invoked = {
-            root / name.rstrip("\"'")
-            for name in re.findall(
-                r"(?:^|[;&|()\s])(?:(?:/usr/bin/)?(?:bash|sh|dash|zsh|ksh|python|python3)"
-                r"(?:\s+-[A-Za-z0-9][A-Za-z0-9_-]*)*|source|\.)\s+(?:\./)?"
-                r"((?:dev-tools|services)/[A-Za-z0-9_./-]+)",
-                text,
-                flags=re.MULTILINE,
-            )
+            root / match.group("path") for match in explicit_reference_pattern.finditer(text)
         }
         result = set()
         for name in re.findall(r"(?:\./)?((?:dev-tools|services)/[A-Za-z0-9_./-]+)", text):
@@ -391,6 +392,11 @@ def main() -> int:
         invoked_suffix_reference = f"python3 ./{invoked_suffix.relative_to(root).as_posix()}"
         sourced_reference = f"source ./{invoked.relative_to(root).as_posix()}"
         dotted_reference = f". ./{invoked_suffix.relative_to(root).as_posix()}"
+        quoted_invoked_reference = f"bash './{invoked.relative_to(root).as_posix()}'"
+        quoted_invoked_suffix_reference = f'python3 "./{invoked_suffix.relative_to(root).as_posix()}"'
+        quoted_sourced_reference = f"source './{invoked.relative_to(root).as_posix()}'"
+        quoted_dotted_reference = f'. "./{invoked_suffix.relative_to(root).as_posix()}"'
+        mismatched_quote_reference = f"bash './{invoked.relative_to(root).as_posix()}\""
         executable_data_reference = f"bash ./{executable_data.relative_to(root).as_posix()}"
         if helper not in references(helper_reference):
             fail("extensionless helper with a shebang was not detected")
@@ -406,10 +412,20 @@ def main() -> int:
             fail("extensionless helper passed to an explicit interpreter was not expanded")
         if invoked_suffix not in references(invoked_suffix_reference):
             fail("helper with an unlisted suffix passed to an explicit interpreter was not detected")
+        if invoked not in references(quoted_invoked_reference):
+            fail("quoted extensionless helper passed to bash was not detected")
+        if invoked_suffix not in references(quoted_invoked_suffix_reference):
+            fail("quoted helper with an unlisted suffix passed to Python was not detected")
         if invoked not in references(sourced_reference):
             fail("extensionless helper sourced without a shebang was not detected")
         if invoked_suffix not in references(dotted_reference):
             fail("helper with an unlisted suffix dot-sourced without a shebang was not detected")
+        if invoked not in references(quoted_sourced_reference):
+            fail("quoted extensionless helper sourced without a shebang was not detected")
+        if invoked_suffix not in references(quoted_dotted_reference):
+            fail("quoted helper with an unlisted suffix dot-sourced without a shebang was not detected")
+        if invoked in references(mismatched_quote_reference):
+            fail("explicit helper invocation accepts mismatched quote delimiters")
         if executable_data not in references(executable_data_reference):
             fail("extensionless executable file was not detected")
         if "extensionless executable data" not in expand_text(executable_data_reference):

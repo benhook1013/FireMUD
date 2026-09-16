@@ -154,6 +154,11 @@ for readme in readmes:
                 break
         if not gh_version:
             raise SystemExit(f"{workflow_versions}: GH_VERSION is missing")
+        version_parts = gh_version.split(".")
+        if len(version_parts) != 3 or any(not part.isdigit() for part in version_parts):
+            raise SystemExit(f"{workflow_versions}: GH_VERSION is not numeric")
+        if tuple(int(part) for part in version_parts) < (2, 63, 0):
+            raise SystemExit(f"{workflow_versions}: GH_VERSION must be >= 2.63.0")
         prerequisite = (
             "The `report-pr-status.py`, `report-worktree-pr-topology.sh`, and "
             "`maintenance/cloc-report.py pr` entrypoints "
