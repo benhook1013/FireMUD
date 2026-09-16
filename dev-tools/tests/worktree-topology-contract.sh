@@ -7,40 +7,52 @@ TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT
 
 BIN_DIR="$TEMP_DIR/bin"
+DEFAULT_REPO="$TEMP_DIR/default-repo"
 VALID_WORKTREE="$TEMP_DIR/valid-worktree"
 INACCESSIBLE_WORKTREE="$TEMP_DIR/inaccessible-worktree"
 MISSING_WORKTREE="$TEMP_DIR/missing-worktree"
 PRUNABLE_WORKTREE="$TEMP_DIR/prunable-worktree"
-mkdir -p "$BIN_DIR" "$VALID_WORKTREE" "$INACCESSIBLE_WORKTREE"
+BARE_WORKTREE="$TEMP_DIR/bare-worktree"
+mkdir -p "$BIN_DIR" "$DEFAULT_REPO" "$VALID_WORKTREE" "$INACCESSIBLE_WORKTREE" "$BARE_WORKTREE"
 
 cat > "$BIN_DIR/git" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "\$1" == "worktree" && "\$2" == "list" ]]; then
+if [[ "\${1:-}" == "rev-parse" && "\${2:-}" == "--show-toplevel" ]]; then
+  printf '%s\\n' "$DEFAULT_REPO"
+  exit 0
+fi
+
+if [[ "\${1:-}" == "worktree" && "\${2:-}" == "list" && "\${3:-}" == "--porcelain" ]]; then
   cat <<'WORKTREES'
 worktree $VALID_WORKTREE
-HEAD valid-head
+HEAD aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 branch refs/heads/valid-branch
+locked valid worktree
 
 worktree $INACCESSIBLE_WORKTREE
-HEAD unavailable-head
+HEAD 1111111111111111111111111111111111111111
 branch refs/heads/unavailable-branch
 
 worktree $MISSING_WORKTREE
-HEAD missing-head
+HEAD 2222222222222222222222222222222222222222
 branch refs/heads/missing-branch
 
 worktree $PRUNABLE_WORKTREE
-HEAD prunable-head
+HEAD 3333333333333333333333333333333333333333
 branch refs/heads/prunable-branch
 prunable gitdir file points to non-existent location
+
+worktree $BARE_WORKTREE
+HEAD bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bare
 
 WORKTREES
   exit 0
 fi
 
-if [[ "\$1" == "-C" && "\$3" == "status" ]]; then
+if [[ "\${1:-}" == "-C" && "\${3:-}" == "status" ]]; then
   case "\$2" in
     "$VALID_WORKTREE")
       printf ' M tracked-file\n'
@@ -57,8 +69,11 @@ if [[ "\$1" == "-C" && "\$3" == "status" ]]; then
   esac
 fi
 
-if [[ "\$1" == "for-each-ref" ]]; then
-  printf 'valid-branch|origin/valid-branch|valid-head|2026-07-14T00:00:00Z\n'
+if [[ "\${1:-}" == "for-each-ref" ]]; then
+  printf '%s\\n' 'valid-branch	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	origin/valid-branch	2026-07-14T00:00:00Z'
+  printf '%s\\n' 'unavailable-branch	1111111111111111111111111111111111111111	-	2026-07-13T00:00:00Z'
+  printf '%s\\n' 'missing-branch	2222222222222222222222222222222222222222	-	2026-07-12T00:00:00Z'
+  printf '%s\\n' 'prunable-branch	3333333333333333333333333333333333333333	-	2026-07-11T00:00:00Z'
   exit 0
 fi
 
@@ -70,8 +85,15 @@ cat > "$BIN_DIR/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "$1" == "pr" && "$2" == "list" ]]; then
-  printf '1\tvalid-branch\tdevelop\tCLEAN\tValid PR\thttps://example.test/pr/1\n'
+if [[ "${1:-}" == "repo" && "${2:-}" == "view" ]]; then
+  printf '%s\n' '{"nameWithOwner":"example/test"}'
+  exit 0
+fi
+
+if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
+  cat <<'PRS'
+[{"number":1,"headRefName":"valid-branch","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"nameWithOwner":"example/test"},"headRepositoryOwner":{"login":"example"},"changedFiles":2,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Valid PR","url":"https://example.test/pr/1","isDraft":false}]
+PRS
   exit 0
 fi
 
@@ -83,13 +105,14 @@ chmod +x "$BIN_DIR/git" "$BIN_DIR/gh"
 
 output_file="$TEMP_DIR/output"
 error_file="$TEMP_DIR/error"
-PATH="$BIN_DIR:$PATH" bash "$SCRIPT" --repo example/test > "$output_file" 2> "$error_file"
+PATH="$BIN_DIR:$PATH" bash "$SCRIPT" > "$output_file" 2> "$error_file"
 
 grep -Fqx $'PATH\tBRANCH\tHEAD\tSTATUS' "$output_file"
-grep -Fqx "$VALID_WORKTREE"$'\tvalid-branch\tvalid-head\tdirty' "$output_file"
-grep -Fqx "$INACCESSIBLE_WORKTREE"$'\tunavailable-branch\tunavailable-head\tunavailable' "$output_file"
-grep -Fqx "$MISSING_WORKTREE"$'\tmissing-branch\tmissing-head\tmissing' "$output_file"
-grep -Fqx "$PRUNABLE_WORKTREE"$'\tprunable-branch\tprunable-head\tprunable' "$output_file"
+grep -Fqx "$VALID_WORKTREE"$'\tvalid-branch\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tdirty (locked)' "$output_file"
+grep -Fqx "$INACCESSIBLE_WORKTREE"$'\tunavailable-branch\t1111111111111111111111111111111111111111\tunavailable' "$output_file"
+grep -Fqx "$MISSING_WORKTREE"$'\tmissing-branch\t2222222222222222222222222222222222222222\tmissing' "$output_file"
+grep -Fqx "$PRUNABLE_WORKTREE"$'\tprunable-branch\t3333333333333333333333333333333333333333\tprunable' "$output_file"
+grep -Fqx "$BARE_WORKTREE"$'\t(bare)\tbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\tbare' "$output_file"
 [[ ! -s "$error_file" ]]
 
 echo "worktree topology contract checks passed"
@@ -239,5 +262,8 @@ EOF
 chmod +x "$LIMIT_BIN/gh"
 over_one_hundred_json="$(cd "$SELECTED_REPO" && PATH="$LIMIT_BIN:$SELECTED_BIN:$PATH" bash "$SCRIPT" --repo owner/repo --pr 42 --json)"
 jq -e '.status == "ok" and (.chain | map(.number) | index(143) != null)' <<<"$over_one_hundred_json" >/dev/null
+
+over_one_hundred_human="$(cd "$SELECTED_REPO" && PATH="$LIMIT_BIN:$SELECTED_BIN:$PATH" bash "$SCRIPT" --repo owner/repo)"
+grep -Fqx $'143\tfeature/beyond-one-hundred\tfeature/head\tCLEAN\tDependent beyond one hundred\thttps://example.test/pr/143' <<<"$over_one_hundred_human"
 
 echo "paginated topology inventory contract checks passed"

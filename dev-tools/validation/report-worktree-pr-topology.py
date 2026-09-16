@@ -485,6 +485,40 @@ def emit_selected_text(report: dict[str, Any]) -> None:
             print(f"error: {error}", file=sys.stderr)
 
 
+def emit_inventory_text(report: dict[str, Any]) -> None:
+    print(f"Repository: {report['repository']}")
+    print()
+    print("Worktrees")
+    print("PATH\tBRANCH\tHEAD\tSTATUS")
+    for worktree in report["worktrees"]:
+        if worktree["bare"]:
+            branch = "(bare)"
+        else:
+            branch = worktree["branch"] or "(detached)"
+        status = worktree["status"]
+        if worktree["locked"] and status not in {"prunable", "bare"}:
+            status = f"{status} (locked)"
+        print(f"{worktree['path']}\t{branch}\t{worktree['head_sha']}\t{status}")
+
+    print()
+    print("Local branches")
+    print("BRANCH\tUPSTREAM\tHEAD\tLAST_COMMIT")
+    for branch in sorted(report["local_branches"], key=lambda item: item["branch"]):
+        print(
+            f"{branch['branch']}\t{branch['upstream'] or '-'}\t"
+            f"{branch['head_sha'][:12]}\t{branch['last_commit_at'] or '-'}"
+        )
+
+    print()
+    print("Open pull requests")
+    print("NUMBER\tHEAD\tBASE\tMERGE_STATE\tTITLE\tURL")
+    for pr in report["pull_requests"]:
+        print(
+            f"{pr['number']}\t{pr['head']['branch']}\t{pr['base']['branch']}\t"
+            f"{pr['merge']['state']}\t{pr['title']}\t{pr['url']}"
+        )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Report exact local worktree and PR topology.")
     parser.add_argument("--repo", help="GitHub repository in OWNER/REPO form")
@@ -557,14 +591,7 @@ def main() -> int:
         if args.json:
             print(json.dumps(report, indent=2, sort_keys=True))
         elif args.pr is None:
-            print(f"Repository: {repo}")
-            print("Open pull requests")
-            print("NUMBER\tHEAD\tBASE\tMERGE_STATE\tTITLE\tURL")
-            for pr in open_prs:
-                print(
-                    f"{pr['number']}\t{pr['head_branch']}\t{pr['base_branch']}\t"
-                    f"{pr['merge_state_status']}\t{pr['title']}\t{pr['url']}"
-                )
+            emit_inventory_text(report)
         else:
             emit_selected_text(report)
         return 1 if report.get("status") == "ambiguous" else 0
