@@ -88,6 +88,15 @@ jq -n --arg repo owner/repo --arg captured "$CAPTURED" '{
 }' >"$RECORD"
 cp "$RECORD" "$TMP_DIR/posted-record.json"
 
+for separator in $'\u0085' $'\u2028' $'\u2029'; do
+  if (cd "$TEST_REPO" && PATH="$MOCK_BIN:$PATH" MOCK_SCENARIO=retirement \
+    dev-tools/request-coderabbit-review.sh 42 --repo owner/repo \
+    --retire-trigger 101 --expected-head-sha "$HEAD" --reason "operator${separator}reason") \
+    >"$TMP_DIR/separator.out" 2>&1; then
+    exit 1
+  fi
+done
+
 (cd "$TEST_REPO" && python3 dev-tools/validation/check-coderabbit-review.py \
   --repo owner/repo --pr 42 --input "$PAYLOAD" --trigger-record "$RECORD" \
   --wait --timeout 0 --json >"$TMP_DIR/timeout.json") || true
@@ -148,6 +157,7 @@ cp "$TMP_DIR/posted-record.json" "$RECORD"
   dev-tools/request-coderabbit-review.sh 42 --repo owner/repo \
   --retire-trigger 101 --expected-head-sha "$HEAD" \
   --reason "bounded wait timed out; captured-head review is stale" >"$TMP_DIR/retired.json")
+[[ "$(jq -r 'has("trigger_record")' "$TMP_DIR/retired.json")" == "false" ]]
 [[ "$(jq -r '.status' "$RECORD")" == "retired" ]]
 [[ "$(jq -r '.trigger.id' "$RECORD")" == "101" ]]
 [[ "$(jq -r '.head_sha' "$RECORD")" == "$CAPTURED" ]]

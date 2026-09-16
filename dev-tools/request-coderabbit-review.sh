@@ -118,7 +118,11 @@ reason = sys.argv[1]
 valid = (
     bool(reason.strip())
     and len(reason) <= 240
-    and all(ord(character) >= 0x20 and ord(character) != 0x7F for character in reason)
+    and all(
+        ord(character) >= 0x20
+        and ord(character) not in {0x7F, 0x85, 0x2028, 0x2029}
+        for character in reason
+    )
 )
 raise SystemExit(0 if valid else 1)
 PY

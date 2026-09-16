@@ -458,6 +458,30 @@ Your included review limit is currently reached under our [Fair Usage Limits Pol
         self.assertEqual(persisted["status"], "timed_out")
         self.assertEqual(persisted["timeout"]["observed_state"], "active")
 
+    def test_timeout_does_not_overwrite_a_newer_trigger_record(self) -> None:
+        old_record = record()
+        newer_record = record()
+        newer_record["head_sha"] = "d" * 40
+        newer_record["trigger"] = {
+            "id": 20,
+            "created_at": "2026-09-14T02:00:00Z",
+            "url": "https://example.test/comments/20",
+            "type": "full",
+            "command": "@coderabbitai full review",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            record_path = Path(directory) / "trigger.json"
+            record_path.write_text(json.dumps(old_record), encoding="utf-8")
+            state = self.state()
+            record_path.write_text(json.dumps(newer_record), encoding="utf-8")
+            persisted = CHECKER.persist_timeout_if_current(
+                str(record_path), old_record, state
+            )
+            current = json.loads(record_path.read_text(encoding="utf-8"))
+
+        self.assertFalse(persisted)
+        self.assertEqual(current, newer_record)
+
     def test_operator_retirement_requires_identity_and_preserves_evidence(self) -> None:
         current_payload = payload()
         current_payload["data"]["repository"]["pullRequest"]["commits"]["nodes"][0][
@@ -490,6 +514,7 @@ Your included review limit is currently reached under our [Fair Usage Limits Pol
             "bounded wait timed out; no current review evidence",
         )
         self.assertEqual(persisted["retirement"]["evidence"]["state"], "timed_out")
+        self.assertNotIn("trigger_record", result)
 
     def test_operator_retirement_repairs_posted_active_old_head(self) -> None:
         new_head = "c" * 40
@@ -603,6 +628,13 @@ Your included review limit is currently reached under our [Fair Usage Limits Pol
                     "operator adjudication",
                     payload(),
                 )
+
+    def test_retirement_reason_rejects_unicode_line_separators(self) -> None:
+        for separator in ("\x85", "\u2028", "\u2029"):
+            with self.subTest(separator=hex(ord(separator))), self.assertRaisesRegex(
+                ValueError, "one line"
+            ):
+                CHECKER.validate_retirement_reason(f"operator{separator}reason")
 
     def test_changed_posting_boundary_is_ambiguous(self) -> None:
         changed = record()

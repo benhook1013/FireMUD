@@ -12,6 +12,7 @@ This script does not trust the top-level CodeRabbit status badge. It verifies:
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import math
 import os
@@ -503,6 +504,12 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
             os.unlink(temporary_name)
         except FileNotFoundError:
             pass
+
+
+def trigger_record_version(record: dict[str, Any]) -> str:
+    """Return a stable snapshot used to compare a waiter's record ownership."""
+
+    return json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 def normalize_command(body: str) -> str:
@@ -1533,6 +1540,7 @@ def trigger_state(
 
 
 RETIREMENT_REASON_MAX_LENGTH = 240
+LINE_SEPARATOR_CODEPOINTS = {0x7F, 0x85, 0x2028, 0x2029}
 
 
 def validate_retirement_reason(reason: str) -> None:
@@ -1542,7 +1550,10 @@ def validate_retirement_reason(reason: str) -> None:
         raise ValueError(
             f"retirement reason must be at most {RETIREMENT_REASON_MAX_LENGTH} characters"
         )
-    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in reason):
+    if any(
+        ord(character) < 0x20 or ord(character) in LINE_SEPARATOR_CODEPOINTS
+        for character in reason
+    ):
         raise ValueError("retirement reason must be one line without control characters")
 
 
@@ -1555,7 +1566,7 @@ def retire_trigger_record(
     reason: str,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    """Retire one timed-out record after checking its live identity and evidence."""
+    """Retire one stale record after checking its live identity and evidence."""
 
     if trigger_id <= 0:
         raise ValueError("trigger identity must be a positive integer")
@@ -1638,7 +1649,6 @@ def retire_trigger_record(
         "expected_head_sha": expected_head_sha,
         "retired_at": retired_at,
         "reason": reason.strip(),
-        "trigger_record": str(Path(path).resolve()),
         "message": (
             "Hosted CodeRabbit trigger "
             f"{trigger_id} retired for current head {expected_head_sha}"
@@ -1651,16 +1661,41 @@ def emit_retirement_text(result: dict[str, Any]) -> None:
         print(f"{key}={value}")
 
 
-def persist_timeout(path: str, record: dict[str, Any], state: TriggerState) -> None:
-    timed_out_record = dict(record)
-    timed_out_record["status"] = "timed_out"
-    timed_out_record["timeout"] = {
-        "at": utc_now(),
-        "observed_state": state.state,
-        "observed_response_id": state.response_id,
-        "reason": "bounded wait expired before a terminal CodeRabbit response",
-    }
-    atomic_write_json(Path(path), timed_out_record)
+def persist_timeout_if_current(
+    path: str, expected_record: dict[str, Any], state: TriggerState
+) -> bool:
+    """Persist timeout evidence only if the waiter still owns its record version."""
+
+    record_path = Path(path)
+    lock_path = record_path.parent / "request.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, stat.S_IRUSR | stat.S_IWUSR)
+    try:
+        os.fchmod(lock_descriptor, stat.S_IRUSR | stat.S_IWUSR)
+        fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
+        try:
+            current_record = load_trigger_record(
+                path,
+                expected_record["repository"],
+                expected_record["pr_number"],
+            )
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            return False
+        if trigger_record_version(current_record) != trigger_record_version(expected_record):
+            return False
+        timed_out_record = dict(expected_record)
+        timed_out_record["status"] = "timed_out"
+        timed_out_record["timeout"] = {
+            "at": utc_now(),
+            "observed_state": state.state,
+            "observed_response_id": state.response_id,
+            "reason": "bounded wait expired before a terminal CodeRabbit response",
+        }
+        atomic_write_json(record_path, timed_out_record)
+        return True
+    finally:
+        fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
+        os.close(lock_descriptor)
 
 
 def emit_trigger_text(state: TriggerState) -> None:
@@ -1849,12 +1884,18 @@ def main() -> int:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 if args.trigger_record and record is not None and state is not None:
-                    persist_timeout(args.trigger_record, record, state)
-                state.state = "timed_out"
+                    persisted = persist_timeout_if_current(
+                        args.trigger_record, record, state
+                    )
+                else:
+                    persisted = True
+                state.state = "timed_out" if persisted else "superseded"
                 state.terminal = True
                 state.manual_adjudication_required = True
                 state.reason = (
                     "bounded wait expired before a terminal CodeRabbit response"
+                    if persisted
+                    else "durable trigger record changed while waiting; timeout was not persisted"
                 )
                 break
             time.sleep(min(args.poll_interval, remaining))
