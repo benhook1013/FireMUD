@@ -16,6 +16,7 @@ MAX_CHAIN_PRS = 50
 DEFAULT_BRANCHES = {"develop", "main", "master"}
 EXACT_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
 REPO = re.compile(r"^[^/\s]+/[^/\s]+$")
+REPO_COMPONENT = re.compile(r"^[^/\s]+$")
 PR_FIELDS = (
     "number,headRefName,headRefOid,baseRefName,baseRefOid,changedFiles,"
     "headRepository,headRepositoryOwner,mergeable,mergeStateStatus,title,url,isDraft"
@@ -57,6 +58,12 @@ def repository_root() -> Path:
 def validate_repo(value: str) -> str:
     if not REPO.fullmatch(value):
         raise TopologyError("repository must be in OWNER/REPO form")
+    return value
+
+
+def validate_repo_component(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not REPO_COMPONENT.fullmatch(value):
+        raise TopologyError(f"{label} must be a non-empty repository identity component")
     return value
 
 
@@ -102,9 +109,19 @@ def normalize_pr(raw: Any, *, label: str) -> dict[str, Any]:
     result["base_sha"] = exact_sha(raw.get("baseRefOid"), f"{label} baseRefOid")
     result["changed_files"] = nonnegative_int(raw.get("changedFiles"), f"{label} changedFiles")
     head_repository = raw.get("headRepository")
-    if not isinstance(head_repository, dict) or not isinstance(head_repository.get("nameWithOwner"), str):
+    head_repository_owner = raw.get("headRepositoryOwner")
+    if not isinstance(head_repository, dict) or not isinstance(head_repository_owner, dict):
         raise TopologyError(f"{label} has no exact head repository identity")
-    result["head_repository"] = validate_repo(head_repository["nameWithOwner"])
+    owner = validate_repo_component(head_repository_owner.get("login"), f"{label} headRepositoryOwner.login")
+    repository = validate_repo_component(head_repository.get("name"), f"{label} headRepository.name")
+    derived_repository = validate_repo(f"{owner}/{repository}")
+    if "nameWithOwner" in head_repository:
+        legacy_repository = head_repository["nameWithOwner"]
+        if not isinstance(legacy_repository, str):
+            raise TopologyError(f"{label} headRepository.nameWithOwner is malformed")
+        if validate_repo(legacy_repository).casefold() != derived_repository.casefold():
+            raise TopologyError(f"{label} head repository identity fields contradict each other")
+    result["head_repository"] = derived_repository
     for raw_key, key in (("mergeable", "mergeable"), ("mergeStateStatus", "merge_state_status")):
         value = raw.get(raw_key)
         if not isinstance(value, str) or not value:

@@ -268,8 +268,14 @@ runs:
                     (.workflow_id | type) == "number" and
                     (.id == ($expected_id | tonumber)) and
                     (.workflow_id == ($expected_workflow_id | tonumber)) and
-                    .name == $expected_name and
-                  .path == $expected_path and
+                  .name == $expected_name and
+                  (
+                    .path == $expected_path or
+                    (
+                      (.path | startswith($expected_path + "@")) and
+                      ((.path | ltrimstr($expected_path + "@")) | test("^[A-Za-z0-9._/-]+$"))
+                    )
+                  ) and
                   .head_sha == $expected_head and
                   .repository.full_name == $expected_repository and
                   .event == "pull_request"

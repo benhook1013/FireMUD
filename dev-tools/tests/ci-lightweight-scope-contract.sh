@@ -258,7 +258,7 @@ readme_checkout_step = find_step(
 require_equal(
     ci,
     ("jobs", "dev-tools-readme-contract", "if"),
-    "${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only == 'true' && needs.changes.outputs.docs_changed == 'true' }}",
+    "${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only == 'true' }}",
     "ci workflow",
 )
 require_equal(

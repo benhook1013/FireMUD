@@ -422,6 +422,10 @@ if [[ "$*" == *"/actions/runs/"* ]]; then
   if [[ "${GH_SCENARIO:-}" == "cross-workflow-same-name" ]]; then
     workflow_path='.github/workflows/other.yml'
     workflow_id=99
+  elif [[ "${GH_SCENARIO:-}" == "run-path-ref-suffix" ]]; then
+    workflow_path='.github/workflows/ci.yml@main'
+  elif [[ "${GH_SCENARIO:-}" == "malformed-run-path-ref-suffix" ]]; then
+    workflow_path='.github/workflows/ci.yml@main@evil'
   elif [[ "${GH_SCENARIO:-}" == "fork-head-same-sha" ]]; then
     head_repository='other-owner/firemud'
   elif [[ "${GH_SCENARIO:-}" == "wrong-run-repository" ]]; then
@@ -498,6 +502,9 @@ JSON
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"completed","conclusion":"failure","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   cross-workflow-same-name)
+    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    ;;
+  run-path-ref-suffix|malformed-run-path-ref-suffix)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   fork-head-same-sha)
@@ -909,7 +916,14 @@ run_action "$fork_head_count" none fork-head-same-sha
   exit 1
 }
 
-for malformed_scenario in cross-workflow-same-name wrong-run-repository unknown-app unknown-check-name invalid-job-id missing-job-id missing-preservation-conclusion unsupported-status missing-timestamp; do
+run_path_ref_count="$tmp_dir/count-run-path-ref-suffix"
+run_action "$run_path_ref_count" none run-path-ref-suffix
+[[ "$(<"$run_path_ref_count")" == "1" ]] || {
+  echo "required-gate action rejected a valid workflow-run path ref suffix" >&2
+  exit 1
+}
+
+for malformed_scenario in cross-workflow-same-name malformed-run-path-ref-suffix wrong-run-repository unknown-app unknown-check-name invalid-job-id missing-job-id missing-preservation-conclusion unsupported-status missing-timestamp; do
   malformed_output="$tmp_dir/${malformed_scenario}-output"
   set +e
   run_action "$tmp_dir/count-${malformed_scenario}" none "$malformed_scenario" >"$malformed_output" 2>&1

@@ -96,7 +96,7 @@ fi
 
 if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
   cat <<'PRS'
-[{"number":1,"headRefName":"valid-branch","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"nameWithOwner":"example/test"},"headRepositoryOwner":{"login":"example"},"changedFiles":2,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Valid PR","url":"https://example.test/pr/1","isDraft":false}]
+[{"number":1,"headRefName":"valid-branch","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOexample","name":"test"},"headRepositoryOwner":{"login":"example"},"changedFiles":2,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Valid PR","url":"https://example.test/pr/1","isDraft":false}]
 PRS
   exit 0
 fi
@@ -138,6 +138,30 @@ jq -e '.mode == "inventory" and .status == "ok" and .errors == []' <<<"$inventor
 jq -e '.worktrees | any(.bare and .head_sha == null and .status == "bare")' <<<"$inventory_json" >/dev/null
 
 echo "worktree topology contract checks passed"
+
+CONTRADICTORY_BIN="$TEMP_DIR/contradictory-bin"
+mkdir -p "$CONTRADICTORY_BIN"
+cat > "$CONTRADICTORY_BIN/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$1 $2" == "pr list" || "$1 $2" == "pr view" ]]; then
+  cat <<'PR'
+[{"number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOownerrepo","name":"repo","nameWithOwner":"owner/other-repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Contradictory","url":"https://example.test/pr/42","isDraft":false}]
+PR
+  exit 0
+fi
+echo "unexpected gh invocation: $*" >&2
+exit 1
+EOF
+chmod +x "$CONTRADICTORY_BIN/gh"
+if contradictory_json="$(cd "$DEFAULT_REPO" && PATH="$CONTRADICTORY_BIN:$BIN_DIR:$PATH" bash "$SCRIPT" --repo owner/repo --pr 42 --json)"; then
+  echo "contradictory repository identity unexpectedly succeeded" >&2
+  exit 1
+fi
+jq -e '.status == "ambiguous" and (.errors | any(contains("head repository identity fields contradict each other")))' <<<"$contradictory_json" >/dev/null
+
+echo "contradictory repository identity contract checks passed"
 
 SELECTED_REPO="$TEMP_DIR/selected-repo"
 SELECTED_WORKTREE="$SELECTED_REPO/selected-worktree"
@@ -183,13 +207,13 @@ set -euo pipefail
 
 if [[ "$1 $2" == "pr list" ]]; then
   cat <<'PRS'
-[{"number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"nameWithOwner":"owner/repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false},{"number":100,"headRefName":"feature/dependent","headRefOid":"dddddddddddddddddddddddddddddddddddddddd","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"nameWithOwner":"owner/repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Dependent","url":"https://example.test/pr/100","isDraft":false},{"number":50,"headRefName":"feature/grandchild","headRefOid":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","baseRefName":"feature/dependent","baseRefOid":"dddddddddddddddddddddddddddddddddddddddd","headRepository":{"nameWithOwner":"owner/repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Grandchild","url":"https://example.test/pr/50","isDraft":false},{"number":45,"headRefName":"renovate/dependent","headRefOid":"ffffffffffffffffffffffffffffffffffffffff","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"nameWithOwner":"owner/repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Renovate dependent","url":"https://example.test/pr/45","isDraft":false},{"number":44,"headRefName":"feature/forked","headRefOid":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"nameWithOwner":"fork/repo"},"headRepositoryOwner":{"login":"fork"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Foreign collision","url":"https://example.test/pr/44","isDraft":false},{"number":46,"headRefName":"renovate/unrelated","headRefOid":"1212121212121212121212121212121212121212","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"nameWithOwner":"owner/repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Unrelated Renovate","url":"https://example.test/pr/46","isDraft":false}]
+[{"number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false},{"number":100,"headRefName":"feature/dependent","headRefOid":"dddddddddddddddddddddddddddddddddddddddd","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Dependent","url":"https://example.test/pr/100","isDraft":false},{"number":50,"headRefName":"feature/grandchild","headRefOid":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","baseRefName":"feature/dependent","baseRefOid":"dddddddddddddddddddddddddddddddddddddddd","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Grandchild","url":"https://example.test/pr/50","isDraft":false},{"number":45,"headRefName":"renovate/dependent","headRefOid":"ffffffffffffffffffffffffffffffffffffffff","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Renovate dependent","url":"https://example.test/pr/45","isDraft":false},{"number":44,"headRefName":"feature/forked","headRefOid":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"id":"R_kgDOforkrepo","name":"repo"},"headRepositoryOwner":{"login":"fork"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Foreign collision","url":"https://example.test/pr/44","isDraft":false},{"number":46,"headRefName":"renovate/unrelated","headRefOid":"1212121212121212121212121212121212121212","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Unrelated Renovate","url":"https://example.test/pr/46","isDraft":false}]
 PRS
   exit 0
 fi
 if [[ "$1 $2" == "pr view" ]]; then
   cat <<'PR'
-{"state":"OPEN","number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"nameWithOwner":"owner/repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false}
+{"state":"OPEN","number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false}
 PR
   exit 0
 fi
@@ -252,7 +276,7 @@ selected = {
     "headRefOid": "b" * 40,
     "baseRefName": "develop",
     "baseRefOid": "c" * 40,
-    "headRepository": {"nameWithOwner": "owner/repo"},
+    "headRepository": {"id": "R_kgDOownerrepo", "name": "repo"},
     "headRepositoryOwner": {"login": "owner"},
     "changedFiles": 3,
     "mergeable": "MERGEABLE",
@@ -272,7 +296,7 @@ for number in range(100, 200):
             "headRefOid": f"{number:040x}",
             "baseRefName": "develop",
             "baseRefOid": "c" * 40,
-            "headRepository": {"nameWithOwner": "owner/repo"},
+            "headRepository": {"id": "R_kgDOownerrepo", "name": "repo"},
             "headRepositoryOwner": {"login": "owner"},
             "changedFiles": 1,
             "mergeable": "MERGEABLE",
@@ -300,7 +324,7 @@ PY
 fi
 if [[ "$1 $2" == "pr view" ]]; then
   cat <<'PR'
-{"state":"OPEN","number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"nameWithOwner":"owner/repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false}
+{"state":"OPEN","number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false}
 PR
   exit 0
 fi
@@ -324,13 +348,13 @@ set -euo pipefail
 
 if [[ "$1 $2" == "pr list" ]]; then
   cat <<'PRS'
-[{"number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"feature/dependent","baseRefOid":"dddddddddddddddddddddddddddddddddddddddd","headRepository":{"nameWithOwner":"owner/repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false},{"number":100,"headRefName":"feature/dependent","headRefOid":"dddddddddddddddddddddddddddddddddddddddd","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"nameWithOwner":"owner/repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Cyclic dependent","url":"https://example.test/pr/100","isDraft":false}]
+[{"number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"feature/dependent","baseRefOid":"dddddddddddddddddddddddddddddddddddddddd","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false},{"number":100,"headRefName":"feature/dependent","headRefOid":"dddddddddddddddddddddddddddddddddddddddd","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Cyclic dependent","url":"https://example.test/pr/100","isDraft":false}]
 PRS
   exit 0
 fi
 if [[ "$1 $2" == "pr view" ]]; then
   cat <<'PR'
-{"state":"OPEN","number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"feature/dependent","baseRefOid":"dddddddddddddddddddddddddddddddddddddddd","headRepository":{"nameWithOwner":"owner/repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false}
+{"state":"OPEN","number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"feature/dependent","baseRefOid":"dddddddddddddddddddddddddddddddddddddddd","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false}
 PR
   exit 0
 fi
@@ -362,7 +386,7 @@ selected = {
     "headRefOid": "b" * 40,
     "baseRefName": "develop",
     "baseRefOid": "c" * 40,
-    "headRepository": {"nameWithOwner": "owner/repo"},
+    "headRepository": {"id": "R_kgDOownerrepo", "name": "repo"},
     "headRepositoryOwner": {"login": "owner"},
     "changedFiles": 3,
     "mergeable": "MERGEABLE",
@@ -380,7 +404,7 @@ for number in range(1000, 1051):
             "headRefOid": f"{number:040x}",
             "baseRefName": "feature/head",
             "baseRefOid": "b" * 40,
-            "headRepository": {"nameWithOwner": "owner/repo"},
+            "headRepository": {"id": "R_kgDOownerrepo", "name": "repo"},
             "headRepositoryOwner": {"login": "owner"},
             "changedFiles": 1,
             "mergeable": "MERGEABLE",
@@ -396,7 +420,7 @@ PY
 fi
 if [[ "$1 $2" == "pr view" ]]; then
   cat <<'PR'
-{"state":"OPEN","number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"nameWithOwner":"owner/repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false}
+{"state":"OPEN","number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false}
 PR
   exit 0
 fi
