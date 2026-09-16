@@ -486,12 +486,17 @@ jobs:
           fi
 
       - name: Wait for preview runtime images
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.effective-image-tag.outputs.image_tag != needs.preview-plan.outputs.base_sha }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           echo "PREVIEW_STAGE=wait-for-images" >> "$GITHUB_ENV"
           bash ./dev-tools/hosted/shared/wait-for-runtime-images.sh "${{ steps.effective-image-tag.outputs.image_tag }}"
+
+      - name: Reuse immutable base runtime images
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.effective-image-tag.outputs.image_tag == needs.preview-plan.outputs.base_sha }}
+        run: |
+          echo "No runtime-image trigger paths changed; using the immutable runtime images published for base commit ${{ needs.preview-plan.outputs.base_sha }}."
 
       - name: Record reconciled preview target
         if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}

@@ -19,13 +19,24 @@ runtime_relevant() {
   local file="$1"
 
   case "${file}" in
-    build.gradle.kts | settings.gradle.kts | gradle.properties)
+    build.gradle.kts | settings.gradle.kts | gradle.properties | .python-version)
       return 0
       ;;
-    .github/workflows/runtime-images.yml | .github/workflows/smoke.yml | .github/workflows/smoke-full.yml)
+    .github/workflows/runtime-images.yml | .github/workflows/publish-pr-runtime-images.yml | .github/workflows/smoke.yml | .github/workflows/smoke-full.yml)
       return 0
       ;;
-    buildSrc/* | gradle/* | protos/* | docker/* | config/* | services/*)
+    .github/actions/setup-python/* | buildSrc/* | gradle/* | protos/* | docker/* | services/* | dev-tools/smoke/*)
+      return 0
+      ;;
+    config/python/smoke-requirements.txt | config/python/smoke-requirements.in | \
+      dev-tools/build-compose-service-jars.sh | \
+      dev-tools/build-local-smoke-images.sh | \
+      dev-tools/certs/generate-dev-certs.sh | \
+      dev-tools/hosted/controller/smoke-paused-controller-image.sh | \
+      dev-tools/verify-compose-health.sh | \
+      dev-tools/verify-fresh-bootstrap.sh | \
+      dev-tools/verify-restart-state.sh | \
+      dev-tools/verify-smoke-images.sh)
       return 0
       ;;
   esac

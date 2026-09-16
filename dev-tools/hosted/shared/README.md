@@ -28,6 +28,7 @@ These scripts are shared because they manage infrastructure or validation behavi
 - `wait-for-runtime-images.sh`
   - waits for the `runtime-images.yml` workflow to validate the requested image tag
   - for pull-request runs, also waits for the trusted `publish-pr-runtime-images.yml` workflow to publish the fixed tag
+  - preview deployments reuse the immutable base-commit images when the pull request contains no runtime-image trigger paths; this selection is made by `resolve-preview-image-tag.sh`
 
 - `hosted-login-look-smoke.sh`
   - runs the canonical hosted TCP LOGIN -> PLAY -> LOOK smoke proof against the exposed environment
