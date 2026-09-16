@@ -556,7 +556,7 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in $(seq 1 60); do
-            if docker exec firemud-helm-proof k3s kubectl wait --for=condition=Ready nodes --all --timeout=2s >/dev/null 2>&1; then
+            if docker exec firemud-helm-proof k3s kubectl get nodes --no-headers 2>/dev/null | awk '$2 ~ /^Ready/ { found=1 } END { exit found ? 0 : 1 }'; then
               break
             fi
             if [[ "$attempt" == 60 ]]; then
