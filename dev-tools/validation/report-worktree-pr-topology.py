@@ -176,9 +176,12 @@ def parse_worktrees(root: Path) -> list[dict[str, Any]]:
             return
         path = current.get("path")
         head = current.get("head_sha")
+        bare = bool(current.get("bare", False))
         if not isinstance(path, str) or not path:
             raise TopologyError("Git worktree inventory has no path")
-        if not isinstance(head, str) or not EXACT_SHA.fullmatch(head):
+        if head is None and not bare:
+            raise TopologyError(f"Git worktree {path} has no exact HEAD SHA")
+        if head is not None and (not isinstance(head, str) or not EXACT_SHA.fullmatch(head)):
             raise TopologyError(f"Git worktree {path} has no exact HEAD SHA")
         branch = current.get("branch")
         if branch is not None and not isinstance(branch, str):
@@ -186,10 +189,10 @@ def parse_worktrees(root: Path) -> list[dict[str, Any]]:
         record = {
             "path": path,
             "branch": branch,
-            "head_sha": head.lower(),
+            "head_sha": head.lower() if head is not None else None,
             "prunable": bool(current.get("prunable", False)),
             "locked": bool(current.get("locked", False)),
-            "bare": bool(current.get("bare", False)),
+            "bare": bare,
         }
         if record["prunable"]:
             record["status"] = "prunable"
@@ -304,7 +307,9 @@ def worktrees_for_pr(pr: dict[str, Any], worktrees: list[dict[str, Any]]) -> lis
     selected: list[dict[str, Any]] = []
     for worktree in worktrees:
         if worktree["branch"] == pr["head_branch"] or (
-            worktree["branch"] is None and worktree["head_sha"] == pr["head_sha"]
+            worktree["branch"] is None
+            and worktree["head_sha"] is not None
+            and worktree["head_sha"] == pr["head_sha"]
         ):
             selected.append(
                 {
@@ -498,7 +503,8 @@ def emit_inventory_text(report: dict[str, Any]) -> None:
         status = worktree["status"]
         if worktree["locked"] and status not in {"prunable", "bare"}:
             status = f"{status} (locked)"
-        print(f"{worktree['path']}\t{branch}\t{worktree['head_sha']}\t{status}")
+        head = worktree["head_sha"] or "-"
+        print(f"{worktree['path']}\t{branch}\t{head}\t{status}")
 
     print()
     print("Local branches")

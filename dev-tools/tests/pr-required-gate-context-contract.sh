@@ -320,6 +320,12 @@ if [[ "$*" == *"/actions/jobs/"* ]]; then
       *) preserve_conclusion=success ;;
     esac
     printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"%s"}]}\n' "$job_id" "$run_id" "$job_id" "$preserve_conclusion"
+  elif [[ "${GH_SCENARIO:-}" == "pending-preservation-step-not-concluded" &&
+    "${job_id}" == "100" && "$(<"$count_file")" -le 2 ]]; then
+    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[]}\n' "$job_id" "$run_id" "$job_id"
+  elif [[ "${GH_SCENARIO:-}" == "pending-missing-step-with-failed-substantive" &&
+    "${job_id}" == "101" ]]; then
+    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[]}\n' "$job_id" "$run_id" "$job_id"
   elif [[ "${GH_SCENARIO:-}" == "missing-preservation-conclusion" && "${job_id}" == "100" ]]; then
     printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   else
@@ -459,6 +465,24 @@ JSON
       completed_at='"2026-07-30T02:00:00Z"'
     fi
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"%s","conclusion":%s,"completed_at":%s,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n' "$status" "$conclusion" "$completed_at"
+    ;;
+  pending-preservation-step-not-concluded)
+    case "$count" in
+      1) status=queued ;;
+      2) status=in_progress ;;
+      *) status=completed ;;
+    esac
+    if [[ "$status" == "completed" ]]; then
+      conclusion='"success"'
+      completed_at='"2026-07-30T02:00:00Z"'
+    else
+      conclusion=null
+      completed_at=null
+    fi
+    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"%s","conclusion":%s,"completed_at":%s,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n' "$status" "$conclusion" "$completed_at"
+    ;;
+  pending-missing-step-with-failed-substantive)
+    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"in_progress","conclusion":null,"completed_at":null,"started_at":"2026-07-30T02:00:00Z","created_at":"2026-07-30T02:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"failure","completed_at":"2026-07-30T03:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   timeout-pending)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"waiting","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
@@ -637,6 +661,31 @@ alternate_pending_count="$tmp_dir/count-alternate-pending"
 run_action "$alternate_pending_count" none alternate-pending
 [[ "$(<"$alternate_pending_count")" == "4" ]] || {
   echo "required-gate action did not treat all GitHub pending statuses as pending" >&2
+  exit 1
+}
+
+pending_step_count="$tmp_dir/count-pending-preservation-step"
+run_action "$pending_step_count" none pending-preservation-step-not-concluded
+[[ "$(<"$pending_step_count")" == "3" ]] || {
+  echo "required-gate action did not treat queued/in-progress preservation jobs without a concluded step as pending" >&2
+  exit 1
+}
+
+pending_step_failure_output="$tmp_dir/pending-step-failure-output"
+set +e
+run_action "$tmp_dir/count-pending-step-failure" none pending-missing-step-with-failed-substantive >"$pending_step_failure_output" 2>&1
+pending_step_failure_status=$?
+set -e
+[[ "$pending_step_failure_status" -ne 0 ]] || {
+  echo "required-gate action allowed a pending preservation job to mask a substantive failure" >&2
+  exit 1
+}
+[[ "$(<"$tmp_dir/count-pending-step-failure")" == "1" ]] || {
+  echo "required-gate action retried after selecting the substantive failure beside a pending preservation job" >&2
+  exit 1
+}
+grep -Fq 'concluded failure' "$pending_step_failure_output" || {
+  echo "required-gate action did not retain substantive failure authority beside a pending preservation job" >&2
   exit 1
 }
 

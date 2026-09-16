@@ -240,6 +240,18 @@ require_contains(
 validation_step = find_step(
     ci, "validation-gate", "Enforce validation success", "ci workflow"
 )
+require_list_item(
+    ci,
+    ("jobs", "validation-gate", "needs"),
+    "dev-tools-readme-contract",
+    "ci workflow",
+)
+require_equal(
+    validation_step,
+    ("env", "DEV_TOOLS_README_CONTRACT"),
+    "${{ needs.dev-tools-readme-contract.result }}",
+    "ci workflow",
+)
 require_contains(
     validation_step,
     ("run",),
@@ -251,6 +263,8 @@ for expected in (
     'is_acceptable_optional_result "$result"',
     'if [ "$LIGHTWEIGHT_ONLY" != "true" ] || [ "$PYTHON_CHANGED" = "true" ]',
     'if [ "$LIGHTWEIGHT_ONLY" != "true" ] || [ "$DESIGN_DOCS_CHANGED" = "true" ] || [ "$VALIDATION_PYTHON_CHANGED" = "true" ]',
+    'echo "Dev Tools README Contract => $DEV_TOOLS_README_CONTRACT"',
+    'if [ "$DEV_TOOLS_README_CONTRACT" != "success" ] && [ "$DEV_TOOLS_README_CONTRACT" != "skipped" ]',
 ):
     require_contains(validation_step, ("run",), expected, "ci workflow")
 

@@ -45,7 +45,6 @@ branch refs/heads/prunable-branch
 prunable gitdir file points to non-existent location
 
 worktree $BARE_WORKTREE
-HEAD bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 bare
 
 WORKTREES
@@ -112,11 +111,12 @@ grep -Fqx "$VALID_WORKTREE"$'\tvalid-branch\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 grep -Fqx "$INACCESSIBLE_WORKTREE"$'\tunavailable-branch\t1111111111111111111111111111111111111111\tunavailable' "$output_file"
 grep -Fqx "$MISSING_WORKTREE"$'\tmissing-branch\t2222222222222222222222222222222222222222\tmissing' "$output_file"
 grep -Fqx "$PRUNABLE_WORKTREE"$'\tprunable-branch\t3333333333333333333333333333333333333333\tprunable' "$output_file"
-grep -Fqx "$BARE_WORKTREE"$'\t(bare)\tbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\tbare' "$output_file"
+grep -Fqx "$BARE_WORKTREE"$'\t(bare)\t-\tbare' "$output_file"
 [[ ! -s "$error_file" ]]
 
 inventory_json="$(PATH="$BIN_DIR:$PATH" bash "$SCRIPT" --json)"
 jq -e '.mode == "inventory" and .status == "ok"' <<<"$inventory_json" >/dev/null
+jq -e '.worktrees | any(.bare and .head_sha == null and .status == "bare")' <<<"$inventory_json" >/dev/null
 
 echo "worktree topology contract checks passed"
 
@@ -142,7 +142,6 @@ branch refs/heads/feature/head
 locked selected for contract
 
 worktree $SELECTED_BARE
-HEAD bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 bare
 
 WORKTREES
@@ -186,7 +185,7 @@ jq -e '.chain | map(.number) == [42, 43]' <<<"$selected_json" >/dev/null
 jq -e '.chain[0].head.sha == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' <<<"$selected_json" >/dev/null
 jq -e '.chain[0].local_head.status == "published"' <<<"$selected_json" >/dev/null
 jq -e '.chain[0].worktrees | any(.locked and .status == "clean" and .head_matches)' <<<"$selected_json" >/dev/null
-jq -e '.chain[0].worktrees | any(.bare and .status == "bare" and .head_matches)' <<<"$selected_json" >/dev/null
+jq -e '.chain[0].worktrees | all(.head_sha != null)' <<<"$selected_json" >/dev/null
 jq -e '.chain[1].base.sha == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' <<<"$selected_json" >/dev/null
 
 echo "selected worktree topology contract checks passed"

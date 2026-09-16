@@ -331,13 +331,19 @@ runs:
             ' <<<"${job_json}" 2>>"${api_error_file}")"
             job_query_status=$?
             set -e
-            if [[ "${job_query_status}" -ne 0 ||
-              "${preserve_step_conclusion}" == "unknown" ||
-              -z "${preserve_step_conclusion}" ]]; then
+            if [[ "${job_query_status}" -ne 0 ]]; then
               candidate_ambiguous=true
               continue
             fi
-            if [[ "${preserve_step_conclusion}" != "skipped" ]]; then
+            if [[ "${preserve_step_conclusion}" == "unknown" ||
+              -z "${preserve_step_conclusion}" ]]; then
+              if [[ "${check_status}" == "queued" || "${check_status}" == "in_progress" ]]; then
+                : # A nonterminal job may not have reached its preservation step yet.
+              else
+                candidate_ambiguous=true
+                continue
+              fi
+            elif [[ "${preserve_step_conclusion}" != "skipped" ]]; then
               case "${preserve_step_conclusion}" in
                 success|failure|neutral|cancelled|timed_out|action_required|stale) continue ;;
                 *) candidate_ambiguous=true; continue ;;

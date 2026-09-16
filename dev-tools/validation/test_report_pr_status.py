@@ -624,7 +624,7 @@ class PrStatusReporterTest(unittest.TestCase):
                 "state": "completed",
                 "terminal": True,
                 "attributed": True,
-                "repository": "owner/repo",
+                "repository": "OWNER/REPO",
                 "pr_number": 42,
                 "head_sha": "0123456789abcdef0123456789abcdef01234567",
                 "current_head_sha": "0123456789abcdef0123456789abcdef01234567",
@@ -659,6 +659,7 @@ class PrStatusReporterTest(unittest.TestCase):
                 report = self.reporter.build_report("owner/repo", 42)
         self.assertTrue(report["hosted_trigger"]["available"])
         self.assertEqual(report["hosted_trigger"]["state"], "completed")
+        self.assertEqual(report["hosted_trigger"]["repository"], "OWNER/REPO")
         self.assertEqual(report["hosted_trigger"]["trigger_comment_id"], 101)
         self.assertEqual(
             sum("check-coderabbit-review.py" in " ".join(command) for command in commands),

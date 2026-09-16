@@ -785,7 +785,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    needs: [buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, docs-check, frontend-checks, build-and-test, validation-gate]
+    needs: [buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, dev-tools-readme-contract, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, docs-check, frontend-checks, build-and-test, validation-gate]
     if: ${{ always() && github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     steps:
       - name: Harden runner
@@ -812,6 +812,7 @@ jobs:
               ["ShellCheck", "${{ needs.shellcheck.result }}"],
               ["Python script validation", "${{ needs.python-script-validation.result }}"],
               ["Dev tool contract checks", "${{ needs.dev-tool-contract-checks.result }}"],
+              ["Dev Tools README contract", "${{ needs.dev-tools-readme-contract.result }}"],
               ["YAML lint", "${{ needs.yaml-lint.result }}"],
               ["Metrics cardinality policy check", "${{ needs.metrics-cardinality-check.result }}"],
               ["Flyway migration sanity checks", "${{ needs.flyway-migration-sanity-checks.result }}"],
@@ -892,7 +893,7 @@ jobs:
       checks: read # Preserve a prior successful required context on metadata-only edits.
       contents: read # Check out the shared required-gate composite action.
       actions: read # Inspect the matching required-gate job's preservation step.
-    needs: [changes, buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, docs-check, frontend-checks, build-and-test]
+    needs: [changes, buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, dev-tools-readme-contract, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, docs-check, frontend-checks, build-and-test]
     if: ${{ always() }}
     steps:
       - name: Harden runner
@@ -933,6 +934,7 @@ jobs:
           SHELLCHECK: ${{ needs.shellcheck.result }}
           PYTHON_SCRIPT_VALIDATION: ${{ needs.python-script-validation.result }}
           DEV_TOOL_CONTRACT_CHECKS: ${{ needs.dev-tool-contract-checks.result }}
+          DEV_TOOLS_README_CONTRACT: ${{ needs.dev-tools-readme-contract.result }}
           YAML_LINT: ${{ needs.yaml-lint.result }}
           METRICS_CARDINALITY_CHECK: ${{ needs.metrics-cardinality-check.result }}
           FLYWAY_MIGRATION_SANITY_CHECKS: ${{ needs.flyway-migration-sanity-checks.result }}
@@ -1002,6 +1004,11 @@ jobs:
             if ! is_acceptable_optional_result "$DEV_TOOL_CONTRACT_CHECKS"; then
               failed=1
             fi
+          fi
+
+          echo "Dev Tools README Contract => $DEV_TOOLS_README_CONTRACT"
+          if [ "$DEV_TOOLS_README_CONTRACT" != "success" ] && [ "$DEV_TOOLS_README_CONTRACT" != "skipped" ]; then
+            failed=1
           fi
 
           echo "Validate Documentation => $DOCS_CHECK"
