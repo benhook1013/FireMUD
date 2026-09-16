@@ -256,9 +256,27 @@ readme_checkout_step = find_step(
     ci, "dev-tools-readme-contract", "⬇️ Checkout Code", "ci workflow"
 )
 require_equal(
+    ci,
+    ("jobs", "dev-tools-readme-contract", "if"),
+    "${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only == 'true' && needs.changes.outputs.docs_changed == 'true' }}",
+    "ci workflow",
+)
+require_equal(
     readme_checkout_step,
     ("with", "persist-credentials"),
     "false",
+    "ci workflow",
+)
+readme_validation_step = find_step(
+    ci,
+    "dev-tools-readme-contract",
+    "🧭 Validate documented dev-tool paths and links",
+    "ci workflow",
+)
+require_equal(
+    readme_validation_step,
+    ("run",),
+    "bash ./dev-tools/tests/dev-tools-readme-contract.sh",
     "ci workflow",
 )
 require_equal(
