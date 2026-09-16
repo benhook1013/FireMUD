@@ -173,8 +173,8 @@ public class CommonCoreAutoConfiguration {
   @Bean
   @ConditionalOnMissingBean(TlsCertificateReadinessHealthEndpointGroupsPostProcessor.class)
   public HealthEndpointGroupsPostProcessor tlsCertificateReadinessHealthEndpointGroupsPostProcessor(
-      @Value("${firemud.health.tls-certificate-readiness.enabled:true}") boolean enabled) {
-    return new TlsCertificateReadinessHealthEndpointGroupsPostProcessor(enabled);
+      @Value("${spring.application.name:unknown}") String serviceName) {
+    return new TlsCertificateReadinessHealthEndpointGroupsPostProcessor(serviceName);
   }
 
   @Configuration(proxyBeanMethods = false)

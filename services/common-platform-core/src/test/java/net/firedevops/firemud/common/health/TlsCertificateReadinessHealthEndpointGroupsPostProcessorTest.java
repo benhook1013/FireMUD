@@ -29,15 +29,16 @@ import org.springframework.boot.health.actuate.endpoint.StatusAggregator;
 class TlsCertificateReadinessHealthEndpointGroupsPostProcessorTest {
 
   private final TlsCertificateReadinessHealthEndpointGroupsPostProcessor processor =
-      new TlsCertificateReadinessHealthEndpointGroupsPostProcessor(true);
+      new TlsCertificateReadinessHealthEndpointGroupsPostProcessor("game-session-service");
 
   @Test
-  void leavesReadinessGroupsUnchangedWhenDisabled() {
+  void leavesTcpProxyReadinessGroupsUnchanged() {
     HealthEndpointGroups original = mock(HealthEndpointGroups.class);
 
     assertSame(
         original,
-        new TlsCertificateReadinessHealthEndpointGroupsPostProcessor(false)
+        new TlsCertificateReadinessHealthEndpointGroupsPostProcessor(
+                TlsCertificateReadinessHealthEndpointGroupsPostProcessor.TCP_PROXY_SERVICE_NAME)
             .postProcessHealthEndpointGroups(original));
     verifyNoInteractions(original);
   }
@@ -122,12 +123,8 @@ class TlsCertificateReadinessHealthEndpointGroupsPostProcessorTest {
     HealthEndpointGroups processed = processor.postProcessHealthEndpointGroups(original);
 
     assertNotNull(processed);
-    assertTrue(
-        processed
-            .getPrimary()
-            .isMember(
-                TlsCertificateReadinessHealthEndpointGroupsPostProcessor
-                    .TLS_CERTIFICATE_RELOAD_CONTRIBUTOR));
+    assertTrue(processed.getPrimary().isMember(
+        TlsCertificateReadinessHealthEndpointGroupsPostProcessor.TLS_CERTIFICATE_RELOAD_CONTRIBUTOR));
   }
 
   @Test

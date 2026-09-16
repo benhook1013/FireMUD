@@ -1,6 +1,7 @@
 package net.firedevops.firemud.common.health;
 
 import java.util.LinkedHashSet;
+import java.util.Objects;
 import java.util.Set;
 import net.firedevops.firemud.common.LoggingUtil;
 import org.springframework.boot.actuate.endpoint.SecurityContext;
@@ -18,18 +19,19 @@ public final class TlsCertificateReadinessHealthEndpointGroupsPostProcessor
 
   private static final org.slf4j.Logger logger =
       LoggingUtil.getLogger(TlsCertificateReadinessHealthEndpointGroupsPostProcessor.class);
+  static final String TCP_PROXY_SERVICE_NAME = "tcp-proxy-service";
   static final String READINESS_GROUP = "readiness";
   public static final String TLS_CERTIFICATE_RELOAD_CONTRIBUTOR = "tlsCertificateReload";
 
-  private final boolean enabled;
+  private final String serviceName;
 
-  public TlsCertificateReadinessHealthEndpointGroupsPostProcessor(boolean enabled) {
-    this.enabled = enabled;
+  public TlsCertificateReadinessHealthEndpointGroupsPostProcessor(String serviceName) {
+    this.serviceName = Objects.requireNonNull(serviceName, "serviceName");
   }
 
   @Override
   public HealthEndpointGroups postProcessHealthEndpointGroups(HealthEndpointGroups groups) {
-    if (!enabled) {
+    if (TCP_PROXY_SERVICE_NAME.equals(serviceName)) {
       return groups;
     }
     HealthEndpointGroup readiness = groups.get(READINESS_GROUP);

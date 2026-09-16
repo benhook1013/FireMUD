@@ -107,8 +107,6 @@ Ordinary renewal atomically replaces the client used for new bridges and readine
 
 The aggregate `tlsCertificateReloadHealthIndicator` remains a default-health and alerting surface, not a wholesale readiness dependency. TCP Proxy’s route-specific `trafficAdmissionReadiness` includes Gateway bridge readiness and fails closed for new Telnet sessions when that path’s watcher or active client material is unusable; unrelated watcher loss does not close this route. Established sessions remain usable while their negotiated path is safe, and controller-owned identity withdrawal remains a disruptive termination boundary. The canonical policy is in [Kubernetes Health Monitoring](../../infrastructure/deployment-environments.md#kubernetes-health-monitoring).
 
-The shared readiness post-processor enables TLS reload gating by default through `firemud.health.tls-certificate-readiness.enabled`. TCP Proxy sets this property to `false` because its aggregate watcher health must not gate actuator readiness; its route-specific `trafficAdmissionReadiness` owns the Gateway bridge readiness decision described above.
-
 The WebSocket client certificate must include the `clientAuth` extended key usage. This is intentionally decoupled from the proxy’s internal gRPC server certificate profile, which must include `serverAuth`.
 
 TLS handshake failures are fail-closed. The proxy does not fall back to plaintext.
