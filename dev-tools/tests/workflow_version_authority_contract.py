@@ -273,11 +273,13 @@ def main() -> int:
     def run_has_gh(run):
         return bool(re.search(r"(^|[;&|()\s])gh(?:\s|$)", run))
 
+    executable_helper_suffixes = {".cjs", ".js", ".py", ".sh"}
+
     def references(text):
         result = set()
         for name in re.findall(r"(?:\./)?((?:dev-tools|services)/[A-Za-z0-9_./-]+)", text):
             path = root / name.rstrip("\"'")
-            if path.is_file():
+            if path.is_file() and path.suffix in executable_helper_suffixes:
                 result.add(path)
         return result
 
@@ -341,6 +343,11 @@ def main() -> int:
 
     def has_gh_consumer(expanded_text):
         return run_has_gh(expanded_text)
+
+    if python_needs(expand_text("bash ./dev-tools/tests/dev-tools-readme-contract.sh")) == "smoke":
+        fail("documentation/data references must not imply the smoke dependency profile")
+    if python_needs(expand_text("bash ./services/game-session-service/websocket-login-look-smoke.sh")) != "smoke":
+        fail("invoked WebSocket smoke helper must retain the smoke dependency profile")
 
     workflow_paths = sorted((*workflows.glob("*.yml"), *workflows.glob("*.yaml")))
 
