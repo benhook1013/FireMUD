@@ -319,6 +319,11 @@ jobs:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: 🐍 Set Up Python
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: smoke
+
       - name: 🧭 Validate documented dev-tool paths and links
         run: bash ./dev-tools/tests/dev-tools-readme-contract.sh
 
