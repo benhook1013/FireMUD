@@ -878,7 +878,7 @@ set -e
   echo "required-gate action allowed an unresolved authoritative candidate to mask an older success" >&2
   exit 1
 }
-[[ "$(<"$persistent_step_lag_count")" == "3" ]] || {
+[[ "$(<"$persistent_step_lag_count")" == "4" ]] || {
   echo "required-gate action did not stop refreshing an unresolved authoritative candidate after its bounded attempts" >&2
   exit 1
 }
@@ -890,7 +890,7 @@ grep -Fxq 'Ambiguous prior Validation Gate run metadata; refusing to preserve.' 
 for non_authoritative_scenario in completed-cancelled-missing-step completed-skipped-missing-step completed-stale-missing-step; do
   non_authoritative_count="$tmp_dir/count-${non_authoritative_scenario}"
   run_action "$non_authoritative_count" none "$non_authoritative_scenario"
-  [[ "$(<"$non_authoritative_count")" == "3" ]] || {
+  [[ "$(<"$non_authoritative_count")" == "4" ]] || {
     echo "required-gate action did not discard the unresolved ${non_authoritative_scenario} candidate after its bounded refresh attempts" >&2
     exit 1
   }

@@ -375,7 +375,7 @@ runs:
                 preservation_step_refresh_attempts["${job_id}"]=$((
                   ${preservation_step_refresh_attempts[${job_id}]:-0} + 1
                 ))
-                if (( preservation_step_refresh_attempts["${job_id}"] < max_preservation_step_refresh_attempts )); then
+                if (( preservation_step_refresh_attempts["${job_id}"] <= max_preservation_step_refresh_attempts )); then
                   job_lookup_retryable=true
                   break
                 fi
