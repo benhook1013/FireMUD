@@ -47,6 +47,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
           "tcp-proxy-service", "tcp-proxy-test", null, java.time.Instant.EPOCH, null, null, null);
   private static final Duration HEARTBEAT_INTERVAL = Duration.ofSeconds(30);
   private static final Duration IDLE_TIMEOUT = Duration.ofMinutes(5);
+  private static final Duration WEBSOCKET_CLOSE_GRACE = Duration.ofSeconds(1);
   private static final int MAX_BUFFER_DEPTH = 512;
   private static final String OK = "OK";
   private static final String STARTUP_UNAVAILABLE_MESSAGE =
@@ -109,6 +110,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   // lifecycle locks.
   private final Object webSocketLifecycleLock = new Object();
   private final Object bufferLifecycleLock = new Object();
+  private WebSocket closeAbortSocket;
+  private ScheduledFuture<?> closeAbortTask;
   private volatile CompletableFuture<WebSocket> inFlightSend;
   private String clientIp;
   private boolean connectEventRecorded;
@@ -550,15 +553,68 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
   private void closeGatewayWebSocket() {
     WebSocket socket;
+    boolean abortImmediately = false;
     synchronized (webSocketLifecycleLock) {
       socket = webSocket.getAndSet(null);
+      if (socket != null) {
+        closeAbortSocket = socket;
+        ChannelHandlerContext currentContext = context;
+        try {
+          if (currentContext == null || currentContext.executor() == null) {
+            throw new IllegalStateException("no executor available for WebSocket close fallback");
+          }
+          closeAbortTask =
+              currentContext
+                  .executor()
+                  .schedule(
+                      () -> abortUnacknowledgedClose(socket),
+                      WEBSOCKET_CLOSE_GRACE.toMillis(),
+                      TimeUnit.MILLISECONDS);
+        } catch (RuntimeException error) {
+          closeAbortSocket = null;
+          closeAbortTask = null;
+          abortImmediately = true;
+          logger.warn(
+              "Unable to schedule Gateway WebSocket close fallback; aborting immediately", error);
+        }
+      }
     }
     if (socket != null) {
       try {
         socket.sendClose(WebSocket.NORMAL_CLOSURE, "bye");
       } catch (Exception e) {
         logger.warn("Failed to close gateway WebSocket cleanly", e);
+      } finally {
+        if (abortImmediately) {
+          socket.abort();
+        }
       }
+    }
+  }
+
+  private void abortUnacknowledgedClose(WebSocket socket) {
+    synchronized (webSocketLifecycleLock) {
+      if (closeAbortSocket != socket) {
+        return;
+      }
+      closeAbortSocket = null;
+      closeAbortTask = null;
+    }
+    socket.abort();
+  }
+
+  private void cancelCloseAbortFallback(WebSocket socket) {
+    ScheduledFuture<?> task;
+    synchronized (webSocketLifecycleLock) {
+      if (closeAbortSocket != socket) {
+        return;
+      }
+      closeAbortSocket = null;
+      task = closeAbortTask;
+      closeAbortTask = null;
+    }
+    if (task != null) {
+      task.cancel(false);
     }
   }
 
@@ -925,6 +981,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       @Override
       public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
         try (CombinedLoggingContext ignored = openLoggingContext()) {
+          cancelCloseAbortFallback(webSocket);
           if (closing) {
             return Listener.super.onClose(webSocket, statusCode, reason);
           }

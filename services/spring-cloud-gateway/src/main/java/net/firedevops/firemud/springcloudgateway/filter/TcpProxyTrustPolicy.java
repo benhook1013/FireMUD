@@ -209,8 +209,7 @@ public final class TcpProxyTrustPolicy {
             && activeProfiles.stream()
                 .map(value -> value.toLowerCase(Locale.ROOT))
                 .allMatch(
-                    value ->
-                        value.equals("test") || value.equals("dev") || value.equals("local"));
+                    value -> value.equals("test") || value.equals("dev") || value.equals("local"));
     if (!onlyDevelopmentProfiles) {
       throw invalid(
           "legacy insecure header trust is restricted to explicit test/dev/local profiles");
@@ -486,7 +485,7 @@ public final class TcpProxyTrustPolicy {
   }
 
   private static String normalizeDnsName(String raw) {
-    String normalized = raw.trim().toLowerCase(Locale.ROOT);
+    String normalized = raw.toLowerCase(Locale.ROOT);
     if (!StandardCharsets.US_ASCII.newEncoder().canEncode(normalized)
         || normalized.endsWith(".")
         || normalized.contains("*")

@@ -138,6 +138,17 @@ class TcpProxyTrustPolicyTest {
 
   @Test
   void migrationDnsAcceptsOnlyOneExactDnsIdentity() throws Exception {
+    for (String configuredDnsSan : List.of(" tcp-proxy.internal", "tcp-proxy.internal ")) {
+      GatewayTcpProxyListenerProperties invalid = properties("migration_dns");
+      invalid.getMigrationDns().setDnsSan(configuredDnsSan);
+      invalid.getMigrationDns().setOwner("platform");
+      invalid.getMigrationDns().setReason("issuer migration");
+      invalid.getMigrationDns().setExpiresAt(Instant.parse("2026-09-08T10:00:00Z"));
+      assertThatThrownBy(() -> policy(invalid, Set.of("prod")))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("migration DNS SAN must be one exact lowercase ASCII DNS name");
+    }
+
     GatewayTcpProxyListenerProperties properties = properties("migration_dns");
     properties.getMigrationDns().setDnsSan("tcp-proxy.internal");
     properties.getMigrationDns().setOwner("platform");
@@ -158,6 +169,14 @@ class TcpProxyTrustPolicyTest {
                     certificate(
                         List.of(san(2, "tcp-proxy.internal"), san(2, "tcp-proxy.internal")),
                         true))))
+        .isFalse();
+    assertThat(
+            policy.authenticatePeer(
+                sslInfo(certificate(List.of(san(2, " tcp-proxy.internal")), true))))
+        .isFalse();
+    assertThat(
+            policy.authenticatePeer(
+                sslInfo(certificate(List.of(san(2, "tcp-proxy.internal ")), true))))
         .isFalse();
   }
 
@@ -250,11 +269,7 @@ class TcpProxyTrustPolicyTest {
       assertThatThrownBy(
               () ->
                   new TcpProxyTrustPolicy(
-                      new GatewayTcpProxyListenerProperties(),
-                      legacy,
-                      8080,
-                      CLOCK,
-                      activeProfiles))
+                      new GatewayTcpProxyListenerProperties(), legacy, 8080, CLOCK, activeProfiles))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("restricted to explicit test/dev/local profiles");
     }

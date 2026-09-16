@@ -741,6 +741,101 @@ class TelnetServerHandlerTest {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
+  void unacknowledgedGatewayCloseAbortsAfterGracePeriod() throws Exception {
+    TelnetServerHandler handler = newHandler(new SimpleMeterRegistry(), false);
+    ChannelHandlerContext context = mock(ChannelHandlerContext.class);
+    EventExecutor executor = mock(EventExecutor.class);
+    ScheduledFuture<?> task = mock(ScheduledFuture.class);
+    WebSocket socket = mock(WebSocket.class);
+    AtomicReference<Runnable> fallback = new AtomicReference<>();
+    when(context.executor()).thenReturn(executor);
+    when(executor.schedule(any(Runnable.class), anyLong(), any(TimeUnit.class)))
+        .thenAnswer(
+            invocation -> {
+              fallback.set(invocation.getArgument(0));
+              return task;
+            });
+    ((AtomicReference<WebSocket>) fieldValue(handler, "webSocket")).set(socket);
+    setField(handler, "context", context);
+
+    invokePrivate(handler, "closeGatewayWebSocket");
+    verify(socket).sendClose(WebSocket.NORMAL_CLOSURE, "bye");
+
+    fallback.get().run();
+    verify(socket).abort();
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void acknowledgedGatewayCloseCancelsFallbackAndLateFallbackCannotAbortReplacement()
+      throws Exception {
+    TelnetServerHandler handler = newHandler(new SimpleMeterRegistry(), false);
+    ChannelHandlerContext context = mock(ChannelHandlerContext.class);
+    EventExecutor executor = mock(EventExecutor.class);
+    ScheduledFuture<?> task = mock(ScheduledFuture.class);
+    WebSocket socket = mock(WebSocket.class);
+    WebSocket replacement = mock(WebSocket.class);
+    AtomicReference<Runnable> fallback = new AtomicReference<>();
+    when(context.executor()).thenReturn(executor);
+    when(executor.schedule(any(Runnable.class), anyLong(), any(TimeUnit.class)))
+        .thenAnswer(
+            invocation -> {
+              fallback.set(invocation.getArgument(0));
+              return task;
+            });
+    ((AtomicReference<WebSocket>) fieldValue(handler, "webSocket")).set(socket);
+    setField(handler, "context", context);
+    setField(handler, "closing", true);
+
+    invokePrivate(handler, "closeGatewayWebSocket");
+    WebSocket.Listener listener = (WebSocket.Listener) invokePrivate(handler, "gatewayListener");
+    listener.onClose(socket, WebSocket.NORMAL_CLOSURE, "bye");
+    verify(task).cancel(false);
+
+    ((AtomicReference<WebSocket>) fieldValue(handler, "webSocket")).set(replacement);
+    fallback.get().run();
+    verify(socket, never()).abort();
+    verify(replacement, never()).abort();
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void gatewayCloseAbortsImmediatelyWhenExecutorIsAbsent() throws Exception {
+    TelnetServerHandler handler = newHandler(new SimpleMeterRegistry(), false);
+    WebSocket socket = mock(WebSocket.class);
+    ((AtomicReference<WebSocket>) fieldValue(handler, "webSocket")).set(socket);
+
+    invokePrivate(handler, "closeGatewayWebSocket");
+
+    verify(socket).sendClose(WebSocket.NORMAL_CLOSURE, "bye");
+    verify(socket).abort();
+    assertNull(fieldValue(handler, "closeAbortSocket"));
+    assertNull(fieldValue(handler, "closeAbortTask"));
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void gatewayCloseAbortsImmediatelyWhenFallbackSchedulingIsRejected() throws Exception {
+    TelnetServerHandler handler = newHandler(new SimpleMeterRegistry(), false);
+    ChannelHandlerContext context = mock(ChannelHandlerContext.class);
+    EventExecutor executor = mock(EventExecutor.class);
+    WebSocket socket = mock(WebSocket.class);
+    when(context.executor()).thenReturn(executor);
+    when(executor.schedule(any(Runnable.class), anyLong(), any(TimeUnit.class)))
+        .thenThrow(new IllegalStateException("executor is shutting down"));
+    ((AtomicReference<WebSocket>) fieldValue(handler, "webSocket")).set(socket);
+    setField(handler, "context", context);
+
+    invokePrivate(handler, "closeGatewayWebSocket");
+
+    verify(socket).sendClose(WebSocket.NORMAL_CLOSURE, "bye");
+    verify(socket).abort();
+    assertNull(fieldValue(handler, "closeAbortSocket"));
+    assertNull(fieldValue(handler, "closeAbortTask"));
+  }
+
+  @Test
   void synchronousGatewayConnectFailureFailClosesTelnet() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TelnetServerHandler handler =
@@ -835,6 +930,22 @@ class TelnetServerHandlerTest {
     } catch (ReflectiveOperationException e) {
       throw new AssertionError("unable to inspect handler lifecycle lock", e);
     }
+  }
+
+  private static void setField(Object target, String name, Object value) {
+    try {
+      Field field = target.getClass().getDeclaredField(name);
+      field.setAccessible(true);
+      field.set(target, value);
+    } catch (ReflectiveOperationException e) {
+      throw new AssertionError("unable to update handler field", e);
+    }
+  }
+
+  private static Object invokePrivate(Object target, String name) throws Exception {
+    var method = target.getClass().getDeclaredMethod(name);
+    method.setAccessible(true);
+    return method.invoke(target);
   }
 
   @Test
