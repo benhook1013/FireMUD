@@ -783,18 +783,18 @@ def main() -> int:
     velero_manifest = (root / "k8s/velero/verify-backups-cronjob.yaml").read_text()
     velero_images = re.findall(r"image: velero/velero:[^\s]+", velero_manifest)
     allowed_velero_images = {
-        "image: velero/velero:v1.12.3",
+        f"image: velero/velero:v{a['VELERO_VERSION']}",
         f"image: velero/velero:v{a['VELERO_VERSION']}@{a['VELERO_IMAGE_DIGEST']}",
     }
     if len(velero_images) != 1 or velero_images[0] not in allowed_velero_images:
-        fail("Velero image projection must remain the known-good tag or match the attested authority")
+        fail("Velero image version/digest projection is stale")
 
     renovate = json.loads((root / "renovate.json").read_text())
     if not {"nodenv", "pyenv", "pip_requirements", "custom.regex"} <= set(renovate["enabledManagers"]):
         fail("Renovate managers incomplete")
     custom_managers = renovate.get("customManagers", [])
     if len(custom_managers) != 10:
-        fail("Renovate must define Actionlint, Velero, seven checksum-backed, and ORT/ZAP image authority managers")
+        fail("Renovate must define Actionlint, Velero, seven version/checksum-backed, and ORT/ZAP image authority managers")
 
     def translate_renovate_pattern(pattern_source):
         return re.sub(r"\(\?<([A-Za-z_])", r"(?P<\1", pattern_source)
@@ -843,9 +843,11 @@ def main() -> int:
     )
     expected_renovate_dependencies.update((("velero/velero", a["VELERO_VERSION"]),))
     matched = Counter()
+    version_only_specs = {
+        "KUBECTL": "kubernetes/kubernetes",
+        "HELM": "helm/helm",
+    }
     attachment_specs = {
-        "KUBECTL": ("kubernetes/kubernetes", "v{{{currentValue}}}", "^v(?<version>.*)$"),
-        "HELM": ("helm/helm", "v{{{currentValue}}}", "^v(?<version>.*)$"),
         "GH": ("cli/cli", "v{{{currentValue}}}", "^v(?<version>.*)$"),
         "BUF": ("bufbuild/buf", "v{{{currentValue}}}", "^v(?<version>.*)$"),
         "KUBECONFORM": ("yannh/kubeconform", "v{{{currentValue}}}", "^v(?<version>.*)$"),
@@ -858,6 +860,30 @@ def main() -> int:
     if len(attachment_managers) != len(attachment_specs):
         fail("Renovate must define one github-release-attachments manager for each checksum-backed tool")
     authority_text = ap.read_text()
+    for key, dep_name in version_only_specs.items():
+        managers = [
+            manager
+            for manager in custom_managers
+            if manager.get("datasourceTemplate") == "github-releases"
+            and manager.get("depNameTemplate") == dep_name
+        ]
+        if len(managers) != 1:
+            fail(f"Renovate must define exactly one version-only manager for {dep_name}")
+        manager = managers[0]
+        if manager.get("versioningTemplate") != "semver" or manager.get("currentValueTemplate") != "{{{currentValue}}}":
+            fail(f"{dep_name} version-only manager must use semver and preserve the raw authority version")
+        if "autoReplaceStringTemplate" in manager:
+            fail(f"{dep_name} version-only manager must leave checksum repair to the updater")
+        patterns = manager.get("matchStrings") or []
+        if len(patterns) != 1:
+            fail(f"{dep_name} version-only manager must define one version match pattern")
+        try:
+            pattern = compile_re2_pattern(patterns[0])
+        except (re.error, TypeError) as error:
+            fail(f"{dep_name} version-only manager pattern is invalid: {error}")
+        matches_for_manager = list(pattern.finditer(authority_text))
+        if len(matches_for_manager) != 1 or matches_for_manager[0].group("currentValue") != a[key + "_VERSION"]:
+            fail(f"{dep_name} version-only manager must match the authority version exactly once")
     for key, (dep_name, current_value_template, extract_version) in attachment_specs.items():
         managers = [manager for manager in attachment_managers if manager.get("depNameTemplate") == dep_name]
         if len(managers) != 1:

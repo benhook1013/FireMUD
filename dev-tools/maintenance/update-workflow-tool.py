@@ -457,6 +457,7 @@ def main() -> None:
                 raise SystemExit("Velero image digest could not be resolved")
             authority = replace(authority, "VELERO_IMAGE_DIGEST", image_digest)
             manifest = args.velero_manifest.read_text(encoding="utf-8")
+        if args.tool == "velero":
             manifest, count = re.subn(
                 r"image: velero/velero:v\d+\.\d+\.\d+(?:@sha256:[0-9a-f]{64})?",
                 f"image: velero/velero:v{args.version}@{image_digest}",

@@ -62,6 +62,46 @@ spec.loader.exec_module(module)
 if module.recovery_journal_path(authority).exists():
     raise SystemExit("successful transaction left recovery state")
 PY
+python3 - "$ROOT_DIR" "$tmp" <<'PY'
+import importlib.util
+import shutil
+import sys
+from pathlib import Path
+
+root, tmp = map(Path, sys.argv[1:])
+default_root = tmp / "default-root"
+default_authority = default_root / "config/workflow-tool-versions.env"
+default_manifest = default_root / "k8s/velero/verify-backups-cronjob.yaml"
+default_authority.parent.mkdir(parents=True)
+default_manifest.parent.mkdir(parents=True)
+shutil.copy(root / "config/workflow-tool-versions.env", default_authority)
+shutil.copy(root / "k8s/velero/verify-backups-cronjob.yaml", default_manifest)
+checksum_file = tmp / "default-checksums"
+evidence_file = tmp / "default-image-evidence"
+checksum = "f" * 64
+digest = "sha256:" + "1" * 64
+checksum_file.write_text(f"version=9.8.7\n{checksum}  velero-v9.8.7-linux-amd64.tar.gz\n", encoding="utf-8")
+evidence_file.write_text(f"velero/velero:v9.8.7@{digest}\n", encoding="utf-8")
+spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module.REPOSITORY_ROOT = default_root
+module.dockerhub_digest = lambda repository, tag: digest
+sys.argv = [
+    str(root / "dev-tools/maintenance/update-workflow-tool.py"),
+    "velero",
+    "9.8.7",
+    "--checksum-file",
+    str(checksum_file),
+    "--image-evidence-file",
+    str(evidence_file),
+]
+module.main()
+if "VELERO_VERSION=9.8.7" not in default_authority.read_text(encoding="utf-8"):
+    raise SystemExit("default authority path was not updated")
+if f"image: velero/velero:v9.8.7@{digest}" not in default_manifest.read_text(encoding="utf-8"):
+    raise SystemExit("default Velero manifest path was not projected")
+PY
 python3 - "$ROOT_DIR" <<'PY'
 import importlib.util
 import io

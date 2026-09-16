@@ -183,6 +183,7 @@ jobs:
           set -e
 
           if [ "$namespace_status" -eq 0 ] && [ "$namespace_list_status" -eq 0 ]; then
+            bash ./dev-tools/hosted/shared/check-kubectl-version-skew.sh
             echo "available=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -930,6 +931,9 @@ jobs:
             "$RUNNER_TEMP/dev-demo-runtime.kubeconfig")"
           bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
+
+      - name: Validate kubectl client/server skew
+        run: bash ./dev-tools/hosted/shared/check-kubectl-version-skew.sh
 
       - name: Delete dev-demo namespace and release
         run: |

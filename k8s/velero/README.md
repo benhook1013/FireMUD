@@ -1,5 +1,7 @@
 # Velero Backups
 
+These manifests are canonical pre-release backup assets. FireMUD has no player-facing production deployment yet, so changing them does not claim that a production cluster was updated. If these assets are later applied to a live production environment, the production overlay and its promotion evidence remain the deployment authority.
+
 This directory contains Kubernetes manifests for installing Velero and scheduling namespace backups for the FireMUD cluster. Velero now backs up **only Kubernetes manifests** (Deployments, Services, StatefulSets, Secrets, etc.). PostgreSQL data is backed up separately using a `pg_dump` CronJob.
 
 The `schedule.yaml` file defines three backup schedules matching the retention policy described in the architecture docs. Each schedule sets `snapshotVolumes: false` to avoid PVC snapshots.

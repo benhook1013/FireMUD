@@ -36,27 +36,25 @@
     },
     {
       "customType": "regex",
-      "description": "Atomically update kubectl and its archive checksum authority",
+      "description": "Signal kubectl releases; checksum updates remain updater-gated",
       "managerFilePatterns": ["/^config/workflow-tool-versions\\.env$/"],
-      "matchStrings": ["# renovate-version: datasource=github-release-attachments depName=kubernetes/kubernetes extractVersion=\\^v(?<version>.*)\\$\\nKUBECTL_VERSION=(?<currentValue>\\S+)\\nKUBECTL_LINUX_AMD64_CHECKSUM_VERSION=(?<currentChecksumVersion>\\S+)\\nKUBECTL_LINUX_AMD64_SHA256=(?<currentDigest>[0-9a-f]{64})"],
-      "datasourceTemplate": "github-release-attachments",
+      "matchStrings": ["# renovate-version: datasource=github-releases depName=kubernetes/kubernetes extractVersion=\\^v(?<version>.*)\\$\\nKUBECTL_VERSION=(?<currentValue>\\S+)"],
+      "datasourceTemplate": "github-releases",
       "depNameTemplate": "kubernetes/kubernetes",
       "versioningTemplate": "semver",
       "extractVersionTemplate": "^v(?<version>.*)$",
-      "currentValueTemplate": "v{{{currentValue}}}",
-      "autoReplaceStringTemplate": "# renovate-version: datasource=github-release-attachments depName=kubernetes/kubernetes extractVersion=^v(?<version>.*)$\nKUBECTL_VERSION={{{replace '^v' '' newValue}}}\nKUBECTL_LINUX_AMD64_CHECKSUM_VERSION={{{replace '^v' '' newValue}}}\nKUBECTL_LINUX_AMD64_SHA256={{{newDigest}}}"
+      "currentValueTemplate": "{{{currentValue}}}"
     },
     {
       "customType": "regex",
-      "description": "Atomically update Helm and its archive checksum authority",
+      "description": "Signal Helm releases; checksum updates remain updater-gated",
       "managerFilePatterns": ["/^config/workflow-tool-versions\\.env$/"],
-      "matchStrings": ["# renovate-version: datasource=github-release-attachments depName=helm/helm extractVersion=\\^v(?<version>.*)\\$\\nHELM_VERSION=(?<currentValue>\\S+)\\nHELM_LINUX_AMD64_CHECKSUM_VERSION=(?<currentChecksumVersion>\\S+)\\nHELM_LINUX_AMD64_SHA256=(?<currentDigest>[0-9a-f]{64})"],
-      "datasourceTemplate": "github-release-attachments",
+      "matchStrings": ["# renovate-version: datasource=github-releases depName=helm/helm extractVersion=\\^v(?<version>.*)\\$\\nHELM_VERSION=(?<currentValue>\\S+)"],
+      "datasourceTemplate": "github-releases",
       "depNameTemplate": "helm/helm",
       "versioningTemplate": "semver",
       "extractVersionTemplate": "^v(?<version>.*)$",
-      "currentValueTemplate": "v{{{currentValue}}}",
-      "autoReplaceStringTemplate": "# renovate-version: datasource=github-release-attachments depName=helm/helm extractVersion=^v(?<version>.*)$\nHELM_VERSION={{{replace '^v' '' newValue}}}\nHELM_LINUX_AMD64_CHECKSUM_VERSION={{{replace '^v' '' newValue}}}\nHELM_LINUX_AMD64_SHA256={{{newDigest}}}"
+      "currentValueTemplate": "{{{currentValue}}}"
     },
     {
       "customType": "regex",
