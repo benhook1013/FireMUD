@@ -212,7 +212,12 @@ public class TlsCertificateWatcher implements AutoCloseable {
       if (retryOnlyWhenUnhealthy && reloadCallbackHealthy.get()) {
         return CallbackInvocationResult.SKIPPED;
       }
-      activeCallbacks.add(callbackThread);
+      synchronized (callbackStateMonitor) {
+        if (!running.get()) {
+          return CallbackInvocationResult.SKIPPED;
+        }
+        activeCallbacks.add(callbackThread);
+      }
       RuntimeException callbackFailure = null;
       try {
         onChange.run();

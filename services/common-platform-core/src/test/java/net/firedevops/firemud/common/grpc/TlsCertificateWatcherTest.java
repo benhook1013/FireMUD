@@ -700,6 +700,73 @@ class TlsCertificateWatcherTest {
     assertFalse(callbackInvoked.get());
   }
 
+  @Test
+  void closePreventsCallbackRegistrationWaitingOnCallbackState(@TempDir Path directory)
+      throws Exception {
+    Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
+    AtomicBoolean callbackInvoked = new AtomicBoolean();
+    AtomicBoolean callbackStartedAfterClose = new AtomicBoolean();
+    AtomicBoolean closeStarted = new AtomicBoolean();
+    AtomicReference<Throwable> invocationFailure = new AtomicReference<>();
+    AtomicReference<Throwable> closeFailure = new AtomicReference<>();
+    TlsCertificateWatcher watcher =
+        new TlsCertificateWatcher(
+            List.of(certificate),
+            () -> {
+              callbackInvoked.set(true);
+              if (closeStarted.get()) {
+                callbackStartedAfterClose.set(true);
+              }
+            });
+    Field callbackStateMonitorField =
+        TlsCertificateWatcher.class.getDeclaredField("callbackStateMonitor");
+    callbackStateMonitorField.setAccessible(true);
+    Object callbackStateMonitor = callbackStateMonitorField.get(watcher);
+    Thread invocation =
+        new Thread(
+            () -> {
+              try {
+                invokeReloadCallback(watcher, false);
+              } catch (Throwable failure) {
+                invocationFailure.set(failure);
+              }
+            });
+    CountDownLatch closeFinished = new CountDownLatch(1);
+    Thread closeThread =
+        new Thread(
+            () -> {
+              closeStarted.set(true);
+              try {
+                watcher.close();
+              } catch (Throwable failure) {
+                closeFailure.set(failure);
+              } finally {
+                closeFinished.countDown();
+              }
+            });
+
+    synchronized (callbackStateMonitor) {
+      invocation.start();
+      awaitLockWaiter(invocation);
+      closeThread.start();
+      awaitStopped(watcher);
+    }
+    try {
+      assertTrue(closeStarted.get());
+      assertTrue(closeFinished.await(5, TimeUnit.SECONDS));
+      invocation.join(5_000);
+      assertFalse(invocation.isAlive());
+      assertFalse(callbackInvoked.get());
+      assertFalse(callbackStartedAfterClose.get());
+      assertNull(invocationFailure.get());
+      assertNull(closeFailure.get());
+    } finally {
+      watcher.close();
+      closeThread.join(5_000);
+      invocation.join(5_000);
+    }
+  }
+
   private static Future<?> submitRetryCallback(TlsCertificateWatcher watcher) throws Exception {
     ScheduledExecutorService retryExecutor = retryExecutor(watcher);
     Method retryMethod = TlsCertificateWatcher.class.getDeclaredMethod("retryReloadCallback");
