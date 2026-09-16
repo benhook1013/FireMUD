@@ -100,7 +100,7 @@ fi
 
 if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
   cat <<'PRS'
-[{"number":1,"headRefName":"valid-branch","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOexample","name":"test"},"headRepositoryOwner":{"login":"example"},"changedFiles":2,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Valid PR","url":"https://example.test/pr/1","isDraft":false},{"number":2,"headRefName":"hostile\tbranch\n\u001b","headRefOid":"dddddddddddddddddddddddddddddddddddddddd","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOexample","name":"test"},"headRepositoryOwner":{"login":"example"},"changedFiles":4,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Hostile\tTitle\n\u001b","url":"https://example.test/pr/2\turl\n\u001b","isDraft":false}]
+[{"number":1,"headRefName":"valid-branch","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOexample","name":"test"},"headRepositoryOwner":{"login":"example"},"changedFiles":2,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Valid PR","url":"https://example.test/pr/1","isDraft":false},{"number":2,"headRefName":"hostile\tbranch\n\u001b\u200b\u202e","headRefOid":"dddddddddddddddddddddddddddddddddddddddd","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOexample","name":"test"},"headRepositoryOwner":{"login":"example"},"changedFiles":4,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Hostile\tTitle\n\u001b\u2066","url":"https://example.test/pr/2\turl\n\u001b\ufeff","isDraft":false}]
 PRS
   exit 0
 fi
@@ -140,7 +140,7 @@ grep -Fqx "$BARE_WORKTREE"$'\t(bare)\t-\tbare' "$output_file"
 inventory_json="$(PATH="$BIN_DIR:$PATH" bash "$SCRIPT" --json)"
 jq -e '.mode == "inventory" and .status == "ok" and .errors == []' <<<"$inventory_json" >/dev/null
 jq -e '.worktrees | any(.bare and .head_sha == null and .status == "bare")' <<<"$inventory_json" >/dev/null
-jq -e '.pull_requests | any(.number == 2 and .head.branch == "hostile\tbranch\n\u001b" and .title == "Hostile\tTitle\n\u001b" and .url == "https://example.test/pr/2\turl\n\u001b")' <<<"$inventory_json" >/dev/null
+jq -e '.pull_requests | any(.number == 2 and .head.branch == "hostile\tbranch\n\u001b\u200b\u202e" and .title == "Hostile\tTitle\n\u001b\u2066" and .url == "https://example.test/pr/2\turl\n\u001b\ufeff")' <<<"$inventory_json" >/dev/null
 
 grep -Fqx $'2\thostile branch\tdevelop\tCLEAN\tHostile Title\thttps://example.test/pr/2 url' "$output_file"
 [[ "$(grep -Fc $'2\thostile branch\tdevelop\tCLEAN\tHostile Title\thttps://example.test/pr/2 url' "$output_file")" -eq 1 ]]

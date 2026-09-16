@@ -13,7 +13,7 @@ from typing import Any
 
 MAX_OPEN_PRS = 1000
 MAX_CHAIN_PRS = 50
-TERMINAL_CONTROLS = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
+TERMINAL_CONTROLS = re.compile(r"[\x00-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff]+")
 EXACT_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
 REPO = re.compile(r"^[^/\s]+/[^/\s]+$")
 REPO_COMPONENT = re.compile(r"^[^/\s]+$")

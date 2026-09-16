@@ -279,6 +279,8 @@ def main() -> int:
         if path.suffix in executable_helper_suffixes:
             return True
         try:
+            if path.is_file() and path.stat().st_mode & 0o111:
+                return True
             with path.open(encoding="utf-8", errors="ignore") as stream:
                 return stream.readline().startswith("#!")
         except OSError:
@@ -362,12 +364,16 @@ def main() -> int:
         helper = Path(helper_dir) / "extensionless-helper"
         suffix_helper = Path(helper_dir) / "other-suffix.bash"
         data = Path(helper_dir) / "extensionless-data"
+        executable_data = Path(helper_dir) / "extensionless-executable-data"
         helper.write_text("#!/usr/bin/env bash\n# extensionless helper\n", encoding="utf-8")
         suffix_helper.write_text("#!/usr/bin/env bash\n# suffix helper\n", encoding="utf-8")
         data.write_text("extensionless data\n", encoding="utf-8")
+        executable_data.write_text("extensionless executable data\n", encoding="utf-8")
+        executable_data.chmod(0o755)
         helper_reference = f"bash ./{helper.relative_to(root).as_posix()}"
         suffix_reference = f"bash ./{suffix_helper.relative_to(root).as_posix()}"
         data_reference = f"bash ./{data.relative_to(root).as_posix()}"
+        executable_data_reference = f"bash ./{executable_data.relative_to(root).as_posix()}"
         if helper not in references(helper_reference):
             fail("extensionless helper with a shebang was not detected")
         if "# extensionless helper" not in expand_text(helper_reference):
@@ -376,6 +382,10 @@ def main() -> int:
             fail("helper with an unlisted suffix and a shebang was not detected")
         if data in references(data_reference):
             fail("extensionless data without a shebang was treated as an executable helper")
+        if executable_data not in references(executable_data_reference):
+            fail("extensionless executable file was not detected")
+        if "extensionless executable data" not in expand_text(executable_data_reference):
+            fail("extensionless executable file was not expanded")
 
     workflow_paths = sorted((*workflows.glob("*.yml"), *workflows.glob("*.yaml")))
 
