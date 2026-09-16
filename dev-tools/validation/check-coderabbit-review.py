@@ -79,6 +79,7 @@ FAILED_REVIEW_PATTERN = re.compile(
 )
 ACTIONABLE_COMMENTS_MARKER = "**Actionable comments posted:"
 OUTSIDE_DIFF_MARKER = "Outside diff range comments"
+OUTSIDE_DIFF_ALT_MARKER = "Outside the diff"
 DUPLICATE_COMMENTS_MARKER = "Duplicate comments"
 REVIEW_SCOPE_PATTERN = re.compile(
     r"Reviewing files that changed from the base of the PR and between\s+"
@@ -521,6 +522,13 @@ def extract_section_count(body: str, marker: str) -> int:
     return int(match.group(1)) if match else 0
 
 
+def outside_diff_count(body: str) -> int:
+    return max(
+        extract_section_count(body, OUTSIDE_DIFF_MARKER),
+        extract_section_count(body, OUTSIDE_DIFF_ALT_MARKER),
+    )
+
+
 def actionable_summary_candidate(
     author: str,
     body: str,
@@ -536,6 +544,7 @@ def actionable_summary_candidate(
         for marker in (
             ACTIONABLE_COMMENTS_MARKER,
             OUTSIDE_DIFF_MARKER,
+            OUTSIDE_DIFF_ALT_MARKER,
             DUPLICATE_COMMENTS_MARKER,
         )
     ):
@@ -551,7 +560,7 @@ def actionable_summary_candidate(
     return (
         timestamp_dt,
         url,
-        extract_section_count(body, OUTSIDE_DIFF_MARKER),
+        outside_diff_count(body),
         extract_section_count(body, DUPLICATE_COMMENTS_MARKER),
     )
 
@@ -586,6 +595,7 @@ def is_substantive_review_body(body: str) -> bool:
             SUBSTANTIVE_REVIEW_MARKER,
             ACTIONABLE_COMMENTS_MARKER,
             OUTSIDE_DIFF_MARKER,
+            OUTSIDE_DIFF_ALT_MARKER,
             DUPLICATE_COMMENTS_MARKER,
             FINAL_REVIEW_RISK_COVERAGE_MARKER,
         )
@@ -637,7 +647,7 @@ def matching_zero_finding_summary(
         if not (legacy_zero_layout or risk_coverage_zero_layout):
             continue
         if (
-            extract_section_count(body, OUTSIDE_DIFF_MARKER) > 0
+            outside_diff_count(body) > 0
             or extract_section_count(body, DUPLICATE_COMMENTS_MARKER) > 0
         ):
             continue

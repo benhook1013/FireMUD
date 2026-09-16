@@ -320,6 +320,29 @@ Your included review limit is currently reached under our [Fair Usage Limits Pol
         state = self.state(reviews=[review])
         self.assertEqual((state.state, state.response_id), ("completed", 55))
 
+    def test_outside_the_diff_review_layout_is_terminal(self) -> None:
+        review = {
+            "databaseId": 55,
+            "author": {"login": "coderabbitai"},
+            "body": f"""**⚠️ Outside the diff (1)**
+
+Reviewing files that changed from the base of the PR and between {'b' * 40} and {HEAD}.
+Files selected for processing (20)""",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-14T01:03:00Z",
+            "url": "https://example.test/reviews/55",
+            "commit": {"oid": HEAD},
+        }
+        comments = [trigger_comment(), finished_reply()]
+        state = self.state(comments, [review])
+        self.assertEqual((state.state, state.response_id), ("completed", 55))
+
+        summary = CHECKER.summarize(REPO, PR, payload(comments, [review]))
+        self.assertTrue(summary.review_finished_after_latest_request)
+        self.assertTrue(summary.substantive_review_after_latest_commit)
+        self.assertEqual(summary.outside_diff_actionable_comments, 1)
+        self.assertFalse(summary.ok)
+
     def test_interleaved_and_same_time_triggers_are_ambiguous(self) -> None:
         for created_at in (TRIGGER_AT, "2026-09-14T01:00:01Z"):
             with self.subTest(created_at=created_at):
