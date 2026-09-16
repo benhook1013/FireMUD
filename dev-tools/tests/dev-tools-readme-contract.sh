@@ -58,7 +58,23 @@ def check_fragment(readme: Path, markdown: Path, fragment: str) -> None:
         )
 
 
+LINK_TITLE = r'''(?:"[^"]*"|'[^']*'|\([^)]*\))'''
+MARKDOWN_LINK_PATTERN = re.compile(
+    rf"\[[^]]+\]\(((?:<[^>]*>|[^)\s]+)(?:\s+{LINK_TITLE})?)\)"
+)
+
+
+def markdown_destination(target: str) -> str:
+    target = target.strip()
+    angle_match = re.fullmatch(rf"<([^>]*)>(?:\s+{LINK_TITLE})?", target)
+    if angle_match is not None:
+        return angle_match.group(1)
+    title_match = re.search(rf"\s+{LINK_TITLE}\s*$", target)
+    return target[: title_match.start()] if title_match is not None else target
+
+
 def link_target(readme: Path, target: str) -> None:
+    target = markdown_destination(target)
     path_target, separator, fragment = target.partition("#")
     path_target = path_target.split("?", 1)[0]
     if not path_target and not separator:
@@ -83,7 +99,7 @@ def canonical_section(readme: Path, text: str) -> str:
 
 for readme in readmes:
     text = readme.read_text(encoding="utf-8")
-    for target in re.findall(r"\[[^]]+\]\(([^)]+)\)", text):
+    for target in MARKDOWN_LINK_PATTERN.findall(text):
         link_target(readme, target)
 
     if readme == root / "dev-tools/README.md":
@@ -117,7 +133,13 @@ with tempfile.TemporaryDirectory() as fixture_dir:
     fixture_root = Path(fixture_dir)
     fixture_readme = fixture_root / "README.md"
     fixture_target = fixture_root / "target.md"
-    fixture_readme.write_text("# Fixture\n\nSee [target](target.md#details).\n", encoding="utf-8")
+    fixture_readme.write_text(
+        "# Fixture\n\n"
+        "See [plain](target.md#details), [double](target.md \"Target\"), "
+        "[single](target.md 'Target'), [parenthesized](target.md (Target)), "
+        "and [angle](<target.md#details> \"Details\").\n",
+        encoding="utf-8",
+    )
     fixture_target.write_text("# Target\n\n## Details\n", encoding="utf-8")
 
     original_tracked_file = tracked_file
@@ -127,7 +149,16 @@ with tempfile.TemporaryDirectory() as fixture_dir:
             raise SystemExit(f"{source}: fixture path does not resolve to a file: {path}")
 
     tracked_file = fixture_tracked_file
+    extracted_targets = MARKDOWN_LINK_PATTERN.findall(fixture_readme.read_text(encoding="utf-8"))
+    for target in extracted_targets:
+        link_target(fixture_readme, target)
+    if len(extracted_targets) != 5:
+        raise SystemExit(f"fixture Markdown link extraction found {len(extracted_targets)} targets")
     link_target(fixture_readme, "target.md#details")
+    link_target(fixture_readme, 'target.md "Target"')
+    link_target(fixture_readme, "target.md 'Target'")
+    link_target(fixture_readme, "target.md (Target)")
+    link_target(fixture_readme, '<target.md#details> "Details"')
     link_target(fixture_readme, "#fixture")
     try:
         link_target(fixture_readme, "target.md#missing")
@@ -136,6 +167,19 @@ with tempfile.TemporaryDirectory() as fixture_dir:
             raise
     else:
         raise SystemExit("missing Markdown anchor fixture did not fail")
+    for target in (
+        'target.md#missing "Missing"',
+        "target.md#missing 'Missing'",
+        "target.md#missing (Missing)",
+        '<target.md#missing> "Missing"',
+    ):
+        try:
+            link_target(fixture_readme, target)
+        except SystemExit as exc:
+            if "documented link anchor does not resolve" not in str(exc):
+                raise
+        else:
+            raise SystemExit(f"missing Markdown anchor fixture did not fail: {target}")
     tracked_file = original_tracked_file
 
 print("dev-tools README path and link contract checks passed")
