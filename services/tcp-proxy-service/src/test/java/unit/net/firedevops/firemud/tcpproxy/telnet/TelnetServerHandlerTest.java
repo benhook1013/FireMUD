@@ -436,14 +436,17 @@ class TelnetServerHandlerTest {
     drainThread.start();
     assertTrue(sendEntered.await(5, TimeUnit.SECONDS));
 
+    CountDownLatch disconnectStarted = new CountDownLatch(1);
     CountDownLatch disconnectFinished = new CountDownLatch(1);
     Thread disconnectThread =
         new Thread(
             () -> {
+              disconnectStarted.countDown();
               handler.channelInactive(ctx);
               disconnectFinished.countDown();
             });
     disconnectThread.start();
+    assertTrue(disconnectStarted.await(5, TimeUnit.SECONDS));
     assertFalse(disconnectFinished.await(100, TimeUnit.MILLISECONDS));
 
     allowSend.countDown();

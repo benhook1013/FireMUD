@@ -3152,10 +3152,17 @@ def workload_namespace(document: dict[str, Any]) -> str:
 
 
 def primary_workload_namespace(documents: list[dict[str, Any]]) -> str:
-    return next(
-        (workload_namespace(document) for document in documents if primary_containers(document)),
-        "firemud",
-    )
+    namespaces = {
+        workload_namespace(document)
+        for document in documents
+        if primary_containers(document)
+    }
+    if len(namespaces) > 1:
+        raise ValueError(
+            "primary workload namespace is ambiguous across rendered workloads: "
+            + ", ".join(sorted(namespaces))
+        )
+    return next(iter(namespaces), "firemud")
 
 
 def effective_container_env(

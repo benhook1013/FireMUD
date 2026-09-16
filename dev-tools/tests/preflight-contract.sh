@@ -2001,6 +2001,26 @@ spec.loader.exec_module(module)
 deployment_event_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 validation_now = module.dt.datetime(2026, 1, 1, 0, 5, tzinfo=module.dt.timezone.utc)
 
+ambiguous_workload_documents = [
+    {
+        "kind": "Deployment",
+        "metadata": {"name": "account-service", "namespace": "firemud"},
+        "spec": {"template": {"spec": {"containers": [{"name": "account-service"}]}}},
+    },
+    {
+        "kind": "Deployment",
+        "metadata": {"name": "game-session-service", "namespace": "other"},
+        "spec": {"template": {"spec": {"containers": [{"name": "game-session-service"}]}}},
+    },
+]
+try:
+    module.primary_workload_namespace(ambiguous_workload_documents)
+except ValueError as error:
+    if "primary workload namespace is ambiguous" not in str(error):
+        raise SystemExit(f"ambiguous workload namespace error was not explicit: {error}")
+else:
+    raise SystemExit("ambiguous workload namespaces were accepted before hosted checks")
+
 
 def validate_report(report, environment, deployment_ref):
     return module.validate_preflight_report(

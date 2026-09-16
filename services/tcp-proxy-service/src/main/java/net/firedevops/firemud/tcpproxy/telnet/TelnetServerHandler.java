@@ -381,10 +381,14 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     sendFuture.whenComplete(
         (ws, error) -> {
           try (CombinedLoggingContext ignored = openLoggingContext()) {
-            outstandingSends.remove(sendFuture);
-            inFlightSend = null;
+            synchronized (bufferLifecycleLock) {
+              outstandingSends.remove(sendFuture);
+              if (error == null) {
+                inFlightSend = null;
+                buffer.poll();
+              }
+            }
             if (error == null) {
-              buffer.poll();
               touchActivity();
             } else {
               logger.warn("Gateway send failed; scheduling reconnect", error);
@@ -705,8 +709,11 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private void cancelOutstandingSends() {
-    CompletableFuture<WebSocket> flight = inFlightSend;
-    inFlightSend = null;
+    CompletableFuture<WebSocket> flight;
+    synchronized (bufferLifecycleLock) {
+      flight = inFlightSend;
+      inFlightSend = null;
+    }
     if (flight != null) {
       flight.cancel(true);
     }
