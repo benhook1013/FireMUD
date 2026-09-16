@@ -33,13 +33,11 @@ def tracked_file(path: Path, source: Path) -> None:
         raise SystemExit(f"{source}: documented path is not tracked: {relative}")
 
 
-def github_anchors(markdown: Path) -> set[str]:
-    anchors: set[str] = set()
-    occurrences: dict[str, int] = {}
-    heading_pattern = re.compile(r"^ {0,3}#{1,6}\s+(.+?)\s*$")
+def markdown_outside_fences(text: str) -> list[str]:
+    active_lines: list[str] = []
     fence_pattern = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
     fence_marker: tuple[str, int] | None = None
-    for line in markdown.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         fence_match = fence_pattern.match(line)
         if fence_marker is not None:
             if (
@@ -53,6 +51,15 @@ def github_anchors(markdown: Path) -> set[str]:
         if fence_match is not None:
             fence_marker = (fence_match.group(1)[0], len(fence_match.group(1)))
             continue
+        active_lines.append(line)
+    return active_lines
+
+
+def github_anchors(markdown: Path) -> set[str]:
+    anchors: set[str] = set()
+    occurrences: dict[str, int] = {}
+    heading_pattern = re.compile(r"^ {0,3}#{1,6}\s+(.+?)\s*$")
+    for line in markdown_outside_fences(markdown.read_text(encoding="utf-8")):
         match = heading_pattern.match(line)
         if match is None:
             continue
@@ -115,7 +122,7 @@ def canonical_section(readme: Path, text: str) -> str:
 
 for readme in readmes:
     text = readme.read_text(encoding="utf-8")
-    for target in MARKDOWN_LINK_PATTERN.findall(text):
+    for target in MARKDOWN_LINK_PATTERN.findall("\n".join(markdown_outside_fences(text))):
         link_target(readme, target)
 
     if readme == root / "dev-tools/README.md":
@@ -178,13 +185,25 @@ with tempfile.TemporaryDirectory() as fixture_dir:
     fixture_target = fixture_root / "target.md"
     fixture_readme.write_text(
         "# Fixture\n\n"
+        "```markdown\n"
+        "See [fake backtick](missing-backtick.md).\n"
+        "```\n\n"
+        "See [after backtick fence](target.md#after-backtick-fence).\n\n"
+        "````markdown\n"
+        "See [fake long backtick](missing-long-backtick.md).\n"
+        "````\n\n"
+        "~~~markdown\n"
+        "See [fake tilde](missing-tilde.md).\n"
+        "~~~\n\n"
+        "See [after tilde fence](target.md#after-tilde-fence).\n\n"
+        "~~~~markdown\n"
+        "See [fake long tilde](missing-long-tilde.md).\n"
+        "~~~~\n\n"
         "See [plain](target.md#details), [double](target.md \"Target\"), "
         "[single](target.md 'Target'), [parenthesized](target.md (Target)), "
         "[angle](<target.md#details> \"Details\"), "
         "[repeated spaces](target.md#double--spaces), "
-        "[edge hyphens](target.md#--edge--), "
-        "[after backtick fence](target.md#after-backtick-fence), "
-        "and [after tilde fence](target.md#after-tilde-fence).\n",
+        "and [edge hyphens](target.md#--edge--).\n",
         encoding="utf-8",
     )
     fixture_target.write_text(
@@ -203,11 +222,21 @@ with tempfile.TemporaryDirectory() as fixture_dir:
             raise SystemExit(f"{source}: fixture path does not resolve to a file: {path}")
 
     tracked_file = fixture_tracked_file
-    extracted_targets = MARKDOWN_LINK_PATTERN.findall(fixture_readme.read_text(encoding="utf-8"))
+    extracted_targets = MARKDOWN_LINK_PATTERN.findall(
+        "\n".join(markdown_outside_fences(fixture_readme.read_text(encoding="utf-8")))
+    )
     for target in extracted_targets:
         link_target(fixture_readme, target)
     if len(extracted_targets) != 9:
         raise SystemExit(f"fixture Markdown link extraction found {len(extracted_targets)} targets")
+    for target in (
+        "missing-backtick.md",
+        "missing-long-backtick.md",
+        "missing-tilde.md",
+        "missing-long-tilde.md",
+    ):
+        if target in extracted_targets:
+            raise SystemExit(f"fenced Markdown link was incorrectly extracted: {target}")
     link_target(fixture_readme, "target.md#details")
     link_target(fixture_readme, 'target.md "Target"')
     link_target(fixture_readme, "target.md 'Target'")
