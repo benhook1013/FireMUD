@@ -711,6 +711,8 @@ def main() -> int:
     if args.pr is not None and args.pr <= 0:
         print("error: --pr must be a positive integer", file=sys.stderr)
         return 2
+    mode = "inventory" if args.pr is None else "selected-stack"
+    repo: str | None = None
     try:
         root = repository_root()
         repo = resolve_repo(root, args.repo)
@@ -797,7 +799,16 @@ def main() -> int:
         return 1 if report.get("status") == "ambiguous" else 0
     except TopologyError as exc:
         if args.json:
-            print(json.dumps({"schema_version": 1, "status": "ambiguous", "errors": [str(exc)]}, indent=2, sort_keys=True))
+            report = {
+                "schema_version": 1,
+                "repository": repo,
+                "mode": mode,
+                "status": "ambiguous",
+                "errors": [str(exc)],
+            }
+            if args.pr is not None:
+                report["selected_pr"] = args.pr
+            print(json.dumps(report, indent=2, sort_keys=True))
         else:
             print(f"error: {_display(exc)}", file=sys.stderr)
         return 1

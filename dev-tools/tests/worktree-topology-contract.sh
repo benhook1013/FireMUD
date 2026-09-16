@@ -168,7 +168,7 @@ if contradictory_json="$(cd "$DEFAULT_REPO" && PATH="$CONTRADICTORY_BIN:$BIN_DIR
   echo "contradictory repository identity unexpectedly succeeded" >&2
   exit 1
 fi
-jq -e '.status == "ambiguous" and (.errors | any(contains("head repository identity fields contradict each other")))' <<<"$contradictory_json" >/dev/null
+jq -e '.schema_version == 1 and .repository == "owner/repo" and .mode == "selected-stack" and .status == "ambiguous" and (.errors | any(contains("head repository identity fields contradict each other")))' <<<"$contradictory_json" >/dev/null
 
 echo "contradictory repository identity contract checks passed"
 
@@ -327,7 +327,7 @@ for default_branch_mode in missing malformed; do
     echo "${default_branch_mode} default branch fixture unexpectedly succeeded" >&2
     exit 1
   fi
-  jq -e '.status == "ambiguous" and (.errors | any(contains("repository default branch lookup")))' <<<"$default_branch_error" >/dev/null
+  jq -e '.schema_version == 1 and .repository == "owner/repo" and .mode == "selected-stack" and .selected_pr == 42 and .status == "ambiguous" and (.errors | any(contains("repository default branch lookup")))' <<<"$default_branch_error" >/dev/null
 done
 
 help_output="$(bash "$SCRIPT" --help)"

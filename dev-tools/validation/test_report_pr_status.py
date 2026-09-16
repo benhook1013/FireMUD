@@ -32,6 +32,13 @@ class PrStatusReporterTest(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.reporter = load_reporter()
 
+    def setUp(self) -> None:
+        self.hosted_trigger_record_path_patch = patch.object(
+            self.reporter, "hosted_trigger_record_path", return_value=None
+        )
+        self.hosted_trigger_record_path_patch.start()
+        self.addCleanup(self.hosted_trigger_record_path_patch.stop)
+
     @staticmethod
     def checkpoint_payload() -> dict:
         payload = {
@@ -895,6 +902,7 @@ class PrStatusReporterTest(unittest.TestCase):
         )
 
     def test_durable_hosted_trigger_record_is_discovered_from_main_and_linked_worktrees(self) -> None:
+        self.hosted_trigger_record_path_patch.stop()
         with tempfile.TemporaryDirectory() as directory:
             fixture_root = Path(directory).resolve()
             main_root = fixture_root / "main"

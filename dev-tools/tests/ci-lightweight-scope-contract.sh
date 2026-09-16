@@ -317,6 +317,12 @@ require_contains(
     "python3 -m unittest discover -s dev-tools/validation -p 'test_*.py'",
     "ci workflow",
 )
+require_contains(
+    complete_contract_step,
+    ("run",),
+    "bash ./dev-tools/tests/dev-tools-readme-contract.sh",
+    "ci workflow",
+)
 
 require_equal(
     security,
