@@ -66,7 +66,7 @@ expected_steps = {
     },
     "🧰 Set up kubectl": {"uses": "./.github/actions/setup-kubectl"},
     "🐳 Set up Docker": {
-        "uses": "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e",
+        "uses": "docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069",
     },
     "🔐 Login to GHCR": {
         "uses": "docker/login-action@dbcb813823bdd20940b903addbd779551569679f",
