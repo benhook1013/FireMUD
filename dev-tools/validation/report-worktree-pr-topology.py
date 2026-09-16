@@ -508,6 +508,51 @@ def selected_chain(
         if len(numbers) > 1:
             errors.append(f"selected stack has multiple PR identities for head branch {branch}: {sorted(numbers)}")
 
+    # A branch/SHA relationship is directed from a base PR to its dependent.
+    # Re-visiting an already discovered PR is otherwise harmless during the
+    # breadth-first walk, but a mutual dependency would make the reported
+    # stack cyclic and therefore unsafe to interpret as a linear topology.
+    discovered_prs = [item[0] for item in discovered.values()]
+    discovered_by_number = {pr["number"]: pr for pr in discovered_prs}
+    edges: dict[int, set[int]] = {pr["number"]: set() for pr in discovered_prs}
+    for current in discovered_prs:
+        if current["base_branch"] not in DEFAULT_BRANCHES:
+            base = next(
+                (
+                    pr
+                    for pr in discovered_prs
+                    if pr["head_branch"] == current["base_branch"]
+                    and pr["head_sha"] == current["base_sha"]
+                ),
+                None,
+            )
+            if base is not None:
+                edges[base["number"]].add(current["number"])
+        for child in discovered_prs:
+            if (
+                child["base_branch"] == current["head_branch"]
+                and child["base_sha"] == current["head_sha"]
+            ):
+                edges[current["number"]].add(child["number"])
+
+    visiting: set[int] = set()
+    visited: set[int] = set()
+
+    def reaches_cycle(number: int) -> bool:
+        if number in visiting:
+            return True
+        if number in visited:
+            return False
+        visiting.add(number)
+        if any(reaches_cycle(child) for child in edges[number]):
+            return True
+        visiting.remove(number)
+        visited.add(number)
+        return False
+
+    if any(reaches_cycle(number) for number in discovered_by_number):
+        errors.append("selected stack contains a directed PR dependency cycle")
+
     chain = [
         render_pr(pr, relation, root, branches, worktrees, relation_evidence)
         for pr, relation, relation_evidence, _depth in sorted(
@@ -622,6 +667,7 @@ def main() -> int:
                 "repository": repo,
                 "mode": "inventory",
                 "status": "ok",
+                "errors": [],
                 "worktrees": worktrees,
                 "local_branches": branches,
                 "pull_requests": [

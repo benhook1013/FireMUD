@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if ! command -v jq >/dev/null 2>&1; then
+  echo "worktree topology contract requires jq on PATH" >&2
+  exit 1
+fi
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRIPT="$ROOT_DIR/dev-tools/validation/report-worktree-pr-topology.sh"
 TEMP_DIR="$(mktemp -d)"
@@ -129,7 +134,7 @@ grep -Fqx "$BARE_WORKTREE"$'\t(bare)\t-\tbare' "$output_file"
 [[ ! -s "$error_file" ]]
 
 inventory_json="$(PATH="$BIN_DIR:$PATH" bash "$SCRIPT" --json)"
-jq -e '.mode == "inventory" and .status == "ok"' <<<"$inventory_json" >/dev/null
+jq -e '.mode == "inventory" and .status == "ok" and .errors == []' <<<"$inventory_json" >/dev/null
 jq -e '.worktrees | any(.bare and .head_sha == null and .status == "bare")' <<<"$inventory_json" >/dev/null
 
 echo "worktree topology contract checks passed"
@@ -231,6 +236,10 @@ cat > "$LIMIT_BIN/gh" <<'EOF'
 set -euo pipefail
 
 if [[ "$1 $2" == "pr list" ]]; then
+  [[ " $* " == *" --limit 1000 "* ]] || {
+    echo "paginated inventory must request --limit 1000" >&2
+    exit 97
+  }
   python3 - <<'PY'
 import json
 
@@ -303,6 +312,36 @@ over_one_hundred_human="$(cd "$SELECTED_REPO" && PATH="$LIMIT_BIN:$SELECTED_BIN:
 grep -Fqx $'143\tfeature/beyond-one-hundred\tfeature/head\tCLEAN\tDependent beyond one hundred\thttps://example.test/pr/143' <<<"$over_one_hundred_human"
 
 echo "paginated topology inventory contract checks passed"
+
+CYCLE_BIN="$TEMP_DIR/cycle-bin"
+mkdir -p "$CYCLE_BIN"
+cat > "$CYCLE_BIN/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$1 $2" == "pr list" ]]; then
+  cat <<'PRS'
+[{"number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"feature/dependent","baseRefOid":"dddddddddddddddddddddddddddddddddddddddd","headRepository":{"nameWithOwner":"owner/repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false},{"number":100,"headRefName":"feature/dependent","headRefOid":"dddddddddddddddddddddddddddddddddddddddd","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"nameWithOwner":"owner/repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Cyclic dependent","url":"https://example.test/pr/100","isDraft":false}]
+PRS
+  exit 0
+fi
+if [[ "$1 $2" == "pr view" ]]; then
+  cat <<'PR'
+{"state":"OPEN","number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"feature/dependent","baseRefOid":"dddddddddddddddddddddddddddddddddddddddd","headRepository":{"nameWithOwner":"owner/repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false}
+PR
+  exit 0
+fi
+echo "unexpected gh invocation: $*" >&2
+exit 1
+EOF
+chmod +x "$CYCLE_BIN/gh"
+if cycle_json="$(cd "$SELECTED_REPO" && PATH="$CYCLE_BIN:$SELECTED_BIN:$PATH" bash "$SCRIPT" --repo owner/repo --pr 42 --json)"; then
+  echo "cyclic topology fixture unexpectedly succeeded" >&2
+  exit 1
+fi
+jq -e '.status == "ambiguous" and (.errors | any(contains("directed PR dependency cycle")))' <<<"$cycle_json" >/dev/null
+
+echo "cyclic topology contract checks passed"
 
 FANOUT_BIN="$TEMP_DIR/fanout-bin"
 mkdir -p "$FANOUT_BIN"

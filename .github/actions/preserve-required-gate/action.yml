@@ -271,7 +271,7 @@ runs:
                     .name == $expected_name and
                   .path == $expected_path and
                   .head_sha == $expected_head and
-                  .head_repository.full_name == $expected_repository and
+                  .repository.full_name == $expected_repository and
                   .event == "pull_request"
                 then "true" else "false" end' \
               <<<"${workflow_run_json}" 2>>"${api_error_file}")"

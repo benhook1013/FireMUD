@@ -830,11 +830,12 @@ def build_report(repo: str, pr_number: int) -> dict[str, Any]:
     if trigger_record is None:
         expected_checker_exit = 0 if checker_evidence.payload["ok"] else 1
     elif isinstance(trigger_state, dict):
+        state_value = trigger_state.get("state")
         expected_checker_exit = (
             0
-            if trigger_state.get("state") == "completed"
+            if state_value == "completed"
             else 2
-            if trigger_state.get("state") in {"awaiting_response", "active"}
+            if isinstance(state_value, str) and state_value in {"awaiting_response", "active"}
             else 1
         )
     else:

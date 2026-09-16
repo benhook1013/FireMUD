@@ -673,6 +673,20 @@ class PrStatusReporterTest(unittest.TestCase):
         self.assertIn("current PR base", report["loc_metadata"]["reason"])
         self.assertIn("current merge-base", report["loc_metadata"]["reason"])
 
+    def test_loc_metadata_is_fresh_when_current_merge_base_matches(self) -> None:
+        with (
+            patch.object(self.reporter, "_current_merge_base", return_value="b" * 40),
+            patch.object(
+                self.reporter.subprocess,
+                "run",
+                side_effect=self.provider_responses(checker_ok=True),
+            ),
+        ):
+            report = self.reporter.build_report("owner/repo", 42)
+
+        self.assertEqual(report["loc_metadata"]["status"], "fresh")
+        self.assertTrue(report["loc_metadata"]["merge_base_checked"])
+
     def test_null_loc_body_is_reported_as_missing(self) -> None:
         github = self.github_payload()
         github["body"] = None
@@ -771,6 +785,36 @@ class PrStatusReporterTest(unittest.TestCase):
                 self.reporter.ReportError, "invalid state"
             ):
                 self.reporter._validate_trigger_state(checker, "owner/repo", 42)
+
+    def test_malformed_trigger_state_type_is_reported_ambiguous_during_build_report(self) -> None:
+        for invalid in ([], {}):
+            checker = self.checker_payload(ok=True)
+            checker["trigger_state"] = {
+                "state": invalid,
+                "repository": "owner/repo",
+                "pr_number": 42,
+                "head_sha": "0123456789abcdef0123456789abcdef01234567",
+                "current_head_sha": "0123456789abcdef0123456789abcdef01234567",
+            }
+            with tempfile.TemporaryDirectory() as directory:
+                record = Path(directory) / "trigger.json"
+                record.write_text("{}", encoding="utf-8")
+                with (
+                    self.subTest(invalid=invalid),
+                    patch.object(self.reporter, "hosted_trigger_record_path", return_value=record),
+                    patch.object(
+                        self.reporter.subprocess,
+                        "run",
+                        side_effect=self.provider_responses(
+                            checker_ok=True,
+                            checker_exit=1,
+                            checker_payload=checker,
+                        ),
+                    ),
+                ):
+                    report = self.reporter.build_report("owner/repo", 42)
+            self.assertEqual(report["hosted_trigger"]["state"], "ambiguous")
+            self.assertIn("invalid state", report["hosted_trigger"]["reason"])
 
     def test_durable_hosted_trigger_record_is_discovered_from_main_and_linked_worktrees(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -16,12 +16,62 @@ grep -Fq '  gate-name:' "$ACTION" || {
   echo "required-gate preservation action must expose a gate-name input" >&2
   exit 1
 }
-for input_name in workflow-name workflow-file workflow-path job-id; do
-  grep -Fq "  ${input_name}:" "$ACTION" || {
-    echo "required-gate preservation action must expose its expected ${input_name} input" >&2
+
+assert_required_input_declaration() {
+  local action_path="$1"
+  local input_name="$2"
+  local input_block
+
+  input_block="$(awk -v expected_input="$input_name" '
+    /^inputs:$/ {
+      in_inputs = 1
+      next
+    }
+    in_inputs && /^[^[:space:]][A-Za-z0-9_-]*:/ {
+      exit
+    }
+    in_inputs && $0 == "  " expected_input ":" {
+      capture = 1
+      print
+      next
+    }
+    capture && /^ {0,2}[A-Za-z0-9_-]+:/ {
+      exit
+    }
+    capture {
+      print
+    }
+  ' "$action_path")"
+  if [[ -z "$input_block" ]] ||
+    ! grep -Fxq "  ${input_name}:" <<<"$input_block" ||
+    ! grep -Fxq '    required: true' <<<"$input_block"; then
+    echo "required-gate preservation action must declare ${input_name} as a required input" >&2
     exit 1
-  }
+  fi
+}
+
+for input_name in workflow-name workflow-file workflow-path job-id; do
+  assert_required_input_declaration "$ACTION" "$input_name"
 done
+# Keep a required declaration outside the inputs mapping from satisfying the
+# final input's block-local requirement.
+malformed_action="$(mktemp)"
+cp "$ACTION" "$malformed_action"
+sed -i \
+  -e '/^  job-id:/,/^runs:/ s/^    required: true$/    required: false/' \
+  -e '/^runs:/a\    required: true' \
+  "$malformed_action"
+malformed_input_status=0
+if (assert_required_input_declaration "$malformed_action" job-id) >/dev/null 2>&1; then
+  malformed_input_status=0
+else
+  malformed_input_status=$?
+fi
+rm -f "$malformed_action"
+if [[ "$malformed_input_status" -eq 0 ]]; then
+  echo "required-gate preservation action accepted a required declaration outside its inputs block" >&2
+  exit 1
+fi
 # shellcheck disable=SC2016 # Assert literal action input interpolation syntax.
 if ! grep -Fq 'GH_TOKEN: ${{ github.token }}' "$ACTION" ||
   ! grep -Fq 'HEAD_SHA: ${{ github.event.pull_request.head.sha }}' "$ACTION" ||
@@ -367,14 +417,18 @@ if [[ "$*" == *"/actions/runs/"* ]]; then
   workflow_name='CI — Validation'
   workflow_path='.github/workflows/ci.yml'
   workflow_id=42
+  run_repository='example/firemud'
   head_repository='example/firemud'
   if [[ "${GH_SCENARIO:-}" == "cross-workflow-same-name" ]]; then
     workflow_path='.github/workflows/other.yml'
     workflow_id=99
   elif [[ "${GH_SCENARIO:-}" == "fork-head-same-sha" ]]; then
     head_repository='other-owner/firemud'
+  elif [[ "${GH_SCENARIO:-}" == "wrong-run-repository" ]]; then
+    run_repository='other-owner/firemud'
+    head_repository='other-owner/firemud'
   fi
-  printf '{"id":%s,"workflow_id":%s,"name":"%s","path":"%s","head_sha":"deadbeef","head_repository":{"full_name":"%s"},"event":"pull_request"}\n' "$run_id" "$workflow_id" "$workflow_name" "$workflow_path" "$head_repository"
+  printf '{"id":%s,"workflow_id":%s,"name":"%s","path":"%s","head_sha":"deadbeef","repository":{"full_name":"%s"},"head_repository":{"full_name":"%s"},"event":"pull_request"}\n' "$run_id" "$workflow_id" "$workflow_name" "$workflow_path" "$run_repository" "$head_repository"
   exit 0
 fi
 if [[ "$*" != *"/repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs"* ]]; then
@@ -447,6 +501,9 @@ JSON
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   fork-head-same-sha)
+    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    ;;
+  wrong-run-repository)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   unknown-app)
@@ -845,7 +902,14 @@ grep -Fq 'concluded failure' "$same_timestamp_output" || {
   exit 1
 }
 
-for malformed_scenario in cross-workflow-same-name fork-head-same-sha unknown-app unknown-check-name invalid-job-id missing-job-id missing-preservation-conclusion unsupported-status missing-timestamp; do
+fork_head_count="$tmp_dir/count-fork-head"
+run_action "$fork_head_count" none fork-head-same-sha
+[[ "$(<"$fork_head_count")" == "1" ]] || {
+  echo "required-gate action rejected a valid fork pull request run owned by the base repository" >&2
+  exit 1
+}
+
+for malformed_scenario in cross-workflow-same-name wrong-run-repository unknown-app unknown-check-name invalid-job-id missing-job-id missing-preservation-conclusion unsupported-status missing-timestamp; do
   malformed_output="$tmp_dir/${malformed_scenario}-output"
   set +e
   run_action "$tmp_dir/count-${malformed_scenario}" none "$malformed_scenario" >"$malformed_output" 2>&1
