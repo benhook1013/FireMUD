@@ -54,55 +54,19 @@ runs:
         trap 'rm -f "$api_error_file"' EXIT
         max_attempts=80
         for attempt in $(seq 1 "${max_attempts}"); do
-          prior_state=""
+          # A metadata-only run emits this same gate name. Its preservation step
+          # identifies the recursive run; substantive gates skip that step and
+          # remain authoritative, including failures.
           : >"${api_error_file}"
           set +e
-          prior_state="$(gh api --method GET \
+          check_runs_json="$(gh api --method GET \
             "/repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs" \
             -f check_name="${REQUIRED_GATE_NAME}" \
             -f filter=all \
             -f per_page=100 \
             --paginate \
             --slurp \
-            2>"${api_error_file}" \
-            | jq -r --arg run_id "${GITHUB_RUN_ID}" '
-                [.[].check_runs[]?
-                  | select(
-                      .app.slug == "github-actions"
-                      and ((.details_url // "") | contains("/actions/runs/\($run_id)/") | not)
-                    )
-                ] as $candidates
-                | ($candidates
-                    | map(select(
-                        .status == "completed"
-                        and .conclusion != null
-                        and .conclusion != "cancelled"
-                        and .conclusion != "skipped"
-                        and .conclusion != "stale"
-                      ))) as $authoritative
-                | ($candidates
-                    | map(select(
-                        .status == "queued"
-                        or .status == "in_progress"
-                        or .status == "requested"
-                        or .status == "waiting"
-                        or .status == "pending"
-                      ))) as $pending
-                | if ($authoritative | length) > 0 then
-                    ($authoritative
-                      | sort_by(.completed_at // .started_at // .created_at)
-                      | last
-                      | ["completed", (.conclusion // "")])
-                  elif ($pending | length) > 0 then
-                    ($pending
-                      | sort_by(.started_at // .created_at)
-                      | last
-                      | ["pending", (.status // "")])
-                  else
-                    ["none", ""]
-                  end
-                | @tsv' \
-              2>>"${api_error_file}")"
+            2>"${api_error_file}")"
           api_status=$?
           set -e
           if [[ "${api_status}" -ne 0 ]]; then
@@ -121,9 +85,133 @@ runs:
             continue
           fi
 
+          set +e
+          candidate_rows="$(jq -r --arg run_id "${GITHUB_RUN_ID}" '
+                [.[].check_runs[]?
+                  | select(
+                      .app.slug == "github-actions"
+                      and ((.details_url // "") | contains("/actions/runs/\($run_id)/") | not)
+                    )
+                ] as $candidates
+                | $candidates[]
+                | [
+                    (.details_url // "__missing__"),
+                    (.status // "__missing__"),
+                    (.conclusion // "__null__"),
+                    (.completed_at // "__null__"),
+                    (.started_at // "__null__"),
+                    (.created_at // "__null__")
+                  ]
+                | @tsv' <<<"${check_runs_json}" 2>>"${api_error_file}")"
+          query_status=$?
+          set -e
+          if [[ "${query_status}" -ne 0 ]]; then
+            echo "GitHub API returned malformed check-run data for the prior ${REQUIRED_GATE_NAME}; refusing to preserve." >&2
+            exit 1
+          fi
+
+          authoritative_rows=()
+          pending_rows=()
+          job_lookup_retryable=false
+          candidate_ambiguous=false
+          while IFS=$'\t' read -r details_url check_status conclusion completed_at started_at created_at; do
+            if [[ -z "${details_url}${check_status}${conclusion}${completed_at}${started_at}${created_at}" ]]; then
+              continue
+            fi
+            if [[ "${details_url}" == "__missing__" ||
+              "${check_status}" == "__missing__" ]]; then
+              candidate_ambiguous=true
+              continue
+            fi
+            [[ "${conclusion}" == "__null__" ]] && conclusion=""
+            [[ "${completed_at}" == "__null__" ]] && completed_at=""
+            [[ "${started_at}" == "__null__" ]] && started_at=""
+            [[ "${created_at}" == "__null__" ]] && created_at=""
+            if [[ "${details_url}" != */actions/runs/*/job/* ]]; then
+              candidate_ambiguous=true
+              continue
+            fi
+            job_id="${details_url##*/job/}"
+            [[ "${job_id}" =~ ^[0-9]+$ ]] || continue
+
+            : >"${api_error_file}"
+            set +e
+            job_json="$(gh api --method GET \
+              "/repos/${GITHUB_REPOSITORY}/actions/jobs/${job_id}" \
+              2>"${api_error_file}")"
+            job_status=$?
+            set -e
+            if [[ "${job_status}" -ne 0 ]]; then
+              job_error="$(<"${api_error_file}")"
+              if is_retryable_gh_failure "${job_status}" "${job_error}"; then
+                job_lookup_retryable=true
+                break
+              fi
+              echo "Permanent GitHub API/configuration failure while identifying a prior ${REQUIRED_GATE_NAME} run; refusing to preserve." >&2
+              [[ -z "${job_error}" ]] || printf '%s\n' "${job_error}" >&2
+              exit 1
+            fi
+
+            set +e
+            preserve_step_conclusion="$(jq -r '
+              [.steps[]?
+                | select(.name == "Preserve successful required gate on metadata-only edit")
+                | (.conclusion // "")
+              ]
+              | if length == 1 then .[0] else "unknown" end
+            ' <<<"${job_json}" 2>>"${api_error_file}")"
+            job_query_status=$?
+            set -e
+            if [[ "${job_query_status}" -ne 0 ||
+              "${preserve_step_conclusion}" == "unknown" ]]; then
+              candidate_ambiguous=true
+              continue
+            fi
+            if [[ "${preserve_step_conclusion}" != "skipped" ]]; then
+              continue
+            fi
+
+            if [[ "${check_status}" == "completed" && -n "${conclusion}" &&
+              "${conclusion}" != "cancelled" && "${conclusion}" != "skipped" &&
+              "${conclusion}" != "stale" ]]; then
+              sort_key="${completed_at:-${started_at:-${created_at}}}"
+              [[ -n "${sort_key}" ]] || continue
+              authoritative_rows+=("${sort_key}"$'\tcompleted\t'"${conclusion}")
+            elif [[ "${check_status}" == "queued" || "${check_status}" == "in_progress" ||
+              "${check_status}" == "requested" || "${check_status}" == "waiting" ||
+              "${check_status}" == "pending" ]]; then
+              sort_key="${started_at:-${created_at}}"
+              [[ -n "${sort_key}" ]] || continue
+              pending_rows+=("${sort_key}"$'\tpending\t'"${check_status}")
+            fi
+          done <<<"${candidate_rows}"
+
+          if [[ "${job_lookup_retryable}" == "true" ]]; then
+            api_error="$(<"${api_error_file}")"
+            echo "Retryable GitHub API failure while checking the prior ${REQUIRED_GATE_NAME} job; retrying attempt ${attempt}/${max_attempts}." >&2
+            if [ "${attempt}" -eq "${max_attempts}" ]; then
+              echo "Timed out waiting for the prior ${REQUIRED_GATE_NAME} on unchanged head ${HEAD_SHA}." >&2
+              exit 1
+            fi
+            [[ -z "${api_error}" ]] || printf '%s\n' "${api_error}" >&2
+            sleep 15
+            continue
+          fi
+          if [[ "${candidate_ambiguous}" == "true" ]]; then
+            echo "Ambiguous prior ${REQUIRED_GATE_NAME} run metadata; refusing to preserve." >&2
+            exit 1
+          fi
+
           prior_status=""
           prior_conclusion=""
-          IFS=$'\t' read -r prior_status prior_conclusion <<< "${prior_state}"
+          if ((${#authoritative_rows[@]} > 0)); then
+            prior_row="$(printf '%s\n' "${authoritative_rows[@]}" | LC_ALL=C sort -t $'\t' -k1,1 | tail -n 1)"
+          elif ((${#pending_rows[@]} > 0)); then
+            prior_row="$(printf '%s\n' "${pending_rows[@]}" | LC_ALL=C sort -t $'\t' -k1,1 | tail -n 1)"
+          else
+            prior_row=$'none\tnone\t'
+          fi
+          IFS=$'\t' read -r _prior_sort prior_status prior_conclusion <<< "${prior_row}"
           if [ "${prior_status}" = "completed" ]; then
             if [ "${prior_conclusion}" = "success" ]; then
               exit 0

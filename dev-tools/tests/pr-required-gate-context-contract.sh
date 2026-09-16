@@ -127,6 +127,10 @@ while IFS='|' read -r workflow gate_job_id gate; do
     echo "$workflow $gate caller must retain checks: read" >&2
     exit 1
   }
+  grep -Fq '      actions: read' <<<"$gate_block" || {
+    echo "$workflow $gate caller must retain actions: read for job-step classification" >&2
+    exit 1
+  }
   grep -Fq '      contents: read' <<<"$gate_block" || {
     echo "$workflow $gate caller must retain contents: read" >&2
     exit 1
@@ -262,6 +266,30 @@ cat >"$tmp_dir/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 count_file="${GH_RETRY_COUNT_FILE:?}"
+if [[ "$*" == *"/actions/jobs/"* ]]; then
+  job_endpoint="${!#}"
+  job_id="${job_endpoint##*/}"
+  metadata=false
+  if [[ "${GH_SCENARIO:-}" == "multiple-metadata" ]] ||
+    [[ "${GH_SCENARIO:-}" == "latest-pending-preferred" && "${job_id}" == "101" ]]; then
+    metadata=true
+  fi
+  if [[ "${metadata}" == "true" ]]; then
+    case "${GH_SCENARIO}:${job_id}" in
+      multiple-metadata:100) preserve_conclusion=success ;;
+      multiple-metadata:101) preserve_conclusion=failure ;;
+      multiple-metadata:102) preserve_conclusion=timed_out ;;
+      multiple-metadata:103) preserve_conclusion=cancelled ;;
+      *) preserve_conclusion=success ;;
+    esac
+    printf '{"steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","conclusion":"%s"}]}\n' "$preserve_conclusion"
+  else
+    cat <<'JSON'
+{"steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","conclusion":"skipped"}]}
+JSON
+  fi
+  exit 0
+fi
 if [[ "$*" != *"/repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs"* ]]; then
   echo "simulated gh api call did not target the pull request head check-runs endpoint" >&2
   exit 90
@@ -288,22 +316,22 @@ case "${GH_SCENARIO:-failure-retry}" in
   latest-pending-preferred)
     if [[ "$count" -eq 1 ]]; then
       cat <<'JSON'
-[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"completed","conclusion":"success","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"},{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/101","status":"in_progress","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]
+[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"},{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"in_progress","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]
 JSON
     else
       cat <<'JSON'
-[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"completed","conclusion":"success","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"},{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/101","status":"completed","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]
+[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"},{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"completed","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]
 JSON
     fi
     ;;
   pending-predecessor)
     if [[ "$count" -eq 1 ]]; then
       cat <<'JSON'
-[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"in_progress","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]
+[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"in_progress","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]
 JSON
     else
       cat <<'JSON'
-[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"completed","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]
+[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]
 JSON
     fi
     ;;
@@ -314,19 +342,22 @@ JSON
     if [[ "$count" -eq 1 ]]; then
       printf '[{"check_runs":[]}]\n'
     elif [[ "$count" -eq 2 ]]; then
-      printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"in_progress","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+      printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"in_progress","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     else
-      printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"completed","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+      printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     fi
     ;;
   failed-predecessor)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"completed","conclusion":"failure","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"failure","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   newer-failure-over-success)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:50:00Z","created_at":"2026-07-30T00:50:00Z"},{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/101","status":"completed","conclusion":"failure","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:50:00Z","created_at":"2026-07-30T01:50:00Z"}]}]\n'
+    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:50:00Z","created_at":"2026-07-30T00:50:00Z"},{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"completed","conclusion":"failure","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:50:00Z","created_at":"2026-07-30T01:50:00Z"}]}]\n'
+    ;;
+  multiple-metadata)
+    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:50:00Z","created_at":"2026-07-30T00:50:00Z"},{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"completed","conclusion":"failure","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:50:00Z","created_at":"2026-07-30T01:50:00Z"},{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/102/job/102","status":"completed","conclusion":"timed_out","completed_at":"2026-07-30T03:00:00Z","started_at":"2026-07-30T02:50:00Z","created_at":"2026-07-30T02:50:00Z"},{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/103/job/103","status":"completed","conclusion":"cancelled","completed_at":"2026-07-30T04:00:00Z","started_at":"2026-07-30T03:50:00Z","created_at":"2026-07-30T03:50:00Z"}]}]\n'
     ;;
   self-run-excluded)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"completed","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/999/job/1","status":"completed","conclusion":"failure","started_at":"2026-07-30T02:00:00Z","created_at":"2026-07-30T02:00:00Z"}]}]\n'
+    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/999/job/1","status":"completed","conclusion":"failure","started_at":"2026-07-30T02:00:00Z","created_at":"2026-07-30T02:00:00Z"}]}]\n'
     ;;
   alternate-pending)
     case "$count" in
@@ -340,10 +371,10 @@ JSON
     else
       conclusion=null
     fi
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"%s","conclusion":%s,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n' "$status" "$conclusion"
+    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"%s","conclusion":%s,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n' "$status" "$conclusion"
     ;;
   timeout-pending)
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"waiting","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"waiting","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   failure-retry)
     case "${GH_FAILURE_MODE:-transient}" in
@@ -376,7 +407,7 @@ JSON
         exit 91
         ;;
     esac
-    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100","status":"completed","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   *)
     echo "unknown simulated gh scenario" >&2
@@ -593,6 +624,24 @@ set -e
 }
 grep -Fq 'Timed out waiting for a prior' "$no_prior_output" || {
   echo "required-gate action did not clearly report the missing prior-run timeout" >&2
+  exit 1
+}
+
+multiple_metadata_output="$tmp_dir/multiple-metadata-output"
+set +e
+run_action "$tmp_dir/count-multiple-metadata" none multiple-metadata >"$multiple_metadata_output" 2>&1
+multiple_metadata_status=$?
+set -e
+[[ "$multiple_metadata_status" -ne 0 ]] || {
+  echo "required-gate action accepted metadata-preservation runs without a prior full gate" >&2
+  exit 1
+}
+[[ "$(<"$tmp_dir/count-multiple-metadata")" == "$max_attempts" ]] || {
+  echo "required-gate action did not keep polling when only metadata-preservation runs were visible" >&2
+  exit 1
+}
+grep -Fq 'Timed out waiting for a prior' "$multiple_metadata_output" || {
+  echo "required-gate action did not report the missing prior full gate with multiple metadata runs" >&2
   exit 1
 }
 
