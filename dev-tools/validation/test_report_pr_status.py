@@ -149,7 +149,8 @@ class PrStatusReporterTest(unittest.TestCase):
             "body": (
                 "<!-- firemud:cloc-report:start -->\n"
                 '<!-- firemud:cloc-report:metadata {"base_oid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",'
-                '"classifier_sha256":null,"head_oid":"0123456789abcdef0123456789abcdef01234567",'
+                '"classifier_sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",'
+                '"head_oid":"0123456789abcdef0123456789abcdef01234567",'
                 '"merge_base":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"} -->\n'
                 "### FireMUD LOC impact\n"
                 "<!-- firemud:cloc-report:end -->"
@@ -636,6 +637,34 @@ class PrStatusReporterTest(unittest.TestCase):
         ):
             report = self.reporter.build_report("owner/repo", 42)
         self.assertEqual(report["loc_metadata"]["status"], "ambiguous")
+
+    def test_loc_metadata_requires_classifier_digest(self) -> None:
+        for classifier in ("absent", None, "not-a-digest", "c" * 63, "g" * 64):
+            github = self.github_payload()
+            metadata_line = github["body"].splitlines()[1]
+            metadata = json.loads(
+                metadata_line.removeprefix("<!-- firemud:cloc-report:metadata ").removesuffix(" -->")
+            )
+            if classifier == "absent":
+                del metadata["classifier_sha256"]
+            else:
+                metadata["classifier_sha256"] = classifier
+            github["body"] = (
+                "<!-- firemud:cloc-report:start -->\n"
+                "<!-- firemud:cloc-report:metadata "
+                + json.dumps(metadata, separators=(",", ":"))
+                + " -->\n"
+                "### FireMUD LOC impact\n"
+                "<!-- firemud:cloc-report:end -->"
+            )
+            with self.subTest(classifier=classifier), patch.object(
+                self.reporter.subprocess,
+                "run",
+                side_effect=self.provider_responses(checker_ok=True, github_payload=github),
+            ):
+                report = self.reporter.build_report("owner/repo", 42)
+            self.assertEqual(report["loc_metadata"]["status"], "ambiguous")
+            self.assertIn("invalid classifier digest", report["loc_metadata"]["reason"])
 
     def test_loc_metadata_fails_closed_when_valid_and_malformed_markers_coexist(self) -> None:
         github = self.github_payload()

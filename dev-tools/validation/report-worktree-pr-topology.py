@@ -522,10 +522,6 @@ def selected_chain(
                 pending.append((child, current_depth + 1))
             elif prior[0]["head_branch"] != child["head_branch"] or prior[0]["head_sha"] != child["head_sha"]:
                 errors.append(f"PR #{child['number']} has conflicting branch/SHA identities")
-        if len(discovered) > MAX_CHAIN_PRS:
-            errors.append(f"selected stack exceeds the {MAX_CHAIN_PRS}-PR bound")
-            break
-
     head_branch_groups: dict[str, list[int]] = {}
     for pr, _relation, _evidence, _depth in discovered.values():
         head_branch_groups.setdefault(pr["head_branch"], []).append(pr["number"])

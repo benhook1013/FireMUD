@@ -326,7 +326,7 @@ jobs:
       - name: 🐍 Set Up Python
         uses: ./.github/actions/setup-python
         with:
-          requirements: smoke
+          requirements: none
 
       - name: 🧭 Validate documented dev-tool paths and links
         run: bash ./dev-tools/tests/dev-tools-readme-contract.sh

@@ -707,13 +707,10 @@ def _loc_metadata_freshness(
         "current_merge_base": current_merge_base,
         "merge_base_checked": merge_base_checked,
     }
-    if "classifier_sha256" in metadata:
-        classifier = metadata["classifier_sha256"]
-        if classifier is not None and (
-            not isinstance(classifier, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", classifier)
-        ):
-            return {"status": "ambiguous", "reason": "PR body LOC metadata has an invalid classifier digest"}
-        result["classifier_sha256"] = classifier
+    classifier = metadata.get("classifier_sha256")
+    if not isinstance(classifier, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", classifier):
+        return {"status": "ambiguous", "reason": "PR body LOC metadata has an invalid classifier digest"}
+    result["classifier_sha256"] = classifier
     if reasons:
         result["reason"] = "; ".join(reasons)
     return result
