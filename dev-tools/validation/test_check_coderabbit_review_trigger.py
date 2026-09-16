@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -522,6 +523,67 @@ Your included review limit is currently reached under our [Fair Usage Limits Pol
 
         self.assertEqual((state.state, state.attributed), ("ambiguous", False))
 
+    def test_timed_out_retired_predecessor_requires_original_timeout_evidence(self) -> None:
+        current_record = fresh_record()
+        comments = [
+            trigger_comment(),
+            fresh_trigger_comment(),
+            comment(
+                21,
+                "coderabbitai",
+                "Full review triggered",
+                "2026-09-14T02:00:01Z",
+            ),
+        ]
+        current_payload = payload(comments, head=FRESH_HEAD)
+        archive = retired_archive_record(evidence_state="timed_out")
+        archive["timeout"] = timed_out_record()["timeout"]
+        with tempfile.TemporaryDirectory() as directory:
+            record_path = Path(directory) / "trigger.json"
+            record_path.write_text(json.dumps(current_record), encoding="utf-8")
+            archive_path = Path(directory) / "trigger-10.json"
+            archive_path.write_text(json.dumps(archive), encoding="utf-8")
+
+            valid_state = CHECKER.trigger_state(
+                REPO, PR, current_payload, current_record, record_path
+            )
+            archive["timeout"] = {"at": "2026-09-14T01:30:00Z"}
+            archive_path.write_text(json.dumps(archive), encoding="utf-8")
+            invalid_state = CHECKER.trigger_state(
+                REPO, PR, current_payload, current_record, record_path
+            )
+
+        self.assertEqual(
+            (valid_state.state, valid_state.response_id, valid_state.attributed),
+            ("active", 21, True),
+        )
+        self.assertEqual((invalid_state.state, invalid_state.attributed), ("ambiguous", False))
+
+    def test_retired_predecessor_requires_a_nonempty_live_url(self) -> None:
+        current_record = fresh_record()
+        archive = retired_archive_record()
+        for live_url in (None, "", [], {}):
+            with self.subTest(live_url=live_url):
+                predecessor = trigger_comment()
+                predecessor["url"] = live_url
+                comments = [predecessor, fresh_trigger_comment()]
+                with tempfile.TemporaryDirectory() as directory:
+                    record_path = Path(directory) / "trigger.json"
+                    record_path.write_text(
+                        json.dumps(current_record), encoding="utf-8"
+                    )
+                    (Path(directory) / "trigger-10.json").write_text(
+                        json.dumps(archive), encoding="utf-8"
+                    )
+                    state = CHECKER.trigger_state(
+                        REPO,
+                        PR,
+                        payload(comments),
+                        current_record,
+                        record_path,
+                    )
+                self.assertEqual((state.state, state.attributed), ("ambiguous", False))
+
     def test_additional_unretired_predecessor_remains_ambiguous(self) -> None:
         current_record = fresh_record()
         comments = [
@@ -559,6 +621,13 @@ Your included review limit is currently reached under our [Fair Usage Limits Pol
             )
             malformed_path.unlink()
             self.assertEqual((state.state, state.attributed), ("ambiguous", False))
+            deep_path = root / "trigger-10.json"
+            deep_path.write_text("[" * 1200 + "]" * 1200, encoding="utf-8")
+            state = CHECKER.trigger_state(
+                REPO, PR, payload(comments), current_record, record_path
+            )
+            deep_path.unlink()
+            self.assertEqual((state.state, state.attributed), ("ambiguous", False))
             for archive_name in ("trigger-10.json.bak", "trigger-010.json"):
                 with self.subTest(archive_name=archive_name):
                     archive_path = root / archive_name
@@ -577,7 +646,16 @@ Your included review limit is currently reached under our [Fair Usage Limits Pol
             state = CHECKER.trigger_state(
                 REPO, PR, payload(comments), current_record, record_path
             )
+            symlink_path.unlink()
             outside.unlink()
+            fifo_path = root / "trigger-10.json"
+            if hasattr(os, "mkfifo"):
+                os.mkfifo(fifo_path)
+                state = CHECKER.trigger_state(
+                    REPO, PR, payload(comments), current_record, record_path
+                )
+                fifo_path.unlink()
+                self.assertEqual((state.state, state.attributed), ("ambiguous", False))
 
         self.assertEqual((state.state, state.attributed), ("ambiguous", False))
 

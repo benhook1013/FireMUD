@@ -1130,22 +1130,52 @@ def load_trigger_record(path: str, repo: str, pr_number: int) -> dict[str, Any]:
 ARCHIVED_TRIGGER_RECORD_PATTERN = re.compile(r"^trigger-([1-9][0-9]*)\.json$")
 
 
-def read_json_regular_file(path: Path) -> dict[str, Any] | None:
+TIMED_OUT_TRIGGER_REASON = "bounded wait expired before a terminal CodeRabbit response"
+
+
+def valid_timeout_evidence(record: dict[str, Any]) -> bool:
+    """Validate the persisted bounded-wait timeout shape used by trigger_state."""
+
+    timeout = record.get("timeout")
+    if not isinstance(timeout, dict):
+        return False
+    timeout_at = timeout.get("at")
+    try:
+        return (
+            isinstance(timeout_at, str)
+            and parse_timestamp(timeout_at) is not None
+            and timeout.get("observed_state") in {"awaiting_response", "active"}
+            and timeout.get("reason") == TIMED_OUT_TRIGGER_REASON
+        )
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
+def read_json_regular_file(
+    path: Path, *, directory_fd: int | None = None
+) -> dict[str, Any] | None:
     """Read one regular JSON file without following a symbolic link."""
 
     descriptor = -1
     try:
-        descriptor = os.open(
-            path,
-            os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0),
+        flags = (
+            os.O_RDONLY
+            | os.O_CLOEXEC
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0)
         )
+        open_path: str | Path = path.name if directory_fd is not None else path
+        if directory_fd is None:
+            descriptor = os.open(open_path, flags)
+        else:
+            descriptor = os.open(open_path, flags, dir_fd=directory_fd)
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             return None
         with os.fdopen(descriptor, "r", encoding="utf-8") as archive_file:
             descriptor = -1
             value = json.load(archive_file)
         return value if isinstance(value, dict) else None
-    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+    except (OSError, TypeError, ValueError, RecursionError, json.JSONDecodeError):
         return None
     finally:
         if descriptor != -1:
@@ -1160,36 +1190,49 @@ def load_archived_trigger_records(
     if current_record_path is None:
         return {}
     parent = Path(current_record_path).parent
+    directory_fd = -1
     try:
         parent_stat = parent.lstat()
-    except OSError:
-        return {}
-    if (
-        stat.S_ISLNK(parent_stat.st_mode)
-        or not stat.S_ISDIR(parent_stat.st_mode)
-        or parent_stat.st_mode & 0o077
-    ):
-        return {}
+        if (
+            stat.S_ISLNK(parent_stat.st_mode)
+            or not stat.S_ISDIR(parent_stat.st_mode)
+            or parent_stat.st_mode & 0o077
+        ):
+            return {}
+        directory_flags = (
+            os.O_RDONLY
+            | os.O_CLOEXEC
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        directory_fd = os.open(parent, directory_flags)
+        opened_parent_stat = os.fstat(directory_fd)
+        if (
+            not stat.S_ISDIR(opened_parent_stat.st_mode)
+            or opened_parent_stat.st_mode & 0o077
+            or (
+                opened_parent_stat.st_dev,
+                opened_parent_stat.st_ino,
+            )
+            != (parent_stat.st_dev, parent_stat.st_ino)
+        ):
+            return {}
 
-    archived: dict[int, dict[str, Any]] = {}
-    try:
-        entries = parent.iterdir()
+        archived: dict[int, dict[str, Any]] = {}
+        entries = os.listdir(directory_fd)
         for entry in entries:
-            match = ARCHIVED_TRIGGER_RECORD_PATTERN.fullmatch(entry.name)
+            match = ARCHIVED_TRIGGER_RECORD_PATTERN.fullmatch(entry)
             if match is None:
                 continue
-            try:
-                entry_stat = entry.lstat()
-            except OSError:
-                continue
-            if stat.S_ISLNK(entry_stat.st_mode) or not stat.S_ISREG(entry_stat.st_mode):
-                continue
-            record = read_json_regular_file(entry)
+            record = read_json_regular_file(Path(entry), directory_fd=directory_fd)
             if record is not None:
                 archived[int(match.group(1))] = record
-    except OSError:
+        return archived
+    except (OSError, TypeError, ValueError):
         return {}
-    return archived
+    finally:
+        if directory_fd != -1:
+            os.close(directory_fd)
 
 
 def retired_archive_matches(
@@ -1202,6 +1245,8 @@ def retired_archive_matches(
     """Validate one archived retirement record against its live predecessor."""
 
     try:
+        if not isinstance(archive, dict) or not isinstance(live_comment, dict):
+            return False
         if (
             type(archive.get("schema_version")) is not int
             or archive.get("schema_version") != 1
@@ -1245,7 +1290,9 @@ def retired_archive_matches(
         live_url = live_comment.get("url")
         live_created_dt = parse_timestamp(live_created_at)
         if (
-            live_id != trigger_id
+            not isinstance(live_url, str)
+            or not live_url
+            or live_id != trigger_id
             or REVIEW_COMMAND_TYPES.get(
                 normalize_command(live_comment.get("body") or "")
             )
@@ -1255,7 +1302,7 @@ def retired_archive_matches(
             or trigger_created_at != live_created_at
         ):
             return False
-        if isinstance(live_url, str) and live_url and trigger_url != live_url:
+        if trigger_url != live_url:
             return False
 
         retirement = archive.get("retirement")
@@ -1299,7 +1346,17 @@ def retired_archive_matches(
             or evidence["current_head_sha"].casefold() != expected_head.casefold()
         ):
             return False
-    except (TypeError, ValueError, OverflowError):
+        if evidence["state"] == "timed_out" and not valid_timeout_evidence(archive):
+            return False
+    except (
+        AttributeError,
+        IndexError,
+        KeyError,
+        TypeError,
+        ValueError,
+        OverflowError,
+        RecursionError,
+    ):
         return False
     return True
 
@@ -1626,15 +1683,9 @@ def trigger_state(
                 reason="a later review trigger arrived before an attributable response",
             )
         if record.get("status") == "timed_out":
-            timeout = record.get("timeout")
-            if (
-                not isinstance(timeout, dict)
-                or parse_timestamp(timeout.get("at")) is None
-                or timeout.get("observed_state") not in {"awaiting_response", "active"}
-                or timeout.get("reason")
-                != "bounded wait expired before a terminal CodeRabbit response"
-            ):
+            if not valid_timeout_evidence(record):
                 raise ValueError("timed-out trigger record has invalid timeout evidence")
+            timeout = record["timeout"]
             timeout_reason = (
                 timeout.get("reason")
                 if isinstance(timeout, dict)
@@ -1778,16 +1829,8 @@ def retire_trigger_record(
         raise ValueError(
             "trigger record is not a posted or persisted bounded-wait trigger; retirement is manual"
         )
-    if record_status == "timed_out":
-        timeout = record.get("timeout")
-        if (
-            not isinstance(timeout, dict)
-            or parse_timestamp(timeout.get("at")) is None
-            or timeout.get("observed_state") not in {"awaiting_response", "active"}
-            or timeout.get("reason")
-            != "bounded wait expired before a terminal CodeRabbit response"
-        ):
-            raise ValueError("timed-out trigger record has invalid timeout evidence")
+    if record_status == "timed_out" and not valid_timeout_evidence(record):
+        raise ValueError("timed-out trigger record has invalid timeout evidence")
     summary = summarize(repo, pr_number, payload)
     state = trigger_state(repo, pr_number, payload, record, path)
     if state.trigger_comment_id != trigger_id:
