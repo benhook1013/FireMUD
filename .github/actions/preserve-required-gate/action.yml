@@ -196,8 +196,7 @@ runs:
                     (.status // "__missing__"),
                     (.conclusion // "__null__"),
                     (.completed_at // "__null__"),
-                    (.started_at // "__null__"),
-                    (.created_at // "__null__")
+                    (.started_at // "__null__")
                   ]
                 | @tsv' <<<"${check_runs_json}" 2>>"${api_error_file}")"
           query_status=$?
@@ -211,8 +210,8 @@ runs:
           pending_rows=()
           job_lookup_retryable=false
           candidate_ambiguous=false
-          while IFS=$'\t' read -r app_slug check_name details_url check_run_id check_status conclusion completed_at started_at created_at; do
-            if [[ -z "${app_slug}${check_name}${details_url}${check_run_id}${check_status}${conclusion}${completed_at}${started_at}${created_at}" ]]; then
+          while IFS=$'\t' read -r app_slug check_name details_url check_run_id check_status conclusion completed_at started_at; do
+            if [[ -z "${app_slug}${check_name}${details_url}${check_run_id}${check_status}${conclusion}${completed_at}${started_at}" ]]; then
               continue
             fi
             if [[ "${app_slug}" != "github-actions" ||
@@ -228,7 +227,6 @@ runs:
             [[ "${conclusion}" == "__null__" ]] && conclusion=""
             [[ "${completed_at}" == "__null__" ]] && completed_at=""
             [[ "${started_at}" == "__null__" ]] && started_at=""
-            [[ "${created_at}" == "__null__" ]] && created_at=""
             if [[ ! "${details_url}" =~ /actions/runs/([0-9]+)/job/([0-9]+)$ ]]; then
               candidate_ambiguous=true
               continue
@@ -388,10 +386,9 @@ runs:
                   *) candidate_ambiguous=true; continue ;;
                 esac
                 if [[ -n "${conclusion}" && -n "${completed_at}" &&
-                  -n "${started_at}" && -n "${created_at}" ]] &&
+                  -n "${started_at}" ]] &&
                   is_github_timestamp "${completed_at}" &&
-                  is_github_timestamp "${started_at}" &&
-                  is_github_timestamp "${created_at}"; then
+                  is_github_timestamp "${started_at}"; then
                   if [[ "${conclusion}" != "cancelled" &&
                     "${conclusion}" != "skipped" &&
                     "${conclusion}" != "stale" ]]; then
@@ -403,9 +400,8 @@ runs:
                 ;;
               queued|in_progress|requested|waiting|pending)
                 if [[ -z "${conclusion}" && -z "${completed_at}" &&
-                  -n "${started_at}" && -n "${created_at}" ]] &&
-                  is_github_timestamp "${started_at}" &&
-                  is_github_timestamp "${created_at}"; then
+                  -n "${started_at}" ]] &&
+                  is_github_timestamp "${started_at}"; then
                   pending_rows+=("${started_at}"$'\t'"${workflow_run_id}"$'\t'"${check_run_id}"$'\t'"${job_id}"$'\tpending\t'"${check_status}")
                 else
                   candidate_ambiguous=true

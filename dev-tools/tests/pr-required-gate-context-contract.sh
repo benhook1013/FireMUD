@@ -469,6 +469,9 @@ JSON
 JSON
     fi
     ;;
+  missing-created-at)
+    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z"}]}]\n'
+    ;;
   pending-predecessor)
     if [[ "$count" -eq 1 ]]; then
       cat <<'JSON'
@@ -752,6 +755,13 @@ successful_predecessor_count="$tmp_dir/count-successful-predecessor-preferred"
 run_action "$successful_predecessor_count" none latest-pending-preferred
 [[ "$(<"$successful_predecessor_count")" == "1" ]] || {
   echo "required-gate action did not preserve an existing success while a concurrent run was pending" >&2
+  exit 1
+}
+
+missing_created_at_count="$tmp_dir/count-missing-created-at"
+run_action "$missing_created_at_count" none missing-created-at
+[[ "$(<"$missing_created_at_count")" == "1" ]] || {
+  echo "required-gate action rejected a valid check-run without created_at while preserving an existing success" >&2
   exit 1
 }
 

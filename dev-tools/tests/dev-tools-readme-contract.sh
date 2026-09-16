@@ -129,6 +129,18 @@ for readme in readmes:
         if not token.endswith("/"):
             tracked_file(readme.parent / token, readme)
 
+    if readme == root / "dev-tools/README.md":
+        prerequisite = (
+            "The `report-pr-status.py` and `report-worktree-pr-topology.sh` entrypoints "
+            "require GitHub CLI `gh` >= 2.63.0 "
+            "because they request the `baseRefOid` field; the repository workflow pin is "
+            "`GH_VERSION=2.76.2`."
+        )
+        if prerequisite not in text:
+            raise SystemExit(
+                f"{readme}: reporter GitHub CLI/baseRefOid prerequisite note is missing"
+            )
+
 
 with tempfile.TemporaryDirectory() as fixture_dir:
     fixture_root = Path(fixture_dir)
