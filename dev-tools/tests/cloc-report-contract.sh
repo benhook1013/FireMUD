@@ -846,6 +846,34 @@ finally:
     cloc_report.require_tool = original_require_tool
     cloc_report.run_command = original_run_command
 
+base_change_calls = []
+cloc_report.require_tool = lambda _name: None
+def fake_changed_base_command(args, _root, *, timeout=None):
+    base_change_calls.append(args)
+    assert timeout == cloc_report.REMOTE_COMMAND_TIMEOUT_SECONDS
+    if args[:3] != ("gh", "pr", "view"):
+        raise AssertionError("changed PR base must prevent merge-base computation and PR edit")
+    return subprocess.CompletedProcess(
+        args,
+        0,
+        stdout=json.dumps(
+            {"baseRefOid": "d" * 40, "headRefOid": "b" * 40, "body": "existing"}
+        ).encode(),
+        stderr=b"",
+    )
+cloc_report.run_command = fake_changed_base_command
+try:
+    try:
+        cloc_report.update_pull_request_body(repo, 2736, impact)
+    except cloc_report.ReportError as error:
+        assert "base changed" in str(error)
+    else:
+        raise AssertionError("changed PR base must block body update even when merge-base is unchanged")
+    assert len(base_change_calls) == 1
+finally:
+    cloc_report.require_tool = original_require_tool
+    cloc_report.run_command = original_run_command
+
 changed_merge_base_calls = []
 cloc_report.require_tool = lambda _name: None
 def fake_changed_merge_base_command(args, _root, *, timeout=None):
@@ -857,7 +885,7 @@ def fake_changed_merge_base_command(args, _root, *, timeout=None):
         args,
         0,
         stdout=json.dumps(
-            {"baseRefOid": "d" * 40, "headRefOid": "b" * 40, "body": "existing"}
+            {"baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "existing"}
         ).encode(),
         stderr=b"",
     )
@@ -918,7 +946,7 @@ def fake_stable_update_command(args, _root, *, timeout=None):
             args,
             0,
             stdout=json.dumps(
-                {"baseRefOid": "d" * 40, "headRefOid": "b" * 40, "body": "existing"}
+                {"baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "existing"}
             ).encode(),
             stderr=b"",
         )
@@ -941,7 +969,7 @@ try:
         number=2736,
         repository="example/example",
         base_ref="stack/base",
-        base_oid="d" * 40,
+        base_oid="a" * 40,
         head_ref="feature/forked",
         head_oid="b" * 40,
     )

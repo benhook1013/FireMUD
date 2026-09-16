@@ -976,10 +976,13 @@ def update_pull_request_body(root: Path, number: int, report: dict[str, object])
     head_ref = head.get("ref")
     if not isinstance(base_ref, str) or not base_ref or not isinstance(head_ref, str) or not head_ref:
         raise ReportError("PR report refs were malformed before body update")
+    counted_base = valid_object_id(base.get("oid"), "base")
     counted_merge_base = valid_object_id(base.get("merge_base"), "merge-base")
     counted_head = valid_object_id(head.get("oid"), "head")
 
     body, current_base, current_head = pull_request_update_state(root, number, repository)
+    if current_base != counted_base:
+        raise ReportError("PR base changed while the LOC report was being generated; refusing body update")
     if current_head != counted_head:
         raise ReportError("PR head changed while the LOC report was being generated; refusing body update")
     current_metadata = PullRequestMetadata(
