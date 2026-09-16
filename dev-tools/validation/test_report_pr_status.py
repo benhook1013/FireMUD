@@ -687,6 +687,26 @@ class PrStatusReporterTest(unittest.TestCase):
         self.assertEqual(report["loc_metadata"]["status"], "fresh")
         self.assertTrue(report["loc_metadata"]["merge_base_checked"])
 
+    def test_loc_metadata_rejects_inline_copy_when_exact_marker_is_outside_block(self) -> None:
+        github = self.github_payload()
+        valid_marker = github["body"].splitlines()[1]
+        github["body"] = (
+            f"{valid_marker}\n"
+            "<!-- firemud:cloc-report:start -->\n"
+            f"copy: {valid_marker}\n"
+            "<!-- firemud:cloc-report:end -->"
+        )
+
+        result = self.reporter._loc_metadata_freshness(
+            github["body"],
+            github["baseRefOid"],
+            github["headRefOid"],
+            "b" * 40,
+        )
+
+        self.assertEqual(result["status"], "ambiguous")
+        self.assertIn("outside the marked report block", result["reason"])
+
     def test_null_loc_body_is_reported_as_missing(self) -> None:
         github = self.github_payload()
         github["body"] = None

@@ -4,13 +4,13 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: report-worktree-pr-topology.sh [--repo OWNER/REPO] [--include-renovate]
+Usage: report-worktree-pr-topology.sh [--repo OWNER/REPO] [--include-renovate] [--json]
        report-worktree-pr-topology.sh --pr N [--repo OWNER/REPO] [--include-renovate] [--json]
 
 Reports local worktrees and branches alongside open GitHub pull requests. Renovate
 pull requests are excluded by default so active product lanes are easy to inspect.
 Use --pr for a bounded exact branch/SHA selected-stack report; --json emits the
-machine-readable form for either inventory mode.
+machine-readable form for either inventory or selected-stack mode.
 EOF
 }
 

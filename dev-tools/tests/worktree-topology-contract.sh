@@ -221,6 +221,9 @@ jq -e '.status == "ok" and (.chain | map(.number) | index(45) != null)' <<<"$sel
 jq -e '.omitted_renovate == []' <<<"$selected_renovate_json" >/dev/null
 
 help_output="$(bash "$SCRIPT" --help)"
+grep -Fqx 'Usage: report-worktree-pr-topology.sh [--repo OWNER/REPO] [--include-renovate] [--json]' <<<"$help_output"
+grep -Fqx '       report-worktree-pr-topology.sh --pr N [--repo OWNER/REPO] [--include-renovate] [--json]' <<<"$help_output"
+grep -Fqx 'machine-readable form for either inventory or selected-stack mode.' <<<"$help_output"
 grep -Fq -- '--json' <<<"$help_output"
 grep -Fq -- '--include-renovate' <<<"$help_output"
 grep -Fq -- '--pr N' <<<"$help_output"
