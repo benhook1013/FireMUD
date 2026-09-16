@@ -1011,8 +1011,10 @@ jobs:
           fi
 
           echo "Dev Tools README Contract => $DEV_TOOLS_README_CONTRACT"
-          if [ "$DEV_TOOLS_README_CONTRACT" != "success" ] && [ "$DEV_TOOLS_README_CONTRACT" != "skipped" ]; then
-            failed=1
+          if [ "$LIGHTWEIGHT_ONLY" = "true" ] || [ "$DEV_TOOLS_README_CONTRACT" != "skipped" ]; then
+            if [ "$DEV_TOOLS_README_CONTRACT" != "success" ]; then
+              failed=1
+            fi
           fi
 
           echo "Validate Documentation => $DOCS_CHECK"
