@@ -303,3 +303,68 @@ over_one_hundred_human="$(cd "$SELECTED_REPO" && PATH="$LIMIT_BIN:$SELECTED_BIN:
 grep -Fqx $'143\tfeature/beyond-one-hundred\tfeature/head\tCLEAN\tDependent beyond one hundred\thttps://example.test/pr/143' <<<"$over_one_hundred_human"
 
 echo "paginated topology inventory contract checks passed"
+
+FANOUT_BIN="$TEMP_DIR/fanout-bin"
+mkdir -p "$FANOUT_BIN"
+cat > "$FANOUT_BIN/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$1 $2" == "pr list" ]]; then
+  python3 - <<'PY'
+import json
+
+selected = {
+    "number": 42,
+    "headRefName": "feature/head",
+    "headRefOid": "b" * 40,
+    "baseRefName": "develop",
+    "baseRefOid": "c" * 40,
+    "headRepository": {"nameWithOwner": "owner/repo"},
+    "headRepositoryOwner": {"login": "owner"},
+    "changedFiles": 3,
+    "mergeable": "MERGEABLE",
+    "mergeStateStatus": "CLEAN",
+    "title": "Selected",
+    "url": "https://example.test/pr/42",
+    "isDraft": False,
+}
+prs = [selected]
+for number in range(1000, 1051):
+    prs.append(
+        {
+            "number": number,
+            "headRefName": f"feature/child-{number}",
+            "headRefOid": f"{number:040x}",
+            "baseRefName": "feature/head",
+            "baseRefOid": "b" * 40,
+            "headRepository": {"nameWithOwner": "owner/repo"},
+            "headRepositoryOwner": {"login": "owner"},
+            "changedFiles": 1,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "title": "Fanout child",
+            "url": f"https://example.test/pr/{number}",
+            "isDraft": False,
+        }
+    )
+print(json.dumps(prs))
+PY
+  exit 0
+fi
+if [[ "$1 $2" == "pr view" ]]; then
+  cat <<'PR'
+{"state":"OPEN","number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"nameWithOwner":"owner/repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false}
+PR
+  exit 0
+fi
+echo "unexpected gh invocation: $*" >&2
+exit 1
+EOF
+chmod +x "$FANOUT_BIN/gh"
+if fanout_json="$(cd "$SELECTED_REPO" && PATH="$FANOUT_BIN:$SELECTED_BIN:$PATH" bash "$SCRIPT" --repo owner/repo --pr 42 --json)"; then
+  :
+fi
+jq -e '.status == "ambiguous" and (.chain | length) == 50 and (.errors | index("selected stack exceeds the 50-PR bound") != null)' <<<"$fanout_json" >/dev/null
+
+echo "wide fanout topology bound contract checks passed"

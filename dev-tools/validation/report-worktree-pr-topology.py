@@ -413,6 +413,23 @@ def selected_chain(
     discovered: dict[int, tuple[dict[str, Any], str, dict[str, Any] | None, int]] = {
         selected["number"]: (selected, "selected", None, 0)
     }
+
+    def discover(
+        pr: dict[str, Any],
+        relation: str,
+        relation_evidence: dict[str, Any] | None,
+        depth: int,
+    ) -> bool:
+        if pr["number"] in discovered:
+            return True
+        if len(discovered) >= MAX_CHAIN_PRS:
+            message = f"selected stack exceeds the {MAX_CHAIN_PRS}-PR bound"
+            if message not in errors:
+                errors.append(message)
+            return False
+        discovered[pr["number"]] = (pr, relation, relation_evidence, depth)
+        return True
+
     same_repository_prs = [
         pr for pr in open_prs if pr["head_repository"].casefold() == repo.casefold()
         and (include_renovate or not pr["head_branch"].startswith("renovate/"))
@@ -433,22 +450,21 @@ def selected_chain(
                 errors.append(
                     f"PR #{current['number']} base {current['base_branch']} SHA does not match PR #{base['number']} head"
                 )
-                discovered.setdefault(
-                    base["number"],
-                    (
-                        base,
-                        "base",
-                        {
-                            "branch_matches": True,
-                            "sha_matches": False,
-                            "expected_sha": current["base_sha"],
-                            "observed_sha": base["head_sha"],
-                        },
-                        current_depth + 1,
-                    ),
-                )
+                if not discover(
+                    base,
+                    "base",
+                    {
+                        "branch_matches": True,
+                        "sha_matches": False,
+                        "expected_sha": current["base_sha"],
+                        "observed_sha": base["head_sha"],
+                    },
+                    current_depth + 1,
+                ):
+                    break
             elif base["number"] not in discovered:
-                discovered[base["number"]] = (base, "base", None, current_depth + 1)
+                if not discover(base, "base", None, current_depth + 1):
+                    break
                 pending.append((base, current_depth + 1))
 
         child_branch_matches = [
@@ -461,24 +477,23 @@ def selected_chain(
                 errors.append(
                     f"PR #{child['number']} dependent base SHA does not match PR #{current['number']} head"
                 )
-                discovered.setdefault(
-                    child["number"],
-                    (
-                        child,
-                        "dependent",
-                        {
-                            "branch_matches": True,
-                            "sha_matches": False,
-                            "expected_sha": current["head_sha"],
-                            "observed_sha": child["base_sha"],
-                        },
-                        current_depth + 1,
-                    ),
-                )
+                if not discover(
+                    child,
+                    "dependent",
+                    {
+                        "branch_matches": True,
+                        "sha_matches": False,
+                        "expected_sha": current["head_sha"],
+                        "observed_sha": child["base_sha"],
+                    },
+                    current_depth + 1,
+                ):
+                    break
                 continue
             prior = discovered.get(child["number"])
             if prior is None:
-                discovered[child["number"]] = (child, "dependent", None, current_depth + 1)
+                if not discover(child, "dependent", None, current_depth + 1):
+                    break
                 pending.append((child, current_depth + 1))
             elif prior[0]["head_branch"] != child["head_branch"] or prior[0]["head_sha"] != child["head_sha"]:
                 errors.append(f"PR #{child['number']} has conflicting branch/SHA identities")

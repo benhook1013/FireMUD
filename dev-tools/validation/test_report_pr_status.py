@@ -637,6 +637,24 @@ class PrStatusReporterTest(unittest.TestCase):
             report = self.reporter.build_report("owner/repo", 42)
         self.assertEqual(report["loc_metadata"]["status"], "ambiguous")
 
+    def test_loc_metadata_fails_closed_when_valid_and_malformed_markers_coexist(self) -> None:
+        github = self.github_payload()
+        valid_marker = github["body"].splitlines()[1]
+        github["body"] = (
+            "<!-- firemud:cloc-report:start -->\n"
+            f"{valid_marker}\n"
+            "<!-- firemud:cloc-report:metadata missing-closing-marker\n"
+            "<!-- firemud:cloc-report:end -->"
+        )
+        with patch.object(
+            self.reporter.subprocess,
+            "run",
+            side_effect=self.provider_responses(checker_ok=True, github_payload=github),
+        ):
+            report = self.reporter.build_report("owner/repo", 42)
+        self.assertEqual(report["loc_metadata"]["status"], "ambiguous")
+        self.assertIn("multiple LOC metadata markers", report["loc_metadata"]["reason"])
+
     def test_loc_metadata_checks_current_base_and_merge_base_when_available(self) -> None:
         github = self.github_payload()
         github["baseRefOid"] = "d" * 40

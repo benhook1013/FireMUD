@@ -27,6 +27,7 @@ RUN_ID = re.compile(r"^run\.[A-Za-z0-9]{1,32}$")
 LOC_METADATA_LINE = re.compile(
     r"^<!-- firemud:cloc-report:metadata (?P<payload>\{.*\}) -->$"
 )
+LOC_METADATA_PREFIX = "<!-- firemud:cloc-report:metadata "
 TRIGGER_STATES = {
     "active",
     "ambiguous",
@@ -656,20 +657,21 @@ def _loc_metadata_freshness(
 ) -> dict[str, Any]:
     start_marker = "<!-- firemud:cloc-report:start -->"
     end_marker = "<!-- firemud:cloc-report:end -->"
-    marker_lines = [
-        match for line in body.splitlines() if (match := LOC_METADATA_LINE.fullmatch(line.strip()))
-    ]
+    marker_lines = [line.strip() for line in body.splitlines() if line.strip().startswith(LOC_METADATA_PREFIX)]
     if not marker_lines:
         return {"status": "missing", "reason": "PR body has no exact LOC metadata marker"}
     if len(marker_lines) != 1:
         return {"status": "ambiguous", "reason": "PR body has multiple LOC metadata markers"}
+    marker_line = LOC_METADATA_LINE.fullmatch(marker_lines[0])
+    if marker_line is None:
+        return {"status": "ambiguous", "reason": "PR body LOC metadata marker is malformed"}
     if body.count(start_marker) != 1 or body.count(end_marker) != 1:
         return {"status": "ambiguous", "reason": "PR body LOC marker block is incomplete or duplicated"}
-    marker_position = body.find(marker_lines[0].group(0))
+    marker_position = body.find(marker_lines[0])
     if not (body.find(start_marker) < marker_position < body.find(end_marker)):
         return {"status": "ambiguous", "reason": "LOC metadata marker is outside the marked report block"}
     try:
-        metadata = json.loads(marker_lines[0].group("payload"))
+        metadata = json.loads(marker_line.group("payload"))
     except json.JSONDecodeError:
         return {"status": "ambiguous", "reason": "PR body LOC metadata is not valid JSON"}
     if not isinstance(metadata, dict):
