@@ -121,3 +121,7 @@ Gameplay published #2750 at head `2980fd5` but retained a stale Hosted-blocked c
 ## Process incident — Hosted waiter lacked wake-capable sentinel (2026-09-15 20:02 NZST)
 
 During #2713 work, Gameplay left the canonical shell waiter armed but omitted the visible Luna sentinel required to notify the main task when Hosted completed or entered cooldown. Ben detected the lapse. Gameplay correctly identified that the shell waiter retained durable review-state responsibility but did not provide the expected task wake signal, and reported spawning the missing Luna sentinel. Treat this as another execution recurrence of the existing watcher rule, not a new design requirement; verify that future Hosted waits have one trigger-specific wake-capable sentinel when the main lane is continuing other work.
+
+## Process incident — premature CLI stop while Hosted pending (2026-09-16 12:58–12:59 NZST, Pacific/Auckland)
+
+On PR #2713, Gameplay stopped CLI after one round with 1 found / 0 accepted, although the preceding round was 4/4 and Hosted remained pending. Gameplay admitted that this stop was premature and unsupported by the repository rule. Correction: resume CLI and follow the existing ceiling of up to four consecutive 0/0 CLI rounds since the last accepted finding while Hosted is the blocker; Overseer judgment may stop earlier. The existing public guidance is adequate, so this execution incident is logged without churning public documentation. Public guidance/tooling change: none required.
