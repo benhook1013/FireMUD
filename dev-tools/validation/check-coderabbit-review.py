@@ -1127,11 +1127,189 @@ def load_trigger_record(path: str, repo: str, pr_number: int) -> dict[str, Any]:
     return record
 
 
+ARCHIVED_TRIGGER_RECORD_PATTERN = re.compile(r"^trigger-([1-9][0-9]*)\.json$")
+
+
+def read_json_regular_file(path: Path) -> dict[str, Any] | None:
+    """Read one regular JSON file without following a symbolic link."""
+
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0),
+        )
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return None
+        with os.fdopen(descriptor, "r", encoding="utf-8") as archive_file:
+            descriptor = -1
+            value = json.load(archive_file)
+        return value if isinstance(value, dict) else None
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+    finally:
+        if descriptor != -1:
+            os.close(descriptor)
+
+
+def load_archived_trigger_records(
+    current_record_path: str | Path | None,
+) -> dict[int, dict[str, Any]]:
+    """Load only canonical retired records beside the current private record."""
+
+    if current_record_path is None:
+        return {}
+    parent = Path(current_record_path).parent
+    try:
+        parent_stat = parent.lstat()
+    except OSError:
+        return {}
+    if (
+        stat.S_ISLNK(parent_stat.st_mode)
+        or not stat.S_ISDIR(parent_stat.st_mode)
+        or parent_stat.st_mode & 0o077
+    ):
+        return {}
+
+    archived: dict[int, dict[str, Any]] = {}
+    try:
+        entries = parent.iterdir()
+        for entry in entries:
+            match = ARCHIVED_TRIGGER_RECORD_PATTERN.fullmatch(entry.name)
+            if match is None:
+                continue
+            try:
+                entry_stat = entry.lstat()
+            except OSError:
+                continue
+            if stat.S_ISLNK(entry_stat.st_mode) or not stat.S_ISREG(entry_stat.st_mode):
+                continue
+            record = read_json_regular_file(entry)
+            if record is not None:
+                archived[int(match.group(1))] = record
+    except OSError:
+        return {}
+    return archived
+
+
+def retired_archive_matches(
+    archive: dict[str, Any],
+    live_comment: dict[str, Any],
+    repo: str,
+    pr_number: int,
+    archive_trigger_id: int,
+) -> bool:
+    """Validate one archived retirement record against its live predecessor."""
+
+    try:
+        if (
+            type(archive.get("schema_version")) is not int
+            or archive.get("schema_version") != 1
+            or archive.get("repository") != repo
+            or type(archive.get("pr_number")) is not int
+            or archive.get("pr_number") != pr_number
+            or archive.get("status") != "retired"
+        ):
+            return False
+        captured_head = archive.get("head_sha")
+        if not isinstance(captured_head, str) or not re.fullmatch(
+            r"[0-9a-fA-F]{40}", captured_head
+        ):
+            return False
+
+        trigger = archive.get("trigger")
+        if not isinstance(trigger, dict):
+            return False
+        trigger_id = trigger.get("id")
+        trigger_created_at = trigger.get("created_at")
+        trigger_url = trigger.get("url")
+        trigger_created_dt = (
+            parse_timestamp(trigger_created_at)
+            if isinstance(trigger_created_at, str)
+            else None
+        )
+        if (
+            type(trigger_id) is not int
+            or trigger_id <= 0
+            or trigger_id != archive_trigger_id
+            or trigger.get("type") != "full"
+            or trigger.get("command") != "@coderabbitai full review"
+            or trigger_created_dt is None
+            or not isinstance(trigger_url, str)
+            or not trigger_url
+        ):
+            return False
+
+        live_id = immutable_database_id(live_comment)
+        live_created_at = live_comment.get("createdAt")
+        live_url = live_comment.get("url")
+        live_created_dt = parse_timestamp(live_created_at)
+        if (
+            live_id != trigger_id
+            or REVIEW_COMMAND_TYPES.get(
+                normalize_command(live_comment.get("body") or "")
+            )
+            != "full"
+            or not isinstance(live_created_at, str)
+            or live_created_dt is None
+            or trigger_created_at != live_created_at
+        ):
+            return False
+        if isinstance(live_url, str) and live_url and trigger_url != live_url:
+            return False
+
+        retirement = archive.get("retirement")
+        if not isinstance(retirement, dict):
+            return False
+        retired_at = retirement.get("retired_at")
+        retirement_reason = retirement.get("reason")
+        retired_dt = (
+            parse_timestamp(retired_at) if isinstance(retired_at, str) else None
+        )
+        if (
+            retirement.get("action") != "operator_retire"
+            or retired_dt is None
+            or trigger_created_dt is None
+            or retired_dt < trigger_created_dt
+            or not isinstance(retirement_reason, str)
+        ):
+            return False
+        validate_retirement_reason(retirement_reason)
+        if type(retirement.get("trigger_comment_id")) is not int or retirement.get(
+            "trigger_comment_id"
+        ) != trigger_id:
+            return False
+
+        expected_head = retirement.get("expected_head_sha")
+        evidence = retirement.get("evidence")
+        if (
+            not isinstance(expected_head, str)
+            or not re.fullmatch(r"[0-9a-fA-F]{40}", expected_head)
+            or not isinstance(evidence, dict)
+            or evidence.get("state") not in {"active", "timed_out"}
+            or not isinstance(evidence.get("captured_head_sha"), str)
+            or not re.fullmatch(
+                r"[0-9a-fA-F]{40}", evidence["captured_head_sha"]
+            )
+            or evidence["captured_head_sha"].casefold() != captured_head.casefold()
+            or not isinstance(evidence.get("current_head_sha"), str)
+            or not re.fullmatch(
+                r"[0-9a-fA-F]{40}", evidence["current_head_sha"]
+            )
+            or evidence["current_head_sha"].casefold() != expected_head.casefold()
+        ):
+            return False
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return True
+
+
 def trigger_state(
     repo: str,
     pr_number: int,
     payload: dict[str, Any],
     record: dict[str, Any],
+    current_record_path: str | Path | None = None,
 ) -> TriggerState:
     pr = payload["data"]["repository"]["pullRequest"]
     current_head = pr["headRefOid"]
@@ -1302,38 +1480,58 @@ def trigger_state(
     )
 
     if prior_triggers:
-        prior_dt = max(prior_triggers, key=lambda item: item[0])[0]
-        prior_terminal = False
-        for comment in comments:
-            if (comment.get("author") or {}).get("login", "") != "coderabbitai":
-                continue
-            created_dt = parse_timestamp(comment.get("createdAt"))
-            if created_dt is None or not (prior_dt < created_dt < trigger_dt):
-                continue
-            body = comment.get("body") or ""
-            detection_body = (
-                body if REVIEW_LIMIT_MARKER in body else unquoted_body(body)
+        archived_records = load_archived_trigger_records(current_record_path)
+        prior_triggers.sort(key=lambda item: item[0])
+        for index, (prior_dt, prior_comment) in enumerate(prior_triggers):
+            prior_id = immutable_database_id(prior_comment)
+            archived = (
+                archived_records.get(prior_id) if prior_id is not None else None
             )
-            cooldown = parse_review_rate_limit_until(detection_body, created_dt)
             if (
-                is_substantive_review_body(body)
-                or NOOP_REVIEW_MARKER in body
-                or FAILED_REVIEW_PATTERN.search(unquoted_body(body))
-                or cooldown is not None
-                or is_finished_review_reply(body)
+                archived is not None
+                and prior_id is not None
+                and retired_archive_matches(
+                    archived, prior_comment, repo, pr_number, prior_id
+                )
             ):
-                prior_terminal = True
-        for review in (pr.get("reviews") or {}).get("nodes", []):
-            submitted_dt = parse_timestamp(review.get("submittedAt"))
-            if (
-                (review.get("author") or {}).get("login", "") == "coderabbitai"
-                and review.get("state") != "DISMISSED"
-                and submitted_dt is not None
-                and prior_dt < submitted_dt < trigger_dt
-                and is_substantive_review_body(review.get("body") or "")
-            ):
-                prior_terminal = True
-        if not prior_terminal:
+                continue
+            prior_end = (
+                prior_triggers[index + 1][0]
+                if index + 1 < len(prior_triggers)
+                else trigger_dt
+            )
+            prior_terminal = False
+            for comment in comments:
+                if (comment.get("author") or {}).get("login", "") != "coderabbitai":
+                    continue
+                created_dt = parse_timestamp(comment.get("createdAt"))
+                if created_dt is None or not (prior_dt < created_dt < prior_end):
+                    continue
+                body = comment.get("body") or ""
+                detection_body = (
+                    body if REVIEW_LIMIT_MARKER in body else unquoted_body(body)
+                )
+                cooldown = parse_review_rate_limit_until(detection_body, created_dt)
+                if (
+                    is_substantive_review_body(body)
+                    or NOOP_REVIEW_MARKER in body
+                    or FAILED_REVIEW_PATTERN.search(unquoted_body(body))
+                    or cooldown is not None
+                    or is_finished_review_reply(body)
+                ):
+                    prior_terminal = True
+            for review in (pr.get("reviews") or {}).get("nodes", []):
+                submitted_dt = parse_timestamp(review.get("submittedAt"))
+                if (
+                    (review.get("author") or {}).get("login", "") == "coderabbitai"
+                    and review.get("state") != "DISMISSED"
+                    and submitted_dt is not None
+                    and prior_dt < submitted_dt < prior_end
+                    and is_substantive_review_body(review.get("body") or "")
+                ):
+                    prior_terminal = True
+            if prior_terminal:
+                continue
             return TriggerState(
                 "ambiguous",
                 True,
@@ -1591,7 +1789,7 @@ def retire_trigger_record(
         ):
             raise ValueError("timed-out trigger record has invalid timeout evidence")
     summary = summarize(repo, pr_number, payload)
-    state = trigger_state(repo, pr_number, payload, record)
+    state = trigger_state(repo, pr_number, payload, record, path)
     if state.trigger_comment_id != trigger_id:
         raise ValueError("trigger identity does not match the durable record")
     current_head = payload["data"]["repository"]["pullRequest"].get("headRefOid")
@@ -1877,7 +2075,9 @@ def main() -> int:
             payload = load_payload(args.input, args.repo, args.pr)
             summary = summarize(args.repo, args.pr, payload)
             state = (
-                trigger_state(args.repo, args.pr, payload, record) if record else None
+                trigger_state(args.repo, args.pr, payload, record, args.trigger_record)
+                if record
+                else None
             )
             if not args.wait or state is None or state.terminal:
                 break
