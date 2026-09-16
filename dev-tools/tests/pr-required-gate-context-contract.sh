@@ -76,6 +76,7 @@ fi
 if ! grep -Fq 'GH_TOKEN: ${{ github.token }}' "$ACTION" ||
   ! grep -Fq 'HEAD_SHA: ${{ github.event.pull_request.head.sha }}' "$ACTION" ||
   ! grep -Fq 'REQUIRED_GATE_NAME: ${{ inputs.gate-name }}' "$ACTION" ||
+  ! grep -Fq 'PR_NUMBER: ${{ github.event.pull_request.number }}' "$ACTION" ||
   ! grep -Fq 'EXPECTED_WORKFLOW_NAME: ${{ inputs.workflow-name }}' "$ACTION" ||
   ! grep -Fq 'EXPECTED_WORKFLOW_FILE: ${{ inputs.workflow-file }}' "$ACTION" ||
   ! grep -Fq 'EXPECTED_WORKFLOW_PATH: ${{ inputs.workflow-path }}' "$ACTION" ||
@@ -431,7 +432,12 @@ if [[ "$*" == *"/actions/runs/"* ]]; then
   workflow_id=42
   run_repository='example/firemud'
   head_repository='example/firemud'
-  if [[ "${GH_SCENARIO:-}" == "cross-workflow-same-name" ]]; then
+  pull_requests='[{"number":123}]'
+  if [[ "${GH_SCENARIO:-}" == "missing-pr-association" ]]; then
+    pull_requests='[]'
+  elif [[ "${GH_SCENARIO:-}" == "other-pr-association" ]]; then
+    pull_requests='[{"number":456}]'
+  elif [[ "${GH_SCENARIO:-}" == "cross-workflow-same-name" ]]; then
     workflow_path='.github/workflows/other.yml'
     workflow_id=99
   elif [[ "${GH_SCENARIO:-}" == "run-path-ref-suffix" ]]; then
@@ -444,7 +450,7 @@ if [[ "$*" == *"/actions/runs/"* ]]; then
     run_repository='other-owner/firemud'
     head_repository='other-owner/firemud'
   fi
-  printf '{"id":%s,"workflow_id":%s,"name":"%s","path":"%s","head_sha":"deadbeef","repository":{"full_name":"%s"},"head_repository":{"full_name":"%s"},"event":"pull_request"}\n' "$run_id" "$workflow_id" "$workflow_name" "$workflow_path" "$run_repository" "$head_repository"
+  printf '{"id":%s,"workflow_id":%s,"name":"%s","path":"%s","head_sha":"deadbeef","repository":{"full_name":"%s"},"head_repository":{"full_name":"%s"},"event":"pull_request","pull_requests":%s}\n' "$run_id" "$workflow_id" "$workflow_name" "$workflow_path" "$run_repository" "$head_repository" "$pull_requests"
   exit 0
 fi
 if [[ "$*" != *"/repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs"* ]]; then
@@ -526,7 +532,7 @@ JSON
   same-timestamp-newer-failure)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"completed","conclusion":"failure","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
-  cross-workflow-same-name)
+  cross-workflow-same-name|missing-pr-association|other-pr-association)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   run-path-ref-suffix|malformed-run-path-ref-suffix)
@@ -718,6 +724,7 @@ run_action() {
   GITHUB_RUN_ID=999 \
   GH_TOKEN=test-token \
   HEAD_SHA=deadbeef \
+  PR_NUMBER=123 \
   REQUIRED_GATE_NAME='Validation Gate' \
   EXPECTED_WORKFLOW_NAME='CI — Validation' \
   EXPECTED_WORKFLOW_FILE=ci.yml \
@@ -737,6 +744,7 @@ run_guard_action() {
   GITHUB_RUN_ID=999 \
   GH_TOKEN=test-token \
   HEAD_SHA="$head_sha" \
+  PR_NUMBER=123 \
   REQUIRED_GATE_NAME='Validation Gate' \
   EXPECTED_WORKFLOW_NAME='CI — Validation' \
   EXPECTED_WORKFLOW_FILE=ci.yml \
@@ -1043,7 +1051,7 @@ run_action "$run_path_ref_count" none run-path-ref-suffix
   exit 1
 }
 
-for malformed_scenario in cross-workflow-same-name malformed-run-path-ref-suffix wrong-run-repository unknown-app unknown-check-name invalid-job-id missing-job-id unsupported-status missing-timestamp; do
+for malformed_scenario in cross-workflow-same-name malformed-run-path-ref-suffix wrong-run-repository unknown-app unknown-check-name invalid-job-id missing-job-id unsupported-status missing-timestamp missing-pr-association other-pr-association; do
   malformed_output="$tmp_dir/${malformed_scenario}-output"
   set +e
   run_action "$tmp_dir/count-${malformed_scenario}" none "$malformed_scenario" >"$malformed_output" 2>&1

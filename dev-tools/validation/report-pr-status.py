@@ -15,12 +15,13 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from display_sanitization import display as _display
+
 ROOT = Path(__file__).resolve().parents[2]
 CHECKPOINT_REPORTER = ROOT / "dev-tools" / "validation" / "report-pr-review-checkpoints.py"
 CODERABBIT_CHECKER = ROOT / "dev-tools" / "validation" / "check-coderabbit-review.py"
 PROVIDER_TIMEOUT_SECONDS = 180
 HUMAN_TIME_ZONE = ZoneInfo("Pacific/Auckland")
-TERMINAL_CONTROLS = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
 EXACT_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
 REVIEWED_SHA = re.compile(r"^[0-9a-fA-F]{7,40}$")
 RUN_ID = re.compile(r"^run\.[A-Za-z0-9]{1,32}$")
@@ -91,13 +92,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pr", required=True, type=int, help="Pull request number")
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     return parser.parse_args()
-
-
-def _display(value: Any) -> str:
-    """Render provider-controlled text without allowing it to alter report layout."""
-
-    text = TERMINAL_CONTROLS.sub(" ", str(value))
-    return " ".join(text.split()) or "-"
 
 
 def _timestamp(value: Any, field: str) -> datetime:

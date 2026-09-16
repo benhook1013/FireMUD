@@ -204,6 +204,10 @@ class PrStatusReporterTest(unittest.TestCase):
         self.assertEqual([item["name"] for item in report["ci"]["failed"]], ["lint"])
         self.assertIn("GitHub mergeStateStatus is not CLEAN", report["reasons"])
 
+    def test_display_sanitizes_invisible_directional_formatting(self) -> None:
+        untrusted = "safe\u200b\u202evalue\ufeff"
+        self.assertEqual(self.reporter._display(untrusted), "safe value")
+
     def test_ready_report_orders_hosted_and_cli_sequence_and_formats_mobile_text(self) -> None:
         checkpoint = self.checkpoint_payload()
         checkpoint["unparsed_candidates"] = 2
