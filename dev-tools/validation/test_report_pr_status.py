@@ -977,6 +977,53 @@ class PrStatusReporterTest(unittest.TestCase):
             rendered,
         )
 
+    def test_non_completed_hosted_trigger_reason_is_visible_but_completed_reason_is_omitted(self) -> None:
+        reason = "the Hosted review request is currently rate limited"
+        for state, checker_exit, expect_reason in (
+            ("rate_limited", 1, True),
+            ("completed", 0, False),
+        ):
+            trigger = {
+                "trigger_state": {
+                    "state": state,
+                    "terminal": state == "completed",
+                    "attributed": state == "completed",
+                    "repository": "owner/repo",
+                    "pr_number": 42,
+                    "head_sha": "0123456789abcdef0123456789abcdef01234567",
+                    "current_head_sha": "0123456789abcdef0123456789abcdef01234567",
+                    "reason": reason,
+                }
+            }
+            checker = self.checker_payload(ok=True)
+            checker.update(trigger)
+            with tempfile.TemporaryDirectory() as directory:
+                record = Path(directory) / "trigger.json"
+                record.write_text("{}", encoding="utf-8")
+                with (
+                    self.subTest(state=state),
+                    patch.object(self.reporter, "hosted_trigger_record_path", return_value=record),
+                    patch.object(
+                        self.reporter.subprocess,
+                        "run",
+                        side_effect=self.provider_responses(
+                            checker_ok=True,
+                            checker_exit=checker_exit,
+                            checker_payload=checker,
+                        ),
+                    ),
+                ):
+                    report = self.reporter.build_report("owner/repo", 42)
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.reporter.emit_text(report)
+            rendered = output.getvalue()
+            expected = f"reason={reason}"
+            if expect_reason:
+                self.assertIn(expected, rendered)
+            else:
+                self.assertNotIn(expected, rendered)
+
     def test_nonterminal_hosted_trigger_without_response_url_is_preserved(self) -> None:
         trigger = {
             "trigger_state": {

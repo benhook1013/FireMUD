@@ -1082,7 +1082,7 @@ def emit_text(report: dict[str, Any]) -> None:
             f"id={_display(trigger_id)}",
             f"head={_display(trigger_head)}",
         ]
-        if trigger.get("state") == "ambiguous" and trigger.get("reason"):
+        if trigger.get("state") != "completed" and trigger.get("reason"):
             trigger_details.append(f"reason={_display(trigger['reason'])}")
         print("trigger: " + " · ".join(trigger_details))
     else:
