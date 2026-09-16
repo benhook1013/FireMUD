@@ -402,7 +402,8 @@ exit 1
 EOF
 chmod +x "$FANOUT_BIN/gh"
 if fanout_json="$(cd "$SELECTED_REPO" && PATH="$FANOUT_BIN:$SELECTED_BIN:$PATH" bash "$SCRIPT" --repo owner/repo --pr 42 --json)"; then
-  :
+  echo "wide fanout topology fixture unexpectedly succeeded" >&2
+  exit 1
 fi
 jq -e '.status == "ambiguous" and (.chain | length) == 50 and (.errors | index("selected stack exceeds the 50-PR bound") != null)' <<<"$fanout_json" >/dev/null
 

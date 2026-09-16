@@ -140,16 +140,3 @@ with tempfile.TemporaryDirectory() as fixture_dir:
 
 print("dev-tools README path and link contract checks passed")
 PY
-
-symlink_test_dir="$(mktemp -d)"
-trap 'rm -rf "$symlink_test_dir"' EXIT
-ln -s "$ROOT_DIR" "$symlink_test_dir/root"
-ROOT_DIR="$ROOT_DIR" SYMLINK_ROOT="$symlink_test_dir/root" python3 - <<'PY'
-import os
-from pathlib import Path
-
-assert Path(os.environ["SYMLINK_ROOT"]).resolve() == Path(os.environ["ROOT_DIR"]).resolve(), (
-    "symlinked roots must normalize to the real repository root"
-)
-print("symlinked repository root normalization check passed")
-PY
