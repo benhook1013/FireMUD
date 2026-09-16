@@ -547,7 +547,7 @@ def _hosted_trigger_evidence(
             "state": "ambiguous",
             "reason": "Hosted trigger evidence does not match the current GitHub PR head",
         }
-    return {"available": True, **state}
+    return {**state, "available": True}
 
 
 def _checkpoint_summaries(checkpoints: list[dict[str, Any]]) -> dict[str, Any]:

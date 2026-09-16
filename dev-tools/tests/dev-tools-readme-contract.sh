@@ -143,7 +143,7 @@ PY
 
 if [[ "${DEV_TOOLS_README_CONTRACT_SYMLINK_TEST:-0}" != "1" ]]; then
   symlink_test_dir="$(mktemp -d)"
+  trap 'rm -rf "$symlink_test_dir"' EXIT
   ln -s "$ROOT_DIR" "$symlink_test_dir/root"
   DEV_TOOLS_README_CONTRACT_SYMLINK_TEST=1 ROOT_PATH="$symlink_test_dir/root" bash "$0"
-  rm -rf "$symlink_test_dir"
 fi

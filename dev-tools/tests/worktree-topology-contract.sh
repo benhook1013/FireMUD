@@ -102,6 +102,20 @@ EOF
 
 chmod +x "$BIN_DIR/git" "$BIN_DIR/gh"
 
+NO_OPTIONS_BIN="$TEMP_DIR/no-options-bin"
+NO_OPTIONS_ARGS="$TEMP_DIR/no-options-args"
+mkdir -p "$NO_OPTIONS_BIN"
+cat > "$NO_OPTIONS_BIN/python3" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf '%s\n' "$@" > "$NO_OPTIONS_ARGS"
+EOF
+chmod +x "$NO_OPTIONS_BIN/python3"
+NO_OPTIONS_ARGS="$NO_OPTIONS_ARGS" PATH="$NO_OPTIONS_BIN:$PATH" bash "$SCRIPT" >/dev/null
+[[ "$(wc -l < "$NO_OPTIONS_ARGS")" -eq 1 ]]
+grep -Fqx "${SCRIPT%.sh}.py" "$NO_OPTIONS_ARGS"
+
 output_file="$TEMP_DIR/output"
 error_file="$TEMP_DIR/error"
 PATH="$BIN_DIR:$PATH" bash "$SCRIPT" > "$output_file" 2> "$error_file"

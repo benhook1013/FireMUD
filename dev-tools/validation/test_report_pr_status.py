@@ -716,6 +716,27 @@ class PrStatusReporterTest(unittest.TestCase):
         self.assertNotIn(str(record), json.dumps(report))
         self.assertEqual(report["verdict"], "READY")
 
+    def test_report_owned_trigger_availability_cannot_be_overridden_by_provider(self) -> None:
+        checker = self.checker_payload(ok=True)
+        checker["trigger_state"] = {
+            "state": "completed",
+            "repository": "owner/repo",
+            "pr_number": 42,
+            "head_sha": "0123456789abcdef0123456789abcdef01234567",
+            "current_head_sha": "0123456789abcdef0123456789abcdef01234567",
+            "available": False,
+        }
+
+        evidence = self.reporter._hosted_trigger_evidence(
+            "owner/repo",
+            42,
+            True,
+            checker,
+            "0123456789abcdef0123456789abcdef01234567",
+        )
+
+        self.assertTrue(evidence["available"])
+
     def test_malformed_trigger_state_type_fails_with_report_error(self) -> None:
         for invalid in ([], {}):
             checker = self.checker_payload(ok=True)

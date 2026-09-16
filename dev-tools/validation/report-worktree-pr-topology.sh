@@ -58,4 +58,4 @@ helper_args=()
 [[ "$include_renovate" == "true" ]] && helper_args+=(--include-renovate)
 [[ -z "$pr_number" ]] || helper_args+=(--pr "$pr_number")
 [[ "$json" == "true" ]] && helper_args+=(--json)
-exec python3 "$helper" "${helper_args[@]}"
+exec python3 "$helper" "${helper_args[@]+"${helper_args[@]}"}"
