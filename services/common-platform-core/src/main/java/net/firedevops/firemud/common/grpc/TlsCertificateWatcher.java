@@ -37,8 +37,6 @@ public class TlsCertificateWatcher implements AutoCloseable {
   private static final Logger logger = LoggingUtil.getLogger(TlsCertificateWatcher.class);
   private static final Duration RELOAD_DEBOUNCE = Duration.ofMillis(100);
   private static final Duration MAX_RELOAD_DELAY = Duration.ofSeconds(1);
-  // Let the worker's bounded event-debounce window flush any recovery event before retrying.
-  private static final Duration CALLBACK_RETRY_DELAY = MAX_RELOAD_DELAY.plus(RELOAD_DEBOUNCE);
   private static final Duration INITIAL_REGISTRATION_RETRY_DELAY = Duration.ofMillis(100);
   private static final Duration MAX_REGISTRATION_RETRY_DELAY = Duration.ofSeconds(30);
   private static final int MAX_REGISTRATION_RETRY_ATTEMPT = 10;
@@ -65,6 +63,8 @@ public class TlsCertificateWatcher implements AutoCloseable {
   private final Set<Thread> activeCallbacks = ConcurrentHashMap.newKeySet();
   private ScheduledFuture<?> retryTask;
   private boolean retryScheduled;
+  private int callbackRetryAttempts;
+  private boolean callbackRetryExhaustionLogged;
   private ScheduledFuture<?> registrationRetryTask;
   private boolean registrationRetryScheduled;
   private int registrationRetryAttempts;
@@ -241,11 +241,23 @@ public class TlsCertificateWatcher implements AutoCloseable {
       if (!running.get() || retryScheduled) {
         return;
       }
+      if (callbackRetryAttempts >= MAX_REGISTRATION_RETRY_ATTEMPT) {
+        if (!callbackRetryExhaustionLogged) {
+          callbackRetryExhaustionLogged = true;
+          logger.error(
+              "TLS certificate reload callback retries exhausted after {} attempts",
+              callbackRetryAttempts);
+        }
+        return;
+      }
+      int retryAttempt = callbackRetryAttempts + 1;
+      Duration retryDelay = registrationRetryDelay(retryAttempt);
+      callbackRetryAttempts = retryAttempt;
       retryScheduled = true;
       try {
         retryTask =
             retryExecutor.schedule(
-                this::retryReloadCallback, CALLBACK_RETRY_DELAY.toNanos(), TimeUnit.NANOSECONDS);
+                this::retryReloadCallback, retryDelay.toNanos(), TimeUnit.NANOSECONDS);
       } catch (RuntimeException e) {
         retryScheduled = false;
         logger.error("TLS certificate watcher could not schedule a bounded reload retry", e);
@@ -260,6 +272,8 @@ public class TlsCertificateWatcher implements AutoCloseable {
         retryTask.cancel(false);
         retryTask = null;
       }
+      callbackRetryAttempts = 0;
+      callbackRetryExhaustionLogged = false;
     }
   }
 
@@ -269,7 +283,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
       retryScheduled = false;
     }
     if (running.get() && invokeReloadCallback(true) == CallbackInvocationResult.FAILED) {
-      logger.error("TLS certificate reload retry failed; awaiting a future certificate event");
+      scheduleCallbackRetry();
     }
   }
 
@@ -530,6 +544,8 @@ public class TlsCertificateWatcher implements AutoCloseable {
       retryScheduled = false;
       registrationRetryScheduled = false;
       registrationRetryAttempts = 0;
+      callbackRetryAttempts = 0;
+      callbackRetryExhaustionLogged = false;
       if (retryTask != null) {
         retryTask.cancel(false);
         retryTask = null;

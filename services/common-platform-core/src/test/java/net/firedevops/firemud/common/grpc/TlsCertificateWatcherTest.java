@@ -23,6 +23,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -467,6 +468,7 @@ class TlsCertificateWatcherTest {
     Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
     AtomicInteger attempts = new AtomicInteger();
     CountDownLatch firstAttempt = new CountDownLatch(1);
+    CountDownLatch releaseFailedCallback = new CountDownLatch(1);
 
     TlsCertificateWatcher watcher =
         TlsCertificateWatcher.createAndStart(
@@ -474,40 +476,65 @@ class TlsCertificateWatcherTest {
             () -> {
               attempts.incrementAndGet();
               firstAttempt.countDown();
+              try {
+                releaseFailedCallback.await();
+              } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+              }
               throw new IllegalStateException("simulated reload failure");
             });
     try {
       Files.writeString(certificate, "certificate-2");
       assertTrue(firstAttempt.await(5, TimeUnit.SECONDS));
+      releaseFailedCallback.countDown();
+      ScheduledFuture<?> retryTask = awaitScheduledCallbackRetry(watcher);
+      ScheduledExecutorService retryExecutor = retryExecutor(watcher);
+      watcher.close();
+      assertTrue(retryTask.isCancelled());
+      assertTrue(retryExecutor.isTerminated());
+      assertEquals(1, attempts.get());
     } finally {
+      releaseFailedCallback.countDown();
       watcher.close();
     }
-
-    Thread.sleep(300);
-    assertEquals(1, attempts.get());
   }
 
   @Test
-  void failedCallbackRetryIsBoundedUntilAnotherCertificateEvent(@TempDir Path directory)
-      throws Exception {
+  void failedCallbackRetriesRepeatedlyUntilTheAttemptCap(@TempDir Path directory) throws Exception {
     Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
     AtomicInteger attempts = new AtomicInteger();
-    CountDownLatch retryAttempt = new CountDownLatch(1);
+    Logger logger = (Logger) LoggerFactory.getLogger(TlsCertificateWatcher.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.list = new CopyOnWriteArrayList<>();
+    appender.start();
+    logger.addAppender(appender);
 
-    try (TlsCertificateWatcher watcher =
-        TlsCertificateWatcher.createAndStart(
-            List.of(certificate),
-            () -> {
-              if (attempts.incrementAndGet() == 2) {
-                retryAttempt.countDown();
-              }
-              throw new IllegalStateException("simulated reload failure");
-            })) {
-      Files.writeString(certificate, "certificate-2");
-      assertTrue(retryAttempt.await(5, TimeUnit.SECONDS));
-      Thread.sleep(300);
-      assertEquals(2, attempts.get());
-      assertFalse(watcher.isHealthy());
+    try {
+      try (TlsCertificateWatcher watcher =
+          TlsCertificateWatcher.createAndStart(
+              List.of(certificate),
+              () -> {
+                attempts.incrementAndGet();
+                throw new IllegalStateException("simulated reload failure");
+              })) {
+        invokeReloadCallback(watcher, false);
+        scheduleCallbackRetry(watcher);
+        for (int retry = 0; retry < 10; retry++) {
+          runScheduledCallbackRetry(watcher);
+        }
+        assertEquals(11, attempts.get());
+        assertFalse(watcher.isHealthy());
+        assertEquals(
+            1,
+            appender.list.stream()
+                .filter(event -> event.getFormattedMessage().contains("callback retries exhausted"))
+                .count());
+        assertTrue(scheduledCallbackRetry(watcher) == null);
+        retryExecutor(watcher).shutdownNow();
+      }
+    } finally {
+      logger.detachAppender(appender);
+      appender.stop();
     }
   }
 
@@ -517,6 +544,7 @@ class TlsCertificateWatcherTest {
     Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
     AtomicInteger attempts = new AtomicInteger();
     CountDownLatch failedCallback = new CountDownLatch(1);
+    CountDownLatch releaseFailedCallback = new CountDownLatch(1);
     CountDownLatch blockingCallbackEntered = new CountDownLatch(1);
     CountDownLatch releaseBlockingCallback = new CountDownLatch(1);
 
@@ -526,6 +554,11 @@ class TlsCertificateWatcherTest {
             () -> {
               if (attempts.incrementAndGet() == 1) {
                 failedCallback.countDown();
+                try {
+                  releaseFailedCallback.await();
+                } catch (InterruptedException e) {
+                  Thread.currentThread().interrupt();
+                }
                 throw new IllegalStateException("simulated reload failure");
               }
               blockingCallbackEntered.countDown();
@@ -537,6 +570,9 @@ class TlsCertificateWatcherTest {
             })) {
       Files.writeString(certificate, "certificate-2");
       assertTrue(failedCallback.await(5, TimeUnit.SECONDS));
+      releaseFailedCallback.countDown();
+      ScheduledFuture<?> retryTask = awaitScheduledCallbackRetry(watcher);
+      assertTrue(retryTask.cancel(false));
       Files.writeString(certificate, "certificate-3");
       assertTrue(blockingCallbackEntered.await(5, TimeUnit.SECONDS));
 
@@ -550,12 +586,13 @@ class TlsCertificateWatcherTest {
       }
       retry.get(5, TimeUnit.SECONDS);
       assertEquals(2, attempts.get());
+    } finally {
+      releaseFailedCallback.countDown();
     }
   }
 
   @Test
-  void registrationRecoveryWaitsForActiveReloadCallback(@TempDir Path directory)
-      throws Exception {
+  void registrationRecoveryWaitsForActiveReloadCallback(@TempDir Path directory) throws Exception {
     Path watchedDirectory = Files.createDirectory(directory.resolve("watched"));
     Path certificate = Files.writeString(watchedDirectory.resolve("tls.crt"), "certificate-1");
     CountDownLatch callbackInvoked = new CountDownLatch(1);
@@ -624,9 +661,7 @@ class TlsCertificateWatcherTest {
   }
 
   private static Future<?> submitRetryCallback(TlsCertificateWatcher watcher) throws Exception {
-    Field executorField = TlsCertificateWatcher.class.getDeclaredField("retryExecutor");
-    executorField.setAccessible(true);
-    ScheduledExecutorService retryExecutor = (ScheduledExecutorService) executorField.get(watcher);
+    ScheduledExecutorService retryExecutor = retryExecutor(watcher);
     Method retryMethod = TlsCertificateWatcher.class.getDeclaredMethod("retryReloadCallback");
     retryMethod.setAccessible(true);
     return retryExecutor.submit(
@@ -637,6 +672,57 @@ class TlsCertificateWatcherTest {
             throw new AssertionError("failed to invoke callback retry", e);
           }
         });
+  }
+
+  private static ScheduledExecutorService retryExecutor(TlsCertificateWatcher watcher)
+      throws Exception {
+    Field executorField = TlsCertificateWatcher.class.getDeclaredField("retryExecutor");
+    executorField.setAccessible(true);
+    return (ScheduledExecutorService) executorField.get(watcher);
+  }
+
+  private static ScheduledFuture<?> scheduledCallbackRetry(TlsCertificateWatcher watcher)
+      throws Exception {
+    Field retryTaskField = TlsCertificateWatcher.class.getDeclaredField("retryTask");
+    retryTaskField.setAccessible(true);
+    return (ScheduledFuture<?>) retryTaskField.get(watcher);
+  }
+
+  private static ScheduledFuture<?> awaitScheduledCallbackRetry(TlsCertificateWatcher watcher)
+      throws Exception {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    ScheduledFuture<?> retryTask;
+    do {
+      retryTask = scheduledCallbackRetry(watcher);
+      if (retryTask != null) {
+        assertTrue(!retryTask.isDone());
+        return retryTask;
+      }
+      Thread.onSpinWait();
+    } while (System.nanoTime() < deadline);
+    throw new AssertionError("callback retry was not scheduled");
+  }
+
+  private static void invokeReloadCallback(
+      TlsCertificateWatcher watcher, boolean retryOnlyWhenUnhealthy) throws Exception {
+    Method callbackMethod =
+        TlsCertificateWatcher.class.getDeclaredMethod("invokeReloadCallback", boolean.class);
+    callbackMethod.setAccessible(true);
+    callbackMethod.invoke(watcher, retryOnlyWhenUnhealthy);
+  }
+
+  private static void scheduleCallbackRetry(TlsCertificateWatcher watcher) throws Exception {
+    Method scheduleMethod = TlsCertificateWatcher.class.getDeclaredMethod("scheduleCallbackRetry");
+    scheduleMethod.setAccessible(true);
+    scheduleMethod.invoke(watcher);
+  }
+
+  private static void runScheduledCallbackRetry(TlsCertificateWatcher watcher) throws Exception {
+    ScheduledFuture<?> retryTask = awaitScheduledCallbackRetry(watcher);
+    assertTrue(retryTask.cancel(false));
+    Method retryMethod = TlsCertificateWatcher.class.getDeclaredMethod("retryReloadCallback");
+    retryMethod.setAccessible(true);
+    retryMethod.invoke(watcher);
   }
 
   @Test

@@ -135,7 +135,6 @@ GATEWAY_WS_SERVER_PATHS = {
 }
 GATEWAY_WS_SERVER_SECRET_ITEM_PATHS = BRIDGE_WS_SECRET_ITEM_PATHS
 GATEWAY_WS_LISTENER_PORT = 8443
-GATEWAY_WS_SERVICE_PORT = 443
 TCP_PROXY_TELNET_SERVICE_PORT = 2323
 GATEWAY_WS_APPROVED_TRUST_PROFILES = frozenset(
     {"production_uri", "migration_dns", "breakglass_fingerprint"}
@@ -3977,12 +3976,20 @@ def canonical_gateway_ws_endpoint(
     ports = [entry for entry in (service.get("spec") or {}).get("ports") or [] if isinstance(entry, dict)]
     if (
         len(ports) != 1
-        or ports[0].get("port") != GATEWAY_WS_SERVICE_PORT
         or ports[0].get("targetPort") != GATEWAY_WS_LISTENER_PORT
         or ports[0].get("protocol", "TCP") != "TCP"
     ):
         return None, [
-            "Gateway mTLS Service must expose only TCP 443 to targetPort 8443"
+            "Gateway mTLS Service must expose exactly one TCP port to targetPort 8443"
+        ]
+    service_port = ports[0].get("port")
+    if (
+        isinstance(service_port, bool)
+        or not isinstance(service_port, int)
+        or not 1 <= service_port <= 65535
+    ):
+        return None, [
+            "Gateway mTLS Service port must be an integer in range 1..65535"
         ]
     if (service.get("spec") or {}).get("selector") != {"app": "spring-cloud-gateway"}:
         return None, ["Gateway mTLS Service must select only app=spring-cloud-gateway"]

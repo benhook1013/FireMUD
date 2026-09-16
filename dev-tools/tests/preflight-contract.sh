@@ -3977,6 +3977,78 @@ if captured_bridge_evaluation_times != [fixed_evaluation_time]:
         + repr(captured_bridge_evaluation_times)
     )
 
+non_default_gateway_port_documents = copy.deepcopy(rendered_documents)
+non_default_gateway_service = next(
+    document
+    for document in non_default_gateway_port_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "spring-cloud-gateway-mtls"
+)
+non_default_gateway_service["spec"]["ports"][0]["port"] = 8444
+for document in non_default_gateway_port_documents:
+    if document.get("kind") != "Deployment" or document.get("metadata", {}).get("name") != "tcp-proxy-service":
+        continue
+    for container in document["spec"]["template"]["spec"]["containers"]:
+        for entry in container.get("env", []):
+            if entry.get("name") == "GATEWAY_WS_URL":
+                entry["value"] = "wss://spring-cloud-gateway-mtls.firemud.svc.cluster.local:8444/ws/game"
+non_default_expected = yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+non_default_canonical, non_default_canonical_issues = module.canonical_gateway_ws_endpoint(
+    non_default_gateway_port_documents, non_default_expected
+)
+if non_default_canonical_issues or non_default_canonical != "spring-cloud-gateway-mtls.firemud.svc.cluster.local:8444":
+    raise SystemExit(
+        "canonical Gateway bridge endpoint did not use the rendered Service port: "
+        f"{non_default_canonical}, {non_default_canonical_issues}"
+    )
+non_default_values, non_default_issues = module.validate_gateway_ws_values(
+    non_default_gateway_port_documents, non_default_expected
+)
+if non_default_issues or not non_default_values:
+    raise SystemExit(
+        "Gateway bridge URL did not match a non-default rendered Service port: "
+        f"{non_default_issues}"
+    )
+for invalid_service_port in ("8444", True, 0, 65536):
+    invalid_port_documents = copy.deepcopy(rendered_documents)
+    invalid_port_service = next(
+        document
+        for document in invalid_port_documents
+        if document.get("kind") == "Service"
+        and document.get("metadata", {}).get("name") == "spring-cloud-gateway-mtls"
+    )
+    invalid_port_service["spec"]["ports"][0]["port"] = invalid_service_port
+    _, invalid_port_issues = module.canonical_gateway_ws_endpoint(
+        invalid_port_documents, non_default_expected
+    )
+    if not any(
+        "Gateway mTLS Service port must be an integer in range 1..65535" in issue
+        for issue in invalid_port_issues
+    ):
+        raise SystemExit(
+            "invalid rendered Gateway Service port was accepted: "
+            f"{invalid_service_port!r}, {invalid_port_issues}"
+        )
+for document in non_default_gateway_port_documents:
+    if document.get("kind") != "Deployment" or document.get("metadata", {}).get("name") != "tcp-proxy-service":
+        continue
+    for container in document["spec"]["template"]["spec"]["containers"]:
+        for entry in container.get("env", []):
+            if entry.get("name") == "GATEWAY_WS_URL":
+                entry["value"] = "wss://spring-cloud-gateway-mtls.firemud.svc.cluster.local:443/ws/game"
+_, non_default_mismatch_issues = module.validate_gateway_ws_values(
+    non_default_gateway_port_documents, non_default_expected
+)
+if not any(
+    "does not match canonical spring-cloud-gateway-mtls.firemud.svc.cluster.local:8444/ws/game"
+    in issue
+    for issue in non_default_mismatch_issues
+):
+    raise SystemExit(
+        "Gateway bridge URL mismatch against a non-default rendered Service port was accepted: "
+        f"{non_default_mismatch_issues}"
+    )
+
 mixed_port_documents = copy.deepcopy(rendered_documents)
 gateway_ingress_policy = next(
     document

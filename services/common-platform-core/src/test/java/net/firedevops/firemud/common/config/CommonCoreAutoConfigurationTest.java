@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import net.firedevops.firemud.common.health.TlsCertificateReadinessHealthEndpointGroupsPostProcessor;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.health.actuate.endpoint.HealthEndpointGroups;
 import org.springframework.boot.health.actuate.endpoint.HealthEndpointGroupsPostProcessor;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
@@ -25,8 +26,10 @@ class CommonCoreAutoConfigurationTest {
               assertThat(context).hasBean("postProcessor");
               assertThat(context)
                   .hasSingleBean(TlsCertificateReadinessHealthEndpointGroupsPostProcessor.class);
-              assertThat(context.getBeansOfType(HealthEndpointGroupsPostProcessor.class)).hasSize(2);
-              assertThat(context.getBean("tlsCertificateReadinessHealthEndpointGroupsPostProcessor"))
+              assertThat(context.getBeansOfType(HealthEndpointGroupsPostProcessor.class))
+                  .hasSize(2);
+              assertThat(
+                      context.getBean("tlsCertificateReadinessHealthEndpointGroupsPostProcessor"))
                   .isNotSameAs(context.getBean("postProcessor"));
             });
   }
@@ -39,7 +42,9 @@ class CommonCoreAutoConfigurationTest {
             context -> {
               assertThat(context)
                   .hasSingleBean(TlsCertificateReadinessHealthEndpointGroupsPostProcessor.class);
-              assertThat(context.getBean(TlsCertificateReadinessHealthEndpointGroupsPostProcessor.class))
+              assertThat(
+                      context.getBean(
+                          TlsCertificateReadinessHealthEndpointGroupsPostProcessor.class))
                   .isSameAs(context.getBean("tlsReadinessPostProcessor"));
             });
   }
@@ -52,11 +57,25 @@ class CommonCoreAutoConfigurationTest {
     }
   }
 
+  @Test
+  void disablesTlsReadinessGatingFromApplicationProperty() {
+    contextRunner
+        .withPropertyValues("firemud.health.tls-certificate-readiness.enabled=false")
+        .run(
+            context -> {
+              HealthEndpointGroupsPostProcessor postProcessor =
+                  context.getBean(HealthEndpointGroupsPostProcessor.class);
+              HealthEndpointGroups groups = mock(HealthEndpointGroups.class);
+
+              assertThat(postProcessor.postProcessHealthEndpointGroups(groups)).isSameAs(groups);
+            });
+  }
+
   @Configuration(proxyBeanMethods = false)
   static class CustomTlsReadinessPostProcessorConfiguration {
     @Bean
     TlsCertificateReadinessHealthEndpointGroupsPostProcessor tlsReadinessPostProcessor() {
-      return new TlsCertificateReadinessHealthEndpointGroupsPostProcessor("custom-service");
+      return new TlsCertificateReadinessHealthEndpointGroupsPostProcessor(true);
     }
   }
 }
