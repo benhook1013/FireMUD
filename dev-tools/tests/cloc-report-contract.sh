@@ -647,7 +647,7 @@ original_pr_functions = (
 snapshot_revisions = []
 cloc_report.resolve_pull_request = lambda _root, _number, _repository: mock_metadata
 cloc_report.pull_request_merge_base = lambda _root, _metadata: "c" * 40
-cloc_report.classifier_digest = lambda: "digest"
+cloc_report.classifier_digest = lambda: "d" * 64
 
 @contextmanager
 def fake_snapshot(_root, revision):
@@ -674,7 +674,9 @@ try:
     assert (
         '<!-- firemud:cloc-report:metadata {"base_oid":"'
         + "a" * 40
-        + '","classifier_sha256":"digest","head_oid":"'
+        + '","classifier_sha256":"'
+        + "d" * 64
+        + '","head_oid":"'
         + "b" * 40
         + '","merge_base":"'
         + "c" * 40
@@ -695,6 +697,24 @@ finally:
         cloc_report.snapshot_worktree,
         cloc_report.summary_for_root,
     ) = original_pr_functions
+
+for invalid_digest in (None, "", "digest", "g" * 64, "d" * 63):
+    invalid_report = dict(impact, classifier_sha256=invalid_digest)
+    try:
+        cloc_report.render_pr_report(invalid_report)
+    except cloc_report.ReportError as error:
+        assert "invalid classifier SHA-256 digest" in str(error)
+    else:
+        raise AssertionError("invalid classifier digests must fail before PR body rendering")
+
+missing_digest_report = dict(impact)
+del missing_digest_report["classifier_sha256"]
+try:
+    cloc_report.render_pr_report(missing_digest_report)
+except cloc_report.ReportError as error:
+    assert "invalid classifier SHA-256 digest" in str(error)
+else:
+    raise AssertionError("missing classifier digests must fail before PR body rendering")
 
 fetch_calls = []
 availability = {"a" * 40: [False, True], "b" * 40: [False, True]}

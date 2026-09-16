@@ -834,6 +834,13 @@ def format_change(percent: object, delta_lines: int, head_lines: int) -> str:
 
 
 def render_pr_report(report: dict[str, object]) -> str:
+    classifier_sha256 = report.get("classifier_sha256")
+    if (
+        not isinstance(classifier_sha256, str)
+        or len(classifier_sha256) != 64
+        or any(character not in "0123456789abcdefABCDEF" for character in classifier_sha256)
+    ):
+        raise ReportError("PR report has an invalid classifier SHA-256 digest")
     base = report["base"]
     head = report["head"]
     if not isinstance(base, dict) or not isinstance(head, dict):
@@ -850,7 +857,7 @@ def render_pr_report(report: dict[str, object]) -> str:
                 "base_oid": base["oid"],
                 "head_oid": head["oid"],
                 "merge_base": base["merge_base"],
-                "classifier_sha256": report.get("classifier_sha256"),
+                "classifier_sha256": classifier_sha256,
             },
             sort_keys=True,
             separators=(",", ":"),

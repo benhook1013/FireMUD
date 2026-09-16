@@ -43,7 +43,8 @@ def github_anchors(markdown: Path) -> set[str]:
             continue
         heading = re.sub(r"\s+#+\s*$", "", match.group(1)).strip().lower()
         base = re.sub(r"[^\w\s-]", "", heading, flags=re.UNICODE)
-        base = re.sub(r"[\s-]+", "-", base).strip("-")
+        base = base.replace(" ", "-")
+        base = re.sub(r"\s", "", base)
         occurrence = occurrences.get(base, 0)
         occurrences[base] = occurrence + 1
         anchors.add(base if occurrence == 0 else f"{base}-{occurrence}")
@@ -137,10 +138,15 @@ with tempfile.TemporaryDirectory() as fixture_dir:
         "# Fixture\n\n"
         "See [plain](target.md#details), [double](target.md \"Target\"), "
         "[single](target.md 'Target'), [parenthesized](target.md (Target)), "
-        "and [angle](<target.md#details> \"Details\").\n",
+        "[angle](<target.md#details> \"Details\"), "
+        "[repeated spaces](target.md#double--spaces), "
+        "and [edge hyphens](target.md#--edge--).\n",
         encoding="utf-8",
     )
-    fixture_target.write_text("# Target\n\n## Details\n", encoding="utf-8")
+    fixture_target.write_text(
+        "# Target\n\n## Details\n\n## Double  Spaces\n\n## - Edge -\n",
+        encoding="utf-8",
+    )
 
     original_tracked_file = tracked_file
 
@@ -152,7 +158,7 @@ with tempfile.TemporaryDirectory() as fixture_dir:
     extracted_targets = MARKDOWN_LINK_PATTERN.findall(fixture_readme.read_text(encoding="utf-8"))
     for target in extracted_targets:
         link_target(fixture_readme, target)
-    if len(extracted_targets) != 5:
+    if len(extracted_targets) != 7:
         raise SystemExit(f"fixture Markdown link extraction found {len(extracted_targets)} targets")
     link_target(fixture_readme, "target.md#details")
     link_target(fixture_readme, 'target.md "Target"')
@@ -160,6 +166,8 @@ with tempfile.TemporaryDirectory() as fixture_dir:
     link_target(fixture_readme, "target.md (Target)")
     link_target(fixture_readme, '<target.md#details> "Details"')
     link_target(fixture_readme, "#fixture")
+    link_target(fixture_readme, "target.md#double--spaces")
+    link_target(fixture_readme, "target.md#--edge--")
     try:
         link_target(fixture_readme, "target.md#missing")
     except SystemExit as exc:
@@ -167,6 +175,14 @@ with tempfile.TemporaryDirectory() as fixture_dir:
             raise
     else:
         raise SystemExit("missing Markdown anchor fixture did not fail")
+    for target in ("target.md#double-spaces", "target.md#edge"):
+        try:
+            link_target(fixture_readme, target)
+        except SystemExit as exc:
+            if "documented link anchor does not resolve" not in str(exc):
+                raise
+        else:
+            raise SystemExit(f"incorrect Markdown anchor fixture did not fail: {target}")
     for target in (
         'target.md#missing "Missing"',
         "target.md#missing 'Missing'",
