@@ -43,3 +43,7 @@ During controller-lifecycle maintainability work, reconsider consolidating `Host
 The Overseer maintains priorities; Gameplay decomposes and implements; consequential architecture decisions remain with the Overseer. Do not create another tracker.
 
 On Gameplay’s current-delivery or phase handoff, or recovery after restart, the Overseer must consult this file and explicitly carry forward or assign the next appropriate item. Update evidence and status at normal milestones. Do not silently drop entries or treat a queued message as completion. No automatic hourly scan or new automation is requested.
+
+## Parked preview capacity follow-up — 2026-09-16
+
+PR #2783’s undeployed hostname reached Traefik’s default self-signed TLS certificate and 404 because wildcard DNS resolves every preview name. The preview deploy was capacity-blocked at two slots by #2677 and orphaned #2713: #2713’s namespace was created, but deployment failed at `Write hosted identity requester kubeconfig` with `A kubeconfig document is required`, leaving an Active namespace with no workloads, Ingress, or TLS Secret; the allocator still counted it as active because the PR remained open and eligible. Future narrow fix: reconcile or expire failed empty preview namespaces, or count only deploy-active/healthy reservations, without deleting a live preview or bypassing authorization; do not advertise a usable URL when the capacity stage is unavailable. Keep this follow-up separate from #2783 review/merge.
