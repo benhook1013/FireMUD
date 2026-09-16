@@ -74,6 +74,7 @@ if [[ "$malformed_input_status" -eq 0 ]]; then
 fi
 # shellcheck disable=SC2016 # Assert literal action input interpolation syntax.
 if ! grep -Fq 'GH_TOKEN: ${{ github.token }}' "$ACTION" ||
+  ! grep -Fq 'BASE_SHA: ${{ github.event.pull_request.base.sha }}' "$ACTION" ||
   ! grep -Fq 'HEAD_SHA: ${{ github.event.pull_request.head.sha }}' "$ACTION" ||
   ! grep -Fq 'REQUIRED_GATE_NAME: ${{ inputs.gate-name }}' "$ACTION" ||
   ! grep -Fq 'PR_NUMBER: ${{ github.event.pull_request.number }}' "$ACTION" ||
@@ -90,6 +91,11 @@ while IFS='|' read -r workflow gate_job_id gate workflow_name workflow_file work
   path="$ROOT_DIR/.github/workflows/$workflow"
   [[ -f "$path" ]] || {
     echo "required-gate caller workflow is missing: $path" >&2
+    exit 1
+  }
+  expected_run_name="run-name: ${workflow_name} \${{ github.event_name == 'pull_request' && format('pr-{0} base-{1} head-{2}', github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha) || github.ref_name }}"
+  grep -Fxq "$expected_run_name" "$path" || {
+    echo "$workflow must publish its canonical pull-request run title" >&2
     exit 1
   }
   gate_block="$(awk -v expected_job_id="$gate_job_id" '
@@ -397,24 +403,24 @@ if [[ "$*" == *"/actions/jobs/"* ]]; then
       multiple-metadata:103) preserve_conclusion=cancelled ;;
       *) preserve_conclusion=success ;;
     esac
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"%s"}]}\n' "$job_id" "$run_id" "$job_id" "$preserve_conclusion"
+    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"%s"}]}\n' "$job_id" "$run_id" "$job_id" "$preserve_conclusion"
   elif [[ "${GH_SCENARIO:-}" == "pending-preservation-step-not-concluded" &&
     "${job_id}" == "100" && "$(<"$count_file")" -le 3 ]]; then
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
+    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   elif [[ "${GH_SCENARIO:-}" == "pending-missing-step-with-failed-substantive" &&
     "${job_id}" == "101" ]]; then
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
+    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   elif [[ "${GH_SCENARIO:-}" == "completed-preservation-step-lag" &&
     "${job_id}" == "100" && "$(<"$count_file")" -eq 1 ]]; then
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
+    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   elif [[ "${GH_SCENARIO:-}" == "completed-preservation-step-persistent-lag" &&
     "${job_id}" == "100" ]]; then
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
+    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   elif [[ "${GH_SCENARIO:-}" =~ ^completed-(cancelled|skipped|stale)-missing-step$ &&
     "${job_id}" == "100" ]]; then
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
+    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   else
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"skipped"}]}\n' "$job_id" "$run_id" "$job_id"
+    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"skipped"}]}\n' "$job_id" "$run_id" "$job_id"
   fi
   exit 0
 fi
@@ -433,8 +439,24 @@ if [[ "$*" == *"/actions/runs/"* ]]; then
   run_repository='example/firemud'
   head_repository='example/firemud'
   pull_requests='[{"number":123}]'
-  if [[ "${GH_SCENARIO:-}" == "missing-pr-association" ]]; then
+  display_title="${workflow_name} pr-${PR_NUMBER} base-${BASE_SHA} head-${HEAD_SHA}"
+  if [[ "${GH_SCENARIO:-}" == "fork-empty-association" ]]; then
     pull_requests='[]'
+    head_repository='other-owner/firemud'
+  elif [[ "${GH_SCENARIO:-}" == "empty-wrong-pr" ]]; then
+    pull_requests='[]'
+    display_title="${workflow_name} pr-456 base-${BASE_SHA} head-${HEAD_SHA}"
+  elif [[ "${GH_SCENARIO:-}" == "empty-wrong-base" ]]; then
+    pull_requests='[]'
+    display_title="${workflow_name} pr-${PR_NUMBER} base-cccccccccccccccccccccccccccccccccccccccc head-${HEAD_SHA}"
+  elif [[ "${GH_SCENARIO:-}" == "empty-wrong-head" ]]; then
+    pull_requests='[]'
+    display_title="${workflow_name} pr-${PR_NUMBER} base-${BASE_SHA} head-dddddddddddddddddddddddddddddddddddddddd"
+  elif [[ "${GH_SCENARIO:-}" == "empty-wrong-title" ]]; then
+    pull_requests='[]'
+    display_title='not the canonical run title'
+  elif [[ "${GH_SCENARIO:-}" == "empty-malformed-association" ]]; then
+    pull_requests='null'
   elif [[ "${GH_SCENARIO:-}" == "other-pr-association" ]]; then
     pull_requests='[{"number":456}]'
   elif [[ "${GH_SCENARIO:-}" == "cross-workflow-same-name" ]]; then
@@ -450,7 +472,7 @@ if [[ "$*" == *"/actions/runs/"* ]]; then
     run_repository='other-owner/firemud'
     head_repository='other-owner/firemud'
   fi
-  printf '{"id":%s,"workflow_id":%s,"name":"%s","path":"%s","head_sha":"deadbeef","repository":{"full_name":"%s"},"head_repository":{"full_name":"%s"},"event":"pull_request","pull_requests":%s}\n' "$run_id" "$workflow_id" "$workflow_name" "$workflow_path" "$run_repository" "$head_repository" "$pull_requests"
+  printf '{"id":%s,"workflow_id":%s,"name":"%s","path":"%s","head_sha":"%s","display_title":"%s","repository":{"full_name":"%s"},"head_repository":{"full_name":"%s"},"event":"pull_request","pull_requests":%s}\n' "$run_id" "$workflow_id" "$workflow_name" "$workflow_path" "$HEAD_SHA" "$display_title" "$run_repository" "$head_repository" "$pull_requests"
   exit 0
 fi
 if [[ "$*" != *"/repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs"* ]]; then
@@ -532,7 +554,7 @@ JSON
   same-timestamp-newer-failure)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"completed","conclusion":"failure","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
-  cross-workflow-same-name|missing-pr-association|other-pr-association)
+  cross-workflow-same-name|fork-empty-association|empty-wrong-pr|empty-wrong-base|empty-wrong-head|empty-wrong-title|empty-malformed-association|other-pr-association)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   run-path-ref-suffix|malformed-run-path-ref-suffix)
@@ -723,7 +745,8 @@ run_action() {
   GITHUB_REPOSITORY=example/firemud \
   GITHUB_RUN_ID=999 \
   GH_TOKEN=test-token \
-  HEAD_SHA=deadbeef \
+  BASE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+  HEAD_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   PR_NUMBER=123 \
   REQUIRED_GATE_NAME='Validation Gate' \
   EXPECTED_WORKFLOW_NAME='CI — Validation' \
@@ -743,6 +766,7 @@ run_guard_action() {
   GITHUB_REPOSITORY=example/firemud \
   GITHUB_RUN_ID=999 \
   GH_TOKEN=test-token \
+  BASE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
   HEAD_SHA="$head_sha" \
   PR_NUMBER=123 \
   REQUIRED_GATE_NAME='Validation Gate' \
@@ -1044,6 +1068,13 @@ run_action "$fork_head_count" none fork-head-same-sha
   exit 1
 }
 
+fork_empty_count="$tmp_dir/count-fork-empty-association"
+run_action "$fork_empty_count" none fork-empty-association
+[[ "$(<"$fork_empty_count")" == "1" ]] || {
+  echo "required-gate action rejected a fork pull request run with an empty association array and canonical title" >&2
+  exit 1
+}
+
 run_path_ref_count="$tmp_dir/count-run-path-ref-suffix"
 run_action "$run_path_ref_count" none run-path-ref-suffix
 [[ "$(<"$run_path_ref_count")" == "1" ]] || {
@@ -1051,7 +1082,7 @@ run_action "$run_path_ref_count" none run-path-ref-suffix
   exit 1
 }
 
-for malformed_scenario in cross-workflow-same-name malformed-run-path-ref-suffix wrong-run-repository unknown-app unknown-check-name invalid-job-id missing-job-id unsupported-status missing-timestamp missing-pr-association other-pr-association; do
+for malformed_scenario in cross-workflow-same-name malformed-run-path-ref-suffix wrong-run-repository unknown-app unknown-check-name invalid-job-id missing-job-id unsupported-status missing-timestamp empty-wrong-pr empty-wrong-base empty-wrong-head empty-wrong-title empty-malformed-association other-pr-association; do
   malformed_output="$tmp_dir/${malformed_scenario}-output"
   set +e
   run_action "$tmp_dir/count-${malformed_scenario}" none "$malformed_scenario" >"$malformed_output" 2>&1
@@ -1109,7 +1140,7 @@ grep -Fq 'Timed out waiting for a prior' "$multiple_metadata_output" || {
 
 context_output="$tmp_dir/context-output"
 set +e
-run_guard_action "$context_output" push deadbeef "$tmp_dir/count-context"
+run_guard_action "$context_output" push aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$tmp_dir/count-context"
 context_status=$?
 set -e
 [[ "$context_status" -ne 0 ]] || {
@@ -1138,7 +1169,7 @@ set -e
   echo "required-gate action polled before rejecting an empty head SHA" >&2
   exit 1
 }
-grep -Fxq 'Required-gate preservation requires a nonempty pull request head SHA; refusing to poll.' "$head_output" || {
+grep -Fxq 'Required-gate preservation requires a valid pull request head SHA; refusing to poll.' "$head_output" || {
   echo "required-gate action did not report the exact empty-head guard message" >&2
   exit 1
 }

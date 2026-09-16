@@ -22,6 +22,7 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
         HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
         REQUIRED_GATE_NAME: ${{ inputs.gate-name }}
@@ -35,14 +36,21 @@ runs:
           echo "Required-gate preservation requires pull_request context; refusing to poll." >&2
           exit 1
         fi
-        for required_variable in GH_TOKEN HEAD_SHA PR_NUMBER REQUIRED_GATE_NAME EXPECTED_WORKFLOW_NAME EXPECTED_WORKFLOW_FILE EXPECTED_WORKFLOW_PATH GITHUB_REPOSITORY GITHUB_RUN_ID; do
+        for required_variable in GH_TOKEN BASE_SHA HEAD_SHA PR_NUMBER REQUIRED_GATE_NAME EXPECTED_WORKFLOW_NAME EXPECTED_WORKFLOW_FILE EXPECTED_WORKFLOW_PATH GITHUB_REPOSITORY GITHUB_RUN_ID; do
           if [[ -z "${!required_variable:-}" ]]; then
             echo "Required-gate preservation is missing ${required_variable}; refusing to poll." >&2
             exit 1
           fi
         done
-        if [[ -z "${HEAD_SHA//[[:space:]]/}" ]]; then
-          echo "Required-gate preservation requires a nonempty pull request head SHA; refusing to poll." >&2
+        is_github_sha() {
+          [[ "$1" =~ ^[0-9A-Fa-f]{40}$ ]]
+        }
+        if ! is_github_sha "${BASE_SHA}"; then
+          echo "Required-gate preservation requires a valid pull request base SHA; refusing to poll." >&2
+          exit 1
+        fi
+        if ! is_github_sha "${HEAD_SHA}"; then
+          echo "Required-gate preservation requires a valid pull request head SHA; refusing to poll." >&2
           exit 1
         fi
         if [[ ! "${PR_NUMBER}" =~ ^[1-9][0-9]*$ ]]; then
@@ -55,6 +63,7 @@ runs:
           echo "Required-gate preservation received invalid workflow or job identity; refusing to poll." >&2
           exit 1
         fi
+        expected_display_title="${EXPECTED_WORKFLOW_NAME} pr-${PR_NUMBER} base-${BASE_SHA} head-${HEAD_SHA}"
         is_retryable_gh_failure() {
           local exit_status="$1"
           local error_text="${2,,}"
@@ -251,6 +260,7 @@ runs:
               --arg expected_head "${HEAD_SHA}" \
               --arg expected_repository "${GITHUB_REPOSITORY}" \
               --arg expected_pr "${PR_NUMBER}" \
+              --arg expected_display_title "${expected_display_title}" \
               'if (.id | type) == "number" and
                     (.workflow_id | type) == "number" and
                     (.id == ($expected_id | tonumber)) and
@@ -267,7 +277,12 @@ runs:
                   .repository.full_name == $expected_repository and
                   .event == "pull_request" and
                   ((.pull_requests // null) | type) == "array" and
-                  any(.pull_requests[]?; ((.number // null) | tostring) == $expected_pr)
+                  (
+                    ((.pull_requests | length) > 0 and
+                      any(.pull_requests[]; ((.number // null) | tostring) == $expected_pr)) or
+                    ((.pull_requests | length) == 0 and
+                      (.display_title // null) == $expected_display_title)
+                  )
                 then "true" else "false" end' \
               <<<"${workflow_run_json}" 2>>"${api_error_file}")"
             workflow_run_query_status=$?

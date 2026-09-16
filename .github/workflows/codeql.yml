@@ -10,6 +10,8 @@ on:
     - cron: '0 0 * * 0'
   workflow_dispatch:
 
+run-name: CodeQL Analysis ${{ github.event_name == 'pull_request' && format('pr-{0} base-{1} head-{2}', github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha) || github.ref_name }}
+
 permissions:
   contents: read
   security-events: write
