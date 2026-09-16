@@ -95,10 +95,12 @@ runs:
         api_error_file="$(mktemp)"
         trap 'rm -f "$api_error_file"' EXIT
         max_attempts=80
+        max_preservation_step_refresh_attempts=3
         expected_workflow_id=""
         declare -A workflow_run_cache=()
         declare -A job_cache=()
         declare -A terminal_job_cache=()
+        declare -A preservation_step_refresh_attempts=()
         for attempt in $(seq 1 "${max_attempts}"); do
           # A metadata-only run emits this same gate name. Its preservation step
           # identifies the recursive run; substantive gates skip that step and
@@ -364,9 +366,25 @@ runs:
               -z "${preserve_step_conclusion}" ]]; then
               if [[ "${check_status}" == "completed" ]]; then
                 # A completed check can briefly precede the jobs API's final
-                # step snapshot. Refresh it through the existing retry path.
-                job_lookup_retryable=true
-                break
+                # step snapshot. Refresh it through the existing retry path,
+                # but do not let one unresolved candidate starve other rows.
+                preservation_step_refresh_attempts["${job_id}"]=$((
+                  ${preservation_step_refresh_attempts[${job_id}]:-0} + 1
+                ))
+                if (( preservation_step_refresh_attempts["${job_id}"] < max_preservation_step_refresh_attempts )); then
+                  job_lookup_retryable=true
+                  break
+                fi
+                case "${conclusion}" in
+                  cancelled|skipped|stale) continue ;;
+                  *)
+                    # An unresolved step on a potentially authoritative
+                    # completed check cannot be allowed to mask a failure or
+                    # otherwise preserve from an older candidate.
+                    candidate_ambiguous=true
+                    continue
+                    ;;
+                esac
               elif [[ "${job_is_pending}" == "true" ]]; then
                 : # A nonterminal job may not have reached its preservation step yet.
               else

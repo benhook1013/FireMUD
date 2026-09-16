@@ -356,9 +356,15 @@ if [[ "$*" == *"/actions/workflows/"* ]]; then
     echo "simulated workflow lookup did not target the expected workflow filename" >&2
     exit 90
   fi
-  cat <<'JSON'
+  if [[ "${GH_SCENARIO:-}" == "workflow-identity-mismatch" ]]; then
+    cat <<'JSON'
+{"id":99,"name":"Security Checks","path":".github/workflows/security.yml"}
+JSON
+  else
+    cat <<'JSON'
 {"id":42,"name":"CI — Validation","path":".github/workflows/ci.yml"}
 JSON
+  fi
   exit 0
 fi
 if [[ "$*" == *"/actions/jobs/"* ]]; then
@@ -400,6 +406,12 @@ if [[ "$*" == *"/actions/jobs/"* ]]; then
     printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   elif [[ "${GH_SCENARIO:-}" == "completed-preservation-step-lag" &&
     "${job_id}" == "100" && "$(<"$count_file")" -eq 1 ]]; then
+    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
+  elif [[ "${GH_SCENARIO:-}" == "completed-preservation-step-persistent-lag" &&
+    "${job_id}" == "100" ]]; then
+    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
+  elif [[ "${GH_SCENARIO:-}" =~ ^completed-(cancelled|skipped|stale)-missing-step$ &&
+    "${job_id}" == "100" ]]; then
     printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   else
     printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"skipped"}]}\n' "$job_id" "$run_id" "$job_id"
@@ -531,6 +543,17 @@ JSON
     ;;
   completed-preservation-step-lag)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":99,"details_url":"https://github.com/example/firemud/actions/runs/99/job/99","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"}]}]\n'
+    ;;
+  completed-preservation-step-persistent-lag)
+    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":99,"details_url":"https://github.com/example/firemud/actions/runs/99/job/99","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"}]}]\n'
+    ;;
+  completed-cancelled-missing-step|completed-skipped-missing-step|completed-stale-missing-step)
+    case "${GH_SCENARIO}" in
+      completed-cancelled-missing-step) non_authoritative_conclusion=cancelled ;;
+      completed-skipped-missing-step) non_authoritative_conclusion=skipped ;;
+      completed-stale-missing-step) non_authoritative_conclusion=stale ;;
+    esac
+    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"%s","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":99,"details_url":"https://github.com/example/firemud/actions/runs/99/job/99","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"}]}]\n' "$non_authoritative_conclusion"
     ;;
   unsupported-status)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"mysterious","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":99,"details_url":"https://github.com/example/firemud/actions/runs/99/job/99","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"}]}]\n'
@@ -752,6 +775,24 @@ for failure_mode in permanent permission; do
   }
 done
 
+workflow_identity_output="$tmp_dir/workflow-identity-output"
+set +e
+run_action "$tmp_dir/count-workflow-identity-mismatch" none workflow-identity-mismatch >"$workflow_identity_output" 2>&1
+workflow_identity_status=$?
+set -e
+[[ "$workflow_identity_status" -ne 0 ]] || {
+  echo "required-gate action accepted a mismatched initial workflow identity" >&2
+  exit 1
+}
+[[ ! -e "$tmp_dir/count-workflow-identity-mismatch" ]] || {
+  echo "required-gate action polled check runs after an initial workflow identity mismatch" >&2
+  exit 1
+}
+grep -Fxq 'GitHub API returned malformed expected workflow identity; refusing to preserve.' "$workflow_identity_output" || {
+  echo "required-gate action did not report the exact initial workflow identity mismatch message" >&2
+  exit 1
+}
+
 successful_predecessor_count="$tmp_dir/count-successful-predecessor-preferred"
 run_action "$successful_predecessor_count" none latest-pending-preferred
 [[ "$(<"$successful_predecessor_count")" == "1" ]] || {
@@ -800,6 +841,34 @@ run_action "$completed_step_lag_count" none completed-preservation-step-lag
   echo "required-gate action did not retry a completed check while its preservation step snapshot lagged" >&2
   exit 1
 }
+
+persistent_step_lag_count="$tmp_dir/count-completed-preservation-step-persistent-lag"
+persistent_step_lag_output="$tmp_dir/completed-preservation-step-persistent-lag-output"
+set +e
+run_action "$persistent_step_lag_count" none completed-preservation-step-persistent-lag >"$persistent_step_lag_output" 2>&1
+persistent_step_lag_status=$?
+set -e
+[[ "$persistent_step_lag_status" -ne 0 ]] || {
+  echo "required-gate action allowed an unresolved authoritative candidate to mask an older success" >&2
+  exit 1
+}
+[[ "$(<"$persistent_step_lag_count")" == "3" ]] || {
+  echo "required-gate action did not stop refreshing an unresolved authoritative candidate after its bounded attempts" >&2
+  exit 1
+}
+grep -Fxq 'Ambiguous prior Validation Gate run metadata; refusing to preserve.' "$persistent_step_lag_output" || {
+  echo "required-gate action did not fail closed for an unresolved authoritative candidate" >&2
+  exit 1
+}
+
+for non_authoritative_scenario in completed-cancelled-missing-step completed-skipped-missing-step completed-stale-missing-step; do
+  non_authoritative_count="$tmp_dir/count-${non_authoritative_scenario}"
+  run_action "$non_authoritative_count" none "$non_authoritative_scenario"
+  [[ "$(<"$non_authoritative_count")" == "3" ]] || {
+    echo "required-gate action did not discard the unresolved ${non_authoritative_scenario} candidate after its bounded refresh attempts" >&2
+    exit 1
+  }
+done
 
 cache_call_counts="$tmp_dir/cache-call-counts"
 mkdir -p "$cache_call_counts"

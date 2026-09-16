@@ -278,8 +278,6 @@ def main() -> int:
     def is_executable_helper(path):
         if path.suffix in executable_helper_suffixes:
             return True
-        if path.suffix:
-            return False
         try:
             with path.open(encoding="utf-8", errors="ignore") as stream:
                 return stream.readline().startswith("#!")
@@ -362,15 +360,20 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="workflow-authority-", dir=root / "dev-tools") as helper_dir:
         helper = Path(helper_dir) / "extensionless-helper"
+        suffix_helper = Path(helper_dir) / "other-suffix.bash"
         data = Path(helper_dir) / "extensionless-data"
         helper.write_text("#!/usr/bin/env bash\n# extensionless helper\n", encoding="utf-8")
+        suffix_helper.write_text("#!/usr/bin/env bash\n# suffix helper\n", encoding="utf-8")
         data.write_text("extensionless data\n", encoding="utf-8")
         helper_reference = f"bash ./{helper.relative_to(root).as_posix()}"
+        suffix_reference = f"bash ./{suffix_helper.relative_to(root).as_posix()}"
         data_reference = f"bash ./{data.relative_to(root).as_posix()}"
         if helper not in references(helper_reference):
             fail("extensionless helper with a shebang was not detected")
         if "# extensionless helper" not in expand_text(helper_reference):
             fail("extensionless helper with a shebang was not expanded")
+        if suffix_helper not in references(suffix_reference):
+            fail("helper with an unlisted suffix and a shebang was not detected")
         if data in references(data_reference):
             fail("extensionless data without a shebang was treated as an executable helper")
 
