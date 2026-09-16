@@ -96,7 +96,7 @@ fi
 
 if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
   cat <<'PRS'
-[{"number":1,"headRefName":"valid-branch","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOexample","name":"test"},"headRepositoryOwner":{"login":"example"},"changedFiles":2,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Valid PR","url":"https://example.test/pr/1","isDraft":false}]
+[{"number":1,"headRefName":"valid-branch","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOexample","name":"test"},"headRepositoryOwner":{"login":"example"},"changedFiles":2,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Valid PR","url":"https://example.test/pr/1","isDraft":false},{"number":2,"headRefName":"hostile\tbranch\n\u001b","headRefOid":"dddddddddddddddddddddddddddddddddddddddd","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOexample","name":"test"},"headRepositoryOwner":{"login":"example"},"changedFiles":4,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Hostile\tTitle\n\u001b","url":"https://example.test/pr/2\turl\n\u001b","isDraft":false}]
 PRS
   exit 0
 fi
@@ -136,6 +136,11 @@ grep -Fqx "$BARE_WORKTREE"$'\t(bare)\t-\tbare' "$output_file"
 inventory_json="$(PATH="$BIN_DIR:$PATH" bash "$SCRIPT" --json)"
 jq -e '.mode == "inventory" and .status == "ok" and .errors == []' <<<"$inventory_json" >/dev/null
 jq -e '.worktrees | any(.bare and .head_sha == null and .status == "bare")' <<<"$inventory_json" >/dev/null
+jq -e '.pull_requests | any(.number == 2 and .head.branch == "hostile\tbranch\n\u001b" and .title == "Hostile\tTitle\n\u001b" and .url == "https://example.test/pr/2\turl\n\u001b")' <<<"$inventory_json" >/dev/null
+
+grep -Fqx $'2\thostile branch\tdevelop\tCLEAN\tHostile Title\thttps://example.test/pr/2 url' "$output_file"
+[[ "$(grep -Fc $'2\thostile branch\tdevelop\tCLEAN\tHostile Title\thttps://example.test/pr/2 url' "$output_file")" -eq 1 ]]
+[[ "$(awk -F '\t' '$1 == 2 { print NF }' "$output_file")" -eq 6 ]]
 
 echo "worktree topology contract checks passed"
 
@@ -205,6 +210,12 @@ cat > "$SELECTED_BIN/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${HOSTILE_SELECTED:-false}" == "true" && "$1 $2" == "pr list" ]]; then
+  cat <<'HOSTILE_PRS'
+[{"number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false},{"number":100,"headRefName":"hostile\tbranch\n\u001b","headRefOid":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Hostile\tTitle\n\u001b","url":"https://example.test/pr/100\turl\n\u001b","isDraft":false}]
+HOSTILE_PRS
+  exit 0
+fi
 if [[ "$1 $2" == "pr list" ]]; then
   cat <<'PRS'
 [{"number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false},{"number":100,"headRefName":"feature/dependent","headRefOid":"dddddddddddddddddddddddddddddddddddddddd","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Dependent","url":"https://example.test/pr/100","isDraft":false},{"number":50,"headRefName":"feature/grandchild","headRefOid":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","baseRefName":"feature/dependent","baseRefOid":"dddddddddddddddddddddddddddddddddddddddd","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Grandchild","url":"https://example.test/pr/50","isDraft":false},{"number":45,"headRefName":"renovate/dependent","headRefOid":"ffffffffffffffffffffffffffffffffffffffff","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Renovate dependent","url":"https://example.test/pr/45","isDraft":false},{"number":44,"headRefName":"feature/forked","headRefOid":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"id":"R_kgDOforkrepo","name":"repo"},"headRepositoryOwner":{"login":"fork"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Foreign collision","url":"https://example.test/pr/44","isDraft":false},{"number":46,"headRefName":"renovate/unrelated","headRefOid":"1212121212121212121212121212121212121212","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Unrelated Renovate","url":"https://example.test/pr/46","isDraft":false}]
@@ -239,6 +250,11 @@ if grep -Fq '#46' <<<"$selected_human"; then
   echo "unrelated Renovate PR was reported as omitted" >&2
   exit 1
 fi
+
+hostile_selected="$(cd "$SELECTED_REPO" && HOSTILE_SELECTED=true PATH="$SELECTED_BIN:$PATH" bash "$SCRIPT" --repo owner/repo --pr 42)"
+grep -Fqx $'dependent\t100\thostile branch\teeeeeeeeeeee\tfeature/head\tbbbbbbbbbbbb\t1\tCLEAN/MERGEABLE\tabsent\t0' <<<"$hostile_selected"
+[[ "$(grep -Fc $'dependent\t100\thostile branch\teeeeeeeeeeee\tfeature/head\tbbbbbbbbbbbb\t1\tCLEAN/MERGEABLE\tabsent\t0' <<<"$hostile_selected")" -eq 1 ]]
+[[ "$(awk -F '\t' '$1 == "dependent" && $2 == 100 { print NF }' <<<"$hostile_selected")" -eq 10 ]]
 
 selected_renovate_json="$(cd "$SELECTED_REPO" && PATH="$SELECTED_BIN:$PATH" bash "$SCRIPT" --repo owner/repo --pr 42 --include-renovate --json)"
 jq -e '.status == "ok" and (.chain | map(.number) | index(45) != null)' <<<"$selected_renovate_json" >/dev/null

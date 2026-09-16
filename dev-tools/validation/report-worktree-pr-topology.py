@@ -14,6 +14,7 @@ from typing import Any
 MAX_OPEN_PRS = 1000
 MAX_CHAIN_PRS = 50
 DEFAULT_BRANCHES = {"develop", "main", "master"}
+TERMINAL_CONTROLS = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
 EXACT_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
 REPO = re.compile(r"^[^/\s]+/[^/\s]+$")
 REPO_COMPONENT = re.compile(r"^[^/\s]+$")
@@ -25,6 +26,13 @@ PR_FIELDS = (
 
 class TopologyError(ValueError):
     """A topology input could not be correlated without guessing."""
+
+
+def _display(value: Any) -> str:
+    """Render provider-controlled text without allowing it to alter report layout."""
+
+    text = TERMINAL_CONTROLS.sub(" ", str(value))
+    return " ".join(text.split()) or "-"
 
 
 def run_command(args: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -585,41 +593,41 @@ def selected_chain(
 
 
 def emit_selected_text(report: dict[str, Any]) -> None:
-    print(f"Repository: {report['repository']}")
-    print(f"Selected PR: #{report['selected_pr']} (exact branch/SHA stack)")
+    print(f"Repository: {_display(report['repository'])}")
+    print(f"Selected PR: #{_display(report['selected_pr'])} (exact branch/SHA stack)")
     print("RELATION\tPR\tHEAD BRANCH\tHEAD SHA\tBASE BRANCH\tBASE SHA\tFILES\tMERGE\tLOCAL HEAD\tWORKTREES")
     for item in report["chain"]:
         local = item["local_head"]["status"]
         print(
             "\t".join(
                 (
-                    item["relation"],
-                    str(item["number"]),
-                    item["head"]["branch"],
-                    item["head"]["sha"][:12],
-                    item["base"]["branch"],
-                    item["base"]["sha"][:12],
-                    str(item["changed_files"]),
-                    f"{item['merge']['state']}/{item['merge']['mergeable']}",
-                    local,
-                    str(len(item["worktrees"])),
+                    _display(item["relation"]),
+                    _display(item["number"]),
+                    _display(item["head"]["branch"]),
+                    _display(item["head"]["sha"][:12]),
+                    _display(item["base"]["branch"]),
+                    _display(item["base"]["sha"][:12]),
+                    _display(item["changed_files"]),
+                    _display(f"{item['merge']['state']}/{item['merge']['mergeable']}"),
+                    _display(local),
+                    _display(len(item["worktrees"])),
                 )
             )
         )
     for omission in report.get("omitted_renovate", []):
-        linked = ",".join(f"#{number}" for number in omission["linked_prs"])
+        linked = ",".join(f"#{_display(number)}" for number in omission["linked_prs"])
         print(
             "omitted Renovate PR "
-            f"#{omission['number']} ({omission['relation']} linked to {linked}; "
+            f"#{_display(omission['number'])} ({_display(omission['relation'])} linked to {linked}; "
             "excluded from the default selected stack; use --include-renovate to include)"
         )
     if report["errors"]:
         for error in report["errors"]:
-            print(f"error: {error}", file=sys.stderr)
+            print(f"error: {_display(error)}", file=sys.stderr)
 
 
 def emit_inventory_text(report: dict[str, Any]) -> None:
-    print(f"Repository: {report['repository']}")
+    print(f"Repository: {_display(report['repository'])}")
     print()
     print("Worktrees")
     print("PATH\tBRANCH\tHEAD\tSTATUS")
@@ -632,15 +640,30 @@ def emit_inventory_text(report: dict[str, Any]) -> None:
         if worktree["locked"] and status not in {"prunable", "bare"}:
             status = f"{status} (locked)"
         head = worktree["head_sha"] or "-"
-        print(f"{worktree['path']}\t{branch}\t{head}\t{status}")
+        print(
+            "\t".join(
+                (
+                    _display(worktree["path"]),
+                    _display(branch),
+                    _display(head),
+                    _display(status),
+                )
+            )
+        )
 
     print()
     print("Local branches")
     print("BRANCH\tUPSTREAM\tHEAD\tLAST_COMMIT")
     for branch in sorted(report["local_branches"], key=lambda item: item["branch"]):
         print(
-            f"{branch['branch']}\t{branch['upstream'] or '-'}\t"
-            f"{branch['head_sha'][:12]}\t{branch['last_commit_at'] or '-'}"
+            "\t".join(
+                (
+                    _display(branch["branch"]),
+                    _display(branch["upstream"] or "-"),
+                    _display(branch["head_sha"][:12]),
+                    _display(branch["last_commit_at"] or "-"),
+                )
+            )
         )
 
     print()
@@ -648,8 +671,16 @@ def emit_inventory_text(report: dict[str, Any]) -> None:
     print("NUMBER\tHEAD\tBASE\tMERGE_STATE\tTITLE\tURL")
     for pr in report["pull_requests"]:
         print(
-            f"{pr['number']}\t{pr['head']['branch']}\t{pr['base']['branch']}\t"
-            f"{pr['merge']['state']}\t{pr['title']}\t{pr['url']}"
+            "\t".join(
+                (
+                    _display(pr["number"]),
+                    _display(pr["head"]["branch"]),
+                    _display(pr["base"]["branch"]),
+                    _display(pr["merge"]["state"]),
+                    _display(pr["title"]),
+                    _display(pr["url"]),
+                )
+            )
         )
 
 
@@ -753,7 +784,7 @@ def main() -> int:
         if args.json:
             print(json.dumps({"schema_version": 1, "status": "ambiguous", "errors": [str(exc)]}, indent=2, sort_keys=True))
         else:
-            print(f"error: {exc}", file=sys.stderr)
+            print(f"error: {_display(exc)}", file=sys.stderr)
         return 1
 
 
