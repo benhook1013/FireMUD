@@ -660,6 +660,46 @@ class TlsCertificateWatcherTest {
     }
   }
 
+  @Test
+  void lockWaiterIsNotTrackedAndCannotReloadAfterClose(@TempDir Path directory) throws Exception {
+    Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
+    AtomicBoolean callbackInvoked = new AtomicBoolean();
+    TlsCertificateWatcher watcher =
+        new TlsCertificateWatcher(List.of(certificate), () -> callbackInvoked.set(true));
+    Field callbackMonitorField = TlsCertificateWatcher.class.getDeclaredField("callbackMonitor");
+    Field activeCallbacksField = TlsCertificateWatcher.class.getDeclaredField("activeCallbacks");
+    callbackMonitorField.setAccessible(true);
+    activeCallbacksField.setAccessible(true);
+    java.util.concurrent.locks.ReentrantLock callbackMonitor =
+        (java.util.concurrent.locks.ReentrantLock) callbackMonitorField.get(watcher);
+    @SuppressWarnings("unchecked")
+    Set<Thread> activeCallbacks = (Set<Thread>) activeCallbacksField.get(watcher);
+    AtomicReference<Throwable> waiterFailure = new AtomicReference<>();
+    callbackMonitor.lock();
+    Thread waiter =
+        new Thread(
+            () -> {
+              try {
+                invokeReloadCallback(watcher, false);
+              } catch (Throwable failure) {
+                waiterFailure.set(failure);
+              }
+            });
+    waiter.start();
+    try {
+      awaitLockWaiter(waiter);
+      assertTrue(activeCallbacks.isEmpty());
+      watcher.close();
+    } finally {
+      callbackMonitor.unlock();
+      waiter.join(5_000);
+      watcher.close();
+    }
+    assertFalse(waiter.isAlive());
+    assertNull(waiterFailure.get());
+    assertFalse(callbackInvoked.get());
+  }
+
   private static Future<?> submitRetryCallback(TlsCertificateWatcher watcher) throws Exception {
     ScheduledExecutorService retryExecutor = retryExecutor(watcher);
     Method retryMethod = TlsCertificateWatcher.class.getDeclaredMethod("retryReloadCallback");
@@ -910,6 +950,19 @@ class TlsCertificateWatcherTest {
       Thread.sleep(10);
     }
     assertTrue(watcher.isHealthy());
+  }
+
+  private static void awaitLockWaiter(Thread waiter) throws Exception {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    while (waiter.getState() == Thread.State.NEW || waiter.getState() == Thread.State.RUNNABLE) {
+      if (System.nanoTime() >= deadline) {
+        break;
+      }
+      Thread.onSpinWait();
+    }
+    assertTrue(
+        waiter.getState() == Thread.State.WAITING || waiter.getState() == Thread.State.BLOCKED,
+        () -> "expected lock waiter, but was " + waiter.getState());
   }
 
   private static void awaitLogCount(

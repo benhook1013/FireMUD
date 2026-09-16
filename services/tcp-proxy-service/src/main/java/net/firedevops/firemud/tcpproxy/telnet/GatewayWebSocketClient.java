@@ -351,7 +351,10 @@ public final class GatewayWebSocketClient implements AutoCloseable {
     return generation == null ? null : generation.client();
   }
 
-  void installGenerationForTest(HttpClient client) {
+  synchronized void installGenerationForTest(HttpClient client) {
+    if (closed.get()) {
+      throw new IllegalStateException("Gateway WebSocket client is closed");
+    }
     ClientState previous = state;
     state = ClientState.available(newGeneration(Objects.requireNonNull(client)));
     retire(previous);

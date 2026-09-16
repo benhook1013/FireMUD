@@ -312,6 +312,20 @@ class GatewayWebSocketClientTest {
   }
 
   @Test
+  void generationInstallationFailsAfterCloseWithoutReplacingState() throws Exception {
+    GatewayWebSocketClient client = newLocalClient("ws://localhost:8080/ws/game");
+    client.close();
+    HttpClient replacementClient = mock(HttpClient.class);
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class, () -> client.installGenerationForTest(replacementClient));
+
+    assertEquals("Gateway WebSocket client is closed", failure.getMessage());
+    assertNull(client.clientIdentity());
+  }
+
+  @Test
   void mutualTlsReadinessRequiresCertificateWatcher() throws Exception {
     MockWebServer server = startMutualTlsServer(InetAddress.getByName("127.0.0.1"));
     server.enqueue(new MockResponse().setResponseCode(200));

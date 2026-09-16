@@ -198,41 +198,44 @@ public class TlsCertificateWatcher implements AutoCloseable {
       return CallbackInvocationResult.SKIPPED;
     }
     Thread callbackThread = Thread.currentThread();
-    activeCallbacks.add(callbackThread);
+    if (retryOnlyWhenUnhealthy) {
+      if (!callbackMonitor.tryLock()) {
+        return CallbackInvocationResult.SKIPPED;
+      }
+    } else {
+      callbackMonitor.lock();
+    }
     try {
-      if (retryOnlyWhenUnhealthy) {
-        if (!callbackMonitor.tryLock()) {
-          return CallbackInvocationResult.SKIPPED;
-        }
-      } else {
-        callbackMonitor.lock();
+      if (!running.get()) {
+        return CallbackInvocationResult.SKIPPED;
       }
+      if (retryOnlyWhenUnhealthy && reloadCallbackHealthy.get()) {
+        return CallbackInvocationResult.SKIPPED;
+      }
+      activeCallbacks.add(callbackThread);
+      RuntimeException callbackFailure = null;
       try {
-        if (!running.get()) {
-          return CallbackInvocationResult.SKIPPED;
-        }
-        if (retryOnlyWhenUnhealthy && reloadCallbackHealthy.get()) {
-          return CallbackInvocationResult.SKIPPED;
-        }
-        try {
-          onChange.run();
-          reloadCallbackHealthy.set(true);
-          cancelScheduledRetry();
-          return CallbackInvocationResult.SUCCEEDED;
-        } catch (RuntimeException e) {
-          reloadCallbackHealthy.set(false);
-          logger.error(
-              "TLS certificate reload callback failed; continuing to watch credentials", e);
-          return CallbackInvocationResult.FAILED;
-        }
+        onChange.run();
+      } catch (RuntimeException e) {
+        callbackFailure = e;
       } finally {
-        callbackMonitor.unlock();
+        activeCallbacks.remove(callbackThread);
+        synchronized (callbackStateMonitor) {
+          callbackStateMonitor.notifyAll();
+        }
       }
+      if (callbackFailure != null) {
+        reloadCallbackHealthy.set(false);
+        logger.error(
+            "TLS certificate reload callback failed; continuing to watch credentials",
+            callbackFailure);
+        return CallbackInvocationResult.FAILED;
+      }
+      reloadCallbackHealthy.set(true);
+      cancelScheduledRetry();
+      return CallbackInvocationResult.SUCCEEDED;
     } finally {
-      activeCallbacks.remove(callbackThread);
-      synchronized (callbackStateMonitor) {
-        callbackStateMonitor.notifyAll();
-      }
+      callbackMonitor.unlock();
     }
   }
 
