@@ -299,8 +299,8 @@ runs:
               job_json="$(gh api --method GET \
                 "/repos/${GITHUB_REPOSITORY}/actions/jobs/${job_id}" \
                 2>"${api_error_file}")"
-              job_was_fetched=true
               job_status=$?
+              job_was_fetched=true
               set -e
               if [[ "${job_status}" -ne 0 ]]; then
                 job_error="$(<"${api_error_file}")"

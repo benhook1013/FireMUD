@@ -321,6 +321,12 @@ if [[ "$*" == *"/actions/jobs/"* ]]; then
     [[ -f "$job_call_file" ]] && job_call_count="$(<"$job_call_file")"
     printf '%s' "$((job_call_count + 1))" >"$job_call_file"
   fi
+  if [[ "${GH_SCENARIO:-}" == "job-failure-retry" && "$job_id" == "100" &&
+    ! -e "${count_file}.job-failure-once" ]]; then
+    : >"${count_file}.job-failure-once"
+    echo "gh: HTTP 503 Service Unavailable" >&2
+    exit 1
+  fi
   metadata=false
   if [[ "${GH_SCENARIO:-}" == "multiple-metadata" ]] ||
     [[ "${GH_SCENARIO:-}" == "latest-pending-preferred" && "${job_id}" == "101" ]] ||
@@ -549,6 +555,9 @@ JSON
     esac
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
+  job-failure-retry)
+    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    ;;
   *)
     echo "unknown simulated gh scenario" >&2
     exit 91
@@ -646,6 +655,13 @@ for failure_mode in transient network rate-limit; do
     exit 1
   }
 done
+
+job_failure_count="$tmp_dir/count-job-failure-retry"
+run_action "$job_failure_count" none job-failure-retry
+[[ "$(<"$job_failure_count")" == "2" ]] || {
+  echo "required-gate action did not retry a retryable job metadata lookup failure" >&2
+  exit 1
+}
 
 for failure_mode in permanent permission; do
   permanent_output="$tmp_dir/${failure_mode}-output"

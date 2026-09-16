@@ -716,6 +716,89 @@ class PrStatusReporterTest(unittest.TestCase):
         self.assertNotIn(str(record), json.dumps(report))
         self.assertEqual(report["verdict"], "READY")
 
+    def test_durable_hosted_trigger_record_is_discovered_from_main_and_linked_worktrees(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            fixture_root = Path(directory)
+            main_root = fixture_root / "main"
+            linked_root = fixture_root / "linked"
+            worktree_git_dir = main_root / ".git" / "worktrees" / "linked"
+            worktree_git_dir.mkdir(parents=True)
+            linked_root.mkdir()
+            (linked_root / ".git").write_text(
+                f"gitdir: {worktree_git_dir}\n", encoding="utf-8"
+            )
+            (worktree_git_dir / "commondir").write_text("../..\n", encoding="utf-8")
+            record = (
+                main_root
+                / ".git"
+                / "coderabbit-review-logs"
+                / "hosted"
+                / "owner_repo"
+                / "pr-42"
+                / "trigger.json"
+            )
+            record.parent.mkdir(parents=True)
+            record.write_text("{}", encoding="utf-8")
+
+            trigger = {
+                "trigger_state": {
+                    "state": "completed",
+                    "terminal": True,
+                    "attributed": True,
+                    "repository": "owner/repo",
+                    "pr_number": 42,
+                    "head_sha": "0123456789abcdef0123456789abcdef01234567",
+                    "current_head_sha": "0123456789abcdef0123456789abcdef01234567",
+                    "trigger_comment_id": 101,
+                    "trigger_created_at": "2026-09-14T00:05:00Z",
+                    "trigger_url": "https://example.test/comments/101",
+                    "trigger_type": "full",
+                    "response_id": 102,
+                    "response_created_at": "2026-09-14T00:10:00Z",
+                    "response_url": "https://example.test/comments/102",
+                    "cooldown_until": None,
+                    "reason": "the captured Hosted review completed",
+                }
+            }
+            trigger_payload = self.checker_payload(ok=True)
+            trigger_payload.update(trigger)
+            record.write_text(json.dumps(trigger_payload), encoding="utf-8")
+
+            with patch.object(self.reporter, "ROOT", main_root):
+                self.assertEqual(self.reporter.hosted_trigger_record_path("owner/repo", 42), record)
+            with patch.object(self.reporter, "ROOT", linked_root):
+                self.assertEqual(self.reporter.hosted_trigger_record_path("owner/repo", 42), record)
+
+            commands = []
+
+            def run(command, **kwargs):
+                commands.append(command)
+                if "--trigger-record" in command:
+                    return subprocess.CompletedProcess(command, 0, record.read_text(encoding="utf-8"), "")
+                return self.provider_responses(checker_ok=True)(command, **kwargs)
+
+            with (
+                patch.object(self.reporter.subprocess, "run", side_effect=run),
+                patch.object(self.reporter, "ROOT", linked_root),
+            ):
+                report = self.reporter.build_report("owner/repo", 42)
+            self.assertTrue(report["hosted_trigger"]["available"])
+            self.assertEqual(sum("--trigger-record" in command for command in commands), 1)
+
+            record.unlink()
+            commands.clear()
+            with (
+                patch.object(self.reporter.subprocess, "run", side_effect=run),
+                patch.object(self.reporter, "ROOT", linked_root),
+            ):
+                report = self.reporter.build_report("owner/repo", 42)
+            self.assertFalse(report["hosted_trigger"]["available"])
+            self.assertEqual(sum("--trigger-record" in command for command in commands), 0)
+            with patch.object(self.reporter, "ROOT", main_root):
+                self.assertIsNone(self.reporter.hosted_trigger_record_path("owner/repo", 42))
+            with patch.object(self.reporter, "ROOT", linked_root):
+                self.assertIsNone(self.reporter.hosted_trigger_record_path("owner/repo", 42))
+
     def test_ambiguous_hosted_trigger_reason_is_visible_in_human_output(self) -> None:
         trigger = {
             "trigger_state": {
@@ -884,6 +967,27 @@ class PrStatusReporterTest(unittest.TestCase):
                 report = self.reporter.build_report("owner/repo", 42)
         self.assertEqual(report["hosted_trigger"]["state"], "unattributed")
         self.assertIsNone(report["hosted_trigger"]["trigger_url"])
+        report["hosted_trigger"]["head_sha"] = None
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.reporter.emit_text(report)
+        rendered = output.getvalue()
+        self.assertIn("trigger: state=unattributed · id=- · head=-", rendered)
+
+    def test_human_loc_output_notes_when_merge_base_is_unchecked(self) -> None:
+        with (
+            patch.object(self.reporter, "_current_merge_base", return_value=None),
+            patch.object(
+                self.reporter.subprocess,
+                "run",
+                side_effect=self.provider_responses(checker_ok=True),
+            ),
+        ):
+            report = self.reporter.build_report("owner/repo", 42)
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.reporter.emit_text(report)
+        self.assertIn("LOC metadata: fresh (merge-base not checked)", output.getvalue())
 
 
 if __name__ == "__main__":

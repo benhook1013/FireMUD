@@ -2,13 +2,13 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-ROOT_PATH="$ROOT_DIR" python3 - <<'PY'
+ROOT_PATH="${ROOT_PATH:-$ROOT_DIR}" python3 - <<'PY'
 import os
 import re
 import subprocess
 from pathlib import Path
 
-root = Path(os.environ["ROOT_PATH"])
+root = Path(os.environ["ROOT_PATH"]).resolve()
 
 readmes = (root / "dev-tools/README.md", root / "dev-tools/hosted/README.md")
 
@@ -38,13 +38,31 @@ def link_target(readme: Path, target: str) -> None:
     tracked_file((readme.parent / target).resolve(), readme)
 
 
+def canonical_section(readme: Path, text: str) -> str:
+    heading = "## Canonical root entrypoints"
+    end_heading = "## Folder map"
+    if heading not in text:
+        raise SystemExit(f"{readme}: missing the '{heading}' section")
+    if end_heading not in text:
+        raise SystemExit(f"{readme}: missing the '{end_heading}' heading after '{heading}'")
+    return text.split(heading, 1)[1].split(end_heading, 1)[0]
+
+
 for readme in readmes:
     text = readme.read_text(encoding="utf-8")
     for target in re.findall(r"\[[^]]+\]\(([^)]+)\)", text):
         link_target(readme, target)
 
     if readme == root / "dev-tools/README.md":
-        canonical = text.split("## Canonical root entrypoints", 1)[1].split("## Folder map", 1)[0]
+        try:
+            canonical_section(readme, "## Folder map\n")
+        except SystemExit as exc:
+            expected = f"{readme}: missing the '## Canonical root entrypoints' section"
+            if str(exc) != expected:
+                raise
+        else:
+            raise SystemExit(f"{readme}: missing-heading regression did not fail")
+        canonical = canonical_section(readme, text)
         for line in canonical.splitlines():
             if not line.startswith("- "):
                 continue
@@ -63,3 +81,10 @@ for readme in readmes:
 
 print("dev-tools README path and link contract checks passed")
 PY
+
+if [[ "${DEV_TOOLS_README_CONTRACT_SYMLINK_TEST:-0}" != "1" ]]; then
+  symlink_test_dir="$(mktemp -d)"
+  ln -s "$ROOT_DIR" "$symlink_test_dir/root"
+  DEV_TOOLS_README_CONTRACT_SYMLINK_TEST=1 ROOT_PATH="$symlink_test_dir/root" bash "$0"
+  rm -rf "$symlink_test_dir"
+fi

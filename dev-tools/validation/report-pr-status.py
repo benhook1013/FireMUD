@@ -1069,10 +1069,12 @@ def emit_text(report: dict[str, Any]) -> None:
     print(f"verdict: {report['verdict']}")
     trigger = report["hosted_trigger"]
     if trigger.get("available"):
+        trigger_id = trigger.get("trigger_comment_id") or "-"
+        trigger_head = str(trigger.get("head_sha") or "")[:12] or "-"
         trigger_details = [
             f"state={_display(trigger.get('state'))}",
-            f"id={_display(trigger.get('trigger_comment_id'))}",
-            f"head={_display(str(trigger.get('head_sha', ''))[:12] or None)}",
+            f"id={_display(trigger_id)}",
+            f"head={_display(trigger_head)}",
         ]
         if trigger.get("state") == "ambiguous" and trigger.get("reason"):
             trigger_details.append(f"reason={_display(trigger['reason'])}")
@@ -1088,11 +1090,15 @@ def emit_text(report: dict[str, Any]) -> None:
         f"observed raw/accepted={taper['hosted_raw_found']}/{taper['hosted_accepted']}"
     )
     loc = report["loc_metadata"]
-    loc_detail = loc.get("reason")
+    loc_details = []
+    if loc.get("merge_base_checked") is False:
+        loc_details.append("merge-base not checked")
+    if loc.get("reason"):
+        loc_details.append(_display(loc["reason"]))
     print(
         "LOC metadata: "
         f"{_display(loc.get('status'))}"
-        + (f" ({_display(loc_detail)})" if loc_detail else "")
+        + (f" ({'; '.join(loc_details)})" if loc_details else "")
     )
     for reason in report["reasons"]:
         print(f"reason: {_display(reason)}")
