@@ -129,6 +129,7 @@ EXPECTED_TOP_LEVEL_LABELS = {
     "app.kubernetes.io/name": "firemud",
     "app.kubernetes.io/managed-by": "Helm",
 }
+TCP_PROXY_IDENTITY_MODE_LABEL = "firemud.dev/certificate-identity-mode"
 
 
 def _expected_top_level_labels() -> dict[str, str]:
@@ -136,6 +137,18 @@ def _expected_top_level_labels() -> dict[str, str]:
         **EXPECTED_TOP_LEVEL_LABELS,
         "helm.sh/chart": _expected_chart_label(TRUSTED_CHART_METADATA),
     }
+
+
+def _expected_object_labels(
+    kind: object, name: object, expected_namespace: str
+) -> dict[str, str]:
+    labels = {
+        **_expected_top_level_labels(),
+        "app.kubernetes.io/instance": expected_namespace,
+    }
+    if kind in {"Deployment", "Service"} and name == "tcp-proxy-service":
+        labels[TCP_PROXY_IDENTITY_MODE_LABEL] = "hosted-controller"
+    return labels
 
 
 def _application_service_spec(
@@ -505,10 +518,7 @@ def _validate_object_metadata(document: dict, expected_namespace: str) -> dict:
             f"{kind}/{name} metadata contains unsupported fields: "
             f"{sorted(unexpected_fields)}"
         )
-    expected_labels = {
-        **_expected_top_level_labels(),
-        "app.kubernetes.io/instance": expected_namespace,
-    }
+    expected_labels = _expected_object_labels(kind, name, expected_namespace)
     actual_labels = metadata.get("labels")
     if isinstance(actual_labels, dict):
         # Identify the first missing or mismatched required label; exact equality below
@@ -1213,13 +1223,6 @@ def validate_network_policies(documents: list[dict]) -> None:
                     }
                 ],
                 "ports": [{"protocol": "TCP", "port": 8080}],
-            },
-            {
-                "from": [{"podSelector": {}}],
-                "ports": [
-                    {"protocol": "TCP", "port": 8080},
-                    {"protocol": "TCP", "port": 6565},
-                ],
             },
         ],
     }

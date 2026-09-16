@@ -7,11 +7,20 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Map;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Shared HTTP helpers for integration tests that should not depend on TestRestTemplate beans. */
 public final class HttpTestSupport {
   private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
+  static final Duration PROBE_TIMEOUT = Duration.ofSeconds(1);
+  private static final ObjectMapper JSON_MAPPER =
+      JsonMapper.builder().enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).build();
 
   private HttpTestSupport() {}
 
@@ -44,12 +53,88 @@ public final class HttpTestSupport {
     return getBody(url, StandardCharsets.UTF_8, headers);
   }
 
+  /** Waits until a Spring Boot readiness endpoint reports UP or the timeout expires. */
+  public static void awaitReadiness(String url, Duration timeout) throws InterruptedException {
+    long deadline = System.nanoTime() + timeout.toNanos();
+    IOException lastIOException = null;
+    String lastSuccessfulResponseBody = null;
+    while (true) {
+      long remainingNanos = deadline - System.nanoTime();
+      if (remainingNanos <= 0) {
+        break;
+      }
+      try {
+        HttpResponse<String> response =
+            getResponse(
+                url,
+                Duration.ofNanos(Math.min(Math.max(1, remainingNanos), PROBE_TIMEOUT.toNanos())));
+        lastSuccessfulResponseBody = response.body();
+        if (isReady(response)) {
+          return;
+        }
+      } catch (IOException ex) {
+        // The server may not be listening yet.
+        lastIOException = ex;
+      } catch (InterruptedException ex) {
+        Thread.currentThread().interrupt();
+        throw ex;
+      }
+      long remainingAfterProbeNanos = deadline - System.nanoTime();
+      if (remainingAfterProbeNanos <= 0) {
+        break;
+      }
+      try {
+        Thread.sleep(
+            Duration.ofNanos(
+                Math.min(
+                    remainingAfterProbeNanos,
+                    TestAsyncAssertions.DEFAULT_POLL_INTERVAL.toNanos())));
+      } catch (InterruptedException ex) {
+        Thread.currentThread().interrupt();
+        throw ex;
+      }
+    }
+    String message = "Timed out waiting for HTTP readiness at " + url;
+    if (lastSuccessfulResponseBody != null) {
+      message += "; last successful response body: " + lastSuccessfulResponseBody;
+    }
+    AssertionError failure = new AssertionError(message);
+    if (lastIOException != null) {
+      failure.initCause(lastIOException);
+    }
+    throw failure;
+  }
+
+  private static boolean isReady(HttpResponse<String> response) {
+    return response.statusCode() >= 200 && response.statusCode() < 300 && isReady(response.body());
+  }
+
+  private static boolean isReady(String body) {
+    try {
+      JsonNode root = JSON_MAPPER.readTree(body);
+      if (root == null || !root.isObject()) {
+        return false;
+      }
+      JsonNode status = root.get("status");
+      return status != null && status.isString() && "UP".equals(status.stringValue());
+    } catch (JacksonException ignored) {
+      return false;
+    }
+  }
+
   public static String getBody(String url, Charset charset, Map<String, String> headers)
       throws IOException, InterruptedException {
     HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(URI.create(url));
     headers.forEach(requestBuilder::header);
     HttpRequest request = requestBuilder.GET().build();
     return HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString(charset)).body();
+  }
+
+  private static HttpResponse<String> getResponse(String url, Duration requestTimeout)
+      throws IOException, InterruptedException {
+    HttpRequest request =
+        HttpRequest.newBuilder(URI.create(url)).timeout(requestTimeout).GET().build();
+    return HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
   }
 
   public static String postJsonBody(String url, String requestBody)

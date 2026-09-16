@@ -2,23 +2,17 @@ package net.firedevops.firemud.springcloudgateway.filter;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.security.cert.CertificateEncodingException;
-import java.security.cert.X509Certificate;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import net.firedevops.firemud.common.security.GameplayRoutingBundleValidator;
 import net.firedevops.firemud.springcloudgateway.config.GatewayHeaderTrustProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.Ordered;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.server.reactive.SslInfo;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.WebFilter;
@@ -38,33 +32,25 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
   private static final String HDR_CLIENT_IP = "X-Client-IP";
   private static final String HDR_GAME_INSTANCE_ID = "X-Game-Instance-Id";
   private static final String HDR_TENANT_ID = "X-Tenant-Id";
+  private static final String HDR_WORLD_SLUG = "X-World-Slug";
+  private static final String HDR_REALM_SLUG = "X-Realm-Slug";
+  private static final String HDR_POINTER_VERSION = "X-Pointer-Version";
 
   private static final String HDR_PROXY_CLIENT_IP = "X-Proxy-Client-IP";
   private static final String HDR_PROXY_CONNECTION_ID = "X-Proxy-Connection-Id";
   private static final String HDR_PROXY_GAME_INSTANCE_ID = "X-Proxy-Game-Instance-Id";
   private static final String HDR_PROXY_TENANT_ID = "X-Proxy-Tenant-Id";
 
-  private static final HexFormat HEX = HexFormat.of();
-
-  private final GatewayHeaderTrustProperties properties;
   private final CidrSet trustedForwardedProxies;
-  private final CidrSet insecureTrustedTcpProxyCidrs;
-  private final List<String> trustedTcpProxyFingerprints;
-  private final List<String> trustedTcpProxyDnsSans;
-  private final List<String> trustedTcpProxyUriSans;
+  private final TcpProxyTrustPolicy tcpProxyTrustPolicy;
 
-  public HeaderTrustFilter(GatewayHeaderTrustProperties properties) {
-    this.properties = Objects.requireNonNull(properties);
+  @Autowired
+  public HeaderTrustFilter(
+      GatewayHeaderTrustProperties properties, TcpProxyTrustPolicy tcpProxyTrustPolicy) {
+    Objects.requireNonNull(properties);
+    this.tcpProxyTrustPolicy = Objects.requireNonNull(tcpProxyTrustPolicy);
     this.trustedForwardedProxies =
         new CidrSet(properties.getForwardedClientIp().getTrustedProxyCidrs());
-    this.insecureTrustedTcpProxyCidrs =
-        new CidrSet(properties.getTcpProxy().getInsecureTrustedCidrs());
-    this.trustedTcpProxyFingerprints =
-        normalizeFingerprints(properties.getTcpProxy().getTrustedClientCertFingerprintsSha256());
-    this.trustedTcpProxyDnsSans =
-        normalizeStrings(properties.getTcpProxy().getTrustedClientCertDnsSans());
-    this.trustedTcpProxyUriSans =
-        normalizeStrings(properties.getTcpProxy().getTrustedClientCertUriSans());
   }
 
   @Override
@@ -73,11 +59,13 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
     boolean isSessionRoute = path.startsWith("/ws/game") || path.startsWith("/api/session/");
 
     InetAddress remoteAddress = remoteInetAddress(exchange);
-    boolean trustedTcpProxy = isTrustedTcpProxy(exchange, remoteAddress);
+    boolean trustedTcpProxy = tcpProxyTrustPolicy.isTrusted(exchange, remoteAddress);
+    boolean dedicatedTcpProxyListener = tcpProxyTrustPolicy.isDedicatedListenerRequest(exchange);
 
     if (isSessionRoute
         && !trustedTcpProxy
-        && presentsProxyHeaders(exchange.getRequest().getHeaders())) {
+        && (dedicatedTcpProxyListener
+            || presentsProxyHeaders(exchange.getRequest().getHeaders()))) {
       exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
       return exchange.getResponse().setComplete();
     }
@@ -85,8 +73,14 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
     String incomingProxyClientIp = exchange.getRequest().getHeaders().getFirst(HDR_PROXY_CLIENT_IP);
     String canonicalClientIp =
         trustedTcpProxy && isSessionRoute
-            ? normalizeIpLiteral(incomingProxyClientIp)
+            ? CidrBlock.normalizeIpLiteral(incomingProxyClientIp)
             : deriveClientIpFromForwardedHeaders(exchange.getRequest().getHeaders(), remoteAddress);
+
+    if (trustedTcpProxy && isSessionRoute && canonicalClientIp == null) {
+      LOG.debug("Rejecting session route: missing or invalid trusted proxy client IP");
+      exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
+      return exchange.getResponse().setComplete();
+    }
 
     String incomingProxyConnectionId =
         trustedTcpProxy
@@ -100,6 +94,17 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
         trustedTcpProxy && isSessionRoute
             ? exchange.getRequest().getHeaders().getFirst(HDR_PROXY_TENANT_ID)
             : null;
+    RoutingBundle incomingRoutingBundle = null;
+
+    if (trustedTcpProxy && isSessionRoute) {
+      try {
+        incomingRoutingBundle = validateRoutingBundle(exchange.getRequest().getHeaders());
+      } catch (RuntimeException ex) {
+        LOG.debug("Rejecting session route: invalid trusted proxy routing bundle", ex);
+        exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
+        return exchange.getResponse().setComplete();
+      }
+    }
 
     if (trustedTcpProxy && isSessionRoute) {
       try {
@@ -111,6 +116,7 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
         return exchange.getResponse().setComplete();
       }
     }
+    final RoutingBundle canonicalRoutingBundle = incomingRoutingBundle;
 
     ServerWebExchange mutated =
         exchange
@@ -137,11 +143,53 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
                             if (incomingProxyTenantId != null && !incomingProxyTenantId.isBlank()) {
                               headers.set(HDR_TENANT_ID, incomingProxyTenantId);
                             }
+                            if (isSessionRoute) {
+                              if (canonicalRoutingBundle != null) {
+                                headers.set(HDR_WORLD_SLUG, canonicalRoutingBundle.worldSlug());
+                                headers.set(HDR_REALM_SLUG, canonicalRoutingBundle.realmSlug());
+                                headers.set(
+                                    HDR_POINTER_VERSION, canonicalRoutingBundle.pointerVersion());
+                              }
+                            }
                           }
                         }))
             .build();
 
     return chain.filter(mutated);
+  }
+
+  private static RoutingBundle validateRoutingBundle(HttpHeaders headers) {
+    boolean hasWorld = headers.get(HDR_WORLD_SLUG) != null;
+    boolean hasRealm = headers.get(HDR_REALM_SLUG) != null;
+    boolean hasPointer = headers.get(HDR_POINTER_VERSION) != null;
+    if (!hasWorld && !hasRealm && !hasPointer) {
+      return null;
+    }
+    if (!hasWorld || !hasRealm || !hasPointer) {
+      throw new IllegalArgumentException("Malformed trusted proxy routing bundle");
+    }
+
+    String worldSlug = singleHeaderValue(headers, HDR_WORLD_SLUG);
+    String realmSlug = singleHeaderValue(headers, HDR_REALM_SLUG);
+    String pointerVersion = singleHeaderValue(headers, HDR_POINTER_VERSION);
+    String canonicalWorldSlug =
+        GameplayRoutingBundleValidator.requireCanonicalSlug(worldSlug, HDR_WORLD_SLUG);
+    String canonicalRealmSlug =
+        GameplayRoutingBundleValidator.requireCanonicalSlug(realmSlug, HDR_REALM_SLUG);
+    String canonicalPointerVersion =
+        GameplayRoutingBundleValidator.requireCanonicalPointerVersion(
+            pointerVersion, HDR_POINTER_VERSION);
+    return new RoutingBundle(canonicalWorldSlug, canonicalRealmSlug, canonicalPointerVersion);
+  }
+
+  private record RoutingBundle(String worldSlug, String realmSlug, String pointerVersion) {}
+
+  private static String singleHeaderValue(HttpHeaders headers, String headerName) {
+    List<String> values = headers.get(headerName);
+    if (values == null || values.size() != 1 || values.get(0) == null) {
+      throw new IllegalArgumentException("Malformed trusted proxy header: " + headerName);
+    }
+    return values.get(0);
   }
 
   private static boolean presentsProxyHeaders(HttpHeaders headers) {
@@ -155,6 +203,9 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
     headers.remove(HDR_CLIENT_IP);
     headers.remove(HDR_GAME_INSTANCE_ID);
     headers.remove(HDR_TENANT_ID);
+    headers.remove(HDR_WORLD_SLUG);
+    headers.remove(HDR_REALM_SLUG);
+    headers.remove(HDR_POINTER_VERSION);
 
     headers.remove(HDR_PROXY_CLIENT_IP);
     headers.remove(HDR_PROXY_CONNECTION_ID);
@@ -166,18 +217,18 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
       HttpHeaders headers, InetAddress remoteAddress) {
     if (remoteAddress != null && trustedForwardedProxies.contains(remoteAddress)) {
       String forwarded = parseForwardedFor(headers.getFirst("Forwarded"));
-      String normalized = normalizeIpLiteral(forwarded);
+      String normalized = CidrBlock.normalizeIpLiteral(forwarded);
       if (normalized != null) {
         return normalized;
       }
 
       String xff = parseXForwardedFor(headers.getFirst("X-Forwarded-For"));
-      normalized = normalizeIpLiteral(xff);
+      normalized = CidrBlock.normalizeIpLiteral(xff);
       if (normalized != null) {
         return normalized;
       }
 
-      normalized = normalizeIpLiteral(headers.getFirst("X-Real-IP"));
+      normalized = CidrBlock.normalizeIpLiteral(headers.getFirst("X-Real-IP"));
       if (normalized != null) {
         return normalized;
       }
@@ -223,261 +274,13 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
     return null;
   }
 
-  private static String normalizeIpLiteral(String value) {
-    if (value == null) {
-      return null;
-    }
-    String trimmed = value.trim();
-    if (trimmed.isEmpty()) {
-      return null;
-    }
-    for (int i = 0; i < trimmed.length(); i++) {
-      char c = trimmed.charAt(i);
-      boolean allowed =
-          (c >= '0' && c <= '9') || c == '.' || c == ':' || c == '[' || c == ']' || c == '%';
-      if (!allowed) {
-        return null;
-      }
-    }
-    try {
-      if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-        trimmed = trimmed.substring(1, trimmed.length() - 1);
-      }
-      InetAddress address = InetAddress.getByName(trimmed);
-      return address.getHostAddress();
-    } catch (Exception ignored) {
-      return null;
-    }
-  }
-
   private InetAddress remoteInetAddress(ServerWebExchange exchange) {
     InetSocketAddress remote = exchange.getRequest().getRemoteAddress();
     return remote != null ? remote.getAddress() : null;
   }
 
-  private boolean isTrustedTcpProxy(ServerWebExchange exchange, InetAddress remoteAddress) {
-    if (isTrustedTcpProxyViaMtls(exchange.getRequest().getSslInfo())) {
-      return true;
-    }
-    return properties.getTcpProxy().isAllowInsecureHeadersFromTrustedCidrs()
-        && remoteAddress != null
-        && insecureTrustedTcpProxyCidrs.contains(remoteAddress);
-  }
-
-  private boolean isTrustedTcpProxyViaMtls(SslInfo sslInfo) {
-    if (sslInfo == null
-        || (trustedTcpProxyFingerprints.isEmpty()
-            && trustedTcpProxyDnsSans.isEmpty()
-            && trustedTcpProxyUriSans.isEmpty())) {
-      return false;
-    }
-    X509Certificate[] peerCerts;
-    try {
-      peerCerts = sslInfo.getPeerCertificates();
-    } catch (Exception ignored) {
-      return false;
-    }
-    if (peerCerts == null || peerCerts.length == 0 || peerCerts[0] == null) {
-      return false;
-    }
-    X509Certificate leaf = peerCerts[0];
-    if (!trustedTcpProxyFingerprints.isEmpty() && matchesFingerprint(leaf)) {
-      return true;
-    }
-    if (!trustedTcpProxyDnsSans.isEmpty() || !trustedTcpProxyUriSans.isEmpty()) {
-      return matchesSans(leaf);
-    }
-    return false;
-  }
-
-  private boolean matchesFingerprint(X509Certificate cert) {
-    try {
-      MessageDigest digest = MessageDigest.getInstance("SHA-256");
-      byte[] hash = digest.digest(cert.getEncoded());
-      String fingerprint = HEX.formatHex(hash).toLowerCase(Locale.ROOT);
-      for (String allowed : trustedTcpProxyFingerprints) {
-        if (fingerprint.equals(allowed)) {
-          return true;
-        }
-      }
-      return false;
-    } catch (CertificateEncodingException | NoSuchAlgorithmException ignored) {
-      return false;
-    }
-  }
-
-  private boolean matchesSans(X509Certificate cert) {
-    try {
-      Collection<List<?>> sans = cert.getSubjectAlternativeNames();
-      if (sans == null) {
-        return false;
-      }
-      for (List<?> san : sans) {
-        if (san == null || san.size() < 2) {
-          continue;
-        }
-        Object typeObj = san.get(0);
-        Object valueObj = san.get(1);
-        if (!(typeObj instanceof Integer type) || !(valueObj instanceof String value)) {
-          continue;
-        }
-        if (type == 2) { // DNS
-          String normalized = value.toLowerCase(Locale.ROOT);
-          for (String allowed : trustedTcpProxyDnsSans) {
-            if (normalized.equals(allowed)) {
-              return true;
-            }
-          }
-        } else if (type == 6) { // URI
-          String normalized = value.toLowerCase(Locale.ROOT);
-          for (String allowed : trustedTcpProxyUriSans) {
-            if (normalized.equals(allowed)) {
-              return true;
-            }
-          }
-        }
-      }
-      return false;
-    } catch (Exception ignored) {
-      return false;
-    }
-  }
-
-  private static List<String> normalizeFingerprints(List<String> raw) {
-    List<String> out = new ArrayList<>();
-    if (raw == null) {
-      return out;
-    }
-    for (String value : raw) {
-      if (value == null) {
-        continue;
-      }
-      String normalized = value.trim().toLowerCase(Locale.ROOT).replace(":", "");
-      if (!normalized.isEmpty()) {
-        out.add(normalized);
-      }
-    }
-    return out;
-  }
-
-  private static List<String> normalizeStrings(List<String> raw) {
-    List<String> out = new ArrayList<>();
-    if (raw == null) {
-      return out;
-    }
-    for (String value : raw) {
-      if (value == null) {
-        continue;
-      }
-      String normalized = value.trim().toLowerCase(Locale.ROOT);
-      if (!normalized.isEmpty()) {
-        out.add(normalized);
-      }
-    }
-    return out;
-  }
-
   @Override
   public int getOrder() {
     return -4;
-  }
-
-  static final class CidrSet {
-    private final List<CidrBlock> blocks;
-
-    CidrSet(List<String> cidrs) {
-      List<CidrBlock> parsed = new ArrayList<>();
-      if (cidrs != null) {
-        for (String cidr : cidrs) {
-          CidrBlock block = CidrBlock.parse(cidr);
-          if (block != null) {
-            parsed.add(block);
-          }
-        }
-      }
-      this.blocks = List.copyOf(parsed);
-    }
-
-    boolean contains(InetAddress address) {
-      if (address == null) {
-        return false;
-      }
-      for (CidrBlock block : blocks) {
-        if (block.contains(address)) {
-          return true;
-        }
-      }
-      return false;
-    }
-  }
-
-  record CidrBlock(byte[] network, int prefixBits) {
-    static CidrBlock parse(String cidr) {
-      if (cidr == null) {
-        return null;
-      }
-      String trimmed = cidr.trim();
-      if (trimmed.isEmpty()) {
-        return null;
-      }
-      String[] parts = trimmed.split("/");
-      if (parts.length != 2) {
-        return null;
-      }
-      String ip = normalizeIpLiteral(parts[0]);
-      if (ip == null) {
-        return null;
-      }
-      int prefix;
-      try {
-        prefix = Integer.parseInt(parts[1].trim());
-      } catch (Exception ignored) {
-        return null;
-      }
-      try {
-        InetAddress address = InetAddress.getByName(ip);
-        int max = address.getAddress().length * 8;
-        if (prefix < 0 || prefix > max) {
-          return null;
-        }
-        byte[] networkBytes = address.getAddress();
-        applyMaskInPlace(networkBytes, prefix);
-        return new CidrBlock(networkBytes, prefix);
-      } catch (Exception ignored) {
-        return null;
-      }
-    }
-
-    boolean contains(InetAddress address) {
-      byte[] bytes = address.getAddress();
-      if (bytes.length != network.length) {
-        return false;
-      }
-      int fullBytes = prefixBits / 8;
-      int remainingBits = prefixBits % 8;
-      for (int i = 0; i < fullBytes; i++) {
-        if (bytes[i] != network[i]) {
-          return false;
-        }
-      }
-      if (remainingBits == 0) {
-        return true;
-      }
-      int mask = 0xFF << (8 - remainingBits);
-      return (bytes[fullBytes] & mask) == (network[fullBytes] & mask);
-    }
-
-    private static void applyMaskInPlace(byte[] bytes, int prefixBits) {
-      int fullBytes = prefixBits / 8;
-      int remainingBits = prefixBits % 8;
-      for (int i = fullBytes + (remainingBits > 0 ? 1 : 0); i < bytes.length; i++) {
-        bytes[i] = 0;
-      }
-      if (remainingBits == 0 || fullBytes >= bytes.length) {
-        return;
-      }
-      int mask = 0xFF << (8 - remainingBits);
-      bytes[fullBytes] = (byte) (bytes[fullBytes] & mask);
-    }
   }
 }

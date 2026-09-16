@@ -31,6 +31,13 @@ def load_validator():
 
 
 VALIDATOR = load_validator()
+TRUSTED_CHART_METADATA = ROOT / "k8s/helm/firemud/Chart.yaml"
+TRUSTED_CHART = yaml.safe_load(
+    TRUSTED_CHART_METADATA.read_text(encoding="utf-8")
+)
+EXPECTED_HELM_CHART_LABEL = (
+    f"{TRUSTED_CHART['name']}-{TRUSTED_CHART['version']}".replace("+", "_")
+)
 
 
 class PreviewArtifactSecretReferenceTest(unittest.TestCase):
@@ -658,10 +665,9 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
     def _tcp_proxy_service(self, spec, *, namespace=None):
         metadata = {
             "name": "tcp-proxy-service",
-            "labels": {
-                **self.validator._expected_top_level_labels(),
-                "app.kubernetes.io/instance": "pr-42",
-            },
+            "labels": VALIDATOR._expected_object_labels(
+                "Service", "tcp-proxy-service", "pr-42"
+            ),
         }
         if namespace is not None:
             metadata["namespace"] = namespace
@@ -708,10 +714,9 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
             self.assertEqual(prepared["spec"]["ports"][0]["nodePort"], 32000)
 
     def test_expected_top_level_label_mismatches_report_expected_and_actual(self):
-        expected_labels = {
-            **self.validator._expected_top_level_labels(),
-            "app.kubernetes.io/instance": "pr-42",
-        }
+        expected_labels = VALIDATOR._expected_object_labels(
+            "Service", "tcp-proxy-service", "pr-42"
+        )
         for label, expected_value in expected_labels.items():
             document = self._tcp_proxy_service({})
             document["metadata"]["labels"] = {

@@ -32,7 +32,7 @@ TCP Proxy metrics follow the global Micrometer/OpenTelemetry conventions describ
 - `tcpproxy.connection.events{type="connect"|"disconnect"}` and `tcpproxy.connection.duration`
 - `tcpproxy.command`, `tcpproxy.heartbeat`, `tcpproxy.idleClose`, `tcpproxy.websocket.reconnect.delay`, and `tcpproxy.websocket.reconnects`
 - `tcpproxy.websocket.reconnects` covers initial bridge-establishment retries and breaker probe or recovery attempts only. It must not be interpreted as hidden recovery for already-established Telnet sessions, which fail-close when their gameplay bridge is lost.
-- `tcpproxy.tls.misconfig` and `tcpproxy.gateway.handshake.failures{reason="..."}`
+- `tcpproxy.tls.misconfig`, `tcpproxy.bridge.metadata.misconfig`, and `tcpproxy.gateway.handshake.failures{reason="..."}`
 - `tcpproxy.telnet.discarded`
 - `tcpproxy.disconnect.notify.transport_failure{status="<grpc_status>"}`
 - `tcpproxy.disconnect.notify.app_error{code="<code>"}` – supplementary caller-side/local application-error breakdown
@@ -45,6 +45,7 @@ Bounded labels and naming rules remain canonical. Detailed identifiers such as c
 
 For `tcpproxy.gateway.handshake.failures{reason="..."}`, the canonical bounded `reason` enum is:
 
+- `bad_header`
 - `bad_url`
 - `dns`
 - `connect_refused`
@@ -58,6 +59,7 @@ For `tcpproxy.gateway.handshake.failures{reason="..."}`, the canonical bounded `
 
 Per-value meanings:
 
+- `bad_header` – invalid per-connection bridge metadata is rejected before the Gateway handshake and increments only `tcpproxy.gateway.handshake.failures{reason="bad_header"}`; invalid startup default metadata increments `tcpproxy.bridge.metadata.misconfig`, while actual TLS configuration or certificate-load failures increment `tcpproxy.tls.misconfig`
 - `bad_url` – invalid `GATEWAY_WS_URL` configuration
 - `dns` – host resolution failure
 - `connect_refused` – target actively refused the TCP connection

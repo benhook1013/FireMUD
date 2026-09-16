@@ -177,7 +177,13 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
   }
 
   private GameplayTelnetDriver openTelnetClient() throws Exception {
+    awaitTrafficAdmissionReady();
     return GameplayTelnetDriver.connect("localhost", telnetServer.getPort(), COMMAND_WAIT);
+  }
+
+  private void awaitTrafficAdmissionReady() throws InterruptedException {
+    HttpTestSupport.awaitReadiness(
+        "http://localhost:" + port + "/actuator/health/readiness", COMMAND_WAIT);
   }
 
   private static void awaitCommand(String expected) {

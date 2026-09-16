@@ -1,6 +1,82 @@
 {{- if .Values.previewStack.enabled }}
+{{- $preview := $.Values.preview | default (dict) }}
 {{- $previewJwt := .Values.previewStack.jwt | default (dict) }}
+{{- $telnetTls := .Values.previewStack.telnetTls | default (dict) }}
+{{- $gatewayWsTls := .Values.previewStack.gatewayWsTls | default (dict) }}
+{{- $gatewayWsTlsTargetPort := "" }}
+{{- $gatewayWsTlsServicePort := "" }}
+{{- $gatewayWsServerTlsMountConfigured := false }}
+{{- $gatewayWsClientTlsMountConfigured := false }}
+{{- if $gatewayWsTls.enabled }}
+{{- $gatewayWsTlsTargetPort = required "previewStack.gatewayWsTls.targetPort is required when Gateway WebSocket TLS is enabled" $gatewayWsTls.targetPort }}
+{{- $gatewayWsTlsServicePort = required "previewStack.gatewayWsTls.servicePort is required when Gateway WebSocket TLS is enabled" $gatewayWsTls.servicePort }}
+{{- end }}
+{{- if $gatewayWsTls.enabled }}
 {{- range $service := .Values.previewStack.services }}
+{{- if and (eq $service.name "spring-cloud-gateway") $service.mountGatewayWsServerTls }}
+{{- $gatewayWsServerTlsMountConfigured = true }}
+{{- end }}
+{{- if and (eq $service.name "tcp-proxy-service") $service.mountGatewayWsClientTls }}
+{{- $gatewayWsClientTlsMountConfigured = true }}
+{{- end }}
+{{- if eq $service.name "spring-cloud-gateway" }}
+{{- $gatewayHealthPort := required "previewStack.services.spring-cloud-gateway.healthPort is required when Gateway WebSocket TLS is enabled" $service.healthPort }}
+{{- if eq (toString $gatewayWsTlsTargetPort) (toString $gatewayHealthPort) }}
+{{- fail (printf "previewStack.gatewayWsTls.targetPort %v collides with the Gateway managed health/HTTP listener healthPort %v" $gatewayWsTlsTargetPort $gatewayHealthPort) }}
+{{- end }}
+{{- range $port := $service.ports }}
+{{- if and (eq (toString $port.port) "80") (eq (toString $port.targetPort) (toString $gatewayWsTlsTargetPort)) }}
+{{- fail (printf "previewStack.gatewayWsTls.targetPort %v collides with the Gateway managed health/HTTP listener service port 80 targetPort %v" $gatewayWsTlsTargetPort $port.targetPort) }}
+{{- end }}
+{{- if and (eq (toString $port.port) "6565") (eq (toString $port.targetPort) (toString $gatewayWsTlsTargetPort)) }}
+{{- fail (printf "previewStack.gatewayWsTls.targetPort %v collides with the Gateway managed gRPC listener service port 6565 targetPort %v" $gatewayWsTlsTargetPort $port.targetPort) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if not $gatewayWsServerTlsMountConfigured }}
+{{- fail "previewStack.services.spring-cloud-gateway.mountGatewayWsServerTls must be true when previewStack.gatewayWsTls.enabled is true" }}
+{{- end }}
+{{- if not $gatewayWsClientTlsMountConfigured }}
+{{- fail "previewStack.services.tcp-proxy-service.mountGatewayWsClientTls must be true when previewStack.gatewayWsTls.enabled is true" }}
+{{- end }}
+{{- end }}
+{{- $telnetTlsSecretName := include "firemud.telnetTlsSecretName" . | trim }}
+{{- $managedTelnetEnv := list "TCP_PROXY_TELNET_MODE" "TCP_PROXY_TLS_ENABLED" "TCP_PROXY_TLS_CERT" "TCP_PROXY_TLS_KEY" }}
+{{- $managedGatewayWsServerEnv := list "FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED" "FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS" "FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT" "FIREMUD_GATEWAY_TCP_PROXY_TLS_CERT_CHAIN_PATH" "FIREMUD_GATEWAY_TCP_PROXY_TLS_PRIVATE_KEY_PATH" "FIREMUD_GATEWAY_TCP_PROXY_TLS_CLIENT_CA_PATH" "FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT" "FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE" "FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN" }}
+{{- $managedGatewayWsClientEnv := list "GATEWAY_WS_URL" "FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH" "FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH" "FIREMUD_GATEWAY_WS_CA_CERT_PATH" }}
+{{- $certificateIdentityMode := include "firemud.certificateIdentityMode" . | trim }}
+{{- range $service := .Values.previewStack.services }}
+{{- $serviceType := default "ClusterIP" $service.serviceType }}
+{{- $telnetPort := "" }}
+{{- if and (eq $service.name "tcp-proxy-service") (eq $certificateIdentityMode "hosted-controller") }}
+{{- $telnetPort = required "preview.telnetPort is required for hosted-controller TCP Proxy" (get $preview "telnetPort") }}
+{{- if eq (toString $telnetPort) "__TELNET_PORT__" }}
+{{- fail "preview.telnetPort must be resolved before rendering hosted-controller TCP Proxy" }}
+{{- end }}
+{{- end }}
+{{- $mountTelnetTls := and (eq $service.name "tcp-proxy-service") $service.mountTelnetTls $telnetTls.enabled }}
+{{- $mountGatewayWsServerTls := and (eq $service.name "spring-cloud-gateway") $service.mountGatewayWsServerTls $gatewayWsTls.enabled }}
+{{- $mountGatewayWsClientTls := and (eq $service.name "tcp-proxy-service") $service.mountGatewayWsClientTls $gatewayWsTls.enabled }}
+{{- $gatewayWsTlsTargetPortDeclared := false }}
+{{- if $mountGatewayWsServerTls }}
+{{- range $port := $service.ports }}
+{{- if eq (toString $port.targetPort) (toString $gatewayWsTlsTargetPort) }}
+{{- $gatewayWsTlsTargetPortDeclared = true }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- range $key, $_ := $service.extraEnv }}
+{{- if and $mountTelnetTls (has $key $managedTelnetEnv) }}
+{{- fail (printf "previewStack.services.%s.extraEnv key %s collides with the managed Telnet TLS environment" $service.name $key) }}
+{{- end }}
+{{- if and $mountGatewayWsServerTls (has $key $managedGatewayWsServerEnv) }}
+{{- fail (printf "previewStack.services.%s.extraEnv key %s collides with the managed Gateway WebSocket server TLS environment" $service.name $key) }}
+{{- end }}
+{{- if and $mountGatewayWsClientTls (has $key $managedGatewayWsClientEnv) }}
+{{- fail (printf "previewStack.services.%s.extraEnv key %s collides with the managed Gateway WebSocket client TLS environment" $service.name $key) }}
+{{- end }}
+{{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -8,8 +84,17 @@ metadata:
   name: {{ $service.name }}
   labels:
 {{ include "firemud.commonLabels" $ | indent 4 }}
+  {{- if eq $service.name "tcp-proxy-service" }}
+    firemud.dev/certificate-identity-mode: {{ $certificateIdentityMode | quote }}
+  {{- end }}
 spec:
   replicas: {{ default 1 $service.replicaCount }}
+  {{- if and (eq $service.name "tcp-proxy-service") $mountGatewayWsClientTls }}
+  # A TCP Proxy bridge-identity withdrawal must not leave an old pod serving
+  # while a replacement is blocked on a missing/revoked controller projection.
+  strategy:
+    type: Recreate
+  {{- end }}
   selector:
     matchLabels:
       app: {{ $service.name }}
@@ -33,45 +118,34 @@ spec:
         - name: {{ $service.name }}
           image: "{{ $service.image.repository }}:{{ default $.Values.previewStack.defaultImageTag $service.image.tag }}"
           imagePullPolicy: Always
-          {{- if $service.springProfile }}
           env:
+            {{- if $service.springProfile }}
             - name: SPRING_PROFILES_ACTIVE
               value: "prod"
-            - name: SPRING_FLYWAY_TABLE
-              value: {{ printf "flyway_schema_history_%s" (default (replace "-" "_" $service.name) $service.schema) | quote }}
-            - name: SERVICE_SCHEMA
-              value: {{ default (replace "-" "_" $service.name) $service.schema | quote }}
-            {{- if $service.mountGrpcTls }}
-            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
-              value: /tls/client.crt
-            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
-              value: /tls/client.key
-            - name: FIREMUD_GRPC_CA_CERT_PATH
-              value: /tls/ca.crt
-            {{- end }}
-            {{- range $key, $value := $service.extraEnv }}
-            - name: {{ $key }}
-              value: {{ $value | quote }}
-            {{- end }}
-          {{- else }}
-          env:
-            {{- if $service.mountGrpcTls }}
-            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
-              value: /tls/client.crt
-            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
-              value: /tls/client.key
-            - name: FIREMUD_GRPC_CA_CERT_PATH
-              value: /tls/ca.crt
             {{- end }}
             - name: SPRING_FLYWAY_TABLE
               value: {{ printf "flyway_schema_history_%s" (default (replace "-" "_" $service.name) $service.schema) | quote }}
             - name: SERVICE_SCHEMA
               value: {{ default (replace "-" "_" $service.name) $service.schema | quote }}
+            {{- if $service.mountGrpcTls }}
+{{ include "firemud.grpcTlsEnv" $ | nindent 12 }}
+            {{- end }}
             {{- range $key, $value := $service.extraEnv }}
+            {{- if and (or (not $mountTelnetTls) (not (has $key $managedTelnetEnv))) (or (not $mountGatewayWsServerTls) (not (has $key $managedGatewayWsServerEnv))) (or (not $mountGatewayWsClientTls) (not (has $key $managedGatewayWsClientEnv))) }}
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
-          {{- end }}
+            {{- end }}
+            {{- if $mountTelnetTls }}
+{{ include "firemud.telnetTlsEnv" $ | nindent 12 }}
+{{ include "firemud.telnetTlsModeEnv" $ | nindent 12 }}
+            {{- end }}
+            {{- if $mountGatewayWsServerTls }}
+{{ include "firemud.gatewayWsServerEnv" (dict "root" $ "targetPort" $gatewayWsTlsTargetPort) | nindent 12 }}
+            {{- end }}
+            {{- if $mountGatewayWsClientTls }}
+{{ include "firemud.gatewayWsClientEnv" (dict "root" $ "servicePort" $gatewayWsTlsServicePort) | nindent 12 }}
+            {{- end }}
           {{- if $service.envFromShared }}
           envFrom:
             - configMapRef:
@@ -79,7 +153,7 @@ spec:
             - secretRef:
                 name: firemud-secret
           {{- end }}
-          {{- if or $service.mountGrpcTls (and $previewJwt.enabled $service.envFromShared) }}
+          {{- if or $service.mountGrpcTls $mountTelnetTls $mountGatewayWsServerTls $mountGatewayWsClientTls (and $previewJwt.enabled $service.envFromShared) }}
           volumeMounts:
             {{- if $service.mountGrpcTls }}
             - name: grpc-tls
@@ -96,10 +170,29 @@ spec:
               readOnly: true
             {{- end }}
             {{- end }}
+            {{- if $mountTelnetTls }}
+            - name: telnet-tls
+              mountPath: /telnet-tls
+              readOnly: true
+            {{- end }}
+            {{- if $mountGatewayWsServerTls }}
+            - name: gateway-ws-server-tls
+              mountPath: /gateway-ws-server-tls
+              readOnly: true
+            {{- end }}
+            {{- if $mountGatewayWsClientTls }}
+            - name: gateway-ws-client-tls
+              mountPath: /gateway-ws-client-tls
+              readOnly: true
+            {{- end }}
           {{- end }}
           ports:
             {{- range $port := $service.ports }}
             - containerPort: {{ $port.targetPort }}
+            {{- end }}
+            {{- if and $mountGatewayWsServerTls (not $gatewayWsTlsTargetPortDeclared) }}
+            - containerPort: {{ $gatewayWsTlsTargetPort }}
+              name: gateway-ws-mtls
             {{- end }}
           readinessProbe:
             httpGet:
@@ -126,7 +219,7 @@ spec:
             limits:
               cpu: {{ default "750m" $.Values.previewStack.resources.app.limits.cpu | quote }}
               memory: {{ default "512Mi" $.Values.previewStack.resources.app.limits.memory | quote }}
-      {{- if or $service.mountGrpcTls (and $previewJwt.enabled $service.envFromShared) }}
+      {{- if or $service.mountGrpcTls $mountTelnetTls $mountGatewayWsServerTls $mountGatewayWsClientTls (and $previewJwt.enabled $service.envFromShared) }}
       volumes:
         {{- if $service.mountGrpcTls }}
         - name: grpc-tls
@@ -143,14 +236,50 @@ spec:
             name: jwt-jwks
         {{- end }}
         {{- end }}
+        {{- if $mountTelnetTls }}
+        - name: telnet-tls
+          secret:
+            secretName: {{ $telnetTlsSecretName }}
+        {{- end }}
+        {{- if $mountGatewayWsServerTls }}
+        - name: gateway-ws-server-tls
+          secret:
+            secretName: {{ include "firemud.gatewayWsServerSecretName" $ }}
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
+        {{- if $mountGatewayWsClientTls }}
+        - name: gateway-ws-client-tls
+          secret:
+            secretName: {{ include "firemud.gatewayWsClientSecretName" $ }}
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
       {{- end }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: {{ $service.name }}
+  {{- if and (eq $service.name "tcp-proxy-service") (eq $certificateIdentityMode "hosted-controller") }}
+  annotations:
+    firemud.dev/allocated-telnet-port: {{ $telnetPort | quote }}
+  {{- end }}
   labels:
 {{ include "firemud.commonLabels" $ | indent 4 }}
+  {{- if eq $service.name "tcp-proxy-service" }}
+    firemud.dev/certificate-identity-mode: {{ $certificateIdentityMode | quote }}
+  {{- end }}
 spec:
   selector:
     app: {{ $service.name }}
@@ -161,10 +290,33 @@ spec:
       name: {{ $portName }}
       targetPort: {{ $port.targetPort }}
       protocol: TCP
-      {{- if $port.nodePort }}
+      {{- if and (eq $certificateIdentityMode "hosted-controller") (eq $service.name "tcp-proxy-service") (eq (int $port.port) 2323) }}
+      {{- if not (or (eq $serviceType "NodePort") (eq $serviceType "LoadBalancer")) }}
+      {{- fail "hosted-controller TCP Proxy nodePort requires serviceType NodePort or LoadBalancer" }}
+      {{- end }}
+      nodePort: {{ $telnetPort }}
+      {{- else if $port.nodePort }}
       nodePort: {{ $port.nodePort }}
       {{- end }}
     {{- end }}
-  type: {{ default "ClusterIP" $service.serviceType }}
+  type: {{ $serviceType }}
+{{- end }}
+{{- if $gatewayWsTls.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spring-cloud-gateway-mtls
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: spring-cloud-gateway
+  ports:
+    - name: wss-mtls
+      port: {{ $gatewayWsTlsServicePort }}
+      targetPort: {{ $gatewayWsTlsTargetPort }}
+      protocol: TCP
 {{- end }}
 {{- end }}

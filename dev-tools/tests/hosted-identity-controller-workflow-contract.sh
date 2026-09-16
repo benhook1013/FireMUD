@@ -3799,26 +3799,79 @@ assert set(inventory) == rendered_deployments, (
 PY
 
 python3 - "$artifact_validator" "$rendered_manifest" <<'PY'
+import copy
 import runpy
 import sys
+import tempfile
+from pathlib import Path
 
 import yaml
 
 validator = runpy.run_path(sys.argv[1])
-documents = [
+raw_documents = [
     document
     for document in yaml.safe_load_all(open(sys.argv[2], encoding="utf-8"))
     if document is not None
 ]
+raw_tcp_proxy_service = next(
+    document
+    for document in raw_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+assert raw_tcp_proxy_service["metadata"]["annotations"] == {
+    "firemud.dev/allocated-telnet-port": "32000"
+}
+
+def sanitize_service(document):
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        source = Path(temporary_directory) / "render.yaml"
+        output = Path(temporary_directory) / "sanitized.yaml"
+        source.write_text(yaml.safe_dump(document), encoding="utf-8")
+        validator["sanitize"](source, output)
+        return next(yaml.safe_load_all(output.read_text(encoding="utf-8")))
+
+
+sanitized_tcp_proxy_service = sanitize_service(raw_tcp_proxy_service)
+assert "annotations" not in sanitized_tcp_proxy_service["metadata"]
+metadata = validator["_validate_object_metadata"](sanitized_tcp_proxy_service, "pr-42")
+assert metadata["labels"] == {
+    **validator["_expected_object_labels"](
+        "Service", "tcp-proxy-service", "pr-42"
+    )
+}
+
+documents = copy.deepcopy(raw_documents)
+validator["_strip_annotations"](documents)
 
 for document in documents:
+    if document.get("kind") == "Service" and document.get("metadata", {}).get(
+        "name"
+    ) == "tcp-proxy-service":
+        continue
     metadata = validator["_validate_object_metadata"](document, "pr-42")
-    assert metadata["labels"] == {
-        **validator["_expected_top_level_labels"](),
-        "app.kubernetes.io/instance": "pr-42",
-    }
+    assert metadata["labels"] == validator["_expected_object_labels"](
+        document["kind"], document["metadata"]["name"], "pr-42"
+    )
     if document["kind"] == "Deployment":
         validator["_validate_workload_selector_metadata"](document)
+
+arbitrary_annotation_documents = copy.deepcopy(raw_documents)
+arbitrary_service = next(
+    document
+    for document in arbitrary_annotation_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+arbitrary_service.setdefault("metadata", {}).setdefault("annotations", {})[
+    "untrusted.example/route"
+] = "capture"
+arbitrary_sanitized_service = sanitize_service(arbitrary_service)
+assert "annotations" not in arbitrary_sanitized_service["metadata"]
+validator["_validate_no_annotations"](arbitrary_sanitized_service)
+for document in arbitrary_annotation_documents:
+    validator["_strip_annotations"](document)
+    validator["_validate_no_annotations"](document)
 PY
 
 # Explicit-null pod templates are authored artifact errors, not validator
@@ -4008,10 +4061,9 @@ documents = [
         "kind": "Service",
         "metadata": {
             "name": "tcp-proxy-service",
-            "labels": {
-                **validator["_expected_top_level_labels"](),
-                "app.kubernetes.io/instance": "pr-42",
-            },
+            "labels": validator["_expected_object_labels"](
+                "Service", "tcp-proxy-service", "pr-42"
+            ),
         },
         "spec": {"ports": [{"port": 2323}]},
     },
