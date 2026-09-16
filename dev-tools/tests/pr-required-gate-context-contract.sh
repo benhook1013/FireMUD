@@ -56,11 +56,11 @@ done
 # Keep a required declaration outside the inputs mapping from satisfying the
 # final input's block-local requirement.
 malformed_action="$(mktemp)"
-cp "$ACTION" "$malformed_action"
-sed -i \
+sed \
   -e '/^  workflow-path:/,/^runs:/ s/^    required: true$/    required: false/' \
-  -e '/^runs:/a\    required: true' \
-  "$malformed_action"
+  -e '/^runs:/a\
+    required: true' \
+  "$ACTION" >"$malformed_action"
 malformed_input_status=0
 if (assert_required_input_declaration "$malformed_action" workflow-path) >/dev/null 2>&1; then
   malformed_input_status=0

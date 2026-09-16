@@ -562,12 +562,15 @@ def _checkpoint_summaries(checkpoints: list[dict[str, Any]]) -> dict[str, Any]:
         }
 
     cli = by_type["CLI"]
+    cli_substantive = [checkpoint for checkpoint in cli if not checkpoint["correction"]]
     cli_zero_streak: list[dict[str, Any]] = []
-    for checkpoint in reversed(cli):
+    for checkpoint in reversed(cli_substantive):
         if checkpoint["raw_found"] != 0 or checkpoint["accepted"] != 0:
             break
         cli_zero_streak.append(checkpoint)
-    last_cli_accepted = next((item for item in reversed(cli) if item["accepted"] > 0), None)
+    last_cli_accepted = next(
+        (item for item in reversed(cli_substantive) if item["accepted"] > 0), None
+    )
 
     hosted = by_type["Hosted"]
     hosted_completed = [checkpoint for checkpoint in hosted if not checkpoint["correction"]]

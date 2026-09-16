@@ -88,6 +88,29 @@ class PrStatusReporterTest(unittest.TestCase):
         return payload
 
     @staticmethod
+    def trigger_state(**overrides) -> dict:
+        state = {
+            "state": "completed",
+            "terminal": True,
+            "attributed": True,
+            "repository": "owner/repo",
+            "pr_number": 42,
+            "head_sha": "0123456789abcdef0123456789abcdef01234567",
+            "current_head_sha": "0123456789abcdef0123456789abcdef01234567",
+            "trigger_comment_id": 101,
+            "trigger_created_at": "2026-09-14T00:05:00Z",
+            "trigger_url": "https://example.test/comments/101",
+            "trigger_type": "full",
+            "response_id": 102,
+            "response_created_at": "2026-09-14T00:10:00Z",
+            "response_url": "https://example.test/comments/102",
+            "cooldown_until": None,
+            "reason": "the captured Hosted review completed",
+        }
+        state.update(overrides)
+        return state
+
+    @staticmethod
     def checker_payload(*, ok: bool, reasons: list[str] | None = None) -> dict:
         return {
             "repo": "owner/repo",
@@ -547,6 +570,78 @@ class PrStatusReporterTest(unittest.TestCase):
         self.assertEqual(report["loc_metadata"]["status"], "fresh")
         self.assertEqual(report["verdict"], "READY")
 
+    def test_cli_correction_does_not_extend_zero_streak(self) -> None:
+        checkpoint = self.checkpoint_payload()
+        checkpoint["checkpoints"] = [
+            {
+                **checkpoint["checkpoints"][0],
+                "comment_id": 201,
+                "created_at": "2026-09-14T01:00:00Z",
+                "type": "CLI",
+                "raw_found": 0,
+                "accepted": 0,
+                "correction": False,
+            },
+            {
+                **checkpoint["checkpoints"][0],
+                "comment_id": 202,
+                "created_at": "2026-09-15T01:00:00Z",
+                "type": "CLI",
+                "raw_found": 0,
+                "accepted": 0,
+                "correction": True,
+            },
+        ]
+        checkpoint["timeline"] = [
+            {"kind": "checkpoint", **item} for item in checkpoint["checkpoints"]
+        ]
+        with patch.object(
+            self.reporter.subprocess,
+            "run",
+            side_effect=self.provider_responses(checker_ok=True, checkpoint_payload=checkpoint),
+        ):
+            report = self.reporter.build_report("owner/repo", 42)
+        counts = report["checkpoint_counts"]
+        self.assertEqual(counts["by_type"]["CLI"]["count"], 2)
+        self.assertEqual(counts["by_type"]["CLI"]["raw_found"], 0)
+        self.assertEqual(counts["cli_zero_streak"]["count"], 1)
+
+    def test_cli_correction_does_not_replace_last_accepted_finding(self) -> None:
+        checkpoint = self.checkpoint_payload()
+        checkpoint["checkpoints"] = [
+            {
+                **checkpoint["checkpoints"][0],
+                "comment_id": 201,
+                "created_at": "2026-09-14T01:00:00Z",
+                "type": "CLI",
+                "raw_found": 1,
+                "accepted": 1,
+                "correction": False,
+            },
+            {
+                **checkpoint["checkpoints"][0],
+                "comment_id": 202,
+                "created_at": "2026-09-15T01:00:00Z",
+                "type": "CLI",
+                "raw_found": 1,
+                "accepted": 1,
+                "correction": True,
+            },
+        ]
+        checkpoint["timeline"] = [
+            {"kind": "checkpoint", **item} for item in checkpoint["checkpoints"]
+        ]
+        with patch.object(
+            self.reporter.subprocess,
+            "run",
+            side_effect=self.provider_responses(checker_ok=True, checkpoint_payload=checkpoint),
+        ):
+            report = self.reporter.build_report("owner/repo", 42)
+        last_accepted = report["checkpoint_counts"]["cli_zero_streak"]["last_accepted_finding"]
+        self.assertEqual(last_accepted["comment_id"], 201)
+        self.assertEqual(last_accepted["created_at"], "2026-09-14T01:00:00Z")
+        self.assertEqual(last_accepted["accepted"], 1)
+
     def test_hosted_taper_labels_raw_positive_and_correction_evidence(self) -> None:
         checkpoint = self.checkpoint_payload()
         checkpoint["checkpoints"] = [
@@ -759,26 +854,7 @@ class PrStatusReporterTest(unittest.TestCase):
         self.assertEqual(report["loc_metadata"]["status"], "missing")
 
     def test_durable_hosted_trigger_is_reported_as_separate_transition_evidence(self) -> None:
-        trigger = {
-            "trigger_state": {
-                "state": "completed",
-                "terminal": True,
-                "attributed": True,
-                "repository": "OWNER/REPO",
-                "pr_number": 42,
-                "head_sha": "0123456789abcdef0123456789abcdef01234567",
-                "current_head_sha": "0123456789abcdef0123456789abcdef01234567",
-                "trigger_comment_id": 101,
-                "trigger_created_at": "2026-09-14T00:05:00Z",
-                "trigger_url": "https://example.test/comments/101",
-                "trigger_type": "full",
-                "response_id": 102,
-                "response_created_at": "2026-09-14T00:10:00Z",
-                "response_url": "https://example.test/comments/102",
-                "cooldown_until": None,
-                "reason": "the captured Hosted review completed",
-            }
-        }
+        trigger = {"trigger_state": self.trigger_state(repository="OWNER/REPO")}
         checker = self.checker_payload(ok=True)
         checker.update(trigger)
         with tempfile.TemporaryDirectory() as directory:
@@ -810,15 +886,7 @@ class PrStatusReporterTest(unittest.TestCase):
 
     def test_report_owned_trigger_availability_cannot_be_overridden_by_provider(self) -> None:
         checker = self.checker_payload(ok=True)
-        checker["trigger_state"] = {
-            "state": "completed",
-            "repository": "owner/repo",
-            "pr_number": 42,
-            "head_sha": "0123456789abcdef0123456789abcdef01234567",
-            "current_head_sha": "0123456789abcdef0123456789abcdef01234567",
-            "reason": "the captured Hosted review completed",
-            "available": False,
-        }
+        checker["trigger_state"] = self.trigger_state(available=False)
 
         evidence = self.reporter._hosted_trigger_evidence(
             "owner/repo",
@@ -834,13 +902,7 @@ class PrStatusReporterTest(unittest.TestCase):
     def test_malformed_trigger_state_type_fails_with_report_error(self) -> None:
         for invalid in ([], {}):
             checker = self.checker_payload(ok=True)
-            checker["trigger_state"] = {
-                "state": invalid,
-                "repository": "owner/repo",
-                "pr_number": 42,
-                "head_sha": "0123456789abcdef0123456789abcdef01234567",
-                "current_head_sha": "0123456789abcdef0123456789abcdef01234567",
-            }
+            checker["trigger_state"] = self.trigger_state(state=invalid)
             with self.subTest(invalid=invalid), self.assertRaisesRegex(
                 self.reporter.ReportError, "invalid state"
             ):
@@ -849,13 +911,7 @@ class PrStatusReporterTest(unittest.TestCase):
     def test_malformed_trigger_state_type_is_reported_ambiguous_during_build_report(self) -> None:
         for invalid in ([], {}):
             checker = self.checker_payload(ok=True)
-            checker["trigger_state"] = {
-                "state": invalid,
-                "repository": "owner/repo",
-                "pr_number": 42,
-                "head_sha": "0123456789abcdef0123456789abcdef01234567",
-                "current_head_sha": "0123456789abcdef0123456789abcdef01234567",
-            }
+            checker["trigger_state"] = self.trigger_state(state=invalid)
             with tempfile.TemporaryDirectory() as directory:
                 record = Path(directory) / "trigger.json"
                 record.write_text("{}", encoding="utf-8")
@@ -879,27 +935,14 @@ class PrStatusReporterTest(unittest.TestCase):
     def test_trigger_state_pr_number_requires_positive_non_bool_int(self) -> None:
         for invalid in (42.0, True):
             checker = self.checker_payload(ok=True)
-            checker["trigger_state"] = {
-                "state": "completed",
-                "repository": "owner/repo",
-                "pr_number": invalid,
-                "head_sha": "0123456789abcdef0123456789abcdef01234567",
-                "current_head_sha": "0123456789abcdef0123456789abcdef01234567",
-            }
+            checker["trigger_state"] = self.trigger_state(pr_number=invalid)
             with self.subTest(invalid=invalid), self.assertRaisesRegex(
                 self.reporter.ReportError, "invalid pr_number"
             ):
                 self.reporter._validate_trigger_state(checker, "owner/repo", 42)
 
         checker = self.checker_payload(ok=True)
-        checker["trigger_state"] = {
-            "state": "completed",
-            "repository": "owner/repo",
-            "pr_number": 42,
-            "head_sha": "0123456789abcdef0123456789abcdef01234567",
-            "current_head_sha": "0123456789abcdef0123456789abcdef01234567",
-            "reason": "the captured Hosted review completed",
-        }
+        checker["trigger_state"] = self.trigger_state()
         self.assertEqual(
             self.reporter._validate_trigger_state(checker, "owner/repo", 42)["pr_number"],
             42,
@@ -930,26 +973,7 @@ class PrStatusReporterTest(unittest.TestCase):
             record.parent.mkdir(parents=True)
             record.write_text("{}", encoding="utf-8")
 
-            trigger = {
-                "trigger_state": {
-                    "state": "completed",
-                    "terminal": True,
-                    "attributed": True,
-                    "repository": "owner/repo",
-                    "pr_number": 42,
-                    "head_sha": "0123456789abcdef0123456789abcdef01234567",
-                    "current_head_sha": "0123456789abcdef0123456789abcdef01234567",
-                    "trigger_comment_id": 101,
-                    "trigger_created_at": "2026-09-14T00:05:00Z",
-                    "trigger_url": "https://example.test/comments/101",
-                    "trigger_type": "full",
-                    "response_id": 102,
-                    "response_created_at": "2026-09-14T00:10:00Z",
-                    "response_url": "https://example.test/comments/102",
-                    "cooldown_until": None,
-                    "reason": "the captured Hosted review completed",
-                }
-            }
+            trigger = {"trigger_state": self.trigger_state()}
             trigger_payload = self.checker_payload(ok=True)
             trigger_payload.update(trigger)
             record.write_text(json.dumps(trigger_payload), encoding="utf-8")
@@ -991,24 +1015,15 @@ class PrStatusReporterTest(unittest.TestCase):
 
     def test_ambiguous_hosted_trigger_reason_is_visible_in_human_output(self) -> None:
         trigger = {
-            "trigger_state": {
-                "state": "ambiguous",
-                "terminal": True,
-                "attributed": False,
-                "repository": "owner/repo",
-                "pr_number": 42,
-                "head_sha": "0123456789abcdef0123456789abcdef01234567",
-                "current_head_sha": "fedcba9876543210fedcba9876543210fedcba98",
-                "trigger_comment_id": 101,
-                "trigger_created_at": "2026-09-14T00:05:00Z",
-                "trigger_url": "https://example.test/comments/101",
-                "trigger_type": "full",
-                "response_id": None,
-                "response_created_at": None,
-                "response_url": None,
-                "cooldown_until": None,
-                "reason": "the durable trigger record disagrees with the current PR head",
-            }
+            "trigger_state": self.trigger_state(
+                state="ambiguous",
+                attributed=False,
+                current_head_sha="fedcba9876543210fedcba9876543210fedcba98",
+                response_id=None,
+                response_created_at=None,
+                response_url=None,
+                reason="the durable trigger record disagrees with the current PR head",
+            )
         }
         checker = self.checker_payload(ok=True)
         checker.update(trigger)
@@ -1045,16 +1060,12 @@ class PrStatusReporterTest(unittest.TestCase):
             ("completed", 0, False),
         ):
             trigger = {
-                "trigger_state": {
-                    "state": state,
-                    "terminal": state == "completed",
-                    "attributed": state == "completed",
-                    "repository": "owner/repo",
-                    "pr_number": 42,
-                    "head_sha": "0123456789abcdef0123456789abcdef01234567",
-                    "current_head_sha": "0123456789abcdef0123456789abcdef01234567",
-                    "reason": reason,
-                }
+                "trigger_state": self.trigger_state(
+                    state=state,
+                    terminal=state == "completed",
+                    attributed=state == "completed",
+                    reason=reason,
+                )
             }
             checker = self.checker_payload(ok=True)
             checker.update(trigger)
@@ -1087,24 +1098,14 @@ class PrStatusReporterTest(unittest.TestCase):
 
     def test_nonterminal_hosted_trigger_without_response_url_is_preserved(self) -> None:
         trigger = {
-            "trigger_state": {
-                "state": "awaiting_response",
-                "terminal": False,
-                "attributed": True,
-                "repository": "owner/repo",
-                "pr_number": 42,
-                "head_sha": "0123456789abcdef0123456789abcdef01234567",
-                "current_head_sha": "0123456789abcdef0123456789abcdef01234567",
-                "trigger_comment_id": 101,
-                "trigger_created_at": "2026-09-14T00:05:00Z",
-                "trigger_url": "https://example.test/comments/101",
-                "trigger_type": "full",
-                "response_id": None,
-                "response_created_at": None,
-                "response_url": None,
-                "cooldown_until": None,
-                "reason": "no qualifying response has arrived yet",
-            }
+            "trigger_state": self.trigger_state(
+                state="awaiting_response",
+                terminal=False,
+                response_id=None,
+                response_created_at=None,
+                response_url=None,
+                reason="no qualifying response has arrived yet",
+            )
         }
         checker = self.checker_payload(ok=True)
         checker.update(trigger)
@@ -1127,24 +1128,14 @@ class PrStatusReporterTest(unittest.TestCase):
 
     def test_retired_hosted_trigger_state_is_reported(self) -> None:
         trigger = {
-            "trigger_state": {
-                "state": "retired",
-                "terminal": True,
-                "attributed": False,
-                "repository": "owner/repo",
-                "pr_number": 42,
-                "head_sha": "0123456789abcdef0123456789abcdef01234567",
-                "current_head_sha": "0123456789abcdef0123456789abcdef01234567",
-                "trigger_comment_id": 101,
-                "trigger_created_at": "2026-09-14T00:05:00Z",
-                "trigger_url": "https://example.test/comments/101",
-                "trigger_type": "full",
-                "response_id": None,
-                "response_created_at": None,
-                "response_url": None,
-                "cooldown_until": None,
-                "reason": "the stale captured trigger was retired",
-            }
+            "trigger_state": self.trigger_state(
+                state="retired",
+                attributed=False,
+                response_id=None,
+                response_created_at=None,
+                response_url=None,
+                reason="the stale captured trigger was retired",
+            )
         }
         checker = self.checker_payload(ok=True)
         checker.update(trigger)
@@ -1167,24 +1158,18 @@ class PrStatusReporterTest(unittest.TestCase):
 
     def test_unattributed_hosted_trigger_without_trigger_identity_is_preserved(self) -> None:
         trigger = {
-            "trigger_state": {
-                "state": "unattributed",
-                "terminal": True,
-                "attributed": False,
-                "repository": "owner/repo",
-                "pr_number": 42,
-                "head_sha": "0123456789abcdef0123456789abcdef01234567",
-                "current_head_sha": "0123456789abcdef0123456789abcdef01234567",
-                "trigger_comment_id": None,
-                "trigger_created_at": None,
-                "trigger_url": None,
-                "trigger_type": None,
-                "response_id": None,
-                "response_created_at": None,
-                "response_url": None,
-                "cooldown_until": None,
-                "reason": "the durable posting reservation has no captured response",
-            }
+            "trigger_state": self.trigger_state(
+                state="unattributed",
+                attributed=False,
+                trigger_comment_id=None,
+                trigger_created_at=None,
+                trigger_url=None,
+                trigger_type=None,
+                response_id=None,
+                response_created_at=None,
+                response_url=None,
+                reason="the durable posting reservation has no captured response",
+            )
         }
         checker = self.checker_payload(ok=True)
         checker.update(trigger)

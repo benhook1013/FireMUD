@@ -154,9 +154,15 @@ cat > "$CONTRADICTORY_BIN/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "$1 $2" == "pr list" || "$1 $2" == "pr view" ]]; then
+if [[ "$1 $2" == "pr list" ]]; then
   cat <<'PR'
 [{"number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOownerrepo","name":"repo","nameWithOwner":"owner/other-repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Contradictory","url":"https://example.test/pr/42","isDraft":false}]
+PR
+  exit 0
+fi
+if [[ "$1 $2" == "pr view" ]]; then
+  cat <<'PR'
+{"state":"OPEN","number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOownerrepo","name":"repo","nameWithOwner":"owner/other-repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Contradictory","url":"https://example.test/pr/42","isDraft":false}
 PR
   exit 0
 fi

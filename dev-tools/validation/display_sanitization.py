@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-
 # Remove terminal controls and invisible formatting characters that can alter
 # the apparent structure or direction of a human-readable report.
 TERMINAL_CONTROLS = re.compile(

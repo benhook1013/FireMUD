@@ -287,10 +287,20 @@ def main() -> int:
             return False
 
     def references(text):
+        explicitly_invoked = {
+            root / name.rstrip("\"'")
+            for name in re.findall(
+                r"(?:^|[;&|()\s])(?:/usr/bin/)?(?:bash|sh|dash|zsh|ksh|python|python3)"
+                r"(?:\s+-[A-Za-z0-9][A-Za-z0-9_-]*)*\s+(?:\./)?"
+                r"((?:dev-tools|services)/[A-Za-z0-9_./-]+)",
+                text,
+                flags=re.MULTILINE,
+            )
+        }
         result = set()
         for name in re.findall(r"(?:\./)?((?:dev-tools|services)/[A-Za-z0-9_./-]+)", text):
             path = root / name.rstrip("\"'")
-            if path.is_file() and is_executable_helper(path):
+            if path.is_file() and (path in explicitly_invoked or is_executable_helper(path)):
                 result.add(path)
         return result
 
@@ -365,14 +375,20 @@ def main() -> int:
         suffix_helper = Path(helper_dir) / "other-suffix.bash"
         data = Path(helper_dir) / "extensionless-data"
         executable_data = Path(helper_dir) / "extensionless-executable-data"
+        invoked = Path(helper_dir) / "extensionless-invoked"
+        invoked_suffix = Path(helper_dir) / "invoked.bash"
         helper.write_text("#!/usr/bin/env bash\n# extensionless helper\n", encoding="utf-8")
         suffix_helper.write_text("#!/usr/bin/env bash\n# suffix helper\n", encoding="utf-8")
         data.write_text("extensionless data\n", encoding="utf-8")
         executable_data.write_text("extensionless executable data\n", encoding="utf-8")
+        invoked.write_text("# explicit interpreter helper\n", encoding="utf-8")
+        invoked_suffix.write_text("# explicit interpreter suffix helper\n", encoding="utf-8")
         executable_data.chmod(0o755)
         helper_reference = f"bash ./{helper.relative_to(root).as_posix()}"
         suffix_reference = f"bash ./{suffix_helper.relative_to(root).as_posix()}"
-        data_reference = f"bash ./{data.relative_to(root).as_posix()}"
+        data_reference = f"documentation mentions ./{data.relative_to(root).as_posix()}"
+        invoked_reference = f"bash ./{invoked.relative_to(root).as_posix()}"
+        invoked_suffix_reference = f"python3 ./{invoked_suffix.relative_to(root).as_posix()}"
         executable_data_reference = f"bash ./{executable_data.relative_to(root).as_posix()}"
         if helper not in references(helper_reference):
             fail("extensionless helper with a shebang was not detected")
@@ -381,7 +397,13 @@ def main() -> int:
         if suffix_helper not in references(suffix_reference):
             fail("helper with an unlisted suffix and a shebang was not detected")
         if data in references(data_reference):
-            fail("extensionless data without a shebang was treated as an executable helper")
+            fail("extensionless data without an invocation was treated as an executable helper")
+        if invoked not in references(invoked_reference):
+            fail("extensionless helper passed to an explicit interpreter was not detected")
+        if "# explicit interpreter helper" not in expand_text(invoked_reference):
+            fail("extensionless helper passed to an explicit interpreter was not expanded")
+        if invoked_suffix not in references(invoked_suffix_reference):
+            fail("helper with an unlisted suffix passed to an explicit interpreter was not detected")
         if executable_data not in references(executable_data_reference):
             fail("extensionless executable file was not detected")
         if "extensionless executable data" not in expand_text(executable_data_reference):
