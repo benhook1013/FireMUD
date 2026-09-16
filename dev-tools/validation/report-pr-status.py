@@ -63,7 +63,9 @@ MERGE_STATE_VALUES = {
     "UNSTABLE",
 }
 
-GH_PR_IDENTITY_FIELDS = "number,title,headRefName,headRefOid,baseRefName,changedFiles,body"
+GH_PR_IDENTITY_FIELDS = (
+    "number,title,headRefName,headRefOid,baseRefName,baseRefOid,changedFiles,body"
+)
 GH_PR_STATE_FIELDS = "statusCheckRollup,mergeable,mergeStateStatus,isDraft,url"
 GH_PR_FIELDS = f"{GH_PR_IDENTITY_FIELDS},{GH_PR_STATE_FIELDS}"
 
@@ -415,12 +417,14 @@ def _validate_github_evidence(payload: dict[str, Any]) -> None:
     number = _require(payload, "number", int, name)
     if isinstance(number, bool) or number <= 0:
         raise ReportError(f"{name} evidence has an invalid number")
-    for key in ("title", "headRefName", "headRefOid", "baseRefName"):
+    for key in ("title", "headRefName", "headRefOid", "baseRefName", "baseRefOid"):
         value = _require(payload, key, str, name)
         if not value:
             raise ReportError(f"{name} evidence has an empty {key}")
     if not EXACT_SHA.fullmatch(payload["headRefOid"]):
         raise ReportError(f"{name} evidence headRefOid must be exactly 40 hexadecimal characters")
+    if not EXACT_SHA.fullmatch(payload["baseRefOid"]):
+        raise ReportError(f"{name} evidence baseRefOid must be exactly 40 hexadecimal characters")
     _require(payload, "statusCheckRollup", list, name)
     mergeable = _require(payload, "mergeable", str, name)
     if mergeable.upper() not in MERGEABLE_VALUES:
@@ -430,7 +434,9 @@ def _validate_github_evidence(payload: dict[str, Any]) -> None:
         raise ReportError(f"{name} evidence has an invalid mergeStateStatus value")
     _nonnegative_int(payload.get("changedFiles"), f"{name} changedFiles")
     _require(payload, "isDraft", bool, name)
-    _require(payload, "body", str, name)
+    body = payload.get("body")
+    if body is not None and not isinstance(body, str):
+        raise ReportError(f"{name} evidence body must be a string or null")
 
 
 def _git_common_dir() -> Path | None:
@@ -494,58 +500,51 @@ def _validate_trigger_state(payload: dict[str, Any], repo: str, pr_number: int) 
             raise ReportError(f"{name} evidence has an invalid {key}")
     for key in ("trigger_comment_id", "response_id"):
         value = state.get(key)
-        if value is not None:
-            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-                raise ReportError(f"{name} evidence has an invalid {key}")
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value <= 0):
+            raise ReportError(f"{name} evidence has an invalid {key}")
     for key in ("trigger_created_at", "response_created_at", "cooldown_until"):
         value = state.get(key)
         if value is not None:
             _timestamp(value, f"{name} {key}")
     for key in ("trigger_url", "response_url", "reason"):
         value = state.get(key)
-        if not isinstance(value, str) or not value:
+        if key == "reason":
+            valid = isinstance(value, str) and bool(value)
+        else:
+            valid = value is None or (isinstance(value, str) and bool(value))
+        if not valid:
             raise ReportError(f"{name} evidence has an invalid {key}")
     return state
 
 
-def _hosted_trigger_evidence(repo: str, pr_number: int) -> dict[str, Any]:
-    record_path = hosted_trigger_record_path(repo, pr_number)
-    if record_path is None:
+def _hosted_trigger_evidence(
+    repo: str,
+    pr_number: int,
+    record_available: bool,
+    checker_payload: dict[str, Any],
+    current_head: str,
+) -> dict[str, Any]:
+    if not record_available:
         return {
             "available": False,
             "state": "unavailable",
             "reason": "no canonical durable Hosted trigger record is present",
         }
     try:
-        evidence = _run_json_provider(
-            [
-                sys.executable,
-                str(CODERABBIT_CHECKER),
-                "--repo",
-                repo,
-                "--pr",
-                str(pr_number),
-                "--trigger-record",
-                str(record_path),
-                "--json",
-            ],
-            "Hosted trigger checker",
-            allow_nonzero=True,
-        )
-        state = _validate_trigger_state(evidence.payload, repo, pr_number)
-        return {
-            "available": True,
-            "record_path": str(record_path),
-            "provider_exit_code": evidence.exit_code,
-            **state,
-        }
+        state = _validate_trigger_state(checker_payload, repo, pr_number)
     except ReportError as exc:
         return {
             "available": True,
-            "record_path": str(record_path),
             "state": "ambiguous",
             "reason": str(exc),
         }
+    if state["current_head_sha"].casefold() != current_head.casefold():
+        return {
+            "available": True,
+            "state": "ambiguous",
+            "reason": "Hosted trigger evidence does not match the current GitHub PR head",
+        }
+    return {"available": True, **state}
 
 
 def _checkpoint_summaries(checkpoints: list[dict[str, Any]]) -> dict[str, Any]:
@@ -569,11 +568,38 @@ def _checkpoint_summaries(checkpoints: list[dict[str, Any]]) -> dict[str, Any]:
         cli_zero_streak.append(checkpoint)
     last_cli_accepted = next((item for item in reversed(cli) if item["accepted"] > 0), None)
 
-    hosted_zero_accepted_streak = 0
-    for checkpoint in reversed(by_type["Hosted"]):
-        if checkpoint["accepted"] != 0:
-            break
-        hosted_zero_accepted_streak += 1
+    hosted = by_type["Hosted"]
+
+    def trailing_count(predicate: Any) -> int:
+        count = 0
+        for checkpoint in reversed(hosted):
+            if not predicate(checkpoint):
+                break
+            count += 1
+        return count
+
+    hosted_correction_exclusions = sum(1 for checkpoint in hosted if checkpoint["correction"])
+    hosted_zero_zero_streak = trailing_count(
+        lambda checkpoint: (
+            not checkpoint["correction"]
+            and checkpoint["raw_found"] == 0
+            and checkpoint["accepted"] == 0
+        )
+    )
+    hosted_raw_positive_accepted_zero_streak = trailing_count(
+        lambda checkpoint: (
+            not checkpoint["correction"]
+            and checkpoint["raw_found"] > 0
+            and checkpoint["accepted"] == 0
+        )
+    )
+    hosted_completed_zero_zero_observed = sum(
+        1
+        for checkpoint in hosted
+        if not checkpoint["correction"]
+        and checkpoint["raw_found"] == 0
+        and checkpoint["accepted"] == 0
+    )
 
     return {
         "observed": len(checkpoints),
@@ -592,13 +618,41 @@ def _checkpoint_summaries(checkpoints: list[dict[str, Any]]) -> dict[str, Any]:
             ),
         },
         "taper_evidence": {
-            "hosted_zero_accepted_streak": hosted_zero_accepted_streak,
-            "hosted_checkpoints_observed": len(by_type["Hosted"]),
+            "hosted_zero_zero_streak": hosted_zero_zero_streak,
+            "hosted_raw_positive_accepted_zero_streak": hosted_raw_positive_accepted_zero_streak,
+            "hosted_completed_zero_zero_observed": hosted_completed_zero_zero_observed,
+            "hosted_raw_found": sum(item["raw_found"] for item in hosted),
+            "hosted_accepted": sum(item["accepted"] for item in hosted),
+            "hosted_correction_exclusions": hosted_correction_exclusions,
+            "hosted_checkpoints_observed": len(hosted),
         },
     }
 
 
-def _loc_metadata_freshness(body: str, current_head: str) -> dict[str, Any]:
+def _current_merge_base(base_oid: str, head_oid: str) -> str | None:
+    try:
+        completed = subprocess.run(
+            ["git", "merge-base", base_oid, head_oid],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=PROVIDER_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    merge_base = (completed.stdout or "").strip()
+    return merge_base.lower() if EXACT_SHA.fullmatch(merge_base) else None
+
+
+def _loc_metadata_freshness(
+    body: str,
+    current_base: str,
+    current_head: str,
+    current_merge_base: str | None,
+) -> dict[str, Any]:
     start_marker = "<!-- firemud:cloc-report:start -->"
     end_marker = "<!-- firemud:cloc-report:end -->"
     marker_lines = [
@@ -623,11 +677,23 @@ def _loc_metadata_freshness(body: str, current_head: str) -> dict[str, Any]:
         value = metadata.get(key)
         if not isinstance(value, str) or not EXACT_SHA.fullmatch(value):
             return {"status": "ambiguous", "reason": f"PR body LOC metadata has no exact {key}"}
+    reasons = []
+    if metadata["head_oid"].casefold() != current_head.casefold():
+        reasons.append("PR body LOC metadata head does not match the current PR head")
+    if metadata["base_oid"].casefold() != current_base.casefold():
+        reasons.append("PR body LOC metadata base does not match the current PR base")
+    merge_base_checked = current_merge_base is not None
+    if merge_base_checked and metadata["merge_base"].casefold() != current_merge_base.casefold():
+        reasons.append("PR body LOC metadata merge-base does not match the current merge-base")
     result = {
-        "status": "fresh" if metadata["head_oid"].casefold() == current_head.casefold() else "stale",
+        "status": "stale" if reasons else "fresh",
         "head_oid": metadata["head_oid"],
         "base_oid": metadata["base_oid"],
         "merge_base": metadata["merge_base"],
+        "current_head_oid": current_head,
+        "current_base_oid": current_base,
+        "current_merge_base": current_merge_base,
+        "merge_base_checked": merge_base_checked,
     }
     if "classifier_sha256" in metadata:
         classifier = metadata["classifier_sha256"]
@@ -636,8 +702,8 @@ def _loc_metadata_freshness(body: str, current_head: str) -> dict[str, Any]:
         ):
             return {"status": "ambiguous", "reason": "PR body LOC metadata has an invalid classifier digest"}
         result["classifier_sha256"] = classifier
-    if result["status"] == "stale":
-        result["reason"] = "PR body LOC metadata head does not match the current PR head"
+    if reasons:
+        result["reason"] = "; ".join(reasons)
     return result
 
 
@@ -731,8 +797,20 @@ def build_report(repo: str, pr_number: int) -> dict[str, Any]:
         [sys.executable, str(CHECKPOINT_REPORTER), "--repo", repo, "--pr", str(pr_number), "--limit", "0", "--json"],
         "checkpoint reporter",
     )
+    trigger_record = hosted_trigger_record_path(repo, pr_number)
+    checker_command = [
+        sys.executable,
+        str(CODERABBIT_CHECKER),
+        "--repo",
+        repo,
+        "--pr",
+        str(pr_number),
+    ]
+    if trigger_record is not None:
+        checker_command.extend(("--trigger-record", str(trigger_record)))
+    checker_command.append("--json")
     checker_evidence = _run_json_provider(
-        [sys.executable, str(CODERABBIT_CHECKER), "--repo", repo, "--pr", str(pr_number), "--json"],
+        checker_command,
         "CodeRabbit checker",
         allow_nonzero=True,
     )
@@ -745,15 +823,34 @@ def build_report(repo: str, pr_number: int) -> dict[str, Any]:
     _validate_checker_evidence(checker_evidence.payload)
     _validate_checker_semantics(checker_evidence.payload, repo, pr_number)
     _validate_github_evidence(github_evidence.payload)
-    if checker_evidence.exit_code != (0 if checker_evidence.payload["ok"] else 1):
+    trigger_state = checker_evidence.payload.get("trigger_state")
+    if trigger_record is None:
+        expected_checker_exit = 0 if checker_evidence.payload["ok"] else 1
+    elif isinstance(trigger_state, dict):
+        expected_checker_exit = (
+            0
+            if trigger_state.get("state") == "completed"
+            else 2
+            if trigger_state.get("state") in {"awaiting_response", "active"}
+            else 1
+        )
+    else:
+        expected_checker_exit = 1
+    if checker_evidence.exit_code != expected_checker_exit:
         raise ReportError(
-            "CodeRabbit checker exit status contradicts its ok value "
-            f"(status {checker_evidence.exit_code}, ok={str(checker_evidence.payload['ok']).lower()})"
+            "CodeRabbit checker exit status contradicts its evidence "
+            f"(status {checker_evidence.exit_code}, expected {expected_checker_exit})"
         )
     if github_evidence.payload["number"] != pr_number:
         raise ReportError("GitHub PR number does not match the requested PR")
+    current_merge_base = _current_merge_base(
+        github_evidence.payload["baseRefOid"], github_evidence.payload["headRefOid"]
+    )
     loc_metadata = _loc_metadata_freshness(
-        github_evidence.payload["body"], github_evidence.payload["headRefOid"]
+        github_evidence.payload.get("body") or "",
+        github_evidence.payload["baseRefOid"],
+        github_evidence.payload["headRefOid"],
+        current_merge_base,
     )
     review_timeline = sorted(
         checkpoint_evidence.payload["timeline"],
@@ -815,7 +912,13 @@ def build_report(repo: str, pr_number: int) -> dict[str, Any]:
         "review_sequence": checkpoints,
         "review_timeline": review_timeline,
         "checkpoint_counts": _checkpoint_summaries(checkpoints),
-        "hosted_trigger": _hosted_trigger_evidence(repo, pr_number),
+        "hosted_trigger": _hosted_trigger_evidence(
+            repo,
+            pr_number,
+            trigger_record is not None,
+            checker_evidence.payload,
+            github_evidence.payload["headRefOid"],
+        ),
         "loc_metadata": loc_metadata,
         "threads": {
             "current": checker_evidence.payload["unresolved_non_outdated"],
@@ -976,8 +1079,10 @@ def emit_text(report: dict[str, Any]) -> None:
     taper = counts["taper_evidence"]
     print(
         "taper evidence: "
-        f"Hosted zero-accepted streak={taper['hosted_zero_accepted_streak']} "
-        f"of {taper['hosted_checkpoints_observed']} observed"
+        f"Hosted true 0/0 streak={taper['hosted_zero_zero_streak']} · "
+        f"raw>0/accepted=0 streak={taper['hosted_raw_positive_accepted_zero_streak']} · "
+        f"corrections excluded={taper['hosted_correction_exclusions']} · "
+        f"observed raw/accepted={taper['hosted_raw_found']}/{taper['hosted_accepted']}"
     )
     loc = report["loc_metadata"]
     loc_detail = loc.get("reason")

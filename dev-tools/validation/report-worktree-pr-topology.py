@@ -11,14 +11,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
-MAX_OPEN_PRS = 100
+MAX_OPEN_PRS = 1000
 MAX_CHAIN_PRS = 50
 DEFAULT_BRANCHES = {"develop", "main", "master"}
 EXACT_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
 REPO = re.compile(r"^[^/\s]+/[^/\s]+$")
 PR_FIELDS = (
     "number,headRefName,headRefOid,baseRefName,baseRefOid,changedFiles,"
-    "mergeable,mergeStateStatus,title,url,isDraft"
+    "headRepository,headRepositoryOwner,mergeable,mergeStateStatus,title,url,isDraft"
 )
 
 
@@ -101,6 +101,10 @@ def normalize_pr(raw: Any, *, label: str) -> dict[str, Any]:
     result["head_sha"] = exact_sha(raw.get("headRefOid"), f"{label} headRefOid")
     result["base_sha"] = exact_sha(raw.get("baseRefOid"), f"{label} baseRefOid")
     result["changed_files"] = nonnegative_int(raw.get("changedFiles"), f"{label} changedFiles")
+    head_repository = raw.get("headRepository")
+    if not isinstance(head_repository, dict) or not isinstance(head_repository.get("nameWithOwner"), str):
+        raise TopologyError(f"{label} has no exact head repository identity")
+    result["head_repository"] = validate_repo(head_repository["nameWithOwner"])
     for raw_key, key in (("mergeable", "mergeable"), ("mergeStateStatus", "merge_state_status")):
         value = raw.get(raw_key)
         if not isinstance(value, str) or not value:
@@ -113,6 +117,7 @@ def normalize_pr(raw: Any, *, label: str) -> dict[str, Any]:
 
 
 def fetch_open_prs(root: Path, repo: str, *, include_renovate: bool) -> list[dict[str, Any]]:
+    # gh paginates internally up to --limit; a full bounded response is still ambiguous.
     payload = command_json(
         [
             "gh",
@@ -132,6 +137,10 @@ def fetch_open_prs(root: Path, repo: str, *, include_renovate: bool) -> list[dic
     )
     if not isinstance(payload, list):
         raise TopologyError("open pull-request inventory is not an array")
+    if len(payload) >= MAX_OPEN_PRS:
+        raise TopologyError(
+            f"open pull-request inventory reached the bounded {MAX_OPEN_PRS}-PR limit; refusing to infer a complete stack"
+        )
     prs = [normalize_pr(item, label=f"open PR {index}") for index, item in enumerate(payload, 1)]
     numbers: set[int] = set()
     for pr in prs:
@@ -179,9 +188,13 @@ def parse_worktrees(root: Path) -> list[dict[str, Any]]:
             "branch": branch,
             "head_sha": head.lower(),
             "prunable": bool(current.get("prunable", False)),
+            "locked": bool(current.get("locked", False)),
+            "bare": bool(current.get("bare", False)),
         }
         if record["prunable"]:
             record["status"] = "prunable"
+        elif record["bare"]:
+            record["status"] = "bare"
         elif not Path(path).is_dir():
             record["status"] = "missing"
         else:
@@ -210,6 +223,10 @@ def parse_worktrees(root: Path) -> list[dict[str, Any]]:
             current["branch"] = None
         elif line.startswith("prunable"):
             current["prunable"] = True
+        elif line == "bare":
+            current["bare"] = True
+        elif line == "locked" or line.startswith("locked "):
+            current["locked"] = True
         else:
             raise TopologyError(f"unrecognized Git worktree record: {line!r}")
     emit()
@@ -310,7 +327,11 @@ def render_pr(
     result = {
         "relation": relation,
         "number": pr["number"],
-        "head": {"branch": pr["head_branch"], "sha": pr["head_sha"]},
+        "head": {
+            "repository": pr["head_repository"],
+            "branch": pr["head_branch"],
+            "sha": pr["head_sha"],
+        },
         "base": {"branch": pr["base_branch"], "sha": pr["base_sha"]},
         "changed_files": pr["changed_files"],
         "merge": {"mergeable": pr["mergeable"], "state": pr["merge_state_status"]},
@@ -331,20 +352,31 @@ def selected_chain(
     open_prs: list[dict[str, Any]],
     branches: list[dict[str, Any]],
     worktrees: list[dict[str, Any]],
+    repo: str,
 ) -> tuple[list[dict[str, Any]], list[str]]:
+    if selected["head_repository"].casefold() != repo.casefold():
+        raise TopologyError(
+            f"selected PR #{selected['number']} head repository {selected['head_repository']} does not match {repo}"
+        )
     existing = next((pr for pr in open_prs if pr["number"] == selected["number"]), None)
-    if existing is not None and any(existing[key] != selected[key] for key in ("head_branch", "head_sha", "base_branch", "base_sha")):
+    if existing is not None and any(
+        existing[key] != selected[key]
+        for key in ("head_repository", "head_branch", "head_sha", "base_branch", "base_sha")
+    ):
         raise TopologyError(f"PR #{selected['number']} changed between selected and inventory reads")
     errors: list[str] = []
     discovered: dict[int, tuple[dict[str, Any], str, dict[str, Any] | None]] = {
         selected["number"]: (selected, "selected", None)
     }
+    same_repository_prs = [
+        pr for pr in open_prs if pr["head_repository"].casefold() == repo.casefold()
+    ]
     pending = [selected]
     while pending:
         current = pending.pop(0)
         candidates = [] if current["base_branch"] in DEFAULT_BRANCHES else [
             pr
-            for pr in open_prs
+            for pr in same_repository_prs
             if pr["number"] != current["number"] and pr["head_branch"] == current["base_branch"]
         ]
         if len(candidates) > 1:
@@ -373,7 +405,9 @@ def selected_chain(
                 pending.append(base)
 
         child_branch_matches = [
-            pr for pr in open_prs if pr["number"] != current["number"] and pr["base_branch"] == current["head_branch"]
+            pr
+            for pr in same_repository_prs
+            if pr["number"] != current["number"] and pr["base_branch"] == current["head_branch"]
         ]
         for child in child_branch_matches:
             if child["base_sha"] != current["head_sha"]:
@@ -481,7 +515,11 @@ def main() -> int:
                 "pull_requests": [
                     {
                         "number": pr["number"],
-                        "head": {"branch": pr["head_branch"], "sha": pr["head_sha"]},
+                        "head": {
+                            "repository": pr["head_repository"],
+                            "branch": pr["head_branch"],
+                            "sha": pr["head_sha"],
+                        },
                         "base": {"branch": pr["base_branch"], "sha": pr["base_sha"]},
                         "changed_files": pr["changed_files"],
                         "merge": {"mergeable": pr["mergeable"], "state": pr["merge_state_status"]},
@@ -494,7 +532,7 @@ def main() -> int:
             }
         else:
             selected = fetch_selected_pr(root, repo, args.pr)
-            chain, errors = selected_chain(root, selected, open_prs, branches, worktrees)
+            chain, errors = selected_chain(root, selected, open_prs, branches, worktrees, repo)
             selected_worktrees = [
                 worktree
                 for item in chain

@@ -96,22 +96,28 @@ echo "worktree topology contract checks passed"
 
 SELECTED_REPO="$TEMP_DIR/selected-repo"
 SELECTED_WORKTREE="$SELECTED_REPO/selected-worktree"
+SELECTED_BARE="$SELECTED_REPO/selected-bare"
 SELECTED_BIN="$TEMP_DIR/selected-bin"
-mkdir -p "$SELECTED_REPO" "$SELECTED_WORKTREE" "$SELECTED_BIN"
+mkdir -p "$SELECTED_REPO" "$SELECTED_WORKTREE" "$SELECTED_BARE" "$SELECTED_BIN"
 
 cat > "$SELECTED_BIN/git" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "\$1 \$2 \$3" == "rev-parse --show-toplevel" ]]; then
+if [[ "\${1:-}" == "rev-parse" && "\${2:-}" == "--show-toplevel" ]]; then
   printf '%s\\n' "$SELECTED_REPO"
   exit 0
 fi
-if [[ "\$1 \$2 \$3" == "worktree list --porcelain" ]]; then
+if [[ "\${1:-}" == "worktree" && "\${2:-}" == "list" && "\${3:-}" == "--porcelain" ]]; then
   cat <<'WORKTREES'
 worktree $SELECTED_WORKTREE
 HEAD bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 branch refs/heads/feature/head
+locked selected for contract
+
+worktree $SELECTED_BARE
+HEAD bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bare
 
 WORKTREES
   exit 0
@@ -133,13 +139,13 @@ set -euo pipefail
 
 if [[ "$1 $2" == "pr list" ]]; then
   cat <<'PRS'
-[{"number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false},{"number":43,"headRefName":"feature/dependent","headRefOid":"dddddddddddddddddddddddddddddddddddddddd","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Dependent","url":"https://example.test/pr/43","isDraft":false}]
+[{"number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"nameWithOwner":"owner/repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false},{"number":43,"headRefName":"feature/dependent","headRefOid":"dddddddddddddddddddddddddddddddddddddddd","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"nameWithOwner":"owner/repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Dependent","url":"https://example.test/pr/43","isDraft":false},{"number":44,"headRefName":"feature/forked","headRefOid":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"nameWithOwner":"fork/repo"},"headRepositoryOwner":{"login":"fork"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Foreign collision","url":"https://example.test/pr/44","isDraft":false}]
 PRS
   exit 0
 fi
 if [[ "$1 $2" == "pr view" ]]; then
   cat <<'PR'
-{"state":"OPEN","number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false}
+{"state":"OPEN","number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"nameWithOwner":"owner/repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false}
 PR
   exit 0
 fi
@@ -153,7 +159,85 @@ jq -e '.mode == "selected-stack" and .status == "ok"' <<<"$selected_json" >/dev/
 jq -e '.chain | map(.number) == [42, 43]' <<<"$selected_json" >/dev/null
 jq -e '.chain[0].head.sha == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' <<<"$selected_json" >/dev/null
 jq -e '.chain[0].local_head.status == "published"' <<<"$selected_json" >/dev/null
-jq -e '.chain[0].worktrees[0].status == "clean" and .chain[0].worktrees[0].head_matches' <<<"$selected_json" >/dev/null
+jq -e '.chain[0].worktrees | any(.locked and .status == "clean" and .head_matches)' <<<"$selected_json" >/dev/null
+jq -e '.chain[0].worktrees | any(.bare and .status == "bare" and .head_matches)' <<<"$selected_json" >/dev/null
 jq -e '.chain[1].base.sha == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' <<<"$selected_json" >/dev/null
 
 echo "selected worktree topology contract checks passed"
+
+LIMIT_BIN="$TEMP_DIR/limit-bin"
+mkdir -p "$LIMIT_BIN"
+cat > "$LIMIT_BIN/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$1 $2" == "pr list" ]]; then
+  python3 - <<'PY'
+import json
+
+selected = {
+    "number": 42,
+    "headRefName": "feature/head",
+    "headRefOid": "b" * 40,
+    "baseRefName": "develop",
+    "baseRefOid": "c" * 40,
+    "headRepository": {"nameWithOwner": "owner/repo"},
+    "headRepositoryOwner": {"login": "owner"},
+    "changedFiles": 3,
+    "mergeable": "MERGEABLE",
+    "mergeStateStatus": "CLEAN",
+    "title": "Selected",
+    "url": "https://example.test/pr/42",
+    "isDraft": False,
+}
+prs = [selected]
+for number in range(100, 200):
+    if number == 143:
+        continue
+    prs.append(
+        {
+            "number": number,
+            "headRefName": f"feature/unrelated-{number}",
+            "headRefOid": f"{number:040x}",
+            "baseRefName": "develop",
+            "baseRefOid": "c" * 40,
+            "headRepository": {"nameWithOwner": "owner/repo"},
+            "headRepositoryOwner": {"login": "owner"},
+            "changedFiles": 1,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "title": "Unrelated",
+            "url": f"https://example.test/pr/{number}",
+            "isDraft": False,
+        }
+    )
+prs.append(
+    {
+        **selected,
+        "number": 143,
+        "headRefName": "feature/beyond-one-hundred",
+        "headRefOid": "d" * 40,
+        "baseRefName": "feature/head",
+        "baseRefOid": "b" * 40,
+        "title": "Dependent beyond one hundred",
+        "url": "https://example.test/pr/143",
+    }
+)
+print(json.dumps(prs))
+PY
+  exit 0
+fi
+if [[ "$1 $2" == "pr view" ]]; then
+  cat <<'PR'
+{"state":"OPEN","number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"nameWithOwner":"owner/repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false}
+PR
+  exit 0
+fi
+echo "unexpected gh invocation: $*" >&2
+exit 1
+EOF
+chmod +x "$LIMIT_BIN/gh"
+over_one_hundred_json="$(cd "$SELECTED_REPO" && PATH="$LIMIT_BIN:$SELECTED_BIN:$PATH" bash "$SCRIPT" --repo owner/repo --pr 42 --json)"
+jq -e '.status == "ok" and (.chain | map(.number) | index(143) != null)' <<<"$over_one_hundred_json" >/dev/null
+
+echo "paginated topology inventory contract checks passed"

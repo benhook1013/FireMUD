@@ -305,6 +305,23 @@ jobs:
         if: ${{ needs.changes.outputs.lightweight_only == 'true' && needs.changes.outputs.validation_python_changed == 'true' }}
         run: python3 -m unittest discover -s dev-tools/validation -p 'test_*.py'
 
+  dev-tools-readme-contract:
+    name: Dev Tools README Contract
+    needs: [changes]
+    runs-on: ubuntu-latest
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only == 'true' && needs.changes.outputs.docs_changed == 'true' }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: 🧭 Validate documented dev-tool paths and links
+        run: bash ./dev-tools/tests/dev-tools-readme-contract.sh
+
   yaml-lint:
     name: YAML Lint
     needs: [changes]

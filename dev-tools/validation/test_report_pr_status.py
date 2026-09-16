@@ -134,6 +134,7 @@ class PrStatusReporterTest(unittest.TestCase):
             "headRefName": "codex/pr-status-report",
             "headRefOid": "0123456789abcdef0123456789abcdef01234567",
             "baseRefName": "main",
+            "baseRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "changedFiles": 2,
             "statusCheckRollup": checks
             if checks is not None
@@ -530,9 +531,48 @@ class PrStatusReporterTest(unittest.TestCase):
             report = self.reporter.build_report("owner/repo", 42)
         self.assertEqual(report["checkpoint_counts"]["by_type"]["CLI"]["count"], 2)
         self.assertEqual(report["checkpoint_counts"]["cli_zero_streak"]["count"], 2)
-        self.assertEqual(report["checkpoint_counts"]["taper_evidence"]["hosted_zero_accepted_streak"], 0)
+        self.assertEqual(report["checkpoint_counts"]["taper_evidence"]["hosted_zero_zero_streak"], 0)
         self.assertEqual(report["loc_metadata"]["status"], "fresh")
         self.assertEqual(report["verdict"], "READY")
+
+    def test_hosted_taper_labels_raw_positive_and_correction_evidence(self) -> None:
+        checkpoint = self.checkpoint_payload()
+        checkpoint["checkpoints"] = [
+            {
+                **checkpoint["checkpoints"][1],
+                "created_at": "2026-09-13T01:00:00Z",
+                "raw_found": 1,
+                "accepted": 0,
+            },
+            {
+                **checkpoint["checkpoints"][1],
+                "created_at": "2026-09-14T01:00:00Z",
+                "raw_found": 0,
+                "accepted": 0,
+                "correction": True,
+            },
+            {
+                **checkpoint["checkpoints"][1],
+                "created_at": "2026-09-15T01:00:00Z",
+                "raw_found": 0,
+                "accepted": 0,
+            },
+        ]
+        checkpoint["timeline"] = [
+            {"kind": "checkpoint", **item} for item in checkpoint["checkpoints"]
+        ]
+        with patch.object(
+            self.reporter.subprocess,
+            "run",
+            side_effect=self.provider_responses(checker_ok=True, checkpoint_payload=checkpoint),
+        ):
+            report = self.reporter.build_report("owner/repo", 42)
+        taper = report["checkpoint_counts"]["taper_evidence"]
+        self.assertEqual(taper["hosted_zero_zero_streak"], 1)
+        self.assertEqual(taper["hosted_raw_positive_accepted_zero_streak"], 0)
+        self.assertEqual(taper["hosted_completed_zero_zero_observed"], 1)
+        self.assertEqual(taper["hosted_raw_found"], 1)
+        self.assertEqual(taper["hosted_correction_exclusions"], 1)
 
     def test_loc_metadata_fails_closed_as_ambiguous_when_marker_is_malformed(self) -> None:
         github = self.github_payload()
@@ -548,6 +588,35 @@ class PrStatusReporterTest(unittest.TestCase):
         ):
             report = self.reporter.build_report("owner/repo", 42)
         self.assertEqual(report["loc_metadata"]["status"], "ambiguous")
+
+    def test_loc_metadata_checks_current_base_and_merge_base_when_available(self) -> None:
+        github = self.github_payload()
+        github["baseRefOid"] = "d" * 40
+        checker = self.checker_payload(ok=True)
+
+        def run(command, **kwargs):
+            if command[:3] == ["git", "merge-base", "d" * 40]:
+                return subprocess.CompletedProcess(command, 0, "c" * 40, "")
+            return self.provider_responses(checker_ok=True, checker_payload=checker, github_payload=github)(
+                command, **kwargs
+            )
+
+        with patch.object(self.reporter.subprocess, "run", side_effect=run):
+            report = self.reporter.build_report("owner/repo", 42)
+        self.assertEqual(report["loc_metadata"]["status"], "stale")
+        self.assertIn("current PR base", report["loc_metadata"]["reason"])
+        self.assertIn("current merge-base", report["loc_metadata"]["reason"])
+
+    def test_null_loc_body_is_reported_as_missing(self) -> None:
+        github = self.github_payload()
+        github["body"] = None
+        with patch.object(
+            self.reporter.subprocess,
+            "run",
+            side_effect=self.provider_responses(checker_ok=True, github_payload=github),
+        ):
+            report = self.reporter.build_report("owner/repo", 42)
+        self.assertEqual(report["loc_metadata"]["status"], "missing")
 
     def test_durable_hosted_trigger_is_reported_as_separate_transition_evidence(self) -> None:
         trigger = {
@@ -570,13 +639,17 @@ class PrStatusReporterTest(unittest.TestCase):
                 "reason": "the captured Hosted review completed",
             }
         }
+        checker = self.checker_payload(ok=True)
+        checker.update(trigger)
         with tempfile.TemporaryDirectory() as directory:
             record = Path(directory) / "trigger.json"
             record.write_text("{}", encoding="utf-8")
+            commands = []
 
             def run(command, **kwargs):
+                commands.append(command)
                 if "--trigger-record" in command:
-                    return subprocess.CompletedProcess(command, 0, json.dumps(trigger), "")
+                    return subprocess.CompletedProcess(command, 0, json.dumps(checker), "")
                 return self.provider_responses(checker_ok=True)(command, **kwargs)
 
             with (
@@ -587,7 +660,92 @@ class PrStatusReporterTest(unittest.TestCase):
         self.assertTrue(report["hosted_trigger"]["available"])
         self.assertEqual(report["hosted_trigger"]["state"], "completed")
         self.assertEqual(report["hosted_trigger"]["trigger_comment_id"], 101)
+        self.assertEqual(
+            sum("check-coderabbit-review.py" in " ".join(command) for command in commands),
+            1,
+        )
+        self.assertNotIn(str(record), json.dumps(report))
         self.assertEqual(report["verdict"], "READY")
+
+    def test_nonterminal_hosted_trigger_without_response_url_is_preserved(self) -> None:
+        trigger = {
+            "trigger_state": {
+                "state": "awaiting_response",
+                "terminal": False,
+                "attributed": True,
+                "repository": "owner/repo",
+                "pr_number": 42,
+                "head_sha": "0123456789abcdef0123456789abcdef01234567",
+                "current_head_sha": "0123456789abcdef0123456789abcdef01234567",
+                "trigger_comment_id": 101,
+                "trigger_created_at": "2026-09-14T00:05:00Z",
+                "trigger_url": "https://example.test/comments/101",
+                "trigger_type": "full",
+                "response_id": None,
+                "response_created_at": None,
+                "response_url": None,
+                "cooldown_until": None,
+                "reason": "no qualifying response has arrived yet",
+            }
+        }
+        checker = self.checker_payload(ok=True)
+        checker.update(trigger)
+        with tempfile.TemporaryDirectory() as directory:
+            record = Path(directory) / "trigger.json"
+            record.write_text("{}", encoding="utf-8")
+
+            def run(command, **kwargs):
+                if "--trigger-record" in command:
+                    return subprocess.CompletedProcess(command, 2, json.dumps(checker), "")
+                return self.provider_responses(checker_ok=True)(command, **kwargs)
+
+            with (
+                patch.object(self.reporter, "hosted_trigger_record_path", return_value=record),
+                patch.object(self.reporter.subprocess, "run", side_effect=run),
+            ):
+                report = self.reporter.build_report("owner/repo", 42)
+        self.assertEqual(report["hosted_trigger"]["state"], "awaiting_response")
+        self.assertIsNone(report["hosted_trigger"]["response_url"])
+
+    def test_unattributed_hosted_trigger_without_trigger_identity_is_preserved(self) -> None:
+        trigger = {
+            "trigger_state": {
+                "state": "unattributed",
+                "terminal": True,
+                "attributed": False,
+                "repository": "owner/repo",
+                "pr_number": 42,
+                "head_sha": "0123456789abcdef0123456789abcdef01234567",
+                "current_head_sha": "0123456789abcdef0123456789abcdef01234567",
+                "trigger_comment_id": None,
+                "trigger_created_at": None,
+                "trigger_url": None,
+                "trigger_type": None,
+                "response_id": None,
+                "response_created_at": None,
+                "response_url": None,
+                "cooldown_until": None,
+                "reason": "the durable posting reservation has no captured response",
+            }
+        }
+        checker = self.checker_payload(ok=True)
+        checker.update(trigger)
+        with tempfile.TemporaryDirectory() as directory:
+            record = Path(directory) / "trigger.json"
+            record.write_text("{}", encoding="utf-8")
+
+            def run(command, **kwargs):
+                if "--trigger-record" in command:
+                    return subprocess.CompletedProcess(command, 1, json.dumps(checker), "")
+                return self.provider_responses(checker_ok=True)(command, **kwargs)
+
+            with (
+                patch.object(self.reporter, "hosted_trigger_record_path", return_value=record),
+                patch.object(self.reporter.subprocess, "run", side_effect=run),
+            ):
+                report = self.reporter.build_report("owner/repo", 42)
+        self.assertEqual(report["hosted_trigger"]["state"], "unattributed")
+        self.assertIsNone(report["hosted_trigger"]["trigger_url"])
 
 
 if __name__ == "__main__":
