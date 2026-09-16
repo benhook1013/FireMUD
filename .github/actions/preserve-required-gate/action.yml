@@ -362,7 +362,7 @@ runs:
             fi
             if [[ "${preserve_step_conclusion}" == "unknown" ||
               -z "${preserve_step_conclusion}" ]]; then
-              if [[ "${check_status}" == "queued" || "${check_status}" == "in_progress" ]]; then
+              if [[ "${job_is_pending}" == "true" ]]; then
                 : # A nonterminal job may not have reached its preservation step yet.
               else
                 candidate_ambiguous=true

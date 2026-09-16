@@ -343,7 +343,7 @@ if [[ "$*" == *"/actions/jobs/"* ]]; then
     esac
     printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"%s"}]}\n' "$job_id" "$run_id" "$job_id" "$preserve_conclusion"
   elif [[ "${GH_SCENARIO:-}" == "pending-preservation-step-not-concluded" &&
-    "${job_id}" == "100" && "$(<"$count_file")" -le 2 ]]; then
+    "${job_id}" == "100" && "$(<"$count_file")" -le 3 ]]; then
     printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   elif [[ "${GH_SCENARIO:-}" == "pending-missing-step-with-failed-substantive" &&
     "${job_id}" == "101" ]]; then
@@ -498,6 +498,7 @@ JSON
     case "$count" in
       1) status=queued ;;
       2) status=in_progress ;;
+      3) status=waiting ;;
       *) status=completed ;;
     esac
     if [[ "$status" == "completed" ]]; then
@@ -713,8 +714,8 @@ run_action "$alternate_pending_count" none alternate-pending
 
 pending_step_count="$tmp_dir/count-pending-preservation-step"
 run_action "$pending_step_count" none pending-preservation-step-not-concluded
-[[ "$(<"$pending_step_count")" == "3" ]] || {
-  echo "required-gate action did not treat queued/in-progress preservation jobs without a concluded step as pending" >&2
+[[ "$(<"$pending_step_count")" == "4" ]] || {
+  echo "required-gate action did not treat pending preservation jobs without a concluded step as pending" >&2
   exit 1
 }
 
@@ -725,7 +726,7 @@ run_action "$tmp_dir/count-cache-metadata" none pending-preservation-step-not-co
   echo "required-gate action refetched immutable workflow-run metadata across polls" >&2
   exit 1
 }
-[[ "$(<"$cache_call_counts/jobs-100")" == "3" ]] || {
+[[ "$(<"$cache_call_counts/jobs-100")" == "4" ]] || {
   echo "required-gate action did not refresh the pending job and final job metadata" >&2
   exit 1
 }

@@ -370,15 +370,15 @@ def selected_chain(
     ):
         raise TopologyError(f"PR #{selected['number']} changed between selected and inventory reads")
     errors: list[str] = []
-    discovered: dict[int, tuple[dict[str, Any], str, dict[str, Any] | None]] = {
-        selected["number"]: (selected, "selected", None)
+    discovered: dict[int, tuple[dict[str, Any], str, dict[str, Any] | None, int]] = {
+        selected["number"]: (selected, "selected", None, 0)
     }
     same_repository_prs = [
         pr for pr in open_prs if pr["head_repository"].casefold() == repo.casefold()
     ]
-    pending = [selected]
+    pending = [(selected, 0)]
     while pending:
-        current = pending.pop(0)
+        current, current_depth = pending.pop(0)
         candidates = [] if current["base_branch"] in DEFAULT_BRANCHES else [
             pr
             for pr in same_repository_prs
@@ -403,11 +403,12 @@ def selected_chain(
                             "expected_sha": current["base_sha"],
                             "observed_sha": base["head_sha"],
                         },
+                        current_depth + 1,
                     ),
                 )
             elif base["number"] not in discovered:
-                discovered[base["number"]] = (base, "base", None)
-                pending.append(base)
+                discovered[base["number"]] = (base, "base", None, current_depth + 1)
+                pending.append((base, current_depth + 1))
 
         child_branch_matches = [
             pr
@@ -430,13 +431,14 @@ def selected_chain(
                             "expected_sha": current["head_sha"],
                             "observed_sha": child["base_sha"],
                         },
+                        current_depth + 1,
                     ),
                 )
                 continue
             prior = discovered.get(child["number"])
             if prior is None:
-                discovered[child["number"]] = (child, "dependent", None)
-                pending.append(child)
+                discovered[child["number"]] = (child, "dependent", None, current_depth + 1)
+                pending.append((child, current_depth + 1))
             elif prior[0]["head_branch"] != child["head_branch"] or prior[0]["head_sha"] != child["head_sha"]:
                 errors.append(f"PR #{child['number']} has conflicting branch/SHA identities")
         if len(discovered) > MAX_CHAIN_PRS:
@@ -444,7 +446,7 @@ def selected_chain(
             break
 
     head_branch_groups: dict[str, list[int]] = {}
-    for pr, _relation, _evidence in discovered.values():
+    for pr, _relation, _evidence, _depth in discovered.values():
         head_branch_groups.setdefault(pr["head_branch"], []).append(pr["number"])
     for branch, numbers in head_branch_groups.items():
         if len(numbers) > 1:
@@ -452,10 +454,11 @@ def selected_chain(
 
     chain = [
         render_pr(pr, relation, root, branches, worktrees, relation_evidence)
-        for pr, relation, relation_evidence in sorted(
+        for pr, relation, relation_evidence, _depth in sorted(
             discovered.values(),
             key=lambda item: (
                 0 if item[1] == "base" else 1 if item[1] == "selected" else 2,
+                -item[3] if item[1] == "base" else item[3],
                 item[0]["number"],
             ),
         )

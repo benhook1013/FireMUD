@@ -716,6 +716,21 @@ class PrStatusReporterTest(unittest.TestCase):
         self.assertNotIn(str(record), json.dumps(report))
         self.assertEqual(report["verdict"], "READY")
 
+    def test_malformed_trigger_state_type_fails_with_report_error(self) -> None:
+        for invalid in ([], {}):
+            checker = self.checker_payload(ok=True)
+            checker["trigger_state"] = {
+                "state": invalid,
+                "repository": "owner/repo",
+                "pr_number": 42,
+                "head_sha": "0123456789abcdef0123456789abcdef01234567",
+                "current_head_sha": "0123456789abcdef0123456789abcdef01234567",
+            }
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(
+                self.reporter.ReportError, "invalid state"
+            ):
+                self.reporter._validate_trigger_state(checker, "owner/repo", 42)
+
     def test_durable_hosted_trigger_record_is_discovered_from_main_and_linked_worktrees(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             fixture_root = Path(directory)

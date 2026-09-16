@@ -489,7 +489,7 @@ def _validate_trigger_state(payload: dict[str, Any], repo: str, pr_number: int) 
     for key in ("state", "repository", "pr_number", "head_sha", "current_head_sha"):
         if key not in state:
             raise ReportError(f"{name} evidence is missing a valid {key}")
-    if state["state"] not in TRIGGER_STATES:
+    if not isinstance(state["state"], str) or state["state"] not in TRIGGER_STATES:
         raise ReportError(f"{name} evidence has an invalid state")
     if not isinstance(state["repository"], str) or not state["repository"]:
         raise ReportError(f"{name} evidence has an invalid repository")
