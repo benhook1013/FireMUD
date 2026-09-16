@@ -742,6 +742,7 @@ class PrStatusReporterTest(unittest.TestCase):
             "pr_number": 42,
             "head_sha": "0123456789abcdef0123456789abcdef01234567",
             "current_head_sha": "0123456789abcdef0123456789abcdef01234567",
+            "reason": "the captured Hosted review completed",
             "available": False,
         }
 
@@ -754,6 +755,7 @@ class PrStatusReporterTest(unittest.TestCase):
         )
 
         self.assertTrue(evidence["available"])
+        self.assertEqual(evidence["state"], "completed")
 
     def test_malformed_trigger_state_type_fails_with_report_error(self) -> None:
         for invalid in ([], {}):
