@@ -17,6 +17,27 @@ class TlsTestSupportTest {
         .isFalse();
   }
 
+  @Test
+  void recognizesPrematureCloseExceptionDirectlyAndInCauseChain() {
+    Throwable prematureCloseException = prematureCloseExceptionTestInstance();
+    assertThat(TlsTestSupport.isTlsHandshakeRejection(prematureCloseException)).isTrue();
+    assertThat(
+            TlsTestSupport.isTlsHandshakeRejection(
+                new IllegalStateException("client request failed", prematureCloseException)))
+        .isTrue();
+  }
+
+  private static Throwable prematureCloseExceptionTestInstance() {
+    try {
+      return (Throwable)
+          Class.forName("reactor.netty.http.client.PrematureCloseException")
+              .getField("TEST_EXCEPTION")
+              .get(null);
+    } catch (ReflectiveOperationException exception) {
+      throw new AssertionError("Reactor Netty TEST_EXCEPTION is unavailable", exception);
+    }
+  }
+
   @ParameterizedTest
   @MethodSource("knownClientCertificateRejections")
   void recognizesExplicitClientCertificateRejections(String message) {
