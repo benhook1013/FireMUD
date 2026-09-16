@@ -346,10 +346,6 @@ runs:
             if [[ "${job_was_fetched}" == "true" ]]; then
               job_cache["${job_id}"]="${job_json}"
             fi
-            if [[ "${check_status}" == "completed" ]]; then
-              terminal_job_cache["${job_id}"]=true
-            fi
-
             set +e
             preserve_step_conclusion="$(jq -r '
               [.steps[]?
@@ -366,7 +362,12 @@ runs:
             fi
             if [[ "${preserve_step_conclusion}" == "unknown" ||
               -z "${preserve_step_conclusion}" ]]; then
-              if [[ "${job_is_pending}" == "true" ]]; then
+              if [[ "${check_status}" == "completed" ]]; then
+                # A completed check can briefly precede the jobs API's final
+                # step snapshot. Refresh it through the existing retry path.
+                job_lookup_retryable=true
+                break
+              elif [[ "${job_is_pending}" == "true" ]]; then
                 : # A nonterminal job may not have reached its preservation step yet.
               else
                 candidate_ambiguous=true
@@ -374,9 +375,18 @@ runs:
               fi
             elif [[ "${preserve_step_conclusion}" != "skipped" ]]; then
               case "${preserve_step_conclusion}" in
-                success|failure|neutral|cancelled|timed_out|action_required|stale) continue ;;
+                success|failure|neutral|cancelled|timed_out|action_required|stale)
+                  if [[ "${check_status}" == "completed" ]]; then
+                    terminal_job_cache["${job_id}"]=true
+                  fi
+                  continue
+                  ;;
                 *) candidate_ambiguous=true; continue ;;
               esac
+            fi
+
+            if [[ "${check_status}" == "completed" ]]; then
+              terminal_job_cache["${job_id}"]=true
             fi
 
             case "${check_status}" in

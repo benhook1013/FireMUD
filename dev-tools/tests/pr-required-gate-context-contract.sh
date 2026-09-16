@@ -398,7 +398,8 @@ if [[ "$*" == *"/actions/jobs/"* ]]; then
   elif [[ "${GH_SCENARIO:-}" == "pending-missing-step-with-failed-substantive" &&
     "${job_id}" == "101" ]]; then
     printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
-  elif [[ "${GH_SCENARIO:-}" == "missing-preservation-conclusion" && "${job_id}" == "100" ]]; then
+  elif [[ "${GH_SCENARIO:-}" == "completed-preservation-step-lag" &&
+    "${job_id}" == "100" && "$(<"$count_file")" -eq 1 ]]; then
     printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   else
     printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"deadbeef","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"skipped"}]}\n' "$job_id" "$run_id" "$job_id"
@@ -528,7 +529,7 @@ JSON
   missing-job-id)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":99,"details_url":"https://github.com/example/firemud/actions/runs/99/job/99","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"}]}]\n'
     ;;
-  missing-preservation-conclusion)
+  completed-preservation-step-lag)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":99,"details_url":"https://github.com/example/firemud/actions/runs/99/job/99","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"}]}]\n'
     ;;
   unsupported-status)
@@ -793,6 +794,13 @@ run_action "$pending_step_count" none pending-preservation-step-not-concluded
   exit 1
 }
 
+completed_step_lag_count="$tmp_dir/count-completed-preservation-step-lag"
+run_action "$completed_step_lag_count" none completed-preservation-step-lag
+[[ "$(<"$completed_step_lag_count")" == "2" ]] || {
+  echo "required-gate action did not retry a completed check while its preservation step snapshot lagged" >&2
+  exit 1
+}
+
 cache_call_counts="$tmp_dir/cache-call-counts"
 mkdir -p "$cache_call_counts"
 run_action "$tmp_dir/count-cache-metadata" none pending-preservation-step-not-concluded "$cache_call_counts"
@@ -933,7 +941,7 @@ run_action "$run_path_ref_count" none run-path-ref-suffix
   exit 1
 }
 
-for malformed_scenario in cross-workflow-same-name malformed-run-path-ref-suffix wrong-run-repository unknown-app unknown-check-name invalid-job-id missing-job-id missing-preservation-conclusion unsupported-status missing-timestamp; do
+for malformed_scenario in cross-workflow-same-name malformed-run-path-ref-suffix wrong-run-repository unknown-app unknown-check-name invalid-job-id missing-job-id unsupported-status missing-timestamp; do
   malformed_output="$tmp_dir/${malformed_scenario}-output"
   set +e
   run_action "$tmp_dir/count-${malformed_scenario}" none "$malformed_scenario" >"$malformed_output" 2>&1

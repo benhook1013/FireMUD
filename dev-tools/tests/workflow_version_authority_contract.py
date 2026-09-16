@@ -275,11 +275,22 @@ def main() -> int:
 
     executable_helper_suffixes = {".cjs", ".js", ".py", ".sh"}
 
+    def is_executable_helper(path):
+        if path.suffix in executable_helper_suffixes:
+            return True
+        if path.suffix:
+            return False
+        try:
+            with path.open(encoding="utf-8", errors="ignore") as stream:
+                return stream.readline().startswith("#!")
+        except OSError:
+            return False
+
     def references(text):
         result = set()
         for name in re.findall(r"(?:\./)?((?:dev-tools|services)/[A-Za-z0-9_./-]+)", text):
             path = root / name.rstrip("\"'")
-            if path.is_file() and path.suffix in executable_helper_suffixes:
+            if path.is_file() and is_executable_helper(path):
                 result.add(path)
         return result
 
@@ -348,6 +359,20 @@ def main() -> int:
         fail("documentation/data references must not imply the smoke dependency profile")
     if python_needs(expand_text("bash ./services/game-session-service/websocket-login-look-smoke.sh")) != "smoke":
         fail("invoked WebSocket smoke helper must retain the smoke dependency profile")
+
+    with tempfile.TemporaryDirectory(prefix="workflow-authority-", dir=root / "dev-tools") as helper_dir:
+        helper = Path(helper_dir) / "extensionless-helper"
+        data = Path(helper_dir) / "extensionless-data"
+        helper.write_text("#!/usr/bin/env bash\n# extensionless helper\n", encoding="utf-8")
+        data.write_text("extensionless data\n", encoding="utf-8")
+        helper_reference = f"bash ./{helper.relative_to(root).as_posix()}"
+        data_reference = f"bash ./{data.relative_to(root).as_posix()}"
+        if helper not in references(helper_reference):
+            fail("extensionless helper with a shebang was not detected")
+        if "# extensionless helper" not in expand_text(helper_reference):
+            fail("extensionless helper with a shebang was not expanded")
+        if data in references(data_reference):
+            fail("extensionless data without a shebang was treated as an executable helper")
 
     workflow_paths = sorted((*workflows.glob("*.yml"), *workflows.glob("*.yaml")))
 

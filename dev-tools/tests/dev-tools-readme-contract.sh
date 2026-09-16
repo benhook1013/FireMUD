@@ -139,7 +139,8 @@ for readme in readmes:
             tracked_file(path, readme)
 
     for token in re.findall(r"`(dev-tools/[^`\s]+)`", text):
-        tracked_file(root / token, readme)
+        if not token.endswith("/"):
+            tracked_file(root / token, readme)
     for token in re.findall(r"`((?:validation|maintenance|tests)/[^`\s]+)`", text):
         if not token.endswith("/"):
             tracked_file(readme.parent / token, readme)
