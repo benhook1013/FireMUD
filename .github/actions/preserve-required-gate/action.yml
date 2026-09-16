@@ -13,9 +13,6 @@ inputs:
   workflow-path:
     description: Exact workflow path returned by the Actions API.
     required: true
-  job-id:
-    description: Exact workflow job key that owns the required gate.
-    required: true
 runs:
   using: composite
   steps:
@@ -30,7 +27,6 @@ runs:
         EXPECTED_WORKFLOW_NAME: ${{ inputs.workflow-name }}
         EXPECTED_WORKFLOW_FILE: ${{ inputs.workflow-file }}
         EXPECTED_WORKFLOW_PATH: ${{ inputs.workflow-path }}
-        EXPECTED_JOB_ID: ${{ inputs.job-id }}
       run: |
         set -euo pipefail
 
@@ -38,7 +34,7 @@ runs:
           echo "Required-gate preservation requires pull_request context; refusing to poll." >&2
           exit 1
         fi
-        for required_variable in GH_TOKEN HEAD_SHA REQUIRED_GATE_NAME EXPECTED_WORKFLOW_NAME EXPECTED_WORKFLOW_FILE EXPECTED_WORKFLOW_PATH EXPECTED_JOB_ID GITHUB_REPOSITORY GITHUB_RUN_ID GITHUB_WORKSPACE; do
+        for required_variable in GH_TOKEN HEAD_SHA REQUIRED_GATE_NAME EXPECTED_WORKFLOW_NAME EXPECTED_WORKFLOW_FILE EXPECTED_WORKFLOW_PATH GITHUB_REPOSITORY GITHUB_RUN_ID; do
           if [[ -z "${!required_variable:-}" ]]; then
             echo "Required-gate preservation is missing ${required_variable}; refusing to poll." >&2
             exit 1
@@ -50,31 +46,10 @@ runs:
         fi
         if [[ ! "${EXPECTED_WORKFLOW_FILE}" =~ ^[A-Za-z0-9._-]+\.(yml|yaml)$ ||
           ! "${EXPECTED_WORKFLOW_PATH}" =~ ^\.github/workflows/[A-Za-z0-9._-]+\.(yml|yaml)$ ||
-          "${EXPECTED_WORKFLOW_PATH}" != ".github/workflows/${EXPECTED_WORKFLOW_FILE}" ||
-          ! "${EXPECTED_JOB_ID}" =~ ^[A-Za-z0-9_-]+$ ]]; then
+          "${EXPECTED_WORKFLOW_PATH}" != ".github/workflows/${EXPECTED_WORKFLOW_FILE}" ]]; then
           echo "Required-gate preservation received invalid workflow or job identity; refusing to poll." >&2
           exit 1
         fi
-        expected_workflow_file_path="${GITHUB_WORKSPACE}/.github/workflows/${EXPECTED_WORKFLOW_FILE}"
-        if [[ ! -f "${expected_workflow_file_path}" ]]; then
-          echo "Required-gate preservation cannot verify the expected workflow job from ${EXPECTED_WORKFLOW_PATH}; refusing to poll." >&2
-          exit 1
-        fi
-        if ! grep -Fxq "name: ${EXPECTED_WORKFLOW_NAME}" "${expected_workflow_file_path}"; then
-          echo "Required-gate preservation cannot verify the expected workflow name ${EXPECTED_WORKFLOW_NAME} from ${EXPECTED_WORKFLOW_PATH}; refusing to poll." >&2
-          exit 1
-        fi
-        expected_job_block="$(awk -v expected_job_id="${EXPECTED_JOB_ID}" '
-          $0 == "  " expected_job_id ":" { capture = 1; next }
-          capture && /^  [A-Za-z0-9_-]+:$/ { exit }
-          capture { print }
-        ' "${expected_workflow_file_path}")"
-        if [[ -z "${expected_job_block}" ]] ||
-          ! grep -Fxq "    name: ${REQUIRED_GATE_NAME}" <<<"${expected_job_block}"; then
-          echo "Required-gate preservation cannot verify the expected ${REQUIRED_GATE_NAME} job key; refusing to poll." >&2
-          exit 1
-        fi
-
         is_retryable_gh_failure() {
           local exit_status="$1"
           local error_text="${2,,}"
@@ -215,6 +190,7 @@ runs:
           authoritative_rows=()
           pending_rows=()
           job_lookup_retryable=false
+          retry_reason=""
           candidate_ambiguous=false
           while IFS=$'\t' read -r app_slug check_name details_url check_run_id check_status conclusion completed_at started_at; do
             if [[ -z "${app_slug}${check_name}${details_url}${check_run_id}${check_status}${conclusion}${completed_at}${started_at}" ]]; then
@@ -253,6 +229,7 @@ runs:
                 workflow_run_error="$(<"${api_error_file}")"
                 if is_retryable_gh_failure "${workflow_run_status}" "${workflow_run_error}"; then
                   job_lookup_retryable=true
+                  retry_reason="workflow-run API lookup"
                   break
                 fi
                 echo "Permanent GitHub API/configuration failure while identifying prior ${REQUIRED_GATE_NAME} workflow run; refusing to preserve." >&2
@@ -316,6 +293,7 @@ runs:
                 job_error="$(<"${api_error_file}")"
                 if is_retryable_gh_failure "${job_status}" "${job_error}"; then
                   job_lookup_retryable=true
+                  retry_reason="job API lookup"
                   break
                 fi
                 echo "Permanent GitHub API/configuration failure while identifying a prior ${REQUIRED_GATE_NAME} run; refusing to preserve." >&2
@@ -377,6 +355,7 @@ runs:
                 ))
                 if (( preservation_step_refresh_attempts["${job_id}"] <= max_preservation_step_refresh_attempts )); then
                   job_lookup_retryable=true
+                  retry_reason="preservation-step snapshot refresh"
                   break
                 fi
                 case "${conclusion}" in
@@ -431,9 +410,9 @@ runs:
                 fi
                 ;;
               queued|in_progress|requested|waiting|pending)
-                if [[ -z "${conclusion}" && -z "${completed_at}" &&
-                  -n "${started_at}" ]] &&
-                  is_github_timestamp "${started_at}"; then
+                if [[ -z "${conclusion}" && -z "${completed_at}" ]] &&
+                  { [[ -z "${started_at}" ]] || is_github_timestamp "${started_at}"; }; then
+                  started_at="${started_at:-9999-12-31T23:59:59Z}"
                   pending_rows+=("${started_at}"$'\t'"${workflow_run_id}"$'\t'"${check_run_id}"$'\t'"${job_id}"$'\tpending\t'"${check_status}")
                 else
                   candidate_ambiguous=true
@@ -444,13 +423,19 @@ runs:
           done <<<"${candidate_rows}"
 
           if [[ "${job_lookup_retryable}" == "true" ]]; then
-            api_error="$(<"${api_error_file}")"
-            echo "Retryable GitHub API failure while checking the prior ${REQUIRED_GATE_NAME} job; retrying attempt ${attempt}/${max_attempts}." >&2
+            if [[ "${retry_reason}" == *"API lookup" ]]; then
+              echo "Retryable GitHub API failure during ${retry_reason} for the prior ${REQUIRED_GATE_NAME}; retrying attempt ${attempt}/${max_attempts}." >&2
+            else
+              echo "Retrying ${retry_reason} for the prior ${REQUIRED_GATE_NAME}; retrying attempt ${attempt}/${max_attempts}." >&2
+            fi
             if [ "${attempt}" -eq "${max_attempts}" ]; then
               echo "Timed out waiting for the prior ${REQUIRED_GATE_NAME} on unchanged head ${HEAD_SHA}." >&2
               exit 1
             fi
-            [[ -z "${api_error}" ]] || printf '%s\n' "${api_error}" >&2
+            if [[ "${retry_reason}" == *"API lookup" ]]; then
+              api_error="$(<"${api_error_file}")"
+              [[ -z "${api_error}" ]] || printf '%s\n' "${api_error}" >&2
+            fi
             sleep 15
             continue
           fi

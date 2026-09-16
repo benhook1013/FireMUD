@@ -163,7 +163,6 @@ jobs:
           workflow-name: Security Checks
           workflow-file: security.yml
           workflow-path: .github/workflows/security.yml
-          job-id: security-gate
 
       - name: Enforce security success
         if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}

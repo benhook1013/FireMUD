@@ -50,7 +50,7 @@ assert_required_input_declaration() {
   fi
 }
 
-for input_name in workflow-name workflow-file workflow-path job-id; do
+for input_name in workflow-name workflow-file workflow-path; do
   assert_required_input_declaration "$ACTION" "$input_name"
 done
 # Keep a required declaration outside the inputs mapping from satisfying the
@@ -58,11 +58,11 @@ done
 malformed_action="$(mktemp)"
 cp "$ACTION" "$malformed_action"
 sed -i \
-  -e '/^  job-id:/,/^runs:/ s/^    required: true$/    required: false/' \
+  -e '/^  workflow-path:/,/^runs:/ s/^    required: true$/    required: false/' \
   -e '/^runs:/a\    required: true' \
   "$malformed_action"
 malformed_input_status=0
-if (assert_required_input_declaration "$malformed_action" job-id) >/dev/null 2>&1; then
+if (assert_required_input_declaration "$malformed_action" workflow-path) >/dev/null 2>&1; then
   malformed_input_status=0
 else
   malformed_input_status=$?
@@ -79,8 +79,8 @@ if ! grep -Fq 'GH_TOKEN: ${{ github.token }}' "$ACTION" ||
   ! grep -Fq 'EXPECTED_WORKFLOW_NAME: ${{ inputs.workflow-name }}' "$ACTION" ||
   ! grep -Fq 'EXPECTED_WORKFLOW_FILE: ${{ inputs.workflow-file }}' "$ACTION" ||
   ! grep -Fq 'EXPECTED_WORKFLOW_PATH: ${{ inputs.workflow-path }}' "$ACTION" ||
-  ! grep -Fq 'EXPECTED_JOB_ID: ${{ inputs.job-id }}' "$ACTION"; then
-  echo "required-gate action must retain caller, head, gate, workflow, and job identity inputs" >&2
+  grep -Fq 'EXPECTED_JOB_ID' "$ACTION"; then
+  echo "required-gate action must retain caller, head, gate, and workflow identity inputs without local job identity" >&2
   exit 1
 fi
 
@@ -132,10 +132,6 @@ while IFS='|' read -r workflow gate_job_id gate workflow_name workflow_file work
   }
   grep -Fxq "          workflow-path: $workflow_path" <<<"$gate_block" || {
     echo "$workflow must pass its exact workflow path to the shared action" >&2
-    exit 1
-  }
-  grep -Fxq "          job-id: $gate_job_id" <<<"$gate_block" || {
-    echo "$workflow must pass its exact gate job key to the shared action" >&2
     exit 1
   }
   preserve_block="$(awk '
@@ -356,7 +352,7 @@ if [[ "$*" == *"/actions/workflows/"* ]]; then
     echo "simulated workflow lookup did not target the expected workflow filename" >&2
     exit 90
   fi
-  if [[ "${GH_SCENARIO:-}" == "local-workflow-name-mismatch" ]]; then
+  if [[ "${GH_SCENARIO:-}" == "no-local-workflow-file" ]]; then
     : >"$count_file"
   fi
   if [[ "${GH_SCENARIO:-}" == "workflow-identity-mismatch" ]]; then
@@ -498,6 +494,16 @@ JSON
 [{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]
 JSON
     fi
+    ;;
+  queued-null-started-at)
+    if [[ "$count" -eq 1 ]]; then
+      printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"queued","conclusion":null,"started_at":null,"created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    else
+      printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    fi
+    ;;
+  no-local-workflow-file)
+    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   no-prior)
     printf '[{"check_runs":[]}]\n'
@@ -702,7 +708,6 @@ run_action() {
   local failure_mode="$2"
   local scenario="${3:-failure-retry}"
   local call_count_dir="${4:-}"
-  local workspace="${5:-$ROOT_DIR}"
   GH_RETRY_COUNT_FILE="$count_file" \
   GH_FAILURE_MODE="$failure_mode" \
   GH_SCENARIO="$scenario" \
@@ -717,8 +722,6 @@ run_action() {
   EXPECTED_WORKFLOW_NAME='CI — Validation' \
   EXPECTED_WORKFLOW_FILE=ci.yml \
   EXPECTED_WORKFLOW_PATH=.github/workflows/ci.yml \
-  EXPECTED_JOB_ID=validation-gate \
-  GITHUB_WORKSPACE="$workspace" \
   bash -euo pipefail -c "$action_script"
 }
 
@@ -738,8 +741,6 @@ run_guard_action() {
   EXPECTED_WORKFLOW_NAME='CI — Validation' \
   EXPECTED_WORKFLOW_FILE=ci.yml \
   EXPECTED_WORKFLOW_PATH=.github/workflows/ci.yml \
-  EXPECTED_JOB_ID=validation-gate \
-  GITHUB_WORKSPACE="$ROOT_DIR" \
   bash -euo pipefail -c "$action_script" >"$output_file" 2>&1
 }
 
@@ -753,9 +754,14 @@ for failure_mode in transient network rate-limit; do
 done
 
 job_failure_count="$tmp_dir/count-job-failure-retry"
-run_action "$job_failure_count" none job-failure-retry
+job_failure_output="$tmp_dir/job-failure-retry-output"
+run_action "$job_failure_count" none job-failure-retry >"$job_failure_output" 2>&1
 [[ "$(<"$job_failure_count")" == "2" ]] || {
   echo "required-gate action did not retry a retryable job metadata lookup failure" >&2
+  exit 1
+}
+grep -Fq 'Retryable GitHub API failure during job API lookup' "$job_failure_output" || {
+  echo "required-gate action did not identify a retryable job API lookup" >&2
   exit 1
 }
 
@@ -797,25 +803,10 @@ grep -Fxq 'GitHub API returned malformed expected workflow identity; refusing to
   exit 1
 }
 
-local_workflow_name_mismatch_workspace="$tmp_dir/local-workflow-name-mismatch-workspace"
-mkdir -p "$local_workflow_name_mismatch_workspace/.github/workflows"
-cp "$ROOT_DIR/.github/workflows/ci.yml" "$local_workflow_name_mismatch_workspace/.github/workflows/ci.yml"
-sed -i '1cname: CI — Locally Renamed' "$local_workflow_name_mismatch_workspace/.github/workflows/ci.yml"
-local_workflow_name_mismatch_output="$tmp_dir/local-workflow-name-mismatch-output"
-set +e
-run_action "$tmp_dir/count-local-workflow-name-mismatch" none local-workflow-name-mismatch "" "$local_workflow_name_mismatch_workspace" >"$local_workflow_name_mismatch_output" 2>&1
-local_workflow_name_mismatch_status=$?
-set -e
-[[ "$local_workflow_name_mismatch_status" -ne 0 ]] || {
-  echo "required-gate action accepted a locally mismatched workflow display name" >&2
-  exit 1
-}
-[[ ! -e "$tmp_dir/count-local-workflow-name-mismatch" ]] || {
-  echo "required-gate action polled GitHub after a local workflow display-name mismatch" >&2
-  exit 1
-}
-grep -Fxq 'Required-gate preservation cannot verify the expected workflow name CI — Validation from .github/workflows/ci.yml; refusing to poll.' "$local_workflow_name_mismatch_output" || {
-  echo "required-gate action did not report the exact local workflow display-name mismatch message" >&2
+no_local_workflow_file_count="$tmp_dir/count-no-local-workflow-file"
+run_action "$no_local_workflow_file_count" none no-local-workflow-file
+[[ "$(<"$no_local_workflow_file_count")" == "1" ]] || {
+  echo "required-gate action rejected valid API identity without a local workflow file" >&2
   exit 1
 }
 
@@ -837,6 +828,13 @@ pending_count="$tmp_dir/count-pending-predecessor"
 run_action "$pending_count" none pending-predecessor
 [[ "$(<"$pending_count")" == "2" ]] || {
   echo "required-gate action did not poll the relevant prior run while it was finishing" >&2
+  exit 1
+}
+
+queued_null_started_at_count="$tmp_dir/count-queued-null-started-at"
+run_action "$queued_null_started_at_count" none queued-null-started-at
+[[ "$(<"$queued_null_started_at_count")" == "2" ]] || {
+  echo "required-gate action did not poll a queued run with a null started_at until completion" >&2
   exit 1
 }
 
@@ -862,11 +860,20 @@ run_action "$pending_step_count" none pending-preservation-step-not-concluded
 }
 
 completed_step_lag_count="$tmp_dir/count-completed-preservation-step-lag"
-run_action "$completed_step_lag_count" none completed-preservation-step-lag
+completed_step_lag_output="$tmp_dir/completed-preservation-step-lag-output"
+run_action "$completed_step_lag_count" none completed-preservation-step-lag >"$completed_step_lag_output" 2>&1
 [[ "$(<"$completed_step_lag_count")" == "2" ]] || {
   echo "required-gate action did not retry a completed check while its preservation step snapshot lagged" >&2
   exit 1
 }
+grep -Fq 'Retrying preservation-step snapshot refresh' "$completed_step_lag_output" || {
+  echo "required-gate action did not identify a preservation-step snapshot refresh" >&2
+  exit 1
+}
+if grep -Fq 'GitHub API failure' "$completed_step_lag_output"; then
+  echo "required-gate action mislabeled a preservation-step snapshot refresh as an API failure" >&2
+  exit 1
+fi
 
 persistent_step_lag_count="$tmp_dir/count-completed-preservation-step-persistent-lag"
 persistent_step_lag_output="$tmp_dir/completed-preservation-step-persistent-lag-output"
