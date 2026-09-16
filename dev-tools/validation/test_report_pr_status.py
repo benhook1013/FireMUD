@@ -867,7 +867,7 @@ class PrStatusReporterTest(unittest.TestCase):
 
     def test_durable_hosted_trigger_record_is_discovered_from_main_and_linked_worktrees(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            fixture_root = Path(directory)
+            fixture_root = Path(directory).resolve()
             main_root = fixture_root / "main"
             linked_root = fixture_root / "linked"
             worktree_git_dir = main_root / ".git" / "worktrees" / "linked"

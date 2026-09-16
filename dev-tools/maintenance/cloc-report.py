@@ -841,10 +841,14 @@ def render_pr_report(report: dict[str, object]) -> str:
         or any(character not in "0123456789abcdefABCDEF" for character in classifier_sha256)
     ):
         raise ReportError("PR report has an invalid classifier SHA-256 digest")
+    classifier_sha256 = classifier_sha256.lower()
     base = report["base"]
     head = report["head"]
     if not isinstance(base, dict) or not isinstance(head, dict):
         raise ReportError("PR report snapshots were malformed")
+    base_oid = valid_object_id(base.get("oid"), "base")
+    head_oid = valid_object_id(head.get("oid"), "head")
+    merge_base = valid_object_id(base.get("merge_base"), "merge-base")
     rows = report["sections"]
     if not isinstance(rows, list):
         raise ReportError("PR report sections were malformed")
@@ -854,9 +858,9 @@ def render_pr_report(report: dict[str, object]) -> str:
         PR_REPORT_METADATA_PREFIX
         + json.dumps(
             {
-                "base_oid": base["oid"],
-                "head_oid": head["oid"],
-                "merge_base": base["merge_base"],
+                "base_oid": base_oid,
+                "head_oid": head_oid,
+                "merge_base": merge_base,
                 "classifier_sha256": classifier_sha256,
             },
             sort_keys=True,
@@ -865,7 +869,7 @@ def render_pr_report(report: dict[str, object]) -> str:
         + PR_REPORT_METADATA_SUFFIX,
         "### FireMUD LOC impact",
         "",
-        f"Compared `{str(base['merge_base'])[:12]}` → `{str(head['oid'])[:12]}` (PR merge-base → head).",
+        f"Compared `{merge_base[:12]}` → `{head_oid[:12]}` (PR merge-base → head).",
         "",
         "| Section | Base LOC | Head LOC | Δ LOC | Change |",
         "|---|---:|---:|---:|---:|",

@@ -698,6 +698,24 @@ finally:
         cloc_report.summary_for_root,
     ) = original_pr_functions
 
+uppercase_report = dict(impact, classifier_sha256="D" * 64)
+uppercase_rendered = cloc_report.render_pr_report(uppercase_report)
+assert '"classifier_sha256":"' + "d" * 64 + '"' in uppercase_rendered
+
+for snapshot, field, label in (
+    ("base", "oid", "base"),
+    ("base", "merge_base", "merge-base"),
+    ("head", "oid", "head"),
+):
+    malformed_report = dict(impact)
+    malformed_report[snapshot] = dict(impact[snapshot], **{field: "g" * 40})
+    try:
+        cloc_report.render_pr_report(malformed_report)
+    except cloc_report.ReportError as error:
+        assert f"invalid {label} commit SHA" in str(error)
+    else:
+        raise AssertionError(f"malformed {label} snapshot IDs must fail before PR body rendering")
+
 for invalid_digest in (None, "", "digest", "g" * 64, "d" * 63):
     invalid_report = dict(impact, classifier_sha256=invalid_digest)
     try:

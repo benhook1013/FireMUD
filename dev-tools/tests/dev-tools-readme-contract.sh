@@ -145,12 +145,20 @@ for readme in readmes:
             tracked_file(readme.parent / token, readme)
 
     if readme == root / "dev-tools/README.md":
+        workflow_versions = root / "config/workflow-tool-versions.env"
+        gh_version = None
+        for line in workflow_versions.read_text(encoding="utf-8").splitlines():
+            if line.startswith("GH_VERSION="):
+                gh_version = line.partition("=")[2].strip()
+                break
+        if not gh_version:
+            raise SystemExit(f"{workflow_versions}: GH_VERSION is missing")
         prerequisite = (
             "The `report-pr-status.py`, `report-worktree-pr-topology.sh`, and "
             "`maintenance/cloc-report.py pr` entrypoints "
             "require GitHub CLI `gh` >= 2.63.0 "
             "because they request the `baseRefOid` field; the repository workflow pin is "
-            "`GH_VERSION=2.76.2`."
+            f"`GH_VERSION={gh_version}`."
         )
         if prerequisite not in text:
             raise SystemExit(
