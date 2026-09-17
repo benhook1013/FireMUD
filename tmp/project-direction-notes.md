@@ -137,3 +137,7 @@ On PR #2783, Gameplay stopped CLI because it judged the findings minor/trivial a
 ## Process incident — missing cross-task handoff (2026-09-17 NZST)
 
 Overseer merged #2785 at `68953f411`, which contains the checker fix needed by Gameplay’s #2783, but ended the turn without explicitly notifying Gameplay to reconcile it. Correction: relay that #2785 merged and Gameplay should reconcile it when safe after the active Hosted review, then continue current work. This was a cross-task coordination lapse; existing guidance appears sufficient, so no broad new rule is added.
+
+## Pending Gameplay handoff — 2026-09-17 NZST
+
+Draft PR #2786 at `2c0b769b4` is green with successful exact-head preview proof. Handoff to Gameplay is pending until its current PR #2783 finishes; no CodeRabbit review has been run for #2786.
