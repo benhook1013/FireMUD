@@ -18,6 +18,9 @@ SCRIPT = Path(__file__).resolve().parent / "report-pr-status.py"
 
 
 def load_reporter():
+    script_parent = str(SCRIPT.parent)
+    if script_parent not in sys.path:
+        sys.path.insert(0, script_parent)
     spec = importlib.util.spec_from_file_location("pr_status_reporter", SCRIPT)
     if spec is None or spec.loader is None:
         raise AssertionError("could not load PR status reporter")

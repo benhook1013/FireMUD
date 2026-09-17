@@ -372,6 +372,16 @@ def main() -> int:
         fail("invoked WebSocket smoke helper must retain the smoke dependency profile")
 
     with tempfile.TemporaryDirectory(prefix="workflow-authority-", dir=root / "dev-tools") as helper_dir:
+        helper_relative = Path(helper_dir).relative_to(root).as_posix()
+        ignored = subprocess.run(
+            ["git", "check-ignore", "--quiet", "--no-index", "--", f"{helper_relative}/extensionless-helper"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if ignored.returncode != 0:
+            fail("workflow authority fixtures must be ignored under dev-tools")
         helper = Path(helper_dir) / "extensionless-helper"
         suffix_helper = Path(helper_dir) / "other-suffix.bash"
         data = Path(helper_dir) / "extensionless-data"
