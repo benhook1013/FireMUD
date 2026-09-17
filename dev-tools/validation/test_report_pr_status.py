@@ -348,6 +348,169 @@ class PrStatusReporterTest(unittest.TestCase):
         self.assertIn("pending active-stale (IN_PROGRESS)", rendered)
         self.assertNotIn("pending active-stale (SUCCESS)", rendered)
 
+    def test_superseded_cancelled_check_run_is_not_actionable(self) -> None:
+        checks = [
+            {
+                "__typename": "CheckRun",
+                "workflowName": "CI",
+                "name": "build",
+                "startedAt": "2026-09-14T00:00:00Z",
+                "status": "COMPLETED",
+                "conclusion": "CANCELLED",
+            },
+            {
+                "__typename": "CheckRun",
+                "workflowName": "CI",
+                "name": "build",
+                "startedAt": "2026-09-14T01:00:00Z",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            },
+        ]
+        with patch.object(self.reporter.subprocess, "run", side_effect=self.provider_responses(checker_ok=True, checks=checks)):
+            report = self.reporter.build_report("owner/repo", 42)
+        self.assertEqual(report["ci"]["pending"], [])
+        self.assertEqual(report["ci"]["failed"], [])
+        self.assertEqual(report["ci"]["observed"], 2)
+
+    def test_latest_check_run_failure_or_pending_remains_actionable(self) -> None:
+        cases = (("FAILURE", "failed"), (None, "pending"))
+        for conclusion, category in cases:
+            with self.subTest(category=category):
+                checks = [
+                    {
+                        "__typename": "CheckRun",
+                        "workflowName": "CI",
+                        "name": "build",
+                        "startedAt": "2026-09-14T00:00:00Z",
+                        "status": "COMPLETED",
+                        "conclusion": "CANCELLED",
+                    },
+                    {
+                        "__typename": "CheckRun",
+                        "workflowName": "CI",
+                        "name": "build",
+                        "startedAt": "2026-09-14T01:00:00Z",
+                        "status": "IN_PROGRESS" if conclusion is None else "COMPLETED",
+                        "conclusion": conclusion,
+                    },
+                ]
+                with patch.object(self.reporter.subprocess, "run", side_effect=self.provider_responses(checker_ok=True, checks=checks)):
+                    report = self.reporter.build_report("owner/repo", 42)
+                self.assertEqual(len(report["ci"][category]), 1)
+
+    def test_check_run_coalescing_fails_closed_for_ties_and_invalid_timestamps(self) -> None:
+        checks = [
+            {
+                "__typename": "CheckRun",
+                "workflowName": "CI",
+                "name": "tie",
+                "startedAt": "2026-09-14T00:00:00Z",
+                "status": "COMPLETED",
+                "conclusion": "CANCELLED",
+            },
+            {
+                "__typename": "CheckRun",
+                "workflowName": "CI",
+                "name": "tie",
+                "startedAt": "2026-09-14T00:00:00Z",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            },
+            {
+                "__typename": "CheckRun",
+                "workflowName": "CI",
+                "name": "invalid",
+                "startedAt": "not-a-timestamp",
+                "status": "COMPLETED",
+                "conclusion": "CANCELLED",
+            },
+            {
+                "__typename": "CheckRun",
+                "workflowName": "CI",
+                "name": "invalid",
+                "startedAt": "also-not-a-timestamp",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            },
+        ]
+        with patch.object(self.reporter.subprocess, "run", side_effect=self.provider_responses(checker_ok=True, checks=checks)):
+            report = self.reporter.build_report("owner/repo", 42)
+        self.assertEqual([item["name"] for item in report["ci"]["failed"]], ["tie", "invalid"])
+        self.assertEqual(report["ci"]["observed"], 4)
+
+    def test_malformed_timestamp_blocks_coalescing_for_that_check_identity(self) -> None:
+        checks = [
+            {
+                "__typename": "CheckRun",
+                "workflowName": "CI",
+                "name": "build",
+                "startedAt": "2026-09-14T00:00:00Z",
+                "status": "COMPLETED",
+                "conclusion": "CANCELLED",
+            },
+            {
+                "__typename": "CheckRun",
+                "workflowName": "CI",
+                "name": "build",
+                "startedAt": "2026-09-14T01:00:00Z",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            },
+            {
+                "__typename": "CheckRun",
+                "workflowName": "CI",
+                "name": "build",
+                "startedAt": "not-a-timestamp",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            },
+        ]
+        with patch.object(self.reporter.subprocess, "run", side_effect=self.provider_responses(checker_ok=True, checks=checks)):
+            report = self.reporter.build_report("owner/repo", 42)
+        self.assertEqual([item["name"] for item in report["ci"]["failed"]], ["build"])
+        self.assertEqual(report["ci"]["observed"], 3)
+
+    def test_malformed_older_check_run_is_validated_before_coalescing(self) -> None:
+        for malformed_field in ("conclusion", "detailsUrl"):
+            with self.subTest(field=malformed_field):
+                older = {
+                    "__typename": "CheckRun",
+                    "workflowName": "CI",
+                    "name": "build",
+                    "startedAt": "2026-09-14T00:00:00Z",
+                    "status": "COMPLETED",
+                    "conclusion": "CANCELLED",
+                }
+                older[malformed_field] = 42
+                checks = [
+                    older,
+                    {
+                        "__typename": "CheckRun",
+                        "workflowName": "CI",
+                        "name": "build",
+                        "startedAt": "2026-09-14T01:00:00Z",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                    },
+                ]
+                with patch.object(
+                    self.reporter.subprocess,
+                    "run",
+                    side_effect=self.provider_responses(checker_ok=True, checks=checks),
+                ), self.assertRaises(self.reporter.ReportError):
+                    self.reporter.build_report("owner/repo", 42)
+
+    def test_status_contexts_are_not_coalesced(self) -> None:
+        checks = [
+            {"__typename": "StatusContext", "context": "build", "state": "FAILURE"},
+            {"__typename": "StatusContext", "context": "build", "state": "SUCCESS"},
+        ]
+        with patch.object(self.reporter.subprocess, "run", side_effect=self.provider_responses(checker_ok=True, checks=checks)):
+            report = self.reporter.build_report("owner/repo", 42)
+        self.assertEqual([item["name"] for item in report["ci"]["failed"]], ["build"])
+        self.assertEqual(report["ci"]["observed"], 2)
+
     def test_checker_exit_must_match_ok_value_and_be_zero_or_one(self) -> None:
         for checker_ok, checker_exit in ((True, 1), (False, 0), (True, 2)):
             with self.subTest(checker_ok=checker_ok, checker_exit=checker_exit), patch.object(

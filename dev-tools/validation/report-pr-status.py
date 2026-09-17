@@ -745,18 +745,67 @@ def _check_text(check: dict[str, Any], key: str) -> str | None:
     return value.upper()
 
 
+def _coalesce_ci_checks(raw_checks: list[Any]) -> list[int]:
+    """Drop superseded, identically named CheckRuns when their ordering is certain."""
+
+    candidates: dict[tuple[str, str], list[tuple[int, datetime]]] = {}
+    blocked_identities: set[tuple[str, str]] = set()
+    for index, raw_check in enumerate(raw_checks):
+        if not isinstance(raw_check, dict) or raw_check.get("__typename") != "CheckRun":
+            continue
+        workflow_name = raw_check.get("workflowName")
+        name = raw_check.get("name")
+        if not (isinstance(workflow_name, str) and workflow_name and isinstance(name, str) and name):
+            continue
+        identity = (workflow_name, name)
+        started_at = raw_check.get("startedAt")
+        if not isinstance(started_at, str):
+            blocked_identities.add(identity)
+            continue
+        try:
+            parsed_started_at = _timestamp(started_at, "CheckRun startedAt")
+        except ReportError:
+            blocked_identities.add(identity)
+            continue
+        candidates.setdefault(identity, []).append((index, parsed_started_at))
+
+    superseded: set[int] = set()
+    for identity, entries in candidates.items():
+        if identity in blocked_identities:
+            continue
+        latest = max(started_at for _, started_at in entries)
+        latest_entries = [index for index, started_at in entries if started_at == latest]
+        if len(latest_entries) == 1:
+            superseded.update(index for index, _ in entries if index != latest_entries[0])
+
+    return [index for index in range(len(raw_checks)) if index not in superseded]
+
+
+def _validate_ci_check(raw_check: Any, index: int) -> tuple[dict[str, Any], str, str | None, str | None, str | None]:
+    if not isinstance(raw_check, dict):
+        raise ReportError(f"GitHub PR status check {index} is not an object")
+    name = raw_check.get("name") or raw_check.get("context")
+    if not isinstance(name, str) or not name:
+        raise ReportError(f"GitHub PR status check {index} has no valid name")
+    conclusion = _check_text(raw_check, "conclusion")
+    state = _check_text(raw_check, "state")
+    status = _check_text(raw_check, "status")
+    for key in ("detailsUrl", "targetUrl"):
+        if raw_check.get(key) is not None and not isinstance(raw_check[key], str):
+            raise ReportError(f"GitHub PR status check {index} has an invalid {key}")
+    return raw_check, name, conclusion, state, status
+
+
 def _normalize_ci_checks(raw_checks: list[Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
     pending: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
-    for index, raw_check in enumerate(raw_checks, 1):
-        if not isinstance(raw_check, dict):
-            raise ReportError(f"GitHub PR status check {index} is not an object")
-        name = raw_check.get("name") or raw_check.get("context")
-        if not isinstance(name, str) or not name:
-            raise ReportError(f"GitHub PR status check {index} has no valid name")
-        conclusion = _check_text(raw_check, "conclusion")
-        state = _check_text(raw_check, "state")
-        status = _check_text(raw_check, "status")
+    validated_checks = [
+        _validate_ci_check(raw_check, index)
+        for index, raw_check in enumerate(raw_checks, 1)
+    ]
+    coalesced_indexes = _coalesce_ci_checks(raw_checks)
+    for original_index in coalesced_indexes:
+        raw_check, name, conclusion, state, status = validated_checks[original_index]
         lifecycle_values = {value for value in (state, status) if value is not None}
         if lifecycle_values & PENDING_VALUES:
             category = "pending"
@@ -782,8 +831,6 @@ def _normalize_ci_checks(raw_checks: list[Any]) -> tuple[list[dict[str, Any]], l
         }
         for key in ("detailsUrl", "targetUrl"):
             if raw_check.get(key) is not None:
-                if not isinstance(raw_check[key], str):
-                    raise ReportError(f"GitHub PR status check {index} has an invalid {key}")
                 rendered["url"] = raw_check[key]
                 break
         (failed if category == "failed" else pending).append(rendered)
