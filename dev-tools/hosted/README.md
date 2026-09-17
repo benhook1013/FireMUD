@@ -33,3 +33,8 @@ It is the canonical first-look diagnostic for both PR preview and dev-demo and p
 - recent events, unavailable workload describes, and current plus previous logs for problematic pods
 
 Use it before ad hoc live inspection so preview debugging stays deterministic and comparable across runs.
+
+## Public Helpers
+
+- [shared/show-rollout-diagnostics.sh](shared/show-rollout-diagnostics.sh) – first-look diagnostics for a hosted namespace when a rollout is blocked.
+- [shared/wait-for-hosted-runtime-rollouts.sh](shared/wait-for-hosted-runtime-rollouts.sh) – bounded readiness wait for the canonical hosted runtime deployment inventory.

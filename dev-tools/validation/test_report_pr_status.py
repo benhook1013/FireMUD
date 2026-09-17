@@ -8,6 +8,7 @@ import io
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -17,6 +18,9 @@ SCRIPT = Path(__file__).resolve().parent / "report-pr-status.py"
 
 
 def load_reporter():
+    script_parent = str(SCRIPT.parent)
+    if script_parent not in sys.path:
+        sys.path.insert(0, script_parent)
     spec = importlib.util.spec_from_file_location("pr_status_reporter", SCRIPT)
     if spec is None or spec.loader is None:
         raise AssertionError("could not load PR status reporter")
@@ -30,6 +34,14 @@ class PrStatusReporterTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.reporter = load_reporter()
+
+    def setUp(self) -> None:
+        self.original_hosted_trigger_record_path = self.reporter.hosted_trigger_record_path
+        self.hosted_trigger_record_path_patch = patch.object(
+            self.reporter, "hosted_trigger_record_path", return_value=None
+        )
+        self.hosted_trigger_record_path_patch.start()
+        self.addCleanup(self.hosted_trigger_record_path_patch.stop)
 
     @staticmethod
     def checkpoint_payload() -> dict:
@@ -78,6 +90,29 @@ class PrStatusReporterTest(unittest.TestCase):
             ],
         ]
         return payload
+
+    @staticmethod
+    def trigger_state(**overrides) -> dict:
+        state = {
+            "state": "completed",
+            "terminal": True,
+            "attributed": True,
+            "repository": "owner/repo",
+            "pr_number": 42,
+            "head_sha": "0123456789abcdef0123456789abcdef01234567",
+            "current_head_sha": "0123456789abcdef0123456789abcdef01234567",
+            "trigger_comment_id": 101,
+            "trigger_created_at": "2026-09-14T00:05:00Z",
+            "trigger_url": "https://example.test/comments/101",
+            "trigger_type": "full",
+            "response_id": 102,
+            "response_created_at": "2026-09-14T00:10:00Z",
+            "response_url": "https://example.test/comments/102",
+            "cooldown_until": None,
+            "reason": "the captured Hosted review completed",
+        }
+        state.update(overrides)
+        return state
 
     @staticmethod
     def checker_payload(*, ok: bool, reasons: list[str] | None = None) -> dict:
@@ -133,6 +168,7 @@ class PrStatusReporterTest(unittest.TestCase):
             "headRefName": "codex/pr-status-report",
             "headRefOid": "0123456789abcdef0123456789abcdef01234567",
             "baseRefName": "main",
+            "baseRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "changedFiles": 2,
             "statusCheckRollup": checks
             if checks is not None
@@ -144,6 +180,15 @@ class PrStatusReporterTest(unittest.TestCase):
             "mergeStateStatus": merge_state,
             "isDraft": False,
             "url": "https://github.com/owner/repo/pull/42",
+            "body": (
+                "<!-- firemud:cloc-report:start -->\n"
+                '<!-- firemud:cloc-report:metadata {"base_oid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",'
+                '"classifier_sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",'
+                '"head_oid":"0123456789abcdef0123456789abcdef01234567",'
+                '"merge_base":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"} -->\n'
+                "### FireMUD LOC impact\n"
+                "<!-- firemud:cloc-report:end -->"
+            ),
         }
 
     def provider_responses(
@@ -168,7 +213,11 @@ class PrStatusReporterTest(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0, json.dumps(checkpoint), "")
             if "check-coderabbit-review.py" in " ".join(command):
                 return subprocess.CompletedProcess(command, checker_exit, json.dumps(checker), "checker blocked")
-            return subprocess.CompletedProcess(command, 0, json.dumps(github), "")
+            if command[:2] == ["git", "merge-base"]:
+                return subprocess.CompletedProcess(command, 0, "b" * 40 + "\n", "")
+            if command and command[0] == "gh":
+                return subprocess.CompletedProcess(command, 0, json.dumps(github), "")
+            raise AssertionError(f"unexpected provider command: {command!r}")
 
         return run
 
@@ -185,6 +234,22 @@ class PrStatusReporterTest(unittest.TestCase):
         self.assertEqual([item["name"] for item in report["ci"]["pending"]], ["build"])
         self.assertEqual([item["name"] for item in report["ci"]["failed"]], ["lint"])
         self.assertIn("GitHub mergeStateStatus is not CLEAN", report["reasons"])
+
+    def test_display_sanitizes_invisible_directional_formatting(self) -> None:
+        untrusted = "safe\u200b\u061c\u202e\ufff9\ufffa\ufffbvalue\ufeff"
+        self.assertEqual(self.reporter._display(untrusted), "safe value")
+
+    def test_display_sanitizes_invisible_compatibility_formatting(self) -> None:
+        untrusted = "safe\u00ad\u034f\u180e\ufe00\ufe0fvalue"
+        self.assertEqual(self.reporter._display(untrusted), "safe value")
+
+    def test_display_sanitizes_unicode_tags(self) -> None:
+        untrusted = "safe\U000e0000\U000e0041\U000e007fvalue"
+        self.assertEqual(self.reporter._display(untrusted), "safe value")
+
+    def test_display_sanitizes_hangul_fillers(self) -> None:
+        untrusted = "safe\u115f\u1160\u3164\uffa0value"
+        self.assertEqual(self.reporter._display(untrusted), "safe value")
 
     def test_ready_report_orders_hosted_and_cli_sequence_and_formats_mobile_text(self) -> None:
         checkpoint = self.checkpoint_payload()
@@ -208,6 +273,7 @@ class PrStatusReporterTest(unittest.TestCase):
         self.assertNotIn("build", rendered)
         self.assertIn("scope-change · comment 103: The report includes the final validation scope.", rendered)
         self.assertIn("mergeStateStatus=CLEAN · mergeable=MERGEABLE", rendered)
+        self.assertIn("LOC metadata: fresh", rendered)
         self.assertIn("2 checkpoint candidate(s) were not parsed", rendered)
         self.assertEqual(report["review_timeline"][0]["kind"], "scope_change")
 
@@ -289,6 +355,169 @@ class PrStatusReporterTest(unittest.TestCase):
         rendered = output.getvalue()
         self.assertIn("pending active-stale (IN_PROGRESS)", rendered)
         self.assertNotIn("pending active-stale (SUCCESS)", rendered)
+
+    def test_superseded_cancelled_check_run_is_not_actionable(self) -> None:
+        checks = [
+            {
+                "__typename": "CheckRun",
+                "workflowName": "CI",
+                "name": "build",
+                "startedAt": "2026-09-14T00:00:00Z",
+                "status": "COMPLETED",
+                "conclusion": "CANCELLED",
+            },
+            {
+                "__typename": "CheckRun",
+                "workflowName": "CI",
+                "name": "build",
+                "startedAt": "2026-09-14T01:00:00Z",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            },
+        ]
+        with patch.object(self.reporter.subprocess, "run", side_effect=self.provider_responses(checker_ok=True, checks=checks)):
+            report = self.reporter.build_report("owner/repo", 42)
+        self.assertEqual(report["ci"]["pending"], [])
+        self.assertEqual(report["ci"]["failed"], [])
+        self.assertEqual(report["ci"]["observed"], 2)
+
+    def test_latest_check_run_failure_or_pending_remains_actionable(self) -> None:
+        cases = (("FAILURE", "failed"), (None, "pending"))
+        for conclusion, category in cases:
+            with self.subTest(category=category):
+                checks = [
+                    {
+                        "__typename": "CheckRun",
+                        "workflowName": "CI",
+                        "name": "build",
+                        "startedAt": "2026-09-14T00:00:00Z",
+                        "status": "COMPLETED",
+                        "conclusion": "CANCELLED",
+                    },
+                    {
+                        "__typename": "CheckRun",
+                        "workflowName": "CI",
+                        "name": "build",
+                        "startedAt": "2026-09-14T01:00:00Z",
+                        "status": "IN_PROGRESS" if conclusion is None else "COMPLETED",
+                        "conclusion": conclusion,
+                    },
+                ]
+                with patch.object(self.reporter.subprocess, "run", side_effect=self.provider_responses(checker_ok=True, checks=checks)):
+                    report = self.reporter.build_report("owner/repo", 42)
+                self.assertEqual(len(report["ci"][category]), 1)
+
+    def test_check_run_coalescing_fails_closed_for_ties_and_invalid_timestamps(self) -> None:
+        checks = [
+            {
+                "__typename": "CheckRun",
+                "workflowName": "CI",
+                "name": "tie",
+                "startedAt": "2026-09-14T00:00:00Z",
+                "status": "COMPLETED",
+                "conclusion": "CANCELLED",
+            },
+            {
+                "__typename": "CheckRun",
+                "workflowName": "CI",
+                "name": "tie",
+                "startedAt": "2026-09-14T00:00:00Z",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            },
+            {
+                "__typename": "CheckRun",
+                "workflowName": "CI",
+                "name": "invalid",
+                "startedAt": "not-a-timestamp",
+                "status": "COMPLETED",
+                "conclusion": "CANCELLED",
+            },
+            {
+                "__typename": "CheckRun",
+                "workflowName": "CI",
+                "name": "invalid",
+                "startedAt": "also-not-a-timestamp",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            },
+        ]
+        with patch.object(self.reporter.subprocess, "run", side_effect=self.provider_responses(checker_ok=True, checks=checks)):
+            report = self.reporter.build_report("owner/repo", 42)
+        self.assertEqual([item["name"] for item in report["ci"]["failed"]], ["tie", "invalid"])
+        self.assertEqual(report["ci"]["observed"], 4)
+
+    def test_malformed_timestamp_blocks_coalescing_for_that_check_identity(self) -> None:
+        checks = [
+            {
+                "__typename": "CheckRun",
+                "workflowName": "CI",
+                "name": "build",
+                "startedAt": "2026-09-14T00:00:00Z",
+                "status": "COMPLETED",
+                "conclusion": "CANCELLED",
+            },
+            {
+                "__typename": "CheckRun",
+                "workflowName": "CI",
+                "name": "build",
+                "startedAt": "2026-09-14T01:00:00Z",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            },
+            {
+                "__typename": "CheckRun",
+                "workflowName": "CI",
+                "name": "build",
+                "startedAt": "not-a-timestamp",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            },
+        ]
+        with patch.object(self.reporter.subprocess, "run", side_effect=self.provider_responses(checker_ok=True, checks=checks)):
+            report = self.reporter.build_report("owner/repo", 42)
+        self.assertEqual([item["name"] for item in report["ci"]["failed"]], ["build"])
+        self.assertEqual(report["ci"]["observed"], 3)
+
+    def test_malformed_older_check_run_is_validated_before_coalescing(self) -> None:
+        for malformed_field in ("conclusion", "detailsUrl"):
+            with self.subTest(field=malformed_field):
+                older = {
+                    "__typename": "CheckRun",
+                    "workflowName": "CI",
+                    "name": "build",
+                    "startedAt": "2026-09-14T00:00:00Z",
+                    "status": "COMPLETED",
+                    "conclusion": "CANCELLED",
+                }
+                older[malformed_field] = 42
+                checks = [
+                    older,
+                    {
+                        "__typename": "CheckRun",
+                        "workflowName": "CI",
+                        "name": "build",
+                        "startedAt": "2026-09-14T01:00:00Z",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                    },
+                ]
+                with patch.object(
+                    self.reporter.subprocess,
+                    "run",
+                    side_effect=self.provider_responses(checker_ok=True, checks=checks),
+                ), self.assertRaises(self.reporter.ReportError):
+                    self.reporter.build_report("owner/repo", 42)
+
+    def test_status_contexts_are_not_coalesced(self) -> None:
+        checks = [
+            {"__typename": "StatusContext", "context": "build", "state": "FAILURE"},
+            {"__typename": "StatusContext", "context": "build", "state": "SUCCESS"},
+        ]
+        with patch.object(self.reporter.subprocess, "run", side_effect=self.provider_responses(checker_ok=True, checks=checks)):
+            report = self.reporter.build_report("owner/repo", 42)
+        self.assertEqual([item["name"] for item in report["ci"]["failed"]], ["build"])
+        self.assertEqual(report["ci"]["observed"], 2)
 
     def test_checker_exit_must_match_ok_value_and_be_zero_or_one(self) -> None:
         for checker_ok, checker_exit in ((True, 1), (False, 0), (True, 2)):
@@ -487,6 +716,725 @@ class PrStatusReporterTest(unittest.TestCase):
         self.assertNotIn("success-build", serialized)
         self.assertNotIn("skipped-docs", serialized)
         self.assertEqual(report["ci"]["observed"], 4)
+
+    def test_checkpoint_counts_streak_taper_and_loc_are_separate_evidence(self) -> None:
+        checkpoint = self.checkpoint_payload()
+        checkpoint["checkpoints"] = [
+            {
+                **checkpoint["checkpoints"][1],
+                "created_at": "2026-09-13T01:00:00Z",
+                "accepted": 1,
+            },
+            {
+                **checkpoint["checkpoints"][0],
+                "created_at": "2026-09-14T01:00:00Z",
+                "raw_found": 0,
+                "accepted": 0,
+            },
+            {
+                **checkpoint["checkpoints"][0],
+                "created_at": "2026-09-15T01:00:00Z",
+                "raw_found": 0,
+                "accepted": 0,
+            },
+        ]
+        checkpoint["timeline"] = [
+            {"kind": "checkpoint", **item} for item in checkpoint["checkpoints"]
+        ]
+        with patch.object(
+            self.reporter.subprocess,
+            "run",
+            side_effect=self.provider_responses(checker_ok=True, checkpoint_payload=checkpoint),
+        ):
+            report = self.reporter.build_report("owner/repo", 42)
+        self.assertEqual(report["checkpoint_counts"]["by_type"]["CLI"]["count"], 2)
+        self.assertEqual(report["checkpoint_counts"]["cli_zero_streak"]["count"], 2)
+        self.assertEqual(report["checkpoint_counts"]["taper_evidence"]["hosted_zero_zero_streak"], 0)
+        self.assertEqual(report["loc_metadata"]["status"], "fresh")
+        self.assertEqual(report["verdict"], "READY")
+
+    def test_cli_correction_does_not_extend_zero_streak(self) -> None:
+        checkpoint = self.checkpoint_payload()
+        checkpoint["checkpoints"] = [
+            {
+                **checkpoint["checkpoints"][0],
+                "comment_id": 201,
+                "created_at": "2026-09-14T01:00:00Z",
+                "type": "CLI",
+                "raw_found": 0,
+                "accepted": 0,
+                "correction": False,
+            },
+            {
+                **checkpoint["checkpoints"][0],
+                "comment_id": 202,
+                "created_at": "2026-09-15T01:00:00Z",
+                "type": "CLI",
+                "raw_found": 0,
+                "accepted": 0,
+                "correction": True,
+            },
+        ]
+        checkpoint["timeline"] = [
+            {"kind": "checkpoint", **item} for item in checkpoint["checkpoints"]
+        ]
+        with patch.object(
+            self.reporter.subprocess,
+            "run",
+            side_effect=self.provider_responses(checker_ok=True, checkpoint_payload=checkpoint),
+        ):
+            report = self.reporter.build_report("owner/repo", 42)
+        counts = report["checkpoint_counts"]
+        self.assertEqual(counts["by_type"]["CLI"]["count"], 2)
+        self.assertEqual(counts["by_type"]["CLI"]["raw_found"], 0)
+        self.assertEqual(counts["cli_zero_streak"]["count"], 1)
+
+    def test_cli_correction_does_not_replace_last_accepted_finding(self) -> None:
+        checkpoint = self.checkpoint_payload()
+        checkpoint["checkpoints"] = [
+            {
+                **checkpoint["checkpoints"][0],
+                "comment_id": 201,
+                "created_at": "2026-09-14T01:00:00Z",
+                "type": "CLI",
+                "raw_found": 1,
+                "accepted": 1,
+                "correction": False,
+            },
+            {
+                **checkpoint["checkpoints"][0],
+                "comment_id": 202,
+                "created_at": "2026-09-15T01:00:00Z",
+                "type": "CLI",
+                "raw_found": 1,
+                "accepted": 1,
+                "correction": True,
+            },
+        ]
+        checkpoint["timeline"] = [
+            {"kind": "checkpoint", **item} for item in checkpoint["checkpoints"]
+        ]
+        with patch.object(
+            self.reporter.subprocess,
+            "run",
+            side_effect=self.provider_responses(checker_ok=True, checkpoint_payload=checkpoint),
+        ):
+            report = self.reporter.build_report("owner/repo", 42)
+        last_accepted = report["checkpoint_counts"]["cli_zero_streak"]["last_accepted_finding"]
+        self.assertEqual(last_accepted["comment_id"], 201)
+        self.assertEqual(last_accepted["created_at"], "2026-09-14T01:00:00Z")
+        self.assertEqual(last_accepted["accepted"], 1)
+
+    def test_hosted_taper_labels_raw_positive_and_correction_evidence(self) -> None:
+        checkpoint = self.checkpoint_payload()
+        checkpoint["checkpoints"] = [
+            {
+                **checkpoint["checkpoints"][1],
+                "created_at": "2026-09-13T01:00:00Z",
+                "raw_found": 1,
+                "accepted": 0,
+            },
+            {
+                **checkpoint["checkpoints"][1],
+                "created_at": "2026-09-14T01:00:00Z",
+                "raw_found": 0,
+                "accepted": 0,
+                "correction": True,
+            },
+            {
+                **checkpoint["checkpoints"][1],
+                "created_at": "2026-09-15T01:00:00Z",
+                "raw_found": 0,
+                "accepted": 0,
+            },
+            {
+                **checkpoint["checkpoints"][1],
+                "created_at": "2026-09-16T01:00:00Z",
+                "raw_found": 0,
+                "accepted": 0,
+            },
+        ]
+        checkpoint["timeline"] = [
+            {"kind": "checkpoint", **item} for item in checkpoint["checkpoints"]
+        ]
+        with patch.object(
+            self.reporter.subprocess,
+            "run",
+            side_effect=self.provider_responses(checker_ok=True, checkpoint_payload=checkpoint),
+        ):
+            report = self.reporter.build_report("owner/repo", 42)
+        taper = report["checkpoint_counts"]["taper_evidence"]
+        self.assertEqual(taper["hosted_zero_zero_streak"], 2)
+        self.assertEqual(taper["hosted_raw_positive_accepted_zero_streak"], 0)
+        self.assertEqual(taper["hosted_completed_zero_zero_observed"], 2)
+        self.assertEqual(taper["hosted_raw_found"], 1)
+        self.assertEqual(taper["hosted_correction_exclusions"], 1)
+
+    def test_hosted_taper_skips_correction_in_raw_positive_streak(self) -> None:
+        checkpoint = self.checkpoint_payload()
+        checkpoint["checkpoints"] = [
+            {
+                **checkpoint["checkpoints"][1],
+                "created_at": "2026-09-13T01:00:00Z",
+                "raw_found": 0,
+                "accepted": 0,
+            },
+            {
+                **checkpoint["checkpoints"][1],
+                "created_at": "2026-09-14T01:00:00Z",
+                "raw_found": 2,
+                "accepted": 0,
+            },
+            {
+                **checkpoint["checkpoints"][1],
+                "created_at": "2026-09-15T01:00:00Z",
+                "raw_found": 9,
+                "accepted": 0,
+                "correction": True,
+            },
+            {
+                **checkpoint["checkpoints"][1],
+                "created_at": "2026-09-16T01:00:00Z",
+                "raw_found": 1,
+                "accepted": 0,
+            },
+        ]
+        checkpoint["timeline"] = [
+            {"kind": "checkpoint", **item} for item in checkpoint["checkpoints"]
+        ]
+        with patch.object(
+            self.reporter.subprocess,
+            "run",
+            side_effect=self.provider_responses(checker_ok=True, checkpoint_payload=checkpoint),
+        ):
+            report = self.reporter.build_report("owner/repo", 42)
+        taper = report["checkpoint_counts"]["taper_evidence"]
+        self.assertEqual(taper["hosted_raw_positive_accepted_zero_streak"], 2)
+        self.assertEqual(taper["hosted_correction_exclusions"], 1)
+
+    def test_loc_metadata_fails_closed_as_ambiguous_when_marker_is_malformed(self) -> None:
+        github = self.github_payload()
+        github["body"] = (
+            "<!-- firemud:cloc-report:start -->\n"
+            "<!-- firemud:cloc-report:metadata {bad} -->\n"
+            "<!-- firemud:cloc-report:end -->"
+        )
+        with patch.object(
+            self.reporter.subprocess,
+            "run",
+            side_effect=self.provider_responses(checker_ok=True, github_payload=github),
+        ):
+            report = self.reporter.build_report("owner/repo", 42)
+        self.assertEqual(report["loc_metadata"]["status"], "ambiguous")
+
+    def test_loc_metadata_requires_classifier_digest(self) -> None:
+        for classifier in ("absent", None, "not-a-digest", "c" * 63, "g" * 64):
+            github = self.github_payload()
+            metadata_line = github["body"].splitlines()[1]
+            metadata = json.loads(
+                metadata_line.removeprefix("<!-- firemud:cloc-report:metadata ").removesuffix(" -->")
+            )
+            if classifier == "absent":
+                del metadata["classifier_sha256"]
+            else:
+                metadata["classifier_sha256"] = classifier
+            github["body"] = (
+                "<!-- firemud:cloc-report:start -->\n"
+                "<!-- firemud:cloc-report:metadata "
+                + json.dumps(metadata, separators=(",", ":"))
+                + " -->\n"
+                "### FireMUD LOC impact\n"
+                "<!-- firemud:cloc-report:end -->"
+            )
+            with self.subTest(classifier=classifier), patch.object(
+                self.reporter.subprocess,
+                "run",
+                side_effect=self.provider_responses(checker_ok=True, github_payload=github),
+            ):
+                report = self.reporter.build_report("owner/repo", 42)
+            self.assertEqual(report["loc_metadata"]["status"], "ambiguous")
+            self.assertIn("invalid classifier digest", report["loc_metadata"]["reason"])
+
+    def test_loc_metadata_fails_closed_when_valid_and_malformed_markers_coexist(self) -> None:
+        github = self.github_payload()
+        valid_marker = github["body"].splitlines()[1]
+        github["body"] = (
+            "<!-- firemud:cloc-report:start -->\n"
+            f"{valid_marker}\n"
+            "<!-- firemud:cloc-report:metadata missing-closing-marker\n"
+            "<!-- firemud:cloc-report:end -->"
+        )
+        with patch.object(
+            self.reporter.subprocess,
+            "run",
+            side_effect=self.provider_responses(checker_ok=True, github_payload=github),
+        ):
+            report = self.reporter.build_report("owner/repo", 42)
+        self.assertEqual(report["loc_metadata"]["status"], "ambiguous")
+        self.assertIn("multiple LOC metadata markers", report["loc_metadata"]["reason"])
+
+    def test_loc_metadata_checks_current_base_and_merge_base_when_available(self) -> None:
+        github = self.github_payload()
+        github["baseRefOid"] = "d" * 40
+        checker = self.checker_payload(ok=True)
+
+        def run(command, **kwargs):
+            if command[:3] == ["git", "merge-base", "d" * 40]:
+                return subprocess.CompletedProcess(command, 0, "c" * 40, "")
+            return self.provider_responses(checker_ok=True, checker_payload=checker, github_payload=github)(
+                command, **kwargs
+            )
+
+        with patch.object(self.reporter.subprocess, "run", side_effect=run):
+            report = self.reporter.build_report("owner/repo", 42)
+        self.assertEqual(report["loc_metadata"]["status"], "stale")
+        self.assertIn("current PR base", report["loc_metadata"]["reason"])
+        self.assertIn("current merge-base", report["loc_metadata"]["reason"])
+
+    def test_loc_metadata_is_fresh_when_current_merge_base_matches(self) -> None:
+        with (
+            patch.object(self.reporter, "_current_merge_base", return_value="b" * 40),
+            patch.object(
+                self.reporter.subprocess,
+                "run",
+                side_effect=self.provider_responses(checker_ok=True),
+            ),
+        ):
+            report = self.reporter.build_report("owner/repo", 42)
+
+        self.assertEqual(report["loc_metadata"]["status"], "fresh")
+        self.assertTrue(report["loc_metadata"]["merge_base_checked"])
+
+    def test_loc_metadata_rejects_inline_copy_when_exact_marker_is_outside_block(self) -> None:
+        github = self.github_payload()
+        valid_marker = github["body"].splitlines()[1]
+        github["body"] = (
+            f"{valid_marker}\n"
+            "<!-- firemud:cloc-report:start -->\n"
+            f"copy: {valid_marker}\n"
+            "<!-- firemud:cloc-report:end -->"
+        )
+
+        result = self.reporter._loc_metadata_freshness(
+            github["body"],
+            github["baseRefOid"],
+            github["headRefOid"],
+            "b" * 40,
+        )
+
+        self.assertEqual(result["status"], "ambiguous")
+        self.assertIn("outside the marked report block", result["reason"])
+
+    def test_null_loc_body_is_reported_as_missing(self) -> None:
+        github = self.github_payload()
+        github["body"] = None
+        with patch.object(
+            self.reporter.subprocess,
+            "run",
+            side_effect=self.provider_responses(checker_ok=True, github_payload=github),
+        ):
+            report = self.reporter.build_report("owner/repo", 42)
+        self.assertEqual(report["loc_metadata"]["status"], "missing")
+
+    def test_durable_hosted_trigger_is_reported_as_separate_transition_evidence(self) -> None:
+        trigger = {"trigger_state": self.trigger_state(repository="OWNER/REPO")}
+        checker = self.checker_payload(ok=True)
+        checker.update(trigger)
+        with tempfile.TemporaryDirectory() as directory:
+            record = Path(directory) / "trigger.json"
+            record.write_text("{}", encoding="utf-8")
+            commands = []
+
+            def run(command, **kwargs):
+                commands.append(command)
+                if "--trigger-record" in command:
+                    return subprocess.CompletedProcess(command, 0, json.dumps(checker), "")
+                return self.provider_responses(checker_ok=True)(command, **kwargs)
+
+            with (
+                patch.object(self.reporter, "hosted_trigger_record_path", return_value=record),
+                patch.object(self.reporter.subprocess, "run", side_effect=run),
+            ):
+                report = self.reporter.build_report("owner/repo", 42)
+        self.assertTrue(report["hosted_trigger"]["available"])
+        self.assertEqual(report["hosted_trigger"]["state"], "completed")
+        self.assertEqual(report["hosted_trigger"]["repository"], "OWNER/REPO")
+        self.assertEqual(report["hosted_trigger"]["trigger_comment_id"], 101)
+        self.assertEqual(
+            sum("check-coderabbit-review.py" in " ".join(command) for command in commands),
+            1,
+        )
+        self.assertNotIn(str(record), json.dumps(report))
+        self.assertEqual(report["verdict"], "READY")
+
+    def test_report_owned_trigger_availability_cannot_be_overridden_by_provider(self) -> None:
+        checker = self.checker_payload(ok=True)
+        checker["trigger_state"] = self.trigger_state(available=False)
+
+        evidence = self.reporter._hosted_trigger_evidence(
+            "owner/repo",
+            42,
+            True,
+            checker,
+            "0123456789abcdef0123456789abcdef01234567",
+        )
+
+        self.assertTrue(evidence["available"])
+        self.assertEqual(evidence["state"], "completed")
+
+    def test_malformed_trigger_state_type_fails_with_report_error(self) -> None:
+        for invalid in ([], {}):
+            checker = self.checker_payload(ok=True)
+            checker["trigger_state"] = self.trigger_state(state=invalid)
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(
+                self.reporter.ReportError, "invalid state"
+            ):
+                self.reporter._validate_trigger_state(checker, "owner/repo", 42)
+
+    def test_malformed_trigger_state_type_is_reported_ambiguous_during_build_report(self) -> None:
+        for invalid in ([], {}):
+            checker = self.checker_payload(ok=True)
+            checker["trigger_state"] = self.trigger_state(state=invalid)
+            with tempfile.TemporaryDirectory() as directory:
+                record = Path(directory) / "trigger.json"
+                record.write_text("{}", encoding="utf-8")
+                with (
+                    self.subTest(invalid=invalid),
+                    patch.object(self.reporter, "hosted_trigger_record_path", return_value=record),
+                    patch.object(
+                        self.reporter.subprocess,
+                        "run",
+                        side_effect=self.provider_responses(
+                            checker_ok=True,
+                            checker_exit=1,
+                            checker_payload=checker,
+                        ),
+                    ),
+                ):
+                    report = self.reporter.build_report("owner/repo", 42)
+            self.assertEqual(report["hosted_trigger"]["state"], "ambiguous")
+            self.assertIn("invalid state", report["hosted_trigger"]["reason"])
+            self.assertEqual(report["hosted_trigger"]["validation_outcome"], "invalid")
+            self.assertEqual(
+                report["hosted_trigger"]["provider_reason"], "the captured Hosted review completed"
+            )
+
+    def test_malformed_trigger_state_is_distinct_from_provider_ambiguous_state(self) -> None:
+        malformed_checker = self.checker_payload(ok=True)
+        malformed_checker["trigger_state"] = self.trigger_state(
+            repository="", reason="the provider supplied a malformed trigger state"
+        )
+        malformed = self.reporter._hosted_trigger_evidence(
+            "owner/repo",
+            42,
+            True,
+            malformed_checker,
+            "0123456789abcdef0123456789abcdef01234567",
+        )
+
+        ambiguous_checker = self.checker_payload(ok=True)
+        ambiguous_checker["trigger_state"] = self.trigger_state(
+            state="ambiguous", reason="the provider could not attribute the response"
+        )
+        provider_ambiguous = self.reporter._hosted_trigger_evidence(
+            "owner/repo",
+            42,
+            True,
+            ambiguous_checker,
+            "0123456789abcdef0123456789abcdef01234567",
+        )
+
+        self.assertEqual(malformed["state"], "ambiguous")
+        self.assertIn("invalid repository", malformed["reason"])
+        self.assertEqual(malformed["validation_outcome"], "invalid")
+        self.assertEqual(malformed["provider_state"], "completed")
+        self.assertEqual(malformed["provider_reason"], "the provider supplied a malformed trigger state")
+        self.assertEqual(provider_ambiguous["state"], "ambiguous")
+        self.assertEqual(provider_ambiguous["reason"], "the provider could not attribute the response")
+        self.assertEqual(provider_ambiguous["validation_outcome"], "valid")
+
+    def test_trigger_state_pr_number_requires_positive_non_bool_int(self) -> None:
+        for invalid in (42.0, True):
+            checker = self.checker_payload(ok=True)
+            checker["trigger_state"] = self.trigger_state(pr_number=invalid)
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(
+                self.reporter.ReportError, "invalid pr_number"
+            ):
+                self.reporter._validate_trigger_state(checker, "owner/repo", 42)
+
+        checker = self.checker_payload(ok=True)
+        checker["trigger_state"] = self.trigger_state()
+        self.assertEqual(
+            self.reporter._validate_trigger_state(checker, "owner/repo", 42)["pr_number"],
+            42,
+        )
+
+    def test_durable_hosted_trigger_record_is_discovered_from_main_and_linked_worktrees(self) -> None:
+        with patch.object(
+            self.reporter,
+            "hosted_trigger_record_path",
+            self.original_hosted_trigger_record_path,
+        ), tempfile.TemporaryDirectory() as directory:
+            fixture_root = Path(directory).resolve()
+            main_root = fixture_root / "main"
+            linked_root = fixture_root / "linked"
+            worktree_git_dir = main_root / ".git" / "worktrees" / "linked"
+            worktree_git_dir.mkdir(parents=True)
+            linked_root.mkdir()
+            (linked_root / ".git").write_text(
+                f"gitdir: {worktree_git_dir}\n", encoding="utf-8"
+            )
+            (worktree_git_dir / "commondir").write_text("../..\n", encoding="utf-8")
+            record = (
+                main_root
+                / ".git"
+                / "coderabbit-review-logs"
+                / "hosted"
+                / "owner_repo"
+                / "pr-42"
+                / "trigger.json"
+            )
+            record.parent.mkdir(parents=True)
+            record.write_text("{}", encoding="utf-8")
+
+            trigger = {"trigger_state": self.trigger_state()}
+            trigger_payload = self.checker_payload(ok=True)
+            trigger_payload.update(trigger)
+            record.write_text(json.dumps(trigger_payload), encoding="utf-8")
+
+            with patch.object(self.reporter, "ROOT", main_root):
+                self.assertEqual(self.reporter.hosted_trigger_record_path("owner/repo", 42), record)
+            with patch.object(self.reporter, "ROOT", linked_root):
+                self.assertEqual(self.reporter.hosted_trigger_record_path("owner/repo", 42), record)
+
+            commands = []
+
+            def run(command, **kwargs):
+                commands.append(command)
+                if "--trigger-record" in command:
+                    return subprocess.CompletedProcess(command, 0, record.read_text(encoding="utf-8"), "")
+                return self.provider_responses(checker_ok=True)(command, **kwargs)
+
+            with (
+                patch.object(self.reporter.subprocess, "run", side_effect=run),
+                patch.object(self.reporter, "ROOT", linked_root),
+            ):
+                report = self.reporter.build_report("owner/repo", 42)
+            self.assertTrue(report["hosted_trigger"]["available"])
+            self.assertEqual(sum("--trigger-record" in command for command in commands), 1)
+
+            record.unlink()
+            commands.clear()
+            with (
+                patch.object(self.reporter.subprocess, "run", side_effect=run),
+                patch.object(self.reporter, "ROOT", linked_root),
+            ):
+                report = self.reporter.build_report("owner/repo", 42)
+            self.assertFalse(report["hosted_trigger"]["available"])
+            self.assertEqual(sum("--trigger-record" in command for command in commands), 0)
+            with patch.object(self.reporter, "ROOT", main_root):
+                self.assertIsNone(self.reporter.hosted_trigger_record_path("owner/repo", 42))
+            with patch.object(self.reporter, "ROOT", linked_root):
+                self.assertIsNone(self.reporter.hosted_trigger_record_path("owner/repo", 42))
+
+    def test_ambiguous_hosted_trigger_reason_is_visible_in_human_output(self) -> None:
+        trigger = {
+            "trigger_state": self.trigger_state(
+                state="ambiguous",
+                attributed=False,
+                current_head_sha="fedcba9876543210fedcba9876543210fedcba98",
+                response_id=None,
+                response_created_at=None,
+                response_url=None,
+                reason="the durable trigger record disagrees with the current PR head",
+            )
+        }
+        checker = self.checker_payload(ok=True)
+        checker.update(trigger)
+        with tempfile.TemporaryDirectory() as directory:
+            record = Path(directory) / "trigger.json"
+            record.write_text("{}", encoding="utf-8")
+            with (
+                patch.object(self.reporter, "hosted_trigger_record_path", return_value=record),
+                patch.object(
+                    self.reporter.subprocess,
+                    "run",
+                    side_effect=self.provider_responses(
+                        checker_ok=True,
+                        checker_exit=1,
+                        checker_payload=checker,
+                    ),
+                ),
+            ):
+                report = self.reporter.build_report("owner/repo", 42)
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.reporter.emit_text(report)
+        rendered = output.getvalue()
+        self.assertIn("trigger: state=ambiguous", rendered)
+        self.assertIn(
+            "reason=Hosted trigger evidence does not match the current GitHub PR head",
+            rendered,
+        )
+        self.assertEqual(report["hosted_trigger"]["validation_outcome"], "invalid")
+
+    def test_non_completed_hosted_trigger_reason_is_visible_but_completed_reason_is_omitted(self) -> None:
+        reason = "the Hosted review request is currently rate limited"
+        for state, checker_exit, expect_reason in (
+            ("rate_limited", 1, True),
+            ("completed", 0, False),
+        ):
+            trigger = {
+                "trigger_state": self.trigger_state(
+                    state=state,
+                    terminal=state == "completed",
+                    attributed=state == "completed",
+                    reason=reason,
+                )
+            }
+            checker = self.checker_payload(ok=True)
+            checker.update(trigger)
+            with tempfile.TemporaryDirectory() as directory:
+                record = Path(directory) / "trigger.json"
+                record.write_text("{}", encoding="utf-8")
+                with (
+                    self.subTest(state=state),
+                    patch.object(self.reporter, "hosted_trigger_record_path", return_value=record),
+                    patch.object(
+                        self.reporter.subprocess,
+                        "run",
+                        side_effect=self.provider_responses(
+                            checker_ok=True,
+                            checker_exit=checker_exit,
+                            checker_payload=checker,
+                        ),
+                    ),
+                ):
+                    report = self.reporter.build_report("owner/repo", 42)
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.reporter.emit_text(report)
+            rendered = output.getvalue()
+            expected = f"reason={reason}"
+            if expect_reason:
+                self.assertIn(expected, rendered)
+            else:
+                self.assertNotIn(expected, rendered)
+
+    def test_nonterminal_hosted_trigger_without_response_url_is_preserved(self) -> None:
+        trigger = {
+            "trigger_state": self.trigger_state(
+                state="awaiting_response",
+                terminal=False,
+                response_id=None,
+                response_created_at=None,
+                response_url=None,
+                reason="no qualifying response has arrived yet",
+            )
+        }
+        checker = self.checker_payload(ok=True)
+        checker.update(trigger)
+        with tempfile.TemporaryDirectory() as directory:
+            record = Path(directory) / "trigger.json"
+            record.write_text("{}", encoding="utf-8")
+
+            def run(command, **kwargs):
+                if "--trigger-record" in command:
+                    return subprocess.CompletedProcess(command, 2, json.dumps(checker), "")
+                return self.provider_responses(checker_ok=True)(command, **kwargs)
+
+            with (
+                patch.object(self.reporter, "hosted_trigger_record_path", return_value=record),
+                patch.object(self.reporter.subprocess, "run", side_effect=run),
+            ):
+                report = self.reporter.build_report("owner/repo", 42)
+        self.assertEqual(report["hosted_trigger"]["state"], "awaiting_response")
+        self.assertIsNone(report["hosted_trigger"]["response_url"])
+
+    def test_retired_hosted_trigger_state_is_reported(self) -> None:
+        trigger = {
+            "trigger_state": self.trigger_state(
+                state="retired",
+                attributed=False,
+                response_id=None,
+                response_created_at=None,
+                response_url=None,
+                reason="the stale captured trigger was retired",
+            )
+        }
+        checker = self.checker_payload(ok=True)
+        checker.update(trigger)
+        with tempfile.TemporaryDirectory() as directory:
+            record = Path(directory) / "trigger.json"
+            record.write_text("{}", encoding="utf-8")
+
+            def run(command, **kwargs):
+                if "--trigger-record" in command:
+                    return subprocess.CompletedProcess(command, 1, json.dumps(checker), "")
+                return self.provider_responses(checker_ok=True)(command, **kwargs)
+
+            with (
+                patch.object(self.reporter, "hosted_trigger_record_path", return_value=record),
+                patch.object(self.reporter.subprocess, "run", side_effect=run),
+            ):
+                report = self.reporter.build_report("owner/repo", 42)
+        self.assertEqual(report["hosted_trigger"]["state"], "retired")
+        self.assertEqual(report["hosted_trigger"]["reason"], "the stale captured trigger was retired")
+
+    def test_unattributed_hosted_trigger_without_trigger_identity_is_preserved(self) -> None:
+        trigger = {
+            "trigger_state": self.trigger_state(
+                state="unattributed",
+                attributed=False,
+                trigger_comment_id=None,
+                trigger_created_at=None,
+                trigger_url=None,
+                trigger_type=None,
+                response_id=None,
+                response_created_at=None,
+                response_url=None,
+                reason="the durable posting reservation has no captured response",
+            )
+        }
+        checker = self.checker_payload(ok=True)
+        checker.update(trigger)
+        with tempfile.TemporaryDirectory() as directory:
+            record = Path(directory) / "trigger.json"
+            record.write_text("{}", encoding="utf-8")
+
+            def run(command, **kwargs):
+                if "--trigger-record" in command:
+                    return subprocess.CompletedProcess(command, 1, json.dumps(checker), "")
+                return self.provider_responses(checker_ok=True)(command, **kwargs)
+
+            with (
+                patch.object(self.reporter, "hosted_trigger_record_path", return_value=record),
+                patch.object(self.reporter.subprocess, "run", side_effect=run),
+            ):
+                report = self.reporter.build_report("owner/repo", 42)
+        self.assertEqual(report["hosted_trigger"]["state"], "unattributed")
+        self.assertIsNone(report["hosted_trigger"]["trigger_url"])
+        report["hosted_trigger"]["head_sha"] = None
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.reporter.emit_text(report)
+        rendered = output.getvalue()
+        self.assertIn("trigger: state=unattributed · id=- · head=-", rendered)
+
+    def test_human_loc_output_notes_when_merge_base_is_unchecked(self) -> None:
+        with (
+            patch.object(self.reporter, "_current_merge_base", return_value=None),
+            patch.object(
+                self.reporter.subprocess,
+                "run",
+                side_effect=self.provider_responses(checker_ok=True),
+            ),
+        ):
+            report = self.reporter.build_report("owner/repo", 42)
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.reporter.emit_text(report)
+        self.assertIn("LOC metadata: fresh (merge-base not checked)", output.getvalue())
 
 
 if __name__ == "__main__":
