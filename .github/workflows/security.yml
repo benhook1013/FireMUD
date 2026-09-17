@@ -8,6 +8,8 @@ on:
     types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
 
+run-name: Security Checks ${{ github.event_name == 'pull_request' && format('pr-{0} base-{1} head-{2}', github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha) || github.ref_name }}
+
 permissions:
   contents: read
 
@@ -139,6 +141,7 @@ jobs:
     permissions:
       checks: read # Preserve a prior successful required context on metadata-only edits.
       contents: read # Check out the shared required-gate composite action.
+      actions: read # Inspect the matching required-gate job's preservation step.
     needs: [changes, trivy-scan, secret-compliance]
     if: ${{ always() }}
     steps:
@@ -159,6 +162,9 @@ jobs:
         uses: ./.github/actions/preserve-required-gate
         with:
           gate-name: Security Gate
+          workflow-name: Security Checks
+          workflow-file: security.yml
+          workflow-path: .github/workflows/security.yml
 
       - name: Enforce security success
         if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}

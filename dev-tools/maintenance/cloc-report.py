@@ -47,6 +47,8 @@ PR_METADATA_FIELDS = "baseRefName,baseRefOid,headRefName,headRefOid"
 PR_UPDATE_FIELDS = "baseRefOid,headRefOid,body"
 PR_REPORT_START = "<!-- firemud:cloc-report:start -->"
 PR_REPORT_END = "<!-- firemud:cloc-report:end -->"
+PR_REPORT_METADATA_PREFIX = "<!-- firemud:cloc-report:metadata "
+PR_REPORT_METADATA_SUFFIX = " -->"
 GITHUB_PR_BODY_MAX_CHARACTERS = 65_536
 
 
@@ -832,19 +834,42 @@ def format_change(percent: object, delta_lines: int, head_lines: int) -> str:
 
 
 def render_pr_report(report: dict[str, object]) -> str:
+    classifier_sha256 = report.get("classifier_sha256")
+    if (
+        not isinstance(classifier_sha256, str)
+        or len(classifier_sha256) != 64
+        or any(character not in "0123456789abcdefABCDEF" for character in classifier_sha256)
+    ):
+        raise ReportError("PR report has an invalid classifier SHA-256 digest")
+    classifier_sha256 = classifier_sha256.lower()
     base = report["base"]
     head = report["head"]
     if not isinstance(base, dict) or not isinstance(head, dict):
         raise ReportError("PR report snapshots were malformed")
+    base_oid = valid_object_id(base.get("oid"), "base")
+    head_oid = valid_object_id(head.get("oid"), "head")
+    merge_base = valid_object_id(base.get("merge_base"), "merge-base")
     rows = report["sections"]
     if not isinstance(rows, list):
         raise ReportError("PR report sections were malformed")
 
     output = [
         PR_REPORT_START,
+        PR_REPORT_METADATA_PREFIX
+        + json.dumps(
+            {
+                "base_oid": base_oid,
+                "head_oid": head_oid,
+                "merge_base": merge_base,
+                "classifier_sha256": classifier_sha256,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + PR_REPORT_METADATA_SUFFIX,
         "### FireMUD LOC impact",
         "",
-        f"Compared `{str(base['merge_base'])[:12]}` → `{str(head['oid'])[:12]}` (PR merge-base → head).",
+        f"Compared `{merge_base[:12]}` → `{head_oid[:12]}` (PR merge-base → head).",
         "",
         "| Section | Base LOC | Head LOC | Δ LOC | Change |",
         "|---|---:|---:|---:|---:|",
@@ -951,6 +976,7 @@ def update_pull_request_body(root: Path, number: int, report: dict[str, object])
     head_ref = head.get("ref")
     if not isinstance(base_ref, str) or not base_ref or not isinstance(head_ref, str) or not head_ref:
         raise ReportError("PR report refs were malformed before body update")
+    valid_object_id(base.get("oid"), "base")
     counted_merge_base = valid_object_id(base.get("merge_base"), "merge-base")
     counted_head = valid_object_id(head.get("oid"), "head")
 
@@ -969,7 +995,8 @@ def update_pull_request_body(root: Path, number: int, report: dict[str, object])
     if current_merge_base != counted_merge_base:
         raise ReportError("PR merge-base changed while the LOC report was being generated; refusing body update")
 
-    updated_body = replace_pr_report_block(body, render_pr_report(report))
+    current_report = {**report, "base": {**base, "oid": current_base}}
+    updated_body = replace_pr_report_block(body, render_pr_report(current_report))
     if updated_body.replace("\r\n", "\n") == body.replace("\r\n", "\n"):
         return False
     body_path: Path | None = None

@@ -273,11 +273,59 @@ def main() -> int:
     def run_has_gh(run):
         return bool(re.search(r"(^|[;&|()\s])gh(?:\s|$)", run))
 
+    executable_helper_suffixes = {".cjs", ".js", ".py", ".sh"}
+
+    def is_executable_helper(path):
+        if path.suffix in executable_helper_suffixes:
+            return True
+        try:
+            if path.is_file() and path.stat().st_mode & 0o111:
+                return True
+            with path.open(encoding="utf-8", errors="ignore") as stream:
+                return stream.readline().startswith("#!")
+        except OSError:
+            return False
+
+    def is_executable_file(path):
+        try:
+            return path.is_file() and bool(path.stat().st_mode & 0o111)
+        except OSError:
+            return False
+
+    explicit_reference_pattern = re.compile(
+        r"(?:^|[;&|()\s])(?:(?:/usr/bin/)?(?:bash|sh|dash|zsh|ksh|python|python3)"
+        r"(?:\s+-[A-Za-z0-9][A-Za-z0-9_-]*)*(?:\s+--)?|source|\.)\s+"
+        r"(?P<quote>['\"])?(?:(?:\./)|(?:\$ROOT_DIR/)|(?:\$\{ROOT_DIR\}/)|"
+        r"(?:\$GITHUB_ACTION_PATH/(?:\.\./)+)|(?:\$\{GITHUB_ACTION_PATH\}/(?:\.\./)+))?"
+        r"(?P<path>(?:dev-tools|services)/[A-Za-z0-9_./-]+)"
+        r"(?(quote)(?P=quote)|(?![A-Za-z0-9_./'\"-]))",
+        flags=re.MULTILINE,
+    )
+
+    direct_reference_pattern = re.compile(
+        r"(?:^|[;&|()])[ \t]*(?:if[ \t]+)?(?:![ \t]*)?"
+        r"(?P<quote>['\"])?(?:(?:\./)|(?:\$ROOT_DIR/)|(?:\$\{ROOT_DIR\}/)|"
+        r"(?:\$GITHUB_ACTION_PATH/(?:\.\./)+)|(?:\$\{GITHUB_ACTION_PATH\}/(?:\.\./)+))?"
+        r"(?P<path>(?:dev-tools|services)/[A-Za-z0-9_./-]+)"
+        r"(?(quote)(?P=quote)|(?![A-Za-z0-9_./'\"-]))",
+        flags=re.MULTILINE,
+    )
+
+    def explicit_references(text):
+        references = {root / match.group("path") for match in explicit_reference_pattern.finditer(text)}
+        references.update(
+            root / match.group("path")
+            for match in direct_reference_pattern.finditer(text)
+            if is_executable_file(root / match.group("path"))
+        )
+        return references
+
     def references(text):
+        explicitly_invoked = explicit_references(text)
         result = set()
         for name in re.findall(r"(?:\./)?((?:dev-tools|services)/[A-Za-z0-9_./-]+)", text):
             path = root / name.rstrip("\"'")
-            if path.is_file():
+            if path.is_file() and (path in explicitly_invoked or is_executable_helper(path)):
                 result.add(path)
         return result
 
@@ -296,6 +344,25 @@ def main() -> int:
             parts.extend(helper_text(source, seen))
         return parts
 
+    def explicitly_invoked_helper_text(text, seen=None):
+        # Dependency profiles follow invoked helpers, not executable-looking paths stored as data.
+        seen = set() if seen is None else seen
+        parts = [text]
+        for path in explicit_references(text):
+            if path in seen:
+                continue
+            seen.add(path)
+            if not path.is_file():
+                continue
+            if path not in referenced_file_cache:
+                try:
+                    referenced_file_cache[path] = path.read_text(errors="ignore")
+                except OSError:
+                    continue
+            source = referenced_file_cache[path]
+            parts.extend(explicitly_invoked_helper_text(source, seen))
+        return parts
+
     workflow_expansion_cache = {}
 
     def expand_text(text):
@@ -303,21 +370,62 @@ def main() -> int:
             workflow_expansion_cache[text] = "\n".join(helper_text(text))
         return workflow_expansion_cache[text]
 
-    def composite_python_profile(uses):
+    conditional_contract_profile = (
+        "${{ (needs.changes.outputs.lightweight_only == 'true' && "
+        "needs.changes.outputs.design_docs_changed == 'true' && "
+        "needs.changes.outputs.validation_python_changed != 'true') && 'yaml' || 'ci' }}"
+    )
+    ci_branch_expression = "needs.changes.outputs.lightweight_only != 'true'"
+
+    def guarantees_ci_branch(step):
+        # The real consumer uses this exact guard; do not infer arbitrary expression semantics here.
+        guard = step.get("if")
+        if not isinstance(guard, str):
+            return False
+        expression = guard.strip()
+        if expression.startswith("${{") or expression.endswith("}}"):
+            if not (expression.startswith("${{") and expression.endswith("}}")):
+                return False
+            expression = expression[3:-2].strip()
+        while expression.startswith("(") and expression.endswith(")"):
+            expression = expression[1:-1].strip()
+        return expression == ci_branch_expression
+
+    def setup_python_profile(path, step, *, allow_conditional=False):
+        with_input = step.get("with", {})
+        if not isinstance(with_input, dict):
+            fail(f"{path}: setup-python with input must be a mapping")
+        profile = with_input.get("requirements", "none")
+        valid_profiles = {"yaml", "ci", "smoke", "docs", "none"}
+        if allow_conditional:
+            valid_profiles.add(conditional_contract_profile)
+        if not isinstance(profile, str) or profile not in valid_profiles:
+            fail(f"{path}: invalid Python dependency profile")
+        return profile
+
+    def composite_python_profile(uses, stack=()):
         if not uses.startswith("./.github/actions/"):
             return None
         action_path = root / uses[2:] / "action.yml"
         if not action_path.is_file():
             return None
+        if action_path in stack:
+            fail(f"{action_path}: recursive composite Python setup")
         action = yaml.safe_load(action_path.read_text(encoding="utf-8")) or {}
+        effective_profile = None
         for step in action.get("runs", {}).get("steps", []):
-            if (
-                isinstance(step, dict)
-                and step.get("uses") == "./.github/actions/setup-python"
-                and step.get("with", {}).get("requirements") in {"yaml", "ci", "smoke", "docs", "none"}
-            ):
-                return step["with"]["requirements"]
-        return None
+            if not isinstance(step, dict):
+                continue
+            step_uses = str(step.get("uses", ""))
+            if step_uses == "./.github/actions/setup-python":
+                effective_profile = setup_python_profile(action_path, step)
+            elif action_path.parent.name == "setup-python" and step_uses.startswith("actions/setup-python@"):
+                effective_profile = "none"
+            elif step_uses.startswith("./.github/actions/"):
+                nested_profile = composite_python_profile(step_uses, (*stack, action_path))
+                if nested_profile is not None:
+                    effective_profile = nested_profile
+        return effective_profile
 
     for composite in (
         "./.github/actions/download-validated-preview-artifact",
@@ -326,8 +434,9 @@ def main() -> int:
         if composite_python_profile(composite) != "yaml":
             fail(f"{composite} must expose its canonical YAML Python profile")
 
-    def python_needs(expanded_text):
-        if "python3" not in expanded_text:
+    def python_needs(text):
+        expanded_text = "\n".join(explicitly_invoked_helper_text(text))
+        if not re.search(r"(^|[;&|()\s])(?:/usr/bin/)?python3?(?:\s|$)", expanded_text):
             return None
         if re.search(r"(^|\n)\s*import websocket\b", expanded_text):
             return "smoke"
@@ -341,6 +450,339 @@ def main() -> int:
 
     def has_gh_consumer(expanded_text):
         return run_has_gh(expanded_text)
+
+    def validate_composite_steps(path, steps):
+        effective_profile = None
+        setup_gh = False
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            uses = str(step.get("uses", ""))
+            run = str(step.get("run", ""))
+            expanded_text = expand_text(run)
+            need = python_needs(run)
+            gh_consumer = has_gh_consumer(expanded_text)
+            if uses == "./.github/actions/setup-python":
+                effective_profile = setup_python_profile(path, step)
+            elif path.parent.name == "setup-python" and uses.startswith("actions/setup-python@"):
+                effective_profile = "none"
+            elif uses.startswith("./.github/actions/"):
+                nested_profile = composite_python_profile(uses)
+                if nested_profile is not None:
+                    effective_profile = nested_profile
+            setup_gh |= uses == "./.github/actions/setup-gh"
+            if uses.startswith("actions/setup-python@") and path.parent.name != "setup-python":
+                fail(f"{path}: bypasses setup-python wrapper")
+            if need is not None:
+                if effective_profile is None:
+                    fail(f"{path}: Python consumer lacks setup")
+                if need != "none":
+                    compatible_profiles = {"yaml", "ci"} if need == "yaml" else {need}
+                    if effective_profile not in compatible_profiles:
+                        fail(f"{path}: Python consumer lacks its pinned dependency profile")
+            if gh_consumer and not setup_gh:
+                fail(f"{path}: gh consumer lacks setup")
+
+    def validate_workflow_python_steps(path, job_name, steps):
+        checkout = False
+        py = False
+        effective_profile = None
+        setup_count = 0
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            uses = str(step.get("uses", ""))
+            run = str(step.get("run", ""))
+            if uses.startswith("actions/checkout@"):
+                checkout = True
+            if uses.startswith("actions/setup-python@"):
+                fail(f"{path.name}:{job_name}: bypasses canonical setup-python action")
+            if uses == "./.github/actions/setup-python":
+                setup_count += 1
+                if not checkout:
+                    fail(f"{path.name}:{job_name}: Python setup before checkout")
+                py = True
+                effective_profile = setup_python_profile(
+                    f"{path.name}:{job_name}",
+                    step,
+                    allow_conditional=path.name == "ci.yml" and job_name == "dev-tool-contract-checks",
+                )
+            elif uses.startswith("./.github/actions/"):
+                composite_profile = composite_python_profile(uses)
+                if composite_profile is not None:
+                    py = True
+                    effective_profile = composite_profile
+            need = python_needs(run)
+            if need is not None and not py:
+                fail(f"{path.name}:{job_name}: direct or helper Python consumer uses ambient runner Python")
+            if need == "yaml":
+                profile_matches = effective_profile in {"yaml", "ci", conditional_contract_profile}
+            elif need in {"smoke", "ci", "docs"}:
+                profile_matches = effective_profile == need or (
+                    effective_profile == conditional_contract_profile and guarantees_ci_branch(step)
+                )
+            else:
+                profile_matches = effective_profile == need
+            if need == "yaml" and not profile_matches:
+                fail(f"{path.name}:{job_name}: PyYAML helper lacks its pinned dependency profile")
+            if need in {"smoke", "ci", "docs"} and not profile_matches:
+                fail(f"{path.name}:{job_name}: {need} helper lacks its pinned dependency profile")
+        return setup_count
+
+    if python_needs("bash ./dev-tools/tests/dev-tools-readme-contract.sh") == "smoke":
+        fail("documentation/data references must not imply the smoke dependency profile")
+    if python_needs("bash ./services/game-session-service/websocket-login-look-smoke.sh") != "smoke":
+        fail("invoked WebSocket smoke helper must retain the smoke dependency profile")
+
+    with tempfile.TemporaryDirectory(prefix="workflow-authority-", dir=root / "dev-tools") as helper_dir:
+        helper_relative = Path(helper_dir).relative_to(root).as_posix()
+        ignored = subprocess.run(
+            ["git", "check-ignore", "--quiet", "--no-index", "--", f"{helper_relative}/extensionless-helper"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if ignored.returncode != 0:
+            fail("workflow authority fixtures must be ignored under dev-tools")
+        helper = Path(helper_dir) / "extensionless-helper"
+        shebang_helper = Path(helper_dir) / "shebang-helper"
+        suffix_helper = Path(helper_dir) / "other-suffix.bash"
+        data = Path(helper_dir) / "extensionless-data"
+        executable_data = Path(helper_dir) / "extensionless-executable-data"
+        invoked = Path(helper_dir) / "extensionless-invoked"
+        invoked_suffix = Path(helper_dir) / "invoked.bash"
+        python_smoke_helper = Path(helper_dir) / "python-smoke-helper"
+        composite_python_helper = Path(helper_dir) / "composite-python-helper"
+        composite_yaml_helper = Path(helper_dir) / "composite-yaml-helper"
+        composite_none_helper = Path(helper_dir) / "composite-none-helper"
+        composite_gh_helper = Path(helper_dir) / "composite-gh-helper"
+        helper.write_text("# option terminator helper\n", encoding="utf-8")
+        shebang_helper.write_text("#!/usr/bin/env bash\n# extensionless helper\n", encoding="utf-8")
+        suffix_helper.write_text("#!/usr/bin/env bash\n# suffix helper\n", encoding="utf-8")
+        data.write_text("extensionless data\n", encoding="utf-8")
+        executable_data.write_text("extensionless executable data\n", encoding="utf-8")
+        invoked.write_text("# explicit interpreter helper\n", encoding="utf-8")
+        invoked_suffix.write_text("# explicit interpreter suffix helper\n", encoding="utf-8")
+        python_smoke_helper.write_text("#!/usr/bin/env python3\nimport websocket\n", encoding="utf-8")
+        composite_python_helper.write_text("python3 - <<'PY'\nimport websocket\nPY\n", encoding="utf-8")
+        composite_yaml_helper.write_text("python3 - <<'PY'\nimport yaml\nPY\n", encoding="utf-8")
+        composite_none_helper.write_text("python3 - <<'PY'\nprint('dependency free')\nPY\n", encoding="utf-8")
+        composite_gh_helper.write_text("gh --version\n", encoding="utf-8")
+        executable_data.chmod(0o755)
+        python_smoke_helper.chmod(0o755)
+        helper_reference = f"bash -- ./{helper.relative_to(root).as_posix()}"
+        shebang_reference = f"bash ./{shebang_helper.relative_to(root).as_posix()}"
+        suffix_reference = f"bash ./{suffix_helper.relative_to(root).as_posix()}"
+        data_reference = f"documentation mentions ./{data.relative_to(root).as_posix()}"
+        invoked_reference = f"bash ./{invoked.relative_to(root).as_posix()}"
+        invoked_suffix_reference = f"python3 ./{invoked_suffix.relative_to(root).as_posix()}"
+        python_smoke_reference = f"python ./{python_smoke_helper.relative_to(root).as_posix()}"
+        sourced_reference = f"source ./{invoked.relative_to(root).as_posix()}"
+        dotted_reference = f". ./{invoked_suffix.relative_to(root).as_posix()}"
+        quoted_invoked_reference = f"bash './{invoked.relative_to(root).as_posix()}'"
+        quoted_terminated_reference = f"bash -e -- './{invoked.relative_to(root).as_posix()}'"
+        quoted_invoked_suffix_reference = f'python3 "./{invoked_suffix.relative_to(root).as_posix()}"'
+        quoted_sourced_reference = f"source './{invoked.relative_to(root).as_posix()}'"
+        quoted_dotted_reference = f'. "./{invoked_suffix.relative_to(root).as_posix()}"'
+        mismatched_quote_reference = f"bash './{invoked.relative_to(root).as_posix()}\""
+        executable_data_reference = f"bash ./{executable_data.relative_to(root).as_posix()}"
+        direct_python_smoke_reference = f"./{python_smoke_helper.relative_to(root).as_posix()}"
+        composite_python_reference = f"bash ./{composite_python_helper.relative_to(root).as_posix()}"
+        composite_yaml_reference = f"bash ./{composite_yaml_helper.relative_to(root).as_posix()}"
+        composite_none_reference = f"bash ./{composite_none_helper.relative_to(root).as_posix()}"
+        composite_gh_reference = f"bash ./{composite_gh_helper.relative_to(root).as_posix()}"
+        if helper not in references(helper_reference):
+            fail("extensionless helper after an option terminator was not detected")
+        if "# option terminator helper" not in expand_text(helper_reference):
+            fail("extensionless helper after an option terminator was not expanded")
+        if shebang_helper not in references(shebang_reference):
+            fail("extensionless helper with a shebang was not detected")
+        if "# extensionless helper" not in expand_text(shebang_reference):
+            fail("extensionless helper with a shebang was not expanded")
+        if suffix_helper not in references(suffix_reference):
+            fail("helper with an unlisted suffix and a shebang was not detected")
+        if data in references(data_reference):
+            fail("extensionless data without an invocation was treated as an executable helper")
+        if invoked not in references(invoked_reference):
+            fail("extensionless helper passed to an explicit interpreter was not detected")
+        if "# explicit interpreter helper" not in expand_text(invoked_reference):
+            fail("extensionless helper passed to an explicit interpreter was not expanded")
+        if invoked_suffix not in references(invoked_suffix_reference):
+            fail("helper with an unlisted suffix passed to an explicit interpreter was not detected")
+        if python_needs(python_smoke_reference) != "smoke":
+            fail("invoked Python helper must retain the smoke dependency profile")
+        if python_needs(direct_python_smoke_reference) != "smoke":
+            fail("directly executed Python helper must retain the smoke dependency profile")
+        if invoked not in references(quoted_invoked_reference):
+            fail("quoted extensionless helper passed to bash was not detected")
+        if invoked not in references(quoted_terminated_reference):
+            fail("quoted extensionless helper after an option terminator was not detected")
+        if invoked_suffix not in references(quoted_invoked_suffix_reference):
+            fail("quoted helper with an unlisted suffix passed to Python was not detected")
+        if invoked not in references(sourced_reference):
+            fail("extensionless helper sourced without a shebang was not detected")
+        if invoked_suffix not in references(dotted_reference):
+            fail("helper with an unlisted suffix dot-sourced without a shebang was not detected")
+        if invoked not in references(quoted_sourced_reference):
+            fail("quoted extensionless helper sourced without a shebang was not detected")
+        if invoked_suffix not in references(quoted_dotted_reference):
+            fail("quoted helper with an unlisted suffix dot-sourced without a shebang was not detected")
+        if invoked in references(mismatched_quote_reference):
+            fail("explicit helper invocation accepts mismatched quote delimiters")
+        if executable_data not in references(executable_data_reference):
+            fail("extensionless executable file was not detected")
+        if "extensionless executable data" not in expand_text(executable_data_reference):
+            fail("extensionless executable file was not expanded")
+
+        composite_fixture = root / ".github/actions/workflow-authority-fixture/action.yml"
+
+        validate_composite_steps(composite_fixture, ["malformed YAML step"])
+
+        def expect_composite_failure(steps, expected_message):
+            try:
+                validate_composite_steps(composite_fixture, steps)
+            except SystemExit as error:
+                if expected_message not in str(error):
+                    fail(f"composite fixture failed for an unexpected reason: {error}")
+            else:
+                fail(f"composite fixture unexpectedly passed: {expected_message}")
+
+        python_steps = [{"run": composite_python_reference}]
+        expect_composite_failure(python_steps, "Python consumer lacks setup")
+        expect_composite_failure(
+            [{"uses": "./.github/actions/setup-python", "with": {"requirements": "none"}}, *python_steps],
+            "Python consumer lacks its pinned dependency profile",
+        )
+        validate_composite_steps(
+            composite_fixture,
+            [{"uses": "./.github/actions/setup-python", "with": {"requirements": "smoke"}}, *python_steps],
+        )
+        validate_composite_steps(
+            composite_fixture,
+            [
+                {"uses": "./.github/actions/setup-python", "with": {"requirements": "smoke"}},
+                {"uses": "./.github/actions/setup-python", "with": {"requirements": "none"}},
+            ],
+        )
+        expect_composite_failure(
+            [
+                {"uses": "./.github/actions/setup-python", "with": {"requirements": "smoke"}},
+                {"uses": "./.github/actions/setup-python", "with": {"requirements": "none"}},
+                *python_steps,
+            ],
+            "Python consumer lacks its pinned dependency profile",
+        )
+        yaml_steps = [{"run": composite_yaml_reference}]
+        validate_composite_steps(
+            composite_fixture,
+            [{"uses": "./.github/actions/setup-python", "with": {"requirements": "yaml"}}, *yaml_steps],
+        )
+        validate_composite_steps(
+            composite_fixture,
+            [{"uses": "./.github/actions/resolve-certificate-identity-mode"}, *yaml_steps],
+        )
+        expect_composite_failure(
+            [
+                {"uses": "./.github/actions/resolve-certificate-identity-mode"},
+                {"uses": "./.github/actions/setup-python", "with": {"requirements": "none"}},
+                *yaml_steps,
+            ],
+            "Python consumer lacks its pinned dependency profile",
+        )
+        none_steps = [{"run": composite_none_reference}]
+        expect_composite_failure(none_steps, "Python consumer lacks setup")
+        validate_composite_steps(
+            composite_fixture,
+            [{"uses": "./.github/actions/setup-python", "with": {"requirements": "smoke"}}, *none_steps],
+        )
+        validate_composite_steps(
+            composite_fixture,
+            [{"uses": "./.github/actions/setup-python", "with": {"requirements": "yaml"}}, *none_steps],
+        )
+        gh_steps = [{"run": composite_gh_reference}]
+        expect_composite_failure(gh_steps, "gh consumer lacks setup")
+        validate_composite_steps(composite_fixture, [{"uses": "./.github/actions/setup-gh"}, *gh_steps])
+
+        workflow_fixture = root / ".github/workflows/workflow-authority-fixture.yml"
+
+        def expect_workflow_failure(
+            steps, expected_message, *, path=workflow_fixture, job_name="profile-sequencing"
+        ):
+            try:
+                validate_workflow_python_steps(path, job_name, steps)
+            except SystemExit as error:
+                if expected_message not in str(error):
+                    fail(f"workflow fixture failed for an unexpected reason: {error}")
+            else:
+                fail(f"workflow fixture unexpectedly passed: {expected_message}")
+
+        workflow_checkout = {"uses": "actions/checkout@test-fixture"}
+        validate_workflow_python_steps(
+            workflow_fixture,
+            "profile-sequencing",
+            [
+                workflow_checkout,
+                {"uses": "./.github/actions/setup-python", "with": {"requirements": "smoke"}},
+                *python_steps,
+            ],
+        )
+        expect_workflow_failure(
+            [
+                workflow_checkout,
+                {"uses": "./.github/actions/setup-python", "with": {"requirements": "smoke"}},
+                {"uses": "./.github/actions/setup-python", "with": {"requirements": "none"}},
+                *python_steps,
+            ],
+            "profile-sequencing: smoke helper lacks its pinned dependency profile",
+        )
+
+        conditional_setup = {
+            "uses": "./.github/actions/setup-python",
+            "with": {"requirements": conditional_contract_profile},
+        }
+        ci_workflow_fixture = workflows / "ci.yml"
+        guarded_ci_consumer = {
+            "if": "${{ needs.changes.outputs.lightweight_only != 'true' }}",
+            "run": "python3 -m ruff --version",
+        }
+        guarded_smoke_consumer = {
+            "if": guarded_ci_consumer["if"],
+            "run": python_smoke_reference,
+        }
+        guarded_docs_consumer = {
+            "if": guarded_ci_consumer["if"],
+            "run": "python3 -m mkdocs build --clean",
+        }
+        validate_workflow_python_steps(
+            ci_workflow_fixture,
+            "dev-tool-contract-checks",
+            [
+                workflow_checkout,
+                conditional_setup,
+                guarded_ci_consumer,
+                guarded_smoke_consumer,
+                guarded_docs_consumer,
+            ],
+        )
+        expect_workflow_failure(
+            [workflow_checkout, conditional_setup, {"run": guarded_ci_consumer["run"]}],
+            "ci.yml:dev-tool-contract-checks: ci helper lacks its pinned dependency profile",
+            path=ci_workflow_fixture,
+            job_name="dev-tool-contract-checks",
+        )
+        expect_workflow_failure(
+            [workflow_checkout, conditional_setup, {"run": python_smoke_reference}],
+            "ci.yml:dev-tool-contract-checks: smoke helper lacks its pinned dependency profile",
+            path=ci_workflow_fixture,
+            job_name="dev-tool-contract-checks",
+        )
+        expect_workflow_failure(
+            [workflow_checkout, conditional_setup, {"run": "python3 -m mkdocs build --clean"}],
+            "ci.yml:dev-tool-contract-checks: docs helper lacks its pinned dependency profile",
+            path=ci_workflow_fixture,
+            job_name="dev-tool-contract-checks",
+        )
 
     workflow_paths = sorted((*workflows.glob("*.yml"), *workflows.glob("*.yaml")))
 
@@ -386,19 +828,15 @@ def main() -> int:
         if "config/workflow-tool-versions.env" in paths:
             fail(f"license-scan.yml {group} filter must not match the entire tool authority file")
 
-    conditional_contract_profile = (
-        "${{ (needs.changes.outputs.lightweight_only == 'true' && "
-        "needs.changes.outputs.design_docs_changed == 'true' && "
-        "needs.changes.outputs.validation_python_changed != 'true') && 'yaml' || 'ci' }}"
-    )
     node_count = python_count = gh_count = 0
     for path in workflow_paths:
         for job_name, job in (load(path).get("jobs") or {}).items():
             if not isinstance(job, dict):
                 continue
-            checkout = py = gh_setup_seen = loader = False
-            python_profiles = set()
-            for step in job.get("steps", []):
+            steps = job.get("steps", [])
+            python_count += validate_workflow_python_steps(path, job_name, steps)
+            checkout = gh_setup_seen = loader = False
+            for step in steps:
                 if not isinstance(step, dict):
                     continue
                 uses = str(step.get("uses", ""))
@@ -417,41 +855,12 @@ def main() -> int:
                         or "node-version" in step.get("with", {})
                     ):
                         fail(f"{path.name}:{job_name}: invalid Node authority consumption")
-                if uses.startswith("actions/setup-python@"):
-                    fail(f"{path.name}:{job_name}: bypasses canonical setup-python action")
-                if uses == "./.github/actions/setup-python":
-                    python_count += 1
-                    if not checkout:
-                        fail(f"{path.name}:{job_name}: Python setup before checkout")
-                    py = True
-                    selected_profile = step.get("with", {}).get("requirements", "none")
-                    python_profiles.add(selected_profile)
-                    valid_profiles = {"none", "yaml", "ci", "smoke", "docs"}
-                    if path.name == "ci.yml" and job_name == "dev-tool-contract-checks":
-                        valid_profiles.add(conditional_contract_profile)
-                    if selected_profile not in valid_profiles:
-                        fail(f"{path.name}:{job_name}: invalid Python dependency profile")
-                composite_profile = composite_python_profile(uses)
-                if composite_profile is not None:
-                    py = True
-                    python_profiles.add(composite_profile)
                 if uses == "./.github/actions/setup-gh":
                     gh_count += 1
                     if not checkout:
                         fail(f"{path.name}:{job_name}: gh setup before checkout")
                     gh_setup_seen = True
                 expanded_text = expand_text(run)
-                need = python_needs(expanded_text)
-                if need is not None and not py:
-                    fail(f"{path.name}:{job_name}: direct or helper Python consumer uses ambient runner Python")
-                if need == "yaml" and not python_profiles.intersection({"yaml", "ci", conditional_contract_profile}):
-                    fail(f"{path.name}:{job_name}: PyYAML helper lacks its pinned dependency profile")
-                if (
-                    need in {"smoke", "ci", "docs"}
-                    and need not in python_profiles
-                    and conditional_contract_profile not in python_profiles
-                ):
-                    fail(f"{path.name}:{job_name}: {need} helper lacks its pinned dependency profile")
                 if has_gh_consumer(expanded_text) and not gh_setup_seen:
                     fail(f"{path.name}:{job_name}: direct or helper gh consumer is not preceded by canonical setup-gh")
                 if uses.startswith("oss-review-toolkit/ort-ci-github-action@") and (
@@ -496,20 +905,7 @@ def main() -> int:
         fail("trusted publisher checkout requires contents: read")
 
     for path in sorted(actions.glob("*/action.yml")):
-        setup_py = setup_gh = False
-        for step in load(path).get("runs", {}).get("steps", []):
-            uses = str(step.get("uses", ""))
-            run = str(step.get("run", ""))
-            setup_py |= uses == "./.github/actions/setup-python" or (
-                path.parent.name == "setup-python" and uses.startswith("actions/setup-python@")
-            )
-            setup_gh |= uses == "./.github/actions/setup-gh"
-            if uses.startswith("actions/setup-python@") and path.parent.name != "setup-python":
-                fail(f"{path}: bypasses setup-python wrapper")
-            if "python3" in run and not setup_py:
-                fail(f"{path}: Python consumer lacks setup")
-            if run_has_gh(run) and not setup_gh:
-                fail(f"{path}: gh consumer lacks setup")
+        validate_composite_steps(path, load(path).get("runs", {}).get("steps", []))
 
     text = "\n".join(p.read_text() for p in workflow_paths)
     for forbidden in (
