@@ -212,6 +212,8 @@ def parse_worktrees(root: Path) -> list[dict[str, Any]]:
         bare = bool(current.get("bare", False))
         if not isinstance(path, str) or not path:
             raise TopologyError("Git worktree inventory has no path")
+        if head == "0" * 40:
+            head = None
         if head is None and not bare:
             raise TopologyError(f"Git worktree {path} has no exact HEAD SHA")
         if head is not None and (not isinstance(head, str) or not EXACT_SHA.fullmatch(head)):

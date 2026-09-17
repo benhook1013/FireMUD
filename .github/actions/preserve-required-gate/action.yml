@@ -293,7 +293,7 @@ runs:
                     .path == $expected_path or
                     (
                       (.path | startswith($expected_path + "@")) and
-                      ((.path | ltrimstr($expected_path + "@")) | test("^[A-Za-z0-9._/-]+$"))
+                      ((.path | ltrimstr($expected_path + "@")) | test("^.+$"))
                     )
                   ) and
                   .head_sha == $expected_head and

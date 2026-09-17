@@ -50,6 +50,7 @@ branch refs/heads/prunable-branch
 prunable gitdir file points to non-existent location
 
 worktree $BARE_WORKTREE
+HEAD 0000000000000000000000000000000000000000
 bare
 
 WORKTREES
@@ -147,6 +148,41 @@ grep -Fqx $'2\thostile branch\tdevelop\tCLEAN\tHostile Title\thttps://example.te
 [[ "$(awk -F '\t' '$1 == 2 { print NF }' "$output_file")" -eq 6 ]]
 
 echo "worktree topology contract checks passed"
+
+UNBORN_REPO="$TEMP_DIR/unborn-repo"
+UNBORN_WORKTREE="$UNBORN_REPO/unborn-worktree"
+UNBORN_BIN="$TEMP_DIR/unborn-bin"
+mkdir -p "$UNBORN_REPO" "$UNBORN_WORKTREE" "$UNBORN_BIN"
+
+cat > "$UNBORN_BIN/git" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "\${1:-}" == "rev-parse" && "\${2:-}" == "--show-toplevel" ]]; then
+  printf '%s\\n' "$UNBORN_REPO"
+  exit 0
+fi
+if [[ "\${1:-}" == "worktree" && "\${2:-}" == "list" && "\${3:-}" == "--porcelain" ]]; then
+  cat <<'WORKTREES'
+worktree $UNBORN_WORKTREE
+HEAD 0000000000000000000000000000000000000000
+branch refs/heads/unborn-branch
+
+WORKTREES
+  exit 0
+fi
+echo "unexpected git invocation: \$*" >&2
+exit 1
+EOF
+chmod +x "$UNBORN_BIN/git"
+
+if unborn_json="$(cd "$UNBORN_REPO" && PATH="$UNBORN_BIN:$PATH" bash "$SCRIPT" --repo example/test --json)"; then
+  echo "unborn non-bare worktree unexpectedly succeeded" >&2
+  exit 1
+fi
+jq -e '.status == "ambiguous" and (.errors | any(contains("no exact HEAD SHA")))' <<<"$unborn_json" >/dev/null
+
+echo "unborn worktree topology contract checks passed"
 
 CONTRADICTORY_BIN="$TEMP_DIR/contradictory-bin"
 mkdir -p "$CONTRADICTORY_BIN"

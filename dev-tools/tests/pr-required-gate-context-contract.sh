@@ -479,8 +479,12 @@ if [[ "$*" == *"/actions/runs/"* ]]; then
     workflow_id=99
   elif [[ "${GH_SCENARIO:-}" == "run-path-ref-suffix" ]]; then
     workflow_path='.github/workflows/ci.yml@main'
+  elif [[ "${GH_SCENARIO:-}" == "run-path-ref-suffix-plus" ]]; then
+    workflow_path='.github/workflows/ci.yml@feature+metadata'
+  elif [[ "${GH_SCENARIO:-}" == "run-path-ref-suffix-at" ]]; then
+    workflow_path='.github/workflows/ci.yml@feature@metadata'
   elif [[ "${GH_SCENARIO:-}" == "malformed-run-path-ref-suffix" ]]; then
-    workflow_path='.github/workflows/ci.yml@main@evil'
+    workflow_path='.github/workflows/ci.yml@'
   elif [[ "${GH_SCENARIO:-}" == "fork-head-same-sha" ]]; then
     head_repository='other-owner/firemud'
   elif [[ "${GH_SCENARIO:-}" == "wrong-run-repository" ]]; then
@@ -572,7 +576,7 @@ JSON
   cross-workflow-same-name|fork-empty-association|dynamic-run-name|dynamic-run-name-fork-empty|wrong-run-name|wrong-job-workflow-name|empty-wrong-pr|empty-wrong-base|empty-wrong-head|empty-wrong-title|empty-malformed-association|other-pr-association)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
-  run-path-ref-suffix|malformed-run-path-ref-suffix)
+  run-path-ref-suffix|run-path-ref-suffix-plus|run-path-ref-suffix-at|malformed-run-path-ref-suffix)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   details-url-query|details-url-fragment|malformed-details-url-suffix)
@@ -1116,6 +1120,15 @@ run_action "$run_path_ref_count" none run-path-ref-suffix
   echo "required-gate action rejected a valid workflow-run path ref suffix" >&2
   exit 1
 }
+
+for run_path_ref_scenario in run-path-ref-suffix-plus run-path-ref-suffix-at; do
+  run_path_ref_count="$tmp_dir/count-${run_path_ref_scenario}"
+  run_action "$run_path_ref_count" none "$run_path_ref_scenario"
+  [[ "$(<"$run_path_ref_count")" == "1" ]] || {
+    echo "required-gate action rejected a valid ${run_path_ref_scenario} workflow-run path ref suffix" >&2
+    exit 1
+  }
+done
 
 for details_url_scenario in details-url-query details-url-fragment; do
   details_url_count="$tmp_dir/count-${details_url_scenario}"

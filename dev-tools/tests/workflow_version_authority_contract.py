@@ -351,7 +351,7 @@ def main() -> int:
             fail(f"{composite} must expose its canonical YAML Python profile")
 
     def python_needs(expanded_text):
-        if "python3" not in expanded_text:
+        if not re.search(r"(^|[;&|()\s])(?:/usr/bin/)?python3?(?:\s|$)", expanded_text):
             return None
         if re.search(r"(^|\n)\s*import websocket\b", expanded_text):
             return "smoke"
@@ -378,18 +378,21 @@ def main() -> int:
         executable_data = Path(helper_dir) / "extensionless-executable-data"
         invoked = Path(helper_dir) / "extensionless-invoked"
         invoked_suffix = Path(helper_dir) / "invoked.bash"
+        python_smoke_helper = Path(helper_dir) / "python-smoke-helper"
         helper.write_text("#!/usr/bin/env bash\n# extensionless helper\n", encoding="utf-8")
         suffix_helper.write_text("#!/usr/bin/env bash\n# suffix helper\n", encoding="utf-8")
         data.write_text("extensionless data\n", encoding="utf-8")
         executable_data.write_text("extensionless executable data\n", encoding="utf-8")
         invoked.write_text("# explicit interpreter helper\n", encoding="utf-8")
         invoked_suffix.write_text("# explicit interpreter suffix helper\n", encoding="utf-8")
+        python_smoke_helper.write_text("import websocket\n", encoding="utf-8")
         executable_data.chmod(0o755)
         helper_reference = f"bash ./{helper.relative_to(root).as_posix()}"
         suffix_reference = f"bash ./{suffix_helper.relative_to(root).as_posix()}"
         data_reference = f"documentation mentions ./{data.relative_to(root).as_posix()}"
         invoked_reference = f"bash ./{invoked.relative_to(root).as_posix()}"
         invoked_suffix_reference = f"python3 ./{invoked_suffix.relative_to(root).as_posix()}"
+        python_smoke_reference = f"python ./{python_smoke_helper.relative_to(root).as_posix()}"
         sourced_reference = f"source ./{invoked.relative_to(root).as_posix()}"
         dotted_reference = f". ./{invoked_suffix.relative_to(root).as_posix()}"
         quoted_invoked_reference = f"bash './{invoked.relative_to(root).as_posix()}'"
@@ -412,6 +415,8 @@ def main() -> int:
             fail("extensionless helper passed to an explicit interpreter was not expanded")
         if invoked_suffix not in references(invoked_suffix_reference):
             fail("helper with an unlisted suffix passed to an explicit interpreter was not detected")
+        if python_needs(expand_text(python_smoke_reference)) != "smoke":
+            fail("invoked Python helper must retain the smoke dependency profile")
         if invoked not in references(quoted_invoked_reference):
             fail("quoted extensionless helper passed to bash was not detected")
         if invoked_suffix not in references(quoted_invoked_suffix_reference):
