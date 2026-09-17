@@ -335,12 +335,15 @@ def main() -> int:
             return None
         action = yaml.safe_load(action_path.read_text(encoding="utf-8")) or {}
         for step in action.get("runs", {}).get("steps", []):
-            if (
-                isinstance(step, dict)
-                and step.get("uses") == "./.github/actions/setup-python"
-                and step.get("with", {}).get("requirements") in {"yaml", "ci", "smoke", "docs", "none"}
-            ):
-                return step["with"]["requirements"]
+            if not isinstance(step, dict) or step.get("uses") != "./.github/actions/setup-python":
+                continue
+            with_input = step.get("with", {})
+            if not isinstance(with_input, dict):
+                fail(f"{action_path}: setup-python with input must be a mapping")
+            profile = with_input.get("requirements", "none")
+            if not isinstance(profile, str) or profile not in {"yaml", "ci", "smoke", "docs", "none"}:
+                fail(f"{action_path}: invalid Python dependency profile")
+            return profile
         return None
 
     for composite in (
@@ -367,7 +370,8 @@ def main() -> int:
         return run_has_gh(expanded_text)
 
     def validate_composite_steps(path, steps):
-        setup_py = setup_gh = False
+        setup_profiles = set()
+        setup_gh = False
         for step in steps:
             if not isinstance(step, dict):
                 continue
@@ -376,14 +380,31 @@ def main() -> int:
             expanded_text = expand_text(run)
             need = python_needs(expanded_text)
             gh_consumer = has_gh_consumer(expanded_text)
-            setup_py |= uses == "./.github/actions/setup-python" or (
-                path.parent.name == "setup-python" and uses.startswith("actions/setup-python@")
-            )
+            if uses == "./.github/actions/setup-python":
+                with_input = step.get("with", {})
+                if not isinstance(with_input, dict):
+                    fail(f"{path}: setup-python with input must be a mapping")
+                setup_profile = with_input.get("requirements", "none")
+                if not isinstance(setup_profile, str) or setup_profile not in {
+                    "yaml",
+                    "ci",
+                    "smoke",
+                    "docs",
+                    "none",
+                }:
+                    fail(f"{path}: invalid Python dependency profile")
+                setup_profiles.add(setup_profile)
+            elif path.parent.name == "setup-python" and uses.startswith("actions/setup-python@"):
+                setup_profiles.add("none")
             setup_gh |= uses == "./.github/actions/setup-gh"
             if uses.startswith("actions/setup-python@") and path.parent.name != "setup-python":
                 fail(f"{path}: bypasses setup-python wrapper")
-            if need is not None and not setup_py:
-                fail(f"{path}: Python consumer lacks setup")
+            if need is not None:
+                if not setup_profiles:
+                    fail(f"{path}: Python consumer lacks setup")
+                compatible_profiles = {"yaml", "ci"} if need == "yaml" else {need}
+                if not setup_profiles.intersection(compatible_profiles):
+                    fail(f"{path}: Python consumer lacks its pinned dependency profile")
             if gh_consumer and not setup_gh:
                 fail(f"{path}: gh consumer lacks setup")
 
@@ -498,10 +519,15 @@ def main() -> int:
 
         python_steps = [{"run": composite_python_reference}]
         expect_composite_failure(python_steps, "Python consumer lacks setup")
+        expect_composite_failure(
+            [{"uses": "./.github/actions/setup-python", "with": {"requirements": "none"}}, *python_steps],
+            "Python consumer lacks its pinned dependency profile",
+        )
         validate_composite_steps(
             composite_fixture,
             [
                 {"uses": "./.github/actions/setup-python", "with": {"requirements": "smoke"}},
+                {"uses": "./.github/actions/setup-python", "with": {"requirements": "none"}},
                 *python_steps,
             ],
         )
