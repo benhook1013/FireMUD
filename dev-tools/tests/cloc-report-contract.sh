@@ -851,25 +851,31 @@ cloc_report.require_tool = lambda _name: None
 def fake_changed_base_command(args, _root, *, timeout=None):
     base_change_calls.append(args)
     assert timeout == cloc_report.REMOTE_COMMAND_TIMEOUT_SECONDS
-    if args[:3] != ("gh", "pr", "view"):
-        raise AssertionError("changed PR base must prevent merge-base computation and PR edit")
-    return subprocess.CompletedProcess(
-        args,
-        0,
-        stdout=json.dumps(
-            {"baseRefOid": "d" * 40, "headRefOid": "b" * 40, "body": "existing"}
-        ).encode(),
-        stderr=b"",
-    )
+    if args[:3] == ("gh", "pr", "view"):
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout=json.dumps(
+                {"baseRefOid": "d" * 40, "headRefOid": "b" * 40, "body": "existing"}
+            ).encode(),
+            stderr=b"",
+        )
+    if args[:3] == ("gh", "pr", "edit"):
+        updated_body = Path(args[-1]).read_text(encoding="utf-8")
+        assert '"base_oid":"' + "d" * 40 + '"' in updated_body
+        assert '"merge_base":"' + "c" * 40 + '"' in updated_body
+        return subprocess.CompletedProcess(args, 0, stdout=b"", stderr=b"")
+    raise AssertionError(f"unexpected changed-base command: {args}")
 cloc_report.run_command = fake_changed_base_command
 try:
-    try:
-        cloc_report.update_pull_request_body(repo, 2736, impact)
-    except cloc_report.ReportError as error:
-        assert "base changed" in str(error)
-    else:
-        raise AssertionError("changed PR base must block body update even when merge-base is unchanged")
-    assert len(base_change_calls) == 1
+    assert cloc_report.update_pull_request_body(repo, 2736, impact) is True
+    assert [args[:3] for args in base_change_calls] == [
+        ("gh", "pr", "view"),
+        ("gh", "pr", "view"),
+        ("gh", "pr", "edit"),
+    ]
+    assert merge_base_metadata[-1].base_oid == "d" * 40
+    assert impact["base"]["oid"] == "a" * 40
 finally:
     cloc_report.require_tool = original_require_tool
     cloc_report.run_command = original_run_command
