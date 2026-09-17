@@ -369,6 +369,8 @@ def main() -> int:
     def validate_composite_steps(path, steps):
         setup_py = setup_gh = False
         for step in steps:
+            if not isinstance(step, dict):
+                continue
             uses = str(step.get("uses", ""))
             run = str(step.get("run", ""))
             expanded_text = expand_text(run)
@@ -482,6 +484,8 @@ def main() -> int:
             fail("extensionless executable file was not expanded")
 
         composite_fixture = root / ".github/actions/workflow-authority-fixture/action.yml"
+
+        validate_composite_steps(composite_fixture, ["malformed YAML step"])
 
         def expect_composite_failure(steps, expected_message):
             try:
