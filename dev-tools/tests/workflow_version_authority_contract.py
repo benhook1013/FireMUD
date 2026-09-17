@@ -1244,11 +1244,21 @@ def main() -> int:
         "HELM": "helm/helm",
     }
     attachment_specs = {
-        "GH": ("cli/cli", "v{{{currentValue}}}", "^v(?<version>.*)$"),
-        "BUF": ("bufbuild/buf", "v{{{currentValue}}}", "^v(?<version>.*)$"),
-        "KUBECONFORM": ("yannh/kubeconform", "v{{{currentValue}}}", "^v(?<version>.*)$"),
-        "TRIVY": ("aquasecurity/trivy", "v{{{currentValue}}}", "^v(?<version>.*)$"),
-        "LYCHEE": ("lycheeverse/lychee", "lychee-v{{{currentValue}}}", "^lychee-v(?<version>.*)$"),
+        "GH": ("cli/cli", "v{{{currentValue}}}", "^v(?<version>.*)$", "GH_LINUX_AMD64"),
+        "BUF": ("bufbuild/buf", "v{{{currentValue}}}", "^v(?<version>.*)$", "BUF_LINUX_X86_64"),
+        "KUBECONFORM": (
+            "yannh/kubeconform",
+            "v{{{currentValue}}}",
+            "^v(?<version>.*)$",
+            "KUBECONFORM_LINUX_AMD64",
+        ),
+        "TRIVY": ("aquasecurity/trivy", "v{{{currentValue}}}", "^v(?<version>.*)$", "TRIVY_LINUX_AMD64"),
+        "LYCHEE": (
+            "lycheeverse/lychee",
+            "lychee-v{{{currentValue}}}",
+            "^lychee-v(?<version>.*)$",
+            "LYCHEE_LINUX_X86_64_MUSL",
+        ),
     }
     attachment_managers = [
         manager for manager in custom_managers if manager.get("datasourceTemplate") == "github-release-attachments"
@@ -1280,7 +1290,7 @@ def main() -> int:
         matches_for_manager = list(pattern.finditer(authority_text))
         if len(matches_for_manager) != 1 or matches_for_manager[0].group("currentValue") != a[key + "_VERSION"]:
             fail(f"{dep_name} version-only manager must match the authority version exactly once")
-    for key, (dep_name, current_value_template, extract_version) in attachment_specs.items():
+    for key, (dep_name, current_value_template, extract_version, checksum_stem) in attachment_specs.items():
         managers = [manager for manager in attachment_managers if manager.get("depNameTemplate") == dep_name]
         if len(managers) != 1:
             fail(f"Renovate must define exactly one checksum manager for {dep_name}")
@@ -1304,9 +1314,9 @@ def main() -> int:
         match = matches_for_manager[0]
         if match.group("currentValue") != a[key + "_VERSION"]:
             fail(f"{dep_name} checksum manager must match the authority version")
-        if match.group("currentChecksumVersion") != a[key + "_" + ("LINUX_X86_64" if key == "BUF" else "LINUX_X86_64_MUSL" if key == "LYCHEE" else "LINUX_AMD64") + "_CHECKSUM_VERSION"]:
+        if match.group("currentChecksumVersion") != a[checksum_stem + "_CHECKSUM_VERSION"]:
             fail(f"{dep_name} checksum manager must capture the checksum version")
-        if match.group("currentDigest") != a[key + "_" + ("LINUX_X86_64" if key == "BUF" else "LINUX_X86_64_MUSL" if key == "LYCHEE" else "LINUX_AMD64") + "_SHA256"]:
+        if match.group("currentDigest") != a[checksum_stem + "_SHA256"]:
             fail(f"{dep_name} checksum manager must capture the archive checksum")
         replacement = manager.get("autoReplaceStringTemplate", "")
         if "{{{newDigest}}}" not in replacement or "_CHECKSUM_VERSION=" not in replacement or "_SHA256=" not in replacement:
@@ -1358,8 +1368,6 @@ def main() -> int:
     if len(docker_managers) != 1:
         fail("Renovate must define exactly one ORT/ZAP Docker manager")
     ort_zap_image_managers = docker_managers
-    if len(ort_zap_image_managers) != 1:
-        fail("Renovate must define exactly one ORT/ZAP image manager")
     ort_zap_image_manager = ort_zap_image_managers[0]
     if "currentValueTemplate" in ort_zap_image_manager or "autoReplaceStringTemplate" in ort_zap_image_manager:
         fail("ORT/ZAP image manager must not inherit Velero value or replacement templates")

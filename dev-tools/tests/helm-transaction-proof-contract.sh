@@ -32,5 +32,21 @@ script = (root / "dev-tools/validation/helm-transaction-proof.sh").read_text()
 for command in ("helm install", "helm upgrade", "helm history", "helm rollback", "helm status"):
     if command not in script:
         raise SystemExit(f"Helm proof script must exercise {command}")
+for required_cleanup_fragment in (
+    "cleanup() {",
+    'helm uninstall "$release" --namespace "$namespace" --wait >/dev/null 2>&1 || true',
+    'kubectl delete namespace "$namespace" --wait >/dev/null 2>&1 || true',
+    "trap cleanup EXIT",
+):
+    if required_cleanup_fragment not in script:
+        raise SystemExit(f"Helm proof script must define failure cleanup: {required_cleanup_fragment}")
+strict_cleanup_sequence = (
+    'helm uninstall "$release" --namespace "$namespace" --wait\n'
+    'kubectl delete namespace "$namespace" --wait\n'
+    'rm -rf -- "$work_dir"\n'
+    "trap - EXIT"
+)
+if strict_cleanup_sequence not in script:
+    raise SystemExit("Helm proof script must keep normal cleanup strict before disarming its EXIT trap")
 print("Helm transaction proof contract passed")
 PY
