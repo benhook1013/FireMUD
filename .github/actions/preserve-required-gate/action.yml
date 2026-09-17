@@ -396,6 +396,9 @@ runs:
             if [[ "${preserve_step_conclusion}" == "unknown" ||
               -z "${preserve_step_conclusion}" ]]; then
               if [[ "${check_status}" == "completed" ]]; then
+                case "${conclusion}" in
+                  cancelled|skipped|stale) continue ;;
+                esac
                 # A completed check can briefly precede the jobs API's final
                 # step snapshot. Restart the candidate scan and rebuild its
                 # rows through the existing retry path for bounded attempts.
@@ -407,16 +410,11 @@ runs:
                   retry_reason="preservation-step snapshot refresh"
                   break
                 fi
-                case "${conclusion}" in
-                  cancelled|skipped|stale) continue ;;
-                  *)
-                    # An unresolved step on a potentially authoritative
-                    # completed check cannot be allowed to mask a failure or
-                    # otherwise preserve from an older candidate.
-                    candidate_ambiguous=true
-                    continue
-                    ;;
-                esac
+                # An unresolved step on a potentially authoritative completed
+                # check cannot be allowed to mask a failure or otherwise
+                # preserve from an older candidate.
+                candidate_ambiguous=true
+                continue
               elif [[ "${job_is_pending}" == "true" ]]; then
                 : # A nonterminal job may not have reached its preservation step yet.
               else

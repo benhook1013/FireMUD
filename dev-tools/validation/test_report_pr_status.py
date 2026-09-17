@@ -243,6 +243,14 @@ class PrStatusReporterTest(unittest.TestCase):
         untrusted = "safe\u00ad\u034f\u180e\ufe00\ufe0fvalue"
         self.assertEqual(self.reporter._display(untrusted), "safe value")
 
+    def test_display_sanitizes_unicode_tags(self) -> None:
+        untrusted = "safe\U000e0000\U000e0041\U000e007fvalue"
+        self.assertEqual(self.reporter._display(untrusted), "safe value")
+
+    def test_display_sanitizes_hangul_fillers(self) -> None:
+        untrusted = "safe\u115f\u1160\u3164\uffa0value"
+        self.assertEqual(self.reporter._display(untrusted), "safe value")
+
     def test_ready_report_orders_hosted_and_cli_sequence_and_formats_mobile_text(self) -> None:
         checkpoint = self.checkpoint_payload()
         checkpoint["unparsed_candidates"] = 2

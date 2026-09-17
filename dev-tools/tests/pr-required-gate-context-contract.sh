@@ -1031,11 +1031,16 @@ grep -Fxq 'Ambiguous prior Validation Gate run metadata; refusing to preserve.' 
 
 for non_authoritative_scenario in completed-cancelled-missing-step completed-skipped-missing-step completed-stale-missing-step; do
   non_authoritative_count="$tmp_dir/count-${non_authoritative_scenario}"
-  run_action "$non_authoritative_count" none "$non_authoritative_scenario"
-  [[ "$(<"$non_authoritative_count")" == "9" ]] || {
-    echo "required-gate action did not discard the unresolved ${non_authoritative_scenario} candidate after its bounded refresh attempts" >&2
+  non_authoritative_output="$tmp_dir/${non_authoritative_scenario}-output"
+  run_action "$non_authoritative_count" none "$non_authoritative_scenario" >"$non_authoritative_output" 2>&1
+  [[ "$(<"$non_authoritative_count")" == "1" ]] || {
+    echo "required-gate action did not immediately discard the unresolved ${non_authoritative_scenario} candidate" >&2
     exit 1
   }
+  if grep -Fq 'Retrying preservation-step snapshot refresh' "$non_authoritative_output"; then
+    echo "required-gate action refreshed a non-authoritative ${non_authoritative_scenario} candidate" >&2
+    exit 1
+  fi
 done
 
 cache_call_counts="$tmp_dir/cache-call-counts"
