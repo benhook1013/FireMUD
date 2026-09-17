@@ -25,7 +25,7 @@ Keep the root of `dev-tools/` small. Only canonical human-facing entrypoints and
 - `evidence_digest.py` – shared canonical RFC 8785-subset evidence digest helper imported by deployment and validation gates.
 - `wait-for-it.sh` – shared Docker image/runtime helper.
 
-The `report-pr-status.py`, `report-worktree-pr-topology.sh`, and `maintenance/cloc-report.py pr` entrypoints require GitHub CLI `gh` >= 2.63.0 because they request the `baseRefOid` field; the repository workflow pin is `GH_VERSION=2.76.2`.
+The `report-pr-status.py`, `report-worktree-pr-topology.sh`, and `maintenance/cloc-report.py pr` entrypoints require GitHub CLI `gh` >= 2.63.0 because they request the `baseRefOid` field; the repository workflow pin is `GH_VERSION=2.101.0`.
 
 ## Folder map
 
