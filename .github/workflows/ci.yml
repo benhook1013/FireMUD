@@ -556,7 +556,7 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in $(seq 1 60); do
-            if docker logs firemud-helm-proof 2>&1 | grep -Fq 'k3s is up and running'; then
+            if docker logs firemud-helm-proof 2>&1 | grep -F 'k3s is up and running' >/dev/null; then
               break
             fi
             if [[ "$attempt" == 60 ]]; then
