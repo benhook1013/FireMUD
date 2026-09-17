@@ -216,9 +216,10 @@ echo "contradictory repository identity contract checks passed"
 
 SELECTED_REPO="$TEMP_DIR/selected-repo"
 SELECTED_WORKTREE="$SELECTED_REPO/selected-worktree"
+SELECTED_DETACHED="$SELECTED_REPO/selected-detached"
 SELECTED_BARE="$SELECTED_REPO/selected-bare"
 SELECTED_BIN="$TEMP_DIR/selected-bin"
-mkdir -p "$SELECTED_REPO" "$SELECTED_WORKTREE" "$SELECTED_BARE" "$SELECTED_BIN"
+mkdir -p "$SELECTED_REPO" "$SELECTED_WORKTREE" "$SELECTED_DETACHED" "$SELECTED_BARE" "$SELECTED_BIN"
 
 cat > "$SELECTED_BIN/git" <<EOF
 #!/usr/bin/env bash
@@ -234,6 +235,10 @@ worktree $SELECTED_WORKTREE
 HEAD bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 branch refs/heads/feature/head
 locked selected for contract
+
+worktree $SELECTED_DETACHED
+HEAD dddddddddddddddddddddddddddddddddddddddd
+detached
 
 worktree $SELECTED_BARE
 bare
@@ -273,7 +278,7 @@ HOSTILE_PRS
 fi
 if [[ "$1 $2" == "pr list" ]]; then
   cat <<'PRS'
-[{"number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false},{"number":100,"headRefName":"feature/dependent","headRefOid":"dddddddddddddddddddddddddddddddddddddddd","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Dependent","url":"https://example.test/pr/100","isDraft":false},{"number":50,"headRefName":"feature/grandchild","headRefOid":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","baseRefName":"feature/dependent","baseRefOid":"dddddddddddddddddddddddddddddddddddddddd","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Grandchild","url":"https://example.test/pr/50","isDraft":false},{"number":45,"headRefName":"renovate/dependent","headRefOid":"ffffffffffffffffffffffffffffffffffffffff","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Renovate dependent","url":"https://example.test/pr/45","isDraft":false},{"number":44,"headRefName":"feature/forked","headRefOid":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"id":"R_kgDOforkrepo","name":"repo"},"headRepositoryOwner":{"login":"fork"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Foreign collision","url":"https://example.test/pr/44","isDraft":false},{"number":46,"headRefName":"renovate/unrelated","headRefOid":"1212121212121212121212121212121212121212","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Unrelated Renovate","url":"https://example.test/pr/46","isDraft":false}]
+[{"number":42,"headRefName":"feature/head","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":3,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Selected","url":"https://example.test/pr/42","isDraft":false},{"number":100,"headRefName":"feature/dependent","headRefOid":"dddddddddddddddddddddddddddddddddddddddd","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Dependent","url":"https://example.test/pr/100","isDraft":false},{"number":50,"headRefName":"feature/grandchild","headRefOid":"dddddddddddddddddddddddddddddddddddddddd","baseRefName":"feature/dependent","baseRefOid":"dddddddddddddddddddddddddddddddddddddddd","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Grandchild","url":"https://example.test/pr/50","isDraft":false},{"number":45,"headRefName":"renovate/dependent","headRefOid":"ffffffffffffffffffffffffffffffffffffffff","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Renovate dependent","url":"https://example.test/pr/45","isDraft":false},{"number":44,"headRefName":"feature/forked","headRefOid":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","baseRefName":"feature/head","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headRepository":{"id":"R_kgDOforkrepo","name":"repo"},"headRepositoryOwner":{"login":"fork"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Foreign collision","url":"https://example.test/pr/44","isDraft":false},{"number":46,"headRefName":"renovate/unrelated","headRefOid":"1212121212121212121212121212121212121212","baseRefName":"develop","baseRefOid":"cccccccccccccccccccccccccccccccccccccccc","headRepository":{"id":"R_kgDOownerrepo","name":"repo"},"headRepositoryOwner":{"login":"owner"},"changedFiles":1,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","title":"Unrelated Renovate","url":"https://example.test/pr/46","isDraft":false}]
 PRS
   exit 0
 fi
@@ -297,6 +302,9 @@ jq -e '.chain[0].worktrees | any(.locked and .status == "clean" and .head_matche
 jq -e '.chain[0].worktrees | all(.head_sha != null)' <<<"$selected_json" >/dev/null
 jq -e '.chain[1].base.sha == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' <<<"$selected_json" >/dev/null
 jq -e '.chain[2].base.sha == "dddddddddddddddddddddddddddddddddddddddd"' <<<"$selected_json" >/dev/null
+jq -e '.chain[1].worktrees | any(.path == "'"$SELECTED_DETACHED"'")' <<<"$selected_json" >/dev/null
+jq -e '.chain[2].worktrees | any(.path == "'"$SELECTED_DETACHED"'")' <<<"$selected_json" >/dev/null
+jq -e '.worktrees | map(.path) == ["'"$SELECTED_WORKTREE"'", "'"$SELECTED_DETACHED"'"]' <<<"$selected_json" >/dev/null
 jq -e '.omitted_renovate | map(.number) == [45] and .[0].relation == "dependent" and .[0].linked_prs == [42]' <<<"$selected_json" >/dev/null
 
 selected_human="$(cd "$SELECTED_REPO" && PATH="$SELECTED_BIN:$PATH" bash "$SCRIPT" --repo owner/repo --pr 42)"

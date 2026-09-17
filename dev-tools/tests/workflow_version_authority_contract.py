@@ -286,18 +286,42 @@ def main() -> int:
         except OSError:
             return False
 
-    def references(text):
-        explicit_reference_pattern = re.compile(
-            r"(?:^|[;&|()\s])(?:(?:/usr/bin/)?(?:bash|sh|dash|zsh|ksh|python|python3)"
-            r"(?:\s+-[A-Za-z0-9][A-Za-z0-9_-]*)*(?:\s+--)?|source|\.)\s+"
-            r"(?P<quote>['\"])?(?:\./)?"
-            r"(?P<path>(?:dev-tools|services)/[A-Za-z0-9_./-]+)"
-            r"(?(quote)(?P=quote)|(?![A-Za-z0-9_./'\"-]))",
-            flags=re.MULTILINE,
+    def is_executable_file(path):
+        try:
+            return path.is_file() and bool(path.stat().st_mode & 0o111)
+        except OSError:
+            return False
+
+    explicit_reference_pattern = re.compile(
+        r"(?:^|[;&|()\s])(?:(?:/usr/bin/)?(?:bash|sh|dash|zsh|ksh|python|python3)"
+        r"(?:\s+-[A-Za-z0-9][A-Za-z0-9_-]*)*(?:\s+--)?|source|\.)\s+"
+        r"(?P<quote>['\"])?(?:(?:\./)|(?:\$ROOT_DIR/)|(?:\$\{ROOT_DIR\}/)|"
+        r"(?:\$GITHUB_ACTION_PATH/(?:\.\./)+)|(?:\$\{GITHUB_ACTION_PATH\}/(?:\.\./)+))?"
+        r"(?P<path>(?:dev-tools|services)/[A-Za-z0-9_./-]+)"
+        r"(?(quote)(?P=quote)|(?![A-Za-z0-9_./'\"-]))",
+        flags=re.MULTILINE,
+    )
+
+    direct_reference_pattern = re.compile(
+        r"(?:^|[;&|()])[ \t]*(?:if[ \t]+)?(?:![ \t]*)?"
+        r"(?P<quote>['\"])?(?:(?:\./)|(?:\$ROOT_DIR/)|(?:\$\{ROOT_DIR\}/)|"
+        r"(?:\$GITHUB_ACTION_PATH/(?:\.\./)+)|(?:\$\{GITHUB_ACTION_PATH\}/(?:\.\./)+))?"
+        r"(?P<path>(?:dev-tools|services)/[A-Za-z0-9_./-]+)"
+        r"(?(quote)(?P=quote)|(?![A-Za-z0-9_./'\"-]))",
+        flags=re.MULTILINE,
+    )
+
+    def explicit_references(text):
+        references = {root / match.group("path") for match in explicit_reference_pattern.finditer(text)}
+        references.update(
+            root / match.group("path")
+            for match in direct_reference_pattern.finditer(text)
+            if is_executable_file(root / match.group("path"))
         )
-        explicitly_invoked = {
-            root / match.group("path") for match in explicit_reference_pattern.finditer(text)
-        }
+        return references
+
+    def references(text):
+        explicitly_invoked = explicit_references(text)
         result = set()
         for name in re.findall(r"(?:\./)?((?:dev-tools|services)/[A-Za-z0-9_./-]+)", text):
             path = root / name.rstrip("\"'")
@@ -320,6 +344,25 @@ def main() -> int:
             parts.extend(helper_text(source, seen))
         return parts
 
+    def explicitly_invoked_helper_text(text, seen=None):
+        # Dependency profiles follow invoked helpers, not executable-looking paths stored as data.
+        seen = set() if seen is None else seen
+        parts = [text]
+        for path in explicit_references(text):
+            if path in seen:
+                continue
+            seen.add(path)
+            if not path.is_file():
+                continue
+            if path not in referenced_file_cache:
+                try:
+                    referenced_file_cache[path] = path.read_text(errors="ignore")
+                except OSError:
+                    continue
+            source = referenced_file_cache[path]
+            parts.extend(explicitly_invoked_helper_text(source, seen))
+        return parts
+
     workflow_expansion_cache = {}
 
     def expand_text(text):
@@ -332,6 +375,21 @@ def main() -> int:
         "needs.changes.outputs.design_docs_changed == 'true' && "
         "needs.changes.outputs.validation_python_changed != 'true') && 'yaml' || 'ci' }}"
     )
+    ci_branch_expression = "needs.changes.outputs.lightweight_only != 'true'"
+
+    def guarantees_ci_branch(step):
+        # The real consumer uses this exact guard; do not infer arbitrary expression semantics here.
+        guard = step.get("if")
+        if not isinstance(guard, str):
+            return False
+        expression = guard.strip()
+        if expression.startswith("${{") or expression.endswith("}}"):
+            if not (expression.startswith("${{") and expression.endswith("}}")):
+                return False
+            expression = expression[3:-2].strip()
+        while expression.startswith("(") and expression.endswith(")"):
+            expression = expression[1:-1].strip()
+        return expression == ci_branch_expression
 
     def setup_python_profile(path, step, *, allow_conditional=False):
         with_input = step.get("with", {})
@@ -376,7 +434,8 @@ def main() -> int:
         if composite_python_profile(composite) != "yaml":
             fail(f"{composite} must expose its canonical YAML Python profile")
 
-    def python_needs(expanded_text):
+    def python_needs(text):
+        expanded_text = "\n".join(explicitly_invoked_helper_text(text))
         if not re.search(r"(^|[;&|()\s])(?:/usr/bin/)?python3?(?:\s|$)", expanded_text):
             return None
         if re.search(r"(^|\n)\s*import websocket\b", expanded_text):
@@ -401,7 +460,7 @@ def main() -> int:
             uses = str(step.get("uses", ""))
             run = str(step.get("run", ""))
             expanded_text = expand_text(run)
-            need = python_needs(expanded_text)
+            need = python_needs(run)
             gh_consumer = has_gh_consumer(expanded_text)
             if uses == "./.github/actions/setup-python":
                 effective_profile = setup_python_profile(path, step)
@@ -453,18 +512,26 @@ def main() -> int:
                 if composite_profile is not None:
                     py = True
                     effective_profile = composite_profile
-            need = python_needs(expand_text(run))
+            need = python_needs(run)
             if need is not None and not py:
                 fail(f"{path.name}:{job_name}: direct or helper Python consumer uses ambient runner Python")
-            if need == "yaml" and effective_profile not in {"yaml", "ci", conditional_contract_profile}:
+            if need == "yaml":
+                profile_matches = effective_profile in {"yaml", "ci", conditional_contract_profile}
+            elif need in {"smoke", "ci", "docs"}:
+                profile_matches = effective_profile == need or (
+                    effective_profile == conditional_contract_profile and guarantees_ci_branch(step)
+                )
+            else:
+                profile_matches = effective_profile == need
+            if need == "yaml" and not profile_matches:
                 fail(f"{path.name}:{job_name}: PyYAML helper lacks its pinned dependency profile")
-            if need in {"smoke", "ci", "docs"} and effective_profile not in {need, conditional_contract_profile}:
+            if need in {"smoke", "ci", "docs"} and not profile_matches:
                 fail(f"{path.name}:{job_name}: {need} helper lacks its pinned dependency profile")
         return setup_count
 
-    if python_needs(expand_text("bash ./dev-tools/tests/dev-tools-readme-contract.sh")) == "smoke":
+    if python_needs("bash ./dev-tools/tests/dev-tools-readme-contract.sh") == "smoke":
         fail("documentation/data references must not imply the smoke dependency profile")
-    if python_needs(expand_text("bash ./services/game-session-service/websocket-login-look-smoke.sh")) != "smoke":
+    if python_needs("bash ./services/game-session-service/websocket-login-look-smoke.sh") != "smoke":
         fail("invoked WebSocket smoke helper must retain the smoke dependency profile")
 
     with tempfile.TemporaryDirectory(prefix="workflow-authority-", dir=root / "dev-tools") as helper_dir:
@@ -497,12 +564,13 @@ def main() -> int:
         executable_data.write_text("extensionless executable data\n", encoding="utf-8")
         invoked.write_text("# explicit interpreter helper\n", encoding="utf-8")
         invoked_suffix.write_text("# explicit interpreter suffix helper\n", encoding="utf-8")
-        python_smoke_helper.write_text("import websocket\n", encoding="utf-8")
+        python_smoke_helper.write_text("#!/usr/bin/env python3\nimport websocket\n", encoding="utf-8")
         composite_python_helper.write_text("python3 - <<'PY'\nimport websocket\nPY\n", encoding="utf-8")
         composite_yaml_helper.write_text("python3 - <<'PY'\nimport yaml\nPY\n", encoding="utf-8")
         composite_none_helper.write_text("python3 - <<'PY'\nprint('dependency free')\nPY\n", encoding="utf-8")
         composite_gh_helper.write_text("gh --version\n", encoding="utf-8")
         executable_data.chmod(0o755)
+        python_smoke_helper.chmod(0o755)
         helper_reference = f"bash -- ./{helper.relative_to(root).as_posix()}"
         shebang_reference = f"bash ./{shebang_helper.relative_to(root).as_posix()}"
         suffix_reference = f"bash ./{suffix_helper.relative_to(root).as_posix()}"
@@ -519,6 +587,7 @@ def main() -> int:
         quoted_dotted_reference = f'. "./{invoked_suffix.relative_to(root).as_posix()}"'
         mismatched_quote_reference = f"bash './{invoked.relative_to(root).as_posix()}\""
         executable_data_reference = f"bash ./{executable_data.relative_to(root).as_posix()}"
+        direct_python_smoke_reference = f"./{python_smoke_helper.relative_to(root).as_posix()}"
         composite_python_reference = f"bash ./{composite_python_helper.relative_to(root).as_posix()}"
         composite_yaml_reference = f"bash ./{composite_yaml_helper.relative_to(root).as_posix()}"
         composite_none_reference = f"bash ./{composite_none_helper.relative_to(root).as_posix()}"
@@ -541,8 +610,10 @@ def main() -> int:
             fail("extensionless helper passed to an explicit interpreter was not expanded")
         if invoked_suffix not in references(invoked_suffix_reference):
             fail("helper with an unlisted suffix passed to an explicit interpreter was not detected")
-        if python_needs(expand_text(python_smoke_reference)) != "smoke":
+        if python_needs(python_smoke_reference) != "smoke":
             fail("invoked Python helper must retain the smoke dependency profile")
+        if python_needs(direct_python_smoke_reference) != "smoke":
+            fail("directly executed Python helper must retain the smoke dependency profile")
         if invoked not in references(quoted_invoked_reference):
             fail("quoted extensionless helper passed to bash was not detected")
         if invoked not in references(quoted_terminated_reference):
@@ -635,9 +706,11 @@ def main() -> int:
 
         workflow_fixture = root / ".github/workflows/workflow-authority-fixture.yml"
 
-        def expect_workflow_failure(steps, expected_message):
+        def expect_workflow_failure(
+            steps, expected_message, *, path=workflow_fixture, job_name="profile-sequencing"
+        ):
             try:
-                validate_workflow_python_steps(workflow_fixture, "profile-sequencing", steps)
+                validate_workflow_python_steps(path, job_name, steps)
             except SystemExit as error:
                 if expected_message not in str(error):
                     fail(f"workflow fixture failed for an unexpected reason: {error}")
@@ -662,6 +735,53 @@ def main() -> int:
                 *python_steps,
             ],
             "profile-sequencing: smoke helper lacks its pinned dependency profile",
+        )
+
+        conditional_setup = {
+            "uses": "./.github/actions/setup-python",
+            "with": {"requirements": conditional_contract_profile},
+        }
+        ci_workflow_fixture = workflows / "ci.yml"
+        guarded_ci_consumer = {
+            "if": "${{ needs.changes.outputs.lightweight_only != 'true' }}",
+            "run": "python3 -m ruff --version",
+        }
+        guarded_smoke_consumer = {
+            "if": guarded_ci_consumer["if"],
+            "run": python_smoke_reference,
+        }
+        guarded_docs_consumer = {
+            "if": guarded_ci_consumer["if"],
+            "run": "python3 -m mkdocs build --clean",
+        }
+        validate_workflow_python_steps(
+            ci_workflow_fixture,
+            "dev-tool-contract-checks",
+            [
+                workflow_checkout,
+                conditional_setup,
+                guarded_ci_consumer,
+                guarded_smoke_consumer,
+                guarded_docs_consumer,
+            ],
+        )
+        expect_workflow_failure(
+            [workflow_checkout, conditional_setup, {"run": guarded_ci_consumer["run"]}],
+            "ci.yml:dev-tool-contract-checks: ci helper lacks its pinned dependency profile",
+            path=ci_workflow_fixture,
+            job_name="dev-tool-contract-checks",
+        )
+        expect_workflow_failure(
+            [workflow_checkout, conditional_setup, {"run": python_smoke_reference}],
+            "ci.yml:dev-tool-contract-checks: smoke helper lacks its pinned dependency profile",
+            path=ci_workflow_fixture,
+            job_name="dev-tool-contract-checks",
+        )
+        expect_workflow_failure(
+            [workflow_checkout, conditional_setup, {"run": "python3 -m mkdocs build --clean"}],
+            "ci.yml:dev-tool-contract-checks: docs helper lacks its pinned dependency profile",
+            path=ci_workflow_fixture,
+            job_name="dev-tool-contract-checks",
         )
 
     workflow_paths = sorted((*workflows.glob("*.yml"), *workflows.glob("*.yaml")))

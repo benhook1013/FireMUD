@@ -760,11 +760,15 @@ def main() -> int:
                 args.include_renovate,
                 default_branch,
             )
-            selected_worktrees = [
-                worktree
-                for item in chain
-                for worktree in item["worktrees"]
-            ]
+            selected_worktrees: list[dict[str, Any]] = []
+            seen_worktree_paths: set[str] = set()
+            for item in chain:
+                for worktree in item["worktrees"]:
+                    path = worktree["path"]
+                    if path in seen_worktree_paths:
+                        continue
+                    seen_worktree_paths.add(path)
+                    selected_worktrees.append(worktree)
             selected_branches = [
                 branch
                 for branch in branches
