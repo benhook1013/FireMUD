@@ -229,6 +229,7 @@ runs:
           pending_rows=()
           job_lookup_retryable=false
           retry_reason=""
+          retry_error_text=""
           candidate_ambiguous=false
           while IFS=$'\t' read -r app_slug check_name details_url check_run_id check_status conclusion completed_at started_at; do
             if [[ -z "${app_slug}${check_name}${details_url}${check_run_id}${check_status}${conclusion}${completed_at}${started_at}" ]]; then
@@ -268,6 +269,7 @@ runs:
                 if is_retryable_gh_failure "${workflow_run_status}" "${workflow_run_error}"; then
                   job_lookup_retryable=true
                   retry_reason="workflow-run API lookup"
+                  retry_error_text="${workflow_run_error}"
                   break
                 fi
                 echo "Permanent GitHub API/configuration failure while identifying prior ${REQUIRED_GATE_NAME} workflow run; refusing to preserve." >&2
@@ -338,6 +340,7 @@ runs:
                 if is_retryable_gh_failure "${job_status}" "${job_error}"; then
                   job_lookup_retryable=true
                   retry_reason="job API lookup"
+                  retry_error_text="${job_error}"
                   break
                 fi
                 echo "Permanent GitHub API/configuration failure while identifying a prior ${REQUIRED_GATE_NAME} run; refusing to preserve." >&2
@@ -394,8 +397,8 @@ runs:
               -z "${preserve_step_conclusion}" ]]; then
               if [[ "${check_status}" == "completed" ]]; then
                 # A completed check can briefly precede the jobs API's final
-                # step snapshot. Refresh it through the existing retry path,
-                # but do not let one unresolved candidate starve other rows.
+                # step snapshot. Restart the candidate scan and rebuild its
+                # rows through the existing retry path for bounded attempts.
                 preservation_step_refresh_attempts["${job_id}"]=$((
                   ${preservation_step_refresh_attempts[${job_id}]:-0} + 1
                 ))
@@ -479,8 +482,7 @@ runs:
               exit 1
             fi
             if [[ "${retry_reason}" == *"API lookup" ]]; then
-              api_error="$(<"${api_error_file}")"
-              [[ -z "${api_error}" ]] || printf '%s\n' "${api_error}" >&2
+              [[ -z "${retry_error_text}" ]] || printf '%s\n' "${retry_error_text}" >&2
             fi
             if ! sleep_until_poll_deadline; then
               echo "Timed out waiting for the prior ${REQUIRED_GATE_NAME} on unchanged head ${HEAD_SHA}." >&2

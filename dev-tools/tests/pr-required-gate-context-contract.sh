@@ -760,6 +760,30 @@ if grep -Fq '${{' <<<"$action_script"; then
   echo "required-gate action run script must receive workflow context through env" >&2
   exit 1
 fi
+grep -Fq 'retry_error_text=""' <<<"$action_script" || {
+  echo "required-gate action must reset retry error text for each attempt" >&2
+  exit 1
+}
+# shellcheck disable=SC2016 # Assert literal shell parameter expansion syntax.
+grep -Fq 'retry_error_text="${workflow_run_error}"' <<<"$action_script" || {
+  echo "required-gate action must capture workflow-run API error text at the failure site" >&2
+  exit 1
+}
+# shellcheck disable=SC2016 # Assert literal shell parameter expansion syntax.
+grep -Fq 'retry_error_text="${job_error}"' <<<"$action_script" || {
+  echo "required-gate action must capture retryable API error text at the failure site" >&2
+  exit 1
+}
+retry_branch="$(awk '/^  if \[\[ "\$\{job_lookup_retryable\}" == "true" \]\]; then$/{capture=1} capture{print} capture && /^  fi$/{exit}' <<<"$action_script")"
+# shellcheck disable=SC2016 # Assert literal shell parameter expansion syntax.
+grep -Fq '[[ -z "${retry_error_text}" ]] || printf' <<<"$retry_branch" || {
+  echo "required-gate action must print captured retry error text" >&2
+  exit 1
+}
+if grep -Fq 'api_error_file' <<<"$retry_branch"; then
+  echo "required-gate action retry branch must not reread the mutable API error file" >&2
+  exit 1
+fi
 run_action() {
   local count_file="$1"
   local failure_mode="$2"
