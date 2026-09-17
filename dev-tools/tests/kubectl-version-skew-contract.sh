@@ -64,10 +64,11 @@ def persists_kubeconfig(step):
     return "GITHUB_ENV" in run and "KUBECONFIG=" in run
 
 
-def validate(workflow, fixture_name):
+def validate(workflow, fixture_name, require_skew=False):
     jobs = workflow.get("jobs", {})
     if not isinstance(jobs, dict):
         raise SystemExit(f"{fixture_name}: workflow must define jobs")
+    skew_invoked = False
     for job_name, job in jobs.items():
         if not isinstance(job, dict) or "steps" not in job:
             continue
@@ -81,14 +82,35 @@ def validate(workflow, fixture_name):
             run = str(step.get("run", ""))
             local = has_kubeconfig(step.get("env", {}))
             persistent = persists_kubeconfig(step)
-            if skew_script in run and not (established or local):
-                raise SystemExit(f"{fixture_name}: {job_name} invokes skew check before kubeconfig at step {index + 1}")
+            if skew_script in run:
+                skew_invoked = True
+                if not (established or local):
+                    raise SystemExit(
+                        f"{fixture_name}: {job_name} invokes skew check before kubeconfig at step {index + 1}"
+                    )
             established = established or persistent
+    if require_skew and not skew_invoked:
+        raise SystemExit(f"{fixture_name}: workflow must invoke the shared kubectl version skew preflight")
 
 
 manual_backup_path = root / ".github/workflows/manual-backup-restore.yml"
 manual_backup = yaml.safe_load(manual_backup_path.read_text(encoding="utf-8"))
 validate(manual_backup, "manual-backup-restore.yml")
+
+hosted_workflow_names = (
+    "preview.yml",
+    "dev-demo.yml",
+    "preview-reconciler.yml",
+    "dev-demo-reconciler.yml",
+    "preview-janitor.yml",
+    "hosted-identity-request.yml",
+)
+hosted_workflows = {}
+for workflow_name in hosted_workflow_names:
+    workflow_path = root / ".github/workflows" / workflow_name
+    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    hosted_workflows[workflow_name] = workflow
+    validate(workflow, workflow_name, require_skew=True)
 
 
 def expect_rejected(workflow, fixture_name):
@@ -128,13 +150,13 @@ step_env_fixture["jobs"]["verify"]["steps"].extend([
     {"name": "Reject leaked step-local kubeconfig", "run": f"bash ./{skew_script}"},
 ])
 expect_rejected(step_env_fixture, "step-local env fixture")
-PY
 
-for workflow in preview.yml dev-demo.yml preview-reconciler.yml dev-demo-reconciler.yml preview-janitor.yml hosted-identity-request.yml; do
-  if ! grep -Fq 'dev-tools/hosted/shared/check-kubectl-version-skew.sh' "$ROOT_DIR/.github/workflows/$workflow"; then
-    echo "$workflow must invoke the shared kubectl version skew preflight" >&2
-    exit 1
-  fi
-done
+# A hosted workflow must also reject a skew invocation that precedes its kubeconfig setup.
+hosted_wrong_order_fixture = copy.deepcopy(hosted_workflows["preview-janitor.yml"])
+hosted_wrong_order_fixture["jobs"]["prune-stale-preview-namespaces"]["steps"].insert(
+    0, {"name": "Reject skew before kubeconfig", "run": f"bash ./{skew_script}"}
+)
+expect_rejected(hosted_wrong_order_fixture, "hosted wrong-order fixture")
+PY
 
 echo "kubectl version skew contract passed"

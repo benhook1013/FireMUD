@@ -115,7 +115,7 @@
       "depNameTemplate": "lycheeverse/lychee",
       "versioningTemplate": "semver",
       "extractVersionTemplate": "^lychee-v(?<version>.*)$",
-      "currentValueTemplate": "lychee-v{{{currentValue}}}",
+      "currentValueTemplate": "{{{currentValue}}}",
       "autoReplaceStringTemplate": "# renovate-version: datasource=github-release-attachments depName=lycheeverse/lychee extractVersion=^lychee-v(?<version>.*)$\nLYCHEE_VERSION={{{replace '^lychee-v' '' newValue}}}\nLYCHEE_LINUX_X86_64_MUSL_CHECKSUM_VERSION={{{replace '^lychee-v' '' newValue}}}\nLYCHEE_LINUX_X86_64_MUSL_SHA256={{{newDigest}}}"
     },
     {

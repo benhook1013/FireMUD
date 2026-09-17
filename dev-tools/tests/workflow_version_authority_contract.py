@@ -1256,7 +1256,7 @@ def main() -> int:
         "TRIVY": ("aquasecurity/trivy", "v{{{currentValue}}}", "^v(?<version>.*)$", "TRIVY_LINUX_AMD64"),
         "LYCHEE": (
             "lycheeverse/lychee",
-            "lychee-v{{{currentValue}}}",
+            "{{{currentValue}}}",
             "^lychee-v(?<version>.*)$",
             "LYCHEE_LINUX_X86_64_MUSL",
         ),
