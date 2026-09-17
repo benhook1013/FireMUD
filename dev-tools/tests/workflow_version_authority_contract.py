@@ -327,6 +327,12 @@ def main() -> int:
             workflow_expansion_cache[text] = "\n".join(helper_text(text))
         return workflow_expansion_cache[text]
 
+    conditional_contract_profile = (
+        "${{ (needs.changes.outputs.lightweight_only == 'true' && "
+        "needs.changes.outputs.design_docs_changed == 'true' && "
+        "needs.changes.outputs.validation_python_changed != 'true') && 'yaml' || 'ci' }}"
+    )
+
     def setup_python_profile(path, step, *, allow_conditional=False):
         with_input = step.get("with", {})
         if not isinstance(with_input, dict):
@@ -573,11 +579,6 @@ def main() -> int:
         if "config/workflow-tool-versions.env" in paths:
             fail(f"license-scan.yml {group} filter must not match the entire tool authority file")
 
-    conditional_contract_profile = (
-        "${{ (needs.changes.outputs.lightweight_only == 'true' && "
-        "needs.changes.outputs.design_docs_changed == 'true' && "
-        "needs.changes.outputs.validation_python_changed != 'true') && 'yaml' || 'ci' }}"
-    )
     node_count = python_count = gh_count = 0
     for path in workflow_paths:
         for job_name, job in (load(path).get("jobs") or {}).items():
