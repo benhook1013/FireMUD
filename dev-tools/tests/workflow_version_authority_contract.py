@@ -289,7 +289,7 @@ def main() -> int:
     def references(text):
         explicit_reference_pattern = re.compile(
             r"(?:^|[;&|()\s])(?:(?:/usr/bin/)?(?:bash|sh|dash|zsh|ksh|python|python3)"
-            r"(?:\s+-[A-Za-z0-9][A-Za-z0-9_-]*)*|source|\.)\s+"
+            r"(?:\s+-[A-Za-z0-9][A-Za-z0-9_-]*)*(?:\s+--)?|source|\.)\s+"
             r"(?P<quote>['\"])?(?:\./)?"
             r"(?P<path>(?:dev-tools|services)/[A-Za-z0-9_./-]+)"
             r"(?(quote)(?P=quote)|(?![A-Za-z0-9_./'\"-]))",
@@ -366,6 +366,25 @@ def main() -> int:
     def has_gh_consumer(expanded_text):
         return run_has_gh(expanded_text)
 
+    def validate_composite_steps(path, steps):
+        setup_py = setup_gh = False
+        for step in steps:
+            uses = str(step.get("uses", ""))
+            run = str(step.get("run", ""))
+            expanded_text = expand_text(run)
+            need = python_needs(expanded_text)
+            gh_consumer = has_gh_consumer(expanded_text)
+            setup_py |= uses == "./.github/actions/setup-python" or (
+                path.parent.name == "setup-python" and uses.startswith("actions/setup-python@")
+            )
+            setup_gh |= uses == "./.github/actions/setup-gh"
+            if uses.startswith("actions/setup-python@") and path.parent.name != "setup-python":
+                fail(f"{path}: bypasses setup-python wrapper")
+            if need is not None and not setup_py:
+                fail(f"{path}: Python consumer lacks setup")
+            if gh_consumer and not setup_gh:
+                fail(f"{path}: gh consumer lacks setup")
+
     if python_needs(expand_text("bash ./dev-tools/tests/dev-tools-readme-contract.sh")) == "smoke":
         fail("documentation/data references must not imply the smoke dependency profile")
     if python_needs(expand_text("bash ./services/game-session-service/websocket-login-look-smoke.sh")) != "smoke":
@@ -383,21 +402,28 @@ def main() -> int:
         if ignored.returncode != 0:
             fail("workflow authority fixtures must be ignored under dev-tools")
         helper = Path(helper_dir) / "extensionless-helper"
+        shebang_helper = Path(helper_dir) / "shebang-helper"
         suffix_helper = Path(helper_dir) / "other-suffix.bash"
         data = Path(helper_dir) / "extensionless-data"
         executable_data = Path(helper_dir) / "extensionless-executable-data"
         invoked = Path(helper_dir) / "extensionless-invoked"
         invoked_suffix = Path(helper_dir) / "invoked.bash"
         python_smoke_helper = Path(helper_dir) / "python-smoke-helper"
-        helper.write_text("#!/usr/bin/env bash\n# extensionless helper\n", encoding="utf-8")
+        composite_python_helper = Path(helper_dir) / "composite-python-helper"
+        composite_gh_helper = Path(helper_dir) / "composite-gh-helper"
+        helper.write_text("# option terminator helper\n", encoding="utf-8")
+        shebang_helper.write_text("#!/usr/bin/env bash\n# extensionless helper\n", encoding="utf-8")
         suffix_helper.write_text("#!/usr/bin/env bash\n# suffix helper\n", encoding="utf-8")
         data.write_text("extensionless data\n", encoding="utf-8")
         executable_data.write_text("extensionless executable data\n", encoding="utf-8")
         invoked.write_text("# explicit interpreter helper\n", encoding="utf-8")
         invoked_suffix.write_text("# explicit interpreter suffix helper\n", encoding="utf-8")
         python_smoke_helper.write_text("import websocket\n", encoding="utf-8")
+        composite_python_helper.write_text("python3 - <<'PY'\nimport websocket\nPY\n", encoding="utf-8")
+        composite_gh_helper.write_text("gh --version\n", encoding="utf-8")
         executable_data.chmod(0o755)
-        helper_reference = f"bash ./{helper.relative_to(root).as_posix()}"
+        helper_reference = f"bash -- ./{helper.relative_to(root).as_posix()}"
+        shebang_reference = f"bash ./{shebang_helper.relative_to(root).as_posix()}"
         suffix_reference = f"bash ./{suffix_helper.relative_to(root).as_posix()}"
         data_reference = f"documentation mentions ./{data.relative_to(root).as_posix()}"
         invoked_reference = f"bash ./{invoked.relative_to(root).as_posix()}"
@@ -406,14 +432,21 @@ def main() -> int:
         sourced_reference = f"source ./{invoked.relative_to(root).as_posix()}"
         dotted_reference = f". ./{invoked_suffix.relative_to(root).as_posix()}"
         quoted_invoked_reference = f"bash './{invoked.relative_to(root).as_posix()}'"
+        quoted_terminated_reference = f"bash -e -- './{invoked.relative_to(root).as_posix()}'"
         quoted_invoked_suffix_reference = f'python3 "./{invoked_suffix.relative_to(root).as_posix()}"'
         quoted_sourced_reference = f"source './{invoked.relative_to(root).as_posix()}'"
         quoted_dotted_reference = f'. "./{invoked_suffix.relative_to(root).as_posix()}"'
         mismatched_quote_reference = f"bash './{invoked.relative_to(root).as_posix()}\""
         executable_data_reference = f"bash ./{executable_data.relative_to(root).as_posix()}"
+        composite_python_reference = f"bash ./{composite_python_helper.relative_to(root).as_posix()}"
+        composite_gh_reference = f"bash ./{composite_gh_helper.relative_to(root).as_posix()}"
         if helper not in references(helper_reference):
+            fail("extensionless helper after an option terminator was not detected")
+        if "# option terminator helper" not in expand_text(helper_reference):
+            fail("extensionless helper after an option terminator was not expanded")
+        if shebang_helper not in references(shebang_reference):
             fail("extensionless helper with a shebang was not detected")
-        if "# extensionless helper" not in expand_text(helper_reference):
+        if "# extensionless helper" not in expand_text(shebang_reference):
             fail("extensionless helper with a shebang was not expanded")
         if suffix_helper not in references(suffix_reference):
             fail("helper with an unlisted suffix and a shebang was not detected")
@@ -429,6 +462,8 @@ def main() -> int:
             fail("invoked Python helper must retain the smoke dependency profile")
         if invoked not in references(quoted_invoked_reference):
             fail("quoted extensionless helper passed to bash was not detected")
+        if invoked not in references(quoted_terminated_reference):
+            fail("quoted extensionless helper after an option terminator was not detected")
         if invoked_suffix not in references(quoted_invoked_suffix_reference):
             fail("quoted helper with an unlisted suffix passed to Python was not detected")
         if invoked not in references(sourced_reference):
@@ -445,6 +480,30 @@ def main() -> int:
             fail("extensionless executable file was not detected")
         if "extensionless executable data" not in expand_text(executable_data_reference):
             fail("extensionless executable file was not expanded")
+
+        composite_fixture = root / ".github/actions/workflow-authority-fixture/action.yml"
+
+        def expect_composite_failure(steps, expected_message):
+            try:
+                validate_composite_steps(composite_fixture, steps)
+            except SystemExit as error:
+                if expected_message not in str(error):
+                    fail(f"composite fixture failed for an unexpected reason: {error}")
+            else:
+                fail(f"composite fixture unexpectedly passed: {expected_message}")
+
+        python_steps = [{"run": composite_python_reference}]
+        expect_composite_failure(python_steps, "Python consumer lacks setup")
+        validate_composite_steps(
+            composite_fixture,
+            [
+                {"uses": "./.github/actions/setup-python", "with": {"requirements": "smoke"}},
+                *python_steps,
+            ],
+        )
+        gh_steps = [{"run": composite_gh_reference}]
+        expect_composite_failure(gh_steps, "gh consumer lacks setup")
+        validate_composite_steps(composite_fixture, [{"uses": "./.github/actions/setup-gh"}, *gh_steps])
 
     workflow_paths = sorted((*workflows.glob("*.yml"), *workflows.glob("*.yaml")))
 
@@ -600,20 +659,7 @@ def main() -> int:
         fail("trusted publisher checkout requires contents: read")
 
     for path in sorted(actions.glob("*/action.yml")):
-        setup_py = setup_gh = False
-        for step in load(path).get("runs", {}).get("steps", []):
-            uses = str(step.get("uses", ""))
-            run = str(step.get("run", ""))
-            setup_py |= uses == "./.github/actions/setup-python" or (
-                path.parent.name == "setup-python" and uses.startswith("actions/setup-python@")
-            )
-            setup_gh |= uses == "./.github/actions/setup-gh"
-            if uses.startswith("actions/setup-python@") and path.parent.name != "setup-python":
-                fail(f"{path}: bypasses setup-python wrapper")
-            if "python3" in run and not setup_py:
-                fail(f"{path}: Python consumer lacks setup")
-            if run_has_gh(run) and not setup_gh:
-                fail(f"{path}: gh consumer lacks setup")
+        validate_composite_steps(path, load(path).get("runs", {}).get("steps", []))
 
     text = "\n".join(p.read_text() for p in workflow_paths)
     for forbidden in (
