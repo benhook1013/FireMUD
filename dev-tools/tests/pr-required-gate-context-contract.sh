@@ -3,9 +3,19 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ACTION="$ROOT_DIR/.github/actions/preserve-required-gate/action.yml"
+POLL_SCRIPT="$ROOT_DIR/.github/actions/preserve-required-gate/poll-required-gate.sh"
 
 [[ -f "$ACTION" ]] || {
   echo "required-gate preservation composite action is missing: $ACTION" >&2
+  exit 1
+}
+[[ -f "$POLL_SCRIPT" ]] || {
+  echo "required-gate preservation poll script is missing: $POLL_SCRIPT" >&2
+  exit 1
+}
+# shellcheck disable=SC2016 # Assert literal composite action runtime path.
+grep -Fxq '      run: bash "$GITHUB_ACTION_PATH/poll-required-gate.sh"' "$ACTION" || {
+  echo "required-gate action must invoke its checked-in poll script" >&2
   exit 1
 }
 grep -Fq 'using: composite' "$ACTION" || {
@@ -728,33 +738,7 @@ exit 0
 EOF
 chmod +x "$tmp_dir/gh" "$tmp_dir/sleep"
 
-action_script="$(awk '
-  /^      run: \|$/ {
-    if (found) {
-      ambiguous = 1
-    }
-    found = 1
-    capture = 1
-    next
-  }
-  capture {
-    if ($0 != "" && $0 !~ /^        /) {
-      capture = 0
-      next
-    }
-    line = $0
-    sub(/^        /, "", line)
-    print line
-  }
-  END {
-    if (!found || ambiguous) {
-      exit 1
-    }
-  }
-' "$ACTION")" || {
-  echo "required-gate action must contain exactly one composite run script" >&2
-  exit 1
-}
+action_script="$(<"$POLL_SCRIPT")"
 # shellcheck disable=SC2016 # Reject literal GitHub expression syntax in executable shell.
 if grep -Fq '${{' <<<"$action_script"; then
   echo "required-gate action run script must receive workflow context through env" >&2
@@ -805,7 +789,7 @@ run_action() {
   EXPECTED_WORKFLOW_NAME='CI — Validation' \
   EXPECTED_WORKFLOW_FILE=ci.yml \
   EXPECTED_WORKFLOW_PATH=.github/workflows/ci.yml \
-  bash -euo pipefail -c "$action_script"
+  bash "$POLL_SCRIPT"
 }
 
 sleep_until_poll_deadline_script="$(awk '
@@ -856,7 +840,7 @@ run_guard_action() {
   EXPECTED_WORKFLOW_NAME='CI — Validation' \
   EXPECTED_WORKFLOW_FILE=ci.yml \
   EXPECTED_WORKFLOW_PATH=.github/workflows/ci.yml \
-  bash -euo pipefail -c "$action_script" >"$output_file" 2>&1
+  bash "$POLL_SCRIPT" >"$output_file" 2>&1
 }
 
 for failure_mode in transient network rate-limit; do
