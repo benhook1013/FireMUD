@@ -402,9 +402,10 @@ def main() -> int:
             if need is not None:
                 if not setup_profiles:
                     fail(f"{path}: Python consumer lacks setup")
-                compatible_profiles = {"yaml", "ci"} if need == "yaml" else {need}
-                if not setup_profiles.intersection(compatible_profiles):
-                    fail(f"{path}: Python consumer lacks its pinned dependency profile")
+                if need != "none":
+                    compatible_profiles = {"yaml", "ci"} if need == "yaml" else {need}
+                    if not setup_profiles.intersection(compatible_profiles):
+                        fail(f"{path}: Python consumer lacks its pinned dependency profile")
             if gh_consumer and not setup_gh:
                 fail(f"{path}: gh consumer lacks setup")
 
@@ -433,6 +434,7 @@ def main() -> int:
         invoked_suffix = Path(helper_dir) / "invoked.bash"
         python_smoke_helper = Path(helper_dir) / "python-smoke-helper"
         composite_python_helper = Path(helper_dir) / "composite-python-helper"
+        composite_none_helper = Path(helper_dir) / "composite-none-helper"
         composite_gh_helper = Path(helper_dir) / "composite-gh-helper"
         helper.write_text("# option terminator helper\n", encoding="utf-8")
         shebang_helper.write_text("#!/usr/bin/env bash\n# extensionless helper\n", encoding="utf-8")
@@ -443,6 +445,7 @@ def main() -> int:
         invoked_suffix.write_text("# explicit interpreter suffix helper\n", encoding="utf-8")
         python_smoke_helper.write_text("import websocket\n", encoding="utf-8")
         composite_python_helper.write_text("python3 - <<'PY'\nimport websocket\nPY\n", encoding="utf-8")
+        composite_none_helper.write_text("python3 - <<'PY'\nprint('dependency free')\nPY\n", encoding="utf-8")
         composite_gh_helper.write_text("gh --version\n", encoding="utf-8")
         executable_data.chmod(0o755)
         helper_reference = f"bash -- ./{helper.relative_to(root).as_posix()}"
@@ -462,6 +465,7 @@ def main() -> int:
         mismatched_quote_reference = f"bash './{invoked.relative_to(root).as_posix()}\""
         executable_data_reference = f"bash ./{executable_data.relative_to(root).as_posix()}"
         composite_python_reference = f"bash ./{composite_python_helper.relative_to(root).as_posix()}"
+        composite_none_reference = f"bash ./{composite_none_helper.relative_to(root).as_posix()}"
         composite_gh_reference = f"bash ./{composite_gh_helper.relative_to(root).as_posix()}"
         if helper not in references(helper_reference):
             fail("extensionless helper after an option terminator was not detected")
@@ -530,6 +534,16 @@ def main() -> int:
                 {"uses": "./.github/actions/setup-python", "with": {"requirements": "none"}},
                 *python_steps,
             ],
+        )
+        none_steps = [{"run": composite_none_reference}]
+        expect_composite_failure(none_steps, "Python consumer lacks setup")
+        validate_composite_steps(
+            composite_fixture,
+            [{"uses": "./.github/actions/setup-python", "with": {"requirements": "smoke"}}, *none_steps],
+        )
+        validate_composite_steps(
+            composite_fixture,
+            [{"uses": "./.github/actions/setup-python", "with": {"requirements": "yaml"}}, *none_steps],
         )
         gh_steps = [{"run": composite_gh_reference}]
         expect_composite_failure(gh_steps, "gh consumer lacks setup")
