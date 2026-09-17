@@ -104,6 +104,7 @@ runs:
           local delay=15
           if (( delay > remaining )); then
             delay=${remaining}
+            echo "Polling delay bounded to ${delay}s by the deadline." >&2
           fi
           sleep "${delay}"
         }
@@ -273,6 +274,7 @@ runs:
                 [[ -z "${workflow_run_error}" ]] || printf '%s\n' "${workflow_run_error}" >&2
                 exit 1
               fi
+              workflow_run_cache["${workflow_run_id}"]="${workflow_run_json}"
             fi
             set +e
             workflow_run_identity_ok="$(jq -r \
@@ -315,10 +317,6 @@ runs:
               candidate_ambiguous=true
               continue
             fi
-            if [[ -z "${workflow_run_cache[${workflow_run_id}]:-}" ]]; then
-              workflow_run_cache["${workflow_run_id}"]="${workflow_run_json}"
-            fi
-
             job_json="${job_cache[${job_id}]:-}"
             job_is_pending=false
             job_was_fetched=false

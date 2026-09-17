@@ -938,6 +938,44 @@ class PrStatusReporterTest(unittest.TestCase):
                     report = self.reporter.build_report("owner/repo", 42)
             self.assertEqual(report["hosted_trigger"]["state"], "ambiguous")
             self.assertIn("invalid state", report["hosted_trigger"]["reason"])
+            self.assertEqual(report["hosted_trigger"]["validation_outcome"], "invalid")
+            self.assertEqual(
+                report["hosted_trigger"]["provider_reason"], "the captured Hosted review completed"
+            )
+
+    def test_malformed_trigger_state_is_distinct_from_provider_ambiguous_state(self) -> None:
+        malformed_checker = self.checker_payload(ok=True)
+        malformed_checker["trigger_state"] = self.trigger_state(
+            repository="", reason="the provider supplied a malformed trigger state"
+        )
+        malformed = self.reporter._hosted_trigger_evidence(
+            "owner/repo",
+            42,
+            True,
+            malformed_checker,
+            "0123456789abcdef0123456789abcdef01234567",
+        )
+
+        ambiguous_checker = self.checker_payload(ok=True)
+        ambiguous_checker["trigger_state"] = self.trigger_state(
+            state="ambiguous", reason="the provider could not attribute the response"
+        )
+        provider_ambiguous = self.reporter._hosted_trigger_evidence(
+            "owner/repo",
+            42,
+            True,
+            ambiguous_checker,
+            "0123456789abcdef0123456789abcdef01234567",
+        )
+
+        self.assertEqual(malformed["state"], "ambiguous")
+        self.assertIn("invalid repository", malformed["reason"])
+        self.assertEqual(malformed["validation_outcome"], "invalid")
+        self.assertEqual(malformed["provider_state"], "completed")
+        self.assertEqual(malformed["provider_reason"], "the provider supplied a malformed trigger state")
+        self.assertEqual(provider_ambiguous["state"], "ambiguous")
+        self.assertEqual(provider_ambiguous["reason"], "the provider could not attribute the response")
+        self.assertEqual(provider_ambiguous["validation_outcome"], "valid")
 
     def test_trigger_state_pr_number_requires_positive_non_bool_int(self) -> None:
         for invalid in (42.0, True):
@@ -1059,6 +1097,7 @@ class PrStatusReporterTest(unittest.TestCase):
             "reason=Hosted trigger evidence does not match the current GitHub PR head",
             rendered,
         )
+        self.assertEqual(report["hosted_trigger"]["validation_outcome"], "invalid")
 
     def test_non_completed_hosted_trigger_reason_is_visible_but_completed_reason_is_omitted(self) -> None:
         reason = "the Hosted review request is currently rate limited"

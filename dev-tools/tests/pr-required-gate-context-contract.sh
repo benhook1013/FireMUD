@@ -474,7 +474,8 @@ if [[ "$*" == *"/actions/runs/"* ]]; then
     pull_requests='null'
   elif [[ "${GH_SCENARIO:-}" == "other-pr-association" ]]; then
     pull_requests='[{"number":456}]'
-  elif [[ "${GH_SCENARIO:-}" == "cross-workflow-same-name" ]]; then
+  elif [[ "${GH_SCENARIO:-}" == "cross-workflow-same-name" ||
+    "${GH_SCENARIO:-}" == "duplicate-invalid-run-identity" ]]; then
     workflow_path='.github/workflows/other.yml'
     workflow_id=99
   elif [[ "${GH_SCENARIO:-}" == "run-path-ref-suffix" ]]; then
@@ -575,6 +576,9 @@ JSON
     ;;
   cross-workflow-same-name|fork-empty-association|dynamic-run-name|dynamic-run-name-fork-empty|wrong-run-name|wrong-job-workflow-name|empty-wrong-pr|empty-wrong-base|empty-wrong-head|empty-wrong-title|empty-malformed-association|other-pr-association)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    ;;
+  duplicate-invalid-run-identity)
+    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":201,"details_url":"https://github.com/example/firemud/actions/runs/200/job/201","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   run-path-ref-suffix|run-path-ref-suffix-plus|run-path-ref-suffix-at|malformed-run-path-ref-suffix)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
@@ -780,6 +784,36 @@ run_action() {
   bash -euo pipefail -c "$action_script"
 }
 
+sleep_until_poll_deadline_script="$(awk '
+  /^sleep_until_poll_deadline\(\) \{$/ { capture=1 }
+  capture {
+    print
+    if ($0 == "}") exit
+  }
+' <<<"$action_script")"
+[[ -n "$sleep_until_poll_deadline_script" ]] || {
+  echo "required-gate action must define its bounded polling sleep helper" >&2
+  exit 1
+}
+deadline_clamp_output="$tmp_dir/deadline-clamp-output"
+deadline_clamp_script="poll_deadline=1
+${sleep_until_poll_deadline_script}
+sleep_until_poll_deadline"
+PATH="$tmp_dir:$PATH" bash -euo pipefail -c "$deadline_clamp_script" >"$deadline_clamp_output" 2>&1
+grep -Fxq 'Polling delay bounded to 1s by the deadline.' "$deadline_clamp_output" || {
+  echo "required-gate action did not report a polling delay clamped by its deadline" >&2
+  exit 1
+}
+deadline_unclamped_output="$tmp_dir/deadline-unclamped-output"
+deadline_unclamped_script="poll_deadline=30
+${sleep_until_poll_deadline_script}
+sleep_until_poll_deadline"
+PATH="$tmp_dir:$PATH" bash -euo pipefail -c "$deadline_unclamped_script" >"$deadline_unclamped_output" 2>&1
+if grep -Fq 'Polling delay bounded' "$deadline_unclamped_output"; then
+  echo "required-gate action logged a polling delay that was not clamped" >&2
+  exit 1
+fi
+
 run_guard_action() {
   local output_file="$1"
   local event_name="$2"
@@ -857,6 +891,26 @@ set -e
 }
 grep -Fxq 'GitHub API returned malformed expected workflow identity; refusing to preserve.' "$workflow_identity_output" || {
   echo "required-gate action did not report the exact initial workflow identity mismatch message" >&2
+  exit 1
+}
+
+duplicate_run_identity_output="$tmp_dir/duplicate-run-identity-output"
+duplicate_run_call_counts="$tmp_dir/duplicate-run-call-counts"
+mkdir -p "$duplicate_run_call_counts"
+set +e
+run_action "$tmp_dir/count-duplicate-run-identity" none duplicate-invalid-run-identity "$duplicate_run_call_counts" >"$duplicate_run_identity_output" 2>&1
+duplicate_run_identity_status=$?
+set -e
+[[ "$duplicate_run_identity_status" -ne 0 ]] || {
+  echo "required-gate action accepted duplicate candidates with invalid workflow-run identity" >&2
+  exit 1
+}
+[[ "$(<"$duplicate_run_call_counts/runs-200")" == "1" ]] || {
+  echo "required-gate action refetched duplicate candidates' immutable workflow-run metadata" >&2
+  exit 1
+}
+grep -Fq 'Ambiguous prior' "$duplicate_run_identity_output" || {
+  echo "required-gate action did not fail closed for duplicate candidates with invalid workflow-run identity" >&2
   exit 1
 }
 

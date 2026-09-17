@@ -530,22 +530,45 @@ def _hosted_trigger_evidence(
             "available": False,
             "state": "unavailable",
             "reason": "no canonical durable Hosted trigger record is present",
+            "validation_outcome": "unavailable",
         }
     try:
         state = _validate_trigger_state(checker_payload, repo, pr_number)
     except ReportError as exc:
-        return {
+        provider_state = checker_payload.get("trigger_state")
+        evidence = {
             "available": True,
             "state": "ambiguous",
             "reason": str(exc),
+            "validation_outcome": "invalid",
         }
+        safe_state = (
+            provider_state.get("state")
+            if isinstance(provider_state, dict)
+            and isinstance(provider_state.get("state"), str)
+            and provider_state["state"] in TRIGGER_STATES
+            else None
+        )
+        safe_reason = (
+            provider_state.get("reason")
+            if isinstance(provider_state, dict)
+            and isinstance(provider_state.get("reason"), str)
+            and provider_state["reason"]
+            else None
+        )
+        if safe_state is not None:
+            evidence["provider_state"] = safe_state
+        if safe_reason is not None:
+            evidence["provider_reason"] = safe_reason
+        return evidence
     if state["current_head_sha"].casefold() != current_head.casefold():
         return {
             "available": True,
             "state": "ambiguous",
             "reason": "Hosted trigger evidence does not match the current GitHub PR head",
+            "validation_outcome": "invalid",
         }
-    return {**state, "available": True}
+    return {**state, "available": True, "validation_outcome": "valid"}
 
 
 def _checkpoint_summaries(checkpoints: list[dict[str, Any]]) -> dict[str, Any]:
