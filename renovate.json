@@ -32,7 +32,9 @@
       "matchStrings": ["# renovate-version: datasource=github-releases depName=rhysd/actionlint extractVersion=\\^v(?<version>.*)\\$\\nACTIONLINT_VERSION=(?<currentValue>\\S+)"],
       "datasourceTemplate": "github-releases",
       "depNameTemplate": "rhysd/actionlint",
-      "versioningTemplate": "semver"
+      "versioningTemplate": "semver",
+      "extractVersionTemplate": "^v(?<version>.*)$",
+      "currentValueTemplate": "{{{currentValue}}}"
     },
     {
       "customType": "regex",

@@ -31,15 +31,27 @@ set -euo pipefail
 if [[ "${FAKE_GH_FAIL:-}" == "1" ]]; then
   exit 42
 fi
+jq_expression=""
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "--jq" ]]; then
+    jq_expression="${2:-}"
+    break
+  fi
+  shift
+done
 printf '%s\n' "${FAKE_CHANGED_FILES:-}"
+if [[ "${jq_expression}" == *previous_filename* && -n "${FAKE_PREVIOUS_FILENAME:-}" ]]; then
+  printf '%s\n' "${FAKE_PREVIOUS_FILENAME}"
+fi
 EOF
 chmod 700 "$fixture_dir/gh"
 
 run_resolver() {
-  local files="$1" expected="$2" actual
+  local files="$1" expected="$2" previous_filename="${3:-}" actual
   actual="$(
     PATH="$fixture_dir:$PATH" \
     FAKE_CHANGED_FILES="$files" \
+    FAKE_PREVIOUS_FILENAME="$previous_filename" \
     GH_TOKEN=contract-token \
     GITHUB_REPOSITORY=benhook1013/FireMUD \
     bash "$resolver" requested-head-tag 2786 base-commit-tag
@@ -56,6 +68,9 @@ run_resolver '.github/actions/setup-python/action.yml' requested-head-tag
 run_resolver 'config/python/smoke-requirements.txt' requested-head-tag
 run_resolver 'dev-tools/hosted/shared/check-kubectl-version-skew.sh' base-commit-tag
 run_resolver 'services/game-logic-service/src/main/Foo.kt' requested-head-tag
+# A rename from a runtime-relevant path must keep the PR image selected even
+# when the current filename is no longer runtime-relevant.
+run_resolver 'design/architecture/new-name.md' requested-head-tag 'dev-tools/build-old-name.sh'
 
 if ! (
   PATH="$fixture_dir:$PATH" \

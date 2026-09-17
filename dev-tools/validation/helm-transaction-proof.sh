@@ -46,7 +46,15 @@ helm status "$release" --namespace "$namespace" >/dev/null
 test "$(kubectl -n "$namespace" get configmap "$release-marker" -o jsonpath='{.data.marker}')" = upgraded
 
 history_json="$(helm history "$release" --namespace "$namespace" --output json)"
-python3 -c 'import json,sys; assert len(json.load(sys.stdin)) >= 2' <<<"$history_json"
+python3 -c '
+import json
+import sys
+
+history = json.load(sys.stdin)
+if len(history) < 2:
+    print("Helm history must contain at least two revisions", file=sys.stderr)
+    raise SystemExit(1)
+' <<<"$history_json"
 helm rollback "$release" 1 --namespace "$namespace" --wait
 helm status "$release" --namespace "$namespace" >/dev/null
 test "$(kubectl -n "$namespace" get configmap "$release-marker" -o jsonpath='{.data.marker}')" = installed

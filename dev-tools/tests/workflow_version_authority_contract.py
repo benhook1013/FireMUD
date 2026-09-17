@@ -1242,6 +1242,7 @@ def main() -> int:
     version_only_specs = {
         "KUBECTL": "kubernetes/kubernetes",
         "HELM": "helm/helm",
+        "ACTIONLINT": "rhysd/actionlint",
     }
     attachment_specs = {
         "GH": ("cli/cli", "v{{{currentValue}}}", "^v(?<version>.*)$", "GH_LINUX_AMD64"),
@@ -1276,8 +1277,12 @@ def main() -> int:
         if len(managers) != 1:
             fail(f"Renovate must define exactly one version-only manager for {dep_name}")
         manager = managers[0]
-        if manager.get("versioningTemplate") != "semver" or manager.get("currentValueTemplate") != "{{{currentValue}}}":
-            fail(f"{dep_name} version-only manager must use semver and preserve the raw authority version")
+        if manager.get("versioningTemplate") != "semver":
+            fail(f"{dep_name} version-only manager must use semver")
+        if manager.get("extractVersionTemplate") != "^v(?<version>.*)$":
+            fail(f"{dep_name} version-only manager must strip the release tag prefix")
+        if manager.get("currentValueTemplate") != "{{{currentValue}}}":
+            fail(f"{dep_name} version-only manager must preserve the raw authority version")
         if "autoReplaceStringTemplate" in manager:
             fail(f"{dep_name} version-only manager must leave checksum repair to the updater")
         patterns = manager.get("matchStrings") or []

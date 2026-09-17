@@ -32,6 +32,18 @@ script = (root / "dev-tools/validation/helm-transaction-proof.sh").read_text()
 for command in ("helm install", "helm upgrade", "helm history", "helm rollback", "helm status"):
     if command not in script:
         raise SystemExit(f"Helm proof script must exercise {command}")
+if "assert " in script:
+    raise SystemExit("Helm proof history validation must not use Python assert")
+for required_history_check_fragment in (
+    "history = json.load(sys.stdin)",
+    "if len(history) < 2:",
+    'print(\"Helm history must contain at least two revisions\", file=sys.stderr)',
+    "raise SystemExit(1)",
+):
+    if required_history_check_fragment not in script:
+        raise SystemExit(
+            f"Helm proof history validation must fail clearly without assertions: {required_history_check_fragment}"
+        )
 for required_cleanup_fragment in (
     "cleanup() {",
     'helm uninstall "$release" --namespace "$namespace" --wait >/dev/null 2>&1 || true',

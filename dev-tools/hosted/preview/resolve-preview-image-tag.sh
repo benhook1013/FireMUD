@@ -48,7 +48,7 @@ if [[ -n "${pr_number}" && -n "${base_image_tag}" ]]; then
 
   if ! changed_files_output="$(
     gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}/files?per_page=100" --paginate \
-      --jq '.[].filename'
+      --jq '.[] | .filename, (.previous_filename // empty)'
   )"; then
     echo "unable to read changed files for pull request ${pr_number}; refusing to select base images" >&2
     exit 1

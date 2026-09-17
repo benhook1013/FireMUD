@@ -28,8 +28,10 @@ configuration:
 For Google Cloud Storage set `provider: gcp` and adjust the bucket name accordingly.
 
 The repository includes a `verify-backups-cronjob.yaml` manifest that runs
-`dev-tools/backups/verify-backups.sh` daily. Production Terraform modules deploy this
-CronJob automatically, but you can apply it manually in other environments:
+`dev-tools/backups/verify-backups.sh` daily. A production Terraform deployment path for
+this CronJob is planned but is not currently deployed automatically; production
+deployment remains governed by the production overlay and its promotion evidence. You
+can apply it manually in other environments:
 
 ```bash
 kubectl apply -f verify-backups-cronjob.yaml -n firemud
