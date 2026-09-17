@@ -327,6 +327,18 @@ def main() -> int:
             workflow_expansion_cache[text] = "\n".join(helper_text(text))
         return workflow_expansion_cache[text]
 
+    def setup_python_profile(path, step, *, allow_conditional=False):
+        with_input = step.get("with", {})
+        if not isinstance(with_input, dict):
+            fail(f"{path}: setup-python with input must be a mapping")
+        profile = with_input.get("requirements", "none")
+        valid_profiles = {"yaml", "ci", "smoke", "docs", "none"}
+        if allow_conditional:
+            valid_profiles.add(conditional_contract_profile)
+        if not isinstance(profile, str) or profile not in valid_profiles:
+            fail(f"{path}: invalid Python dependency profile")
+        return profile
+
     def composite_python_profile(uses):
         if not uses.startswith("./.github/actions/"):
             return None
@@ -337,13 +349,7 @@ def main() -> int:
         for step in action.get("runs", {}).get("steps", []):
             if not isinstance(step, dict) or step.get("uses") != "./.github/actions/setup-python":
                 continue
-            with_input = step.get("with", {})
-            if not isinstance(with_input, dict):
-                fail(f"{action_path}: setup-python with input must be a mapping")
-            profile = with_input.get("requirements", "none")
-            if not isinstance(profile, str) or profile not in {"yaml", "ci", "smoke", "docs", "none"}:
-                fail(f"{action_path}: invalid Python dependency profile")
-            return profile
+            return setup_python_profile(action_path, step)
         return None
 
     for composite in (
@@ -381,19 +387,7 @@ def main() -> int:
             need = python_needs(expanded_text)
             gh_consumer = has_gh_consumer(expanded_text)
             if uses == "./.github/actions/setup-python":
-                with_input = step.get("with", {})
-                if not isinstance(with_input, dict):
-                    fail(f"{path}: setup-python with input must be a mapping")
-                setup_profile = with_input.get("requirements", "none")
-                if not isinstance(setup_profile, str) or setup_profile not in {
-                    "yaml",
-                    "ci",
-                    "smoke",
-                    "docs",
-                    "none",
-                }:
-                    fail(f"{path}: invalid Python dependency profile")
-                setup_profiles.add(setup_profile)
+                setup_profiles.add(setup_python_profile(path, step))
             elif path.parent.name == "setup-python" and uses.startswith("actions/setup-python@"):
                 setup_profiles.add("none")
             setup_gh |= uses == "./.github/actions/setup-gh"
@@ -617,13 +611,12 @@ def main() -> int:
                     if not checkout:
                         fail(f"{path.name}:{job_name}: Python setup before checkout")
                     py = True
-                    selected_profile = step.get("with", {}).get("requirements", "none")
+                    selected_profile = setup_python_profile(
+                        f"{path.name}:{job_name}",
+                        step,
+                        allow_conditional=path.name == "ci.yml" and job_name == "dev-tool-contract-checks",
+                    )
                     python_profiles.add(selected_profile)
-                    valid_profiles = {"none", "yaml", "ci", "smoke", "docs"}
-                    if path.name == "ci.yml" and job_name == "dev-tool-contract-checks":
-                        valid_profiles.add(conditional_contract_profile)
-                    if selected_profile not in valid_profiles:
-                        fail(f"{path.name}:{job_name}: invalid Python dependency profile")
                 composite_profile = composite_python_profile(uses)
                 if composite_profile is not None:
                     py = True
