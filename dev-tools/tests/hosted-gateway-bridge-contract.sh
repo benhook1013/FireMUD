@@ -83,6 +83,66 @@ helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
   --namespace pr-123 \
   >"$RENDERED"
 
+python3 - "$RENDERED" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+documents = [
+    document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+gateway = next(
+    document
+    for document in documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "spring-cloud-gateway"
+)
+container = gateway["spec"]["template"]["spec"]["containers"][0]
+expected_env = [
+    {"name": "SPRING_PROFILES_ACTIVE", "value": "prod"},
+    {"name": "SPRING_FLYWAY_TABLE", "value": "flyway_schema_history_gateway"},
+    {"name": "SERVICE_SCHEMA", "value": "gateway"},
+    {"name": "FIREMUD_GRPC_CERT_CHAIN_PATH", "value": "/tls/client.crt"},
+    {"name": "FIREMUD_GRPC_PRIVATE_KEY_PATH", "value": "/tls/client.key"},
+    {"name": "FIREMUD_GRPC_CA_CERT_PATH", "value": "/tls/ca.crt"},
+    {"name": "FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED", "value": "true"},
+    {"name": "FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS", "value": "0.0.0.0"},
+    {"name": "FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT", "value": "8443"},
+    {
+        "name": "FIREMUD_GATEWAY_TCP_PROXY_TLS_CERT_CHAIN_PATH",
+        "value": "/gateway-ws-server-tls/tls.crt",
+    },
+    {
+        "name": "FIREMUD_GATEWAY_TCP_PROXY_TLS_PRIVATE_KEY_PATH",
+        "value": "/gateway-ws-server-tls/tls.key",
+    },
+    {
+        "name": "FIREMUD_GATEWAY_TCP_PROXY_TLS_CLIENT_CA_PATH",
+        "value": "/gateway-ws-server-tls/ca.crt",
+    },
+    {"name": "FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT", "value": "pr-preview"},
+    {"name": "FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE", "value": "production_uri"},
+    {
+        "name": "FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN",
+        "value": "spiffe://firemud/ns/pr-123/sa/tcp-proxy-service",
+    },
+]
+if container.get("env") != expected_env:
+    raise SystemExit(
+        f"Gateway rendered an unexpected exact env contract: {container.get('env')}"
+    )
+if container.get("envFrom") != [
+    {"configMapRef": {"name": "firemud-config"}},
+    {"secretRef": {"name": "firemud-secret"}},
+]:
+    raise SystemExit(
+        f"Gateway rendered an unexpected exact envFrom contract: {container.get('envFrom')}"
+    )
+PY
+
 for collision in \
   "tcp-proxy-service|TCP_PROXY_TLS_ENABLED|Telnet TLS" \
   "spring-cloud-gateway|FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT|Gateway WebSocket server TLS" \
@@ -348,6 +408,67 @@ def proxy_egress_destinations(policy):
 
 enabled = policies(sys.argv[1])
 disabled = policies(sys.argv[2])
+expected_gateway_egress = {
+    "podSelector": {"matchLabels": {"app": "spring-cloud-gateway"}},
+    "policyTypes": ["Egress"],
+    "egress": [
+        {
+            "to": [
+                {
+                    "namespaceSelector": {
+                        "matchLabels": {
+                            "kubernetes.io/metadata.name": "kube-system"
+                        }
+                    },
+                    "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+                }
+            ],
+            "ports": [
+                {"protocol": "UDP", "port": 53},
+                {"protocol": "TCP", "port": 53},
+            ],
+        },
+        {
+            "to": [
+                {
+                    "podSelector": {
+                        "matchExpressions": [
+                            {
+                                "key": "app",
+                                "operator": "In",
+                                "values": [
+                                    "account-service",
+                                    "game-design-service",
+                                    "game-session-service",
+                                    "logging-admin-service",
+                                    "social-groups-service",
+                                ],
+                            }
+                        ]
+                    }
+                }
+            ],
+            "ports": [{"protocol": "TCP", "port": 8080}],
+        },
+        {
+            "to": [{"podSelector": {"matchLabels": {"app": "redis-cache"}}}],
+            "ports": [{"protocol": "TCP", "port": 6379}],
+        },
+        {
+            "to": [{"podSelector": {"matchLabels": {"app": "otel-collector"}}}],
+            "ports": [{"protocol": "TCP", "port": 4317}],
+        },
+    ],
+}
+for mode, rendered in (("enabled", enabled), ("disabled", disabled)):
+    gateway_egress = rendered.get("spring-cloud-gateway-egress")
+    if gateway_egress is None:
+        raise SystemExit(f"{mode} render omitted the Gateway default-deny egress policy")
+    if gateway_egress.get("spec") != expected_gateway_egress:
+        raise SystemExit(
+            f"{mode} render widened or changed the Gateway egress contract: "
+            f"{gateway_egress.get('spec')}"
+        )
 required_base_egress = {
     ("kube-dns", (53, 53)),
     ("game-session-service", (6565,)),

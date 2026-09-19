@@ -4022,11 +4022,17 @@ for description, documents in mutations.items():
 
 cleaned_config = clean_config_map(
     {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
         "metadata": {"name": "firemud-config"},
-        "data": {"SAFE_VALUE": "retained", "API_TOKEN": "removed"},
+        "data": validator["_trusted_hosted_shared_config"](),
     }
 )
-assert cleaned_config["data"] == {"SAFE_VALUE": "retained"}
+assert cleaned_config["data"] == {
+    key: value
+    for key, value in validator["_trusted_hosted_shared_config"]().items()
+    if key not in validator["HOSTED_REDACTED_CONFIG_KEYS"]
+}
 for malformed_data in (["not", "a", "mapping"], "not-a-mapping"):
     try:
         clean_config_map(
