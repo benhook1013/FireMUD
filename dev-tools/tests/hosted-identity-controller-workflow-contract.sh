@@ -837,6 +837,14 @@ publisher_script = next(
     for step in publisher_steps
     if step.get("name") == "Publish fixed PR image tags"
 )
+backup_publish_run = next(
+    step["run"]
+    for step in publisher_steps
+    if step.get("name") == "Publish fixed PR backup verifier image"
+)
+assert "pr-backup-verifier-image.txt" in backup_publish_run
+assert 'ghcr.io/benhook1013/backup-verifier:${IMAGE_TAG}' in backup_publish_run
+assert "docker push \"$backup_image\"" in backup_publish_run
 missing_image_check = 'if ! docker image inspect "$image" >/dev/null 2>&1; then'
 assert 'service_manifest=/tmp/pr-runtime-images/pr-runtime-services.txt' in publisher_script
 assert 'declare -A seen_services=()' in publisher_script

@@ -31,6 +31,10 @@ This directory contains FireMUD backup tooling for three different lanes:
   - It does not prove immutable lineage, artifact readability, restore-tool compatibility, or player-facing readiness.
   - Used by the manual backup/restore workflow as existence/reachability evidence only.
 
+- `smoke-backup-verifier-image.sh`
+  - Runs the published backup-verifier image's focused CI smoke: Bash, AWS CLI, the pinned Velero CLI, verifier-script syntax, and non-root execution.
+  - Local Docker is optional for this repository check; the image build and smoke run in the runtime-image CI jobs.
+
 ## Choosing The Right Script
 
 - Use `backup-db.sh` for a quick local PostgreSQL snapshot before a restore or experiment.
