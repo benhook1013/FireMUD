@@ -140,6 +140,26 @@ grep -Fq 'unable to parse base-image workflow' "$fixture_dir/malformed-workflow-
   exit 1
 }
 
+sleep_zero_calls="$fixture_dir/base-image-sleep-zero-calls"
+if (
+  PATH="$fixture_dir:$PATH" \
+  FAKE_DOCKER_CALLS="$sleep_zero_calls" \
+  HOSTED_BASE_IMAGE_WAIT_TIMEOUT_SECONDS=1 \
+  HOSTED_BASE_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  bash "$base_image_waiter" "$base_sha"
+) >"$fixture_dir/base-image-sleep-zero-output" 2>"$fixture_dir/base-image-sleep-zero-error"; then
+  echo "base-image waiter must reject a zero polling sleep" >&2
+  exit 1
+fi
+grep -Fq 'sleep value must be a positive integer' "$fixture_dir/base-image-sleep-zero-error" || {
+  echo "base-image waiter did not explain the zero polling sleep" >&2
+  exit 1
+}
+[[ ! -e "$sleep_zero_calls" ]] || {
+  echo "base-image waiter probed images after rejecting a zero polling sleep" >&2
+  exit 1
+}
+
 expected_base_services=(
   account-service
   automation-scripting-service
@@ -157,8 +177,8 @@ expected_base_services=(
 success_calls="$fixture_dir/base-image-success-calls"
 PATH="$fixture_dir:$PATH" \
   FAKE_DOCKER_CALLS="$success_calls" \
-  HOSTED_BASE_IMAGE_WAIT_TIMEOUT_SECONDS=0 \
-  HOSTED_BASE_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  HOSTED_BASE_IMAGE_WAIT_TIMEOUT_SECONDS=5 \
+  HOSTED_BASE_IMAGE_WAIT_SLEEP_SECONDS=1 \
   bash "$base_image_waiter" "$base_sha" >"$fixture_dir/base-image-success-output"
 [[ "$(wc -l < "$success_calls")" -eq "${#expected_base_services[@]}" ]] || {
   echo "base-image waiter did not check every docker-images.yml service" >&2
@@ -176,8 +196,8 @@ if (
   PATH="$fixture_dir:$PATH" \
   FAKE_DOCKER_CALLS="$timeout_calls" \
   FAKE_REGISTRY_MODE=missing \
-  HOSTED_BASE_IMAGE_WAIT_TIMEOUT_SECONDS=0 \
-  HOSTED_BASE_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  HOSTED_BASE_IMAGE_WAIT_TIMEOUT_SECONDS=2 \
+  HOSTED_BASE_IMAGE_WAIT_SLEEP_SECONDS=2 \
   bash "$base_image_waiter" "$base_sha"
 ) >"$fixture_dir/base-image-timeout-output" 2>"$fixture_dir/base-image-timeout-error"; then
   echo "base-image waiter must fail when required registry images remain unavailable" >&2
@@ -192,6 +212,27 @@ grep -Fq 'Timed out waiting for base runtime images' "$fixture_dir/base-image-ti
   exit 1
 }
 
+zero_timeout_calls="$fixture_dir/base-image-zero-timeout-calls"
+if (
+  PATH="$fixture_dir:$PATH" \
+  FAKE_DOCKER_CALLS="$zero_timeout_calls" \
+  FAKE_REGISTRY_MODE=missing \
+  HOSTED_BASE_IMAGE_WAIT_TIMEOUT_SECONDS=0 \
+  HOSTED_BASE_IMAGE_WAIT_SLEEP_SECONDS=1 \
+  bash "$base_image_waiter" "$base_sha"
+) >"$fixture_dir/base-image-zero-timeout-output" 2>"$fixture_dir/base-image-zero-timeout-error"; then
+  echo "base-image waiter must fail immediately for a zero global timeout" >&2
+  exit 1
+fi
+grep -Fq 'Timed out waiting for base runtime images' "$fixture_dir/base-image-zero-timeout-error" || {
+  echo "base-image waiter did not report its zero global timeout" >&2
+  exit 1
+}
+[[ ! -e "$zero_timeout_calls" ]] || {
+  echo "base-image waiter probed images after a zero global timeout" >&2
+  exit 1
+}
+
 hang_calls="$fixture_dir/base-image-hang-calls"
 hang_marker="$fixture_dir/base-image-hang-marker"
 if (
@@ -199,9 +240,9 @@ if (
   FAKE_DOCKER_CALLS="$hang_calls" \
   FAKE_DOCKER_HANG_MARKER="$hang_marker" \
   FAKE_REGISTRY_MODE=hang-first \
-  HOSTED_BASE_IMAGE_WAIT_TIMEOUT_SECONDS=0 \
-  HOSTED_BASE_IMAGE_WAIT_SLEEP_SECONDS=0 \
-  HOSTED_BASE_IMAGE_PROBE_TIMEOUT_SECONDS=1 \
+  HOSTED_BASE_IMAGE_WAIT_TIMEOUT_SECONDS=1 \
+  HOSTED_BASE_IMAGE_WAIT_SLEEP_SECONDS=1 \
+  HOSTED_BASE_IMAGE_PROBE_TIMEOUT_SECONDS=30 \
   bash "$base_image_waiter" "$base_sha"
 ) >"$fixture_dir/base-image-hang-output" 2>"$fixture_dir/base-image-hang-error"; then
   echo "base-image waiter must fail closed when a registry probe hangs" >&2
@@ -211,8 +252,8 @@ grep -Fq 'Timed out waiting for base runtime images' "$fixture_dir/base-image-ha
   echo "base-image waiter did not report the hanging probe timeout" >&2
   exit 1
 }
-[[ "$(wc -l < "$hang_calls")" -eq "${#expected_base_services[@]}" ]] || {
-  echo "base-image hanging-probe path did not check every docker-images.yml service" >&2
+[[ "$(wc -l < "$hang_calls")" -eq 1 ]] || {
+  echo "base-image hanging-probe path should stop after the global deadline" >&2
   exit 1
 }
 

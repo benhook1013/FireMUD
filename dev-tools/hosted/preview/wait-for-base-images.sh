@@ -78,24 +78,48 @@ if [[ ! "$timeout_seconds" =~ ^[0-9]+$ ]] || [[ ! "$sleep_seconds" =~ ^[0-9]+$ ]
   echo "base-image wait timeout and sleep values must be non-negative integers" >&2
   exit 1
 fi
+if ((sleep_seconds == 0)); then
+  echo "base-image wait sleep value must be a positive integer" >&2
+  exit 1
+fi
 if [[ ! "$registry_probe_timeout_seconds" =~ ^[1-9][0-9]*$ ]]; then
   echo "base-image registry probe timeout must be a positive integer" >&2
   exit 1
 fi
 
+if ((timeout_seconds == 0)); then
+  printf 'Timed out waiting for base runtime images for %s after 0s; missing services: %s\n' \
+    "$base_sha" "${services[*]}" >&2
+  exit 1
+fi
+
 start_epoch="${SECONDS}"
-deadline=$((SECONDS + timeout_seconds))
+deadline=$((start_epoch + timeout_seconds))
 while :; do
   missing_services=()
-  for service in "${services[@]}"; do
+  sweep_completed=true
+  for ((service_index = 0; service_index < ${#services[@]}; service_index++)); do
+    service="${services[$service_index]}"
     image="ghcr.io/benhook1013/${service}:${base_sha}"
-    if ! timeout --signal=KILL "${registry_probe_timeout_seconds}s" \
+    remaining_seconds=$((deadline - SECONDS))
+    if ((remaining_seconds <= 0)); then
+      sweep_completed=false
+      for ((remaining_index = service_index; remaining_index < ${#services[@]}; remaining_index++)); do
+        missing_services+=("${services[$remaining_index]}")
+      done
+      break
+    fi
+    probe_timeout_seconds="$registry_probe_timeout_seconds"
+    if ((probe_timeout_seconds > remaining_seconds)); then
+      probe_timeout_seconds="$remaining_seconds"
+    fi
+    if ! timeout --signal=KILL "${probe_timeout_seconds}s" \
       docker manifest inspect "$image" >/dev/null 2>&1; then
       missing_services+=("$service")
     fi
   done
 
-  if ((${#missing_services[@]} == 0)); then
+  if [[ "$sweep_completed" == true ]] && ((${#missing_services[@]} == 0)); then
     printf 'All %s base runtime images are available for %s after %ss.\n' \
       "${#services[@]}" "$base_sha" "$((SECONDS - start_epoch))"
     exit 0
@@ -109,5 +133,15 @@ while :; do
 
   printf 'Waiting for base runtime images for %s after %ss; missing services: %s\n' \
     "$base_sha" "$((SECONDS - start_epoch))" "${missing_services[*]}"
-  sleep "$sleep_seconds"
+  remaining_seconds=$((deadline - SECONDS))
+  if ((remaining_seconds <= 0)); then
+    printf 'Timed out waiting for base runtime images for %s after %ss; missing services: %s\n' \
+      "$base_sha" "$((SECONDS - start_epoch))" "${missing_services[*]}" >&2
+    exit 1
+  fi
+  sleep_duration="$sleep_seconds"
+  if ((sleep_duration > remaining_seconds)); then
+    sleep_duration="$remaining_seconds"
+  fi
+  sleep "$sleep_duration"
 done
