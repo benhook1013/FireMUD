@@ -6,9 +6,11 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PluginVersionStatusEventDto;
@@ -19,9 +21,12 @@ import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.PluginVersionStatusEvent;
+import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
 import net.firedevops.firemud.gamedesign.entity.PublishedPluginVersion;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.mapper.VersionMapper;
+import net.firedevops.firemud.gamedesign.model.PublishAttemptStatus;
+import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
 import net.firedevops.firemud.gamedesign.model.PublishParticipantKey;
 import net.firedevops.firemud.gamedesign.model.PublishType;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
@@ -111,36 +116,177 @@ public class VersionServiceImpl implements VersionService {
   }
 
   @Override
-  @Transactional
   @Timed(value = "gamedesign.version.publish")
   public VersionDto publishVersion(String tenantId, String notes, String publishRequestId) {
     logger.info("Publishing version for tenant {}", tenantId);
-    requireText(publishRequestId, "publishRequestId");
+    PublicationDigestRequestBinding.validatePublicationIdentity(tenantId, publishRequestId);
     if (temporalPublishOrchestrator.isPresent()) {
       return temporalPublishOrchestrator
           .get()
           .publishFullVersion(tenantId, notes, publishRequestId);
     }
     return publishCommandService.publishFullVersion(
-        tenantId, notes, TemporalVersionPublishOrchestrator.workflowId(tenantId, publishRequestId));
+        tenantId,
+        notes,
+        publishRequestId,
+        TemporalVersionPublishOrchestrator.workflowId(tenantId, publishRequestId));
   }
 
   @Override
-  @Transactional
   @Timed(value = "gamedesign.version.publishScriptPatch")
   public VersionDto publishScriptPatchVersion(
-      String tenantId, Long baseVersionId, String scriptPatchVersion, String notes) {
+      String tenantId,
+      Long baseVersionId,
+      String scriptPatchVersion,
+      String notes,
+      String publishRequestId) {
     logger.info(
         "Publishing script patch {} for tenant {} base {}",
         scriptPatchVersion,
         tenantId,
         baseVersionId);
-    Game game =
-        Optional.ofNullable(gameRepository.findByTenantIdForUpdate(tenantId))
-            .orElseThrow(() -> new IllegalArgumentException("game not found"));
+    PublicationDigestRequestBinding patchBinding =
+        PublicationDigestRequestBinding.patch(
+            tenantId,
+            baseVersionId == null ? null : String.valueOf(baseVersionId),
+            scriptPatchVersion,
+            publishRequestId);
+    String publishWorkflowId = patchBinding.derivedWorkflowIdentity();
+    ScriptPatchReservation reservation;
+    try {
+      reservation =
+          publishAttemptService.executeScriptPatchTransaction(
+              () ->
+                  reserveScriptPatch(
+                      patchBinding, tenantId, baseVersionId, scriptPatchVersion, notes));
+    } catch (PublishAttemptService.ScriptPatchTransactionException ex) {
+      throw ex.causeException();
+    }
+    if (reservation.status() == PublishAttemptStatus.SUCCEEDED) {
+      return reservation.versionDto();
+    }
+    if (reservation.status() == PublishAttemptStatus.FAILED) {
+      throw replayFailedScriptPatch(reservation.failureCode(), reservation.failureMessage());
+    }
+
+    boolean finalizationStarted = false;
+    try {
+      List<PublishParticipantDigestDto> participantDigests =
+          publishGateService.collectScriptPatchParticipantDigests(
+              reservation.versionDto(), patchBinding.publishRequestId(), publishWorkflowId);
+      publishGateService.assertGatePassed(reservation.versionDto(), participantDigests);
+      recordedParticipantDigestService.assertMatchesRecordedDigests(
+          tenantId, PublishType.SCRIPT_PATCH, participantDigests);
+      runSafely(
+          "notify script patch version update",
+          () -> scriptingClient.notifyScriptVersionUpdate(tenantId, scriptPatchVersion, List.of()));
+
+      finalizationStarted = true;
+      ScriptPatchFinalization finalization =
+          publishAttemptService.executeScriptPatchTransaction(
+              () -> finalizeScriptPatch(patchBinding, reservation, participantDigests, tenantId));
+      if (finalization.status() == PublishAttemptStatus.SUCCEEDED) {
+        return finalization.versionDto();
+      }
+      if (finalization.status() == PublishAttemptStatus.FAILED) {
+        throw replayFailedScriptPatch(finalization.failureCode(), finalization.failureMessage());
+      }
+      throw new IllegalStateException(
+          "PUBLISH_ATTEMPT_INCONSISTENT: finalization remained pending");
+    } catch (RuntimeException ex) {
+      if (finalizationStarted
+          && !(ex instanceof PublishAttemptService.ScriptPatchTransactionException)) {
+        // A transaction-manager failure after the callback returned is ambiguous. Leave the
+        // durable PENDING reservation for reconciliation instead of guessing whether cleanup is
+        // safe.
+        throw ex;
+      }
+      RuntimeException operationFailure =
+          ex instanceof PublishAttemptService.ScriptPatchTransactionException transactionFailure
+              ? transactionFailure.causeException()
+              : ex;
+      try {
+        ScriptPatchFinalization failure =
+            publishAttemptService.executeScriptPatchTransaction(
+                () ->
+                    failScriptPatch(
+                        patchBinding,
+                        reservation,
+                        publishFailureCode(operationFailure),
+                        publishFailureMessage(operationFailure)));
+        if (failure.status() == PublishAttemptStatus.SUCCEEDED) {
+          return failure.versionDto();
+        }
+      } catch (PublishAttemptService.ScriptPatchTransactionException cleanupFailure) {
+        RuntimeException cleanupOperationFailure = cleanupFailure.causeException();
+        cleanupOperationFailure.addSuppressed(operationFailure);
+        throw cleanupOperationFailure;
+      } catch (RuntimeException cleanupFailure) {
+        cleanupFailure.addSuppressed(operationFailure);
+        throw cleanupFailure;
+      }
+      throw operationFailure;
+    }
+  }
+
+  private ScriptPatchReservation reserveScriptPatch(
+      PublicationDigestRequestBinding patchBinding,
+      String tenantId,
+      Long baseVersionId,
+      String scriptPatchVersion,
+      String notes) {
+    Optional<Game> game = Optional.ofNullable(gameRepository.findByTenantIdForUpdate(tenantId));
+    if (game.isEmpty()) {
+      throw new IllegalArgumentException("game not found");
+    }
+    String publishWorkflowId = patchBinding.derivedWorkflowIdentity();
+    PublishAttempt existingAttempt =
+        publishAttemptService.findByPublishWorkflowId(publishWorkflowId).orElse(null);
+    if (existingAttempt != null) {
+      validateExistingScriptPatchAttempt(
+          existingAttempt, patchBinding, tenantId, baseVersionId, scriptPatchVersion);
+      if (existingAttempt.getStatus() == PublishAttemptStatus.SUCCEEDED) {
+        Version publishedVersion = requireAttemptVersion(existingAttempt, patchBinding);
+        if (publishedVersion.getVersionState() != VersionLifecycleState.PUBLISHED) {
+          throw new IllegalStateException(
+              "PUBLISH_ATTEMPT_INCONSISTENT: succeeded attempt does not reference a published version");
+        }
+        return new ScriptPatchReservation(
+            publishWorkflowId,
+            existingAttempt.getVersionId(),
+            existingAttempt.getStatus(),
+            versionMapper.toDto(publishedVersion),
+            existingAttempt.getFailureCode(),
+            existingAttempt.getFailureMessage());
+      }
+      if (existingAttempt.getStatus() == PublishAttemptStatus.FAILED) {
+        return new ScriptPatchReservation(
+            publishWorkflowId,
+            existingAttempt.getVersionId(),
+            existingAttempt.getStatus(),
+            null,
+            existingAttempt.getFailureCode(),
+            existingAttempt.getFailureMessage());
+      }
+      if (existingAttempt.getStatus() != PublishAttemptStatus.PENDING) {
+        throw new IllegalStateException("PUBLISH_ATTEMPT_INCONSISTENT: unknown attempt status");
+      }
+      Version pendingVersion = requireAttemptVersion(existingAttempt, patchBinding);
+      if (pendingVersion.getVersionState() != VersionLifecycleState.DRAFT) {
+        throw new IllegalStateException(
+            "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED: pending attempt does not reference a draft version");
+      }
+      return new ScriptPatchReservation(
+          publishWorkflowId,
+          pendingVersion.getId(),
+          existingAttempt.getStatus(),
+          versionMapper.toDto(pendingVersion),
+          null,
+          null);
+    }
 
     Version version = new Version();
-    version.setTenantId(game.getTenantId());
+    version.setTenantId(game.get().getTenantId());
     version.setNotes(notes);
     version.setVersionNumber(calculateNextNumber(tenantId));
     version.setVersionState(VersionLifecycleState.DRAFT);
@@ -149,36 +295,154 @@ public class VersionServiceImpl implements VersionService {
     version.setBaseVersionId(baseVersionId);
     version.setScriptOnly(true);
     version.setUpdatedAt(LocalDateTime.now());
-
     Version saved = versionRepository.save(version);
     VersionDto dto = versionMapper.toDto(saved);
-    String publishWorkflowId = UUID.randomUUID().toString();
-    publishAttemptService.createAttempt(dto, PublishType.SCRIPT_PATCH, publishWorkflowId);
+    publishAttemptService.createScriptPatchAttempt(
+        dto, publishWorkflowId, baseVersionId, patchBinding.requestDigest());
+    return new ScriptPatchReservation(
+        publishWorkflowId, saved.getId(), PublishAttemptStatus.PENDING, dto, null, null);
+  }
+
+  private ScriptPatchFinalization finalizeScriptPatch(
+      PublicationDigestRequestBinding patchBinding,
+      ScriptPatchReservation reservation,
+      List<PublishParticipantDigestDto> participantDigests,
+      String tenantId) {
+    if (gameRepository.findByTenantIdForUpdate(tenantId) == null) {
+      throw new IllegalArgumentException("game not found");
+    }
+    PublishAttempt attempt =
+        publishAttemptService
+            .findByPublishWorkflowId(reservation.publishWorkflowId())
+            .orElseThrow(() -> new IllegalStateException("publish attempt not found"));
+    if (attempt.getStatus() == PublishAttemptStatus.SUCCEEDED) {
+      Version publishedVersion = requireAttemptVersion(attempt, patchBinding);
+      return new ScriptPatchFinalization(
+          attempt.getStatus(), versionMapper.toDto(publishedVersion), null, null);
+    }
+    if (attempt.getStatus() == PublishAttemptStatus.FAILED) {
+      return new ScriptPatchFinalization(
+          attempt.getStatus(), null, attempt.getFailureCode(), attempt.getFailureMessage());
+    }
+    Version saved = requireAttemptVersion(attempt, patchBinding);
+    if (saved.getVersionState() != VersionLifecycleState.DRAFT) {
+      throw new IllegalStateException(
+          "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED: pending attempt does not reference a draft version");
+    }
+    publishAttemptService.recordScriptPatchParticipantDigests(
+        reservation.publishWorkflowId(), participantDigests);
+    saved.setVersionState(VersionLifecycleState.PUBLISHED);
+    saved.setVersionStateEpoch(saved.getVersionStateEpoch() + 1L);
+    saved.setUpdatedAt(LocalDateTime.now());
+    saved = versionRepository.save(saved);
+    recordedParticipantDigestService.recordVerifiedDigests(
+        tenantId, PublishType.SCRIPT_PATCH, reservation.publishWorkflowId(), participantDigests);
+    publishAttemptService.markScriptPatchSucceeded(reservation.publishWorkflowId());
+    return new ScriptPatchFinalization(
+        PublishAttemptStatus.SUCCEEDED, versionMapper.toDto(saved), null, null);
+  }
+
+  private ScriptPatchFinalization failScriptPatch(
+      PublicationDigestRequestBinding patchBinding,
+      ScriptPatchReservation reservation,
+      String failureCode,
+      String failureMessage) {
+    if (gameRepository.findByTenantIdForUpdate(patchBinding.tenantId()) == null) {
+      throw new IllegalArgumentException("game not found");
+    }
+    PublishAttempt attempt =
+        publishAttemptService
+            .findByPublishWorkflowId(reservation.publishWorkflowId())
+            .orElseThrow(() -> new IllegalStateException("publish attempt not found"));
+    if (attempt.getStatus() == PublishAttemptStatus.SUCCEEDED) {
+      Version publishedVersion = requireAttemptVersion(attempt, patchBinding);
+      return new ScriptPatchFinalization(
+          attempt.getStatus(), versionMapper.toDto(publishedVersion), null, null);
+    }
+    if (attempt.getStatus() == PublishAttemptStatus.FAILED) {
+      return new ScriptPatchFinalization(
+          attempt.getStatus(), null, attempt.getFailureCode(), attempt.getFailureMessage());
+    }
+    Optional<Version> draft =
+        versionRepository.findByTenantIdAndId(patchBinding.tenantId(), attempt.getVersionId());
+    if (draft.isPresent() && draft.get().getVersionState() != VersionLifecycleState.DRAFT) {
+      throw new IllegalStateException(
+          "PUBLISH_ATTEMPT_INCONSISTENT: pending attempt references a non-draft version");
+    }
+    draft.ifPresent(versionRepository::delete);
+    publishAttemptService.markScriptPatchFailed(
+        reservation.publishWorkflowId(), failureCode, failureMessage);
+    return new ScriptPatchFinalization(
+        PublishAttemptStatus.FAILED, null, failureCode, failureMessage);
+  }
+
+  private record ScriptPatchReservation(
+      String publishWorkflowId,
+      Long versionId,
+      PublishAttemptStatus status,
+      VersionDto versionDto,
+      String failureCode,
+      String failureMessage) {}
+
+  private record ScriptPatchFinalization(
+      PublishAttemptStatus status,
+      VersionDto versionDto,
+      String failureCode,
+      String failureMessage) {}
+
+  private void validateExistingScriptPatchAttempt(
+      PublishAttempt attempt,
+      PublicationDigestRequestBinding patchBinding,
+      String tenantId,
+      Long baseVersionId,
+      String scriptPatchVersion) {
+    if (!Objects.equals(attempt.getPublishWorkflowId(), patchBinding.derivedWorkflowIdentity())
+        || !Objects.equals(attempt.getTenantId(), tenantId)
+        || attempt.getPublishType() != PublishType.SCRIPT_PATCH
+        || !Objects.equals(attempt.getScriptPatchVersion(), scriptPatchVersion)
+        || !Objects.equals(attempt.getBaseVersionId(), baseVersionId)
+        || !Objects.equals(attempt.getRequestDigest(), patchBinding.requestDigest())) {
+      throw new IllegalArgumentException(
+          "PUBLISH_ATTEMPT_IDENTITY_CONFLICT: stable publish request scope does not match the existing attempt");
+    }
+  }
+
+  private Version requireAttemptVersion(
+      PublishAttempt attempt, PublicationDigestRequestBinding patchBinding) {
+    if (attempt.getVersionId() == null || attempt.getVersionNumber() <= 0) {
+      throw new IllegalStateException(
+          "PUBLISH_ATTEMPT_INCOMPLETE: attempt is missing its durable version evidence");
+    }
+    Version version =
+        versionRepository
+            .findByTenantIdAndId(patchBinding.tenantId(), attempt.getVersionId())
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "PUBLISH_ATTEMPT_INCOMPLETE: referenced version is not available"));
+    if (!Objects.equals(version.getTenantId(), patchBinding.tenantId())
+        || version.getVersionNumber() != attempt.getVersionNumber()
+        || !version.isScriptOnly()
+        || !Objects.equals(version.getScriptPatchVersion(), patchBinding.scriptPatchVersion())
+        || !Objects.equals(
+            version.getBaseVersionId(), Long.valueOf(patchBinding.baseVersionId()))) {
+      throw new IllegalStateException(
+          "PUBLISH_ATTEMPT_SCOPE_MISMATCH: referenced version evidence does not match the request");
+    }
+    return version;
+  }
+
+  private RuntimeException replayFailedScriptPatch(String failureCode, String failureMessage) {
+    if (failureCode == null || failureCode.isBlank()) {
+      return new IllegalStateException(
+          "PUBLISH_ATTEMPT_INCONSISTENT: failed attempt is missing failure evidence");
+    }
     try {
-      List<PublishParticipantDigestDto> participantDigests =
-          publishGateService.collectScriptPatchParticipantDigests(dto);
-      publishAttemptService.recordParticipantDigests(publishWorkflowId, participantDigests);
-      publishGateService.assertGatePassed(dto, participantDigests);
-      recordedParticipantDigestService.assertMatchesRecordedDigests(
-          dto.tenantId(), PublishType.SCRIPT_PATCH, participantDigests);
-      runSafely(
-          "notify script patch version update",
-          () ->
-              scriptingClient.notifyScriptVersionUpdate(
-                  String.valueOf(game.getTenantId()), scriptPatchVersion, List.of()));
-      saved.setVersionState(VersionLifecycleState.PUBLISHED);
-      saved.setVersionStateEpoch(saved.getVersionStateEpoch() + 1L);
-      saved.setUpdatedAt(LocalDateTime.now());
-      saved = versionRepository.save(saved);
-      recordedParticipantDigestService.recordVerifiedDigests(
-          dto.tenantId(), PublishType.SCRIPT_PATCH, publishWorkflowId, participantDigests);
-      publishAttemptService.markSucceeded(publishWorkflowId);
-      return versionMapper.toDto(saved);
-    } catch (RuntimeException ex) {
-      publishAttemptService.markFailed(
-          publishWorkflowId, publishFailureCode(ex), publishFailureMessage(ex));
-      versionRepository.delete(saved);
-      throw ex;
+      return new PublishGateFailureException(
+          PublishGateFailureCode.valueOf(failureCode), failureMessage);
+    } catch (IllegalArgumentException ignored) {
+      return new IllegalStateException(
+          failureMessage == null || failureMessage.isBlank() ? failureCode : failureMessage);
     }
   }
 
@@ -193,6 +457,7 @@ public class VersionServiceImpl implements VersionService {
             .findTopByTenantIdAndScriptPatchVersionOrderByVersionNumberDesc(
                 tenantId, scriptPatchVersion)
             .filter(Version::isScriptOnly)
+            .filter(candidate -> candidate.getVersionState() == VersionLifecycleState.PUBLISHED)
             .orElseThrow(() -> new IllegalArgumentException("script patch version not found")));
   }
 
@@ -290,6 +555,11 @@ public class VersionServiceImpl implements VersionService {
             notes)) {
       return toPublishedPluginVersionDto(entity);
     }
+    if (entity.getPublicationState() == VersionLifecycleState.SUPERSEDED
+        || entity.getPublicationState() == VersionLifecycleState.REVOKED_DESIGN) {
+      throw new IllegalArgumentException(
+          "CONFLICT: terminal plugin version cannot be republished; create a new plugin version");
+    }
 
     requireRequestedUploadMatchesStoredBundle(
         entity,
@@ -360,6 +630,7 @@ public class VersionServiceImpl implements VersionService {
     requireText(pluginVersionId, "pluginVersionId");
     return publishedPluginVersionRepository
         .findByTenantIdAndPluginIdAndPluginVersionId(tenantId, pluginId, pluginVersionId)
+        .filter(entity -> entity.getPublicationState() == VersionLifecycleState.PUBLISHED)
         .map(this::toPublishedPluginVersionDto)
         .orElseThrow(() -> new IllegalArgumentException("NOT_FOUND: plugin version not found"));
   }
@@ -470,6 +741,8 @@ public class VersionServiceImpl implements VersionService {
         versionRepository
             .findTopByTenantIdAndScriptPatchVersionOrderByVersionNumberDesc(
                 tenantId, scriptPatchVersion)
+            .filter(Version::isScriptOnly)
+            .filter(candidate -> candidate.getVersionState() == VersionLifecycleState.PUBLISHED)
             .orElseThrow(() -> new IllegalArgumentException("script patch version not found"));
     return controlPlaneDigestService.getDigestForScriptPatch(versionMapper.toDto(version));
   }

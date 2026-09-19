@@ -7,9 +7,12 @@ import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.stream.Collectors;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
+import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationClaims;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationException;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
+import net.firedevops.firemud.common.security.PublicationReadGuard;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.ActorConditionStateDto;
@@ -91,6 +94,7 @@ import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Pageable;
 import org.springframework.grpc.server.service.GrpcService;
 import org.springframework.util.StringUtils;
@@ -124,6 +128,7 @@ public class EntityManagementGrpcService
   private final EntityUpgradeValidationService entityUpgradeValidationService;
   private final EntityTemplateReferenceService entityTemplateReferenceService;
   private final EffectPayloadParser effectPayloadParser;
+  private PublicationReadGuard publicationReadGuard;
 
   EntityManagementGrpcService(
       PingService pingService,
@@ -233,7 +238,8 @@ public class EntityManagementGrpcService
       EntityTemplateReferenceService entityTemplateReferenceService,
       GameplaySessionAttestationService gameplaySessionAttestationService,
       MeterRegistry meterRegistry,
-      EffectPayloadParser effectPayloadParser) {
+      EffectPayloadParser effectPayloadParser,
+      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
     this(
         pingService,
         characterService,
@@ -253,6 +259,35 @@ public class EntityManagementGrpcService
         gameplaySessionAttestationService,
         meterRegistry,
         effectPayloadParser);
+    this.publicationReadGuard = configuredPublicationReadGuard(workloadNamespace);
+  }
+
+  public EntityManagementGrpcService(
+      PingService pingService,
+      CharacterService characterService,
+      EntityDraftDesignDigestService entityDraftDesignDigestService,
+      EquipmentService equipmentService,
+      InventoryService inventoryService,
+      ContainerService containerService,
+      RoomEntityService roomEntityService,
+      EntityMutationEffectReplayService entityMutationEffectReplayService,
+      EntityUpgradeValidationService entityUpgradeValidationService,
+      GameplaySessionAttestationService gameplaySessionAttestationService,
+      MeterRegistry meterRegistry,
+      PublicationReadGuard publicationReadGuard) {
+    this(
+        pingService,
+        characterService,
+        entityDraftDesignDigestService,
+        equipmentService,
+        inventoryService,
+        containerService,
+        roomEntityService,
+        entityMutationEffectReplayService,
+        entityUpgradeValidationService,
+        gameplaySessionAttestationService,
+        meterRegistry);
+    this.publicationReadGuard = publicationReadGuard;
   }
 
   public EntityManagementGrpcService(
@@ -279,6 +314,9 @@ public class EntityManagementGrpcService
         inventoryService,
         containerService,
         roomEntityService,
+        (tenantId, gameInstanceId, terminationRequestId) ->
+            new net.firedevops.firemud.entitymanagement.dto.RuntimeInstanceCleanupResultDto(
+                0L, 0L, 0L, 0L),
         entityMutationEffectReplayService,
         entityUpgradeValidationService,
         (tenantId, versionId, templateType, templateId) -> false,
@@ -307,16 +345,37 @@ public class EntityManagementGrpcService
         responseObserver.onCompleted();
         return;
       }
+      if (!request.getBaseVersionId().isEmpty()) {
+        throw new IllegalArgumentException("baseVersionId must be empty for full publication");
+      }
+      PublicationDigestRequestBinding binding =
+          PublicationDigestRequestBinding.full(
+              request.getTenantId(), request.getVersionId(), request.getPublishRequestId());
+      binding.validateSupplied(request.getDerivedWorkflowIdentity(), request.getRequestDigest());
+      requirePublicationRead();
       var digest =
           entityDraftDesignDigestService.getDraftDesignDigest(
               request.getTenantId(), request.getVersionId());
+      requireMatchingDigestScope(binding, digest.tenantId(), digest.scopeValue());
       responseObserver.onNext(
           GetDraftDesignDigestResponse.newBuilder()
-              .setTenantId(digest.tenantId())
-              .setScopeValue(digest.scopeValue())
+              .setTenantId(binding.tenantId())
+              .setVersionId(binding.versionId())
               .setAppliedCommitId(digest.appliedCommitId())
               .setContentDigest(digest.contentDigest())
               .setDigestSchemaVersion(digest.digestSchemaVersion())
+              .build());
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      responseObserver.onNext(
+          GetDraftDesignDigestResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "GetDraftDesignDigest",
+                      "PERMISSION_DENIED",
+                      ex.getMessage()))
               .build());
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
@@ -337,6 +396,32 @@ public class EntityManagementGrpcService
               .setError(GrpcAppErrors.internal(meterRegistry, logger, "GetDraftDesignDigest", ex))
               .build());
       responseObserver.onCompleted();
+    }
+  }
+
+  private static void requireMatchingDigestScope(
+      PublicationDigestRequestBinding binding, String tenantId, String scopeValue) {
+    if (!binding.tenantId().equals(tenantId) || !binding.versionId().equals(scopeValue)) {
+      throw new IllegalArgumentException("owner digest scope does not match publication binding");
+    }
+  }
+
+  private void requirePublicationRead() {
+    if (publicationReadGuard == null) {
+      throw new AdminAuthorizationException("Publication read authorization is not configured");
+    }
+    publicationReadGuard.requirePublicationRead(
+        PublicationReadGuard.ENTITY_MANAGEMENT_DIGEST_METHOD);
+  }
+
+  private static PublicationReadGuard configuredPublicationReadGuard(String workloadNamespace) {
+    if (workloadNamespace == null || workloadNamespace.isBlank()) {
+      return null;
+    }
+    try {
+      return new PublicationReadGuard(workloadNamespace);
+    } catch (IllegalArgumentException ex) {
+      return null;
     }
   }
 

@@ -7,8 +7,11 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
+import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationException;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
+import net.firedevops.firemud.common.security.PublicationReadGuard;
 import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionRequest;
 import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionResponse;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
@@ -59,6 +62,8 @@ import net.firedevops.firemud.gamelogic.v1.SendCommunicationResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.grpc.server.service.GrpcService;
 
 /** gRPC endpoints for the Game Logic Service. */
@@ -78,11 +83,37 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
 
   private final GameLogicDraftDesignDigestService gameLogicDraftDesignDigestService;
   private final GameplaySessionAttestationService gameplaySessionAttestationService;
+  private PublicationReadGuard publicationReadGuard;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
       justification = "MeterRegistry is thread-safe and only stored")
   private final MeterRegistry meterRegistry;
+
+  @Autowired
+  public GameLogicGrpcService(
+      PingService pingService,
+      CommandService commandService,
+      LookAggregationService lookAggregationService,
+      CommunicationAggregationService communicationAggregationService,
+      MoveAggregationService moveAggregationService,
+      ItemRuntimeService itemRuntimeService,
+      GameLogicDraftDesignDigestService gameLogicDraftDesignDigestService,
+      GameplaySessionAttestationService gameplaySessionAttestationService,
+      MeterRegistry meterRegistry,
+      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
+    this(
+        pingService,
+        commandService,
+        lookAggregationService,
+        communicationAggregationService,
+        moveAggregationService,
+        itemRuntimeService,
+        gameLogicDraftDesignDigestService,
+        gameplaySessionAttestationService,
+        meterRegistry);
+    this.publicationReadGuard = configuredPublicationReadGuard(workloadNamespace);
+  }
 
   public GameLogicGrpcService(
       PingService pingService,
@@ -105,6 +136,30 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
     this.meterRegistry = meterRegistry;
   }
 
+  public GameLogicGrpcService(
+      PingService pingService,
+      CommandService commandService,
+      LookAggregationService lookAggregationService,
+      CommunicationAggregationService communicationAggregationService,
+      MoveAggregationService moveAggregationService,
+      ItemRuntimeService itemRuntimeService,
+      GameLogicDraftDesignDigestService gameLogicDraftDesignDigestService,
+      GameplaySessionAttestationService gameplaySessionAttestationService,
+      MeterRegistry meterRegistry,
+      PublicationReadGuard publicationReadGuard) {
+    this(
+        pingService,
+        commandService,
+        lookAggregationService,
+        communicationAggregationService,
+        moveAggregationService,
+        itemRuntimeService,
+        gameLogicDraftDesignDigestService,
+        gameplaySessionAttestationService,
+        meterRegistry);
+    this.publicationReadGuard = publicationReadGuard;
+  }
+
   @Override
   @Timed(value = "gamelogicGrpc.getDraftDesignDigest")
   public void getDraftDesignDigest(
@@ -125,16 +180,37 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
         responseObserver.onCompleted();
         return;
       }
+      if (!request.getBaseVersionId().isEmpty()) {
+        throw new IllegalArgumentException("baseVersionId must be empty for full publication");
+      }
+      PublicationDigestRequestBinding binding =
+          PublicationDigestRequestBinding.full(
+              request.getTenantId(), request.getVersionId(), request.getPublishRequestId());
+      binding.validateSupplied(request.getDerivedWorkflowIdentity(), request.getRequestDigest());
+      requirePublicationRead();
       var digest =
           gameLogicDraftDesignDigestService.getDraftDesignDigest(
               request.getTenantId(), request.getVersionId());
+      requireMatchingDigestScope(binding, digest.tenantId(), digest.scopeValue());
       responseObserver.onNext(
           GetDraftDesignDigestResponse.newBuilder()
-              .setTenantId(digest.tenantId())
-              .setScopeValue(digest.scopeValue())
+              .setTenantId(binding.tenantId())
+              .setVersionId(binding.versionId())
               .setAppliedCommitId(digest.appliedCommitId())
               .setContentDigest(digest.contentDigest())
               .setDigestSchemaVersion(digest.digestSchemaVersion())
+              .build());
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      responseObserver.onNext(
+          GetDraftDesignDigestResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "GetDraftDesignDigest",
+                      "PERMISSION_DENIED",
+                      ex.getMessage()))
               .build());
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
@@ -155,6 +231,31 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
               .setError(GrpcAppErrors.internal(meterRegistry, logger, "GetDraftDesignDigest", ex))
               .build());
       responseObserver.onCompleted();
+    }
+  }
+
+  private static void requireMatchingDigestScope(
+      PublicationDigestRequestBinding binding, String tenantId, String scopeValue) {
+    if (!binding.tenantId().equals(tenantId) || !binding.versionId().equals(scopeValue)) {
+      throw new IllegalArgumentException("owner digest scope does not match publication binding");
+    }
+  }
+
+  private void requirePublicationRead() {
+    if (publicationReadGuard == null) {
+      throw new AdminAuthorizationException("Publication read authorization is not configured");
+    }
+    publicationReadGuard.requirePublicationRead(PublicationReadGuard.GAME_LOGIC_DIGEST_METHOD);
+  }
+
+  private static PublicationReadGuard configuredPublicationReadGuard(String workloadNamespace) {
+    if (workloadNamespace == null || workloadNamespace.isBlank()) {
+      return null;
+    }
+    try {
+      return new PublicationReadGuard(workloadNamespace);
+    } catch (IllegalArgumentException ex) {
+      return null;
     }
   }
 
