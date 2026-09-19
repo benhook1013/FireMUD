@@ -712,6 +712,10 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
             prepared = yaml.safe_load(destination.read_text(encoding="utf-8"))
             self.assertEqual(prepared["metadata"]["namespace"], "pr-42")
             self.assertEqual(prepared["spec"]["ports"][0]["nodePort"], 32000)
+            self.assertEqual(
+                prepared["metadata"]["annotations"],
+                {"firemud.dev/allocated-telnet-port": "32000"},
+            )
 
     def test_expected_top_level_label_mismatches_report_expected_and_actual(self):
         expected_labels = VALIDATOR._expected_object_labels(
@@ -743,6 +747,9 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
             },
             namespace="pr-42",
         )
+        document["metadata"]["annotations"] = {
+            "firemud.dev/allocated-telnet-port": "32001"
+        }
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "prepared.yaml"
             path.write_text(yaml.safe_dump(document), encoding="utf-8")
