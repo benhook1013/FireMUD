@@ -948,6 +948,49 @@ class ScriptWorkItemExecutionServiceImplTest {
   }
 
   @Test
+  void deadLetterGenerationAdvancesOncePerDistinctTransition() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptWorkItem item = workItem();
+    ScriptEventAudit audit = new ScriptEventAudit();
+    when(workItemService.claimPendingForEvaluation(1))
+        .thenReturn(List.of(item), List.of(item), List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.empty());
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            new ScriptOutputProperties(),
+            allowingTenantBudgetService(),
+            allowingDryRunCapacityService(),
+            new ObjectMapper(),
+            new SimpleMeterRegistry());
+
+    service.processPendingWorkItems(1);
+    assertThat(item.getFailureGeneration()).isEqualTo(1L);
+
+    item.setStatus("PENDING_EVALUATION");
+    service.processPendingWorkItems(1);
+    assertThat(item.getFailureGeneration()).isEqualTo(2L);
+
+    service.processPendingWorkItems(1);
+    assertThat(item.getFailureGeneration()).isEqualTo(2L);
+  }
+
+  @Test
   void defersOutcomeMetricUntilTransactionCommit() {
     TransactionSynchronizationManager.initSynchronization();
     try {

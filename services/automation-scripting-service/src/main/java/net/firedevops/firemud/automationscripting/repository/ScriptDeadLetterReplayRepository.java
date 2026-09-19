@@ -2,10 +2,7 @@ package net.firedevops.firemud.automationscripting.repository;
 
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptDeadLetterReplayRequests.SCRIPT_DEAD_LETTER_REPLAY_REQUESTS;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptDeadLetterReplayResults.SCRIPT_DEAD_LETTER_REPLAY_RESULTS;
-import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptWorkItems.SCRIPT_WORK_ITEMS;
 import static org.jooq.impl.DSL.field;
-import static org.jooq.impl.DSL.notExists;
-import static org.jooq.impl.DSL.selectOne;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
@@ -30,59 +27,6 @@ public class ScriptDeadLetterReplayRepository {
 
   public ScriptDeadLetterReplayRepository(DSLContext dsl) {
     this.dsl = dsl;
-  }
-
-  /** Result rows are disposed first so their tenant-qualified FKs cannot pin work items. */
-  public long deleteExpiredResults(Instant safeWatermark, Instant now) {
-    java.time.OffsetDateTime cutoff = safeWatermark.atOffset(java.time.ZoneOffset.UTC);
-    java.time.OffsetDateTime current = now.atOffset(java.time.ZoneOffset.UTC);
-    org.jooq.Condition activeParent =
-        SCRIPT_WORK_ITEMS
-            .TENANT_ID
-            .eq(SCRIPT_DEAD_LETTER_REPLAY_RESULTS.TENANT_ID)
-            .and(SCRIPT_WORK_ITEMS.ID.eq(SCRIPT_DEAD_LETTER_REPLAY_RESULTS.WORK_ITEM_ID))
-            .and(
-                // Keep every nonterminal status conservative.  A newly introduced active status
-                // must block evidence disposal until this owner explicitly classifies it as
-                // terminal, while the established terminal set remains disposable-safe.
-                SCRIPT_WORK_ITEMS.STATUS.notIn(
-                    AutomationScriptingJooqRepositorySupport.TERMINAL_WORK_ITEM_STATUSES));
-    return dsl.deleteFrom(SCRIPT_DEAD_LETTER_REPLAY_RESULTS)
-        .where(
-            SCRIPT_DEAD_LETTER_REPLAY_RESULTS
-                .TENANT_ID
-                .isNotNull()
-                .and(SCRIPT_DEAD_LETTER_REPLAY_RESULTS.CREATED_AT.lt(cutoff))
-                .and(RESULT_HOLD_UNTIL.isNull().or(RESULT_HOLD_UNTIL.le(current)))
-                .and(notExists(selectOne().from(SCRIPT_WORK_ITEMS).where(activeParent))))
-        .execute();
-  }
-
-  /** Completed request receipts are disposed only after every immutable result is gone. */
-  public long deleteExpiredRequests(Instant safeWatermark, Instant now) {
-    java.time.OffsetDateTime cutoff = safeWatermark.atOffset(java.time.ZoneOffset.UTC);
-    java.time.OffsetDateTime current = now.atOffset(java.time.ZoneOffset.UTC);
-    org.jooq.Condition resultForRequest =
-        SCRIPT_DEAD_LETTER_REPLAY_RESULTS
-            .TENANT_ID
-            .eq(SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.TENANT_ID)
-            .and(
-                SCRIPT_DEAD_LETTER_REPLAY_RESULTS.REPLAY_REQUEST_ID.eq(
-                    SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.ID));
-    return dsl.deleteFrom(SCRIPT_DEAD_LETTER_REPLAY_REQUESTS)
-        .where(
-            SCRIPT_DEAD_LETTER_REPLAY_REQUESTS
-                .TENANT_ID
-                .isNotNull()
-                .and(SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.STATUS.eq("COMPLETED"))
-                .and(SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.UPDATED_AT.lt(cutoff))
-                .and(REQUEST_HOLD_UNTIL.isNull().or(REQUEST_HOLD_UNTIL.le(current)))
-                .and(
-                    notExists(
-                        selectOne()
-                            .from(SCRIPT_DEAD_LETTER_REPLAY_RESULTS)
-                            .where(resultForRequest))))
-        .execute();
   }
 
   /** Applies or clears the durable owner hold for one replay request. */
@@ -169,6 +113,36 @@ public class ScriptDeadLetterReplayRepository {
       long lifecycleRevision,
       long failureGeneration,
       Instant now) {
+    saveResult(
+        requestId,
+        requestedWorkItemId,
+        workItemId,
+        outcome,
+        rejectionReason,
+        failureReason,
+        scriptPinEpoch,
+        pluginActivationEpoch,
+        lifecycleRevision,
+        failureGeneration,
+        "",
+        "",
+        now);
+  }
+
+  public void saveResult(
+      long requestId,
+      long requestedWorkItemId,
+      Long workItemId,
+      String outcome,
+      String rejectionReason,
+      String failureReason,
+      long scriptPinEpoch,
+      long pluginActivationEpoch,
+      long lifecycleRevision,
+      long failureGeneration,
+      String originalFailureStage,
+      String originalFailureReason,
+      Instant now) {
     String tenantId =
         dsl.select(SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.TENANT_ID)
             .from(SCRIPT_DEAD_LETTER_REPLAY_REQUESTS)
@@ -183,6 +157,12 @@ public class ScriptDeadLetterReplayRepository {
         .set(SCRIPT_DEAD_LETTER_REPLAY_RESULTS.WORK_ITEM_ID, workItemId)
         .set(SCRIPT_DEAD_LETTER_REPLAY_RESULTS.OUTCOME, outcome)
         .set(SCRIPT_DEAD_LETTER_REPLAY_RESULTS.REJECTION_REASON, rejectionReason)
+        .set(
+            SCRIPT_DEAD_LETTER_REPLAY_RESULTS.ORIGINAL_FAILURE_STAGE,
+            originalFailureStage == null ? "" : originalFailureStage)
+        .set(
+            SCRIPT_DEAD_LETTER_REPLAY_RESULTS.ORIGINAL_FAILURE_REASON,
+            originalFailureReason == null ? "" : originalFailureReason)
         .set(SCRIPT_DEAD_LETTER_REPLAY_RESULTS.FAILURE_REASON, failureReason)
         .set(SCRIPT_DEAD_LETTER_REPLAY_RESULTS.SCRIPT_PIN_EPOCH, scriptPinEpoch)
         .set(SCRIPT_DEAD_LETTER_REPLAY_RESULTS.PLUGIN_ACTIVATION_EPOCH, pluginActivationEpoch)
@@ -244,7 +224,9 @@ public class ScriptDeadLetterReplayRepository {
         record.get(SCRIPT_DEAD_LETTER_REPLAY_RESULTS.SCRIPT_PIN_EPOCH),
         record.get(SCRIPT_DEAD_LETTER_REPLAY_RESULTS.PLUGIN_ACTIVATION_EPOCH),
         record.get(SCRIPT_DEAD_LETTER_REPLAY_RESULTS.LIFECYCLE_REVISION),
-        record.get(SCRIPT_DEAD_LETTER_REPLAY_RESULTS.FAILURE_GENERATION));
+        record.get(SCRIPT_DEAD_LETTER_REPLAY_RESULTS.FAILURE_GENERATION),
+        record.get(SCRIPT_DEAD_LETTER_REPLAY_RESULTS.ORIGINAL_FAILURE_STAGE),
+        record.get(SCRIPT_DEAD_LETTER_REPLAY_RESULTS.ORIGINAL_FAILURE_REASON));
   }
 
   public record ReplayRequest(
@@ -259,7 +241,9 @@ public class ScriptDeadLetterReplayRepository {
       long scriptPinEpoch,
       long pluginActivationEpoch,
       long lifecycleRevision,
-      long failureGeneration) {
+      long failureGeneration,
+      String originalFailureStage,
+      String originalFailureReason) {
     /**
      * Compatibility constructor for callers that use the work-item ID as both result IDs.
      *
@@ -288,7 +272,41 @@ public class ScriptDeadLetterReplayRepository {
           scriptPinEpoch,
           pluginActivationEpoch,
           lifecycleRevision,
-          failureGeneration);
+          failureGeneration,
+          "",
+          "");
+    }
+
+    public ReplayItem(
+        long requestedWorkItemId,
+        Long workItemId,
+        String outcome,
+        String rejectionReason,
+        String failureReason,
+        long scriptPinEpoch,
+        long pluginActivationEpoch,
+        long lifecycleRevision,
+        long failureGeneration) {
+      this(
+          requestedWorkItemId,
+          workItemId,
+          outcome,
+          rejectionReason,
+          failureReason,
+          scriptPinEpoch,
+          pluginActivationEpoch,
+          lifecycleRevision,
+          failureGeneration,
+          "",
+          "");
+    }
+
+    public String originalFailureStage() {
+      return originalFailureStage == null ? "" : originalFailureStage;
+    }
+
+    public String originalFailureReason() {
+      return originalFailureReason == null ? "" : originalFailureReason;
     }
   }
 }

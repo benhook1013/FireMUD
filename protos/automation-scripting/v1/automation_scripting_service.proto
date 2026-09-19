@@ -330,6 +330,18 @@ message ReplayDeadLetteredWorkItemsResponse {
   int64 replayed_count = 1;
   int64 rejected_count = 2;
   shared.v1.ErrorDetail error = 3;
+  // Durable per-item outcomes, in the same order as the selected work-item IDs.
+  repeated ReplayDeadLetteredWorkItemResult results = 4;
+  // The canonical request fingerprint used for idempotent replay readback.
+  string request_fingerprint = 5;
+}
+
+message ReplayDeadLetteredWorkItemResult {
+  string work_item_id = 1;
+  string outcome = 2;
+  string rejection_reason = 3;
+  string failure_reason = 4;
+  int64 failure_generation = 5;
 }
 
 enum TriggerMode {

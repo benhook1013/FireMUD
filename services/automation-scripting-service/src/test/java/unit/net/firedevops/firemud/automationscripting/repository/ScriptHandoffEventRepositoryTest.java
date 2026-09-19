@@ -469,6 +469,7 @@ class ScriptHandoffEventRepositoryTest {
 
     assertThat(bindingsRef.get()[0]).isInstanceOf(java.sql.Timestamp.class);
     assertThat(bindingsRef.get()).contains("2026-08-02 00:00:00+00:00");
+    assertThat(bindingsRef.get()).contains("DEAD_LETTERED");
     assertThat(bindingsRef.get())
         .anySatisfy(
             binding -> {

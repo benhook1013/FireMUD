@@ -81,9 +81,14 @@ public class ScriptHandoffEventRepository {
                                                         SCRIPT_WORK_ITEMS.ID.eq(
                                                             candidates.WORK_ITEM_ID))
                                                     .and(
-                                                        SCRIPT_WORK_ITEMS.STATUS.notIn(
-                                                            AutomationScriptingJooqRepositorySupport
-                                                                .TERMINAL_WORK_ITEM_STATUSES))))))
+                                                        SCRIPT_WORK_ITEMS
+                                                            .STATUS
+                                                            .notIn(
+                                                                AutomationScriptingJooqRepositorySupport
+                                                                    .TERMINAL_WORK_ITEM_STATUSES)
+                                                            .or(
+                                                                SCRIPT_WORK_ITEMS.STATUS.eq(
+                                                                    "DEAD_LETTERED")))))))
                         .orderBy(candidates.EVENT_ID.asc())
                         .limit(RETENTION_DELETE_BATCH_SIZE)))
         .execute();

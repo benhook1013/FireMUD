@@ -791,6 +791,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     assertThat(result.accepted()).isFalse();
     assertThat(result.errorCode()).isEqualTo("REMOTE_RESPONSE_INVALID");
     assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
+    assertThat(item.getFailureGeneration()).isEqualTo(1L);
     assertThat(result.outcome()).isEqualTo("REMOTE_REJECTED");
     assertThat(audit.getFinalStage()).isEqualTo("TICK_HANDOFF");
     assertThat(audit.getFinalOutcome()).isEqualTo("infrastructure_error");
@@ -925,6 +926,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
     verify(workItemRepository).save(workItemCaptor.capture());
     assertThat(workItemCaptor.getValue().getStatus()).isEqualTo("DEAD_LETTERED");
+    assertThat(workItemCaptor.getValue().getFailureGeneration()).isEqualTo(1L);
     assertThat(workItemCaptor.getValue().getCancelReason()).isEqualTo("remote_response_invalid");
   }
 

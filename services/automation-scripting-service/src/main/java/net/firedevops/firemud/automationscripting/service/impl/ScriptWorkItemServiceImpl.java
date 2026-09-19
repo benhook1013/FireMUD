@@ -64,7 +64,6 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   private static final List<String> DRAIN_RELEVANT_STATUSES =
       List.of(STATUS_PENDING_EVALUATION, STATUS_EVALUATING, STATUS_HANDOFF_IN_FLIGHT);
   private static final int CANCELLATION_PAGE_SIZE = 100;
-  private static final int DEAD_LETTER_CLEANUP_PAGE_SIZE = 500;
   private final AtomicLong retentionBlockedRows = new AtomicLong();
   private final MeterRegistry meterRegistry;
 
@@ -233,25 +232,11 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   @Transactional
   public TerminalCleanupResult cleanupTerminalWorkItems() {
     Instant now = Instant.now();
-    // Child evidence is retained through the longest local retry/replay horizon.  Disposition is
-    // deliberately ordered before parent deletion: replay results -> audit/handoff children ->
-    // terminal work item.  A hold is enforced by each child repository.
-    long replayRetentionSeconds =
-        Math.max(
-            Math.max(
-                Math.multiplyExact((long) outboxProperties.getHandedOffRetentionDays(), 86_400L),
-                Math.multiplyExact((long) outboxProperties.getCanceledRetentionDays(), 86_400L)),
-            outboxProperties.getDeadLetterMaxAgeSeconds());
-    Instant evidenceWatermark = now.minusSeconds(replayRetentionSeconds);
-    long replayResultsDisposed = 0L;
-    long replayRequestsDisposed = 0L;
-    if (replayRepository != null) {
-      replayResultsDisposed = replayRepository.deleteExpiredResults(evidenceWatermark, now);
-      replayRequestsDisposed = replayRepository.deleteExpiredRequests(evidenceWatermark, now);
-    }
-    long auditDisposed = auditRepository.deleteExpiredRetentionEvidence(evidenceWatermark, now);
-    long handoffDisposed =
-        handoffEventRepository.deleteExpiredRetentionEvidence(evidenceWatermark, now);
+    // HANDED_OFF and CANCELED retain their established status-specific cleanup contract.  A
+    // DEAD_LETTERED row is different: the current schema has no recovery aggregate, complete
+    // child ledger, or rollback/receipt horizon that can prove the whole bundle is disposable.
+    // Keep its parent and all supporting replay/audit/handoff evidence until that owner contract
+    // exists.  In particular, do not turn configured age or row-count knobs into a guessed TTL.
     long handedOffDeleted =
         workItemRepository.deleteByStatusAndUpdatedAtBefore(
             STATUS_HANDED_OFF,
@@ -260,11 +245,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         workItemRepository.deleteByStatusAndUpdatedAtBefore(
             STATUS_CANCELED,
             now.minus(outboxProperties.getCanceledRetentionDays(), ChronoUnit.DAYS));
-    long deadLetteredDeleted =
-        workItemRepository.deleteByStatusAndUpdatedAtBefore(
-            STATUS_DEAD_LETTERED,
-            now.minus(outboxProperties.getDeadLetterMaxAgeSeconds(), ChronoUnit.SECONDS));
-    deadLetteredDeleted += deleteExcessDeadLetters();
+    long deadLetteredDeleted = 0L;
     long blocked =
         workItemRepository.countTerminalRowsBlockedByEvidence(
                 STATUS_HANDED_OFF,
@@ -276,12 +257,6 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
                 STATUS_DEAD_LETTERED,
                 now.minus(outboxProperties.getDeadLetterMaxAgeSeconds(), ChronoUnit.SECONDS));
     retentionBlockedRows.set(blocked);
-    if (replayResultsDisposed + replayRequestsDisposed + auditDisposed + handoffDisposed > 0) {
-      meterRegistry
-          .counter("automation_retention_disposed_total")
-          .increment(
-              replayResultsDisposed + replayRequestsDisposed + auditDisposed + handoffDisposed);
-    }
     return new TerminalCleanupResult(handedOffDeleted, canceledDeleted, deadLetteredDeleted);
   }
 
@@ -562,11 +537,11 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     String normalizedTenantId = normalizeText(tenantId);
     requireText(normalizedTenantId, "tenant_id");
     int boundedLimit = Math.min(Math.max(limit <= 0 ? 50 : limit, 1), 500);
-    String normalizedGameInstanceId = normalizeRegionId(gameInstanceId);
-    String normalizedScriptPatchVersion = normalizeRegionId(scriptPatchVersion);
+    String normalizedGameInstanceId = normalizeText(gameInstanceId);
+    String normalizedScriptPatchVersion = normalizeText(scriptPatchVersion);
     return workItemRepository
         .findDeadLettersByTenantIdAndFiltersOrderByUpdatedAtDescIdDesc(
-            tenantId,
+            normalizedTenantId,
             normalizedGameInstanceId,
             normalizedScriptPatchVersion,
             STATUS_DEAD_LETTERED,
@@ -630,9 +605,19 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       if (item == null) {
         results.add(new ReplayItemResult(requestedId, "rejected", "not_found_or_not_owned", 0L));
         persistReplayResult(
-            durableRequest, requestedLongId, "rejected", "not_found_or_not_owned", null, now);
+            durableRequest,
+            requestedLongId,
+            "rejected",
+            "not_found_or_not_owned",
+            null,
+            OriginalFailureEvidence.EMPTY,
+            now);
         continue;
       }
+      // Read the mutable failure evidence before the claim changes the work-item status. The
+      // immutable replay result is the generation-bound receipt that survives later execution
+      // updates to both the work item and its audit row.
+      OriginalFailureEvidence originalFailure = originalFailureEvidence(item);
       if (!STATUS_DEAD_LETTERED.equals(item.getStatus())) {
         String reasonForCurrentStatus =
             switch (blankToEmpty(item.getStatus())) {
@@ -644,7 +629,13 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             new ReplayItemResult(
                 requestedId, "rejected", reasonForCurrentStatus, item.getFailureGeneration()));
         persistReplayResult(
-            durableRequest, requestedLongId, "rejected", reasonForCurrentStatus, item, now);
+            durableRequest,
+            requestedLongId,
+            "rejected",
+            reasonForCurrentStatus,
+            item,
+            originalFailure,
+            now);
         continue;
       }
       String replayRejection = replayEligibilityReason(item, runtimeStateCache);
@@ -653,7 +644,34 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             new ReplayItemResult(
                 requestedId, "rejected", replayRejection, item.getFailureGeneration()));
         persistReplayResult(
-            durableRequest, requestedLongId, "rejected", replayRejection, item, now);
+            durableRequest,
+            requestedLongId,
+            "rejected",
+            replayRejection,
+            item,
+            originalFailure,
+            now);
+        continue;
+      }
+      if (!originalFailure.isComplete()) {
+        // A dead-letter row without both immutable failure dimensions cannot be safely replayed:
+        // accepting it would lose the original stage/reason as soon as later execution updates
+        // the mutable work item or audit row. Keep the row untouched and persist only the bounded
+        // rejection receipt.
+        results.add(
+            new ReplayItemResult(
+                requestedId,
+                "rejected",
+                "stage_evidence_unavailable",
+                item.getFailureGeneration()));
+        persistReplayResult(
+            durableRequest,
+            requestedLongId,
+            "rejected",
+            "stage_evidence_unavailable",
+            item,
+            originalFailure,
+            now);
         continue;
       }
       Optional<ScriptWorkItem> claimed =
@@ -668,16 +686,22 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             new ReplayItemResult(
                 requestedId, "rejected", "recovery_in_progress", item.getFailureGeneration()));
         persistReplayResult(
-            durableRequest, requestedLongId, "rejected", "recovery_in_progress", item, now);
+            durableRequest,
+            requestedLongId,
+            "rejected",
+            "recovery_in_progress",
+            item,
+            originalFailure,
+            now);
         continue;
       }
       item = claimed.orElseThrow();
       refreshReadinessProjectionIfNeeded(item);
       rolloutProjectionService.refreshForWorkItem(item);
-      markReplayQueued(item.getId(), reason, now);
       results.add(
           new ReplayItemResult(requestedId, "retried_evaluation", "", item.getFailureGeneration()));
-      persistReplayResult(durableRequest, requestedLongId, "retried_evaluation", "", item, now);
+      persistReplayResult(
+          durableRequest, requestedLongId, "retried_evaluation", "", item, originalFailure, now);
     }
     ReplayCounts counts = replayCounts(results);
     if (durableRequest != null) {
@@ -737,20 +761,26 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   private static String replayRequestFingerprint(ReplayDeadLettersCommand command) {
     List<String> normalizedWorkItemIds =
         command.workItemIds().stream()
-            .map(ScriptWorkItemServiceImpl::normalizeText)
+            // Work-item IDs are numeric identities.  Canonicalize accepted alternate spellings
+            // (for example, 01 and +1) before sorting and hashing so an exact logical retry does
+            // not become an idempotency conflict.
+            .map(id -> Long.toString(parseWorkItemId(id)))
             .sorted()
             .toList();
-    String canonical =
-        String.join(
-            "\u0000",
-            normalizeText(command.tenantId()),
-            String.join(",", normalizedWorkItemIds),
-            normalizeText(command.controlPlaneRequestId()),
-            normalizeText(command.actorPrincipal()),
-            normalizeReplayReason(command.reason()));
+    // replayDeadLetteredWorkItems/v1 uses UTF-8 byte-length framing.  The version label is part of
+    // the preimage so a future encoding change cannot silently reinterpret retained fingerprints.
+    StringBuilder canonical = new StringBuilder();
+    appendReplayFingerprintSegment(canonical, "replayDeadLetteredWorkItems/v1");
+    appendReplayFingerprintSegment(canonical, normalizeText(command.tenantId()));
+    appendReplayFingerprintSegment(canonical, Integer.toString(normalizedWorkItemIds.size()));
+    normalizedWorkItemIds.forEach(id -> appendReplayFingerprintSegment(canonical, id));
+    appendReplayFingerprintSegment(canonical, normalizeText(command.controlPlaneRequestId()));
+    appendReplayFingerprintSegment(canonical, normalizeText(command.actorPrincipal()));
+    appendReplayFingerprintSegment(canonical, normalizeReplayReason(command.reason()));
     try {
       byte[] digest =
-          MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8));
+          MessageDigest.getInstance("SHA-256")
+              .digest(canonical.toString().getBytes(StandardCharsets.UTF_8));
       StringBuilder fingerprint = new StringBuilder(digest.length * 2);
       for (byte value : digest) {
         fingerprint.append(String.format("%02x", value));
@@ -759,6 +789,11 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     } catch (NoSuchAlgorithmException e) {
       throw new IllegalStateException("SHA-256 is required for replay request identity", e);
     }
+  }
+
+  private static void appendReplayFingerprintSegment(StringBuilder canonical, String value) {
+    byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+    canonical.append(bytes.length).append(':').append(value);
   }
 
   private PatchInstanceRolloutSummary withPublication(
@@ -1172,6 +1207,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       String outcome,
       String rejectionReason,
       ScriptWorkItem item,
+      OriginalFailureEvidence originalFailure,
       Instant now) {
     if (request == null) {
       return;
@@ -1187,7 +1223,35 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         item == null ? 0L : item.getPluginActivationEpoch(),
         item == null ? 0L : item.getLifecycleRevision(),
         item == null ? 0L : item.getFailureGeneration(),
+        originalFailure.stage(),
+        originalFailure.reason(),
         now);
+  }
+
+  private OriginalFailureEvidence originalFailureEvidence(ScriptWorkItem item) {
+    if (item == null || item.getId() == null) {
+      return OriginalFailureEvidence.EMPTY;
+    }
+    String workItemReason = blankToEmpty(item.getCancelReason());
+    return auditRepository
+        .findByWorkItemId(item.getId())
+        .map(
+            audit -> {
+              String auditReason = blankToEmpty(audit.getFinalReason());
+              boolean consistent =
+                  auditReason.isBlank()
+                      || workItemReason.isBlank()
+                      || auditReason.equals(workItemReason);
+              return new OriginalFailureEvidence(
+                  blankToEmpty(audit.getFinalStage()),
+                  firstNonBlank(auditReason, workItemReason),
+                  consistent);
+            })
+        .orElse(new OriginalFailureEvidence("", workItemReason, true));
+  }
+
+  private static String firstNonBlank(String preferred, String fallback) {
+    return preferred != null && !preferred.isBlank() ? preferred : blankToEmpty(fallback);
   }
 
   private ReplayResult replayResultFromDurable(
@@ -1269,52 +1333,6 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             });
   }
 
-  private void markReplayQueued(Long workItemId, String reason, Instant now) {
-    auditRepository
-        .findByWorkItemId(workItemId)
-        .ifPresent(
-            audit -> {
-              audit.setFinalStage("REPLAY");
-              audit.setFinalOutcome("requeued");
-              audit.setFinalReason(reason);
-              audit.setUpdatedAt(now);
-              auditRepository.save(audit);
-            });
-  }
-
-  private long deleteExcessDeadLetters() {
-    long deadLetteredCount = workItemRepository.countByStatus(STATUS_DEAD_LETTERED);
-    long excess = deadLetteredCount - outboxProperties.getDeadLetterMaxRows();
-    if (excess <= 0) {
-      return 0;
-    }
-    // Held oldest rows must not consume the cap candidate budget. Keyset pages remain bounded and
-    // avoid skipping rows that shift into an earlier offset after an eligible deletion.
-    long deleted = 0L;
-    Instant afterUpdatedAt = null;
-    Long afterId = null;
-    while (deleted < excess) {
-      List<ScriptWorkItem> page =
-          workItemRepository.findByStatusOrderByUpdatedAtAscIdAscAfter(
-              STATUS_DEAD_LETTERED, afterUpdatedAt, afterId, DEAD_LETTER_CLEANUP_PAGE_SIZE);
-      if (page.isEmpty()) {
-        break;
-      }
-      for (ScriptWorkItem item : page) {
-        afterUpdatedAt = item.getUpdatedAt();
-        afterId = item.getId();
-        if (workItemRepository.deleteDeadLetteredIfNoRetainedEvidence(
-            item.getTenantId(), item.getId())) {
-          deleted++;
-          if (deleted >= excess) {
-            break;
-          }
-        }
-      }
-    }
-    return deleted;
-  }
-
   private void cancel(ScriptWorkItem item, String reason, Instant now) {
     item.setStatus(STATUS_CANCELED);
     item.setCancelReason(reason);
@@ -1332,6 +1350,19 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private record RuntimeScopeKey(String tenantId, String gameInstanceId, String regionId) {}
+
+  private record OriginalFailureEvidence(String stage, String reason, boolean consistent) {
+    private static final OriginalFailureEvidence EMPTY = new OriginalFailureEvidence("", "", true);
+
+    private OriginalFailureEvidence {
+      stage = blankToEmpty(stage);
+      reason = blankToEmpty(reason);
+    }
+
+    private boolean isComplete() {
+      return consistent && !stage.isBlank() && !reason.isBlank();
+    }
+  }
 
   private static String normalizeReason(String reason) {
     return reason == null || reason.isBlank() ? "operator_cancel" : reason;

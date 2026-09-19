@@ -60,4 +60,49 @@ class FactionServiceImplTest {
                 2L, 2L, "live", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, 1L, 5));
     verify(standingRepository, never()).save(any(FactionStanding.class));
   }
+
+  @Test
+  void adjustReputationRejectsExistingStandingForFactionFromAnotherTenant() {
+    FactionRepository factionRepository = Mockito.mock(FactionRepository.class);
+    FactionStandingRepository standingRepository = Mockito.mock(FactionStandingRepository.class);
+    FactionServiceImpl service = new FactionServiceImpl(factionRepository, standingRepository);
+    FactionStanding existingStanding = new FactionStanding();
+    Faction foreignFaction = new Faction();
+    foreignFaction.setId(1L);
+    existingStanding.setFaction(foreignFaction);
+    existingStanding.setReputation(10);
+    when(factionRepository.findByTenantIdAndId(2L, 1L)).thenReturn(Optional.empty());
+    when(standingRepository.findByTenantIdAndCharacterIdAndPlayableStateKeyAndFaction_Id(
+            2L, 2L, "shared-live", 1L))
+        .thenReturn(Optional.of(existingStanding));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.adjustReputation(
+                2L, 2L, "live", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, 1L, 5));
+    verify(standingRepository, never()).save(any(FactionStanding.class));
+  }
+
+  @Test
+  void getReputationRejectsExistingStandingForFactionFromAnotherTenant() {
+    FactionRepository factionRepository = Mockito.mock(FactionRepository.class);
+    FactionStandingRepository standingRepository = Mockito.mock(FactionStandingRepository.class);
+    FactionServiceImpl service = new FactionServiceImpl(factionRepository, standingRepository);
+    FactionStanding existingStanding = new FactionStanding();
+    Faction foreignFaction = new Faction();
+    foreignFaction.setId(1L);
+    existingStanding.setFaction(foreignFaction);
+    existingStanding.setReputation(10);
+    when(factionRepository.findByTenantIdAndId(2L, 1L)).thenReturn(Optional.empty());
+    when(standingRepository.findByTenantIdAndCharacterIdAndPlayableStateKeyAndFaction_Id(
+            2L, 2L, "shared-live", 1L))
+        .thenReturn(Optional.of(existingStanding));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.getReputation(
+                2L, 2L, "live", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, 1L));
+  }
 }

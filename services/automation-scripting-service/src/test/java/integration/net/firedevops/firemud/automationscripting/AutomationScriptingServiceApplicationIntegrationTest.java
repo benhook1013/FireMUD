@@ -42,7 +42,6 @@ import net.firedevops.firemud.test.HttpTestSupport;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.jooq.DSLContext;
-import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
@@ -258,7 +257,7 @@ class AutomationScriptingServiceApplicationIntegrationTest {
   }
 
   @Test
-  void postgresBindingCompensationRestoresFixedIdsAndRejectsConflicts() {
+  void postgresBindingCompensationRestoresLogicalBindings() {
     String name = "script-binding-compensation-" + UUID.randomUUID();
     ScriptDefinition originalDefinition = scriptDefinition(name, "{\"original\":true}");
     ScriptDefinition savedDefinition = scriptDefinitionRepository.save(originalDefinition);
@@ -266,14 +265,19 @@ class AutomationScriptingServiceApplicationIntegrationTest {
     ScriptEventBinding savedBinding = scriptEventBindingRepository.save(originalBinding);
     int originalDefinitionRowVersion = savedDefinition.getRowVersion();
     AtomicReference<List<ScriptEventBinding>> bindingsObservedAfterDelete = new AtomicReference<>();
+    AtomicReference<Boolean> failForwardReplacement = new AtomicReference<>(true);
 
     ScriptEventBindingRepository failingBindingRepository =
         new ScriptEventBindingRepository(dsl) {
           @Override
           public List<ScriptEventBinding> saveAll(Collection<ScriptEventBinding> entities) {
-            bindingsObservedAfterDelete.set(
-                findByTenantIdAndScriptPatchVersionAndScriptId(1L, "patch-definition", name));
-            throw new IllegalStateException("binding replacement failed");
+            if (failForwardReplacement.getAndSet(false)) {
+              bindingsObservedAfterDelete.set(
+                  findByTenantIdAndScriptPatchVersionAndScriptIdOrderByEventTypeAscEventSchemaVersionAscPriorityAscBindingIdAscIdAsc(
+                      1L, "patch-definition", name));
+              throw new IllegalStateException("binding replacement failed");
+            }
+            return super.saveAll(entities);
           }
         };
     ScriptDefinitionServiceImpl service =
@@ -293,7 +297,14 @@ class AutomationScriptingServiceApplicationIntegrationTest {
             "{\"replacement\":true}",
             List.of(
                 new ScriptDefinitionDto.EventBindingDto(
-                    "onCommand", "v1", "ACTION_TAG", "replacement-scope", 0, "normal", false)));
+                    "onCommand",
+                    "v1",
+                    "ACTION_TAG",
+                    "replacement-scope",
+                    0,
+                    "normal",
+                    false,
+                    "binding-replacement")));
 
     assertThatThrownBy(() -> service.updateScript(update)).isInstanceOf(SagaException.class);
     assertThat(bindingsObservedAfterDelete.get()).isNotNull().isEmpty();
@@ -307,8 +318,11 @@ class AutomationScriptingServiceApplicationIntegrationTest {
             .toList();
     assertThat(restoredBindings).hasSize(1);
     ScriptEventBinding restoredBinding = restoredBindings.get(0);
-    assertThat(restoredBinding.getId()).isEqualTo(savedBinding.getId());
-    assertThat(restoredBinding).usingRecursiveComparison().isEqualTo(savedBinding);
+    assertThat(restoredBinding)
+        .usingRecursiveComparison()
+        .ignoringFields("id", "rowVersion")
+        .isEqualTo(savedBinding);
+    assertThat(restoredBinding.getBindingId()).isEqualTo(savedBinding.getBindingId());
 
     ScriptDefinition restoredDefinition =
         scriptDefinitionRepository
@@ -323,20 +337,6 @@ class AutomationScriptingServiceApplicationIntegrationTest {
     staleDefinition.setRowVersion(originalDefinitionRowVersion);
     assertThatThrownBy(() -> scriptDefinitionRepository.save(staleDefinition))
         .isInstanceOf(org.springframework.dao.OptimisticLockingFailureException.class);
-
-    ScriptEventBinding conflictingId = copyBinding(restoredBinding);
-    assertThatThrownBy(() -> scriptEventBindingRepository.restoreWithId(conflictingId))
-        .isInstanceOf(DataAccessException.class);
-    ScriptEventBinding conflictingNaturalKey = copyBinding(restoredBinding);
-    conflictingNaturalKey.setId(restoredBinding.getId() + 1_000_000L);
-    assertThatThrownBy(() -> scriptEventBindingRepository.restoreWithId(conflictingNaturalKey))
-        .isInstanceOf(DataAccessException.class);
-
-    ScriptEventBinding generated = copyBinding(restoredBinding);
-    generated.setId(null);
-    generated.setTargetScopeId("generated-scope");
-    ScriptEventBinding generatedBinding = scriptEventBindingRepository.save(generated);
-    assertThat(generatedBinding.getId()).isNotEqualTo(restoredBinding.getId());
   }
 
   @Test
@@ -395,6 +395,7 @@ class AutomationScriptingServiceApplicationIntegrationTest {
     ScriptEventBinding binding = new ScriptEventBinding();
     binding.setTenantId(1L);
     binding.setScriptPatchVersion("patch-definition");
+    binding.setBindingId("binding-" + targetScopeId);
     binding.setEventType("onCommand");
     binding.setEventSchemaVersion("v1");
     binding.setScriptId(scriptId);
@@ -404,24 +405,6 @@ class AutomationScriptingServiceApplicationIntegrationTest {
     binding.setPriorityTag("normal");
     binding.setEnabled(true);
     return binding;
-  }
-
-  private static ScriptEventBinding copyBinding(ScriptEventBinding source) {
-    ScriptEventBinding copy = new ScriptEventBinding();
-    copy.setId(source.getId());
-    copy.setTenantId(source.getTenantId());
-    copy.setScriptPatchVersion(source.getScriptPatchVersion());
-    copy.setEventType(source.getEventType());
-    copy.setEventSchemaVersion(source.getEventSchemaVersion());
-    copy.setScriptId(source.getScriptId());
-    copy.setTargetScopeType(source.getTargetScopeType());
-    copy.setTargetScopeId(source.getTargetScopeId());
-    copy.setPriority(source.getPriority());
-    copy.setPriorityTag(source.getPriorityTag());
-    copy.setRequiresExclusiveEvent(source.isRequiresExclusiveEvent());
-    copy.setEnabled(source.isEnabled());
-    copy.setRowVersion(source.getRowVersion());
-    return copy;
   }
 
   private ScriptHandoffEvent saveHandoffAfterBarrier(
