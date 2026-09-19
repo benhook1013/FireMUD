@@ -11,11 +11,13 @@ from pathlib import Path
 import yaml
 
 root = Path(sys.argv[1])
-docs = list(
-    yaml.safe_load_all(
+docs = [
+    doc
+    for doc in yaml.safe_load_all(
         (root / "k8s/velero/verify-backups-cronjob.yaml").read_text(encoding="utf-8")
     )
-)
+    if doc is not None
+]
 if len(docs) != 4:
     raise SystemExit("backup verifier projection must contain ServiceAccount, Role, RoleBinding, and CronJob")
 service_account, role, binding, cronjob = docs

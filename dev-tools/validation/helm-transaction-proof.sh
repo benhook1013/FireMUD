@@ -7,6 +7,11 @@ command -v kubectl >/dev/null 2>&1 || { echo "kubectl is required" >&2; exit 1; 
 
 work_dir="$(mktemp -d)"
 temp_id="$(basename "$work_dir" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')"
+if [[ -z "$temp_id" ]]; then
+  echo "sanitized temp_id derived from work_dir $work_dir is empty" >&2
+  rm -rf -- "$work_dir"
+  exit 1
+fi
 namespace="helm-transaction-proof-${temp_id}"
 release="firemud-proof"
 namespace_owned=false
@@ -46,11 +51,11 @@ else
   echo "unable to exclusively create disposable namespace $namespace" >&2
   exit 1
 fi
-helm install "$release" "$chart_dir" --namespace "$namespace" --wait
+helm install "$release" "$chart_dir" --namespace "$namespace" --wait --timeout 180s
 helm status "$release" --namespace "$namespace" >/dev/null
 test "$(kubectl -n "$namespace" get configmap "$release-marker" -o jsonpath='{.data.marker}')" = installed
 
-helm upgrade "$release" "$chart_dir" --namespace "$namespace" --set marker=upgraded --wait
+helm upgrade "$release" "$chart_dir" --namespace "$namespace" --set marker=upgraded --wait --timeout 180s
 helm status "$release" --namespace "$namespace" >/dev/null
 test "$(kubectl -n "$namespace" get configmap "$release-marker" -o jsonpath='{.data.marker}')" = upgraded
 
@@ -64,7 +69,7 @@ if len(history) < 2:
     print("Helm history must contain at least two revisions", file=sys.stderr)
     raise SystemExit(1)
 ' <<<"$history_json"
-helm rollback "$release" 1 --namespace "$namespace" --wait
+helm rollback "$release" 1 --namespace "$namespace" --wait --timeout 180s
 helm status "$release" --namespace "$namespace" >/dev/null
 test "$(kubectl -n "$namespace" get configmap "$release-marker" -o jsonpath='{.data.marker}')" = installed
 helm uninstall "$release" --namespace "$namespace" --wait --timeout 180s

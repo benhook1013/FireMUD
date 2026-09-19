@@ -169,6 +169,16 @@ script = (root / "dev-tools/validation/helm-transaction-proof.sh").read_text()
 for command in ("helm install", "helm upgrade", "helm history", "helm rollback", "helm status"):
     if command not in script:
         raise SystemExit(f"Helm proof script must exercise {command}")
+for required_helm_command in (
+    'helm install "$release" "$chart_dir" --namespace "$namespace" --wait --timeout 180s',
+    'helm upgrade "$release" "$chart_dir" --namespace "$namespace" --set marker=upgraded --wait --timeout 180s',
+    'helm rollback "$release" 1 --namespace "$namespace" --wait --timeout 180s',
+):
+    if required_helm_command not in script:
+        raise SystemExit(
+            "Helm proof install, upgrade, and rollback operations must use a bounded 180-second timeout: "
+            f"{required_helm_command}"
+        )
 if "assert " in script:
     raise SystemExit("Helm proof history validation must not use Python assert")
 for required_history_check_fragment in (
@@ -201,6 +211,17 @@ if strict_cleanup_sequence not in script:
     raise SystemExit("Helm proof script must keep normal cleanup strict before disarming its EXIT trap")
 if 'temp_id="$(basename "$work_dir"' not in script or 'namespace="helm-transaction-proof-${temp_id}"' not in script:
     raise SystemExit("Helm proof namespace must be unique per temporary work directory")
+empty_temp_id_guard = '''if [[ -z "$temp_id" ]]; then
+  echo "sanitized temp_id derived from work_dir $work_dir is empty" >&2
+  rm -rf -- "$work_dir"
+  exit 1
+fi'''
+namespace_assignment = 'namespace="helm-transaction-proof-${temp_id}"'
+if empty_temp_id_guard not in script or f"{empty_temp_id_guard}\n{namespace_assignment}" not in script:
+    raise SystemExit(
+        "Helm proof must reject an empty sanitized temp_id immediately before constructing its namespace "
+        "and identify work_dir as the source"
+    )
 if 'kubectl create namespace "$namespace" >/dev/null 2>&1' not in script:
     raise SystemExit("Helm proof must claim its unique namespace with exclusive kubectl create")
 if 'kubectl create namespace "$namespace" --dry-run=client' in script or 'kubectl apply -f -' in script:
