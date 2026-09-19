@@ -256,6 +256,12 @@ jobs:
         with:
           values-file: k8s/helm/firemud/values-hosted-shared.example.yaml
 
+      - name: Reject hosted manual deploy without trusted handoff
+        if: ${{ github.event_name == 'workflow_dispatch' && steps.derive.outputs.action == 'deploy' && steps.deploy-certificate-identity.outputs.mode == 'hosted-controller' }}
+        run: |
+          echo "::error title=Hosted manual deploy requires trusted handoff::Use the pull_request lifecycle for hosted-controller deployment; workflow_dispatch cannot activate a hosted identity." >&2
+          exit 1
+
       - name: Resolve preview eligibility
         id: eligibility
         env:
@@ -319,6 +325,45 @@ jobs:
           head_sha=${{ steps.derive.outputs.head_sha }}
           preview_max_active=${PREVIEW_MAX_ACTIVE:-1}
           EOF
+
+  preview-mode-evidence:
+    name: Publish Immutable Preview Mode Evidence
+    needs: preview-plan
+    if: ${{ github.event_name == 'pull_request' && needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'deploy' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
+      - name: Write immutable certificate identity mode evidence
+        env:
+          PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
+          CERTIFICATE_IDENTITY_MODE: ${{ needs.preview-plan.outputs.certificate_identity_mode }}
+        run: |
+          set -euo pipefail
+          umask 077
+          jq -n \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg sourceWorkflow '.github/workflows/preview.yml' \
+            --argjson sourceRunId "$GITHUB_RUN_ID" \
+            --argjson prNumber "$PR_NUMBER" \
+            --arg headSha "$HEAD_SHA" \
+            --arg certificateIdentityMode "$CERTIFICATE_IDENTITY_MODE" \
+            '{schemaVersion:1,event:"pull_request",repository:$repository,sourceWorkflow:$sourceWorkflow,sourceRunId:$sourceRunId,prNumber:$prNumber,headSha:$headSha,certificateIdentityMode:$certificateIdentityMode}' \
+            > "$RUNNER_TEMP/preview-mode.json"
+
+      - name: Upload immutable preview mode evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: preview-mode-pr-${{ needs.preview-plan.outputs.pr_number }}-${{ needs.preview-plan.outputs.head_sha }}
+          path: ${{ runner.temp }}/preview-mode.json
+          if-no-files-found: error
+          retention-days: 7
 
   preview-render-hosted:
     name: Render Sanitized Hosted Preview Artifact

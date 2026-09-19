@@ -572,6 +572,7 @@ for required in \
 done
 
 python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" "$janitor" "$mode_action" "$runtime" "$artifact_action" <<'PY'
+import json
 import os
 import re
 import subprocess
@@ -752,6 +753,9 @@ for job_name, required_gate in expected_gates.items():
     assert required_gate in condition, (job_name, condition)
 
 validate_job = jobs["validate-target"]
+assert validate_job["outputs"]["action"] == (
+    "${{ steps.source.outputs.action || steps.target.outputs.action }}"
+)
 assert validate_job["outputs"]["certificate_identity_mode"] == (
     "${{ steps.certificate-identity.outputs.mode }}"
 )
@@ -1363,9 +1367,6 @@ for fragment in (
     '[[ "$source_path" == ',
     'Missing workflow run id',
     'Unexpected source workflow',
-    'expected_artifact_name="preview-render-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}"',
-    'select(.name == $name and .expired == false)',
-    '[[ "$artifact_count" == 1 ]] || emit_no_action',
     '[[ "$base_ref" == main || "$base_ref" == develop ]] || emit_no_action',
     'Ignoring closed pull request because its base branch is unsupported.',
     '[[ "$state" == closed ]] || emit_no_action',
@@ -1380,6 +1381,13 @@ assert "steps.target.outputs.action == 'deploy'" in source_step["if"]
 source_script = source_step["run"]
 assert 'render_run_id="$SOURCE_RUN_ID"' in source_script
 assert 'if [[ -z "$render_run_id" ]]' not in source_script
+for fragment in (
+    'mode_artifact_name="preview-mode-pr-${PR_NUMBER}-${HEAD_SHA}"',
+    'render_artifact_name="preview-render-pr-${PR_NUMBER}-${HEAD_SHA}"',
+    '[[ "$mode_artifact_count" == 1 ]] || emit_no_action',
+    'echo "render_artifact_count=${render_artifact_count}"',
+):
+    assert fragment in source_script, fragment
 assert 'actions/workflows/preview.yml/runs?' not in source_script
 assert 'test -n "$render_run_id"' not in source_script
 assert 'Missing source run id::Expected a non-empty workflow run id' in source_script
@@ -1392,6 +1400,77 @@ for source_field, expected in (
 ):
     assert f"require_source_field {source_field} {expected}" in source_script
 assert "Expected %q; actual %q." in source_script
+assert "mode_artifact_name=" in source_script
+assert "render_artifact_count=" in source_script
+assert "echo 'action=none'" in source_script
+mode_download = next(
+    step
+    for step in validate_job["steps"]
+    if step.get("name") == "Download immutable source certificate mode evidence"
+)
+assert mode_download["if"] == "${{ steps.source.outputs.action == 'deploy' }}"
+mode_verify = next(
+    step
+    for step in validate_job["steps"]
+    if step.get("name") == "Verify candidate and trusted certificate identity modes agree"
+)
+assert "Certificate identity mode changed" in mode_verify["run"]
+assert "RENDER_ARTIFACT_COUNT" in mode_verify["env"]
+with tempfile.TemporaryDirectory() as mode_fixture:
+    mode_directory = Path(mode_fixture) / "preview-mode-evidence"
+    mode_directory.mkdir()
+    mode_file = mode_directory / "preview-mode.json"
+    mode_metadata = {
+        "schemaVersion": 1,
+        "event": "pull_request",
+        "repository": "example/FireMUD",
+        "sourceWorkflow": ".github/workflows/preview.yml",
+        "sourceRunId": 42,
+        "prNumber": 900,
+        "headSha": "c" * 40,
+        "certificateIdentityMode": "hosted-controller",
+    }
+    mode_file.write_text(json.dumps(mode_metadata), encoding="utf-8")
+    mode_environment = os.environ.copy()
+    mode_environment.update(
+        MODE_EVIDENCE_DIRECTORY=str(mode_directory),
+        EXPECTED_MODE="hosted-controller",
+        EXPECTED_REPOSITORY="example/FireMUD",
+        EXPECTED_SOURCE_RUN_ID="42",
+        EXPECTED_PR_NUMBER="900",
+        EXPECTED_HEAD_SHA="c" * 40,
+        RENDER_ARTIFACT_COUNT="1",
+    )
+    accepted_mode = subprocess.run(
+        ["bash", "-c", mode_verify["run"]],
+        env=mode_environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert accepted_mode.returncode == 0, accepted_mode.stderr
+    mode_environment["EXPECTED_MODE"] = "standalone"
+    mismatched_mode = subprocess.run(
+        ["bash", "-c", mode_verify["run"]],
+        env=mode_environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert mismatched_mode.returncode != 0
+    assert "Certificate identity mode changed" in mismatched_mode.stderr
+    mode_metadata["repository"] = "attacker/Fork"
+    mode_file.write_text(json.dumps(mode_metadata), encoding="utf-8")
+    mode_environment["EXPECTED_MODE"] = "hosted-controller"
+    malformed_mode = subprocess.run(
+        ["bash", "-c", mode_verify["run"]],
+        env=mode_environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert malformed_mode.returncode != 0
+    assert "Invalid certificate identity mode evidence" in malformed_mode.stderr
 
 deploy_steps = jobs["deploy-runtime"]["steps"]
 deploy_by_name = {
@@ -1440,7 +1519,9 @@ for artifact_job_name in ("prepare-runtime", "deploy-runtime"):
 # Preparation, deployment, and post-rollout verification each bind the same
 # immutable PR render through the trusted artifact action.
 assert trusted_source.count("./.github/actions/download-validated-preview-artifact") == 3
-assert "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" not in trusted_source
+assert trusted_source.count(
+    "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+) == 1
 active_request = deploy_by_name["Apply canonical Active request"]
 assert active_request["run"] == (
     'bash ./dev-tools/hosted/shared/request-hosted-identity.sh "$IDENTITY_NAME" Active'
@@ -5258,7 +5339,11 @@ case "$resource" in
       '{state:$state,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:"base-900"},merge_commit_sha:"merge-900",labels:$labels}'
     ;;
   repos/example/FireMUD/actions/runs/42/artifacts\?per_page=100)
-    printf '%s' '[{"artifacts":[]}]'
+    if [[ -n "${FAKE_SOURCE_ARTIFACTS_JSON:-}" ]]; then
+      printf '%s' "$FAKE_SOURCE_ARTIFACTS_JSON"
+    else
+      printf '%s' '[{"artifacts":[{"name":"preview-mode-pr-900-cccccccccccccccccccccccccccccccccccccccc","expired":false},{"name":"preview-render-pr-900-cccccccccccccccccccccccccccccccccccccccc","expired":false}]}]'
+    fi
     ;;
   *)
     printf 'unexpected fake gh invocation: %s\n' "$*" >&2
@@ -5286,7 +5371,14 @@ target_gh_log="$TEMP_DIR/target-gh.log"
     GITHUB_OUTPUT="$TEMP_DIR/output" \
     bash "$TEMP_DIR/target.sh"
 )
-test "$(cat "$TEMP_DIR/output")" = 'action=none'
+test "$(cat "$TEMP_DIR/output")" = 'action=deploy
+pr_number=900
+base_sha=base-900
+head_sha=cccccccccccccccccccccccccccccccccccccccc
+merge_sha=merge-900
+image_tag=cccccccccccccccccccccccccccccccccccccccc
+namespace=pr-900
+hostname=pr-900.preview.firedevops.net'
 test "$(cat "$target_gh_log")" = 'api repos/example/FireMUD/actions/runs/42'
 
 run_target_without_pull_request_metadata() {
@@ -5355,9 +5447,37 @@ source_gh_log="$TEMP_DIR/source-gh.log"
 test "$(cat "$source_output")" = "$(cat <<'EOF'
 render_run_id=42
 artifact_name=preview-render-pr-900-cccccccccccccccccccccccccccccccccccccccc
+render_artifact_count=1
+mode_artifact_name=preview-mode-pr-900-cccccccccccccccccccccccccccccccccccccccc
+action=deploy
 EOF
 )"
 test "$(cat "$source_gh_log")" = 'api repos/example/FireMUD/actions/runs/42'
+
+source_no_mode_output="$TEMP_DIR/source-no-mode-output"
+source_no_mode_stderr="$TEMP_DIR/source-no-mode.stderr"
+if ! (
+  cd "$ROOT_DIR"
+  PATH="$TEMP_DIR/bin:$PATH" \
+    GH_TOKEN=fake \
+    GITHUB_REPOSITORY=example/FireMUD \
+    SOURCE_RUN_ID=42 \
+    HEAD_SHA=cccccccccccccccccccccccccccccccccccccccc \
+    PR_NUMBER=900 \
+    FAKE_SOURCE_ARTIFACTS_JSON='[{"artifacts":[]}]' \
+    SOURCE_GH_LOG="$TEMP_DIR/source-no-mode-gh.log" \
+    GITHUB_OUTPUT="$source_no_mode_output" \
+    bash "$source_step"
+) >"$TEMP_DIR/source-no-mode.stdout" 2>"$source_no_mode_stderr"; then
+  cat "$TEMP_DIR/source-no-mode.stdout" >&2
+  cat "$source_no_mode_stderr" >&2
+  echo "source validation must skip a source run without immutable mode evidence" >&2
+  exit 1
+fi
+grep -Fxq 'action=none' "$source_no_mode_output"
+grep -Fxq \
+  'Ignoring source render without exactly one current preview-mode-pr-900-cccccccccccccccccccccccccccccccccccccccc artifact.' \
+  "$TEMP_DIR/source-no-mode.stdout"
 
 missing_source_stderr="$TEMP_DIR/source-missing-id.stderr"
 missing_source_gh_log="$TEMP_DIR/source-missing-id-gh.log"

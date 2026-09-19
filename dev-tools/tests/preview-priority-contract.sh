@@ -2302,8 +2302,8 @@ grep -Fqx \
   "$TEMP_DIR/trusted-target-unsupported.stderr"
 test ! -s "$unsupported_target_output"
 
-# The successor lifecycle resolver remains checked in but dormant. An exact
-# validated artifact can resolve deploy once a successor producer is activated.
+# The target step validates immutable workflow and PR identity only. Artifact
+# presence and candidate mode are deferred to the trusted source-mode step.
 reset_case
 run_trusted_target_fixture \
   '[{"artifacts":[{"name":"preview-render-pr-900-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","expired":false}]}]' \
@@ -2311,13 +2311,12 @@ run_trusted_target_fixture \
 grep -qx 'action=deploy' "$TEMP_DIR/trusted-target-exact-artifact.out"
 grep -qx 'head_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$TEMP_DIR/trusted-target-exact-artifact.out"
 
-# The prerequisite's old preview producer publishes no validated artifact, so
-# its only reachable workflow_run source must resolve no action.
+# Artifact absence is handled by the source-mode step after target validation.
 reset_case
 run_trusted_target_fixture \
   '[{"artifacts":[]}]' valid "$FAKE_TARGET_HEAD" \
   "$TEMP_DIR/trusted-target-no-artifact.out"
-grep -qx 'action=none' "$TEMP_DIR/trusted-target-no-artifact.out"
+grep -qx 'action=deploy' "$TEMP_DIR/trusted-target-no-artifact.out"
 
 reset_case
 run_trusted_target_fixture \
@@ -2711,10 +2710,32 @@ import yaml
 
 workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
 plan = workflow["jobs"]["preview-plan"]
+mode_evidence = workflow["jobs"]["preview-mode-evidence"]
 hosted = workflow["jobs"]["preview-render-hosted"]
 standalone = workflow["jobs"]["preview-deploy"]
 assert "merge_sha" in plan["outputs"]
 assert "certificate_identity_mode" in plan["outputs"]
+assert "workflow_dispatch" in str(
+    next(
+        step
+        for step in plan["steps"]
+        if step.get("name") == "Reject hosted manual deploy without trusted handoff"
+    ).get("if")
+)
+assert "action == 'deploy'" in next(
+    step
+    for step in plan["steps"]
+    if step.get("name") == "Reject hosted manual deploy without trusted handoff"
+).get("if")
+assert "exit 1" in next(
+    step
+    for step in plan["steps"]
+    if step.get("name") == "Reject hosted manual deploy without trusted handoff"
+).get("run")
+assert mode_evidence["needs"] == "preview-plan"
+assert "certificate_identity_mode" in str(mode_evidence)
+assert mode_evidence["steps"][-1]["uses"].startswith("actions/upload-artifact@")
+assert "preview-mode-pr-" in mode_evidence["steps"][-1]["with"]["name"]
 assert "certificate_identity_mode == 'hosted-controller'" in hosted["if"]
 assert "certificate_identity_mode == 'standalone'" in standalone["if"]
 hosted_runs = "\n".join(

@@ -22,7 +22,7 @@ jobs:
       contents: read # Check out the trusted default-branch validation implementation.
       pull-requests: read # Read immutable pull-request target metadata.
     outputs:
-      action: ${{ steps.target.outputs.action }}
+      action: ${{ steps.source.outputs.action || steps.target.outputs.action }}
       pr_number: ${{ steps.target.outputs.pr_number }}
       base_sha: ${{ steps.target.outputs.base_sha }}
       head_sha: ${{ steps.target.outputs.head_sha }}
@@ -134,16 +134,6 @@ jobs:
             labels_valid="$(sed -n 's/^labels_valid=//p' <<<"$label_metadata")"
             [[ "$labels_valid" == true ]] || emit_no_action \
               "Refusing hosted preview lifecycle action: PR label metadata is missing or malformed."
-            expected_artifact_name="preview-render-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}"
-            if ! artifacts_json="$(gh api --paginate --slurp \
-              "repos/${GITHUB_REPOSITORY}/actions/runs/${WORKFLOW_RUN_ID}/artifacts?per_page=100")"; then
-              emit_no_action "Ignoring source render because its artifacts could not be verified."
-            fi
-            artifact_count="$(jq --arg name "$expected_artifact_name" \
-              '[.[].artifacts[] | select(.name == $name and .expired == false)] | length' \
-              <<<"$artifacts_json")"
-            [[ "$artifact_count" == 1 ]] || emit_no_action \
-              "Ignoring source render without exactly one current ${expected_artifact_name} artifact."
           else
             [[ "$repository" == "$GITHUB_REPOSITORY" ]] || emit_no_action \
               "Ignoring closed pull request because its head repository is not trusted."
@@ -175,6 +165,11 @@ jobs:
           PR_NUMBER: ${{ steps.target.outputs.pr_number }}
         run: |
           set -euo pipefail
+          emit_no_action() {
+            echo "$1"
+            echo 'action=none' >> "$GITHUB_OUTPUT"
+            exit 0
+          }
           render_run_id="$SOURCE_RUN_ID"
           [[ -n "$render_run_id" ]] || {
             echo "::error title=Missing source run id::Expected a non-empty workflow run id; actual value was empty." >&2
@@ -197,10 +192,90 @@ jobs:
           require_source_field event pull_request "$(jq -r '.event' <<<"$source_json")"
           require_source_field repository "$GITHUB_REPOSITORY" \
             "$(jq -r '.repository.full_name' <<<"$source_json")"
+          if ! artifacts_json="$(gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${render_run_id}/artifacts?per_page=100")"; then
+            emit_no_action "Ignoring source render because its artifacts could not be verified."
+          fi
+          mode_artifact_name="preview-mode-pr-${PR_NUMBER}-${HEAD_SHA}"
+          mode_artifact_count="$(jq --arg name "$mode_artifact_name" \
+            '[.[].artifacts[] | select(.name == $name and .expired == false)] | length' \
+            <<<"$artifacts_json")"
+          [[ "$mode_artifact_count" == 1 ]] || emit_no_action \
+            "Ignoring source render without exactly one current ${mode_artifact_name} artifact."
+          render_artifact_name="preview-render-pr-${PR_NUMBER}-${HEAD_SHA}"
+          render_artifact_count="$(jq --arg name "$render_artifact_name" \
+            '[.[].artifacts[] | select(.name == $name and .expired == false)] | length' \
+            <<<"$artifacts_json")"
           {
             echo "render_run_id=${render_run_id}"
-            echo "artifact_name=preview-render-pr-${PR_NUMBER}-${HEAD_SHA}"
+            echo "artifact_name=${render_artifact_name}"
+            echo "render_artifact_count=${render_artifact_count}"
+            echo "mode_artifact_name=${mode_artifact_name}"
+            echo "action=deploy"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Download immutable source certificate mode evidence
+        if: ${{ steps.source.outputs.action == 'deploy' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ${{ steps.source.outputs.mode_artifact_name }}
+          path: ${{ runner.temp }}/preview-mode-evidence
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.source.outputs.render_run_id }}
+
+      - name: Verify candidate and trusted certificate identity modes agree
+        if: ${{ steps.source.outputs.action == 'deploy' }}
+        env:
+          MODE_EVIDENCE_DIRECTORY: ${{ runner.temp }}/preview-mode-evidence
+          EXPECTED_MODE: ${{ steps.certificate-identity.outputs.mode }}
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+          EXPECTED_SOURCE_RUN_ID: ${{ steps.source.outputs.render_run_id }}
+          EXPECTED_PR_NUMBER: ${{ steps.target.outputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ steps.target.outputs.head_sha }}
+          RENDER_ARTIFACT_COUNT: ${{ steps.source.outputs.render_artifact_count }}
+        run: |
+          set -euo pipefail
+          mode_file="$MODE_EVIDENCE_DIRECTORY/preview-mode.json"
+          [[ -f "$mode_file" ]] || {
+            echo "::error title=Missing certificate identity mode evidence::The source render did not publish the required immutable mode evidence." >&2
+            exit 1
+          }
+          mapfile -t mode_files < <(find "$MODE_EVIDENCE_DIRECTORY" -type f -print)
+          [[ "${#mode_files[@]}" == 1 && "${mode_files[0]}" == "$mode_file" ]] || {
+            echo "::error title=Unexpected certificate identity mode evidence::The source mode artifact must contain exactly preview-mode.json." >&2
+            exit 1
+          }
+          mode_metadata="$(cat "$mode_file")"
+          mode="$(jq -er \
+            --arg repository "$EXPECTED_REPOSITORY" \
+            --arg sourceWorkflow '.github/workflows/preview.yml' \
+            --argjson sourceRunId "$EXPECTED_SOURCE_RUN_ID" \
+            --argjson prNumber "$EXPECTED_PR_NUMBER" \
+            --arg headSha "$EXPECTED_HEAD_SHA" \
+            ' . as $metadata |
+              select(type == "object") |
+              select(($metadata | keys | sort) == (["schemaVersion","event","repository","sourceWorkflow","sourceRunId","prNumber","headSha","certificateIdentityMode"] | sort)) |
+              select($metadata.schemaVersion == 1) |
+              select($metadata.event == "pull_request") |
+              select($metadata.repository == $repository) |
+              select($metadata.sourceWorkflow == $sourceWorkflow) |
+              select($metadata.sourceRunId == $sourceRunId) |
+              select($metadata.prNumber == $prNumber) |
+              select($metadata.headSha == $headSha) |
+              select($metadata.certificateIdentityMode == "standalone" or $metadata.certificateIdentityMode == "hosted-controller") |
+              $metadata.certificateIdentityMode' \
+            <<<"$mode_metadata")" || {
+              echo "::error title=Invalid certificate identity mode evidence::The source mode artifact is not bound to this trusted lifecycle target." >&2
+              exit 1
+            }
+          if [[ "$mode" != "$EXPECTED_MODE" ]]; then
+            echo "::error title=Certificate identity mode changed::Source render selected ${mode}, but the trusted default branch resolves ${EXPECTED_MODE}; refusing activation." >&2
+            exit 1
+          fi
+          if [[ "$mode" == hosted-controller && "$RENDER_ARTIFACT_COUNT" != 1 ]]; then
+            echo "::error title=Missing hosted preview render artifact::A hosted-controller source render must publish exactly one validated render artifact." >&2
+            exit 1
+          fi
 
   prepare-runtime:
     name: Prepare Validated Preview Inputs
