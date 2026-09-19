@@ -54,6 +54,9 @@ import yaml
 
 root = pathlib.Path(sys.argv[1])
 skew_script = "dev-tools/hosted/shared/check-kubectl-version-skew.sh"
+github_env_kubeconfig_pattern = re.compile(
+    r"(?:^|[;&|])[ \t]*(?:echo|printf)[ \t]+[^;&|]*\bKUBECONFIG=[^;&|]*>>[ \t]*(?:[\"']?\$\{?GITHUB_ENV\}?\"?|'?\$\{?GITHUB_ENV\}?'?)"
+)
 
 
 def has_kubeconfig(environment):
@@ -66,7 +69,14 @@ def persists_kubeconfig(step):
         options = step.get("with", {})
         return isinstance(options, dict) and str(options.get("export-to-github-env", "true")).lower() != "false"
     run = str(step.get("run", ""))
-    return "GITHUB_ENV" in run and "KUBECONFIG=" in run
+    for raw_line in run.splitlines():
+        line = raw_line.lstrip()
+        if not line or line.startswith("#"):
+            continue
+        line = line.split("#", 1)[0]
+        if github_env_kubeconfig_pattern.search(line):
+            return True
+    return False
 
 
 def executable_invocation_count(run):
@@ -171,6 +181,17 @@ after_kubeconfig_fixture["jobs"]["verify"]["steps"].extend([
     {"name": "Validate restored cluster skew", "run": f"bash ./{skew_script}"},
 ])
 validate(after_kubeconfig_fixture, "after-kubeconfig fixture")
+
+# A comment-only export must not authorize a later invocation.
+comment_only_export_fixture = copy.deepcopy(manual_backup)
+comment_only_export_fixture["jobs"]["verify"]["steps"].extend([
+    {
+        "name": "Comment-only fake kubeconfig export",
+        "run": '# echo "KUBECONFIG=/tmp/comment-only.kubeconfig" >> "$GITHUB_ENV"',
+    },
+    {"name": "Reject skew after comment-only export", "run": f"bash ./{skew_script}"},
+])
+expect_rejected(comment_only_export_fixture, "comment-only export fixture")
 
 # An export later in the same step must not authorize an earlier invocation.
 before_export_fixture = copy.deepcopy(manual_backup)

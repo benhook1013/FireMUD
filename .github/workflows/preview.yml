@@ -493,19 +493,19 @@ jobs:
           echo "PREVIEW_STAGE=wait-for-images" >> "$GITHUB_ENV"
           bash ./dev-tools/hosted/shared/wait-for-runtime-images.sh "${{ steps.effective-image-tag.outputs.image_tag }}"
 
-      - name: Log in to GHCR for base-image availability
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.effective-image-tag.outputs.image_tag == needs.preview-plan.outputs.base_sha }}
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-          logout: true
-
       - name: Reuse immutable base runtime images
         if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.effective-image-tag.outputs.image_tag == needs.preview-plan.outputs.base_sha }}
         run: |
+          set -euo pipefail
           echo "PREVIEW_STAGE=wait-for-base-images" >> "$GITHUB_ENV"
+          cleanup_docker_config() {
+            if [[ -n "${DOCKER_CONFIG:-}" && -d "$DOCKER_CONFIG" ]]; then
+              rm -rf -- "$DOCKER_CONFIG"
+            fi
+          }
+          trap cleanup_docker_config EXIT
+          DOCKER_CONFIG="$(mktemp -d)"
+          export DOCKER_CONFIG
           bash ./dev-tools/hosted/preview/wait-for-base-images.sh "${{ steps.effective-image-tag.outputs.image_tag }}"
           echo "No runtime-image trigger paths changed; using the immutable runtime images published for base commit ${{ needs.preview-plan.outputs.base_sha }}."
 
