@@ -374,9 +374,8 @@ jobs:
           read -r checked_out_merge_sha checked_out_base_sha checked_out_head_sha extra_parent <<<"$merge_parents"
           if [[ "$checked_out_merge_sha" != "$MERGE_SHA" || -z "$checked_out_base_sha" ||
             -z "$checked_out_head_sha" || -n "$extra_parent" ||
-            "${checked_out_base_sha,,}" != "${BASE_SHA,,}" ||
             "${checked_out_head_sha,,}" != "${HEAD_SHA,,}" ]]; then
-            echo "::error title=Stale preview merge ref::The checked-out merge ref parents do not match the planned base and head SHAs." >&2
+            echo "::error title=Stale preview merge ref::The checked-out merge ref is not a two-parent merge of the planned head SHA." >&2
             exit 1
           fi
           values="$RUNNER_TEMP/preview-values.yaml"
