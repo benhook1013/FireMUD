@@ -13,6 +13,25 @@ workflow = yaml.safe_load((root / ".github/workflows/ci.yml").read_text())
 job = workflow.get("jobs", {}).get("helm-transaction-proof")
 if not isinstance(job, dict) or job.get("name") != "Helm Transaction Proof":
     raise SystemExit("CI must define the disposable Helm transaction proof job")
+
+
+def require_helm_job_timeout(job_definition):
+    timeout_minutes = job_definition.get("timeout-minutes")
+    if not isinstance(timeout_minutes, int) or timeout_minutes < 15:
+        raise SystemExit(
+            "Helm transaction proof job must allow at least 15 minutes for bounded disposable-cluster proof"
+        )
+
+
+require_helm_job_timeout(job)
+timeout_fixture = copy.deepcopy(job)
+timeout_fixture["timeout-minutes"] = 10
+try:
+    require_helm_job_timeout(timeout_fixture)
+except SystemExit:
+    pass
+else:
+    raise SystemExit("Helm transaction proof contract accepted a 10-minute job timeout")
 pinned_k3s_image = "rancher/k3s:v1.34.5-k3s1@sha256:998f4db28a13143ada759690b554c5d8c1814ac03f77c1bdd78bbd73875a1379"
 if not isinstance(job.get("env"), dict) or job["env"].get("K3S_IMAGE") != pinned_k3s_image:
     raise SystemExit("Helm transaction proof must define the exact pinned k3s image once as K3S_IMAGE")
