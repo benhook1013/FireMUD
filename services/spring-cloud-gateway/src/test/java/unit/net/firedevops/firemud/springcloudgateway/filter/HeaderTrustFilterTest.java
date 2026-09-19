@@ -143,6 +143,53 @@ class HeaderTrustFilterTest {
   }
 
   @Test
+  void stripsGatewayOwnedFiremudHeadersOutsideGameplayAndPreservesConnectTokenCarrier() {
+    HeaderTrustFilter filter = legacyFilter(new GatewayHeaderTrustProperties());
+
+    MockServerHttpRequest publicApiRequest =
+        MockServerHttpRequest.get("/api/session/ping")
+            .remoteAddress(new InetSocketAddress("1.2.3.4", 0))
+            .header("X-Firemud-Connection-Mode", "trusted_tcp_proxy")
+            .header("X-Firemud-Connect-Context", "spoofed-context")
+            .header("X-Firemud-Connect-Token", "spoofed-token")
+            .header("X-Firemud-Transport-Session-Id", "9001")
+            .build();
+    ServerWebExchange publicApiExchange =
+        filterThroughChain(filter, MockServerWebExchange.from(publicApiRequest));
+
+    assertThat(publicApiExchange.getRequest().getHeaders().getFirst("X-Firemud-Connection-Mode"))
+        .isNull();
+    assertThat(publicApiExchange.getRequest().getHeaders().getFirst("X-Firemud-Connect-Context"))
+        .isNull();
+    assertThat(publicApiExchange.getRequest().getHeaders().getFirst("X-Firemud-Connect-Token"))
+        .isNull();
+    assertThat(
+            publicApiExchange.getRequest().getHeaders().getFirst("X-Firemud-Transport-Session-Id"))
+        .isNull();
+
+    MockServerHttpRequest gameplayRequest =
+        MockServerHttpRequest.get("/ws/game/test")
+            .remoteAddress(new InetSocketAddress("1.2.3.4", 0))
+            .header("X-Firemud-Connection-Mode", "trusted_tcp_proxy")
+            .header("X-Firemud-Connect-Context", "spoofed-context")
+            .header("X-Firemud-Connect-Token", "carrier-token")
+            .header("X-Firemud-Transport-Session-Id", "9001")
+            .build();
+    ServerWebExchange gameplayExchange =
+        filterThroughChain(filter, MockServerWebExchange.from(gameplayRequest));
+
+    assertThat(gameplayExchange.getRequest().getHeaders().getFirst("X-Firemud-Connection-Mode"))
+        .isNull();
+    assertThat(gameplayExchange.getRequest().getHeaders().getFirst("X-Firemud-Connect-Context"))
+        .isNull();
+    assertThat(gameplayExchange.getRequest().getHeaders().getFirst("X-Firemud-Connect-Token"))
+        .isEqualTo("carrier-token");
+    assertThat(
+            gameplayExchange.getRequest().getHeaders().getFirst("X-Firemud-Transport-Session-Id"))
+        .isNull();
+  }
+
+  @Test
   void stripsConnectTokenCarrierFromNonGameplayRoutes() {
     HeaderTrustFilter filter = legacyFilter(new GatewayHeaderTrustProperties());
 
@@ -219,6 +266,10 @@ class HeaderTrustFilterTest {
             .header("X-World-Slug", "demo")
             .header("X-Realm-Slug", "production")
             .header("X-Pointer-Version", "17")
+            .header("X-Firemud-Connection-Mode", "first_party_web")
+            .header("X-Firemud-Connect-Context", "spoofed-context")
+            .header("X-Firemud-Connect-Token", "carrier-token")
+            .header("X-Firemud-Transport-Session-Id", "9001")
             .build();
 
     ServerWebExchange mutatedExchange =
@@ -240,6 +291,14 @@ class HeaderTrustFilterTest {
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Proxy-Game-Instance-Id"))
         .isNull();
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Proxy-Tenant-Id")).isNull();
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connection-Mode"))
+        .isNull();
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connect-Context"))
+        .isNull();
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connect-Token"))
+        .isEqualTo("carrier-token");
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Transport-Session-Id"))
+        .isNull();
   }
 
   @Test

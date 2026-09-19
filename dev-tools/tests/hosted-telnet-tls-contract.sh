@@ -5,6 +5,22 @@ ROOT_DIR=$(cd "$(dirname "$0")/../.." && pwd)
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
+python3 - "$ROOT_DIR/dev-tools/hosted/shared/hosted-login-look-smoke.sh" <<'PY'
+import sys
+from pathlib import Path
+
+script = Path(sys.argv[1]).read_text(encoding="utf-8")
+assert "tls_enabled=True" in script, "hosted Telnet smoke must request TLS"
+assert 'ca_file = os.environ.get("SMOKE_TELNET_CA_FILE") or None' in script, (
+    "hosted Telnet smoke must allow an explicit CA override"
+)
+assert "tls_server_hostname=host" in script, "hosted Telnet smoke must set SNI/hostname"
+assert "tls_ca_file=ca_file" in script, "hosted Telnet smoke must use the CA override"
+assert "_create_unverified_context" not in script, (
+    "hosted Telnet smoke must not disable certificate verification"
+)
+PY
+
 python3 - \
   "$ROOT_DIR/k8s/helm/firemud/values-hosted-shared.example.yaml" \
   "$TMP_DIR/values-controller.yaml" <<'PY'

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 FIREMUD_REPO_ROOT=${FIREMUD_REPO_ROOT:-$(cd "$(dirname "$0")/../../.." && pwd)}
+# shellcheck disable=SC1091 # The repository root is resolved at runtime.
 source "$FIREMUD_REPO_ROOT/dev-tools/smoke/demo-smoke-defaults.sh"
 
 SMOKE_HOST=${SMOKE_TELNET_HOST:?SMOKE_TELNET_HOST is required}
@@ -16,6 +17,7 @@ SMOKE_LOGIN_EXPECT=${SMOKE_LOGIN_EXPECT:-OK LOGIN}
 SMOKE_PLAY_EXPECT=${SMOKE_PLAY_EXPECT:-OK PLAY}
 SMOKE_LOOK_EXPECT=${SMOKE_LOOK_EXPECT:-OK LOOK}
 SMOKE_TLS_CA_FILE=${SMOKE_TLS_CA_FILE:-}
+export SMOKE_TELNET_CA_FILE=${SMOKE_TELNET_CA_FILE:-$SMOKE_TLS_CA_FILE}
 export FIREMUD_REPO_ROOT
 export SMOKE_TLS_CA_FILE
 
@@ -27,6 +29,7 @@ else
 fi
 
 echo "Running ${SMOKE_TARGET_LABEL} TCP smoke against ${SMOKE_HOST}:${TCP_PORT}"
+echo "Using verified Telnet TLS with hostname '${SMOKE_HOST}'${SMOKE_TELNET_CA_FILE:+ and explicit CA override}"
 echo "Using login credentials (email and password redacted)"
 
 "$PYTHON" - <<'PY'
@@ -49,6 +52,7 @@ worlds_expect = os.environ.get("SMOKE_WORLDS_EXPECT", "OK WORLDS")
 login_expect = os.environ.get("SMOKE_LOGIN_EXPECT", "OK LOGIN")
 play_expect = os.environ.get("SMOKE_PLAY_EXPECT", "OK PLAY")
 look_expect = os.environ.get("SMOKE_LOOK_EXPECT", "OK LOOK")
+ca_file = os.environ.get("SMOKE_TELNET_CA_FILE") or None
 run_telnet_smoke_session(
     host,
     port,
@@ -66,7 +70,7 @@ run_telnet_smoke_session(
     retry_interval_seconds=2,
     tls_enabled=True,
     tls_server_hostname=host,
-    tls_ca_file=os.environ.get("SMOKE_TLS_CA_FILE") or None,
+    tls_ca_file=ca_file,
 )
 
 label = os.environ.get("SMOKE_TARGET_LABEL", "hosted environment")

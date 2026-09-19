@@ -167,6 +167,9 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
       assertThat(admittedHeaders.get().getFirst("X-Game-Instance-Id")).isEqualTo("42");
       assertThat(admittedHeaders.get().getFirst("X-Firemud-Connection-Mode"))
           .isEqualTo("trusted_tcp_proxy");
+      assertThat(admittedHeaders.get().getFirst("X-Firemud-Connect-Context")).isNull();
+      assertThat(admittedHeaders.get().getFirst("X-Firemud-Connect-Token")).isNull();
+      assertThat(admittedHeaders.get().getFirst("X-Firemud-Transport-Session-Id")).isNull();
 
       assertThatThrownBy(
               () ->
@@ -193,6 +196,58 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
                       Duration.ofSeconds(1)))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("Timeout on blocking read");
+    }
+  }
+
+  @Test
+  void dedicatedListenerRejectsWrongCertificateHealthProbes() throws Exception {
+    GatewayTcpProxyListenerProperties listenerProperties = listenerProperties(8443);
+    GatewayHeaderTrustProperties headerProperties = new GatewayHeaderTrustProperties();
+    ListenerFixture fixture =
+        listenerFixture(
+            listenerProperties,
+            headerProperties,
+            Set.of("prod"),
+            new AtomicInteger(),
+            session ->
+                session.send(reactor.core.publisher.Mono.just(session.textMessage("admitted"))));
+    try (fixture) {
+      TcpProxyTlsListener listener = fixture.listener();
+      listener.start();
+      int port = listener.boundPort();
+      listenerProperties.setPort(port);
+      SslContext wrongClientContext = clientContext("wrong-client.pem", "wrong-client-key.pem");
+
+      assertThat(requestStatus(port, wrongClientContext, "/actuator/health/readiness"))
+          .isEqualTo(403);
+      assertThat(requestStatus(port, wrongClientContext, "/actuator/health/liveness"))
+          .isEqualTo(403);
+    }
+  }
+
+  @Test
+  void developmentCidrListenerRejectsOutOfCidrHealthProbes() throws Exception {
+    GatewayTcpProxyListenerProperties listenerProperties =
+        listenerProperties(8443, "development_cidr", "isolated-test");
+    listenerProperties.getDevelopmentCidr().setTrustedCidr("127.0.0.2/32");
+    GatewayHeaderTrustProperties headerProperties = new GatewayHeaderTrustProperties();
+    ListenerFixture fixture =
+        listenerFixture(
+            listenerProperties,
+            headerProperties,
+            Set.of("test"),
+            new AtomicInteger(),
+            session ->
+                session.send(reactor.core.publisher.Mono.just(session.textMessage("admitted"))));
+    try (fixture) {
+      TcpProxyTlsListener listener = fixture.listener();
+      listener.start();
+      int port = listener.boundPort();
+      listenerProperties.setPort(port);
+
+      SslContext clientContext = clientContextWithoutIdentity();
+      assertThat(requestStatus(port, clientContext, "/actuator/health/readiness")).isEqualTo(403);
+      assertThat(requestStatus(port, clientContext, "/actuator/health/liveness")).isEqualTo(403);
     }
   }
 
@@ -299,6 +354,10 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
     headers.set("X-Proxy-Connection-Id", "conn-123");
     headers.set("X-Proxy-Tenant-Id", "7");
     headers.set("X-Proxy-Game-Instance-Id", "42");
+    headers.set("X-Firemud-Connection-Mode", "first_party_web");
+    headers.set("X-Firemud-Connect-Context", "spoofed-context");
+    headers.set("X-Firemud-Connect-Token", "spoofed-token");
+    headers.set("X-Firemud-Transport-Session-Id", "9001");
     return headers;
   }
 
@@ -330,6 +389,16 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
     } finally {
       execution.dispose();
     }
+  }
+
+  private static int requestStatus(int port, SslContext sslContext, String path) {
+    return requireNonNull(
+        HttpClient.create()
+            .secure(spec -> spec.sslContext(sslContext))
+            .get()
+            .uri("https://127.0.0.1:" + port + path)
+            .responseSingle((response, content) -> content.thenReturn(response.status().code()))
+            .block(Duration.ofSeconds(5)));
   }
 
   private static SslContext clientContext(String certificate, String privateKey) throws Exception {

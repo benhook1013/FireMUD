@@ -70,7 +70,7 @@ public final class GameplayTelnetDriver implements AutoCloseable {
     login(email, password);
     play(world);
     sendLine("LOOK");
-    readBlockContainingOrTimeout(text);
+    readBlockContaining(text);
   }
 
   public void enterGameplayAndWaitReady(
@@ -79,7 +79,7 @@ public final class GameplayTelnetDriver implements AutoCloseable {
     login(email, password);
     play(world, characterName);
     sendLine("LOOK");
-    readBlockContainingOrTimeout(text);
+    readBlockContaining(text);
   }
 
   public void sendLine(String command) {

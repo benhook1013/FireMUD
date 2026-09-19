@@ -32,6 +32,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpHeaders;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -123,6 +124,20 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
     awaitCommand("look");
     assertThat(GAME_SESSION_STUB.stub().receivedCommands())
         .contains("WORLDS", "LOGIN demo@example.com swordfish", "PLAY demo", "look");
+    assertThat(GAME_SESSION_STUB.stub().receivedHandshakeHeaders())
+        .anySatisfy(
+            headers -> {
+              assertThat(headers.getFirst("X-Client-IP")).isEqualTo("127.0.0.1");
+              assertThat(headers.getFirst("X-Proxy-Client-IP")).isEqualTo("127.0.0.1");
+              assertThat(headers.getFirst("X-Proxy-Connection-Id")).isNotBlank();
+              assertThat(headers.getFirst("X-Game-Instance-Id")).isEqualTo("1");
+              assertThat(headers.getFirst("X-Proxy-Game-Instance-Id")).isEqualTo("1");
+              assertThat(headers.getFirst("X-Tenant-Id")).isEqualTo("1");
+              assertThat(headers.getFirst("X-Proxy-Tenant-Id")).isEqualTo("1");
+              assertThat(headers.getFirst("X-World-Slug")).isEqualTo("demo");
+              assertThat(headers.getFirst("X-Realm-Slug")).isEqualTo("production");
+              assertThat(headers.getFirst("X-Pointer-Version")).isEqualTo("1");
+            });
   }
 
   @Test
@@ -327,6 +342,7 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
 
   private static final class GameSessionStub {
     private final Queue<String> commands = new ConcurrentLinkedQueue<>();
+    private final Queue<HttpHeaders> handshakeHeaders = new ConcurrentLinkedQueue<>();
 
     void recordCommand(String command) {
       commands.add(command);
@@ -334,6 +350,16 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
 
     List<String> receivedCommands() {
       return new ArrayList<>(commands);
+    }
+
+    void recordHandshakeHeaders(HttpHeaders headers) {
+      HttpHeaders copy = new HttpHeaders();
+      copy.putAll(headers);
+      handshakeHeaders.add(copy);
+    }
+
+    List<HttpHeaders> receivedHandshakeHeaders() {
+      return new ArrayList<>(handshakeHeaders);
     }
   }
 
@@ -371,6 +397,7 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
 
     @Override
     public Mono<Void> handle(WebSocketSession session) {
+      stub.recordHandshakeHeaders(session.getHandshakeInfo().getHeaders());
       Flux<String> commands =
           session
               .receive()

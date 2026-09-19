@@ -112,6 +112,7 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
       reloadChannel();
     } catch (SSLException e) {
       logger.error("Failed to reload gRPC channel", e);
+      throw new IllegalStateException("Failed to reload gRPC channel", e);
     }
   }
 }

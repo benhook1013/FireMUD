@@ -2638,6 +2638,13 @@ def service_consumer_documents():
                     {"key": "ca.crt", "path": "ca.crt"},
                 ]
             volumes.append({"name": name, kind: projection})
+        container = {
+            "name": service,
+            "volumeMounts": mounts,
+        }
+        if service == "spring-cloud-gateway":
+            container["env"] = validator._expected_gateway_container_env("pr-42")
+            container["envFrom"] = copy.deepcopy(validator.EXPECTED_GATEWAY_ENV_FROM)
         documents.append(
             {
                 "kind": "Deployment",
@@ -2646,12 +2653,7 @@ def service_consumer_documents():
                     "template": {
                         "spec": {
                             "serviceAccountName": "firemud-app",
-                            "containers": [
-                                {
-                                    "name": service,
-                                    "volumeMounts": mounts,
-                                }
-                            ],
+                            "containers": [container],
                             "volumes": volumes,
                         }
                     }

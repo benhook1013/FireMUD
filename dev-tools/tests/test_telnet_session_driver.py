@@ -1062,26 +1062,25 @@ class TelnetSessionDriverTest(unittest.TestCase):
             "LOOK\nNORTH",
             f"LOGIN demo@example.com {secret}\nINJECT",
         ):
-            with self.subTest(command=command):
-                with tempfile.TemporaryDirectory() as directory:
-                    output = []
-                    session = telnet_session.TelnetSession(
-                        "localhost",
-                        32000,
-                        Path(directory) / "session.jsonl",
-                        output=output.append,
-                        tls_enabled=False,
-                    )
-                    session.socket = unittest.mock.Mock()
+            with self.subTest(command=command), tempfile.TemporaryDirectory() as directory:
+                output = []
+                session = telnet_session.TelnetSession(
+                    "localhost",
+                    32000,
+                    Path(directory) / "session.jsonl",
+                    output=output.append,
+                    tls_enabled=False,
+                )
+                session.socket = unittest.mock.Mock()
 
-                    with self.assertRaisesRegex(
-                        ValueError, f"^{telnet_session.INVALID_COMMAND_ERROR}$"
-                    ):
-                        session.send_command(command)
+                with self.assertRaisesRegex(
+                    ValueError, f"^{telnet_session.INVALID_COMMAND_ERROR}$"
+                ):
+                    session.send_command(command)
 
-                    session.socket.sendall.assert_not_called()
-                    self.assertEqual(session.store.read(), [])
-                    self.assertNotIn(secret, "\n".join(output))
+                session.socket.sendall.assert_not_called()
+                self.assertEqual(session.store.read(), [])
+                self.assertNotIn(secret, "\n".join(output))
 
     def test_send_command_preserves_normal_trailing_line_break_treatment(self):
         with tempfile.TemporaryDirectory() as directory:

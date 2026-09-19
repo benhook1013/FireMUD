@@ -8,8 +8,12 @@ python3 - <<'PY' "$ROOT_DIR"
 import contextlib
 import io
 import json
+import socket
 import ssl
+import subprocess
 import sys
+import tempfile
+import threading
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -794,6 +798,206 @@ assert [result["response"] for result in command_plan_results] == [
     "OK SAY hello",
 ]
 assert command_plan_session.closed is True
+class FakeTlsContext:
+    def __init__(self, wrapped_session):
+        self.wrapped_session = wrapped_session
+        self.server_hostname = None
+
+    def wrap_socket(self, raw_socket, server_hostname):
+        assert raw_socket is raw_tls_socket
+        self.server_hostname = server_hostname
+        return self.wrapped_session
+
+
+raw_tls_socket = FakeSession()
+wrapped_tls_session = FakeSession(["OK WORLDS\n"])
+tls_context = FakeTlsContext(wrapped_tls_session)
+with patch(
+    "smoke_common.socket.create_connection", return_value=raw_tls_socket
+) as create_connection, patch(
+    "smoke_common.ssl.create_default_context", return_value=tls_context
+) as create_default_context:
+    tls_responses = run_telnet_smoke_session(
+        "preview.example.test",
+        32042,
+        [("WORLDS", ["OK WORLDS"], "WORLDS")],
+        1,
+        tls_enabled=True,
+        tls_ca_file="/etc/ssl/certs/preview-ca.pem",
+        tls_server_hostname="preview.example.test",
+    )
+assert tls_responses == ["OK WORLDS\n"]
+create_connection.assert_called_once_with(
+    ("preview.example.test", 32042), timeout=1
+)
+create_default_context.assert_called_once_with(
+    cafile="/etc/ssl/certs/preview-ca.pem"
+)
+assert tls_context.server_hostname == "preview.example.test"
+assert wrapped_tls_session.sent == ["WORLDS\r\n"]
+assert wrapped_tls_session.closed is True
+assert raw_tls_socket.closed is False
+
+
+plaintext_socket = FakeSession(["OK WORLDS\n"])
+with patch(
+    "smoke_common.socket.create_connection", return_value=plaintext_socket
+) as create_plaintext_connection, patch(
+    "smoke_common.ssl.create_default_context"
+) as create_plaintext_context:
+    assert open_telnet_socket(
+        "127.0.0.1", 2323, 1, tls_enabled=False
+    ) is plaintext_socket
+create_plaintext_connection.assert_called_once_with(("127.0.0.1", 2323), timeout=1)
+create_plaintext_context.assert_not_called()
+
+
+def generate_tls_certificates(certificate_dir):
+    ca_key = certificate_dir / "ca-key.pem"
+    ca_certificate = certificate_dir / "ca-cert.pem"
+    server_key = certificate_dir / "server-key.pem"
+    server_csr = certificate_dir / "server.csr.pem"
+    server_certificate = certificate_dir / "server-cert.pem"
+    server_extensions = certificate_dir / "server-extensions.cnf"
+
+    subprocess.run(
+        ["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", str(ca_key)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        [
+            "openssl",
+            "req",
+            "-x509",
+            "-new",
+            "-key",
+            str(ca_key),
+            "-sha256",
+            "-days",
+            "1",
+            "-out",
+            str(ca_certificate),
+            "-subj",
+            "/CN=FireMUD smoke test CA",
+            "-addext",
+            "basicConstraints=critical,CA:TRUE,pathlen:1",
+            "-addext",
+            "keyUsage=critical,keyCertSign,cRLSign",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", str(server_key)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        [
+            "openssl",
+            "req",
+            "-new",
+            "-key",
+            str(server_key),
+            "-out",
+            str(server_csr),
+            "-subj",
+            "/CN=localhost",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    server_extensions.write_text(
+        "basicConstraints=critical,CA:FALSE\n"
+        "keyUsage=critical,digitalSignature,keyEncipherment\n"
+        "extendedKeyUsage=serverAuth\n"
+        "subjectAltName=DNS:localhost,IP:127.0.0.1\n"
+    )
+    subprocess.run(
+        [
+            "openssl",
+            "x509",
+            "-req",
+            "-in",
+            str(server_csr),
+            "-CA",
+            str(ca_certificate),
+            "-CAkey",
+            str(ca_key),
+            "-CAcreateserial",
+            "-out",
+            str(server_certificate),
+            "-days",
+            "1",
+            "-sha256",
+            "-extfile",
+            str(server_extensions),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return ca_certificate, server_certificate, server_key
+
+
+with tempfile.TemporaryDirectory(prefix="firemud-smoke-tls-") as certificate_directory:
+    ca_certificate, server_certificate, server_key = generate_tls_certificates(
+        Path(certificate_directory)
+    )
+    server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_context.load_cert_chain(
+        certfile=str(server_certificate),
+        keyfile=str(server_key),
+    )
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server_socket.bind(("127.0.0.1", 0))
+    server_socket.listen(1)
+    server_socket.settimeout(5)
+    server_port = server_socket.getsockname()[1]
+    server_commands = []
+    server_errors = []
+
+
+    def serve_tls_telnet():
+        try:
+            raw_connection, _address = server_socket.accept()
+            with raw_connection:
+                with server_context.wrap_socket(
+                    raw_connection,
+                    server_side=True,
+                ) as tls_connection:
+                    command = tls_connection.recv(4096)
+                    server_commands.append(command)
+                    tls_connection.sendall(b"OK WORLDS\n")
+        except Exception as exc:
+            server_errors.append(exc)
+
+
+    server_thread = threading.Thread(target=serve_tls_telnet, daemon=True)
+    server_thread.start()
+    try:
+        local_tls_responses = run_telnet_smoke_session(
+            "127.0.0.1",
+            server_port,
+            [("WORLDS", ["OK WORLDS"], "WORLDS")],
+            5,
+            tls_enabled=True,
+            tls_ca_file=str(ca_certificate),
+            tls_server_hostname="localhost",
+        )
+    finally:
+        server_socket.close()
+        server_thread.join(timeout=5)
+    assert not server_thread.is_alive(), "local TLS server thread did not finish"
+    assert not server_errors, f"local TLS server failed: {server_errors!r}"
+    assert server_commands == [b"WORLDS\r\n"]
+    assert local_tls_responses == ["OK WORLDS\n"]
 
 
 opened_ws = []

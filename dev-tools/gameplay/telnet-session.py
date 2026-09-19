@@ -460,12 +460,18 @@ class TelnetSession:
             return
         try:
             self.socket.shutdown(socket.SHUT_RDWR)
-        except Exception:
-            pass
+        except OSError:
+            # A failed shutdown must not prevent the close attempt below.
+            return self._close_socket()
+        self._close_socket()
+
+    def _close_socket(self) -> None:
+        if self.socket is None:
+            return
         try:
             self.socket.close()
-        except Exception:
-            pass
+        except OSError:
+            return
 
     def _fail_persistence(self) -> None:
         with self.persistence_failure_lock:
@@ -479,8 +485,9 @@ class TelnetSession:
             self.disconnect_event.set()
         try:
             self.output(EVIDENCE_FAILURE_DIAGNOSTIC)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - failure diagnostic callback is best effort
+            self._shutdown_socket()
+            return
         self._shutdown_socket()
 
     def _fail_output(self) -> None:
@@ -505,8 +512,8 @@ class TelnetSession:
         ):
             try:
                 self.store.append("system", event, **fields)
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001, S112 - preserve terminal state if evidence cannot append
+                continue
 
     def _session_failed(self) -> bool:
         return self.persistence_failed or self.output_failed
@@ -516,14 +523,14 @@ class TelnetSession:
             return None
         try:
             record = self.store.append(direction, event, **fields)
-        except Exception:
+        except Exception:  # noqa: BLE001 - any store failure invalidates evidence
             self._fail_persistence()
             return None
         if self._session_failed():
             return None
         try:
             self._show(record)
-        except Exception:
+        except Exception:  # noqa: BLE001 - callback failure must terminate the session
             self._fail_output()
             return None
         return record
@@ -777,7 +784,7 @@ class TelnetSession:
             raise ValueError(INVALID_COMMAND_ERROR)
         redaction = _login_redaction(command)
         if redaction:
-            safe, raw, replacement = redaction
+            safe, _raw, _replacement = redaction
             display = safe
         else:
             display = command

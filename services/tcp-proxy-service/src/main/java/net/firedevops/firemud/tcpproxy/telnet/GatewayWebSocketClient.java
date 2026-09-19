@@ -706,6 +706,12 @@ public final class GatewayWebSocketClient implements AutoCloseable {
       if (message.contains("bad_certificate") || message.contains("client certificate")) {
         return CLIENT_CERT_INVALID_REASON;
       }
+      // Gateway's mTLS listener reports rejection of an untrusted client CA as
+      // the TLS alert `unknown_ca`; this is an invalid bridge identity, not a
+      // generic protocol negotiation failure.
+      if (message.contains("unknown_ca")) {
+        return CLIENT_CERT_INVALID_REASON;
+      }
       if (message.contains("pkix")
           || message.contains("certpath")
           || message.contains("certificate_unknown")

@@ -40,7 +40,7 @@ import org.slf4j.MDC;
 import org.springframework.util.StringUtils;
 
 /** Handler that forwards Telnet lines to the gateway via WebSocket. */
-public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
+public final class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private static final Logger logger = LoggerFactory.getLogger(TelnetServerHandler.class);
   private static final RuntimeIdentity DEFAULT_RUNTIME_IDENTITY =
       new RuntimeIdentity(
@@ -48,7 +48,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private static final Duration HEARTBEAT_INTERVAL = Duration.ofSeconds(30);
   private static final Duration IDLE_TIMEOUT = Duration.ofMinutes(5);
   private static final Duration WEBSOCKET_CLOSE_GRACE = Duration.ofSeconds(1);
-  private static final int MAX_BUFFER_DEPTH = 512;
+  static final int DEFAULT_MAX_BUFFERED_LINES = 64;
+  static final int MAX_GATEWAY_TEXT_BYTES = 64 * 1024;
   private static final String OK = "OK";
   private static final String STARTUP_UNAVAILABLE_MESSAGE =
       "DISCONNECT startup_unavailable Gameplay path starting; please reconnect\n";
@@ -63,6 +64,16 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
           + "Type PLAY <world> after LOGIN to enter a world.\n"
           + "Type HELP for commands.\n";
   private static final Set<String> SENSITIVE_COMMANDS = Set.of("LOGIN", "LOGON");
+  private static final Set<String> VALID_CLOSE_SUBREASONS =
+      Set.of(
+          "user_logout",
+          "takeover",
+          "gateway_restart",
+          "admin_termination",
+          "edge_backpressure",
+          "none");
+  private static final Set<String> VALID_CLOSE_TOP_LEVEL_REASONS =
+      Set.of("logout", "idle_timeout", "policy_violation", "internal_error");
 
   private final String gatewayWsUrl;
   private final Runnable onConnect;
@@ -85,6 +96,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private final String defaultRealmSlug;
   private final String defaultPointerVersion;
   private final RuntimeIdentity runtimeIdentity;
+  private final int maxBufferedLines;
   private final TelnetSessionContext sessionContext = new TelnetSessionContext();
   private final String proxyConnectionId = UUID.randomUUID().toString();
   private final AtomicLong disconnectSequence = new AtomicLong();
@@ -110,6 +122,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   // lifecycle locks.
   private final Object webSocketLifecycleLock = new Object();
   private final Object bufferLifecycleLock = new Object();
+  private final Object gatewayTextLifecycleLock = new Object();
+  private final StringBuilder gatewayTextBuffer = new StringBuilder();
+  private int gatewayTextBufferBytes;
   private WebSocket closeAbortSocket;
   private ScheduledFuture<?> closeAbortTask;
   private volatile CompletableFuture<WebSocket> inFlightSend;
@@ -145,7 +160,47 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         null,
         null,
         null,
-        DEFAULT_RUNTIME_IDENTITY);
+        DEFAULT_RUNTIME_IDENTITY,
+        DEFAULT_MAX_BUFFERED_LINES);
+  }
+
+  TelnetServerHandler(
+      String gatewayWsUrl,
+      Runnable onConnect,
+      Runnable onDisconnect,
+      io.micrometer.core.instrument.Counter connectionCounter,
+      io.micrometer.core.instrument.Counter discardedCommandCounter,
+      boolean advertiseMcp,
+      MeterRegistry meterRegistry,
+      BooleanSupplier gameplayTrafficReady,
+      WebSocketConnector webSocketConnector,
+      TcpProxyEventService eventService,
+      AtomicInteger bufferDepth,
+      String defaultGameInstanceId,
+      String defaultTenantId,
+      String defaultWorldSlug,
+      String defaultRealmSlug,
+      String defaultPointerVersion,
+      int maxBufferedLines) {
+    this(
+        gatewayWsUrl,
+        onConnect,
+        onDisconnect,
+        connectionCounter,
+        discardedCommandCounter,
+        advertiseMcp,
+        meterRegistry,
+        gameplayTrafficReady,
+        webSocketConnector,
+        eventService,
+        bufferDepth,
+        defaultGameInstanceId,
+        defaultTenantId,
+        defaultWorldSlug,
+        defaultRealmSlug,
+        defaultPointerVersion,
+        DEFAULT_RUNTIME_IDENTITY,
+        maxBufferedLines);
   }
 
   TelnetServerHandler(
@@ -182,7 +237,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         defaultWorldSlug,
         defaultRealmSlug,
         defaultPointerVersion,
-        DEFAULT_RUNTIME_IDENTITY);
+        DEFAULT_RUNTIME_IDENTITY,
+        DEFAULT_MAX_BUFFERED_LINES);
   }
 
   TelnetServerHandler(
@@ -203,6 +259,49 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       String defaultRealmSlug,
       String defaultPointerVersion,
       RuntimeIdentity runtimeIdentity) {
+    this(
+        gatewayWsUrl,
+        onConnect,
+        onDisconnect,
+        connectionCounter,
+        discardedCommandCounter,
+        advertiseMcp,
+        meterRegistry,
+        gameplayTrafficReady,
+        webSocketConnector,
+        eventService,
+        bufferDepth,
+        defaultGameInstanceId,
+        defaultTenantId,
+        defaultWorldSlug,
+        defaultRealmSlug,
+        defaultPointerVersion,
+        runtimeIdentity,
+        DEFAULT_MAX_BUFFERED_LINES);
+  }
+
+  TelnetServerHandler(
+      String gatewayWsUrl,
+      Runnable onConnect,
+      Runnable onDisconnect,
+      io.micrometer.core.instrument.Counter connectionCounter,
+      io.micrometer.core.instrument.Counter discardedCommandCounter,
+      boolean advertiseMcp,
+      MeterRegistry meterRegistry,
+      BooleanSupplier gameplayTrafficReady,
+      WebSocketConnector webSocketConnector,
+      TcpProxyEventService eventService,
+      AtomicInteger bufferDepth,
+      String defaultGameInstanceId,
+      String defaultTenantId,
+      String defaultWorldSlug,
+      String defaultRealmSlug,
+      String defaultPointerVersion,
+      RuntimeIdentity runtimeIdentity,
+      int maxBufferedLines) {
+    if (maxBufferedLines <= 0) {
+      throw new IllegalArgumentException("TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES must be positive");
+    }
     this.gatewayWsUrl = gatewayWsUrl;
     this.onConnect = onConnect;
     this.onDisconnect = onDisconnect;
@@ -223,6 +322,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     this.defaultPointerVersion =
         defaultRoutingBundle == null ? null : defaultRoutingBundle.pointerVersion();
     this.runtimeIdentity = runtimeIdentity;
+    this.maxBufferedLines = maxBufferedLines;
     this.commandTimer = meterRegistry.timer("tcpproxy.command");
     this.heartbeatTimer = meterRegistry.timer("tcpproxy.heartbeat");
     this.idleCloseTimer = meterRegistry.timer("tcpproxy.idleClose");
@@ -486,6 +586,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         buffer.clear();
         updateBufferDepthGauge();
       }
+      clearGatewayTextBuffer();
       cancelInFlightGatewayConnection();
       stopHeartbeat();
       cancelIdleCheck();
@@ -506,24 +607,24 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private boolean canBufferMore() {
     int depth = buffer.size() + outstandingSends.size();
     bufferDepth.set(depth);
-    if (depth >= MAX_BUFFER_DEPTH) {
-      if (!closing) {
-        closing = true;
-      }
-      return false;
-    }
-    return true;
+    return depth < maxBufferedLines;
   }
 
   private void handleBufferOverflow() {
     logger.warn(
         "Telnet buffer depth {} exceeded for {}; closing connection to prevent memory pressure",
-        MAX_BUFFER_DEPTH,
+        maxBufferedLines,
         gatewayWsUrl);
     discardedCommandCounter.increment();
-    ChannelHandlerContext closeContext = context;
-    if (closeContext != null) {
-      closeContext.close();
+    if (webSocket.get() != null) {
+      meterRegistry
+          .counter("tcpproxy.telnet.discarded", "reason", "gateway_buffer_full")
+          .increment();
+      failClose(
+          "policy_violation;subreason=edge_backpressure",
+          "Gameplay connection closed due to policy violation");
+    } else {
+      failCloseBackendUnavailable("Gateway link dropped; please reconnect");
     }
   }
 
@@ -718,43 +819,78 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       updateBufferDepthGauge();
       closeContext = context;
     }
+    clearGatewayTextBuffer();
     cancelInFlightGatewayConnection();
     closeGatewayWebSocket();
     if (closeContext != null) {
-      closeContext
-          .writeAndFlush("DISCONNECT " + reasonToken + " " + message + "\n")
-          .addListener(ChannelFutureListener.CLOSE);
+      ChannelFutureListener closeListener = ChannelFutureListener.CLOSE;
+      io.netty.channel.ChannelFuture writeFuture =
+          closeContext.writeAndFlush("DISCONNECT " + reasonToken + " " + message + "\n");
+      if (writeFuture != null) {
+        writeFuture.addListener(closeListener);
+      } else {
+        closeContext.close();
+      }
     }
   }
 
   private GatewayCloseClassification classifyGatewayClose(int statusCode, String reason) {
-    String trimmedReason = reason == null ? "" : reason.trim();
-    if (statusCode == 1000 && trimmedReason.startsWith("logout")) {
+    String closeReason = reason == null ? "" : reason;
+    ParsedCloseReason parsed = parseCloseReason(closeReason);
+    if (parsed != null && statusCode == 1000 && "logout".equals(parsed.topLevelReason())) {
       return new GatewayCloseClassification(
-          trimmedReason,
+          closeReason,
           "Gameplay session ended; please reconnect",
-          shutdownClassForLogout(trimmedReason));
+          shutdownClassForLogout(closeReason));
     }
-    if (statusCode == 1001 && "idle_timeout".equals(trimmedReason)) {
+    if (parsed != null && statusCode == 1001 && "idle_timeout".equals(parsed.topLevelReason())) {
       return new GatewayCloseClassification(
-          "idle_timeout", "Gameplay session timed out; please reconnect", "unattributed_failure");
+          closeReason, "Gameplay session timed out; please reconnect", "unattributed_failure");
     }
-    if (statusCode == 1008 && trimmedReason.startsWith("policy_violation")) {
+    if (parsed != null
+        && statusCode == 1008
+        && "policy_violation".equals(parsed.topLevelReason())) {
       return new GatewayCloseClassification(
-          trimmedReason,
+          closeReason,
           "Gameplay connection closed due to policy violation",
           "unattributed_failure");
     }
-    if (statusCode == 1011 && "internal_error".equals(trimmedReason)) {
+    if (parsed != null && statusCode == 1011 && "internal_error".equals(parsed.topLevelReason())) {
       return new GatewayCloseClassification(
-          "internal_error", "Gameplay connection failed; please reconnect", "unattributed_failure");
+          closeReason, "Gameplay connection failed; please reconnect", "unattributed_failure");
     }
     return new GatewayCloseClassification(
         "backend_unavailable", "Gateway link dropped; please reconnect", "unattributed_failure");
   }
 
+  private ParsedCloseReason parseCloseReason(String reason) {
+    if (reason == null || reason.isEmpty()) {
+      return null;
+    }
+    int separator = reason.indexOf(';');
+    String topLevelReason = separator < 0 ? reason : reason.substring(0, separator);
+    if (topLevelReason.isEmpty() || (separator >= 0 && reason.indexOf(';', separator + 1) >= 0)) {
+      return null;
+    }
+    String subreason = null;
+    if (separator >= 0) {
+      String suffix = reason.substring(separator + 1);
+      if (!suffix.startsWith("subreason=")) {
+        return null;
+      }
+      subreason = suffix.substring("subreason=".length());
+      if (!VALID_CLOSE_SUBREASONS.contains(subreason)) {
+        return null;
+      }
+    }
+    if (!VALID_CLOSE_TOP_LEVEL_REASONS.contains(topLevelReason)) {
+      return null;
+    }
+    return new ParsedCloseReason(topLevelReason, subreason);
+  }
+
   private String shutdownClassForLogout(String reasonToken) {
-    if ("logout;subreason=gateway_restart".equalsIgnoreCase(reasonToken)) {
+    if ("logout;subreason=gateway_restart".equals(reasonToken)) {
       return "planned_drain";
     }
     return "upstream_logout";
@@ -788,6 +924,13 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
   private void updateBufferDepthGauge() {
     bufferDepth.set(buffer.size() + outstandingSends.size());
+  }
+
+  private void clearGatewayTextBuffer() {
+    synchronized (gatewayTextLifecycleLock) {
+      gatewayTextBuffer.setLength(0);
+      gatewayTextBufferBytes = 0;
+    }
   }
 
   private void notifyConnectIfReady() {
@@ -955,8 +1098,34 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
           if (logger.isDebugEnabled()) {
             logger.debug("Gateway response: {}", data);
           }
-          if (context != null) {
-            context.writeAndFlush(data.toString() + "\n");
+          String completeLine = null;
+          boolean overflow = false;
+          String fragment = data == null ? "" : data.toString();
+          int fragmentBytes = fragment.getBytes(StandardCharsets.UTF_8).length;
+          synchronized (gatewayTextLifecycleLock) {
+            if (!closing) {
+              if (fragmentBytes > MAX_GATEWAY_TEXT_BYTES - gatewayTextBufferBytes) {
+                gatewayTextBuffer.setLength(0);
+                gatewayTextBufferBytes = 0;
+                overflow = true;
+              } else {
+                gatewayTextBuffer.append(fragment);
+                gatewayTextBufferBytes += fragmentBytes;
+                if (last) {
+                  completeLine = gatewayTextBuffer.toString();
+                  gatewayTextBuffer.setLength(0);
+                  gatewayTextBufferBytes = 0;
+                }
+              }
+            }
+          }
+          if (overflow) {
+            failClose("policy_violation", "Gateway response exceeded the maximum text limit");
+          } else if (completeLine != null && !closing && context != null) {
+            context.writeAndFlush(completeLine + "\n");
+          }
+          if (closing) {
+            return null;
           }
           webSocket.request(1);
         }
@@ -1076,6 +1245,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
   private record GatewayCloseClassification(
       String reasonToken, String message, String shutdownClass) {}
+
+  private record ParsedCloseReason(String topLevelReason, String subreason) {}
 
   boolean isMcpNegotiated() {
     return mcpNegotiated;

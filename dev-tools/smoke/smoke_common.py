@@ -1,3 +1,4 @@
+import contextlib
 import ipaddress
 import json
 import os
@@ -247,7 +248,7 @@ def run_transport_session(
         except retriable_exceptions as exc:
             try:
                 session.close()
-            except Exception as close_exc:
+            except Exception as close_exc:  # noqa: BLE001 - transport close failures vary by client
                 raise ProbeOperationalFailure(
                     f"Failed during {session_label}: {exc}; "
                     f"close failed: {close_exc}"
@@ -256,10 +257,9 @@ def run_transport_session(
                 f"Failed during {session_label}: {exc}"
             ) from exc
         except Exception:
-            try:
+            # A secondary close failure must not hide the primary command failure.
+            with contextlib.suppress(Exception):
                 session.close()
-            except Exception:
-                pass
             raise
         else:
             try:

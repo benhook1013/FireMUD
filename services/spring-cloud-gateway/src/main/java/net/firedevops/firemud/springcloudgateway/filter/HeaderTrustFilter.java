@@ -30,6 +30,8 @@ import reactor.core.publisher.Mono;
 @Component
 public final class HeaderTrustFilter implements WebFilter, Ordered {
   private static final Logger LOG = LoggerFactory.getLogger(HeaderTrustFilter.class);
+  private static final String HDR_FIREMUD_PREFIX = "X-Firemud-";
+  private static final String HDR_CONNECT_TOKEN = "X-Firemud-Connect-Token";
   private static final String HDR_CLIENT_IP = "X-Client-IP";
   private static final String HDR_GAME_INSTANCE_ID = "X-Game-Instance-Id";
   private static final String HDR_TENANT_ID = "X-Tenant-Id";
@@ -66,10 +68,9 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
     boolean trustedTcpProxy = tcpProxyTrustPolicy.isTrusted(exchange, remoteAddress);
     boolean dedicatedTcpProxyListener = tcpProxyTrustPolicy.isDedicatedListenerRequest(exchange);
 
-    if (isSessionRoute
-        && !trustedTcpProxy
+    if (!trustedTcpProxy
         && (dedicatedTcpProxyListener
-            || presentsProxyHeaders(exchange.getRequest().getHeaders()))) {
+            || (isSessionRoute && presentsProxyHeaders(exchange.getRequest().getHeaders())))) {
       exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
       return exchange.getResponse().setComplete();
     }
@@ -205,6 +206,15 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
 
   private void stripGatewayOwnedHeaders(
       HttpHeaders headers, boolean preserveGameplayConnectTokenCarrier) {
+    List.copyOf(headers.headerNames()).stream()
+        .filter(
+            name -> name.regionMatches(true, 0, HDR_FIREMUD_PREFIX, 0, HDR_FIREMUD_PREFIX.length()))
+        .filter(
+            name ->
+                (!preserveGameplayConnectTokenCarrier || !name.equalsIgnoreCase(HDR_CONNECT_TOKEN))
+                    && !name.equalsIgnoreCase(HDR_FIREMUD_LOCALE))
+        .forEach(headers::remove);
+
     headers.remove(HDR_CLIENT_IP);
     headers.remove(HDR_GAME_INSTANCE_ID);
     headers.remove(HDR_TENANT_ID);
@@ -217,17 +227,8 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
     headers.remove(HDR_PROXY_GAME_INSTANCE_ID);
     headers.remove(HDR_PROXY_TENANT_ID);
 
-    // Gateway-owned admission context is reconstructed by the gameplay handshake filter. Keep the
-    // migration-only connect-token carrier only long enough for that filter to reject it on the
-    // gameplay route; it must never reach another route. The presentation locale is preserved.
-    for (String headerName : List.copyOf(headers.headerNames())) {
-      if (headerName.regionMatches(true, 0, "X-Firemud-", 0, "X-Firemud-".length())
-          && (!preserveGameplayConnectTokenCarrier
-              || !headerName.equalsIgnoreCase(HDR_FIREMUD_CONNECT_TOKEN))
-          && !headerName.equalsIgnoreCase(HDR_FIREMUD_LOCALE)) {
-        headers.remove(headerName);
-      }
-    }
+    // The presentation locale is intentionally preserved; all other gateway-owned Firemud
+    // headers are removed above, except the migration connect-token carrier on gameplay routes.
   }
 
   private String deriveClientIpFromForwardedHeaders(

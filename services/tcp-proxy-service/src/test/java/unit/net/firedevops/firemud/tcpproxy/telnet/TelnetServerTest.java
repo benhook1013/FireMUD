@@ -30,6 +30,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 
 class TelnetServerTest {
@@ -64,6 +65,31 @@ class TelnetServerTest {
     server.start();
     server.stop();
     assertTrue(true); // no exception means success
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {0, -1})
+  void invalidGatewayBufferLimitFailsFast(int maxBufferedLines) {
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                new TelnetServer(
+                    0,
+                    false,
+                    "",
+                    "",
+                    false,
+                    0,
+                    0,
+                    4096,
+                    maxBufferedLines,
+                    new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
+                    Mockito.mock(TcpProxyEventService.class),
+                    readyProbe(),
+                    gatewayClient()));
+
+    assertEquals("TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES must be positive", exception.getMessage());
   }
 
   @Test
