@@ -28,6 +28,24 @@ public class DeploymentRolloutService {
       String gatewayInternalWsRevision,
       String grpcRevision,
       Runnable runtimeProfileFence) {
+    return sync(
+        client,
+        plan,
+        telnetRevision,
+        gatewayInternalWsRevision,
+        grpcRevision,
+        Map.of(),
+        runtimeProfileFence);
+  }
+
+  public RolloutResult sync(
+      KubernetesClient client,
+      EnvironmentIdentityPlan plan,
+      String telnetRevision,
+      String gatewayInternalWsRevision,
+      String grpcRevision,
+      Map<String, String> grpcPublicationRevisions,
+      Runnable runtimeProfileFence) {
     if (runtimeProfileFence == null) {
       throw new IllegalArgumentException("runtime profile guard is required");
     }
@@ -39,6 +57,9 @@ public class DeploymentRolloutService {
     }
     if (grpcRevision == null) {
       throw new IllegalArgumentException("gRPC revision is required");
+    }
+    if (grpcPublicationRevisions == null) {
+      throw new IllegalArgumentException("gRPC publication revisions are required");
     }
     Map<String, Map<String, String>> revisionsByDeployment = new LinkedHashMap<>();
     revisionsByDeployment
@@ -56,6 +77,19 @@ public class DeploymentRolloutService {
           .computeIfAbsent(consumer, ignored -> new LinkedHashMap<>())
           .put(HostedIdentityContract.GRPC_REVISION_ANNOTATION, grpcRevision);
     }
+    if (!grpcPublicationRevisions.isEmpty()) {
+      for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+        String role = HostedIdentityContract.grpcPublicationRole(workload);
+        String revision = grpcPublicationRevisions.get(role);
+        if (revision == null) {
+          throw new IllegalArgumentException(
+              "gRPC publication revision is required: " + workload);
+        }
+        revisionsByDeployment
+            .computeIfAbsent(workload, ignored -> new LinkedHashMap<>())
+            .put(HostedIdentityContract.GRPC_REVISION_ANNOTATION, revision);
+      }
+    }
     Map<String, Boolean> readinessByDeployment = new LinkedHashMap<>();
     for (Map.Entry<String, Map<String, String>> entry : revisionsByDeployment.entrySet()) {
       boolean ready =
@@ -68,9 +102,14 @@ public class DeploymentRolloutService {
       readinessByDeployment.put(entry.getKey(), ready);
     }
     boolean telnetReady = readinessByDeployment.getOrDefault(TCP_PROXY_DEPLOYMENT, false);
+    var grpcConsumers = plan.grpcConsumers().stream();
+    if (!grpcPublicationRevisions.isEmpty()) {
+      grpcConsumers =
+          java.util.stream.Stream.concat(
+              grpcConsumers, HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream());
+    }
     boolean grpcReady =
-        plan.grpcConsumers().stream()
-            .allMatch(consumer -> readinessByDeployment.getOrDefault(consumer, false));
+        grpcConsumers.allMatch(consumer -> readinessByDeployment.getOrDefault(consumer, false));
     return new RolloutResult(telnetReady && grpcReady, telnetReady, grpcReady);
   }
 

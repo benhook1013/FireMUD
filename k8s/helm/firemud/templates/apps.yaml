@@ -49,9 +49,9 @@ spec:
               value: {{ default (replace "-" "_" $service.name) $service.schema | quote }}
             {{- if $service.mountGrpcTls }}
             - name: FIREMUD_GRPC_CERT_CHAIN_PATH
-              value: /tls/client.crt
+              value: {{ if has $service.name (list "game-design-service" "world-management-service" "entity-management-service" "game-logic-service" "automation-scripting-service") }}/tls/tls.crt{{ else }}/tls/client.crt{{ end }}
             - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
-              value: /tls/client.key
+              value: {{ if has $service.name (list "game-design-service" "world-management-service" "entity-management-service" "game-logic-service" "automation-scripting-service") }}/tls/tls.key{{ else }}/tls/client.key{{ end }}
             - name: FIREMUD_GRPC_CA_CERT_PATH
               value: /tls/ca.crt
             {{- end }}
@@ -63,9 +63,9 @@ spec:
           env:
             {{- if $service.mountGrpcTls }}
             - name: FIREMUD_GRPC_CERT_CHAIN_PATH
-              value: /tls/client.crt
+              value: {{ if has $service.name (list "game-design-service" "world-management-service" "entity-management-service" "game-logic-service" "automation-scripting-service") }}/tls/tls.crt{{ else }}/tls/client.crt{{ end }}
             - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
-              value: /tls/client.key
+              value: {{ if has $service.name (list "game-design-service" "world-management-service" "entity-management-service" "game-logic-service" "automation-scripting-service") }}/tls/tls.key{{ else }}/tls/client.key{{ end }}
             - name: FIREMUD_GRPC_CA_CERT_PATH
               value: /tls/ca.crt
             {{- end }}

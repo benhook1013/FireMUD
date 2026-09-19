@@ -1144,7 +1144,7 @@ controller_secret_expression = next(
     if "system:serviceaccount:firemud-system:firemud-hosted-identity-controller" in expression
 )
 normalized_controller_secret_expression = " ".join(controller_secret_expression.split())
-assert "object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'gateway-internal-ws', 'tcp-proxy-bridge', 'grpc']" in controller_secret_expression
+assert "object.metadata.labels['firemud.dev/role'].startsWith('grpc-publication-')" in controller_secret_expression
 assert "object.metadata.name == 'firemud-grpc-tls'" in controller_secret_expression
 assert normalized_controller_secret_expression.count("request.name.startsWith(") == 3
 assert normalized_controller_secret_expression.count("object.metadata.name.startsWith(") == 2
@@ -1166,6 +1166,11 @@ def canonical_primary_name(namespace, name):
         "telnet-tls",
         "gateway-internal-ws",
         "tcp-proxy-bridge",
+        "grpc-game-design-service",
+        "grpc-world-management-service",
+        "grpc-entity-management-service",
+        "grpc-game-logic-service",
+        "grpc-automation-scripting-service",
     }
 
 
@@ -1174,6 +1179,7 @@ assert canonical_primary_name("pr-42", "pr-42-telnet-tls")
 assert canonical_primary_name("pr-42-identity", "pr-42-gateway-internal-ws")
 assert not canonical_primary_name("pr-42-identity", "pr-43-gateway-internal-ws")
 assert not canonical_primary_name("dev-identity", "pr-42-tls")
+assert canonical_primary_name("pr-42-identity", "pr-42-grpc-game-design-service")
 cert_manager_expression = next(
     expression
     for expression in secret_expressions
@@ -1189,6 +1195,7 @@ assert "object.metadata.name == 'dev-tls'" in cert_manager_expression
 assert "object.metadata.name == 'dev-telnet-tls'" in cert_manager_expression
 assert "object.metadata.name == 'dev-gateway-internal-ws'" in cert_manager_expression
 assert "object.metadata.name == 'dev-tcp-proxy-bridge'" in cert_manager_expression
+assert "object.metadata.labels['firemud.dev/role'].startsWith('grpc-publication-')" in cert_manager_expression
 assert "request.namespace.substring(0, request.namespace.size() - 9) + '-tls'" in cert_manager_expression
 assert "request.namespace.substring(0, request.namespace.size() - 9) + '-telnet-tls'" in cert_manager_expression
 assert "request.namespace.substring(0, request.namespace.size() - 9) + '-gateway-internal-ws'" in cert_manager_expression
@@ -1208,10 +1215,10 @@ assert "request.namespace.matches('^(dev-identity|pr-[1-9][0-9]{0,50}-identity)$
 assert "request.namespace == 'dev-identity'" in certificate_namespace_match
 assert "request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')" in certificate_namespace_match
 assert "request.operation == 'DELETE'" in certificate_namespace_match
-assert "request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$')" in certificate_namespace_match
+assert "request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-" in certificate_namespace_match
 assert "request.name.startsWith(" in certificate_namespace_match
 assert "request.operation != 'DELETE'" in certificate_namespace_match
-assert "object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$')" in certificate_namespace_match
+assert "object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-" in certificate_namespace_match
 assert "object.metadata.name.startsWith(" in certificate_namespace_match
 certificate_match = " ".join(
     certificate_policy["spec"]["validations"][0]["expression"].split()
@@ -1240,11 +1247,8 @@ assert "firemud-grpc-tls" not in controller_delete_expression
 assert "request.name.startsWith(" in controller_delete_expression
 assert "(request.operation != 'DELETE' && has(object.metadata.labels)" in certificate_match
 assert "object.metadata.labels['firemud.dev/identity-name'] == ((request.namespace == 'dev-identity') ? 'dev-demo' : request.namespace.substring(0, request.namespace.size() - 9))" in certificate_match
-assert (
-    "object.metadata.labels['firemud.dev/role'] in "
-    "['ingress', 'telnet', 'gateway-internal-ws', 'tcp-proxy-bridge']"
-) in certificate_match
-assert "object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'gateway-internal-ws', 'tcp-proxy-bridge', 'grpc']" not in certificate_match
+assert "object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'gateway-internal-ws', 'tcp-proxy-bridge']" in certificate_match
+assert "grpc-publication-" in certificate_match
 assert "object.metadata.name == 'firemud-grpc-tls'" not in certificate_match
 
 certificate_expressions = [
@@ -1259,6 +1263,7 @@ controller_non_delete_expression = certificate_expressions[0].split(
 )[0]
 assert "firemud-grpc-tls" not in controller_non_delete_expression
 assert "'grpc'" not in controller_non_delete_expression
+assert "grpc-publication-" in controller_non_delete_expression
 assert "has(object.spec.isCA)" in controller_non_delete_expression
 assert "object.spec.isCA == false" in controller_non_delete_expression
 assert "(!has(object.spec.commonName) || object.spec.commonName == '')" in controller_non_delete_expression
@@ -2593,7 +2598,19 @@ def service_consumer_documents():
     documents = []
     for service in sorted(validator.SERVICE_IMAGES):
         sources = {
-            "grpc-tls": ("/tls", "secret", "firemud-grpc-tls"),
+            "grpc-tls": (
+                "/tls",
+                "secret",
+                f"firemud-grpc-{service}"
+                if service in {
+                    "game-design-service",
+                    "world-management-service",
+                    "entity-management-service",
+                    "game-logic-service",
+                    "automation-scripting-service",
+                }
+                else "firemud-grpc-tls",
+            ),
             "jwt-signing-keys": (
                 "/var/run/secrets/firemud/jwt",
                 "secret",
@@ -2649,6 +2666,36 @@ def service_consumer_documents():
                             "containers": [
                                 {
                                     "name": service,
+                                    "env": [
+                                        {
+                                            "name": "FIREMUD_GRPC_CERT_CHAIN_PATH",
+                                            "value": "/tls/tls.crt"
+                                            if service in {
+                                                "game-design-service",
+                                                "world-management-service",
+                                                "entity-management-service",
+                                                "game-logic-service",
+                                                "automation-scripting-service",
+                                            }
+                                            else "/tls/client.crt",
+                                        },
+                                        {
+                                            "name": "FIREMUD_GRPC_PRIVATE_KEY_PATH",
+                                            "value": "/tls/tls.key"
+                                            if service in {
+                                                "game-design-service",
+                                                "world-management-service",
+                                                "entity-management-service",
+                                                "game-logic-service",
+                                                "automation-scripting-service",
+                                            }
+                                            else "/tls/client.key",
+                                        },
+                                        {
+                                            "name": "FIREMUD_GRPC_CA_CERT_PATH",
+                                            "value": "/tls/ca.crt",
+                                        },
+                                    ],
                                     "volumeMounts": mounts,
                                 }
                             ],

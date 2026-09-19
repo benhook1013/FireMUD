@@ -7,9 +7,9 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
  * Authorization guard for the four owner-to-owner publication digest reads.
  *
  * <p>The guard is intentionally explicit about the method set. It must be called by the four
- * corresponding handlers, rather than installed as a blanket rejection for every gRPC method.
- * The peer certificate is the workload authority; the signed internal JWT is an independent
- * predicate and contributes no service identity or operator role.
+ * corresponding handlers, rather than installed as a blanket rejection for every gRPC method. The
+ * peer certificate is the workload authority; the signed internal JWT is an independent predicate
+ * and contributes no service identity or operator role.
  */
 public final class PublicationReadGuard {
   public static final String WORLD_MANAGEMENT_DIGEST_METHOD =

@@ -29,9 +29,9 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
             - name: FIREMUD_GRPC_CERT_CHAIN_PATH
-              value: /tls/client.crt
+              value: /tls/tls.crt
             - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
-              value: /tls/client.key
+              value: /tls/tls.key
             - name: FIREMUD_GRPC_CA_CERT_PATH
               value: /tls/ca.crt
           envFrom:

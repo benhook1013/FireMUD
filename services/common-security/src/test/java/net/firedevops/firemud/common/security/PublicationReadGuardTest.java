@@ -48,7 +48,8 @@ class PublicationReadGuardTest {
   void deniesMissingPeerIdentity() {
     SessionContext.setContext(null, List.of(), Map.of(), true, "game-design-service", "instance-1");
     assertThatThrownBy(
-            () -> guard.requirePublicationRead(PublicationReadGuard.ENTITY_MANAGEMENT_DIGEST_METHOD))
+            () ->
+                guard.requirePublicationRead(PublicationReadGuard.ENTITY_MANAGEMENT_DIGEST_METHOD))
         .isInstanceOf(AdminAuthorizationException.class);
   }
 

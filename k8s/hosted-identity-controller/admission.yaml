@@ -158,14 +158,16 @@ spec:
           request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')) &&
          ((request.operation == 'DELETE' &&
            (request.name == 'firemud-grpc-tls' ||
-            request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') ||
+            request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$') ||
+            request.name.matches('^firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)$') ||
             request.name == 'firemud-grpc-tls-previous' ||
-            request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)-previous$'))) ||
+            request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))-previous$'))) ||
           (request.operation != 'DELETE' &&
            (object.metadata.name == 'firemud-grpc-tls' ||
-            object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') ||
+            object.metadata.name.matches('^firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)$') ||
+            object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$') ||
             object.metadata.name == 'firemud-grpc-tls-previous' ||
-            object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)-previous$')))))
+            object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))-previous$')))))
   validations:
     # Namespace deletion also deletes the exact retained material.  Allow
     # only the built-in kube-system namespace controller, DELETE, managed
@@ -177,7 +179,7 @@ spec:
          (request.namespace in ['dev', 'dev-identity'] ||
           request.namespace.matches('^pr-[1-9][0-9]{0,50}$') ||
           request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')) &&
-         request.name.matches('^(firemud-grpc-tls|firemud-grpc-tls-previous|(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)(-previous)?)$') &&
+         request.name.matches('^(firemud-grpc-tls|firemud-grpc-tls-previous|firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)|firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)-previous|(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))(-previous)?)$') &&
          (request.name == 'firemud-grpc-tls' || request.name == 'firemud-grpc-tls-previous' ||
           request.name.startsWith(
             ((request.namespace == 'dev' || request.namespace == 'dev-identity') ? 'dev' :
@@ -187,7 +189,7 @@ spec:
         (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
          ((request.operation == 'DELETE' &&
            (request.name == 'firemud-grpc-tls' ||
-            (request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') &&
+           (request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$') &&
              request.name.startsWith(
                ((request.namespace == 'dev' || request.namespace == 'dev-identity') ? 'dev' :
                 request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$') ?
@@ -195,7 +197,7 @@ spec:
                   request.namespace) + '-')) ||
             ((request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')) &&
              (request.name == 'firemud-grpc-tls-previous' ||
-             (request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)-previous$') &&
+             (request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))-previous$') &&
               request.name.startsWith(
                 ((request.namespace == 'dev' || request.namespace == 'dev-identity') ? 'dev' :
                  request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$') ?
@@ -204,10 +206,10 @@ spec:
           (request.operation != 'DELETE' &&
            has(object.metadata.labels) &&
            object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller' &&
-           object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'gateway-internal-ws', 'tcp-proxy-bridge', 'grpc'] &&
+           (object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'gateway-internal-ws', 'tcp-proxy-bridge', 'grpc'] || object.metadata.labels['firemud.dev/role'].startsWith('grpc-publication-')) &&
            object.metadata.labels['firemud.dev/retention'] == 'retained' &&
            (object.metadata.name == 'firemud-grpc-tls' ||
-            (object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') &&
+            (object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$') &&
              object.metadata.name.startsWith(
                ((request.namespace == 'dev' || request.namespace == 'dev-identity') ? 'dev' :
                 request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$') ?
@@ -215,7 +217,7 @@ spec:
                   request.namespace) + '-')) ||
             ((request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')) &&
              (object.metadata.name == 'firemud-grpc-tls-previous' ||
-              (object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)-previous$') &&
+            (object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))-previous$') &&
                object.metadata.name.startsWith(
                  ((request.namespace == 'dev' || request.namespace == 'dev-identity') ? 'dev' :
                   request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$') ?
@@ -234,8 +236,8 @@ spec:
          object.metadata.annotations['cert-manager.io/certificate-name'] == object.metadata.name &&
          ((object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet'] &&
            object.metadata.annotations['cert-manager.io/issuer-name'] == 'letsencrypt-prod') ||
-          (object.metadata.labels['firemud.dev/role'] in ['gateway-internal-ws', 'tcp-proxy-bridge'] &&
-           object.metadata.annotations['cert-manager.io/issuer-name'] == 'firemud-ca-issuer')) &&
+            ((object.metadata.labels['firemud.dev/role'] in ['gateway-internal-ws', 'tcp-proxy-bridge'] || object.metadata.labels['firemud.dev/role'].startsWith('grpc-publication-')) &&
+             object.metadata.annotations['cert-manager.io/issuer-name'] == 'firemud-ca-issuer')) &&
          object.metadata.annotations['cert-manager.io/issuer-kind'] == 'ClusterIssuer' &&
          object.metadata.annotations['cert-manager.io/issuer-group'] == 'cert-manager.io' &&
          ((!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) ||
@@ -248,7 +250,9 @@ spec:
            ((object.metadata.name == 'dev-tls' && object.metadata.labels['firemud.dev/role'] == 'ingress') ||
             (object.metadata.name == 'dev-telnet-tls' && object.metadata.labels['firemud.dev/role'] == 'telnet') ||
             (object.metadata.name == 'dev-gateway-internal-ws' && object.metadata.labels['firemud.dev/role'] == 'gateway-internal-ws') ||
-            (object.metadata.name == 'dev-tcp-proxy-bridge' && object.metadata.labels['firemud.dev/role'] == 'tcp-proxy-bridge'))) ||
+            (object.metadata.name == 'dev-tcp-proxy-bridge' && object.metadata.labels['firemud.dev/role'] == 'tcp-proxy-bridge') ||
+            (object.metadata.labels['firemud.dev/role'].startsWith('grpc-publication-') &&
+             object.metadata.name == 'dev-grpc-' + object.metadata.labels['firemud.dev/role'].substring(17)))) ||
           (request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$') &&
            object.metadata.labels['firemud.dev/identity-name'] == request.namespace.substring(0, request.namespace.size() - 9) &&
            ((object.metadata.name == request.namespace.substring(0, request.namespace.size() - 9) + '-tls' &&
@@ -258,7 +262,9 @@ spec:
             (object.metadata.name == request.namespace.substring(0, request.namespace.size() - 9) + '-gateway-internal-ws' &&
              object.metadata.labels['firemud.dev/role'] == 'gateway-internal-ws') ||
             (object.metadata.name == request.namespace.substring(0, request.namespace.size() - 9) + '-tcp-proxy-bridge' &&
-             object.metadata.labels['firemud.dev/role'] == 'tcp-proxy-bridge')))))
+             object.metadata.labels['firemud.dev/role'] == 'tcp-proxy-bridge') ||
+            (object.metadata.labels['firemud.dev/role'].startsWith('grpc-publication-') &&
+             object.metadata.name == request.namespace.substring(0, request.namespace.size() - 9) + '-grpc-' + object.metadata.labels['firemud.dev/role'].substring(17))))))
       message: managed identity and runtime TLS Secrets are writable only by the controller or cert-manager for its owned identity Secret
       reason: Forbidden
     - expression: >-
@@ -309,12 +315,12 @@ spec:
          (request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$'))) ||
         ((request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')) &&
          ((request.operation == 'DELETE' &&
-           request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') &&
+           request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$') &&
            request.name.startsWith(
              ((request.namespace == 'dev-identity') ? 'dev' :
               request.namespace.substring(0, request.namespace.size() - 9)) + '-')) ||
           (request.operation != 'DELETE' &&
-           object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') &&
+           object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$') &&
            object.metadata.name.startsWith(
              ((request.namespace == 'dev-identity') ? 'dev' :
               request.namespace.substring(0, request.namespace.size() - 9)) + '-'))))
@@ -331,7 +337,7 @@ spec:
          request.operation == 'DELETE' &&
          (request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')) &&
          (request.name == 'firemud-grpc-tls' ||
-          (request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') &&
+          (request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$') &&
            request.name.startsWith(
              ((request.namespace == 'dev-identity') ? 'dev' :
               request.namespace.substring(0, request.namespace.size() - 9)) + '-')))) ||
@@ -339,7 +345,7 @@ spec:
          request.subResource == '' &&
          (request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')) &&
          ((request.operation == 'DELETE' &&
-           (request.name.matches('^((dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge))$') &&
+           (request.name.matches('^((dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)))$') &&
             request.name.startsWith(
               ((request.namespace == 'dev-identity') ? 'dev' :
                request.namespace.substring(0, request.namespace.size() - 9)) + '-'))) ||
@@ -347,8 +353,8 @@ spec:
            has(object.metadata.labels) &&
            object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller' &&
            object.metadata.labels['firemud.dev/identity-name'] == ((request.namespace == 'dev-identity') ? 'dev-demo' : request.namespace.substring(0, request.namespace.size() - 9)) &&
-           object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'gateway-internal-ws', 'tcp-proxy-bridge'] &&
-           object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') &&
+           (object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'gateway-internal-ws', 'tcp-proxy-bridge'] || object.metadata.labels['firemud.dev/role'].startsWith('grpc-publication-')) &&
+           object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$') &&
            object.metadata.name.startsWith(
              ((request.namespace == 'dev-identity') ? 'dev' :
               request.namespace.substring(0, request.namespace.size() - 9)) + '-') &&
@@ -386,11 +392,16 @@ spec:
            (object.metadata.labels['firemud.dev/role'] != 'tcp-proxy-bridge' ||
             ((!has(object.spec.dnsNames) || object.spec.dnsNames.size() == 0) &&
              object.spec.uris == ['spiffe://firemud/ns/' + ((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)) + '/sa/tcp-proxy-service'] &&
-             object.spec.usages == ['digital signature', 'key encipherment', 'client auth'])))) ||
+             object.spec.usages == ['digital signature', 'key encipherment', 'client auth'])) ||
+           (!object.metadata.labels['firemud.dev/role'].startsWith('grpc-publication-') ||
+            (object.spec.secretName == object.metadata.name &&
+             object.spec.dnsNames == [object.metadata.labels['firemud.dev/role'].substring(17), object.metadata.labels['firemud.dev/role'].substring(17) + '.' + ((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)), object.metadata.labels['firemud.dev/role'].substring(17) + '.' + ((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)) + '.svc', object.metadata.labels['firemud.dev/role'].substring(17) + '.' + ((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)) + '.svc.cluster.local'] &&
+             object.spec.uris == ['spiffe://firemud/ns/' + ((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)) + '/sa/' + object.metadata.labels['firemud.dev/role'].substring(17)] &&
+             object.spec.usages == ['digital signature', 'key encipherment', 'server auth', 'client auth']))) ||
         (request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' &&
          request.subResource == 'status' &&
          request.operation == 'UPDATE' &&
-         object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') &&
+         object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$') &&
          object.metadata.name.startsWith(
            ((request.namespace == 'dev-identity') ? 'dev' :
             request.namespace.substring(0, request.namespace.size() - 9)) + '-') &&
@@ -499,7 +510,7 @@ spec:
             object.rules.exists(r,
               r.apiGroups == ['cert-manager.io'] &&
               r.resources == ['certificates'] &&
-              r.resourceNames == [(((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tls'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-telnet-tls'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-gateway-internal-ws'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tcp-proxy-bridge')] &&
+              r.resourceNames == [(((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tls'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-telnet-tls'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-gateway-internal-ws'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tcp-proxy-bridge'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-grpc-game-design-service'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-grpc-world-management-service'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-grpc-entity-management-service'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-grpc-game-logic-service'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-grpc-automation-scripting-service')] &&
               r.verbs == ['get', 'update', 'patch', 'delete']) &&
             object.rules.exists(r,
               r.apiGroups == ['cert-manager.io'] &&
@@ -509,12 +520,12 @@ spec:
             object.rules.exists(r,
               r.apiGroups == [''] &&
               r.resources == ['secrets'] &&
-              r.resourceNames == [(((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tls'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-telnet-tls'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-gateway-internal-ws'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tcp-proxy-bridge'), 'firemud-grpc-tls', (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tls-previous'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-telnet-tls-previous'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-gateway-internal-ws-previous'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tcp-proxy-bridge-previous'), 'firemud-grpc-tls-previous'] &&
+              r.resourceNames == [(((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tls'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-telnet-tls'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-gateway-internal-ws'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tcp-proxy-bridge'), 'firemud-grpc-tls', (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-grpc-game-design-service'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-grpc-world-management-service'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-grpc-entity-management-service'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-grpc-game-logic-service'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-grpc-automation-scripting-service'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tls-previous'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-telnet-tls-previous'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-gateway-internal-ws-previous'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tcp-proxy-bridge-previous'), 'firemud-grpc-tls-previous'] &&
               r.verbs == ['get']) &&
             object.rules.exists(r,
               r.apiGroups == [''] &&
               r.resources == ['secrets'] &&
-              r.resourceNames == [(((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tls'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-telnet-tls'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-gateway-internal-ws'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tcp-proxy-bridge'), 'firemud-grpc-tls', (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tls-previous'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-telnet-tls-previous'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-gateway-internal-ws-previous'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tcp-proxy-bridge-previous'), 'firemud-grpc-tls-previous'] &&
+              r.resourceNames == [(((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tls'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-telnet-tls'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-gateway-internal-ws'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tcp-proxy-bridge'), 'firemud-grpc-tls', (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-grpc-game-design-service'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-grpc-world-management-service'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-grpc-entity-management-service'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-grpc-game-logic-service'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-grpc-automation-scripting-service'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tls-previous'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-telnet-tls-previous'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-gateway-internal-ws-previous'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tcp-proxy-bridge-previous'), 'firemud-grpc-tls-previous'] &&
               r.verbs == ['update', 'patch', 'delete']) &&
             object.rules.exists(r,
               r.apiGroups == [''] &&
@@ -527,7 +538,7 @@ spec:
             object.rules.exists(r,
               r.apiGroups == [''] &&
               r.resources == ['secrets'] &&
-              r.resourceNames == [(((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tls'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-telnet-tls'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-gateway-internal-ws'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tcp-proxy-bridge'), 'firemud-grpc-tls'] &&
+              r.resourceNames == [(((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tls'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-telnet-tls'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-gateway-internal-ws'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tcp-proxy-bridge'), 'firemud-grpc-tls', 'firemud-grpc-game-design-service', 'firemud-grpc-world-management-service', 'firemud-grpc-entity-management-service', 'firemud-grpc-game-logic-service', 'firemud-grpc-automation-scripting-service'] &&
               r.verbs == ['get', 'update', 'patch', 'delete']) &&
             object.rules.exists(r,
               r.apiGroups == [''] &&
@@ -537,7 +548,7 @@ spec:
             object.rules.exists(r,
               r.apiGroups == ['apps'] &&
               r.resources == ['deployments'] &&
-              r.resourceNames == ['account-service', 'automation-scripting-service', 'entity-management-service', 'game-design-service', 'game-logic-service', 'game-session-service', 'logging-admin-service', 'social-groups-service', 'spring-cloud-gateway', 'tcp-proxy-service', 'world-management-service'] &&
+              r.resourceNames == ['account-service', 'game-session-service', 'logging-admin-service', 'social-groups-service', 'spring-cloud-gateway', 'tcp-proxy-service', 'game-design-service', 'world-management-service', 'entity-management-service', 'game-logic-service', 'automation-scripting-service'] &&
               r.verbs == ['get', 'update', 'patch']))))))
       message: only system:masters or the controller may establish the exact derived identity/runtime scope Role; controller wildcards, extra rules, namespaces, and resource names are forbidden
       reason: Forbidden

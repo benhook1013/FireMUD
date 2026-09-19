@@ -440,7 +440,12 @@ class CertificateMaterialServiceTest {
             plan.telnetSecretName(),
             plan.gatewayInternalWsSecretName(),
             plan.tcpProxyBridgeSecretName(),
-            plan.grpcSecretName()),
+            plan.grpcSecretName(),
+            plan.grpcPublicationSecretName("game-design-service"),
+            plan.grpcPublicationSecretName("world-management-service"),
+            plan.grpcPublicationSecretName("entity-management-service"),
+            plan.grpcPublicationSecretName("game-logic-service"),
+            plan.grpcPublicationSecretName("automation-scripting-service")),
         java.util.Set.copyOf(read.getAllValues()));
 
     clearInvocations(runtimeSecrets);
@@ -1689,6 +1694,25 @@ class CertificateMaterialServiceTest {
       when(projectionResource.get()).thenReturn(projection);
       Resource<Secret> sourceResource = mock(Resource.class);
       when(secretClient.identitySecrets().withName(name)).thenReturn(sourceResource);
+    }
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      String role = HostedIdentityContract.grpcPublicationRole(workload);
+      String name = plan.grpcPublicationSecretName(workload);
+      String sourceName = plan.grpcPublicationSourceSecretName(workload);
+      String revision = SecretProjectionService.revisionForRole(role, data);
+      Resource<Secret> projectionResource = mock(Resource.class);
+      when(secretClient.runtimeSecrets().withName(name)).thenReturn(projectionResource);
+      when(projectionResource.get())
+          .thenReturn(
+              ownedSecret(
+                  plan,
+                  role,
+                  name,
+                  data,
+                  acceptedAnnotations(revision, "1".repeat(64))));
+      Resource<Secret> sourceResource = mock(Resource.class);
+      when(secretClient.identitySecrets().withName(sourceName)).thenReturn(sourceResource);
+      when(sourceResource.get()).thenReturn(certManagerSource(plan, role, sourceName, data));
     }
     Secret ownedGrpc =
         ownedSecret(plan, HostedIdentityContract.GRPC_ROLE, plan.grpcSecretName(), data, Map.of());

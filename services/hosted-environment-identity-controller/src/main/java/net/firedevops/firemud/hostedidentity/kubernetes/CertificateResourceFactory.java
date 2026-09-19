@@ -75,6 +75,22 @@ public class CertificateResourceFactory {
         renewBefore);
   }
 
+  /** Builds one retained client/server identity for a protected publication workload. */
+  public GenericKubernetesResource grpcPublication(
+      EnvironmentIdentityPlan plan, String workload, Duration renewBefore) {
+    return certificate(
+        plan,
+        HostedIdentityContract.grpcPublicationRole(workload),
+        plan.grpcPublicationCertificateName(workload),
+        plan.grpcPublicationSourceSecretName(workload),
+        plan.grpcIssuer(),
+        plan.grpcPublicationDnsNames(workload),
+        List.of(plan.grpcPublicationUriSan(workload)),
+        List.of("digital signature", "key encipherment", "server auth", "client auth"),
+        HostedIdentityProperties.INTERNAL_CERTIFICATE_DURATION,
+        renewBefore);
+  }
+
   private GenericKubernetesResource certificate(
       EnvironmentIdentityPlan plan,
       String role,

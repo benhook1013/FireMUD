@@ -218,7 +218,10 @@ class HostedIdentityScopeServiceTest {
 
     assertEquals(
         List.of(
-            "pr-42-tls", "pr-42-telnet-tls", "pr-42-gateway-internal-ws", "pr-42-tcp-proxy-bridge"),
+            "pr-42-tls", "pr-42-telnet-tls", "pr-42-gateway-internal-ws", "pr-42-tcp-proxy-bridge",
+            "pr-42-grpc-game-design-service", "pr-42-grpc-world-management-service",
+            "pr-42-grpc-entity-management-service", "pr-42-grpc-game-logic-service",
+            "pr-42-grpc-automation-scripting-service"),
         HostedIdentityScopeService.requiredCertificateNames(plan));
   }
 
@@ -227,7 +230,15 @@ class HostedIdentityScopeServiceTest {
     EnvironmentIdentityPlan plan = plan().withGrpcConsumers(List.of("independent-grpc-consumer"));
 
     assertEquals(
-        List.of("independent-grpc-consumer", "spring-cloud-gateway", "tcp-proxy-service"),
+        List.of(
+            "independent-grpc-consumer",
+            "game-design-service",
+            "world-management-service",
+            "entity-management-service",
+            "game-logic-service",
+            "automation-scripting-service",
+            "spring-cloud-gateway",
+            "tcp-proxy-service"),
         HostedIdentityScopeService.requiredDeploymentNames(plan));
   }
 
