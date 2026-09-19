@@ -25,8 +25,12 @@ if service_account["kind"] != "ServiceAccount" or service_account["metadata"] !=
     "namespace": "firemud",
 }:
     raise SystemExit("backup verifier ServiceAccount must be owned by firemud")
-if role["kind"] != "Role" or role["metadata"]["namespace"] != "velero":
-    raise SystemExit("backup verifier Role must be scoped to velero")
+if (
+    role["kind"] != "Role"
+    or role["metadata"].get("name") != "verify-velero-backups-reader"
+    or role["metadata"].get("namespace") != "velero"
+):
+    raise SystemExit("backup verifier Role must be named verify-velero-backups-reader and scoped to velero")
 if role["rules"] != [
     {"apiGroups": ["velero.io"], "resources": ["backups"], "verbs": ["get", "list"]}
 ]:
@@ -58,6 +62,10 @@ expected_image = (
 )
 if pod["serviceAccountName"] != "verify-velero-backups" or container["image"] != expected_image:
     raise SystemExit("backup verifier CronJob identity or digest is stale")
+if container.get("securityContext", {}).get("seccompProfile") != {"type": "RuntimeDefault"}:
+    raise SystemExit("backup verifier CronJob must use the RuntimeDefault seccomp profile")
+if container.get("securityContext", {}).get("capabilities") != {"drop": ["ALL"]}:
+    raise SystemExit("backup verifier CronJob must drop all Linux capabilities")
 if "command" in container or "volumeMounts" in container or "volumes" in pod:
     raise SystemExit("backup verifier CronJob must use the image entrypoint without embedded script drift")
 if container["env"] != [{"name": "VELERO_NAMESPACE", "value": "velero"}]:

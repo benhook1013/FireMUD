@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -18,6 +19,14 @@ def main() -> int:
     root = Path(os.environ.get("FIREMUD_REPO_ROOT", Path(__file__).resolve().parents[2]))
     workflows = root / ".github/workflows"
     actions = root / ".github/actions"
+
+    updater_spec = importlib.util.spec_from_file_location(
+        "workflow_tool_updater", root / "dev-tools/maintenance/update-workflow-tool.py"
+    )
+    if updater_spec is None or updater_spec.loader is None:
+        raise SystemExit("could not load workflow tool updater")
+    updater = importlib.util.module_from_spec(updater_spec)
+    updater_spec.loader.exec_module(updater)
 
     def fail(m):
         raise SystemExit(m)
@@ -1179,45 +1188,11 @@ def main() -> int:
             fail(f"ci.yml {cache_id} key must hash .node-version and {lockfile}")
 
     def extract_hcl_block(text, header):
-        """Extract one exact top-level HCL block without consuming following blocks."""
-        match = re.search(rf'(?m)^{re.escape(header)}\s*\{{', text)
-        if match is None:
+        """Return the exact text for one updater-scanned HCL block."""
+        span = updater.find_hcl_block_span(text, header)
+        if span is None:
             return None
-        opening_brace = text.find("{", match.start(), match.end())
-        depth = 0
-        in_string = False
-        escaped = False
-        line_comment = False
-        block_comment = False
-        for index in range(opening_brace, len(text)):
-            char = text[index]
-            next_char = text[index + 1] if index + 1 < len(text) else ""
-            if line_comment:
-                if char == "\n":
-                    line_comment = False
-            elif block_comment:
-                if char == "*" and next_char == "/":
-                    block_comment = False
-            elif in_string:
-                if escaped:
-                    escaped = False
-                elif char == "\\":
-                    escaped = True
-                elif char == '"':
-                    in_string = False
-            elif char == '"':
-                in_string = True
-            elif char == "#" or (char == "/" and next_char == "/"):
-                line_comment = True
-            elif char == "/" and next_char == "*":
-                block_comment = True
-            elif char == "{":
-                depth += 1
-            elif char == "}":
-                depth -= 1
-                if depth == 0:
-                    return text[match.start() : index + 1]
-        return None
+        return text[span[0] : span[1]]
 
     def has_hcl_set_value(block, name, value):
         """Match one exact Helm set block, keeping its name/value association."""
