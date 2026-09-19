@@ -28,6 +28,45 @@ if ! grep -q '^    trustEnvironment: dev-demo-cluster$' "$TMP_DIR/rendered-dev-d
   exit 1
 fi
 
+if ! service_indexes="$(python3 - "$TMP_DIR/values.yaml" <<'PY'
+import pathlib
+import sys
+
+import yaml
+
+values = yaml.safe_load(pathlib.Path(sys.argv[1]).read_text())
+services = (values or {}).get("previewStack", {}).get("services")
+if not isinstance(services, list):
+    raise SystemExit("previewStack.services must be a list")
+
+indexes = {}
+for index, service in enumerate(services):
+    if isinstance(service, dict) and service.get("name") in {
+        "spring-cloud-gateway",
+        "tcp-proxy-service",
+    }:
+        indexes.setdefault(service["name"], []).append(index)
+
+for service_name in ("spring-cloud-gateway", "tcp-proxy-service"):
+    matches = indexes.get(service_name, [])
+    if len(matches) != 1:
+        raise SystemExit(
+            f"expected exactly one previewStack.services entry named "
+            f"{service_name}, found {len(matches)}"
+        )
+
+print(indexes["spring-cloud-gateway"][0], indexes["tcp-proxy-service"][0])
+PY
+)"; then
+  echo "could not derive unique Gateway and TCP Proxy service indexes" >&2
+  exit 1
+fi
+read -r gateway_index proxy_index <<<"$service_indexes"
+if [[ -z "$gateway_index" || -z "$proxy_index" ]]; then
+  echo "derived Gateway and TCP Proxy service indexes were empty" >&2
+  exit 1
+fi
+
 helm template pr-42 "$CHART_DIR" \
   --namespace pr-42 \
   -f "$TMP_DIR/values.yaml" \
@@ -183,8 +222,8 @@ if ! grep -A1 'name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT' "$TMP_DIR/dev-
 fi
 
 for unsafe_override in \
-  'previewStack.services[9].serviceType=NodePort' \
-  'previewStack.services[9].ports[0].nodePort=32042'; do
+  "previewStack.services[${proxy_index}].serviceType=NodePort" \
+  "previewStack.services[${proxy_index}].ports[0].nodePort=32042"; do
   if helm template unsafe-pr-42 "$CHART_DIR" \
     --namespace pr-42 \
     -f "$TMP_DIR/values.yaml" \
@@ -246,8 +285,8 @@ helm template disabled-pr-42 "$CHART_DIR" \
   -f "$TMP_DIR/values.yaml" \
   --set previewStack.enabled=true \
   --set previewStack.gatewayWsTls.enabled=false \
-  --set previewStack.services[8].mountGatewayWsServerTls=false \
-  --set previewStack.services[9].mountGatewayWsClientTls=false \
+  --set "previewStack.services[${gateway_index}].mountGatewayWsServerTls=false" \
+  --set "previewStack.services[${proxy_index}].mountGatewayWsClientTls=false" \
   >"$TMP_DIR/disabled-bridge.yaml"
 python3 - <<'PY' "$TMP_DIR/disabled-bridge.yaml"
 import pathlib
