@@ -228,8 +228,11 @@ class TelnetServerHandlerTest {
             });
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
+    EventExecutor executor = mock(EventExecutor.class);
     when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
     when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+    handler.channelActive(ctx);
 
     List<String> lines =
         List.of("WORLDS", "LOGIN player@example.com secret", "PLAY demo", "opaque extension");
