@@ -24,6 +24,7 @@ PROVIDER_TIMEOUT_SECONDS = 180
 HUMAN_TIME_ZONE = ZoneInfo("Pacific/Auckland")
 EXACT_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
 REVIEWED_SHA = re.compile(r"^[0-9a-fA-F]{7,40}$")
+ARCHIVED_TRIGGER_RECORD = re.compile(r"^trigger-([1-9][0-9]*)\.json$")
 RUN_ID = re.compile(r"^run\.[A-Za-z0-9]{1,32}$")
 LOC_METADATA_LINE = re.compile(
     r"^<!-- firemud:cloc-report:metadata (?P<payload>\{.*\}) -->$"
@@ -223,6 +224,49 @@ def _validate_checkpoint_evidence(payload: dict[str, Any]) -> list[dict[str, Any
     warnings = _require(payload, "warnings", list, name)
     if any(not isinstance(warning, str) for warning in warnings):
         raise ReportError(f"{name} evidence has an invalid warning")
+    hosted_reviews = payload.get("hosted_review_checkpoint")
+    if hosted_reviews is not None:
+        if not isinstance(hosted_reviews, dict):
+            raise ReportError(f"{name} hosted review checkpoint evidence is not an object")
+        if not isinstance(hosted_reviews.get("available"), bool):
+            raise ReportError(f"{name} hosted review checkpoint evidence has invalid availability")
+        for key in ("completed_count", "marked_count", "missing_count"):
+            value = hosted_reviews.get(key)
+            if value is not None:
+                _nonnegative_int(value, f"{name} hosted review {key}")
+        missing_ids = hosted_reviews.get("missing_review_ids")
+        if not isinstance(missing_ids, list) or any(
+            isinstance(value, bool) or not isinstance(value, int) or value <= 0
+            for value in missing_ids
+        ):
+            raise ReportError(f"{name} hosted review missing IDs are invalid")
+        if hosted_reviews.get("missing_count") is not None and hosted_reviews["missing_count"] != len(missing_ids):
+            raise ReportError(f"{name} hosted review missing count is inconsistent")
+        for key in ("malformed_count", "duplicate_count", "wrong_id_count"):
+            value = hosted_reviews.get(key)
+            if value is not None:
+                _nonnegative_int(value, f"{name} hosted review {key}")
+        wrong_ids = hosted_reviews.get("wrong_marker_ids")
+        if not isinstance(wrong_ids, list) or any(
+            isinstance(value, bool) or not isinstance(value, int) or value <= 0
+            for value in wrong_ids
+        ):
+            raise ReportError(f"{name} hosted review wrong marker IDs are invalid")
+        if hosted_reviews.get("wrong_id_count") is not None and hosted_reviews["wrong_id_count"] != len(wrong_ids):
+            raise ReportError(f"{name} hosted review wrong ID count is inconsistent")
+        completed_reviews = hosted_reviews.get("completed_reviews")
+        if not isinstance(completed_reviews, list):
+            raise ReportError(f"{name} hosted review details are invalid")
+        for review in completed_reviews:
+            if not isinstance(review, dict):
+                raise ReportError(f"{name} hosted review detail is not an object")
+            review_id = review.get("review_id")
+            if isinstance(review_id, bool) or not isinstance(review_id, int) or review_id <= 0:
+                raise ReportError(f"{name} hosted review detail has an invalid ID")
+            _timestamp(review.get("submitted_at"), f"{name} hosted review submitted_at")
+            commit_id = review.get("commit_id")
+            if not isinstance(commit_id, str) or not EXACT_SHA.fullmatch(commit_id):
+                raise ReportError(f"{name} hosted review detail has an invalid commit ID")
     unparsed_candidates = payload.get("unparsed_candidates")
     _nonnegative_int(unparsed_candidates, f"{name} unparsed_candidates")
     for index, event in enumerate(timeline, 1):
@@ -299,6 +343,23 @@ def _validate_checker_evidence(payload: dict[str, Any]) -> None:
     request_type = payload["latest_explicit_review_request_type"]
     if request_type not in {None, "full", "incremental"}:
         raise ReportError(f"{name} evidence has an invalid latest review request type")
+    request_id = payload.get("latest_explicit_review_request_id")
+    if request_id is not None and (
+        isinstance(request_id, bool) or not isinstance(request_id, int) or request_id <= 0
+    ):
+        raise ReportError(f"{name} evidence has an invalid latest review request id")
+    request_url = payload.get("latest_explicit_review_request_url")
+    if request_url is not None and (not isinstance(request_url, str) or not request_url):
+        raise ReportError(f"{name} evidence has an invalid latest review request url")
+    request_at = payload.get("latest_explicit_review_request_at")
+    if request_at is not None:
+        _timestamp(request_at, f"{name} latest_explicit_review_request_at")
+    request_command = payload.get("latest_explicit_review_request_command")
+    if request_command is not None and request_command not in {
+        "@coderabbitai full review",
+        "@coderabbitai review",
+    }:
+        raise ReportError(f"{name} evidence has an invalid latest review request command")
 
 
 def _checker_blockers(payload: dict[str, Any]) -> list[str]:
@@ -473,7 +534,56 @@ def hosted_trigger_record_path(repo: str, pr_number: int) -> Path | None:
         / "trigger.json"
     )
     try:
-        return candidate if candidate.is_file() else None
+        if candidate.is_file():
+            return candidate
+        if not candidate.parent.is_dir() or candidate.parent.is_symlink():
+            return None
+        archived: list[tuple[int, Path]] = []
+        for path in candidate.parent.iterdir():
+            match = ARCHIVED_TRIGGER_RECORD.fullmatch(path.name)
+            if match is None or path.is_symlink() or not path.is_file():
+                continue
+            trigger_id = int(match.group(1))
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+                trigger = record.get("trigger") if isinstance(record, dict) else None
+                retirement = record.get("retirement") if isinstance(record, dict) else None
+                evidence = retirement.get("evidence") if isinstance(retirement, dict) else None
+                if (
+                    not isinstance(record, dict)
+                    or record.get("schema_version") != 1
+                    or record.get("status") != "retired"
+                    or record.get("repository") != repo
+                    or record.get("pr_number") != pr_number
+                    or not isinstance(record.get("head_sha"), str)
+                    or EXACT_SHA.fullmatch(record["head_sha"]) is None
+                    or not isinstance(trigger, dict)
+                    or trigger.get("id") != trigger_id
+                    or trigger.get("type") != "full"
+                    or trigger.get("command") != "@coderabbitai full review"
+                    or not isinstance(trigger.get("created_at"), str)
+                    or _timestamp(trigger["created_at"], "archived trigger created_at") is None
+                    or not isinstance(trigger.get("url"), str)
+                    or not trigger["url"]
+                    or not isinstance(retirement, dict)
+                    or retirement.get("action") != "operator_retire"
+                    or not isinstance(retirement.get("retired_at"), str)
+                    or _timestamp(retirement["retired_at"], "archived retirement timestamp") is None
+                    or not isinstance(retirement.get("reason"), str)
+                    or not retirement["reason"]
+                    or retirement.get("trigger_comment_id") != trigger_id
+                    or not isinstance(retirement.get("expected_head_sha"), str)
+                    or EXACT_SHA.fullmatch(retirement["expected_head_sha"]) is None
+                    or not isinstance(evidence, dict)
+                    or evidence.get("state") not in {"active", "timed_out"}
+                    or evidence.get("captured_head_sha") != record["head_sha"]
+                    or evidence.get("current_head_sha") != retirement["expected_head_sha"]
+                ):
+                    continue
+            except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                continue
+            archived.append((trigger_id, path))
+        return max(archived, key=lambda item: item[0])[1] if archived else None
     except OSError:
         return None
 
@@ -515,6 +625,12 @@ def _validate_trigger_state(payload: dict[str, Any], repo: str, pr_number: int) 
             valid = value is None or (isinstance(value, str) and bool(value))
         if not valid:
             raise ReportError(f"{name} evidence has an invalid {key}")
+    trigger_command = state.get("trigger_command")
+    if trigger_command is not None and trigger_command not in {
+        "@coderabbitai full review",
+        "@coderabbitai review",
+    }:
+        raise ReportError(f"{name} evidence has an invalid trigger_command")
     return state
 
 
@@ -525,12 +641,62 @@ def _hosted_trigger_evidence(
     checker_payload: dict[str, Any],
     current_head: str,
 ) -> dict[str, Any]:
+    latest_request_at = checker_payload.get("latest_explicit_review_request_at")
+    latest_request_type = checker_payload.get("latest_explicit_review_request_type")
+    latest_request_id = checker_payload.get("latest_explicit_review_request_id")
+    latest_request_url = checker_payload.get("latest_explicit_review_request_url")
+    latest_request_command = checker_payload.get("latest_explicit_review_request_command")
+    has_latest_request = isinstance(latest_request_at, str) and bool(latest_request_at)
+
+    def request_state() -> str:
+        if not has_latest_request:
+            return "unavailable"
+        if checker_payload.get("latest_review_request_rate_limited"):
+            return "rate_limited"
+        if checker_payload.get("latest_review_request_noop"):
+            return "noop"
+        if checker_payload.get("latest_review_request_failed"):
+            return "failed"
+        if checker_payload.get("review_finished_after_latest_request"):
+            return "completed"
+        if checker_payload.get("explicit_review_after_latest_commit"):
+            return "active"
+        return "awaiting_response"
+
+    request_fields = {
+        "latest_request_id": latest_request_id,
+        "latest_request_created_at": latest_request_at,
+        "latest_request_type": latest_request_type,
+        "latest_request_url": latest_request_url,
+        "latest_request_command": latest_request_command,
+    }
     if not record_available:
+        if has_latest_request:
+            state = request_state()
+            warning = None
+            if state in {"active", "rate_limited"}:
+                warning = (
+                    "latest Hosted request is manual/unrecorded while it is "
+                    f"{state.replace('_', ' ')}; use the manual-request waiter and do not overlap it"
+                )
+            return {
+                "available": False,
+                "record_available": False,
+                "classification": "manual/unrecorded",
+                "state": state,
+                "reason": "the latest explicit Hosted request has no canonical durable trigger record",
+                "validation_outcome": "unavailable",
+                "warning": warning,
+                **request_fields,
+            }
         return {
             "available": False,
+            "record_available": False,
+            "classification": "unavailable/no-request",
             "state": "unavailable",
-            "reason": "no canonical durable Hosted trigger record is present",
+            "reason": "no explicit Hosted request is present",
             "validation_outcome": "unavailable",
+            **request_fields,
         }
     try:
         state = _validate_trigger_state(checker_payload, repo, pr_number)
@@ -538,9 +704,12 @@ def _hosted_trigger_evidence(
         provider_state = checker_payload.get("trigger_state")
         evidence = {
             "available": True,
+            "record_available": True,
+            "classification": "malformed/unknown",
             "state": "ambiguous",
             "reason": str(exc),
             "validation_outcome": "invalid",
+            **request_fields,
         }
         safe_state = (
             provider_state.get("state")
@@ -564,11 +733,71 @@ def _hosted_trigger_evidence(
     if state["current_head_sha"].casefold() != current_head.casefold():
         return {
             "available": True,
+            "record_available": True,
+            "classification": "ambiguous/overlapping",
             "state": "ambiguous",
             "reason": "Hosted trigger evidence does not match the current GitHub PR head",
             "validation_outcome": "invalid",
+            **request_fields,
         }
-    return {**state, "available": True, "validation_outcome": "valid"}
+    record_id = state.get("trigger_comment_id")
+    same_request = (
+        isinstance(latest_request_id, int)
+        and isinstance(record_id, int)
+        and latest_request_id == record_id
+        and latest_request_at == state.get("trigger_created_at")
+        and latest_request_url == state.get("trigger_url")
+        and latest_request_type == state.get("trigger_type")
+        and latest_request_command == state.get("trigger_command")
+    )
+    if latest_request_id is None and latest_request_at is not None:
+        same_request = (
+            latest_request_at == state.get("trigger_created_at")
+            and (latest_request_url is None or latest_request_url == state.get("trigger_url"))
+            and (latest_request_type is None or latest_request_type == state.get("trigger_type"))
+        )
+
+    if not has_latest_request:
+        classification = "retired-archive" if state.get("state") == "retired" else "unavailable/no-request"
+        provenance_reason = "the durable record exists but no explicit Hosted request is present in live PR evidence"
+    elif same_request and state.get("state") == "ambiguous":
+        classification = "ambiguous/overlapping"
+        provenance_reason = "canonical trigger evidence is ambiguous"
+    elif same_request and state.get("state") == "retired":
+        classification = "retired-archive"
+        provenance_reason = "latest explicit Hosted request matches a trigger retained in the retired archive"
+    elif same_request and state.get("state") == "unattributed":
+        classification = "reservation/unverified"
+        provenance_reason = state.get("reason") or "canonical trigger reservation is not verified"
+    elif same_request:
+        classification = "canonical-recorded"
+        provenance_reason = "latest explicit Hosted request matches the canonical durable trigger record"
+    elif state.get("state") == "ambiguous":
+        classification = "ambiguous/overlapping"
+        provenance_reason = "durable trigger evidence overlaps another explicit Hosted request"
+    elif state.get("state") == "unattributed":
+        classification = "reservation/unverified"
+        provenance_reason = state.get("reason") or "durable trigger reservation has not been verified"
+    else:
+        classification = "manual/unrecorded"
+        provenance_reason = "a newer explicit Hosted request is not covered by the canonical durable trigger record"
+
+    warning = None
+    if classification == "manual/unrecorded" and request_state() in {"active", "rate_limited"}:
+        warning = (
+            "latest Hosted request is manual/unrecorded while it is "
+            f"{request_state().replace('_', ' ')}; use the manual-request waiter and do not overlap it"
+        )
+    return {
+        **state,
+        "available": True,
+        "record_available": True,
+        "classification": classification,
+        "provenance_reason": provenance_reason,
+        "validation_outcome": "valid",
+        "warning": warning,
+        **request_fields,
+    }
 
 
 def _checkpoint_summaries(checkpoints: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1144,6 +1373,21 @@ def emit_text(report: dict[str, Any]) -> None:
     )
     print(f"verdict: {report['verdict']}")
     trigger = report["hosted_trigger"]
+    classification = trigger.get("classification", "unavailable/no-request")
+    request_details = [f"classification={_display(classification)}"]
+    if trigger.get("state"):
+        request_details.append(f"state={_display(trigger['state'])}")
+    if trigger.get("latest_request_id") is not None:
+        request_details.append(f"request={_display(trigger['latest_request_id'])}")
+    elif trigger.get("trigger_comment_id") is not None:
+        request_details.append(f"request={_display(trigger['trigger_comment_id'])}")
+    if trigger.get("latest_request_created_at"):
+        request_details.append(
+            f"posted={format_human_timestamp(trigger['latest_request_created_at'])}"
+        )
+    print("hosted request: " + " · ".join(request_details))
+    if trigger.get("warning"):
+        print(f"warning: {_display(trigger['warning'])}")
     if trigger.get("available"):
         trigger_id = trigger.get("trigger_comment_id") or "-"
         trigger_head = str(trigger.get("head_sha") or "")[:12] or "-"

@@ -1067,6 +1067,43 @@ class PrStatusReporterTest(unittest.TestCase):
         self.assertNotIn(str(record), json.dumps(report))
         self.assertEqual(report["verdict"], "READY")
 
+    def test_manual_latest_request_is_classified_and_warned_without_a_record(self) -> None:
+        checker = self.checker_payload(ok=True)
+        checker.update(
+            {
+                "latest_explicit_review_request_id": 202,
+                "latest_explicit_review_request_url": "https://example.test/comments/202",
+                "latest_explicit_review_request_command": "@coderabbitai full review",
+                "latest_review_request_rate_limited": True,
+            }
+        )
+        evidence = self.reporter._hosted_trigger_evidence(
+            "owner/repo", 42, False, checker, checker["head_sha"]
+        )
+        self.assertEqual(evidence["classification"], "manual/unrecorded")
+        self.assertEqual(evidence["state"], "rate_limited")
+        self.assertIn("manual/unrecorded", evidence["warning"])
+
+    def test_newer_manual_request_does_not_inherit_an_older_record(self) -> None:
+        checker = self.checker_payload(ok=True)
+        checker.update(
+            {
+                "latest_explicit_review_request_id": 202,
+                "latest_explicit_review_request_url": "https://example.test/comments/202",
+                "latest_explicit_review_request_command": "@coderabbitai full review",
+            }
+        )
+        checker["trigger_state"] = self.trigger_state(
+            trigger_command="@coderabbitai full review",
+            trigger_created_at="2026-09-14T00:05:00Z",
+            trigger_comment_id=101,
+            trigger_url="https://example.test/comments/101",
+        )
+        evidence = self.reporter._hosted_trigger_evidence(
+            "owner/repo", 42, True, checker, checker["head_sha"]
+        )
+        self.assertEqual(evidence["classification"], "manual/unrecorded")
+
     def test_report_owned_trigger_availability_cannot_be_overridden_by_provider(self) -> None:
         checker = self.checker_payload(ok=True)
         checker["trigger_state"] = self.trigger_state(available=False)
@@ -1236,6 +1273,85 @@ class PrStatusReporterTest(unittest.TestCase):
                 self.assertIsNone(self.reporter.hosted_trigger_record_path("owner/repo", 42))
             with patch.object(self.reporter, "ROOT", linked_root):
                 self.assertIsNone(self.reporter.hosted_trigger_record_path("owner/repo", 42))
+
+    def test_validated_retired_archive_covers_latest_recorded_request(self) -> None:
+        with (
+            patch.object(self.reporter, "hosted_trigger_record_path", self.original_hosted_trigger_record_path),
+            tempfile.TemporaryDirectory() as directory,
+        ):
+            root = Path(directory).resolve()
+            archive = (
+                root
+                / ".git"
+                / "coderabbit-review-logs"
+                / "hosted"
+                / "owner_repo"
+                / "pr-42"
+                / "trigger-101.json"
+            )
+            archive.parent.mkdir(parents=True)
+            archive.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "status": "retired",
+                        "repository": "owner/repo",
+                        "pr_number": 42,
+                        "head_sha": "0123456789abcdef0123456789abcdef01234567",
+                        "trigger": {
+                            "id": 101,
+                            "created_at": "2026-09-14T00:05:00Z",
+                            "url": "https://example.test/comments/101",
+                            "type": "full",
+                            "command": "@coderabbitai full review",
+                        },
+                        "retirement": {
+                            "action": "operator_retire",
+                            "retired_at": "2026-09-14T01:00:00Z",
+                            "reason": "manual adjudication",
+                            "trigger_comment_id": 101,
+                            "expected_head_sha": "0123456789abcdef0123456789abcdef01234567",
+                            "evidence": {
+                                "state": "active",
+                                "captured_head_sha": "0123456789abcdef0123456789abcdef01234567",
+                                "current_head_sha": "0123456789abcdef0123456789abcdef01234567",
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            checker = self.checker_payload(ok=True)
+            checker.update(
+                {
+                    "latest_explicit_review_request_id": 101,
+                    "latest_explicit_review_request_url": "https://example.test/comments/101",
+                    "latest_explicit_review_request_command": "@coderabbitai full review",
+                    "trigger_state": self.trigger_state(
+                        state="retired",
+                        trigger_command="@coderabbitai full review",
+                        reason="the stale trigger was explicitly retired by an operator",
+                    ),
+                }
+            )
+            with (
+                patch.object(self.reporter, "ROOT", root),
+                patch.object(
+                    self.reporter.subprocess,
+                    "run",
+                    side_effect=self.provider_responses(
+                        checker_ok=True,
+                        checker_exit=1,
+                        checker_payload=checker,
+                    ),
+                ),
+            ):
+                report = self.reporter.build_report("owner/repo", 42)
+                self.assertEqual(
+                    self.reporter.hosted_trigger_record_path("owner/repo", 42), archive
+                )
+            self.assertEqual(report["hosted_trigger"]["classification"], "retired-archive")
+            self.assertEqual(report["hosted_trigger"]["state"], "retired")
 
     def test_ambiguous_hosted_trigger_reason_is_visible_in_human_output(self) -> None:
         trigger = {
