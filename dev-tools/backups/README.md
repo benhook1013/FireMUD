@@ -36,7 +36,7 @@ This directory contains FireMUD backup tooling for three different lanes:
   - Runs the locally built backup-verifier image's focused CI smoke: Bash, AWS CLI, the pinned Velero CLI, verifier-script syntax, and non-root execution.
   - The smoke proves image contents and tool behavior only; it does not prove live-cluster backup existence or reachability. Local Docker is optional for this repository check; the image build and smoke run in the runtime-image CI jobs.
 
-The checked-in `k8s/velero/verify-backups-cronjob.yaml` runs the CI-verified, digest-pinned `backup-verifier` image as a non-root UID. Its `firemud` ServiceAccount is bound only to `get` and `list` on Velero `backups` in the `velero` namespace. The CronJob is existence/reachability evidence only; it does not prove immutable lineage, artifact readability, restore-tool compatibility, or player-facing readiness.
+The checked-in `k8s/velero/verify-backups-cronjob.yaml` runs the CI-verified, digest-pinned `backup-verifier` image as a non-root UID. Its `verify-velero-backups` ServiceAccount is in the `firemud` namespace and is bound only to `get` and `list` on Velero `backups` in the `velero` namespace. The CronJob is existence/reachability evidence only; it does not prove immutable lineage, artifact readability, restore-tool compatibility, or player-facing readiness.
 
 ## Choosing The Right Script
 
