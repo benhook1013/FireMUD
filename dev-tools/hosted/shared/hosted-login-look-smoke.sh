@@ -15,7 +15,9 @@ SMOKE_WORLDS_EXPECT=${SMOKE_WORLDS_EXPECT:-OK WORLDS}
 SMOKE_LOGIN_EXPECT=${SMOKE_LOGIN_EXPECT:-OK LOGIN}
 SMOKE_PLAY_EXPECT=${SMOKE_PLAY_EXPECT:-OK PLAY}
 SMOKE_LOOK_EXPECT=${SMOKE_LOOK_EXPECT:-OK LOOK}
+SMOKE_TLS_CA_FILE=${SMOKE_TLS_CA_FILE:-}
 export FIREMUD_REPO_ROOT
+export SMOKE_TLS_CA_FILE
 
 if command -v python3 >/dev/null 2>&1; then
   PYTHON=python3
@@ -62,6 +64,9 @@ run_telnet_smoke_session(
     timeout_seconds,
     retry_window_seconds=timeout_seconds,
     retry_interval_seconds=2,
+    tls_enabled=True,
+    tls_server_hostname=host,
+    tls_ca_file=os.environ.get("SMOKE_TLS_CA_FILE") or None,
 )
 
 label = os.environ.get("SMOKE_TARGET_LABEL", "hosted environment")
