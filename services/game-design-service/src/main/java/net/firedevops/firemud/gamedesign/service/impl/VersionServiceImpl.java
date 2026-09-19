@@ -116,7 +116,6 @@ public class VersionServiceImpl implements VersionService {
   }
 
   @Override
-  @Transactional
   @Timed(value = "gamedesign.version.publish")
   public VersionDto publishVersion(String tenantId, String notes, String publishRequestId) {
     logger.info("Publishing version for tenant {}", tenantId);

@@ -11,6 +11,8 @@ import net.firedevops.firemud.gamedesign.model.PublishType;
 public interface PublishAttemptService {
   <T> T executeScriptPatchTransaction(Supplier<T> operation);
 
+  <T> T executeFullVersionTransaction(Supplier<T> operation);
+
   final class ScriptPatchTransactionException extends RuntimeException {
     public ScriptPatchTransactionException(RuntimeException cause) {
       super("script-patch transaction operation failed", cause);
@@ -21,7 +23,19 @@ public interface PublishAttemptService {
     }
   }
 
+  final class FullVersionTransactionException extends RuntimeException {
+    public FullVersionTransactionException(RuntimeException cause) {
+      super("full-version transaction operation failed", cause);
+    }
+
+    public RuntimeException causeException() {
+      return (RuntimeException) getCause();
+    }
+  }
+
   void createAttempt(VersionDto version, PublishType publishType, String publishWorkflowId);
+
+  void createFullVersionAttempt(VersionDto version, String publishWorkflowId, String requestDigest);
 
   void createScriptPatchAttempt(
       VersionDto version, String publishWorkflowId, Long baseVersionId, String requestDigest);
@@ -38,7 +52,14 @@ public interface PublishAttemptService {
   void recordParticipantDigests(
       String publishWorkflowId, List<PublishParticipantDigestDto> participantDigests);
 
+  void recordFullVersionParticipantDigests(
+      String publishWorkflowId, List<PublishParticipantDigestDto> participantDigests);
+
   void markSucceeded(String publishWorkflowId);
 
+  void markFullVersionSucceeded(String publishWorkflowId);
+
   void markFailed(String publishWorkflowId, String failureCode, String failureMessage);
+
+  void markFullVersionFailed(String publishWorkflowId, String failureCode, String failureMessage);
 }
