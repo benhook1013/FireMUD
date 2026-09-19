@@ -59,6 +59,13 @@ SERVICE_IMAGES = {
     "tcp-proxy-service",
     "world-management-service",
 }
+PUBLICATION_GRPC_WORKLOADS = {
+    "game-design-service",
+    "world-management-service",
+    "entity-management-service",
+    "game-logic-service",
+    "automation-scripting-service",
+}
 EXPECTED_NAMES = {
     "Deployment": SERVICE_IMAGES | {"postgres", "redis-coord", "redis-cache", "minio"},
     "Service": SERVICE_IMAGES
@@ -124,7 +131,7 @@ EXPECTED_SECRET_REFS = {
     "jwt-signing-keys",
     "minio-credentials",
     "firemud-grpc-tls",
-}
+} | {f"firemud-grpc-{service}" for service in PUBLICATION_GRPC_WORKLOADS}
 EXPECTED_TOP_LEVEL_LABELS = {
     "app.kubernetes.io/name": "firemud",
     "app.kubernetes.io/managed-by": "Helm",
@@ -1021,8 +1028,38 @@ def validate_service_consumers(documents: list[dict], expected_namespace: str) -
         if len(containers) != 1 or containers[0].get("name") != service:
             fail(f"Deployment/{service} has an unexpected container layout")
 
+        container = containers[0]
+        expected_grpc_paths = (
+            {
+                "FIREMUD_GRPC_CERT_CHAIN_PATH": "/tls/tls.crt",
+                "FIREMUD_GRPC_PRIVATE_KEY_PATH": "/tls/tls.key",
+                "FIREMUD_GRPC_CA_CERT_PATH": "/tls/ca.crt",
+            }
+            if service in PUBLICATION_GRPC_WORKLOADS
+            else {
+                "FIREMUD_GRPC_CERT_CHAIN_PATH": "/tls/client.crt",
+                "FIREMUD_GRPC_PRIVATE_KEY_PATH": "/tls/client.key",
+                "FIREMUD_GRPC_CA_CERT_PATH": "/tls/ca.crt",
+            }
+        )
+        declared_grpc_paths = {
+            entry.get("name"): entry.get("value")
+            for entry in container.get("env", [])
+            if isinstance(entry, dict)
+        }
+        for env_name, expected_path in expected_grpc_paths.items():
+            if declared_grpc_paths.get(env_name) != expected_path:
+                fail(
+                    f"Deployment/{service} must configure {env_name} as {expected_path}"
+                )
+
+        grpc_secret_name = (
+            f"firemud-grpc-{service}"
+            if service in PUBLICATION_GRPC_WORKLOADS
+            else "firemud-grpc-tls"
+        )
         expected_mounts = {
-            "grpc-tls": ("/tls", "firemud-grpc-tls"),
+            "grpc-tls": ("/tls", grpc_secret_name),
             "jwt-signing-keys": ("/var/run/secrets/firemud/jwt", "jwt-signing-keys"),
         }
         if service == "account-service":
@@ -1041,7 +1078,6 @@ def validate_service_consumers(documents: list[dict], expected_namespace: str) -
                 "/gateway-ws-server-tls",
                 f"{expected_namespace}-gateway-internal-ws",
             )
-        container = containers[0]
         raw_mounts = _require_mapping_list(
             container.get("volumeMounts", []),
             f"Deployment/{service}.spec.template.spec.containers[0].volumeMounts",

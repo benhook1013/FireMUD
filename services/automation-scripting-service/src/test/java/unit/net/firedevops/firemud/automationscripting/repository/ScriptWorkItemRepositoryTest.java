@@ -96,6 +96,64 @@ class ScriptWorkItemRepositoryTest {
   }
 
   @Test
+  void insertAndHydratePluginFencePersistsBothValues() {
+    ScriptWorkItemsRecord row = workItemRecord(13L, 0, 0L);
+    row.setPluginActivationEpoch(4L);
+    row.setLifecycleRevision(8L);
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicReference<String> insertSql = new AtomicReference<>();
+    MockDataProvider provider =
+        context -> {
+          insertSql.set(context.sql().toLowerCase(Locale.ROOT));
+          Field<Boolean> insertedField = DSL.field("xmax = 0", Boolean.class).as("inserted");
+          List<Field<?>> fields = new ArrayList<>();
+          Collections.addAll(fields, SCRIPT_WORK_ITEMS.fields());
+          fields.add(insertedField);
+          Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
+          returned.from(row);
+          returned.set(insertedField, true);
+          Result<Record> result = resultDsl.newResult(fields.toArray(new Field<?>[0]));
+          result.add(returned);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    ScriptWorkItem item = new ScriptWorkItem();
+    item.setTenantId("tenant-1");
+    item.setGameInstanceId("game-1");
+    item.setRegionId("region-1");
+    item.setRegionEpoch(7L);
+    item.setEntityId("entity-1");
+    item.setScriptId("script-1");
+    item.setPluginId("plugin-1");
+    item.setPluginVersionId("plugin-v1");
+    item.setPluginActivationEpoch(4L);
+    item.setLifecycleRevision(8L);
+
+    ScriptWorkItem saved = repository.insertIfAbsentByTriggerIdentity(item).workItem();
+
+    assertThat(saved.getPluginActivationEpoch()).isEqualTo(4L);
+    assertThat(saved.getLifecycleRevision()).isEqualTo(8L);
+    assertThat(insertSql)
+        .hasValueSatisfying(
+            sql -> assertThat(sql).contains("plugin_activation_epoch", "lifecycle_revision"));
+  }
+
+  @Test
+  void insertRejectsAConflictingPluginFencePair() {
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(SQLDialect.POSTGRES));
+    ScriptWorkItem item = new ScriptWorkItem();
+    item.setPluginActivationEpoch(4L);
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> repository.insertIfAbsentByTriggerIdentity(item))
+        .withMessage(
+            "plugin_activation_epoch and lifecycle_revision must both be zero or both be positive");
+  }
+
+  @Test
   void insertRejectsConflictingOwnerEvidenceAgainstExistingIdentity() {
     ScriptWorkItemsRecord row = workItemRecord(9L, 4, 7L);
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);

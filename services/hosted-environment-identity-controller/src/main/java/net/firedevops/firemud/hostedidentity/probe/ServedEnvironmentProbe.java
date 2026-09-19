@@ -63,8 +63,7 @@ public class ServedEnvironmentProbe {
   private static final int IO_TIMEOUT_MILLIS = 8000;
   private static final Duration TOTAL_PROBE_TIMEOUT_SLACK = Duration.ofSeconds(1);
   static final Duration TOTAL_PROBE_TIMEOUT =
-      Duration.ofMillis(CONNECT_TIMEOUT_MILLIS + IO_TIMEOUT_MILLIS)
-          .plus(TOTAL_PROBE_TIMEOUT_SLACK);
+      Duration.ofMillis(CONNECT_TIMEOUT_MILLIS + IO_TIMEOUT_MILLIS).plus(TOTAL_PROBE_TIMEOUT_SLACK);
   private static final int GRPC_PORT = 6565;
   private static final int MAX_HTTP_STATUS_LINE_BYTES = 256;
   private static final String GRPC_PROBE_SERVICE = "account-service";
@@ -568,8 +567,7 @@ public class ServedEnvironmentProbe {
     if (expectedFingerprint == null || expectedFingerprint.isBlank()) {
       throw new IllegalStateException("expected served leaf fingerprint is required");
     }
-    SSLSocket socket =
-        trackSocket((SSLSocket) SSLSocketFactory.getDefault().createSocket());
+    SSLSocket socket = trackSocket((SSLSocket) SSLSocketFactory.getDefault().createSocket());
     return openTlsSocket(hostname, port, expectedFingerprint, socket);
   }
 

@@ -753,6 +753,9 @@ public class ScriptGameplayCommandHandoffServiceImpl
           now);
       return;
     }
+    // Generation-aware recovery belongs to the separate parent aggregate. The
+    // current work-item status records this failed handoff without fabricating
+    // recovery evidence that this path cannot maintain atomically.
     workItem.setStatus(STATUS_DEAD_LETTERED);
     String failureReason = ScriptHandoffOutcomeSupport.canonicalInfrastructureReason(result);
     workItem.setCancelReason(failureReason);
@@ -819,6 +822,9 @@ public class ScriptGameplayCommandHandoffServiceImpl
     event.setBindingId(normalize(workItem.getBindingId()));
     event.setPluginId(normalize(workItem.getPluginId()));
     event.setPluginVersionId(normalize(workItem.getPluginVersionId()));
+    event.setScriptPinEpoch(workItem.getScriptPinEpoch());
+    event.setPluginActivationEpoch(workItem.getPluginActivationEpoch());
+    event.setLifecycleRevision(workItem.getLifecycleRevision());
     event.setWorkItemId(workItem.getId());
     event.setCommandOrdinal(command.ordinal());
     event.setAutomationDispatchId(dispatchId);
@@ -842,6 +848,14 @@ public class ScriptGameplayCommandHandoffServiceImpl
     event.setHandoffOutcome(outcome);
     event.setHandoffReason(reason);
     event.setObservedAt(now);
+    handoffEventRepository
+        .findByTenantIdAndWorkItemIdAndCommandOrdinal(
+            workItem.getTenantId(), workItem.getId(), command.ordinal())
+        .ifPresent(
+            existing -> {
+              event.setId(existing.getId());
+              event.setRowVersion(existing.getRowVersion());
+            });
     handoffEventRepository.save(event);
   }
 

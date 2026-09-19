@@ -103,7 +103,9 @@ public interface PluginRuntimeStateService {
       String actorPrincipal,
       long lastPolicyCheckedAtMs,
       PluginPublicationLink activePublication,
-      PluginPublicationLink pendingPublication) {}
+      PluginPublicationLink pendingPublication,
+      long pluginActivationEpoch,
+      long lifecycleRevision) {}
 
   record PluginPublicationLink(
       String pluginVersionId,

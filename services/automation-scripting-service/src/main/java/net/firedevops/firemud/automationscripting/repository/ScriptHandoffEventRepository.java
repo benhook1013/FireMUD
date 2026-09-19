@@ -1,15 +1,22 @@
 package net.firedevops.firemud.automationscripting.repository;
 
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptHandoffEvents.SCRIPT_HANDOFF_EVENTS;
+import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptWorkItems.SCRIPT_WORK_ITEMS;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.blankToEmpty;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.blankToNull;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.limitOrDefault;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.offsetOrZero;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
+import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toOffsetDateTime;
+import static org.jooq.impl.DSL.field;
+import static org.jooq.impl.DSL.notExists;
+import static org.jooq.impl.DSL.row;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -17,6 +24,7 @@ import net.firedevops.firemud.automationscripting.entity.ScriptHandoffEvent;
 import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptHandoffEventsRecord;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
+import org.jooq.Field;
 import org.jooq.Record;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Repository;
@@ -26,10 +34,72 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class ScriptHandoffEventRepository {
+  private static final int RETENTION_DELETE_BATCH_SIZE = 500;
+  private static final Field<OffsetDateTime> RETENTION_HOLD_UNTIL =
+      field("retention_hold_until", OffsetDateTime.class);
   private final DSLContext dsl;
 
   public ScriptHandoffEventRepository(DSLContext dsl) {
     this.dsl = dsl;
+  }
+
+  /**
+   * Disposes one ordered batch of terminal handoff evidence before its parent work item is swept.
+   * Later scheduled cleanup runs continue from the remaining eligible rows.
+   */
+  public long deleteExpiredRetentionEvidence(Instant safeWatermark, Instant now) {
+    LocalDateTime cutoff = toLocalDateTime(safeWatermark);
+    OffsetDateTime current = toOffsetDateTime(now);
+    var candidates = SCRIPT_HANDOFF_EVENTS.as("retention_candidates");
+    return dsl.deleteFrom(SCRIPT_HANDOFF_EVENTS)
+        .where(
+            row(SCRIPT_HANDOFF_EVENTS.ID, SCRIPT_HANDOFF_EVENTS.TENANT_ID)
+                .in(
+                    dsl.select(candidates.ID, candidates.TENANT_ID)
+                        .from(candidates)
+                        .where(
+                            candidates
+                                .TENANT_ID
+                                .isNotNull()
+                                .and(candidates.OBSERVED_AT.lt(cutoff))
+                                .and(
+                                    RETENTION_HOLD_UNTIL
+                                        .isNull()
+                                        .or(RETENTION_HOLD_UNTIL.le(current)))
+                                .and(
+                                    notExists(
+                                        org.jooq
+                                            .impl
+                                            .DSL
+                                            .selectOne()
+                                            .from(SCRIPT_WORK_ITEMS)
+                                            .where(
+                                                SCRIPT_WORK_ITEMS
+                                                    .TENANT_ID
+                                                    .eq(candidates.TENANT_ID)
+                                                    .and(
+                                                        SCRIPT_WORK_ITEMS.ID.eq(
+                                                            candidates.WORK_ITEM_ID))
+                                                    .and(
+                                                        SCRIPT_WORK_ITEMS.STATUS.notIn(
+                                                            AutomationScriptingJooqRepositorySupport
+                                                                .TERMINAL_WORK_ITEM_STATUSES))))))
+                        .orderBy(candidates.EVENT_ID.asc())
+                        .limit(RETENTION_DELETE_BATCH_SIZE)))
+        .execute();
+  }
+
+  /** Applies or clears the durable owner hold for one tenant-qualified handoff row. */
+  public boolean setRetentionHold(String tenantId, long handoffId, Instant holdUntil) {
+    return dsl.update(SCRIPT_HANDOFF_EVENTS)
+            .set(RETENTION_HOLD_UNTIL, holdUntil == null ? null : toOffsetDateTime(holdUntil))
+            .where(
+                SCRIPT_HANDOFF_EVENTS
+                    .ID
+                    .eq(handoffId)
+                    .and(SCRIPT_HANDOFF_EVENTS.TENANT_ID.eq(tenantId)))
+            .execute()
+        == 1;
   }
 
   public List<ScriptHandoffEvent> findEvents(
@@ -136,6 +206,22 @@ public class ScriptHandoffEventRepository {
         .limit(limitOrDefault(pageable, 100))
         .offset(offsetOrZero(pageable))
         .fetch(this::toEntity);
+  }
+
+  /** Returns the single durable logical child projection for a work-item command. */
+  public Optional<ScriptHandoffEvent> findByTenantIdAndWorkItemIdAndCommandOrdinal(
+      String tenantId, Long workItemId, int commandOrdinal) {
+    if (tenantId == null || tenantId.isBlank() || workItemId == null) {
+      return Optional.empty();
+    }
+    return dsl.selectFrom(SCRIPT_HANDOFF_EVENTS)
+        .where(
+            SCRIPT_HANDOFF_EVENTS
+                .TENANT_ID
+                .eq(tenantId)
+                .and(SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID.eq(workItemId))
+                .and(SCRIPT_HANDOFF_EVENTS.COMMAND_ORDINAL.eq(commandOrdinal)))
+        .fetchOptional(this::toEntity);
   }
 
   public ScriptHandoffEvent save(ScriptHandoffEvent entity) {
@@ -254,6 +340,8 @@ public class ScriptHandoffEventRepository {
         && Objects.equals(
             blankToEmpty(existing.getPluginVersionId()),
             blankToEmpty(incoming.getPluginVersionId()))
+        && existing.getPluginActivationEpoch() == incoming.getPluginActivationEpoch()
+        && existing.getLifecycleRevision() == incoming.getLifecycleRevision()
         && Objects.equals(existing.getWorkItemId(), incoming.getWorkItemId())
         && existing.getCommandOrdinal() == incoming.getCommandOrdinal()
         && Objects.equals(existing.getAutomationDispatchId(), incoming.getAutomationDispatchId())
@@ -293,6 +381,8 @@ public class ScriptHandoffEventRepository {
         .and(
             SCRIPT_HANDOFF_EVENTS.PLUGIN_VERSION_ID.isNotDistinctFrom(
                 blankToEmpty(entity.getPluginVersionId())))
+        .and(SCRIPT_HANDOFF_EVENTS.PLUGIN_ACTIVATION_EPOCH.eq(entity.getPluginActivationEpoch()))
+        .and(SCRIPT_HANDOFF_EVENTS.LIFECYCLE_REVISION.eq(entity.getLifecycleRevision()))
         .and(SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID.eq(entity.getWorkItemId()))
         .and(SCRIPT_HANDOFF_EVENTS.COMMAND_ORDINAL.eq(entity.getCommandOrdinal()))
         .and(
@@ -334,6 +424,9 @@ public class ScriptHandoffEventRepository {
     record.setBindingId(entity.getBindingId());
     record.setPluginId(blankToEmpty(entity.getPluginId()));
     record.setPluginVersionId(blankToEmpty(entity.getPluginVersionId()));
+    record.setScriptPinEpoch(entity.getScriptPinEpoch());
+    record.setPluginActivationEpoch(entity.getPluginActivationEpoch());
+    record.setLifecycleRevision(entity.getLifecycleRevision());
     record.setWorkItemId(entity.getWorkItemId());
     record.setCommandOrdinal(entity.getCommandOrdinal());
     record.setAutomationDispatchId(entity.getAutomationDispatchId());
@@ -386,6 +479,10 @@ public class ScriptHandoffEventRepository {
     entity.setBindingId(record.get(SCRIPT_HANDOFF_EVENTS.BINDING_ID));
     entity.setPluginId(blankToEmpty(record.get(SCRIPT_HANDOFF_EVENTS.PLUGIN_ID)));
     entity.setPluginVersionId(blankToEmpty(record.get(SCRIPT_HANDOFF_EVENTS.PLUGIN_VERSION_ID)));
+    Long pluginActivationEpoch = record.get(SCRIPT_HANDOFF_EVENTS.PLUGIN_ACTIVATION_EPOCH);
+    entity.setPluginActivationEpoch(pluginActivationEpoch == null ? 0L : pluginActivationEpoch);
+    Long lifecycleRevision = record.get(SCRIPT_HANDOFF_EVENTS.LIFECYCLE_REVISION);
+    entity.setLifecycleRevision(lifecycleRevision == null ? 0L : lifecycleRevision);
     entity.setWorkItemId(record.get(SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID));
     Integer commandOrdinal = record.get(SCRIPT_HANDOFF_EVENTS.COMMAND_ORDINAL);
     entity.setCommandOrdinal(commandOrdinal == null ? 0 : commandOrdinal);

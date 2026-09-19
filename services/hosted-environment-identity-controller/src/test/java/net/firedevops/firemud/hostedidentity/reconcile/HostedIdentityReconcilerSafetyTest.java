@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
@@ -53,6 +54,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.hostedidentity.admission.AdmissionValidator;
@@ -157,6 +159,37 @@ class HostedIdentityReconcilerSafetyTest {
 
     assertReadinessStatus(
         status,
+        HostedEnvironmentIdentityStatus.Phase.Syncing,
+        "AwaitingAcceptance",
+        "predecessor-not-accepted",
+        false);
+  }
+
+  @Test
+  void protectedPublicationProjectionMustBeAcceptedBeforeReadiness() {
+    List<SecretProjectionService.ProjectionResult> projections =
+        new java.util.ArrayList<>(
+            java.util.stream.Stream.concat(
+                    java.util.stream.Stream.of(
+                        SecretProjectionService.ProjectionResult.synced("ingress"),
+                        SecretProjectionService.ProjectionResult.synced("telnet"),
+                        SecretProjectionService.ProjectionResult.synced("gateway"),
+                        SecretProjectionService.ProjectionResult.synced("bridge"),
+                        SecretProjectionService.ProjectionResult.synced("grpc")),
+                    HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
+                        .map(
+                            workload ->
+                                "game-logic-service".equals(workload)
+                                    ? SecretProjectionService.ProjectionResult.awaiting(
+                                        "predecessor-not-accepted", workload)
+                                    : SecretProjectionService.ProjectionResult.synced(workload)))
+                .toList());
+
+    assertReadinessStatus(
+        HostedIdentityReconciler.readinessStatus(
+            projections,
+            new DeploymentRolloutService.RolloutResult(true, true, true),
+            new ServedEnvironmentProbe.ProbeResult(true, "served")),
         HostedEnvironmentIdentityStatus.Phase.Syncing,
         "AwaitingAcceptance",
         "predecessor-not-accepted",
@@ -281,6 +314,7 @@ class HostedIdentityReconcilerSafetyTest {
             anyString(),
             anyString(),
             anyString(),
+            anyMap(),
             any()))
         .thenThrow(new IllegalStateException("downstream-rollout-boundary"));
 
@@ -299,6 +333,7 @@ class HostedIdentityReconcilerSafetyTest {
             anyString(),
             anyString(),
             anyString(),
+            anyMap(),
             any());
     verifyNoInteractions(aligned.probes);
   }
@@ -346,6 +381,7 @@ class HostedIdentityReconcilerSafetyTest {
             anyString(),
             anyString(),
             anyString(),
+            anyMap(),
             any()))
         .thenReturn(new DeploymentRolloutService.RolloutResult(true, true, true));
     when(fixture.probes.probe(
@@ -396,6 +432,7 @@ class HostedIdentityReconcilerSafetyTest {
             anyString(),
             anyString(),
             anyString(),
+            anyMap(),
             any()))
         .thenReturn(new DeploymentRolloutService.RolloutResult(true, true, true));
     when(fixture.probes.probe(
@@ -565,7 +602,7 @@ class HostedIdentityReconcilerSafetyTest {
     when(fixture.runtime.read(fixture.client, fixture.plan))
         .thenReturn(expected, expected, expected)
         .thenThrow(new IllegalStateException("invalid runtime profile"));
-    when(fixture.rollout.sync(any(), any(), anyString(), anyString(), anyString(), any()))
+    when(fixture.rollout.sync(any(), any(), anyString(), anyString(), anyString(), anyMap(), any()))
         .thenReturn(new DeploymentRolloutService.RolloutResult(true, true, true));
     when(fixture.probes.probe(
             any(),
@@ -1353,7 +1390,7 @@ class HostedIdentityReconcilerSafetyTest {
         .thenReturn(
             DeploymentHeadGateFixture.material(
                 fixture.plan, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE, "4"));
-    when(fixture.rollout.sync(any(), any(), anyString(), anyString(), anyString(), any()))
+    when(fixture.rollout.sync(any(), any(), anyString(), anyString(), anyString(), anyMap(), any()))
         .thenReturn(new DeploymentRolloutService.RolloutResult(true, true, true));
     MixedOperation<Secret, SecretList, Resource<Secret>> secrets = mock(MixedOperation.class);
     NonNamespaceOperation<Secret, SecretList, Resource<Secret>> runtimeSecrets =
@@ -1392,7 +1429,7 @@ class HostedIdentityReconcilerSafetyTest {
         new RuntimeProfileService.RuntimeProfile(
             "uid", "a".repeat(40), "a".repeat(40), 32016, true);
     DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(expected);
-    when(fixture.rollout.sync(any(), any(), anyString(), anyString(), anyString(), any()))
+    when(fixture.rollout.sync(any(), any(), anyString(), anyString(), anyString(), anyMap(), any()))
         .thenReturn(new DeploymentRolloutService.RolloutResult(false, false, false));
 
     HostedEnvironmentIdentityStatus status =
@@ -1405,7 +1442,7 @@ class HostedIdentityReconcilerSafetyTest {
     assertEquals("5".repeat(64), status.getGrpc().getSpkiSha256());
     ArgumentCaptor<String> gatewayRevision = ArgumentCaptor.forClass(String.class);
     verify(fixture.rollout)
-        .sync(any(), any(), anyString(), gatewayRevision.capture(), anyString(), any());
+        .sync(any(), any(), anyString(), gatewayRevision.capture(), anyString(), anyMap(), any());
     assertEquals(
         "revision-" + HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE, gatewayRevision.getValue());
   }
@@ -1538,6 +1575,22 @@ class HostedIdentityReconcilerSafetyTest {
                   "4",
                   SERIALIZED_DEFERRED_DRIFT));
       when(batch.grpc(any())).thenReturn(material(plan, HostedIdentityContract.GRPC_ROLE, "5"));
+      when(batch.grpcPublication(anyString()))
+          .thenAnswer(
+              invocation -> {
+                String workload = invocation.getArgument(0, String.class);
+                String fingerprintDigit =
+                    switch (workload) {
+                      case "game-design-service" -> "6";
+                      case "world-management-service" -> "7";
+                      case "entity-management-service" -> "8";
+                      case "game-logic-service" -> "9";
+                      case "automation-scripting-service" -> "a";
+                      default -> throw new IllegalArgumentException(workload);
+                    };
+                return material(
+                    plan, HostedIdentityContract.grpcPublicationRole(workload), fingerprintDigit);
+              });
       when(projections.project(
               org.mockito.ArgumentMatchers.eq(client),
               org.mockito.ArgumentMatchers.eq(plan),

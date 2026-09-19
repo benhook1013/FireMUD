@@ -23,7 +23,7 @@ These scripts are shared because they manage infrastructure or validation behavi
   - creates or updates the shared GHCR image-pull secret in the target namespace
 
 - `ensure-grpc-tls-secret.sh`
-  - creates or updates the hosted environment's gRPC TLS secret from the local development cert helper
+  - preserves the shared bundle for non-publication workloads and, in standalone mode, creates or reuses stable `<runtime>-grpc-<workload>` source leaves projected to the five `firemud-grpc-<workload>` publication Secrets
 
 - `wait-for-runtime-images.sh`
   - waits for the `runtime-images.yml` workflow to validate the requested image tag
