@@ -1,6 +1,6 @@
 # Velero Backups
 
-These manifests are canonical pre-release backup assets. FireMUD has no player-facing production deployment yet, so changing them does not claim that a production cluster was updated. If these assets are later applied to a live production environment, the production overlay and its promotion evidence remain the deployment authority.
+These manifests are canonical pre-release backup assets. FireMUD has no player-facing production deployment yet, so changing them does not claim that a production cluster was updated and does not require production attestation today. Their checked-in production consumer is `k8s/terraform-production/main.tf`, through `kubernetes_manifest.velero_schedule` and `kubernetes_manifest.velero_verify`; no live player-facing production apply is proven. If that Terraform production stack is later applied live, the exact applied stack plan and its promotion evidence govern the deployment. The production Kustomize overlay and its attestation remain the authority for actual overlay resources.
 
 This directory contains Kubernetes manifests for installing Velero and scheduling namespace backups for the FireMUD cluster. Velero now backs up **only Kubernetes manifests** (Deployments, Services, StatefulSets, Secrets, etc.). PostgreSQL data is backed up separately using a `pg_dump` CronJob.
 

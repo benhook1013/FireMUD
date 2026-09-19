@@ -10,7 +10,7 @@ command -v python3 >/dev/null 2>&1 || {
   exit 1
 }
 
-version_json="$(kubectl version --output=json)"
+version_json="$(kubectl version --output=json --request-timeout=30s)"
 read -r client_major client_minor server_major server_minor client_version server_version < <(
   python3 -c '
 import json

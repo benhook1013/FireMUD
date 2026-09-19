@@ -8,13 +8,29 @@ mkdir -p "$tmp/bin"
 cat > "$tmp/bin/kubectl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "${1:-}" != version || "${2:-}" != --output=json ]]; then
+if [[ "$#" -ne 3 || "${1:-}" != version || "${2:-}" != --output=json || "${3:-}" != --request-timeout=30s ]]; then
   echo "unexpected kubectl invocation" >&2
   exit 1
 fi
 printf '%s\n' "${KUBECTL_VERSION_JSON:?}"
 EOF
 chmod 0755 "$tmp/bin/kubectl"
+
+expect_rejected_kubectl_invocation() {
+  local name="$1"
+  shift
+  local output
+  if output="$(PATH="$tmp/bin:$PATH" KUBECTL_VERSION_JSON='{"clientVersion":{"gitVersion":"v1.34.5"},"serverVersion":{"gitVersion":"v1.34.5"}}' kubectl version --output=json "$@" 2>&1)"; then
+    echo "$name unexpectedly passed: $output" >&2
+    exit 1
+  elif [[ "$output" != *"unexpected kubectl invocation"* ]]; then
+    echo "$name returned the wrong diagnostic: $output" >&2
+    exit 1
+  fi
+}
+
+expect_rejected_kubectl_invocation omitted-timeout
+expect_rejected_kubectl_invocation wrong-timeout --request-timeout=60s
 
 run_case() {
   local name="$1"

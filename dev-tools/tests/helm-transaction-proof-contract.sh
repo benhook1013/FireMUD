@@ -150,6 +150,83 @@ else:
     raise SystemExit(
         "Helm transaction proof accepted a mutable executable k3s tag with the digest only in a comment"
     )
+
+
+canonical_proof_step_name = "Run Helm lifecycle proof"
+canonical_proof_command = "bash ./dev-tools/validation/helm-transaction-proof.sh"
+
+
+def require_canonical_proof_step(job_definition):
+    proof_steps = [
+        step
+        for step in job_definition.get("steps", [])
+        if isinstance(step, dict) and step.get("name") == canonical_proof_step_name
+    ]
+    if len(proof_steps) != 1:
+        raise SystemExit(
+            "Helm transaction proof must define exactly one named canonical proof step"
+        )
+    proof_step = proof_steps[0]
+    if "continue-on-error" in proof_step:
+        raise SystemExit("Helm transaction proof step must not define continue-on-error")
+    if "if" in proof_step:
+        raise SystemExit("Helm transaction proof step must not define a step-level condition")
+    run = proof_step.get("run")
+    if not isinstance(run, str):
+        raise SystemExit("Helm transaction proof step must define an executable run")
+    executable_lines = [
+        line.strip()
+        for line in run.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    if executable_lines != [canonical_proof_command]:
+        raise SystemExit(
+            "Helm transaction proof step must execute the canonical proof command directly"
+        )
+
+
+require_canonical_proof_step(job)
+for fixture_name, fixture_run in (
+    ("commented-only", f"# {canonical_proof_command}"),
+    ("echo-only", f'echo "{canonical_proof_command}"'),
+):
+    mutated_job = copy.deepcopy(job)
+    for step in mutated_job["steps"]:
+        if isinstance(step, dict) and step.get("name") == canonical_proof_step_name:
+            step["run"] = fixture_run
+            break
+    else:
+        raise SystemExit(f"Helm transaction proof {fixture_name} fixture could not find the proof step")
+    try:
+        require_canonical_proof_step(mutated_job)
+    except SystemExit:
+        pass
+    else:
+        raise SystemExit(
+            f"Helm transaction proof accepted a {fixture_name} proof command fixture"
+        )
+
+for fixture_name, step_update in (
+    ("continue-on-error", {"continue-on-error": True}),
+    ("expression continue-on-error", {"continue-on-error": "${{ github.event_name == 'push' }}"}),
+    ("skip condition", {"if": "false"}),
+):
+    mutated_job = copy.deepcopy(job)
+    for step in mutated_job["steps"]:
+        if isinstance(step, dict) and step.get("name") == canonical_proof_step_name:
+            step.update(step_update)
+            break
+    else:
+        raise SystemExit(f"Helm transaction proof {fixture_name} fixture could not find the proof step")
+    try:
+        require_canonical_proof_step(mutated_job)
+    except SystemExit:
+        pass
+    else:
+        raise SystemExit(
+            f"Helm transaction proof accepted a {fixture_name} proof step fixture"
+        )
+
 step_uses = {
     step.get("uses")
     for step in job.get("steps", [])
@@ -159,8 +236,6 @@ if "./.github/actions/setup-kubectl" not in step_uses:
     raise SystemExit("Helm transaction proof must use canonical kubectl setup")
 if "./.github/actions/setup-helm" not in step_uses:
     raise SystemExit("Helm transaction proof must use canonical Helm setup")
-if "helm-transaction-proof.sh" not in job_text:
-    raise SystemExit("Helm transaction proof job must invoke the canonical proof script")
 if "docker logs firemud-helm-proof 2>&1 | grep -F 'k3s is up and running' >/dev/null" not in job_text:
     raise SystemExit("Helm transaction proof must wait on the pinned k3s startup marker before API operations")
 if "--disable=metrics-server" not in job_text:
