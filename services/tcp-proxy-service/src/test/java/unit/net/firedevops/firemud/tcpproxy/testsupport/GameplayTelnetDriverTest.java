@@ -42,6 +42,73 @@ class GameplayTelnetDriverTest {
     }
   }
 
+  @Test
+  void readBlockContainingFailsWhenStreamClosesAfterMatch() throws Exception {
+    try (ServerSocket server = new ServerSocket(0)) {
+      Thread serverThread =
+          new Thread(
+              () -> {
+                try (Socket socket = server.accept();
+                    PrintWriter writer =
+                        new PrintWriter(
+                            new OutputStreamWriter(
+                                socket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                            true)) {
+                  writer.println("LOOK READY");
+                } catch (IOException ignored) {
+                  // The client may close the socket while the test is cleaning up.
+                }
+              });
+      serverThread.start();
+
+      try (GameplayTelnetDriver driver =
+          GameplayTelnetDriver.connect("localhost", server.getLocalPort(), Duration.ofSeconds(1))) {
+        AssertionError failure =
+            assertThrows(AssertionError.class, () -> driver.readBlockContaining("LOOK READY"));
+
+        assertEquals(
+            "Expected block containing 'LOOK READY', got:\nLOOK READY\n", failure.getMessage());
+      } finally {
+        server.close();
+        serverThread.join(5_000);
+      }
+    }
+  }
+
+  @Test
+  void readBlockContainingFailsWhenTimeoutOccursAfterMatch() throws Exception {
+    try (ServerSocket server = new ServerSocket(0)) {
+      Thread serverThread =
+          new Thread(
+              () -> {
+                try (Socket socket = server.accept();
+                    PrintWriter writer =
+                        new PrintWriter(
+                            new OutputStreamWriter(
+                                socket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                            true)) {
+                  writer.println("LOOK READY");
+                  Thread.sleep(2_000);
+                } catch (IOException | InterruptedException ignored) {
+                  // The client may close the socket while the test is cleaning up.
+                }
+              });
+      serverThread.start();
+
+      try (GameplayTelnetDriver driver =
+          GameplayTelnetDriver.connect("localhost", server.getLocalPort(), Duration.ofMillis(250))) {
+        AssertionError failure =
+            assertThrows(AssertionError.class, () -> driver.readBlockContaining("LOOK READY"));
+
+        assertEquals(
+            "Expected block containing 'LOOK READY', got:\nLOOK READY\n", failure.getMessage());
+      } finally {
+        server.close();
+        serverThread.join(5_000);
+      }
+    }
+  }
+
   private static void serveLoginAndPlayOnly(ServerSocket server) {
     try (Socket socket = server.accept();
         BufferedReader reader =

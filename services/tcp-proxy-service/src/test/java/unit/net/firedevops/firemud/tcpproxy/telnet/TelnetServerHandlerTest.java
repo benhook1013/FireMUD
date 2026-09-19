@@ -95,6 +95,32 @@ class TelnetServerHandlerTest {
       java.util.function.BooleanSupplier gameplayTrafficReady,
       TelnetServerHandler.WebSocketConnector connector,
       int maxBufferedLines) {
+    return newHandler(
+        registry,
+        advertiseMcp,
+        gameplayTrafficReady,
+        connector,
+        Mockito.mock(TcpProxyEventService.class),
+        "1",
+        "1",
+        "demo",
+        "production",
+        "1",
+        maxBufferedLines);
+  }
+
+  private TelnetServerHandler newHandler(
+      SimpleMeterRegistry registry,
+      boolean advertiseMcp,
+      java.util.function.BooleanSupplier gameplayTrafficReady,
+      TelnetServerHandler.WebSocketConnector connector,
+      TcpProxyEventService eventService,
+      String sessionId,
+      String tenantId,
+      String worldSlug,
+      String realmSlug,
+      String pointerVersion,
+      int maxBufferedLines) {
     return new TelnetServerHandler(
         "ws://localhost/ws",
         () -> {},
@@ -105,14 +131,37 @@ class TelnetServerHandlerTest {
         registry,
         gameplayTrafficReady,
         connector,
-        Mockito.mock(TcpProxyEventService.class),
+        eventService,
         new AtomicInteger(),
-        "1",
-        "1",
-        "demo",
-        "production",
-        "1",
+        sessionId,
+        tenantId,
+        worldSlug,
+        realmSlug,
+        pointerVersion,
         maxBufferedLines);
+  }
+
+  private TelnetServerHandler newMetadataHandler(
+      SimpleMeterRegistry registry,
+      TelnetServerHandler.WebSocketConnector connector,
+      TcpProxyEventService eventService,
+      String sessionId,
+      String tenantId,
+      String worldSlug,
+      String realmSlug,
+      String pointerVersion) {
+    return newHandler(
+        registry,
+        false,
+        () -> true,
+        connector,
+        eventService,
+        sessionId,
+        tenantId,
+        worldSlug,
+        realmSlug,
+        pointerVersion,
+        TelnetServerHandler.DEFAULT_MAX_BUFFERED_LINES);
   }
 
   private WebSocket stubWebSocket() {
@@ -1424,23 +1473,8 @@ class TelnetServerHandlerTest {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     RecordingConnector connector = new RecordingConnector();
     TelnetServerHandler handler =
-        new TelnetServerHandler(
-            "ws://localhost/ws",
-            () -> {},
-            () -> {},
-            registry.counter("test"),
-            registry.counter("discarded"),
-            false,
-            registry,
-            () -> true,
-            connector,
-            Mockito.mock(TcpProxyEventService.class),
-            new AtomicInteger(),
-            "1",
-            "1",
-            "demo",
-            "production",
-            "1");
+        newMetadataHandler(
+            registry, connector, Mockito.mock(TcpProxyEventService.class), "1", "1", "demo", "production", "1");
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -1466,23 +1500,8 @@ class TelnetServerHandlerTest {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     RecordingConnector connector = new RecordingConnector();
     TelnetServerHandler handler =
-        new TelnetServerHandler(
-            "ws://localhost/ws",
-            () -> {},
-            () -> {},
-            registry.counter("test"),
-            registry.counter("discarded"),
-            false,
-            registry,
-            () -> true,
-            connector,
-            Mockito.mock(TcpProxyEventService.class),
-            new AtomicInteger(),
-            null,
-            null,
-            null,
-            null,
-            null);
+        newMetadataHandler(
+            registry, connector, Mockito.mock(TcpProxyEventService.class), null, null, null, null, null);
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -1507,23 +1526,8 @@ class TelnetServerHandlerTest {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     RecordingConnector connector = new RecordingConnector();
     TelnetServerHandler handler =
-        new TelnetServerHandler(
-            "ws://localhost/ws",
-            () -> {},
-            () -> {},
-            registry.counter("test"),
-            registry.counter("discarded"),
-            false,
-            registry,
-            () -> true,
-            connector,
-            Mockito.mock(TcpProxyEventService.class),
-            new AtomicInteger(),
-            "1",
-            "1",
-            "demo",
-            "production",
-            "");
+        newMetadataHandler(
+            registry, connector, Mockito.mock(TcpProxyEventService.class), "1", "1", "demo", "production", "");
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -1549,23 +1553,8 @@ class TelnetServerHandlerTest {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     RecordingConnector connector = new RecordingConnector();
     TelnetServerHandler handler =
-        new TelnetServerHandler(
-            "ws://localhost/ws",
-            () -> {},
-            () -> {},
-            registry.counter("test"),
-            registry.counter("discarded"),
-            false,
-            registry,
-            () -> true,
-            connector,
-            Mockito.mock(TcpProxyEventService.class),
-            new AtomicInteger(),
-            "1",
-            "1",
-            "demo",
-            "production",
-            "0");
+        newMetadataHandler(
+            registry, connector, Mockito.mock(TcpProxyEventService.class), "1", "1", "demo", "production", "0");
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();

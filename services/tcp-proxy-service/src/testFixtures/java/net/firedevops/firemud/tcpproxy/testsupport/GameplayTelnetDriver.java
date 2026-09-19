@@ -229,7 +229,7 @@ public final class GameplayTelnetDriver implements AutoCloseable {
         return block.toString();
       }
     }
-    if (matched || returnOnTimeout) {
+    if (returnOnTimeout) {
       return block.toString();
     }
     throw new AssertionError(
