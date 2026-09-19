@@ -58,7 +58,8 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
   @Override
   public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
     String path = exchange.getRequest().getPath().pathWithinApplication().value();
-    boolean isSessionRoute = path.startsWith("/ws/game") || path.startsWith("/api/session/");
+    boolean isGameplayRoute = isGameplayRoute(path);
+    boolean isSessionRoute = isGameplayRoute || path.startsWith("/api/session/");
 
     InetAddress remoteAddress = remoteInetAddress(exchange);
     boolean trustedTcpProxy = tcpProxyTrustPolicy.isTrusted(exchange, remoteAddress);
@@ -127,7 +128,7 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
                 request ->
                     request.headers(
                         headers -> {
-                          stripGatewayOwnedHeaders(headers);
+                          stripGatewayOwnedHeaders(headers, isGameplayRoute);
 
                           if (canonicalClientIp != null) {
                             headers.set(HDR_CLIENT_IP, canonicalClientIp);
@@ -201,7 +202,8 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
         || headers.getFirst(HDR_PROXY_TENANT_ID) != null;
   }
 
-  private void stripGatewayOwnedHeaders(HttpHeaders headers) {
+  private void stripGatewayOwnedHeaders(
+      HttpHeaders headers, boolean preserveGameplayConnectTokenCarrier) {
     headers.remove(HDR_CLIENT_IP);
     headers.remove(HDR_GAME_INSTANCE_ID);
     headers.remove(HDR_TENANT_ID);
@@ -214,16 +216,21 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
     headers.remove(HDR_PROXY_GAME_INSTANCE_ID);
     headers.remove(HDR_PROXY_TENANT_ID);
 
-    // Gateway-owned admission context is reconstructed by the gameplay handshake filter. Keep
-    // the migration-only connect-token carrier and presentation locale; every other Firemud
-    // context/mode value is never trusted from a caller.
+    // Gateway-owned admission context is reconstructed by the gameplay handshake filter. Keep the
+    // migration-only connect-token carrier only long enough for that filter to reject it on the
+    // gameplay route; it must never reach another route. The presentation locale is preserved.
     for (String headerName : List.copyOf(headers.headerNames())) {
       if (headerName.regionMatches(true, 0, "X-Firemud-", 0, "X-Firemud-".length())
-          && !headerName.equalsIgnoreCase(HDR_FIREMUD_CONNECT_TOKEN)
+          && (!preserveGameplayConnectTokenCarrier
+              || !headerName.equalsIgnoreCase(HDR_FIREMUD_CONNECT_TOKEN))
           && !headerName.equalsIgnoreCase(HDR_FIREMUD_LOCALE)) {
         headers.remove(headerName);
       }
     }
+  }
+
+  private static boolean isGameplayRoute(String path) {
+    return path.equals("/ws/game") || path.startsWith("/ws/game/");
   }
 
   private String deriveClientIpFromForwardedHeaders(

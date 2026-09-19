@@ -6,6 +6,7 @@ import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.time.Duration;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.health.DependencyReadinessSupport;
@@ -22,7 +23,8 @@ public class GameplayRouteReadinessHealthIndicator implements HealthIndicator {
   private static final String COMPONENT = "spring-cloud-gateway";
   private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(1);
   private static final String CONTRACT = "Gateway /ws/game upgrade";
-  private static final String CONNECT_TOKEN_HEADER = "X-Firemud-Connect-Token";
+  private static final String COOKIE_HEADER = "Cookie";
+  private static final String CONNECT_TOKEN_COOKIE = "Firemud-Connect-Token";
   private static final String PROXY_CONNECTION_ID_HEADER = "X-Proxy-Connection-Id";
   private static final String GAME_INSTANCE_ID_HEADER = "X-Game-Instance-Id";
   private static final String TENANT_ID_HEADER = "X-Tenant-Id";
@@ -35,7 +37,7 @@ public class GameplayRouteReadinessHealthIndicator implements HealthIndicator {
   private final int serverPort;
   private final ReadinessTransitionTracker readinessTransitionTracker;
   private final JwtUtil jwtUtil;
-  private final HttpClient client = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
+  private final HttpClient client;
 
   @SuppressFBWarnings(
       value = "CT_CONSTRUCTOR_THROW",
@@ -45,9 +47,22 @@ public class GameplayRouteReadinessHealthIndicator implements HealthIndicator {
       @Value("${local.server.port:${server.port:8080}}") int serverPort,
       ReadinessTransitionTracker readinessTransitionTracker,
       ObjectProvider<JwtUtil> jwtUtilProvider) {
+    this(
+        serverPort,
+        readinessTransitionTracker,
+        jwtUtilProvider,
+        HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build());
+  }
+
+  GameplayRouteReadinessHealthIndicator(
+      int serverPort,
+      ReadinessTransitionTracker readinessTransitionTracker,
+      ObjectProvider<JwtUtil> jwtUtilProvider,
+      HttpClient client) {
     this.serverPort = serverPort;
     this.readinessTransitionTracker = readinessTransitionTracker;
     this.jwtUtil = jwtUtilProvider.getIfAvailable();
+    this.client = Objects.requireNonNull(client, "client must not be null");
   }
 
   @Override
@@ -80,8 +95,7 @@ public class GameplayRouteReadinessHealthIndicator implements HealthIndicator {
   private WebSocket.Builder buildClient() {
     WebSocket.Builder builder = client.newWebSocketBuilder();
     if (jwtUtil != null) {
-      return builder.header(
-          CONNECT_TOKEN_HEADER,
+      String connectToken =
           jwtUtil.generateToken(
               PROBE_ACCOUNT_ID,
               Map.of(
@@ -104,7 +118,8 @@ public class GameplayRouteReadinessHealthIndicator implements HealthIndicator {
                   "requestId",
                   "readiness-request",
                   "jti",
-                  "gateway-readiness-" + UUID.randomUUID())));
+                  "gateway-readiness-" + UUID.randomUUID()));
+      return builder.header(COOKIE_HEADER, CONNECT_TOKEN_COOKIE + "=" + connectToken);
     }
     return builder
         .header(GAME_INSTANCE_ID_HEADER, "1")
