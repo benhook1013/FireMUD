@@ -59,6 +59,13 @@ SERVICE_IMAGES = {
     "tcp-proxy-service",
     "world-management-service",
 }
+PUBLICATION_GRPC_WORKLOADS = {
+    "game-design-service",
+    "world-management-service",
+    "entity-management-service",
+    "game-logic-service",
+    "automation-scripting-service",
+}
 EXPECTED_NAMES = {
     "Deployment": SERVICE_IMAGES | {"postgres", "redis-coord", "redis-cache", "minio"},
     "Service": SERVICE_IMAGES
@@ -124,7 +131,7 @@ EXPECTED_SECRET_REFS = {
     "jwt-signing-keys",
     "minio-credentials",
     "firemud-grpc-tls",
-}
+} | {f"firemud-grpc-{service}" for service in PUBLICATION_GRPC_WORKLOADS}
 EXPECTED_TOP_LEVEL_LABELS = {
     "app.kubernetes.io/name": "firemud",
     "app.kubernetes.io/managed-by": "Helm",
@@ -1021,8 +1028,13 @@ def validate_service_consumers(documents: list[dict], expected_namespace: str) -
         if len(containers) != 1 or containers[0].get("name") != service:
             fail(f"Deployment/{service} has an unexpected container layout")
 
+        grpc_secret_name = (
+            f"firemud-grpc-{service}"
+            if service in PUBLICATION_GRPC_WORKLOADS
+            else "firemud-grpc-tls"
+        )
         expected_mounts = {
-            "grpc-tls": ("/tls", "firemud-grpc-tls"),
+            "grpc-tls": ("/tls", grpc_secret_name),
             "jwt-signing-keys": ("/var/run/secrets/firemud/jwt", "jwt-signing-keys"),
         }
         if service == "account-service":

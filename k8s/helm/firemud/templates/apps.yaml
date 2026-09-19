@@ -37,6 +37,12 @@ spec:
           env:
             - name: SPRING_PROFILES_ACTIVE
               value: "prod"
+            {{- if has $service.name (list "game-design-service" "world-management-service" "entity-management-service" "game-logic-service" "automation-scripting-service") }}
+            - name: FIREMUD_GRPC_WORKLOAD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- end }}
             - name: SPRING_FLYWAY_TABLE
               value: {{ printf "flyway_schema_history_%s" (default (replace "-" "_" $service.name) $service.schema) | quote }}
             - name: SERVICE_SCHEMA
@@ -131,7 +137,7 @@ spec:
         {{- if $service.mountGrpcTls }}
         - name: grpc-tls
           secret:
-            secretName: {{ include "firemud.grpcSecretName" $ }}
+            secretName: {{ include "firemud.grpcSecretNameForService" (dict "root" $ "serviceName" $service.name) }}
         {{- end }}
         {{- if and $previewJwt.enabled $service.envFromShared }}
         - name: jwt-signing-keys
