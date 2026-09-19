@@ -18,7 +18,6 @@ Example `values.yaml` snippet when using AWS S3:
 
 ```yaml
 configuration:
-  provider: aws
   defaultVolumesToFsBackup: false
   backupStorageLocation:
     - name: default
@@ -27,7 +26,7 @@ configuration:
       prefix: postgres
 ```
 
-For Google Cloud Storage set `provider: gcp` and adjust the bucket name accordingly.
+For Google Cloud Storage set the `backupStorageLocation` provider to `gcp` and adjust the bucket name accordingly.
 
 The repository includes a `verify-backups-cronjob.yaml` pre-release manifest that runs the independently promoted, CI-built, digest-pinned `ghcr.io/benhook1013/backup-verifier` image daily. The image carries `verify-backups.sh`, the pinned Velero CLI, and AWS CLI, runs as a non-root UID, and uses a `firemud` ServiceAccount with only `get`/`list` access to Velero `backups` in the `velero` namespace. The checked-in production Terraform stack declares and manages these CronJob resources through `kubernetes_manifest.velero_verify`; that repository wiring does not prove a live production apply. Applying this manifest does not claim live deployment or restore readiness. You can apply it manually in other environments:
 
@@ -70,7 +69,6 @@ Example `values-minio.yaml` config:
 
 ```yaml
 configuration:
-  provider: aws
   defaultVolumesToFsBackup: false
   backupStorageLocation:
     - name: local

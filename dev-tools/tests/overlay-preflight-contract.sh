@@ -231,14 +231,18 @@ for changed_file in \
   assert_production_change_requires_attestation "$changed_file"
 done
 
-(
+if ! (
   # shellcheck disable=SC1091
   source "$REPO_ROOT/dev-tools/deploy/validate-kustomize-overlays.sh"
   changed_files_between_base_and_head() {
     printf '%s\n' 'k8s/velero/verify-backups-cronjob.yaml'
   }
   GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop run_preflight_policy_checks
-) >"$OUTPUT_FILE" 2>&1
+) >"$OUTPUT_FILE" 2>&1; then
+  echo "Standalone Velero preflight validation failed; captured output follows:" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
+fi
 
 grep -q "Skipping static preflight policy enforcement" "$OUTPUT_FILE" || {
   echo "Standalone Velero pre-release assets incorrectly required production attestation" >&2

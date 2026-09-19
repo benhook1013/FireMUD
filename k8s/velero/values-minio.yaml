@@ -1,5 +1,4 @@
 configuration:
-  provider: aws
   defaultVolumesToFsBackup: false
   backupStorageLocation:
     - name: local

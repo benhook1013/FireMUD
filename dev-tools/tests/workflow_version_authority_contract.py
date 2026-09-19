@@ -1219,6 +1219,16 @@ def main() -> int:
                     return text[match.start() : index + 1]
         return None
 
+    def has_hcl_set_value(block, name, value):
+        """Match one exact Helm set block, keeping its name/value association."""
+        pattern = (
+            rf'(?ms)^[ \t]*set[ \t]*\{{\s*'
+            rf'name[ \t]*=[ \t]*"{re.escape(name)}"\s*'
+            rf'value[ \t]*=[ \t]*"{re.escape(value)}"\s*'
+            rf'\}}[ \t]*$'
+        )
+        return re.search(pattern, block) is not None
+
     fixture = (
         'resource "helm_release" "velero" {\n'
         '  version = "canonical"\n'
@@ -1237,12 +1247,38 @@ def main() -> int:
     velero_release = extract_hcl_block(velero_terraform, 'resource "helm_release" "velero"')
     if velero_release is None:
         fail("Terraform Velero Helm release block is unterminated")
-    if f'version    = "{a["VELERO_CHART_VERSION"]}"' not in velero_release:
+    chart_pattern = rf'(?m)^[ \t]*version[ \t]*=[ \t]*"{re.escape(a["VELERO_CHART_VERSION"])}"[ \t]*$'
+    if re.search(chart_pattern, velero_release) is None:
         fail("Terraform Velero Helm release must pin the canonical chart version")
-    if f'value = "v{a["VELERO_VERSION"]}"' not in velero_release:
+    if not has_hcl_set_value(velero_release, "image.tag", f'v{a["VELERO_VERSION"]}'):
         fail("Terraform Velero Helm release must pin the canonical server image tag")
-    if f'value = "{a["VELERO_IMAGE_DIGEST"]}"' not in velero_release:
+    if not has_hcl_set_value(velero_release, "image.digest", a["VELERO_IMAGE_DIGEST"]):
         fail("Terraform Velero Helm release must pin the canonical server image digest")
+
+    negative_release = (
+        'resource "helm_release" "velero" {\n'
+        f'  # version = "{a["VELERO_CHART_VERSION"]}"\n'
+        '  version = "not-canonical"\n'
+        '  set {\n'
+        f'    name = "unrelated.tag"\n    value = "v{a["VELERO_VERSION"]}"\n'
+        '  }\n'
+        '  set {\n'
+        '    name = "image.tag"\n    value = "not-canonical"\n'
+        '  }\n'
+        '  set {\n'
+        f'    name = "unrelated.digest"\n    value = "{a["VELERO_IMAGE_DIGEST"]}"\n'
+        '  }\n'
+        '  set {\n'
+        '    name = "image.digest"\n    value = "sha256:not-canonical"\n'
+        '  }\n'
+        '}\n'
+    )
+    if re.search(chart_pattern, negative_release) is not None:
+        fail("Velero chart assertion accepted a commented assignment")
+    if has_hcl_set_value(negative_release, "image.tag", f'v{a["VELERO_VERSION"]}'):
+        fail("Velero image tag assertion accepted an unrelated Helm set")
+    if has_hcl_set_value(negative_release, "image.digest", a["VELERO_IMAGE_DIGEST"]):
+        fail("Velero image digest assertion accepted an unrelated Helm set")
 
     velero_cronjob_path = root / "k8s/velero/verify-backups-cronjob.yaml"
     if not velero_cronjob_path.is_file():

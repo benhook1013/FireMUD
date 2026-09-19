@@ -12,6 +12,31 @@ checksum=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 image_digest=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 printf 'version=9.8.7\n%s  velero-v9.8.7-linux-amd64.tar.gz\n' "$checksum" > "$tmp/checksums"
 echo "velero/velero:v9.8.7@$image_digest" > "$tmp/image-evidence"
+
+assert_velero_terraform_projection() {
+  local terraform_file="$1"
+  local chart_version="$2"
+  local velero_version="$3"
+  local digest="$4"
+  python3 - "$ROOT_DIR" "$terraform_file" "$chart_version" "$velero_version" "$digest" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+root, terraform, chart, version, digest = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("updater", Path(root) / "dev-tools/maintenance/update-workflow-tool.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+source = Path(terraform).read_text(encoding="utf-8")
+try:
+    projected = module.replace_velero_terraform_projection(source, chart, version, digest)
+except SystemExit as exc:
+    raise SystemExit(f"Velero Terraform output does not contain the expected anchored release projections: {exc}") from exc
+if projected != source:
+    raise SystemExit("Velero Terraform output projections are stale or not associated with their Helm set names")
+PY
+}
+
 python3 - "$ROOT_DIR" "$tmp/authority.env" "$tmp/checksums" "$tmp/image-evidence" "$tmp/velero.Dockerfile" "$tmp/terraform.tf" "$image_digest" <<'PY'
 import importlib.util
 import sys
@@ -54,9 +79,7 @@ grep -Fx "VELERO_LINUX_AMD64_SHA256=$checksum" "$tmp/authority.env" >/dev/null
 grep -Fx "VELERO_IMAGE_DIGEST=$image_digest" "$tmp/authority.env" >/dev/null
 grep -Fx 'VELERO_CHART_VERSION=12.2.0' "$tmp/authority.env" >/dev/null
 grep -F "FROM velero/velero:v9.8.7@$image_digest AS velero-cli" "$tmp/velero.Dockerfile" >/dev/null
-grep -F 'version    = "12.2.0"' "$tmp/terraform.tf" >/dev/null
-grep -F 'value = "v9.8.7"' "$tmp/terraform.tf" >/dev/null
-grep -F "value = \"$image_digest\"" "$tmp/terraform.tf" >/dev/null
+assert_velero_terraform_projection "$tmp/terraform.tf" 12.2.0 9.8.7 "$image_digest"
 test "$(stat -c '%a' "$tmp/authority.env")" = 640
 test "$(stat -c '%a' "$tmp/velero.Dockerfile")" = 600
 python3 - "$ROOT_DIR" <<'PY'
@@ -103,10 +126,8 @@ output "unrelated" {
 }
 '''
 updated = module.replace_velero_terraform_projection(source, "12.3.0", "1.19.0", "sha256:new")
-if 'version = "12.3.0"' not in updated or 'value = "v1.19.0"' not in updated:
+if module.replace_velero_terraform_projection(updated, "12.3.0", "1.19.0", "sha256:new") != updated:
     raise SystemExit("Velero Terraform resource was not updated")
-if 'value = "sha256:new"' not in updated:
-    raise SystemExit("Velero Terraform image digest was not updated")
 if 'module "unrelated"' not in updated or 'data "unrelated" "projection"' not in updated:
     raise SystemExit("unrelated Terraform blocks were lost")
 if updated.count('value = "v1.18.2"') != 1 or updated.count('value = "sha256:old"') != 2:
@@ -170,12 +191,9 @@ if "VELERO_VERSION=9.8.7" not in default_authority.read_text(encoding="utf-8"):
     raise SystemExit("default authority path was not updated")
 if f"FROM velero/velero:v9.8.7@{digest} AS velero-cli" not in default_dockerfile.read_text(encoding="utf-8"):
     raise SystemExit("default Velero Dockerfile path was not projected")
-if 'version    = "12.2.0"' not in default_terraform.read_text(encoding="utf-8"):
-    raise SystemExit("default Terraform chart path was not projected")
-if 'value = "v9.8.7"' not in default_terraform.read_text(encoding="utf-8"):
-    raise SystemExit("default Terraform image tag path was not projected")
-if f'value = "{digest}"' not in default_terraform.read_text(encoding="utf-8"):
-    raise SystemExit("default Terraform image digest path was not projected")
+default_terraform_text = default_terraform.read_text(encoding="utf-8")
+if module.replace_velero_terraform_projection(default_terraform_text, "12.2.0", "9.8.7", digest) != default_terraform_text:
+    raise SystemExit("default Terraform Velero release projections were not anchored or associated with their Helm set names")
 PY
 python3 - "$ROOT_DIR" <<'PY'
 import importlib.util
@@ -449,9 +467,7 @@ PY
 grep -Fx "VELERO_LINUX_AMD64_SHA256=$lock_checksum" "$tmp/lock-authority.env" >/dev/null
 grep -Fx "VELERO_IMAGE_DIGEST=$lock_image_digest" "$tmp/lock-authority.env" >/dev/null
 grep -F "FROM velero/velero:v9.8.7@$lock_image_digest AS velero-cli" "$tmp/lock-velero.Dockerfile" >/dev/null
-grep -F 'version    = "12.2.0"' "$tmp/lock-terraform.tf" >/dev/null
-grep -F 'value = "v9.8.7"' "$tmp/lock-terraform.tf" >/dev/null
-grep -F "value = \"$lock_image_digest\"" "$tmp/lock-terraform.tf" >/dev/null
+assert_velero_terraform_projection "$tmp/lock-terraform.tf" 12.2.0 9.8.7 "$lock_image_digest"
 
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/unchanged.env"
 cp "$tmp/unchanged.env" "$tmp/before.env"
