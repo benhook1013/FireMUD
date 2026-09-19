@@ -24,6 +24,13 @@ public class CommonGrpcServerConfiguration {
 
   @Bean
   @GlobalServerInterceptor
+  @ConditionalOnMissingBean(GrpcPeerIdentityInterceptor.class)
+  public GrpcPeerIdentityInterceptor grpcPeerIdentityInterceptor() {
+    return new GrpcPeerIdentityInterceptor();
+  }
+
+  @Bean
+  @GlobalServerInterceptor
   @ConditionalOnMissingBean(MetricsInterceptor.class)
   public MetricsInterceptor metricsInterceptor(MeterRegistry registry) {
     return new MetricsInterceptor(registry);
