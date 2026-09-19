@@ -10,18 +10,34 @@ preview_workflow="$ROOT_DIR/.github/workflows/preview.yml"
   exit 1
 }
 
-grep -Fq 'steps.effective-image-tag.outputs.image_tag != needs.preview-plan.outputs.base_sha' "$preview_workflow" || {
-  echo "preview must wait for a runtime-image workflow when it selects a PR image" >&2
+wait_step="$({
+  awk '
+    /^      - name: Wait for preview runtime images$/ { in_wait_step = 1 }
+    in_wait_step { print }
+    in_wait_step && /^      - name:/ && $0 !~ /Wait for preview runtime images$/ { exit }
+  ' "$preview_workflow"
+})"
+
+grep -Fq 'if: ${{ steps.preview-access.outputs.available == '\''true'\'' && steps.preview-capacity.outcome == '\''success'\'' }}' <<<"$wait_step" || {
+  echo "preview must wait for runtime images after access and capacity succeed" >&2
   exit 1
 }
-grep -Fq 'steps.effective-image-tag.outputs.image_tag == needs.preview-plan.outputs.base_sha' "$preview_workflow" || {
-  echo "preview must explicitly record immutable base-image reuse" >&2
+grep -Fq 'bash ./dev-tools/hosted/shared/wait-for-runtime-images.sh "${{ steps.effective-image-tag.outputs.image_tag }}"' <<<"$wait_step" || {
+  echo "preview must wait for the resolved base-SHA or PR image tag" >&2
   exit 1
 }
-grep -Fq 'Reuse immutable base runtime images' "$preview_workflow" || {
-  echo "preview must name the immutable base-image reuse step" >&2
+if grep -Fq 'Reuse immutable base runtime images' "$preview_workflow"; then
+  echo "preview must not skip the canonical runtime-image wait for base images" >&2
   exit 1
-}
+fi
+if grep -Fq 'steps.effective-image-tag.outputs.image_tag != needs.preview-plan.outputs.base_sha' "$preview_workflow"; then
+  echo "preview must not conditionally skip the base-image wait" >&2
+  exit 1
+fi
+if grep -Fq 'steps.effective-image-tag.outputs.image_tag == needs.preview-plan.outputs.base_sha' "$preview_workflow"; then
+  echo "preview must not retain a duplicate base-image reuse branch" >&2
+  exit 1
+fi
 
 fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$fixture_dir"' EXIT

@@ -977,16 +977,18 @@ PY
 
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/recovery-authority.env"
 cp "$ROOT_DIR/docker/backup-verifier.Dockerfile" "$tmp/recovery-velero.Dockerfile"
+cp "$ROOT_DIR/k8s/terraform-production/main.tf" "$tmp/recovery-terraform.tf"
 chmod 0640 "$tmp/recovery-authority.env"
 chmod 0600 "$tmp/recovery-velero.Dockerfile"
-python3 - "$ROOT_DIR" "$tmp/recovery-authority.env" "$tmp/recovery-velero.Dockerfile" <<'PY'
+chmod 0600 "$tmp/recovery-terraform.tf"
+python3 - "$ROOT_DIR" "$tmp/recovery-authority.env" "$tmp/recovery-velero.Dockerfile" "$tmp/recovery-terraform.tf" <<'PY'
 import importlib.util
 import json
 import stat
 import sys
 from pathlib import Path
 
-root, authority, dockerfile = map(Path, sys.argv[1:])
+root, authority, dockerfile, terraform = map(Path, sys.argv[1:])
 spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -994,8 +996,10 @@ real_replace = module.os.replace
 phase = "forward"
 dockerfile = dockerfile.resolve()
 authority = authority.resolve()
+terraform = terraform.resolve()
 authority_before = authority.read_text(encoding="utf-8")
 dockerfile_before = dockerfile.read_text(encoding="utf-8")
+terraform_before = terraform.read_text(encoding="utf-8")
 
 def fail_forward_and_rollback(source, destination):
     global phase
@@ -1009,7 +1013,13 @@ def fail_forward_and_rollback(source, destination):
 
 module.os.replace = fail_forward_and_rollback
 try:
-    module.transactional_write([(authority, "changed authority\n"), (dockerfile, "changed dockerfile\n")])
+    module.transactional_write(
+        [
+            (authority, "changed authority\n"),
+            (dockerfile, "changed dockerfile\n"),
+            (terraform, "changed terraform\n"),
+        ]
+    )
 except OSError:
     pass
 else:
@@ -1023,7 +1033,11 @@ if payload.get("schema") != module.RECOVERY_SCHEMA or payload.get("version") != 
     raise SystemExit("recovery state schema is not durable")
 if payload.get("state") != "prepared":
     raise SystemExit("failed rollback did not retain prepared recovery state")
-if {entry.get("path") for entry in payload.get("targets", [])} != {str(authority), str(dockerfile)}:
+if {entry.get("path") for entry in payload.get("targets", [])} != {
+    str(authority),
+    str(dockerfile),
+    str(terraform),
+}:
     raise SystemExit("recovery state target set is incomplete")
 if journal.stat().st_mode & 0o077:
     raise SystemExit("prepared recovery journal is accessible to group or world")
@@ -1046,6 +1060,8 @@ sys.argv = [
     str(authority),
     "--velero-dockerfile",
     str(dockerfile),
+    "--terraform-file",
+    str(terraform),
     "--velero-chart-version",
     "12.2.0",
 ]
@@ -1057,7 +1073,11 @@ except SystemExit as exc:
         raise SystemExit(f"unexpected unavailable evidence diagnostic: {exc}") from exc
 else:
     raise SystemExit("unavailable Velero image evidence was accepted")
-if authority.read_text(encoding="utf-8") != authority_before or dockerfile.read_text(encoding="utf-8") != dockerfile_before:
+if (
+    authority.read_text(encoding="utf-8") != authority_before
+    or dockerfile.read_text(encoding="utf-8") != dockerfile_before
+    or terraform.read_text(encoding="utf-8") != terraform_before
+):
     raise SystemExit("unavailable later evidence left recovered targets inconsistent")
 if journal.exists():
     raise SystemExit("initial recovery did not clear the prepared journal before evidence failure")
