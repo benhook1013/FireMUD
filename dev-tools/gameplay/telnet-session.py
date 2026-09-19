@@ -307,7 +307,11 @@ def _login_redaction_patterns(command: str) -> list[tuple[bytes, bytes]]:
     credential = _iso88591_bytes(match.group(1))
     if not credential:
         return [(raw, replacement)]
-    return [(raw, replacement), (credential, b"[REDACTED]")]
+    patterns = [(raw, replacement), (credential, b"[REDACTED]")]
+    normalized_credential = re.sub(rb"[ \t]+", b" ", credential).strip(b" ")
+    if normalized_credential and normalized_credential != credential:
+        patterns.append((normalized_credential, b"[REDACTED]"))
+    return patterns
 
 
 def _ascii_casefold_bytes(value: bytes) -> bytes:

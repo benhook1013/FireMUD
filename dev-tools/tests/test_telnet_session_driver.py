@@ -1671,6 +1671,62 @@ class TelnetSessionDriverTest(unittest.TestCase):
                 "Diagnostic credential=[REDACTED]; proof remains visible.\r\n",
             )
 
+    def test_login_redaction_normalizes_fragmented_mixed_case_whitespace_tail(self):
+        credential_tail = "SeCrEt-7\t\tsecond-token"
+        normalized_tail = "SeCrEt-7 second-token"
+
+        def handler(connection):
+            command = b""
+            while not command.endswith(b"\r\n"):
+                command += connection.recv(1)
+            self.assertEqual(
+                command,
+                b"LOGIN demo@example.com SeCrEt-7\t\tsecond-token\r\n",
+            )
+            connection.sendall(b"login DEMO@EXAMPLE.COM SeCrEt-7 ")
+            time.sleep(0.02)
+            connection.sendall(
+                b"second-token\r\n"
+                b"Diagnostic credential=SeCrEt-7 second-token; proof remains visible.\r\n"
+            )
+            time.sleep(0.08)
+
+        server = FakeServer(handler)
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "session.jsonl"
+            output = []
+            session = telnet_session.TelnetSession(
+                "127.0.0.1",
+                server.port,
+                transcript,
+                output=output.append,
+                tls_enabled=False,
+            )
+            session.connect()
+            session.send_command(f"LOGIN demo@example.com {credential_tail}")
+            records = wait_for(
+                session.store,
+                lambda rows: any(
+                    "proof remains visible" in row.get("text", "") for row in rows
+                ),
+            )
+            session.close("normalized_tail_redaction_complete")
+            server.close_and_check()
+
+            transcript_text = transcript.read_text(encoding="utf-8")
+            rendered = "\n".join(output)
+            for leaked in (credential_tail, normalized_tail):
+                self.assertNotIn(leaked, transcript_text)
+                self.assertNotIn(leaked, rendered)
+            received = [
+                row["text"] for row in records if row.get("event") == "received"
+            ]
+            self.assertEqual(
+                "".join(received),
+                "login DEMO@EXAMPLE.COM [REDACTED]\r\n"
+                "Diagnostic credential=[REDACTED]; proof remains visible.\r\n",
+            )
+
     def test_login_redaction_reassembles_room_text_across_socket_boundary(self):
         def handler(connection):
             command = b""

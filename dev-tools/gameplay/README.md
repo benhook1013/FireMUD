@@ -41,6 +41,6 @@ python3 dev-tools/gameplay/telnet-session.py read \
   --transcript /tmp/firemud-session.jsonl --after 17
 ```
 
-Credentials are never printed or written: outbound `LOGIN`/`LOGON` commands and an exact echoed login line have the secret replaced with `[REDACTED]` before display and append. As with any interactive client, credentials necessarily exist transiently in process memory while being sent; this tool does not claim to protect that memory from a compromised host or debugger.
+Credential-bearing outbound `LOGIN`/`LOGON` commands are redacted before display and append. The inbound guard also redacts exact echoes, credential-only diagnostics, and common case or whitespace canonicalizations before they become transcript or display evidence; ambiguous fragments are suppressed as described below. A server that transforms a credential in an unrecognized way is outside this guard's proof, and credentials necessarily exist transiently in process memory while being sent; the tool does not protect that memory from a compromised host or debugger.
 
 When an inbound line partially matches a held `LOGIN`/`LOGON` echo through credential bytes but later bytes disprove the exact echo, the client discards the held prefix and the remainder of that line through its boundary rather than risk exposing a credential fragment. The transcript records `redaction_suppressed` events with `phase` values `start` and `end`, and interactive output renders those boundaries so the operator can see that inbound display contained a deliberate safety gap.
