@@ -56,6 +56,7 @@ public class GrpcServerTlsReloader {
       serverLifecycle.start();
     } catch (Exception e) {
       logger.error("Failed to restart gRPC server", e);
+      throw new IllegalStateException("Failed to restart gRPC server", e);
     }
   }
 

@@ -4,7 +4,7 @@ The target runtime/data contract keeps TCP Proxy stateless at the gameplay bound
 
 ## Implementation Status
 
-Immediate closure on established bridge loss and the current close mapping and shutdown classification are implemented as described in [Operations](./operations.md#implementation-status). Preserving every valid authenticated Gateway token, including standalone `session_replaced` and `service_restart`, remains target-only behavior; current handler mapping and classification remain the Operations implementation status. See [Bridge Lifecycle Ownership](#bridge-lifecycle-ownership) for the local runtime invariants.
+Immediate closure on established bridge loss and the current close mapping and shutdown classification are implemented as described in [Operations](./operations.md#implementation-status). Preserving every valid authenticated Gateway token, including standalone `session_replaced` and `service_restart`, remains target-only behavior; current handler mapping and classification remain the Operations implementation status. The target identity-bearing TCP Proxy Deployment strategy is `Recreate`, but the hosted Helm template currently omits that strategy and therefore retains Kubernetes' default rollout behavior; configuring the chart remains an implementation gap. See [Bridge Lifecycle Ownership](#bridge-lifecycle-ownership) for the local runtime invariants.
 
 ## Redis Role and Prefixes
 
@@ -38,7 +38,9 @@ The TCP Proxy Service participates in three distinct trust boundaries:
 - WebSocket mTLS bridge: TCP Proxy Service <-> Spring Cloud Gateway
 - Internal gRPC mTLS: internal clients <-> TCP Proxy Service
 
-These trust surfaces are related but not interchangeable. In very small local or hobby deployments, certificate reuse across surfaces may be acceptable, but in shared and player-facing environments operators should provision separate identities per surface so a compromise in one boundary does not automatically extend to the others.
+These trust surfaces are related but not interchangeable. Throwaway local development may reuse generated certificate material, but every shared or player-facing environment, including hobby/self-hosted deployments, must provision distinct leaf-certificate and private-key material for each certificate-bearing surface so a compromise in one boundary does not automatically extend to the others. Transport leaves that authenticate the same TCP Proxy workload may carry the same canonical TCP Proxy URI SAN/workload identity; that shared identity claim does not permit reusing a leaf certificate, private key, or surface-specific trust binding.
+
+The identity-bearing TCP Proxy Deployment must use `Recreate`, so planned replacement intentionally creates a bounded Telnet admission outage. Readiness must remain false after the old pod terminates until the replacement reports traffic-admission readiness. The maintenance window must suppress only the expected no-ready-proxy/Telnet-availability alert for that declared interval; unrelated alerts and an outage that exceeds the planned interval remain actionable. This is an operational requirement for the future rollout, not evidence that alert suppression or certificate withdrawal is implemented.
 
 ## Bridge Lifecycle Ownership
 
