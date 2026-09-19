@@ -41,6 +41,7 @@ The checked-in Terraform Helm release is pinned to the verified VMware Tanzu Vel
 ```bash
 python3 dev-tools/maintenance/update-workflow-tool.py velero <velero-version> \
   --velero-dockerfile docker/backup-verifier.Dockerfile \
+  --terraform-file k8s/terraform-production/main.tf \
   --velero-chart-version <chart-version> --image-evidence-file <path>
 ```
 

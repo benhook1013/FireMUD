@@ -19,16 +19,38 @@ if [[ ! -f "$workflow_file" ]]; then
 fi
 
 mapfile -t services < <(
-  awk '
-    /^      matrix:$/ { in_matrix = 1; next }
-    in_matrix && /^        service:$/ { in_services = 1; next }
-    in_services && /^          - / {
-      sub(/^          - /, "")
-      print
-      next
-    }
-    in_services { exit }
-  ' "$workflow_file"
+  python3 - "$workflow_file" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+workflow_path = Path(sys.argv[1])
+try:
+    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+except (OSError, yaml.YAMLError) as exc:
+    print(f"unable to parse base-image workflow {workflow_path}: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+
+if not isinstance(workflow, dict):
+    print(f"base-image workflow must be a YAML mapping: {workflow_path}", file=sys.stderr)
+    raise SystemExit(1)
+jobs = workflow.get("jobs")
+docker_build = jobs.get("docker-build") if isinstance(jobs, dict) else None
+strategy = docker_build.get("strategy") if isinstance(docker_build, dict) else None
+matrix = strategy.get("matrix") if isinstance(strategy, dict) else None
+services = matrix.get("service") if isinstance(matrix, dict) else None
+if not isinstance(services, list) or not services or any(not isinstance(service, str) for service in services):
+    print(
+        "required base-image service matrix must be a non-empty list of strings: "
+        f"{workflow_path}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+for service in services:
+    print(service)
+PY
 )
 
 if ((${#services[@]} == 0)); then

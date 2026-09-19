@@ -22,13 +22,17 @@ runtime_relevant() {
     build.gradle.kts | settings.gradle.kts | gradle.properties | .python-version)
       return 0
       ;;
-    .github/workflows/runtime-images.yml | .github/workflows/publish-pr-runtime-images.yml | .github/workflows/smoke.yml | .github/workflows/smoke-full.yml)
+    .github/workflows/runtime-images.yml | .github/workflows/publish-pr-runtime-images.yml | .github/workflows/smoke.yml | .github/workflows/smoke-full.yml | .dockerignore)
       return 0
       ;;
-    .github/actions/setup-python/* | buildSrc/* | gradle/* | protos/* | docker/* | services/* | dev-tools/smoke/*)
+    .github/actions/setup-python/* | .github/actions/load-workflow-tool-versions/* | buildSrc/* | gradle/* | protos/* | docker/* | services/* | dev-tools/smoke/*)
       return 0
       ;;
     config/python/smoke-requirements.txt | config/python/smoke-requirements.in | \
+      config/workflow-tool-versions.env | \
+      dev-tools/backups/verify-backups.sh | \
+      dev-tools/backups/pg-dump-s3-selection.shlib | \
+      dev-tools/backups/smoke-backup-verifier-image.sh | \
       dev-tools/build-*.sh | \
       dev-tools/certs/generate-*.sh | \
       dev-tools/hosted/controller/smoke-*.sh | \

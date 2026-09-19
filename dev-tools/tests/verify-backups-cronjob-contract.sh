@@ -11,7 +11,6 @@ from pathlib import Path
 import yaml
 
 root = Path(sys.argv[1])
-manifest_text = (root / "k8s/velero/verify-backups-cronjob.yaml").read_text(encoding="utf-8")
 docs = list(
     yaml.safe_load_all(
         (root / "k8s/velero/verify-backups-cronjob.yaml").read_text(encoding="utf-8")
@@ -70,9 +69,30 @@ if "command" in container or "volumeMounts" in container or "volumes" in pod:
     raise SystemExit("backup verifier CronJob must use the image entrypoint without embedded script drift")
 if container["env"] != [{"name": "VELERO_NAMESPACE", "value": "velero"}]:
     raise SystemExit("backup verifier CronJob must explicitly select the Velero namespace")
-for forbidden in ("PG_DUMP_BUCKET", "secretName:", "s3"):
-    if forbidden.lower() in manifest_text.lower():
-        raise SystemExit(f"backup verifier CronJob must not bundle optional object-store configuration: {forbidden}")
+
+forbidden_env_names = {
+    "PG_DUMP_BUCKET",
+    "PG_DUMP_ENDPOINT",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+}
+if any(entry.get("name") in forbidden_env_names for entry in container.get("env", [])):
+    raise SystemExit("backup verifier CronJob must not bundle optional object-store or credential environment")
+
+def contains_key(value, key):
+    if isinstance(value, dict):
+        return key in value or any(contains_key(child, key) for child in value.values())
+    if isinstance(value, list):
+        return any(contains_key(child, key) for child in value)
+    return False
+
+for forbidden_key in ("secretName", "secretKeyRef", "secretRef", "envFrom"):
+    if contains_key(cronjob, forbidden_key):
+        raise SystemExit(
+            "backup verifier CronJob must not bundle optional credential or secret configuration: "
+            f"{forbidden_key}"
+        )
 dockerfile = (root / "docker/backup-verifier.Dockerfile").read_text(encoding="utf-8")
 authority = {}
 for line in (root / "config/workflow-tool-versions.env").read_text(encoding="utf-8").splitlines():

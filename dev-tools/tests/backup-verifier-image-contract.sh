@@ -18,6 +18,18 @@ require_contains() {
   }
 }
 
+require_count() {
+  local path="$1"
+  local expected="$2"
+  local required_count="$3"
+  local actual_count
+  actual_count="$(grep -Fc -- "$expected" "$path" || true)"
+  [[ "$actual_count" == "$required_count" ]] || {
+    echo "$path must contain $required_count occurrence(s) of: $expected (found $actual_count)" >&2
+    exit 1
+  }
+}
+
 velero_version="$(awk -F= '$1 == "VELERO_VERSION" { print $2 }' "$authority")"
 velero_digest="$(awk -F= '$1 == "VELERO_IMAGE_DIGEST" { print $2 }' "$authority")"
 if [[ -z "$velero_version" || -z "$velero_digest" ]]; then
@@ -36,10 +48,17 @@ require_contains "$dockerignore" '!dev-tools/backups/verify-backups.sh'
 require_contains "$dockerignore" '!dev-tools/backups/pg-dump-s3-selection.shlib'
 
 require_contains "$smoke" 'docker run --rm --entrypoint /bin/bash'
+# shellcheck disable=SC2016 # Assert literal shell syntax in the smoke helper.
+require_contains "$smoke" '[[ $# -ne 2 || -z "$1" || -z "$2" ]]'
+# shellcheck disable=SC2016 # Assert literal shell syntax in the smoke helper.
+require_contains "$smoke" 'expected_velero_version="$2"'
+require_contains "$smoke" 'EXPECTED_VELERO_VERSION='
 require_contains "$smoke" 'command -v bash'
 require_contains "$smoke" 'command -v aws'
 require_contains "$smoke" 'command -v velero'
 require_contains "$smoke" 'velero version --client-only'
+require_contains "$smoke" 'Velero client version output was empty'
+require_contains "$smoke" 'Velero client version mismatch'
 require_contains "$smoke" 'aws --version 2>&1'
 require_contains "$smoke" 'bash -n /opt/firemud/backups/verify-backups.sh'
 # shellcheck disable=SC2016 # Assert the literal command embedded in the smoke helper.
@@ -58,6 +77,12 @@ if [[ ! -f "$publisher" ]]; then
 fi
 require_contains "$runtime" 'BACKUP_VERIFIER_IMAGE'
 require_contains "$runtime" 'smoke-backup-verifier-image.sh'
+require_count "$runtime" 'uses: ./.github/actions/load-workflow-tool-versions' 2
+require_count "$runtime" 'config/workflow-tool-versions.env' 2
+# shellcheck disable=SC2016 # Assert literal workflow expressions and shell fragments.
+require_count "$runtime" 'VELERO_VERSION: ${{ steps.workflow-tool-versions.outputs.velero-version }}' 2
+# shellcheck disable=SC2016 # Assert literal workflow expressions and shell fragments.
+require_count "$runtime" 'bash ./dev-tools/backups/smoke-backup-verifier-image.sh "$BACKUP_VERIFIER_IMAGE" "$VELERO_VERSION"' 2
 require_contains "$runtime" "backup-verifier' >> \"\$service_manifest\""
 # shellcheck disable=SC2016 # Assert the literal workflow shell fragment.
 require_contains "$runtime" 'images+=("$BACKUP_VERIFIER_IMAGE")'

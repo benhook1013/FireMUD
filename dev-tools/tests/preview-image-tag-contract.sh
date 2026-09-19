@@ -73,7 +73,7 @@ image="$3"
 printf '%s\n' "$image" >> "${FAKE_DOCKER_CALLS:?}"
 if [[ "${FAKE_REGISTRY_MODE:-available}" == "hang-first" && ! -e "${FAKE_DOCKER_HANG_MARKER:?}" ]]; then
   : > "$FAKE_DOCKER_HANG_MARKER"
-  while :; do :; done
+  exec sleep 3600
 fi
 if [[ "${FAKE_REGISTRY_MODE:-available}" == "available" ]]; then
   case "$image" in
@@ -93,6 +93,52 @@ fi
 exit 1
 EOF
 chmod 700 "$fixture_dir/docker"
+
+mkdir -p "$fixture_dir/noncanonical-workflow/.github/workflows"
+cat > "$fixture_dir/noncanonical-workflow/.github/workflows/docker-images.yml" <<'EOF'
+jobs:
+  docker-build:
+    strategy:
+      matrix:
+        service: account-service
+EOF
+if (
+  cd "$fixture_dir/noncanonical-workflow"
+  PATH="$fixture_dir:$PATH" \
+    HOSTED_BASE_IMAGE_WAIT_TIMEOUT_SECONDS=0 \
+    HOSTED_BASE_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    bash "$base_image_waiter" "$base_sha"
+) >"$fixture_dir/noncanonical-workflow-output" 2>"$fixture_dir/noncanonical-workflow-error"; then
+  echo "base-image waiter must reject a non-list service matrix" >&2
+  exit 1
+fi
+grep -Fq 'must be a non-empty list of strings' "$fixture_dir/noncanonical-workflow-error" || {
+  echo "base-image waiter did not explain the non-list service matrix" >&2
+  exit 1
+}
+
+mkdir -p "$fixture_dir/malformed-workflow/.github/workflows"
+cat > "$fixture_dir/malformed-workflow/.github/workflows/docker-images.yml" <<'EOF'
+jobs:
+  docker-build:
+    strategy:
+      matrix:
+        service: [account-service
+EOF
+if (
+  cd "$fixture_dir/malformed-workflow"
+  PATH="$fixture_dir:$PATH" \
+    HOSTED_BASE_IMAGE_WAIT_TIMEOUT_SECONDS=0 \
+    HOSTED_BASE_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    bash "$base_image_waiter" "$base_sha"
+) >"$fixture_dir/malformed-workflow-output" 2>"$fixture_dir/malformed-workflow-error"; then
+  echo "base-image waiter must reject malformed docker-images.yml" >&2
+  exit 1
+fi
+grep -Fq 'unable to parse base-image workflow' "$fixture_dir/malformed-workflow-error" || {
+  echo "base-image waiter did not report malformed docker-images.yml" >&2
+  exit 1
+}
 
 expected_base_services=(
   account-service
@@ -189,7 +235,13 @@ run_resolver() {
 run_resolver '.github/workflows/preview.yml' base-commit-tag
 run_resolver 'design/architecture/foo.md' base-commit-tag
 run_resolver '.github/actions/setup-python/action.yml' requested-head-tag
+run_resolver '.github/actions/load-workflow-tool-versions/action.yml' requested-head-tag
+run_resolver '.dockerignore' requested-head-tag
 run_resolver 'config/python/smoke-requirements.txt' requested-head-tag
+run_resolver 'config/workflow-tool-versions.env' requested-head-tag
+run_resolver 'dev-tools/backups/verify-backups.sh' requested-head-tag
+run_resolver 'dev-tools/backups/pg-dump-s3-selection.shlib' requested-head-tag
+run_resolver 'dev-tools/backups/smoke-backup-verifier-image.sh' requested-head-tag
 run_resolver 'dev-tools/hosted/shared/check-kubectl-version-skew.sh' base-commit-tag
 run_resolver 'services/game-logic-service/src/main/Foo.kt' requested-head-tag
 # A rename from a runtime-relevant path must keep the PR image selected even

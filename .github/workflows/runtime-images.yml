@@ -36,8 +36,10 @@ on:
       - 'services/tcp-proxy-service/**'
       - 'services/world-management-service/**'
       - 'services/hosted-environment-identity-controller/**'
+      - '.github/actions/load-workflow-tool-versions/**'
       - '.github/actions/setup-python/**'
       - '.python-version'
+      - 'config/workflow-tool-versions.env'
       - 'config/python/smoke-requirements.txt'
       - 'config/python/smoke-requirements.in'
       - 'dev-tools/build-compose-service-jars.sh'
@@ -149,8 +151,10 @@ jobs:
                     ".github/workflows/runtime-images.yml",
                     ".github/workflows/smoke-full.yml",
                     ".github/workflows/smoke.yml",
+                    ".github/actions/load-workflow-tool-versions/action.yml",
                     ".python-version",
                     "build.gradle.kts",
+                    "config/workflow-tool-versions.env",
                     "config/python/smoke-requirements.txt",
                     "config/python/smoke-requirements.in",
                     "dev-tools/build-compose-service-jars.sh",
@@ -432,6 +436,10 @@ jobs:
           ref: ${{ needs.image-meta.outputs.checkout_ref }}
           persist-credentials: false
 
+      - name: Load workflow tool versions
+        id: workflow-tool-versions
+        uses: ./.github/actions/load-workflow-tool-versions
+
       - name: Build backup verifier image
         run: |
           docker build \
@@ -441,9 +449,11 @@ jobs:
 
       - name: Smoke backup verifier image
         id: smoke
+        env:
+          VELERO_VERSION: ${{ steps.workflow-tool-versions.outputs.velero-version }}
         run: |
           set -euo pipefail
-          bash ./dev-tools/backups/smoke-backup-verifier-image.sh "$BACKUP_VERIFIER_IMAGE"
+          bash ./dev-tools/backups/smoke-backup-verifier-image.sh "$BACKUP_VERIFIER_IMAGE" "$VELERO_VERSION"
           image_id="$(docker image inspect --format '{{.Id}}' "$BACKUP_VERIFIER_IMAGE")"
           [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || {
             echo "Backup verifier image did not return an exact image ID." >&2
@@ -777,6 +787,10 @@ jobs:
           ref: ${{ needs.image-meta.outputs.checkout_ref }}
           persist-credentials: false
 
+      - name: Load workflow tool versions
+        id: workflow-tool-versions
+        uses: ./.github/actions/load-workflow-tool-versions
+
       - name: Set up canonical Python
         if: ${{ needs.image-meta.outputs.runtime_smoke_required == 'true' }}
         uses: ./.github/actions/setup-python
@@ -808,7 +822,9 @@ jobs:
             .
 
       - name: Smoke PR backup verifier image
-        run: bash ./dev-tools/backups/smoke-backup-verifier-image.sh "$BACKUP_VERIFIER_IMAGE"
+        env:
+          VELERO_VERSION: ${{ steps.workflow-tool-versions.outputs.velero-version }}
+        run: bash ./dev-tools/backups/smoke-backup-verifier-image.sh "$BACKUP_VERIFIER_IMAGE" "$VELERO_VERSION"
 
       - name: Run credential-free full-stack smoke
         if: ${{ needs.image-meta.outputs.runtime_smoke_required == 'true' }}
