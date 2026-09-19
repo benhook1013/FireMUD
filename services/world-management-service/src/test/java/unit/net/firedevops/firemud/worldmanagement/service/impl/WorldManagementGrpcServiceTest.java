@@ -329,6 +329,7 @@ class WorldManagementGrpcServiceTest {
                   public void onCompleted() {}
                 }));
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    Mockito.verify(digestService).getDraftDesignDigest("1", "7");
   }
 
   @Test
