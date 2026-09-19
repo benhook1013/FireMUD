@@ -47,8 +47,25 @@ public class PublishAttemptServiceImpl implements PublishAttemptService {
 
   @Override
   @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public <T> T executeFullVersionTransaction(Supplier<T> operation) {
+    try {
+      return operation.get();
+    } catch (RuntimeException ex) {
+      throw new FullVersionTransactionException(ex);
+    }
+  }
+
+  @Override
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
   public void createAttempt(VersionDto version, PublishType publishType, String publishWorkflowId) {
     createAttempt(version, publishType, publishWorkflowId, null, null);
+  }
+
+  @Override
+  @Transactional
+  public void createFullVersionAttempt(
+      VersionDto version, String publishWorkflowId, String requestDigest) {
+    createAttempt(version, PublishType.FULL_VERSION, publishWorkflowId, null, requestDigest);
   }
 
   @Override
@@ -98,6 +115,13 @@ public class PublishAttemptServiceImpl implements PublishAttemptService {
     recordParticipantDigestsInCurrentTransaction(publishWorkflowId, participantDigests);
   }
 
+  @Override
+  @Transactional
+  public void recordFullVersionParticipantDigests(
+      String publishWorkflowId, List<PublishParticipantDigestDto> participantDigests) {
+    recordParticipantDigestsInCurrentTransaction(publishWorkflowId, participantDigests);
+  }
+
   private void recordParticipantDigestsInCurrentTransaction(
       String publishWorkflowId, List<PublishParticipantDigestDto> participantDigests) {
     PublishAttempt attempt = requireAttempt(publishWorkflowId);
@@ -115,6 +139,12 @@ public class PublishAttemptServiceImpl implements PublishAttemptService {
   @Override
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public void markSucceeded(String publishWorkflowId) {
+    markSucceededInCurrentTransaction(publishWorkflowId);
+  }
+
+  @Override
+  @Transactional
+  public void markFullVersionSucceeded(String publishWorkflowId) {
     markSucceededInCurrentTransaction(publishWorkflowId);
   }
 
@@ -137,6 +167,13 @@ public class PublishAttemptServiceImpl implements PublishAttemptService {
   @Override
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public void markFailed(String publishWorkflowId, String failureCode, String failureMessage) {
+    markFailedInCurrentTransaction(publishWorkflowId, failureCode, failureMessage);
+  }
+
+  @Override
+  @Transactional
+  public void markFullVersionFailed(
+      String publishWorkflowId, String failureCode, String failureMessage) {
     markFailedInCurrentTransaction(publishWorkflowId, failureCode, failureMessage);
   }
 
