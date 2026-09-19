@@ -5,7 +5,16 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUN_OWNED_COMPOSE_HELPER="$ROOT_DIR/dev-tools/smoke/run-owned-compose.sh"
 
 python3 - <<'PY' "$ROOT_DIR"
+import contextlib
+import io
+import json
+import socket
+import ssl
+import subprocess
 import sys
+import tempfile
+import threading
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,16 +22,49 @@ root = Path(sys.argv[1])
 sys.path.insert(0, str(root / "dev-tools" / "smoke"))
 
 import smoke_common
-from smoke_common import run_telnet_smoke_session, run_transport_session, run_websocket_smoke_session
+from smoke_common import (
+    open_telnet_socket,
+    run_telnet_smoke_session,
+    run_transport_session,
+    run_websocket_smoke_session,
+)
+
+
+for local_host in (
+    "localhost",
+    "LOCALHOST",
+    "localhost.",
+    "127.0.0.1",
+    "127.255.255.254",
+    "::1",
+    "0:0:0:0:0:0:0:1",
+    "::ffff:127.0.0.1",
+):
+    assert smoke_common.is_localhost_equivalent(local_host), local_host
+
+for remote_host in (
+    "",
+    "remotehost",
+    "example.test",
+    "localhost.example.test",
+    "0.0.0.0",
+    "192.168.1.10",
+    "203.0.113.10",
+    "::",
+    "::ffff:192.168.1.10",
+):
+    assert not smoke_common.is_localhost_equivalent(remote_host), remote_host
 
 
 class FakeSession:
     def __init__(self, chunks=None):
         self.chunks = list(chunks or [])
         self.sent = []
+        self.wire_sent = []
         self.closed = False
 
     def sendall(self, payload):
+        self.wire_sent.append(payload)
         self.sent.append(payload.decode("iso-8859-1"))
 
     def recv(self, _size=None):
@@ -56,6 +98,645 @@ class CommandResponseSession(FakeSession):
         self.chunks = [self.responses.pop(0)]
 
 
+class FakeTlsContext:
+    def __init__(self, wrapped=None, failure=None):
+        self.wrapped = wrapped or FakeSession()
+        self.failure = failure
+        self.check_hostname = False
+        self.verify_mode = ssl.CERT_NONE
+        self.wrap_calls = []
+
+    def wrap_socket(self, raw_socket, *, server_hostname):
+        self.wrap_calls.append((raw_socket, server_hostname))
+        if self.failure is not None:
+            raise self.failure
+        return self.wrapped
+
+
+raw_plaintext_socket = FakeSession()
+with patch(
+    "smoke_common.socket.create_connection", return_value=raw_plaintext_socket
+):
+    assert (
+        open_telnet_socket(
+            "127.0.0.1",
+            2323,
+            1,
+            tls_enabled=False,
+        )
+        is raw_plaintext_socket
+    )
+
+
+with patch("smoke_common.socket.create_connection") as connect:
+    try:
+        open_telnet_socket(
+            "203.0.113.10",
+            2323,
+            1,
+            tls_enabled=False,
+        )
+    except ValueError as exc:
+        assert str(exc) == smoke_common.PLAINTEXT_TELNET_HOST_ERROR
+    else:
+        raise AssertionError("plaintext Telnet accepted a non-loopback host")
+connect.assert_not_called()
+
+
+raw_tls_socket = FakeSession()
+wrapped_tls_socket = FakeSession()
+tls_context = FakeTlsContext(wrapped=wrapped_tls_socket)
+with patch(
+    "smoke_common.socket.create_connection", return_value=raw_tls_socket
+) as connect, patch(
+    "smoke_common.ssl.create_default_context", return_value=tls_context
+) as create_context:
+    result = open_telnet_socket(
+        "203.0.113.10",
+        2323,
+        1,
+        tls_enabled=True,
+        tls_server_hostname="preview.example.test",
+        tls_ca_file="ca.pem",
+    )
+assert result is wrapped_tls_socket
+assert connect.call_count == 1
+create_context.assert_called_once_with(cafile="ca.pem")
+assert tls_context.wrap_calls == [(raw_tls_socket, "preview.example.test")]
+assert tls_context.check_hostname is True
+assert tls_context.verify_mode == ssl.CERT_REQUIRED
+assert raw_tls_socket.closed is False
+
+
+failed_raw_tls_socket = FakeSession()
+failed_tls_context = FakeTlsContext(failure=ssl.SSLError("certificate mismatch"))
+with patch(
+    "smoke_common.socket.create_connection", return_value=failed_raw_tls_socket
+) as connect, patch(
+    "smoke_common.ssl.create_default_context", return_value=failed_tls_context
+) as create_context:
+    try:
+        open_telnet_socket(
+            "203.0.113.10",
+            2323,
+            1,
+            tls_enabled=True,
+            tls_server_hostname="preview.example.test",
+        )
+    except ssl.SSLError:
+        pass
+    else:
+        raise AssertionError("TLS failure unexpectedly succeeded")
+assert failed_raw_tls_socket.closed is True
+assert connect.call_count == 1
+create_context.assert_called_once_with()
+
+
+try:
+    open_telnet_socket("example.test", 2323, 1)
+except TypeError as exc:
+    assert "tls_enabled" in str(exc)
+else:
+    raise AssertionError("Telnet socket helper accepted an omitted TLS mode")
+
+for invalid_tls_enabled in (None, "true", 0, 1, [], {}):
+    try:
+        open_telnet_socket(
+            "example.test", 2323, 1, tls_enabled=invalid_tls_enabled
+        )
+    except TypeError as exc:
+        assert "tls_enabled" in str(exc)
+    else:
+        raise AssertionError(
+            f"Telnet socket helper accepted non-boolean TLS mode: {invalid_tls_enabled!r}"
+        )
+
+for invalid_options in (
+    {"tls_enabled": True},
+    {"tls_enabled": False, "tls_server_hostname": "example.test"},
+    {"tls_enabled": False, "tls_ca_file": "ca.pem"},
+):
+    try:
+        open_telnet_socket("example.test", 2323, 1, **invalid_options)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(f"invalid Telnet TLS options were accepted: {invalid_options}")
+
+
+mixed_response_chunks = iter(
+    ["OK LOGIN account=demo\nERROR INVALID_CREDENTIALS Login failed.\n"]
+)
+try:
+    smoke_common.wait_for_incremental_response(
+        lambda: next(mixed_response_chunks, ""),
+        [],
+        0,
+        ["OK LOGIN"],
+        1,
+        "".join,
+    )
+except smoke_common.ProbeOperationalFailure as exc:
+    assert "ERROR INVALID_CREDENTIALS" in str(exc)
+else:
+    raise AssertionError("mixed success and explicit failure response passed smoke")
+
+
+trailing_response_chunks = iter(["OK LOOK room=R-1021\n"])
+try:
+    smoke_common.wait_for_incremental_response(
+        lambda: next(trailing_response_chunks, ""),
+        [],
+        0,
+        ["OK LOOK"],
+        1,
+        "".join,
+        lambda: "DISCONNECT backend_unavailable Gateway bridge closed.\n",
+    )
+except smoke_common.ProbeOperationalFailure as exc:
+    assert "DISCONNECT backend_unavailable" in str(exc)
+else:
+    raise AssertionError("explicit failure in trailing drain passed smoke")
+
+
+expected_error_response = (
+    "ERROR SLOT_INCOMPATIBLE Iron Boots cannot be worn by this body layout\n"
+)
+expected_error_substrings = [
+    "ERROR SLOT_INCOMPATIBLE",
+    "Iron Boots cannot be worn by this body layout",
+]
+expected_error_chunks = iter([expected_error_response])
+assert smoke_common.wait_for_incremental_response(
+    lambda: next(expected_error_chunks, ""),
+    [],
+    0,
+    expected_error_substrings,
+    1,
+    "".join,
+) == expected_error_response
+
+
+for additional_failure in (
+    "ERROR UPSTREAM_FAILURE Gameplay unavailable.\n",
+    "DISCONNECT backend_unavailable Gateway bridge closed.\n",
+):
+    expected_error_with_additional_failure = iter(
+        [expected_error_response + additional_failure]
+    )
+    try:
+        smoke_common.wait_for_incremental_response(
+            lambda: next(expected_error_with_additional_failure, ""),
+            [],
+            0,
+            expected_error_substrings,
+            1,
+            "".join,
+        )
+    except smoke_common.ProbeOperationalFailure as exc:
+        assert additional_failure.strip() in str(exc)
+    else:
+        raise AssertionError(
+            f"{additional_failure.strip()} following an expected explicit error "
+            "passed smoke"
+        )
+
+
+secret = "contract-password"
+login_command = f"LOGIN demo@example.test {secret}"
+login_response = (
+    f"login   demo@example.test   {secret}\n"
+    "OK LOGIN account=demo\n"
+    f"Diagnostic credential={secret}; proof remains visible.\n"
+)
+login_session = FakeSession([login_response])
+login_step_results = []
+login_output = io.StringIO()
+with contextlib.redirect_stdout(login_output):
+    raw_login_response = smoke_common.send_telnet_command_and_expect(
+        login_session,
+        [],
+        login_command,
+        ["OK LOGIN"],
+        "LOGIN",
+        1,
+        drain_timeout=0,
+        step_results=login_step_results,
+    )
+assert secret in raw_login_response, "protocol response must remain unchanged"
+assert login_session.sent == [f"{login_command}\r\n"]
+assert secret not in login_output.getvalue()
+assert secret not in json.dumps(login_step_results)
+assert login_step_results[0]["command"] == "LOGIN demo@example.test [REDACTED]"
+assert "OK LOGIN account=demo" in login_output.getvalue()
+assert "Diagnostic credential=[REDACTED]; proof remains visible." in login_output.getvalue()
+
+
+iac_secret = "p\u00ffss"
+iac_login_command = f"LOGIN demo@example.test {iac_secret}"
+iac_login_response = f"{iac_login_command}\nOK LOGIN account=demo\n"
+iac_session = CommandResponseSession(["OK SAY\n", iac_login_response])
+iac_step_results = []
+with contextlib.redirect_stdout(io.StringIO()):
+    smoke_common.send_telnet_command_and_expect(
+        iac_session,
+        [],
+        "SAY \u00ff",
+        ["OK SAY"],
+        "SAY",
+        1,
+        drain_timeout=0,
+    )
+    iac_response = smoke_common.send_telnet_command_and_expect(
+        iac_session,
+        [],
+        iac_login_command,
+        ["OK LOGIN"],
+        "LOGIN",
+        1,
+        drain_timeout=0,
+        step_results=iac_step_results,
+    )
+assert iac_session.wire_sent == [
+    b"SAY \xff\xff\r\n",
+    b"LOGIN demo@example.test p\xff\xffss\r\n",
+]
+assert iac_secret in iac_response
+assert iac_secret not in json.dumps(iac_step_results)
+
+
+logon_command = f"LOGON demo@example.test {secret}"
+logon_session = FakeSession([login_response])
+logon_step_results = []
+logon_output = io.StringIO()
+with contextlib.redirect_stdout(logon_output):
+    raw_logon_response = smoke_common.send_telnet_command_and_expect(
+        logon_session,
+        [],
+        logon_command,
+        ["OK LOGIN"],
+        "LOGON",
+        1,
+        drain_timeout=0,
+        step_results=logon_step_results,
+    )
+assert secret in raw_logon_response, "protocol response must remain unchanged"
+assert secret not in logon_output.getvalue()
+assert secret not in json.dumps(logon_step_results)
+assert logon_step_results[0]["command"] == "LOGON demo@example.test [REDACTED]"
+assert "Diagnostic credential=[REDACTED]; proof remains visible." in logon_output.getvalue()
+
+
+mixed_case_secret = "MiXeD  Credential"
+mixed_case_command = f"LoGiN demo@example.test {mixed_case_secret}"
+mixed_case_response = (
+    "lOgIn demo@example.test mIxEd credential\n"
+    "OK LOGIN account=demo\n"
+    "Diagnostic credential=mIXeD credential; proof remains visible.\n"
+)
+mixed_case_telnet_steps = []
+mixed_case_telnet_output = io.StringIO()
+with contextlib.redirect_stdout(mixed_case_telnet_output):
+    mixed_case_telnet_raw = smoke_common.send_telnet_command_and_expect(
+        FakeSession([mixed_case_response]),
+        [],
+        mixed_case_command,
+        ["OK LOGIN"],
+        "LOGIN",
+        1,
+        drain_timeout=0,
+        step_results=mixed_case_telnet_steps,
+    )
+assert "mIxEd credential" in mixed_case_telnet_raw
+for credential_form in (mixed_case_secret, "MiXeD Credential", "mIxEd credential"):
+    assert credential_form.casefold() not in mixed_case_telnet_output.getvalue().casefold()
+    assert credential_form.casefold() not in json.dumps(mixed_case_telnet_steps).casefold()
+assert "Diagnostic credential=[REDACTED]; proof remains visible." in (
+    mixed_case_telnet_output.getvalue()
+)
+assert mixed_case_telnet_steps[0]["response"].startswith(
+    "lOgIn demo@example.test [REDACTED]"
+)
+
+
+class DeadlineBoundSession(FakeSession):
+    def __init__(self, chunks=None):
+        super().__init__(chunks)
+        self.timeouts = []
+
+    def settimeout(self, timeout):
+        self.timeouts.append(timeout)
+
+    def recv(self, _size=None):
+        if self.chunks:
+            chunk = self.chunks.pop(0)
+            return chunk if _size is None else chunk.encode("iso-8859-1")
+        time.sleep(self.timeouts[-1])
+        raise TimeoutError
+
+
+deadline_session = DeadlineBoundSession(["OK LOOK room=demo\n"])
+started_at = time.monotonic()
+deadline_response = smoke_common.send_telnet_command_and_expect(
+    deadline_session,
+    [],
+    "LOOK",
+    ["OK LOOK"],
+    "LOOK",
+    0.08,
+    drain_timeout=1.0,
+)
+elapsed = time.monotonic() - started_at
+assert deadline_response == "OK LOOK room=demo\n"
+assert elapsed < 0.25, f"Telnet command exceeded deadline during receive/drain: {elapsed}"
+assert deadline_session.timeouts
+assert max(deadline_session.timeouts) <= 0.09
+
+
+class BlockingSendSession(FakeSession):
+    def __init__(self):
+        super().__init__()
+        self.timeouts = []
+
+    def settimeout(self, timeout):
+        self.timeouts.append(timeout)
+
+    def sendall(self, payload):
+        self.wire_sent.append(payload)
+        time.sleep(self.timeouts[-1])
+        raise TimeoutError("send blocked")
+
+
+blocked_send_session = BlockingSendSession()
+started_at = time.monotonic()
+try:
+    smoke_common.send_telnet_command_and_expect(
+        blocked_send_session,
+        [],
+        "LOOK",
+        ["OK LOOK"],
+        "LOOK",
+        0.08,
+    )
+except TimeoutError as exc:
+    assert str(exc) == "send blocked"
+else:
+    raise AssertionError("blocked Telnet send unexpectedly completed")
+elapsed = time.monotonic() - started_at
+assert elapsed < 0.25, f"Telnet send exceeded command deadline: {elapsed}"
+assert blocked_send_session.timeouts
+assert max(blocked_send_session.timeouts) <= 0.09
+
+
+blocked_receive_session = DeadlineBoundSession()
+started_at = time.monotonic()
+try:
+    smoke_common.send_telnet_command_and_expect(
+        blocked_receive_session,
+        [],
+        "LOOK",
+        ["OK LOOK"],
+        "LOOK",
+        0.08,
+    )
+except smoke_common.ProbeOperationalFailure:
+    pass
+else:
+    raise AssertionError("blocked Telnet receive unexpectedly completed")
+elapsed = time.monotonic() - started_at
+assert elapsed < 0.25, f"Telnet receive exceeded command deadline: {elapsed}"
+assert blocked_receive_session.timeouts
+assert max(blocked_receive_session.timeouts) <= 0.09
+
+
+class TimedWebSocket(FakeSession):
+    def __init__(self, chunks=None, *, block_send=False):
+        super().__init__(chunks)
+        self.timeouts = []
+        self.block_send = block_send
+
+    def settimeout(self, timeout):
+        self.timeouts.append(timeout)
+
+    def send(self, payload):
+        self.sent.append(payload)
+        if self.block_send:
+            time.sleep(self.timeouts[-1])
+            raise TimeoutError("send blocked")
+
+    def recv(self, _size=None):
+        if self.chunks:
+            return self.chunks.pop(0)
+        time.sleep(self.timeouts[-1])
+        raise TimeoutError("receive blocked")
+
+
+blocked_websocket_send = TimedWebSocket(block_send=True)
+started_at = time.monotonic()
+try:
+    smoke_common.send_websocket_command_and_expect(
+        blocked_websocket_send,
+        [],
+        "LOOK",
+        ["OK LOOK"],
+        "LOOK",
+        0.08,
+    )
+except TimeoutError as exc:
+    assert str(exc) == "send blocked"
+else:
+    raise AssertionError("blocked WebSocket send unexpectedly completed")
+elapsed = time.monotonic() - started_at
+assert elapsed < 0.25, f"WebSocket send exceeded command deadline: {elapsed}"
+assert blocked_websocket_send.timeouts
+assert max(blocked_websocket_send.timeouts) <= 0.09
+
+
+blocked_websocket_receive = TimedWebSocket()
+started_at = time.monotonic()
+try:
+    smoke_common.send_websocket_command_and_expect(
+        blocked_websocket_receive,
+        [],
+        "LOOK",
+        ["OK LOOK"],
+        "LOOK",
+        0.08,
+    )
+except smoke_common.ProbeOperationalFailure:
+    pass
+else:
+    raise AssertionError("blocked WebSocket receive unexpectedly completed")
+elapsed = time.monotonic() - started_at
+assert elapsed < 0.25, f"WebSocket receive exceeded command deadline: {elapsed}"
+assert blocked_websocket_receive.timeouts
+assert max(blocked_websocket_receive.timeouts) <= 0.09
+
+
+blocked_websocket_drain = TimedWebSocket(["OK LOOK room=demo"])
+started_at = time.monotonic()
+drained_response = smoke_common.send_websocket_command_and_expect(
+    blocked_websocket_drain,
+    [],
+    "LOOK",
+    ["OK LOOK"],
+    "LOOK",
+    0.08,
+)
+elapsed = time.monotonic() - started_at
+assert drained_response == "OK LOOK room=demo"
+assert elapsed < 0.25, f"WebSocket drain exceeded command deadline: {elapsed}"
+assert blocked_websocket_drain.timeouts
+assert max(blocked_websocket_drain.timeouts) <= 0.09
+
+
+for invalid_command in (
+    "LOOK\nNORTH",
+    "LOGIN demo@example.test secret-with-newline\nINJECT",
+):
+    invalid_session = FakeSession(["OK SHOULD NOT ARRIVE\n"])
+    try:
+        smoke_common.send_telnet_command_and_expect(
+            invalid_session,
+            [],
+            invalid_command,
+            ["OK SHOULD NOT ARRIVE"],
+            "INVALID",
+            1,
+        )
+    except ValueError as exc:
+        assert str(exc) == smoke_common.INVALID_COMMAND_LINE_ERROR
+    else:
+        raise AssertionError(f"embedded line break was accepted: {invalid_command!r}")
+    assert invalid_session.sent == []
+
+
+trailing_newline_session = FakeSession(["OK LOOK room=demo\n"])
+smoke_common.send_telnet_command_and_expect(
+    trailing_newline_session,
+    [],
+    "LOOK\n",
+    ["OK LOOK"],
+    "LOOK",
+    1,
+    drain_timeout=0,
+)
+assert trailing_newline_session.sent == ["LOOK\r\n"]
+
+
+websocket_login_session = FakeSession([login_response])
+websocket_login_step_results = []
+websocket_login_output = io.StringIO()
+with contextlib.redirect_stdout(websocket_login_output):
+    raw_websocket_login_response = smoke_common.send_websocket_command_and_expect(
+        websocket_login_session,
+        [],
+        login_command,
+        ["OK LOGIN"],
+        "LOGIN",
+        1,
+        step_results=websocket_login_step_results,
+    )
+assert secret in raw_websocket_login_response, "protocol response must remain unchanged"
+assert websocket_login_session.sent == [login_command]
+assert secret not in websocket_login_output.getvalue()
+assert secret not in json.dumps(websocket_login_step_results)
+assert (
+    websocket_login_step_results[0]["command"]
+    == "LOGIN demo@example.test [REDACTED]"
+)
+assert "OK LOGIN account=demo" in websocket_login_output.getvalue()
+
+
+mixed_case_websocket_steps = []
+mixed_case_websocket_output = io.StringIO()
+with contextlib.redirect_stdout(mixed_case_websocket_output):
+    mixed_case_websocket_raw = smoke_common.send_websocket_command_and_expect(
+        FakeSession([mixed_case_response]),
+        [],
+        mixed_case_command,
+        ["OK LOGIN"],
+        "LOGIN",
+        1,
+        step_results=mixed_case_websocket_steps,
+    )
+assert "mIxEd credential" in mixed_case_websocket_raw
+for credential_form in (mixed_case_secret, "MiXeD Credential", "mIxEd credential"):
+    assert (
+        credential_form.casefold()
+        not in mixed_case_websocket_output.getvalue().casefold()
+    )
+    assert (
+        credential_form.casefold()
+        not in json.dumps(mixed_case_websocket_steps).casefold()
+    )
+assert "Diagnostic credential=[REDACTED]; proof remains visible." in (
+    mixed_case_websocket_output.getvalue()
+)
+assert mixed_case_websocket_steps[0]["response"].startswith(
+    "lOgIn demo@example.test [REDACTED]"
+)
+
+
+failing_login_chunks = iter(
+    [f"OK LOGIN account=demo\nERROR AUTH_FAILURE credential={secret}\n"]
+)
+try:
+    smoke_common.wait_for_incremental_response(
+        lambda: next(failing_login_chunks, ""),
+        [],
+        0,
+        ["OK LOGIN"],
+        1,
+        "".join,
+        sanitize_response=lambda response: smoke_common.redact_login_credential(
+            response, login_command
+        ),
+    )
+except smoke_common.ProbeOperationalFailure as exc:
+    assert secret not in str(exc)
+    assert "ERROR AUTH_FAILURE credential=[REDACTED]" in str(exc)
+else:
+    raise AssertionError("credential-bearing mixed failure unexpectedly passed")
+
+
+mixed_failure_secret = "FaIlUrE  Token"
+mixed_failure_response = (
+    "OK LOGIN account=demo\n"
+    "ERROR AUTH_FAILURE credential=fAiLuRe token\n"
+)
+for transport in ("telnet", "websocket"):
+    try:
+        if transport == "telnet":
+            smoke_common.send_telnet_command_and_expect(
+                FakeSession([mixed_failure_response]),
+                [],
+                f"LOGIN demo@example.test {mixed_failure_secret}",
+                ["OK LOGIN"],
+                "LOGIN",
+                1,
+                drain_timeout=0,
+            )
+        else:
+            smoke_common.send_websocket_command_and_expect(
+                FakeSession([mixed_failure_response]),
+                [],
+                f"LOGIN demo@example.test {mixed_failure_secret}",
+                ["OK LOGIN"],
+                "LOGIN",
+                1,
+            )
+    except smoke_common.ProbeOperationalFailure as exc:
+        diagnostic = str(exc)
+        assert mixed_failure_secret.casefold() not in diagnostic.casefold()
+        assert "fAiLuRe token".casefold() not in diagnostic.casefold()
+        assert "ERROR AUTH_FAILURE credential=[REDACTED]" in diagnostic
+    else:
+        raise AssertionError(
+            f"{transport} mixed-case credential failure unexpectedly passed"
+        )
+
+
 opened = []
 
 
@@ -71,10 +752,252 @@ telnet_responses = run_telnet_smoke_session(
     [("WORLDS", ["OK WORLDS"], "WORLDS")],
     1,
     open_session=open_telnet,
+    tls_enabled=False,
 )
 assert telnet_responses == ["OK WORLDS\n"]
 assert opened[0].sent == ["WORLDS\r\n"]
 assert opened[0].closed is True
+
+
+# Transport helper proof only: command sequencing is not live Game Session proof.
+command_plan_session = CommandResponseSession(
+    ["OK LOGIN\n", "OK MOVE NORTH\n", "OK SAY hello\n"]
+)
+command_plan_results = []
+command_plan_responses = run_telnet_smoke_session(
+    "example.test",
+    2323,
+    [
+        ("LOGIN demo swordfish", ["OK LOGIN"], "LOGIN"),
+        ("NORTH", ["OK MOVE NORTH"], "NORTH"),
+        ("SAY hello", ["OK SAY hello"], "SAY"),
+    ],
+    1,
+    open_session=lambda: command_plan_session,
+    step_results=command_plan_results,
+    tls_enabled=False,
+)
+assert command_plan_session.sent == [
+    "LOGIN demo swordfish\r\n",
+    "NORTH\r\n",
+    "SAY hello\r\n",
+]
+assert command_plan_responses == [
+    "OK LOGIN\n",
+    "OK MOVE NORTH\n",
+    "OK SAY hello\n",
+]
+assert [result["label"] for result in command_plan_results] == [
+    "LOGIN",
+    "NORTH",
+    "SAY",
+]
+assert [result["response"] for result in command_plan_results] == [
+    "OK LOGIN",
+    "OK MOVE NORTH",
+    "OK SAY hello",
+]
+assert command_plan_session.closed is True
+class FakeTlsContext:
+    def __init__(self, wrapped_session):
+        self.wrapped_session = wrapped_session
+        self.server_hostname = None
+
+    def wrap_socket(self, raw_socket, server_hostname):
+        assert raw_socket is raw_tls_socket
+        self.server_hostname = server_hostname
+        return self.wrapped_session
+
+
+raw_tls_socket = FakeSession()
+wrapped_tls_session = FakeSession(["OK WORLDS\n"])
+tls_context = FakeTlsContext(wrapped_tls_session)
+with patch(
+    "smoke_common.socket.create_connection", return_value=raw_tls_socket
+) as create_connection, patch(
+    "smoke_common.ssl.create_default_context", return_value=tls_context
+) as create_default_context:
+    tls_responses = run_telnet_smoke_session(
+        "preview.example.test",
+        32042,
+        [("WORLDS", ["OK WORLDS"], "WORLDS")],
+        1,
+        tls_enabled=True,
+        tls_ca_file="/etc/ssl/certs/preview-ca.pem",
+        tls_server_hostname="preview.example.test",
+    )
+assert tls_responses == ["OK WORLDS\n"]
+create_connection.assert_called_once_with(
+    ("preview.example.test", 32042), timeout=1
+)
+create_default_context.assert_called_once_with(
+    cafile="/etc/ssl/certs/preview-ca.pem"
+)
+assert tls_context.server_hostname == "preview.example.test"
+assert wrapped_tls_session.sent == ["WORLDS\r\n"]
+assert wrapped_tls_session.closed is True
+assert raw_tls_socket.closed is False
+
+
+plaintext_socket = FakeSession(["OK WORLDS\n"])
+with patch(
+    "smoke_common.socket.create_connection", return_value=plaintext_socket
+) as create_plaintext_connection, patch(
+    "smoke_common.ssl.create_default_context"
+) as create_plaintext_context:
+    assert open_telnet_socket(
+        "127.0.0.1", 2323, 1, tls_enabled=False
+    ) is plaintext_socket
+create_plaintext_connection.assert_called_once_with(("127.0.0.1", 2323), timeout=1)
+create_plaintext_context.assert_not_called()
+
+
+def generate_tls_certificates(certificate_dir):
+    ca_key = certificate_dir / "ca-key.pem"
+    ca_certificate = certificate_dir / "ca-cert.pem"
+    server_key = certificate_dir / "server-key.pem"
+    server_csr = certificate_dir / "server.csr.pem"
+    server_certificate = certificate_dir / "server-cert.pem"
+    server_extensions = certificate_dir / "server-extensions.cnf"
+
+    subprocess.run(
+        ["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", str(ca_key)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        [
+            "openssl",
+            "req",
+            "-x509",
+            "-new",
+            "-key",
+            str(ca_key),
+            "-sha256",
+            "-days",
+            "1",
+            "-out",
+            str(ca_certificate),
+            "-subj",
+            "/CN=FireMUD smoke test CA",
+            "-addext",
+            "basicConstraints=critical,CA:TRUE,pathlen:1",
+            "-addext",
+            "keyUsage=critical,keyCertSign,cRLSign",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", str(server_key)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        [
+            "openssl",
+            "req",
+            "-new",
+            "-key",
+            str(server_key),
+            "-out",
+            str(server_csr),
+            "-subj",
+            "/CN=localhost",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    server_extensions.write_text(
+        "basicConstraints=critical,CA:FALSE\n"
+        "keyUsage=critical,digitalSignature,keyEncipherment\n"
+        "extendedKeyUsage=serverAuth\n"
+        "subjectAltName=DNS:localhost,IP:127.0.0.1\n"
+    )
+    subprocess.run(
+        [
+            "openssl",
+            "x509",
+            "-req",
+            "-in",
+            str(server_csr),
+            "-CA",
+            str(ca_certificate),
+            "-CAkey",
+            str(ca_key),
+            "-CAcreateserial",
+            "-out",
+            str(server_certificate),
+            "-days",
+            "1",
+            "-sha256",
+            "-extfile",
+            str(server_extensions),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return ca_certificate, server_certificate, server_key
+
+
+with tempfile.TemporaryDirectory(prefix="firemud-smoke-tls-") as certificate_directory:
+    ca_certificate, server_certificate, server_key = generate_tls_certificates(
+        Path(certificate_directory)
+    )
+    server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_context.load_cert_chain(
+        certfile=str(server_certificate),
+        keyfile=str(server_key),
+    )
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server_socket.bind(("127.0.0.1", 0))
+    server_socket.listen(1)
+    server_socket.settimeout(5)
+    server_port = server_socket.getsockname()[1]
+    server_commands = []
+    server_errors = []
+
+
+    def serve_tls_telnet():
+        try:
+            raw_connection, _address = server_socket.accept()
+            with raw_connection:
+                with server_context.wrap_socket(
+                    raw_connection,
+                    server_side=True,
+                ) as tls_connection:
+                    command = tls_connection.recv(4096)
+                    server_commands.append(command)
+                    tls_connection.sendall(b"OK WORLDS\n")
+        except Exception as exc:
+            server_errors.append(exc)
+
+
+    server_thread = threading.Thread(target=serve_tls_telnet, daemon=True)
+    server_thread.start()
+    try:
+        local_tls_responses = run_telnet_smoke_session(
+            "127.0.0.1",
+            server_port,
+            [("WORLDS", ["OK WORLDS"], "WORLDS")],
+            5,
+            tls_enabled=True,
+            tls_ca_file=str(ca_certificate),
+            tls_server_hostname="localhost",
+        )
+    finally:
+        server_socket.close()
+        server_thread.join(timeout=5)
+    assert not server_thread.is_alive(), "local TLS server thread did not finish"
+    assert not server_errors, f"local TLS server failed: {server_errors!r}"
+    assert server_commands == [b"WORLDS\r\n"]
+    assert local_tls_responses == ["OK WORLDS\n"]
 
 
 opened_ws = []
@@ -170,6 +1093,7 @@ upstream_responses = run_telnet_smoke_session(
     open_session=open_after_transient_upstream_failure,
     retry_window_seconds=1,
     retry_interval_seconds=0,
+    tls_enabled=False,
 )
 assert upstream_responses == ["OK LOGIN"]
 assert len(upstream_attempts) == 2
@@ -200,6 +1124,7 @@ for transport in ("telnet", "websocket"):
                 open_session=open_later_failure,
                 retry_window_seconds=1,
                 retry_interval_seconds=0,
+                tls_enabled=False,
             )
         else:
             run_websocket_smoke_session(
@@ -215,6 +1140,67 @@ for transport in ("telnet", "websocket"):
         assert "ERROR UPSTREAM_FAILURE" in str(exc)
     assert len(later_failure_attempts) == 1
     assert later_failure_attempts[0].closed is True
+
+
+post_command_failure_attempts = []
+
+
+def open_after_command_failure():
+    session = FakeSession()
+    post_command_failure_attempts.append(session)
+    return session
+
+
+def fail_after_login_was_sent(session):
+    session.sent.append("LOGIN demo swordfish")
+    raise OSError("connection lost after LOGIN")
+
+
+try:
+    run_transport_session(
+        open_after_command_failure,
+        fail_after_login_was_sent,
+        "post-command failure session",
+        retry_window_seconds=1,
+        retry_interval_seconds=0,
+    )
+except smoke_common.ProbeOperationalFailure as exc:
+    assert "Failed during post-command failure session" in str(exc)
+else:
+    raise AssertionError("post-command OSError unexpectedly retried")
+assert len(post_command_failure_attempts) == 1
+assert post_command_failure_attempts[0].closed is True
+
+
+class CloseFailureSession(FakeSession):
+    def close(self):
+        self.closed = True
+        raise OSError("close failed")
+
+
+close_failure_attempts = []
+
+
+def open_close_failure_session():
+    session = CloseFailureSession()
+    close_failure_attempts.append(session)
+    return session
+
+
+try:
+    run_transport_session(
+        open_close_failure_session,
+        lambda _session: "completed",
+        "close failure session",
+        retry_window_seconds=1,
+        retry_interval_seconds=0,
+    )
+except smoke_common.ProbeOperationalFailure as exc:
+    assert "Failed to close close failure session" in str(exc)
+else:
+    raise AssertionError("close OSError unexpectedly retried")
+assert len(close_failure_attempts) == 1
+assert close_failure_attempts[0].closed is True
 
 
 class FakeHttpResponse:
@@ -320,6 +1306,11 @@ for script in \
     SMOKE_MUTATION_BOUNDARY=restricted-synthetic \
     GITHUB_ACTIONS=false \
     COMPOSE_PROJECT_NAME=firemud-smoke-contract bash "$script"
+  if [[ "$script" == *"tcp-proxy-service/telnet-login-look-smoke.sh" ]]; then
+    assert_command_rejects \
+      "Plaintext Telnet smoke requires a localhost-equivalent target" \
+      env SMOKE_TELNET_HOST=remotehost bash "$script"
+  fi
   grep -q 'SMOKE_MUTATION_EXTENSION=.*false' "$script"
   grep -q 'SMOKE_MUTATION_BOUNDARY=.*' "$script"
   grep -q 'require_smoke_mutation_boundary' "$script"

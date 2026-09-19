@@ -54,3 +54,8 @@ Entry format:
   - Context: focused Gradle tests for independent modules were launched concurrently during multi-module validation.
   - Observation: concurrent generation and compilation raced generated sources in a shared dependency and caused transient missing-generated-source errors that obscured the real result.
   - Expected pattern: run Gradle validation sequentially when tasks share generated-source dependencies, preferably through the canonical locked runner or one combined invocation, and parallelize only independent read-only checks such as script linting.
+
+- `2026-09-19`: Canonical validation wrappers and broad formatters need scope-safe invocation
+  - Context: successor validation in a dedicated stacked worktree used `dev-tools/validation/run-locked-gradle.sh` and `dev-tools/validation/validate-helm.sh`, then the repository-wide `spotlessApply` required by the validation workflow.
+  - Observation: both canonical shell entrypoints are tracked as non-executable, so direct invocation fails unless callers know to use `bash`; repository-wide Spotless also reformatted clean inherited controller files outside the assigned slice, requiring explicit diff inspection and scoped reversal before handoff.
+  - Expected pattern: either make canonical validation entrypoints executable or document `bash` as the required invocation, and treat broad automatic-formatting output as untrusted scope expansion until the resulting diff is inspected against ownership boundaries.

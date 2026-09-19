@@ -571,6 +571,42 @@ assert spec.loader is not None
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
+selector_labels = {"app": "tcp-proxy-service", "environment": "preview"}
+if not module.kubernetes_selector_matches(
+    {
+        "matchLabels": {"app": "tcp-proxy-service"},
+        "matchExpressions": [],
+    },
+    selector_labels,
+):
+    raise SystemExit("valid Kubernetes selector unexpectedly failed to match")
+if not module.kubernetes_selector_matches(
+    {
+        "matchExpressions": [
+            {"key": "role", "operator": "NotIn", "values": ["blocked"]}
+        ]
+    },
+    selector_labels,
+):
+    raise SystemExit("Kubernetes NotIn selector unexpectedly rejected an absent label key")
+if module.kubernetes_selector_matches(
+    {
+        "matchExpressions": [
+            {"key": "role", "operator": "NotIn", "values": ["blocked"]}
+        ]
+    },
+    {**selector_labels, "role": "blocked"},
+):
+    raise SystemExit("Kubernetes NotIn selector unexpectedly matched an included label value")
+for malformed_selector in (
+    {"matchLabels": []},
+    {"matchLabels": None},
+    {"matchExpressions": {}},
+    {"matchExpressions": None},
+):
+    if module.kubernetes_selector_matches(malformed_selector, selector_labels):
+        raise SystemExit(f"malformed Kubernetes selector was accepted: {malformed_selector!r}")
+
 expected_rfc8785_digest = "sha256:fd8b688bfa8b71822975ab3519e20b09e43b67d382a9f32831bfa384df21a82d"
 actual_rfc8785_digest = module.canonical_evidence_digest({"\ufffd": 2, "\U0001f600": 1})
 if actual_rfc8785_digest != expected_rfc8785_digest:
@@ -850,8 +886,12 @@ metadata:
   name: spring-cloud-gateway-mtls
 spec:
   type: ClusterIP
+  selector:
+    app: spring-cloud-gateway
   ports:
     - port: 443
+      targetPort: 8443
+      protocol: TCP
 ---
 apiVersion: v1
 kind: Secret
@@ -884,9 +924,61 @@ metadata:
   name: hobby-tcp-proxy-bridge
 type: Opaque
 stringData:
-  client.crt: bridge-client
-  client.key: bridge-key
+  tls.crt: bridge-client
+  tls.key: bridge-key
   ca.crt: bridge-ca
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spring-cloud-gateway
+spec:
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: spring-cloud-gateway
+    spec:
+      containers:
+        - name: spring-cloud-gateway
+          image: ghcr.io/benhook1013/spring-cloud-gateway:latest
+          env:
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED
+              value: "true"
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS
+              value: 0.0.0.0
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT
+              value: "8443"
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_CERT_CHAIN_PATH
+              value: /gateway-ws-server-tls/tls.crt
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_PRIVATE_KEY_PATH
+              value: /gateway-ws-server-tls/tls.key
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_CLIENT_CA_PATH
+              value: /gateway-ws-server-tls/ca.crt
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT
+              value: hobby-self-hosted
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE
+              value: production_uri
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN
+              value: spiffe://firemud/ns/firemud/sa/tcp-proxy-service
+          ports:
+            - containerPort: 8443
+          volumeMounts:
+            - name: gateway-ws-server-tls
+              mountPath: /gateway-ws-server-tls
+              readOnly: true
+      volumes:
+        - name: gateway-ws-server-tls
+          secret:
+            secretName: hobby-gateway-internal-ws
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+              - key: ca.crt
+                path: ca.crt
 ---
 apiVersion: v1
 kind: Secret
@@ -910,7 +1002,12 @@ kind: Deployment
 metadata:
   name: tcp-proxy-service
 spec:
+  strategy:
+    type: Recreate
   template:
+    metadata:
+      labels:
+        app: tcp-proxy-service
     spec:
       serviceAccountName: firemud-app
       containers:
@@ -926,11 +1023,11 @@ spec:
             - name: GATEWAY_WS_URL
               value: wss://spring-cloud-gateway-mtls.firemud.svc.cluster.local/ws/game
             - name: FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH
-              value: /tls/client.crt
+              value: /gateway-ws-client-tls/tls.crt
             - name: FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH
-              value: /tls/client.key
+              value: /gateway-ws-client-tls/tls.key
             - name: FIREMUD_GATEWAY_WS_CA_CERT_PATH
-              value: /tls/ca.crt
+              value: /gateway-ws-client-tls/ca.crt
           envFrom:
             - secretRef:
                 name: postgres-credentials
@@ -938,7 +1035,7 @@ spec:
                 name: firemud-config
           volumeMounts:
             - name: hobby-tcp-proxy-bridge
-              mountPath: /tls
+              mountPath: /gateway-ws-client-tls
               readOnly: true
             - name: grpc-tls
               mountPath: /grpc-tls
@@ -951,10 +1048,10 @@ spec:
           secret:
             secretName: hobby-tcp-proxy-bridge
             items:
-              - key: client.crt
-                path: client.crt
-              - key: client.key
-                path: client.key
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
               - key: ca.crt
                 path: ca.crt
         - name: grpc-tls
@@ -963,6 +1060,44 @@ spec:
         - name: jwt-signing-keys
           secret:
             secretName: jwt-signing-keys
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: spring-cloud-gateway-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app: spring-cloud-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: tcp-proxy-service
+      ports:
+        - protocol: TCP
+          port: 8443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tcp-proxy-service-egress
+spec:
+  podSelector:
+    matchLabels:
+      app: tcp-proxy-service
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: spring-cloud-gateway
+      ports:
+        - protocol: TCP
+          port: 8443
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -1415,6 +1550,286 @@ for policy_id in ("PREFLIGHT-JWT-001", "PREFLIGHT-JWKS-001"):
         raise SystemExit(f"{policy_id} diagnostic was incorrectly apply-blocking: {diagnostic}")
 PY
 
+# PREFLIGHT-BRIDGE-001 accepts each approved certificate-bound trust profile and
+# rejects incomplete, expired, inactive, or development-only profile settings.
+python3 - <<'PY' "$ROOT_DIR" "$RENDERED_MANIFEST"
+import copy
+import datetime as dt
+import importlib.util
+import pathlib
+import sys
+from types import SimpleNamespace
+
+import yaml
+
+root = pathlib.Path(sys.argv[1])
+render_path = pathlib.Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location(
+    "preflight_trust_profile_contract", root / "dev-tools/deploy/preflight.py"
+)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+base_documents = list(yaml.safe_load_all(render_path.read_text(encoding="utf-8")))
+expected = {
+    "environment": "hobby-self-hosted",
+    "internalBindings": {
+        "certificates": {
+            "gatewayInternalWsListenerRef": (
+                "cert-manager://firemud/hobby-gateway-internal-ws"
+            )
+        }
+    },
+}
+
+
+def gateway_env(documents):
+    deployment = next(
+        document
+        for document in documents
+        if document.get("kind") == "Deployment"
+        and document.get("metadata", {}).get("name") == "spring-cloud-gateway"
+    )
+    return next(
+        container
+        for container in deployment["spec"]["template"]["spec"]["containers"]
+        if container.get("name") == "spring-cloud-gateway"
+    )["env"]
+
+
+def with_profile(profile, **settings):
+    documents = copy.deepcopy(base_documents)
+    env = gateway_env(documents)
+    for entry in env:
+        if entry.get("name") == "FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE":
+            entry["value"] = profile
+    for name in module.GATEWAY_WS_TRUST_PROFILE_SETTING_NAMES_ALL:
+        env[:] = [entry for entry in env if entry.get("name") != name]
+    for name, value in settings.items():
+        env.append({"name": name, "value": value})
+    return documents
+
+
+def issues_for(documents):
+    return module.validate_gateway_ws_listener(documents, expected)[1]
+
+
+for invalid_environment in (None, 123, ""):
+    invalid_expected = copy.deepcopy(expected)
+    if invalid_environment is None:
+        invalid_expected.pop("environment")
+    else:
+        invalid_expected["environment"] = invalid_environment
+    invalid_issues = module.validate_gateway_ws_listener(
+        base_documents, invalid_expected
+    )[1]
+    if not any(
+        "expected environment must be a non-empty string" in issue
+        for issue in invalid_issues
+    ):
+        raise SystemExit(
+            f"invalid expected environment {invalid_environment!r} was accepted: "
+            + str(invalid_issues)
+        )
+
+
+future = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1)).isoformat()
+production_uri = "spiffe://firemud/ns/firemud/sa/tcp-proxy-service"
+production_documents = with_profile(
+    "production_uri",
+    FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN=production_uri,
+)
+if issues_for(production_documents):
+    raise SystemExit(
+        "canonical production_uri profile was rejected: "
+        + "; ".join(issues_for(production_documents))
+    )
+
+padded_production_uri = copy.deepcopy(production_documents)
+for entry in gateway_env(padded_production_uri):
+    if entry.get("name") == "FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN":
+        entry["value"] = f" {production_uri} "
+padded_production_uri_issues = issues_for(padded_production_uri)
+if not any(
+    "TRUST_URI_SAN must not contain surrounding whitespace" in issue
+    for issue in padded_production_uri_issues
+):
+    raise SystemExit(
+        "surrounding-whitespace production_uri profile was accepted: "
+        + str(padded_production_uri_issues)
+    )
+
+migration_documents = with_profile(
+    "migration_dns",
+    FIREMUD_GATEWAY_TCP_PROXY_TRUST_DNS_SAN="tcp-proxy.internal",
+    FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_OWNER="platform",
+    FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_REASON="issuer migration",
+    FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_EXPIRES_AT=future,
+)
+if issues_for(migration_documents):
+    raise SystemExit(
+        "complete migration_dns profile was rejected: "
+        + "; ".join(issues_for(migration_documents))
+    )
+
+padded_migration = copy.deepcopy(migration_documents)
+padded_migration_env = gateway_env(padded_migration)
+for entry in padded_migration_env:
+    if entry.get("name") == "FIREMUD_GATEWAY_TCP_PROXY_TRUST_DNS_SAN":
+        entry["value"] = " tcp-proxy.internal "
+padded_migration_issues = issues_for(padded_migration)
+if not any(
+    "FIREMUD_GATEWAY_TCP_PROXY_TRUST_DNS_SAN must not contain surrounding whitespace"
+    in issue
+    for issue in padded_migration_issues
+):
+    raise SystemExit(
+        "surrounding-whitespace migration_dns profile was accepted: "
+        + str(padded_migration_issues)
+    )
+
+breakglass_documents = with_profile(
+    "breakglass_fingerprint",
+    FIREMUD_GATEWAY_TCP_PROXY_TRUST_FINGERPRINT_SHA256="a" * 64,
+    FIREMUD_GATEWAY_TCP_PROXY_TRUST_INCIDENT_REFERENCE="INC-2713",
+    FIREMUD_GATEWAY_TCP_PROXY_TRUST_BREAKGLASS_EXPIRES_AT=future,
+)
+if issues_for(breakglass_documents):
+    raise SystemExit(
+        "complete breakglass_fingerprint profile was rejected: "
+        + "; ".join(issues_for(breakglass_documents))
+    )
+
+incomplete_migration = copy.deepcopy(migration_documents)
+incomplete_env = gateway_env(incomplete_migration)
+incomplete_env[:] = [
+    entry
+    for entry in incomplete_env
+    if entry.get("name") != "FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_OWNER"
+]
+incomplete_issues = issues_for(incomplete_migration)
+if not any("MIGRATION_OWNER is required" in issue for issue in incomplete_issues):
+    raise SystemExit(f"incomplete migration profile was accepted: {incomplete_issues}")
+
+expired_migration = copy.deepcopy(migration_documents)
+expired_migration_env = gateway_env(expired_migration)
+for entry in expired_migration_env:
+    if entry.get("name") == "FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_EXPIRES_AT":
+        entry["value"] = "2020-01-01T00:00:00Z"
+expired_migration_issues = issues_for(expired_migration)
+if not any(
+    "MIGRATION_EXPIRES_AT must be in the future" in issue
+    for issue in expired_migration_issues
+):
+    raise SystemExit(f"expired migration profile was accepted: {expired_migration_issues}")
+
+fixed_evaluation_time = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
+fixed_migration = copy.deepcopy(migration_documents)
+fixed_migration_env = gateway_env(fixed_migration)
+for entry in fixed_migration_env:
+    if entry.get("name") == "FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_EXPIRES_AT":
+        entry["value"] = "2026-01-01T00:00:01Z"
+if module.validate_gateway_ws_listener(
+    fixed_migration,
+    expected,
+    evaluation_time=fixed_evaluation_time,
+)[1]:
+    raise SystemExit("fixed evaluation time did not control migration expiry")
+
+fixed_breakglass = copy.deepcopy(breakglass_documents)
+fixed_breakglass_env = gateway_env(fixed_breakglass)
+for entry in fixed_breakglass_env:
+    if entry.get("name") == "FIREMUD_GATEWAY_TCP_PROXY_TRUST_BREAKGLASS_EXPIRES_AT":
+        entry["value"] = "2026-01-01T00:00:01Z"
+if module.validate_gateway_ws_listener(
+    fixed_breakglass,
+    expected,
+    evaluation_time=fixed_evaluation_time,
+)[1]:
+    raise SystemExit("fixed evaluation time did not control break-glass expiry")
+
+original_datetime_dependency = module.dt
+original_datetime = original_datetime_dependency.datetime
+class WallClockTrapDateTime(original_datetime):
+    @classmethod
+    def now(cls, tz=None):
+        raise AssertionError("Gateway bridge validation sampled wall-clock time")
+
+module.dt = SimpleNamespace(
+    datetime=WallClockTrapDateTime,
+    timezone=original_datetime_dependency.timezone,
+    timedelta=original_datetime_dependency.timedelta,
+)
+try:
+    if module.validate_gateway_ws_listener(
+        fixed_migration,
+        expected,
+        evaluation_time=fixed_evaluation_time,
+    )[1]:
+        raise SystemExit("fixed migration validation failed while wall clock was unavailable")
+finally:
+    module.dt = original_datetime_dependency
+
+try:
+    module.validate_gateway_ws_listener(
+        fixed_migration,
+        expected,
+        evaluation_time=dt.datetime(2026, 1, 1),
+    )
+except ValueError as error:
+    if str(error) != "evaluation time must include a timezone":
+        raise SystemExit(f"naive evaluation time had the wrong diagnostic: {error}")
+else:
+    raise SystemExit("naive Gateway evaluation time did not fail closed")
+
+incomplete_breakglass = copy.deepcopy(breakglass_documents)
+incomplete_breakglass_env = gateway_env(incomplete_breakglass)
+incomplete_breakglass_env[:] = [
+    entry
+    for entry in incomplete_breakglass_env
+    if entry.get("name") != "FIREMUD_GATEWAY_TCP_PROXY_TRUST_INCIDENT_REFERENCE"
+]
+incomplete_breakglass_issues = issues_for(incomplete_breakglass)
+if not any(
+    "INCIDENT_REFERENCE is required" in issue
+    for issue in incomplete_breakglass_issues
+):
+    raise SystemExit(
+        "incomplete breakglass profile was accepted: "
+        + str(incomplete_breakglass_issues)
+    )
+
+expired_breakglass = copy.deepcopy(breakglass_documents)
+expired_env = gateway_env(expired_breakglass)
+for entry in expired_env:
+    if entry.get("name") == "FIREMUD_GATEWAY_TCP_PROXY_TRUST_BREAKGLASS_EXPIRES_AT":
+        entry["value"] = "2020-01-01T00:00:00Z"
+expired_issues = issues_for(expired_breakglass)
+if not any("BREAKGLASS_EXPIRES_AT must be in the future" in issue for issue in expired_issues):
+    raise SystemExit(f"expired breakglass profile was accepted: {expired_issues}")
+
+inactive_migration = copy.deepcopy(migration_documents)
+gateway_env(inactive_migration).append(
+    {
+        "name": "FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN",
+        "value": "spiffe://firemud/ns/firemud/sa/tcp-proxy-service",
+    }
+)
+inactive_issues = issues_for(inactive_migration)
+if not any("inactive trust-profile settings" in issue for issue in inactive_issues):
+    raise SystemExit(f"inactive production URI setting was accepted: {inactive_issues}")
+
+development_documents = with_profile(
+    "development_cidr",
+    FIREMUD_GATEWAY_TCP_PROXY_TRUST_DEVELOPMENT_CIDR="10.20.0.0/16",
+)
+development_issues = issues_for(development_documents)
+if not any("development_cidr is forbidden" in issue for issue in development_issues):
+    raise SystemExit(f"development_cidr profile was accepted: {development_issues}")
+PY
+
 # A ConfigMap-backed player-facing fixture remains deferred and must fail required binding checks.
 set +e
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
@@ -1545,6 +1960,7 @@ def called_name(node):
 class MainContractVisitor(ast.NodeVisitor):
     promotion_attestation_reload = False
     recovery_compatibility_evaluations = 0
+    hosted_telnet_target_namespace = False
 
     def visit_Call(self, node):
         if called_name(node.func) == "load_json" and any(
@@ -1555,6 +1971,13 @@ class MainContractVisitor(ast.NodeVisitor):
             self.promotion_attestation_reload = True
         if called_name(node.func) == "recovery_compatibility_check":
             self.recovery_compatibility_evaluations += 1
+        if called_name(node.func) == "validate_hosted_telnet_tls_values" and any(
+            keyword.arg == "target_namespace"
+            and isinstance(keyword.value, ast.Name)
+            and keyword.value.id == "target_namespace"
+            for keyword in node.keywords
+        ):
+            self.hosted_telnet_target_namespace = True
         self.generic_visit(node)
 
 
@@ -1564,15 +1987,100 @@ if main_contract.promotion_attestation_reload:
     raise SystemExit("production preflight reloaded the promotion attestation inside main")
 if main_contract.recovery_compatibility_evaluations:
     raise SystemExit("production preflight duplicated recovery compatibility evaluation inside main")
+if not main_contract.hosted_telnet_target_namespace:
+    raise SystemExit(
+        "production preflight must pass the derived target_namespace to hosted Telnet TLS validation"
+    )
+
+
+def has_clean_namespace_failure(function_name):
+    functions = [
+        node
+        for node in preflight_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == function_name
+    ]
+    if len(functions) != 1:
+        raise SystemExit(f"expected exactly one {function_name} definition")
+    for node in ast.walk(functions[0]):
+        if not isinstance(node, ast.Try):
+            continue
+        for handler in node.handlers:
+            if not isinstance(handler.type, ast.Name) or handler.type.id != "ValueError":
+                continue
+            if any(
+                isinstance(call.func, ast.Name)
+                and call.func.id == "fail"
+                for statement in handler.body
+                for call in ast.walk(statement)
+                if isinstance(call, ast.Call)
+            ):
+                return True
+    return False
+
+
+if not has_clean_namespace_failure("main"):
+    raise SystemExit("main does not retain fail-fast handling for ambiguous workload namespaces")
 
 spec = importlib.util.spec_from_file_location("preflight_hobby_contract", root / "dev-tools/deploy/preflight.py")
 module = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
+expected_bindings_path = root / "design/operations/environments/hobby-self-hosted/expected-bindings.yaml"
+expected_bindings = module.load_yaml(expected_bindings_path)
 
 deployment_event_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 validation_now = module.dt.datetime(2026, 1, 1, 0, 5, tzinfo=module.dt.timezone.utc)
+
+ambiguous_workload_documents = [
+    {
+        "kind": "Deployment",
+        "metadata": {"name": "account-service", "namespace": "firemud"},
+        "spec": {"template": {"spec": {"containers": [{"name": "account-service"}]}}},
+    },
+    {
+        "kind": "Deployment",
+        "metadata": {"name": "game-session-service", "namespace": "other"},
+        "spec": {"template": {"spec": {"containers": [{"name": "game-session-service"}]}}},
+    },
+]
+try:
+    module.primary_workload_namespace(ambiguous_workload_documents)
+except ValueError as error:
+    if "primary workload namespace is ambiguous" not in str(error):
+        raise SystemExit(f"ambiguous workload namespace error was not explicit: {error}")
+else:
+    raise SystemExit("ambiguous workload namespaces were accepted before hosted checks")
+
+ambiguous_binding_results = module.expected_binding_checks(
+    expected_bindings_path,
+    "design/operations/environments/hobby-self-hosted/expected-bindings.yaml",
+    "hobby-self-hosted",
+    ambiguous_workload_documents,
+    expected_bindings=expected_bindings,
+)
+ambiguous_services_result = next(
+    (
+        result
+        for result in ambiguous_binding_results
+        if result.policy_id == "PREFLIGHT-SERVICES-001"
+    ),
+    None,
+)
+if ambiguous_services_result is None:
+    raise SystemExit(
+        "expected_binding_checks did not report ambiguous workload namespaces"
+    )
+if (
+    ambiguous_services_result.status != "fail"
+    or not ambiguous_services_result.required
+    or "primary workload namespace is ambiguous" not in ambiguous_services_result.message
+):
+    raise SystemExit(
+        "expected_binding_checks did not return the required namespace failure report: "
+        f"{ambiguous_services_result}"
+    )
 
 
 def validate_report(report, environment, deployment_ref):
@@ -1844,19 +2352,12 @@ if not_applicable_status != "fail" or "non-passing required policy IDs" not in n
 
 PY
 
-# The checked-in production overlay lacks the dedicated bridge client wiring,
-# so static preflight must fail closed rather than authorize URL-only wiring.
-set +e
+# The checked-in production overlay includes the complete dedicated bridge
+# client wiring, so static preflight must pass its bridge contract.
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF="$CHECKED_OUT_SHA" \
   FIREMUD_PREFLIGHT_OUTPUT="$PRODUCTION_REPORT" \
   python3 "$SCRIPT" production >"$LEGACY_PRODUCTION_PREFLIGHT_OUTPUT"
-production_preflight_status=$?
-set -e
-if [ "$production_preflight_status" -eq 0 ]; then
-  echo "production preflight unexpectedly authorized URL-only bridge wiring" >&2
-  exit 1
-fi
 python3 - "$PRODUCTION_REPORT" <<'PY'
 import json
 import pathlib
@@ -1864,8 +2365,8 @@ import sys
 
 report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 bridge = next(check for check in report["checkResults"] if check["policyId"] == "PREFLIGHT-BRIDGE-001")
-if bridge["status"] != "fail" or bridge["required"] is not True:
-    raise SystemExit(f"production bridge gap was not an explicit required failure: {bridge}")
+if bridge["status"] != "pass" or bridge["required"] is not True:
+    raise SystemExit(f"production bridge contract did not pass as required: {bridge}")
 PY
 
 cat >"$LEGACY_PRODUCTION_TRAFFIC_EVIDENCE" <<'JSON'
@@ -1962,19 +2463,12 @@ fi
 
 for env in staging production; do
   REPORT="$TMP_DIR/preflight-$env.json"
-  # These checked-in overlays lack the dedicated bridge client wiring; static
-  # CI must record that required gap rather than authorize URL-only wiring.
-  set +e
+  # Checked-in overlays include the complete dedicated bridge client wiring;
+  # static CI must pass the required bridge contract.
   FIREMUD_PREFLIGHT_CONTEXT=ci-static \
     FIREMUD_DEPLOYMENT_REF="$CHECKED_OUT_SHA" \
     FIREMUD_PREFLIGHT_OUTPUT="$REPORT" \
     python3 "$SCRIPT" "$env" >"$TMP_DIR/firemud-preflight-contract-$env.out"
-  preflight_status=$?
-  set -e
-  if [ "$preflight_status" -eq 0 ]; then
-    echo "$env: URL-only bridge wiring unexpectedly passed static CI" >&2
-    exit 1
-  fi
 
   python3 - <<'PY' "$REPORT" "$env"
 import json
@@ -1989,13 +2483,13 @@ if report.get("expectedBindingsRef") != expected_ref:
 failures = [
     check
     for check in report["checkResults"]
-    if check["status"] == "fail" and check["policyId"] not in {"PREFLIGHT-JWT-001", "PREFLIGHT-JWKS-001", "PREFLIGHT-BRIDGE-001", "PREFLIGHT-SERVICES-001", "PREFLIGHT-REDIS-001"}
+    if check["status"] == "fail" and check["policyId"] not in {"PREFLIGHT-JWT-001", "PREFLIGHT-JWKS-001", "PREFLIGHT-SERVICES-001", "PREFLIGHT-REDIS-001"}
 ]
 if failures:
     raise SystemExit(f"{env}: unexpected preflight failures: {failures}")
 bridge = [check for check in report["checkResults"] if check["policyId"] == "PREFLIGHT-BRIDGE-001"]
-if len(bridge) != 1 or bridge[0]["status"] != "fail" or bridge[0]["required"] is not True:
-    raise SystemExit(f"{env}: missing explicit required bridge-client failure: {bridge}")
+if len(bridge) != 1 or bridge[0]["status"] != "pass" or bridge[0]["required"] is not True:
+    raise SystemExit(f"{env}: bridge-client contract did not pass as required: {bridge}")
 for policy_id in ("PREFLIGHT-SERVICES-001", "PREFLIGHT-REDIS-001"):
     effective_check = [check for check in report["checkResults"] if check["policyId"] == policy_id]
     if len(effective_check) != 1 or effective_check[0]["status"] != "pass" or effective_check[0]["required"] is not True:
@@ -2011,10 +2505,13 @@ PY
 done
 
 python3 - <<'PY' "$ROOT_DIR" "$TMP_DIR"
+import datetime as dt
+import contextlib
 import copy
 import hashlib
-import json
 import importlib.util
+import io
+import json
 import os
 import pathlib
 import sys
@@ -3476,16 +3973,295 @@ _, malformed_secret_issues = module.effective_container_env(
 if not malformed_secret_issues or any("%%%not-base64%%%" in issue for issue in malformed_secret_issues):
     raise SystemExit(f"invalid Secret data was not rejected without leakage: {malformed_secret_issues}")
 
-bridge_values, bridge_issues = module.validate_gateway_ws_values(
-    rendered_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+original_gateway_endpoint = module.canonical_gateway_ws_endpoint
+original_gateway_listener = module.validate_gateway_ws_listener
+original_gateway_network_policy = module.validate_gateway_ws_network_policy
+fixed_evaluation_time = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
+captured_bridge_evaluation_times = []
+module.canonical_gateway_ws_endpoint = lambda documents, expected: (
+    "spring-cloud-gateway-mtls.firemud.svc.cluster.local:443",
+    [],
 )
+module.validate_gateway_ws_listener = lambda documents, expected, **kwargs: (
+    captured_bridge_evaluation_times.append(kwargs.get("evaluation_time"))
+    or (set(), [])
+)
+module.validate_gateway_ws_network_policy = lambda documents, namespace: []
+try:
+    bridge_values, bridge_issues = module.validate_gateway_ws_values(
+        rendered_documents,
+        yaml.safe_load(current_expected_path.read_text(encoding="utf-8")),
+        evaluation_time=fixed_evaluation_time,
+    )
+finally:
+    module.canonical_gateway_ws_endpoint = original_gateway_endpoint
+    module.validate_gateway_ws_listener = original_gateway_listener
+    module.validate_gateway_ws_network_policy = original_gateway_network_policy
 if bridge_issues or not bridge_values:
     raise SystemExit(f"canonical bridge fixture did not pass: {bridge_issues}")
+if captured_bridge_evaluation_times != [fixed_evaluation_time]:
+    raise SystemExit(
+        "Gateway bridge validation did not thread its fixed evaluation time: "
+        + repr(captured_bridge_evaluation_times)
+    )
+
+non_default_gateway_port_documents = copy.deepcopy(rendered_documents)
+non_default_gateway_service = next(
+    document
+    for document in non_default_gateway_port_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "spring-cloud-gateway-mtls"
+)
+non_default_gateway_service["spec"]["ports"][0]["port"] = 8444
+for document in non_default_gateway_port_documents:
+    if document.get("kind") != "Deployment" or document.get("metadata", {}).get("name") != "tcp-proxy-service":
+        continue
+    for container in document["spec"]["template"]["spec"]["containers"]:
+        for entry in container.get("env", []):
+            if entry.get("name") == "GATEWAY_WS_URL":
+                entry["value"] = "wss://spring-cloud-gateway-mtls.firemud.svc.cluster.local:8444/ws/game"
+non_default_expected = yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+non_default_canonical, non_default_canonical_issues = module.canonical_gateway_ws_endpoint(
+    non_default_gateway_port_documents, non_default_expected
+)
+if non_default_canonical_issues or non_default_canonical != "spring-cloud-gateway-mtls.firemud.svc.cluster.local:8444":
+    raise SystemExit(
+        "canonical Gateway bridge endpoint did not use the rendered Service port: "
+        f"{non_default_canonical}, {non_default_canonical_issues}"
+    )
+non_default_values, non_default_issues = module.validate_gateway_ws_values(
+    non_default_gateway_port_documents, non_default_expected
+)
+if non_default_issues or not non_default_values:
+    raise SystemExit(
+        "Gateway bridge URL did not match a non-default rendered Service port: "
+        f"{non_default_issues}"
+    )
+for invalid_service_port in ("8444", True, 0, 65536):
+    invalid_port_documents = copy.deepcopy(rendered_documents)
+    invalid_port_service = next(
+        document
+        for document in invalid_port_documents
+        if document.get("kind") == "Service"
+        and document.get("metadata", {}).get("name") == "spring-cloud-gateway-mtls"
+    )
+    invalid_port_service["spec"]["ports"][0]["port"] = invalid_service_port
+    _, invalid_port_issues = module.canonical_gateway_ws_endpoint(
+        invalid_port_documents, non_default_expected
+    )
+    if not any(
+        "Gateway mTLS Service port must be an integer in range 1..65535" in issue
+        for issue in invalid_port_issues
+    ):
+        raise SystemExit(
+            "invalid rendered Gateway Service port was accepted: "
+            f"{invalid_service_port!r}, {invalid_port_issues}"
+        )
+for document in non_default_gateway_port_documents:
+    if document.get("kind") != "Deployment" or document.get("metadata", {}).get("name") != "tcp-proxy-service":
+        continue
+    for container in document["spec"]["template"]["spec"]["containers"]:
+        for entry in container.get("env", []):
+            if entry.get("name") == "GATEWAY_WS_URL":
+                entry["value"] = "wss://spring-cloud-gateway-mtls.firemud.svc.cluster.local:443/ws/game"
+_, non_default_mismatch_issues = module.validate_gateway_ws_values(
+    non_default_gateway_port_documents, non_default_expected
+)
+if not any(
+    "does not match canonical spring-cloud-gateway-mtls.firemud.svc.cluster.local:8444/ws/game"
+    in issue
+    for issue in non_default_mismatch_issues
+):
+    raise SystemExit(
+        "Gateway bridge URL mismatch against a non-default rendered Service port was accepted: "
+        f"{non_default_mismatch_issues}"
+    )
+
+mixed_port_documents = copy.deepcopy(rendered_documents)
+gateway_ingress_policy = next(
+    document
+    for document in mixed_port_documents
+    if document.get("kind") == "NetworkPolicy"
+    and document.get("metadata", {}).get("name") == "spring-cloud-gateway-ingress"
+)
+gateway_ingress_policy["spec"]["ingress"][0]["ports"].append(
+    {"protocol": "TCP", "port": "gateway-ws"}
+)
+_, mixed_port_issues = module.validate_gateway_ws_values(
+    mixed_port_documents,
+    yaml.safe_load(current_expected_path.read_text(encoding="utf-8")),
+)
+if not any("must not use a named port" in issue for issue in mixed_port_issues):
+    raise SystemExit(
+        "named port after canonical numeric listener port was skipped: "
+        f"{mixed_port_issues}"
+    )
+
+omitted_protocol_documents = copy.deepcopy(rendered_documents)
+for policy_name, direction in (
+    ("spring-cloud-gateway-ingress", "ingress"),
+    ("tcp-proxy-service-egress", "egress"),
+):
+    policy = next(
+        document
+        for document in omitted_protocol_documents
+        if document.get("kind") == "NetworkPolicy"
+        and document.get("metadata", {}).get("name") == policy_name
+    )
+    del policy["spec"][direction][0]["ports"][0]["protocol"]
+omitted_protocol_issues = module.validate_gateway_ws_network_policy(
+    omitted_protocol_documents, "firemud"
+)
+if omitted_protocol_issues:
+    raise SystemExit(
+        "Kubernetes-default TCP protocol was rejected for the Gateway bridge: "
+        f"{omitted_protocol_issues}"
+    )
+
+end_port_documents = copy.deepcopy(rendered_documents)
+for policy_name, direction in (
+    ("spring-cloud-gateway-ingress", "ingress"),
+    ("tcp-proxy-service-egress", "egress"),
+):
+    policy = next(
+        document
+        for document in end_port_documents
+        if document.get("kind") == "NetworkPolicy"
+        and document.get("metadata", {}).get("name") == policy_name
+    )
+    policy["spec"][direction][0]["ports"][0]["endPort"] = 8443
+end_port_issues = module.validate_gateway_ws_network_policy(
+    end_port_documents, "firemud"
+)
+if end_port_issues.count("Gateway ingress listener rule must be exactly TCP 8443") != 1:
+    raise SystemExit(
+        "Gateway bridge accepted an 8443..8443 endPort range: "
+        f"{end_port_issues}"
+    )
+if end_port_issues.count("TCP Proxy egress listener rule must be exactly TCP 8443") != 1:
+    raise SystemExit(
+        "TCP Proxy bridge accepted an 8443..8443 endPort range: "
+        f"{end_port_issues}"
+    )
+
+invalid_policy_type_documents = copy.deepcopy(rendered_documents)
+invalid_policy_type_documents.append(
+    {
+        "kind": "NetworkPolicy",
+        "metadata": {"name": "invalid-policy-types", "namespace": "firemud"},
+        "spec": {
+            "podSelector": {},
+            "policyTypes": ["Ingress", "Ingress"],
+        },
+    }
+)
+_, invalid_policy_type_issues = module.validate_gateway_ws_values(
+    invalid_policy_type_documents,
+    yaml.safe_load(current_expected_path.read_text(encoding="utf-8")),
+)
+invalid_policy_type_message = "invalid-policy-types has invalid policyTypes"
+if invalid_policy_type_issues.count(invalid_policy_type_message) != 1:
+    raise SystemExit(
+        "one invalid NetworkPolicy identity did not produce exactly one diagnostic: "
+        f"{invalid_policy_type_issues}"
+    )
+
+for workload_kind in ("StatefulSet", "DaemonSet"):
+    non_deployment_documents = copy.deepcopy(rendered_documents)
+    bridge_workload = next(
+        document
+        for document in non_deployment_documents
+        if document.get("kind") == "Deployment"
+        and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    )
+    bridge_workload["kind"] = workload_kind
+    bridge_workload["spec"].pop("strategy")
+    _, non_deployment_issues = module.validate_gateway_ws_values(
+        non_deployment_documents,
+        yaml.safe_load(current_expected_path.read_text(encoding="utf-8")),
+    )
+    if any("bridge Deployment strategy must be Recreate" in issue for issue in non_deployment_issues):
+        raise SystemExit(
+            f"{workload_kind} bridge incorrectly required Deployment strategy: "
+            f"{non_deployment_issues}"
+        )
+if not module.path_is_under_mount("/grpc-tls/client.crt", "/grpc-tls"):
+    raise SystemExit("gRPC TLS path was not recognized beneath its mount")
+if module.path_is_under_mount("/grpc-tls-shadow/client.crt", "/grpc-tls"):
+    raise SystemExit("gRPC TLS mount matching accepted a sibling path prefix")
+labeled_bridge_issues = module.label_bridge_validation_issues(
+    ["certificate-backed Gateway bridge is unavailable"],
+    ["dedicated Telnet TLS certificate is unavailable"],
+)
+if labeled_bridge_issues != [
+    "Gateway bridge: certificate-backed Gateway bridge is unavailable",
+    "Hosted Telnet TLS: dedicated Telnet TLS certificate is unavailable",
+]:
+    raise SystemExit(f"bridge transport failures were not labeled separately: {labeled_bridge_issues}")
+bridge_failure_results = []
+bridge_failure_status, bridge_failure_message = module.bridge_validation_result(
+    labeled_bridge_issues
+)
+module.append_result(
+    bridge_failure_results,
+    "PREFLIGHT-BRIDGE-001",
+    True,
+    bridge_failure_status,
+    bridge_failure_message,
+)
+if len(bridge_failure_results) != 1 or bridge_failure_results[0].message != (
+    "Bridge and Telnet transport validation failed: "
+    "Gateway bridge: certificate-backed Gateway bridge is unavailable; "
+    "Hosted Telnet TLS: dedicated Telnet TLS certificate is unavailable"
+):
+    raise SystemExit(
+        "combined bridge failure was emitted with a misleading transport subject: "
+        f"{bridge_failure_results}"
+    )
+bridge_pass_results = []
+bridge_pass_status, bridge_pass_message = module.bridge_validation_result([])
+module.append_result(
+    bridge_pass_results,
+    "PREFLIGHT-BRIDGE-001",
+    True,
+    bridge_pass_status,
+    bridge_pass_message,
+)
+if len(bridge_pass_results) != 1 or bridge_pass_results[0].message != (
+    "Gateway bridge and direct Telnet TLS alignment is valid"
+):
+    raise SystemExit(
+        "successful bridge diagnostic must name both Gateway and direct Telnet TLS scope: "
+        f"{bridge_pass_results}"
+    )
 invalid_listener_expected = yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
 invalid_listener_expected["internalBindings"]["certificates"]["gatewayInternalWsListenerRef"] = "secret://firemud/not-a-cert-manager-binding"
 _, invalid_listener_issues = module.validate_gateway_ws_values(rendered_documents, invalid_listener_expected)
 if not any("gatewayInternalWsListenerRef must be a cert-manager binding" in issue for issue in invalid_listener_issues):
     raise SystemExit(f"malformed Gateway listener binding was not rejected explicitly: {invalid_listener_issues}")
+invalid_listener_container_documents = copy.deepcopy(rendered_documents)
+invalid_listener_gateway = next(
+    document
+    for document in invalid_listener_container_documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "spring-cloud-gateway"
+)
+invalid_listener_gateway["spec"]["strategy"] = {"type": "Recreate"}
+invalid_listener_gateway["spec"]["template"]["spec"]["containers"] = []
+_, invalid_listener_container_issues = module.validate_gateway_ws_listener(
+    invalid_listener_container_documents,
+    yaml.safe_load(current_expected_path.read_text(encoding="utf-8")),
+)
+if (
+    "Gateway bridge Deployment strategy must be RollingUpdate or omitted so Kubernetes uses its default for ordinary availability-preserving replacement; emergency identity withdrawal requires controller termination and is not proven by this rendered strategy"
+    not in invalid_listener_container_issues
+    or "Gateway Deployment must contain one spring-cloud-gateway container"
+    not in invalid_listener_container_issues
+):
+    raise SystemExit(
+        "invalid Gateway strategy was lost when the listener container count was invalid: "
+        f"{invalid_listener_container_issues}"
+    )
 bridge_mutation = copy.deepcopy(rendered_documents)
 for document in bridge_mutation:
     if document.get("kind") == "Deployment" and document.get("metadata", {}).get("name") == "tcp-proxy-service":
@@ -3556,13 +4332,13 @@ account_container = next(
 account_container.setdefault("env", []).extend(
     [
         {"name": "GATEWAY_WS_URL", "value": "wss://spring-cloud-gateway-mtls.firemud.svc.cluster.local:443/ws/game"},
-        {"name": "FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH", "value": "/tls/client.crt"},
-        {"name": "FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH", "value": "/tls/client.key"},
-        {"name": "FIREMUD_GATEWAY_WS_CA_CERT_PATH", "value": "/tls/ca.crt"},
+        {"name": "FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH", "value": "/gateway-ws-client-tls/tls.crt"},
+        {"name": "FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH", "value": "/gateway-ws-client-tls/tls.key"},
+        {"name": "FIREMUD_GATEWAY_WS_CA_CERT_PATH", "value": "/gateway-ws-client-tls/ca.crt"},
     ]
 )
 account_container.setdefault("volumeMounts", []).append(
-    {"name": "hobby-tcp-proxy-bridge", "mountPath": "/tls", "readOnly": True}
+    {"name": "hobby-tcp-proxy-bridge", "mountPath": "/gateway-ws-client-tls", "readOnly": True}
 )
 account_deployment["spec"]["template"]["spec"].setdefault("volumes", []).append(
     {"name": "hobby-tcp-proxy-bridge", "secret": {"secretName": "hobby-tcp-proxy-bridge"}}
@@ -3586,9 +4362,9 @@ def set_bridge_env(documents, name, value):
 
 
 for path_name, expected_path in (
-    ("FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH", "/tls/client.crt"),
-    ("FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH", "/tls/client.key"),
-    ("FIREMUD_GATEWAY_WS_CA_CERT_PATH", "/tls/ca.crt"),
+    ("FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH", "/gateway-ws-client-tls/tls.crt"),
+    ("FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH", "/gateway-ws-client-tls/tls.key"),
+    ("FIREMUD_GATEWAY_WS_CA_CERT_PATH", "/gateway-ws-client-tls/ca.crt"),
 ):
     bridge_path_documents = copy.deepcopy(rendered_documents)
     set_bridge_url(bridge_path_documents, canonical_bridge_url)
@@ -3613,7 +4389,7 @@ bridge_mount_container["volumeMounts"] = [
 _, bridge_mount_issues = module.validate_gateway_ws_values(
     bridge_mount_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
 )
-if not any("dedicated read-only Secret-backed /tls mount" in issue for issue in bridge_mount_issues):
+if not any("requires exactly one /gateway-ws-client-tls mount" in issue for issue in bridge_mount_issues):
     raise SystemExit(f"missing bridge client mount was accepted: {bridge_mount_issues}")
 
 bridge_readonly_documents = copy.deepcopy(rendered_documents)
@@ -3630,7 +4406,7 @@ next(
 _, bridge_readonly_issues = module.validate_gateway_ws_values(
     bridge_readonly_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
 )
-if not any("dedicated read-only Secret-backed /tls mount" in issue for issue in bridge_readonly_issues):
+if not any("/gateway-ws-client-tls mount must be read-only" in issue for issue in bridge_readonly_issues):
     raise SystemExit(f"writable bridge client mount was accepted: {bridge_readonly_issues}")
 
 bridge_secret_documents = copy.deepcopy(rendered_documents)
@@ -3648,7 +4424,7 @@ next(
 _, bridge_secret_issues = module.validate_gateway_ws_values(
     bridge_secret_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
 )
-if not any("must reference Secret firemud/hobby-tcp-proxy-bridge" in issue for issue in bridge_secret_issues):
+if not any("must reference Secret hobby-tcp-proxy-bridge" in issue for issue in bridge_secret_issues):
     raise SystemExit(f"wrong bridge Secret identity was accepted: {bridge_secret_issues}")
 
 bridge_subpath_documents = copy.deepcopy(rendered_documents)
@@ -3667,6 +4443,23 @@ _, bridge_subpath_issues = module.validate_gateway_ws_values(
 )
 if not any("must not use subPath" in issue for issue in bridge_subpath_issues):
     raise SystemExit(f"bridge Secret subPath was accepted: {bridge_subpath_issues}")
+
+bridge_subpath_expr_documents = copy.deepcopy(rendered_documents)
+bridge_subpath_expr_container = next(
+    container
+    for document in bridge_subpath_expr_documents
+    if document.get("kind") == "Deployment" and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    for container in document["spec"]["template"]["spec"]["containers"]
+    if container.get("name") == "tcp-proxy-service"
+)
+next(
+    mount for mount in bridge_subpath_expr_container["volumeMounts"] if mount.get("name") == "hobby-tcp-proxy-bridge"
+)["subPathExpr"] = "$(POD_NAME).crt"
+_, bridge_subpath_expr_issues = module.validate_gateway_ws_values(
+    bridge_subpath_expr_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+)
+if not any("must not use subPathExpr" in issue for issue in bridge_subpath_expr_issues):
+    raise SystemExit(f"bridge Secret subPathExpr was accepted: {bridge_subpath_expr_issues}")
 
 bridge_items_documents = copy.deepcopy(rendered_documents)
 bridge_items_volume = next(
@@ -3743,7 +4536,7 @@ next(
 _, bridge_identity_issues = module.validate_gateway_ws_values(
     bridge_identity_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
 )
-if not any("dedicated read-only Secret-backed /tls mount" in issue for issue in bridge_identity_issues):
+if not any("must reference Secret hobby-tcp-proxy-bridge" in issue for issue in bridge_identity_issues):
     raise SystemExit(f"bridge client reused the gRPC Secret identity without failing: {bridge_identity_issues}")
 
 bridge_same_identity_documents = copy.deepcopy(rendered_documents)
@@ -3760,7 +4553,7 @@ next(
 _, bridge_same_identity_issues = module.validate_gateway_ws_values(
     bridge_same_identity_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
 )
-if not any("dedicated read-only Secret-backed /tls mount" in issue for issue in bridge_same_identity_issues):
+if not any("bridge client Secret must be distinct from the gRPC TLS Secret" in issue for issue in bridge_same_identity_issues):
     raise SystemExit(f"bridge client reused the gRPC Secret identity without failing: {bridge_same_identity_issues}")
 
 bridge_missing_grpc_path_documents = copy.deepcopy(rendered_documents)
@@ -3858,6 +4651,168 @@ _, bridge_namespace_issues = module.validate_gateway_ws_values(
 )
 if not any("namespace does not match" in issue for issue in bridge_namespace_issues):
     raise SystemExit(f"bridge workload namespace mismatch was accepted: {bridge_namespace_issues}")
+
+telnet_documents = [
+    {
+        "kind": "Service",
+        "metadata": {"name": "tcp-proxy-service", "namespace": "firemud"},
+        "spec": {
+            "type": "NodePort",
+            "ports": [
+                {
+                    "port": 2323,
+                    "targetPort": 2323,
+                    "protocol": "TCP",
+                    "nodePort": 32023,
+                }
+            ],
+        },
+    },
+    {
+        "kind": "Certificate",
+        "metadata": {"name": "hobby-telnet-tls", "namespace": "firemud"},
+        "spec": {"secretName": "hobby-telnet-tls"},
+    },
+    {
+        "kind": "Ingress",
+        "metadata": {"name": "hobby-ingress", "namespace": "firemud"},
+        "spec": {"tls": [{"secretName": "hobby-http-tls"}]},
+    },
+    {
+        "kind": "Deployment",
+        "metadata": {"name": "tcp-proxy-service", "namespace": "firemud"},
+        "spec": {
+            "template": {
+                "spec": {
+                    "containers": [
+                        {
+                            "name": "tcp-proxy-service",
+                            "env": [
+                                {"name": "TCP_PROXY_TLS_ENABLED", "value": "true"},
+                                {"name": "TCP_PROXY_TLS_CERT", "value": "/telnet-tls/tls.crt"},
+                                {"name": "TCP_PROXY_TLS_KEY", "value": "/telnet-tls/tls.key"},
+                                {"name": "TCP_PROXY_TELNET_MODE", "value": "DIRECT_TLS"},
+                            ],
+                            "volumeMounts": [
+                                {"name": "telnet-tls", "mountPath": "/telnet-tls", "readOnly": True}
+                            ],
+                        }
+                    ],
+                    "volumes": [
+                        {"name": "telnet-tls", "secret": {"secretName": "hobby-telnet-tls"}}
+                    ],
+                }
+            }
+        },
+    },
+]
+telnet_issues = module.validate_hosted_telnet_tls_values(telnet_documents)
+if telnet_issues:
+    raise SystemExit(f"canonical hosted Telnet TLS fixture did not pass: {telnet_issues}")
+non_default_telnet_documents = copy.deepcopy(telnet_documents)
+for document in non_default_telnet_documents:
+    document.setdefault("metadata", {})["namespace"] = "pr-42"
+    if document.get("kind") in {"Service", "Deployment"}:
+        document["metadata"].setdefault("labels", {})[
+            "firemud.dev/certificate-identity-mode"
+        ] = "standalone"
+non_default_telnet_service = next(
+    document
+    for document in non_default_telnet_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+non_default_telnet_service["spec"]["ports"][0]["targetPort"] = 2324
+derived_namespace = next(
+    (
+        module.workload_namespace(document)
+        for document in non_default_telnet_documents
+        if module.primary_containers(document)
+    ),
+    "firemud",
+)
+if derived_namespace != "pr-42":
+    raise SystemExit(f"general overlay preflight did not derive workload namespace: {derived_namespace}")
+non_default_telnet_issues = module.validate_hosted_telnet_tls_values(
+    non_default_telnet_documents, target_namespace=derived_namespace
+)
+if not any("targetPort 2323" in issue for issue in non_default_telnet_issues):
+    raise SystemExit(
+        "general overlay preflight skipped invalid non-default namespace bridge resources: "
+        f"{non_default_telnet_issues}"
+    )
+telnet_missing_listener = copy.deepcopy(telnet_documents)
+next(
+    document
+    for document in telnet_missing_listener
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)["spec"]["ports"] = []
+telnet_missing_listener_issues = module.validate_hosted_telnet_tls_values(
+    telnet_missing_listener
+)
+if not any(
+    "requires exactly one direct TLS listener with port 2323, targetPort 2323, and protocol TCP"
+    in issue
+    for issue in telnet_missing_listener_issues
+):
+    raise SystemExit(
+        "standalone hosted Telnet TLS accepted a missing direct TLS listener: "
+        f"{telnet_missing_listener_issues}"
+    )
+telnet_mismatched_listener = copy.deepcopy(telnet_documents)
+next(
+    port
+    for document in telnet_mismatched_listener
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    for port in document.get("spec", {}).get("ports", [])
+)["targetPort"] = 2324
+telnet_mismatched_listener_issues = module.validate_hosted_telnet_tls_values(
+    telnet_mismatched_listener
+)
+if not any(
+    "requires exactly one direct TLS listener with port 2323, targetPort 2323, and protocol TCP"
+    in issue
+    for issue in telnet_mismatched_listener_issues
+):
+    raise SystemExit(
+        "standalone hosted Telnet TLS accepted a mismatched direct TLS listener: "
+        f"{telnet_mismatched_listener_issues}"
+    )
+telnet_cross_namespace_decoys = copy.deepcopy(telnet_documents)
+telnet_cross_namespace_decoys.extend(
+    [
+        {
+            "kind": "Certificate",
+            "metadata": {"name": "hobby-telnet-tls", "namespace": "other"},
+            "spec": {"secretName": "wrong-cross-namespace-secret"},
+        },
+        {
+            "kind": "Ingress",
+            "metadata": {"name": "other-ingress", "namespace": "other"},
+            "spec": {"tls": [{"secretName": "hobby-telnet-tls"}]},
+        },
+        {
+            "kind": "Deployment",
+            "metadata": {"name": "tcp-proxy-service", "namespace": "other"},
+            "spec": {"template": {"spec": {"containers": []}}},
+        },
+        {
+            "kind": "Service",
+            "metadata": {"name": "tcp-proxy-service", "namespace": "other"},
+            "spec": {"type": "NodePort"},
+        },
+    ]
+)
+telnet_cross_namespace_issues = module.validate_hosted_telnet_tls_values(
+    telnet_cross_namespace_decoys
+)
+if telnet_cross_namespace_issues:
+    raise SystemExit(
+        "same-name Telnet TLS resources in another namespace affected validation: "
+        f"{telnet_cross_namespace_issues}"
+    )
 
 redis_endpoints, redis_issues = module.effective_redis_endpoints(
     rendered_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
@@ -9169,8 +10124,64 @@ metadata:
   namespace: __NAMESPACE__
 spec:
   type: ClusterIP
+  selector:
+    app: spring-cloud-gateway
   ports:
     - port: 443
+      targetPort: 8443
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spring-cloud-gateway
+  namespace: __NAMESPACE__
+spec:
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: spring-cloud-gateway
+    spec:
+      containers:
+        - name: spring-cloud-gateway
+          env:
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED
+              value: "true"
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS
+              value: 0.0.0.0
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT
+              value: "8443"
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_CERT_CHAIN_PATH
+              value: /gateway-ws-server-tls/tls.crt
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_PRIVATE_KEY_PATH
+              value: /gateway-ws-server-tls/tls.key
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_CLIENT_CA_PATH
+              value: /gateway-ws-server-tls/ca.crt
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT
+              value: pr-preview
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE
+              value: production_uri
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN
+              value: spiffe://firemud/ns/__NAMESPACE__/sa/tcp-proxy-service
+          ports:
+            - containerPort: 8443
+          volumeMounts:
+            - name: gateway-ws-server-tls
+              mountPath: /gateway-ws-server-tls
+              readOnly: true
+      volumes:
+        - name: gateway-ws-server-tls
+          secret:
+            secretName: __RELEASE__-gateway-internal-ws
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+              - key: ca.crt
+                path: ca.crt
 ---
 apiVersion: v1
 kind: Service
@@ -9200,7 +10211,12 @@ metadata:
     app.kubernetes.io/instance: __RELEASE__
     firemud.dev/certificate-identity-mode: hosted-controller
 spec:
+  strategy:
+    type: Recreate
   template:
+    metadata:
+      labels:
+        app: tcp-proxy-service
     spec:
       containers:
         - name: tcp-proxy-service
@@ -9208,11 +10224,11 @@ spec:
             - name: GATEWAY_WS_URL
               value: wss://spring-cloud-gateway-mtls.__NAMESPACE__.svc.cluster.local/ws/game
             - name: FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH
-              value: /tls/client.crt
+              value: /gateway-ws-client-tls/tls.crt
             - name: FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH
-              value: /tls/client.key
+              value: /gateway-ws-client-tls/tls.key
             - name: FIREMUD_GATEWAY_WS_CA_CERT_PATH
-              value: /tls/ca.crt
+              value: /gateway-ws-client-tls/ca.crt
             - name: FIREMUD_GRPC_CERT_CHAIN_PATH
               value: /grpc-tls/client.crt
             - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
@@ -9229,7 +10245,7 @@ spec:
               value: /telnet-tls/tls.key
           volumeMounts:
             - name: bridge
-              mountPath: /tls
+              mountPath: /gateway-ws-client-tls
               readOnly: true
             - name: grpc
               mountPath: /grpc-tls
@@ -9242,10 +10258,10 @@ spec:
           secret:
             secretName: __RELEASE__-tcp-proxy-bridge
             items:
-              - key: client.crt
-                path: client.crt
-              - key: client.key
-                path: client.key
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
               - key: ca.crt
                 path: ca.crt
         - name: grpc
@@ -9254,6 +10270,46 @@ spec:
         - name: telnet
           secret:
             secretName: __RELEASE__-telnet-tls
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: spring-cloud-gateway-ingress
+  namespace: __NAMESPACE__
+spec:
+  podSelector:
+    matchLabels:
+      app: spring-cloud-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: tcp-proxy-service
+      ports:
+        - protocol: TCP
+          port: 8443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tcp-proxy-service-egress
+  namespace: __NAMESPACE__
+spec:
+  podSelector:
+    matchLabels:
+      app: tcp-proxy-service
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: spring-cloud-gateway
+      ports:
+        - protocol: TCP
+          port: 8443
 """
 render = render.replace("__NAMESPACE__", namespace).replace("__RELEASE__", release)
 render_path = tmp / "hosted-bridge-contract.yaml"
@@ -9359,6 +10415,159 @@ if module.hosted_bridge_success_message("operator") != (
     "controller-projected Secret readiness is confirmed"
 ):
     raise SystemExit("hosted-bridge operator success does not confirm projection readiness")
+
+load_balancer_documents = list(yaml.safe_load_all(render_path.read_text(encoding="utf-8")))
+load_balancer_service = next(
+    document
+    for document in load_balancer_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+load_balancer_service["spec"]["type"] = "LoadBalancer"
+load_balancer_path = tmp / "hosted-bridge-contract-load-balancer.yaml"
+load_balancer_path.write_text(
+    yaml.safe_dump_all(load_balancer_documents, sort_keys=False), encoding="utf-8"
+)
+load_balancer = run_hosted(
+    load_balancer_path,
+    "--expected-hosted-telnet-node-port",
+    str(node_port),
+)
+if load_balancer.returncode != 0:
+    raise SystemExit(
+        "hosted-bridge rejected a valid LoadBalancer TCP Proxy Service: "
+        f"{load_balancer.stderr}{load_balancer.stdout}"
+    )
+
+legacy_load_balancer_documents = list(
+    yaml.safe_load_all(load_balancer_path.read_text(encoding="utf-8"))
+)
+for document in legacy_load_balancer_documents:
+    if (
+        document.get("kind") in {"Service", "Deployment"}
+        and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    ):
+        document.get("metadata", {}).pop("labels", None)
+        if document.get("kind") == "Deployment":
+            for container in document["spec"]["template"]["spec"].get("containers", []):
+                container["env"] = [
+                    entry
+                    for entry in container.get("env", [])
+                    if entry.get("name")
+                    not in {
+                        "TCP_PROXY_TELNET_MODE",
+                        "TCP_PROXY_TLS_ENABLED",
+                        "TCP_PROXY_TLS_CERT",
+                        "TCP_PROXY_TLS_KEY",
+                    }
+                ]
+legacy_load_balancer_issues = module.validate_hosted_telnet_tls_values(
+    legacy_load_balancer_documents,
+    target_namespace=namespace,
+)
+if legacy_load_balancer_issues:
+    raise SystemExit(
+        "hosted-bridge generic validation rejected an unmarked legacy LoadBalancer: "
+        f"{legacy_load_balancer_issues}"
+    )
+
+unlabelled_tls_load_balancer_documents = copy.deepcopy(legacy_load_balancer_documents)
+unlabelled_tls_deployment = next(
+    document
+    for document in unlabelled_tls_load_balancer_documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+unlabelled_tls_container = unlabelled_tls_deployment["spec"]["template"]["spec"][
+    "containers"
+][0]
+unlabelled_tls_container["env"].extend(
+    [
+        {"name": "TCP_PROXY_TELNET_MODE", "value": "DIRECT_TLS"},
+        {"name": "TCP_PROXY_TLS_ENABLED", "value": "true"},
+        {"name": "TCP_PROXY_TLS_CERT", "value": "/telnet-tls/tls.crt"},
+        {"name": "TCP_PROXY_TLS_KEY", "value": "/telnet-tls/tls.key"},
+    ]
+)
+unlabelled_tls_load_balancer_issues = module.validate_hosted_telnet_tls_values(
+    unlabelled_tls_load_balancer_documents,
+    target_namespace=namespace,
+)
+if not unlabelled_tls_load_balancer_issues:
+    raise SystemExit(
+        "hosted-bridge generic validation skipped an unlabelled TLS-configured LoadBalancer: "
+        f"{unlabelled_tls_load_balancer_issues}"
+    )
+
+load_balancer_mismatch_documents = list(
+    yaml.safe_load_all(render_path.read_text(encoding="utf-8"))
+)
+load_balancer_mismatch_service = next(
+    document
+    for document in load_balancer_mismatch_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+load_balancer_mismatch_service["spec"]["type"] = "LoadBalancer"
+next(
+    port
+    for port in load_balancer_mismatch_service["spec"]["ports"]
+    if port.get("port") == 2323
+)["nodePort"] = node_port + 1
+load_balancer_mismatch_path = tmp / "hosted-bridge-contract-load-balancer-mismatch.yaml"
+load_balancer_mismatch_path.write_text(
+    yaml.safe_dump_all(load_balancer_mismatch_documents, sort_keys=False), encoding="utf-8"
+)
+load_balancer_mismatch = run_hosted(
+    load_balancer_mismatch_path,
+    "--expected-hosted-telnet-node-port",
+    str(node_port),
+)
+if load_balancer_mismatch.returncode == 0:
+    raise SystemExit("hosted-bridge accepted a mismatched LoadBalancer Telnet nodePort")
+load_balancer_mismatch_result = json.loads(load_balancer_mismatch.stdout)
+if (
+    load_balancer_mismatch_result.get("status") != "fail"
+    or "trusted hosted-controller TCP Proxy Telnet nodePort must equal"
+    not in load_balancer_mismatch_result.get("message", "")
+):
+    raise SystemExit(
+        "hosted-bridge LoadBalancer mismatch result was not explicit: "
+        f"{load_balancer_mismatch_result}"
+    )
+
+duplicate_mixed_type_documents = list(
+    yaml.safe_load_all(render_path.read_text(encoding="utf-8"))
+)
+duplicate_mixed_type_documents.append(
+    {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {"name": "tcp-proxy-service", "namespace": namespace},
+        "spec": {"type": "ClusterIP"},
+    }
+)
+duplicate_mixed_type_path = tmp / "hosted-bridge-contract-duplicate-mixed-type.yaml"
+duplicate_mixed_type_path.write_text(
+    yaml.safe_dump_all(duplicate_mixed_type_documents, sort_keys=False), encoding="utf-8"
+)
+duplicate_mixed_type = run_hosted(
+    duplicate_mixed_type_path,
+    "--expected-hosted-telnet-node-port",
+    str(node_port),
+)
+if duplicate_mixed_type.returncode == 0:
+    raise SystemExit("hosted-bridge accepted duplicate mixed-type TCP Proxy Services")
+duplicate_mixed_type_result = json.loads(duplicate_mixed_type.stdout)
+if (
+    duplicate_mixed_type_result.get("status") != "fail"
+    or "requires exactly one tcp-proxy-service Service"
+    not in duplicate_mixed_type_result.get("message", "")
+):
+    raise SystemExit(
+        "hosted-bridge mixed-type duplicate result was not explicit: "
+        f"{duplicate_mixed_type_result}"
+    )
 
 duplicate_mount_documents = list(
     yaml.safe_load_all(render_path.read_text(encoding="utf-8"))
@@ -9499,6 +10708,29 @@ subpath_telnet_issues = module.validate_hosted_telnet_tls_values(
 if "/telnet-tls must not use subPath" not in subpath_telnet_issues:
     raise SystemExit(f"hosted-bridge accepted a /telnet-tls subPath mount: {subpath_telnet_issues}")
 
+subpath_expr_telnet_documents = list(yaml.safe_load_all(render_path.read_text(encoding="utf-8")))
+subpath_expr_telnet_mount = next(
+    mount
+    for mount in next(
+        document
+        for document in subpath_expr_telnet_documents
+        if document.get("kind") == "Deployment"
+        and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    )["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]
+    if mount.get("mountPath") == "/telnet-tls"
+)
+subpath_expr_telnet_mount["subPathExpr"] = "$(POD_NAME).crt"
+subpath_expr_telnet_issues = module.validate_hosted_telnet_tls_values(
+    subpath_expr_telnet_documents,
+    required_identity_mode="hosted-controller",
+    expected_hosted_telnet_node_port=node_port,
+    target_namespace=namespace,
+)
+if "/telnet-tls must not use subPathExpr" not in subpath_expr_telnet_issues:
+    raise SystemExit(
+        f"hosted-bridge accepted a /telnet-tls subPathExpr mount: {subpath_expr_telnet_issues}"
+    )
+
 invalid_telnet_items_documents = list(
     yaml.safe_load_all(render_path.read_text(encoding="utf-8"))
 )
@@ -9591,12 +10823,17 @@ if maximum.returncode != 0:
     raise SystemExit(f"hosted-bridge rejected maximum valid expected port: {maximum.stderr}{maximum.stdout}")
 
 mismatched_documents = list(yaml.safe_load_all(render_path.read_text(encoding="utf-8")))
-next(
+mismatched_service = next(
     document
     for document in mismatched_documents
     if document.get("kind") == "Service"
     and document.get("metadata", {}).get("name") == "tcp-proxy-service"
-)["spec"]["ports"][0]["nodePort"] = node_port + 1
+)
+next(
+    port
+    for port in mismatched_service["spec"]["ports"]
+    if port.get("port") == 2323
+)["nodePort"] = node_port + 1
 mismatched_path = tmp / "hosted-bridge-contract-mismatch.yaml"
 mismatched_path.write_text(
     yaml.safe_dump_all(mismatched_documents, sort_keys=False), encoding="utf-8"

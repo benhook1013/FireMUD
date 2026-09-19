@@ -74,6 +74,75 @@ class HeaderTrustFilterTest {
   }
 
   @Test
+  void treatsMatrixParameterGameplayPathsAsSessionRoutes() {
+    HeaderTrustFilter filter = legacyFilter(new GatewayHeaderTrustProperties());
+
+    for (String path : new String[] {"/ws/game;probe", "/ws;probe/game", "/ws/game;probe/child"}) {
+      MockServerHttpRequest request =
+          MockServerHttpRequest.get(path)
+              .remoteAddress(new InetSocketAddress("1.2.3.4", 0))
+              .header("X-Proxy-Client-IP", "203.0.113.99")
+              .build();
+      MockServerWebExchange exchange = MockServerWebExchange.from(request);
+      AtomicReference<ServerWebExchange> delegated = new AtomicReference<>();
+
+      filter
+          .filter(
+              exchange,
+              candidate -> {
+                delegated.set(candidate);
+                return Mono.empty();
+              })
+          .block();
+
+      assertThat(delegated.get()).as("path=%s", path).isNull();
+      assertThat(exchange.getResponse().getStatusCode())
+          .as("path=%s", path)
+          .isEqualTo(HttpStatus.FORBIDDEN);
+    }
+  }
+
+  @Test
+  void stripsSpoofedGatewayOwnedAdmissionContextButPreservesMigrationCarrierAndLocale() {
+    HeaderTrustFilter filter = legacyFilter(new GatewayHeaderTrustProperties());
+
+    MockServerHttpRequest request =
+        MockServerHttpRequest.get("/ws/game/test")
+            .remoteAddress(new InetSocketAddress("1.2.3.4", 0))
+            .header("X-Firemud-Connection-Mode", "trusted_tcp_proxy")
+            .header("X-Firemud-Connect-Context", "spoofed-context")
+            .header("X-Firemud-Transport-Session-Id", "spoofed-session")
+            .header("X-Firemud-Handshake-Error-Class", "POLICY_DENY")
+            .header("X-Firemud-Unknown-Admission-Header", "spoofed")
+            .header("X-Firemud-Connect-Token", "token-carrier")
+            .header("X-Firemud-Locale", "en-NZ")
+            .build();
+
+    ServerWebExchange mutatedExchange =
+        filterThroughChain(filter, MockServerWebExchange.from(request));
+
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connection-Mode"))
+        .isNull();
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connect-Context"))
+        .isNull();
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Transport-Session-Id"))
+        .isNull();
+    assertThat(
+            mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
+        .isNull();
+    assertThat(
+            mutatedExchange
+                .getRequest()
+                .getHeaders()
+                .getFirst("X-Firemud-Unknown-Admission-Header"))
+        .isNull();
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connect-Token"))
+        .isEqualTo("token-carrier");
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Locale"))
+        .isEqualTo("en-NZ");
+  }
+
+  @Test
   void stripsGatewayOwnedFiremudHeadersOutsideGameplayAndPreservesConnectTokenCarrier() {
     HeaderTrustFilter filter = legacyFilter(new GatewayHeaderTrustProperties());
 
@@ -118,6 +187,26 @@ class HeaderTrustFilterTest {
     assertThat(
             gameplayExchange.getRequest().getHeaders().getFirst("X-Firemud-Transport-Session-Id"))
         .isNull();
+  }
+
+  @Test
+  void stripsConnectTokenCarrierFromNonGameplayRoutes() {
+    HeaderTrustFilter filter = legacyFilter(new GatewayHeaderTrustProperties());
+
+    for (String path : new String[] {"/api/account/profile", "/ws/gameXYZ"}) {
+      MockServerHttpRequest request =
+          MockServerHttpRequest.get(path)
+              .remoteAddress(new InetSocketAddress("1.2.3.4", 0))
+              .header("X-Firemud-Connect-Token", "token-carrier")
+              .build();
+
+      ServerWebExchange mutatedExchange =
+          filterThroughChain(filter, MockServerWebExchange.from(request));
+
+      assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connect-Token"))
+          .as("path=%s", path)
+          .isNull();
+    }
   }
 
   @Test

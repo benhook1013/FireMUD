@@ -1,18 +1,21 @@
 {{- if and .Values.previewStack.enabled .Values.previewStack.ingress.enabled }}
+{{- $hostedControllerMode := include "firemud.hostedControllerMode" . | trim }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: firemud-preview
   labels:
 {{ include "firemud.commonLabels" . | indent 4 }}
+  {{- if ne $hostedControllerMode "true" }}
   annotations:
     cert-manager.io/cluster-issuer: {{ .Values.previewStack.ingress.clusterIssuer | quote }}
+  {{- end }}
 spec:
   ingressClassName: {{ .Values.previewStack.ingress.className | quote }}
   tls:
     - hosts:
         - {{ .Values.preview.hostname | quote }}
-      secretName: {{ .Values.previewStack.ingress.tlsSecretName | quote }}
+      secretName: {{ include "firemud.ingressTlsSecretName" . | quote }}
   rules:
     - host: {{ .Values.preview.hostname | quote }}
       http:

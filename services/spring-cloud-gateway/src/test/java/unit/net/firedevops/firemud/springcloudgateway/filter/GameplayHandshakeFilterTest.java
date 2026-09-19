@@ -76,6 +76,102 @@ class GameplayHandshakeFilterTest {
   }
 
   @Test
+  void rejectsMatrixParameterGameplayRoutesEvenWithCookieCarrier() {
+    GameplayHandshakeFilter filter =
+        new GameplayHandshakeFilter(
+            new JwtUtil(SECRET, 30_000L),
+            TEST_RUNTIME_IDENTITY,
+            null,
+            environmentWithProfiles("test"));
+    String token =
+        new JwtUtil(SECRET, 30_000L)
+            .generateToken(
+                "7",
+                Map.of(
+                    "aud", "gameplay-connect",
+                    "accountId", "7",
+                    "tenantId", "1",
+                    "worldSlug", "demo",
+                    "realmSlug", "production",
+                    "gameInstanceId", "42",
+                    "pointerVersion", "17",
+                    "connectScopeId", "scope-matrix",
+                    "requestId", "req-matrix",
+                    "jti", "jti-matrix"));
+
+    for (String path : new String[] {"/ws/game;probe", "/ws;probe/game", "/ws/game;probe/child"}) {
+      AtomicBoolean delegated = new AtomicBoolean();
+      MockServerWebExchange exchange =
+          MockServerWebExchange.from(
+              MockServerHttpRequest.get(path)
+                  .cookie(new HttpCookie(GameplayHandshakeFilter.CONNECT_TOKEN_COOKIE, token))
+                  .build());
+
+      filter
+          .filter(
+              exchange,
+              e -> {
+                delegated.set(true);
+                return Mono.empty();
+              })
+          .block();
+
+      assertThat(delegated).as("path=%s", path).isFalse();
+      assertThat(exchange.getResponse().getStatusCode())
+          .as("path=%s", path)
+          .isEqualTo(HttpStatus.FORBIDDEN);
+      assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
+          .as("path=%s", path)
+          .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_REJECTED);
+      assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Reason"))
+          .as("path=%s", path)
+          .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_UNSUPPORTED_CARRIER_OR_ROUTE);
+    }
+  }
+
+  @Test
+  void rejectsMatrixParameterGameplayRoutesBeforeTrustedProxyBypass() {
+    GameplayHandshakeFilter filter =
+        new GameplayHandshakeFilter(
+            new JwtUtil(SECRET, 30_000L),
+            TEST_RUNTIME_IDENTITY,
+            null,
+            environmentWithProfiles("test"));
+
+    for (String path : new String[] {"/ws/game;probe", "/ws;probe/game", "/ws/game;probe/child"}) {
+      AtomicBoolean delegated = new AtomicBoolean();
+      MockServerWebExchange exchange =
+          MockServerWebExchange.from(
+              MockServerHttpRequest.get(path)
+                  .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
+                  .header(GameplayHandshakeFilter.PROXY_CONNECTION_ID_HEADER, "conn-matrix")
+                  .header(GameplayHandshakeFilter.GAME_INSTANCE_ID_HEADER, "42")
+                  .header(GameplayHandshakeFilter.TENANT_ID_HEADER, "1")
+                  .build());
+
+      filter
+          .filter(
+              exchange,
+              e -> {
+                delegated.set(true);
+                return Mono.empty();
+              })
+          .block();
+
+      assertThat(delegated).as("path=%s", path).isFalse();
+      assertThat(exchange.getResponse().getStatusCode())
+          .as("path=%s", path)
+          .isEqualTo(HttpStatus.FORBIDDEN);
+      assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
+          .as("path=%s", path)
+          .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_REJECTED);
+      assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Reason"))
+          .as("path=%s", path)
+          .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_UNSUPPORTED_CARRIER_OR_ROUTE);
+    }
+  }
+
+  @Test
   void rejectsFirstPartyHandshakeWithMalformedNumericClaim() {
     GameplayHandshakeFilter filter =
         new GameplayHandshakeFilter(
@@ -102,7 +198,7 @@ class GameplayHandshakeFilterTest {
     MockServerWebExchange exchange =
         MockServerWebExchange.from(
             MockServerHttpRequest.get("/ws/game/test")
-                .header(GameplayHandshakeFilter.CONNECT_TOKEN_HEADER, token)
+                .cookie(new HttpCookie(GameplayHandshakeFilter.CONNECT_TOKEN_COOKIE, token))
                 .build());
 
     filter.filter(exchange, e -> Mono.empty()).block();
@@ -110,6 +206,8 @@ class GameplayHandshakeFilterTest {
     assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
         .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_REJECTED);
+    assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Reason"))
+        .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_INVALID_CONTENT);
   }
 
   @Test
@@ -139,7 +237,7 @@ class GameplayHandshakeFilterTest {
     MockServerWebExchange exchange =
         MockServerWebExchange.from(
             MockServerHttpRequest.get("/ws/game/test")
-                .header(GameplayHandshakeFilter.CONNECT_TOKEN_HEADER, token)
+                .cookie(new HttpCookie(GameplayHandshakeFilter.CONNECT_TOKEN_COOKIE, token))
                 .build());
 
     filter.filter(exchange, e -> Mono.empty()).block();
@@ -147,6 +245,8 @@ class GameplayHandshakeFilterTest {
     assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
         .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_REJECTED);
+    assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Reason"))
+        .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_INVALID_CONTENT);
   }
 
   @Test
@@ -176,7 +276,7 @@ class GameplayHandshakeFilterTest {
     MockServerWebExchange exchange =
         MockServerWebExchange.from(
             MockServerHttpRequest.get("/ws/game/test")
-                .header(GameplayHandshakeFilter.CONNECT_TOKEN_HEADER, token)
+                .cookie(new HttpCookie(GameplayHandshakeFilter.CONNECT_TOKEN_COOKIE, token))
                 .build());
 
     filter.filter(exchange, e -> Mono.empty()).block();
@@ -184,6 +284,8 @@ class GameplayHandshakeFilterTest {
     assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
         .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_REJECTED);
+    assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Reason"))
+        .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_INVALID_CONTENT);
   }
 
   @Test
@@ -213,7 +315,7 @@ class GameplayHandshakeFilterTest {
     MockServerWebExchange exchange =
         MockServerWebExchange.from(
             MockServerHttpRequest.get("/ws/game/test")
-                .header(GameplayHandshakeFilter.CONNECT_TOKEN_HEADER, token)
+                .cookie(new HttpCookie(GameplayHandshakeFilter.CONNECT_TOKEN_COOKIE, token))
                 .build());
 
     filter.filter(exchange, e -> Mono.empty()).block();
@@ -249,7 +351,7 @@ class GameplayHandshakeFilterTest {
     MockServerWebExchange exchange =
         MockServerWebExchange.from(
             MockServerHttpRequest.get("/ws/game/test")
-                .header(GameplayHandshakeFilter.CONNECT_TOKEN_HEADER, token)
+                .cookie(new HttpCookie(GameplayHandshakeFilter.CONNECT_TOKEN_COOKIE, token))
                 .build());
 
     filter.filter(exchange, e -> Mono.empty()).block();
@@ -270,7 +372,7 @@ class GameplayHandshakeFilterTest {
     MockServerWebExchange exchange =
         MockServerWebExchange.from(
             MockServerHttpRequest.get("/ws/game/test")
-                .header(GameplayHandshakeFilter.CONNECT_TOKEN_HEADER, "boom-token")
+                .cookie(new HttpCookie(GameplayHandshakeFilter.CONNECT_TOKEN_COOKIE, "boom-token"))
                 .build());
 
     IllegalStateException ex =
@@ -306,7 +408,7 @@ class GameplayHandshakeFilterTest {
 
     MockServerHttpRequest request =
         MockServerHttpRequest.get("/ws/game/test")
-            .header(GameplayHandshakeFilter.CONNECT_TOKEN_HEADER, token)
+            .cookie(new HttpCookie(GameplayHandshakeFilter.CONNECT_TOKEN_COOKIE, token))
             .header("X-Tenant-Id", "2")
             .build();
 
@@ -356,7 +458,7 @@ class GameplayHandshakeFilterTest {
   }
 
   @Test
-  void rejectsHandshakeWithBothCookieAndHeaderCarrier() {
+  void rejectsPublicHeaderCarrierEvenWhenCookieCarrierIsAlsoPresent() {
     GameplayHandshakeFilter filter =
         new GameplayHandshakeFilter(
             new JwtUtil(SECRET, 30_000L),
@@ -391,6 +493,32 @@ class GameplayHandshakeFilterTest {
     assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
         .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_REJECTED);
+    assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Reason"))
+        .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_UNSUPPORTED_CARRIER_OR_ROUTE);
+  }
+
+  @Test
+  void rejectsPublicHeaderCarrierOnExactGameplayRouteAsUnsupported() {
+    GameplayHandshakeFilter filter =
+        new GameplayHandshakeFilter(
+            new JwtUtil(SECRET, 30_000L),
+            TEST_RUNTIME_IDENTITY,
+            null,
+            environmentWithProfiles("test"));
+
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(
+            MockServerHttpRequest.get("/ws/game")
+                .header(GameplayHandshakeFilter.CONNECT_TOKEN_HEADER, "header-token")
+                .build());
+
+    filter.filter(exchange, e -> Mono.empty()).block();
+
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
+        .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_REJECTED);
+    assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Reason"))
+        .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_UNSUPPORTED_CARRIER_OR_ROUTE);
   }
 
   @Test
@@ -419,7 +547,7 @@ class GameplayHandshakeFilterTest {
 
     MockServerHttpRequest request =
         MockServerHttpRequest.get("/ws/game/test")
-            .header(GameplayHandshakeFilter.CONNECT_TOKEN_HEADER, token)
+            .cookie(new HttpCookie(GameplayHandshakeFilter.CONNECT_TOKEN_COOKIE, token))
             .build();
 
     ServerWebExchange mutatedExchange =
@@ -488,6 +616,10 @@ class GameplayHandshakeFilterTest {
             .header("X-Proxy-Connection-Id", "conn-123")
             .header("X-Proxy-Game-Instance-Id", "42")
             .header("X-Proxy-Tenant-Id", "1")
+            .header("X-Firemud-Connection-Mode", "first_party_web")
+            .header("X-Firemud-Connect-Context", "spoofed-context")
+            .header("X-Firemud-Transport-Session-Id", "spoofed-session")
+            .header("X-Firemud-Handshake-Error-Class", "POLICY_DENY")
             .build();
 
     ServerWebExchange mutatedExchange =
@@ -496,6 +628,20 @@ class GameplayHandshakeFilterTest {
 
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connection-Mode"))
         .isEqualTo(GameplayHandshakeFilter.CONNECTION_MODE_TRUSTED_TCP_PROXY);
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connect-Context"))
+        .isNull();
+    assertThat(
+            mutatedExchange
+                .getRequest()
+                .getHeaders()
+                .getFirst(GameplayHandshakeFilter.TRANSPORT_SESSION_HEADER))
+        .isNull();
+    assertThat(
+            mutatedExchange
+                .getRequest()
+                .getHeaders()
+                .getFirst(GameplayHandshakeFilter.HANDSHAKE_ERROR_CLASS_HEADER))
+        .isNull();
     assertThat(mutatedExchange.getResponse().getStatusCode()).isNull();
   }
 
@@ -784,7 +930,7 @@ class GameplayHandshakeFilterTest {
     MockServerWebExchange exchange =
         MockServerWebExchange.from(
             MockServerHttpRequest.get("/ws/game/test")
-                .header(GameplayHandshakeFilter.CONNECT_TOKEN_HEADER, token)
+                .cookie(new HttpCookie(GameplayHandshakeFilter.CONNECT_TOKEN_COOKIE, token))
                 .build());
 
     filter.filter(exchange, e -> Mono.empty()).block();
@@ -792,6 +938,8 @@ class GameplayHandshakeFilterTest {
     assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
         .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_EXPIRED);
+    assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Reason"))
+        .isNull();
   }
 
   @Test
@@ -828,12 +976,12 @@ class GameplayHandshakeFilterTest {
     MockServerWebExchange first =
         MockServerWebExchange.from(
             MockServerHttpRequest.get("/ws/game/test")
-                .header(GameplayHandshakeFilter.CONNECT_TOKEN_HEADER, token)
+                .cookie(new HttpCookie(GameplayHandshakeFilter.CONNECT_TOKEN_COOKIE, token))
                 .build());
     MockServerWebExchange second =
         MockServerWebExchange.from(
             MockServerHttpRequest.get("/ws/game/test")
-                .header(GameplayHandshakeFilter.CONNECT_TOKEN_HEADER, token)
+                .cookie(new HttpCookie(GameplayHandshakeFilter.CONNECT_TOKEN_COOKIE, token))
                 .build());
 
     filter.filter(first, e -> Mono.empty()).block();
@@ -871,7 +1019,7 @@ class GameplayHandshakeFilterTest {
     MockServerWebExchange exchange =
         MockServerWebExchange.from(
             MockServerHttpRequest.get("/ws/game/test")
-                .header(GameplayHandshakeFilter.CONNECT_TOKEN_HEADER, token)
+                .cookie(new HttpCookie(GameplayHandshakeFilter.CONNECT_TOKEN_COOKIE, token))
                 .build());
 
     filter.filter(exchange, e -> Mono.empty()).block();

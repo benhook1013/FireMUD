@@ -572,6 +572,7 @@ for required in \
 done
 
 python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" "$janitor" "$mode_action" "$runtime" "$artifact_action" <<'PY'
+import json
 import os
 import re
 import subprocess
@@ -752,6 +753,9 @@ for job_name, required_gate in expected_gates.items():
     assert required_gate in condition, (job_name, condition)
 
 validate_job = jobs["validate-target"]
+assert validate_job["outputs"]["action"] == (
+    "${{ steps.source.outputs.action || steps.target.outputs.action }}"
+)
 assert validate_job["outputs"]["certificate_identity_mode"] == (
     "${{ steps.certificate-identity.outputs.mode }}"
 )
@@ -1363,9 +1367,6 @@ for fragment in (
     '[[ "$source_path" == ',
     'Missing workflow run id',
     'Unexpected source workflow',
-    'expected_artifact_name="preview-render-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}"',
-    'select(.name == $name and .expired == false)',
-    '[[ "$artifact_count" == 1 ]] || emit_no_action',
     '[[ "$base_ref" == main || "$base_ref" == develop ]] || emit_no_action',
     'Ignoring closed pull request because its base branch is unsupported.',
     '[[ "$state" == closed ]] || emit_no_action',
@@ -1380,6 +1381,13 @@ assert "steps.target.outputs.action == 'deploy'" in source_step["if"]
 source_script = source_step["run"]
 assert 'render_run_id="$SOURCE_RUN_ID"' in source_script
 assert 'if [[ -z "$render_run_id" ]]' not in source_script
+for fragment in (
+    'mode_artifact_name="preview-mode-pr-${PR_NUMBER}-${HEAD_SHA}"',
+    'render_artifact_name="preview-render-pr-${PR_NUMBER}-${HEAD_SHA}"',
+    '[[ "$mode_artifact_count" == 1 ]] || emit_no_action',
+    'echo "render_artifact_count=${render_artifact_count}"',
+):
+    assert fragment in source_script, fragment
 assert 'actions/workflows/preview.yml/runs?' not in source_script
 assert 'test -n "$render_run_id"' not in source_script
 assert 'Missing source run id::Expected a non-empty workflow run id' in source_script
@@ -1392,6 +1400,77 @@ for source_field, expected in (
 ):
     assert f"require_source_field {source_field} {expected}" in source_script
 assert "Expected %q; actual %q." in source_script
+assert "mode_artifact_name=" in source_script
+assert "render_artifact_count=" in source_script
+assert "echo 'action=none'" in source_script
+mode_download = next(
+    step
+    for step in validate_job["steps"]
+    if step.get("name") == "Download immutable source certificate mode evidence"
+)
+assert mode_download["if"] == "${{ steps.source.outputs.action == 'deploy' }}"
+mode_verify = next(
+    step
+    for step in validate_job["steps"]
+    if step.get("name") == "Verify candidate and trusted certificate identity modes agree"
+)
+assert "Certificate identity mode changed" in mode_verify["run"]
+assert "RENDER_ARTIFACT_COUNT" in mode_verify["env"]
+with tempfile.TemporaryDirectory() as mode_fixture:
+    mode_directory = Path(mode_fixture) / "preview-mode-evidence"
+    mode_directory.mkdir()
+    mode_file = mode_directory / "preview-mode.json"
+    mode_metadata = {
+        "schemaVersion": 1,
+        "event": "pull_request",
+        "repository": "example/FireMUD",
+        "sourceWorkflow": ".github/workflows/preview.yml",
+        "sourceRunId": 42,
+        "prNumber": 900,
+        "headSha": "c" * 40,
+        "certificateIdentityMode": "hosted-controller",
+    }
+    mode_file.write_text(json.dumps(mode_metadata), encoding="utf-8")
+    mode_environment = os.environ.copy()
+    mode_environment.update(
+        MODE_EVIDENCE_DIRECTORY=str(mode_directory),
+        EXPECTED_MODE="hosted-controller",
+        EXPECTED_REPOSITORY="example/FireMUD",
+        EXPECTED_SOURCE_RUN_ID="42",
+        EXPECTED_PR_NUMBER="900",
+        EXPECTED_HEAD_SHA="c" * 40,
+        RENDER_ARTIFACT_COUNT="1",
+    )
+    accepted_mode = subprocess.run(
+        ["bash", "-c", mode_verify["run"]],
+        env=mode_environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert accepted_mode.returncode == 0, accepted_mode.stderr
+    mode_environment["EXPECTED_MODE"] = "standalone"
+    mismatched_mode = subprocess.run(
+        ["bash", "-c", mode_verify["run"]],
+        env=mode_environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert mismatched_mode.returncode != 0
+    assert "Certificate identity mode changed" in mismatched_mode.stderr
+    mode_metadata["repository"] = "attacker/Fork"
+    mode_file.write_text(json.dumps(mode_metadata), encoding="utf-8")
+    mode_environment["EXPECTED_MODE"] = "hosted-controller"
+    malformed_mode = subprocess.run(
+        ["bash", "-c", mode_verify["run"]],
+        env=mode_environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert malformed_mode.returncode != 0
+    assert "Invalid certificate identity mode evidence" in malformed_mode.stderr
 
 deploy_steps = jobs["deploy-runtime"]["steps"]
 deploy_by_name = {
@@ -1437,8 +1516,12 @@ for artifact_job_name in ("prepare-runtime", "deploy-runtime"):
     assert artifact_job_steps.index(trusted_checkout) < artifact_job_steps.index(
         artifact_call
     )
-assert trusted_source.count("./.github/actions/download-validated-preview-artifact") == 2
-assert "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" not in trusted_source
+# Preparation, deployment, and post-rollout verification each bind the same
+# immutable PR render through the trusted artifact action.
+assert trusted_source.count("./.github/actions/download-validated-preview-artifact") == 3
+assert trusted_source.count(
+    "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+) == 1
 active_request = deploy_by_name["Apply canonical Active request"]
 assert active_request["run"] == (
     'bash ./dev-tools/hosted/shared/request-hosted-identity.sh "$IDENTITY_NAME" Active'
@@ -3799,26 +3882,79 @@ assert set(inventory) == rendered_deployments, (
 PY
 
 python3 - "$artifact_validator" "$rendered_manifest" <<'PY'
+import copy
 import runpy
 import sys
+import tempfile
+from pathlib import Path
 
 import yaml
 
 validator = runpy.run_path(sys.argv[1])
-documents = [
+raw_documents = [
     document
     for document in yaml.safe_load_all(open(sys.argv[2], encoding="utf-8"))
     if document is not None
 ]
+raw_tcp_proxy_service = next(
+    document
+    for document in raw_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+assert raw_tcp_proxy_service["metadata"]["annotations"] == {
+    "firemud.dev/allocated-telnet-port": "32000"
+}
+
+def sanitize_service(document):
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        source = Path(temporary_directory) / "render.yaml"
+        output = Path(temporary_directory) / "sanitized.yaml"
+        source.write_text(yaml.safe_dump(document), encoding="utf-8")
+        validator["sanitize"](source, output)
+        return next(yaml.safe_load_all(output.read_text(encoding="utf-8")))
+
+
+sanitized_tcp_proxy_service = sanitize_service(raw_tcp_proxy_service)
+assert "annotations" not in sanitized_tcp_proxy_service["metadata"]
+metadata = validator["_validate_object_metadata"](sanitized_tcp_proxy_service, "pr-42")
+assert metadata["labels"] == {
+    **validator["_expected_object_labels"](
+        "Service", "tcp-proxy-service", "pr-42"
+    )
+}
+
+documents = copy.deepcopy(raw_documents)
+validator["_strip_annotations"](documents)
 
 for document in documents:
+    if document.get("kind") == "Service" and document.get("metadata", {}).get(
+        "name"
+    ) == "tcp-proxy-service":
+        continue
     metadata = validator["_validate_object_metadata"](document, "pr-42")
-    assert metadata["labels"] == {
-        **validator["_expected_top_level_labels"](),
-        "app.kubernetes.io/instance": "pr-42",
-    }
+    assert metadata["labels"] == validator["_expected_object_labels"](
+        document["kind"], document["metadata"]["name"], "pr-42"
+    )
     if document["kind"] == "Deployment":
         validator["_validate_workload_selector_metadata"](document)
+
+arbitrary_annotation_documents = copy.deepcopy(raw_documents)
+arbitrary_service = next(
+    document
+    for document in arbitrary_annotation_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+arbitrary_service.setdefault("metadata", {}).setdefault("annotations", {})[
+    "untrusted.example/route"
+] = "capture"
+arbitrary_sanitized_service = sanitize_service(arbitrary_service)
+assert "annotations" not in arbitrary_sanitized_service["metadata"]
+validator["_validate_no_annotations"](arbitrary_sanitized_service)
+for document in arbitrary_annotation_documents:
+    validator["_strip_annotations"](document)
+    validator["_validate_no_annotations"](document)
 PY
 
 # Explicit-null pod templates are authored artifact errors, not validator
@@ -3967,11 +4103,17 @@ for description, documents in mutations.items():
 
 cleaned_config = clean_config_map(
     {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
         "metadata": {"name": "firemud-config"},
-        "data": {"SAFE_VALUE": "retained", "API_TOKEN": "removed"},
+        "data": validator["_trusted_hosted_shared_config"](),
     }
 )
-assert cleaned_config["data"] == {"SAFE_VALUE": "retained"}
+assert cleaned_config["data"] == {
+    key: value
+    for key, value in validator["_trusted_hosted_shared_config"]().items()
+    if key not in validator["HOSTED_REDACTED_CONFIG_KEYS"]
+}
 for malformed_data in (["not", "a", "mapping"], "not-a-mapping"):
     try:
         clean_config_map(
@@ -4008,10 +4150,9 @@ documents = [
         "kind": "Service",
         "metadata": {
             "name": "tcp-proxy-service",
-            "labels": {
-                **validator["_expected_top_level_labels"](),
-                "app.kubernetes.io/instance": "pr-42",
-            },
+            "labels": validator["_expected_object_labels"](
+                "Service", "tcp-proxy-service", "pr-42"
+            ),
         },
         "spec": {"ports": [{"port": 2323}]},
     },
@@ -4050,6 +4191,16 @@ validate_target(prepared, "pr-42", 32000)
 prepared_documents = list(yaml.safe_load_all(prepared.read_text(encoding="utf-8")))
 if any(document["metadata"].get("namespace") != "pr-42" for document in prepared_documents):
     raise SystemExit("trusted runtime preparation left a namespace implicit")
+tcp_service = next(
+    document
+    for document in prepared_documents
+    if document["kind"] == "Service"
+    and document["metadata"]["name"] == "tcp-proxy-service"
+)
+if tcp_service["metadata"].get("annotations") != {
+    "firemud.dev/allocated-telnet-port": "32000"
+}:
+    raise SystemExit("trusted runtime preparation did not restore the allocated Telnet annotation")
 
 
 def expect_rejected(case_name, mutation, expected_message=None):
@@ -4133,6 +4284,30 @@ expect_rejected(
     ),
     "unsafe selector",
 )
+expect_rejected(
+    "missing-allocated-telnet-annotation",
+    lambda current: current[0]["metadata"].pop("annotations"),
+    "must contain exactly the trusted allocated Telnet port annotation",
+)
+expect_rejected(
+    "wrong-allocated-telnet-annotation",
+    lambda current: current[0]["metadata"]["annotations"].__setitem__(
+        "firemud.dev/allocated-telnet-port", "32001"
+    ),
+    "must contain exactly the trusted allocated Telnet port annotation",
+)
+expect_rejected(
+    "extra-allocated-telnet-annotation",
+    lambda current: current[0]["metadata"]["annotations"].__setitem__(
+        "untrusted.example/route", "capture"
+    ),
+    "must contain exactly the trusted allocated Telnet port annotation",
+)
+expect_rejected(
+    "missing-tcp-service-spec",
+    lambda current: current[0].__setitem__("spec", None),
+    "Service/tcp-proxy-service.spec is not an object",
+)
 try:
     validate_target(prepared, "pr-42", 32001)
 except ValueError:
@@ -4161,6 +4336,43 @@ steps = workflow["jobs"]["deploy-runtime"]["steps"]
 apply_step = next(
     step for step in steps if step.get("name") == "Apply validated PR runtime artifact"
 )
+apply_run = apply_step["run"]
+assert apply_run.count("python3 ./dev-tools/deploy/preflight.py hosted-bridge") == 1
+preflight_position = apply_run.index(
+    "python3 ./dev-tools/deploy/preflight.py hosted-bridge"
+)
+dry_run_position = apply_run.index("kubectl apply --dry-run=server")
+assert preflight_position < dry_run_position
+for required in (
+    '"$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$RELEASE_NAME"',
+    '--expected-hosted-telnet-node-port "$TELNET_PORT"',
+    "FIREMUD_PREFLIGHT_CONTEXT=ci-static",
+):
+    assert required in apply_run, required
+verify_steps = workflow["jobs"]["verify-runtime"]["steps"]
+verify_names = [step.get("name") for step in verify_steps]
+artifact_download = next(
+    step
+    for step in verify_steps
+    if step.get("name") == "Download and validate immutable runtime artifact"
+)
+assert artifact_download["uses"] == "./.github/actions/download-validated-preview-artifact"
+inject_step = next(
+    step for step in verify_steps if step.get("name") == "Inject observed allocated Telnet port"
+)
+verify_preflight_step = next(
+    step for step in verify_steps if step.get("name") == "Validate deployed runtime bridge"
+)
+verify_preflight_run = verify_preflight_step["run"]
+assert "FIREMUD_PREFLIGHT_CONTEXT=operator" in verify_preflight_run
+assert verify_preflight_run.count("python3 ./dev-tools/deploy/preflight.py hosted-bridge") == 1
+assert verify_names.index("Wait for runtime rollouts") < verify_names.index(
+    "Read allocated TCP port"
+) < verify_names.index("Inject observed allocated Telnet port") < verify_names.index(
+    "Validate deployed runtime bridge"
+) < verify_names.index("Smoke hosted preview over TCP")
+assert '"$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$RELEASE_NAME"' in verify_preflight_run
+assert '--expected-hosted-telnet-node-port "$TELNET_PORT"' in verify_preflight_run
 record_step = next(
     step for step in steps if step.get("name") == "Record exact deployed preview head"
 )
@@ -4169,7 +4381,19 @@ source_record_step = next(
     for step in preview_workflow["jobs"]["preview-deploy"]["steps"]
     if step.get("name") == "Record exact deployed preview head"
 )
-Path(sys.argv[3]).write_text(apply_step["run"], encoding="utf-8")
+# The race fixture intentionally isolates the revalidation/apply shell. The
+# contract assertions above cover the hosted preflight invocation; the small
+# synthetic manifest below cannot satisfy its full preflight Secret contract.
+apply_run_for_fixture = apply_step["run"]
+preflight_start = apply_run_for_fixture.index("FIREMUD_PREFLIGHT_CONTEXT=ci-static \\\n")
+preflight_end = apply_run_for_fixture.index(
+    '  --expected-hosted-telnet-node-port "$TELNET_PORT"\n',
+    preflight_start,
+) + len('  --expected-hosted-telnet-node-port "$TELNET_PORT"\n')
+apply_run_for_fixture = (
+    apply_run_for_fixture[:preflight_start] + apply_run_for_fixture[preflight_end:]
+)
+Path(sys.argv[3]).write_text(apply_run_for_fixture, encoding="utf-8")
 Path(sys.argv[4]).write_text(record_step["run"], encoding="utf-8")
 Path(sys.argv[5]).write_text(source_record_step["run"], encoding="utf-8")
 PY
@@ -5115,7 +5339,11 @@ case "$resource" in
       '{state:$state,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:"base-900"},merge_commit_sha:"merge-900",labels:$labels}'
     ;;
   repos/example/FireMUD/actions/runs/42/artifacts\?per_page=100)
-    printf '%s' '[{"artifacts":[]}]'
+    if [[ -n "${FAKE_SOURCE_ARTIFACTS_JSON:-}" ]]; then
+      printf '%s' "$FAKE_SOURCE_ARTIFACTS_JSON"
+    else
+      printf '%s' '[{"artifacts":[{"name":"preview-mode-pr-900-cccccccccccccccccccccccccccccccccccccccc","expired":false},{"name":"preview-render-pr-900-cccccccccccccccccccccccccccccccccccccccc","expired":false}]}]'
+    fi
     ;;
   *)
     printf 'unexpected fake gh invocation: %s\n' "$*" >&2
@@ -5143,7 +5371,14 @@ target_gh_log="$TEMP_DIR/target-gh.log"
     GITHUB_OUTPUT="$TEMP_DIR/output" \
     bash "$TEMP_DIR/target.sh"
 )
-test "$(cat "$TEMP_DIR/output")" = 'action=none'
+test "$(cat "$TEMP_DIR/output")" = 'action=deploy
+pr_number=900
+base_sha=base-900
+head_sha=cccccccccccccccccccccccccccccccccccccccc
+merge_sha=merge-900
+image_tag=cccccccccccccccccccccccccccccccccccccccc
+namespace=pr-900
+hostname=pr-900.preview.firedevops.net'
 test "$(cat "$target_gh_log")" = 'api repos/example/FireMUD/actions/runs/42'
 
 run_target_without_pull_request_metadata() {
@@ -5212,9 +5447,37 @@ source_gh_log="$TEMP_DIR/source-gh.log"
 test "$(cat "$source_output")" = "$(cat <<'EOF'
 render_run_id=42
 artifact_name=preview-render-pr-900-cccccccccccccccccccccccccccccccccccccccc
+render_artifact_count=1
+mode_artifact_name=preview-mode-pr-900-cccccccccccccccccccccccccccccccccccccccc
+action=deploy
 EOF
 )"
 test "$(cat "$source_gh_log")" = 'api repos/example/FireMUD/actions/runs/42'
+
+source_no_mode_output="$TEMP_DIR/source-no-mode-output"
+source_no_mode_stderr="$TEMP_DIR/source-no-mode.stderr"
+if ! (
+  cd "$ROOT_DIR"
+  PATH="$TEMP_DIR/bin:$PATH" \
+    GH_TOKEN=fake \
+    GITHUB_REPOSITORY=example/FireMUD \
+    SOURCE_RUN_ID=42 \
+    HEAD_SHA=cccccccccccccccccccccccccccccccccccccccc \
+    PR_NUMBER=900 \
+    FAKE_SOURCE_ARTIFACTS_JSON='[{"artifacts":[]}]' \
+    SOURCE_GH_LOG="$TEMP_DIR/source-no-mode-gh.log" \
+    GITHUB_OUTPUT="$source_no_mode_output" \
+    bash "$source_step"
+) >"$TEMP_DIR/source-no-mode.stdout" 2>"$source_no_mode_stderr"; then
+  cat "$TEMP_DIR/source-no-mode.stdout" >&2
+  cat "$source_no_mode_stderr" >&2
+  echo "source validation must skip a source run without immutable mode evidence" >&2
+  exit 1
+fi
+grep -Fxq 'action=none' "$source_no_mode_output"
+grep -Fxq \
+  'Ignoring source render without exactly one current preview-mode-pr-900-cccccccccccccccccccccccccccccccccccccccc artifact.' \
+  "$TEMP_DIR/source-no-mode.stdout"
 
 missing_source_stderr="$TEMP_DIR/source-missing-id.stderr"
 missing_source_gh_log="$TEMP_DIR/source-missing-id-gh.log"

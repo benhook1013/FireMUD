@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.Ordered;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.server.PathContainer;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.WebFilter;
@@ -42,6 +43,8 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
   private static final String HDR_PROXY_CONNECTION_ID = "X-Proxy-Connection-Id";
   private static final String HDR_PROXY_GAME_INSTANCE_ID = "X-Proxy-Game-Instance-Id";
   private static final String HDR_PROXY_TENANT_ID = "X-Proxy-Tenant-Id";
+  private static final String HDR_FIREMUD_CONNECT_TOKEN = "X-Firemud-Connect-Token";
+  private static final String HDR_FIREMUD_LOCALE = "X-Firemud-Locale";
 
   private final CidrSet trustedForwardedProxies;
   private final TcpProxyTrustPolicy tcpProxyTrustPolicy;
@@ -57,9 +60,9 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
 
   @Override
   public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
-    String path = exchange.getRequest().getPath().pathWithinApplication().value();
-    boolean isGameplayWebSocketRoute = path.startsWith("/ws/game");
-    boolean isSessionRoute = isGameplayWebSocketRoute || path.startsWith("/api/session/");
+    PathContainer path = exchange.getRequest().getPath().pathWithinApplication();
+    boolean isGameplayRoute = GameplayRouteClassifier.classify(path).gameplayRoute();
+    boolean isSessionRoute = isGameplayRoute || path.value().startsWith("/api/session/");
 
     InetAddress remoteAddress = remoteInetAddress(exchange);
     boolean trustedTcpProxy = tcpProxyTrustPolicy.isTrusted(exchange, remoteAddress);
@@ -127,7 +130,7 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
                 request ->
                     request.headers(
                         headers -> {
-                          stripGatewayOwnedHeaders(headers, isGameplayWebSocketRoute);
+                          stripGatewayOwnedHeaders(headers, isGameplayRoute);
 
                           if (canonicalClientIp != null) {
                             headers.set(HDR_CLIENT_IP, canonicalClientIp);
@@ -208,7 +211,8 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
             name -> name.regionMatches(true, 0, HDR_FIREMUD_PREFIX, 0, HDR_FIREMUD_PREFIX.length()))
         .filter(
             name ->
-                !preserveGameplayConnectTokenCarrier || !name.equalsIgnoreCase(HDR_CONNECT_TOKEN))
+                (!preserveGameplayConnectTokenCarrier || !name.equalsIgnoreCase(HDR_CONNECT_TOKEN))
+                    && !name.equalsIgnoreCase(HDR_FIREMUD_LOCALE))
         .forEach(headers::remove);
 
     headers.remove(HDR_CLIENT_IP);
@@ -222,6 +226,9 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
     headers.remove(HDR_PROXY_CONNECTION_ID);
     headers.remove(HDR_PROXY_GAME_INSTANCE_ID);
     headers.remove(HDR_PROXY_TENANT_ID);
+
+    // The presentation locale is intentionally preserved; all other gateway-owned Firemud
+    // headers are removed above, except the migration connect-token carrier on gameplay routes.
   }
 
   private String deriveClientIpFromForwardedHeaders(
