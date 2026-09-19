@@ -74,6 +74,46 @@ class HeaderTrustFilterTest {
   }
 
   @Test
+  void stripsSpoofedGatewayOwnedAdmissionContextButPreservesMigrationCarrierAndLocale() {
+    HeaderTrustFilter filter = legacyFilter(new GatewayHeaderTrustProperties());
+
+    MockServerHttpRequest request =
+        MockServerHttpRequest.get("/ws/game/test")
+            .remoteAddress(new InetSocketAddress("1.2.3.4", 0))
+            .header("X-Firemud-Connection-Mode", "trusted_tcp_proxy")
+            .header("X-Firemud-Connect-Context", "spoofed-context")
+            .header("X-Firemud-Transport-Session-Id", "spoofed-session")
+            .header("X-Firemud-Handshake-Error-Class", "POLICY_DENY")
+            .header("X-Firemud-Unknown-Admission-Header", "spoofed")
+            .header("X-Firemud-Connect-Token", "token-carrier")
+            .header("X-Firemud-Locale", "en-NZ")
+            .build();
+
+    ServerWebExchange mutatedExchange =
+        filterThroughChain(filter, MockServerWebExchange.from(request));
+
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connection-Mode"))
+        .isNull();
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connect-Context"))
+        .isNull();
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Transport-Session-Id"))
+        .isNull();
+    assertThat(
+            mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
+        .isNull();
+    assertThat(
+            mutatedExchange
+                .getRequest()
+                .getHeaders()
+                .getFirst("X-Firemud-Unknown-Admission-Header"))
+        .isNull();
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connect-Token"))
+        .isEqualTo("token-carrier");
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Locale"))
+        .isEqualTo("en-NZ");
+  }
+
+  @Test
   void derivesClientIpFromForwardedHeadersOnlyWhenRemoteIsTrusted() {
     GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
     props.getForwardedClientIp().setTrustedProxyCidrs(List.of("1.2.3.4/32"));

@@ -300,6 +300,7 @@ done
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values-controller.yaml" \
   --set-string 'previewStack.telnetTls.secretName=other-release-telnet-tls' \
+  --set-string 'previewStack.ingress.tlsSecretName=other-release-tls' \
   --namespace pr-42 >"$TMP_DIR/rendered-mismatched-hosted-secret.yaml"
 python3 - "$TMP_DIR/rendered-mismatched-hosted-secret.yaml" <<'PY'
 import sys
@@ -324,6 +325,9 @@ telnet_volume = next(
     if volume.get("name") == "telnet-tls"
 )
 assert telnet_volume["secret"]["secretName"] == "preview-release-telnet-tls"
+ingress = next(document for document in documents if document.get("kind") == "Ingress")
+assert ingress["spec"]["tls"][0]["secretName"] == "preview-release-tls"
+assert "cert-manager.io/cluster-issuer" not in ingress.get("metadata", {}).get("annotations", {})
 PY
 
 CERTIFICATE_IDENTITY_MODE_ERROR="previewStack.certificateIdentity.mode must be standalone or hosted-controller"
@@ -393,7 +397,38 @@ def load_yaml_mappings(path):
     ]
 
 
+def assert_application_security_context(documents, label):
+    deployments = [
+        document
+        for document in documents
+        if document.get("kind") == "Deployment"
+        and (
+            document.get("metadata", {}).get("name", "").endswith("-service")
+            or document.get("metadata", {}).get("name") == "spring-cloud-gateway"
+        )
+    ]
+    assert deployments, f"{label} render omitted application Deployments"
+    for deployment in deployments:
+        pod_spec = deployment["spec"]["template"]["spec"]
+        assert pod_spec["securityContext"] == {
+            "runAsNonRoot": True,
+            "runAsUser": 1000,
+            "runAsGroup": 1000,
+            "fsGroup": 1000,
+            "seccompProfile": {"type": "RuntimeDefault"},
+        }, (label, deployment["metadata"]["name"], pod_spec["securityContext"])
+        containers = pod_spec["containers"]
+        assert len(containers) == 1, (label, deployment["metadata"]["name"])
+        assert containers[0]["securityContext"] == {
+            "allowPrivilegeEscalation": False,
+            "runAsUser": 1000,
+            "runAsGroup": 1000,
+            "capabilities": {"drop": ["ALL"]},
+        }, (label, deployment["metadata"]["name"], containers[0]["securityContext"])
+
+
 documents = load_yaml_mappings(Path(os.environ["RENDERED"]))
+assert_application_security_context(documents, "standalone")
 issues = preflight.validate_hosted_telnet_tls_values(documents)
 assert not issues, issues
 
@@ -432,6 +467,7 @@ assert any(
 ), "standalone mode accepted a mismatched direct TLS Service listener"
 
 controller_documents = load_yaml_mappings(Path(os.environ["CONTROLLER_RENDERED"]))
+assert_application_security_context(controller_documents, "hosted-controller")
 for document in controller_documents:
     metadata = document.get("metadata")
     if isinstance(metadata, dict):
@@ -441,6 +477,13 @@ controller_issues = preflight.validate_hosted_telnet_tls_values(
     target_namespace="pr-42",
 )
 assert not controller_issues, controller_issues
+controller_ingress = next(
+    document for document in controller_documents if document.get("kind") == "Ingress"
+)
+assert controller_ingress["spec"]["tls"][0]["secretName"] == "preview-release-tls"
+assert "cert-manager.io/cluster-issuer" not in controller_ingress.get(
+    "metadata", {}
+).get("annotations", {})
 null_identity_documents = load_yaml_mappings(Path(os.environ["NULL_IDENTITY_RENDERED"]))
 for document in null_identity_documents:
     metadata = document.get("metadata")
@@ -815,6 +858,7 @@ assert certificate["spec"]["dnsNames"] == ["preview-42.preview.example.test"]
 assert certificate["spec"]["issuerRef"]["name"] == "letsencrypt-prod"
 ingress = next(d for d in documents if d.get("kind") == "Ingress")
 assert ingress["spec"]["tls"][0]["secretName"] == "preview-release-tls"
+assert ingress["metadata"]["annotations"]["cert-manager.io/cluster-issuer"] == "letsencrypt-prod"
 assert certificate["spec"]["secretName"] != ingress["spec"]["tls"][0]["secretName"]
 
 mismatched = deepcopy(documents)
