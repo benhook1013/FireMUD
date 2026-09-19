@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.repository;
 import static net.firedevops.firemud.accountservice.jooq.Tables.ACCOUNT_EMAIL_LOGIN_CHALLENGE;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.time.LocalDateTime;
 import java.util.Optional;
 import net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge;
 import org.jooq.DSLContext;
@@ -72,6 +73,46 @@ public class AccountEmailLoginChallengeRepository {
       dsl.deleteFrom(ACCOUNT_EMAIL_LOGIN_CHALLENGE)
           .where(ACCOUNT_EMAIL_LOGIN_CHALLENGE.ID.eq(entity.getId()))
           .execute();
+    }
+  }
+
+  /** Deletes at most {@code batchSize} expired rows in deterministic expiry/id order. */
+  public int deleteExpired(LocalDateTime capturedNow, int batchSize) {
+    validateCleanupArguments(capturedNow, batchSize);
+    return dsl.deleteFrom(ACCOUNT_EMAIL_LOGIN_CHALLENGE)
+        .where(
+            ACCOUNT_EMAIL_LOGIN_CHALLENGE.ID.in(
+                dsl.select(ACCOUNT_EMAIL_LOGIN_CHALLENGE.ID)
+                    .from(ACCOUNT_EMAIL_LOGIN_CHALLENGE)
+                    .where(ACCOUNT_EMAIL_LOGIN_CHALLENGE.EXPIRES_AT.lt(capturedNow))
+                    .orderBy(
+                        ACCOUNT_EMAIL_LOGIN_CHALLENGE.EXPIRES_AT.asc(),
+                        ACCOUNT_EMAIL_LOGIN_CHALLENGE.ID.asc())
+                    .limit(batchSize)))
+        .execute();
+  }
+
+  public Optional<LocalDateTime> findOldestExpiredAt(LocalDateTime capturedNow) {
+    if (capturedNow == null) {
+      throw new IllegalArgumentException("capturedNow must not be null");
+    }
+    return Optional.ofNullable(
+        dsl.select(ACCOUNT_EMAIL_LOGIN_CHALLENGE.EXPIRES_AT)
+            .from(ACCOUNT_EMAIL_LOGIN_CHALLENGE)
+            .where(ACCOUNT_EMAIL_LOGIN_CHALLENGE.EXPIRES_AT.lt(capturedNow))
+            .orderBy(
+                ACCOUNT_EMAIL_LOGIN_CHALLENGE.EXPIRES_AT.asc(),
+                ACCOUNT_EMAIL_LOGIN_CHALLENGE.ID.asc())
+            .limit(1)
+            .fetchOne(ACCOUNT_EMAIL_LOGIN_CHALLENGE.EXPIRES_AT));
+  }
+
+  private static void validateCleanupArguments(LocalDateTime capturedNow, int batchSize) {
+    if (capturedNow == null) {
+      throw new IllegalArgumentException("capturedNow must not be null");
+    }
+    if (batchSize <= 0) {
+      throw new IllegalArgumentException("batchSize must be positive");
     }
   }
 

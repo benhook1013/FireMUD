@@ -753,9 +753,12 @@ public class ScriptGameplayCommandHandoffServiceImpl
           now);
       return;
     }
-    // Generation-aware recovery belongs to the separate parent aggregate. The
-    // current work-item status records this failed handoff without fabricating
-    // recovery evidence that this path cannot maintain atomically.
+    // A terminal failure is a distinct dead-letter transition unless this item was
+    // already terminal. Replay moves it back to PENDING_EVALUATION first, so the
+    // next terminal failure advances the generation exactly once.
+    if (!STATUS_DEAD_LETTERED.equals(workItem.getStatus())) {
+      workItem.setFailureGeneration(Math.addExact(workItem.getFailureGeneration(), 1L));
+    }
     workItem.setStatus(STATUS_DEAD_LETTERED);
     String failureReason = ScriptHandoffOutcomeSupport.canonicalInfrastructureReason(result);
     workItem.setCancelReason(failureReason);
