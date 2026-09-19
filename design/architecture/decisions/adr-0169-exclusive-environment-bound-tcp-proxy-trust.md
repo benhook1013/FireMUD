@@ -29,7 +29,7 @@ ADR 0010 selected URI SAN as the preferred production identity but defined DNS S
 
 ## Decision
 
-Player-facing TCP Proxy traffic enters Gateway through a dedicated internal-only `wss://` listener that requires a client certificate. Gateway applies the checks shared by every non-development trust profile first: the certificate must chain to the trust bundle or issuer explicitly assigned to that deployment environment and be valid for client authentication. It then applies exactly one matcher selected by the active profile:
+Player-facing TCP Proxy traffic enters Gateway through a dedicated internal-only `wss://` listener that requires a client certificate. Gateway applies the checks shared by every non-development trust profile first: the certificate must chain to the trust bundle or issuer explicitly assigned to that deployment environment and include the `clientAuth` extended key usage. A certificate with no extended-key-usage extension is rejected; it is not treated as unrestricted. It then applies exactly one matcher selected by the active profile:
 
 - `production_uri` requires the exact allowlisted URI SAN/SPIFFE workload identity for TCP Proxy;
 - `migration_dns` requires the exact allowlisted DNS SAN;

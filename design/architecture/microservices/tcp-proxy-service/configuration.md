@@ -109,7 +109,7 @@ Ordinary renewal atomically replaces the client used for new bridges and readine
 
 The aggregate `tlsCertificateReloadHealthIndicator` remains a default-health and alerting surface, not a wholesale readiness dependency. TCP Proxy’s route-specific `trafficAdmissionReadiness` includes Gateway bridge readiness and fails closed for new Telnet sessions when that path’s watcher or active client material is unusable; unrelated watcher loss does not close this route. Established sessions remain usable while their negotiated path is safe, and controller-owned identity withdrawal remains a disruptive termination boundary. The canonical policy is in [Kubernetes Health Monitoring](../../infrastructure/deployment-environments.md#kubernetes-health-monitoring).
 
-The WebSocket client certificate must include the `clientAuth` extended key usage. This is intentionally decoupled from the proxy’s internal gRPC server certificate profile, which must include `serverAuth`.
+The WebSocket client certificate must include the `clientAuth` extended key usage; a certificate with no extended-key-usage extension is rejected rather than treated as unrestricted. This is intentionally decoupled from the proxy’s internal gRPC server certificate profile, which must include `serverAuth`.
 
 TLS handshake failures are fail-closed. The proxy does not fall back to plaintext.
 
