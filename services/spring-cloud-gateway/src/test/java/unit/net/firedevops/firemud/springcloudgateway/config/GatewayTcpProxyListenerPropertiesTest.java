@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.time.Instant;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.context.properties.bind.BindException;
 import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.core.env.MapPropertySource;
@@ -51,6 +52,7 @@ class GatewayTcpProxyListenerPropertiesTest {
                     .bind(
                         "firemud.gateway.tcp-proxy-listener",
                         Bindable.ofInstance(new GatewayTcpProxyListenerProperties())))
+        .isInstanceOf(BindException.class)
         .hasMessageContaining("expires-at");
   }
 

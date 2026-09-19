@@ -18,7 +18,8 @@ import tools.jackson.databind.json.JsonMapper;
 /** Shared HTTP helpers for integration tests that should not depend on TestRestTemplate beans. */
 public final class HttpTestSupport {
   private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(1);
-  private static final HttpClient HTTP_CLIENT =
+  private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
+  private static final HttpClient READINESS_HTTP_CLIENT =
       HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
   static final Duration PROBE_TIMEOUT = Duration.ofSeconds(1);
   private static final ObjectMapper JSON_MAPPER =
@@ -136,7 +137,8 @@ public final class HttpTestSupport {
       throws IOException, InterruptedException {
     HttpRequest request =
         HttpRequest.newBuilder(URI.create(url)).timeout(requestTimeout).GET().build();
-    return HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+    return READINESS_HTTP_CLIENT.send(
+        request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
   }
 
   public static String postJsonBody(String url, String requestBody)
