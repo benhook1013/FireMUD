@@ -808,7 +808,11 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
             latest_explicit_review_request_url,
             latest_explicit_review_request_command,
         ) = max(
-            review_requests, key=lambda request: request[0]
+            review_requests,
+            key=lambda request: (
+                request[0],
+                request[2] if request[2] is not None else -1,
+            ),
         )
         latest_explicit_review_request_dt = latest_request_dt
 
