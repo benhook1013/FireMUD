@@ -32,6 +32,10 @@ These scripts are shared because they manage infrastructure or validation behavi
 - `hosted-login-look-smoke.sh`
   - runs the canonical hosted TCP LOGIN -> PLAY -> LOOK smoke proof against the exposed environment
 
+- `push-verified-image.sh`
+  - retries one trusted Docker image push up to three times with 5-second and 10-second backoff
+  - extracts exactly one valid sha256 digest from the successful push output and writes `digest=` to `GITHUB_OUTPUT`; failed-attempt output is never reused
+
 - `show-rollout-diagnostics.sh`
   - prints the canonical hosted rollout failure view for both preview lanes, including blocked readiness reasons, service/target ports, safe config summaries, secret/TLS summaries, events, describes, and current plus previous logs for problematic pods
 

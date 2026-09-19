@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-for required_command in helm jq kubectl openssl python3; do
+for required_command in helm jq kubectl node openssl python3; do
   if ! command -v "$required_command" >/dev/null 2>&1; then
     echo "Missing required command: $required_command" >&2
     exit 1
@@ -35,6 +35,7 @@ render_preview_values="$ROOT_DIR/dev-tools/hosted/preview/render-preview-values.
 preview_annotator="$ROOT_DIR/dev-tools/hosted/preview/annotate-preview-namespace.sh"
 runtime_rollout_waiter="$ROOT_DIR/dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh"
 credential_source="$ROOT_DIR/dev-tools/hosted/preview/provision-runtime-credentials.sh"
+push_verified_image="$ROOT_DIR/dev-tools/hosted/shared/push-verified-image.sh"
 runner_label_validator="$ROOT_DIR/dev-tools/tests/preview_runner_labels.py"
 
 python3 "$runner_label_validator" --self-test
@@ -755,7 +756,7 @@ for required in \
   contains "$requester" "$required"
 done
 
-python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" "$janitor" "$mode_action" "$runtime" "$artifact_action" <<'PY'
+python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" "$janitor" "$mode_action" "$runtime" "$artifact_action" "$push_verified_image" <<'PY'
 import os
 import re
 import subprocess
@@ -776,6 +777,10 @@ janitor_workflow = yaml.safe_load(Path(sys.argv[7]).read_text(encoding="utf-8"))
 mode_action = yaml.safe_load(Path(sys.argv[8]).read_text(encoding="utf-8"))
 runtime_workflow = yaml.safe_load(Path(sys.argv[9]).read_text(encoding="utf-8"))
 artifact_action = yaml.safe_load(Path(sys.argv[10]).read_text(encoding="utf-8"))
+push_verified_image = Path(sys.argv[11])
+push_verified_image_text = push_verified_image.read_text(encoding="utf-8")
+assert push_verified_image.is_file()
+assert push_verified_image.stat().st_mode & 0o111
 
 for job_name in ("validate-target", "prepare-runtime", "deploy-runtime"):
     caller_python_steps = [
@@ -1422,11 +1427,19 @@ assert controller_publish_job["permissions"] == {
 }
 assert controller_publish_job["env"] == controller_build_job["env"]
 controller_publish_steps = controller_publish_job["steps"]
+checkout_index = next(i for i, step in enumerate(controller_publish_steps) if step.get("name") == "Checkout trusted publication commit")
 download_index = next(i for i, step in enumerate(controller_publish_steps) if step.get("name") == "Download exact verified controller image artifact")
 load_index = next(i for i, step in enumerate(controller_publish_steps) if step.get("name") == "Load and verify exact controller image")
 login_index = next(i for i, step in enumerate(controller_publish_steps) if step.get("name") == "Login to GHCR")
 publish_index = next(i for i, step in enumerate(controller_publish_steps) if step.get("name") == "Publish exact verified controller image")
-assert download_index < load_index < login_index < publish_index
+assert checkout_index < download_index < load_index < login_index < publish_index
+assert controller_publish_steps[checkout_index]["uses"] == (
+    "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
+)
+assert controller_publish_steps[checkout_index]["with"] == {
+    "ref": "${{ needs.image-meta.outputs.checkout_ref }}",
+    "persist-credentials": False,
+}
 assert controller_publish_steps[download_index]["uses"] == (
     "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
 )
@@ -1450,15 +1463,24 @@ assert "./gradlew" not in str(controller_publish_steps)
 assert "docker build" not in str(controller_publish_steps)
 assert "docker run" not in str(controller_publish_steps)
 assert "health/liveness" not in str(controller_publish_steps)
-assert 'docker push "$CONTROLLER_IMAGE"' in publish_run
+assert 'bash ./dev-tools/hosted/shared/push-verified-image.sh "$CONTROLLER_IMAGE"' in publish_run
+assert 'docker push "$CONTROLLER_IMAGE"' not in publish_run
 assert "docker manifest inspect" not in publish_run
 assert "current_image_id" in publish_run
-assert "pushed_digest" in publish_run
 assert "docker buildx imagetools inspect" not in publish_run
-assert "push_output" in publish_run
-assert "pushed_digests" in publish_run
-assert '${#pushed_digests[@]} != 1' in publish_run
-assert "BASH_REMATCH[1]" in publish_run
+for required in (
+    'max_push_attempts=3',
+    'push_output=""',
+    'docker push "$image" 2>&1',
+    'backoff_seconds=$((5 * 2 ** (push_attempt - 1)))',
+    'sleep "$backoff_seconds"',
+    'pushed_digests=()',
+    'if ((${#pushed_digests[@]} != 1)); then',
+    'sha256:[0-9a-f]{64}',
+    'echo "digest=$pushed_digest" >> "${GITHUB_OUTPUT:?GITHUB_OUTPUT must point to a step output file}"',
+):
+    assert required in push_verified_image_text, required
+assert 'done\n\npushed_digests=()' in push_verified_image_text
 attest_step = next(step for step in controller_publish_steps if step.get("uses") == "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6")
 assert attest_step["with"]["subject-name"] == "${{ env.CONTROLLER_IMAGE_NAME }}"
 assert attest_step["with"]["subject-digest"] == "${{ steps.publish.outputs.digest }}"
@@ -1467,8 +1489,6 @@ assert attest_step["with"]["subject-name"] == "${{ env.CONTROLLER_IMAGE_NAME }}"
 assert attest_step["with"]["push-to-registry"] is True
 assert attest_step["with"]["create-storage-record"] is False
 assert controller_publish_steps[publish_index]["id"] == "publish"
-assert "pushed_digest" in publish_run
-assert "sha256:[0-9a-f]" in publish_run
 assert "hosted-environment-identity-controller" not in publisher_script
 janitor_steps = janitor_workflow["jobs"]["prune-stale-preview-namespaces"]["steps"]
 janitor_mode_step = next(
@@ -2820,6 +2840,13 @@ case "${CONTROLLER_PUSH_MODE:?}" in
     printf 'trusted: digest: %s size: 2\n' "$successful_digest"
     printf 'duplicate: digest: %s size: 2\n' "$successful_digest"
     ;;
+  zero-success)
+    printf 'trusted: push completed without a digest\n'
+    ;;
+  always-fail)
+    printf 'failed: digest: %s size: 1\n' "$failed_digest"
+    exit 1
+    ;;
   *)
     echo "unexpected controller push mode: $CONTROLLER_PUSH_MODE" >&2
     exit 2
@@ -2841,15 +2868,18 @@ controller_sleep_log="$TEMP_DIR/controller-sleep.log"
 controller_publish_output="$TEMP_DIR/controller-publish.output"
 controller_publish_stdout="$TEMP_DIR/controller-publish.stdout"
 successful_digest="sha256:$(printf '2%.0s' {1..64})"
-env \
-  PATH="$controller_publish_stub_dir:$PATH" \
-  CONTROLLER_IMAGE="$controller_image" \
-  VERIFIED_IMAGE_ID="$controller_image_id" \
-  CONTROLLER_PUSH_MODE=failed-then-success \
-  CONTROLLER_PUSH_COUNT="$controller_push_count" \
-  CONTROLLER_SLEEP_LOG="$controller_sleep_log" \
-  GITHUB_OUTPUT="$controller_publish_output" \
-  bash "$controller_publish_step" >"$controller_publish_stdout"
+(
+  cd "$ROOT_DIR"
+  env \
+    PATH="$controller_publish_stub_dir:$PATH" \
+    CONTROLLER_IMAGE="$controller_image" \
+    VERIFIED_IMAGE_ID="$controller_image_id" \
+    CONTROLLER_PUSH_MODE=failed-then-success \
+    CONTROLLER_PUSH_COUNT="$controller_push_count" \
+    CONTROLLER_SLEEP_LOG="$controller_sleep_log" \
+    GITHUB_OUTPUT="$controller_publish_output" \
+    bash "$controller_publish_step" >"$controller_publish_stdout"
+)
 test "$(<"$controller_push_count")" -eq 2
 grep -Fxq '5' "$controller_sleep_log"
 grep -Fxq "digest=$successful_digest" "$controller_publish_output"
@@ -2860,22 +2890,71 @@ fi
 
 controller_duplicate_count="$TEMP_DIR/controller-duplicate-count"
 controller_duplicate_output="$TEMP_DIR/controller-duplicate.output"
-if env \
-  PATH="$controller_publish_stub_dir:$PATH" \
-  CONTROLLER_IMAGE="$controller_image" \
-  VERIFIED_IMAGE_ID="$controller_image_id" \
-  CONTROLLER_PUSH_MODE=duplicate-success \
-  CONTROLLER_PUSH_COUNT="$controller_duplicate_count" \
-  CONTROLLER_SLEEP_LOG="$TEMP_DIR/controller-duplicate-sleep.log" \
-  GITHUB_OUTPUT="$controller_duplicate_output" \
-  bash "$controller_publish_step" >"$TEMP_DIR/controller-duplicate.stdout" \
-  2>"$TEMP_DIR/controller-duplicate.stderr"; then
+if (
+  cd "$ROOT_DIR"
+  env \
+    PATH="$controller_publish_stub_dir:$PATH" \
+    CONTROLLER_IMAGE="$controller_image" \
+    VERIFIED_IMAGE_ID="$controller_image_id" \
+    CONTROLLER_PUSH_MODE=duplicate-success \
+    CONTROLLER_PUSH_COUNT="$controller_duplicate_count" \
+    CONTROLLER_SLEEP_LOG="$TEMP_DIR/controller-duplicate-sleep.log" \
+    GITHUB_OUTPUT="$controller_duplicate_output" \
+    bash "$controller_publish_step" >"$TEMP_DIR/controller-duplicate.stdout" \
+    2>"$TEMP_DIR/controller-duplicate.stderr"
+); then
   echo "controller publication accepted more than one successful push digest" >&2
   exit 1
 fi
 grep -Fq 'did not report exactly one exact sha256 digest' \
   "$TEMP_DIR/controller-duplicate.stderr"
 test ! -s "$controller_duplicate_output"
+
+controller_zero_count="$TEMP_DIR/controller-zero-count"
+controller_zero_output="$TEMP_DIR/controller-zero.output"
+if (
+  cd "$ROOT_DIR"
+  env \
+    PATH="$controller_publish_stub_dir:$PATH" \
+    CONTROLLER_IMAGE="$controller_image" \
+    VERIFIED_IMAGE_ID="$controller_image_id" \
+    CONTROLLER_PUSH_MODE=zero-success \
+    CONTROLLER_PUSH_COUNT="$controller_zero_count" \
+    CONTROLLER_SLEEP_LOG="$TEMP_DIR/controller-zero-sleep.log" \
+    GITHUB_OUTPUT="$controller_zero_output" \
+    bash "$controller_publish_step" >"$TEMP_DIR/controller-zero.stdout" \
+    2>"$TEMP_DIR/controller-zero.stderr"
+); then
+  echo "controller publication accepted a successful push without a digest" >&2
+  exit 1
+fi
+grep -Fq 'did not report exactly one exact sha256 digest' \
+  "$TEMP_DIR/controller-zero.stderr"
+test ! -s "$controller_zero_output"
+
+controller_failure_count="$TEMP_DIR/controller-failure-count"
+controller_failure_output="$TEMP_DIR/controller-failure.output"
+if (
+  cd "$ROOT_DIR"
+  env \
+    PATH="$controller_publish_stub_dir:$PATH" \
+    CONTROLLER_IMAGE="$controller_image" \
+    VERIFIED_IMAGE_ID="$controller_image_id" \
+    CONTROLLER_PUSH_MODE=always-fail \
+    CONTROLLER_PUSH_COUNT="$controller_failure_count" \
+    CONTROLLER_SLEEP_LOG="$TEMP_DIR/controller-failure-sleep.log" \
+    GITHUB_OUTPUT="$controller_failure_output" \
+    bash "$controller_publish_step" >"$TEMP_DIR/controller-failure.stdout" \
+    2>"$TEMP_DIR/controller-failure.stderr"
+); then
+  echo "controller publication accepted three failed push attempts" >&2
+  exit 1
+fi
+test "$(<"$controller_failure_count")" -eq 3
+grep -Fxq '5' "$TEMP_DIR/controller-failure-sleep.log"
+grep -Fxq '10' "$TEMP_DIR/controller-failure-sleep.log"
+grep -Fq 'after 3 attempts' "$TEMP_DIR/controller-failure.stderr"
+test ! -s "$controller_failure_output"
 
 preview_derive_step="$TEMP_DIR/preview-derive-step.sh"
 python3 - "$preview" "$preview_derive_step" <<'PY'

@@ -8,6 +8,7 @@ smoke="$ROOT_DIR/dev-tools/backups/smoke-backup-verifier-image.sh"
 runtime="$ROOT_DIR/.github/workflows/runtime-images.yml"
 publisher="$ROOT_DIR/.github/workflows/publish-pr-runtime-images.yml"
 dockerignore="$ROOT_DIR/.dockerignore"
+push_verified_image="$ROOT_DIR/dev-tools/hosted/shared/push-verified-image.sh"
 
 require_contains() {
   local path="$1"
@@ -77,6 +78,78 @@ if [[ ! -f "$publisher" ]]; then
 fi
 require_contains "$runtime" 'BACKUP_VERIFIER_IMAGE'
 require_contains "$runtime" 'smoke-backup-verifier-image.sh'
+[[ -x "$push_verified_image" ]] || {
+  echo "$push_verified_image must be executable" >&2
+  exit 1
+}
+# shellcheck disable=SC2016 # These assertions intentionally match literal workflow/helper shell.
+require_contains "$runtime" 'bash ./dev-tools/hosted/shared/push-verified-image.sh "$BACKUP_VERIFIER_IMAGE"'
+# shellcheck disable=SC2016 # This assertion intentionally matches literal workflow shell.
+if grep -Fq -- 'docker push "$BACKUP_VERIFIER_IMAGE"' "$runtime"; then
+  echo "backup verifier publication must use the shared verified-image push helper" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016 # These assertions intentionally match literal helper shell.
+for required in \
+  'max_push_attempts=3' \
+  'backoff_seconds=$((5 * 2 ** (push_attempt - 1)))' \
+  'sleep "$backoff_seconds"' \
+  'pushed_digests=()' \
+  'if ((${#pushed_digests[@]} != 1)); then' \
+  'echo "digest=$pushed_digest" >> "${GITHUB_OUTPUT:?GITHUB_OUTPUT must point to a step output file}"'; do
+  require_contains "$push_verified_image" "$required"
+done
+python3 - "$runtime" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+job = workflow["jobs"]["publish-backup-verifier"]
+steps = job["steps"]
+checkout_index = next(
+    index
+    for index, step in enumerate(steps)
+    if step.get("name") == "Checkout trusted publication commit"
+)
+download_index = next(
+    index
+    for index, step in enumerate(steps)
+    if step.get("name") == "Download exact verified backup verifier image artifact"
+)
+load_index = next(
+    index
+    for index, step in enumerate(steps)
+    if step.get("name") == "Load and verify exact backup verifier image"
+)
+login_index = next(
+    index for index, step in enumerate(steps) if step.get("name") == "Login to GHCR"
+)
+publish_index = next(
+    index
+    for index, step in enumerate(steps)
+    if step.get("name") == "Publish exact verified backup verifier image"
+)
+if not checkout_index < download_index < load_index < login_index < publish_index:
+    raise SystemExit("Backup verifier publisher must checkout before artifact load and helper invocation")
+checkout = steps[checkout_index]
+if checkout.get("uses") != "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd":
+    raise SystemExit("Backup verifier publisher must use the pinned checkout action")
+if checkout.get("with") != {
+    "ref": "${{ needs.image-meta.outputs.checkout_ref }}",
+    "persist-credentials": False,
+}:
+    raise SystemExit("Backup verifier publisher checkout must use the trusted exact commit without persisted credentials")
+condition = job.get("if", "")
+for required in (
+    "github.event_name != 'pull_request'",
+    "github.ref == 'refs/heads/main'",
+    "github.ref == 'refs/heads/develop'",
+):
+    if required not in condition:
+        raise SystemExit("Backup verifier publisher must remain default-branch-only")
+PY
 require_count "$runtime" 'uses: ./.github/actions/load-workflow-tool-versions' 2
 require_count "$runtime" 'config/workflow-tool-versions.env' 2
 # shellcheck disable=SC2016 # Assert literal workflow expressions and shell fragments.
