@@ -31,6 +31,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.config.CommonCoreAutoConfiguration;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.health.contributor.Health;
@@ -219,8 +220,7 @@ class TlsCertificateWatcherTest {
     @SuppressWarnings("unchecked")
     Map<WatchKey, Path> keys = (Map<WatchKey, Path>) keysField.get(watcher);
     WatchKey originalKey = keys.keySet().iterator().next();
-    ScheduledFuture<?> staleRetry =
-        retryExecutor(watcher).schedule(() -> {}, 1, TimeUnit.DAYS);
+    ScheduledFuture<?> staleRetry = retryExecutor(watcher).schedule(() -> {}, 1, TimeUnit.DAYS);
     registrationRetryTaskField.set(watcher, staleRetry);
     registrationRetryScheduledField.setBoolean(watcher, true);
     registrationRetryAttemptsField.setInt(watcher, 3);
@@ -542,6 +542,7 @@ class TlsCertificateWatcherTest {
   }
 
   @Test
+  @Timeout(15)
   void failedCallbackRetriesRepeatedlyUntilTheAttemptCap(@TempDir Path directory) throws Exception {
     Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
     AtomicInteger attempts = new AtomicInteger();
@@ -703,6 +704,7 @@ class TlsCertificateWatcherTest {
   }
 
   @Test
+  @Timeout(15)
   void lockWaiterIsNotTrackedAndCannotReloadAfterClose(@TempDir Path directory) throws Exception {
     Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
     AtomicBoolean callbackInvoked = new AtomicBoolean();
@@ -743,6 +745,7 @@ class TlsCertificateWatcherTest {
   }
 
   @Test
+  @Timeout(15)
   void closePreventsCallbackRegistrationWaitingOnCallbackState(@TempDir Path directory)
       throws Exception {
     Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
