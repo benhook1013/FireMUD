@@ -6,7 +6,6 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
-import java.util.Objects;
 import net.firedevops.firemud.automationscripting.dto.ScriptDefinitionDto;
 import net.firedevops.firemud.automationscripting.model.FormationType;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
@@ -72,9 +71,6 @@ public class AutomationScriptingGrpcService
   private PublicationReadGuard publicationReadGuard;
 
   @org.springframework.beans.factory.annotation.Autowired
-  @SuppressFBWarnings(
-      value = "CT_CONSTRUCTOR_THROW",
-      justification = "Fail-fast startup is intentional if required RPC dependencies are missing.")
   public AutomationScriptingGrpcService(
       PingService pingService,
       ScriptDefinitionService scriptService,
@@ -99,9 +95,6 @@ public class AutomationScriptingGrpcService
         configuredPublicationReadGuard(workloadNamespace));
   }
 
-  @SuppressFBWarnings(
-      value = "CT_CONSTRUCTOR_THROW",
-      justification = "Fail-fast startup is intentional if required RPC dependencies are missing.")
   public AutomationScriptingGrpcService(
       PingService pingService,
       ScriptDefinitionService scriptService,
@@ -125,9 +118,6 @@ public class AutomationScriptingGrpcService
         (PublicationReadGuard) null);
   }
 
-  @SuppressFBWarnings(
-      value = "CT_CONSTRUCTOR_THROW",
-      justification = "Fail-fast startup is intentional if required RPC dependencies are missing.")
   public AutomationScriptingGrpcService(
       PingService pingService,
       ScriptDefinitionService scriptService,
@@ -139,16 +129,15 @@ public class AutomationScriptingGrpcService
       NpcFormationService formationService,
       MeterRegistry meterRegistry,
       PublicationReadGuard publicationReadGuard) {
-    this(
-        pingService,
-        scriptService,
-        scriptDesignDigestService,
-        scriptVersionService,
-        scriptScheduleInstanceService,
-        scriptEventIngressService,
-        workItemRepository,
-        formationService,
-        meterRegistry);
+    this.pingService = pingService;
+    this.scriptService = scriptService;
+    this.scriptDesignDigestService = scriptDesignDigestService;
+    this.scriptVersionService = scriptVersionService;
+    this.scriptScheduleInstanceService = scriptScheduleInstanceService;
+    this.scriptEventIngressService = scriptEventIngressService;
+    this.workItemRepository = workItemRepository;
+    this.formationService = formationService;
+    this.meterRegistry = meterRegistry;
     this.publicationReadGuard = publicationReadGuard;
   }
 

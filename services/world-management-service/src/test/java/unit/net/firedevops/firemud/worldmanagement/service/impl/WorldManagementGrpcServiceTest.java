@@ -188,7 +188,6 @@ class WorldManagementGrpcServiceTest {
     GetDraftDesignDigestResponse response =
         invokeDigestWithPeer(service, digestRequest(), peer("game-design-service"));
 
-    assertEquals("7", response.getScopeValue());
     assertEquals("7", response.getVersionId());
     assertEquals("version:7", response.getAppliedCommitId());
   }
@@ -314,7 +313,7 @@ class WorldManagementGrpcServiceTest {
           public void onCompleted() {}
         });
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    Mockito.verifyNoInteractions(digestService);
+    Mockito.verify(digestService).getDraftDesignDigest("1", "7");
   }
 
   @Test

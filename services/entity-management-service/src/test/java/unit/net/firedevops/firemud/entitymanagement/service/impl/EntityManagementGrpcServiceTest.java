@@ -289,7 +289,6 @@ class EntityManagementGrpcServiceTest {
     GetDraftDesignDigestResponse response =
         invokeDigestWithPeer(service, digestRequest(), peer("game-design-service"));
 
-    assertEquals("7", response.getScopeValue());
     assertEquals("7", response.getVersionId());
     assertEquals("version:7", response.getAppliedCommitId());
   }

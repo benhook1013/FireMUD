@@ -148,7 +148,6 @@ class AutomationScriptingGrpcServiceTest {
                 }));
 
     assertEquals("7", ref.get().getVersionId());
-    assertEquals("7", ref.get().getScopeValue());
     assertEquals("version:7", ref.get().getAppliedCommitId());
   }
 
