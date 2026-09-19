@@ -467,11 +467,16 @@ jobs:
           EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
           ARTIFACT_PATH: ${{ runner.temp }}/preview-rendered-with-port.yaml
+          RELEASE_NAME: pr-${{ needs.validate-target.outputs.pr_number }}
           TELNET_PORT: ${{ steps.allocate-telnet-port.outputs.port }}
         run: |
           set -euo pipefail
           python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
             runtime-target "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$TELNET_PORT"
+          FIREMUD_PREFLIGHT_CONTEXT=ci-static \
+            python3 ./dev-tools/deploy/preflight.py hosted-bridge \
+            "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$RELEASE_NAME" \
+            --expected-hosted-telnet-node-port "$TELNET_PORT"
           bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
             "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
           kubectl apply --dry-run=server --server-side --field-manager=trusted-hosted-preview -n "$RUNTIME_NAMESPACE" -f "$ARTIFACT_PATH"
@@ -564,6 +569,21 @@ jobs:
           content: ${{ secrets.PREVIEW_RUNTIME_KUBECONFIG }}
           path: ${{ runner.temp }}/preview-runtime.kubeconfig
 
+      - name: Download and validate immutable runtime artifact
+        uses: ./.github/actions/download-validated-preview-artifact
+        with:
+          artifact-directory: ${{ runner.temp }}/preview-artifact
+          artifact-name: ${{ needs.validate-target.outputs.artifact_name }}
+          source-run-id: ${{ needs.validate-target.outputs.render_run_id }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          pr-number: ${{ needs.validate-target.outputs.pr_number }}
+          base-sha: ${{ needs.validate-target.outputs.base_sha }}
+          head-sha: ${{ needs.validate-target.outputs.head_sha }}
+          merge-sha: ${{ needs.validate-target.outputs.merge_sha }}
+          image-tag: ${{ needs.validate-target.outputs.image_tag }}
+          preview-hostname: ${{ needs.validate-target.outputs.hostname }}
+
       - name: Revalidate open PR before runtime verification
         env:
           GH_TOKEN: ${{ github.token }}
@@ -601,6 +621,18 @@ jobs:
           }
           echo "port=$port" >> "$GITHUB_OUTPUT"
 
+      - name: Inject observed allocated Telnet port
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/preview-artifact
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+          TELNET_PORT: ${{ steps.runtime-port.outputs.port }}
+        run: |
+          set -euo pipefail
+          python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
+            inject "$ARTIFACT_DIR/preview-rendered-sanitized.yaml" \
+            "$RUNNER_TEMP/preview-rendered-with-port.yaml" \
+            "$RUNTIME_NAMESPACE" "$TELNET_PORT"
+
       - name: Revalidate open PR after runtime waits
         env:
           GH_TOKEN: ${{ github.token }}
@@ -609,6 +641,21 @@ jobs:
         run: |
           bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
             "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
+
+      - name: Validate deployed runtime bridge
+        env:
+          ARTIFACT_PATH: ${{ runner.temp }}/preview-rendered-with-port.yaml
+          RELEASE_NAME: pr-${{ needs.validate-target.outputs.pr_number }}
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+          TELNET_PORT: ${{ steps.runtime-port.outputs.port }}
+        run: |
+          set -euo pipefail
+          python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
+            runtime-target "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$TELNET_PORT"
+          FIREMUD_PREFLIGHT_CONTEXT=operator \
+            python3 ./dev-tools/deploy/preflight.py hosted-bridge \
+            "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$RELEASE_NAME" \
+            --expected-hosted-telnet-node-port "$TELNET_PORT"
 
       - name: Publish trusted preview deployment state
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
