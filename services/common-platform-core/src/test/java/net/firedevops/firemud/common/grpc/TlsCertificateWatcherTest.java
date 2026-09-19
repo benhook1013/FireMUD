@@ -3,6 +3,7 @@ package net.firedevops.firemud.common.grpc;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import ch.qos.logback.classic.Level;
@@ -11,11 +12,13 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.nio.file.ClosedWatchServiceException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardWatchEventKinds;
 import java.nio.file.WatchEvent;
 import java.nio.file.WatchKey;
+import java.nio.file.WatchService;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -61,6 +64,31 @@ class TlsCertificateWatcherTest {
         new CommonCoreAutoConfiguration().tlsCertificateReloadHealthIndicator();
 
     assertAggregateHealth(indicator.health());
+  }
+
+  @Test
+  void failedThreadStartClosesWatcherResources(@TempDir Path directory) throws Exception {
+    Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
+    TlsCertificateWatcher watcher = new TlsCertificateWatcher(List.of(certificate), () -> {});
+    Thread alreadyStarted = new Thread(() -> {});
+    alreadyStarted.start();
+    alreadyStarted.join();
+    Field threadField = TlsCertificateWatcher.class.getDeclaredField("thread");
+    Field watchServiceField = TlsCertificateWatcher.class.getDeclaredField("watchService");
+    threadField.setAccessible(true);
+    watchServiceField.setAccessible(true);
+    threadField.set(watcher, alreadyStarted);
+
+    try {
+      assertThrows(IllegalThreadStateException.class, watcher::start);
+      assertFalse(watcher.isRunning());
+      assertTrue(retryExecutor(watcher).isShutdown());
+      assertThrows(
+          ClosedWatchServiceException.class,
+          () -> ((WatchService) watchServiceField.get(watcher)).take());
+    } finally {
+      watcher.close();
+    }
   }
 
   @Test

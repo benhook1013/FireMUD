@@ -147,6 +147,12 @@ public class TlsCertificateWatcher implements AutoCloseable {
     } catch (RuntimeException e) {
       ACTIVE_WATCHERS.remove(this);
       retryExecutor.shutdownNow();
+      running.set(false);
+      try {
+        watchService.close();
+      } catch (IOException closeFailure) {
+        e.addSuppressed(closeFailure);
+      }
       throw e;
     }
   }

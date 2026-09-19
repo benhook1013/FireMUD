@@ -11,28 +11,15 @@ if ! command -v helm >/dev/null 2>&1; then
   exit 1
 fi
 
-sed \
-  -e 's/__PR_NUMBER__/42/g' \
-  -e 's/__NAMESPACE__/pr-42/g' \
-  -e 's/__RELEASE_NAME__/pr-42/g' \
-  -e 's/__HOSTNAME__/pr-42.preview.example.test/g' \
-  -e 's/__TELNET_PORT__/32042/g' \
-  -e 's/__IMAGE_TAG__/test/g' \
-  -e 's/__TLS_SECRET_NAME__/pr-42-tls/g' \
-  -e 's/__JWT_SIGNING_KEY__/test-key/g' \
-  -e 's/__TCP_PROXY_GATEWAY_BASE_URL_LINE__//g' \
-  -e 's/__TCP_PROXY_ADDITIONAL_SERVICE_PORTS__//g' \
-  "$CHART_DIR/values-hosted-shared.example.yaml" >"$TMP_DIR/values.yaml"
-
 python3 "$ROOT_DIR/dev-tools/hosted/preview/render-preview-values.py" \
   "$CHART_DIR/values-hosted-shared.example.yaml" \
-  "$TMP_DIR/rendered-preview-values.yaml" \
+  "$TMP_DIR/values.yaml" \
   42 pr-42 pr-42 pr-42.preview.example.test test 32042
 python3 "$ROOT_DIR/dev-tools/hosted/dev-demo/render-dev-demo-values.py" \
   "$CHART_DIR/values-hosted-shared.example.yaml" \
   "$TMP_DIR/rendered-dev-demo-values.yaml" \
   dev-identity dev-demo dev.preview.firedevops.net test 32016
-if ! grep -q '^    trustEnvironment: pr-preview$' "$TMP_DIR/rendered-preview-values.yaml"; then
+if ! grep -q '^    trustEnvironment: pr-preview$' "$TMP_DIR/values.yaml"; then
   echo "preview renderer did not select pr-preview trust environment" >&2
   exit 1
 fi
