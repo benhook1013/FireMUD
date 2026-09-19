@@ -46,6 +46,15 @@ def replace(text: str, key: str, value: str) -> str:
     return updated
 
 
+def read_velero_projection(path: Path, projection_type: str) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise SystemExit(
+            f"could not read Velero {projection_type} projection {path} as UTF-8: {exc}"
+        ) from exc
+
+
 def replace_velero_terraform_projection(
     text: str, chart_version: str, velero_version: str, image_digest: str
 ) -> str:
@@ -569,11 +578,11 @@ def main() -> None:
                 raise SystemExit("Velero image digest could not be resolved")
             authority = replace(authority, "VELERO_CHART_VERSION", args.velero_chart_version)
             authority = replace(authority, "VELERO_IMAGE_DIGEST", image_digest)
-            dockerfile = args.velero_dockerfile.read_text(encoding="utf-8")
+            dockerfile = read_velero_projection(args.velero_dockerfile, "Dockerfile")
             dockerfile = replace_velero_dockerfile_projection(
                 dockerfile, args.version, image_digest
             )
-            terraform = args.terraform_file.read_text(encoding="utf-8")
+            terraform = read_velero_projection(args.terraform_file, "Terraform")
             terraform = replace_velero_terraform_projection(
                 terraform, args.velero_chart_version, args.version, image_digest
             )

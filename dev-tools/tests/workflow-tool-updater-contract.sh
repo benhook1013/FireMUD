@@ -82,8 +82,59 @@ grep -F "FROM velero/velero:v9.8.7@$image_digest AS velero-cli" "$tmp/velero.Doc
 assert_velero_terraform_projection "$tmp/terraform.tf" 12.2.0 9.8.7 "$image_digest"
 test "$(stat -c '%a' "$tmp/authority.env")" = 640
 test "$(stat -c '%a' "$tmp/velero.Dockerfile")" = 600
+python3 - "$ROOT_DIR" "$tmp/authority.env" "$tmp/velero.Dockerfile" "$tmp/terraform.tf" "$tmp/checksums" "$tmp/image-evidence" <<'PY'
+import importlib.util
+import shutil
+import sys
+from pathlib import Path
+
+root, authority, dockerfile, terraform, checksum_file, evidence_file = map(Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module.dockerhub_digest = lambda repository, tag: "sha256:" + "b" * 64
+authority_before = authority.read_text(encoding="utf-8")
+for projection_type, missing, dockerfile_arg, terraform_arg in (
+    ("Dockerfile", authority.parent / "missing-velero.Dockerfile", authority.parent / "missing-velero.Dockerfile", terraform),
+    ("Terraform", authority.parent / "missing-velero.tf", dockerfile, authority.parent / "missing-velero.tf"),
+):
+    target_authority = authority.parent / f"read-{projection_type.lower()}.env"
+    target_dockerfile = authority.parent / f"read-{projection_type.lower()}.Dockerfile"
+    target_terraform = authority.parent / f"read-{projection_type.lower()}.tf"
+    shutil.copy(authority, target_authority)
+    shutil.copy(dockerfile, target_dockerfile)
+    shutil.copy(terraform, target_terraform)
+    sys.argv = [
+        str(root / "dev-tools/maintenance/update-workflow-tool.py"),
+        "velero",
+        "9.8.7",
+        "--checksum-file",
+        str(checksum_file),
+        "--image-evidence-file",
+        str(evidence_file),
+        "--authority",
+        str(target_authority),
+        "--velero-dockerfile",
+        str(dockerfile_arg if projection_type == "Dockerfile" else target_dockerfile),
+        "--terraform-file",
+        str(terraform_arg if projection_type == "Terraform" else target_terraform),
+        "--velero-chart-version",
+        "12.2.0",
+    ]
+    try:
+        module.main()
+    except SystemExit as exc:
+        expected = f"could not read Velero {projection_type} projection {missing} as UTF-8:"
+        if not str(exc).startswith(expected):
+            raise SystemExit(f"unexpected {projection_type} read diagnostic: {exc}") from exc
+    else:
+        raise SystemExit(f"missing Velero {projection_type} projection was accepted")
+    if target_authority.read_text(encoding="utf-8") != authority_before:
+        raise SystemExit(f"failed {projection_type} read changed the authority")
+PY
 python3 - "$ROOT_DIR" <<'PY'
 import importlib.util
+import re
 from pathlib import Path
 import sys
 
@@ -126,8 +177,27 @@ output "unrelated" {
 }
 '''
 updated = module.replace_velero_terraform_projection(source, "12.3.0", "1.19.0", "sha256:new")
+release_start = updated.index('resource "helm_release" "velero" {')
+release_end = updated.index('\n\nmodule "unrelated" {', release_start)
+updated_release = updated[release_start:release_end]
+if re.search(r'(?m)^[ \t]*version[ \t]*=[ \t]*"12\.3\.0"[ \t]*$', updated_release) is None:
+    raise SystemExit("updated Velero release is missing its chart version projection")
+
+def has_set_value(name, value):
+    pattern = (
+        rf'(?ms)^[ \t]*set[ \t]*\{{\s*'
+        rf'name[ \t]*=[ \t]*"{re.escape(name)}"\s*'
+        rf'value[ \t]*=[ \t]*"{re.escape(value)}"\s*'
+        rf'\}}[ \t]*$'
+    )
+    return re.search(pattern, updated_release) is not None
+
+if not has_set_value("image.tag", "v1.19.0"):
+    raise SystemExit("updated Velero release is missing its image tag projection")
+if not has_set_value("image.digest", "sha256:new"):
+    raise SystemExit("updated Velero release is missing its image digest projection")
 if module.replace_velero_terraform_projection(updated, "12.3.0", "1.19.0", "sha256:new") != updated:
-    raise SystemExit("Velero Terraform resource was not updated")
+    raise SystemExit("Velero Terraform projection is not idempotent")
 if 'module "unrelated"' not in updated or 'data "unrelated" "projection"' not in updated:
     raise SystemExit("unrelated Terraform blocks were lost")
 if updated.count('value = "v1.18.2"') != 1 or updated.count('value = "sha256:old"') != 2:

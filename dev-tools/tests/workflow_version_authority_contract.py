@@ -1231,6 +1231,9 @@ def main() -> int:
 
     fixture = (
         'resource "helm_release" "velero" {\n'
+        '  description = "literal } remains inside this block"\n'
+        '  # line comment with a closing brace }\n'
+        '  /* block comment with a closing brace } */\n'
         '  version = "canonical"\n'
         '}\n'
         'resource "helm_release" "following" {\n'
@@ -1238,7 +1241,9 @@ def main() -> int:
         '}\n'
     )
     fixture_block = extract_hcl_block(fixture, 'resource "helm_release" "velero"')
-    if fixture_block is None or 'version = "following-only"' in fixture_block:
+    if fixture_block is None or 'version = "canonical"' not in fixture_block:
+        fail("Terraform HCL block extraction dropped the canonical version")
+    if 'version = "following-only"' in fixture_block:
         fail("Terraform HCL block extraction consumed a following resource")
 
     velero_terraform = (root / "k8s/terraform-production/main.tf").read_text()
