@@ -337,8 +337,7 @@ public final class TelnetServer {
     EventLoopGroup allocatedBossGroup = null;
     EventLoopGroup allocatedWorkerGroup = null;
     try {
-      allocatedBossGroup =
-          new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+      allocatedBossGroup = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
       allocatedWorkerGroup = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
       bossGroup = allocatedBossGroup;
       workerGroup = allocatedWorkerGroup;
