@@ -43,6 +43,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import javax.net.ssl.SSLHandshakeException;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import net.firedevops.firemud.test.TestAsyncAssertions;
 import org.junit.jupiter.api.Test;
@@ -270,6 +271,46 @@ class TelnetServerHandlerTest {
 
       assertEquals(0, handler.getBufferedSize());
       verify(ctx).writeAndFlush(startsWith("DISCONNECT backend_unavailable "));
+      verify(closeFuture).addListener(ChannelFutureListener.CLOSE);
+    } finally {
+      executor.shutdownGracefully();
+    }
+  }
+
+  @Test
+  void unknownCaGatewayHandshakeIsReportedAsPolicyViolation() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    ChannelFuture closeFuture = mock(ChannelFuture.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    try {
+      when(ctx.channel()).thenReturn(channel);
+      when(ctx.executor()).thenReturn(executor);
+      when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+      when(ctx.writeAndFlush(any())).thenReturn(closeFuture);
+      when(closeFuture.addListener(any(ChannelFutureListener.class))).thenReturn(closeFuture);
+      TelnetServerHandler handler =
+          newHandler(
+              registry,
+              false,
+              (ip,
+                  proxyConnectionId,
+                  session,
+                  tenant,
+                  worldSlug,
+                  realmSlug,
+                  pointerVersion,
+                  listener) ->
+                  CompletableFuture.failedFuture(
+                      new SSLHandshakeException("Received fatal alert: unknown_ca")));
+
+      handler.channelActive(ctx);
+      handler.channelRead0(ctx, "LOOK");
+
+      verify(ctx)
+          .writeAndFlush(
+              "DISCONNECT policy_violation Gateway link rejected by policy; please reconnect\n");
       verify(closeFuture).addListener(ChannelFutureListener.CLOSE);
     } finally {
       executor.shutdownGracefully();

@@ -981,6 +981,10 @@ class GatewayWebSocketClientTest {
     assertEquals(
         "client_cert_invalid",
         GatewayWebSocketClient.classifyFailure(new SSLHandshakeException("bad_certificate")));
+    assertEquals(
+        "client_cert_invalid",
+        GatewayWebSocketClient.classifyFailure(
+            new SSLHandshakeException("Received fatal alert: unknown_ca")));
   }
 
   @Test
@@ -1011,6 +1015,9 @@ class GatewayWebSocketClientTest {
     assertTrue(
         GatewayWebSocketClient.isPolicyFailure(
             new SSLHandshakeException("Received fatal alert: bad_certificate")));
+    assertTrue(
+        GatewayWebSocketClient.isPolicyFailure(
+            new SSLHandshakeException("Received fatal alert: unknown_ca")));
     assertFalse(
         GatewayWebSocketClient.isPolicyFailure(
             new SSLHandshakeException("Received fatal alert: protocol_version")));
