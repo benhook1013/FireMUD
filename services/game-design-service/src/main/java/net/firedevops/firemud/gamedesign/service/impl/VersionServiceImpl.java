@@ -21,13 +21,13 @@ import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.PluginVersionStatusEvent;
-import net.firedevops.firemud.gamedesign.entity.PublishedPluginVersion;
 import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
+import net.firedevops.firemud.gamedesign.entity.PublishedPluginVersion;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.mapper.VersionMapper;
-import net.firedevops.firemud.gamedesign.model.PublishParticipantKey;
 import net.firedevops.firemud.gamedesign.model.PublishAttemptStatus;
 import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
+import net.firedevops.firemud.gamedesign.model.PublishParticipantKey;
 import net.firedevops.firemud.gamedesign.model.PublishType;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
@@ -185,22 +185,21 @@ public class VersionServiceImpl implements VersionService {
       finalizationStarted = true;
       ScriptPatchFinalization finalization =
           publishAttemptService.executeScriptPatchTransaction(
-              () ->
-                  finalizeScriptPatch(
-                      patchBinding, reservation, participantDigests, tenantId));
+              () -> finalizeScriptPatch(patchBinding, reservation, participantDigests, tenantId));
       if (finalization.status() == PublishAttemptStatus.SUCCEEDED) {
         return finalization.versionDto();
       }
       if (finalization.status() == PublishAttemptStatus.FAILED) {
-        throw replayFailedScriptPatch(
-            finalization.failureCode(), finalization.failureMessage());
+        throw replayFailedScriptPatch(finalization.failureCode(), finalization.failureMessage());
       }
-      throw new IllegalStateException("PUBLISH_ATTEMPT_INCONSISTENT: finalization remained pending");
+      throw new IllegalStateException(
+          "PUBLISH_ATTEMPT_INCONSISTENT: finalization remained pending");
     } catch (RuntimeException ex) {
       if (finalizationStarted
           && !(ex instanceof PublishAttemptService.ScriptPatchTransactionException)) {
         // A transaction-manager failure after the callback returned is ambiguous. Leave the
-        // durable PENDING reservation for reconciliation instead of guessing whether cleanup is safe.
+        // durable PENDING reservation for reconciliation instead of guessing whether cleanup is
+        // safe.
         throw ex;
       }
       RuntimeException operationFailure =
@@ -374,7 +373,8 @@ public class VersionServiceImpl implements VersionService {
     draft.ifPresent(versionRepository::delete);
     publishAttemptService.markScriptPatchFailed(
         reservation.publishWorkflowId(), failureCode, failureMessage);
-    return new ScriptPatchFinalization(PublishAttemptStatus.FAILED, null, failureCode, failureMessage);
+    return new ScriptPatchFinalization(
+        PublishAttemptStatus.FAILED, null, failureCode, failureMessage);
   }
 
   private record ScriptPatchReservation(
@@ -425,7 +425,8 @@ public class VersionServiceImpl implements VersionService {
         || version.getVersionNumber() != attempt.getVersionNumber()
         || !version.isScriptOnly()
         || !Objects.equals(version.getScriptPatchVersion(), patchBinding.scriptPatchVersion())
-        || !Objects.equals(version.getBaseVersionId(), Long.valueOf(patchBinding.baseVersionId()))) {
+        || !Objects.equals(
+            version.getBaseVersionId(), Long.valueOf(patchBinding.baseVersionId()))) {
       throw new IllegalStateException(
           "PUBLISH_ATTEMPT_SCOPE_MISMATCH: referenced version evidence does not match the request");
     }
@@ -442,9 +443,7 @@ public class VersionServiceImpl implements VersionService {
           PublishGateFailureCode.valueOf(failureCode), failureMessage);
     } catch (IllegalArgumentException ignored) {
       return new IllegalStateException(
-          failureMessage == null || failureMessage.isBlank()
-              ? failureCode
-              : failureMessage);
+          failureMessage == null || failureMessage.isBlank() ? failureCode : failureMessage);
     }
   }
 

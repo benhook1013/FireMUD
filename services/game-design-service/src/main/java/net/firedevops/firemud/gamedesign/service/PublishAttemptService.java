@@ -3,9 +3,9 @@ package net.firedevops.firemud.gamedesign.service;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
-import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
+import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
 import net.firedevops.firemud.gamedesign.model.PublishType;
 
 public interface PublishAttemptService {
@@ -24,10 +24,7 @@ public interface PublishAttemptService {
   void createAttempt(VersionDto version, PublishType publishType, String publishWorkflowId);
 
   void createScriptPatchAttempt(
-      VersionDto version,
-      String publishWorkflowId,
-      Long baseVersionId,
-      String requestDigest);
+      VersionDto version, String publishWorkflowId, Long baseVersionId, String requestDigest);
 
   void recordScriptPatchParticipantDigests(
       String publishWorkflowId, List<PublishParticipantDigestDto> participantDigests);

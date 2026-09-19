@@ -117,6 +117,7 @@ class PublicationDigestRequestBindingTest {
     assertThatIllegalArgumentException()
         .isThrownBy(() -> PublicationDigestRequestBinding.full("cafe\u0301", "1", "request"));
     assertThatIllegalArgumentException()
-        .isThrownBy(() -> PublicationDigestRequestBinding.patch("tenant", "1", "patche\u0301", "request"));
+        .isThrownBy(
+            () -> PublicationDigestRequestBinding.patch("tenant", "1", "patche\u0301", "request"));
   }
 }

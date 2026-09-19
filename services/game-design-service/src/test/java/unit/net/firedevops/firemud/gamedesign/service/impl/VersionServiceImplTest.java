@@ -5,9 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.isNull;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -230,8 +230,8 @@ class VersionServiceImplTest {
                 "publish-script-patch:tenant-1:publish-request:" + PUBLISH_REQUEST_ID),
             org.mockito.ArgumentMatchers.eq(3L),
             org.mockito.ArgumentMatchers.eq(
-                PublicationDigestRequestBinding
-                    .patch("tenant-1", "3", "patch-2", PUBLISH_REQUEST_ID)
+                PublicationDigestRequestBinding.patch(
+                        "tenant-1", "3", "patch-2", PUBLISH_REQUEST_ID)
                     .requestDigest()));
     verify(scriptingClient).notifyScriptVersionUpdate("tenant-1", "patch-2", java.util.List.of());
     verify(recordedParticipantDigestService)
@@ -249,11 +249,11 @@ class VersionServiceImplTest {
         PublicationDigestRequestBinding.patch("tenant-1", "3", "patch-2", PUBLISH_REQUEST_ID);
     PublishAttempt attempt =
         scriptPatchAttempt(binding, PublishAttemptStatus.SUCCEEDED, 11L, 8, 3L);
-    Version published = scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.PUBLISHED, "first notes");
+    Version published =
+        scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.PUBLISHED, "first notes");
     when(publishAttemptService.findByPublishWorkflowId(binding.derivedWorkflowIdentity()))
         .thenReturn(Optional.of(attempt));
-    when(versionRepository.findByTenantIdAndId("tenant-1", 11L))
-        .thenReturn(Optional.of(published));
+    when(versionRepository.findByTenantIdAndId("tenant-1", 11L)).thenReturn(Optional.of(published));
 
     VersionDto replay =
         service.publishScriptPatchVersion(
@@ -278,10 +278,10 @@ class VersionServiceImplTest {
 
     PublicationDigestRequestBinding binding =
         PublicationDigestRequestBinding.patch("tenant-1", "3", "patch-2", PUBLISH_REQUEST_ID);
-    PublishAttempt attempt =
-        scriptPatchAttempt(binding, PublishAttemptStatus.PENDING, 11L, 8, 3L);
+    PublishAttempt attempt = scriptPatchAttempt(binding, PublishAttemptStatus.PENDING, 11L, 8, 3L);
     Version draft = scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.DRAFT, "first notes");
-    Version published = scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.PUBLISHED, "first notes");
+    Version published =
+        scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.PUBLISHED, "first notes");
     when(publishAttemptService.findByPublishWorkflowId(binding.derivedWorkflowIdentity()))
         .thenReturn(Optional.of(attempt));
     when(versionRepository.findByTenantIdAndId("tenant-1", 11L)).thenReturn(Optional.of(draft));
@@ -315,8 +315,7 @@ class VersionServiceImplTest {
     when(versionRepository.findTopByTenantIdOrderByVersionNumberDesc("tenant-1"))
         .thenReturn(Optional.of(latest));
 
-    Version savedDraft =
-        scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.DRAFT, "notes");
+    Version savedDraft = scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.DRAFT, "notes");
     when(versionRepository.save(any(Version.class))).thenReturn(savedDraft);
     PublicationDigestRequestBinding binding =
         PublicationDigestRequestBinding.patch("tenant-1", "3", "patch-2", PUBLISH_REQUEST_ID);
@@ -340,20 +339,21 @@ class VersionServiceImplTest {
                     "tenant-1", 3L, "patch-2", "notes", PUBLISH_REQUEST_ID));
 
     assertEquals(PublishGateFailureCode.PARTICIPANT_SCOPE_MISMATCH, thrown.failureCode());
-    String workflowId =
-        "publish-script-patch:tenant-1:publish-request:" + PUBLISH_REQUEST_ID;
-    verify(publishAttemptService).createScriptPatchAttempt(
-        any(VersionDto.class),
-        org.mockito.ArgumentMatchers.eq(workflowId),
-        org.mockito.ArgumentMatchers.eq(3L),
-        org.mockito.ArgumentMatchers.eq(
-            PublicationDigestRequestBinding
-                .patch("tenant-1", "3", "patch-2", PUBLISH_REQUEST_ID)
-                .requestDigest()));
+    String workflowId = "publish-script-patch:tenant-1:publish-request:" + PUBLISH_REQUEST_ID;
+    verify(publishAttemptService)
+        .createScriptPatchAttempt(
+            any(VersionDto.class),
+            org.mockito.ArgumentMatchers.eq(workflowId),
+            org.mockito.ArgumentMatchers.eq(3L),
+            org.mockito.ArgumentMatchers.eq(
+                PublicationDigestRequestBinding.patch(
+                        "tenant-1", "3", "patch-2", PUBLISH_REQUEST_ID)
+                    .requestDigest()));
     verify(publishAttemptService)
         .markScriptPatchFailed(
             org.mockito.ArgumentMatchers.eq(workflowId),
-            org.mockito.ArgumentMatchers.eq(PublishGateFailureCode.PARTICIPANT_SCOPE_MISMATCH.name()),
+            org.mockito.ArgumentMatchers.eq(
+                PublishGateFailureCode.PARTICIPANT_SCOPE_MISMATCH.name()),
             org.mockito.ArgumentMatchers.eq("scope mismatch"));
     verify(versionRepository).delete(savedDraft);
     verify(publishAttemptService, org.mockito.Mockito.never())
@@ -462,8 +462,7 @@ class VersionServiceImplTest {
 
     PublicationDigestRequestBinding binding =
         PublicationDigestRequestBinding.patch("tenant-1", "3", "patch-2", PUBLISH_REQUEST_ID);
-    PublishAttempt attempt =
-        scriptPatchAttempt(binding, PublishAttemptStatus.FAILED, 11L, 8, 3L);
+    PublishAttempt attempt = scriptPatchAttempt(binding, PublishAttemptStatus.FAILED, 11L, 8, 3L);
     attempt.setFailureCode(PublishGateFailureCode.PARTICIPANT_SCOPE_MISMATCH.name());
     attempt.setFailureMessage("scope mismatch");
     when(publishAttemptService.findByPublishWorkflowId(binding.derivedWorkflowIdentity()))
@@ -503,11 +502,7 @@ class VersionServiceImplTest {
   }
 
   private Version scriptPatchVersion(
-      long id,
-      int versionNumber,
-      long baseVersionId,
-      VersionLifecycleState state,
-      String notes) {
+      long id, int versionNumber, long baseVersionId, VersionLifecycleState state, String notes) {
     Version version = new Version();
     version.setId(id);
     version.setTenantId("tenant-1");
@@ -794,8 +789,7 @@ class VersionServiceImplTest {
   void publishPluginVersionRejectsTerminalRowsWithoutMutation() {
     for (VersionLifecycleState terminalState :
         List.of(VersionLifecycleState.SUPERSEDED, VersionLifecycleState.REVOKED_DESIGN)) {
-      PublishedPluginVersion terminal =
-          uploadedPluginVersion("tenant-1", "plugin-1", "plugin-v1");
+      PublishedPluginVersion terminal = uploadedPluginVersion("tenant-1", "plugin-1", "plugin-v1");
       terminal.setPublicationState(terminalState);
       when(publishedPluginVersionRepository.findByTenantIdAndPluginIdAndPluginVersionId(
               "tenant-1", "plugin-1", "plugin-v1"))
@@ -894,8 +888,7 @@ class VersionServiceImplTest {
 
   @Test
   void getPublishedPluginVersionRejectsUnpublishedVersion() {
-    PublishedPluginVersion uploaded =
-        uploadedPluginVersion("tenant-1", "plugin-1", "plugin-v1");
+    PublishedPluginVersion uploaded = uploadedPluginVersion("tenant-1", "plugin-1", "plugin-v1");
     when(publishedPluginVersionRepository.findByTenantIdAndPluginIdAndPluginVersionId(
             "tenant-1", "plugin-1", "plugin-v1"))
         .thenReturn(Optional.of(uploaded));
