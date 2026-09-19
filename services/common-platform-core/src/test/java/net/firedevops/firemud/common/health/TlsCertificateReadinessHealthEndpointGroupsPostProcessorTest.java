@@ -123,8 +123,12 @@ class TlsCertificateReadinessHealthEndpointGroupsPostProcessorTest {
     HealthEndpointGroups processed = processor.postProcessHealthEndpointGroups(original);
 
     assertNotNull(processed);
-    assertTrue(processed.getPrimary().isMember(
-        TlsCertificateReadinessHealthEndpointGroupsPostProcessor.TLS_CERTIFICATE_RELOAD_CONTRIBUTOR));
+    assertTrue(
+        processed
+            .getPrimary()
+            .isMember(
+                TlsCertificateReadinessHealthEndpointGroupsPostProcessor
+                    .TLS_CERTIFICATE_RELOAD_CONTRIBUTOR));
   }
 
   @Test

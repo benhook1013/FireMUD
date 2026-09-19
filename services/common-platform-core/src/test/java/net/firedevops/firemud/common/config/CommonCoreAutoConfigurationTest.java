@@ -25,8 +25,10 @@ class CommonCoreAutoConfigurationTest {
               assertThat(context).hasBean("postProcessor");
               assertThat(context)
                   .hasSingleBean(TlsCertificateReadinessHealthEndpointGroupsPostProcessor.class);
-              assertThat(context.getBeansOfType(HealthEndpointGroupsPostProcessor.class)).hasSize(2);
-              assertThat(context.getBean("tlsCertificateReadinessHealthEndpointGroupsPostProcessor"))
+              assertThat(context.getBeansOfType(HealthEndpointGroupsPostProcessor.class))
+                  .hasSize(2);
+              assertThat(
+                      context.getBean("tlsCertificateReadinessHealthEndpointGroupsPostProcessor"))
                   .isNotSameAs(context.getBean("postProcessor"));
             });
   }
@@ -39,7 +41,9 @@ class CommonCoreAutoConfigurationTest {
             context -> {
               assertThat(context)
                   .hasSingleBean(TlsCertificateReadinessHealthEndpointGroupsPostProcessor.class);
-              assertThat(context.getBean(TlsCertificateReadinessHealthEndpointGroupsPostProcessor.class))
+              assertThat(
+                      context.getBean(
+                          TlsCertificateReadinessHealthEndpointGroupsPostProcessor.class))
                   .isSameAs(context.getBean("tlsReadinessPostProcessor"));
             });
   }

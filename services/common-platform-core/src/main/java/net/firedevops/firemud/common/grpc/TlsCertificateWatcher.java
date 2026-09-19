@@ -224,8 +224,8 @@ public class TlsCertificateWatcher implements AutoCloseable {
       } catch (RuntimeException e) {
         callbackFailure = e;
       } finally {
-        activeCallbacks.remove(callbackThread);
         synchronized (callbackStateMonitor) {
+          activeCallbacks.remove(callbackThread);
           callbackStateMonitor.notifyAll();
         }
       }
