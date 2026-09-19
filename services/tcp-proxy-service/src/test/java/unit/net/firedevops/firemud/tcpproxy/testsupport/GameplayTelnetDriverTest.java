@@ -2,6 +2,7 @@ package net.firedevops.firemud.tcpproxy.testsupport;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -13,6 +14,8 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 class GameplayTelnetDriverTest {
@@ -78,6 +81,7 @@ class GameplayTelnetDriverTest {
   @Test
   void readBlockContainingFailsWhenTimeoutOccursAfterMatch() throws Exception {
     try (ServerSocket server = new ServerSocket(0)) {
+      CountDownLatch responseFlushed = new CountDownLatch(1);
       Thread serverThread =
           new Thread(
               () -> {
@@ -88,16 +92,18 @@ class GameplayTelnetDriverTest {
                                 socket.getOutputStream(), StandardCharsets.ISO_8859_1),
                             true)) {
                   writer.println("LOOK READY");
-                  Thread.sleep(2_000);
-                } catch (IOException | InterruptedException ignored) {
+                  responseFlushed.countDown();
+                  socket.setSoTimeout(5_000);
+                  socket.getInputStream().read();
+                } catch (IOException ignored) {
                   // The client may close the socket while the test is cleaning up.
                 }
               });
       serverThread.start();
 
       try (GameplayTelnetDriver driver =
-          GameplayTelnetDriver.connect(
-              "localhost", server.getLocalPort(), Duration.ofMillis(250))) {
+          GameplayTelnetDriver.connect("localhost", server.getLocalPort(), Duration.ofSeconds(1))) {
+        assertTrue(responseFlushed.await(5, TimeUnit.SECONDS));
         AssertionError failure =
             assertThrows(AssertionError.class, () -> driver.readBlockContaining("LOOK READY"));
 

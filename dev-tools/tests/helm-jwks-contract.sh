@@ -293,7 +293,7 @@ if pathlib.PurePosixPath(jwks_path).name not in projected_jwks_files:
 PY
 
 if helm template contract "$CHART_DIR" \
-  -f "$CHART_DIR/values-hosted-shared.example.yaml" \
+  -f "$VALUES" \
   --set previewStack.jwt.jwksResourceKind=Secret \
   >"$TMP_DIR/secret-override.out" 2>&1; then
   echo "Secret-backed previewStack.jwt.jwksResourceKind override unexpectedly rendered" >&2
