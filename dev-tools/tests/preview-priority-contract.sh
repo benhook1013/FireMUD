@@ -2720,8 +2720,16 @@ assert "certificate_identity_mode == 'standalone'" in standalone["if"]
 hosted_runs = "\n".join(
     step["run"] for step in hosted["steps"] if isinstance(step.get("run"), str)
 )
+checkout = next(
+    step for step in hosted["steps"] if step.get("name") == "Check out PR merge for untrusted render"
+)
+assert checkout["with"]["ref"] == "refs/pull/${{ needs.preview-plan.outputs.pr_number }}/merge"
+assert checkout["with"]["fetch-depth"] == 2
 assert "validate-preview-artifact.py" in hosted_runs
 assert 'sanitize "$filtered" "$sanitized"' in hosted_runs
+assert "git rev-parse --verify 'HEAD^{commit}'" in hosted_runs
+assert "git rev-list --parents -n 1" in hosted_runs
+assert "Stale preview merge ref" in hosted_runs
 assert '("ConfigMap", "jwt-jwks")' in hosted_runs
 assert "preview-rendered-sanitized.yaml" in "\n".join(
     str(step.get("with", {}).get("path", "")) for step in hosted["steps"]
@@ -2753,6 +2761,53 @@ extract_workflow_step_run \
   "$ROOT_DIR/.github/workflows/preview.yml" \
   "Render and sanitize hosted preview without cluster credentials" \
   "$producer_step"
+render_git_bin="$TEMP_DIR/render-git-bin"
+mkdir -p "$render_git_bin"
+cat >"$render_git_bin/git" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == rev-parse && "$2" == --verify && "$3" == "HEAD^{commit}" ]]; then
+  printf '%s\n' "${FAKE_RENDER_MERGE_SHA:?}"
+  exit 0
+fi
+if [[ "$1" == rev-list && "$2" == --parents && "$3" == -n && "$4" == 1 ]]; then
+  printf '%s %s %s%s\n' \
+    "${FAKE_RENDER_MERGE_SHA:?}" \
+    "${FAKE_RENDER_BASE_PARENT:?}" \
+    "${FAKE_RENDER_HEAD_PARENT:?}" \
+    "${FAKE_RENDER_EXTRA_PARENT:+ ${FAKE_RENDER_EXTRA_PARENT}}"
+  exit 0
+fi
+echo "unexpected git invocation: $*" >&2
+exit 1
+EOF
+chmod +x "$render_git_bin/git"
+
+mismatch_dir="$TEMP_DIR/hosted-render-mismatch"
+mkdir -p "$mismatch_dir"
+if RUNNER_TEMP="$mismatch_dir" \
+  GITHUB_REPOSITORY="firemud-test/repo" \
+  GITHUB_RUN_ID=2713 \
+  GITHUB_STEP_SUMMARY="$mismatch_dir/summary.md" \
+  PR_NUMBER=2713 \
+  NAMESPACE=pr-2713 \
+  RELEASE_NAME=pr-2713 \
+  HOSTNAME=pr-2713.preview.firedevops.net \
+  IMAGE_TAG=deadbeef \
+  BASE_SHA=1111111111111111111111111111111111111111 \
+  HEAD_SHA=2222222222222222222222222222222222222222 \
+  MERGE_SHA=9999999999999999999999999999999999999999 \
+  FAKE_RENDER_MERGE_SHA=3333333333333333333333333333333333333333 \
+  FAKE_RENDER_BASE_PARENT=1111111111111111111111111111111111111111 \
+  FAKE_RENDER_HEAD_PARENT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  PATH="$render_git_bin:$ORIGINAL_PATH" \
+  bash "$producer_step" >"$mismatch_dir/output.log" 2>&1; then
+  echo "hosted render accepted a merge ref with mismatched planned head parent" >&2
+  exit 1
+fi
+grep -Fq 'Stale preview merge ref' "$mismatch_dir/output.log"
+test ! -e "$mismatch_dir/preview-metadata.json"
+
 RUNNER_TEMP="$render_contract_dir" \
 GITHUB_REPOSITORY="firemud-test/repo" \
 GITHUB_RUN_ID=2713 \
@@ -2764,8 +2819,11 @@ HOSTNAME=pr-2713.preview.firedevops.net \
 IMAGE_TAG=deadbeef \
 BASE_SHA=1111111111111111111111111111111111111111 \
 HEAD_SHA=2222222222222222222222222222222222222222 \
-MERGE_SHA=3333333333333333333333333333333333333333 \
-PATH="$ORIGINAL_PATH" \
+MERGE_SHA=9999999999999999999999999999999999999999 \
+FAKE_RENDER_MERGE_SHA=3333333333333333333333333333333333333333 \
+FAKE_RENDER_BASE_PARENT=1111111111111111111111111111111111111111 \
+FAKE_RENDER_HEAD_PARENT=2222222222222222222222222222222222222222 \
+PATH="$render_git_bin:$ORIGINAL_PATH" \
 bash "$producer_step"
 cp "$render_contract_dir/preview-rendered-sanitized.yaml" \
   "$render_contract_dir/sanitized.yaml"

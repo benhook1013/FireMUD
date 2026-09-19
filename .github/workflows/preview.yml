@@ -339,7 +339,8 @@ jobs:
       - name: Check out PR merge for untrusted render
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ needs.preview-plan.outputs.merge_sha }}
+          ref: refs/pull/${{ needs.preview-plan.outputs.pr_number }}/merge
+          fetch-depth: 2
           persist-credentials: false
 
       - name: Set up canonical Helm
@@ -359,10 +360,25 @@ jobs:
           IMAGE_TAG: ${{ needs.preview-plan.outputs.image_tag }}
           BASE_SHA: ${{ needs.preview-plan.outputs.base_sha }}
           HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
-          MERGE_SHA: ${{ needs.preview-plan.outputs.merge_sha }}
         run: |
           set -euo pipefail
           umask 077
+          if ! MERGE_SHA="$(git rev-parse --verify 'HEAD^{commit}')"; then
+            echo "::error title=Invalid preview merge ref::The checked-out pull request merge ref is not a commit." >&2
+            exit 1
+          fi
+          if ! merge_parents="$(git rev-list --parents -n 1 "$MERGE_SHA")"; then
+            echo "::error title=Invalid preview merge ref::Unable to read the checked-out merge commit parents." >&2
+            exit 1
+          fi
+          read -r checked_out_merge_sha checked_out_base_sha checked_out_head_sha extra_parent <<<"$merge_parents"
+          if [[ "$checked_out_merge_sha" != "$MERGE_SHA" || -z "$checked_out_base_sha" ||
+            -z "$checked_out_head_sha" || -n "$extra_parent" ||
+            "${checked_out_base_sha,,}" != "${BASE_SHA,,}" ||
+            "${checked_out_head_sha,,}" != "${HEAD_SHA,,}" ]]; then
+            echo "::error title=Stale preview merge ref::The checked-out merge ref parents do not match the planned base and head SHAs." >&2
+            exit 1
+          fi
           values="$RUNNER_TEMP/preview-values.yaml"
           rendered="$RUNNER_TEMP/preview-rendered.yaml"
           sanitized="$RUNNER_TEMP/preview-rendered-sanitized.yaml"

@@ -1310,6 +1310,10 @@ def validate_network_policies(documents: list[dict]) -> None:
                 ],
                 "ports": [{"protocol": "TCP", "port": 6565}],
             },
+            {
+                "to": [{"podSelector": {"matchLabels": {"app": "otel-collector"}}}],
+                "ports": [{"protocol": "TCP", "port": 4317}],
+            },
         ],
     }
     if proxy_egress != expected_proxy_egress:
