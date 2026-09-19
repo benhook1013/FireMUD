@@ -14,6 +14,8 @@ The recovered plan is the sole surviving detailed 23-unit map. Keep this tracked
 
 Phase 5 is a cross-parcel consistency and closeout check, not another complete 23-unit discovery cycle: verify unique canonical owners, legitimate secondary handoffs, product/architecture allocation, affected tracker implementation/proof claims, links/contracts, and the retained design-input dispositions. It resolves genuine residual consequential decisions with Ben and closes the post-ADR design-alignment project only when that evidence holds. No additional adversarial human decision-review phase is currently specified after this pass; future capability implementation/proof continues under the live domain trackers.
 
+The original 8–18-source unit estimates did not predict 5B's correction and PR growth. At the start of each remaining unit or family, refresh its manifest, likely changed paths, known cross-owner seams, and available review headroom; then keep a coherent unit intact or subdivide it on a real contract boundary. Do not pre-split all 23 units from stale estimates, and do not drop or misroute findings to preserve a file count. The recovered plan's pass counts are historical planning input, not a fresh blanket quota.
+
 Document Worker remains human-paused at this checkpoint; the newest direction is to restore the broader programme soon, beginning with the existing #2677 front and preserving the #2678/#2679/#2661 downstream work. Gameplay may finish current #2786/#2713/#2795 slices against their accepted owning contracts; do not mark an overlapping capability or the overall design alignment complete until its authority, implementation status, and proof are reconciled. A concrete cross-lane design conflict escalates immediately.
 
 ## Confirmed direction
