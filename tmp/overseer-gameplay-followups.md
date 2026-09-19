@@ -1,6 +1,14 @@
 # Overseer Gameplay Follow-ups
 
-## Current Gameplay and CI direction — 2026-09-10
+## Active review direction — 2026-09-19
+
+The historical 2026-09-10 queue below is not the current PR order. #2783, the heavily reviewed PR reporting and required-gate work, has merged. Gameplay's active merge target is #2786, the combined Renovate/tool-version update and its compatibility proof; General's #2789 and #2792 are separate, unreviewed gameplay successors and do not own CodeRabbit capacity.
+
+An earlier Overseer judgment that #2786 had enough review applied to its smaller candidate and is withdrawn. #2786 subsequently grew from roughly 30 to 44 files when review exposed a real backup-check runtime gap requiring a dedicated trusted image and scoped access. On the expanded candidate, useful findings continued: CLI 9/9 and Hosted 3/3 at `38fa0c5`, followed by CLI 2/2, 4/3, and 4/3 on later heads. This is evidence for finishing and reviewing that new boundary, not for a fixed number of further rounds or an automatic merge. At the next stable handoff, compare current Hosted and CLI findings by severity and current-PR obligation, then make an explicit stopping judgment; accepted findings already fixed downstream must be distinguished from new #2786 defects. Do not carry #2783's review history or the earlier smaller-candidate judgment onto #2786.
+
+This section records the current direction and supersedes stale current-PR claims below; it is not a new review ledger. Gameplay should refresh #2786's PR body and LOC section at merge handoff, because the body still describes a 30-file candidate and an older head.
+
+## Historical Gameplay and CI direction — 2026-09-10
 
 Gameplay continues the #2694 fixes and full Hosted/CLI proof toward inert prerequisite merge readiness; #2694 remains the current review front. Intended delivery sequencing after #2694 requires reconciling the actual bases and does not claim all three PRs are currently stacked. #2713 (`codex/gameplay-bridge-foundation`) owns the secure TCPProxy↔Gateway bridge, whose hosted proof depends on #2694 projections. #2686 (`codex/gameplay-demo`) owns hosted-controller activation, admission API proof, dev-demo rollout, Telnet smoke, and final gameplay. Gameplay prepares the semantic cut while preserving all findings. The CI correction mini-project remains the explicitly authorized next assignment after the current Gameplay delivery; Gameplay is the intended implementer in a separate CI PR. Handoff status: queued next-work scope communicated; execution not begun. Worker remains explicitly human-paused.
 
