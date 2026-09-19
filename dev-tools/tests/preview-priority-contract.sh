@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+REAL_HELM="$(command -v helm || true)"
+ORIGINAL_PATH="$PATH"
 ALLOCATOR="$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
 PRUNER="$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 DELETE_HOSTED_NAMESPACE="$ROOT_DIR/dev-tools/hosted/shared/delete-hosted-namespace.sh"
@@ -2698,6 +2700,142 @@ assert (
     "labels_json_base64"
 ) in run
 PY
+# Hosted-controller previews are render-only in the PR-controlled workflow. They
+# publish the exact immutable artifact consumed by the trusted workflow, while
+# standalone previews retain the direct cluster lifecycle.
+python3 - "$ROOT_DIR/.github/workflows/preview.yml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+plan = workflow["jobs"]["preview-plan"]
+hosted = workflow["jobs"]["preview-render-hosted"]
+standalone = workflow["jobs"]["preview-deploy"]
+assert "merge_sha" in plan["outputs"]
+assert "certificate_identity_mode" in plan["outputs"]
+assert "certificate_identity_mode == 'hosted-controller'" in hosted["if"]
+assert "certificate_identity_mode == 'standalone'" in standalone["if"]
+hosted_runs = "\n".join(
+    step["run"] for step in hosted["steps"] if isinstance(step.get("run"), str)
+)
+assert "validate-preview-artifact.py" in hosted_runs
+assert 'sanitize "$filtered" "$sanitized"' in hosted_runs
+assert '("ConfigMap", "jwt-jwks")' in hosted_runs
+assert "preview-rendered-sanitized.yaml" in "\n".join(
+    str(step.get("with", {}).get("path", "")) for step in hosted["steps"]
+)
+assert "preview-metadata.json" in "\n".join(
+    str(step.get("with", {}).get("path", "")) for step in hosted["steps"]
+)
+assert not any(
+    "PREVIEW_KUBECONFIG" in str(step) or "HOSTED_IDENTITY_REQUESTER_KUBECONFIG" in str(step)
+    for step in hosted["steps"]
+)
+PY
+# jwt-jwks is a trusted runtime diagnostic projection, not PR-controlled
+# artifact input; the trusted provisioner must remain its sole writer.
+grep -Fq 'create configmap jwt-jwks' \
+  "$ROOT_DIR/dev-tools/hosted/preview/provision-runtime-credentials.sh"
+grep -Fq 'firemudDiagnostic' \
+  "$ROOT_DIR/dev-tools/hosted/preview/provision-runtime-credentials.sh"
+
+# Exercise the complete hosted-controller source producer and trusted consumer
+# contract against the current chart. The source filter is deliberately
+# allowlisted: runtime credentials and the trusted jwt-jwks diagnostic projection
+# are owned by the trusted workflow, while every other forbidden object fails.
+render_contract_dir="$TEMP_DIR/hosted-render-contract"
+mkdir -p "$render_contract_dir"
+test -n "$REAL_HELM" -a -x "$REAL_HELM"
+producer_step="$TEMP_DIR/hosted-render-producer.sh"
+extract_workflow_step_run \
+  "$ROOT_DIR/.github/workflows/preview.yml" \
+  "Render and sanitize hosted preview without cluster credentials" \
+  "$producer_step"
+RUNNER_TEMP="$render_contract_dir" \
+GITHUB_REPOSITORY="firemud-test/repo" \
+GITHUB_RUN_ID=2713 \
+GITHUB_STEP_SUMMARY="$render_contract_dir/summary.md" \
+PR_NUMBER=2713 \
+NAMESPACE=pr-2713 \
+RELEASE_NAME=pr-2713 \
+HOSTNAME=pr-2713.preview.firedevops.net \
+IMAGE_TAG=deadbeef \
+BASE_SHA=1111111111111111111111111111111111111111 \
+HEAD_SHA=2222222222222222222222222222222222222222 \
+MERGE_SHA=3333333333333333333333333333333333333333 \
+PATH="$ORIGINAL_PATH" \
+bash "$producer_step"
+cp "$render_contract_dir/preview-rendered-sanitized.yaml" \
+  "$render_contract_dir/sanitized.yaml"
+manifest_sha256="$(sha256sum "$render_contract_dir/sanitized.yaml" | awk '{print $1}')"
+jq -n \
+  --arg repository firemud-test/repo \
+  --arg sourceWorkflow .github/workflows/preview.yml \
+  --argjson sourceRunId 2713 \
+  --argjson prNumber 2713 \
+  --arg baseSha 1111111111111111111111111111111111111111 \
+  --arg headSha 2222222222222222222222222222222222222222 \
+  --arg mergeSha 3333333333333333333333333333333333333333 \
+  --arg hostname pr-2713.preview.firedevops.net \
+  --arg imageTag deadbeef \
+  --arg manifestSha256 "$manifest_sha256" \
+  '{schemaVersion:1,event:"pull_request",repository:$repository,sourceWorkflow:$sourceWorkflow,sourceRunId:$sourceRunId,prNumber:$prNumber,baseSha:$baseSha,headSha:$headSha,mergeSha:$mergeSha,hostname:$hostname,imageTag:$imageTag,manifestSha256:$manifestSha256}' \
+  > "$render_contract_dir/metadata.expected.json"
+cmp -s "$render_contract_dir/metadata.expected.json" \
+  "$render_contract_dir/preview-metadata.json"
+cp "$render_contract_dir/metadata.expected.json" "$render_contract_dir/metadata.json"
+python3 "$ROOT_DIR/dev-tools/hosted/preview/validate-preview-artifact.py" \
+  "$render_contract_dir/metadata.json" "$render_contract_dir/sanitized.yaml" \
+  firemud-test/repo 2713 2713 \
+  1111111111111111111111111111111111111111 \
+  2222222222222222222222222222222222222222 \
+  3333333333333333333333333333333333333333 deadbeef \
+  pr-2713.preview.firedevops.net
+python3 "$ROOT_DIR/dev-tools/hosted/preview/validate-preview-artifact.py" \
+  inject "$render_contract_dir/sanitized.yaml" "$render_contract_dir/injected.yaml" \
+  pr-2713 32000
+FIREMUD_PREFLIGHT_CONTEXT=ci-static \
+  python3 "$ROOT_DIR/dev-tools/deploy/preflight.py" hosted-bridge \
+  "$render_contract_dir/injected.yaml" pr-2713 pr-2713 \
+  --expected-hosted-telnet-node-port 32000
+python3 - "$render_contract_dir/injected.yaml" "$render_contract_dir/insecure.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+source, destination = map(Path, sys.argv[1:])
+documents = list(yaml.safe_load_all(source.read_text(encoding="utf-8")))
+for document in documents:
+    if (
+        document.get("kind") == "Deployment"
+        and (document.get("metadata") or {}).get("name") == "tcp-proxy-service"
+    ):
+        for env in document["spec"]["template"]["spec"]["containers"][0]["env"]:
+            if env.get("name") == "GATEWAY_WS_URL":
+                env["value"] = "ws://spring-cloud-gateway-mtls:443/ws/game"
+                break
+        else:
+            raise SystemExit("tcp-proxy-service has no GATEWAY_WS_URL")
+        break
+else:
+    raise SystemExit("tcp-proxy-service Deployment is missing")
+destination.write_text(
+    "---\n".join(yaml.safe_dump(document, sort_keys=False) for document in documents),
+    encoding="utf-8",
+)
+PY
+if FIREMUD_PREFLIGHT_CONTEXT=ci-static \
+  python3 "$ROOT_DIR/dev-tools/deploy/preflight.py" hosted-bridge \
+  "$render_contract_dir/insecure.yaml" pr-2713 pr-2713 \
+  --expected-hosted-telnet-node-port 32000 \
+  > "$render_contract_dir/insecure.out" 2>&1; then
+  echo "hosted bridge preflight accepted insecure ws:// Gateway URL" >&2
+  exit 1
+fi
+grep -Fq 'GATEWAY_WS_URL' "$render_contract_dir/insecure.out"
 # shellcheck disable=SC2016 # Assert malformed label metadata fails closed before eligibility.
 grep -Fq -- 'if ! labels_json="$(printf '\''%s'\'' "$labels_json_base64" | base64 --decode 2>/dev/null)" ||' \
   "$reconciler_workflow"

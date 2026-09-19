@@ -505,13 +505,20 @@ def _require_mapping_list(value: object, path: str) -> list[dict]:
     return value
 
 
-def _validate_object_metadata(document: dict, expected_namespace: str) -> dict:
+def _validate_object_metadata(
+    document: dict,
+    expected_namespace: str,
+    *,
+    allow_allocated_telnet_port: bool = False,
+) -> dict:
     """Require the exact Helm-authored metadata admitted into the trusted apply."""
 
     kind = document.get("kind", "object")
     metadata = _require_mapping(document.get("metadata"), f"{kind}.metadata")
     name = metadata.get("name")
     allowed_fields = {"name", "namespace", "labels"}
+    if allow_allocated_telnet_port:
+        allowed_fields.add("annotations")
     unexpected_fields = set(metadata) - allowed_fields
     if unexpected_fields:
         fail(
@@ -532,6 +539,26 @@ def _validate_object_metadata(document: dict, expected_namespace: str) -> dict:
                 )
     if actual_labels != expected_labels:
         fail(f"{kind}/{name} has unsafe Helm metadata labels")
+    if allow_allocated_telnet_port:
+        annotations = metadata.get("annotations")
+        service_spec = _require_mapping(document.get("spec"), f"{kind}/{name}.spec")
+        service_ports = _require_mapping_list(
+            service_spec.get("ports"), f"{kind}/{name}.spec.ports"
+        )
+        telnet_node_port = next(
+            (
+                service_port.get("nodePort")
+                for service_port in service_ports
+                if service_port.get("port") == 2323
+            ),
+            None,
+        )
+        if annotations != {
+            "firemud.dev/allocated-telnet-port": str(telnet_node_port)
+        }:
+            fail(
+                f"{kind}/{name} must contain exactly the trusted allocated Telnet port annotation"
+            )
     namespace = metadata.get("namespace")
     if namespace is not None and namespace != expected_namespace:
         fail(f"{kind}/{name} targets namespace {namespace!r}")
@@ -911,7 +938,10 @@ def inject_telnet_port(
     for document in documents:
         if not isinstance(document, dict):
             fail("validated preview render contains a non-object document")
-        metadata = _validate_object_metadata(document, expected_namespace)
+        metadata = _validate_object_metadata(
+            document,
+            expected_namespace,
+        )
         namespace = metadata.get("namespace")
         if namespace not in (None, expected_namespace):
             fail(
@@ -933,6 +963,15 @@ def inject_telnet_port(
     if "nodePort" in matches[0]:
         fail("validated preview render already contains a NodePort")
     matches[0]["nodePort"] = port
+    tcp_service = next(
+        document
+        for document in documents
+        if document.get("kind") == "Service"
+        and (document.get("metadata") or {}).get("name") == "tcp-proxy-service"
+    )
+    tcp_service["metadata"]["annotations"] = {
+        "firemud.dev/allocated-telnet-port": str(port)
+    }
     destination.write_text(
         "---\n".join(yaml.safe_dump(document, sort_keys=False) for document in documents),
         encoding="utf-8",
@@ -956,7 +995,15 @@ def validate_runtime_target(path: Path, expected_namespace: str, expected_port: 
     for index, document in enumerate(documents):
         if not isinstance(document, dict):
             fail(f"prepared preview document {index} is not an object")
-        metadata = _validate_object_metadata(document, expected_namespace)
+        is_tcp_proxy_service = (
+            document.get("kind") == "Service"
+            and (document.get("metadata") or {}).get("name") == "tcp-proxy-service"
+        )
+        metadata = _validate_object_metadata(
+            document,
+            expected_namespace,
+            allow_allocated_telnet_port=is_tcp_proxy_service,
+        )
         name = metadata.get("name")
         if metadata.get("namespace") != expected_namespace:
             fail(
