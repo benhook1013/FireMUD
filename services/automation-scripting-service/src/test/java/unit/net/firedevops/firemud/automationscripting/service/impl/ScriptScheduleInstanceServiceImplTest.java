@@ -791,7 +791,19 @@ class ScriptScheduleInstanceServiceImplTest {
     when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
             "1", "game-1", "MILLISECONDS"))
         .thenReturn(List.of(materialized));
-    assertThat(service.observeRuntimeTickProgress(observation(1L, 9_000L)).firedScheduleCount())
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+        .thenReturn(
+            runtimeStateResponse("patch-1", "req-3").toBuilder()
+                .setRuntimeState(
+                    runtimeStateResponse("patch-1", "req-3").getRuntimeState().toBuilder()
+                        .setRegionEpoch(7L))
+                .build());
+    assertThat(
+            service
+                .observeRuntimeTickProgress(
+                    new ScriptScheduleInstanceService.RuntimeTickProgressObservation(
+                        "1", "game-1", "region-1", 7L, 1L, 9_000L))
+                .firedScheduleCount())
         .isEqualTo(1);
     ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
     verify(automationQueueService).enqueueWorkItem(workItemCaptor.capture());
@@ -1869,13 +1881,14 @@ class ScriptScheduleInstanceServiceImplTest {
     assertThat(workItem.getTriggerMode()).isEqualTo("TRIGGER_MODE_CATCH_UP");
     // Golden identity: SHA-256 (first 60 hex chars) of length-prefixed UTF-8 values in
     // TimerFiringCandidate.eventIdentity(): tenant, instance, playable scope, region/epoch, target
-    // scope/entity, script/plugin/activation/binding identity, event/schema, patch/pin epoch, schedule,
+    // scope/entity, script/plugin/activation/binding identity, event/schema, patch/pin epoch,
+    // schedule,
     // dueTickId,
     // dry-run, and trigger mode. Owner request evidence is durable but excluded from this
     // logical event identity. Changing any value, order, or framing changes persisted scriptEventId
     // dedupe keys, so a migration must backfill existing scheduler work/audit identities together.
     assertThat(workItem.getScriptEventId())
-        .isEqualTo("timer-87941af4a5b3d69e44a2ea68d49319afe0bb3542d15b2ea4ed930af8039efc9e");
+        .isEqualTo("timer-7924cca7cd6e76eaeb1560b38582139880d206e325ccae4ea26094280e3f");
     assertThat(workItem.getScriptPinEpoch()).isEqualTo(1L);
     assertThat(workItem.getScriptPinControlPlaneRequestId()).isEqualTo("req-1");
     assertThat(workItem.getQuotaClass()).isEqualTo(ScriptQuotaClasses.STANDARD_RUNTIME);

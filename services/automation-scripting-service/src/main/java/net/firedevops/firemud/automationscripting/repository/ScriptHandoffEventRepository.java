@@ -1,9 +1,9 @@
 package net.firedevops.firemud.automationscripting.repository;
 
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptHandoffEvents.SCRIPT_HANDOFF_EVENTS;
+import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptWorkItems.SCRIPT_WORK_ITEMS;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.blankToEmpty;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.blankToNull;
-import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptWorkItems.SCRIPT_WORK_ITEMS;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.limitOrDefault;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.offsetOrZero;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
@@ -381,9 +381,7 @@ public class ScriptHandoffEventRepository {
         .and(
             SCRIPT_HANDOFF_EVENTS.PLUGIN_VERSION_ID.isNotDistinctFrom(
                 blankToEmpty(entity.getPluginVersionId())))
-        .and(
-            SCRIPT_HANDOFF_EVENTS.PLUGIN_ACTIVATION_EPOCH.eq(
-                entity.getPluginActivationEpoch()))
+        .and(SCRIPT_HANDOFF_EVENTS.PLUGIN_ACTIVATION_EPOCH.eq(entity.getPluginActivationEpoch()))
         .and(SCRIPT_HANDOFF_EVENTS.LIFECYCLE_REVISION.eq(entity.getLifecycleRevision()))
         .and(SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID.eq(entity.getWorkItemId()))
         .and(SCRIPT_HANDOFF_EVENTS.COMMAND_ORDINAL.eq(entity.getCommandOrdinal()))

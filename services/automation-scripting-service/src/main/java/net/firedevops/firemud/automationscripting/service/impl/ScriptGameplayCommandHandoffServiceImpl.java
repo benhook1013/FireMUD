@@ -753,11 +753,9 @@ public class ScriptGameplayCommandHandoffServiceImpl
           now);
       return;
     }
-    // This is the durable transition into DEAD_LETTERED for handoff failures. Advance the
-    // generation exactly once so replay evidence cannot be confused with a prior failure.
-    if (!STATUS_DEAD_LETTERED.equals(workItem.getStatus())) {
-      workItem.setFailureGeneration(Math.addExact(workItem.getFailureGeneration(), 1L));
-    }
+    // Generation-aware recovery belongs to the separate parent aggregate. The
+    // current work-item status records this failed handoff without fabricating
+    // recovery evidence that this path cannot maintain atomically.
     workItem.setStatus(STATUS_DEAD_LETTERED);
     String failureReason = ScriptHandoffOutcomeSupport.canonicalInfrastructureReason(result);
     workItem.setCancelReason(failureReason);

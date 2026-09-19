@@ -2032,7 +2032,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                         44L,
                         "",
                         ""),
-                    null)));
+                    null,
+                    1L,
+                    1L)));
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             Mockito.mock(ScriptWorkItemService.class),

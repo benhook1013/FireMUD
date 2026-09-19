@@ -2287,13 +2287,13 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       values.add(blankToEmpty(instance.getScriptId()));
       values.add(blankToEmpty(instance.getPluginId()));
       values.add(blankToEmpty(instance.getPluginVersionId()));
-      values.add("pluginActivationEpoch:" + instance.getPluginActivationEpoch());
-      values.add("lifecycleRevision:" + instance.getLifecycleRevision());
+      if (isPluginOwned(instance.getPluginId(), instance.getPluginVersionId())) {
+        values.add("pluginActivationEpoch:" + instance.getPluginActivationEpoch());
+      }
       values.add(blankToEmpty(instance.getEventType()));
       values.add(DEFAULT_SCHEMA_VERSION);
       values.add(blankToEmpty(instance.getScriptPatchVersion()));
       values.add(Long.toString(scriptPinEpoch));
-      values.add("scriptPinControlPlaneRequestId:" + blankToEmpty(scriptPinControlPlaneRequestId));
       if (isPluginOwned(instance.getPluginId(), instance.getPluginVersionId())) {
         values.add(applicableBindingId(instance));
       }

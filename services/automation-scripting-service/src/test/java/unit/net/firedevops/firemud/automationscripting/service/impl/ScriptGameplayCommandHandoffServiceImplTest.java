@@ -790,7 +790,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
 
     assertThat(result.accepted()).isFalse();
     assertThat(result.errorCode()).isEqualTo("REMOTE_RESPONSE_INVALID");
-    assertThat(item.getFailureGeneration()).isEqualTo(2L);
+    assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
     assertThat(result.outcome()).isEqualTo("REMOTE_REJECTED");
     assertThat(audit.getFinalStage()).isEqualTo("TICK_HANDOFF");
     assertThat(audit.getFinalOutcome()).isEqualTo("infrastructure_error");

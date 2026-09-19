@@ -2,8 +2,6 @@ package net.firedevops.firemud.automationscripting.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -71,6 +69,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_PIN_STATE_UNAVAILABLE.name();
   private static final String OUTCOME_QUOTA_DENIED =
       TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED.name();
+  private static final String OUTCOME_OUTPUT_BUDGET_EXCEEDED =
+      TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_OUTPUT_BUDGET_EXCEEDED.name();
   private static final String REASON_IDEMPOTENCY_CONFLICT = "idempotency_conflict";
 
   /**
@@ -195,8 +195,6 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     String schemaVersion = schemaVersion(request);
     String requestDigest =
         ScriptEventIngressRequestDigest.compute(request, schemaVersion, sourceService);
-    ScriptEventRegistryService.EventDefinition definition =
-        eventRegistryService.getDefinition(request.getEventType(), schemaVersion).orElse(null);
 
     // Claim the complete event identity before validation that can consult mutable runtime state,
     // before quota acquisition, and before resolving or materializing any handler. PostgreSQL's
@@ -206,7 +204,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         buildIngressAudit(
             request,
             schemaVersion,
-            definition,
+            null,
             sourceService,
             new TriggerAdmission(false, OUTCOME_REGISTRY_REJECTED, IN_PROGRESS_REASON, 0),
             IN_PROGRESS_STATE);
@@ -251,7 +249,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     }
     ScriptEventRegistryService.EventDefinition definition =
         eventRegistryService.getDefinition(request.getEventType(), schemaVersion).orElse(null);
-
+    claimRequest.setQuotaClass(
+        ScriptQuotaClasses.normalize(definition == null ? null : definition.quotaClass()));
     AdmissionAuthority authority = new AdmissionAuthority();
     ValidationResult validation =
         validate(request, schemaVersion, sourceService, definition, claimRequest, authority);
@@ -277,6 +276,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       }
     }
     ScriptEventIngressAudit audit = claimRequest;
+    setPluginFence(audit, request, authority);
     audit.setAdmitted(admission.admitted());
     audit.setAdmissionOutcome(admission.outcome());
     audit.setAdmissionReason(admission.reason());

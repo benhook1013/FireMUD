@@ -303,6 +303,8 @@ class PluginRuntimeStateServiceImplTest {
     existing.setPluginState(PluginState.PLUGIN_STATE_DRAINING.name());
     existing.setStatusReason("operator_drain");
     existing.setControlPlaneRequestId("req-7");
+    existing.setPluginActivationEpoch(4L);
+    existing.setLifecycleRevision(9L);
     existing.setActorPrincipal("operator-1");
     existing.setLastChangedAt(java.time.Instant.ofEpochMilli(123));
     existing.setRuntimeRegionId("region-9");
@@ -346,6 +348,8 @@ class PluginRuntimeStateServiceImplTest {
     assertThat(status.get().pluginState()).isEqualTo(PluginState.PLUGIN_STATE_DRAINING);
     assertThat(status.get().lastChangedAtMs()).isEqualTo(123L);
     assertThat(status.get().controlPlaneRequestId()).isEqualTo("req-7");
+    assertThat(status.get().pluginActivationEpoch()).isEqualTo(4L);
+    assertThat(status.get().lifecycleRevision()).isEqualTo(9L);
     assertThat(status.get().actorPrincipal()).isEqualTo("operator-1");
     assertThat(status.get().activePublication()).isNotNull();
     assertThat(status.get().activePublication().publicationId()).isEqualTo(17L);

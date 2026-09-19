@@ -5,8 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.time.LocalDateTime;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.entity.ScriptHandoffEvent;
@@ -520,7 +520,7 @@ class ScriptHandoffEventRepositoryTest {
   }
 
   @Test
-  void newLogicalChildUsesAtomicNaturalKeyConflictUpsert() {
+  void newLogicalChildUsesAtomicCurrentEventIdConflictUpsert() {
     AtomicReference<String> sql = new AtomicReference<>();
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     MockDataProvider provider =
@@ -543,8 +543,8 @@ class ScriptHandoffEventRepositoryTest {
     int updateIndex = renderedSql.indexOf("do update", conflictIndex);
     assertThat(conflictIndex).as(renderedSql).isGreaterThanOrEqualTo(0);
     assertThat(updateIndex).as(renderedSql).isGreaterThan(conflictIndex);
-    assertThat(renderedSql.substring(conflictIndex, updateIndex))
-        .contains("tenant_id", "work_item_id", "command_ordinal");
+    assertThat(renderedSql.substring(conflictIndex, updateIndex)).contains("event_id");
+    assertThat(renderedSql).contains("where");
     assertThat(renderedSql).contains("returning", "do update");
   }
 
@@ -559,7 +559,7 @@ class ScriptHandoffEventRepositoryTest {
 
     assertThatThrownBy(() -> repository.save(handoffEvent()))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("returned no durable row");
+        .hasMessageContaining("did not yield a persisted row");
   }
 
   private static ScriptHandoffEventsRecord handoffRecord() {

@@ -89,11 +89,16 @@ public class PluginRuntimeStateRepository {
             .set(PLUGIN_RUNTIME_STATES.RUNTIME_REGION_EPOCH, entity.getRuntimeRegionEpoch())
             .set(PLUGIN_RUNTIME_STATES.PLUGIN_ID, entity.getPluginId())
             .set(PLUGIN_RUNTIME_STATES.ACTIVE_PLUGIN_VERSION_ID, entity.getActivePluginVersionId())
+            .set(PLUGIN_RUNTIME_STATES.PLUGIN_ACTIVATION_EPOCH, entity.getPluginActivationEpoch())
+            .set(PLUGIN_RUNTIME_STATES.LIFECYCLE_REVISION, entity.getLifecycleRevision())
             .set(
                 PLUGIN_RUNTIME_STATES.PENDING_PLUGIN_VERSION_ID, entity.getPendingPluginVersionId())
             .set(PLUGIN_RUNTIME_STATES.PLUGIN_STATE, entity.getPluginState())
             .set(PLUGIN_RUNTIME_STATES.STATUS_REASON, entity.getStatusReason())
             .set(PLUGIN_RUNTIME_STATES.CONTROL_PLANE_REQUEST_ID, entity.getControlPlaneRequestId())
+            .set(
+                PLUGIN_RUNTIME_STATES.CONTROL_PLANE_REQUEST_FINGERPRINT,
+                entity.getControlPlaneRequestFingerprint())
             .set(PLUGIN_RUNTIME_STATES.ACTOR_PRINCIPAL, entity.getActorPrincipal())
             .set(PLUGIN_RUNTIME_STATES.LAST_CHANGED_AT, toLocalDateTime(entity.getLastChangedAt()))
             .set(
@@ -155,10 +160,13 @@ public class PluginRuntimeStateRepository {
     record.setRuntimeRegionEpoch(entity.getRuntimeRegionEpoch());
     record.setPluginId(entity.getPluginId());
     record.setActivePluginVersionId(entity.getActivePluginVersionId());
+    record.setPluginActivationEpoch(entity.getPluginActivationEpoch());
+    record.setLifecycleRevision(entity.getLifecycleRevision());
     record.setPendingPluginVersionId(entity.getPendingPluginVersionId());
     record.setPluginState(entity.getPluginState());
     record.setStatusReason(entity.getStatusReason());
     record.setControlPlaneRequestId(entity.getControlPlaneRequestId());
+    record.setControlPlaneRequestFingerprint(entity.getControlPlaneRequestFingerprint());
     record.setActorPrincipal(entity.getActorPrincipal());
     record.setLastChangedAt(toLocalDateTime(entity.getLastChangedAt()));
     record.setLastPolicyCheckedAt(toLocalDateTime(entity.getLastPolicyCheckedAt()));
@@ -174,10 +182,16 @@ public class PluginRuntimeStateRepository {
     entity.setRuntimeRegionEpoch(record.get(PLUGIN_RUNTIME_STATES.RUNTIME_REGION_EPOCH));
     entity.setPluginId(record.get(PLUGIN_RUNTIME_STATES.PLUGIN_ID));
     entity.setActivePluginVersionId(record.get(PLUGIN_RUNTIME_STATES.ACTIVE_PLUGIN_VERSION_ID));
+    Long pluginActivationEpoch = record.get(PLUGIN_RUNTIME_STATES.PLUGIN_ACTIVATION_EPOCH);
+    entity.setPluginActivationEpoch(pluginActivationEpoch == null ? 0L : pluginActivationEpoch);
+    Long lifecycleRevision = record.get(PLUGIN_RUNTIME_STATES.LIFECYCLE_REVISION);
+    entity.setLifecycleRevision(lifecycleRevision == null ? 0L : lifecycleRevision);
     entity.setPendingPluginVersionId(record.get(PLUGIN_RUNTIME_STATES.PENDING_PLUGIN_VERSION_ID));
     entity.setPluginState(record.get(PLUGIN_RUNTIME_STATES.PLUGIN_STATE));
     entity.setStatusReason(record.get(PLUGIN_RUNTIME_STATES.STATUS_REASON));
     entity.setControlPlaneRequestId(record.get(PLUGIN_RUNTIME_STATES.CONTROL_PLANE_REQUEST_ID));
+    entity.setControlPlaneRequestFingerprint(
+        record.get(PLUGIN_RUNTIME_STATES.CONTROL_PLANE_REQUEST_FINGERPRINT));
     entity.setActorPrincipal(record.get(PLUGIN_RUNTIME_STATES.ACTOR_PRINCIPAL));
     entity.setLastChangedAt(toInstant(record.get(PLUGIN_RUNTIME_STATES.LAST_CHANGED_AT)));
     entity.setLastPolicyCheckedAt(
