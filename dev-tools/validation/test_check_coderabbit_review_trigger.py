@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 SCRIPT = Path(__file__).with_name("check-coderabbit-review.py")
 SPEC = importlib.util.spec_from_file_location("check_coderabbit_review", SCRIPT)
@@ -199,6 +200,59 @@ class TriggerStateTests(unittest.TestCase):
             trigger_record_path,
         )
 
+    def manual_wait(self, current_payload: dict[str, object], timeout: float = 0) -> dict[str, object]:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", delete=False) as file:
+            json.dump(current_payload, file)
+            input_path = file.name
+        try:
+            return CHECKER.manual_wait_result(REPO, PR, input_path, timeout, 0.1)
+        finally:
+            Path(input_path).unlink()
+
+    def test_manual_wait_pins_highest_numeric_id_for_same_timestamp(self) -> None:
+        first = trigger_comment()
+        second = comment(12, "owner", "@coderabbitai full review", TRIGGER_AT)
+        result = self.manual_wait(payload([first, second]))
+        self.assertEqual(result["request"]["id"], 12)
+        self.assertEqual(result["state"], "timed_out")
+        self.assertEqual(result["provenance"], "manual/unrecorded")
+
+    def test_manual_wait_rejects_duplicate_or_missing_identity(self) -> None:
+        duplicate = self.manual_wait(payload([trigger_comment(), trigger_comment()]))
+        self.assertEqual((duplicate["state"], duplicate["provenance"]), ("ambiguous", "ambiguous/overlapping"))
+        missing = trigger_comment()
+        missing.pop("databaseId")
+        missing_result = self.manual_wait(payload([missing]))
+        self.assertEqual(missing_result["state"], "ambiguous")
+
+    def test_manual_wait_completed_and_rate_limited_requests(self) -> None:
+        completed_comments = [trigger_comment(), finished_reply(), zero_finding_summary()]
+        completed = self.manual_wait(payload(completed_comments))
+        self.assertEqual((completed["state"], completed["status"]), ("completed", "completed"))
+
+        limited = self.manual_wait(
+            payload(
+                [
+                    trigger_comment(),
+                    comment(11, "coderabbitai", "Review rate limited", "2026-09-14T01:00:01Z"),
+                ]
+            )
+        )
+        self.assertEqual(limited["state"], "rate_limited")
+        self.assertIsNone(limited["trigger_state"]["cooldown_until"])
+
+    def test_manual_wait_fails_closed_on_head_change_and_newer_request(self) -> None:
+        initial = payload([trigger_comment()])
+        changed = payload([trigger_comment()], head=FRESH_HEAD)
+        with patch.object(CHECKER, "load_payload", side_effect=[initial, changed]):
+            head_result = CHECKER.manual_wait_result(REPO, PR, "ignored", 10, 0.1)
+        self.assertEqual(head_result["status"], "head_changed")
+
+        newer = payload([trigger_comment(), fresh_trigger_comment()])
+        with patch.object(CHECKER, "load_payload", side_effect=[initial, newer]):
+            newer_result = CHECKER.manual_wait_result(REPO, PR, "ignored", 10, 0.1)
+        self.assertEqual(newer_result["status"], "superseded")
+
     def test_awaiting_response_ignores_old_same_time_pending_and_edited_timestamps(
         self,
     ) -> None:
@@ -325,7 +379,7 @@ Your included review limit is currently reached under our [Fair Usage Limits Pol
                 self.assertEqual(state.state, "awaiting_response")
                 self.assertFalse(state.terminal)
 
-    def test_empty_rate_limit_snapshot_does_not_qualify(self) -> None:
+    def test_rate_limit_without_expiry_is_terminal_with_unknown_cooldown(self) -> None:
         state = self.state(
             [
                 trigger_comment(),
@@ -334,7 +388,8 @@ Your included review limit is currently reached under our [Fair Usage Limits Pol
                 ),
             ]
         )
-        self.assertEqual(state.state, "awaiting_response")
+        self.assertEqual(state.state, "rate_limited")
+        self.assertIsNone(state.cooldown_until)
 
     def test_completed_comment_must_match_captured_head(self) -> None:
         template = "<!-- walkthrough_start -->\nReviewing files that changed from the base of the PR and between `{base}` and `{head}`\nFiles selected for processing (2)"

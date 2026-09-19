@@ -178,6 +178,36 @@ def _comment_hosted_review_id(body: str) -> int | None:
     return marker_ids[0] if len(marker_ids) == 1 else None
 
 
+def hosted_marker_audit(comments: list[dict[str, Any]]) -> dict[str, Any]:
+    """Inspect every Hosted marker, including malformed and duplicate variants."""
+
+    marker_ids: list[int] = []
+    malformed = 0
+    duplicate = 0
+    for comment in comments:
+        body = comment.get("body") if isinstance(comment, dict) else None
+        if not isinstance(body, str):
+            continue
+        found: list[int] = []
+        for line in body.splitlines()[1:]:
+            stripped = line.strip()
+            if not stripped.startswith("<!-- firemud-hosted-review:"):
+                continue
+            match = HOSTED_MARKER.fullmatch(stripped)
+            if match is None:
+                malformed += 1
+            else:
+                found.append(int(match.group("review_id")))
+        if len(found) > 1:
+            duplicate += 1
+        marker_ids.extend(found)
+    return {
+        "marker_ids": sorted(set(marker_ids)),
+        "malformed_count": malformed,
+        "duplicate_count": duplicate,
+    }
+
+
 def _comment_fields(
     comment: Any, position: int
 ) -> tuple[str, str, str | None, int | None, str | None]:
@@ -319,9 +349,13 @@ def fetch_comments(repo: str, pr_number: int) -> list[dict[str, Any]]:
 def collect_report(
     comments: list[dict[str, Any]],
     limit: int,
+    repo: str | None = None,
+    pr_number: int | None = None,
+    check_hosted_reviews: bool = False,
 ) -> dict[str, Any]:
     checkpoints, unparsed_candidates = parse_checkpoint_comments(comments)
     scope_changes = parse_scope_changes(comments)
+    marker_audit = hosted_marker_audit(comments)
     checkpoints.sort(key=lambda checkpoint: checkpoint.created_at)
     scope_changes.sort(key=lambda change: change.created_at)
     returned = checkpoints if limit == 0 else checkpoints[-limit:]
@@ -329,6 +363,82 @@ def collect_report(
     warnings = (
         [f"{unlinked_cli_count} CLI checkpoint comment(s) lack a firemud-cli-run marker"] if unlinked_cli_count else []
     )
+    hosted_review_checkpoint: dict[str, Any] = {
+        "available": False,
+        "completed_count": None,
+        "marked_count": sum(
+            checkpoint.type == "Hosted" and checkpoint.hosted_review_id is not None
+            for checkpoint in checkpoints
+        ),
+        "missing_count": None,
+        "missing_review_ids": [],
+        "malformed_count": marker_audit["malformed_count"],
+        "duplicate_count": marker_audit["duplicate_count"],
+        "wrong_id_count": None,
+        "wrong_marker_ids": [],
+        "completed_reviews": [],
+        "reason": None,
+    }
+    if marker_audit["malformed_count"]:
+        warnings.append(
+            f"{marker_audit['malformed_count']} malformed firemud-hosted-review marker(s) "
+            "were not used for checkpoint linkage"
+        )
+    if marker_audit["duplicate_count"]:
+        warnings.append(
+            f"{marker_audit['duplicate_count']} checkpoint comment(s) contain duplicate "
+            "firemud-hosted-review markers"
+        )
+    if check_hosted_reviews and repo is not None and pr_number is not None:
+        try:
+            completed_reviews = _completed_hosted_reviews(fetch_hosted_reviews(repo, pr_number))
+        except (CheckpointError, RuntimeError) as exc:
+            hosted_review_checkpoint.update(
+                {
+                    "reason": f"completed Hosted review audit unavailable: {exc}",
+                }
+            )
+            warnings.append(hosted_review_checkpoint["reason"])
+            completed_reviews = None
+        if completed_reviews is None:
+            completed_reviews = []
+        else:
+            completed_ids = [review["id"] for review in completed_reviews]
+            marked_ids = set(marker_audit["marker_ids"])
+            missing_ids = [review_id for review_id in completed_ids if review_id not in marked_ids]
+            wrong_marker_ids = [review_id for review_id in marked_ids if review_id not in completed_ids]
+            hosted_review_checkpoint = {
+                "available": True,
+                "completed_count": len(completed_ids),
+                "marked_count": len(marked_ids),
+                "missing_count": len(missing_ids),
+                "missing_review_ids": missing_ids,
+                "malformed_count": marker_audit["malformed_count"],
+                "duplicate_count": marker_audit["duplicate_count"],
+                "wrong_id_count": len(wrong_marker_ids),
+                "wrong_marker_ids": wrong_marker_ids,
+                "completed_reviews": [
+                    {
+                        "review_id": review["id"],
+                        "submitted_at": review.get("submitted_at"),
+                        "commit_id": review.get("commit_id"),
+                    }
+                    for review in completed_reviews
+                ],
+                "reason": None,
+            }
+            if missing_ids:
+                warnings.append(
+                    f"{len(missing_ids)} completed CodeRabbit Hosted review(s) have no "
+                    "firemud-hosted-review checkpoint marker: "
+                    + ", ".join(str(review_id) for review_id in missing_ids)
+                )
+            if wrong_marker_ids:
+                warnings.append(
+                    f"{len(wrong_marker_ids)} firemud-hosted-review marker ID(s) do not "
+                    "match a completed CodeRabbit Hosted review: "
+                    + ", ".join(str(review_id) for review_id in wrong_marker_ids)
+                )
     timeline: list[dict[str, Any]] = [{"kind": "checkpoint", **checkpoint.as_json()} for checkpoint in returned]
     timeline.extend({"kind": "scope_change", **change.as_json()} for change in scope_changes)
     timeline.sort(key=lambda item: item["created_at"])
@@ -340,6 +450,7 @@ def collect_report(
         "unparsed_candidates": unparsed_candidates,
         "matched_scope_changes": len(scope_changes),
         "warnings": warnings,
+        "hosted_review_checkpoint": hosted_review_checkpoint,
         "checkpoints": [checkpoint.as_json() for checkpoint in returned],
         "timeline": timeline,
     }
@@ -1275,6 +1386,14 @@ def emit_text(report: dict[str, Any]) -> None:
     )
     for warning in report.get("warnings", []):
         print(f"warning={terminal_display_text(warning)}")
+    hosted_review_checkpoint = report.get("hosted_review_checkpoint", {})
+    if hosted_review_checkpoint.get("available"):
+        print(
+            "hosted_reviews="
+            f"completed={hosted_review_checkpoint['completed_count']} "
+            f"marked={hosted_review_checkpoint['marked_count']} "
+            f"missing_checkpoints={hosted_review_checkpoint['missing_count']}"
+        )
     print("comment_id posted_at_nz type found/accepted sha files run_id hosted_review_id")
     for item in report["timeline"]:
         if item["kind"] == "scope_change":
@@ -1507,7 +1626,13 @@ def main() -> int:
                     print(f"error: {detail['message']}", file=sys.stderr)
                     return 1
             else:
-                report = collect_report(comments, args.limit)
+                report = collect_report(
+                    comments,
+                    args.limit,
+                    args.repo,
+                    args.pr,
+                    check_hosted_reviews=True,
+                )
         if args.hosted is not None:
             if args.json:
                 print(json.dumps(hosted, indent=2, sort_keys=True))

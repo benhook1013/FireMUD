@@ -1067,6 +1067,43 @@ class PrStatusReporterTest(unittest.TestCase):
         self.assertNotIn(str(record), json.dumps(report))
         self.assertEqual(report["verdict"], "READY")
 
+    def test_manual_latest_request_is_classified_and_warned_without_a_record(self) -> None:
+        checker = self.checker_payload(ok=True)
+        checker.update(
+            {
+                "latest_explicit_review_request_id": 202,
+                "latest_explicit_review_request_url": "https://example.test/comments/202",
+                "latest_explicit_review_request_command": "@coderabbitai full review",
+                "latest_review_request_rate_limited": True,
+            }
+        )
+        evidence = self.reporter._hosted_trigger_evidence(
+            "owner/repo", 42, False, checker, checker["head_sha"]
+        )
+        self.assertEqual(evidence["classification"], "manual/unrecorded")
+        self.assertEqual(evidence["state"], "rate_limited")
+        self.assertIn("manual/unrecorded", evidence["warning"])
+
+    def test_newer_manual_request_does_not_inherit_an_older_record(self) -> None:
+        checker = self.checker_payload(ok=True)
+        checker.update(
+            {
+                "latest_explicit_review_request_id": 202,
+                "latest_explicit_review_request_url": "https://example.test/comments/202",
+                "latest_explicit_review_request_command": "@coderabbitai full review",
+            }
+        )
+        checker["trigger_state"] = self.trigger_state(
+            trigger_command="@coderabbitai full review",
+            trigger_created_at="2026-09-14T00:05:00Z",
+            trigger_comment_id=101,
+            trigger_url="https://example.test/comments/101",
+        )
+        evidence = self.reporter._hosted_trigger_evidence(
+            "owner/repo", 42, True, checker, checker["head_sha"]
+        )
+        self.assertEqual(evidence["classification"], "manual/unrecorded")
+
     def test_report_owned_trigger_availability_cannot_be_overridden_by_provider(self) -> None:
         checker = self.checker_payload(ok=True)
         checker["trigger_state"] = self.trigger_state(available=False)

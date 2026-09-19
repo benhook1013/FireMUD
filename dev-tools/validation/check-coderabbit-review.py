@@ -112,6 +112,9 @@ class ReviewSummary:
     unresolved_total: int
     latest_explicit_review_request_at: str | None
     latest_explicit_review_request_type: str | None
+    latest_explicit_review_request_id: int | None
+    latest_explicit_review_request_url: str | None
+    latest_explicit_review_request_command: str | None
     latest_coderabbit_review_finished_at: str | None
     explicit_review_after_latest_commit: bool
     review_finished_after_latest_request: bool
@@ -152,6 +155,7 @@ class TriggerState:
     response_url: str | None
     cooldown_until: str | None
     reason: str
+    trigger_command: str | None = None
     age_seconds: int | None = None
     manual_adjudication_required: bool = False
 
@@ -177,6 +181,14 @@ def parse_args() -> argparse.Namespace:
         "--wait",
         action="store_true",
         help="Block until the trigger reaches a terminal state",
+    )
+    parser.add_argument(
+        "--wait-latest-request",
+        action="store_true",
+        help=(
+            "Wait for the latest explicit manual Hosted request using an in-memory pin; "
+            "never creates a durable trigger record"
+        ),
     )
     parser.add_argument(
         "--timeout",
@@ -683,7 +695,10 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
     latest_explicit_review_request_at: str | None = None
     latest_explicit_review_request_dt: datetime | None = None
     latest_explicit_review_request_type: str | None = None
-    review_requests: list[tuple[datetime, str]] = []
+    latest_explicit_review_request_id: int | None = None
+    latest_explicit_review_request_url: str | None = None
+    latest_explicit_review_request_command: str | None = None
+    review_requests: list[tuple[datetime, str, int | None, str | None, str]] = []
     substantive_review_evidence: list[tuple[datetime, str]] = []
     plan_ceiling_evidence: list[datetime] = []
     latest_coderabbit_review_finished_at: str | None = None
@@ -709,7 +724,15 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
             and command_type is not None
             and created_at_dt is not None
         ):
-            review_requests.append((created_at_dt, command_type))
+            review_requests.append(
+                (
+                    created_at_dt,
+                    command_type,
+                    immutable_database_id(comment),
+                    comment.get("url") if isinstance(comment.get("url"), str) else None,
+                    normalize_command(body),
+                )
+            )
             if (
                 latest_explicit_review_request_dt is None
                 or created_at_dt > latest_explicit_review_request_dt
@@ -778,7 +801,13 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
             plan_ceiling_evidence.append(submitted_at_dt)
 
     if review_requests:
-        latest_request_dt, latest_explicit_review_request_type = max(
+        (
+            latest_request_dt,
+            latest_explicit_review_request_type,
+            latest_explicit_review_request_id,
+            latest_explicit_review_request_url,
+            latest_explicit_review_request_command,
+        ) = max(
             review_requests, key=lambda request: request[0]
         )
         latest_explicit_review_request_dt = latest_request_dt
@@ -825,7 +854,7 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         latest_incremental_request_dt = latest_explicit_review_request_dt
         prior_full_requests = [
             request_dt
-            for request_dt, request_type in review_requests
+            for request_dt, request_type, _, _, _ in review_requests
             if request_type == "full" and request_dt < latest_incremental_request_dt
         ]
         latest_full_request_dt = max(prior_full_requests, default=None)
@@ -1084,6 +1113,9 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         unresolved_total=unresolved_total,
         latest_explicit_review_request_at=latest_explicit_review_request_at,
         latest_explicit_review_request_type=latest_explicit_review_request_type,
+        latest_explicit_review_request_id=latest_explicit_review_request_id,
+        latest_explicit_review_request_url=latest_explicit_review_request_url,
+        latest_explicit_review_request_command=latest_explicit_review_request_command,
         latest_coderabbit_review_finished_at=latest_coderabbit_review_finished_at,
         explicit_review_after_latest_commit=explicit_review_after_latest_commit,
         review_finished_after_latest_request=review_finished_after_latest_request,
@@ -1377,6 +1409,9 @@ def trigger_state(
     payload: dict[str, Any],
     record: dict[str, Any],
     current_record_path: str | Path | None = None,
+    *,
+    allow_incremental: bool = False,
+    pinned_trigger_id: int | None = None,
 ) -> TriggerState:
     pr = payload["data"]["repository"]["pullRequest"]
     current_head = pr["headRefOid"]
@@ -1406,13 +1441,16 @@ def trigger_state(
     trigger_created_at = trigger.get("created_at")
     trigger_url = trigger.get("url")
     trigger_type = trigger.get("type")
+    trigger_command = normalize_command(trigger.get("command") or "")
     if (
         not isinstance(trigger_id, int)
         or trigger_id <= 0
         or parse_timestamp(trigger_created_at) is None
         or not isinstance(trigger_url, str)
         or not trigger_url
-        or trigger_type != "full"
+        or trigger_type not in ({"full", "incremental"} if allow_incremental else {"full"})
+        or trigger_command
+        != ("@coderabbitai full review" if trigger_type == "full" else "@coderabbitai review")
     ):
         raise ValueError("trigger record has invalid immutable trigger fields")
     trigger_dt = parse_timestamp(trigger_created_at)
@@ -1456,6 +1494,7 @@ def trigger_state(
         "trigger_created_at": trigger_created_at,
         "trigger_url": trigger_url,
         "trigger_type": trigger_type,
+        "trigger_command": trigger_command,
     }
     if record.get("status") in {
         "posted_boundary_changed",
@@ -1529,7 +1568,16 @@ def trigger_state(
             reason="the stale trigger was explicitly retired by an operator",
             age_seconds=age_seconds(trigger_dt),
         )
-    if any(created_dt == trigger_dt for created_dt, _ in other_triggers):
+    if any(
+        created_dt == trigger_dt
+        and not (
+            allow_incremental
+            and pinned_trigger_id is not None
+            and immutable_database_id(other_comment) is not None
+            and immutable_database_id(other_comment) < pinned_trigger_id
+        )
+        for created_dt, other_comment in other_triggers
+    ):
         return TriggerState(
             "ambiguous",
             True,
@@ -1583,6 +1631,9 @@ def trigger_state(
                     is_substantive_review_body(body)
                     or NOOP_REVIEW_MARKER in body
                     or FAILED_REVIEW_PATTERN.search(unquoted_body(body))
+                    or REVIEW_LIMIT_MARKER in body
+                    or REVIEW_LIMIT_STATUS_PATTERN.search(detection_body)
+                    or REVIEW_LIMIT_COMPLETE_MESSAGE_PATTERN.search(detection_body)
                     or cooldown is not None
                     or is_finished_review_reply(body)
                 ):
@@ -1633,8 +1684,8 @@ def trigger_state(
             or REVIEW_LIMIT_COMPLETE_MESSAGE_PATTERN.search(detection_body)
         ):
             until = parse_review_rate_limit_until(detection_body, created_dt)
+            state = "rate_limited"
             if until is not None:
-                state = "rate_limited"
                 cooldown = until.isoformat()
         elif NOOP_REVIEW_MARKER in body:
             state = "noop"
@@ -1798,6 +1849,199 @@ def trigger_state(
     )
 
 
+def explicit_review_requests(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return externally posted review commands with immutable identity fields."""
+
+    pr = payload["data"]["repository"]["pullRequest"]
+    requests: list[dict[str, Any]] = []
+    for comment in pr["comments"]["nodes"]:
+        author = (comment.get("author") or {}).get("login", "")
+        command_type = REVIEW_COMMAND_TYPES.get(normalize_command(comment.get("body") or ""))
+        created_at = comment.get("createdAt")
+        created_dt = parse_timestamp(created_at)
+        comment_id = immutable_database_id(comment)
+        if author == "coderabbitai" or command_type is None or created_dt is None:
+            continue
+        requests.append(
+            {
+                "id": comment_id,
+                "type": command_type,
+                "command": normalize_command(comment.get("body") or ""),
+                "created_at": created_at,
+                "url": comment.get("url") if isinstance(comment.get("url"), str) else None,
+                "_created_dt": created_dt,
+            }
+        )
+    return sorted(requests, key=lambda item: (item["_created_dt"], item["id"] or 0))
+
+
+def manual_wait_result(
+    repo: str,
+    pr_number: int,
+    input_path: str | None,
+    timeout: float,
+    poll_interval: float,
+    canonical_record: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Wait for one pinned manual request without persisting trigger state."""
+
+    initial_payload = load_payload(input_path, repo, pr_number)
+    initial_pr = initial_payload["data"]["repository"]["pullRequest"]
+    pinned_head = initial_pr.get("headRefOid")
+    if not isinstance(pinned_head, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", pinned_head):
+        raise ValueError("manual waiter could not pin an exact pull-request head")
+    requests = explicit_review_requests(initial_payload)
+    result_base: dict[str, Any] = {
+        "operation": "wait_latest_request",
+        "repository": repo,
+        "pr_number": pr_number,
+        "provenance": "manual/unrecorded",
+        "head_sha": pinned_head,
+    }
+    if not requests:
+        return {
+            **result_base,
+            "status": "unavailable",
+            "state": "unavailable",
+            "terminal": True,
+            "reason": "no explicit Hosted review request is present",
+        }
+
+    latest_dt = requests[-1]["_created_dt"]
+    latest = [request for request in requests if request["_created_dt"] == latest_dt]
+    latest_ids = [request["id"] for request in latest]
+    if (
+        any(request["id"] is None or request["url"] is None for request in latest)
+        or len(set(latest_ids)) != len(latest_ids)
+    ):
+        return {
+            **result_base,
+            "provenance": "ambiguous/overlapping",
+            "status": "ambiguous",
+            "state": "ambiguous",
+            "terminal": True,
+            "reason": "latest explicit requests do not have one immutable comment identity",
+        }
+    pinned = max(latest, key=lambda request: request["id"])
+    request = {key: value for key, value in pinned.items() if not key.startswith("_")}
+    result_base["request"] = request
+
+    if canonical_record is not None:
+        trigger = canonical_record.get("trigger")
+        if isinstance(trigger, dict) and trigger.get("id") == pinned["id"]:
+            return {
+                **result_base,
+                "provenance": "canonical-recorded",
+                "status": "refused",
+                "state": "canonical-recorded",
+                "terminal": True,
+                "reason": "the latest request belongs to the canonical durable trigger record; use --wait",
+            }
+
+    manual_record = {
+        "schema_version": 1,
+        "status": "posted",
+        "repository": repo,
+        "pr_number": pr_number,
+        "head_sha": pinned_head,
+        "trigger": {
+            "id": pinned["id"],
+            "created_at": pinned["created_at"],
+            "url": pinned["url"],
+            "type": pinned["type"],
+            "command": f"@coderabbitai {'full review' if pinned['type'] == 'full' else 'review'}",
+        },
+    }
+
+    def poll(current_payload: dict[str, Any]) -> dict[str, Any] | None:
+        current_pr = current_payload["data"]["repository"]["pullRequest"]
+        current_head = current_pr.get("headRefOid")
+        if not isinstance(current_head, str) or current_head.casefold() != pinned_head.casefold():
+            return {
+                **result_base,
+                "provenance": "ambiguous/overlapping",
+                "status": "head_changed",
+                "state": "ambiguous",
+                "terminal": True,
+                "reason": "pull-request head changed while waiting for the manual request",
+            }
+        current_requests = explicit_review_requests(current_payload)
+        exact = [request for request in current_requests if request["id"] == pinned["id"]]
+        if len(exact) != 1 or any(
+            exact[0].get(field) != pinned.get(field)
+            for field in ("type", "command", "created_at", "url")
+        ):
+            return {
+                **result_base,
+                "provenance": "ambiguous/overlapping",
+                "status": "ambiguous",
+                "state": "ambiguous",
+                "terminal": True,
+                "reason": "the pinned manual request no longer has the same immutable identity",
+            }
+        later = [request for request in current_requests if request["_created_dt"] > pinned["_created_dt"]]
+        same_time_other = [
+            request
+            for request in current_requests
+            if request["_created_dt"] == pinned["_created_dt"]
+            and request["id"] is not None
+            and request["id"] > pinned["id"]
+        ]
+        if later:
+            return {
+                **result_base,
+                "provenance": "ambiguous/overlapping",
+                "status": "superseded",
+                "state": "superseded",
+                "terminal": True,
+                "reason": "another explicit review request superseded the pinned manual request",
+            }
+        if same_time_other:
+            return {
+                **result_base,
+                "provenance": "ambiguous/overlapping",
+                "status": "ambiguous",
+                "state": "ambiguous",
+                "terminal": True,
+                "reason": "another same-time explicit request makes attribution ambiguous",
+            }
+        state = trigger_state(
+            repo,
+            pr_number,
+            current_payload,
+            manual_record,
+            allow_incremental=True,
+            pinned_trigger_id=pinned["id"],
+        )
+        if state.terminal:
+            return {
+                **result_base,
+                "status": state.state,
+                "state": state.state,
+                "terminal": True,
+                "reason": state.reason,
+                "trigger_state": state.__dict__,
+            }
+        return None
+
+    deadline = time.monotonic() + timeout
+    while True:
+        current_payload = load_payload(input_path, repo, pr_number)
+        terminal = poll(current_payload)
+        if terminal is not None:
+            return terminal
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return {
+                **result_base,
+                "status": "timed_out",
+                "state": "timed_out",
+                "terminal": True,
+                "reason": "manual Hosted request wait expired before a terminal response",
+            }
+        time.sleep(min(poll_interval, remaining))
+
+
 RETIREMENT_REASON_MAX_LENGTH = 240
 LINE_SEPARATOR_CODEPOINTS = {0x7F, 0x85, 0x2028, 0x2029}
 
@@ -1912,6 +2156,33 @@ def emit_retirement_text(result: dict[str, Any]) -> None:
         print(f"{key}={value}")
 
 
+def emit_manual_wait_text(result: dict[str, Any]) -> None:
+    print(f"operation={result['operation']}")
+    print(f"provenance={result['provenance']}")
+    print(f"repository={result['repository']}")
+    print(f"pr_number={result['pr_number']}")
+    print(f"head_sha={result.get('head_sha', 'none')}")
+    request = result.get("request")
+    if isinstance(request, dict):
+        print(f"request_id={request.get('id', 'none')}")
+        print(f"request_type={request.get('type', 'none')}")
+        print(f"request_created_at={request.get('created_at', 'none')}")
+        print(f"request_url={request.get('url', 'none')}")
+    print(f"status={result['status']}")
+    print(f"state={result['state']}")
+    print(f"terminal={str(result.get('terminal', False)).lower()}")
+    print(f"reason={result['reason']}")
+    if result.get("provenance") == "manual/unrecorded" and result["state"] in {
+        "active",
+        "awaiting_response",
+        "timed_out",
+    }:
+        print(
+            "warning=MANUAL HOSTED REQUEST HAS NO DURABLE POSTING RECORD; "
+            "DO NOT RETRY OR OVERLAP IT WITHOUT ADJUDICATION"
+        )
+
+
 def persist_timeout_if_current(
     path: str, expected_record: dict[str, Any], state: TriggerState
 ) -> bool:
@@ -1983,6 +2254,16 @@ def emit_text(summary: ReviewSummary) -> None:
     )
     print(
         f"latest_explicit_review_request_type={summary.latest_explicit_review_request_type or 'none'}"
+    )
+    print(
+        f"latest_explicit_review_request_id={summary.latest_explicit_review_request_id or 'none'}"
+    )
+    print(
+        f"latest_explicit_review_request_url={summary.latest_explicit_review_request_url or 'none'}"
+    )
+    print(
+        "latest_explicit_review_request_command="
+        f"{summary.latest_explicit_review_request_command or 'none'}"
     )
     print(
         f"latest_coderabbit_review_finished_at={summary.latest_coderabbit_review_finished_at or 'none'}"
@@ -2088,6 +2369,25 @@ def main() -> int:
     if args.retire_trigger is not None and args.wait:
         print("error=--retire-trigger cannot be combined with --wait", file=sys.stderr)
         return 2
+    if args.wait_latest_request and args.wait:
+        print(
+            "error=--wait-latest-request cannot be combined with --wait",
+            file=sys.stderr,
+        )
+        return 2
+    if args.wait_latest_request and args.retire_trigger is not None:
+        print(
+            "error=--wait-latest-request cannot be combined with --retire-trigger",
+            file=sys.stderr,
+        )
+        return 2
+    if args.wait_latest_request and args.trigger_record:
+        print(
+            "error=--wait-latest-request cannot be combined with --trigger-record; "
+            "manual waits refuse durable trigger ownership",
+            file=sys.stderr,
+        )
+        return 2
     if args.wait and not args.trigger_record:
         print("error=--wait requires --trigger-record", file=sys.stderr)
         return 2
@@ -2107,6 +2407,20 @@ def main() -> int:
             if args.trigger_record
             else None
         )
+        if args.wait_latest_request:
+            result = manual_wait_result(
+                args.repo,
+                args.pr,
+                args.input,
+                args.timeout,
+                args.poll_interval,
+                record,
+            )
+            if args.json:
+                print(json.dumps(result, indent=2, sort_keys=True))
+            else:
+                emit_manual_wait_text(result)
+            return 0 if result.get("state") == "completed" else 1
         if args.retire_trigger is not None:
             payload = load_payload(args.input, args.repo, args.pr)
             result = retire_trigger_record(

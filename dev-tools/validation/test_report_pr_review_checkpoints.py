@@ -144,6 +144,72 @@ class CheckpointReporterTest(unittest.TestCase):
             self.reporter.emit_text(report)
         self.assertIn("unlinked", output.getvalue())
 
+    def test_completed_hosted_reviews_are_audited_against_exact_markers(self) -> None:
+        comments = [
+            {
+                "id": 201,
+                "body": "**Hosted: 1 found / 0 accepted** · `abcdef1`\n"
+                "<!-- firemud-hosted-review: 900 -->",
+                "created_at": "2026-09-10T00:00:00Z",
+            },
+            {
+                "id": 202,
+                "body": "**Hosted: 0 found / 0 accepted**\n"
+                "<!-- firemud-hosted-review: malformed -->\n"
+                "<!-- firemud-hosted-review: 900 -->\n"
+                "<!-- firemud-hosted-review: 900 -->",
+                "created_at": "2026-09-10T00:01:00Z",
+            },
+        ]
+        reviews = [
+            {
+                "id": 900,
+                "user": {"login": "coderabbitai"},
+                "state": "COMMENTED",
+                "submitted_at": "2026-09-10T00:02:00Z",
+                "commit_id": "a" * 40,
+            },
+            {
+                "id": 901,
+                "user": {"login": "coderabbitai"},
+                "state": "COMMENTED",
+                "submitted_at": "2026-09-10T00:03:00Z",
+                "commit_id": "b" * 40,
+            },
+            {
+                "id": 902,
+                "user": {"login": "coderabbitai"},
+                "state": "PENDING",
+                "submitted_at": None,
+                "commit_id": "c" * 40,
+            },
+        ]
+        with patch.object(self.reporter, "fetch_hosted_reviews", return_value=reviews):
+            report = self.reporter.collect_report(
+                comments, 0, "owner/repo", 42, check_hosted_reviews=True
+            )
+        audit = report["hosted_review_checkpoint"]
+        self.assertEqual(audit["completed_count"], 2)
+        self.assertEqual(audit["missing_review_ids"], [901])
+        self.assertEqual(audit["wrong_marker_ids"], [])
+        self.assertEqual(audit["malformed_count"], 1)
+        self.assertEqual(audit["duplicate_count"], 1)
+        self.assertTrue(any("901" in warning for warning in report["warnings"]))
+
+    def test_hosted_review_audit_reports_unavailable_without_failing_checkpoint_extraction(self) -> None:
+        with patch.object(
+            self.reporter,
+            "fetch_hosted_reviews",
+            side_effect=RuntimeError("GitHub unavailable"),
+        ):
+            report = self.reporter.collect_report(
+                [], 0, "owner/repo", 42, check_hosted_reviews=True
+            )
+        audit = report["hosted_review_checkpoint"]
+        self.assertFalse(audit["available"])
+        self.assertIn("unavailable", audit["reason"])
+        self.assertTrue(any("GitHub unavailable" in warning for warning in report["warnings"]))
+
     def test_duplicate_and_malformed_run_markers_remain_unlinked_checkpoints(self) -> None:
         comments = [
             {
