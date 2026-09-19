@@ -262,8 +262,52 @@ class GatewayWebSocketClientTest {
 
     assertTrue(client.isReadyAsync().get(5, TimeUnit.SECONDS));
     assertSame(configuredClient, client.clientIdentity());
+    RecordedRequest websocketRequest = server.takeRequest(5, TimeUnit.SECONDS);
+    assertNotNull(websocketRequest.getHandshake());
+    assertEquals("127.0.0.1", websocketRequest.getHeader("X-Client-IP"));
+    assertEquals("127.0.0.1", websocketRequest.getHeader("X-Proxy-Client-IP"));
+    assertEquals("connection-1", websocketRequest.getHeader("X-Proxy-Connection-Id"));
+    assertEquals("instance-1", websocketRequest.getHeader("X-Game-Instance-Id"));
+    assertEquals("instance-1", websocketRequest.getHeader("X-Proxy-Game-Instance-Id"));
+    assertEquals("tenant-1", websocketRequest.getHeader("X-Tenant-Id"));
+    assertEquals("tenant-1", websocketRequest.getHeader("X-Proxy-Tenant-Id"));
+    assertEquals("demo", websocketRequest.getHeader("X-World-Slug"));
+    assertEquals("main", websocketRequest.getHeader("X-Realm-Slug"));
+    assertEquals("1", websocketRequest.getHeader("X-Pointer-Version"));
     assertNotNull(server.takeRequest(5, TimeUnit.SECONDS).getHandshake());
-    assertNotNull(server.takeRequest(5, TimeUnit.SECONDS).getHandshake());
+    webSocket.abort();
+  }
+
+  @Test
+  void partialRoutingBundleIsOmittedFromWebSocketHandshake() throws Exception {
+    MockWebServer server = startMutualTlsServer(InetAddress.getByName("127.0.0.1"));
+    server.enqueue(
+        new MockResponse()
+            .withWebSocketUpgrade(
+                new okhttp3.WebSocketListener() {
+                  @Override
+                  public void onOpen(okhttp3.WebSocket webSocket, Response response) {}
+                }));
+    GatewayWebSocketClient client = newClient("localhost", server.getPort(), caCertificate);
+
+    WebSocket webSocket =
+        client
+            .connect(
+                "127.0.0.1",
+                "connection-1",
+                "instance-1",
+                "tenant-1",
+                "demo",
+                null,
+                "1",
+                new WebSocket.Listener() {})
+            .get(5, TimeUnit.SECONDS);
+
+    RecordedRequest request = server.takeRequest(5, TimeUnit.SECONDS);
+    assertNotNull(request.getHandshake());
+    assertNull(request.getHeader("X-World-Slug"));
+    assertNull(request.getHeader("X-Realm-Slug"));
+    assertNull(request.getHeader("X-Pointer-Version"));
     webSocket.abort();
   }
 

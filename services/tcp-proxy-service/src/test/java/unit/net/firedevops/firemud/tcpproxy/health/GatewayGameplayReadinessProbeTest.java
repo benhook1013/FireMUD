@@ -21,6 +21,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -282,6 +283,7 @@ class GatewayGameplayReadinessProbeTest {
       throws Exception {
     GatewayWebSocketClient client = mock(GatewayWebSocketClient.class);
     AtomicInteger cancellationAttempts = new AtomicInteger();
+    CountDownLatch cancellationObserved = new CountDownLatch(1);
     AtomicReference<BiConsumer<? super Boolean, ? super Throwable>> callback =
         new AtomicReference<>();
     CompletableFuture<Boolean> throwingFuture =
@@ -296,12 +298,14 @@ class GatewayGameplayReadinessProbeTest {
           @Override
           public boolean cancel(boolean mayInterruptIfRunning) {
             cancellationAttempts.incrementAndGet();
+            cancellationObserved.countDown();
             return false;
           }
         };
     when(client.isReadyAsync()).thenReturn(throwingFuture);
     try (GatewayGameplayReadinessProbe probe = startedProbe(client, Duration.ofHours(1))) {
       verify(client, timeout(1000)).isReadyAsync();
+      assertTrue(cancellationObserved.await(1, TimeUnit.SECONDS));
       assertEquals(1, cancellationAttempts.get());
       assertFalse(probe.isReady());
 
