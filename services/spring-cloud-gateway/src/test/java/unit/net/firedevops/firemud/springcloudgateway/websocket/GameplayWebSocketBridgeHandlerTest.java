@@ -11,6 +11,8 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
@@ -464,6 +466,7 @@ class GameplayWebSocketBridgeHandlerTest {
     HttpHeaders headers = new HttpHeaders();
     WebSocketMessage payload = mock(WebSocketMessage.class);
     Sinks.Many<WebSocketMessage> downstreamMessages = Sinks.many().unicast().onBackpressureBuffer();
+    CountDownLatch closeInvoked = new CountDownLatch(1);
     Sinks.One<Void> closeWrite = Sinks.one();
     AtomicReference<CloseStatus> closeStatus = new AtomicReference<>();
 
@@ -477,6 +480,7 @@ class GameplayWebSocketBridgeHandlerTest {
         .thenAnswer(
             invocation -> {
               closeStatus.set(invocation.getArgument(0));
+              closeInvoked.countDown();
               return closeWrite.asMono();
             });
     when(upstream.send(any())).thenReturn(Mono.never());
@@ -506,6 +510,7 @@ class GameplayWebSocketBridgeHandlerTest {
             })
         .then(
             () -> {
+              awaitClose(closeInvoked);
               assertThat(closeStatus.get()).isNotNull();
               assertThat(closeStatus.get().getCode()).isEqualTo(1013);
               assertThat(closeStatus.get().getReason()).isEqualTo("backend_unavailable");
@@ -525,6 +530,7 @@ class GameplayWebSocketBridgeHandlerTest {
     WebSocketMessage firstPayload = mock(WebSocketMessage.class);
     WebSocketMessage secondPayload = mock(WebSocketMessage.class);
     Sinks.Many<WebSocketMessage> downstreamMessages = Sinks.many().unicast().onBackpressureBuffer();
+    CountDownLatch closeInvoked = new CountDownLatch(1);
     Sinks.One<Void> closeWrite = Sinks.one();
     AtomicReference<CloseStatus> closeStatus = new AtomicReference<>();
 
@@ -539,6 +545,7 @@ class GameplayWebSocketBridgeHandlerTest {
         .thenAnswer(
             invocation -> {
               closeStatus.set(invocation.getArgument(0));
+              closeInvoked.countDown();
               return closeWrite.asMono();
             });
     when(upstream.send(any()))
@@ -582,6 +589,7 @@ class GameplayWebSocketBridgeHandlerTest {
             })
         .then(
             () -> {
+              awaitClose(closeInvoked);
               assertThat(closeStatus.get()).isNotNull();
               assertThat(closeStatus.get().getCode()).isEqualTo(1013);
               assertThat(closeStatus.get().getReason()).isEqualTo("backend_unavailable");
@@ -728,5 +736,14 @@ class GameplayWebSocketBridgeHandlerTest {
                 .counter()
                 .count())
         .isEqualTo(1.0);
+  }
+
+  private static void awaitClose(CountDownLatch closeInvoked) {
+    try {
+      assertThat(closeInvoked.await(5, TimeUnit.SECONDS)).isTrue();
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new AssertionError("Interrupted while waiting for WebSocket close", e);
+    }
   }
 }

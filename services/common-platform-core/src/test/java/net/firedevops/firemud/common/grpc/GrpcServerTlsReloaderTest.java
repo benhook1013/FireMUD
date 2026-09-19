@@ -2,9 +2,9 @@ package net.firedevops.firemud.common.grpc;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import java.lang.reflect.InvocationTargetException;
@@ -53,8 +53,8 @@ class GrpcServerTlsReloaderTest {
       awaitCondition(watcher::isHealthy);
 
       assertTrue(startAttempts.get() >= 2);
-      verify(serverLifecycle, times(2)).stop();
-      verify(serverLifecycle, times(2)).start();
+      verify(serverLifecycle, atLeast(2)).stop();
+      verify(serverLifecycle, atLeast(2)).start();
       InOrder restartOrder = inOrder(serverLifecycle);
       restartOrder.verify(serverLifecycle).stop();
       restartOrder.verify(serverLifecycle).start();

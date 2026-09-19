@@ -27,6 +27,8 @@ class AbstractReloadingBlockingGrpcClientTest {
     grpc.setCertChain(certificate.toString());
     grpc.setPrivateKey(privateKey.toString());
     grpc.setCaCert(caCertificate.toString());
+    int unhealthyWatchersBefore =
+        ((Number) TlsCertificateWatcher.health().getDetails().get("unhealthyWatchers")).intValue();
 
     TestClient client =
         new TestClient(new ServiceEndpointsProperties(), grpc, new FailingReloadChannelFactory());
@@ -35,13 +37,17 @@ class AbstractReloadingBlockingGrpcClientTest {
       Files.writeString(certificate, "certificate-2");
 
       awaitCondition(
-          () ->
-              "OUT_OF_SERVICE".equals(
-                  TlsCertificateWatcher.health().getStatus().getCode()));
+          () -> {
+            Health health = TlsCertificateWatcher.health();
+            return "OUT_OF_SERVICE".equals(health.getStatus().getCode())
+                && ((Number) health.getDetails().get("unhealthyWatchers")).intValue()
+                    >= unhealthyWatchersBefore + 1;
+          });
 
       Health health = TlsCertificateWatcher.health();
       assertThat(health.getStatus().getCode()).isEqualTo("OUT_OF_SERVICE");
-      assertThat(health.getDetails()).containsEntry("unhealthyWatchers", 1);
+      assertThat(health.getDetails())
+          .containsEntry("unhealthyWatchers", unhealthyWatchersBefore + 1);
     } finally {
       client.close();
     }

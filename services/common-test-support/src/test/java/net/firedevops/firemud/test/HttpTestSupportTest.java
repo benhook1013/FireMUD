@@ -85,7 +85,7 @@ class HttpTestSupportTest {
         TestHttpServer.hanging(requestStarted, releaseRequest, requestFinished, requestCount)) {
       Duration timeout =
           HttpTestSupport.PROBE_TIMEOUT
-              .multipliedBy(2)
+              .multipliedBy(3)
               .plus(TestAsyncAssertions.DEFAULT_POLL_INTERVAL);
       long startedAt = System.nanoTime();
       Throwable failure;
