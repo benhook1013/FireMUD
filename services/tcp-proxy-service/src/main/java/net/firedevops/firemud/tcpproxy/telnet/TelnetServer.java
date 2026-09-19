@@ -330,7 +330,7 @@ public final class TelnetServer {
   }
 
   @Timed(value = "tcpproxy.start")
-  public void start() throws InterruptedException {
+  public synchronized void start() throws InterruptedException {
     if (!running.compareAndSet(false, true)) {
       return;
     }
@@ -415,7 +415,7 @@ public final class TelnetServer {
   }
 
   @Timed(value = "tcpproxy.stop")
-  public void stop() {
+  public synchronized void stop() {
     if (!running.compareAndSet(true, false)) {
       return;
     }

@@ -259,8 +259,9 @@ public class TlsCertificateWatcher implements AutoCloseable {
       if (retryAttempt >= MAX_RETRY_ATTEMPTS && !callbackRetryExhaustionLogged) {
         callbackRetryExhaustionLogged = true;
         logger.error(
-            "TLS certificate reload callback retries exhausted after {} attempts",
-            MAX_RETRY_ATTEMPTS);
+            "TLS certificate reload callback retries reached {} attempts; continuing at capped delay {}",
+            MAX_RETRY_ATTEMPTS,
+            MAX_REGISTRATION_RETRY_DELAY);
       }
       Duration retryDelay = registrationRetryDelay(retryAttempt);
       callbackRetryAttempts = retryAttempt;
