@@ -1007,6 +1007,53 @@ class TelnetSessionDriverTest(unittest.TestCase):
             self.assertIn("LOGIN demo@example.com [REDACTED]", transcript_text)
             self.assertIn("LOGIN demo@example.com [REDACTED]", rendered)
 
+    def test_send_rejects_embedded_line_breaks_before_transcript_or_wire(self):
+        secret = "credential-secret"
+        for command in (
+            "LOOK\nNORTH",
+            f"LOGIN demo@example.com {secret}\nINJECT",
+        ):
+            with self.subTest(command=command):
+                with tempfile.TemporaryDirectory() as directory:
+                    output = []
+                    session = telnet_session.TelnetSession(
+                        "localhost",
+                        32000,
+                        Path(directory) / "session.jsonl",
+                        output=output.append,
+                        tls_enabled=False,
+                    )
+                    session.socket = unittest.mock.Mock()
+
+                    with self.assertRaisesRegex(
+                        ValueError, f"^{telnet_session.INVALID_COMMAND_ERROR}$"
+                    ):
+                        session.send_command(command)
+
+                    session.socket.sendall.assert_not_called()
+                    self.assertEqual(session.store.read(), [])
+                    self.assertNotIn(secret, "\n".join(output))
+
+    def test_send_command_preserves_normal_trailing_line_break_treatment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "session.jsonl"
+            session = telnet_session.TelnetSession(
+                "localhost",
+                32000,
+                transcript,
+                output=lambda _line: None,
+                tls_enabled=False,
+            )
+            session.socket = unittest.mock.Mock()
+
+            session.send_command("LOOK\r\n")
+
+            session.socket.sendall.assert_called_once_with(b"LOOK\r\n")
+            self.assertEqual(
+                [record["text"] for record in session.store.read() if record["event"] == "command"],
+                ["LOOK"],
+            )
+
     def test_idle_timeout_record_and_command_reset_are_serialized(self):
         class CoordinatedSocket:
             def __init__(self):
@@ -1228,6 +1275,109 @@ class TelnetSessionDriverTest(unittest.TestCase):
             disconnects = [record for record in records if record["event"] == "disconnect"]
             self.assertEqual([record["reason"] for record in disconnects], ["demo_complete"])
             self.assertFalse(any(record["event"] == "error" for record in records))
+
+    def test_receiver_evidence_failure_is_terminal_and_does_not_recurse(self):
+        class FailingSocket:
+            def __init__(self):
+                self.shutdown_calls = 0
+                self.close_calls = 0
+
+            def recv(self, _size):
+                return b"receiver payload"
+
+            def shutdown(self, _how):
+                self.shutdown_calls += 1
+
+            def close(self):
+                self.close_calls += 1
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = []
+            session = telnet_session.TelnetSession(
+                "localhost",
+                32000,
+                Path(directory) / "session.jsonl",
+                output=output.append,
+                tls_enabled=False,
+            )
+            failing_store = unittest.mock.Mock()
+            failing_store.append.side_effect = RuntimeError("secret=credential-secret")
+            session.store = failing_store
+            fake_socket = FailingSocket()
+            session.socket = fake_socket
+
+            session._receive_loop()
+
+            self.assertTrue(session.persistence_failed)
+            self.assertTrue(session.closed)
+            self.assertTrue(session.disconnect_event.is_set())
+            self.assertEqual(session.disconnect_outcome(), ("evidence_failure", True))
+            self.assertEqual(failing_store.append.call_count, 1)
+            self.assertGreaterEqual(fake_socket.shutdown_calls, 1)
+            self.assertGreaterEqual(fake_socket.close_calls, 1)
+            self.assertEqual(output, [telnet_session.EVIDENCE_FAILURE_DIAGNOSTIC])
+            self.assertNotIn("credential-secret", "\n".join(output))
+
+    def test_close_evidence_failure_is_terminal_and_does_not_recurse(self):
+        class FailingSocket:
+            def __init__(self):
+                self.shutdown_calls = 0
+                self.close_calls = 0
+
+            def shutdown(self, _how):
+                self.shutdown_calls += 1
+
+            def close(self):
+                self.close_calls += 1
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = []
+            session = telnet_session.TelnetSession(
+                "localhost",
+                32000,
+                Path(directory) / "session.jsonl",
+                output=output.append,
+                tls_enabled=False,
+            )
+            failing_store = unittest.mock.Mock()
+            failing_store.append.side_effect = RuntimeError("secret=credential-secret")
+            session.store = failing_store
+            fake_socket = FailingSocket()
+            session.socket = fake_socket
+
+            session.close("operator_close")
+            session.close("second_close")
+
+            self.assertTrue(session.persistence_failed)
+            self.assertTrue(session.closed)
+            self.assertTrue(session.disconnect_event.is_set())
+            self.assertEqual(session.disconnect_outcome(), ("evidence_failure", True))
+            self.assertEqual(failing_store.append.call_count, 1)
+            self.assertGreaterEqual(fake_socket.shutdown_calls, 1)
+            self.assertGreaterEqual(fake_socket.close_calls, 1)
+            self.assertEqual(output, [telnet_session.EVIDENCE_FAILURE_DIAGNOSTIC])
+            self.assertNotIn("credential-secret", "\n".join(output))
+
+    def test_send_evidence_failure_does_not_put_command_on_wire(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = []
+            session = telnet_session.TelnetSession(
+                "localhost",
+                32000,
+                Path(directory) / "session.jsonl",
+                output=output.append,
+                tls_enabled=False,
+            )
+            session.store = unittest.mock.Mock()
+            session.store.append.side_effect = OSError("disk full")
+            session.socket = unittest.mock.Mock()
+
+            with self.assertRaisesRegex(OSError, "Unable to persist session evidence"):
+                session.send_command("LOOK")
+
+            session.socket.sendall.assert_not_called()
+            self.assertEqual(session.disconnect_outcome(), ("evidence_failure", True))
+            self.assertEqual(output, [telnet_session.EVIDENCE_FAILURE_DIAGNOSTIC])
 
     def test_received_display_escapes_terminal_controls_without_mutating_evidence(self):
         raw = "room\roverwrite \x1b[31mred\x1b]8;;https://example.test\x07\x01\r\n"

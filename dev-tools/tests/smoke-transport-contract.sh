@@ -10,6 +10,7 @@ import io
 import json
 import ssl
 import sys
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -121,6 +122,21 @@ with patch(
         )
         is raw_plaintext_socket
     )
+
+
+with patch("smoke_common.socket.create_connection") as connect:
+    try:
+        open_telnet_socket(
+            "203.0.113.10",
+            2323,
+            1,
+            tls_enabled=False,
+        )
+    except ValueError as exc:
+        assert str(exc) == smoke_common.PLAINTEXT_TELNET_HOST_ERROR
+    else:
+        raise AssertionError("plaintext Telnet accepted a non-loopback host")
+connect.assert_not_called()
 
 
 raw_tls_socket = FakeSession()
@@ -365,6 +381,74 @@ assert secret not in logon_output.getvalue()
 assert secret not in json.dumps(logon_step_results)
 assert logon_step_results[0]["command"] == "LOGON demo@example.test [REDACTED]"
 assert "Diagnostic credential=[REDACTED]; proof remains visible." in logon_output.getvalue()
+
+
+class DeadlineBoundSession(FakeSession):
+    def __init__(self, chunks=None):
+        super().__init__(chunks)
+        self.timeouts = []
+
+    def settimeout(self, timeout):
+        self.timeouts.append(timeout)
+
+    def recv(self, _size=None):
+        if self.chunks:
+            chunk = self.chunks.pop(0)
+            return chunk if _size is None else chunk.encode("iso-8859-1")
+        time.sleep(self.timeouts[-1])
+        raise TimeoutError
+
+
+deadline_session = DeadlineBoundSession(["OK LOOK room=demo\n"])
+started_at = time.monotonic()
+deadline_response = smoke_common.send_telnet_command_and_expect(
+    deadline_session,
+    [],
+    "LOOK",
+    ["OK LOOK"],
+    "LOOK",
+    0.08,
+    drain_timeout=1.0,
+)
+elapsed = time.monotonic() - started_at
+assert deadline_response == "OK LOOK room=demo\n"
+assert elapsed < 0.25, f"Telnet command exceeded deadline during receive/drain: {elapsed}"
+assert deadline_session.timeouts
+assert max(deadline_session.timeouts) <= 0.09
+
+
+for invalid_command in (
+    "LOOK\nNORTH",
+    "LOGIN demo@example.test secret-with-newline\nINJECT",
+):
+    invalid_session = FakeSession(["OK SHOULD NOT ARRIVE\n"])
+    try:
+        smoke_common.send_telnet_command_and_expect(
+            invalid_session,
+            [],
+            invalid_command,
+            ["OK SHOULD NOT ARRIVE"],
+            "INVALID",
+            1,
+        )
+    except ValueError as exc:
+        assert str(exc) == smoke_common.INVALID_COMMAND_LINE_ERROR
+    else:
+        raise AssertionError(f"embedded line break was accepted: {invalid_command!r}")
+    assert invalid_session.sent == []
+
+
+trailing_newline_session = FakeSession(["OK LOOK room=demo\n"])
+smoke_common.send_telnet_command_and_expect(
+    trailing_newline_session,
+    [],
+    "LOOK\n",
+    ["OK LOOK"],
+    "LOOK",
+    1,
+    drain_timeout=0,
+)
+assert trailing_newline_session.sent == ["LOOK\r\n"]
 
 
 websocket_login_session = FakeSession([login_response])
