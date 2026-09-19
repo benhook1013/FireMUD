@@ -856,7 +856,8 @@ sleep_until_poll_deadline_script="$(awk '
   exit 1
 }
 deadline_clamp_output="$tmp_dir/deadline-clamp-output"
-deadline_clamp_script="poll_deadline=1
+deadline_clamp_script="poll_interval_seconds=$poll_interval_seconds
+poll_deadline=1
 ${sleep_until_poll_deadline_script}
 sleep_until_poll_deadline"
 PATH="$tmp_dir:$PATH" bash -euo pipefail -c "$deadline_clamp_script" >"$deadline_clamp_output" 2>&1
@@ -865,7 +866,8 @@ grep -Fxq 'Polling delay bounded to 1s by the deadline.' "$deadline_clamp_output
   exit 1
 }
 deadline_unclamped_output="$tmp_dir/deadline-unclamped-output"
-deadline_unclamped_script="poll_deadline=30
+deadline_unclamped_script="poll_interval_seconds=$poll_interval_seconds
+poll_deadline=30
 ${sleep_until_poll_deadline_script}
 sleep_until_poll_deadline"
 PATH="$tmp_dir:$PATH" bash -euo pipefail -c "$deadline_unclamped_script" >"$deadline_unclamped_output" 2>&1
