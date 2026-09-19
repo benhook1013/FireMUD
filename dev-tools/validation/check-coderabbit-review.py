@@ -1707,6 +1707,16 @@ def trigger_state(
                     and is_substantive_review_body(review.get("body") or "")
                 ):
                     prior_terminal = True
+                if (
+                    (review.get("author") or {}).get("login", "") == "coderabbitai"
+                    and review.get("state") != "DISMISSED"
+                    and submitted_dt is not None
+                    and prior_end < submitted_dt < trigger_dt
+                    and is_substantive_review_body(review.get("body") or "")
+                ):
+                    # A subsequent full review completed before this trigger. The
+                    # older unanswered request cannot still be the active review.
+                    prior_terminal = True
             if prior_terminal:
                 continue
             return TriggerState(

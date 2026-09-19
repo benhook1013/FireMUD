@@ -551,6 +551,26 @@ Files selected for processing (20)""",
         ]
         self.assertEqual(self.state(comments).state, "active")
 
+    def test_later_completed_review_supersedes_older_unanswered_trigger(self) -> None:
+        comments = [
+            comment(7, "owner", "@coderabbitai full review", "2026-09-14T00:57:00Z"),
+            comment(8, "coderabbitai", "Full review triggered", "2026-09-14T00:57:01Z"),
+            comment(9, "owner", "@coderabbitai full review", "2026-09-14T00:58:00Z"),
+            trigger_comment(),
+            comment(11, "coderabbitai", "Full review triggered", "2026-09-14T01:00:01Z"),
+        ]
+        completed_later_review = {
+            "databaseId": 12,
+            "author": {"login": "coderabbitai"},
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-14T00:59:00Z",
+            "body": "<!-- walkthrough_start -->",
+            "commit": {"oid": HEAD},
+            "url": "https://example.test/reviews/12",
+        }
+        self.assertEqual(self.state(comments, [completed_later_review]).state, "active")
+        self.assertEqual(self.state(comments).state, "ambiguous")
+
     def test_prior_zero_finding_trigger_does_not_poison_rate_limit_attribution(
         self,
     ) -> None:
