@@ -40,13 +40,16 @@ import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
 import net.firedevops.firemud.automationscripting.v1.UpdateScriptRequest;
 import net.firedevops.firemud.automationscripting.v1.UpdateScriptResponse;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
+import net.firedevops.firemud.common.security.PublicationReadGuard;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.grpc.server.service.GrpcService;
 
 @GrpcService
@@ -66,8 +69,8 @@ public class AutomationScriptingGrpcService
   private final ScriptWorkItemRepository workItemRepository;
   private final NpcFormationService formationService;
   private final MeterRegistry meterRegistry;
+  private PublicationReadGuard publicationReadGuard;
 
-  @org.springframework.beans.factory.annotation.Autowired
   @SuppressFBWarnings(
       value = "CT_CONSTRUCTOR_THROW",
       justification = "Fail-fast startup is intentional if required RPC dependencies are missing.")
@@ -90,6 +93,55 @@ public class AutomationScriptingGrpcService
     this.workItemRepository = Objects.requireNonNull(workItemRepository);
     this.formationService = Objects.requireNonNull(formationService);
     this.meterRegistry = meterRegistry;
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public AutomationScriptingGrpcService(
+      PingService pingService,
+      ScriptDefinitionService scriptService,
+      ScriptDesignDigestService scriptDesignDigestService,
+      ScriptVersionService scriptVersionService,
+      ScriptScheduleInstanceService scriptScheduleInstanceService,
+      ScriptEventIngressService scriptEventIngressService,
+      ScriptWorkItemRepository workItemRepository,
+      NpcFormationService formationService,
+      MeterRegistry meterRegistry,
+      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
+    this(
+        pingService,
+        scriptService,
+        scriptDesignDigestService,
+        scriptVersionService,
+        scriptScheduleInstanceService,
+        scriptEventIngressService,
+        workItemRepository,
+        formationService,
+        meterRegistry);
+    this.publicationReadGuard = configuredPublicationReadGuard(workloadNamespace);
+  }
+
+  public AutomationScriptingGrpcService(
+      PingService pingService,
+      ScriptDefinitionService scriptService,
+      ScriptDesignDigestService scriptDesignDigestService,
+      ScriptVersionService scriptVersionService,
+      ScriptScheduleInstanceService scriptScheduleInstanceService,
+      ScriptEventIngressService scriptEventIngressService,
+      ScriptWorkItemRepository workItemRepository,
+      NpcFormationService formationService,
+      MeterRegistry meterRegistry,
+      PublicationReadGuard publicationReadGuard) {
+    this(
+        pingService,
+        scriptService,
+        scriptDesignDigestService,
+        scriptVersionService,
+        scriptScheduleInstanceService,
+        scriptEventIngressService,
+        workItemRepository,
+        formationService,
+        meterRegistry);
+    this.publicationReadGuard = publicationReadGuard;
   }
 
   @Override
@@ -375,21 +427,37 @@ public class AutomationScriptingGrpcService
       GetDraftDesignDigestRequest request,
       StreamObserver<GetDraftDesignDigestResponse> responseObserver) {
     try {
-      requireAdminRole();
+      PublicationDigestRequestBinding binding = publicationBinding(request);
+      binding.validateSupplied(request.getDerivedWorkflowIdentity(), request.getRequestDigest());
+      requirePublicationRead();
       var digest =
-          request.getScopeCase() == GetDraftDesignDigestRequest.ScopeCase.VERSION_ID
+          binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.FULL_VERSION
               ? scriptDesignDigestService.getDraftDesignDigestForVersion(
-                  request.getTenantId(), request.getVersionId())
+                  binding.tenantId(), binding.versionId())
               : scriptDesignDigestService.getDraftDesignDigestForScriptPatch(
-                  request.getTenantId(), request.getScriptPatchVersion());
-      responseObserver.onNext(
+                  binding.tenantId(), binding.scriptPatchVersion());
+      String expectedScope =
+          binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.FULL_VERSION
+              ? binding.versionId()
+              : binding.scriptPatchVersion();
+      if (!binding.tenantId().equals(digest.tenantId())
+          || !expectedScope.equals(digest.scopeValue())) {
+        throw new IllegalArgumentException("owner digest scope does not match publication binding");
+      }
+      GetDraftDesignDigestResponse.Builder response =
           GetDraftDesignDigestResponse.newBuilder()
-              .setTenantId(digest.tenantId())
-              .setScopeValue(digest.scopeValue())
+              .setTenantId(binding.tenantId())
               .setAppliedCommitId(digest.appliedCommitId())
               .setContentDigest(digest.contentDigest())
-              .setDigestSchemaVersion(digest.digestSchemaVersion())
-              .build());
+              .setDigestSchemaVersion(digest.digestSchemaVersion());
+      if (binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.FULL_VERSION) {
+        response.setVersionId(binding.versionId());
+      } else {
+        response
+            .setScriptPatchVersion(binding.scriptPatchVersion())
+            .setBaseVersionId(binding.baseVersionId());
+      }
+      responseObserver.onNext(response.build());
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       responseObserver.onNext(
@@ -416,6 +484,48 @@ public class AutomationScriptingGrpcService
               .build());
       responseObserver.onCompleted();
     }
+  }
+
+  private static PublicationDigestRequestBinding publicationBinding(
+      GetDraftDesignDigestRequest request) {
+    return switch (request.getScopeCase()) {
+      case VERSION_ID -> fullPublicationBinding(request);
+      case SCRIPT_PATCH_VERSION ->
+          PublicationDigestRequestBinding.patch(
+              request.getTenantId(),
+              request.getBaseVersionId(),
+              request.getScriptPatchVersion(),
+              request.getPublishRequestId());
+      case SCOPE_NOT_SET -> throw new IllegalArgumentException("publication scope is required");
+    };
+  }
+
+  private void requirePublicationRead() {
+    if (publicationReadGuard == null) {
+      throw new AdminAuthorizationException("Publication read authorization is not configured");
+    }
+    publicationReadGuard.requirePublicationRead(
+        PublicationReadGuard.AUTOMATION_SCRIPTING_DIGEST_METHOD);
+  }
+
+  private static PublicationReadGuard configuredPublicationReadGuard(String workloadNamespace) {
+    if (workloadNamespace == null || workloadNamespace.isBlank()) {
+      return null;
+    }
+    try {
+      return new PublicationReadGuard(workloadNamespace);
+    } catch (IllegalArgumentException ex) {
+      return null;
+    }
+  }
+
+  private static PublicationDigestRequestBinding fullPublicationBinding(
+      GetDraftDesignDigestRequest request) {
+    if (!request.getBaseVersionId().isEmpty()) {
+      throw new IllegalArgumentException("baseVersionId must be empty for full publication");
+    }
+    return PublicationDigestRequestBinding.full(
+        request.getTenantId(), request.getVersionId(), request.getPublishRequestId());
   }
 
   @Override

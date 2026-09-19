@@ -34,7 +34,8 @@ public class TemporalVersionPublishOrchestrator {
 
   public VersionDto publishFullVersion(String tenantId, String notes, String publishRequestId) {
     String workflowId = workflowId(tenantId, publishRequestId);
-    PublishWorkflowRequest request = new PublishWorkflowRequest(tenantId, notes, workflowId);
+    PublishWorkflowRequest request =
+        new PublishWorkflowRequest(tenantId, notes, publishRequestId, workflowId);
     TemporalVersionPublishWorkflow workflow = newWorkflowStub(workflowId);
     try {
       WorkflowStub.fromTyped(workflow).start(request);
@@ -43,7 +44,7 @@ public class TemporalVersionPublishOrchestrator {
     }
     PublishWorkflowSnapshot snapshot = waitForSnapshot(workflow, workflowId);
     if (snapshot.isSucceeded()) {
-      return commandService.publishFullVersion(tenantId, notes, workflowId);
+      return commandService.publishFullVersion(tenantId, notes, publishRequestId, workflowId);
     }
     if (snapshot.failureCode() != null && snapshot.failureCode().startsWith("DIGEST_")) {
       throw new PublishGateFailureException(

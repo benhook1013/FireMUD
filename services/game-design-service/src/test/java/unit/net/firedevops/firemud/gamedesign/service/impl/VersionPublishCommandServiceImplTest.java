@@ -122,7 +122,8 @@ class VersionPublishCommandServiceImplTest {
         List.of(
             new PublishParticipantDigestDto(
                 "GAME_DESIGN_CONTROL_PLANE", "10", "version:10", "digest-1", 1, null, null));
-    when(publishGateService.collectFullVersionParticipantDigests(any(VersionDto.class)))
+    when(publishGateService.collectFullVersionParticipantDigests(
+            any(VersionDto.class), any(String.class), any(String.class)))
         .thenReturn(participantDigests);
     when(controlPlaneDigestService.getDigestForVersion(any(VersionDto.class)))
         .thenReturn(new DesignControlPlaneDigestDto("tenant-1", "10", "version:10", "digest-1", 1));
@@ -188,7 +189,7 @@ class VersionPublishCommandServiceImplTest {
 
     VersionDto dto =
         service.publishFullVersion(
-            "tenant-1", "notes", "publish:tenant-1:publish-request:workflow-1");
+            "tenant-1", "notes", "workflow-1", "publish:tenant-1:publish-request:workflow-1");
 
     assertEquals(8, dto.versionNumber());
     assertEquals(VersionLifecycleState.PUBLISHED, dto.versionState());
@@ -232,7 +233,8 @@ class VersionPublishCommandServiceImplTest {
         .thenReturn(Optional.empty(), Optional.of(attempt));
     when(versionRepository.findByTenantIdAndId("tenant-1", 10L))
         .thenReturn(Optional.of(savedDraft));
-    when(publishGateService.collectFullVersionParticipantDigests(any(VersionDto.class)))
+    when(publishGateService.collectFullVersionParticipantDigests(
+            any(VersionDto.class), any(String.class), any(String.class)))
         .thenReturn(
             List.of(
                 new PublishParticipantDigestDto(
@@ -249,7 +251,10 @@ class VersionPublishCommandServiceImplTest {
             PublishGateFailureException.class,
             () ->
                 service.publishFullVersion(
-                    "tenant-1", "notes", "publish:tenant-1:publish-request:workflow-1"));
+                    "tenant-1",
+                    "notes",
+                    "workflow-1",
+                    "publish:tenant-1:publish-request:workflow-1"));
 
     assertEquals(PublishGateFailureCode.RECORDED_CONTENT_DIGEST_MISMATCH, thrown.failureCode());
     verify(publishAttemptService)
@@ -257,6 +262,65 @@ class VersionPublishCommandServiceImplTest {
             any(String.class),
             org.mockito.ArgumentMatchers.eq("RECORDED_CONTENT_DIGEST_MISMATCH"),
             org.mockito.ArgumentMatchers.eq("recorded digest mismatch"));
+  }
+
+  @Test
+  void publishFullVersionGateRejectionDoesNotRecordDigestsOrExportAssets() {
+    Game game = new Game();
+    game.setId(1L);
+    game.setTenantId("tenant-1");
+    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
+    when(versionRepository.findTopByTenantIdOrderByVersionNumberDesc("tenant-1"))
+        .thenReturn(Optional.empty());
+
+    Version savedDraft = new Version();
+    savedDraft.setId(10L);
+    savedDraft.setTenantId("tenant-1");
+    savedDraft.setVersionNumber(1);
+    savedDraft.setVersionState(VersionLifecycleState.DRAFT);
+    savedDraft.setVersionStateEpoch(1L);
+    savedDraft.setUpdatedAt(LocalDateTime.now());
+    when(versionRepository.save(any(Version.class))).thenReturn(savedDraft);
+
+    PublishAttempt attempt = new PublishAttempt();
+    attempt.setTenantId("tenant-1");
+    attempt.setVersionId(10L);
+    attempt.setVersionNumber(1);
+    attempt.setPublishType(PublishType.FULL_VERSION);
+    attempt.setPublishWorkflowId("publish:tenant-1:publish-request:workflow-1");
+    when(publishAttemptRepository.findByPublishWorkflowId(
+            "publish:tenant-1:publish-request:workflow-1"))
+        .thenReturn(Optional.empty(), Optional.of(attempt));
+    when(versionRepository.findByTenantIdAndId("tenant-1", 10L))
+        .thenReturn(Optional.of(savedDraft));
+
+    List<PublishParticipantDigestDto> participantDigests =
+        List.of(
+            new PublishParticipantDigestDto(
+                "GAME_DESIGN_CONTROL_PLANE", "10", "version:10", "digest-1", 1, null, null));
+    when(publishGateService.collectFullVersionParticipantDigests(
+            any(VersionDto.class), any(String.class), any(String.class)))
+        .thenReturn(participantDigests);
+    org.mockito.Mockito.doThrow(
+            new PublishGateFailureException(
+                PublishGateFailureCode.RECORDED_CONTENT_DIGEST_MISMATCH, "gate rejected"))
+        .when(publishGateService)
+        .assertGatePassed(any(VersionDto.class), any(List.class));
+
+    PublishGateFailureException thrown =
+        assertThrows(
+            PublishGateFailureException.class,
+            () ->
+                service.publishFullVersion(
+                    "tenant-1",
+                    "notes",
+                    "workflow-1",
+                    "publish:tenant-1:publish-request:workflow-1"));
+
+    assertEquals(PublishGateFailureCode.RECORDED_CONTENT_DIGEST_MISMATCH, thrown.failureCode());
+    verify(publishAttemptService, never())
+        .recordParticipantDigests(any(String.class), any(List.class));
+    verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
   }
 
   @Test
@@ -290,7 +354,8 @@ class VersionPublishCommandServiceImplTest {
         .thenReturn(Optional.of(savedDraft));
     when(assetExportService.exportAssets("tenant-1", 1))
         .thenReturn(new ExportedAssetManifest("abc123", List.of("manifest.json")));
-    when(publishGateService.collectFullVersionParticipantDigests(any(VersionDto.class)))
+    when(publishGateService.collectFullVersionParticipantDigests(
+            any(VersionDto.class), any(String.class), any(String.class)))
         .thenReturn(
             List.of(
                 new PublishParticipantDigestDto(
@@ -329,7 +394,7 @@ class VersionPublishCommandServiceImplTest {
         IllegalStateException.class,
         () ->
             service.publishFullVersion(
-                "tenant-1", "notes", "publish:tenant-1:publish-request:workflow-1"));
+                "tenant-1", "notes", "workflow-1", "publish:tenant-1:publish-request:workflow-1"));
 
     verify(assetExportService).deleteExportedAssets("tenant-1", 1, List.of("manifest.json"));
   }

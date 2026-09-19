@@ -4,10 +4,12 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamedesign.client.EntityManagementClient;
 import net.firedevops.firemud.gamedesign.client.GameLogicClient;
@@ -60,19 +62,22 @@ class PublishGateServiceImplTest {
             "notes",
             LocalDateTime.now(),
             LocalDateTime.now());
-    when(worldManagementClient.getDraftDesignDigestForVersion("tenant-1", 7L))
+    when(worldManagementClient.getDraftDesignDigestForVersion(
+            any(PublicationDigestRequestBinding.class)))
         .thenReturn(
             new PublishParticipantDigestDto(
                 "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 2, null, null));
-    when(entityManagementClient.getDraftDesignDigestForVersion("tenant-1", 7L))
+    when(entityManagementClient.getDraftDesignDigestForVersion(
+            any(PublicationDigestRequestBinding.class)))
         .thenReturn(
             new PublishParticipantDigestDto(
                 "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 1, null, null));
-    when(gameLogicClient.getDraftDesignDigestForVersion("tenant-1", 7L))
+    when(gameLogicClient.getDraftDesignDigestForVersion(any(PublicationDigestRequestBinding.class)))
         .thenReturn(
             new PublishParticipantDigestDto(
                 "GAME_LOGIC", "7", "version:7", "digest-logic", 1, null, null));
-    when(automationScriptingClient.getDraftDesignDigestForVersion("tenant-1", 7L))
+    when(automationScriptingClient.getDraftDesignDigestForVersion(
+            any(PublicationDigestRequestBinding.class)))
         .thenReturn(
             new PublishParticipantDigestDto(
                 "AUTOMATION_SCRIPTING", "7", "version:7", "digest-script", 4, null, null));
@@ -80,7 +85,8 @@ class PublishGateServiceImplTest {
         .thenReturn(new DesignControlPlaneDigestDto("tenant-1", "7", "version:7", "digest-1", 1));
 
     List<PublishParticipantDigestDto> digests =
-        service.collectFullVersionParticipantDigests(version);
+        service.collectFullVersionParticipantDigests(
+            version, "publish-request-1", "publish:tenant-1:publish-request:publish-request-1");
 
     assertEquals(5, digests.size());
     assertEquals("WORLD_MANAGEMENT", digests.get(0).participantKey());
@@ -251,7 +257,8 @@ class PublishGateServiceImplTest {
         .thenReturn(
             new DesignControlPlaneDigestDto(
                 "tenant-1", "patch-1", "script-patch:patch-1", "digest-2", 1));
-    when(automationScriptingClient.getDraftDesignDigestForScriptPatch("tenant-1", "patch-1"))
+    when(automationScriptingClient.getDraftDesignDigestForScriptPatch(
+            any(PublicationDigestRequestBinding.class)))
         .thenReturn(
             new PublishParticipantDigestDto(
                 "AUTOMATION_SCRIPTING",
@@ -263,7 +270,10 @@ class PublishGateServiceImplTest {
                 null));
 
     List<PublishParticipantDigestDto> digests =
-        service.collectScriptPatchParticipantDigests(version);
+        service.collectScriptPatchParticipantDigests(
+            version,
+            "publish-request-1",
+            "publish-script-patch:tenant-1:publish-request:publish-request-1");
 
     assertEquals(2, digests.size());
     assertDoesNotThrow(() -> service.assertGatePassed(version, digests));

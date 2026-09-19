@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamedesign.service.impl;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamedesign.client.EntityManagementClient;
 import net.firedevops.firemud.gamedesign.client.GameLogicClient;
@@ -60,19 +61,33 @@ public class PublishGateServiceImpl implements PublishGateService {
 
   @Override
   public List<PublishParticipantDigestDto> collectFullVersionParticipantDigests(
-      VersionDto version) {
+      VersionDto version, String publishRequestId, String publishWorkflowId) {
     Objects.requireNonNull(version, "version must not be null");
+    PublicationDigestRequestBinding binding =
+        PublicationDigestRequestBinding.full(
+            version.tenantId(), String.valueOf(version.id()), publishRequestId);
+    requireWorkflowIdentity(binding, publishWorkflowId);
     return FULL_VERSION_PARTICIPANTS.stream()
-        .map(participant -> observeFullVersionParticipant(version, participant))
+        .map(participant -> observeFullVersionParticipant(version, binding, participant))
         .toList();
   }
 
   @Override
   public List<PublishParticipantDigestDto> collectScriptPatchParticipantDigests(
-      VersionDto version) {
+      VersionDto version, String publishRequestId, String publishWorkflowId) {
     Objects.requireNonNull(version, "version must not be null");
+    if (!version.scriptOnly() || version.baseVersionId() == null) {
+      throw new IllegalArgumentException("script-patch version must include baseVersionId");
+    }
+    PublicationDigestRequestBinding binding =
+        PublicationDigestRequestBinding.patch(
+            version.tenantId(),
+            String.valueOf(version.baseVersionId()),
+            version.scriptPatchVersion(),
+            publishRequestId);
+    requireWorkflowIdentity(binding, publishWorkflowId);
     return SCRIPT_PATCH_PARTICIPANTS.stream()
-        .map(participant -> observeScriptPatchParticipant(version, participant))
+        .map(participant -> observeScriptPatchParticipant(version, binding, participant))
         .toList();
   }
 
@@ -134,29 +149,35 @@ public class PublishGateServiceImpl implements PublishGateService {
   }
 
   private PublishParticipantDigestDto observeFullVersionParticipant(
-      VersionDto version, PublishParticipantKey participantKey) {
+      VersionDto version,
+      PublicationDigestRequestBinding binding,
+      PublishParticipantKey participantKey) {
     return switch (participantKey) {
-      case WORLD_MANAGEMENT ->
-          worldManagementClient.getDraftDesignDigestForVersion(version.tenantId(), version.id());
-      case ENTITY_MANAGEMENT ->
-          entityManagementClient.getDraftDesignDigestForVersion(version.tenantId(), version.id());
-      case GAME_LOGIC ->
-          gameLogicClient.getDraftDesignDigestForVersion(version.tenantId(), version.id());
+      case WORLD_MANAGEMENT -> worldManagementClient.getDraftDesignDigestForVersion(binding);
+      case ENTITY_MANAGEMENT -> entityManagementClient.getDraftDesignDigestForVersion(binding);
+      case GAME_LOGIC -> gameLogicClient.getDraftDesignDigestForVersion(binding);
       case AUTOMATION_SCRIPTING ->
-          automationScriptingClient.getDraftDesignDigestForVersion(
-              version.tenantId(), version.id());
+          automationScriptingClient.getDraftDesignDigestForVersion(binding);
       case GAME_DESIGN_CONTROL_PLANE ->
           toParticipantDigest(
               participantKey, controlPlaneDigestService.getDigestForVersion(version));
     };
   }
 
+  private void requireWorkflowIdentity(
+      PublicationDigestRequestBinding binding, String suppliedWorkflowIdentity) {
+    if (!binding.derivedWorkflowIdentity().equals(suppliedWorkflowIdentity)) {
+      throw new IllegalArgumentException("publishWorkflowId does not match publication binding");
+    }
+  }
+
   private PublishParticipantDigestDto observeScriptPatchParticipant(
-      VersionDto version, PublishParticipantKey participantKey) {
+      VersionDto version,
+      PublicationDigestRequestBinding binding,
+      PublishParticipantKey participantKey) {
     return switch (participantKey) {
       case AUTOMATION_SCRIPTING ->
-          automationScriptingClient.getDraftDesignDigestForScriptPatch(
-              version.tenantId(), version.scriptPatchVersion());
+          automationScriptingClient.getDraftDesignDigestForScriptPatch(binding);
       case GAME_DESIGN_CONTROL_PLANE ->
           toParticipantDigest(
               participantKey, controlPlaneDigestService.getDigestForScriptPatch(version));

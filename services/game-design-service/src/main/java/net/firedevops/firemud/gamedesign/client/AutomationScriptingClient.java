@@ -12,6 +12,7 @@ import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import org.springframework.stereotype.Component;
 
@@ -63,27 +64,44 @@ public class AutomationScriptingClient
   }
 
   public PublishParticipantDigestDto getDraftDesignDigestForScriptPatch(
-      String tenantId, String scriptPatchVersion) {
+      PublicationDigestRequestBinding binding) {
     var response =
         stub()
             .getDraftDesignDigest(
                 GetDraftDesignDigestRequest.newBuilder()
-                    .setTenantId(tenantId)
-                    .setScriptPatchVersion(scriptPatchVersion)
+                    .setTenantId(binding.tenantId())
+                    .setBaseVersionId(requirePatchBaseVersionId(binding))
+                    .setScriptPatchVersion(binding.scriptPatchVersion())
+                    .setPublishRequestId(binding.publishRequestId())
+                    .setDerivedWorkflowIdentity(binding.derivedWorkflowIdentity())
+                    .setRequestDigest(binding.requestDigest())
                     .build());
     if (response.hasError() && !response.getError().getCode().isBlank()) {
       return new PublishParticipantDigestDto(
           "AUTOMATION_SCRIPTING",
-          scriptPatchVersion,
+          binding.scriptPatchVersion(),
           null,
           null,
           null,
           response.getError().getCode(),
           response.getError().getMessage());
     }
+    String mismatch = responseBindingMismatch(response, binding);
+    if (mismatch != null) {
+      return new PublishParticipantDigestDto(
+          "AUTOMATION_SCRIPTING",
+          binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.FULL_VERSION
+              ? binding.versionId()
+              : binding.scriptPatchVersion(),
+          null,
+          null,
+          null,
+          "RESPONSE_BINDING_MISMATCH",
+          mismatch);
+    }
     return new PublishParticipantDigestDto(
         "AUTOMATION_SCRIPTING",
-        response.getScopeValue(),
+        response.hasVersionId() ? response.getVersionId() : response.getScriptPatchVersion(),
         response.getAppliedCommitId(),
         response.getContentDigest(),
         response.getDigestSchemaVersion(),
@@ -92,31 +110,79 @@ public class AutomationScriptingClient
   }
 
   public PublishParticipantDigestDto getDraftDesignDigestForVersion(
-      String tenantId, long versionId) {
+      PublicationDigestRequestBinding binding) {
     var response =
         stub()
             .getDraftDesignDigest(
                 GetDraftDesignDigestRequest.newBuilder()
-                    .setTenantId(tenantId)
-                    .setVersionId(String.valueOf(versionId))
+                    .setTenantId(binding.tenantId())
+                    .setVersionId(requireFullVersionId(binding))
+                    .setPublishRequestId(binding.publishRequestId())
+                    .setDerivedWorkflowIdentity(binding.derivedWorkflowIdentity())
+                    .setRequestDigest(binding.requestDigest())
                     .build());
     if (response.hasError() && !response.getError().getCode().isBlank()) {
       return new PublishParticipantDigestDto(
           "AUTOMATION_SCRIPTING",
-          String.valueOf(versionId),
+          binding.versionId(),
           null,
           null,
           null,
           response.getError().getCode(),
           response.getError().getMessage());
     }
+    String mismatch = responseBindingMismatch(response, binding);
+    if (mismatch != null) {
+      return new PublishParticipantDigestDto(
+          "AUTOMATION_SCRIPTING",
+          binding.versionId(),
+          null,
+          null,
+          null,
+          "RESPONSE_BINDING_MISMATCH",
+          mismatch);
+    }
     return new PublishParticipantDigestDto(
         "AUTOMATION_SCRIPTING",
-        response.getScopeValue(),
+        response.getVersionId(),
         response.getAppliedCommitId(),
         response.getContentDigest(),
         response.getDigestSchemaVersion(),
         null,
         null);
+  }
+
+  private String requireFullVersionId(PublicationDigestRequestBinding binding) {
+    if (binding.scopeKind() != PublicationDigestRequestBinding.ScopeKind.FULL_VERSION) {
+      throw new IllegalArgumentException("full-version binding required");
+    }
+    return binding.versionId();
+  }
+
+  private String requirePatchBaseVersionId(PublicationDigestRequestBinding binding) {
+    if (binding.scopeKind() != PublicationDigestRequestBinding.ScopeKind.SCRIPT_PATCH) {
+      throw new IllegalArgumentException("script-patch binding required");
+    }
+    return binding.baseVersionId();
+  }
+
+  private String responseBindingMismatch(
+      net.firedevops.firemud.automationscripting.v1.GetDraftDesignDigestResponse response,
+      PublicationDigestRequestBinding binding) {
+    if (!binding.tenantId().equals(response.getTenantId())) {
+      return "owner returned a tenant that does not match request";
+    }
+    if (binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.FULL_VERSION) {
+      if (!response.hasVersionId()
+          || !binding.versionId().equals(response.getVersionId())
+          || !response.getBaseVersionId().isEmpty()) {
+        return "owner returned tenant or typed full-version scope that does not match request";
+      }
+    } else if (!response.hasScriptPatchVersion()
+        || !binding.scriptPatchVersion().equals(response.getScriptPatchVersion())
+        || !binding.baseVersionId().equals(response.getBaseVersionId())) {
+      return "owner returned tenant or typed script-patch scope that does not match request";
+    }
+    return null;
   }
 }

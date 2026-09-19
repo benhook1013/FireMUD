@@ -8,15 +8,19 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
+import io.grpc.Context;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationClaims;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationException;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
+import net.firedevops.firemud.common.security.PublicationReadGuard;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.ActorConditionStateDto;
 import net.firedevops.firemud.entitymanagement.dto.ActorResourceStateDto;
@@ -75,6 +79,35 @@ import org.springframework.data.domain.Pageable;
 import tools.jackson.databind.ObjectMapper;
 
 class EntityManagementGrpcServiceTest {
+  private static final String TEST_NAMESPACE = "test";
+
+  private static PublicationReadGuard publicationReadGuard() {
+    return new PublicationReadGuard(TEST_NAMESPACE);
+  }
+
+  private static void runAsGameDesign(Runnable action) {
+    Context.current()
+        .withValue(
+            GrpcPeerIdentity.CONTEXT_KEY,
+            new GrpcPeerIdentity(
+                "spiffe://firemud/ns/test/sa/game-design-service",
+                TEST_NAMESPACE,
+                "game-design-service"))
+        .run(action);
+  }
+
+  private static GetDraftDesignDigestRequest fullDigestRequest(String tenantId, String versionId) {
+    PublicationDigestRequestBinding binding =
+        PublicationDigestRequestBinding.full(tenantId, versionId, "request-7");
+    return GetDraftDesignDigestRequest.newBuilder()
+        .setTenantId(binding.tenantId())
+        .setVersionId(binding.versionId())
+        .setPublishRequestId(binding.publishRequestId())
+        .setDerivedWorkflowIdentity(binding.derivedWorkflowIdentity())
+        .setRequestDigest(binding.requestDigest())
+        .build();
+  }
+
   private GameplaySessionAttestationService attestationService() {
     GameplaySessionAttestationService service =
         Mockito.mock(GameplaySessionAttestationService.class);
@@ -172,7 +205,7 @@ class EntityManagementGrpcServiceTest {
     EntityDraftDesignDigestService digestService =
         Mockito.mock(EntityDraftDesignDigestService.class);
     SessionContext.setContext(
-        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
     return new EntityManagementGrpcService(
         pingService,
         characterService,
@@ -199,7 +232,7 @@ class EntityManagementGrpcServiceTest {
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     var meterRegistry = new SimpleMeterRegistry();
     SessionContext.setContext(
-        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
     Mockito.when(digestService.getDraftDesignDigest("1", "7"))
         .thenReturn(
             new EntityDraftDesignDigestService.EntityDraftDesignDigest(
@@ -216,11 +249,54 @@ class EntityManagementGrpcServiceTest {
             effectReplayService(),
             Mockito.mock(EntityUpgradeValidationService.class),
             attestationService(),
-            meterRegistry);
+            meterRegistry,
+            publicationReadGuard());
 
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    runAsGameDesign(
+        () ->
+            service.getDraftDesignDigest(
+                fullDigestRequest("1", "7"),
+                new StreamObserver<>() {
+                  @Override
+                  public void onNext(GetDraftDesignDigestResponse value) {
+                    ref.set(value);
+                  }
+
+                  @Override
+                  public void onError(Throwable t) {}
+
+                  @Override
+                  public void onCompleted() {}
+                }));
+
+    assertEquals("7", ref.get().getVersionId());
+    assertEquals("version:7", ref.get().getAppliedCommitId());
+  }
+
+  @Test
+  void getDraftDesignDigestRejectsJwtOnlyCaller() {
+    EntityDraftDesignDigestService digestService =
+        Mockito.mock(EntityDraftDesignDigestService.class);
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(CharacterService.class),
+            digestService,
+            Mockito.mock(EquipmentService.class),
+            Mockito.mock(InventoryService.class),
+            Mockito.mock(ContainerService.class),
+            Mockito.mock(RoomEntityService.class),
+            effectReplayService(),
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService(),
+            new SimpleMeterRegistry(),
+            publicationReadGuard());
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
     service.getDraftDesignDigest(
-        GetDraftDesignDigestRequest.newBuilder().setTenantId("1").setVersionId("7").build(),
+        fullDigestRequest("1", "7"),
         new StreamObserver<>() {
           @Override
           public void onNext(GetDraftDesignDigestResponse value) {
@@ -233,9 +309,8 @@ class EntityManagementGrpcServiceTest {
           @Override
           public void onCompleted() {}
         });
-
-    assertEquals("7", ref.get().getScopeValue());
-    assertEquals("version:7", ref.get().getAppliedCommitId());
+    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+    Mockito.verifyNoInteractions(digestService);
   }
 
   @Test
