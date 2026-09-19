@@ -130,8 +130,8 @@ for env in (gateway_env, proxy_env):
     if any("INSECURE" in key for key in env):
         raise SystemExit("insecure Gateway header trust env remained in the hosted render")
 
-def secret_volume(container, volume_name, secret_name):
-    volume = next(item for item in container["volumes"] if item["name"] == volume_name)
+def secret_volume(pod_spec, volume_name, secret_name):
+    volume = next(item for item in pod_spec["volumes"] if item["name"] == volume_name)
     secret = volume.get("secret") or {}
     if secret.get("secretName") != secret_name:
         raise SystemExit(f"{volume_name} did not use Secret {secret_name}")
@@ -143,16 +143,16 @@ def secret_volume(container, volume_name, secret_name):
     if secret.get("items") != expected_items:
         raise SystemExit(f"{volume_name} did not select exactly tls.crt/tls.key/ca.crt")
 
-for deployment, container, volume_name, mount_name, mount_path, secret_name in (
+for deployment, pod_spec, volume_name, mount_name, mount_path, secret_name in (
     (gateway_deployment, gateway_deployment["spec"]["template"]["spec"], "gateway-ws-server-tls", "gateway-ws-server-tls", "/gateway-ws-server-tls", "pr-42-gateway-internal-ws"),
     (proxy_deployment, proxy_deployment["spec"]["template"]["spec"], "gateway-ws-client-tls", "gateway-ws-client-tls", "/gateway-ws-client-tls", "pr-42-tcp-proxy-bridge"),
 ):
-    pod_container = next(item for item in container["containers"] if item["name"] == deployment["metadata"]["name"])
+    pod_container = next(item for item in pod_spec["containers"] if item["name"] == deployment["metadata"]["name"])
     if {item["name"]: item for item in pod_container["volumeMounts"]}[mount_name] != {
         "name": mount_name, "mountPath": mount_path, "readOnly": True
     }:
         raise SystemExit(f"{deployment['metadata']['name']} bridge mount is not distinct/read-only")
-    secret_volume(container, volume_name, secret_name)
+    secret_volume(pod_spec, volume_name, secret_name)
 
 gateway_service = named("Service", "spring-cloud-gateway-mtls")
 if gateway_service["spec"].get("type") != "ClusterIP":
