@@ -136,7 +136,6 @@ class EvidenceStore:
 
     def __init__(self, path: os.PathLike[str] | str):
         self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._next_seq = 1
         self._observed_file_state: tuple[int, int, int, int] | None = None
@@ -182,6 +181,7 @@ class EvidenceStore:
         with self._lock:
             # The process-local lock protects threads; flock protects writers
             # sharing this transcript across processes.
+            self.path.parent.mkdir(parents=True, exist_ok=True)
             fd = os.open(self.path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
             try:
                 os.fchmod(fd, 0o600)
@@ -606,7 +606,10 @@ class TelnetSession:
                     self.redaction_patterns.append((raw, replacement))
                 self.idle_timeout_recorded = False
                 self._append("outbound", "command", text=display)
-                self.socket.sendall(_iso88591_bytes(command) + b"\r\n")
+                wire_command = _iso88591_bytes(command).replace(
+                    bytes((IAC,)), bytes((IAC, IAC))
+                )
+                self.socket.sendall(wire_command + b"\r\n")
         except OSError as exc:
             self._append("outbound", "error", reason="send", detail=str(exc))
             self._record_disconnect("send_error", failed=True)
