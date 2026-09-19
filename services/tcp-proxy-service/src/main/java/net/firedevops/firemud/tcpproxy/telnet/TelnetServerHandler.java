@@ -1101,7 +1101,7 @@ public final class TelnetServerHandler extends SimpleChannelInboundHandler<Strin
           String completeLine = null;
           boolean overflow = false;
           String fragment = data == null ? "" : data.toString();
-          int fragmentBytes = fragment.getBytes(StandardCharsets.UTF_8).length;
+          int fragmentBytes = utf8ByteLength(fragment);
           synchronized (gatewayTextLifecycleLock) {
             if (!closing) {
               if (fragmentBytes > MAX_GATEWAY_TEXT_BYTES - gatewayTextBufferBytes) {
@@ -1229,6 +1229,28 @@ public final class TelnetServerHandler extends SimpleChannelInboundHandler<Strin
   }
 
   private static final byte IAC = (byte) 255;
+
+  private static int utf8ByteLength(String value) {
+    int length = 0;
+    for (int index = 0; index < value.length(); index++) {
+      char character = value.charAt(index);
+      if (character <= 0x7F) {
+        length++;
+      } else if (character <= 0x7FF) {
+        length += 2;
+      } else if (Character.isHighSurrogate(character)
+          && index + 1 < value.length()
+          && Character.isLowSurrogate(value.charAt(index + 1))) {
+        length += 4;
+        index++;
+      } else if (Character.isSurrogate(character)) {
+        length++;
+      } else {
+        length += 3;
+      }
+    }
+    return length;
+  }
 
   private static final byte WILL = (byte) 251;
   private static final byte WONT = (byte) 252;

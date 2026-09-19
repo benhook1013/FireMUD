@@ -2129,6 +2129,17 @@ class TelnetServerHandlerTest {
   }
 
   @Test
+  void utf8ByteLengthMatchesJavaEncodingForMultibyteAndMalformedText() throws Exception {
+    var method = TelnetServerHandler.class.getDeclaredMethod("utf8ByteLength", String.class);
+    method.setAccessible(true);
+
+    assertEquals(3, method.invoke(null, "Aé"));
+    assertEquals(4, method.invoke(null, "😀"));
+    assertEquals(1, method.invoke(null, "\uD800"));
+    assertEquals(1, method.invoke(null, "\uDC00"));
+  }
+
+  @Test
   void fragmentedGatewayTextOverflowFailsClosedWithoutWritingPartialLine() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     AtomicReference<WebSocket.Listener> listenerRef = new AtomicReference<>();

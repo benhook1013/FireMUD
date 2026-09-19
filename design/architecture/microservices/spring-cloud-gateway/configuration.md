@@ -40,7 +40,7 @@ The hosted Gateway pod also has default-deny egress. Its only permitted destinat
 
 | Variable | Purpose |
 | --- | --- |
-| `FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS` | Internal listener bind address; defaults to `0.0.0.0` for Kubernetes Service selection. |
+| `FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS` | Internal listener bind address; defaults to `127.0.0.1` for a local-only disabled-by-default listener. Deployments that expose the listener through a Kubernetes Service must explicitly set this to `0.0.0.0`. |
 | `FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT` | Dedicated internal listener port; defaults to `8443` and must differ from the public server port. |
 | `FIREMUD_GATEWAY_TCP_PROXY_TLS_CERT_CHAIN_PATH` | Filesystem path to the Gateway listener certificate chain. |
 | `FIREMUD_GATEWAY_TCP_PROXY_TLS_PRIVATE_KEY_PATH` | Filesystem path to the matching Gateway listener private key. |
