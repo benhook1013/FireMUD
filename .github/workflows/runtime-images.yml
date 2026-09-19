@@ -834,7 +834,7 @@ jobs:
             printf '%s\n' "$service" >> "$service_manifest"
             images+=("ghcr.io/benhook1013/${service}:${SMOKE_IMAGE_TAG}")
           done
-          printf '%s\n' 'backup-verifier' > /tmp/pr-backup-verifier-image.txt
+          printf '%s\n' 'backup-verifier' >> "$service_manifest"
           images+=("$BACKUP_VERIFIER_IMAGE")
           docker save "${images[@]}" | gzip -1 > /tmp/pr-runtime-images.tar.gz
 
@@ -845,7 +845,6 @@ jobs:
           path: |
             /tmp/pr-runtime-images.tar.gz
             /tmp/pr-runtime-services.txt
-            /tmp/pr-backup-verifier-image.txt
           if-no-files-found: error
           retention-days: 1
 

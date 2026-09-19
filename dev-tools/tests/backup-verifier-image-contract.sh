@@ -45,9 +45,17 @@ for path in \
 done
 require_contains "$runtime" 'BACKUP_VERIFIER_IMAGE'
 require_contains "$runtime" 'smoke-backup-verifier-image.sh'
-require_contains "$runtime" 'pr-backup-verifier-image.txt'
-require_contains "$publisher" 'pr-backup-verifier-image.txt'
-require_contains "$publisher" 'backup-verifier'
+require_contains "$runtime" "backup-verifier' >> \"\$service_manifest\""
+# shellcheck disable=SC2016 # Assert the literal workflow shell fragment.
+require_contains "$runtime" 'images+=("$BACKUP_VERIFIER_IMAGE")'
+if grep -Fq -- 'pr-backup-verifier-image.txt' "$runtime" "$publisher"; then
+  echo 'backup verifier must use the canonical PR runtime service manifest' >&2
+  exit 1
+fi
+if grep -Fq -- 'Publish fixed PR backup verifier image' "$publisher"; then
+  echo 'backup verifier must use the existing trusted publisher loop' >&2
+  exit 1
+fi
 
 bash -n "$smoke"
 bash -n "$ROOT_DIR/dev-tools/backups/verify-backups.sh"
