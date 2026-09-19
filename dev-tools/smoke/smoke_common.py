@@ -1,6 +1,7 @@
 import ipaddress
 import json
 import os
+import re
 import socket
 import ssl
 import subprocess
@@ -317,7 +318,12 @@ def redact_login_credential(response, command):
     )
     redacted = response
     for value in credential_variants:
-        redacted = redacted.replace(value, "[REDACTED]")
+        redacted = re.sub(
+            re.escape(value),
+            "[REDACTED]",
+            redacted,
+            flags=re.ASCII | re.IGNORECASE,
+        )
     return redacted
 
 

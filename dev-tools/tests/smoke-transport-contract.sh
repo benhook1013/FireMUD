@@ -383,6 +383,38 @@ assert logon_step_results[0]["command"] == "LOGON demo@example.test [REDACTED]"
 assert "Diagnostic credential=[REDACTED]; proof remains visible." in logon_output.getvalue()
 
 
+mixed_case_secret = "MiXeD  Credential"
+mixed_case_command = f"LoGiN demo@example.test {mixed_case_secret}"
+mixed_case_response = (
+    "lOgIn demo@example.test mIxEd credential\n"
+    "OK LOGIN account=demo\n"
+    "Diagnostic credential=mIXeD credential; proof remains visible.\n"
+)
+mixed_case_telnet_steps = []
+mixed_case_telnet_output = io.StringIO()
+with contextlib.redirect_stdout(mixed_case_telnet_output):
+    mixed_case_telnet_raw = smoke_common.send_telnet_command_and_expect(
+        FakeSession([mixed_case_response]),
+        [],
+        mixed_case_command,
+        ["OK LOGIN"],
+        "LOGIN",
+        1,
+        drain_timeout=0,
+        step_results=mixed_case_telnet_steps,
+    )
+assert "mIxEd credential" in mixed_case_telnet_raw
+for credential_form in (mixed_case_secret, "MiXeD Credential", "mIxEd credential"):
+    assert credential_form.casefold() not in mixed_case_telnet_output.getvalue().casefold()
+    assert credential_form.casefold() not in json.dumps(mixed_case_telnet_steps).casefold()
+assert "Diagnostic credential=[REDACTED]; proof remains visible." in (
+    mixed_case_telnet_output.getvalue()
+)
+assert mixed_case_telnet_steps[0]["response"].startswith(
+    "lOgIn demo@example.test [REDACTED]"
+)
+
+
 class DeadlineBoundSession(FakeSession):
     def __init__(self, chunks=None):
         super().__init__(chunks)
@@ -612,6 +644,36 @@ assert (
 assert "OK LOGIN account=demo" in websocket_login_output.getvalue()
 
 
+mixed_case_websocket_steps = []
+mixed_case_websocket_output = io.StringIO()
+with contextlib.redirect_stdout(mixed_case_websocket_output):
+    mixed_case_websocket_raw = smoke_common.send_websocket_command_and_expect(
+        FakeSession([mixed_case_response]),
+        [],
+        mixed_case_command,
+        ["OK LOGIN"],
+        "LOGIN",
+        1,
+        step_results=mixed_case_websocket_steps,
+    )
+assert "mIxEd credential" in mixed_case_websocket_raw
+for credential_form in (mixed_case_secret, "MiXeD Credential", "mIxEd credential"):
+    assert (
+        credential_form.casefold()
+        not in mixed_case_websocket_output.getvalue().casefold()
+    )
+    assert (
+        credential_form.casefold()
+        not in json.dumps(mixed_case_websocket_steps).casefold()
+    )
+assert "Diagnostic credential=[REDACTED]; proof remains visible." in (
+    mixed_case_websocket_output.getvalue()
+)
+assert mixed_case_websocket_steps[0]["response"].startswith(
+    "lOgIn demo@example.test [REDACTED]"
+)
+
+
 failing_login_chunks = iter(
     [f"OK LOGIN account=demo\nERROR AUTH_FAILURE credential={secret}\n"]
 )
@@ -632,6 +694,43 @@ except smoke_common.ProbeOperationalFailure as exc:
     assert "ERROR AUTH_FAILURE credential=[REDACTED]" in str(exc)
 else:
     raise AssertionError("credential-bearing mixed failure unexpectedly passed")
+
+
+mixed_failure_secret = "FaIlUrE  Token"
+mixed_failure_response = (
+    "OK LOGIN account=demo\n"
+    "ERROR AUTH_FAILURE credential=fAiLuRe token\n"
+)
+for transport in ("telnet", "websocket"):
+    try:
+        if transport == "telnet":
+            smoke_common.send_telnet_command_and_expect(
+                FakeSession([mixed_failure_response]),
+                [],
+                f"LOGIN demo@example.test {mixed_failure_secret}",
+                ["OK LOGIN"],
+                "LOGIN",
+                1,
+                drain_timeout=0,
+            )
+        else:
+            smoke_common.send_websocket_command_and_expect(
+                FakeSession([mixed_failure_response]),
+                [],
+                f"LOGIN demo@example.test {mixed_failure_secret}",
+                ["OK LOGIN"],
+                "LOGIN",
+                1,
+            )
+    except smoke_common.ProbeOperationalFailure as exc:
+        diagnostic = str(exc)
+        assert mixed_failure_secret.casefold() not in diagnostic.casefold()
+        assert "fAiLuRe token".casefold() not in diagnostic.casefold()
+        assert "ERROR AUTH_FAILURE credential=[REDACTED]" in diagnostic
+    else:
+        raise AssertionError(
+            f"{transport} mixed-case credential failure unexpectedly passed"
+        )
 
 
 opened = []
