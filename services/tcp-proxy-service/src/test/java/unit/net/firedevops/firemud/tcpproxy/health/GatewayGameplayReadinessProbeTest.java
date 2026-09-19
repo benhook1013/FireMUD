@@ -143,6 +143,7 @@ class GatewayGameplayReadinessProbeTest {
 
       verify(client, timeout(1000).times(2)).isReadyAsync();
       awaitExceptionalCompletion(stalled);
+      assertTrue(stalled.isCancelled());
       verify(client, timeout(1000).times(3)).isReadyAsync();
       awaitNonEmpty(retryFutures);
       CompletableFuture<Boolean> retry = retryFutures.get(0);
