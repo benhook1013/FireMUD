@@ -29,7 +29,7 @@ Automation's **target-state only** contract exposes stage-aware dead-letter reco
 
 ## Implementation Status
 
-The current `ReplayDeadLetteredWorkItems` implementation still requeues eligible parent rows as `PENDING_EVALUATION` and returns aggregate counts; it does not prove stage-specific frozen-input retry or stored-output continuation.
+The current `ReplayDeadLetteredWorkItems` implementation permits failed, non-superseded tenant-readiness `onLoad` rows through its `eligibleForOnLoadReplay` check; other eligible parent rows are requeued as `PENDING_EVALUATION`. The implementation does not prove stage-specific frozen-input retry or stored-output continuation, and stale or superseded readiness work remains ineligible.
 
 The current Automation pin projection and wire contract now retain the observed exact `{scriptPatchVersion, scriptPinEpoch, lastObservedControlPlaneRequestId}` owner tuple. Instance admission remains non-admitted and retryable with `pin_state_unavailable` when required pin authority is unavailable. Scheduling and replay instead retain durable, non-admitted authority-fenced state for retry without recording a terminal `finalStage` or `finalOutcome`; a proven absent or mismatched owner tuple is rejected. Exact final-effect fencing, complete source/target remote tuple proof, and stage-aware recovery remain implementation/proof gaps.
 
