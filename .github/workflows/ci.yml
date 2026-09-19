@@ -515,12 +515,6 @@ jobs:
       - name: 🧪 Validate rendered Helm manifests
         run: bash ./dev-tools/validation/validate-helm.sh render
 
-      - name: 🧪 Validate hosted Telnet TLS contract
-        run: bash ./dev-tools/tests/hosted-telnet-tls-contract.sh
-
-      - name: 🧪 Validate hosted Gateway bridge contract
-        run: bash ./dev-tools/tests/hosted-gateway-bridge-contract.sh
-
   # Docs and frontend validation
   docs-check:
     name: Validate Documentation

@@ -2638,13 +2638,6 @@ def service_consumer_documents():
                     {"key": "ca.crt", "path": "ca.crt"},
                 ]
             volumes.append({"name": name, kind: projection})
-        container = {
-            "name": service,
-            "volumeMounts": mounts,
-        }
-        if service == "spring-cloud-gateway":
-            container["env"] = validator._expected_gateway_container_env("pr-42")
-            container["envFrom"] = copy.deepcopy(validator.EXPECTED_GATEWAY_ENV_FROM)
         documents.append(
             {
                 "kind": "Deployment",
@@ -2653,7 +2646,12 @@ def service_consumer_documents():
                     "template": {
                         "spec": {
                             "serviceAccountName": "firemud-app",
-                            "containers": [container],
+                            "containers": [
+                                {
+                                    "name": service,
+                                    "volumeMounts": mounts,
+                                }
+                            ],
                             "volumes": volumes,
                         }
                     }
@@ -2764,13 +2762,8 @@ with tempfile.TemporaryDirectory() as directory:
             "name": "tcp-proxy-service",
             "namespace": "pr-42",
             "labels": {
-                "app.kubernetes.io/name": "firemud",
-                "app.kubernetes.io/managed-by": "Helm",
-                "helm.sh/chart": validator._expected_chart_label(
-                    validator.TRUSTED_CHART_METADATA
-                ),
+                **validator._expected_top_level_labels(),
                 "app.kubernetes.io/instance": "pr-42",
-                "firemud.dev/certificate-identity-mode": "hosted-controller",
             },
         },
         "spec": copy.deepcopy(

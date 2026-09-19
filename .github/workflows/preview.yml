@@ -70,8 +70,6 @@ jobs:
       image_tag: ${{ steps.derive.outputs.image_tag }}
       head_sha: ${{ steps.derive.outputs.head_sha }}
       base_sha: ${{ steps.derive.outputs.base_sha }}
-      merge_sha: ${{ steps.derive.outputs.merge_sha }}
-      certificate_identity_mode: ${{ steps.deploy-certificate-identity.outputs.mode }}
       eligible: ${{ steps.eligibility.outputs.eligible }}
       eligibility_reason: ${{ steps.eligibility.outputs.reason }}
       close_certificate_identity_mode: ${{ steps.close-certificate-identity.outputs.mode }}
@@ -124,7 +122,6 @@ jobs:
             PR_NUMBER="${{ github.event.pull_request.number }}"
             HEAD_SHA="${{ github.event.pull_request.head.sha }}"
             BASE_SHA="${{ github.event.pull_request.base.sha }}"
-            MERGE_SHA="${{ github.event.pull_request.merge_commit_sha || github.event.pull_request.head.sha }}"
             PREVIEW_DOMAIN="preview.firedevops.net"
             IMAGE_TAG=""
             if [ "${{ github.event.action }}" = "closed" ]; then
@@ -136,7 +133,6 @@ jobs:
             PR_NUMBER="$INPUT_PR_NUMBER"
             HEAD_SHA="$INPUT_HEAD_SHA"
             BASE_SHA=""
-            MERGE_SHA=""
             PREVIEW_DOMAIN="$INPUT_PREVIEW_DOMAIN"
             ACTION="$INPUT_ACTION"
             IMAGE_TAG="$INPUT_IMAGE_TAG"
@@ -170,8 +166,7 @@ jobs:
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             PULL_REQUEST_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
             if ! PR_HEAD_SHA="$(jq -er '.head.sha | select(type == "string")' <<<"$PULL_REQUEST_JSON")" ||
-              ! BASE_SHA="$(jq -er '.base.sha | select(type == "string")' <<<"$PULL_REQUEST_JSON")" ||
-              ! MERGE_SHA="$(jq -er '(.merge_commit_sha // .head.sha) | select(type == "string")' <<<"$PULL_REQUEST_JSON")"; then
+              ! BASE_SHA="$(jq -er '.base.sha | select(type == "string")' <<<"$PULL_REQUEST_JSON")"; then
               echo "::error title=Invalid pull request metadata::Expected string head and base SHAs." >&2
               exit 1
             fi
@@ -211,7 +206,6 @@ jobs:
             echo "image_tag=${IMAGE_TAG}"
             echo "head_sha=${HEAD_SHA}"
             echo "base_sha=${BASE_SHA}"
-            echo "merge_sha=${MERGE_SHA:-$HEAD_SHA}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Resolve preview target metadata
@@ -248,13 +242,6 @@ jobs:
             echo "state=${PR_STATE}"
             echo "labels_json=${LABELS_JSON}"
           } >> "$GITHUB_OUTPUT"
-
-      - name: Resolve deployment certificate identity mode
-        id: deploy-certificate-identity
-        if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
-        uses: ./.github/actions/resolve-certificate-identity-mode
-        with:
-          values-file: k8s/helm/firemud/values-hosted-shared.example.yaml
 
       - name: Resolve preview eligibility
         id: eligibility
@@ -320,154 +307,6 @@ jobs:
           preview_max_active=${PREVIEW_MAX_ACTIVE:-1}
           EOF
 
-  preview-render-hosted:
-    name: Render Sanitized Hosted Preview Artifact
-    needs: preview-plan
-    if: ${{ needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'deploy' && needs.preview-plan.outputs.certificate_identity_mode == 'hosted-controller' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    concurrency:
-      group: preview-render-${{ needs.preview-plan.outputs.pr_number }}
-      cancel-in-progress: true
-    steps:
-      - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
-        with:
-          egress-policy: audit
-
-      - name: Check out PR merge for untrusted render
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: refs/pull/${{ needs.preview-plan.outputs.pr_number }}/merge
-          fetch-depth: 2
-          persist-credentials: false
-
-      - name: Set up canonical Helm
-        uses: ./.github/actions/setup-helm
-
-      - name: Set up canonical Python
-        uses: ./.github/actions/setup-python
-        with:
-          requirements: yaml
-
-      - name: Render and sanitize hosted preview without cluster credentials
-        env:
-          PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
-          NAMESPACE: ${{ needs.preview-plan.outputs.namespace }}
-          RELEASE_NAME: ${{ needs.preview-plan.outputs.release_name }}
-          HOSTNAME: ${{ needs.preview-plan.outputs.hostname }}
-          IMAGE_TAG: ${{ needs.preview-plan.outputs.image_tag }}
-          BASE_SHA: ${{ needs.preview-plan.outputs.base_sha }}
-          HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
-        run: |
-          set -euo pipefail
-          umask 077
-          if ! MERGE_SHA="$(git rev-parse --verify 'HEAD^{commit}')"; then
-            echo "::error title=Invalid preview merge ref::The checked-out pull request merge ref is not a commit." >&2
-            exit 1
-          fi
-          if ! merge_parents="$(git rev-list --parents -n 1 "$MERGE_SHA")"; then
-            echo "::error title=Invalid preview merge ref::Unable to read the checked-out merge commit parents." >&2
-            exit 1
-          fi
-          read -r checked_out_merge_sha checked_out_base_sha checked_out_head_sha extra_parent <<<"$merge_parents"
-          if [[ "$checked_out_merge_sha" != "$MERGE_SHA" || -z "$checked_out_base_sha" ||
-            -z "$checked_out_head_sha" || -n "$extra_parent" ||
-            "${checked_out_head_sha,,}" != "${HEAD_SHA,,}" ]]; then
-            echo "::error title=Stale preview merge ref::The checked-out merge ref is not a two-parent merge of the planned head SHA." >&2
-            exit 1
-          fi
-          values="$RUNNER_TEMP/preview-values.yaml"
-          rendered="$RUNNER_TEMP/preview-rendered.yaml"
-          sanitized="$RUNNER_TEMP/preview-rendered-sanitized.yaml"
-          metadata="$RUNNER_TEMP/preview-metadata.json"
-          python3 ./dev-tools/hosted/preview/render-preview-values.py \
-            k8s/helm/firemud/values-hosted-shared.example.yaml \
-            "$values" "$PR_NUMBER" "$NAMESPACE" "$RELEASE_NAME" "$HOSTNAME" "$IMAGE_TAG" 32000
-          helm template "$RELEASE_NAME" k8s/helm/firemud \
-            -f "$values" --namespace "$NAMESPACE" > "$rendered"
-          # These are the only chart-owned objects intentionally omitted from
-          # the credential-free artifact: the trusted workflow provisions the
-          # runtime Secrets and jwt-jwks, and the cluster owns the ServiceAccount.
-          # The trusted credential provisioner creates jwt-jwks from its trusted
-          # signing Secret, so accepting the PR-rendered diagnostic ConfigMap
-          # would overwrite that content. Reject
-          # every other forbidden object instead of silently dropping it.
-          filtered="$RUNNER_TEMP/preview-rendered-artifact-input.yaml"
-          python3 - "$rendered" "$filtered" <<'PY'
-          import sys
-          from pathlib import Path
-
-          import yaml
-
-          source, destination = map(Path, sys.argv[1:])
-          excluded = {
-              ("ServiceAccount", "firemud-app"),
-              ("Secret", "firemud-secret"),
-              ("Secret", "jwt-signing-keys"),
-              ("Secret", "minio-credentials"),
-              ("ConfigMap", "jwt-jwks"),
-          }
-          forbidden = {
-              "Certificate", "CertificateRequest", "ClusterIssuer",
-              "CustomResourceDefinition", "HostedEnvironmentIdentity", "Role",
-              "RoleBinding", "ClusterRole", "ClusterRoleBinding",
-              "ServiceAccount", "Secret",
-          }
-          documents = []
-          for document in yaml.safe_load_all(source.read_text(encoding="utf-8")):
-              if document is None:
-                  continue
-              if not isinstance(document, dict):
-                  raise SystemExit("render contains a non-object document")
-              identity = (document.get("kind"), (document.get("metadata") or {}).get("name"))
-              if identity in excluded:
-                  continue
-              if document.get("kind") in forbidden:
-                  raise SystemExit(
-                      f"render contains forbidden object not in explicit exclusion allowlist: {identity}"
-                  )
-              documents.append(document)
-          destination.write_text(
-              "---\n".join(yaml.safe_dump(document, sort_keys=False) for document in documents),
-              encoding="utf-8",
-          )
-          PY
-          python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
-            sanitize "$filtered" "$sanitized"
-          manifest_sha256="$(sha256sum "$sanitized" | awk '{print $1}')"
-          jq -n \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --arg sourceWorkflow '.github/workflows/preview.yml' \
-            --argjson sourceRunId "$GITHUB_RUN_ID" \
-            --argjson prNumber "$PR_NUMBER" \
-            --arg baseSha "$BASE_SHA" \
-            --arg headSha "$HEAD_SHA" \
-            --arg mergeSha "$MERGE_SHA" \
-            --arg hostname "$HOSTNAME" \
-            --arg imageTag "$IMAGE_TAG" \
-            --arg manifestSha256 "$manifest_sha256" \
-            '{schemaVersion:1,event:"pull_request",repository:$repository,sourceWorkflow:$sourceWorkflow,sourceRunId:$sourceRunId,prNumber:$prNumber,baseSha:$baseSha,headSha:$headSha,mergeSha:$mergeSha,hostname:$hostname,imageTag:$imageTag,manifestSha256:$manifestSha256}' \
-            > "$metadata"
-          {
-            echo '### Sanitized PR preview artifact'
-            echo
-            echo "- PR: #${PR_NUMBER}"
-            echo "- Head SHA: \`${HEAD_SHA}\`"
-            echo '- Artifact contains no cluster, runtime, identity, or repository write credential.'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload sanitized render artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: preview-render-pr-${{ needs.preview-plan.outputs.pr_number }}-${{ needs.preview-plan.outputs.head_sha }}
-          path: |
-            ${{ runner.temp }}/preview-rendered-sanitized.yaml
-            ${{ runner.temp }}/preview-metadata.json
-          if-no-files-found: error
-          retention-days: 7
-
   preview-deploy:
     name: Deploy Preview Release
     timeout-minutes: 120
@@ -477,7 +316,7 @@ jobs:
       - linux
       - x64
     needs: preview-plan
-    if: ${{ needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'deploy' && needs.preview-plan.outputs.certificate_identity_mode == 'standalone' }}
+    if: ${{ needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'deploy' }}
     environment: pr-preview
     concurrency:
       group: preview-allocation-lifecycle

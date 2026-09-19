@@ -26,23 +26,9 @@ spec:
       labels:
         app: firemud-seed
     spec:
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-        runAsGroup: 1000
-        fsGroup: 1000
-        seccompProfile:
-          type: RuntimeDefault
       restartPolicy: Never
       containers:
         - name: seed
-          securityContext:
-            allowPrivilegeEscalation: false
-            runAsUser: 1000
-            runAsGroup: 1000
-            capabilities:
-              drop:
-                - ALL
           image: {{ .Values.previewStack.seed.image | quote }}
           env:
             - name: PGPASSWORD

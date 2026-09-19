@@ -1,7 +1,6 @@
 import json
 import os
 import socket
-import ssl
 import subprocess
 import time
 import urllib.error
@@ -447,28 +446,6 @@ def run_telnet_command_plan(
     return responses
 
 
-def open_telnet_session(
-    host,
-    port,
-    timeout_seconds,
-    tls=False,
-    ca_file=None,
-    server_hostname=None,
-):
-    raw_socket = socket.create_connection((host, port), timeout=timeout_seconds)
-    if not tls:
-        return raw_socket
-    try:
-        context = ssl.create_default_context(cafile=ca_file)
-        return context.wrap_socket(
-            raw_socket,
-            server_hostname=server_hostname or host,
-        )
-    except Exception:
-        raw_socket.close()
-        raise
-
-
 def run_telnet_smoke_session(
     host,
     port,
@@ -480,22 +457,10 @@ def run_telnet_smoke_session(
     play_drain_timeout=1.0,
     default_drain_timeout=0.25,
     step_results=None,
-    tls=False,
-    ca_file=None,
-    server_hostname=None,
 ):
     return run_transport_session(
         open_session
-        or (
-            lambda: open_telnet_session(
-                host,
-                port,
-                timeout_seconds,
-                tls=tls,
-                ca_file=ca_file,
-                server_hostname=server_hostname,
-            )
-        ),
+        or (lambda: socket.create_connection((host, port), timeout=timeout_seconds)),
         lambda sock: run_telnet_command_plan(
             sock,
             steps,
