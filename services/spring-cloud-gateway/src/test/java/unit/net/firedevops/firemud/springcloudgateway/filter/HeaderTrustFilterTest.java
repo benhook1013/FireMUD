@@ -95,10 +95,7 @@ class HeaderTrustFilterTest {
     assertThat(publicApiExchange.getRequest().getHeaders().getFirst("X-Firemud-Connect-Token"))
         .isNull();
     assertThat(
-            publicApiExchange
-                .getRequest()
-                .getHeaders()
-                .getFirst("X-Firemud-Transport-Session-Id"))
+            publicApiExchange.getRequest().getHeaders().getFirst("X-Firemud-Transport-Session-Id"))
         .isNull();
 
     MockServerHttpRequest gameplayRequest =
@@ -119,10 +116,7 @@ class HeaderTrustFilterTest {
     assertThat(gameplayExchange.getRequest().getHeaders().getFirst("X-Firemud-Connect-Token"))
         .isEqualTo("carrier-token");
     assertThat(
-            gameplayExchange
-                .getRequest()
-                .getHeaders()
-                .getFirst("X-Firemud-Transport-Session-Id"))
+            gameplayExchange.getRequest().getHeaders().getFirst("X-Firemud-Transport-Session-Id"))
         .isNull();
   }
 
@@ -214,11 +208,7 @@ class HeaderTrustFilterTest {
         .isNull();
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connect-Token"))
         .isEqualTo("carrier-token");
-    assertThat(
-            mutatedExchange
-                .getRequest()
-                .getHeaders()
-                .getFirst("X-Firemud-Transport-Session-Id"))
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Transport-Session-Id"))
         .isNull();
   }
 

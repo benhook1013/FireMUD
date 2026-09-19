@@ -463,8 +463,7 @@ class GameplayWebSocketBridgeHandlerTest {
     HandshakeInfo handshakeInfo = mock(HandshakeInfo.class);
     HttpHeaders headers = new HttpHeaders();
     WebSocketMessage payload = mock(WebSocketMessage.class);
-    Sinks.Many<WebSocketMessage> downstreamMessages =
-        Sinks.many().unicast().onBackpressureBuffer();
+    Sinks.Many<WebSocketMessage> downstreamMessages = Sinks.many().unicast().onBackpressureBuffer();
     Sinks.One<Void> closeWrite = Sinks.one();
     AtomicReference<CloseStatus> closeStatus = new AtomicReference<>();
 
@@ -525,8 +524,7 @@ class GameplayWebSocketBridgeHandlerTest {
     HttpHeaders headers = new HttpHeaders();
     WebSocketMessage firstPayload = mock(WebSocketMessage.class);
     WebSocketMessage secondPayload = mock(WebSocketMessage.class);
-    Sinks.Many<WebSocketMessage> downstreamMessages =
-        Sinks.many().unicast().onBackpressureBuffer();
+    Sinks.Many<WebSocketMessage> downstreamMessages = Sinks.many().unicast().onBackpressureBuffer();
     Sinks.One<Void> closeWrite = Sinks.one();
     AtomicReference<CloseStatus> closeStatus = new AtomicReference<>();
 

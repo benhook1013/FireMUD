@@ -117,8 +117,7 @@ public final class TelnetServer {
     this.maxLineBytes = maxLineBytes;
     this.maxBufferedLines = maxBufferedLines;
     if (maxBufferedLines <= 0) {
-      throw new IllegalArgumentException(
-          "TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES must be positive");
+      throw new IllegalArgumentException("TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES must be positive");
     }
     this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry");
     this.connectionCounter = meterRegistry.counter("tcpproxy.connections.total");

@@ -2166,10 +2166,7 @@ class TelnetServerHandlerTest {
       Mockito.clearInvocations(ctx);
       listenerRef
           .get()
-          .onText(
-              gateway,
-              "€".repeat(TelnetServerHandler.MAX_GATEWAY_TEXT_BYTES / 3),
-              false);
+          .onText(gateway, "€".repeat(TelnetServerHandler.MAX_GATEWAY_TEXT_BYTES / 3), false);
       listenerRef.get().onText(gateway, "€", true);
 
       verify(ctx)

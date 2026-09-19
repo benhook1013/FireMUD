@@ -40,7 +40,7 @@ import org.slf4j.MDC;
 import org.springframework.util.StringUtils;
 
 /** Handler that forwards Telnet lines to the gateway via WebSocket. */
-public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
+public final class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private static final Logger logger = LoggerFactory.getLogger(TelnetServerHandler.class);
   private static final RuntimeIdentity DEFAULT_RUNTIME_IDENTITY =
       new RuntimeIdentity(
@@ -300,8 +300,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       RuntimeIdentity runtimeIdentity,
       int maxBufferedLines) {
     if (maxBufferedLines <= 0) {
-      throw new IllegalArgumentException(
-          "TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES must be positive");
+      throw new IllegalArgumentException("TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES must be positive");
     }
     this.gatewayWsUrl = gatewayWsUrl;
     this.onConnect = onConnect;
@@ -846,9 +845,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     }
     if (parsed != null && statusCode == 1001 && "idle_timeout".equals(parsed.topLevelReason())) {
       return new GatewayCloseClassification(
-          closeReason,
-          "Gameplay session timed out; please reconnect",
-          "unattributed_failure");
+          closeReason, "Gameplay session timed out; please reconnect", "unattributed_failure");
     }
     if (parsed != null
         && statusCode == 1008
@@ -860,9 +857,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     }
     if (parsed != null && statusCode == 1011 && "internal_error".equals(parsed.topLevelReason())) {
       return new GatewayCloseClassification(
-          closeReason,
-          "Gameplay connection failed; please reconnect",
-          "unattributed_failure");
+          closeReason, "Gameplay connection failed; please reconnect", "unattributed_failure");
     }
     return new GatewayCloseClassification(
         "backend_unavailable", "Gateway link dropped; please reconnect", "unattributed_failure");
@@ -874,8 +869,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     }
     int separator = reason.indexOf(';');
     String topLevelReason = separator < 0 ? reason : reason.substring(0, separator);
-    if (topLevelReason.isEmpty()
-        || (separator >= 0 && reason.indexOf(';', separator + 1) >= 0)) {
+    if (topLevelReason.isEmpty() || (separator >= 0 && reason.indexOf(';', separator + 1) >= 0)) {
       return null;
     }
     String subreason = null;
@@ -1126,9 +1120,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
             }
           }
           if (overflow) {
-            failClose(
-                "policy_violation",
-                "Gateway response exceeded the maximum text limit");
+            failClose("policy_violation", "Gateway response exceeded the maximum text limit");
           } else if (completeLine != null && !closing && context != null) {
             context.writeAndFlush(completeLine + "\n");
           }
