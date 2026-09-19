@@ -62,61 +62,56 @@
       "customType": "regex",
       "description": "Atomically update GitHub CLI and its archive checksum authority",
       "managerFilePatterns": ["/^config/workflow-tool-versions\\.env$/"],
-      "matchStrings": ["# renovate-version: datasource=github-release-attachments depName=cli/cli extractVersion=\\^v(?<version>.*)\\$\\nGH_VERSION=(?<currentValue>\\S+)\\nGH_LINUX_AMD64_CHECKSUM_VERSION=(?<currentChecksumVersion>\\S+)\\nGH_LINUX_AMD64_SHA256=(?<currentDigest>[0-9a-f]{64})"],
+      "matchStrings": ["# renovate-version: datasource=github-release-attachments depName=cli/cli\\nGH_VERSION=(?<currentValue>\\S+)\\nGH_LINUX_AMD64_CHECKSUM_VERSION=(?<currentChecksumVersion>\\S+)\\nGH_LINUX_AMD64_SHA256=(?<currentDigest>[0-9a-f]{64})"],
       "datasourceTemplate": "github-release-attachments",
       "depNameTemplate": "cli/cli",
       "versioningTemplate": "semver",
-      "extractVersionTemplate": "^v(?<version>.*)$",
       "currentValueTemplate": "v{{{currentValue}}}",
-      "autoReplaceStringTemplate": "# renovate-version: datasource=github-release-attachments depName=cli/cli extractVersion=^v(?<version>.*)$\nGH_VERSION={{{replace '^v' '' newValue}}}\nGH_LINUX_AMD64_CHECKSUM_VERSION={{{replace '^v' '' newValue}}}\nGH_LINUX_AMD64_SHA256={{{newDigest}}}"
+      "autoReplaceStringTemplate": "# renovate-version: datasource=github-release-attachments depName=cli/cli\nGH_VERSION={{{replace '^v' '' newValue}}}\nGH_LINUX_AMD64_CHECKSUM_VERSION={{{replace '^v' '' newValue}}}\nGH_LINUX_AMD64_SHA256={{{newDigest}}}"
     },
     {
       "customType": "regex",
       "description": "Atomically update Buf and its archive checksum authority",
       "managerFilePatterns": ["/^config/workflow-tool-versions\\.env$/"],
-      "matchStrings": ["# renovate-version: datasource=github-release-attachments depName=bufbuild/buf extractVersion=\\^v(?<version>.*)\\$\\nBUF_VERSION=(?<currentValue>\\S+)\\nBUF_LINUX_X86_64_CHECKSUM_VERSION=(?<currentChecksumVersion>\\S+)\\nBUF_LINUX_X86_64_SHA256=(?<currentDigest>[0-9a-f]{64})"],
+      "matchStrings": ["# renovate-version: datasource=github-release-attachments depName=bufbuild/buf\\nBUF_VERSION=(?<currentValue>\\S+)\\nBUF_LINUX_X86_64_CHECKSUM_VERSION=(?<currentChecksumVersion>\\S+)\\nBUF_LINUX_X86_64_SHA256=(?<currentDigest>[0-9a-f]{64})"],
       "datasourceTemplate": "github-release-attachments",
       "depNameTemplate": "bufbuild/buf",
       "versioningTemplate": "semver",
-      "extractVersionTemplate": "^v(?<version>.*)$",
       "currentValueTemplate": "v{{{currentValue}}}",
-      "autoReplaceStringTemplate": "# renovate-version: datasource=github-release-attachments depName=bufbuild/buf extractVersion=^v(?<version>.*)$\nBUF_VERSION={{{replace '^v' '' newValue}}}\nBUF_LINUX_X86_64_CHECKSUM_VERSION={{{replace '^v' '' newValue}}}\nBUF_LINUX_X86_64_SHA256={{{newDigest}}}"
+      "autoReplaceStringTemplate": "# renovate-version: datasource=github-release-attachments depName=bufbuild/buf\nBUF_VERSION={{{replace '^v' '' newValue}}}\nBUF_LINUX_X86_64_CHECKSUM_VERSION={{{replace '^v' '' newValue}}}\nBUF_LINUX_X86_64_SHA256={{{newDigest}}}"
     },
     {
       "customType": "regex",
       "description": "Atomically update Kubeconform and its archive checksum authority",
       "managerFilePatterns": ["/^config/workflow-tool-versions\\.env$/"],
-      "matchStrings": ["# renovate-version: datasource=github-release-attachments depName=yannh/kubeconform extractVersion=\\^v(?<version>.*)\\$\\nKUBECONFORM_VERSION=(?<currentValue>\\S+)\\nKUBECONFORM_LINUX_AMD64_CHECKSUM_VERSION=(?<currentChecksumVersion>\\S+)\\nKUBECONFORM_LINUX_AMD64_SHA256=(?<currentDigest>[0-9a-f]{64})"],
+      "matchStrings": ["# renovate-version: datasource=github-release-attachments depName=yannh/kubeconform\\nKUBECONFORM_VERSION=(?<currentValue>\\S+)\\nKUBECONFORM_LINUX_AMD64_CHECKSUM_VERSION=(?<currentChecksumVersion>\\S+)\\nKUBECONFORM_LINUX_AMD64_SHA256=(?<currentDigest>[0-9a-f]{64})"],
       "datasourceTemplate": "github-release-attachments",
       "depNameTemplate": "yannh/kubeconform",
       "versioningTemplate": "semver",
-      "extractVersionTemplate": "^v(?<version>.*)$",
       "currentValueTemplate": "v{{{currentValue}}}",
-      "autoReplaceStringTemplate": "# renovate-version: datasource=github-release-attachments depName=yannh/kubeconform extractVersion=^v(?<version>.*)$\nKUBECONFORM_VERSION={{{replace '^v' '' newValue}}}\nKUBECONFORM_LINUX_AMD64_CHECKSUM_VERSION={{{replace '^v' '' newValue}}}\nKUBECONFORM_LINUX_AMD64_SHA256={{{newDigest}}}"
+      "autoReplaceStringTemplate": "# renovate-version: datasource=github-release-attachments depName=yannh/kubeconform\nKUBECONFORM_VERSION={{{replace '^v' '' newValue}}}\nKUBECONFORM_LINUX_AMD64_CHECKSUM_VERSION={{{replace '^v' '' newValue}}}\nKUBECONFORM_LINUX_AMD64_SHA256={{{newDigest}}}"
     },
     {
       "customType": "regex",
       "description": "Atomically update Trivy and its archive checksum authority",
       "managerFilePatterns": ["/^config/workflow-tool-versions\\.env$/"],
-      "matchStrings": ["# renovate-version: datasource=github-release-attachments depName=aquasecurity/trivy extractVersion=\\^v(?<version>.*)\\$\\nTRIVY_VERSION=(?<currentValue>\\S+)\\nTRIVY_LINUX_AMD64_CHECKSUM_VERSION=(?<currentChecksumVersion>\\S+)\\nTRIVY_LINUX_AMD64_SHA256=(?<currentDigest>[0-9a-f]{64})"],
+      "matchStrings": ["# renovate-version: datasource=github-release-attachments depName=aquasecurity/trivy\\nTRIVY_VERSION=(?<currentValue>\\S+)\\nTRIVY_LINUX_AMD64_CHECKSUM_VERSION=(?<currentChecksumVersion>\\S+)\\nTRIVY_LINUX_AMD64_SHA256=(?<currentDigest>[0-9a-f]{64})"],
       "datasourceTemplate": "github-release-attachments",
       "depNameTemplate": "aquasecurity/trivy",
       "versioningTemplate": "semver",
-      "extractVersionTemplate": "^v(?<version>.*)$",
       "currentValueTemplate": "v{{{currentValue}}}",
-      "autoReplaceStringTemplate": "# renovate-version: datasource=github-release-attachments depName=aquasecurity/trivy extractVersion=^v(?<version>.*)$\nTRIVY_VERSION={{{replace '^v' '' newValue}}}\nTRIVY_LINUX_AMD64_CHECKSUM_VERSION={{{replace '^v' '' newValue}}}\nTRIVY_LINUX_AMD64_SHA256={{{newDigest}}}"
+      "autoReplaceStringTemplate": "# renovate-version: datasource=github-release-attachments depName=aquasecurity/trivy\nTRIVY_VERSION={{{replace '^v' '' newValue}}}\nTRIVY_LINUX_AMD64_CHECKSUM_VERSION={{{replace '^v' '' newValue}}}\nTRIVY_LINUX_AMD64_SHA256={{{newDigest}}}"
     },
     {
       "customType": "regex",
       "description": "Atomically update Lychee and its archive checksum authority",
       "managerFilePatterns": ["/^config/workflow-tool-versions\\.env$/"],
-      "matchStrings": ["# renovate-version: datasource=github-release-attachments depName=lycheeverse/lychee extractVersion=\\^lychee-v(?<version>.*)\\$\\nLYCHEE_VERSION=(?<currentValue>\\S+)\\nLYCHEE_LINUX_X86_64_MUSL_CHECKSUM_VERSION=(?<currentChecksumVersion>\\S+)\\nLYCHEE_LINUX_X86_64_MUSL_SHA256=(?<currentDigest>[0-9a-f]{64})"],
+      "matchStrings": ["# renovate-version: datasource=github-release-attachments depName=lycheeverse/lychee\\nLYCHEE_VERSION=(?<currentValue>\\S+)\\nLYCHEE_LINUX_X86_64_MUSL_CHECKSUM_VERSION=(?<currentChecksumVersion>\\S+)\\nLYCHEE_LINUX_X86_64_MUSL_SHA256=(?<currentDigest>[0-9a-f]{64})"],
       "datasourceTemplate": "github-release-attachments",
       "depNameTemplate": "lycheeverse/lychee",
-      "versioningTemplate": "semver",
-      "extractVersionTemplate": "^lychee-v(?<version>.*)$",
+      "versioningTemplate": "regex:^lychee-v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$",
       "currentValueTemplate": "lychee-v{{{currentValue}}}",
-      "autoReplaceStringTemplate": "# renovate-version: datasource=github-release-attachments depName=lycheeverse/lychee extractVersion=^lychee-v(?<version>.*)$\nLYCHEE_VERSION={{{replace '^lychee-v' '' newValue}}}\nLYCHEE_LINUX_X86_64_MUSL_CHECKSUM_VERSION={{{replace '^lychee-v' '' newValue}}}\nLYCHEE_LINUX_X86_64_MUSL_SHA256={{{newDigest}}}"
+      "autoReplaceStringTemplate": "# renovate-version: datasource=github-release-attachments depName=lycheeverse/lychee\nLYCHEE_VERSION={{{replace '^lychee-v' '' newValue}}}\nLYCHEE_LINUX_X86_64_MUSL_CHECKSUM_VERSION={{{replace '^lychee-v' '' newValue}}}\nLYCHEE_LINUX_X86_64_MUSL_SHA256={{{newDigest}}}"
     },
     {
       "customType": "regex",

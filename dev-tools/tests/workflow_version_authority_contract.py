@@ -1346,19 +1346,21 @@ def main() -> int:
         "ACTIONLINT": "rhysd/actionlint",
     }
     attachment_specs = {
-        "GH": ("cli/cli", "v{{{currentValue}}}", "^v(?<version>.*)$", "GH_LINUX_AMD64"),
-        "BUF": ("bufbuild/buf", "v{{{currentValue}}}", "^v(?<version>.*)$", "BUF_LINUX_X86_64"),
+        "GH": ("cli/cli", "v{{{currentValue}}}", "semver", "^v", "GH_LINUX_AMD64"),
+        "BUF": ("bufbuild/buf", "v{{{currentValue}}}", "semver", "^v", "BUF_LINUX_X86_64"),
         "KUBECONFORM": (
             "yannh/kubeconform",
             "v{{{currentValue}}}",
-            "^v(?<version>.*)$",
+            "semver",
+            "^v",
             "KUBECONFORM_LINUX_AMD64",
         ),
-        "TRIVY": ("aquasecurity/trivy", "v{{{currentValue}}}", "^v(?<version>.*)$", "TRIVY_LINUX_AMD64"),
+        "TRIVY": ("aquasecurity/trivy", "v{{{currentValue}}}", "semver", "^v", "TRIVY_LINUX_AMD64"),
         "LYCHEE": (
             "lycheeverse/lychee",
             "lychee-v{{{currentValue}}}",
-            "^lychee-v(?<version>.*)$",
+            "regex:^lychee-v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$",
+            "^lychee-v",
             "LYCHEE_LINUX_X86_64_MUSL",
         ),
     }
@@ -1396,20 +1398,25 @@ def main() -> int:
         matches_for_manager = list(pattern.finditer(authority_text))
         if len(matches_for_manager) != 1 or matches_for_manager[0].group("currentValue") != a[key + "_VERSION"]:
             fail(f"{dep_name} version-only manager must match the authority version exactly once")
-    for key, (dep_name, current_value_template, extract_version, checksum_stem) in attachment_specs.items():
+    for key, (dep_name, current_value_template, versioning, release_prefix, checksum_stem) in attachment_specs.items():
         managers = [manager for manager in attachment_managers if manager.get("depNameTemplate") == dep_name]
         if len(managers) != 1:
             fail(f"Renovate must define exactly one checksum manager for {dep_name}")
         manager = managers[0]
         if manager.get("currentValueTemplate") != current_value_template:
             fail(f"{dep_name} checksum manager must expose its release tag prefix")
-        if manager.get("extractVersionTemplate") != extract_version:
-            fail(f"{dep_name} checksum manager must extract the release version")
-        if manager.get("versioningTemplate") != "semver":
-            fail(f"{dep_name} checksum manager must use semver versioning")
+        if "extractVersionTemplate" in manager:
+            fail(f"{dep_name} checksum manager must preserve the raw release tag for attachment lookup")
+        if manager.get("versioningTemplate") != versioning:
+            fail(f"{dep_name} checksum manager has an unexpected versioning scheme")
         patterns = manager.get("matchStrings") or []
         if len(patterns) != 1:
             fail(f"{dep_name} checksum manager must define one complete authority-block pattern")
+        marker = f"# renovate-version: datasource=github-release-attachments depName={dep_name}"
+        if marker not in authority_text or authority_text.count(marker) != 1:
+            fail(f"{dep_name} authority must define exactly one raw-release attachment marker")
+        if "extractVersion" in patterns[0]:
+            fail(f"{dep_name} checksum marker must not strip the release tag before attachment lookup")
         try:
             pattern = compile_re2_pattern(patterns[0])
         except (re.error, TypeError) as error:
@@ -1427,7 +1434,10 @@ def main() -> int:
         replacement = manager.get("autoReplaceStringTemplate", "")
         if "{{{newDigest}}}" not in replacement or "_CHECKSUM_VERSION=" not in replacement or "_SHA256=" not in replacement:
             fail(f"{dep_name} checksum manager must replace version and checksum authority together")
-        new_value_token = "{{{replace '^lychee-v' '' newValue}}}" if key == "LYCHEE" else "{{{replace '^v' '' newValue}}}"
+        if "extractVersion" in replacement or marker not in replacement:
+            fail(f"{dep_name} replacement must preserve the raw-release marker")
+        new_value_token = "{{{replace '" + release_prefix + "' '' newValue}}}"
+        raw_release_tag = f"{release_prefix.removeprefix('^')}9.9.9"
         rendered_replacement = replacement.replace(new_value_token, "9.9.9").replace(
             "{{{newDigest}}}", "d" * 64
         )
@@ -1436,6 +1446,15 @@ def main() -> int:
             fail(f"{dep_name} checksum manager replacement must preserve one complete authority block")
         if rendered_match.group("currentChecksumVersion") != "9.9.9" or rendered_match.group("currentDigest") != "d" * 64:
             fail(f"{dep_name} checksum manager replacement must update both checksum fields")
+        if key == "LYCHEE":
+            versioning_pattern = re.compile(translate_renovate_pattern(versioning.removeprefix("regex:")))
+            versioning_match = versioning_pattern.fullmatch(raw_release_tag)
+            if versioning_match is None or versioning_match.groupdict() != {
+                "major": "9",
+                "minor": "9",
+                "patch": "9",
+            }:
+                fail(f"{dep_name} versioning must compare numeric releases while accepting the raw tag")
     velero_chart_managers = [manager for manager in custom_managers if manager.get("depNameTemplate") == "velero"]
     if len(velero_chart_managers) != 1:
         fail("Renovate must define exactly one Velero chart manager")
