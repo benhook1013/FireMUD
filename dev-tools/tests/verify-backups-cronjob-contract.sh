@@ -70,16 +70,6 @@ if "command" in container or "volumeMounts" in container or "volumes" in pod:
 if container["env"] != [{"name": "VELERO_NAMESPACE", "value": "velero"}]:
     raise SystemExit("backup verifier CronJob must explicitly select the Velero namespace")
 
-forbidden_env_names = {
-    "PG_DUMP_BUCKET",
-    "PG_DUMP_ENDPOINT",
-    "AWS_ACCESS_KEY_ID",
-    "AWS_SECRET_ACCESS_KEY",
-    "AWS_SESSION_TOKEN",
-}
-if any(entry.get("name") in forbidden_env_names for entry in container.get("env", [])):
-    raise SystemExit("backup verifier CronJob must not bundle optional object-store or credential environment")
-
 def contains_key(value, key):
     if isinstance(value, dict):
         return key in value or any(contains_key(child, key) for child in value.values())

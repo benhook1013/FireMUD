@@ -28,10 +28,11 @@ These scripts are shared because they manage infrastructure or validation behavi
 - `wait-for-runtime-images.sh`
   - waits for the `runtime-images.yml` workflow to validate the requested image tag
   - for pull-request runs, also waits for the trusted `publish-pr-runtime-images.yml` workflow to publish the fixed tag
-  - preview deployments reuse the immutable base-commit images when the pull request contains no runtime-image trigger paths; this selection is made by `resolve-preview-image-tag.sh`
 
 - `hosted-login-look-smoke.sh`
   - runs the canonical hosted TCP LOGIN -> PLAY -> LOOK smoke proof against the exposed environment
 
 - `show-rollout-diagnostics.sh`
   - prints the canonical hosted rollout failure view for both preview lanes, including blocked readiness reasons, service/target ports, safe config summaries, secret/TLS summaries, events, describes, and current plus previous logs for problematic pods
+
+Preview-only image handling uses [`../preview/resolve-preview-image-tag.sh`](../preview/resolve-preview-image-tag.sh) to select the requested preview tag or the immutable base-commit tag when no runtime-image trigger paths changed. When the base tag is selected, [`../preview/wait-for-base-images.sh`](../preview/wait-for-base-images.sh) checks that each base runtime image is available in GHCR before deployment.
