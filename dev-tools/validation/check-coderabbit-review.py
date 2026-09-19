@@ -1707,6 +1707,16 @@ def trigger_state(
                     and is_substantive_review_body(review.get("body") or "")
                 ):
                     prior_terminal = True
+                if (
+                    (review.get("author") or {}).get("login", "") == "coderabbitai"
+                    and review.get("state") != "DISMISSED"
+                    and submitted_dt is not None
+                    and prior_end < submitted_dt < trigger_dt
+                    and is_substantive_review_body(review.get("body") or "")
+                ):
+                    # A subsequent full review completed before this trigger. The
+                    # older unanswered request cannot still be the active review.
+                    prior_terminal = True
             if prior_terminal:
                 continue
             return TriggerState(
@@ -2191,9 +2201,27 @@ def retire_trigger_record(
         and state.head_sha.casefold() == expected_head_sha.casefold()
     ):
         raise ValueError("cannot retire a trigger with an attributable active review")
-    if state.state == "ambiguous":
+    captured_trigger_dt = parse_timestamp(state.trigger_created_at)
+    latest_request_dt = parse_timestamp(summary.latest_explicit_review_request_at)
+    latest_review_dt = parse_timestamp(summary.latest_coderabbit_review_finished_at)
+    later_completed_review = (
+        state.state == "ambiguous"
+        and state.reason
+        in {
+            "a later review trigger arrived before an attributable response",
+            "a later review trigger arrived while the captured request was active",
+            "an earlier review trigger has no terminal response before the captured trigger",
+        }
+        and record["head_sha"].casefold() != expected_head_sha.casefold()
+        and latest_request_dt is not None
+        and captured_trigger_dt is not None
+        and latest_request_dt > captured_trigger_dt
+        and summary.review_finished_after_latest_request
+        and latest_review_dt is not None
+    )
+    if state.state == "ambiguous" and not later_completed_review:
         raise ValueError("cannot retire a trigger with ambiguous response evidence")
-    if state.state not in {"timed_out", "active"}:
+    if state.state not in {"timed_out", "active"} and not later_completed_review:
         if record_status == "posted" and state.state == "awaiting_response":
             raise ValueError(
                 "posted trigger has no active response or persisted timeout evidence"
@@ -2219,6 +2247,14 @@ def retire_trigger_record(
             "state": state.state,
             "captured_head_sha": record["head_sha"],
             "current_head_sha": state.current_head_sha,
+            **(
+                {
+                    "superseding_request_at": summary.latest_explicit_review_request_at,
+                    "superseding_review_finished_at": summary.latest_coderabbit_review_finished_at,
+                }
+                if later_completed_review
+                else {}
+            ),
         },
     }
     atomic_write_json(Path(path), retired_record)
