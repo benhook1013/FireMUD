@@ -1474,7 +1474,14 @@ class TelnetServerHandlerTest {
     RecordingConnector connector = new RecordingConnector();
     TelnetServerHandler handler =
         newMetadataHandler(
-            registry, connector, Mockito.mock(TcpProxyEventService.class), "1", "1", "demo", "production", "1");
+            registry,
+            connector,
+            Mockito.mock(TcpProxyEventService.class),
+            "1",
+            "1",
+            "demo",
+            "production",
+            "1");
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -1501,7 +1508,14 @@ class TelnetServerHandlerTest {
     RecordingConnector connector = new RecordingConnector();
     TelnetServerHandler handler =
         newMetadataHandler(
-            registry, connector, Mockito.mock(TcpProxyEventService.class), null, null, null, null, null);
+            registry,
+            connector,
+            Mockito.mock(TcpProxyEventService.class),
+            null,
+            null,
+            null,
+            null,
+            null);
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -1527,7 +1541,14 @@ class TelnetServerHandlerTest {
     RecordingConnector connector = new RecordingConnector();
     TelnetServerHandler handler =
         newMetadataHandler(
-            registry, connector, Mockito.mock(TcpProxyEventService.class), "1", "1", "demo", "production", "");
+            registry,
+            connector,
+            Mockito.mock(TcpProxyEventService.class),
+            "1",
+            "1",
+            "demo",
+            "production",
+            "");
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -1554,7 +1575,14 @@ class TelnetServerHandlerTest {
     RecordingConnector connector = new RecordingConnector();
     TelnetServerHandler handler =
         newMetadataHandler(
-            registry, connector, Mockito.mock(TcpProxyEventService.class), "1", "1", "demo", "production", "0");
+            registry,
+            connector,
+            Mockito.mock(TcpProxyEventService.class),
+            "1",
+            "1",
+            "demo",
+            "production",
+            "0");
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();

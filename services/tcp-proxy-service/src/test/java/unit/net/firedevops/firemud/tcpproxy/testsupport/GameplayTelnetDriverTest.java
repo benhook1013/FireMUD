@@ -96,7 +96,8 @@ class GameplayTelnetDriverTest {
       serverThread.start();
 
       try (GameplayTelnetDriver driver =
-          GameplayTelnetDriver.connect("localhost", server.getLocalPort(), Duration.ofMillis(250))) {
+          GameplayTelnetDriver.connect(
+              "localhost", server.getLocalPort(), Duration.ofMillis(250))) {
         AssertionError failure =
             assertThrows(AssertionError.class, () -> driver.readBlockContaining("LOOK READY"));
 

@@ -77,7 +77,7 @@ public final class TelnetServer {
   private volatile int boundPort;
   private EventLoopGroup bossGroup;
   private EventLoopGroup workerGroup;
-  private Channel serverChannel;
+  private volatile Channel serverChannel;
   private final AtomicBoolean running = new AtomicBoolean(false);
   private SslContext sslContext;
 
