@@ -1096,6 +1096,8 @@ sys.argv = [
     str(authority),
     "--velero-dockerfile",
     str(dockerfile),
+    "--terraform-file",
+    str(terraform),
 ]
 module.main()
 if "HELM_VERSION=9.8.7" not in authority.read_text(encoding="utf-8"):

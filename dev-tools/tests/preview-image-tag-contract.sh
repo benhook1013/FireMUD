@@ -233,6 +233,7 @@ run_resolver() {
 }
 
 run_resolver '.github/workflows/preview.yml' base-commit-tag
+run_resolver '.github/workflows/docker-images.yml' requested-head-tag
 run_resolver 'design/architecture/foo.md' base-commit-tag
 run_resolver '.github/actions/setup-python/action.yml' requested-head-tag
 run_resolver '.github/actions/load-workflow-tool-versions/action.yml' requested-head-tag

@@ -3,7 +3,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 python3 - "$ROOT_DIR" <<'PY'
+import copy
 import pathlib
+import shlex
 import yaml
 
 root = pathlib.Path(__import__("sys").argv[1])
@@ -37,8 +39,98 @@ for required_pull_fragment in (
             "Helm transaction proof must pre-pull its pinned k3s image with bounded retries: "
             f"{required_pull_fragment}"
         )
-if "docker run --pull=never --detach" not in job_text or '"$K3S_IMAGE"' not in job_text:
-    raise SystemExit("Helm transaction proof must run the pre-pulled pinned k3s image with --pull=never")
+def require_pinned_k3s_start(job_definition, expected_image):
+    start_runs = [
+        step.get("run", "")
+        for step in job_definition.get("steps", [])
+        if isinstance(step, dict) and step.get("name") == "Start pinned disposable k3s server"
+    ]
+    if len(start_runs) != 1 or not isinstance(start_runs[0], str):
+        raise SystemExit("Helm transaction proof must define one pinned k3s start step")
+    def shell_commands(script):
+        logical_commands = []
+        continued_lines = []
+        for raw_line in script.splitlines():
+            line = raw_line.rstrip()
+            if not continued_lines and not line.strip():
+                continue
+            if line.endswith("\\"):
+                continued_lines.append(line[:-1])
+                continue
+            continued_lines.append(line)
+            logical_commands.append("\n".join(continued_lines))
+            continued_lines = []
+        if continued_lines:
+            logical_commands.append("\n".join(continued_lines))
+
+        commands = []
+        for logical_command in logical_commands:
+            lexer = shlex.shlex(logical_command, posix=True, punctuation_chars=";&|")
+            lexer.whitespace_split = True
+            lexer.commenters = "#"
+            command = []
+            for token in lexer:
+                if token in {";", "&&", "||", "&"}:
+                    if command:
+                        commands.append(command)
+                        command = []
+                else:
+                    command.append(token)
+            if command:
+                commands.append(command)
+        return commands
+
+    k3s_runs = [
+        command
+        for command in shell_commands(start_runs[0])
+        if command[:2] == ["docker", "run"]
+    ]
+    if len(k3s_runs) != 1:
+        raise SystemExit("Helm transaction proof must define exactly one executable k3s docker run")
+    run_tokens = k3s_runs[0]
+    if run_tokens.count("--pull=never") != 1:
+        raise SystemExit(
+            "Helm transaction proof must run the k3s image with exactly one --pull=never"
+        )
+    try:
+        image_index = run_tokens.index("$K3S_IMAGE")
+        server_indices = [index for index, token in enumerate(run_tokens) if token == "server"]
+    except ValueError:
+        image_index = -1
+        server_indices = []
+    if (
+        run_tokens.count("$K3S_IMAGE") != 1
+        or image_index < 0
+        or len(server_indices) != 1
+        or run_tokens.index("--pull=never") > image_index
+        or server_indices[0] != image_index + 1
+    ):
+        raise SystemExit(
+            "Helm transaction proof must run the exact K3S_IMAGE token immediately before server"
+        )
+    if job_definition.get("env", {}).get("K3S_IMAGE") != expected_image:
+        raise SystemExit("Helm transaction proof must bind the executable image to pinned K3S_IMAGE")
+
+
+require_pinned_k3s_start(job, pinned_k3s_image)
+mutated_job = copy.deepcopy(job)
+for step in mutated_job["steps"]:
+    if isinstance(step, dict) and step.get("name") == "Start pinned disposable k3s server":
+        step["run"] = (
+            step["run"].replace('"$K3S_IMAGE"', "rancher/k3s:v1.34.5-k3s1")
+            + f"\n# pinned image: {pinned_k3s_image}\necho \"$K3S_IMAGE\" server\n"
+        )
+        break
+else:
+    raise SystemExit("Helm transaction proof mutation fixture could not find the start step")
+try:
+    require_pinned_k3s_start(mutated_job, pinned_k3s_image)
+except SystemExit:
+    pass
+else:
+    raise SystemExit(
+        "Helm transaction proof accepted a mutable executable k3s tag with the digest only in a comment"
+    )
 step_uses = {
     step.get("uses")
     for step in job.get("steps", [])

@@ -47,7 +47,7 @@ require_contains "$dockerignore" '!docker/backup-verifier.Dockerfile'
 require_contains "$dockerignore" '!dev-tools/backups/verify-backups.sh'
 require_contains "$dockerignore" '!dev-tools/backups/pg-dump-s3-selection.shlib'
 
-require_contains "$smoke" 'docker run --rm --entrypoint /bin/bash'
+require_contains "$smoke" 'docker run --rm --read-only --entrypoint /bin/bash'
 # shellcheck disable=SC2016 # Assert literal shell syntax in the smoke helper.
 require_contains "$smoke" '[[ $# -ne 2 || -z "$1" || -z "$2" ]]'
 # shellcheck disable=SC2016 # Assert literal shell syntax in the smoke helper.

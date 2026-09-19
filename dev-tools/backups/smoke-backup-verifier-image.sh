@@ -13,7 +13,7 @@ expected_velero_version="$2"
   exit 1
 }
 
-docker run --rm --entrypoint /bin/bash \
+docker run --rm --read-only --entrypoint /bin/bash \
   --env "EXPECTED_VELERO_VERSION=$expected_velero_version" \
   "$image" -ceu '
   [[ "$(id -u)" != 0 ]] || { echo "backup verifier image must run as non-root" >&2; exit 1; }

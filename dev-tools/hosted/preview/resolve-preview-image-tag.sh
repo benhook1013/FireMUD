@@ -22,7 +22,7 @@ runtime_relevant() {
     build.gradle.kts | settings.gradle.kts | gradle.properties | .python-version)
       return 0
       ;;
-    .github/workflows/runtime-images.yml | .github/workflows/publish-pr-runtime-images.yml | .github/workflows/smoke.yml | .github/workflows/smoke-full.yml | .dockerignore)
+    .github/workflows/docker-images.yml | .github/workflows/runtime-images.yml | .github/workflows/publish-pr-runtime-images.yml | .github/workflows/smoke.yml | .github/workflows/smoke-full.yml | .dockerignore)
       return 0
       ;;
     .github/actions/setup-python/* | .github/actions/load-workflow-tool-versions/* | buildSrc/* | gradle/* | protos/* | docker/* | services/* | dev-tools/smoke/*)
