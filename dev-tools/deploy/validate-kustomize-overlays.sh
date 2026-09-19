@@ -25,9 +25,14 @@ production_policy_applies_to_changes() {
   local changed_files="$1"
   local changed_file
 
+  # k8s/velero is a standalone pre-release asset today. Its checked-in
+  # production consumer is k8s/terraform-production/main.tf through the
+  # kubernetes_manifest.velero_schedule and kubernetes_manifest.velero_verify
+  # resources; no live player-facing production apply is proven. Actual
+  # production overlay resources remain attestation-gated below.
   while IFS= read -r changed_file; do
     case "$changed_file" in
-      k8s/overlays/prod|k8s/overlays/prod/*|k8s/base|k8s/base/*|k8s/postgres|k8s/postgres/*|k8s/velero|k8s/velero/*)
+      k8s/overlays/prod|k8s/overlays/prod/*|k8s/base|k8s/base/*|k8s/postgres|k8s/postgres/*)
         return 0
         ;;
     esac

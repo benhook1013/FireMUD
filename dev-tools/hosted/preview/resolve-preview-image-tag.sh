@@ -19,13 +19,24 @@ runtime_relevant() {
   local file="$1"
 
   case "${file}" in
-    build.gradle.kts | settings.gradle.kts | gradle.properties)
+    build.gradle.kts | settings.gradle.kts | gradle.properties | .python-version)
       return 0
       ;;
-    .github/workflows/runtime-images.yml | .github/workflows/smoke.yml | .github/workflows/smoke-full.yml)
+    .github/workflows/docker-images.yml | .github/workflows/runtime-images.yml | .github/workflows/publish-pr-runtime-images.yml | .github/workflows/smoke.yml | .github/workflows/smoke-full.yml | .dockerignore)
       return 0
       ;;
-    buildSrc/* | gradle/* | protos/* | docker/* | config/* | services/*)
+    .github/actions/setup-python/* | .github/actions/load-workflow-tool-versions/* | buildSrc/* | gradle/* | protos/* | docker/* | services/* | dev-tools/smoke/*)
+      return 0
+      ;;
+    config/python/smoke-requirements.txt | config/python/smoke-requirements.in | \
+      config/workflow-tool-versions.env | \
+      dev-tools/backups/verify-backups.sh | \
+      dev-tools/backups/pg-dump-s3-selection.shlib | \
+      dev-tools/backups/smoke-backup-verifier-image.sh | \
+      dev-tools/build-*.sh | \
+      dev-tools/certs/generate-*.sh | \
+      dev-tools/hosted/controller/smoke-*.sh | \
+      dev-tools/verify-*.sh)
       return 0
       ;;
   esac
@@ -39,10 +50,17 @@ if [[ -n "${pr_number}" && -n "${base_image_tag}" ]]; then
     exit 1
   fi
 
-  mapfile -t changed_files < <(
+  if ! changed_files_output="$(
     gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}/files?per_page=100" --paginate \
-      --jq '.[].filename'
-  )
+      --jq '.[] | .filename, (.previous_filename // empty)'
+  )"; then
+    echo "unable to read changed files for pull request ${pr_number}; refusing to select base images" >&2
+    exit 1
+  fi
+  changed_files=()
+  if [[ -n "${changed_files_output}" ]]; then
+    mapfile -t changed_files <<<"${changed_files_output}"
+  fi
 
   has_runtime_change=false
   for file in "${changed_files[@]}"; do

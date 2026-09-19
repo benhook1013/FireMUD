@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-for required_command in helm jq kubectl openssl python3; do
+for required_command in helm jq kubectl node openssl python3; do
   if ! command -v "$required_command" >/dev/null 2>&1; then
     echo "Missing required command: $required_command" >&2
     exit 1
@@ -35,6 +35,7 @@ render_preview_values="$ROOT_DIR/dev-tools/hosted/preview/render-preview-values.
 preview_annotator="$ROOT_DIR/dev-tools/hosted/preview/annotate-preview-namespace.sh"
 runtime_rollout_waiter="$ROOT_DIR/dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh"
 credential_source="$ROOT_DIR/dev-tools/hosted/preview/provision-runtime-credentials.sh"
+push_verified_image="$ROOT_DIR/dev-tools/hosted/shared/push-verified-image.sh"
 runner_label_validator="$ROOT_DIR/dev-tools/tests/preview_runner_labels.py"
 
 python3 "$runner_label_validator" --self-test
@@ -89,8 +90,10 @@ if grep -Fq -- '*.jar' "$controller_dockerfile"; then
   echo "$controller_dockerfile must copy only the canonical controller artifact" >&2
   exit 1
 fi
-python3 - "$runtime" "$publisher" <<'PY'
+python3 - "$runtime" "$publisher" "$workflow_tool_authority" <<'PY'
+import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -139,6 +142,16 @@ for required in (
     "PR smoke scope detection failed; running both local smokes:",
     'core.setOutput("runtime_smoke_required", String(runtimeSmokeRequired))',
     'core.setOutput("controller_smoke_required", String(controllerSmokeRequired))',
+    "github.rest.repos.getContent",
+    "workflowToolAuthorityPath",
+    "knownWorkflowToolKeys",
+    "Promise.all",
+    'data.encoding !== "base64"',
+    "const trimmedLine = line.trim();",
+    'key.startsWith("VELERO_")',
+    "authorityChanged",
+    "nonAuthorityPaths",
+    "Workflow tool authority comparison was incomplete; running full-stack smoke:",
 ):
     assert required in smoke_scope_script, required
 
@@ -150,7 +163,7 @@ assert not re.search(r'"services/[^"]+/"', runtime_prefixes_script)
 assert "dev-tools/smoke/" in runtime_prefixes_script
 assert ".github/actions/setup-python/" in runtime_prefixes_script
 runtime_scope_predicate = smoke_scope_script[
-    smoke_scope_script.index("runtimeSmokeRequired = paths.some"):
+    smoke_scope_script.index("runtimeSmokeRequired = nonAuthorityPaths.some"):
     smoke_scope_script.index("controllerSmokeRequired = paths.some")
 ]
 normalized_runtime_scope_predicate = "".join(runtime_scope_predicate.split())
@@ -162,9 +175,181 @@ assert (
 
 controller_scope_script = smoke_scope_script[
     smoke_scope_script.index("const controllerPrefixes"):
-    smoke_scope_script.index("runtimeSmokeRequired = paths.some")
+    smoke_scope_script.index("runtimeSmokeRequired = nonAuthorityPaths.some")
 ]
 assert "services/hosted-environment-identity-controller/" in controller_scope_script
+
+authority_text = Path(sys.argv[3]).read_text(encoding="utf-8")
+base_sha = "a" * 40
+head_sha = "b" * 40
+
+
+def authority_with(**changes):
+    lines = []
+    for line in authority_text.splitlines():
+        if line and not line.startswith("#") and "=" in line:
+            key = line.split("=", 1)[0]
+            if key in changes:
+                line = f"{key}={changes[key]}"
+        lines.append(line)
+    return "\n".join(lines) + "\n"
+
+
+def run_scope(changed_paths, *, head_content=None, api_error=False, changed_file_count=None):
+    if head_content is None:
+        head_content = authority_text
+    node_source = """
+const scopeScript = %s;
+const baseSha = %s;
+const headSha = %s;
+const baseContent = %s;
+const headContent = %s;
+const changedFiles = %s;
+const apiError = %s;
+const apiCalls = [];
+const warnings = [];
+const outputs = {};
+const github = {
+  paginate: async () => changedFiles,
+  rest: {
+    pulls: { listFiles: async () => undefined },
+    repos: {
+      getContent: async ({ owner, repo, path, ref }) => {
+        apiCalls.push({ owner, repo, path, ref });
+        if (apiError) throw new Error("simulated API failure");
+        const content = ref === baseSha ? baseContent : headContent;
+        return {
+          data: {
+            type: "file",
+            path,
+            encoding: "base64",
+            content: Buffer.from(content, "utf8").toString("base64"),
+          },
+        };
+      },
+    },
+  },
+};
+const context = {
+  eventName: "pull_request",
+  repo: { owner: "base-owner", repo: "base-repo" },
+  payload: {
+    repository: { full_name: "base-owner/base-repo" },
+    pull_request: {
+      number: 2786,
+      changed_files: %s,
+      base: { sha: baseSha },
+      head: { sha: headSha, repo: { full_name: "fork-owner/fork-repo" } },
+    },
+  },
+};
+const core = {
+  warning: (message) => warnings.push(message),
+  setOutput: (name, value) => { outputs[name] = value; },
+};
+const runner = new Function(
+  "github",
+  "context",
+  "core",
+  "return (async () => {\\n" + scopeScript + "\\n})()"
+);
+await runner(github, context, core);
+process.stdout.write(JSON.stringify({ outputs, warnings, apiCalls }));
+""" % (
+        json.dumps(smoke_scope_script),
+        json.dumps(base_sha),
+        json.dumps(head_sha),
+        json.dumps(authority_text),
+        json.dumps(head_content),
+        json.dumps([{"filename": path} for path in changed_paths]),
+        json.dumps(api_error),
+        json.dumps(
+            len(changed_paths)
+            if changed_file_count is None
+            else changed_file_count
+        ),
+    )
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", node_source],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert result.returncode == 0, result
+    return json.loads(result.stdout)
+
+
+authority_path = "config/workflow-tool-versions.env"
+non_velero_only = run_scope(
+    [authority_path], head_content=authority_with(TRIVY_VERSION="99.0.0")
+)
+assert non_velero_only["outputs"] == {
+    "runtime_smoke_required": "false",
+    "controller_smoke_required": "false",
+}
+assert {call["owner"] for call in non_velero_only["apiCalls"]} == {
+    "base-owner",
+    "fork-owner",
+}
+assert all(call["path"] == authority_path for call in non_velero_only["apiCalls"])
+
+whitespace_only = run_scope(
+    [authority_path],
+    head_content=authority_text.replace("TRIVY_VERSION=", " \t\nTRIVY_VERSION=", 1),
+)
+assert whitespace_only["outputs"]["runtime_smoke_required"] == "false"
+assert not whitespace_only["warnings"]
+
+velero_only = run_scope(
+    [authority_path], head_content=authority_with(VELERO_VERSION="99.0.0")
+)
+assert velero_only["outputs"]["runtime_smoke_required"] == "true"
+
+mixed_authority = run_scope(
+    [authority_path],
+    head_content=authority_with(VELERO_VERSION="99.0.0", TRIVY_VERSION="99.0.0"),
+)
+assert mixed_authority["outputs"]["runtime_smoke_required"] == "true"
+
+unknown_key = run_scope(
+    [authority_path], head_content=authority_text + "UNKNOWN_TOOL_VERSION=1.0.0\n"
+)
+assert unknown_key["outputs"]["runtime_smoke_required"] == "true"
+assert unknown_key["warnings"]
+
+missing_key = run_scope(
+    [authority_path],
+    head_content="\n".join(
+        line
+        for line in authority_text.splitlines()
+        if not line.startswith("TRIVY_VERSION=")
+    )
+    + "\n",
+)
+assert missing_key["outputs"]["runtime_smoke_required"] == "true"
+assert missing_key["warnings"]
+
+api_failure = run_scope([authority_path], api_error=True)
+assert api_failure["outputs"]["runtime_smoke_required"] == "true"
+assert api_failure["warnings"]
+
+incomplete_file_list = run_scope([authority_path], changed_file_count=2)
+assert incomplete_file_list["outputs"] == {
+    "runtime_smoke_required": "true",
+    "controller_smoke_required": "true",
+}
+
+assert run_scope(["services/account-service/src/Example.java"])["outputs"] == {
+    "runtime_smoke_required": "true",
+    "controller_smoke_required": "false",
+}
+assert run_scope([
+    "services/hosted-environment-identity-controller/src/Example.java"
+])["outputs"] == {
+    "runtime_smoke_required": "false",
+    "controller_smoke_required": "true",
+}
 
 runtime_job = workflow["jobs"]["pr-local-smoke"]
 assert "needs.image-meta.outputs.runtime_smoke_required" not in runtime_job["if"]
@@ -571,7 +756,7 @@ for required in \
   contains "$requester" "$required"
 done
 
-python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" "$janitor" "$mode_action" "$runtime" "$artifact_action" <<'PY'
+python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" "$janitor" "$mode_action" "$runtime" "$artifact_action" "$push_verified_image" <<'PY'
 import os
 import re
 import subprocess
@@ -592,6 +777,10 @@ janitor_workflow = yaml.safe_load(Path(sys.argv[7]).read_text(encoding="utf-8"))
 mode_action = yaml.safe_load(Path(sys.argv[8]).read_text(encoding="utf-8"))
 runtime_workflow = yaml.safe_load(Path(sys.argv[9]).read_text(encoding="utf-8"))
 artifact_action = yaml.safe_load(Path(sys.argv[10]).read_text(encoding="utf-8"))
+push_verified_image = Path(sys.argv[11])
+push_verified_image_text = push_verified_image.read_text(encoding="utf-8")
+assert push_verified_image.is_file()
+assert push_verified_image.stat().st_mode & 0o111
 
 for job_name in ("validate-target", "prepare-runtime", "deploy-runtime"):
     caller_python_steps = [
@@ -1238,11 +1427,19 @@ assert controller_publish_job["permissions"] == {
 }
 assert controller_publish_job["env"] == controller_build_job["env"]
 controller_publish_steps = controller_publish_job["steps"]
+checkout_index = next(i for i, step in enumerate(controller_publish_steps) if step.get("name") == "Checkout trusted publication commit")
 download_index = next(i for i, step in enumerate(controller_publish_steps) if step.get("name") == "Download exact verified controller image artifact")
 load_index = next(i for i, step in enumerate(controller_publish_steps) if step.get("name") == "Load and verify exact controller image")
 login_index = next(i for i, step in enumerate(controller_publish_steps) if step.get("name") == "Login to GHCR")
 publish_index = next(i for i, step in enumerate(controller_publish_steps) if step.get("name") == "Publish exact verified controller image")
-assert download_index < load_index < login_index < publish_index
+assert checkout_index < download_index < load_index < login_index < publish_index
+assert controller_publish_steps[checkout_index]["uses"] == (
+    "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
+)
+assert controller_publish_steps[checkout_index]["with"] == {
+    "ref": "${{ needs.image-meta.outputs.checkout_ref }}",
+    "persist-credentials": False,
+}
 assert controller_publish_steps[download_index]["uses"] == (
     "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
 )
@@ -1266,15 +1463,24 @@ assert "./gradlew" not in str(controller_publish_steps)
 assert "docker build" not in str(controller_publish_steps)
 assert "docker run" not in str(controller_publish_steps)
 assert "health/liveness" not in str(controller_publish_steps)
-assert 'docker push "$CONTROLLER_IMAGE"' in publish_run
+assert 'bash ./dev-tools/hosted/shared/push-verified-image.sh "$CONTROLLER_IMAGE"' in publish_run
+assert 'docker push "$CONTROLLER_IMAGE"' not in publish_run
 assert "docker manifest inspect" not in publish_run
 assert "current_image_id" in publish_run
-assert "pushed_digest" in publish_run
 assert "docker buildx imagetools inspect" not in publish_run
-assert "push_output" in publish_run
-assert "pushed_digests" in publish_run
-assert '${#pushed_digests[@]} != 1' in publish_run
-assert "BASH_REMATCH[1]" in publish_run
+for required in (
+    'max_push_attempts=3',
+    'push_output=""',
+    'docker push "$image" 2>&1',
+    'backoff_seconds=$((5 * 2 ** (push_attempt - 1)))',
+    'sleep "$backoff_seconds"',
+    'pushed_digests=()',
+    'if ((${#pushed_digests[@]} != 1)); then',
+    'sha256:[0-9a-f]{64}',
+    'echo "digest=$pushed_digest" >> "${GITHUB_OUTPUT:?GITHUB_OUTPUT must point to a step output file}"',
+):
+    assert required in push_verified_image_text, required
+assert 'done\n\npushed_digests=()' in push_verified_image_text
 attest_step = next(step for step in controller_publish_steps if step.get("uses") == "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6")
 assert attest_step["with"]["subject-name"] == "${{ env.CONTROLLER_IMAGE_NAME }}"
 assert attest_step["with"]["subject-digest"] == "${{ steps.publish.outputs.digest }}"
@@ -1283,8 +1489,6 @@ assert attest_step["with"]["subject-name"] == "${{ env.CONTROLLER_IMAGE_NAME }}"
 assert attest_step["with"]["push-to-registry"] is True
 assert attest_step["with"]["create-storage-record"] is False
 assert controller_publish_steps[publish_index]["id"] == "publish"
-assert "pushed_digest" in publish_run
-assert "sha256:[0-9a-f]" in publish_run
 assert "hosted-environment-identity-controller" not in publisher_script
 janitor_steps = janitor_workflow["jobs"]["prune-stale-preview-namespaces"]["steps"]
 janitor_mode_step = next(
@@ -2636,6 +2840,13 @@ case "${CONTROLLER_PUSH_MODE:?}" in
     printf 'trusted: digest: %s size: 2\n' "$successful_digest"
     printf 'duplicate: digest: %s size: 2\n' "$successful_digest"
     ;;
+  zero-success)
+    printf 'trusted: push completed without a digest\n'
+    ;;
+  always-fail)
+    printf 'failed: digest: %s size: 1\n' "$failed_digest"
+    exit 1
+    ;;
   *)
     echo "unexpected controller push mode: $CONTROLLER_PUSH_MODE" >&2
     exit 2
@@ -2657,15 +2868,18 @@ controller_sleep_log="$TEMP_DIR/controller-sleep.log"
 controller_publish_output="$TEMP_DIR/controller-publish.output"
 controller_publish_stdout="$TEMP_DIR/controller-publish.stdout"
 successful_digest="sha256:$(printf '2%.0s' {1..64})"
-env \
-  PATH="$controller_publish_stub_dir:$PATH" \
-  CONTROLLER_IMAGE="$controller_image" \
-  VERIFIED_IMAGE_ID="$controller_image_id" \
-  CONTROLLER_PUSH_MODE=failed-then-success \
-  CONTROLLER_PUSH_COUNT="$controller_push_count" \
-  CONTROLLER_SLEEP_LOG="$controller_sleep_log" \
-  GITHUB_OUTPUT="$controller_publish_output" \
-  bash "$controller_publish_step" >"$controller_publish_stdout"
+(
+  cd "$ROOT_DIR"
+  env \
+    PATH="$controller_publish_stub_dir:$PATH" \
+    CONTROLLER_IMAGE="$controller_image" \
+    VERIFIED_IMAGE_ID="$controller_image_id" \
+    CONTROLLER_PUSH_MODE=failed-then-success \
+    CONTROLLER_PUSH_COUNT="$controller_push_count" \
+    CONTROLLER_SLEEP_LOG="$controller_sleep_log" \
+    GITHUB_OUTPUT="$controller_publish_output" \
+    bash "$controller_publish_step" >"$controller_publish_stdout"
+)
 test "$(<"$controller_push_count")" -eq 2
 grep -Fxq '5' "$controller_sleep_log"
 grep -Fxq "digest=$successful_digest" "$controller_publish_output"
@@ -2676,22 +2890,71 @@ fi
 
 controller_duplicate_count="$TEMP_DIR/controller-duplicate-count"
 controller_duplicate_output="$TEMP_DIR/controller-duplicate.output"
-if env \
-  PATH="$controller_publish_stub_dir:$PATH" \
-  CONTROLLER_IMAGE="$controller_image" \
-  VERIFIED_IMAGE_ID="$controller_image_id" \
-  CONTROLLER_PUSH_MODE=duplicate-success \
-  CONTROLLER_PUSH_COUNT="$controller_duplicate_count" \
-  CONTROLLER_SLEEP_LOG="$TEMP_DIR/controller-duplicate-sleep.log" \
-  GITHUB_OUTPUT="$controller_duplicate_output" \
-  bash "$controller_publish_step" >"$TEMP_DIR/controller-duplicate.stdout" \
-  2>"$TEMP_DIR/controller-duplicate.stderr"; then
+if (
+  cd "$ROOT_DIR"
+  env \
+    PATH="$controller_publish_stub_dir:$PATH" \
+    CONTROLLER_IMAGE="$controller_image" \
+    VERIFIED_IMAGE_ID="$controller_image_id" \
+    CONTROLLER_PUSH_MODE=duplicate-success \
+    CONTROLLER_PUSH_COUNT="$controller_duplicate_count" \
+    CONTROLLER_SLEEP_LOG="$TEMP_DIR/controller-duplicate-sleep.log" \
+    GITHUB_OUTPUT="$controller_duplicate_output" \
+    bash "$controller_publish_step" >"$TEMP_DIR/controller-duplicate.stdout" \
+    2>"$TEMP_DIR/controller-duplicate.stderr"
+); then
   echo "controller publication accepted more than one successful push digest" >&2
   exit 1
 fi
 grep -Fq 'did not report exactly one exact sha256 digest' \
   "$TEMP_DIR/controller-duplicate.stderr"
 test ! -s "$controller_duplicate_output"
+
+controller_zero_count="$TEMP_DIR/controller-zero-count"
+controller_zero_output="$TEMP_DIR/controller-zero.output"
+if (
+  cd "$ROOT_DIR"
+  env \
+    PATH="$controller_publish_stub_dir:$PATH" \
+    CONTROLLER_IMAGE="$controller_image" \
+    VERIFIED_IMAGE_ID="$controller_image_id" \
+    CONTROLLER_PUSH_MODE=zero-success \
+    CONTROLLER_PUSH_COUNT="$controller_zero_count" \
+    CONTROLLER_SLEEP_LOG="$TEMP_DIR/controller-zero-sleep.log" \
+    GITHUB_OUTPUT="$controller_zero_output" \
+    bash "$controller_publish_step" >"$TEMP_DIR/controller-zero.stdout" \
+    2>"$TEMP_DIR/controller-zero.stderr"
+); then
+  echo "controller publication accepted a successful push without a digest" >&2
+  exit 1
+fi
+grep -Fq 'did not report exactly one exact sha256 digest' \
+  "$TEMP_DIR/controller-zero.stderr"
+test ! -s "$controller_zero_output"
+
+controller_failure_count="$TEMP_DIR/controller-failure-count"
+controller_failure_output="$TEMP_DIR/controller-failure.output"
+if (
+  cd "$ROOT_DIR"
+  env \
+    PATH="$controller_publish_stub_dir:$PATH" \
+    CONTROLLER_IMAGE="$controller_image" \
+    VERIFIED_IMAGE_ID="$controller_image_id" \
+    CONTROLLER_PUSH_MODE=always-fail \
+    CONTROLLER_PUSH_COUNT="$controller_failure_count" \
+    CONTROLLER_SLEEP_LOG="$TEMP_DIR/controller-failure-sleep.log" \
+    GITHUB_OUTPUT="$controller_failure_output" \
+    bash "$controller_publish_step" >"$TEMP_DIR/controller-failure.stdout" \
+    2>"$TEMP_DIR/controller-failure.stderr"
+); then
+  echo "controller publication accepted three failed push attempts" >&2
+  exit 1
+fi
+test "$(<"$controller_failure_count")" -eq 3
+grep -Fxq '5' "$TEMP_DIR/controller-failure-sleep.log"
+grep -Fxq '10' "$TEMP_DIR/controller-failure-sleep.log"
+grep -Fq 'after 3 attempts' "$TEMP_DIR/controller-failure.stderr"
+test ! -s "$controller_failure_output"
 
 preview_derive_step="$TEMP_DIR/preview-derive-step.sh"
 python3 - "$preview" "$preview_derive_step" <<'PY'

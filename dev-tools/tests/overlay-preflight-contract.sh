@@ -66,7 +66,7 @@ expected_steps = {
     },
     "🧰 Set up kubectl": {"uses": "./.github/actions/setup-kubectl"},
     "🐳 Set up Docker": {
-        "uses": "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e",
+        "uses": "docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069",
     },
     "🔐 Login to GHCR": {
         "uses": "docker/login-action@dbcb813823bdd20940b903addbd779551569679f",
@@ -227,10 +227,28 @@ assert_production_change_requires_attestation() {
 for changed_file in \
   'k8s/overlays/prod/kustomization.yaml' \
   'k8s/base/account-service.yaml' \
-  'k8s/postgres/pg-dump-cronjob.yaml' \
-  'k8s/velero/schedule.yaml'; do
+  'k8s/postgres/pg-dump-cronjob.yaml'; do
   assert_production_change_requires_attestation "$changed_file"
 done
+
+if ! (
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/dev-tools/deploy/validate-kustomize-overlays.sh"
+  changed_files_between_base_and_head() {
+    printf '%s\n' 'k8s/velero/verify-backups-cronjob.yaml'
+  }
+  GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop run_preflight_policy_checks
+) >"$OUTPUT_FILE" 2>&1; then
+  echo "Standalone Velero preflight validation failed; captured output follows:" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
+fi
+
+grep -q "Skipping static preflight policy enforcement" "$OUTPUT_FILE" || {
+  echo "Standalone Velero pre-release assets incorrectly required production attestation" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
+}
 
 if (
   # shellcheck disable=SC1091

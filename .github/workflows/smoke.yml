@@ -5,6 +5,8 @@ on:
     branches: [main, develop]
     types: [opened, synchronize, reopened, edited]
 
+run-name: PR Smoke Gate ${{ github.event_name == 'pull_request' && format('pr-{0} base-{1} head-{2}', github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha) || github.ref_name }}
+
 permissions:
   contents: read
 
@@ -398,6 +400,9 @@ jobs:
         uses: ./.github/actions/preserve-required-gate
         with:
           gate-name: Smoke Gate
+          workflow-name: PR Smoke Gate
+          workflow-file: smoke.yml
+          workflow-path: .github/workflows/smoke.yml
 
       - name: Fail when smoke dependencies did not succeed
         if: ${{ steps.smoke_gate_context.outputs.required == 'true' && steps.smoke_gate_context.outputs.execute != 'true' }}

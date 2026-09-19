@@ -18,7 +18,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 class SagaPersistenceRepositoryIntegrationTest {
   private static final String SERVICE_SCHEMA = "saga_contract_test";
 
@@ -32,7 +32,6 @@ class SagaPersistenceRepositoryIntegrationTest {
 
   @BeforeAll
   static void setUp() throws Exception {
-    POSTGRES.start();
     connection =
         DriverManager.getConnection(
             POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
@@ -48,7 +47,6 @@ class SagaPersistenceRepositoryIntegrationTest {
     if (connection != null) {
       connection.close();
     }
-    POSTGRES.stop();
   }
 
   @BeforeEach

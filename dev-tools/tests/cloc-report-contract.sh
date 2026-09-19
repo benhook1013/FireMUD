@@ -647,7 +647,7 @@ original_pr_functions = (
 snapshot_revisions = []
 cloc_report.resolve_pull_request = lambda _root, _number, _repository: mock_metadata
 cloc_report.pull_request_merge_base = lambda _root, _metadata: "c" * 40
-cloc_report.classifier_digest = lambda: "digest"
+cloc_report.classifier_digest = lambda: "d" * 64
 
 @contextmanager
 def fake_snapshot(_root, revision):
@@ -671,6 +671,17 @@ try:
     rendered_impact = cloc_report.render_pr_report(impact)
     assert cloc_report.PR_REPORT_START in rendered_impact
     assert cloc_report.PR_REPORT_END in rendered_impact
+    assert (
+        '<!-- firemud:cloc-report:metadata {"base_oid":"'
+        + "a" * 40
+        + '","classifier_sha256":"'
+        + "d" * 64
+        + '","head_oid":"'
+        + "b" * 40
+        + '","merge_base":"'
+        + "c" * 40
+        + '"} -->'
+    ) in rendered_impact
     assert "| **Overall** | 10 | 12 | +2 | +20.0% |" in rendered_impact
     assert "| &emsp;**Source** | 8 | 7 | -1 | -12.5% |" in rendered_impact
     assert "| &emsp;&emsp;↳ Production | 5 | 5 | 0 | 0.0% |" in rendered_impact
@@ -686,6 +697,42 @@ finally:
         cloc_report.snapshot_worktree,
         cloc_report.summary_for_root,
     ) = original_pr_functions
+
+uppercase_report = dict(impact, classifier_sha256="D" * 64)
+uppercase_rendered = cloc_report.render_pr_report(uppercase_report)
+assert '"classifier_sha256":"' + "d" * 64 + '"' in uppercase_rendered
+
+for snapshot, field, label in (
+    ("base", "oid", "base"),
+    ("base", "merge_base", "merge-base"),
+    ("head", "oid", "head"),
+):
+    malformed_report = dict(impact)
+    malformed_report[snapshot] = dict(impact[snapshot], **{field: "g" * 40})
+    try:
+        cloc_report.render_pr_report(malformed_report)
+    except cloc_report.ReportError as error:
+        assert f"invalid {label} commit SHA" in str(error)
+    else:
+        raise AssertionError(f"malformed {label} snapshot IDs must fail before PR body rendering")
+
+for invalid_digest in (None, "", "digest", "g" * 64, "d" * 63):
+    invalid_report = dict(impact, classifier_sha256=invalid_digest)
+    try:
+        cloc_report.render_pr_report(invalid_report)
+    except cloc_report.ReportError as error:
+        assert "invalid classifier SHA-256 digest" in str(error)
+    else:
+        raise AssertionError("invalid classifier digests must fail before PR body rendering")
+
+missing_digest_report = dict(impact)
+del missing_digest_report["classifier_sha256"]
+try:
+    cloc_report.render_pr_report(missing_digest_report)
+except cloc_report.ReportError as error:
+    assert "invalid classifier SHA-256 digest" in str(error)
+else:
+    raise AssertionError("missing classifier digests must fail before PR body rendering")
 
 fetch_calls = []
 availability = {"a" * 40: [False, True], "b" * 40: [False, True]}
@@ -799,6 +846,40 @@ finally:
     cloc_report.require_tool = original_require_tool
     cloc_report.run_command = original_run_command
 
+base_change_calls = []
+cloc_report.require_tool = lambda _name: None
+def fake_changed_base_command(args, _root, *, timeout=None):
+    base_change_calls.append(args)
+    assert timeout == cloc_report.REMOTE_COMMAND_TIMEOUT_SECONDS
+    if args[:3] == ("gh", "pr", "view"):
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout=json.dumps(
+                {"baseRefOid": "d" * 40, "headRefOid": "b" * 40, "body": "existing"}
+            ).encode(),
+            stderr=b"",
+        )
+    if args[:3] == ("gh", "pr", "edit"):
+        updated_body = Path(args[-1]).read_text(encoding="utf-8")
+        assert '"base_oid":"' + "d" * 40 + '"' in updated_body
+        assert '"merge_base":"' + "c" * 40 + '"' in updated_body
+        return subprocess.CompletedProcess(args, 0, stdout=b"", stderr=b"")
+    raise AssertionError(f"unexpected changed-base command: {args}")
+cloc_report.run_command = fake_changed_base_command
+try:
+    assert cloc_report.update_pull_request_body(repo, 2736, impact) is True
+    assert [args[:3] for args in base_change_calls] == [
+        ("gh", "pr", "view"),
+        ("gh", "pr", "view"),
+        ("gh", "pr", "edit"),
+    ]
+    assert merge_base_metadata[-1].base_oid == "d" * 40
+    assert impact["base"]["oid"] == "a" * 40
+finally:
+    cloc_report.require_tool = original_require_tool
+    cloc_report.run_command = original_run_command
+
 changed_merge_base_calls = []
 cloc_report.require_tool = lambda _name: None
 def fake_changed_merge_base_command(args, _root, *, timeout=None):
@@ -810,7 +891,7 @@ def fake_changed_merge_base_command(args, _root, *, timeout=None):
         args,
         0,
         stdout=json.dumps(
-            {"baseRefOid": "d" * 40, "headRefOid": "b" * 40, "body": "existing"}
+            {"baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "existing"}
         ).encode(),
         stderr=b"",
     )
@@ -871,7 +952,7 @@ def fake_stable_update_command(args, _root, *, timeout=None):
             args,
             0,
             stdout=json.dumps(
-                {"baseRefOid": "d" * 40, "headRefOid": "b" * 40, "body": "existing"}
+                {"baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "existing"}
             ).encode(),
             stderr=b"",
         )
@@ -894,7 +975,7 @@ try:
         number=2736,
         repository="example/example",
         base_ref="stack/base",
-        base_oid="d" * 40,
+        base_oid="a" * 40,
         head_ref="feature/forked",
         head_oid="b" * 40,
     )

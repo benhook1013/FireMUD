@@ -240,6 +240,51 @@ require_contains(
 validation_step = find_step(
     ci, "validation-gate", "Enforce validation success", "ci workflow"
 )
+require_list_item(
+    ci,
+    ("jobs", "validation-gate", "needs"),
+    "dev-tools-readme-contract",
+    "ci workflow",
+)
+require_list_item(
+    ci,
+    ("jobs", "validation-summary", "needs"),
+    "dev-tools-readme-contract",
+    "ci workflow",
+)
+readme_checkout_step = find_step(
+    ci, "dev-tools-readme-contract", "⬇️ Checkout Code", "ci workflow"
+)
+require_equal(
+    ci,
+    ("jobs", "dev-tools-readme-contract", "if"),
+    "${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only == 'true' }}",
+    "ci workflow",
+)
+require_equal(
+    readme_checkout_step,
+    ("with", "persist-credentials"),
+    "false",
+    "ci workflow",
+)
+readme_validation_step = find_step(
+    ci,
+    "dev-tools-readme-contract",
+    "🧭 Validate documented dev-tool paths and links",
+    "ci workflow",
+)
+require_equal(
+    readme_validation_step,
+    ("run",),
+    "bash ./dev-tools/tests/dev-tools-readme-contract.sh",
+    "ci workflow",
+)
+require_equal(
+    validation_step,
+    ("env", "DEV_TOOLS_README_CONTRACT"),
+    "${{ needs.dev-tools-readme-contract.result }}",
+    "ci workflow",
+)
 require_contains(
     validation_step,
     ("run",),
@@ -251,6 +296,8 @@ for expected in (
     'is_acceptable_optional_result "$result"',
     'if [ "$LIGHTWEIGHT_ONLY" != "true" ] || [ "$PYTHON_CHANGED" = "true" ]',
     'if [ "$LIGHTWEIGHT_ONLY" != "true" ] || [ "$DESIGN_DOCS_CHANGED" = "true" ] || [ "$VALIDATION_PYTHON_CHANGED" = "true" ]',
+    'echo "Dev Tools README Contract => $DEV_TOOLS_README_CONTRACT"',
+    'if [ "$LIGHTWEIGHT_ONLY" = "true" ] || [ "$DEV_TOOLS_README_CONTRACT" != "skipped" ]; then',
 ):
     require_contains(validation_step, ("run",), expected, "ci workflow")
 
@@ -268,6 +315,12 @@ require_contains(
     complete_contract_step,
     ("run",),
     "python3 -m unittest discover -s dev-tools/validation -p 'test_*.py'",
+    "ci workflow",
+)
+require_contains(
+    complete_contract_step,
+    ("run",),
+    "bash ./dev-tools/tests/dev-tools-readme-contract.sh",
     "ci workflow",
 )
 

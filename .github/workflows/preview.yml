@@ -393,6 +393,7 @@ jobs:
           set -e
 
           if [ "$namespace_status" -eq 0 ] && [ "$cluster_issuer_status" -eq 0 ] && [ "$namespace_list_status" -eq 0 ]; then
+            bash ./dev-tools/hosted/shared/check-kubectl-version-skew.sh
             echo "available=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -485,12 +486,28 @@ jobs:
           fi
 
       - name: Wait for preview runtime images
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.effective-image-tag.outputs.image_tag != needs.preview-plan.outputs.base_sha }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           echo "PREVIEW_STAGE=wait-for-images" >> "$GITHUB_ENV"
           bash ./dev-tools/hosted/shared/wait-for-runtime-images.sh "${{ steps.effective-image-tag.outputs.image_tag }}"
+
+      - name: Reuse immutable base runtime images
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.effective-image-tag.outputs.image_tag == needs.preview-plan.outputs.base_sha }}
+        run: |
+          set -euo pipefail
+          echo "PREVIEW_STAGE=wait-for-base-images" >> "$GITHUB_ENV"
+          cleanup_docker_config() {
+            if [[ -n "${DOCKER_CONFIG:-}" && -d "$DOCKER_CONFIG" ]]; then
+              rm -rf -- "$DOCKER_CONFIG"
+            fi
+          }
+          trap cleanup_docker_config EXIT
+          DOCKER_CONFIG="$(mktemp -d)"
+          export DOCKER_CONFIG
+          bash ./dev-tools/hosted/preview/wait-for-base-images.sh "${{ steps.effective-image-tag.outputs.image_tag }}"
+          echo "No runtime-image trigger paths changed; using the immutable runtime images published for base commit ${{ needs.preview-plan.outputs.base_sha }}."
 
       - name: Record reconciled preview target
         if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
@@ -895,6 +912,9 @@ jobs:
           KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"
           bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
+
+      - name: Validate kubectl client/server skew
+        run: bash ./dev-tools/hosted/shared/check-kubectl-version-skew.sh
 
       - name: Revalidate preview cleanup target before deletion
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
