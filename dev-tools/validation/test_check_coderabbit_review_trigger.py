@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -264,6 +266,39 @@ class TriggerStateTests(unittest.TestCase):
         with patch.object(CHECKER, "load_payload", side_effect=[initial, newer]):
             newer_result = CHECKER.manual_wait_result(REPO, PR, "ignored", 10, 0.1)
         self.assertEqual(newer_result["status"], "superseded")
+
+    def test_manual_wait_cli_rejects_auto_discovered_canonical_record_without_mutation(self) -> None:
+        current_payload = payload([trigger_comment()])
+        with tempfile.TemporaryDirectory() as directory:
+            input_path = Path(directory) / "payload.json"
+            record_path = Path(directory) / "trigger.json"
+            input_path.write_text(json.dumps(current_payload), encoding="utf-8")
+            record_path.write_text(json.dumps(record()), encoding="utf-8")
+            before = record_path.read_text(encoding="utf-8")
+            output = io.StringIO()
+            argv = [
+                "check-coderabbit-review.py",
+                "--repo",
+                REPO,
+                "--pr",
+                str(PR),
+                "--input",
+                str(input_path),
+                "--wait-latest-request",
+                "--timeout",
+                "0",
+                "--json",
+            ]
+            with (
+                patch.object(CHECKER, "default_trigger_record_paths", return_value=[record_path]),
+                patch.object(sys, "argv", argv),
+                redirect_stdout(output),
+            ):
+                exit_code = CHECKER.main()
+
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(json.loads(output.getvalue())["state"], "canonical-recorded")
+            self.assertEqual(record_path.read_text(encoding="utf-8"), before)
 
     def test_awaiting_response_ignores_old_same_time_pending_and_edited_timestamps(
         self,

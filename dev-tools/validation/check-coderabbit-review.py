@@ -1176,6 +1176,61 @@ def load_trigger_record(path: str, repo: str, pr_number: int) -> dict[str, Any]:
 ARCHIVED_TRIGGER_RECORD_PATTERN = re.compile(r"^trigger-([1-9][0-9]*)\.json$")
 
 
+def _git_common_dir() -> Path | None:
+    """Resolve the shared Git directory for read-only trigger discovery."""
+
+    root = Path(__file__).resolve().parents[2]
+    dot_git = root / ".git"
+    if dot_git.is_dir():
+        return dot_git
+    try:
+        pointer = dot_git.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        return None
+    if not pointer.startswith("gitdir:"):
+        return None
+    worktree_git_dir = Path(pointer.partition(":")[2].strip())
+    if not worktree_git_dir.is_absolute():
+        worktree_git_dir = (root / worktree_git_dir).resolve()
+    try:
+        common_pointer = (worktree_git_dir / "commondir").read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        return None
+    common_dir = Path(common_pointer)
+    if not common_dir.is_absolute():
+        common_dir = (worktree_git_dir / common_dir).resolve()
+    return common_dir if common_dir.is_dir() else None
+
+
+def default_trigger_record_paths(repo: str, pr_number: int) -> list[Path]:
+    """Find current and archived durable records without writing or locking them."""
+
+    common_dir = _git_common_dir()
+    if common_dir is None:
+        return []
+    record_dir = (
+        common_dir
+        / "coderabbit-review-logs"
+        / "hosted"
+        / repo.replace("/", "_")
+        / f"pr-{pr_number}"
+    )
+    try:
+        if not record_dir.is_dir() or record_dir.is_symlink():
+            return []
+        current = record_dir / "trigger.json"
+        paths = [current] if current.is_file() and not current.is_symlink() else []
+        archived = []
+        for path in record_dir.iterdir():
+            match = ARCHIVED_TRIGGER_RECORD_PATTERN.fullmatch(path.name)
+            if match is not None and path.is_file() and not path.is_symlink():
+                archived.append((int(match.group(1)), path))
+        paths.extend(path for _, path in sorted(archived, reverse=True))
+        return paths
+    except OSError:
+        return []
+
+
 TIMED_OUT_TRIGGER_REASON = "bounded wait expired before a terminal CodeRabbit response"
 
 
@@ -1885,7 +1940,7 @@ def manual_wait_result(
     input_path: str | None,
     timeout: float,
     poll_interval: float,
-    canonical_record: dict[str, Any] | None = None,
+    canonical_record: dict[str, Any] | list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Wait for one pinned manual request without persisting trigger state."""
 
@@ -1930,9 +1985,38 @@ def manual_wait_result(
     request = {key: value for key, value in pinned.items() if not key.startswith("_")}
     result_base["request"] = request
 
-    if canonical_record is not None:
-        trigger = canonical_record.get("trigger")
-        if isinstance(trigger, dict) and trigger.get("id") == pinned["id"]:
+    canonical_records = (
+        canonical_record
+        if isinstance(canonical_record, list)
+        else [canonical_record]
+        if isinstance(canonical_record, dict)
+        else []
+    )
+    for durable_record in canonical_records:
+        trigger = durable_record.get("trigger")
+        if not isinstance(trigger, dict):
+            continue
+        if trigger.get("id") == pinned["id"]:
+            identity = {
+                "id": trigger.get("id"),
+                "created_at": trigger.get("created_at"),
+                "url": trigger.get("url"),
+                "type": trigger.get("type"),
+                "command": normalize_command(trigger.get("command") or ""),
+            }
+            pinned_identity = {
+                key: pinned[key]
+                for key in ("id", "created_at", "url", "type", "command")
+            }
+            if identity != pinned_identity or durable_record.get("head_sha") != pinned_head:
+                return {
+                    **result_base,
+                    "provenance": "ambiguous/overlapping",
+                    "status": "ambiguous",
+                    "state": "ambiguous",
+                    "terminal": True,
+                    "reason": "a durable trigger record conflicts with the pinned manual request identity",
+                }
             return {
                 **result_base,
                 "provenance": "canonical-recorded",
@@ -2412,13 +2496,16 @@ def main() -> int:
             else None
         )
         if args.wait_latest_request:
+            discovered_records = []
+            for path in default_trigger_record_paths(args.repo, args.pr):
+                discovered_records.append(load_trigger_record(path, args.repo, args.pr))
             result = manual_wait_result(
                 args.repo,
                 args.pr,
                 args.input,
                 args.timeout,
                 args.poll_interval,
-                record,
+                discovered_records,
             )
             if args.json:
                 print(json.dumps(result, indent=2, sort_keys=True))
