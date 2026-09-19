@@ -1011,6 +1011,7 @@ class TelnetServerHandlerTest {
         newHandler(
             registry,
             false,
+            () -> true,
             (ip,
                 proxyConnectionId,
                 session,
@@ -1018,7 +1019,8 @@ class TelnetServerHandlerTest {
                 worldSlug,
                 realmSlug,
                 pointerVersion,
-                listener) -> new CompletableFuture<>());
+                listener) -> new CompletableFuture<>(),
+            1);
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -1029,7 +1031,7 @@ class TelnetServerHandlerTest {
 
       handler.channelActive(ctx);
 
-      int maxDepth = maxBufferDepth();
+      int maxDepth = 1;
       for (int i = 0; i < maxDepth; i++) {
         handler.channelRead0(ctx, "cmd" + i);
       }
@@ -1050,6 +1052,7 @@ class TelnetServerHandlerTest {
         newHandler(
             registry,
             false,
+            () -> true,
             (ip,
                 proxyConnectionId,
                 session,
@@ -1057,7 +1060,8 @@ class TelnetServerHandlerTest {
                 worldSlug,
                 realmSlug,
                 pointerVersion,
-                listener) -> new CompletableFuture<>());
+                listener) -> new CompletableFuture<>(),
+            1);
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -1068,7 +1072,7 @@ class TelnetServerHandlerTest {
 
       handler.channelActive(ctx);
 
-      int maxDepth = maxBufferDepth();
+      int maxDepth = 1;
       for (int i = 0; i < maxDepth; i++) {
         handler.channelRead0(ctx, "cmd" + i);
       }
