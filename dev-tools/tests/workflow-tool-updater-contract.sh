@@ -59,6 +59,61 @@ grep -F 'value = "v9.8.7"' "$tmp/terraform.tf" >/dev/null
 grep -F "value = \"$image_digest\"" "$tmp/terraform.tf" >/dev/null
 test "$(stat -c '%a' "$tmp/authority.env")" = 640
 test "$(stat -c '%a' "$tmp/velero.yaml")" = 600
+python3 - "$ROOT_DIR" <<'PY'
+import importlib.util
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+source = '''resource "helm_release" "velero" {
+  version = "12.2.0"
+  set {
+    name = "image.tag"
+    value = "v1.18.2"
+  }
+  set {
+    name = "image.digest"
+    value = "sha256:old"
+  }
+}
+
+module "unrelated" {
+  set {
+    name = "image.tag"
+    value = "v1.18.2"
+  }
+}
+
+data "unrelated" "projection" {
+  set {
+    name = "image.digest"
+    value = "sha256:old"
+  }
+}
+
+variable "unrelated" {
+  default = "v1.18.2"
+}
+
+output "unrelated" {
+  value = "sha256:old"
+}
+'''
+updated = module.replace_velero_terraform_projection(source, "12.3.0", "1.19.0", "sha256:new")
+if 'version = "12.3.0"' not in updated or 'value = "v1.19.0"' not in updated:
+    raise SystemExit("Velero Terraform resource was not updated")
+if 'value = "sha256:new"' not in updated:
+    raise SystemExit("Velero Terraform image digest was not updated")
+if 'module "unrelated"' not in updated or 'data "unrelated" "projection"' not in updated:
+    raise SystemExit("unrelated Terraform blocks were lost")
+if updated.count('value = "v1.18.2"') != 1 or updated.count('value = "sha256:old"') != 2:
+    raise SystemExit("unrelated Terraform blocks were rewritten")
+if 'default = "v1.18.2"' not in updated or 'output "unrelated"' not in updated:
+    raise SystemExit("variable or output Terraform blocks were lost")
+PY
 python3 - "$ROOT_DIR" "$tmp/authority.env" <<'PY'
 import importlib.util
 import sys

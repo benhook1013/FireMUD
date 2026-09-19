@@ -49,14 +49,58 @@ def replace(text: str, key: str, value: str) -> str:
 def replace_velero_terraform_projection(
     text: str, chart_version: str, velero_version: str, image_digest: str
 ) -> str:
-    release_match = re.search(
-        r'(?ms)^resource "helm_release" "velero" \{.*?(?=^resource |^locals |\Z)',
-        text,
-    )
+    release_match = re.search(r'(?m)^resource\s+"helm_release"\s+"velero"\s*\{', text)
     if release_match is None:
         raise SystemExit("expected one Velero Terraform helm_release projection")
 
-    release = release_match.group(0)
+    # Extract exactly this HCL block. A line-based end marker could accidentally
+    # include an intervening module, data, variable, output, or other top-level
+    # block and let a matching nested `set` entry be rewritten.
+    opening_brace = text.find("{", release_match.start(), release_match.end())
+    depth = 0
+    in_string = False
+    escaped = False
+    line_comment = False
+    block_comment = False
+    index = opening_brace
+    while index < len(text):
+        char = text[index]
+        next_char = text[index + 1] if index + 1 < len(text) else ""
+        if line_comment:
+            if char == "\n":
+                line_comment = False
+        elif block_comment:
+            if char == "*" and next_char == "/":
+                block_comment = False
+                index += 1
+        elif in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char == "#" or (char == "/" and next_char == "/"):
+            line_comment = True
+            if char == "/":
+                index += 1
+        elif char == "/" and next_char == "*":
+            block_comment = True
+            index += 1
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                release_end = index + 1
+                break
+        index += 1
+    else:
+        raise SystemExit("Velero Terraform helm_release projection has an unterminated block")
+
+    release = text[release_match.start() : release_end]
     release, chart_count = re.subn(
         r'(?m)^(\s*version\s*=\s*)"[^"]+"$',
         rf'\g<1>"{chart_version}"',
@@ -78,7 +122,7 @@ def replace_velero_terraform_projection(
         raise SystemExit("expected exactly one Velero Terraform image tag projection")
     if digest_count != 1:
         raise SystemExit("expected exactly one Velero Terraform image digest projection")
-    return text[: release_match.start()] + release + text[release_match.end() :]
+    return text[: release_match.start()] + release + text[release_end:]
 
 
 def staged_file(path: Path, text: str, *, preserve_mode: bool = False) -> Path:

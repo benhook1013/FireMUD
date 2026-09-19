@@ -4,5 +4,7 @@ configuration:
   provider: aws
   defaultVolumesToFsBackup: false
   backupStorageLocation:
-    bucket: firemud-backups
-    prefix: postgres
+    - name: default
+      provider: aws
+      bucket: firemud-backups
+      prefix: postgres

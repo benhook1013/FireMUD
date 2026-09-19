@@ -46,15 +46,15 @@ for required_history_check_fragment in (
         )
 for required_cleanup_fragment in (
     "cleanup() {",
-    'helm uninstall "$release" --namespace "$namespace" --wait >/dev/null 2>&1 || true',
-    'kubectl delete namespace "$namespace" --wait >/dev/null 2>&1 || true',
+    'helm uninstall "$release" --namespace "$namespace" --wait --timeout 180s >/dev/null 2>&1 || true',
+    'kubectl delete namespace "$namespace" --wait --request-timeout=180s --timeout=180s >/dev/null 2>&1 || true',
     "trap cleanup EXIT",
 ):
     if required_cleanup_fragment not in script:
         raise SystemExit(f"Helm proof script must define failure cleanup: {required_cleanup_fragment}")
 strict_cleanup_sequence = (
-    'helm uninstall "$release" --namespace "$namespace" --wait\n'
-    'kubectl delete namespace "$namespace" --wait\n'
+    'helm uninstall "$release" --namespace "$namespace" --wait --timeout 180s\n'
+    'kubectl delete namespace "$namespace" --wait --request-timeout=180s --timeout=180s\n'
     'rm -rf -- "$work_dir"\n'
     "trap - EXIT"
 )

@@ -9,8 +9,8 @@ work_dir="$(mktemp -d)"
 namespace="helm-transaction-proof"
 release="firemud-proof"
 cleanup() {
-  helm uninstall "$release" --namespace "$namespace" --wait >/dev/null 2>&1 || true
-  kubectl delete namespace "$namespace" --wait >/dev/null 2>&1 || true
+  helm uninstall "$release" --namespace "$namespace" --wait --timeout 180s >/dev/null 2>&1 || true
+  kubectl delete namespace "$namespace" --wait --request-timeout=180s --timeout=180s >/dev/null 2>&1 || true
   rm -rf -- "$work_dir"
 }
 trap cleanup EXIT
@@ -58,8 +58,8 @@ if len(history) < 2:
 helm rollback "$release" 1 --namespace "$namespace" --wait
 helm status "$release" --namespace "$namespace" >/dev/null
 test "$(kubectl -n "$namespace" get configmap "$release-marker" -o jsonpath='{.data.marker}')" = installed
-helm uninstall "$release" --namespace "$namespace" --wait
-kubectl delete namespace "$namespace" --wait
+helm uninstall "$release" --namespace "$namespace" --wait --timeout 180s
+kubectl delete namespace "$namespace" --wait --request-timeout=180s --timeout=180s
 rm -rf -- "$work_dir"
 trap - EXIT
 

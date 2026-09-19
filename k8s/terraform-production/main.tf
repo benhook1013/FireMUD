@@ -69,15 +69,15 @@ resource "helm_release" "velero" {
     value = "sha256:37396519f399536e5f01427d723565ae69294ec3fb5625cf1c87c09eaa9de16b"
   }
   set {
-    name  = "configuration.provider"
+    name  = "configuration.backupStorageLocation[0].provider"
     value = var.velero_provider
   }
   set {
-    name  = "configuration.backupStorageLocation.bucket"
+    name  = "configuration.backupStorageLocation[0].bucket"
     value = var.velero_bucket
   }
   set {
-    name  = "configuration.backupStorageLocation.prefix"
+    name  = "configuration.backupStorageLocation[0].prefix"
     value = var.velero_bucket_prefix
   }
   set {

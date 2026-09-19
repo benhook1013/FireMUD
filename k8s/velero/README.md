@@ -21,8 +21,10 @@ configuration:
   provider: aws
   defaultVolumesToFsBackup: false
   backupStorageLocation:
-    bucket: firemud-backups
-    prefix: postgres
+    - name: default
+      provider: aws
+      bucket: firemud-backups
+      prefix: postgres
 ```
 
 For Google Cloud Storage set `provider: gcp` and adjust the bucket name accordingly.
@@ -68,13 +70,13 @@ configuration:
   provider: aws
   defaultVolumesToFsBackup: false
   backupStorageLocation:
-    name: local
-    provider: aws
-    bucket: firemud-backups
-    config:
-      region: minio
-      s3Url: http://minio.minio.svc.cluster.local:9000
-      insecureSkipTLSVerify: true
+    - name: local
+      provider: aws
+      bucket: firemud-backups
+      config:
+        region: minio
+        s3Url: http://minio.minio.svc.cluster.local:9000
+        insecureSkipTLSVerify: true
 credentials:
   useSecret: true
   existingSecret: velero-minio-creds

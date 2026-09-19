@@ -1469,7 +1469,7 @@ def main() -> int:
         or velero_manual_rule.get("matchManagers") != ["custom.regex"]
         or velero_manual_rule.get("matchPackageNames") != ["velero/velero"]
         or velero_manual_rule.get("prBodyNotes") != [
-            "Run `python3 dev-tools/maintenance/update-workflow-tool.py velero <version> --image-evidence-file <path>` before merging so the Velero image digest and CLI archive checksum are verified and updated together."
+            "Run `python3 dev-tools/maintenance/update-workflow-tool.py velero <version> --velero-chart-version <chart-version> --image-evidence-file <path>` before merging so the Velero chart, image digest, and CLI archive checksum are verified and updated together."
         ]
     ):
         fail("Velero custom manager updates must carry the transactional updater PR note")
