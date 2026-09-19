@@ -120,6 +120,17 @@
     },
     {
       "customType": "regex",
+      "description": "Signal Velero chart releases while preserving transactional projections",
+      "managerFilePatterns": ["/^config/workflow-tool-versions\\.env$/"],
+      "matchStrings": ["# renovate-chart: datasource=helm depName=velero registryUrl=https://vmware-tanzu\\.github\\.io/helm-charts\\nVELERO_CHART_VERSION=(?<currentValue>\\S+)"],
+      "datasourceTemplate": "helm",
+      "depNameTemplate": "velero",
+      "registryUrlTemplate": "https://vmware-tanzu.github.io/helm-charts",
+      "versioningTemplate": "semver",
+      "currentValueTemplate": "{{{currentValue}}}"
+    },
+    {
+      "customType": "regex",
       "description": "Signal Velero image releases while preserving the CLI checksum authority",
       "managerFilePatterns": ["/^config/workflow-tool-versions\\.env$/"],
       "matchStrings": ["# renovate-image: datasource=docker depName=velero/velero\\nVELERO_VERSION=(?<currentValue>\\S+)\\nVELERO_IMAGE_DIGEST=(?<currentDigest>sha256:[0-9a-f]{64})"],
@@ -214,6 +225,7 @@
         "custom.regex"
       ],
       "matchPackageNames": [
+        "velero",
         "velero/velero"
       ],
       "prBodyNotes": [

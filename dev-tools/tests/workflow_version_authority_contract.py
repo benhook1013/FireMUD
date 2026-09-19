@@ -1259,6 +1259,21 @@ def main() -> int:
         fail("Terraform Velero Helm release must pin the canonical server image tag")
     if not has_hcl_set_value(velero_release, "image.digest", a["VELERO_IMAGE_DIGEST"]):
         fail("Terraform Velero Helm release must pin the canonical server image digest")
+    if not has_hcl_set_value(velero_release, "configuration.backupStorageLocation[0].name", "default"):
+        fail("Terraform Velero Helm release must name its default backup storage location")
+    minio_values = yaml.safe_load((root / "k8s/velero/values-minio.yaml").read_text())
+    minio_locations = (
+        (minio_values.get("configuration") or {}).get("backupStorageLocation")
+        if isinstance(minio_values, dict)
+        else None
+    )
+    if (
+        not isinstance(minio_locations, list)
+        or len(minio_locations) != 1
+        or not isinstance(minio_locations[0], dict)
+        or minio_locations[0].get("name") != "default"
+    ):
+        fail("MinIO Velero values must name their backup storage location default")
 
     negative_release = (
         'resource "helm_release" "velero" {\n'
@@ -1299,8 +1314,8 @@ def main() -> int:
     if not {"nodenv", "pyenv", "pip_requirements", "custom.regex"} <= set(renovate["enabledManagers"]):
         fail("Renovate managers incomplete")
     custom_managers = renovate.get("customManagers", [])
-    if len(custom_managers) != 10:
-        fail("Renovate must define three version-only, five checksum-backed, one Velero, and one ORT/ZAP image authority manager")
+    if len(custom_managers) != 11:
+        fail("Renovate must define three version-only, five checksum-backed, one Velero chart, one Velero image, and one ORT/ZAP image authority manager")
 
     def translate_renovate_pattern(pattern_source):
         return re.sub(r"\(\?<([A-Za-z_])", r"(?P<\1", pattern_source)
@@ -1347,6 +1362,7 @@ def main() -> int:
     expected_renovate_dependencies.update(
         (expected_image_dep_names[x], a[f"{x}_VERSION"]) for x in expected_image_dep_names
     )
+    expected_renovate_dependencies.update((("velero", a["VELERO_CHART_VERSION"]),))
     expected_renovate_dependencies.update((("velero/velero", a["VELERO_VERSION"]),))
     matched = Counter()
     version_only_specs = {
@@ -1445,6 +1461,28 @@ def main() -> int:
             fail(f"{dep_name} checksum manager replacement must preserve one complete authority block")
         if rendered_match.group("currentChecksumVersion") != "9.9.9" or rendered_match.group("currentDigest") != "d" * 64:
             fail(f"{dep_name} checksum manager replacement must update both checksum fields")
+    velero_chart_managers = [manager for manager in custom_managers if manager.get("depNameTemplate") == "velero"]
+    if len(velero_chart_managers) != 1:
+        fail("Renovate must define exactly one Velero chart manager")
+    velero_chart_manager = velero_chart_managers[0]
+    if (
+        velero_chart_manager.get("datasourceTemplate") != "helm"
+        or velero_chart_manager.get("registryUrlTemplate") != "https://vmware-tanzu.github.io/helm-charts"
+        or velero_chart_manager.get("versioningTemplate") != "semver"
+        or velero_chart_manager.get("currentValueTemplate") != "{{{currentValue}}}"
+        or "autoReplaceStringTemplate" in velero_chart_manager
+    ):
+        fail("Velero chart manager must signal Helm releases without automatic projection")
+    velero_chart_pattern_sources = velero_chart_manager.get("matchStrings", [None])
+    if len(velero_chart_pattern_sources) != 1:
+        fail("Velero chart manager must define one match pattern")
+    try:
+        velero_chart_pattern = compile_re2_pattern(velero_chart_pattern_sources[0])
+    except (re.error, TypeError) as error:
+        fail(f"Velero chart manager pattern is invalid: {error}")
+    velero_chart_matches = list(velero_chart_pattern.finditer(authority_text))
+    if len(velero_chart_matches) != 1 or velero_chart_matches[0].group("currentValue") != a["VELERO_CHART_VERSION"]:
+        fail("Velero chart manager must match the canonical chart authority exactly once")
     velero_managers = [manager for manager in custom_managers if manager.get("depNameTemplate") == "velero/velero"]
     if len(velero_managers) != 1:
         fail("Renovate must define exactly one Velero image manager")
@@ -1560,7 +1598,7 @@ def main() -> int:
     if (
         velero_manual_rule is None
         or velero_manual_rule.get("matchManagers") != ["custom.regex"]
-        or velero_manual_rule.get("matchPackageNames") != ["velero/velero"]
+        or velero_manual_rule.get("matchPackageNames") != ["velero", "velero/velero"]
         or velero_manual_rule.get("prBodyNotes") != [
             "Run `python3 dev-tools/maintenance/update-workflow-tool.py velero <version> --velero-dockerfile <path> --terraform-file <path> --velero-chart-version <chart-version> --image-evidence-file <path>` before merging so the Velero chart, verifier Dockerfile image digest, Terraform projection, and CLI archive checksum are verified and updated together."
         ]
@@ -1568,6 +1606,8 @@ def main() -> int:
         fail("Velero custom manager updates must carry the transactional updater PR note")
     if "# renovate-image: datasource=docker depName=velero/velero" not in authority_text:
         fail("Velero authority must retain its Renovate image manager marker")
+    if "# renovate-chart: datasource=helm depName=velero registryUrl=https://vmware-tanzu.github.io/helm-charts" not in authority_text:
+        fail("Velero authority must retain its Renovate chart manager marker")
 
     proto = (root / "gradle/proto-convention.gradle").read_text()
     if (

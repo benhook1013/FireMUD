@@ -47,6 +47,7 @@ run_case missing-server fail '{"clientVersion":{"gitVersion":"v1.34.5"}}' 'kubec
 python3 - "$ROOT_DIR" <<'PY'
 import copy
 import pathlib
+import re
 import sys
 
 import yaml
@@ -66,6 +67,20 @@ def persists_kubeconfig(step):
         return isinstance(options, dict) and str(options.get("export-to-github-env", "true")).lower() != "false"
     run = str(step.get("run", ""))
     return "GITHUB_ENV" in run and "KUBECONFIG=" in run
+
+
+def executable_invocation_count(run):
+    command_pattern = re.compile(
+        rf"(?:^|[;&|])[ \t]*(?:(?:bash|sh)[ \t]+)?\./{re.escape(skew_script)}(?=$|[ \t])"
+    )
+    count = 0
+    for raw_line in run.splitlines():
+        line = raw_line.lstrip()
+        if not line or line.startswith("#"):
+            continue
+        line = line.split("#", 1)[0]
+        count += len(command_pattern.findall(line))
+    return count
 
 
 def validate(workflow, fixture_name, required_jobs=()):
@@ -90,7 +105,7 @@ def validate(workflow, fixture_name, required_jobs=()):
             run = str(step.get("run", ""))
             local = has_kubeconfig(step.get("env", {}))
             persistent = persists_kubeconfig(step)
-            invocation_count = run.count(skew_script)
+            invocation_count = executable_invocation_count(run)
             if invocation_count:
                 skew_invocations[job_name] = skew_invocations.get(job_name, 0) + invocation_count
                 if not (established or local):
@@ -172,6 +187,21 @@ step_env_fixture["jobs"]["verify"]["steps"].extend([
     {"name": "Reject leaked step-local kubeconfig", "run": f"bash ./{skew_script}"},
 ])
 expect_rejected(step_env_fixture, "step-local env fixture")
+
+# A commented-out invocation must not satisfy the exactly-once command contract.
+commented_invocation_fixture = copy.deepcopy(manual_backup)
+for step in commented_invocation_fixture["jobs"]["verify"]["steps"]:
+    if isinstance(step, dict) and isinstance(step.get("run"), str):
+        step["run"] = "\n".join(line for line in step["run"].splitlines() if skew_script not in line)
+commented_invocation_fixture["jobs"]["verify"]["steps"].append(
+    {"name": "Commented skew invocation", "run": f"# bash ./{skew_script}"}
+)
+expect_rejected(
+    commented_invocation_fixture,
+    "commented invocation fixture",
+    "must invoke the shared kubectl version skew preflight exactly once",
+    required_jobs=("verify",),
+)
 
 # A hosted workflow must also reject a skew invocation that precedes its kubeconfig setup.
 hosted_wrong_order_fixture = copy.deepcopy(hosted_workflows["preview-janitor.yml"])

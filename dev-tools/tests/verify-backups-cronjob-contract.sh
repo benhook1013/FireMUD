@@ -43,6 +43,12 @@ if binding["roleRef"] != {
     "name": "verify-velero-backups-reader",
 }:
     raise SystemExit("backup verifier RoleBinding must target the read-only Role")
+if (
+    cronjob.get("kind") != "CronJob"
+    or cronjob.get("metadata", {}).get("name") != "verify-velero-backups"
+    or cronjob.get("metadata", {}).get("namespace") != "firemud"
+):
+    raise SystemExit("backup verifier CronJob must be named verify-velero-backups in firemud")
 pod = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]
 container = pod["containers"][0]
 expected_image = (

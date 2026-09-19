@@ -71,7 +71,7 @@ Example `values-minio.yaml` config:
 configuration:
   defaultVolumesToFsBackup: false
   backupStorageLocation:
-    - name: local
+    - name: default
       provider: aws
       bucket: firemud-backups
       config:
