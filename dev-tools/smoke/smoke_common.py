@@ -20,6 +20,10 @@ class TransientUpstreamSmokeFailure(ProbeOperationalFailure):
 
 
 RETRYABLE_STARTUP_COMMAND_LABELS = frozenset({"WORLDS", "LOGIN"})
+INVALID_COMMAND_LINE_ERROR = "commands must not contain embedded CR or LF"
+PLAINTEXT_TELNET_HOST_ERROR = (
+    "tls_enabled=False requires a localhost-equivalent Telnet host"
+)
 
 
 def is_localhost_equivalent(host):
@@ -283,6 +287,15 @@ def redact_login_credential(response, command):
     return redacted
 
 
+def _normalize_command_line(command):
+    if not isinstance(command, str):
+        raise TypeError("command must be a string")
+    normalized = command.rstrip("\r\n")
+    if "\r" in normalized or "\n" in normalized:
+        raise ValueError(INVALID_COMMAND_LINE_ERROR)
+    return normalized
+
+
 def redact_login_command(command):
     if not isinstance(command, str):
         return command
@@ -401,7 +414,7 @@ def wait_for_incremental_response(
                         response = drained_response
                 return response
         else:
-            time.sleep(idle_sleep_seconds)
+            time.sleep(min(idle_sleep_seconds, max(0, deadline - time.time())))
     diagnostic_response = sanitize_response(response) if sanitize_response else response
     raise ProbeOperationalFailure(
         f"Expected response containing {expected_substrings}, got '{diagnostic_response}'"
@@ -473,7 +486,10 @@ def recv_until_socket(sock, expected_substring, timeout):
     chunks = []
     while time.time() < deadline:
         try:
-            sock.settimeout(deadline - time.time())
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                break
+            sock.settimeout(remaining)
             data = sock.recv(4096)
         except (TimeoutError, BlockingIOError):
             break
@@ -486,12 +502,17 @@ def recv_until_socket(sock, expected_substring, timeout):
     return "".join(chunks)
 
 
-def drain_available_socket(sock, quiet_timeout=0.25):
-    deadline = time.time() + quiet_timeout
+def drain_available_socket(sock, quiet_timeout=0.25, deadline=None):
+    quiet_deadline = time.time() + quiet_timeout
+    if deadline is not None:
+        quiet_deadline = min(quiet_deadline, deadline)
     chunks = []
-    while time.time() < deadline:
+    while time.time() < quiet_deadline:
         try:
-            sock.settimeout(max(0.05, deadline - time.time()))
+            remaining = quiet_deadline - time.time()
+            if remaining <= 0:
+                break
+            sock.settimeout(remaining)
             data = sock.recv(4096)
         except (TimeoutError, BlockingIOError):
             break
@@ -511,18 +532,27 @@ def send_telnet_command_and_expect(
     drain_timeout=0.25,
     step_results=None,
 ):
+    line = _normalize_command_line(line)
     start_index = len(responses)
     started_at = time.time()
+    command_deadline = started_at + timeout_seconds
     command_bytes = line.encode("iso-8859-1").replace(b"\xff", b"\xff\xff")
     sock.sendall(command_bytes + b"\r\n")
+    remaining_timeout = max(0, command_deadline - time.time())
     response = wait_for_incremental_response(
-        lambda: recv_until_socket(sock, "", 0.5),
+        lambda: recv_until_socket(
+            sock, "", max(0, command_deadline - time.time())
+        ),
         responses,
         start_index,
         expected_substrings,
-        timeout_seconds,
+        remaining_timeout,
         "".join,
-        lambda: drain_available_socket(sock, drain_timeout),
+        lambda: drain_available_socket(
+            sock,
+            min(drain_timeout, max(0, command_deadline - time.time())),
+            deadline=command_deadline,
+        ),
         retry_upstream_failure=label in RETRYABLE_STARTUP_COMMAND_LABELS,
         sanitize_response=lambda value: redact_login_credential(value, line),
     )
@@ -584,6 +614,8 @@ def open_telnet_socket(
         raise ValueError(
             "TLS server hostname and CA file are only valid for TLS Telnet connections"
         )
+    if not tls_enabled and not is_localhost_equivalent(host):
+        raise ValueError(PLAINTEXT_TELNET_HOST_ERROR)
 
     raw_socket = socket.create_connection((host, port), timeout=timeout_seconds)
     if not tls_enabled:
@@ -692,6 +724,7 @@ def send_websocket_command_and_expect(
     timeout_seconds,
     step_results=None,
 ):
+    line = _normalize_command_line(line)
     start_index = len(responses)
     started_at = time.time()
     ws.send(line)

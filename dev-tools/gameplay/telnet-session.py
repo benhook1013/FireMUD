@@ -105,6 +105,10 @@ def _is_loopback_host(host: str) -> bool:
 INSECURE_HOST_ERROR = (
     "--allow-insecure requires --host to be localhost or a loopback address literal"
 )
+INVALID_COMMAND_ERROR = "Telnet commands must not contain embedded CR or LF"
+EVIDENCE_FAILURE_DIAGNOSTIC = (
+    "TELNET SESSION FAILED: unable to persist session evidence"
+)
 
 
 class _TransportArgumentParser(argparse.ArgumentParser):
@@ -359,6 +363,8 @@ class TelnetSession:
         self.disconnect_reason: str | None = None
         self.disconnect_failed = False
         self.idle_timeout_recorded = False
+        self.persistence_failed = False
+        self.persistence_failure_lock = threading.Lock()
         self.parser = TelnetParser()
         self.redaction_patterns: list[tuple[bytes, bytes]] = []
         self.redaction_tail = b""
@@ -387,8 +393,42 @@ class TelnetSession:
             )
             self.output(f"[{record['seq']}] REDACTION SUPPRESSED ({phase}): {detail}")
 
-    def _append(self, direction: str, event: str, **fields) -> dict:
-        record = self.store.append(direction, event, **fields)
+    def _shutdown_socket(self) -> None:
+        if self.socket is None:
+            return
+        try:
+            self.socket.shutdown(socket.SHUT_RDWR)
+        except Exception:
+            pass
+        try:
+            self.socket.close()
+        except Exception:
+            pass
+
+    def _fail_persistence(self) -> None:
+        with self.persistence_failure_lock:
+            if self.persistence_failed:
+                return
+            self.persistence_failed = True
+            self.closed = True
+            self.disconnect_recorded = True
+            self.disconnect_reason = "evidence_failure"
+            self.disconnect_failed = True
+            self.disconnect_event.set()
+        try:
+            self.output(EVIDENCE_FAILURE_DIAGNOSTIC)
+        except Exception:
+            pass
+        self._shutdown_socket()
+
+    def _append(self, direction: str, event: str, **fields) -> dict | None:
+        if self.persistence_failed:
+            return None
+        try:
+            record = self.store.append(direction, event, **fields)
+        except Exception:
+            self._fail_persistence()
+            return None
         self._show(record)
         return record
 
@@ -422,6 +462,8 @@ class TelnetSession:
             self._append("system", "error", reason="connect", detail=str(exc))
             raise
         self._append("system", "connect", host=self.host, port=self.port)
+        if self.persistence_failed:
+            raise OSError("Unable to persist session evidence")
         self.receiver = threading.Thread(target=self._receive_loop, name="firemud-telnet-receiver", daemon=True)
         self.receiver.start()
 
@@ -520,6 +562,8 @@ class TelnetSession:
     def _receive_loop(self) -> None:
         assert self.socket is not None
         while True:
+            if self.persistence_failed:
+                return
             try:
                 chunk = self.socket.recv(4096)
             except TimeoutError:
@@ -527,6 +571,8 @@ class TelnetSession:
                     if not self.closed and not self.idle_timeout_recorded:
                         self._append("inbound", "timeout", reason="read_idle")
                         self.idle_timeout_recorded = True
+                if self.persistence_failed:
+                    return
                 continue
             except OSError as exc:
                 self._record_disconnect(
@@ -545,6 +591,8 @@ class TelnetSession:
                         "received",
                         text=trailing.decode("iso-8859-1", errors="replace"),
                     )
+                if self.persistence_failed:
+                    return
                 self._append("system", "disconnect", reason="remote_eof")
                 return
             with self.state_lock:
@@ -552,6 +600,8 @@ class TelnetSession:
             payload, negotiations = self.parser.feed(chunk)
             for command, option, response in negotiations:
                 self._append("inbound", "telnet_negotiation", command=command, option=option)
+                if self.persistence_failed:
+                    return
                 if response is not None:
                     with self.send_lock:
                         try:
@@ -567,6 +617,8 @@ class TelnetSession:
                                 ),
                             )
                             return
+                    if self.persistence_failed:
+                        return
                     response_name = "DONT" if command == "WILL" else "WONT"
                     self._append(
                         "outbound",
@@ -581,9 +633,13 @@ class TelnetSession:
                     "received",
                     text=safe_payload.decode("iso-8859-1", errors="replace"),
                 )
+                if self.persistence_failed:
+                    return
 
     def send_command(self, command: str) -> None:
         command = command.rstrip("\r\n")
+        if "\r" in command or "\n" in command:
+            raise ValueError(INVALID_COMMAND_ERROR)
         redaction = _login_redaction(command)
         if redaction:
             safe, raw, replacement = redaction
@@ -606,6 +662,8 @@ class TelnetSession:
                     self.redaction_patterns.append((raw, replacement))
                 self.idle_timeout_recorded = False
                 self._append("outbound", "command", text=display)
+                if self.persistence_failed:
+                    raise OSError("Unable to persist session evidence")
                 wire_command = _iso88591_bytes(command).replace(
                     bytes((IAC,)), bytes((IAC, IAC))
                 )
@@ -657,15 +715,7 @@ class TelnetSession:
                 return
             self.closed = True
         self._append("local", "close", reason=reason)
-        if self.socket is not None:
-            try:
-                self.socket.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
-            try:
-                self.socket.close()
-            except OSError:
-                pass
+        self._shutdown_socket()
         self._record_disconnect(reason, local=True)
         if self.receiver and self.receiver is not threading.current_thread():
             self.receiver.join(timeout=max(1.0, self.read_timeout * 4))
@@ -807,7 +857,7 @@ def run_connect(args: argparse.Namespace) -> int:
             elif line:
                 try:
                     session.send_command(line)
-                except (OSError, RuntimeError) as exc:
+                except (OSError, RuntimeError, ValueError) as exc:
                     print(f"Unable to send command: {exc}", file=sys.stderr)
                     return 1
     finally:
