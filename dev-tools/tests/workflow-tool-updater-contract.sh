@@ -205,6 +205,65 @@ if updated.count('value = "v1.18.2"') != 1 or updated.count('value = "sha256:old
 if 'default = "v1.18.2"' not in updated or 'output "unrelated"' not in updated:
     raise SystemExit("variable or output Terraform blocks were lost")
 PY
+python3 - "$ROOT_DIR" <<'PY'
+import importlib.util
+import re
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+cases = (
+    ("<<EOT", "EOT", "} misleading closing brace\n# misleading comment {\n\"misleading quote }\" // comment\n"),
+    ("<<-EOT", "EOT", "  } misleading closing brace\n  # misleading comment {\n  \"misleading quote }\" // comment\n"),
+)
+for introducer, marker, body in cases:
+    terminator = marker if introducer == "<<EOT" else f"  {marker}"
+    source = f'''resource "helm_release" "velero" {{
+  values = {introducer}
+{body}{terminator}
+  version = "12.2.0"
+  set {{
+    name = "image.tag"
+    value = "v1.18.2"
+  }}
+  set {{
+    name = "image.digest"
+    value = "sha256:old"
+  }}
+}}
+
+resource "unrelated" "projection" {{
+  value = "sha256:unrelated"
+}}
+'''
+    updated = module.replace_velero_terraform_projection(
+        source, "12.3.0", "1.19.0", "sha256:new"
+    )
+    release_start = updated.index('resource "helm_release" "velero" {')
+    release_end = updated.index('\n\nresource "unrelated" "projection"', release_start)
+    updated_release = updated[release_start:release_end]
+    if re.search(r'(?m)^[ \t]*version[ \t]*=[ \t]*"12\.3\.0"[ \t]*$', updated_release) is None:
+        raise SystemExit(f"{introducer} case did not update the Velero chart version")
+    if 'name = "image.tag"\n    value = "v1.19.0"' not in updated_release:
+        raise SystemExit(f"{introducer} case did not update the Velero image tag")
+    if 'name = "image.digest"\n    value = "sha256:new"' not in updated_release:
+        raise SystemExit(f"{introducer} case did not update the Velero image digest")
+    if 'resource "unrelated" "projection"' not in updated or 'sha256:unrelated' not in updated:
+        raise SystemExit(f"{introducer} case lost the following unrelated block")
+    if module.replace_velero_terraform_projection(updated, "12.3.0", "1.19.0", "sha256:new") != updated:
+        raise SystemExit(f"{introducer} case is not idempotent")
+
+unterminated = '''resource "helm_release" "velero" {
+  values = <<EOT
+  } misleading body brace
+'''
+if module.find_hcl_block_span(unterminated, 'resource "helm_release" "velero"') is not None:
+    raise SystemExit("unterminated heredoc was not rejected")
+PY
 python3 - "$ROOT_DIR" "$tmp/authority.env" <<'PY'
 import importlib.util
 import sys

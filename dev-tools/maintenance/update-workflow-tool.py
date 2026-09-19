@@ -55,6 +55,32 @@ def read_velero_projection(path: Path, projection_type: str) -> str:
         ) from exc
 
 
+HCL_HEREDOC_INTRODUCER = re.compile(r"<<(-?)([A-Za-z_][A-Za-z0-9_-]*)")
+
+
+def skip_hcl_heredoc(
+    text: str, introducer_end: int, marker: str, allow_indentation: bool
+) -> int | None:
+    """Return the offset after a heredoc, or None when its terminator is absent."""
+
+    line_end = text.find("\n", introducer_end)
+    if line_end == -1:
+        return None
+    line_start = line_end + 1
+    while line_start <= len(text):
+        line_end = text.find("\n", line_start)
+        if line_end == -1:
+            line_end = len(text)
+        line = text[line_start:line_end].rstrip("\r")
+        candidate = line.lstrip(" \t") if allow_indentation else line
+        if candidate == marker:
+            return line_end if line_end == len(text) else line_end + 1
+        if line_end == len(text):
+            break
+        line_start = line_end + 1
+    return None
+
+
 def find_hcl_block_span(text: str, header: str) -> tuple[int, int] | None:
     """Find one exact HCL block, preserving comment and string boundaries."""
 
@@ -95,6 +121,19 @@ def find_hcl_block_span(text: str, header: str) -> tuple[int, int] | None:
         elif char == "/" and next_char == "*":
             block_comment = True
             index += 1
+        elif char == "<" and next_char == "<":
+            heredoc = HCL_HEREDOC_INTRODUCER.match(text, index)
+            if heredoc is not None:
+                heredoc_end = skip_hcl_heredoc(
+                    text,
+                    heredoc.end(),
+                    heredoc.group(2),
+                    heredoc.group(1) == "-",
+                )
+                if heredoc_end is None:
+                    return None
+                index = heredoc_end
+                continue
         elif char == "{":
             depth += 1
         elif char == "}":
