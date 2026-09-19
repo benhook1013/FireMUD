@@ -348,6 +348,41 @@ def proxy_egress_destinations(policy):
 
 enabled = policies(sys.argv[1])
 disabled = policies(sys.argv[2])
+controller_ingress = enabled.get("account-service-controller-ingress")
+expected_controller_ingress = {
+    "from": [
+        {
+            "namespaceSelector": {
+                "matchLabels": {"kubernetes.io/metadata.name": "firemud-system"}
+            },
+            "podSelector": {
+                "matchLabels": {
+                    "app.kubernetes.io/name": "hosted-environment-identity-controller",
+                    "app.kubernetes.io/component": "controller",
+                }
+            },
+        }
+    ],
+    "ports": [{"protocol": "TCP", "port": 6565}],
+}
+if controller_ingress is None:
+    raise SystemExit(
+        "hosted Helm omitted the Account ingress policy for the identity controller"
+    )
+if controller_ingress.get("spec", {}).get("podSelector") != {
+    "matchLabels": {"app": "account-service"}
+}:
+    raise SystemExit(
+        "identity controller ingress policy must select only the Account workload"
+    )
+if controller_ingress.get("spec", {}).get("policyTypes") != ["Ingress"]:
+    raise SystemExit(
+        "identity controller ingress policy must not change Account egress policy"
+    )
+if controller_ingress["spec"].get("ingress") != [expected_controller_ingress]:
+    raise SystemExit(
+        "identity controller ingress policy must allow only firemud-system/controller TCP/6565"
+    )
 required_base_egress = {
     ("kube-dns", (53, 53)),
     ("game-session-service", (6565,)),

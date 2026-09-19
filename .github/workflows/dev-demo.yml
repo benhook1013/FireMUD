@@ -957,11 +957,17 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "$REQUESTER_KUBECONFIG" ]]; then
-            echo "Hosted identity requester credentials are unavailable; skipping identity retirement."
+            echo "Hosted identity requester credentials are unavailable; retirement cannot proceed."
             echo "available=false" >> "$GITHUB_OUTPUT"
           else
             echo "available=true" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Require Hosted identity requester credentials for retirement
+        if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available != 'true' }}
+        run: |
+          echo "::error title=Missing Hosted identity requester credentials::Runtime deletion completed, but HostedEnvironmentIdentity/dev-demo was retained because retirement credentials are unavailable." >&2
+          exit 1
 
       - name: Write hosted identity requester kubeconfig
         if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available == 'true' }}
@@ -980,6 +986,12 @@ jobs:
           set -euo pipefail
           bash ./dev-tools/hosted/shared/request-hosted-identity.sh --discover-api \
             >> "$GITHUB_OUTPUT"
+
+      - name: Require HostedEnvironmentIdentity API for retirement
+        if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available == 'true' && steps.identity-api.outputs.served != 'true' }}
+        run: |
+          echo "::error title=HostedEnvironmentIdentity API unavailable::Runtime deletion completed, but HostedEnvironmentIdentity/dev-demo was retained because the controller API is unavailable." >&2
+          exit 1
 
       - name: Check HostedEnvironmentIdentity existence before retirement
         id: identity-existence

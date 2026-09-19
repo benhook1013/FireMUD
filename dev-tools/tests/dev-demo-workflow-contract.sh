@@ -474,8 +474,10 @@ destroy_order = (
     "Delete dev-demo namespace and release",
     "Confirm exact dev-demo runtime NotFound",
     "Check Hosted identity requester credentials",
+    "Require Hosted identity requester credentials for retirement",
     "Write hosted identity requester kubeconfig",
     "Discover HostedEnvironmentIdentity API",
+    "Require HostedEnvironmentIdentity API for retirement",
     "Check HostedEnvironmentIdentity existence before retirement",
     "Apply fixed dev-demo Retired request",
     "Observe terminal dev-demo retirement and delete request",
@@ -550,10 +552,26 @@ for required in (
     'if [[ -z "$REQUESTER_KUBECONFIG" ]]',
     "available=false",
     "available=true",
-    "skipping identity retirement",
+    "retirement cannot proceed",
 ):
     if required not in destroy_requester_check["run"]:
         raise SystemExit(f"dev-demo destroy requester credential guard lacks {required}")
+retirement_credentials_requirement = destroy_by_name[
+    "Require Hosted identity requester credentials for retirement"
+]
+if retirement_credentials_requirement.get("if") != (
+    "${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && "
+    "steps.requester-credentials.outputs.available != 'true' }}"
+):
+    raise SystemExit(
+        "dev-demo destroy must fail closed when retirement requester credentials are unavailable"
+    )
+if "HostedEnvironmentIdentity/dev-demo was retained" not in retirement_credentials_requirement.get(
+    "run", ""
+):
+    raise SystemExit(
+        "dev-demo destroy requester credential failure must state that retained identity is safe"
+    )
 destroy_identity_api = destroy_by_name["Discover HostedEnvironmentIdentity API"]
 if destroy_identity_api.get("id") != "identity-api":
     raise SystemExit("dev-demo destroy API discovery must publish a stable step output")
@@ -587,6 +605,23 @@ if destroy_identity_api["run"] != (
     '  >> "$GITHUB_OUTPUT"\n'
 ):
     raise SystemExit("dev-demo destroy must use the shared API discovery helper")
+retirement_api_requirement = destroy_by_name[
+    "Require HostedEnvironmentIdentity API for retirement"
+]
+if retirement_api_requirement.get("if") != (
+    "${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && "
+    "steps.requester-credentials.outputs.available == 'true' && "
+    "steps.identity-api.outputs.served != 'true' }}"
+):
+    raise SystemExit(
+        "dev-demo destroy must fail closed when the HostedEnvironmentIdentity API is unavailable"
+    )
+if "HostedEnvironmentIdentity/dev-demo was retained" not in retirement_api_requirement.get(
+    "run", ""
+):
+    raise SystemExit(
+        "dev-demo destroy API failure must state that retained identity is safe"
+    )
 destroy_requester_writer = destroy_by_name["Write hosted identity requester kubeconfig"]
 expected_destroy_requester_guard = (
     "${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && "
