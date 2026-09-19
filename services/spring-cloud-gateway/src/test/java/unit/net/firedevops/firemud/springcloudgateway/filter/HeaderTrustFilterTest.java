@@ -114,6 +114,26 @@ class HeaderTrustFilterTest {
   }
 
   @Test
+  void stripsConnectTokenCarrierFromNonGameplayRoutes() {
+    HeaderTrustFilter filter = legacyFilter(new GatewayHeaderTrustProperties());
+
+    for (String path : new String[] {"/api/account/profile", "/ws/gameXYZ"}) {
+      MockServerHttpRequest request =
+          MockServerHttpRequest.get(path)
+              .remoteAddress(new InetSocketAddress("1.2.3.4", 0))
+              .header("X-Firemud-Connect-Token", "token-carrier")
+              .build();
+
+      ServerWebExchange mutatedExchange =
+          filterThroughChain(filter, MockServerWebExchange.from(request));
+
+      assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connect-Token"))
+          .as("path=%s", path)
+          .isNull();
+    }
+  }
+
+  @Test
   void derivesClientIpFromForwardedHeadersOnlyWhenRemoteIsTrusted() {
     GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
     props.getForwardedClientIp().setTrustedProxyCidrs(List.of("1.2.3.4/32"));
