@@ -11,6 +11,12 @@ workflow = yaml.safe_load((root / ".github/workflows/ci.yml").read_text())
 job = workflow.get("jobs", {}).get("helm-transaction-proof")
 if not isinstance(job, dict) or job.get("name") != "Helm Transaction Proof":
     raise SystemExit("CI must define the disposable Helm transaction proof job")
+pinned_k3s_image = "rancher/k3s:v1.34.5-k3s1@sha256:998f4db28a13143ada759690b554c5d8c1814ac03f77c1bdd78bbd73875a1379"
+if not isinstance(job.get("env"), dict) or job["env"].get("K3S_IMAGE") != pinned_k3s_image:
+    raise SystemExit("Helm transaction proof must define the exact pinned k3s image once as K3S_IMAGE")
+workflow_text = (root / ".github/workflows/ci.yml").read_text()
+if workflow_text.count(pinned_k3s_image) != 1:
+    raise SystemExit("Helm transaction proof must define the pinned k3s image exactly once")
 needs = job.get("needs", [])
 if isinstance(needs, str):
     needs = [needs]
@@ -19,8 +25,20 @@ if not isinstance(needs, list) or "changes" not in needs:
 job_text = "\n".join(
     str(step.get("run", "")) for step in job.get("steps", []) if isinstance(step, dict)
 )
-if "rancher/k3s:v1.34.5-k3s1@sha256:998f4db28a13143ada759690b554c5d8c1814ac03f77c1bdd78bbd73875a1379" not in job_text:
-    raise SystemExit("Helm transaction proof must use the pinned k3s v1.34.5 server image")
+for required_pull_fragment in (
+    "for attempt in 1 2 3;",
+    'if timeout 120s docker pull "$K3S_IMAGE"; then',
+    'sleep $((attempt * 5))',
+    'if [[ "$pull_succeeded" != true ]]; then',
+    'echo "Unable to pull $K3S_IMAGE after three attempts" >&2',
+):
+    if required_pull_fragment not in job_text:
+        raise SystemExit(
+            "Helm transaction proof must pre-pull its pinned k3s image with bounded retries: "
+            f"{required_pull_fragment}"
+        )
+if "docker run --pull=never --detach" not in job_text or '"$K3S_IMAGE"' not in job_text:
+    raise SystemExit("Helm transaction proof must run the pre-pulled pinned k3s image with --pull=never")
 step_uses = {
     step.get("uses")
     for step in job.get("steps", [])

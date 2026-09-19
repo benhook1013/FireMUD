@@ -554,6 +554,8 @@ jobs:
     needs: [changes]
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      K3S_IMAGE: rancher/k3s:v1.34.5-k3s1@sha256:998f4db28a13143ada759690b554c5d8c1814ac03f77c1bdd78bbd73875a1379
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner
@@ -577,12 +579,30 @@ jobs:
         with:
           requirements: yaml
 
+      - name: Pull pinned disposable k3s server image
+        run: |
+          set -euo pipefail
+          pull_succeeded=false
+          for attempt in 1 2 3; do
+            if timeout 120s docker pull "$K3S_IMAGE"; then
+              pull_succeeded=true
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              sleep $((attempt * 5))
+            fi
+          done
+          if [[ "$pull_succeeded" != true ]]; then
+            echo "Unable to pull $K3S_IMAGE after three attempts" >&2
+            exit 1
+          fi
+
       - name: Start pinned disposable k3s server
         run: |
-          docker run --detach --privileged \
+          docker run --pull=never --detach --privileged \
             --name firemud-helm-proof \
             --publish 6443:6443 \
-            rancher/k3s:v1.34.5-k3s1@sha256:998f4db28a13143ada759690b554c5d8c1814ac03f77c1bdd78bbd73875a1379 \
+            "$K3S_IMAGE" \
             server --disable=traefik --disable=servicelb --disable=metrics-server --write-kubeconfig-mode=644
 
       - name: Wait for disposable k3s startup
