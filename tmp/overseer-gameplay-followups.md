@@ -8,7 +8,7 @@ An earlier Overseer judgment that #2786 had enough review applied to its smaller
 
 This section records the current direction and supersedes stale current-PR claims below; it is not a new review ledger. Gameplay should refresh #2786's PR body and LOC section at merge handoff, because the body still describes a 30-file candidate and an older head.
 
-General's next proposed bounded preparation package is the unique readiness-test behavior in old #2701. Compare that small delta against the #2792 successor tree, preserve only still-needed behavior in a draft child if necessary, and leave CodeRabbit ownership with Gameplay. The old 101-file count includes its obsolete #2686 ancestry and does not define the size of the unique package. Direct task messaging is unavailable in this Overseer session, so this assignment still needs relay before it is considered started.
+General verified that old #2701's unique readiness waits and bounded status/JSON helper are already present in #2792; no transplant or new PR is needed, and #2701 remains intact. Next General preparation is the remaining #2686 hosted identity activation: controller-owned Helm consumers plus the trusted dev-demo lifecycle and focused static proof, stacked on #2792 without replaying obsolete controller/Telnet paths or using CodeRabbit. Live served-certificate, consumer-convergence, and `LOGIN -> PLAY -> LOOK` proof follows when a hosted environment is available. Direct task messaging is unavailable in this Overseer session, so the activation assignment needs relay before it is considered started.
 
 ## Historical Gameplay and CI direction — 2026-09-10
 
