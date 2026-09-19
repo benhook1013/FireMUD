@@ -2,6 +2,8 @@
 
 Last refreshed: 2026-09-12. These notes are non-normative continuity guidance. Architecture/design documents own target-state contracts; implementation trackers own implementation, proof, gaps, and handoffs; repository workflow guidance selects process. Refresh owner-reported PR, review, CI, and SHA facts at decision time.
 
+Current queue override (2026-09-19): [Overseer Gameplay Follow-ups](./overseer-gameplay-followups.md#current-gameplay-delivery-and-parked-work--2026-09-19) now records #2786, then #2713 -> #2795, with current live proof and the parked post-delivery queue. The older #2731 -> #2750 -> #2755 -> #2713 -> #2686 -> #2701 queue below is dated historical context, not a live merge instruction; #2686 and #2701 are reconciliation sources rather than intended merges.
+
 ## Confirmed direction
 
 - Continue the separate documentation/corpus-consolidation lane and implementation/proof lanes. Preserve useful cross-boundary findings, but keep substantial persistence, migration, concurrency, runtime, and proof capabilities in explicit owner slices.
