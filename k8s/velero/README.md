@@ -33,6 +33,15 @@ The repository includes a `verify-backups-cronjob.yaml` manifest that runs `dev-
 kubectl apply -f verify-backups-cronjob.yaml -n firemud
 ```
 
+The planned Terraform Helm release is pinned to the verified VMware Tanzu Velero chart `12.2.0`, released 2026-09-16, whose `appVersion` is Velero `1.18.2`. Its server image tag and digest must stay aligned with the `VELERO_VERSION` and `VELERO_IMAGE_DIGEST` authority and the CronJob projection. Update all three projections with the canonical transaction, supplying the chart version explicitly:
+
+```bash
+python3 dev-tools/maintenance/update-workflow-tool.py velero <velero-version> \
+  --velero-chart-version <chart-version> --image-evidence-file <path>
+```
+
+The explicit chart argument is required because Helm chart versions and Velero app versions are independent. This updates repository plans and pre-release manifests only; it does not claim that a live production deployment changed.
+
 ## Local Backup with MinIO
 
 If running backups locally, deploy MinIO on the cluster and configure Velero to use it as the backup storage location. The manifest `minio.yaml` starts a single-node MinIO instance with a `ClusterIP` service and expects a pre-created `minio-creds` secret in the `minio` namespace.

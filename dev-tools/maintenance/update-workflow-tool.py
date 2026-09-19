@@ -46,6 +46,41 @@ def replace(text: str, key: str, value: str) -> str:
     return updated
 
 
+def replace_velero_terraform_projection(
+    text: str, chart_version: str, velero_version: str, image_digest: str
+) -> str:
+    release_match = re.search(
+        r'(?ms)^resource "helm_release" "velero" \{.*?(?=^resource |^locals |\Z)',
+        text,
+    )
+    if release_match is None:
+        raise SystemExit("expected one Velero Terraform helm_release projection")
+
+    release = release_match.group(0)
+    release, chart_count = re.subn(
+        r'(?m)^(\s*version\s*=\s*)"[^"]+"$',
+        rf'\g<1>"{chart_version}"',
+        release,
+    )
+    release, tag_count = re.subn(
+        r'(?ms)^(\s*set\s*\{\s*\n\s*name\s*=\s*"image\.tag"\s*\n\s*value\s*=\s*)"[^"]+"',
+        rf'\g<1>"v{velero_version}"',
+        release,
+    )
+    release, digest_count = re.subn(
+        r'(?ms)^(\s*set\s*\{\s*\n\s*name\s*=\s*"image\.digest"\s*\n\s*value\s*=\s*)"[^"]+"',
+        rf'\g<1>"{image_digest}"',
+        release,
+    )
+    if chart_count != 1:
+        raise SystemExit("expected exactly one Velero Terraform chart version projection")
+    if tag_count != 1:
+        raise SystemExit("expected exactly one Velero Terraform image tag projection")
+    if digest_count != 1:
+        raise SystemExit("expected exactly one Velero Terraform image digest projection")
+    return text[: release_match.start()] + release + text[release_match.end() :]
+
+
 def staged_file(path: Path, text: str, *, preserve_mode: bool = False) -> Path:
     existing_mode = None
     if preserve_mode:
@@ -397,6 +432,13 @@ def main() -> None:
         "--velero-manifest", type=Path, default=REPOSITORY_ROOT / "k8s/velero/verify-backups-cronjob.yaml"
     )
     parser.add_argument(
+        "--terraform-file", type=Path, default=REPOSITORY_ROOT / "k8s/terraform-production/main.tf"
+    )
+    parser.add_argument(
+        "--velero-chart-version",
+        help="required exact VMware Tanzu Velero Helm chart version for Velero updates",
+    )
+    parser.add_argument(
         "--image-evidence-file",
         type=Path,
         help=(
@@ -411,12 +453,20 @@ def main() -> None:
         parser.error("--image-evidence-file is only valid for velero")
     if args.tool == "velero" and args.image_evidence_file is None:
         parser.error("--image-evidence-file is required for velero updates")
+    if args.velero_chart_version is not None and args.tool != "velero":
+        parser.error("--velero-chart-version is only valid for velero")
+    if args.tool == "velero" and args.velero_chart_version is None:
+        parser.error("--velero-chart-version is required for velero updates")
+    if args.velero_chart_version is not None and not re.fullmatch(r"\d+\.\d+\.\d+", args.velero_chart_version):
+        parser.error("Velero chart version must have exactly three numeric parts")
 
     resolved_authority = args.authority.resolve()
     resolved_velero_manifest = args.velero_manifest.resolve()
+    resolved_terraform_file = args.terraform_file.resolve()
     allowed_target_sets = [
         frozenset((resolved_authority,)),
         frozenset((resolved_authority, resolved_velero_manifest)),
+        frozenset((resolved_authority, resolved_velero_manifest, resolved_terraform_file)),
     ]
     with authority_lock(args.authority):
         reconcile_recovery_journal(args.authority, allowed_target_sets)
@@ -452,12 +502,13 @@ def main() -> None:
         authority = replace(authority, f"{stem}_CHECKSUM_VERSION", args.version)
         authority = replace(authority, f"{stem}_SHA256", matches[0])
         manifest = None
+        terraform = None
         if args.tool == "velero":
             if image_digest is None:
                 raise SystemExit("Velero image digest could not be resolved")
+            authority = replace(authority, "VELERO_CHART_VERSION", args.velero_chart_version)
             authority = replace(authority, "VELERO_IMAGE_DIGEST", image_digest)
             manifest = args.velero_manifest.read_text(encoding="utf-8")
-        if args.tool == "velero":
             manifest, count = re.subn(
                 r"image: velero/velero:v\d+\.\d+\.\d+(?:@sha256:[0-9a-f]{64})?",
                 f"image: velero/velero:v{args.version}@{image_digest}",
@@ -465,9 +516,15 @@ def main() -> None:
             )
             if count != 1:
                 raise SystemExit("expected one Velero image projection")
+            terraform = args.terraform_file.read_text(encoding="utf-8")
+            terraform = replace_velero_terraform_projection(
+                terraform, args.velero_chart_version, args.version, image_digest
+            )
         updates = [(args.authority, authority)]
         if manifest is not None:
             updates.append((args.velero_manifest, manifest))
+        if terraform is not None:
+            updates.append((args.terraform_file, terraform))
         transactional_write(updates, authority=args.authority)
 
 

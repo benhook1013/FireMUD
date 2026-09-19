@@ -5,19 +5,20 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/authority.env"
 cp "$ROOT_DIR/k8s/velero/verify-backups-cronjob.yaml" "$tmp/velero.yaml"
+cp "$ROOT_DIR/k8s/terraform-production/main.tf" "$tmp/terraform.tf"
 chmod 0640 "$tmp/authority.env"
 chmod 0600 "$tmp/velero.yaml"
 checksum=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 image_digest=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 printf 'version=9.8.7\n%s  velero-v9.8.7-linux-amd64.tar.gz\n' "$checksum" > "$tmp/checksums"
 echo "velero/velero:v9.8.7@$image_digest" > "$tmp/image-evidence"
-python3 - "$ROOT_DIR" "$tmp/authority.env" "$tmp/checksums" "$tmp/image-evidence" "$tmp/velero.yaml" "$image_digest" <<'PY'
+python3 - "$ROOT_DIR" "$tmp/authority.env" "$tmp/checksums" "$tmp/image-evidence" "$tmp/velero.yaml" "$tmp/terraform.tf" "$image_digest" <<'PY'
 import importlib.util
 import sys
 from pathlib import Path
 
-root, authority, checksum_file, evidence_file, manifest = map(Path, sys.argv[1:6])
-expected_digest = sys.argv[6]
+root, authority, checksum_file, evidence_file, manifest, terraform = map(Path, sys.argv[1:7])
+expected_digest = sys.argv[7]
 spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -40,6 +41,10 @@ sys.argv = [
     str(authority),
     "--velero-manifest",
     str(manifest),
+    "--terraform-file",
+    str(terraform),
+    "--velero-chart-version",
+    "12.2.0",
 ]
 module.main()
 PY
@@ -47,7 +52,11 @@ grep -Fx 'VELERO_VERSION=9.8.7' "$tmp/authority.env" >/dev/null
 grep -Fx 'VELERO_LINUX_AMD64_CHECKSUM_VERSION=9.8.7' "$tmp/authority.env" >/dev/null
 grep -Fx "VELERO_LINUX_AMD64_SHA256=$checksum" "$tmp/authority.env" >/dev/null
 grep -Fx "VELERO_IMAGE_DIGEST=$image_digest" "$tmp/authority.env" >/dev/null
+grep -Fx 'VELERO_CHART_VERSION=12.2.0' "$tmp/authority.env" >/dev/null
 grep -F "image: velero/velero:v9.8.7@$image_digest" "$tmp/velero.yaml" >/dev/null
+grep -F 'version    = "12.2.0"' "$tmp/terraform.tf" >/dev/null
+grep -F 'value = "v9.8.7"' "$tmp/terraform.tf" >/dev/null
+grep -F "value = \"$image_digest\"" "$tmp/terraform.tf" >/dev/null
 test "$(stat -c '%a' "$tmp/authority.env")" = 640
 test "$(stat -c '%a' "$tmp/velero.yaml")" = 600
 python3 - "$ROOT_DIR" "$tmp/authority.env" <<'PY'
@@ -72,10 +81,13 @@ root, tmp = map(Path, sys.argv[1:])
 default_root = tmp / "default-root"
 default_authority = default_root / "config/workflow-tool-versions.env"
 default_manifest = default_root / "k8s/velero/verify-backups-cronjob.yaml"
+default_terraform = default_root / "k8s/terraform-production/main.tf"
 default_authority.parent.mkdir(parents=True)
 default_manifest.parent.mkdir(parents=True)
+default_terraform.parent.mkdir(parents=True)
 shutil.copy(root / "config/workflow-tool-versions.env", default_authority)
 shutil.copy(root / "k8s/velero/verify-backups-cronjob.yaml", default_manifest)
+shutil.copy(root / "k8s/terraform-production/main.tf", default_terraform)
 checksum_file = tmp / "default-checksums"
 evidence_file = tmp / "default-image-evidence"
 checksum = "f" * 64
@@ -95,12 +107,20 @@ sys.argv = [
     str(checksum_file),
     "--image-evidence-file",
     str(evidence_file),
+    "--velero-chart-version",
+    "12.2.0",
 ]
 module.main()
 if "VELERO_VERSION=9.8.7" not in default_authority.read_text(encoding="utf-8"):
     raise SystemExit("default authority path was not updated")
 if f"image: velero/velero:v9.8.7@{digest}" not in default_manifest.read_text(encoding="utf-8"):
     raise SystemExit("default Velero manifest path was not projected")
+if 'version    = "12.2.0"' not in default_terraform.read_text(encoding="utf-8"):
+    raise SystemExit("default Terraform chart path was not projected")
+if 'value = "v9.8.7"' not in default_terraform.read_text(encoding="utf-8"):
+    raise SystemExit("default Terraform image tag path was not projected")
+if f'value = "{digest}"' not in default_terraform.read_text(encoding="utf-8"):
+    raise SystemExit("default Terraform image digest path was not projected")
 PY
 python3 - "$ROOT_DIR" <<'PY'
 import importlib.util
@@ -260,18 +280,19 @@ PY
 
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/lock-authority.env"
 cp "$ROOT_DIR/k8s/velero/verify-backups-cronjob.yaml" "$tmp/lock-velero.yaml"
+cp "$ROOT_DIR/k8s/terraform-production/main.tf" "$tmp/lock-terraform.tf"
 lock_checksum=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 lock_image_digest=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 printf 'version=9.8.7\n%s  velero-v9.8.7-linux-amd64.tar.gz\n' "$lock_checksum" > "$tmp/lock-checksum"
 echo "velero/velero:v9.8.7@$lock_image_digest" > "$tmp/lock-image-evidence"
-python3 - "$ROOT_DIR" "$tmp/lock-authority.env" "$tmp/lock-checksum" "$tmp/lock-image-evidence" "$tmp/lock-velero.yaml" "$lock_image_digest" <<'PY'
+python3 - "$ROOT_DIR" "$tmp/lock-authority.env" "$tmp/lock-checksum" "$tmp/lock-image-evidence" "$tmp/lock-velero.yaml" "$tmp/lock-terraform.tf" "$lock_image_digest" <<'PY'
 import importlib.util
 import subprocess
 import sys
 from pathlib import Path
 
-root, authority, checksum_file, evidence_file, manifest = map(Path, sys.argv[1:6])
-expected_digest = sys.argv[6]
+root, authority, checksum_file, evidence_file, manifest, terraform = map(Path, sys.argv[1:7])
+expected_digest = sys.argv[7]
 spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -361,6 +382,10 @@ sys.argv = [
     str(authority),
     "--velero-manifest",
     str(manifest),
+    "--terraform-file",
+    str(terraform),
+    "--velero-chart-version",
+    "12.2.0",
 ]
 module.main()
 if events[:6] != ["reconcile", "evidence", "resolve", "checksum", "reconcile", "transaction"]:
@@ -369,17 +394,22 @@ PY
 grep -Fx "VELERO_LINUX_AMD64_SHA256=$lock_checksum" "$tmp/lock-authority.env" >/dev/null
 grep -Fx "VELERO_IMAGE_DIGEST=$lock_image_digest" "$tmp/lock-authority.env" >/dev/null
 grep -F "image: velero/velero:v9.8.7@$lock_image_digest" "$tmp/lock-velero.yaml" >/dev/null
+grep -F 'version    = "12.2.0"' "$tmp/lock-terraform.tf" >/dev/null
+grep -F 'value = "v9.8.7"' "$tmp/lock-terraform.tf" >/dev/null
+grep -F "value = \"$lock_image_digest\"" "$tmp/lock-terraform.tf" >/dev/null
 
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/unchanged.env"
 cp "$tmp/unchanged.env" "$tmp/before.env"
 echo 'no Velero image projection' > "$tmp/invalid-velero.yaml"
-python3 - "$ROOT_DIR" "$tmp/unchanged.env" "$tmp/checksums" "$tmp/image-evidence" "$tmp/invalid-velero.yaml" "$image_digest" <<'PY'
+cp "$ROOT_DIR/k8s/terraform-production/main.tf" "$tmp/invalid-terraform.tf"
+cp "$tmp/invalid-terraform.tf" "$tmp/before-terraform.tf"
+python3 - "$ROOT_DIR" "$tmp/unchanged.env" "$tmp/checksums" "$tmp/image-evidence" "$tmp/invalid-velero.yaml" "$tmp/invalid-terraform.tf" "$image_digest" <<'PY'
 import importlib.util
 import sys
 from pathlib import Path
 
-root, authority, checksum_file, evidence_file, manifest = map(Path, sys.argv[1:6])
-expected_digest = sys.argv[6]
+root, authority, checksum_file, evidence_file, manifest, terraform = map(Path, sys.argv[1:7])
+expected_digest = sys.argv[7]
 spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -396,6 +426,10 @@ sys.argv = [
     str(authority),
     "--velero-manifest",
     str(manifest),
+    "--terraform-file",
+    str(terraform),
+    "--velero-chart-version",
+    "12.2.0",
 ]
 try:
     module.main()
@@ -406,18 +440,20 @@ else:
     raise SystemExit("updater accepted a missing Velero image projection")
 PY
 cmp "$tmp/before.env" "$tmp/unchanged.env"
+cmp "$tmp/before-terraform.tf" "$tmp/invalid-terraform.tf"
 
 cp "$ROOT_DIR/k8s/velero/verify-backups-cronjob.yaml" "$tmp/unchanged.yaml"
 cp "$tmp/before.env" "$tmp/no-image-evidence.env"
 cp "$tmp/unchanged.yaml" "$tmp/no-image-evidence.yaml"
-python3 - "$ROOT_DIR" "$tmp/no-image-evidence.env" "$tmp/checksums" "$tmp/no-image-evidence.yaml" <<'PY'
+cp "$ROOT_DIR/k8s/terraform-production/main.tf" "$tmp/no-image-evidence.tf"
+python3 - "$ROOT_DIR" "$tmp/no-image-evidence.env" "$tmp/checksums" "$tmp/no-image-evidence.yaml" "$tmp/no-image-evidence.tf" <<'PY'
 import contextlib
 import importlib.util
 import io
 import sys
 from pathlib import Path
 
-root, authority, checksum_file, manifest = map(Path, sys.argv[1:])
+root, authority, checksum_file, manifest, terraform = map(Path, sys.argv[1:])
 spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -436,6 +472,10 @@ sys.argv = [
     str(authority),
     "--velero-manifest",
     str(manifest),
+    "--terraform-file",
+    str(terraform),
+    "--velero-chart-version",
+    "12.2.0",
 ]
 stderr = io.StringIO()
 with contextlib.redirect_stderr(stderr):
@@ -451,6 +491,7 @@ if "--image-evidence-file is required for velero updates" not in stderr.getvalue
 PY
 cmp "$tmp/before.env" "$tmp/no-image-evidence.env"
 cmp "$tmp/unchanged.yaml" "$tmp/no-image-evidence.yaml"
+cmp "$ROOT_DIR/k8s/terraform-production/main.tf" "$tmp/no-image-evidence.tf"
 
 assert_rejected_evidence() {
   local name="$1"
@@ -458,20 +499,24 @@ assert_rejected_evidence() {
   local expected_diagnostic="$3"
   local authority="$tmp/${name}.env"
   local manifest="$tmp/${name}.yaml"
+  local terraform="$tmp/${name}.tf"
   local evidence_file="$tmp/${name}.evidence"
 
   cp "$tmp/before.env" "$authority"
   cp "$ROOT_DIR/k8s/velero/verify-backups-cronjob.yaml" "$manifest"
+  cp "$ROOT_DIR/k8s/terraform-production/main.tf" "$terraform"
   printf '%s\n' "$evidence" > "$evidence_file"
   if python3 "$ROOT_DIR/dev-tools/maintenance/update-workflow-tool.py" velero 9.8.7 \
     --checksum-file "$tmp/checksums" --image-evidence-file "$evidence_file" \
-    --authority "$authority" --velero-manifest "$manifest" \
+    --authority "$authority" --velero-manifest "$manifest" --terraform-file "$terraform" \
+    --velero-chart-version 12.2.0 \
     2>"$tmp/${name}.stderr"; then
     echo "updater accepted invalid Velero image evidence: $name" >&2
     exit 1
   fi
   cmp "$tmp/before.env" "$authority"
   cmp "$tmp/unchanged.yaml" "$manifest"
+  cmp "$ROOT_DIR/k8s/terraform-production/main.tf" "$terraform"
   grep -F -- "$expected_diagnostic" "$tmp/${name}.stderr" >/dev/null
 }
 
@@ -493,13 +538,14 @@ velero/velero:v9.8.7@$image_digest" \
 
 cp "$tmp/before.env" "$tmp/mismatched-digest.env"
 cp "$tmp/unchanged.yaml" "$tmp/mismatched-digest.yaml"
+cp "$ROOT_DIR/k8s/terraform-production/main.tf" "$tmp/mismatched-digest.tf"
 printf '%s\n' "velero/velero:v9.8.7@$image_digest" > "$tmp/mismatched-digest.evidence"
-python3 - "$ROOT_DIR" "$tmp/mismatched-digest.env" "$tmp/checksums" "$tmp/mismatched-digest.evidence" "$tmp/mismatched-digest.yaml" <<'PY'
+python3 - "$ROOT_DIR" "$tmp/mismatched-digest.env" "$tmp/checksums" "$tmp/mismatched-digest.evidence" "$tmp/mismatched-digest.yaml" "$tmp/mismatched-digest.tf" <<'PY'
 import importlib.util
 import sys
 from pathlib import Path
 
-root, authority, checksum_file, evidence_file, manifest = map(Path, sys.argv[1:])
+root, authority, checksum_file, evidence_file, manifest, terraform = map(Path, sys.argv[1:])
 spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -522,6 +568,10 @@ sys.argv = [
     str(authority),
     "--velero-manifest",
     str(manifest),
+    "--terraform-file",
+    str(terraform),
+    "--velero-chart-version",
+    "12.2.0",
 ]
 try:
     module.main()
@@ -533,29 +583,50 @@ else:
 PY
 cmp "$tmp/before.env" "$tmp/mismatched-digest.env"
 cmp "$tmp/unchanged.yaml" "$tmp/mismatched-digest.yaml"
+cmp "$ROOT_DIR/k8s/terraform-production/main.tf" "$tmp/mismatched-digest.tf"
 
 cp "$tmp/before.env" "$tmp/raw-digest.env"
 cp "$tmp/unchanged.yaml" "$tmp/raw-digest.yaml"
+cp "$ROOT_DIR/k8s/terraform-production/main.tf" "$tmp/raw-digest.tf"
 if python3 "$ROOT_DIR/dev-tools/maintenance/update-workflow-tool.py" velero 9.8.7 \
   --checksum-file "$tmp/checksums" --image-digest "$image_digest" \
-  --authority "$tmp/raw-digest.env" --velero-manifest "$tmp/raw-digest.yaml" 2>"$tmp/raw-digest.stderr"; then
+  --authority "$tmp/raw-digest.env" --velero-manifest "$tmp/raw-digest.yaml" \
+  --terraform-file "$tmp/raw-digest.tf" --velero-chart-version 12.2.0 2>"$tmp/raw-digest.stderr"; then
   echo 'updater retained the raw --image-digest override' >&2
   exit 1
 fi
 grep -F -- 'unrecognized arguments: --image-digest' "$tmp/raw-digest.stderr" >/dev/null
 cmp "$tmp/before.env" "$tmp/raw-digest.env"
 cmp "$tmp/unchanged.yaml" "$tmp/raw-digest.yaml"
+cmp "$ROOT_DIR/k8s/terraform-production/main.tf" "$tmp/raw-digest.tf"
+
+cp "$tmp/before.env" "$tmp/missing-chart.env"
+cp "$tmp/unchanged.yaml" "$tmp/missing-chart.yaml"
+cp "$ROOT_DIR/k8s/terraform-production/main.tf" "$tmp/missing-chart.tf"
+if python3 "$ROOT_DIR/dev-tools/maintenance/update-workflow-tool.py" velero 9.8.7 \
+  --checksum-file "$tmp/checksums" --image-evidence-file "$tmp/image-evidence" \
+  --authority "$tmp/missing-chart.env" --velero-manifest "$tmp/missing-chart.yaml" \
+  --terraform-file "$tmp/missing-chart.tf" 2>"$tmp/missing-chart.stderr"; then
+  echo 'updater accepted a Velero update without an explicit chart version' >&2
+  exit 1
+fi
+grep -F -- '--velero-chart-version is required for velero updates' "$tmp/missing-chart.stderr" >/dev/null
+cmp "$tmp/before.env" "$tmp/missing-chart.env"
+cmp "$tmp/unchanged.yaml" "$tmp/missing-chart.yaml"
+cmp "$ROOT_DIR/k8s/terraform-production/main.tf" "$tmp/missing-chart.tf"
 
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/transaction-authority.env"
 cp "$ROOT_DIR/k8s/velero/verify-backups-cronjob.yaml" "$tmp/transaction-velero.yaml"
+cp "$ROOT_DIR/k8s/terraform-production/main.tf" "$tmp/transaction-terraform.tf"
 cp "$tmp/transaction-authority.env" "$tmp/transaction-authority-before.env"
 cp "$tmp/transaction-velero.yaml" "$tmp/transaction-velero-before.yaml"
-python3 - "$ROOT_DIR" "$tmp/transaction-authority.env" "$tmp/transaction-velero.yaml" <<'PY'
+cp "$tmp/transaction-terraform.tf" "$tmp/transaction-terraform-before.tf"
+python3 - "$ROOT_DIR" "$tmp/transaction-authority.env" "$tmp/transaction-velero.yaml" "$tmp/transaction-terraform.tf" <<'PY'
 import importlib.util
 import sys
 from pathlib import Path
 
-root, authority, manifest = map(Path, sys.argv[1:])
+root, authority, manifest, terraform = map(Path, sys.argv[1:])
 spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -563,22 +634,25 @@ real_replace = module.os.replace
 manifest = manifest.resolve()
 
 def fail_second_target(source, destination):
-    if Path(destination).resolve() == manifest:
-        raise OSError("simulated second replacement failure")
+    if Path(destination).resolve() == terraform:
+        raise OSError("simulated third replacement failure")
     real_replace(source, destination)
 
 module.os.replace = fail_second_target
 try:
-    module.transactional_write([(authority, "changed authority\n"), (manifest, "changed manifest\n")])
+    module.transactional_write(
+        [(authority, "changed authority\n"), (manifest, "changed manifest\n"), (terraform, "changed terraform\n")]
+    )
 except OSError:
     pass
 else:
-    raise SystemExit("transaction accepted a failed second replacement")
+    raise SystemExit("transaction accepted a failed third replacement")
 if module.recovery_journal_path(authority).exists():
     raise SystemExit("successful rollback left recovery state")
 PY
 cmp "$tmp/transaction-authority-before.env" "$tmp/transaction-authority.env"
 cmp "$tmp/transaction-velero-before.yaml" "$tmp/transaction-velero.yaml"
+cmp "$tmp/transaction-terraform-before.tf" "$tmp/transaction-terraform.tf"
 
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/commit-marker-authority.env"
 cp "$ROOT_DIR/k8s/velero/verify-backups-cronjob.yaml" "$tmp/commit-marker-velero.yaml"
@@ -830,6 +904,8 @@ sys.argv = [
     str(authority),
     "--velero-manifest",
     str(manifest),
+    "--velero-chart-version",
+    "12.2.0",
 ]
 try:
     module.main()

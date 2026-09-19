@@ -58,7 +58,16 @@ resource "helm_release" "velero" {
   name       = "velero"
   repository = "https://vmware-tanzu.github.io/helm-charts"
   chart      = "velero"
+  version    = "12.2.0"
   namespace  = var.namespace
+  set {
+    name  = "image.tag"
+    value = "v1.18.2"
+  }
+  set {
+    name  = "image.digest"
+    value = "sha256:37396519f399536e5f01427d723565ae69294ec3fb5625cf1c87c09eaa9de16b"
+  }
   set {
     name  = "configuration.provider"
     value = var.velero_provider

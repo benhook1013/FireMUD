@@ -129,6 +129,8 @@ def main() -> int:
     versions = ["KUBECTL", "HELM", "GH", "BUF", "KUBECONFORM", "VELERO", "ACTIONLINT", "TRIVY", "LYCHEE", "ORT", "ZAP"]
     if any(not re.fullmatch(r"\d+\.\d+\.\d+", a.get(f"{x}_VERSION", "")) for x in versions):
         fail("all workflow tools must have exact versions")
+    if not re.fullmatch(r"\d+\.\d+\.\d+", a.get("VELERO_CHART_VERSION", "")):
+        fail("Velero chart authority must have an exact three-part version")
     pairs = {
         "KUBECTL": "KUBECTL_LINUX_AMD64",
         "HELM": "HELM_LINUX_AMD64",
@@ -150,7 +152,7 @@ def main() -> int:
     expected = (
         {f"{x}_VERSION" for x in versions}
         | {f"{s}_{suffix}" for s in pairs.values() for suffix in ("CHECKSUM_VERSION", "SHA256")}
-        | {"VELERO_IMAGE_DIGEST", "ORT_DIGEST", "ZAP_DIGEST"}
+        | {"VELERO_CHART_VERSION", "VELERO_IMAGE_DIGEST", "ORT_DIGEST", "ZAP_DIGEST"}
     )
     if set(a) != expected:
         fail("workflow tool authority has unexpected or missing keys")
@@ -1176,6 +1178,21 @@ def main() -> int:
         if set(paths) != {".node-version", lockfile}:
             fail(f"ci.yml {cache_id} key must hash .node-version and {lockfile}")
 
+    velero_terraform = (root / "k8s/terraform-production/main.tf").read_text()
+    velero_release_matches = re.findall(
+        r'(?ms)^resource "helm_release" "velero" \{.*?(?=^resource |^locals |\Z)',
+        velero_terraform,
+    )
+    if len(velero_release_matches) != 1:
+        fail("Terraform must define exactly one Velero Helm release")
+    velero_release = velero_release_matches[0]
+    if f'version    = "{a["VELERO_CHART_VERSION"]}"' not in velero_release:
+        fail("Terraform Velero Helm release must pin the canonical chart version")
+    if f'value = "v{a["VELERO_VERSION"]}"' not in velero_release:
+        fail("Terraform Velero Helm release must pin the canonical server image tag")
+    if f'value = "{a["VELERO_IMAGE_DIGEST"]}"' not in velero_release:
+        fail("Terraform Velero Helm release must pin the canonical server image digest")
+
     velero_manifest = (root / "k8s/velero/verify-backups-cronjob.yaml").read_text()
     velero_images = re.findall(r"image: velero/velero:[^\s]+", velero_manifest)
     allowed_velero_images = {
@@ -1256,7 +1273,7 @@ def main() -> int:
         "TRIVY": ("aquasecurity/trivy", "v{{{currentValue}}}", "^v(?<version>.*)$", "TRIVY_LINUX_AMD64"),
         "LYCHEE": (
             "lycheeverse/lychee",
-            "{{{currentValue}}}",
+            "lychee-v{{{currentValue}}}",
             "^lychee-v(?<version>.*)$",
             "LYCHEE_LINUX_X86_64_MUSL",
         ),

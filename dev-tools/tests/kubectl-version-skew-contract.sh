@@ -64,11 +64,15 @@ def persists_kubeconfig(step):
     return "GITHUB_ENV" in run and "KUBECONFIG=" in run
 
 
-def validate(workflow, fixture_name, require_skew=False):
+def validate(workflow, fixture_name, required_jobs=()):
     jobs = workflow.get("jobs", {})
     if not isinstance(jobs, dict):
         raise SystemExit(f"{fixture_name}: workflow must define jobs")
-    skew_invoked = False
+    required_jobs = tuple(required_jobs)
+    missing_jobs = [job_name for job_name in required_jobs if job_name not in jobs]
+    if missing_jobs:
+        raise SystemExit(f"{fixture_name}: required skew jobs are missing: {', '.join(missing_jobs)}")
+    skew_invocations = {}
     for job_name, job in jobs.items():
         if not isinstance(job, dict) or "steps" not in job:
             continue
@@ -82,15 +86,21 @@ def validate(workflow, fixture_name, require_skew=False):
             run = str(step.get("run", ""))
             local = has_kubeconfig(step.get("env", {}))
             persistent = persists_kubeconfig(step)
-            if skew_script in run:
-                skew_invoked = True
+            invocation_count = run.count(skew_script)
+            if invocation_count:
+                skew_invocations[job_name] = skew_invocations.get(job_name, 0) + invocation_count
                 if not (established or local):
                     raise SystemExit(
                         f"{fixture_name}: {job_name} invokes skew check before kubeconfig at step {index + 1}"
                     )
             established = established or persistent
-    if require_skew and not skew_invoked:
-        raise SystemExit(f"{fixture_name}: workflow must invoke the shared kubectl version skew preflight")
+    for job_name in required_jobs:
+        invocation_count = skew_invocations.get(job_name, 0)
+        if invocation_count != 1:
+            raise SystemExit(
+                f"{fixture_name}: {job_name} must invoke the shared kubectl version skew preflight exactly once; "
+                f"found {invocation_count}"
+            )
 
 
 manual_backup_path = root / ".github/workflows/manual-backup-restore.yml"
@@ -106,18 +116,26 @@ hosted_workflow_names = (
     "hosted-identity-request.yml",
 )
 hosted_workflows = {}
+required_hosted_skew_jobs = {
+    "preview.yml": ("preview-deploy", "preview-destroy"),
+    "dev-demo.yml": ("dev-demo-deploy", "dev-demo-destroy"),
+    "preview-reconciler.yml": ("reconcile-previews",),
+    "dev-demo-reconciler.yml": ("reconcile-dev-demo",),
+    "preview-janitor.yml": ("prune-stale-preview-namespaces",),
+    "hosted-identity-request.yml": ("deploy-runtime", "destroy-runtime", "retire-identity"),
+}
 for workflow_name in hosted_workflow_names:
     workflow_path = root / ".github/workflows" / workflow_name
     workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
     hosted_workflows[workflow_name] = workflow
-    validate(workflow, workflow_name, require_skew=True)
+    validate(workflow, workflow_name, required_jobs=required_hosted_skew_jobs[workflow_name])
 
 
-def expect_rejected(workflow, fixture_name):
+def expect_rejected(workflow, fixture_name, message_fragment="before kubeconfig", required_jobs=()):
     try:
-        validate(workflow, fixture_name)
+        validate(workflow, fixture_name, required_jobs=required_jobs)
     except SystemExit as error:
-        if "before kubeconfig" not in str(error):
+        if message_fragment not in str(error):
             raise
     else:
         raise SystemExit(f"{fixture_name} unexpectedly passed")
@@ -153,10 +171,29 @@ expect_rejected(step_env_fixture, "step-local env fixture")
 
 # A hosted workflow must also reject a skew invocation that precedes its kubeconfig setup.
 hosted_wrong_order_fixture = copy.deepcopy(hosted_workflows["preview-janitor.yml"])
+hosted_wrong_order_fixture["jobs"]["prune-stale-preview-namespaces"]["steps"] = [
+    step
+    for step in hosted_wrong_order_fixture["jobs"]["prune-stale-preview-namespaces"]["steps"]
+    if skew_script not in str(step.get("run", ""))
+]
 hosted_wrong_order_fixture["jobs"]["prune-stale-preview-namespaces"]["steps"].insert(
     0, {"name": "Reject skew before kubeconfig", "run": f"bash ./{skew_script}"}
 )
 expect_rejected(hosted_wrong_order_fixture, "hosted wrong-order fixture")
+
+# A workflow-level invocation must not satisfy a different cluster-using job.
+multi_job_removal_fixture = copy.deepcopy(hosted_workflows["preview.yml"])
+multi_job_removal_fixture["jobs"]["preview-destroy"]["steps"] = [
+    step
+    for step in multi_job_removal_fixture["jobs"]["preview-destroy"]["steps"]
+    if skew_script not in str(step.get("run", ""))
+]
+expect_rejected(
+    multi_job_removal_fixture,
+    "multi-job removal fixture",
+    "must invoke the shared kubectl version skew preflight exactly once",
+    required_jobs=required_hosted_skew_jobs["preview.yml"],
+)
 PY
 
 echo "kubectl version skew contract passed"
