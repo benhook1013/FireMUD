@@ -145,6 +145,136 @@ jobs:
                     "protos/",
                     ".github/actions/setup-python/",
                   ];
+                  const workflowToolAuthorityPath = "config/workflow-tool-versions.env";
+                  const knownWorkflowToolKeys = new Set([
+                    "KUBECTL_VERSION",
+                    "KUBECTL_LINUX_AMD64_CHECKSUM_VERSION",
+                    "KUBECTL_LINUX_AMD64_SHA256",
+                    "HELM_VERSION",
+                    "HELM_LINUX_AMD64_CHECKSUM_VERSION",
+                    "HELM_LINUX_AMD64_SHA256",
+                    "GH_VERSION",
+                    "GH_LINUX_AMD64_CHECKSUM_VERSION",
+                    "GH_LINUX_AMD64_SHA256",
+                    "BUF_VERSION",
+                    "BUF_LINUX_X86_64_CHECKSUM_VERSION",
+                    "BUF_LINUX_X86_64_SHA256",
+                    "KUBECONFORM_VERSION",
+                    "KUBECONFORM_LINUX_AMD64_CHECKSUM_VERSION",
+                    "KUBECONFORM_LINUX_AMD64_SHA256",
+                    "VELERO_VERSION",
+                    "VELERO_IMAGE_DIGEST",
+                    "VELERO_LINUX_AMD64_CHECKSUM_VERSION",
+                    "VELERO_LINUX_AMD64_SHA256",
+                    "VELERO_CHART_VERSION",
+                    "ACTIONLINT_VERSION",
+                    "TRIVY_VERSION",
+                    "TRIVY_LINUX_AMD64_CHECKSUM_VERSION",
+                    "TRIVY_LINUX_AMD64_SHA256",
+                    "LYCHEE_VERSION",
+                    "LYCHEE_LINUX_X86_64_MUSL_CHECKSUM_VERSION",
+                    "LYCHEE_LINUX_X86_64_MUSL_SHA256",
+                    "ORT_VERSION",
+                    "ORT_DIGEST",
+                    "ZAP_VERSION",
+                    "ZAP_DIGEST",
+                  ]);
+                  const readAuthorityContent = async (owner, repo, ref) => {
+                    const response = await github.rest.repos.getContent({
+                      owner,
+                      repo,
+                      path: workflowToolAuthorityPath,
+                      ref,
+                    });
+                    const data = response.data;
+                    if (
+                      !data ||
+                      data.type !== "file" ||
+                      data.path !== workflowToolAuthorityPath ||
+                      data.encoding !== "base64" ||
+                      typeof data.content !== "string"
+                    ) {
+                      throw new Error("workflow tool authority response was not a complete file");
+                    }
+                    const encoded = data.content.replace(/\s/g, "");
+                    if (
+                      encoded.length === 0 ||
+                      encoded.length % 4 !== 0 ||
+                      !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)
+                    ) {
+                      throw new Error("workflow tool authority response had invalid base64 content");
+                    }
+                    const decoded = Buffer.from(encoded, "base64");
+                    if (decoded.toString("base64") !== encoded) {
+                      throw new Error("workflow tool authority response had non-canonical base64 content");
+                    }
+                    const content = decoded.toString("utf8");
+                    if (!Buffer.from(content, "utf8").equals(decoded)) {
+                      throw new Error("workflow tool authority response was not valid UTF-8");
+                    }
+                    return content;
+                  };
+                  const parseAuthority = (content, source) => {
+                    if (typeof content !== "string" || content.length === 0) {
+                      throw new Error(`${source} workflow tool authority was empty`);
+                    }
+                    const values = new Map();
+                    for (const [index, line] of content.split(/\r\n|\n|\r/).entries()) {
+                      if (line === "" || line.startsWith("#")) {
+                        continue;
+                      }
+                      const match = line.match(/^([A-Z][A-Z0-9_]*)=(\S+)$/);
+                      if (!match || !knownWorkflowToolKeys.has(match[1])) {
+                        throw new Error(`${source} workflow tool authority has an unknown or malformed key on line ${index + 1}`);
+                      }
+                      if (values.has(match[1])) {
+                        throw new Error(`${source} workflow tool authority has a duplicate key: ${match[1]}`);
+                      }
+                      values.set(match[1], match[2]);
+                    }
+                    if (values.size !== knownWorkflowToolKeys.size) {
+                      throw new Error(`${source} workflow tool authority did not contain the complete known key set`);
+                    }
+                    return values;
+                  };
+                  const veleroAuthorityChanged = async () => {
+                    try {
+                      const pullRequest = context.payload.pull_request;
+                      const baseSha = pullRequest?.base?.sha;
+                      const headSha = pullRequest?.head?.sha;
+                      const headFullName = pullRequest?.head?.repo?.full_name;
+                      const baseFullName = context.payload.repository?.full_name;
+                      const repositoryName = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+                      if (
+                        typeof baseSha !== "string" ||
+                        !/^[0-9a-f]{40}$/i.test(baseSha) ||
+                        typeof headSha !== "string" ||
+                        !/^[0-9a-f]{40}$/i.test(headSha) ||
+                        typeof baseFullName !== "string" ||
+                        !repositoryName.test(baseFullName) ||
+                        typeof headFullName !== "string" ||
+                        !repositoryName.test(headFullName)
+                      ) {
+                        throw new Error("pull request base or head repository identity was incomplete");
+                      }
+                      const [baseOwner, baseRepo] = baseFullName.split("/");
+                      const [headOwner, headRepo] = headFullName.split("/");
+                      const [baseContent, headContent] = await Promise.all([
+                        readAuthorityContent(baseOwner, baseRepo, baseSha),
+                        readAuthorityContent(headOwner, headRepo, headSha),
+                      ]);
+                      const baseValues = parseAuthority(baseContent, "base");
+                      const headValues = parseAuthority(headContent, "head");
+                      return [...knownWorkflowToolKeys].some(
+                        (key) => key.startsWith("VELERO_") && baseValues.get(key) !== headValues.get(key)
+                      );
+                    } catch (error) {
+                      core.warning(
+                        `Workflow tool authority comparison was incomplete; running full-stack smoke: ${error.message}`
+                      );
+                      return true;
+                    }
+                  };
                   const runtimeFiles = new Set([
                     ".dockerignore",
                     ".github/workflows/publish-pr-runtime-images.yml",
@@ -154,7 +284,6 @@ jobs:
                     ".github/actions/load-workflow-tool-versions/action.yml",
                     ".python-version",
                     "build.gradle.kts",
-                    "config/workflow-tool-versions.env",
                     "config/python/smoke-requirements.txt",
                     "config/python/smoke-requirements.in",
                     "dev-tools/build-compose-service-jars.sh",
@@ -189,7 +318,11 @@ jobs:
                     "gradlew.bat",
                     "settings.gradle.kts",
                   ]);
-                  runtimeSmokeRequired = paths.some(
+                  const authorityChanged = paths.includes(workflowToolAuthorityPath);
+                  const nonAuthorityPaths = paths.filter(
+                    (path) => path !== workflowToolAuthorityPath
+                  );
+                  runtimeSmokeRequired = nonAuthorityPaths.some(
                     (path) =>
                       runtimeFiles.has(path) ||
                       runtimePrefixes.some((prefix) => path.startsWith(prefix)) ||
@@ -198,6 +331,9 @@ jobs:
                           "services/hosted-environment-identity-controller/"
                         ))
                   );
+                  if (!runtimeSmokeRequired && authorityChanged) {
+                    runtimeSmokeRequired = await veleroAuthorityChanged();
+                  }
                   controllerSmokeRequired = paths.some(
                     (path) =>
                       controllerFiles.has(path) ||

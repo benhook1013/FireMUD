@@ -78,11 +78,18 @@ if [[ ! "$timeout_seconds" =~ ^[0-9]+$ ]] || [[ ! "$sleep_seconds" =~ ^[0-9]+$ ]
   echo "base-image wait timeout and sleep values must be non-negative integers" >&2
   exit 1
 fi
+if [[ ! "$registry_probe_timeout_seconds" =~ ^[0-9]+$ ]]; then
+  echo "base-image registry probe timeout must be a positive integer" >&2
+  exit 1
+fi
+timeout_seconds=$((10#$timeout_seconds))
+sleep_seconds=$((10#$sleep_seconds))
+registry_probe_timeout_seconds=$((10#$registry_probe_timeout_seconds))
 if ((sleep_seconds == 0)); then
   echo "base-image wait sleep value must be a positive integer" >&2
   exit 1
 fi
-if [[ ! "$registry_probe_timeout_seconds" =~ ^[1-9][0-9]*$ ]]; then
+if ((registry_probe_timeout_seconds == 0)); then
   echo "base-image registry probe timeout must be a positive integer" >&2
   exit 1
 fi

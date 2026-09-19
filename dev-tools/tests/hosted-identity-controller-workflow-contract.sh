@@ -89,8 +89,10 @@ if grep -Fq -- '*.jar' "$controller_dockerfile"; then
   echo "$controller_dockerfile must copy only the canonical controller artifact" >&2
   exit 1
 fi
-python3 - "$runtime" "$publisher" <<'PY'
+python3 - "$runtime" "$publisher" "$workflow_tool_authority" <<'PY'
+import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -139,6 +141,15 @@ for required in (
     "PR smoke scope detection failed; running both local smokes:",
     'core.setOutput("runtime_smoke_required", String(runtimeSmokeRequired))',
     'core.setOutput("controller_smoke_required", String(controllerSmokeRequired))',
+    "github.rest.repos.getContent",
+    "workflowToolAuthorityPath",
+    "knownWorkflowToolKeys",
+    "Promise.all",
+    'data.encoding !== "base64"',
+    'key.startsWith("VELERO_")',
+    "authorityChanged",
+    "nonAuthorityPaths",
+    "Workflow tool authority comparison was incomplete; running full-stack smoke:",
 ):
     assert required in smoke_scope_script, required
 
@@ -150,7 +161,7 @@ assert not re.search(r'"services/[^"]+/"', runtime_prefixes_script)
 assert "dev-tools/smoke/" in runtime_prefixes_script
 assert ".github/actions/setup-python/" in runtime_prefixes_script
 runtime_scope_predicate = smoke_scope_script[
-    smoke_scope_script.index("runtimeSmokeRequired = paths.some"):
+    smoke_scope_script.index("runtimeSmokeRequired = nonAuthorityPaths.some"):
     smoke_scope_script.index("controllerSmokeRequired = paths.some")
 ]
 normalized_runtime_scope_predicate = "".join(runtime_scope_predicate.split())
@@ -162,9 +173,174 @@ assert (
 
 controller_scope_script = smoke_scope_script[
     smoke_scope_script.index("const controllerPrefixes"):
-    smoke_scope_script.index("runtimeSmokeRequired = paths.some")
+    smoke_scope_script.index("runtimeSmokeRequired = nonAuthorityPaths.some")
 ]
 assert "services/hosted-environment-identity-controller/" in controller_scope_script
+
+authority_text = Path(sys.argv[3]).read_text(encoding="utf-8")
+base_sha = "a" * 40
+head_sha = "b" * 40
+
+
+def authority_with(**changes):
+    lines = []
+    for line in authority_text.splitlines():
+        if line and not line.startswith("#") and "=" in line:
+            key = line.split("=", 1)[0]
+            if key in changes:
+                line = f"{key}={changes[key]}"
+        lines.append(line)
+    return "\n".join(lines) + "\n"
+
+
+def run_scope(changed_paths, *, head_content=None, api_error=False, changed_file_count=None):
+    if head_content is None:
+        head_content = authority_text
+    node_source = """
+const scopeScript = %s;
+const baseSha = %s;
+const headSha = %s;
+const baseContent = %s;
+const headContent = %s;
+const changedFiles = %s;
+const apiError = %s;
+const apiCalls = [];
+const warnings = [];
+const outputs = {};
+const github = {
+  paginate: async () => changedFiles,
+  rest: {
+    pulls: { listFiles: async () => undefined },
+    repos: {
+      getContent: async ({ owner, repo, path, ref }) => {
+        apiCalls.push({ owner, repo, path, ref });
+        if (apiError) throw new Error("simulated API failure");
+        const content = ref === baseSha ? baseContent : headContent;
+        return {
+          data: {
+            type: "file",
+            path,
+            encoding: "base64",
+            content: Buffer.from(content, "utf8").toString("base64"),
+          },
+        };
+      },
+    },
+  },
+};
+const context = {
+  eventName: "pull_request",
+  repo: { owner: "base-owner", repo: "base-repo" },
+  payload: {
+    repository: { full_name: "base-owner/base-repo" },
+    pull_request: {
+      number: 2786,
+      changed_files: %s,
+      base: { sha: baseSha },
+      head: { sha: headSha, repo: { full_name: "fork-owner/fork-repo" } },
+    },
+  },
+};
+const core = {
+  warning: (message) => warnings.push(message),
+  setOutput: (name, value) => { outputs[name] = value; },
+};
+const runner = new Function(
+  "github",
+  "context",
+  "core",
+  "return (async () => {\\n" + scopeScript + "\\n})()"
+);
+await runner(github, context, core);
+process.stdout.write(JSON.stringify({ outputs, warnings, apiCalls }));
+""" % (
+        json.dumps(smoke_scope_script),
+        json.dumps(base_sha),
+        json.dumps(head_sha),
+        json.dumps(authority_text),
+        json.dumps(head_content),
+        json.dumps([{"filename": path} for path in changed_paths]),
+        json.dumps(api_error),
+        json.dumps(
+            len(changed_paths)
+            if changed_file_count is None
+            else changed_file_count
+        ),
+    )
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", node_source],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert result.returncode == 0, result
+    return json.loads(result.stdout)
+
+
+authority_path = "config/workflow-tool-versions.env"
+non_velero_only = run_scope(
+    [authority_path], head_content=authority_with(TRIVY_VERSION="99.0.0")
+)
+assert non_velero_only["outputs"] == {
+    "runtime_smoke_required": "false",
+    "controller_smoke_required": "false",
+}
+assert {call["owner"] for call in non_velero_only["apiCalls"]} == {
+    "base-owner",
+    "fork-owner",
+}
+assert all(call["path"] == authority_path for call in non_velero_only["apiCalls"])
+
+velero_only = run_scope(
+    [authority_path], head_content=authority_with(VELERO_VERSION="99.0.0")
+)
+assert velero_only["outputs"]["runtime_smoke_required"] == "true"
+
+mixed_authority = run_scope(
+    [authority_path],
+    head_content=authority_with(VELERO_VERSION="99.0.0", TRIVY_VERSION="99.0.0"),
+)
+assert mixed_authority["outputs"]["runtime_smoke_required"] == "true"
+
+unknown_key = run_scope(
+    [authority_path], head_content=authority_text + "UNKNOWN_TOOL_VERSION=1.0.0\n"
+)
+assert unknown_key["outputs"]["runtime_smoke_required"] == "true"
+assert unknown_key["warnings"]
+
+missing_key = run_scope(
+    [authority_path],
+    head_content="\n".join(
+        line
+        for line in authority_text.splitlines()
+        if not line.startswith("TRIVY_VERSION=")
+    )
+    + "\n",
+)
+assert missing_key["outputs"]["runtime_smoke_required"] == "true"
+assert missing_key["warnings"]
+
+api_failure = run_scope([authority_path], api_error=True)
+assert api_failure["outputs"]["runtime_smoke_required"] == "true"
+assert api_failure["warnings"]
+
+incomplete_file_list = run_scope([authority_path], changed_file_count=2)
+assert incomplete_file_list["outputs"] == {
+    "runtime_smoke_required": "true",
+    "controller_smoke_required": "true",
+}
+
+assert run_scope(["services/account-service/src/Example.java"])["outputs"] == {
+    "runtime_smoke_required": "true",
+    "controller_smoke_required": "false",
+}
+assert run_scope([
+    "services/hosted-environment-identity-controller/src/Example.java"
+])["outputs"] == {
+    "runtime_smoke_required": "false",
+    "controller_smoke_required": "true",
+}
 
 runtime_job = workflow["jobs"]["pr-local-smoke"]
 assert "needs.image-meta.outputs.runtime_smoke_required" not in runtime_job["if"]

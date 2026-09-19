@@ -352,6 +352,28 @@ grep -Fq 'Timed out waiting for base runtime images' "$fixture_dir/base-image-ze
   exit 1
 }
 
+leading_zero_calls="$fixture_dir/base-image-leading-zero-calls"
+if (
+  PATH="$fixture_dir:$PATH" \
+  FAKE_DOCKER_CALLS="$leading_zero_calls" \
+  FAKE_REGISTRY_MODE=missing \
+  HOSTED_BASE_IMAGE_WAIT_TIMEOUT_SECONDS=0000 \
+  HOSTED_BASE_IMAGE_WAIT_SLEEP_SECONDS=0008 \
+  HOSTED_BASE_IMAGE_PROBE_TIMEOUT_SECONDS=0009 \
+  bash "$base_image_waiter" "$base_sha"
+) >"$fixture_dir/base-image-leading-zero-output" 2>"$fixture_dir/base-image-leading-zero-error"; then
+  echo "base-image waiter must treat leading-zero timeout values as decimal" >&2
+  exit 1
+fi
+grep -Fq 'Timed out waiting for base runtime images' "$fixture_dir/base-image-leading-zero-error" || {
+  echo "base-image waiter did not report the leading-zero zero-timeout fixture" >&2
+  exit 1
+}
+[[ ! -e "$leading_zero_calls" ]] || {
+  echo "base-image waiter probed images after the leading-zero zero-timeout fixture" >&2
+  exit 1
+}
+
 hang_calls="$fixture_dir/base-image-hang-calls"
 hang_marker="$fixture_dir/base-image-hang-marker"
 if (
