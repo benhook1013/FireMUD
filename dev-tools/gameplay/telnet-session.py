@@ -322,11 +322,16 @@ def _ascii_casefold_bytes(value: bytes) -> bytes:
     )
 
 
-def _is_credential_only_redaction(pattern: bytes) -> bool:
-    return (
-        re.match(rb"(?i)^[ \t]*(?:LOGIN|LOGON)[ \t]+\S+[ \t]+", pattern)
-        is None
-    )
+def _is_credential_only_redaction(pattern: bytes, replacement: bytes) -> bool:
+    """Identify credential-only patterns from their construction marker.
+
+    A credential can itself begin with ``LOGIN`` or ``LOGON``.  Inferring the
+    pattern kind from its bytes would therefore mistake such a credential for
+    a full command and skip the case/whitespace-normalized matching needed for
+    canonicalized server echoes.
+    """
+    del pattern
+    return replacement == b"[REDACTED]"
 
 
 def _display_text(text: str) -> str:
@@ -603,11 +608,15 @@ class TelnetSession:
         while cursor < len(combined):
             candidates = []
             for pattern, replacement in patterns:
-                credential_only = _is_credential_only_redaction(pattern)
+                credential_only = _is_credential_only_redaction(pattern, replacement)
                 search_pattern = (
                     _ascii_casefold_bytes(pattern) if credential_only else pattern
                 )
                 search_data = folded_combined if credential_only else combined
+                # Track complete matches separately, but retain the earliest
+                # first-byte candidate so a preceding near-match cannot be
+                # skipped in favor of a later credential occurrence.
+                exact_start = search_data.find(search_pattern, cursor)
                 start = search_data.find(search_pattern[:1], cursor)
                 if start >= 0:
                     candidates.append(
@@ -617,16 +626,54 @@ class TelnetSession:
                             replacement,
                             credential_only,
                             search_pattern,
+                            exact_start == start,
                         )
                     )
             if not candidates:
                 safe.extend(combined[cursor:])
                 break
 
+            # Keep the earliest candidate fail-closed. The one exception is
+            # the command's own LOGIN/LOGON prefix being mistaken for a
+            # credential that starts with the same alias; only discard that
+            # candidate when it diverges immediately after the alias and a
+            # complete credential match exists later in this buffer.
+            exact_candidates = [
+                candidate
+                for candidate in candidates
+                if (
+                    (folded_combined if candidate[3] else combined).find(
+                        candidate[4], cursor
+                    )
+                    >= 0
+                )
+            ]
+            if exact_candidates:
+                alias_candidates = []
+                for candidate in candidates:
+                    start, pattern, _, credential_only, search_pattern, exact = candidate
+                    if exact or not credential_only:
+                        continue
+                    alias_match = re.match(rb"(?i)(LOGIN|LOGON)([ \t])", pattern)
+                    if alias_match is None:
+                        continue
+                    search_data = folded_combined
+                    alias_length = len(alias_match.group(1))
+                    matched = 0
+                    while (
+                        matched < len(search_pattern)
+                        and start + matched < len(combined)
+                        and search_data[start + matched] == search_pattern[matched]
+                    ):
+                        matched += 1
+                    if matched == alias_length or matched == alias_length + 1:
+                        alias_candidates.append(candidate)
+                if alias_candidates:
+                    candidates = [candidate for candidate in candidates if candidate not in alias_candidates]
             start = min(candidate[0] for candidate in candidates)
             matching_candidates = [candidate for candidate in candidates if candidate[0] == start]
             matches = []
-            for _, pattern, replacement, credential_only, search_pattern in matching_candidates:
+            for _, pattern, replacement, credential_only, search_pattern, _ in matching_candidates:
                 matched = 0
                 available = min(len(search_pattern), len(combined) - start)
                 search_data = folded_combined if credential_only else combined

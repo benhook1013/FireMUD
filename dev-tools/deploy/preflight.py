@@ -4688,7 +4688,7 @@ def validate_hosted_telnet_tls_values(
     *,
     target_namespace: str = "firemud",
 ) -> list[str]:
-    """Validate the hosted NodePort Telnet direct-TLS binding.
+    """Validate the hosted NodePort or LoadBalancer Telnet direct-TLS binding.
 
     Hosted-controller renders carry an allocator annotation and matching
     explicit Telnet nodePort. A trusted caller may additionally supply the
@@ -4713,26 +4713,80 @@ def validate_hosted_telnet_tls_values(
             document, target_namespace, default_namespace=target_namespace
         )
     ]
-    nodeport_services = [
+    if len(tcp_services) > 1:
+        service_types = {
+            (document.get("spec") or {}).get("type") for document in tcp_services
+        }
+        if service_types <= {"NodePort", "LoadBalancer"}:
+            issues.append(
+                "hosted TCP Proxy TLS requires exactly one tcp-proxy-service NodePort Service or LoadBalancer Service"
+            )
+        else:
+            issues.append(
+                "hosted TCP Proxy TLS requires exactly one tcp-proxy-service Service"
+            )
+        return issues
+    if (
+        len(tcp_services) == 1
+        and required_identity_mode is None
+        and expected_hosted_telnet_node_port is None
+        and (tcp_services[0].get("spec") or {}).get("type") == "LoadBalancer"
+    ):
+        labels = (tcp_services[0].get("metadata") or {}).get("labels")
+        explicitly_marked = isinstance(labels, dict) and (
+            "firemud.dev/certificate-identity-mode" in labels
+        )
+        explicitly_tls_configured = False
+        for document in documents:
+            if (
+                document.get("kind") != "Deployment"
+                or metadata_name(document) != "tcp-proxy-service"
+                or not rendered_namespace_matches(
+                    document, target_namespace, default_namespace=target_namespace
+                )
+            ):
+                continue
+            pod_spec = ((document.get("spec") or {}).get("template") or {}).get(
+                "spec"
+            ) or {}
+            for container in pod_spec.get("containers") or []:
+                for entry in container.get("env") or []:
+                    if not isinstance(entry, dict):
+                        continue
+                    if entry.get("name") in {
+                        "TCP_PROXY_TELNET_MODE",
+                        "TCP_PROXY_TLS_ENABLED",
+                        "TCP_PROXY_TLS_CERT",
+                        "TCP_PROXY_TLS_KEY",
+                    }:
+                        explicitly_tls_configured = True
+                        break
+                if explicitly_tls_configured:
+                    break
+            if explicitly_tls_configured:
+                break
+        if not explicitly_marked and not explicitly_tls_configured:
+            return issues
+    externally_exposed_services = [
         document
         for document in tcp_services
-        if (document.get("spec") or {}).get("type") == "NodePort"
+        if (document.get("spec") or {}).get("type") in {"NodePort", "LoadBalancer"}
     ]
-    if not nodeport_services:
+    if not externally_exposed_services:
         if (
             required_identity_mode is not None
             or expected_hosted_telnet_node_port is not None
         ):
             issues.append(
-                "hosted TCP Proxy TLS requires exactly one tcp-proxy-service NodePort Service"
+                "hosted TCP Proxy TLS requires exactly one tcp-proxy-service NodePort Service or LoadBalancer Service"
             )
         return issues
-    if len(nodeport_services) != 1:
+    if len(externally_exposed_services) != 1:
         issues.append(
-            "hosted TCP Proxy TLS requires exactly one tcp-proxy-service NodePort Service"
+            "hosted TCP Proxy TLS requires exactly one tcp-proxy-service NodePort Service or LoadBalancer Service"
         )
         return issues
-    tcp_service = nodeport_services[0]
+    tcp_service = externally_exposed_services[0]
     tcp_namespace = target_namespace
 
     deployments = [

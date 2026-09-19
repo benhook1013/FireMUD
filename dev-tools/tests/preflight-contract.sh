@@ -10416,6 +10416,159 @@ if module.hosted_bridge_success_message("operator") != (
 ):
     raise SystemExit("hosted-bridge operator success does not confirm projection readiness")
 
+load_balancer_documents = list(yaml.safe_load_all(render_path.read_text(encoding="utf-8")))
+load_balancer_service = next(
+    document
+    for document in load_balancer_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+load_balancer_service["spec"]["type"] = "LoadBalancer"
+load_balancer_path = tmp / "hosted-bridge-contract-load-balancer.yaml"
+load_balancer_path.write_text(
+    yaml.safe_dump_all(load_balancer_documents, sort_keys=False), encoding="utf-8"
+)
+load_balancer = run_hosted(
+    load_balancer_path,
+    "--expected-hosted-telnet-node-port",
+    str(node_port),
+)
+if load_balancer.returncode != 0:
+    raise SystemExit(
+        "hosted-bridge rejected a valid LoadBalancer TCP Proxy Service: "
+        f"{load_balancer.stderr}{load_balancer.stdout}"
+    )
+
+legacy_load_balancer_documents = list(
+    yaml.safe_load_all(load_balancer_path.read_text(encoding="utf-8"))
+)
+for document in legacy_load_balancer_documents:
+    if (
+        document.get("kind") in {"Service", "Deployment"}
+        and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    ):
+        document.get("metadata", {}).pop("labels", None)
+        if document.get("kind") == "Deployment":
+            for container in document["spec"]["template"]["spec"].get("containers", []):
+                container["env"] = [
+                    entry
+                    for entry in container.get("env", [])
+                    if entry.get("name")
+                    not in {
+                        "TCP_PROXY_TELNET_MODE",
+                        "TCP_PROXY_TLS_ENABLED",
+                        "TCP_PROXY_TLS_CERT",
+                        "TCP_PROXY_TLS_KEY",
+                    }
+                ]
+legacy_load_balancer_issues = module.validate_hosted_telnet_tls_values(
+    legacy_load_balancer_documents,
+    target_namespace=namespace,
+)
+if legacy_load_balancer_issues:
+    raise SystemExit(
+        "hosted-bridge generic validation rejected an unmarked legacy LoadBalancer: "
+        f"{legacy_load_balancer_issues}"
+    )
+
+unlabelled_tls_load_balancer_documents = copy.deepcopy(legacy_load_balancer_documents)
+unlabelled_tls_deployment = next(
+    document
+    for document in unlabelled_tls_load_balancer_documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+unlabelled_tls_container = unlabelled_tls_deployment["spec"]["template"]["spec"][
+    "containers"
+][0]
+unlabelled_tls_container["env"].extend(
+    [
+        {"name": "TCP_PROXY_TELNET_MODE", "value": "DIRECT_TLS"},
+        {"name": "TCP_PROXY_TLS_ENABLED", "value": "true"},
+        {"name": "TCP_PROXY_TLS_CERT", "value": "/telnet-tls/tls.crt"},
+        {"name": "TCP_PROXY_TLS_KEY", "value": "/telnet-tls/tls.key"},
+    ]
+)
+unlabelled_tls_load_balancer_issues = module.validate_hosted_telnet_tls_values(
+    unlabelled_tls_load_balancer_documents,
+    target_namespace=namespace,
+)
+if not unlabelled_tls_load_balancer_issues:
+    raise SystemExit(
+        "hosted-bridge generic validation skipped an unlabelled TLS-configured LoadBalancer: "
+        f"{unlabelled_tls_load_balancer_issues}"
+    )
+
+load_balancer_mismatch_documents = list(
+    yaml.safe_load_all(render_path.read_text(encoding="utf-8"))
+)
+load_balancer_mismatch_service = next(
+    document
+    for document in load_balancer_mismatch_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+load_balancer_mismatch_service["spec"]["type"] = "LoadBalancer"
+next(
+    port
+    for port in load_balancer_mismatch_service["spec"]["ports"]
+    if port.get("port") == 2323
+)["nodePort"] = node_port + 1
+load_balancer_mismatch_path = tmp / "hosted-bridge-contract-load-balancer-mismatch.yaml"
+load_balancer_mismatch_path.write_text(
+    yaml.safe_dump_all(load_balancer_mismatch_documents, sort_keys=False), encoding="utf-8"
+)
+load_balancer_mismatch = run_hosted(
+    load_balancer_mismatch_path,
+    "--expected-hosted-telnet-node-port",
+    str(node_port),
+)
+if load_balancer_mismatch.returncode == 0:
+    raise SystemExit("hosted-bridge accepted a mismatched LoadBalancer Telnet nodePort")
+load_balancer_mismatch_result = json.loads(load_balancer_mismatch.stdout)
+if (
+    load_balancer_mismatch_result.get("status") != "fail"
+    or "trusted hosted-controller TCP Proxy Telnet nodePort must equal"
+    not in load_balancer_mismatch_result.get("message", "")
+):
+    raise SystemExit(
+        "hosted-bridge LoadBalancer mismatch result was not explicit: "
+        f"{load_balancer_mismatch_result}"
+    )
+
+duplicate_mixed_type_documents = list(
+    yaml.safe_load_all(render_path.read_text(encoding="utf-8"))
+)
+duplicate_mixed_type_documents.append(
+    {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {"name": "tcp-proxy-service", "namespace": namespace},
+        "spec": {"type": "ClusterIP"},
+    }
+)
+duplicate_mixed_type_path = tmp / "hosted-bridge-contract-duplicate-mixed-type.yaml"
+duplicate_mixed_type_path.write_text(
+    yaml.safe_dump_all(duplicate_mixed_type_documents, sort_keys=False), encoding="utf-8"
+)
+duplicate_mixed_type = run_hosted(
+    duplicate_mixed_type_path,
+    "--expected-hosted-telnet-node-port",
+    str(node_port),
+)
+if duplicate_mixed_type.returncode == 0:
+    raise SystemExit("hosted-bridge accepted duplicate mixed-type TCP Proxy Services")
+duplicate_mixed_type_result = json.loads(duplicate_mixed_type.stdout)
+if (
+    duplicate_mixed_type_result.get("status") != "fail"
+    or "requires exactly one tcp-proxy-service Service"
+    not in duplicate_mixed_type_result.get("message", "")
+):
+    raise SystemExit(
+        "hosted-bridge mixed-type duplicate result was not explicit: "
+        f"{duplicate_mixed_type_result}"
+    )
+
 duplicate_mount_documents = list(
     yaml.safe_load_all(render_path.read_text(encoding="utf-8"))
 )
@@ -10670,12 +10823,17 @@ if maximum.returncode != 0:
     raise SystemExit(f"hosted-bridge rejected maximum valid expected port: {maximum.stderr}{maximum.stdout}")
 
 mismatched_documents = list(yaml.safe_load_all(render_path.read_text(encoding="utf-8")))
-next(
+mismatched_service = next(
     document
     for document in mismatched_documents
     if document.get("kind") == "Service"
     and document.get("metadata", {}).get("name") == "tcp-proxy-service"
-)["spec"]["ports"][0]["nodePort"] = node_port + 1
+)
+next(
+    port
+    for port in mismatched_service["spec"]["ports"]
+    if port.get("port") == 2323
+)["nodePort"] = node_port + 1
 mismatched_path = tmp / "hosted-bridge-contract-mismatch.yaml"
 mismatched_path.write_text(
     yaml.safe_dump_all(mismatched_documents, sort_keys=False), encoding="utf-8"

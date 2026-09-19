@@ -1726,6 +1726,105 @@ class TelnetSessionDriverTest(unittest.TestCase):
                 "Diagnostic credential=[REDACTED]; proof remains visible.\r\n",
             )
 
+    def test_login_and_logon_credentials_starting_with_command_alias_are_redacted(self):
+        cases = (
+            ("LOGIN", "LOGIN\tinner-secret", "login  DEMO@EXAMPLE.COM login inner-secret"),
+            ("LOGON", "LOGON\tinner-secret", "logon  DEMO@EXAMPLE.COM logon inner-secret"),
+        )
+        for command_name, credential, echoed_command in cases:
+            with self.subTest(command_name=command_name):
+                def handler(connection, expected_command=command_name, expected_credential=credential,
+                            normalized_echo=echoed_command):
+                    command = b""
+                    while not command.endswith(b"\r\n"):
+                        command += connection.recv(1)
+                    self.assertEqual(
+                        command,
+                        f"{expected_command} demo@example.com {expected_credential}\r\n".encode(
+                            "iso-8859-1"
+                        ),
+                    )
+                    connection.sendall(normalized_echo.encode("iso-8859-1") + b"\r\n")
+                    time.sleep(0.08)
+
+                server = FakeServer(handler)
+                with tempfile.TemporaryDirectory() as directory:
+                    transcript = Path(directory) / "session.jsonl"
+                    output = []
+                    session = telnet_session.TelnetSession(
+                        "127.0.0.1",
+                        server.port,
+                        transcript,
+                        output=output.append,
+                        tls_enabled=False,
+                    )
+                    session.connect()
+                    session.send_command(
+                        f"{command_name} demo@example.com {credential}"
+                    )
+                    records = wait_for(
+                        session.store,
+                        lambda rows: any(r["event"] == "received" for r in rows),
+                    )
+                    session.close("command_alias_credential_redaction_complete")
+                    server.close_and_check()
+
+                    transcript_text = transcript.read_text(encoding="utf-8")
+                    rendered = "\n".join(output)
+                    for leaked in (credential, credential.replace("\t", " ")):
+                        self.assertNotIn(leaked, transcript_text)
+                        self.assertNotIn(leaked, rendered)
+                    received = [
+                        row["text"] for row in records if row.get("event") == "received"
+                    ]
+                    self.assertEqual(
+                        "".join(received),
+                        f"{command_name.lower()}  DEMO@EXAMPLE.COM [REDACTED]\r\n",
+                    )
+
+    def test_login_redaction_does_not_skip_earlier_variant_for_later_exact_match(self):
+        secret = "LOGIN inner-secret"
+        earlier_variant = "login inner-secrex"
+
+        def handler(connection):
+            command = b""
+            while not command.endswith(b"\r\n"):
+                command += connection.recv(1)
+            connection.sendall(
+                earlier_variant.encode("iso-8859-1")
+                + b"\r\n"
+                + secret.encode("iso-8859-1")
+                + b"\r\n"
+            )
+            time.sleep(0.08)
+
+        server = FakeServer(handler)
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "session.jsonl"
+            output = []
+            session = telnet_session.TelnetSession(
+                "127.0.0.1",
+                server.port,
+                transcript,
+                output=output.append,
+                tls_enabled=False,
+            )
+            session.connect()
+            session.send_command(f"LOGIN demo@example.com {secret}")
+            wait_for(
+                session.store,
+                lambda rows: any(r["event"] == "received" for r in rows),
+            )
+            session.close("earliest_variant_redaction_complete")
+            server.close_and_check()
+
+            transcript_text = transcript.read_text(encoding="utf-8")
+            rendered = "\n".join(output)
+            self.assertNotIn(earlier_variant, transcript_text)
+            self.assertNotIn(earlier_variant, rendered)
+            self.assertNotIn(secret, transcript_text)
+            self.assertNotIn(secret, rendered)
+
     def test_login_redaction_reassembles_room_text_across_socket_boundary(self):
         def handler(connection):
             command = b""
