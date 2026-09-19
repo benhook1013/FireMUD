@@ -331,6 +331,51 @@ smoke.yml|smoke-gate|Smoke Gate|PR Smoke Gate|smoke.yml|.github/workflows/smoke.
 codeql.yml|codeql-gate|CodeQL Gate|CodeQL Analysis|codeql.yml|.github/workflows/codeql.yml
 EOF
 
+# shellcheck disable=SC2016 # Match the checked-in arithmetic assignment literally.
+poll_timeout_minutes="$(sed -n 's/^poll_timeout_seconds=\$((\([1-9][0-9]*\) \* 60))$/\1/p' "$POLL_SCRIPT")"
+poll_interval_seconds="$(sed -n 's/^poll_interval_seconds=\([1-9][0-9]*\)$/\1/p' "$POLL_SCRIPT")"
+[[ "$poll_timeout_minutes" =~ ^[1-9][0-9]*$ ]] || {
+  echo "required-gate action must define one positive minute-based polling timeout" >&2
+  exit 1
+}
+poll_timeout_seconds=$((poll_timeout_minutes * 60))
+[[ "$poll_interval_seconds" =~ ^[1-9][0-9]*$ ]] || {
+  echo "required-gate action must define one positive polling interval" >&2
+  exit 1
+}
+(( poll_timeout_seconds > 19 * 60 )) || {
+  echo "required-gate action polling timeout must exceed the retired 19-minute budget" >&2
+  exit 1
+}
+(( poll_timeout_seconds < 25 * 60 )) || {
+  echo "required-gate action polling timeout must leave setup and cleanup room in 25-minute callers" >&2
+  exit 1
+}
+python3 - "$ROOT_DIR" "$poll_timeout_seconds" <<'PY'
+from pathlib import Path
+import sys
+
+import yaml
+
+root = Path(sys.argv[1])
+poll_timeout_seconds = int(sys.argv[2])
+callers = {
+    "ci.yml": "validation-gate",
+    "codeql.yml": "codeql-gate",
+    "license-scan.yml": "license-gate",
+    "security.yml": "security-gate",
+    "smoke.yml": "smoke-gate",
+}
+for workflow, job_id in callers.items():
+    path = root / ".github" / "workflows" / workflow
+    data = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    timeout_minutes = int(data["jobs"][job_id]["timeout-minutes"])
+    if timeout_minutes * 60 <= poll_timeout_seconds:
+        raise SystemExit(
+            f"{workflow} {job_id} timeout must exceed the shared poll budget"
+        )
+PY
+
 CODEQL_WORKFLOW="$ROOT_DIR/.github/workflows/codeql.yml"
 OVERLAY_WORKFLOW="$ROOT_DIR/.github/workflows/validate-kustomize-overlays.yml"
 
@@ -573,6 +618,13 @@ JSON
       printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"in_progress","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     else
       printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    fi
+    ;;
+  delayed-predecessor-after-19-minutes)
+    if [[ "$count" -le 77 ]]; then
+      printf '[{"check_runs":[]}]\n'
+    else
+      printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:20:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     fi
     ;;
   failed-predecessor)
@@ -964,6 +1016,13 @@ run_action "$delayed_count" none delayed-predecessor
   exit 1
 }
 
+delayed_after_19_minutes_count="$tmp_dir/count-delayed-predecessor-after-19-minutes"
+run_action "$delayed_after_19_minutes_count" none delayed-predecessor-after-19-minutes
+[[ "$(<"$delayed_after_19_minutes_count")" == "78" ]] || {
+  echo "required-gate action did not preserve a substantive predecessor published after 19 minutes" >&2
+  exit 1
+}
+
 alternate_pending_count="$tmp_dir/count-alternate-pending"
 run_action "$alternate_pending_count" none alternate-pending
 [[ "$(<"$alternate_pending_count")" == "4" ]] || {
@@ -1072,6 +1131,10 @@ grep -Fq 'concluded failure' "$pending_step_failure_output" || {
 max_attempts="$(sed -n 's/^max_attempts=\([1-9][0-9]*\)$/\1/p' <<<"$action_script")"
 [[ "$max_attempts" =~ ^[1-9][0-9]*$ ]] || {
   echo "required-gate action must define one positive max_attempts polling bound" >&2
+  exit 1
+}
+(( max_attempts * poll_interval_seconds >= poll_timeout_seconds )) || {
+  echo "required-gate action attempt bound must cover its polling timeout" >&2
   exit 1
 }
 timeout_output="$tmp_dir/timeout-output"

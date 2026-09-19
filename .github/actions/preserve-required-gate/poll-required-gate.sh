@@ -56,8 +56,12 @@ is_github_timestamp() {
 
 api_error_file="$(mktemp)"
 trap 'rm -f "$api_error_file"' EXIT
-max_attempts=80
-poll_timeout_seconds=$((19 * 60))
+# Every required-gate caller allows at least 25 minutes. Leave two minutes for
+# runner setup and cleanup while allowing a substantive predecessor to finish
+# after the previous 19-minute preservation budget.
+poll_interval_seconds=15
+poll_timeout_seconds=$((23 * 60))
+max_attempts=92
 poll_deadline=$((SECONDS + poll_timeout_seconds))
 max_preservation_step_refresh_attempts=8
 expected_workflow_id=""
@@ -70,7 +74,7 @@ sleep_until_poll_deadline() {
   if (( remaining <= 0 )); then
     return 1
   fi
-  local delay=15
+  local delay="${poll_interval_seconds}"
   if (( delay > remaining )); then
     delay=${remaining}
     echo "Polling delay bounded to ${delay}s by the deadline." >&2
