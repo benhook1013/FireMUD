@@ -336,6 +336,11 @@ public class TlsCertificateWatcher implements AutoCloseable {
     } else {
       synchronized (retryMonitor) {
         registrationRetryAttempts = 0;
+        registrationRetryScheduled = false;
+        if (registrationRetryTask != null) {
+          registrationRetryTask.cancel(false);
+          registrationRetryTask = null;
+        }
       }
     }
     return changed;

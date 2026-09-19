@@ -198,6 +198,48 @@ class TlsCertificateWatcherTest {
   }
 
   @Test
+  void successfulInlineReregistrationCancelsObsoleteRegistrationRetry(@TempDir Path directory)
+      throws Exception {
+    Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
+    TlsCertificateWatcher watcher = new TlsCertificateWatcher(List.of(certificate), () -> {});
+    Field keysField = TlsCertificateWatcher.class.getDeclaredField("keys");
+    Field registrationRetryTaskField =
+        TlsCertificateWatcher.class.getDeclaredField("registrationRetryTask");
+    Field registrationRetryScheduledField =
+        TlsCertificateWatcher.class.getDeclaredField("registrationRetryScheduled");
+    Field registrationRetryAttemptsField =
+        TlsCertificateWatcher.class.getDeclaredField("registrationRetryAttempts");
+    Method processKeyMethod =
+        TlsCertificateWatcher.class.getDeclaredMethod("processKey", WatchKey.class);
+    keysField.setAccessible(true);
+    registrationRetryTaskField.setAccessible(true);
+    registrationRetryScheduledField.setAccessible(true);
+    registrationRetryAttemptsField.setAccessible(true);
+    processKeyMethod.setAccessible(true);
+    @SuppressWarnings("unchecked")
+    Map<WatchKey, Path> keys = (Map<WatchKey, Path>) keysField.get(watcher);
+    WatchKey originalKey = keys.keySet().iterator().next();
+    ScheduledFuture<?> staleRetry =
+        retryExecutor(watcher).schedule(() -> {}, 1, TimeUnit.DAYS);
+    registrationRetryTaskField.set(watcher, staleRetry);
+    registrationRetryScheduledField.setBoolean(watcher, true);
+    registrationRetryAttemptsField.setInt(watcher, 3);
+
+    try {
+      originalKey.cancel();
+      assertTrue((Boolean) processKeyMethod.invoke(watcher, originalKey));
+      assertEquals(1, keys.size());
+      assertTrue(keys.containsValue(directory.toAbsolutePath().normalize()));
+      assertTrue(staleRetry.isCancelled());
+      assertNull(registrationRetryTaskField.get(watcher));
+      assertFalse(registrationRetryScheduledField.getBoolean(watcher));
+      assertEquals(0, registrationRetryAttemptsField.getInt(watcher));
+    } finally {
+      watcher.close();
+    }
+  }
+
+  @Test
   void failedInitialReregistrationRetriesAfterDirectoryIsRecreated(@TempDir Path directory)
       throws Exception {
     Path replacedDirectory = Files.createDirectory(directory.resolve("replaced"));

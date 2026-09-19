@@ -34,3 +34,52 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- define "firemud.grpcSecretName" -}}
 {{- default "firemud-grpc-tls" .Values.previewStack.grpcTls.secretName -}}
 {{- end -}}
+
+{{- define "firemud.gatewayWsServerSecretName" -}}
+{{- printf "%s-gateway-internal-ws" .Release.Name -}}
+{{- end -}}
+
+{{- define "firemud.gatewayWsClientSecretName" -}}
+{{- printf "%s-tcp-proxy-bridge" .Release.Name -}}
+{{- end -}}
+
+{{- define "firemud.gatewayWsServerEnv" -}}
+{{- $root := .root -}}
+{{- $preview := $root.Values.preview | default (dict) -}}
+{{- $prNumber := get $preview "prNumber" -}}
+{{- if or (not (hasKey $preview "prNumber")) (and (empty $prNumber) (ne (toString $prNumber) "0")) -}}
+{{- fail "preview.prNumber is required when Gateway WebSocket TLS is enabled" -}}
+{{- end -}}
+{{/* A raw shared-values Helm render keeps the unresolved placeholder; it is
+      still a PR preview for trust-profile purposes. */}}
+- name: FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED
+  value: "true"
+- name: FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS
+  value: "0.0.0.0"
+- name: FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT
+  value: {{ .targetPort | quote }}
+- name: FIREMUD_GATEWAY_TCP_PROXY_TLS_CERT_CHAIN_PATH
+  value: /gateway-ws-server-tls/tls.crt
+- name: FIREMUD_GATEWAY_TCP_PROXY_TLS_PRIVATE_KEY_PATH
+  value: /gateway-ws-server-tls/tls.key
+- name: FIREMUD_GATEWAY_TCP_PROXY_TLS_CLIENT_CA_PATH
+  value: /gateway-ws-server-tls/ca.crt
+- name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT
+  value: {{ ternary "dev-demo-cluster" "pr-preview" (eq (toString $prNumber) "0") | quote }}
+- name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE
+  value: production_uri
+- name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN
+  value: {{ printf "spiffe://firemud/ns/%s/sa/tcp-proxy-service" $root.Release.Namespace | quote }}
+{{- end -}}
+
+{{- define "firemud.gatewayWsClientEnv" -}}
+{{- $root := .root -}}
+- name: GATEWAY_WS_URL
+  value: {{ printf "wss://spring-cloud-gateway-mtls.%s.svc.cluster.local:%v/ws/game" $root.Release.Namespace .servicePort | quote }}
+- name: FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH
+  value: /gateway-ws-client-tls/tls.crt
+- name: FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH
+  value: /gateway-ws-client-tls/tls.key
+- name: FIREMUD_GATEWAY_WS_CA_CERT_PATH
+  value: /gateway-ws-client-tls/ca.crt
+{{- end -}}
