@@ -49,6 +49,14 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- eq (include "firemud.certificateIdentityMode" . | trim) "hosted-controller" -}}
 {{- end -}}
 
+{{- define "firemud.ingressTlsSecretName" -}}
+{{- if eq (include "firemud.hostedControllerMode" . | trim) "true" -}}
+{{- printf "%s-tls" .Release.Name -}}
+{{- else -}}
+{{- default (printf "%s-tls" .Release.Name) .Values.previewStack.ingress.tlsSecretName -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "firemud.gatewayWsServerSecretName" -}}
 {{- printf "%s-gateway-internal-ws" .Release.Name -}}
 {{- end -}}

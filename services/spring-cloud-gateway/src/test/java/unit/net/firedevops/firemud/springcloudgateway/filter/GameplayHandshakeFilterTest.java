@@ -488,6 +488,10 @@ class GameplayHandshakeFilterTest {
             .header("X-Proxy-Connection-Id", "conn-123")
             .header("X-Proxy-Game-Instance-Id", "42")
             .header("X-Proxy-Tenant-Id", "1")
+            .header("X-Firemud-Connection-Mode", "first_party_web")
+            .header("X-Firemud-Connect-Context", "spoofed-context")
+            .header("X-Firemud-Transport-Session-Id", "spoofed-session")
+            .header("X-Firemud-Handshake-Error-Class", "POLICY_DENY")
             .build();
 
     ServerWebExchange mutatedExchange =
@@ -496,6 +500,20 @@ class GameplayHandshakeFilterTest {
 
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connection-Mode"))
         .isEqualTo(GameplayHandshakeFilter.CONNECTION_MODE_TRUSTED_TCP_PROXY);
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connect-Context"))
+        .isNull();
+    assertThat(
+            mutatedExchange
+                .getRequest()
+                .getHeaders()
+                .getFirst(GameplayHandshakeFilter.TRANSPORT_SESSION_HEADER))
+        .isNull();
+    assertThat(
+            mutatedExchange
+                .getRequest()
+                .getHeaders()
+                .getFirst(GameplayHandshakeFilter.HANDSHAKE_ERROR_CLASS_HEADER))
+        .isNull();
     assertThat(mutatedExchange.getResponse().getStatusCode()).isNull();
   }
 

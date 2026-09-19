@@ -40,6 +40,8 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
   private static final String HDR_PROXY_CONNECTION_ID = "X-Proxy-Connection-Id";
   private static final String HDR_PROXY_GAME_INSTANCE_ID = "X-Proxy-Game-Instance-Id";
   private static final String HDR_PROXY_TENANT_ID = "X-Proxy-Tenant-Id";
+  private static final String HDR_FIREMUD_CONNECT_TOKEN = "X-Firemud-Connect-Token";
+  private static final String HDR_FIREMUD_LOCALE = "X-Firemud-Locale";
 
   private final CidrSet trustedForwardedProxies;
   private final TcpProxyTrustPolicy tcpProxyTrustPolicy;
@@ -211,6 +213,17 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
     headers.remove(HDR_PROXY_CONNECTION_ID);
     headers.remove(HDR_PROXY_GAME_INSTANCE_ID);
     headers.remove(HDR_PROXY_TENANT_ID);
+
+    // Gateway-owned admission context is reconstructed by the gameplay handshake filter. Keep
+    // the migration-only connect-token carrier and presentation locale; every other Firemud
+    // context/mode value is never trusted from a caller.
+    for (String headerName : List.copyOf(headers.headerNames())) {
+      if (headerName.regionMatches(true, 0, "X-Firemud-", 0, "X-Firemud-".length())
+          && !headerName.equalsIgnoreCase(HDR_FIREMUD_CONNECT_TOKEN)
+          && !headerName.equalsIgnoreCase(HDR_FIREMUD_LOCALE)) {
+        headers.remove(headerName);
+      }
+    }
   }
 
   private String deriveClientIpFromForwardedHeaders(
