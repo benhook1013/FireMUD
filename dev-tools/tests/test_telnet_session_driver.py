@@ -3,6 +3,7 @@
 
 import argparse
 import contextlib
+import fcntl
 import importlib.util
 import io
 import json
@@ -380,6 +381,53 @@ class TelnetSessionDriverTest(unittest.TestCase):
                 store.read(after=6),
                 [{"cursor": 7, "event": "received", "text": "later"}],
             )
+
+    def test_read_waits_for_exclusive_writer_before_parsing_partial_jsonl(self):
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "session.jsonl"
+            store = telnet_session.EvidenceStore(transcript)
+            initial = store.append("system", "connect")
+            record = {
+                "timestamp": telnet_session.utc_now(),
+                "seq": initial["seq"] + 1,
+                "cursor": initial["cursor"] + 1,
+                "direction": "inbound",
+                "event": "received",
+                "text": "complete after the writer releases",
+            }
+            encoded = (
+                json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
+            ).encode("utf-8")
+            writer_fd = os.open(transcript, os.O_WRONLY | os.O_APPEND)
+            read_done = threading.Event()
+            result = {}
+
+            try:
+                fcntl.flock(writer_fd, fcntl.LOCK_EX)
+                split = max(1, len(encoded) // 2)
+                os.write(writer_fd, encoded[:split])
+
+                def read_records():
+                    result["records"] = store.read(after=initial["cursor"])
+                    read_done.set()
+
+                reader = threading.Thread(target=read_records, daemon=True)
+                reader.start()
+                self.assertFalse(
+                    read_done.wait(0.1),
+                    "read parsed a JSONL line while its writer held an exclusive flock",
+                )
+                os.write(writer_fd, encoded[split:])
+                fcntl.flock(writer_fd, fcntl.LOCK_UN)
+                reader.join(2)
+                self.assertFalse(reader.is_alive())
+            finally:
+                try:
+                    fcntl.flock(writer_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(writer_fd)
+
+            self.assertEqual(result["records"], [record])
 
     def test_tls_custom_ca_replaces_default_roots_and_wraps_with_hostname(self):
         class FakeSocket:
@@ -1002,8 +1050,9 @@ class TelnetSessionDriverTest(unittest.TestCase):
             )
             transcript_text = transcript.read_text(encoding="utf-8")
             rendered = "\n".join(output)
-            self.assertNotIn(secret, transcript_text)
-            self.assertNotIn(secret, rendered)
+            for leaked in (secret, "SeCrEt-7"):
+                self.assertNotIn(leaked, transcript_text)
+                self.assertNotIn(leaked, rendered)
             self.assertIn("LOGIN demo@example.com [REDACTED]", transcript_text)
             self.assertIn("LOGIN demo@example.com [REDACTED]", rendered)
 
@@ -1318,6 +1367,75 @@ class TelnetSessionDriverTest(unittest.TestCase):
             self.assertEqual(output, [telnet_session.EVIDENCE_FAILURE_DIAGNOSTIC])
             self.assertNotIn("credential-secret", "\n".join(output))
 
+    def test_receiver_output_callback_failure_is_terminal_without_recursive_callback(self):
+        class FailingSocket:
+            def __init__(self):
+                self.shutdown_calls = 0
+                self.close_calls = 0
+
+            def recv(self, _size):
+                return b"remote output\r\n"
+
+            def shutdown(self, _how):
+                self.shutdown_calls += 1
+
+            def close(self):
+                self.close_calls += 1
+
+        with tempfile.TemporaryDirectory() as directory:
+            callback_calls = []
+            secret = "credential-secret"
+
+            def output(line):
+                callback_calls.append(line)
+                raise RuntimeError(f"callback leaked {secret}")
+
+            session = telnet_session.TelnetSession(
+                "localhost",
+                32000,
+                Path(directory) / "session.jsonl",
+                output=output,
+                tls_enabled=False,
+            )
+            fake_socket = FailingSocket()
+            session.socket = fake_socket
+            receiver = threading.Thread(target=session._receive_loop, daemon=True)
+            session.receiver = receiver
+            receiver.start()
+            receiver.join(2)
+
+            self.assertFalse(receiver.is_alive())
+            self.assertTrue(session.output_failed)
+            self.assertTrue(session.closed)
+            self.assertTrue(session.disconnect_event.is_set())
+            self.assertEqual(
+                session.disconnect_outcome(),
+                (telnet_session.OUTPUT_FAILURE_REASON, True),
+            )
+            self.assertGreaterEqual(fake_socket.shutdown_calls, 1)
+            self.assertGreaterEqual(fake_socket.close_calls, 1)
+            self.assertEqual(len(callback_calls), 1)
+            records = session.store.read()
+            self.assertTrue(
+                any(
+                    row["event"] == "error"
+                    and row.get("reason") == telnet_session.OUTPUT_FAILURE_REASON
+                    and row.get("detail") == telnet_session.OUTPUT_FAILURE_DETAIL
+                    for row in records
+                )
+            )
+            self.assertTrue(
+                any(
+                    row["event"] == "disconnect"
+                    and row.get("reason") == telnet_session.OUTPUT_FAILURE_REASON
+                    for row in records
+                )
+            )
+            transcript_text = session.store.path.read_text(encoding="utf-8")
+            self.assertNotIn(secret, transcript_text)
+
+            session.close("after_callback_failure")
+
     def test_close_evidence_failure_is_terminal_and_does_not_recurse(self):
         class FailingSocket:
             def __init__(self):
@@ -1499,6 +1617,59 @@ class TelnetSessionDriverTest(unittest.TestCase):
             self.assertNotIn(secret, rendered)
             self.assertIn("LOGIN demo@example.com [REDACTED]", transcript_text)
             self.assertIn("LOGIN demo@example.com [REDACTED]", rendered)
+
+    def test_login_echo_and_diagnostic_redact_fragmented_case_changed_credential(self):
+        secret = "secret-7"
+
+        def handler(connection):
+            command = b""
+            while not command.endswith(b"\r\n"):
+                command += connection.recv(1)
+            self.assertEqual(command, b"LOGIN demo@example.com secret-7\r\n")
+            # The command and account are canonicalized, and the credential is
+            # split across socket reads. The second line exercises a diagnostic
+            # that contains only the credential rather than an echoed command.
+            connection.sendall(b"login DEMO@EXAMPLE.COM Se")
+            time.sleep(0.02)
+            connection.sendall(
+                b"CrEt-7\r\nDiagnostic credential=SeCrEt-7; proof remains visible.\r\n"
+            )
+            time.sleep(0.08)
+
+        server = FakeServer(handler)
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "session.jsonl"
+            output = []
+            session = telnet_session.TelnetSession(
+                "127.0.0.1",
+                server.port,
+                transcript,
+                output=output.append,
+                tls_enabled=False,
+            )
+            session.connect()
+            session.send_command(f"LOGIN demo@example.com {secret}")
+            records = wait_for(
+                session.store,
+                lambda rows: any(
+                    "proof remains visible" in row.get("text", "") for row in rows
+                ),
+            )
+            session.close("canonicalized_redaction_complete")
+            server.close_and_check()
+
+            transcript_text = transcript.read_text(encoding="utf-8")
+            rendered = "\n".join(output)
+            self.assertNotIn(secret, transcript_text)
+            self.assertNotIn(secret, rendered)
+            received = [
+                row["text"] for row in records if row.get("event") == "received"
+            ]
+            self.assertEqual(
+                "".join(received),
+                "login DEMO@EXAMPLE.COM [REDACTED]\r\n"
+                "Diagnostic credential=[REDACTED]; proof remains visible.\r\n",
+            )
 
     def test_login_redaction_reassembles_room_text_across_socket_boundary(self):
         def handler(connection):

@@ -417,6 +417,143 @@ assert deadline_session.timeouts
 assert max(deadline_session.timeouts) <= 0.09
 
 
+class BlockingSendSession(FakeSession):
+    def __init__(self):
+        super().__init__()
+        self.timeouts = []
+
+    def settimeout(self, timeout):
+        self.timeouts.append(timeout)
+
+    def sendall(self, payload):
+        self.wire_sent.append(payload)
+        time.sleep(self.timeouts[-1])
+        raise TimeoutError("send blocked")
+
+
+blocked_send_session = BlockingSendSession()
+started_at = time.monotonic()
+try:
+    smoke_common.send_telnet_command_and_expect(
+        blocked_send_session,
+        [],
+        "LOOK",
+        ["OK LOOK"],
+        "LOOK",
+        0.08,
+    )
+except TimeoutError as exc:
+    assert str(exc) == "send blocked"
+else:
+    raise AssertionError("blocked Telnet send unexpectedly completed")
+elapsed = time.monotonic() - started_at
+assert elapsed < 0.25, f"Telnet send exceeded command deadline: {elapsed}"
+assert blocked_send_session.timeouts
+assert max(blocked_send_session.timeouts) <= 0.09
+
+
+blocked_receive_session = DeadlineBoundSession()
+started_at = time.monotonic()
+try:
+    smoke_common.send_telnet_command_and_expect(
+        blocked_receive_session,
+        [],
+        "LOOK",
+        ["OK LOOK"],
+        "LOOK",
+        0.08,
+    )
+except smoke_common.ProbeOperationalFailure:
+    pass
+else:
+    raise AssertionError("blocked Telnet receive unexpectedly completed")
+elapsed = time.monotonic() - started_at
+assert elapsed < 0.25, f"Telnet receive exceeded command deadline: {elapsed}"
+assert blocked_receive_session.timeouts
+assert max(blocked_receive_session.timeouts) <= 0.09
+
+
+class TimedWebSocket(FakeSession):
+    def __init__(self, chunks=None, *, block_send=False):
+        super().__init__(chunks)
+        self.timeouts = []
+        self.block_send = block_send
+
+    def settimeout(self, timeout):
+        self.timeouts.append(timeout)
+
+    def send(self, payload):
+        self.sent.append(payload)
+        if self.block_send:
+            time.sleep(self.timeouts[-1])
+            raise TimeoutError("send blocked")
+
+    def recv(self, _size=None):
+        if self.chunks:
+            return self.chunks.pop(0)
+        time.sleep(self.timeouts[-1])
+        raise TimeoutError("receive blocked")
+
+
+blocked_websocket_send = TimedWebSocket(block_send=True)
+started_at = time.monotonic()
+try:
+    smoke_common.send_websocket_command_and_expect(
+        blocked_websocket_send,
+        [],
+        "LOOK",
+        ["OK LOOK"],
+        "LOOK",
+        0.08,
+    )
+except TimeoutError as exc:
+    assert str(exc) == "send blocked"
+else:
+    raise AssertionError("blocked WebSocket send unexpectedly completed")
+elapsed = time.monotonic() - started_at
+assert elapsed < 0.25, f"WebSocket send exceeded command deadline: {elapsed}"
+assert blocked_websocket_send.timeouts
+assert max(blocked_websocket_send.timeouts) <= 0.09
+
+
+blocked_websocket_receive = TimedWebSocket()
+started_at = time.monotonic()
+try:
+    smoke_common.send_websocket_command_and_expect(
+        blocked_websocket_receive,
+        [],
+        "LOOK",
+        ["OK LOOK"],
+        "LOOK",
+        0.08,
+    )
+except smoke_common.ProbeOperationalFailure:
+    pass
+else:
+    raise AssertionError("blocked WebSocket receive unexpectedly completed")
+elapsed = time.monotonic() - started_at
+assert elapsed < 0.25, f"WebSocket receive exceeded command deadline: {elapsed}"
+assert blocked_websocket_receive.timeouts
+assert max(blocked_websocket_receive.timeouts) <= 0.09
+
+
+blocked_websocket_drain = TimedWebSocket(["OK LOOK room=demo"])
+started_at = time.monotonic()
+drained_response = smoke_common.send_websocket_command_and_expect(
+    blocked_websocket_drain,
+    [],
+    "LOOK",
+    ["OK LOOK"],
+    "LOOK",
+    0.08,
+)
+elapsed = time.monotonic() - started_at
+assert drained_response == "OK LOOK room=demo"
+assert elapsed < 0.25, f"WebSocket drain exceeded command deadline: {elapsed}"
+assert blocked_websocket_drain.timeouts
+assert max(blocked_websocket_drain.timeouts) <= 0.09
+
+
 for invalid_command in (
     "LOOK\nNORTH",
     "LOGIN demo@example.test secret-with-newline\nINJECT",
@@ -700,6 +837,67 @@ for transport in ("telnet", "websocket"):
         assert "ERROR UPSTREAM_FAILURE" in str(exc)
     assert len(later_failure_attempts) == 1
     assert later_failure_attempts[0].closed is True
+
+
+post_command_failure_attempts = []
+
+
+def open_after_command_failure():
+    session = FakeSession()
+    post_command_failure_attempts.append(session)
+    return session
+
+
+def fail_after_login_was_sent(session):
+    session.sent.append("LOGIN demo swordfish")
+    raise OSError("connection lost after LOGIN")
+
+
+try:
+    run_transport_session(
+        open_after_command_failure,
+        fail_after_login_was_sent,
+        "post-command failure session",
+        retry_window_seconds=1,
+        retry_interval_seconds=0,
+    )
+except smoke_common.ProbeOperationalFailure as exc:
+    assert "Failed during post-command failure session" in str(exc)
+else:
+    raise AssertionError("post-command OSError unexpectedly retried")
+assert len(post_command_failure_attempts) == 1
+assert post_command_failure_attempts[0].closed is True
+
+
+class CloseFailureSession(FakeSession):
+    def close(self):
+        self.closed = True
+        raise OSError("close failed")
+
+
+close_failure_attempts = []
+
+
+def open_close_failure_session():
+    session = CloseFailureSession()
+    close_failure_attempts.append(session)
+    return session
+
+
+try:
+    run_transport_session(
+        open_close_failure_session,
+        lambda _session: "completed",
+        "close failure session",
+        retry_window_seconds=1,
+        retry_interval_seconds=0,
+    )
+except smoke_common.ProbeOperationalFailure as exc:
+    assert "Failed to close close failure session" in str(exc)
+else:
+    raise AssertionError("close OSError unexpectedly retried")
+assert len(close_failure_attempts) == 1
+assert close_failure_attempts[0].closed is True
 
 
 class FakeHttpResponse:

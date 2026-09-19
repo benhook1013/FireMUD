@@ -7,7 +7,6 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
-from contextlib import closing
 from urllib.parse import quote
 
 
@@ -208,17 +207,7 @@ def run_transport_session(
     deadline = time.time() + retry_window_seconds if retry_window_seconds > 0 else None
     while True:
         try:
-            with closing(open_session()) as session:
-                return execute_session(session)
-        except TransientUpstreamSmokeFailure:
-            if deadline is None:
-                raise
-            remaining = deadline - time.time()
-            if remaining <= 0:
-                raise
-            time.sleep(min(retry_interval_seconds, remaining))
-            if time.time() >= deadline:
-                raise
+            session = open_session()
         except retriable_exceptions as exc:
             if deadline is None:
                 raise ProbeOperationalFailure(
@@ -234,6 +223,51 @@ def run_transport_session(
                 raise ProbeOperationalFailure(
                     f"Failed to open {session_label}: {exc}"
                 ) from exc
+            continue
+
+        try:
+            result = execute_session(session)
+        except TransientUpstreamSmokeFailure:
+            try:
+                session.close()
+            except Exception as exc:
+                raise ProbeOperationalFailure(
+                    f"Failed to close {session_label}: {exc}"
+                ) from exc
+            if deadline is None:
+                raise
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise
+            time.sleep(min(retry_interval_seconds, remaining))
+            if time.time() >= deadline:
+                raise
+            continue
+        except retriable_exceptions as exc:
+            try:
+                session.close()
+            except Exception as close_exc:
+                raise ProbeOperationalFailure(
+                    f"Failed during {session_label}: {exc}; "
+                    f"close failed: {close_exc}"
+                ) from exc
+            raise ProbeOperationalFailure(
+                f"Failed during {session_label}: {exc}"
+            ) from exc
+        except Exception:
+            try:
+                session.close()
+            except Exception:
+                pass
+            raise
+        else:
+            try:
+                session.close()
+            except Exception as exc:
+                raise ProbeOperationalFailure(
+                    f"Failed to close {session_label}: {exc}"
+                ) from exc
+            return result
 
 
 def login_play_look_steps(
@@ -382,8 +416,10 @@ def wait_for_incremental_response(
     idle_sleep_seconds=0.05,
     retry_upstream_failure=False,
     sanitize_response=None,
+    deadline=None,
 ):
-    deadline = time.time() + timeout
+    if deadline is None:
+        deadline = time.time() + timeout
     response = combine_responses(responses[start_index:])
     while time.time() < deadline:
         chunk = next_chunk()
@@ -481,8 +517,11 @@ def gameplay_item_container_equipment_steps(
     ]
 
 
-def recv_until_socket(sock, expected_substring, timeout):
-    deadline = time.time() + timeout
+def recv_until_socket(sock, expected_substring, timeout=None, *, deadline=None):
+    if deadline is None:
+        if timeout is None:
+            raise TypeError("recv_until_socket requires timeout or deadline")
+        deadline = time.time() + timeout
     chunks = []
     while time.time() < deadline:
         try:
@@ -537,11 +576,15 @@ def send_telnet_command_and_expect(
     started_at = time.time()
     command_deadline = started_at + timeout_seconds
     command_bytes = line.encode("iso-8859-1").replace(b"\xff", b"\xff\xff")
+    remaining_timeout = command_deadline - time.time()
+    if remaining_timeout <= 0:
+        raise ProbeOperationalFailure(f"Timed out before sending {label}")
+    sock.settimeout(remaining_timeout)
     sock.sendall(command_bytes + b"\r\n")
     remaining_timeout = max(0, command_deadline - time.time())
     response = wait_for_incremental_response(
         lambda: recv_until_socket(
-            sock, "", max(0, command_deadline - time.time())
+            sock, "", deadline=command_deadline
         ),
         responses,
         start_index,
@@ -555,6 +598,7 @@ def send_telnet_command_and_expect(
         ),
         retry_upstream_failure=label in RETRYABLE_STARTUP_COMMAND_LABELS,
         sanitize_response=lambda value: redact_login_credential(value, line),
+        deadline=command_deadline,
     )
     diagnostic_response = redact_login_credential(response, line)
     print(f"=== {label} response ===")
@@ -679,12 +723,17 @@ def run_telnet_smoke_session(
     )
 
 
-def recv_text_websocket(ws, label, timeout):
-    deadline = time.time() + timeout
+def recv_text_websocket(ws, label, timeout=None, *, deadline=None):
+    if deadline is None:
+        if timeout is None:
+            raise TypeError("recv_text_websocket requires timeout or deadline")
+        deadline = time.time() + timeout
     last_error = None
     while time.time() < deadline:
         remaining = deadline - time.time()
-        ws.settimeout(min(1.0, max(0.1, remaining)))
+        if remaining <= 0:
+            break
+        ws.settimeout(remaining)
         try:
             return ws.recv()
         except Exception as exc:
@@ -693,23 +742,29 @@ def recv_text_websocket(ws, label, timeout):
             ):
                 raise
             last_error = exc
+    timeout_description = (
+        f"{timeout}s" if timeout is not None else "the command deadline"
+    )
     raise ProbeOperationalFailure(
-        f"Timed out waiting for {label} after {timeout}s"
+        f"Timed out waiting for {label} after {timeout_description}"
     ) from last_error
 
 
-def recv_optional_websocket_chunk(ws, label, timeout):
+def recv_optional_websocket_chunk(ws, label, timeout=None, *, deadline=None):
     try:
-        return recv_text_websocket(ws, label, timeout).strip()
+        return recv_text_websocket(ws, label, timeout, deadline=deadline).strip()
     except ProbeOperationalFailure:
         return ""
 
 
-def drain_available_websocket(ws, responses, quiet_timeout=0.25):
-    deadline = time.time() + quiet_timeout
-    while time.time() < deadline:
-        remaining = max(0.05, deadline - time.time())
-        chunk = recv_optional_websocket_chunk(ws, "drain chunk", remaining)
+def drain_available_websocket(ws, responses, quiet_timeout=0.25, *, deadline=None):
+    quiet_deadline = time.time() + quiet_timeout
+    if deadline is not None:
+        quiet_deadline = min(quiet_deadline, deadline)
+    while time.time() < quiet_deadline:
+        chunk = recv_optional_websocket_chunk(
+            ws, "drain chunk", deadline=quiet_deadline
+        )
         if not chunk:
             return
         responses.append(chunk)
@@ -727,19 +782,28 @@ def send_websocket_command_and_expect(
     line = _normalize_command_line(line)
     start_index = len(responses)
     started_at = time.time()
+    command_deadline = started_at + timeout_seconds
+    remaining_timeout = command_deadline - time.time()
+    if remaining_timeout <= 0:
+        raise ProbeOperationalFailure(f"Timed out before sending {label}")
+    ws.settimeout(remaining_timeout)
     ws.send(line)
+    remaining_timeout = max(0, command_deadline - time.time())
     response = wait_for_incremental_response(
         lambda: recv_optional_websocket_chunk(
-            ws, f"{label} response chunk", min(0.5, timeout_seconds)
+            ws, f"{label} response chunk", deadline=command_deadline
         ),
         responses,
         start_index,
         expected_substrings,
-        timeout_seconds,
+        remaining_timeout,
         lambda parts: "\n".join(chunk for chunk in parts if chunk),
-        lambda: drain_available_websocket(ws, responses),
+        lambda: drain_available_websocket(
+            ws, responses, deadline=command_deadline
+        ),
         retry_upstream_failure=label in RETRYABLE_STARTUP_COMMAND_LABELS,
         sanitize_response=lambda value: redact_login_credential(value, line),
+        deadline=command_deadline,
     )
     diagnostic_response = redact_login_credential(response, line)
     print(f"=== {label} response ===")

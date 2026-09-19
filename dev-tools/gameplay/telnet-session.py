@@ -109,6 +109,9 @@ INVALID_COMMAND_ERROR = "Telnet commands must not contain embedded CR or LF"
 EVIDENCE_FAILURE_DIAGNOSTIC = (
     "TELNET SESSION FAILED: unable to persist session evidence"
 )
+OUTPUT_FAILURE_REASON = "output_callback"
+OUTPUT_FAILURE_DETAIL = "session output callback failed"
+OUTPUT_FAILURE_DIAGNOSTIC = "TELNET SESSION FAILED: unable to render session evidence"
 
 
 class _TransportArgumentParser(argparse.ArgumentParser):
@@ -218,19 +221,34 @@ class EvidenceStore:
                 os.close(fd)
 
     def read(self, after: int | None = None) -> list[dict]:
-        if not self.path.exists():
+        try:
+            fd = os.open(self.path, os.O_RDONLY)
+        except FileNotFoundError:
             return []
-        records = []
-        with self.path.open(encoding="utf-8") as stream:
-            for line in stream:
+        try:
+            with self._lock:
+                fcntl.flock(fd, fcntl.LOCK_SH)
                 try:
-                    record = json.loads(line)
-                    cursor = int(record["cursor"])
-                except (TypeError, ValueError, KeyError, json.JSONDecodeError):
-                    continue
-                if after is None or cursor > after:
-                    records.append(record)
-        return records
+                    records = []
+                    with os.fdopen(os.dup(fd), encoding="utf-8") as stream:
+                        for line in stream:
+                            try:
+                                record = json.loads(line)
+                                cursor = int(record["cursor"])
+                            except (
+                                TypeError,
+                                ValueError,
+                                KeyError,
+                                json.JSONDecodeError,
+                            ):
+                                continue
+                            if after is None or cursor > after:
+                                records.append(record)
+                    return records
+                finally:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
     def latest_cursor(self) -> int:
         with self._lock:
@@ -267,6 +285,44 @@ def _login_redaction(command: str) -> tuple[str, bytes, bytes] | None:
     replacement = _iso88591_bytes(safe)
     safe = replacement.decode("iso-8859-1")
     return safe, raw, replacement
+
+
+def _login_redaction_patterns(command: str) -> list[tuple[bytes, bytes]]:
+    """Return full-command and credential-only redaction patterns.
+
+    The full command gives an exact echo a useful canonical replacement.  The
+    credential-only pattern is deliberately broader: servers commonly
+    canonicalize command or account casing and may include the credential in a
+    diagnostic rather than echoing the exact command bytes.
+    """
+    redaction = _login_redaction(command)
+    if redaction is None:
+        return []
+    _, raw, replacement = redaction
+    match = re.match(
+        r"(?i)^[ \t]*(?:LOGIN|LOGON)[ \t]+\S+[ \t]+(\S.*)$", command
+    )
+    if match is None:
+        return [(raw, replacement)]
+    credential = _iso88591_bytes(match.group(1))
+    if not credential:
+        return [(raw, replacement)]
+    return [(raw, replacement), (credential, b"[REDACTED]")]
+
+
+def _ascii_casefold_bytes(value: bytes) -> bytes:
+    """Fold only ASCII letters, preserving every other Telnet byte."""
+    return bytes(
+        byte + (ord("a") - ord("A")) if ord("A") <= byte <= ord("Z") else byte
+        for byte in value
+    )
+
+
+def _is_credential_only_redaction(pattern: bytes) -> bool:
+    return (
+        re.match(rb"(?i)^[ \t]*(?:LOGIN|LOGON)[ \t]+\S+[ \t]+", pattern)
+        is None
+    )
 
 
 def _display_text(text: str) -> str:
@@ -365,6 +421,8 @@ class TelnetSession:
         self.idle_timeout_recorded = False
         self.persistence_failed = False
         self.persistence_failure_lock = threading.Lock()
+        self.output_failed = False
+        self.output_failure_lock = threading.Lock()
         self.parser = TelnetParser()
         self.redaction_patterns: list[tuple[bytes, bytes]] = []
         self.redaction_tail = b""
@@ -421,15 +479,49 @@ class TelnetSession:
             pass
         self._shutdown_socket()
 
+    def _fail_output(self) -> None:
+        """Terminalize without invoking a callback that has already failed."""
+        with self.output_failure_lock:
+            if self.output_failed:
+                return
+            self.output_failed = True
+            self.closed = True
+            self.disconnect_recorded = True
+            self.disconnect_reason = OUTPUT_FAILURE_REASON
+            self.disconnect_failed = True
+            self.disconnect_event.set()
+
+        self._shutdown_socket()
+        # Keep the failure evidence bounded and constant.  In particular, do
+        # not persist the callback exception text, which may contain a
+        # credential, and do not route these records back through _show().
+        for event, fields in (
+            ("error", {"reason": OUTPUT_FAILURE_REASON, "detail": OUTPUT_FAILURE_DETAIL}),
+            ("disconnect", {"reason": OUTPUT_FAILURE_REASON}),
+        ):
+            try:
+                self.store.append("system", event, **fields)
+            except Exception:
+                pass
+
+    def _session_failed(self) -> bool:
+        return self.persistence_failed or self.output_failed
+
     def _append(self, direction: str, event: str, **fields) -> dict | None:
-        if self.persistence_failed:
+        if self._session_failed():
             return None
         try:
             record = self.store.append(direction, event, **fields)
         except Exception:
             self._fail_persistence()
             return None
-        self._show(record)
+        if self._session_failed():
+            return None
+        try:
+            self._show(record)
+        except Exception:
+            self._fail_output()
+            return None
         return record
 
     def connect(self) -> None:
@@ -462,8 +554,12 @@ class TelnetSession:
             self._append("system", "error", reason="connect", detail=str(exc))
             raise
         self._append("system", "connect", host=self.host, port=self.port)
-        if self.persistence_failed:
-            raise OSError("Unable to persist session evidence")
+        if self._session_failed():
+            raise OSError(
+                "Unable to persist session evidence"
+                if self.persistence_failed
+                else OUTPUT_FAILURE_DIAGNOSTIC
+            )
         self.receiver = threading.Thread(target=self._receive_loop, name="firemud-telnet-receiver", daemon=True)
         self.receiver.start()
 
@@ -490,14 +586,28 @@ class TelnetSession:
         if not patterns:
             return combined
 
+        folded_combined = _ascii_casefold_bytes(combined)
         safe = bytearray()
         cursor = 0
         while cursor < len(combined):
-            candidates = [
-                (start, pattern, replacement)
-                for pattern, replacement in patterns
-                if (start := combined.find(pattern[:1], cursor)) >= 0
-            ]
+            candidates = []
+            for pattern, replacement in patterns:
+                credential_only = _is_credential_only_redaction(pattern)
+                search_pattern = (
+                    _ascii_casefold_bytes(pattern) if credential_only else pattern
+                )
+                search_data = folded_combined if credential_only else combined
+                start = search_data.find(search_pattern[:1], cursor)
+                if start >= 0:
+                    candidates.append(
+                        (
+                            start,
+                            pattern,
+                            replacement,
+                            credential_only,
+                            search_pattern,
+                        )
+                    )
             if not candidates:
                 safe.extend(combined[cursor:])
                 break
@@ -505,13 +615,19 @@ class TelnetSession:
             start = min(candidate[0] for candidate in candidates)
             matching_candidates = [candidate for candidate in candidates if candidate[0] == start]
             matches = []
-            for _, pattern, replacement in matching_candidates:
+            for _, pattern, replacement, credential_only, search_pattern in matching_candidates:
                 matched = 0
-                available = min(len(pattern), len(combined) - start)
-                while matched < available and combined[start + matched] == pattern[matched]:
+                available = min(len(search_pattern), len(combined) - start)
+                search_data = folded_combined if credential_only else combined
+                while (
+                    matched < available
+                    and search_data[start + matched] == search_pattern[matched]
+                ):
                     matched += 1
-                matches.append((matched, pattern, replacement))
-            matched, pattern, replacement = max(matches, key=lambda item: item[0])
+                matches.append((matched, pattern, replacement, credential_only))
+            matched, pattern, replacement, credential_only = max(
+                matches, key=lambda item: item[0]
+            )
 
             safe.extend(combined[cursor:start])
             if matched == len(pattern):
@@ -519,10 +635,12 @@ class TelnetSession:
                 cursor = start + matched
                 continue
 
-            login_prefix = re.match(
-                rb"(?i)^[ \t]*(?:LOGIN|LOGON)[ \t]+\S+[ \t]+", pattern
-            )
-            includes_credential = login_prefix is None or matched > login_prefix.end()
+            login_prefix = None
+            if not credential_only:
+                login_prefix = re.match(
+                    rb"(?i)^[ \t]*(?:LOGIN|LOGON)[ \t]+\S+[ \t]+", pattern
+                )
+            includes_credential = credential_only or matched > login_prefix.end()
             if start + matched == len(combined):
                 if not final:
                     self.redaction_tail = combined[start:]
@@ -532,6 +650,17 @@ class TelnetSession:
                     self._append("inbound", "redaction_suppressed", phase="start")
                     self._append("inbound", "redaction_suppressed", phase="end")
                 break
+
+            # A credential-only pattern is intentionally broad enough to catch
+            # diagnostics, so an isolated matching byte in ordinary room text
+            # must not suppress that whole line. The full LOGIN/LOGON pattern
+            # retains the existing fail-closed near-match behavior; a
+            # credential-only near-match is suppressed only once it has
+            # established a meaningful prefix.
+            if credential_only and matched < 2:
+                safe.extend(combined[start : start + matched])
+                cursor = start + matched
+                continue
 
             # Never emit a disproved prefix once it includes credential bytes.
             # Once that boundary is crossed, discard the complete current line
@@ -562,7 +691,7 @@ class TelnetSession:
     def _receive_loop(self) -> None:
         assert self.socket is not None
         while True:
-            if self.persistence_failed:
+            if self._session_failed():
                 return
             try:
                 chunk = self.socket.recv(4096)
@@ -571,7 +700,7 @@ class TelnetSession:
                     if not self.closed and not self.idle_timeout_recorded:
                         self._append("inbound", "timeout", reason="read_idle")
                         self.idle_timeout_recorded = True
-                if self.persistence_failed:
+                if self._session_failed():
                     return
                 continue
             except OSError as exc:
@@ -591,7 +720,7 @@ class TelnetSession:
                         "received",
                         text=trailing.decode("iso-8859-1", errors="replace"),
                     )
-                if self.persistence_failed:
+                if self._session_failed():
                     return
                 self._append("system", "disconnect", reason="remote_eof")
                 return
@@ -600,7 +729,7 @@ class TelnetSession:
             payload, negotiations = self.parser.feed(chunk)
             for command, option, response in negotiations:
                 self._append("inbound", "telnet_negotiation", command=command, option=option)
-                if self.persistence_failed:
+                if self._session_failed():
                     return
                 if response is not None:
                     with self.send_lock:
@@ -617,7 +746,7 @@ class TelnetSession:
                                 ),
                             )
                             return
-                    if self.persistence_failed:
+                    if self._session_failed():
                         return
                     response_name = "DONT" if command == "WILL" else "WONT"
                     self._append(
@@ -626,6 +755,8 @@ class TelnetSession:
                         command=response_name,
                         option=option,
                     )
+                    if self._session_failed():
+                        return
             safe_payload = self._redact_inbound(payload)
             if safe_payload:
                 self._append(
@@ -633,7 +764,7 @@ class TelnetSession:
                     "received",
                     text=safe_payload.decode("iso-8859-1", errors="replace"),
                 )
-                if self.persistence_failed:
+                if self._session_failed():
                     return
 
     def send_command(self, command: str) -> None:
@@ -659,11 +790,15 @@ class TelnetSession:
                 ):
                     raise RuntimeError("Telnet session is not connected")
                 if redaction:
-                    self.redaction_patterns.append((raw, replacement))
+                    self.redaction_patterns.extend(_login_redaction_patterns(command))
                 self.idle_timeout_recorded = False
                 self._append("outbound", "command", text=display)
-                if self.persistence_failed:
-                    raise OSError("Unable to persist session evidence")
+                if self._session_failed():
+                    raise OSError(
+                        "Unable to persist session evidence"
+                        if self.persistence_failed
+                        else OUTPUT_FAILURE_DIAGNOSTIC
+                    )
                 wire_command = _iso88591_bytes(command).replace(
                     bytes((IAC,)), bytes((IAC, IAC))
                 )

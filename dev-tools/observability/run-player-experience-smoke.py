@@ -2169,8 +2169,17 @@ def run_first_party_websocket_step(
     step_results: list[dict[str, Any]],
 ) -> None:
     started_at = time.time()
+    command_deadline = started_at + timeout_seconds
+    remaining_timeout = command_deadline - time.time()
+    if remaining_timeout <= 0:
+        raise ProbeOperationalFailure(
+            f"Timed out before sending structured {command_type} command"
+        )
+    ws.settimeout(remaining_timeout)
     ws.send(command)
-    payload = await_structured_command_result(ws, command_type, timeout_seconds)
+    payload = await_structured_command_result(
+        ws, command_type, timeout_seconds, deadline=command_deadline
+    )
     step_results.append(
         {
             "label": command_type,
@@ -2181,10 +2190,23 @@ def run_first_party_websocket_step(
     )
 
 
-def await_structured_command_result(ws: Any, command_type: str, timeout_seconds: int) -> str:
-    deadline = time.time() + timeout_seconds
+def await_structured_command_result(
+    ws: Any,
+    command_type: str,
+    timeout_seconds: int | None = None,
+    *,
+    deadline: float | None = None,
+) -> str:
+    if deadline is None:
+        if timeout_seconds is None:
+            raise TypeError(
+                "await_structured_command_result requires timeout or deadline"
+            )
+        deadline = time.time() + timeout_seconds
     while time.time() < deadline:
-        remaining = min(1.0, max(0.1, deadline - time.time()))
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            break
         ws.settimeout(remaining)
         payload = ws.recv()
         try:
