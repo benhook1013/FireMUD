@@ -314,6 +314,9 @@ public class EntityManagementGrpcService
         inventoryService,
         containerService,
         roomEntityService,
+        (tenantId, gameInstanceId, terminationRequestId) ->
+            new net.firedevops.firemud.entitymanagement.dto.RuntimeInstanceCleanupResultDto(
+                0L, 0L, 0L, 0L),
         entityMutationEffectReplayService,
         entityUpgradeValidationService,
         (tenantId, versionId, templateType, templateId) -> false,

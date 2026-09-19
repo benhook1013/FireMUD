@@ -83,13 +83,12 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
 
   private final GameLogicDraftDesignDigestService gameLogicDraftDesignDigestService;
   private final GameplaySessionAttestationService gameplaySessionAttestationService;
+  private PublicationReadGuard publicationReadGuard;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
       justification = "MeterRegistry is thread-safe and only stored")
   private final MeterRegistry meterRegistry;
-
-  private PublicationReadGuard publicationReadGuard;
 
   @Autowired
   public GameLogicGrpcService(
