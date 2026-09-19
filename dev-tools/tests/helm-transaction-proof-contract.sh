@@ -46,6 +46,8 @@ for required_history_check_fragment in (
         )
 for required_cleanup_fragment in (
     "cleanup() {",
+    'namespace_owned=false',
+    'if [[ "$namespace_owned" == true ]]; then',
     'helm uninstall "$release" --namespace "$namespace" --wait --timeout 180s >/dev/null 2>&1 || true',
     'kubectl delete namespace "$namespace" --wait --request-timeout=180s --timeout=180s >/dev/null 2>&1 || true',
     "trap cleanup EXIT",
@@ -60,5 +62,11 @@ strict_cleanup_sequence = (
 )
 if strict_cleanup_sequence not in script:
     raise SystemExit("Helm proof script must keep normal cleanup strict before disarming its EXIT trap")
+if 'temp_id="$(basename "$work_dir"' not in script or 'namespace="helm-transaction-proof-${temp_id}"' not in script:
+    raise SystemExit("Helm proof namespace must be unique per temporary work directory")
+if 'kubectl create namespace "$namespace" >/dev/null 2>&1' not in script:
+    raise SystemExit("Helm proof must claim its unique namespace with exclusive kubectl create")
+if 'kubectl create namespace "$namespace" --dry-run=client' in script or 'kubectl apply -f -' in script:
+    raise SystemExit("Helm proof must not adopt an existing namespace through apply")
 print("Helm transaction proof contract passed")
 PY

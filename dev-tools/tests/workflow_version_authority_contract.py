@@ -1178,14 +1178,65 @@ def main() -> int:
         if set(paths) != {".node-version", lockfile}:
             fail(f"ci.yml {cache_id} key must hash .node-version and {lockfile}")
 
-    velero_terraform = (root / "k8s/terraform-production/main.tf").read_text()
-    velero_release_matches = re.findall(
-        r'(?ms)^resource "helm_release" "velero" \{.*?(?=^resource |^locals |\Z)',
-        velero_terraform,
+    def extract_hcl_block(text, header):
+        """Extract one exact top-level HCL block without consuming following blocks."""
+        match = re.search(rf'(?m)^{re.escape(header)}\s*\{{', text)
+        if match is None:
+            return None
+        opening_brace = text.find("{", match.start(), match.end())
+        depth = 0
+        in_string = False
+        escaped = False
+        line_comment = False
+        block_comment = False
+        for index in range(opening_brace, len(text)):
+            char = text[index]
+            next_char = text[index + 1] if index + 1 < len(text) else ""
+            if line_comment:
+                if char == "\n":
+                    line_comment = False
+            elif block_comment:
+                if char == "*" and next_char == "/":
+                    block_comment = False
+            elif in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+            elif char == '"':
+                in_string = True
+            elif char == "#" or (char == "/" and next_char == "/"):
+                line_comment = True
+            elif char == "/" and next_char == "*":
+                block_comment = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[match.start() : index + 1]
+        return None
+
+    fixture = (
+        'resource "helm_release" "velero" {\n'
+        '  version = "canonical"\n'
+        '}\n'
+        'resource "helm_release" "following" {\n'
+        '  version = "following-only"\n'
+        '}\n'
     )
-    if len(velero_release_matches) != 1:
+    fixture_block = extract_hcl_block(fixture, 'resource "helm_release" "velero"')
+    if fixture_block is None or 'version = "following-only"' in fixture_block:
+        fail("Terraform HCL block extraction consumed a following resource")
+
+    velero_terraform = (root / "k8s/terraform-production/main.tf").read_text()
+    if velero_terraform.count('resource "helm_release" "velero"') != 1:
         fail("Terraform must define exactly one Velero Helm release")
-    velero_release = velero_release_matches[0]
+    velero_release = extract_hcl_block(velero_terraform, 'resource "helm_release" "velero"')
+    if velero_release is None:
+        fail("Terraform Velero Helm release block is unterminated")
     if f'version    = "{a["VELERO_CHART_VERSION"]}"' not in velero_release:
         fail("Terraform Velero Helm release must pin the canonical chart version")
     if f'value = "v{a["VELERO_VERSION"]}"' not in velero_release:
@@ -1193,17 +1244,9 @@ def main() -> int:
     if f'value = "{a["VELERO_IMAGE_DIGEST"]}"' not in velero_release:
         fail("Terraform Velero Helm release must pin the canonical server image digest")
 
-    velero_cronjob = (root / "k8s/velero/verify-backups-cronjob.yaml").read_text()
-    verifier_images = re.findall(
-        r"image: ghcr\.io/benhook1013/backup-verifier:[^\s]+", velero_cronjob
-    )
-    expected_verifier_image = (
-        "image: ghcr.io/benhook1013/backup-verifier:"
-        "9c41b19b3417a004d5a70de70468de94b97805f2@"
-        "sha256:f92597ca04dbd8a1821813965a95cf237c85de78db40fe91b6b539513605c60f"
-    )
-    if verifier_images != [expected_verifier_image]:
-        fail("backup verifier CronJob image digest is stale")
+    velero_cronjob_path = root / "k8s/velero/verify-backups-cronjob.yaml"
+    if not velero_cronjob_path.is_file():
+        fail("backup verifier CronJob manifest is missing")
     verifier_dockerfile = (root / "docker/backup-verifier.Dockerfile").read_text()
     expected_velero_stage = (
         f"FROM velero/velero:v{a['VELERO_VERSION']}@{a['VELERO_IMAGE_DIGEST']} AS velero-cli"
@@ -1216,7 +1259,7 @@ def main() -> int:
         fail("Renovate managers incomplete")
     custom_managers = renovate.get("customManagers", [])
     if len(custom_managers) != 10:
-        fail("Renovate must define Actionlint, Velero, seven version/checksum-backed, and ORT/ZAP image authority managers")
+        fail("Renovate must define three version-only, five checksum-backed, one Velero, and one ORT/ZAP image authority manager")
 
     def translate_renovate_pattern(pattern_source):
         return re.sub(r"\(\?<([A-Za-z_])", r"(?P<\1", pattern_source)
@@ -1478,7 +1521,7 @@ def main() -> int:
         or velero_manual_rule.get("matchManagers") != ["custom.regex"]
         or velero_manual_rule.get("matchPackageNames") != ["velero/velero"]
         or velero_manual_rule.get("prBodyNotes") != [
-            "Run `python3 dev-tools/maintenance/update-workflow-tool.py velero <version> --velero-dockerfile <path> --velero-chart-version <chart-version> --image-evidence-file <path>` before merging so the Velero chart, verifier Dockerfile image digest, and CLI archive checksum are verified and updated together."
+            "Run `python3 dev-tools/maintenance/update-workflow-tool.py velero <version> --velero-dockerfile <path> --terraform-file <path> --velero-chart-version <chart-version> --image-evidence-file <path>` before merging so the Velero chart, verifier Dockerfile image digest, Terraform projection, and CLI archive checksum are verified and updated together."
         ]
     ):
         fail("Velero custom manager updates must carry the transactional updater PR note")

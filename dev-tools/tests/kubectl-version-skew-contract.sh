@@ -20,6 +20,7 @@ run_case() {
   local name="$1"
   local expected="$2"
   local json="$3"
+  local diagnostic="${4:-}"
   local output
   if output="$(PATH="$tmp/bin:$PATH" KUBECTL_VERSION_JSON="$json" bash "$ROOT_DIR/dev-tools/hosted/shared/check-kubectl-version-skew.sh" 2>&1)"; then
     if [[ "$expected" != pass ]]; then
@@ -29,16 +30,19 @@ run_case() {
   elif [[ "$expected" = pass ]]; then
     echo "$name unexpectedly failed: $output" >&2
     exit 1
+  elif [[ -n "$diagnostic" && "$output" != *"$diagnostic"* ]]; then
+    echo "$name returned the wrong diagnostic: $output" >&2
+    exit 1
   fi
 }
 
 run_case same pass '{"clientVersion":{"gitVersion":"v1.34.5"},"serverVersion":{"gitVersion":"v1.34.5+k3s1"}}'
 run_case client-newer pass '{"clientVersion":{"gitVersion":"v1.35.8"},"serverVersion":{"gitVersion":"v1.34.5+k3s1"}}'
 run_case client-older pass '{"clientVersion":{"gitVersion":"v1.33.9"},"serverVersion":{"gitVersion":"v1.34.5+k3s1"}}'
-run_case too-new fail '{"clientVersion":{"gitVersion":"v1.36.0"},"serverVersion":{"gitVersion":"v1.34.5+k3s1"}}'
-run_case too-old fail '{"clientVersion":{"gitVersion":"v1.32.0"},"serverVersion":{"gitVersion":"v1.34.5+k3s1"}}'
-run_case major-mismatch fail '{"clientVersion":{"gitVersion":"v2.34.0"},"serverVersion":{"gitVersion":"v1.34.5+k3s1"}}'
-run_case missing-server fail '{"clientVersion":{"gitVersion":"v1.34.5"}}'
+run_case too-new fail '{"clientVersion":{"gitVersion":"v1.36.0"},"serverVersion":{"gitVersion":"v1.34.5+k3s1"}}' 'minor skew is unsupported'
+run_case too-old fail '{"clientVersion":{"gitVersion":"v1.32.0"},"serverVersion":{"gitVersion":"v1.34.5+k3s1"}}' 'minor skew is unsupported'
+run_case major-mismatch fail '{"clientVersion":{"gitVersion":"v2.34.0"},"serverVersion":{"gitVersion":"v1.34.5+k3s1"}}' 'major version skew is unsupported'
+run_case missing-server fail '{"clientVersion":{"gitVersion":"v1.34.5"}}' 'kubectl version output lacks parseable client and server gitVersion values'
 
 python3 - "$ROOT_DIR" <<'PY'
 import copy

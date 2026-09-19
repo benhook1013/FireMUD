@@ -17,7 +17,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
-root, authority, checksum_file, evidence_file, manifest, terraform = map(Path, sys.argv[1:7])
+root, authority, checksum_file, evidence_file, dockerfile, terraform = map(Path, sys.argv[1:7])
 expected_digest = sys.argv[7]
 spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
 module = importlib.util.module_from_spec(spec)
@@ -40,7 +40,7 @@ sys.argv = [
     "--authority",
     str(authority),
     "--velero-dockerfile",
-    str(manifest),
+    str(dockerfile),
     "--terraform-file",
     str(terraform),
     "--velero-chart-version",
@@ -135,13 +135,13 @@ from pathlib import Path
 root, tmp = map(Path, sys.argv[1:])
 default_root = tmp / "default-root"
 default_authority = default_root / "config/workflow-tool-versions.env"
-default_manifest = default_root / "docker/backup-verifier.Dockerfile"
+default_dockerfile = default_root / "docker/backup-verifier.Dockerfile"
 default_terraform = default_root / "k8s/terraform-production/main.tf"
 default_authority.parent.mkdir(parents=True)
-default_manifest.parent.mkdir(parents=True)
+default_dockerfile.parent.mkdir(parents=True)
 default_terraform.parent.mkdir(parents=True)
 shutil.copy(root / "config/workflow-tool-versions.env", default_authority)
-shutil.copy(root / "docker/backup-verifier.Dockerfile", default_manifest)
+shutil.copy(root / "docker/backup-verifier.Dockerfile", default_dockerfile)
 shutil.copy(root / "k8s/terraform-production/main.tf", default_terraform)
 checksum_file = tmp / "default-checksums"
 evidence_file = tmp / "default-image-evidence"
@@ -168,7 +168,7 @@ sys.argv = [
 module.main()
 if "VELERO_VERSION=9.8.7" not in default_authority.read_text(encoding="utf-8"):
     raise SystemExit("default authority path was not updated")
-if f"FROM velero/velero:v9.8.7@{digest} AS velero-cli" not in default_manifest.read_text(encoding="utf-8"):
+if f"FROM velero/velero:v9.8.7@{digest} AS velero-cli" not in default_dockerfile.read_text(encoding="utf-8"):
     raise SystemExit("default Velero Dockerfile path was not projected")
 if 'version    = "12.2.0"' not in default_terraform.read_text(encoding="utf-8"):
     raise SystemExit("default Terraform chart path was not projected")
@@ -334,19 +334,19 @@ for tool, (_, asset_template, _) in module.SPECS.items():
 PY
 
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/lock-authority.env"
-cp "$ROOT_DIR/docker/backup-verifier.Dockerfile" "$tmp/lock-velero.yaml"
+cp "$ROOT_DIR/docker/backup-verifier.Dockerfile" "$tmp/lock-velero.Dockerfile"
 cp "$ROOT_DIR/k8s/terraform-production/main.tf" "$tmp/lock-terraform.tf"
 lock_checksum=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 lock_image_digest=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 printf 'version=9.8.7\n%s  velero-v9.8.7-linux-amd64.tar.gz\n' "$lock_checksum" > "$tmp/lock-checksum"
 echo "velero/velero:v9.8.7@$lock_image_digest" > "$tmp/lock-image-evidence"
-python3 - "$ROOT_DIR" "$tmp/lock-authority.env" "$tmp/lock-checksum" "$tmp/lock-image-evidence" "$tmp/lock-velero.yaml" "$tmp/lock-terraform.tf" "$lock_image_digest" <<'PY'
+python3 - "$ROOT_DIR" "$tmp/lock-authority.env" "$tmp/lock-checksum" "$tmp/lock-image-evidence" "$tmp/lock-velero.Dockerfile" "$tmp/lock-terraform.tf" "$lock_image_digest" <<'PY'
 import importlib.util
 import subprocess
 import sys
 from pathlib import Path
 
-root, authority, checksum_file, evidence_file, manifest, terraform = map(Path, sys.argv[1:7])
+root, authority, checksum_file, evidence_file, dockerfile, terraform = map(Path, sys.argv[1:7])
 expected_digest = sys.argv[7]
 spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
 module = importlib.util.module_from_spec(spec)
@@ -436,7 +436,7 @@ sys.argv = [
     "--authority",
     str(authority),
     "--velero-dockerfile",
-    str(manifest),
+    str(dockerfile),
     "--terraform-file",
     str(terraform),
     "--velero-chart-version",
@@ -448,22 +448,22 @@ if events[:6] != ["reconcile", "evidence", "resolve", "checksum", "reconcile", "
 PY
 grep -Fx "VELERO_LINUX_AMD64_SHA256=$lock_checksum" "$tmp/lock-authority.env" >/dev/null
 grep -Fx "VELERO_IMAGE_DIGEST=$lock_image_digest" "$tmp/lock-authority.env" >/dev/null
-grep -F "FROM velero/velero:v9.8.7@$lock_image_digest AS velero-cli" "$tmp/lock-velero.yaml" >/dev/null
+grep -F "FROM velero/velero:v9.8.7@$lock_image_digest AS velero-cli" "$tmp/lock-velero.Dockerfile" >/dev/null
 grep -F 'version    = "12.2.0"' "$tmp/lock-terraform.tf" >/dev/null
 grep -F 'value = "v9.8.7"' "$tmp/lock-terraform.tf" >/dev/null
 grep -F "value = \"$lock_image_digest\"" "$tmp/lock-terraform.tf" >/dev/null
 
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/unchanged.env"
 cp "$tmp/unchanged.env" "$tmp/before.env"
-echo 'no Velero image projection' > "$tmp/invalid-velero.yaml"
+echo 'no Velero image projection' > "$tmp/invalid-velero.Dockerfile"
 cp "$ROOT_DIR/k8s/terraform-production/main.tf" "$tmp/invalid-terraform.tf"
 cp "$tmp/invalid-terraform.tf" "$tmp/before-terraform.tf"
-python3 - "$ROOT_DIR" "$tmp/unchanged.env" "$tmp/checksums" "$tmp/image-evidence" "$tmp/invalid-velero.yaml" "$tmp/invalid-terraform.tf" "$image_digest" <<'PY'
+python3 - "$ROOT_DIR" "$tmp/unchanged.env" "$tmp/checksums" "$tmp/image-evidence" "$tmp/invalid-velero.Dockerfile" "$tmp/invalid-terraform.tf" "$image_digest" <<'PY'
 import importlib.util
 import sys
 from pathlib import Path
 
-root, authority, checksum_file, evidence_file, manifest, terraform = map(Path, sys.argv[1:7])
+root, authority, checksum_file, evidence_file, dockerfile, terraform = map(Path, sys.argv[1:7])
 expected_digest = sys.argv[7]
 spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
 module = importlib.util.module_from_spec(spec)
@@ -480,7 +480,7 @@ sys.argv = [
     "--authority",
     str(authority),
     "--velero-dockerfile",
-    str(manifest),
+    str(dockerfile),
     "--terraform-file",
     str(terraform),
     "--velero-chart-version",
@@ -497,18 +497,18 @@ PY
 cmp "$tmp/before.env" "$tmp/unchanged.env"
 cmp "$tmp/before-terraform.tf" "$tmp/invalid-terraform.tf"
 
-cp "$ROOT_DIR/docker/backup-verifier.Dockerfile" "$tmp/unchanged.yaml"
+cp "$ROOT_DIR/docker/backup-verifier.Dockerfile" "$tmp/unchanged.Dockerfile"
 cp "$tmp/before.env" "$tmp/no-image-evidence.env"
-cp "$tmp/unchanged.yaml" "$tmp/no-image-evidence.yaml"
+cp "$tmp/unchanged.Dockerfile" "$tmp/no-image-evidence.Dockerfile"
 cp "$ROOT_DIR/k8s/terraform-production/main.tf" "$tmp/no-image-evidence.tf"
-python3 - "$ROOT_DIR" "$tmp/no-image-evidence.env" "$tmp/checksums" "$tmp/no-image-evidence.yaml" "$tmp/no-image-evidence.tf" <<'PY'
+python3 - "$ROOT_DIR" "$tmp/no-image-evidence.env" "$tmp/checksums" "$tmp/no-image-evidence.Dockerfile" "$tmp/no-image-evidence.tf" <<'PY'
 import contextlib
 import importlib.util
 import io
 import sys
 from pathlib import Path
 
-root, authority, checksum_file, manifest, terraform = map(Path, sys.argv[1:])
+root, authority, checksum_file, dockerfile, terraform = map(Path, sys.argv[1:])
 spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -526,7 +526,7 @@ sys.argv = [
     "--authority",
     str(authority),
     "--velero-dockerfile",
-    str(manifest),
+    str(dockerfile),
     "--terraform-file",
     str(terraform),
     "--velero-chart-version",
@@ -545,7 +545,7 @@ if "--image-evidence-file is required for velero updates" not in stderr.getvalue
     raise SystemExit(f"missing Velero evidence had unexpected diagnostic: {stderr.getvalue()}")
 PY
 cmp "$tmp/before.env" "$tmp/no-image-evidence.env"
-cmp "$tmp/unchanged.yaml" "$tmp/no-image-evidence.yaml"
+cmp "$tmp/unchanged.Dockerfile" "$tmp/no-image-evidence.Dockerfile"
 cmp "$ROOT_DIR/k8s/terraform-production/main.tf" "$tmp/no-image-evidence.tf"
 
 assert_rejected_evidence() {
@@ -553,24 +553,24 @@ assert_rejected_evidence() {
   local evidence="$2"
   local expected_diagnostic="$3"
   local authority="$tmp/${name}.env"
-  local manifest="$tmp/${name}.yaml"
+  local dockerfile="$tmp/${name}.Dockerfile"
   local terraform="$tmp/${name}.tf"
   local evidence_file="$tmp/${name}.evidence"
 
   cp "$tmp/before.env" "$authority"
-  cp "$ROOT_DIR/docker/backup-verifier.Dockerfile" "$manifest"
+  cp "$ROOT_DIR/docker/backup-verifier.Dockerfile" "$dockerfile"
   cp "$ROOT_DIR/k8s/terraform-production/main.tf" "$terraform"
   printf '%s\n' "$evidence" > "$evidence_file"
   if python3 "$ROOT_DIR/dev-tools/maintenance/update-workflow-tool.py" velero 9.8.7 \
     --checksum-file "$tmp/checksums" --image-evidence-file "$evidence_file" \
-    --authority "$authority" --velero-dockerfile "$manifest" --terraform-file "$terraform" \
+    --authority "$authority" --velero-dockerfile "$dockerfile" --terraform-file "$terraform" \
     --velero-chart-version 12.2.0 \
     2>"$tmp/${name}.stderr"; then
     echo "updater accepted invalid Velero image evidence: $name" >&2
     exit 1
   fi
   cmp "$tmp/before.env" "$authority"
-  cmp "$tmp/unchanged.yaml" "$manifest"
+  cmp "$tmp/unchanged.Dockerfile" "$dockerfile"
   cmp "$ROOT_DIR/k8s/terraform-production/main.tf" "$terraform"
   grep -F -- "$expected_diagnostic" "$tmp/${name}.stderr" >/dev/null
 }
@@ -592,15 +592,15 @@ velero/velero:v9.8.7@$image_digest" \
   "Velero image evidence must contain exactly one immutable image reference"
 
 cp "$tmp/before.env" "$tmp/mismatched-digest.env"
-cp "$tmp/unchanged.yaml" "$tmp/mismatched-digest.yaml"
+cp "$tmp/unchanged.Dockerfile" "$tmp/mismatched-digest.Dockerfile"
 cp "$ROOT_DIR/k8s/terraform-production/main.tf" "$tmp/mismatched-digest.tf"
 printf '%s\n' "velero/velero:v9.8.7@$image_digest" > "$tmp/mismatched-digest.evidence"
-python3 - "$ROOT_DIR" "$tmp/mismatched-digest.env" "$tmp/checksums" "$tmp/mismatched-digest.evidence" "$tmp/mismatched-digest.yaml" "$tmp/mismatched-digest.tf" <<'PY'
+python3 - "$ROOT_DIR" "$tmp/mismatched-digest.env" "$tmp/checksums" "$tmp/mismatched-digest.evidence" "$tmp/mismatched-digest.Dockerfile" "$tmp/mismatched-digest.tf" <<'PY'
 import importlib.util
 import sys
 from pathlib import Path
 
-root, authority, checksum_file, evidence_file, manifest, terraform = map(Path, sys.argv[1:])
+root, authority, checksum_file, evidence_file, dockerfile, terraform = map(Path, sys.argv[1:])
 spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -622,7 +622,7 @@ sys.argv = [
     "--authority",
     str(authority),
     "--velero-dockerfile",
-    str(manifest),
+    str(dockerfile),
     "--terraform-file",
     str(terraform),
     "--velero-chart-version",
@@ -637,56 +637,57 @@ else:
     raise SystemExit("updater accepted a Velero evidence digest for the wrong Docker Hub tag")
 PY
 cmp "$tmp/before.env" "$tmp/mismatched-digest.env"
-cmp "$tmp/unchanged.yaml" "$tmp/mismatched-digest.yaml"
+cmp "$tmp/unchanged.Dockerfile" "$tmp/mismatched-digest.Dockerfile"
 cmp "$ROOT_DIR/k8s/terraform-production/main.tf" "$tmp/mismatched-digest.tf"
 
 cp "$tmp/before.env" "$tmp/raw-digest.env"
-cp "$tmp/unchanged.yaml" "$tmp/raw-digest.yaml"
+cp "$tmp/unchanged.Dockerfile" "$tmp/raw-digest.Dockerfile"
 cp "$ROOT_DIR/k8s/terraform-production/main.tf" "$tmp/raw-digest.tf"
 if python3 "$ROOT_DIR/dev-tools/maintenance/update-workflow-tool.py" velero 9.8.7 \
   --checksum-file "$tmp/checksums" --image-digest "$image_digest" \
-  --authority "$tmp/raw-digest.env" --velero-dockerfile "$tmp/raw-digest.yaml" \
+  --authority "$tmp/raw-digest.env" --velero-dockerfile "$tmp/raw-digest.Dockerfile" \
   --terraform-file "$tmp/raw-digest.tf" --velero-chart-version 12.2.0 2>"$tmp/raw-digest.stderr"; then
   echo 'updater retained the raw --image-digest override' >&2
   exit 1
 fi
 grep -F -- 'unrecognized arguments: --image-digest' "$tmp/raw-digest.stderr" >/dev/null
 cmp "$tmp/before.env" "$tmp/raw-digest.env"
-cmp "$tmp/unchanged.yaml" "$tmp/raw-digest.yaml"
+cmp "$tmp/unchanged.Dockerfile" "$tmp/raw-digest.Dockerfile"
 cmp "$ROOT_DIR/k8s/terraform-production/main.tf" "$tmp/raw-digest.tf"
 
 cp "$tmp/before.env" "$tmp/missing-chart.env"
-cp "$tmp/unchanged.yaml" "$tmp/missing-chart.yaml"
+cp "$tmp/unchanged.Dockerfile" "$tmp/missing-chart.Dockerfile"
 cp "$ROOT_DIR/k8s/terraform-production/main.tf" "$tmp/missing-chart.tf"
 if python3 "$ROOT_DIR/dev-tools/maintenance/update-workflow-tool.py" velero 9.8.7 \
   --checksum-file "$tmp/checksums" --image-evidence-file "$tmp/image-evidence" \
-  --authority "$tmp/missing-chart.env" --velero-dockerfile "$tmp/missing-chart.yaml" \
+  --authority "$tmp/missing-chart.env" --velero-dockerfile "$tmp/missing-chart.Dockerfile" \
   --terraform-file "$tmp/missing-chart.tf" 2>"$tmp/missing-chart.stderr"; then
   echo 'updater accepted a Velero update without an explicit chart version' >&2
   exit 1
 fi
 grep -F -- '--velero-chart-version is required for velero updates' "$tmp/missing-chart.stderr" >/dev/null
 cmp "$tmp/before.env" "$tmp/missing-chart.env"
-cmp "$tmp/unchanged.yaml" "$tmp/missing-chart.yaml"
+cmp "$tmp/unchanged.Dockerfile" "$tmp/missing-chart.Dockerfile"
 cmp "$ROOT_DIR/k8s/terraform-production/main.tf" "$tmp/missing-chart.tf"
 
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/transaction-authority.env"
-cp "$ROOT_DIR/docker/backup-verifier.Dockerfile" "$tmp/transaction-velero.yaml"
+cp "$ROOT_DIR/docker/backup-verifier.Dockerfile" "$tmp/transaction-velero.Dockerfile"
 cp "$ROOT_DIR/k8s/terraform-production/main.tf" "$tmp/transaction-terraform.tf"
 cp "$tmp/transaction-authority.env" "$tmp/transaction-authority-before.env"
-cp "$tmp/transaction-velero.yaml" "$tmp/transaction-velero-before.yaml"
+cp "$tmp/transaction-velero.Dockerfile" "$tmp/transaction-velero-before.Dockerfile"
 cp "$tmp/transaction-terraform.tf" "$tmp/transaction-terraform-before.tf"
-python3 - "$ROOT_DIR" "$tmp/transaction-authority.env" "$tmp/transaction-velero.yaml" "$tmp/transaction-terraform.tf" <<'PY'
+python3 - "$ROOT_DIR" "$tmp/transaction-authority.env" "$tmp/transaction-velero.Dockerfile" "$tmp/transaction-terraform.tf" <<'PY'
 import importlib.util
 import sys
 from pathlib import Path
 
-root, authority, manifest, terraform = map(Path, sys.argv[1:])
+root, authority, dockerfile, terraform = map(Path, sys.argv[1:])
 spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 real_replace = module.os.replace
-manifest = manifest.resolve()
+dockerfile = dockerfile.resolve()
+terraform = terraform.resolve()
 
 def fail_second_target(source, destination):
     if Path(destination).resolve() == terraform:
@@ -696,7 +697,7 @@ def fail_second_target(source, destination):
 module.os.replace = fail_second_target
 try:
     module.transactional_write(
-        [(authority, "changed authority\n"), (manifest, "changed manifest\n"), (terraform, "changed terraform\n")]
+        [(authority, "changed authority\n"), (dockerfile, "changed Dockerfile\n"), (terraform, "changed Terraform\n")]
     )
 except OSError:
     pass
@@ -706,25 +707,25 @@ if module.recovery_journal_path(authority).exists():
     raise SystemExit("successful rollback left recovery state")
 PY
 cmp "$tmp/transaction-authority-before.env" "$tmp/transaction-authority.env"
-cmp "$tmp/transaction-velero-before.yaml" "$tmp/transaction-velero.yaml"
+cmp "$tmp/transaction-velero-before.Dockerfile" "$tmp/transaction-velero.Dockerfile"
 cmp "$tmp/transaction-terraform-before.tf" "$tmp/transaction-terraform.tf"
 
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/commit-marker-authority.env"
-cp "$ROOT_DIR/docker/backup-verifier.Dockerfile" "$tmp/commit-marker-velero.yaml"
-python3 - "$ROOT_DIR" "$tmp/commit-marker-authority.env" "$tmp/commit-marker-velero.yaml" <<'PY'
+cp "$ROOT_DIR/docker/backup-verifier.Dockerfile" "$tmp/commit-marker-velero.Dockerfile"
+python3 - "$ROOT_DIR" "$tmp/commit-marker-authority.env" "$tmp/commit-marker-velero.Dockerfile" <<'PY'
 import importlib.util
 import sys
 from pathlib import Path
 
-root, authority, manifest = map(Path, sys.argv[1:])
+root, authority, dockerfile = map(Path, sys.argv[1:])
 spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 authority = authority.resolve()
-manifest = manifest.resolve()
+dockerfile = dockerfile.resolve()
 journal = module.recovery_journal_path(authority)
 authority_before = authority.read_text(encoding="utf-8")
-manifest_before = manifest.read_text(encoding="utf-8")
+dockerfile_before = dockerfile.read_text(encoding="utf-8")
 real_atomic_text_replace = module.atomic_text_replace
 
 def fail_committed_marker(path, text):
@@ -735,7 +736,7 @@ def fail_committed_marker(path, text):
 module.atomic_text_replace = fail_committed_marker
 try:
     module.transactional_write(
-        [(authority, "committed-marker authority\n"), (manifest, "committed-marker manifest\n")]
+        [(authority, "committed-marker authority\n"), (dockerfile, "committed-marker Dockerfile\n")]
     )
 except OSError as exc:
     if str(exc) != "simulated committed marker write failure":
@@ -744,33 +745,33 @@ else:
     raise SystemExit("transaction accepted a failed committed marker write")
 if authority.read_text(encoding="utf-8") != authority_before:
     raise SystemExit("committed marker failure did not restore the authority")
-if manifest.read_text(encoding="utf-8") != manifest_before:
-    raise SystemExit("committed marker failure did not restore the manifest")
+if dockerfile.read_text(encoding="utf-8") != dockerfile_before:
+    raise SystemExit("committed marker failure did not restore the Dockerfile")
 if journal.exists():
     raise SystemExit("committed marker failure left recovery state")
 
 module.atomic_text_replace = real_atomic_text_replace
 module.transactional_write(
-    [(authority, "recovered authority\n"), (manifest, "recovered manifest\n")]
+    [(authority, "recovered authority\n"), (dockerfile, "recovered Dockerfile\n")]
 )
 if authority.read_text(encoding="utf-8") != "recovered authority\n":
     raise SystemExit("transaction did not remain recoverable after committed marker failure")
-if manifest.read_text(encoding="utf-8") != "recovered manifest\n":
-    raise SystemExit("manifest transaction did not remain recoverable after committed marker failure")
+if dockerfile.read_text(encoding="utf-8") != "recovered Dockerfile\n":
+    raise SystemExit("Dockerfile transaction did not remain recoverable after committed marker failure")
 if journal.exists():
     raise SystemExit("recoverable transaction left recovery state")
 PY
 
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/fsync-authority.env"
-cp "$ROOT_DIR/docker/backup-verifier.Dockerfile" "$tmp/fsync-velero.yaml"
+cp "$ROOT_DIR/docker/backup-verifier.Dockerfile" "$tmp/fsync-velero.Dockerfile"
 cp "$tmp/fsync-authority.env" "$tmp/fsync-authority-before.env"
-cp "$tmp/fsync-velero.yaml" "$tmp/fsync-velero-before.yaml"
-python3 - "$ROOT_DIR" "$tmp/fsync-authority.env" "$tmp/fsync-velero.yaml" <<'PY'
+cp "$tmp/fsync-velero.Dockerfile" "$tmp/fsync-velero-before.Dockerfile"
+python3 - "$ROOT_DIR" "$tmp/fsync-authority.env" "$tmp/fsync-velero.Dockerfile" <<'PY'
 import importlib.util
 import sys
 from pathlib import Path
 
-root, authority, manifest = map(Path, sys.argv[1:])
+root, authority, dockerfile = map(Path, sys.argv[1:])
 spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -797,7 +798,7 @@ module.os.replace = track_authority_replacement
 module.fsync_directory = fail_forward_fsync
 authority_before = authority.read_text(encoding="utf-8")
 try:
-    module.transactional_write([(authority, "changed authority\n"), (manifest, "changed manifest\n")])
+    module.transactional_write([(authority, "changed authority\n"), (dockerfile, "changed dockerfile\n")])
 except OSError:
     pass
 else:
@@ -808,25 +809,25 @@ if module.recovery_journal_path(authority).exists():
     raise SystemExit("successful rollback left recovery state")
 PY
 cmp "$tmp/fsync-authority-before.env" "$tmp/fsync-authority.env"
-cmp "$tmp/fsync-velero-before.yaml" "$tmp/fsync-velero.yaml"
+cmp "$tmp/fsync-velero-before.Dockerfile" "$tmp/fsync-velero.Dockerfile"
 
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/commit-fsync-authority.env"
-cp "$ROOT_DIR/docker/backup-verifier.Dockerfile" "$tmp/commit-fsync-velero.yaml"
-python3 - "$ROOT_DIR" "$tmp/commit-fsync-authority.env" "$tmp/commit-fsync-velero.yaml" <<'PY'
+cp "$ROOT_DIR/docker/backup-verifier.Dockerfile" "$tmp/commit-fsync-velero.Dockerfile"
+python3 - "$ROOT_DIR" "$tmp/commit-fsync-authority.env" "$tmp/commit-fsync-velero.Dockerfile" <<'PY'
 import importlib.util
 import json
 import sys
 from pathlib import Path
 
-root, authority, manifest = map(Path, sys.argv[1:])
+root, authority, dockerfile = map(Path, sys.argv[1:])
 spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 authority = authority.resolve()
-manifest = manifest.resolve()
+dockerfile = dockerfile.resolve()
 journal = module.recovery_journal_path(authority)
 authority_before = authority.read_text(encoding="utf-8")
-manifest_before = manifest.read_text(encoding="utf-8")
+dockerfile_before = dockerfile.read_text(encoding="utf-8")
 real_atomic_text_replace = module.atomic_text_replace
 real_fsync = module.fsync_directory
 real_replace = module.os.replace
@@ -857,7 +858,7 @@ module.fsync_directory = fail_commit_fsync
 module.os.replace = fail_first_rollback
 try:
     module.transactional_write(
-        [(authority, "mixed authority\n"), (manifest, "mixed manifest\n")]
+        [(authority, "mixed authority\n"), (dockerfile, "mixed Dockerfile\n")]
     )
 except OSError as exc:
     if str(exc) != "simulated rollback replacement failure":
@@ -866,7 +867,7 @@ else:
     raise SystemExit("transaction accepted a failed rollback after committed marker fsync failure")
 if authority.read_text(encoding="utf-8") != "mixed authority\n":
     raise SystemExit("commit-fsync failure did not leave the failed rollback target observable")
-if manifest.read_text(encoding="utf-8") != manifest_before:
+if dockerfile.read_text(encoding="utf-8") != dockerfile_before:
     raise SystemExit("commit-fsync failure did not restore the successful rollback target")
 if not journal.exists():
     raise SystemExit("commit-fsync rollback failure discarded recovery state")
@@ -878,42 +879,42 @@ module.atomic_text_replace = real_atomic_text_replace
 module.fsync_directory = real_fsync
 module.os.replace = real_replace
 module.transactional_write(
-    [(authority, "converged authority\n"), (manifest, "converged manifest\n")]
+    [(authority, "converged authority\n"), (dockerfile, "converged Dockerfile\n")]
 )
 if authority.read_text(encoding="utf-8") != "converged authority\n":
     raise SystemExit("next invocation did not converge the authority after recovery")
-if manifest.read_text(encoding="utf-8") != "converged manifest\n":
-    raise SystemExit("next invocation did not converge the manifest after recovery")
+if dockerfile.read_text(encoding="utf-8") != "converged Dockerfile\n":
+    raise SystemExit("next invocation did not converge the Dockerfile after recovery")
 if journal.exists():
     raise SystemExit("recovered commit-fsync transaction left recovery state")
 PY
 
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/recovery-authority.env"
-cp "$ROOT_DIR/docker/backup-verifier.Dockerfile" "$tmp/recovery-velero.yaml"
+cp "$ROOT_DIR/docker/backup-verifier.Dockerfile" "$tmp/recovery-velero.Dockerfile"
 chmod 0640 "$tmp/recovery-authority.env"
-chmod 0600 "$tmp/recovery-velero.yaml"
-python3 - "$ROOT_DIR" "$tmp/recovery-authority.env" "$tmp/recovery-velero.yaml" <<'PY'
+chmod 0600 "$tmp/recovery-velero.Dockerfile"
+python3 - "$ROOT_DIR" "$tmp/recovery-authority.env" "$tmp/recovery-velero.Dockerfile" <<'PY'
 import importlib.util
 import json
 import stat
 import sys
 from pathlib import Path
 
-root, authority, manifest = map(Path, sys.argv[1:])
+root, authority, dockerfile = map(Path, sys.argv[1:])
 spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 real_replace = module.os.replace
 phase = "forward"
-manifest = manifest.resolve()
+dockerfile = dockerfile.resolve()
 authority = authority.resolve()
 authority_before = authority.read_text(encoding="utf-8")
-manifest_before = manifest.read_text(encoding="utf-8")
+dockerfile_before = dockerfile.read_text(encoding="utf-8")
 
 def fail_forward_and_rollback(source, destination):
     global phase
     destination = Path(destination).resolve()
-    if destination == manifest and phase == "forward":
+    if destination == dockerfile and phase == "forward":
         phase = "rollback"
         raise OSError("simulated second replacement failure")
     if destination == authority and phase == "rollback":
@@ -922,7 +923,7 @@ def fail_forward_and_rollback(source, destination):
 
 module.os.replace = fail_forward_and_rollback
 try:
-    module.transactional_write([(authority, "changed authority\n"), (manifest, "changed manifest\n")])
+    module.transactional_write([(authority, "changed authority\n"), (dockerfile, "changed dockerfile\n")])
 except OSError:
     pass
 else:
@@ -936,7 +937,7 @@ if payload.get("schema") != module.RECOVERY_SCHEMA or payload.get("version") != 
     raise SystemExit("recovery state schema is not durable")
 if payload.get("state") != "prepared":
     raise SystemExit("failed rollback did not retain prepared recovery state")
-if {entry.get("path") for entry in payload.get("targets", [])} != {str(authority), str(manifest)}:
+if {entry.get("path") for entry in payload.get("targets", [])} != {str(authority), str(dockerfile)}:
     raise SystemExit("recovery state target set is incomplete")
 if journal.stat().st_mode & 0o077:
     raise SystemExit("prepared recovery journal is accessible to group or world")
@@ -958,7 +959,7 @@ sys.argv = [
     "--authority",
     str(authority),
     "--velero-dockerfile",
-    str(manifest),
+    str(dockerfile),
     "--velero-chart-version",
     "12.2.0",
 ]
@@ -970,7 +971,7 @@ except SystemExit as exc:
         raise SystemExit(f"unexpected unavailable evidence diagnostic: {exc}") from exc
 else:
     raise SystemExit("unavailable Velero image evidence was accepted")
-if authority.read_text(encoding="utf-8") != authority_before or manifest.read_text(encoding="utf-8") != manifest_before:
+if authority.read_text(encoding="utf-8") != authority_before or dockerfile.read_text(encoding="utf-8") != dockerfile_before:
     raise SystemExit("unavailable later evidence left recovered targets inconsistent")
 if journal.exists():
     raise SystemExit("initial recovery did not clear the prepared journal before evidence failure")
@@ -988,17 +989,17 @@ sys.argv = [
     "--authority",
     str(authority),
     "--velero-dockerfile",
-    str(manifest),
+    str(dockerfile),
 ]
 module.main()
 if "HELM_VERSION=9.8.7" not in authority.read_text(encoding="utf-8"):
     raise SystemExit("later one-target transaction did not produce the authority update")
-if manifest.read_text(encoding="utf-8") != manifest_before:
-    raise SystemExit("later one-target transaction did not restore the manifest")
+if dockerfile.read_text(encoding="utf-8") != dockerfile_before:
+    raise SystemExit("later one-target transaction did not restore the Dockerfile")
 if stat.S_IMODE(authority.stat().st_mode) != 0o640:
     raise SystemExit("recovery restore changed the authority mode")
-if stat.S_IMODE(manifest.stat().st_mode) != 0o600:
-    raise SystemExit("recovery restore changed the manifest mode")
+if stat.S_IMODE(dockerfile.stat().st_mode) != 0o600:
+    raise SystemExit("recovery restore changed the Dockerfile mode")
 if journal.exists():
     raise SystemExit("later transaction did not clear recovered state")
 
@@ -1009,7 +1010,7 @@ def fail_cleanup(path):
 
 module.remove_recovery_journal = fail_cleanup
 try:
-    module.transactional_write([(authority, "committed authority\n"), (manifest, "committed manifest\n")])
+    module.transactional_write([(authority, "committed authority\n"), (dockerfile, "committed Dockerfile\n")])
 except OSError:
     pass
 else:
@@ -1017,45 +1018,45 @@ else:
 payload = json.loads(journal.read_text(encoding="utf-8"))
 if payload.get("state") != "committed":
     raise SystemExit("committed cleanup failure did not retain committed state")
-if authority.read_text(encoding="utf-8") != "committed authority\n" or manifest.read_text(encoding="utf-8") != "committed manifest\n":
+if authority.read_text(encoding="utf-8") != "committed authority\n" or dockerfile.read_text(encoding="utf-8") != "committed Dockerfile\n":
     raise SystemExit("committed cleanup failure rolled back the update")
 
 module.remove_recovery_journal = real_remove
-module.transactional_write([(authority, "final authority\n"), (manifest, "final manifest\n")])
+module.transactional_write([(authority, "final authority\n"), (dockerfile, "final Dockerfile\n")])
 if authority.read_text(encoding="utf-8") != "final authority\n":
     raise SystemExit("committed recovery changed the authority unexpectedly")
-if manifest.read_text(encoding="utf-8") != "final manifest\n":
-    raise SystemExit("committed recovery changed the manifest unexpectedly")
+if dockerfile.read_text(encoding="utf-8") != "final Dockerfile\n":
+    raise SystemExit("committed recovery changed the Dockerfile unexpectedly")
 if journal.exists():
     raise SystemExit("committed recovery did not clear state")
 PY
 
 cp "$ROOT_DIR/config/workflow-tool-versions.env" "$tmp/state-authority.env"
-cp "$ROOT_DIR/docker/backup-verifier.Dockerfile" "$tmp/state-velero.yaml"
-python3 - "$ROOT_DIR" "$tmp/state-authority.env" "$tmp/state-velero.yaml" <<'PY'
+cp "$ROOT_DIR/docker/backup-verifier.Dockerfile" "$tmp/state-velero.Dockerfile"
+python3 - "$ROOT_DIR" "$tmp/state-authority.env" "$tmp/state-velero.Dockerfile" <<'PY'
 import importlib.util
 import json
 import sys
 from pathlib import Path
 
-root, authority, manifest = map(Path, sys.argv[1:])
+root, authority, dockerfile = map(Path, sys.argv[1:])
 spec = importlib.util.spec_from_file_location("updater", root / "dev-tools/maintenance/update-workflow-tool.py")
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 authority = authority.resolve()
-manifest = manifest.resolve()
+dockerfile = dockerfile.resolve()
 journal = module.recovery_journal_path(authority)
 authority_before = authority.read_text(encoding="utf-8")
-manifest_before = manifest.read_text(encoding="utf-8")
+dockerfile_before = dockerfile.read_text(encoding="utf-8")
 
 journal.write_text("{malformed", encoding="utf-8")
 try:
-    module.transactional_write([(authority, "must not apply\n"), (manifest, "must not apply\n")])
+    module.transactional_write([(authority, "must not apply\n"), (dockerfile, "must not apply\n")])
 except OSError:
     pass
 else:
     raise SystemExit("updater accepted malformed recovery state")
-if authority.read_text(encoding="utf-8") != authority_before or manifest.read_text(encoding="utf-8") != manifest_before:
+if authority.read_text(encoding="utf-8") != authority_before or dockerfile.read_text(encoding="utf-8") != dockerfile_before:
     raise SystemExit("malformed recovery state changed a target")
 if not journal.exists():
     raise SystemExit("malformed recovery state was discarded")
@@ -1069,19 +1070,19 @@ journal.write_text(
             "state": "prepared",
             "targets": [
                 {"path": str(authority), "contents": authority_before},
-                {"path": str(authority.with_name("unexpected-target")), "contents": manifest_before},
+                {"path": str(authority.with_name("unexpected-target")), "contents": dockerfile_before},
             ],
         }
     ),
     encoding="utf-8",
 )
 try:
-    module.transactional_write([(authority, "must not apply\n"), (manifest, "must not apply\n")])
+    module.transactional_write([(authority, "must not apply\n"), (dockerfile, "must not apply\n")])
 except OSError:
     pass
 else:
     raise SystemExit("updater accepted a mismatched recovery target set")
-if authority.read_text(encoding="utf-8") != authority_before or manifest.read_text(encoding="utf-8") != manifest_before:
+if authority.read_text(encoding="utf-8") != authority_before or dockerfile.read_text(encoding="utf-8") != dockerfile_before:
     raise SystemExit("mismatched recovery state changed a target")
 if not journal.exists():
     raise SystemExit("mismatched recovery state was discarded")
@@ -1096,7 +1097,7 @@ journal_target.write_text(
             "state": "prepared",
             "targets": [
                 {"path": str(authority), "contents": authority_before},
-                {"path": str(manifest), "contents": manifest_before},
+                {"path": str(dockerfile), "contents": dockerfile_before},
             ],
         }
     ),
@@ -1104,12 +1105,12 @@ journal_target.write_text(
 )
 journal.symlink_to(journal_target)
 try:
-    module.transactional_write([(authority, "must not apply\n"), (manifest, "must not apply\n")])
+    module.transactional_write([(authority, "must not apply\n"), (dockerfile, "must not apply\n")])
 except OSError:
     pass
 else:
     raise SystemExit("updater accepted a symlink recovery state")
-if authority.read_text(encoding="utf-8") != authority_before or manifest.read_text(encoding="utf-8") != manifest_before:
+if authority.read_text(encoding="utf-8") != authority_before or dockerfile.read_text(encoding="utf-8") != dockerfile_before:
     raise SystemExit("symlink recovery state changed a target")
 if not journal.is_symlink():
     raise SystemExit("symlink recovery state was discarded")
@@ -1129,14 +1130,14 @@ def fail_second_staging(path, text, preserve_mode=False):
 
 module.staged_file = fail_second_staging
 try:
-    module.transactional_write([(authority, "must not apply\n"), (manifest, "must not apply\n")])
+    module.transactional_write([(authority, "must not apply\n"), (dockerfile, "must not apply\n")])
 except OSError:
     pass
 else:
     raise SystemExit("updater accepted a second staging failure")
 if staged_paths[0].exists():
     raise SystemExit("second staging failure left the first temporary file")
-if authority.read_text(encoding="utf-8") != authority_before or manifest.read_text(encoding="utf-8") != manifest_before:
+if authority.read_text(encoding="utf-8") != authority_before or dockerfile.read_text(encoding="utf-8") != dockerfile_before:
     raise SystemExit("second staging failure changed a target")
 if journal.exists():
     raise SystemExit("second staging failure left recovery state")

@@ -6,11 +6,15 @@ command -v helm >/dev/null 2>&1 || { echo "helm is required" >&2; exit 1; }
 command -v kubectl >/dev/null 2>&1 || { echo "kubectl is required" >&2; exit 1; }
 
 work_dir="$(mktemp -d)"
-namespace="helm-transaction-proof"
+temp_id="$(basename "$work_dir" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')"
+namespace="helm-transaction-proof-${temp_id}"
 release="firemud-proof"
+namespace_owned=false
 cleanup() {
-  helm uninstall "$release" --namespace "$namespace" --wait --timeout 180s >/dev/null 2>&1 || true
-  kubectl delete namespace "$namespace" --wait --request-timeout=180s --timeout=180s >/dev/null 2>&1 || true
+  if [[ "$namespace_owned" == true ]]; then
+    helm uninstall "$release" --namespace "$namespace" --wait --timeout 180s >/dev/null 2>&1 || true
+    kubectl delete namespace "$namespace" --wait --request-timeout=180s --timeout=180s >/dev/null 2>&1 || true
+  fi
   rm -rf -- "$work_dir"
 }
 trap cleanup EXIT
@@ -36,7 +40,12 @@ data:
 EOF
 
 helm lint "$chart_dir"
-kubectl create namespace "$namespace" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+if kubectl create namespace "$namespace" >/dev/null 2>&1; then
+  namespace_owned=true
+else
+  echo "unable to exclusively create disposable namespace $namespace" >&2
+  exit 1
+fi
 helm install "$release" "$chart_dir" --namespace "$namespace" --wait
 helm status "$release" --namespace "$namespace" >/dev/null
 test "$(kubectl -n "$namespace" get configmap "$release-marker" -o jsonpath='{.data.marker}')" = installed

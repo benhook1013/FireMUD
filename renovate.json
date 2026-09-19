@@ -217,7 +217,7 @@
         "velero/velero"
       ],
       "prBodyNotes": [
-        "Run `python3 dev-tools/maintenance/update-workflow-tool.py velero <version> --velero-dockerfile <path> --velero-chart-version <chart-version> --image-evidence-file <path>` before merging so the Velero chart, verifier Dockerfile image digest, and CLI archive checksum are verified and updated together."
+        "Run `python3 dev-tools/maintenance/update-workflow-tool.py velero <version> --velero-dockerfile <path> --terraform-file <path> --velero-chart-version <chart-version> --image-evidence-file <path>` before merging so the Velero chart, verifier Dockerfile image digest, Terraform projection, and CLI archive checksum are verified and updated together."
       ]
     },
     {
