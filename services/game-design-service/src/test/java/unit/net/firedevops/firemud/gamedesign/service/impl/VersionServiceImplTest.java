@@ -791,6 +791,47 @@ class VersionServiceImplTest {
   }
 
   @Test
+  void publishPluginVersionRejectsTerminalRowsWithoutMutation() {
+    for (VersionLifecycleState terminalState :
+        List.of(VersionLifecycleState.SUPERSEDED, VersionLifecycleState.REVOKED_DESIGN)) {
+      PublishedPluginVersion terminal =
+          uploadedPluginVersion("tenant-1", "plugin-1", "plugin-v1");
+      terminal.setPublicationState(terminalState);
+      when(publishedPluginVersionRepository.findByTenantIdAndPluginIdAndPluginVersionId(
+              "tenant-1", "plugin-1", "plugin-v1"))
+          .thenReturn(Optional.of(terminal));
+
+      IllegalArgumentException thrown =
+          assertThrows(
+              IllegalArgumentException.class,
+              () ->
+                  service.publishPluginVersion(
+                      "tenant-1",
+                      "plugin-1",
+                      "plugin-v1",
+                      7L,
+                      "digest-live",
+                      "bundle-1",
+                      1,
+                      "",
+                      "",
+                      "signer-1",
+                      false,
+                      "ALLOWED",
+                      "notes"));
+
+      assertTrue(thrown.getMessage().contains("terminal plugin version"));
+      assertEquals(terminalState, terminal.getPublicationState());
+    }
+
+    verify(publishedPluginVersionRepository, org.mockito.Mockito.never())
+        .save(any(PublishedPluginVersion.class));
+    verify(pluginBundleStorageService, org.mockito.Mockito.never())
+        .loadPluginBundle(any(), any(), any());
+    verify(pluginVersionStatusEventRepository, org.mockito.Mockito.never()).save(any());
+  }
+
+  @Test
   void revokePluginVersionTransitionsToRevokedDesignAndAppendsEvent() {
     PublishedPluginVersion published = uploadedPluginVersion("tenant-1", "plugin-1", "plugin-v1");
     published.setPublicationState(VersionLifecycleState.PUBLISHED);
@@ -824,6 +865,73 @@ class VersionServiceImplTest {
     DesignControlPlaneDigestDto dto = service.getDesignControlPlaneDigest("tenant-1", 7L);
 
     assertEquals("digest-1", dto.contentDigest());
+  }
+
+  @Test
+  void getPublishedScriptPatchVersionRejectsUnpublishedVersion() {
+    Version draft = scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.DRAFT, "notes");
+    when(versionRepository.findTopByTenantIdAndScriptPatchVersionOrderByVersionNumberDesc(
+            "tenant-1", "patch-2"))
+        .thenReturn(Optional.of(draft));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.getPublishedScriptPatchVersion("tenant-1", "patch-2"));
+  }
+
+  @Test
+  void getPublishedScriptPatchVersionRejectsNonScriptVersion() {
+    Version fullVersion = scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.PUBLISHED, "notes");
+    fullVersion.setScriptOnly(false);
+    when(versionRepository.findTopByTenantIdAndScriptPatchVersionOrderByVersionNumberDesc(
+            "tenant-1", "patch-2"))
+        .thenReturn(Optional.of(fullVersion));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.getPublishedScriptPatchVersion("tenant-1", "patch-2"));
+  }
+
+  @Test
+  void getPublishedPluginVersionRejectsUnpublishedVersion() {
+    PublishedPluginVersion uploaded =
+        uploadedPluginVersion("tenant-1", "plugin-1", "plugin-v1");
+    when(publishedPluginVersionRepository.findByTenantIdAndPluginIdAndPluginVersionId(
+            "tenant-1", "plugin-1", "plugin-v1"))
+        .thenReturn(Optional.of(uploaded));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.getPublishedPluginVersion("tenant-1", "plugin-1", "plugin-v1"));
+  }
+
+  @Test
+  void getDesignControlPlaneDigestForScriptPatchRejectsNonScriptVersion() {
+    Version fullVersion = scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.PUBLISHED, "notes");
+    fullVersion.setScriptOnly(false);
+    when(versionRepository.findTopByTenantIdAndScriptPatchVersionOrderByVersionNumberDesc(
+            "tenant-1", "patch-2"))
+        .thenReturn(Optional.of(fullVersion));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.getDesignControlPlaneDigestForScriptPatch("tenant-1", "patch-2"));
+    verify(controlPlaneDigestService, org.mockito.Mockito.never())
+        .getDigestForScriptPatch(any(VersionDto.class));
+  }
+
+  @Test
+  void getDesignControlPlaneDigestForScriptPatchRejectsUnpublishedVersion() {
+    Version draft = scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.DRAFT, "notes");
+    when(versionRepository.findTopByTenantIdAndScriptPatchVersionOrderByVersionNumberDesc(
+            "tenant-1", "patch-2"))
+        .thenReturn(Optional.of(draft));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.getDesignControlPlaneDigestForScriptPatch("tenant-1", "patch-2"));
+    verify(controlPlaneDigestService, org.mockito.Mockito.never())
+        .getDigestForScriptPatch(any(VersionDto.class));
   }
 
   @Test
