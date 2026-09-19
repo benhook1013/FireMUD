@@ -167,6 +167,9 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
       assertThat(admittedHeaders.get().getFirst("X-Game-Instance-Id")).isEqualTo("42");
       assertThat(admittedHeaders.get().getFirst("X-Firemud-Connection-Mode"))
           .isEqualTo("trusted_tcp_proxy");
+      assertThat(admittedHeaders.get().getFirst("X-Firemud-Connect-Context")).isNull();
+      assertThat(admittedHeaders.get().getFirst("X-Firemud-Connect-Token")).isNull();
+      assertThat(admittedHeaders.get().getFirst("X-Firemud-Transport-Session-Id")).isNull();
 
       assertThatThrownBy(
               () ->
@@ -299,6 +302,10 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
     headers.set("X-Proxy-Connection-Id", "conn-123");
     headers.set("X-Proxy-Tenant-Id", "7");
     headers.set("X-Proxy-Game-Instance-Id", "42");
+    headers.set("X-Firemud-Connection-Mode", "first_party_web");
+    headers.set("X-Firemud-Connect-Context", "spoofed-context");
+    headers.set("X-Firemud-Connect-Token", "spoofed-token");
+    headers.set("X-Firemud-Transport-Session-Id", "9001");
     return headers;
   }
 

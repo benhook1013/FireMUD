@@ -12,6 +12,7 @@ import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.springcloudgateway.config.GameplayWebSocketBridgeProperties;
 import org.junit.jupiter.api.AfterEach;
@@ -64,6 +65,49 @@ class GameplayWebSocketBridgeHandlerTest {
     }
 
     assertThat(MDC.getCopyOfContextMap()).isNullOrEmpty();
+  }
+
+  @Test
+  void bridgeGeneratesTransportSessionIdWhenTrustedAdmissionProvidesNone() {
+    ReactorNettyWebSocketClient client = mock(ReactorNettyWebSocketClient.class);
+    WebSocketSession downstream = mock(WebSocketSession.class);
+    HandshakeInfo handshakeInfo = mock(HandshakeInfo.class);
+    HttpHeaders headers = new HttpHeaders();
+    headers.set("X-Firemud-Connection-Mode", "trusted_tcp_proxy");
+    AtomicReference<HttpHeaders> upstreamHeaders = new AtomicReference<>();
+
+    when(downstream.getId()).thenReturn("downstream");
+    when(downstream.getHandshakeInfo()).thenReturn(handshakeInfo);
+    when(handshakeInfo.getHeaders()).thenReturn(headers);
+    when(downstream.send(any())).thenReturn(Mono.never());
+    when(downstream.receive()).thenReturn(Flux.never());
+    when(client.execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class)))
+        .thenAnswer(
+            invocation -> {
+              upstreamHeaders.set(invocation.getArgument(1));
+              return Mono.never();
+            });
+
+    GameplayWebSocketBridgeHandler handler =
+        new GameplayWebSocketBridgeHandler(
+            client,
+            new GameplayWebSocketBridgeProperties(
+                "ws://game-session-service:8080/ws/game", 0, 50L, 128),
+            new RuntimeIdentity(
+                "spring-cloud-gateway", "gateway-test", null, Instant.EPOCH, null, null, null));
+
+    StepVerifier.create(handler.handle(downstream))
+        .expectSubscription()
+        .thenAwait(Duration.ofMillis(100))
+        .thenCancel()
+        .verify();
+
+    assertThat(upstreamHeaders.get()).isNotNull();
+    assertThat(upstreamHeaders.get().getFirst("X-Firemud-Connection-Mode"))
+        .isEqualTo("trusted_tcp_proxy");
+    assertThat(upstreamHeaders.get().getFirst("X-Firemud-Transport-Session-Id"))
+        .matches("\\d+")
+        .isNotEqualTo("9001");
   }
 
   @Test
@@ -409,6 +453,144 @@ class GameplayWebSocketBridgeHandlerTest {
         .isEqualTo(1.0);
     assertThat(meterRegistry.get("gateway.websocket.slow_client_closes").counter().count())
         .isEqualTo(1.0);
+  }
+
+  @Test
+  void inboundBufferWithoutUpstreamSubscriberClosesBackendUnavailable() {
+    ReactorNettyWebSocketClient client = mock(ReactorNettyWebSocketClient.class);
+    WebSocketSession downstream = mock(WebSocketSession.class);
+    WebSocketSession upstream = mock(WebSocketSession.class);
+    HandshakeInfo handshakeInfo = mock(HandshakeInfo.class);
+    HttpHeaders headers = new HttpHeaders();
+    WebSocketMessage payload = mock(WebSocketMessage.class);
+    Sinks.Many<WebSocketMessage> downstreamMessages =
+        Sinks.many().unicast().onBackpressureBuffer();
+    Sinks.One<Void> closeWrite = Sinks.one();
+    AtomicReference<CloseStatus> closeStatus = new AtomicReference<>();
+
+    when(payload.getPayloadAsText()).thenReturn("command");
+    when(downstream.getId()).thenReturn("downstream");
+    when(downstream.getHandshakeInfo()).thenReturn(handshakeInfo);
+    when(handshakeInfo.getHeaders()).thenReturn(headers);
+    when(downstream.send(any())).thenReturn(Mono.never());
+    when(downstream.receive()).thenReturn(downstreamMessages.asFlux());
+    when(downstream.close(any(CloseStatus.class)))
+        .thenAnswer(
+            invocation -> {
+              closeStatus.set(invocation.getArgument(0));
+              return closeWrite.asMono();
+            });
+    when(upstream.send(any())).thenReturn(Mono.never());
+    when(upstream.receive()).thenReturn(Flux.never());
+    when(upstream.closeStatus()).thenReturn(Mono.empty());
+    when(client.execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class)))
+        .thenAnswer(
+            invocation -> {
+              WebSocketHandler upstreamHandler = invocation.getArgument(2);
+              return upstreamHandler.handle(upstream);
+            });
+
+    GameplayWebSocketBridgeHandler handler =
+        new GameplayWebSocketBridgeHandler(
+            client,
+            new GameplayWebSocketBridgeProperties(
+                "ws://game-session-service:8080/ws/game", 0, 50L, 1),
+            new RuntimeIdentity(
+                "spring-cloud-gateway", "gateway-test", null, Instant.EPOCH, null, null, null));
+
+    StepVerifier.create(handler.handle(downstream))
+        .expectSubscription()
+        .then(
+            () -> {
+              assertThat(downstreamMessages.tryEmitNext(payload)).isEqualTo(Sinks.EmitResult.OK);
+              downstreamMessages.tryEmitNext(payload);
+            })
+        .then(
+            () -> {
+              assertThat(closeStatus.get()).isNotNull();
+              assertThat(closeStatus.get().getCode()).isEqualTo(1013);
+              assertThat(closeStatus.get().getReason()).isEqualTo("backend_unavailable");
+              closeWrite.tryEmitEmpty();
+            })
+        .thenCancel()
+        .verify();
+  }
+
+  @Test
+  void inboundBufferOverflowClosesBackendUnavailable() {
+    ReactorNettyWebSocketClient client = mock(ReactorNettyWebSocketClient.class);
+    WebSocketSession downstream = mock(WebSocketSession.class);
+    WebSocketSession upstream = mock(WebSocketSession.class);
+    HandshakeInfo handshakeInfo = mock(HandshakeInfo.class);
+    HttpHeaders headers = new HttpHeaders();
+    WebSocketMessage firstPayload = mock(WebSocketMessage.class);
+    WebSocketMessage secondPayload = mock(WebSocketMessage.class);
+    Sinks.Many<WebSocketMessage> downstreamMessages =
+        Sinks.many().unicast().onBackpressureBuffer();
+    Sinks.One<Void> closeWrite = Sinks.one();
+    AtomicReference<CloseStatus> closeStatus = new AtomicReference<>();
+
+    when(firstPayload.getPayloadAsText()).thenReturn("first");
+    when(secondPayload.getPayloadAsText()).thenReturn("second");
+    when(downstream.getId()).thenReturn("downstream");
+    when(downstream.getHandshakeInfo()).thenReturn(handshakeInfo);
+    when(handshakeInfo.getHeaders()).thenReturn(headers);
+    when(downstream.send(any())).thenReturn(Mono.never());
+    when(downstream.receive()).thenReturn(downstreamMessages.asFlux());
+    when(downstream.close(any(CloseStatus.class)))
+        .thenAnswer(
+            invocation -> {
+              closeStatus.set(invocation.getArgument(0));
+              return closeWrite.asMono();
+            });
+    when(upstream.send(any()))
+        .thenAnswer(
+            invocation -> {
+              Publisher<WebSocketMessage> outbound = invocation.getArgument(0);
+              Flux.from(outbound)
+                  .subscribe(
+                      new BaseSubscriber<>() {
+                        @Override
+                        protected void hookOnSubscribe(Subscription subscription) {
+                          // Keep the inbound sink subscribed without consuming its buffer.
+                        }
+                      });
+              return Mono.never();
+            });
+    when(upstream.receive()).thenReturn(Flux.never());
+    when(upstream.closeStatus()).thenReturn(Mono.empty());
+    when(client.execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class)))
+        .thenAnswer(
+            invocation -> {
+              WebSocketHandler upstreamHandler = invocation.getArgument(2);
+              return upstreamHandler.handle(upstream);
+            });
+
+    GameplayWebSocketBridgeHandler handler =
+        new GameplayWebSocketBridgeHandler(
+            client,
+            new GameplayWebSocketBridgeProperties(
+                "ws://game-session-service:8080/ws/game", 0, 50L, 1),
+            new RuntimeIdentity(
+                "spring-cloud-gateway", "gateway-test", null, Instant.EPOCH, null, null, null));
+
+    StepVerifier.create(handler.handle(downstream))
+        .expectSubscription()
+        .then(
+            () -> {
+              assertThat(downstreamMessages.tryEmitNext(firstPayload))
+                  .isEqualTo(Sinks.EmitResult.OK);
+              downstreamMessages.tryEmitNext(secondPayload);
+            })
+        .then(
+            () -> {
+              assertThat(closeStatus.get()).isNotNull();
+              assertThat(closeStatus.get().getCode()).isEqualTo(1013);
+              assertThat(closeStatus.get().getReason()).isEqualTo("backend_unavailable");
+              closeWrite.tryEmitEmpty();
+            })
+        .thenCancel()
+        .verify();
   }
 
   @Test

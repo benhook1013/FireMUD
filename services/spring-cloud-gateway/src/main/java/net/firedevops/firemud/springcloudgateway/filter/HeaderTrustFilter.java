@@ -29,6 +29,8 @@ import reactor.core.publisher.Mono;
 @Component
 public final class HeaderTrustFilter implements WebFilter, Ordered {
   private static final Logger LOG = LoggerFactory.getLogger(HeaderTrustFilter.class);
+  private static final String HDR_FIREMUD_PREFIX = "X-Firemud-";
+  private static final String HDR_CONNECT_TOKEN = "X-Firemud-Connect-Token";
   private static final String HDR_CLIENT_IP = "X-Client-IP";
   private static final String HDR_GAME_INSTANCE_ID = "X-Game-Instance-Id";
   private static final String HDR_TENANT_ID = "X-Tenant-Id";
@@ -56,7 +58,8 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
   @Override
   public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
     String path = exchange.getRequest().getPath().pathWithinApplication().value();
-    boolean isSessionRoute = path.startsWith("/ws/game") || path.startsWith("/api/session/");
+    boolean isGameplayWebSocketRoute = path.startsWith("/ws/game");
+    boolean isSessionRoute = isGameplayWebSocketRoute || path.startsWith("/api/session/");
 
     InetAddress remoteAddress = remoteInetAddress(exchange);
     boolean trustedTcpProxy = tcpProxyTrustPolicy.isTrusted(exchange, remoteAddress);
@@ -125,7 +128,7 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
                 request ->
                     request.headers(
                         headers -> {
-                          stripGatewayOwnedHeaders(headers);
+                          stripGatewayOwnedHeaders(headers, isGameplayWebSocketRoute);
 
                           if (canonicalClientIp != null) {
                             headers.set(HDR_CLIENT_IP, canonicalClientIp);
@@ -199,7 +202,19 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
         || headers.getFirst(HDR_PROXY_TENANT_ID) != null;
   }
 
-  private void stripGatewayOwnedHeaders(HttpHeaders headers) {
+  private void stripGatewayOwnedHeaders(
+      HttpHeaders headers, boolean preserveGameplayConnectTokenCarrier) {
+    List.copyOf(headers.headerNames()).stream()
+        .filter(
+            name ->
+                name.regionMatches(
+                    true, 0, HDR_FIREMUD_PREFIX, 0, HDR_FIREMUD_PREFIX.length()))
+        .filter(
+            name ->
+                !preserveGameplayConnectTokenCarrier
+                    || !name.equalsIgnoreCase(HDR_CONNECT_TOKEN))
+        .forEach(headers::remove);
+
     headers.remove(HDR_CLIENT_IP);
     headers.remove(HDR_GAME_INSTANCE_ID);
     headers.remove(HDR_TENANT_ID);
