@@ -432,12 +432,6 @@ public class VersionServiceImpl implements VersionService {
     return version;
   }
 
-  private RuntimeException replayFailedScriptPatch(PublishAttempt attempt) {
-    String failureCode = attempt.getFailureCode();
-    String failureMessage = attempt.getFailureMessage();
-    return replayFailedScriptPatch(failureCode, failureMessage);
-  }
-
   private RuntimeException replayFailedScriptPatch(String failureCode, String failureMessage) {
     if (failureCode == null || failureCode.isBlank()) {
       return new IllegalStateException(
