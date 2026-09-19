@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -36,7 +37,9 @@ import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
 import net.firedevops.firemud.automationscripting.v1.UpdateScriptRequest;
 import net.firedevops.firemud.automationscripting.v1.UpdateScriptResponse;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.saga.SagaException;
+import net.firedevops.firemud.common.security.PublicationReadGuard;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.AfterEach;
@@ -45,6 +48,16 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class AutomationScriptingGrpcServiceTest {
+  private static final String TEST_NAMESPACE = "test";
+  private static final GrpcPeerIdentity GAME_DESIGN_PEER =
+      new GrpcPeerIdentity(
+          "spiffe://firemud/ns/test/sa/game-design-service", TEST_NAMESPACE, "game-design-service");
+  private static final GrpcPeerIdentity WRONG_PEER =
+      new GrpcPeerIdentity(
+          "spiffe://firemud/ns/test/sa/world-management-service",
+          TEST_NAMESPACE,
+          "world-management-service");
+
   @BeforeEach
   void setSessionContext() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
@@ -78,11 +91,86 @@ class AutomationScriptingGrpcServiceTest {
             ingressService,
             Mockito.mock(ScriptWorkItemRepository.class),
             formationService,
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            new PublicationReadGuard(TEST_NAMESPACE));
 
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    withPeer(
+        GAME_DESIGN_PEER,
+        () -> {
+          SessionContext.setContext(
+              null, List.of(), Map.of(), true, "forged-but-not-authoritative", "instance-1");
+          service.getDraftDesignDigest(
+              GetDraftDesignDigestRequest.newBuilder().setTenantId("1").setVersionId("7").build(),
+              new StreamObserver<>() {
+                @Override
+                public void onNext(GetDraftDesignDigestResponse value) {
+                  ref.set(value);
+                }
+
+                @Override
+                public void onError(Throwable t) {}
+
+                @Override
+                public void onCompleted() {}
+              });
+        });
+
+    assertEquals("7", ref.get().getScopeValue());
+    assertEquals("version:7", ref.get().getAppliedCommitId());
+  }
+
+  @Test
+  void getDraftDesignDigestRejectsWrongPeerJwtOnlyAndUserOrAdminJwt() {
+    ScriptDesignDigestService digestService = Mockito.mock(ScriptDesignDigestService.class);
+    AutomationScriptingGrpcService service = newDigestService(digestService);
+    GetDraftDesignDigestRequest request =
+        GetDraftDesignDigestRequest.newBuilder().setTenantId("1").setVersionId("7").build();
+
+    SessionContext.setContext(null, List.of(), Map.of(), true, "game-design-service", "instance-1");
+    assertEquals("PERMISSION_DENIED", invokeDigest(service, request).getError().getCode());
+
+    withPeer(
+        WRONG_PEER,
+        () -> {
+          SessionContext.setContext(
+              null, List.of(), Map.of(), true, "game-design-service", "instance-1");
+          assertEquals("PERMISSION_DENIED", invokeDigest(service, request).getError().getCode());
+        });
+
+    withPeer(
+        GAME_DESIGN_PEER,
+        () -> {
+          SessionContext.setContext("42", List.of(), Map.of(), false, "game-design-service", null);
+          assertEquals("PERMISSION_DENIED", invokeDigest(service, request).getError().getCode());
+
+          SessionContext.setContext(
+              "42", List.of("platformAdmin"), Map.of(), false, "game-design-service", null);
+          assertEquals("PERMISSION_DENIED", invokeDigest(service, request).getError().getCode());
+        });
+
+    Mockito.verifyNoInteractions(digestService);
+  }
+
+  private AutomationScriptingGrpcService newDigestService(ScriptDesignDigestService digestService) {
+    return new AutomationScriptingGrpcService(
+        Mockito.mock(PingService.class),
+        Mockito.mock(ScriptDefinitionService.class),
+        digestService,
+        Mockito.mock(ScriptVersionService.class),
+        Mockito.mock(ScriptScheduleInstanceService.class),
+        Mockito.mock(ScriptEventIngressService.class),
+        Mockito.mock(ScriptWorkItemRepository.class),
+        Mockito.mock(NpcFormationService.class),
+        new SimpleMeterRegistry(),
+        new PublicationReadGuard(TEST_NAMESPACE));
+  }
+
+  private GetDraftDesignDigestResponse invokeDigest(
+      AutomationScriptingGrpcService service, GetDraftDesignDigestRequest request) {
+    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
     service.getDraftDesignDigest(
-        GetDraftDesignDigestRequest.newBuilder().setTenantId("1").setVersionId("7").build(),
+        request,
         new StreamObserver<>() {
           @Override
           public void onNext(GetDraftDesignDigestResponse value) {
@@ -95,9 +183,17 @@ class AutomationScriptingGrpcServiceTest {
           @Override
           public void onCompleted() {}
         });
+    return ref.get();
+  }
 
-    assertEquals("7", ref.get().getScopeValue());
-    assertEquals("version:7", ref.get().getAppliedCommitId());
+  private static void withPeer(GrpcPeerIdentity peer, Runnable action) {
+    Context context = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
+    Context previous = context.attach();
+    try {
+      action.run();
+    } finally {
+      context.detach(previous);
+    }
   }
 
   @Test

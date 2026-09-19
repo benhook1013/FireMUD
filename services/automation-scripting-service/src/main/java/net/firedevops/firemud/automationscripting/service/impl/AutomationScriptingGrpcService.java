@@ -42,11 +42,13 @@ import net.firedevops.firemud.automationscripting.v1.UpdateScriptResponse;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
+import net.firedevops.firemud.common.security.PublicationReadGuard;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.grpc.server.service.GrpcService;
 
 @GrpcService
@@ -66,6 +68,7 @@ public class AutomationScriptingGrpcService
   private final ScriptWorkItemRepository workItemRepository;
   private final NpcFormationService formationService;
   private final MeterRegistry meterRegistry;
+  private PublicationReadGuard publicationReadGuard;
 
   @org.springframework.beans.factory.annotation.Autowired
   @SuppressFBWarnings(
@@ -80,7 +83,61 @@ public class AutomationScriptingGrpcService
       ScriptEventIngressService scriptEventIngressService,
       ScriptWorkItemRepository workItemRepository,
       NpcFormationService formationService,
+      MeterRegistry meterRegistry,
+      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
+    this(
+        pingService,
+        scriptService,
+        scriptDesignDigestService,
+        scriptVersionService,
+        scriptScheduleInstanceService,
+        scriptEventIngressService,
+        workItemRepository,
+        formationService,
+        meterRegistry,
+        createPublicationReadGuard(workloadNamespace));
+  }
+
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification = "Fail-fast startup is intentional if required RPC dependencies are missing.")
+  public AutomationScriptingGrpcService(
+      PingService pingService,
+      ScriptDefinitionService scriptService,
+      ScriptDesignDigestService scriptDesignDigestService,
+      ScriptVersionService scriptVersionService,
+      ScriptScheduleInstanceService scriptScheduleInstanceService,
+      ScriptEventIngressService scriptEventIngressService,
+      ScriptWorkItemRepository workItemRepository,
+      NpcFormationService formationService,
       MeterRegistry meterRegistry) {
+    this(
+        pingService,
+        scriptService,
+        scriptDesignDigestService,
+        scriptVersionService,
+        scriptScheduleInstanceService,
+        scriptEventIngressService,
+        workItemRepository,
+        formationService,
+        meterRegistry,
+        (PublicationReadGuard) null);
+  }
+
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification = "Fail-fast startup is intentional if required RPC dependencies are missing.")
+  public AutomationScriptingGrpcService(
+      PingService pingService,
+      ScriptDefinitionService scriptService,
+      ScriptDesignDigestService scriptDesignDigestService,
+      ScriptVersionService scriptVersionService,
+      ScriptScheduleInstanceService scriptScheduleInstanceService,
+      ScriptEventIngressService scriptEventIngressService,
+      ScriptWorkItemRepository workItemRepository,
+      NpcFormationService formationService,
+      MeterRegistry meterRegistry,
+      PublicationReadGuard publicationReadGuard) {
     this.pingService = pingService;
     this.scriptService = scriptService;
     this.scriptDesignDigestService = scriptDesignDigestService;
@@ -90,6 +147,7 @@ public class AutomationScriptingGrpcService
     this.workItemRepository = Objects.requireNonNull(workItemRepository);
     this.formationService = Objects.requireNonNull(formationService);
     this.meterRegistry = meterRegistry;
+    this.publicationReadGuard = publicationReadGuard;
   }
 
   @Override
@@ -372,7 +430,7 @@ public class AutomationScriptingGrpcService
       GetDraftDesignDigestRequest request,
       StreamObserver<GetDraftDesignDigestResponse> responseObserver) {
     try {
-      requireAdminRole();
+      requirePublicationRead();
       var digest =
           request.getScopeCase() == GetDraftDesignDigestRequest.ScopeCase.VERSION_ID
               ? scriptDesignDigestService.getDraftDesignDigestForVersion(
@@ -413,6 +471,20 @@ public class AutomationScriptingGrpcService
               .build());
       responseObserver.onCompleted();
     }
+  }
+
+  private void requirePublicationRead() {
+    if (publicationReadGuard == null) {
+      throw new AdminAuthorizationException("Publication read authorization is not configured");
+    }
+    publicationReadGuard.requirePublicationRead(
+        PublicationReadGuard.AUTOMATION_SCRIPTING_DIGEST_METHOD);
+  }
+
+  private static PublicationReadGuard createPublicationReadGuard(String workloadNamespace) {
+    return workloadNamespace == null || workloadNamespace.isBlank()
+        ? null
+        : new PublicationReadGuard(workloadNamespace);
   }
 
   @Override

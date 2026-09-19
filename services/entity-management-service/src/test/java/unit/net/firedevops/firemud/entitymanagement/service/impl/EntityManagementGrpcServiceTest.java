@@ -8,15 +8,18 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
+import io.grpc.Context;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationClaims;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationException;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
+import net.firedevops.firemud.common.security.PublicationReadGuard;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.ActorConditionStateDto;
 import net.firedevops.firemud.entitymanagement.dto.ActorResourceStateDto;
@@ -69,12 +72,62 @@ import net.firedevops.firemud.entitymanagement.v1.ValidateEntityUpgradeMappingsR
 import net.firedevops.firemud.entitymanagement.v1.ValidateEntityUpgradeMappingsResponse;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemRequest;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.data.domain.Pageable;
 import tools.jackson.databind.ObjectMapper;
 
 class EntityManagementGrpcServiceTest {
+  private static final String TEST_NAMESPACE = "test";
+
+  @AfterEach
+  void clearSecurityContext() {
+    SessionContext.clear();
+  }
+
+  private static PublicationReadGuard publicationReadGuard() {
+    return new PublicationReadGuard(TEST_NAMESPACE);
+  }
+
+  private static GrpcPeerIdentity peer(String service) {
+    return new GrpcPeerIdentity(
+        "spiffe://firemud/ns/" + TEST_NAMESPACE + "/sa/" + service, TEST_NAMESPACE, service);
+  }
+
+  private static void runWithPeer(GrpcPeerIdentity peer, Runnable action) {
+    Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer).run(action);
+  }
+
+  private static void setRoleFreeInternalJwt() {
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "forged-but-not-authoritative", "instance-1");
+  }
+
+  private static GetDraftDesignDigestRequest digestRequest() {
+    return GetDraftDesignDigestRequest.newBuilder().setTenantId("1").setVersionId("7").build();
+  }
+
+  private static GetDraftDesignDigestResponse invokeDigest(
+      EntityManagementGrpcService service, GetDraftDesignDigestRequest request) {
+    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    service.getDraftDesignDigest(
+        request,
+        new StreamObserver<>() {
+          @Override
+          public void onNext(GetDraftDesignDigestResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+    return ref.get();
+  }
+
   private GameplaySessionAttestationService attestationService() {
     GameplaySessionAttestationService service =
         Mockito.mock(GameplaySessionAttestationService.class);
@@ -198,8 +251,6 @@ class EntityManagementGrpcServiceTest {
     ContainerService containerService = Mockito.mock(ContainerService.class);
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     var meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext(
-        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
     Mockito.when(digestService.getDraftDesignDigest("1", "7"))
         .thenReturn(
             new EntityDraftDesignDigestService.EntityDraftDesignDigest(
@@ -216,26 +267,92 @@ class EntityManagementGrpcServiceTest {
             effectReplayService(),
             Mockito.mock(EntityUpgradeValidationService.class),
             attestationService(),
-            meterRegistry);
+            meterRegistry,
+            publicationReadGuard());
 
+    setRoleFreeInternalJwt();
+    GetDraftDesignDigestResponse response =
+        invokeDigestWithPeer(service, digestRequest(), peer("game-design-service"));
+
+    assertEquals("7", response.getScopeValue());
+    assertEquals("version:7", response.getAppliedCommitId());
+  }
+
+  private static GetDraftDesignDigestResponse invokeDigestWithPeer(
+      EntityManagementGrpcService service,
+      GetDraftDesignDigestRequest request,
+      GrpcPeerIdentity peer) {
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
-    service.getDraftDesignDigest(
-        GetDraftDesignDigestRequest.newBuilder().setTenantId("1").setVersionId("7").build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(GetDraftDesignDigestResponse value) {
-            ref.set(value);
-          }
+    runWithPeer(
+        peer,
+        () -> {
+          ref.set(invokeDigest(service, request));
+        });
+    return ref.get();
+  }
 
-          @Override
-          public void onError(Throwable t) {}
+  @Test
+  void getDraftDesignDigestRejectsWrongPeerBeforeReadingDigest() {
+    EntityDraftDesignDigestService digestService =
+        Mockito.mock(EntityDraftDesignDigestService.class);
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(CharacterService.class),
+            digestService,
+            Mockito.mock(EquipmentService.class),
+            Mockito.mock(InventoryService.class),
+            Mockito.mock(ContainerService.class),
+            Mockito.mock(RoomEntityService.class),
+            effectReplayService(),
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService(),
+            new SimpleMeterRegistry(),
+            publicationReadGuard());
+    setRoleFreeInternalJwt();
 
-          @Override
-          public void onCompleted() {}
+    GetDraftDesignDigestResponse response =
+        invokeDigestWithPeer(service, digestRequest(), peer("world-management-service"));
+
+    assertEquals("PERMISSION_DENIED", response.getError().getCode());
+    verifyNoInteractions(digestService);
+  }
+
+  @Test
+  void getDraftDesignDigestRejectsJwtOnlyAndUserOrAdminJwtBeforeReadingDigest() {
+    EntityDraftDesignDigestService digestService =
+        Mockito.mock(EntityDraftDesignDigestService.class);
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(CharacterService.class),
+            digestService,
+            Mockito.mock(EquipmentService.class),
+            Mockito.mock(InventoryService.class),
+            Mockito.mock(ContainerService.class),
+            Mockito.mock(RoomEntityService.class),
+            effectReplayService(),
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService(),
+            new SimpleMeterRegistry(),
+            publicationReadGuard());
+
+    setRoleFreeInternalJwt();
+    assertEquals("PERMISSION_DENIED", invokeDigest(service, digestRequest()).getError().getCode());
+
+    runWithPeer(
+        peer("game-design-service"),
+        () -> {
+          SessionContext.setContext("42", List.of(), Map.of(), false, "game-design-service", null);
+          assertEquals(
+              "PERMISSION_DENIED", invokeDigest(service, digestRequest()).getError().getCode());
+          SessionContext.setContext(
+              "42", List.of("platformAdmin"), Map.of(), false, "game-design-service", null);
+          assertEquals(
+              "PERMISSION_DENIED", invokeDigest(service, digestRequest()).getError().getCode());
         });
 
-    assertEquals("7", ref.get().getScopeValue());
-    assertEquals("version:7", ref.get().getAppliedCommitId());
+    verifyNoInteractions(digestService);
   }
 
   @Test
@@ -261,6 +378,7 @@ class EntityManagementGrpcServiceTest {
             roomEntityService,
             meterRegistry);
 
+    SessionContext.clear();
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
         PingRequest.getDefaultInstance(),
