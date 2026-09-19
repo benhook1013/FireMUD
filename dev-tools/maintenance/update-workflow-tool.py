@@ -46,6 +46,154 @@ def replace(text: str, key: str, value: str) -> str:
     return updated
 
 
+def read_velero_projection(path: Path, projection_type: str) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise SystemExit(
+            f"could not read Velero {projection_type} projection {path} as UTF-8: {exc}"
+        ) from exc
+
+
+HCL_HEREDOC_INTRODUCER = re.compile(r"<<(-?)([A-Za-z_][A-Za-z0-9_-]*)")
+
+
+def skip_hcl_heredoc(
+    text: str, introducer_end: int, marker: str, allow_indentation: bool
+) -> int | None:
+    """Return the offset after a heredoc, or None when its terminator is absent."""
+
+    line_end = text.find("\n", introducer_end)
+    if line_end == -1:
+        return None
+    line_start = line_end + 1
+    while line_start <= len(text):
+        line_end = text.find("\n", line_start)
+        if line_end == -1:
+            line_end = len(text)
+        line = text[line_start:line_end].rstrip("\r")
+        candidate = line.lstrip(" \t") if allow_indentation else line
+        if candidate == marker:
+            return line_end if line_end == len(text) else line_end + 1
+        if line_end == len(text):
+            break
+        line_start = line_end + 1
+    return None
+
+
+def find_hcl_block_span(text: str, header: str) -> tuple[int, int] | None:
+    """Find one exact HCL block, preserving comment and string boundaries."""
+
+    header_pattern = r"\s+".join(re.escape(part) for part in header.split())
+    match = re.search(rf'(?m)^{header_pattern}\s*\{{', text)
+    if match is None:
+        return None
+    opening_brace = text.find("{", match.start(), match.end())
+    depth = 0
+    in_string = False
+    escaped = False
+    line_comment = False
+    block_comment = False
+    index = opening_brace
+    while index < len(text):
+        char = text[index]
+        next_char = text[index + 1] if index + 1 < len(text) else ""
+        if line_comment:
+            if char == "\n":
+                line_comment = False
+        elif block_comment:
+            if char == "*" and next_char == "/":
+                block_comment = False
+                index += 1
+        elif in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char == "#" or (char == "/" and next_char == "/"):
+            line_comment = True
+            if char == "/":
+                index += 1
+        elif char == "/" and next_char == "*":
+            block_comment = True
+            index += 1
+        elif char == "<" and next_char == "<":
+            heredoc = HCL_HEREDOC_INTRODUCER.match(text, index)
+            if heredoc is not None:
+                heredoc_end = skip_hcl_heredoc(
+                    text,
+                    heredoc.end(),
+                    heredoc.group(2),
+                    heredoc.group(1) == "-",
+                )
+                if heredoc_end is None:
+                    return None
+                index = heredoc_end
+                continue
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return match.start(), index + 1
+        index += 1
+    return None
+
+
+def replace_velero_terraform_projection(
+    text: str, chart_version: str, velero_version: str, image_digest: str
+) -> str:
+    release_span = find_hcl_block_span(text, 'resource "helm_release" "velero"')
+    if release_span is None:
+        if re.search(r'(?m)^resource\s+"helm_release"\s+"velero"\s*\{', text):
+            raise SystemExit("Velero Terraform helm_release projection has an unterminated block")
+        raise SystemExit("expected one Velero Terraform helm_release projection")
+    release_start, release_end = release_span
+
+    release = text[release_start:release_end]
+    release, chart_count = re.subn(
+        r'(?m)^(\s*version\s*=\s*)"[^"]+"$',
+        rf'\g<1>"{chart_version}"',
+        release,
+    )
+    release, tag_count = re.subn(
+        r'(?ms)^(\s*set\s*\{\s*\n\s*name\s*=\s*"image\.tag"\s*\n\s*value\s*=\s*)"[^"]+"',
+        rf'\g<1>"v{velero_version}"',
+        release,
+    )
+    release, digest_count = re.subn(
+        r'(?ms)^(\s*set\s*\{\s*\n\s*name\s*=\s*"image\.digest"\s*\n\s*value\s*=\s*)"[^"]+"',
+        rf'\g<1>"{image_digest}"',
+        release,
+    )
+    if chart_count != 1:
+        raise SystemExit("expected exactly one Velero Terraform chart version projection")
+    if tag_count != 1:
+        raise SystemExit("expected exactly one Velero Terraform image tag projection")
+    if digest_count != 1:
+        raise SystemExit("expected exactly one Velero Terraform image digest projection")
+    return text[:release_start] + release + text[release_end:]
+
+
+def replace_velero_dockerfile_projection(
+    text: str, velero_version: str, image_digest: str
+) -> str:
+    """Update the independently built verifier image's pinned Velero stage."""
+
+    updated, count = re.subn(
+        r"(?m)^FROM velero/velero:v\d+\.\d+\.\d+@sha256:[0-9a-f]{64}(\s+AS\s+velero-cli)$",
+        rf"FROM velero/velero:v{velero_version}@{image_digest}\g<1>",
+        text,
+    )
+    if count != 1:
+        raise SystemExit("expected exactly one Velero verifier Dockerfile projection")
+    return updated
+
+
 def staged_file(path: Path, text: str, *, preserve_mode: bool = False) -> Path:
     existing_mode = None
     if preserve_mode:
@@ -394,7 +542,16 @@ def main() -> None:
     )
     parser.add_argument("--authority", type=Path, default=REPOSITORY_ROOT / "config/workflow-tool-versions.env")
     parser.add_argument(
-        "--velero-manifest", type=Path, default=REPOSITORY_ROOT / "k8s/velero/verify-backups-cronjob.yaml"
+        "--velero-dockerfile",
+        type=Path,
+        default=REPOSITORY_ROOT / "docker/backup-verifier.Dockerfile",
+    )
+    parser.add_argument(
+        "--terraform-file", type=Path, default=REPOSITORY_ROOT / "k8s/terraform-production/main.tf"
+    )
+    parser.add_argument(
+        "--velero-chart-version",
+        help="required exact VMware Tanzu Velero Helm chart version for Velero updates",
     )
     parser.add_argument(
         "--image-evidence-file",
@@ -411,12 +568,20 @@ def main() -> None:
         parser.error("--image-evidence-file is only valid for velero")
     if args.tool == "velero" and args.image_evidence_file is None:
         parser.error("--image-evidence-file is required for velero updates")
+    if args.velero_chart_version is not None and args.tool != "velero":
+        parser.error("--velero-chart-version is only valid for velero")
+    if args.tool == "velero" and args.velero_chart_version is None:
+        parser.error("--velero-chart-version is required for velero updates")
+    if args.velero_chart_version is not None and not re.fullmatch(r"\d+\.\d+\.\d+", args.velero_chart_version):
+        parser.error("Velero chart version must have exactly three numeric parts")
 
     resolved_authority = args.authority.resolve()
-    resolved_velero_manifest = args.velero_manifest.resolve()
+    resolved_velero_dockerfile = args.velero_dockerfile.resolve()
+    resolved_terraform_file = args.terraform_file.resolve()
     allowed_target_sets = [
         frozenset((resolved_authority,)),
-        frozenset((resolved_authority, resolved_velero_manifest)),
+        frozenset((resolved_authority, resolved_velero_dockerfile)),
+        frozenset((resolved_authority, resolved_velero_dockerfile, resolved_terraform_file)),
     ]
     with authority_lock(args.authority):
         reconcile_recovery_journal(args.authority, allowed_target_sets)
@@ -451,22 +616,26 @@ def main() -> None:
         stem = CHECKSUM_STEMS[prefix]
         authority = replace(authority, f"{stem}_CHECKSUM_VERSION", args.version)
         authority = replace(authority, f"{stem}_SHA256", matches[0])
-        manifest = None
+        dockerfile = None
+        terraform = None
         if args.tool == "velero":
             if image_digest is None:
                 raise SystemExit("Velero image digest could not be resolved")
+            authority = replace(authority, "VELERO_CHART_VERSION", args.velero_chart_version)
             authority = replace(authority, "VELERO_IMAGE_DIGEST", image_digest)
-            manifest = args.velero_manifest.read_text(encoding="utf-8")
-            manifest, count = re.subn(
-                r"image: velero/velero:v\d+\.\d+\.\d+(?:@sha256:[0-9a-f]{64})?",
-                f"image: velero/velero:v{args.version}@{image_digest}",
-                manifest,
+            dockerfile = read_velero_projection(args.velero_dockerfile, "Dockerfile")
+            dockerfile = replace_velero_dockerfile_projection(
+                dockerfile, args.version, image_digest
             )
-            if count != 1:
-                raise SystemExit("expected one Velero image projection")
+            terraform = read_velero_projection(args.terraform_file, "Terraform")
+            terraform = replace_velero_terraform_projection(
+                terraform, args.velero_chart_version, args.version, image_digest
+            )
         updates = [(args.authority, authority)]
-        if manifest is not None:
-            updates.append((args.velero_manifest, manifest))
+        if dockerfile is not None:
+            updates.append((args.velero_dockerfile, dockerfile))
+        if terraform is not None:
+            updates.append((args.terraform_file, terraform))
         transactional_write(updates, authority=args.authority)
 
 

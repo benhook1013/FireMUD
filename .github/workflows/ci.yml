@@ -290,6 +290,11 @@ jobs:
           bash ./dev-tools/tests/dev-tools-readme-contract.sh
           bash ./dev-tools/tests/preflight-contract.sh
           bash ./dev-tools/tests/verify-backups-velero-contract.sh
+          bash ./dev-tools/tests/verify-backups-cronjob-contract.sh
+          bash ./dev-tools/tests/backup-verifier-image-contract.sh
+          bash ./dev-tools/tests/kubectl-version-skew-contract.sh
+          bash ./dev-tools/tests/helm-transaction-proof-contract.sh
+          bash ./dev-tools/tests/preview-image-tag-contract.sh
           bash ./dev-tools/tests/overlay-preflight-contract.sh
           bash ./dev-tools/tests/validate-external-credentials-contract.sh
           bash ./dev-tools/tests/observability-validator-contract.sh
@@ -545,6 +550,86 @@ jobs:
       - name: 🧪 Validate rendered Helm manifests
         run: bash ./dev-tools/validation/validate-helm.sh render
 
+  helm-transaction-proof:
+    name: Helm Transaction Proof
+    needs: [changes]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      K3S_IMAGE: rancher/k3s:v1.34.5-k3s1@sha256:998f4db28a13143ada759690b554c5d8c1814ac03f77c1bdd78bbd73875a1379
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up kubectl
+        uses: ./.github/actions/setup-kubectl
+
+      - name: Set up Helm
+        uses: ./.github/actions/setup-helm
+
+      - name: Set up canonical Python dependencies
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: yaml
+
+      - name: Pull pinned disposable k3s server image
+        run: |
+          set -euo pipefail
+          pull_succeeded=false
+          for attempt in 1 2 3; do
+            if timeout 120s docker pull "$K3S_IMAGE"; then
+              pull_succeeded=true
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              sleep $((attempt * 5))
+            fi
+          done
+          if [[ "$pull_succeeded" != true ]]; then
+            echo "Unable to pull $K3S_IMAGE after three attempts" >&2
+            exit 1
+          fi
+
+      - name: Start pinned disposable k3s server
+        run: |
+          docker run --pull=never --detach --privileged \
+            --name firemud-helm-proof \
+            --publish 6443:6443 \
+            "$K3S_IMAGE" \
+            server --disable=traefik --disable=servicelb --disable=metrics-server --write-kubeconfig-mode=644
+
+      - name: Wait for disposable k3s startup
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            if docker logs firemud-helm-proof 2>&1 | grep -F 'k3s is up and running' >/dev/null; then
+              break
+            fi
+            if [[ "$attempt" == 60 ]]; then
+              docker logs firemud-helm-proof
+              exit 1
+            fi
+            sleep 2
+          done
+          docker cp firemud-helm-proof:/etc/rancher/k3s/k3s.yaml "$RUNNER_TEMP/helm-proof.kubeconfig"
+          chmod 0600 "$RUNNER_TEMP/helm-proof.kubeconfig"
+          echo "KUBECONFIG=$RUNNER_TEMP/helm-proof.kubeconfig" >> "$GITHUB_ENV"
+
+      - name: Run Helm lifecycle proof
+        run: bash ./dev-tools/validation/helm-transaction-proof.sh
+
+      - name: Remove disposable k3s server
+        if: ${{ always() }}
+        run: docker rm --force firemud-helm-proof >/dev/null 2>&1 || true
+
   # Docs and frontend validation
   docs-check:
     name: Validate Documentation
@@ -792,7 +877,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    needs: [buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, dev-tools-readme-contract, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, docs-check, frontend-checks, build-and-test, validation-gate]
+    needs: [buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, dev-tools-readme-contract, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, helm-transaction-proof, docs-check, frontend-checks, build-and-test, validation-gate]
     if: ${{ always() && github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     steps:
       - name: Harden runner
@@ -827,6 +912,7 @@ jobs:
               ["GitHub workflow lint", "${{ needs.workflow-lint.result }}"],
               ["Helm chart lint", "${{ needs.helm-lint.result }}"],
               ["Helm render validation", "${{ needs.helm-render-validation.result }}"],
+              ["Helm transaction proof", "${{ needs.helm-transaction-proof.result }}"],
               ["Validate Documentation", "${{ needs.docs-check.result }}"],
               ["Frontend checks", "${{ needs.frontend-checks.result }}"],
               ["Service build/test matrix", "${{ needs.build-and-test.result }}"],
@@ -900,7 +986,7 @@ jobs:
       checks: read # Preserve a prior successful required context on metadata-only edits.
       contents: read # Check out the shared required-gate composite action.
       actions: read # Inspect the matching required-gate job's preservation step.
-    needs: [changes, buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, dev-tools-readme-contract, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, docs-check, frontend-checks, build-and-test]
+    needs: [changes, buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, dev-tools-readme-contract, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, helm-transaction-proof, docs-check, frontend-checks, build-and-test]
     if: ${{ always() }}
     steps:
       - name: Harden runner
@@ -948,6 +1034,7 @@ jobs:
           WORKFLOW_LINT: ${{ needs.workflow-lint.result }}
           HELM_LINT: ${{ needs.helm-lint.result }}
           HELM_RENDER_VALIDATION: ${{ needs.helm-render-validation.result }}
+          HELM_TRANSACTION_PROOF: ${{ needs.helm-transaction-proof.result }}
           DOCS_CHECK: ${{ needs.docs-check.result }}
           FRONTEND_CHECKS: ${{ needs.frontend-checks.result }}
           BUILD_AND_TEST: ${{ needs.build-and-test.result }}
@@ -974,7 +1061,8 @@ jobs:
             "gRPC Transport Configuration Sanity Checks:$GRPC_TRANSPORT_CONFIG_SANITY_CHECKS" \
             "GitHub Workflow Lint:$WORKFLOW_LINT" \
             "Helm Chart Lint:$HELM_LINT" \
-            "Helm Render Validation:$HELM_RENDER_VALIDATION"
+            "Helm Render Validation:$HELM_RENDER_VALIDATION" \
+            "Helm Transaction Proof:$HELM_TRANSACTION_PROOF"
           do
             name="${check%%:*}"
             result="${check#*:}"

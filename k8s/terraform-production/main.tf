@@ -58,17 +58,30 @@ resource "helm_release" "velero" {
   name       = "velero"
   repository = "https://vmware-tanzu.github.io/helm-charts"
   chart      = "velero"
+  version    = "12.2.0"
   namespace  = var.namespace
   set {
-    name  = "configuration.provider"
+    name  = "image.tag"
+    value = "v1.18.2"
+  }
+  set {
+    name  = "image.digest"
+    value = "sha256:37396519f399536e5f01427d723565ae69294ec3fb5625cf1c87c09eaa9de16b"
+  }
+  set {
+    name  = "configuration.backupStorageLocation[0].name"
+    value = "default"
+  }
+  set {
+    name  = "configuration.backupStorageLocation[0].provider"
     value = var.velero_provider
   }
   set {
-    name  = "configuration.backupStorageLocation.bucket"
+    name  = "configuration.backupStorageLocation[0].bucket"
     value = var.velero_bucket
   }
   set {
-    name  = "configuration.backupStorageLocation.prefix"
+    name  = "configuration.backupStorageLocation[0].prefix"
     value = var.velero_bucket_prefix
   }
   set {

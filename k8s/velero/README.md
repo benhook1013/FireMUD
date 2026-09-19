@@ -1,5 +1,7 @@
 # Velero Backups
 
+These manifests are canonical pre-release backup assets. FireMUD has no player-facing production deployment yet, so changing them does not claim that a production cluster was updated and does not require production attestation today. Their checked-in production consumer is `k8s/terraform-production/main.tf`, through `kubernetes_manifest.velero_schedule` and `kubernetes_manifest.velero_verify`; no live player-facing production apply is proven. If that Terraform production stack is later applied live, the exact applied stack plan and its promotion evidence govern the deployment. The production Kustomize overlay and its attestation remain the authority for actual overlay resources.
+
 This directory contains Kubernetes manifests for installing Velero and scheduling namespace backups for the FireMUD cluster. Velero now backs up **only Kubernetes manifests** (Deployments, Services, StatefulSets, Secrets, etc.). PostgreSQL data is backed up separately using a `pg_dump` CronJob.
 
 The `schedule.yaml` file defines three backup schedules matching the retention policy described in the architecture docs. Each schedule sets `snapshotVolumes: false` to avoid PVC snapshots.
@@ -16,22 +18,34 @@ Example `values.yaml` snippet when using AWS S3:
 
 ```yaml
 configuration:
-  provider: aws
   defaultVolumesToFsBackup: false
   backupStorageLocation:
-    bucket: firemud-backups
-    prefix: postgres
+    - name: default
+      provider: aws
+      bucket: firemud-backups
+      prefix: postgres
 ```
 
-For Google Cloud Storage set `provider: gcp` and adjust the bucket name accordingly.
+For Google Cloud Storage set the `backupStorageLocation` provider to `gcp` and adjust the bucket name accordingly.
 
-The repository includes a `verify-backups-cronjob.yaml` manifest that runs
-`dev-tools/backups/verify-backups.sh` daily. Production Terraform modules deploy this
-CronJob automatically, but you can apply it manually in other environments:
+The repository includes a `verify-backups-cronjob.yaml` pre-release manifest that runs the independently promoted, CI-built, digest-pinned `ghcr.io/benhook1013/backup-verifier` image daily. The image carries `verify-backups.sh`, the pinned Velero CLI, and AWS CLI, and runs as a non-root UID. The CronJob uses the `verify-velero-backups` ServiceAccount in the `firemud` namespace; its RoleBinding grants that identity only `get`/`list` access to Velero `backups` in the `velero` namespace. The checked-in production Terraform stack declares and manages these CronJob resources through `kubernetes_manifest.velero_verify`; that repository wiring does not prove a live production apply. Applying this manifest does not claim live deployment or restore readiness. You can apply it manually in other environments:
 
 ```bash
 kubectl apply -f verify-backups-cronjob.yaml -n firemud
 ```
+
+The CronJob leaves the optional `PG_DUMP_BUCKET` check disabled by default. An approved environment-specific projection must provide the bucket and its credentials together; credentials are never bundled into the verifier image. CI image smoke proves the image contents and offline client commands, while a live cluster backup-list result remains unrun deployment proof.
+
+The checked-in Terraform Helm release is pinned to the verified VMware Tanzu Velero chart `12.2.0`, released 2026-09-16, whose `appVersion` is Velero `1.18.2`. The `VELERO_VERSION` and `VELERO_IMAGE_DIGEST` authority, the Velero stage in `docker/backup-verifier.Dockerfile`, and the Terraform server image projection must stay aligned. The CronJob's `backup-verifier` digest is independently promoted from its exact CI-smoked image and is intentionally not rewritten by this Velero updater transaction. Update those three Velero projections with the canonical transaction, supplying the chart version explicitly:
+
+```bash
+python3 dev-tools/maintenance/update-workflow-tool.py velero <velero-version> \
+  --velero-dockerfile docker/backup-verifier.Dockerfile \
+  --terraform-file k8s/terraform-production/main.tf \
+  --velero-chart-version <chart-version> --image-evidence-file <path>
+```
+
+The explicit chart argument is required because Helm chart versions and Velero app versions are independent. This updates repository plans and pre-release manifests only; it does not claim that a live production deployment changed.
 
 ## Local Backup with MinIO
 
@@ -56,16 +70,16 @@ Example `values-minio.yaml` config:
 
 ```yaml
 configuration:
-  provider: aws
   defaultVolumesToFsBackup: false
   backupStorageLocation:
-    name: local
-    provider: aws
-    bucket: firemud-backups
-    config:
-      region: minio
-      s3Url: http://minio.minio.svc.cluster.local:9000
-      insecureSkipTLSVerify: true
+    - name: default
+      provider: aws
+      bucket: firemud-backups
+      config:
+        region: minio
+        s3Url: http://minio.minio.svc.cluster.local:9000
+        s3ForcePathStyle: "true"
+        insecureSkipTLSVerify: true
 credentials:
   useSecret: true
   existingSecret: velero-minio-creds
