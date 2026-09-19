@@ -29,16 +29,19 @@ configuration:
 
 For Google Cloud Storage set `provider: gcp` and adjust the bucket name accordingly.
 
-The repository includes a `verify-backups-cronjob.yaml` manifest that runs `dev-tools/backups/verify-backups.sh` daily. A production Terraform deployment path for this CronJob is planned but is not currently deployed automatically; production deployment remains governed by the production overlay and its promotion evidence. You can apply it manually in other environments:
+The repository includes a `verify-backups-cronjob.yaml` pre-release manifest that runs the independently promoted, CI-built, digest-pinned `ghcr.io/benhook1013/backup-verifier` image daily. The image carries `verify-backups.sh`, the pinned Velero CLI, and AWS CLI, runs as a non-root UID, and uses a `firemud` ServiceAccount with only `get`/`list` access to Velero `backups` in the `velero` namespace. A production Terraform deployment path for this CronJob is planned but is not currently deployed automatically; production deployment remains governed by the production overlay and its promotion evidence. Applying this manifest does not claim live deployment or restore readiness. You can apply it manually in other environments:
 
 ```bash
 kubectl apply -f verify-backups-cronjob.yaml -n firemud
 ```
 
-The planned Terraform Helm release is pinned to the verified VMware Tanzu Velero chart `12.2.0`, released 2026-09-16, whose `appVersion` is Velero `1.18.2`. Its server image tag and digest must stay aligned with the `VELERO_VERSION` and `VELERO_IMAGE_DIGEST` authority and the CronJob projection. Update all three projections with the canonical transaction, supplying the chart version explicitly:
+The CronJob leaves the optional `PG_DUMP_BUCKET` check disabled by default. An approved environment-specific projection must provide the bucket and its credentials together; credentials are never bundled into the verifier image. CI image smoke proves the image contents and offline client commands, while a live cluster backup-list result remains unrun deployment proof.
+
+The planned Terraform Helm release is pinned to the verified VMware Tanzu Velero chart `12.2.0`, released 2026-09-16, whose `appVersion` is Velero `1.18.2`. The `VELERO_VERSION` and `VELERO_IMAGE_DIGEST` authority, the Velero stage in `docker/backup-verifier.Dockerfile`, and the Terraform server image projection must stay aligned. The CronJob's `backup-verifier` digest is independently promoted from its exact CI-smoked image and is intentionally not rewritten by this Velero updater transaction. Update those three Velero projections with the canonical transaction, supplying the chart version explicitly:
 
 ```bash
 python3 dev-tools/maintenance/update-workflow-tool.py velero <velero-version> \
+  --velero-dockerfile docker/backup-verifier.Dockerfile \
   --velero-chart-version <chart-version> --image-evidence-file <path>
 ```
 

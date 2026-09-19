@@ -6,7 +6,8 @@ set -euo pipefail
 # shellcheck disable=SC1090,SC1091 # The helper path is resolved from this script.
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/pg-dump-s3-selection.shlib"
 
-NAMESPACE=${FIREMUD_K8S_NAMESPACE:-firemud}
+TARGET_NAMESPACE=${FIREMUD_K8S_NAMESPACE:-firemud}
+VELERO_NAMESPACE=${VELERO_NAMESPACE:-velero}
 
 # Ensure Velero CLI is available
 command -v velero >/dev/null 2>&1 || {
@@ -15,17 +16,17 @@ command -v velero >/dev/null 2>&1 || {
 }
 
 # List backups and ensure at least one exists
-if ! BACKUP_LIST=$(velero backup get -n "$NAMESPACE"); then
-  echo "Unable to list Velero backups in namespace $NAMESPACE" >&2
+if ! BACKUP_LIST=$(velero backup get -n "$VELERO_NAMESPACE"); then
+  echo "Unable to list Velero backups in namespace $VELERO_NAMESPACE" >&2
   exit 1
 fi
 BACKUP_COUNT=$(printf '%s\n' "$BACKUP_LIST" | awk 'NR > 1 && NF { count++ } END { print count + 0 }')
 if [ "$BACKUP_COUNT" -eq 0 ]; then
-  echo "No Velero backups found in namespace $NAMESPACE" >&2
+  echo "No Velero backups found in namespace $VELERO_NAMESPACE" >&2
   exit 1
 fi
 
-echo "Found $BACKUP_COUNT Velero backups in $NAMESPACE"
+echo "Found $BACKUP_COUNT Velero backups in $VELERO_NAMESPACE (target namespace: $TARGET_NAMESPACE)"
 
 if [ -n "${PG_DUMP_BUCKET:-}" ]; then
   command -v aws >/dev/null 2>&1 || {

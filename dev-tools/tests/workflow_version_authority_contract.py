@@ -1193,14 +1193,23 @@ def main() -> int:
     if f'value = "{a["VELERO_IMAGE_DIGEST"]}"' not in velero_release:
         fail("Terraform Velero Helm release must pin the canonical server image digest")
 
-    velero_manifest = (root / "k8s/velero/verify-backups-cronjob.yaml").read_text()
-    velero_images = re.findall(r"image: velero/velero:[^\s]+", velero_manifest)
-    allowed_velero_images = {
-        f"image: velero/velero:v{a['VELERO_VERSION']}",
-        f"image: velero/velero:v{a['VELERO_VERSION']}@{a['VELERO_IMAGE_DIGEST']}",
-    }
-    if len(velero_images) != 1 or velero_images[0] not in allowed_velero_images:
-        fail("Velero image version/digest projection is stale")
+    velero_cronjob = (root / "k8s/velero/verify-backups-cronjob.yaml").read_text()
+    verifier_images = re.findall(
+        r"image: ghcr\.io/benhook1013/backup-verifier:[^\s]+", velero_cronjob
+    )
+    expected_verifier_image = (
+        "image: ghcr.io/benhook1013/backup-verifier:"
+        "9c41b19b3417a004d5a70de70468de94b97805f2@"
+        "sha256:f92597ca04dbd8a1821813965a95cf237c85de78db40fe91b6b539513605c60f"
+    )
+    if verifier_images != [expected_verifier_image]:
+        fail("backup verifier CronJob image digest is stale")
+    verifier_dockerfile = (root / "docker/backup-verifier.Dockerfile").read_text()
+    expected_velero_stage = (
+        f"FROM velero/velero:v{a['VELERO_VERSION']}@{a['VELERO_IMAGE_DIGEST']} AS velero-cli"
+    )
+    if verifier_dockerfile.count(expected_velero_stage) != 1:
+        fail("backup verifier Dockerfile Velero projection is stale")
 
     renovate = json.loads((root / "renovate.json").read_text())
     if not {"nodenv", "pyenv", "pip_requirements", "custom.regex"} <= set(renovate["enabledManagers"]):
@@ -1445,15 +1454,15 @@ def main() -> int:
         (
             rule
             for rule in rules
-            if rule.get("description") == "Production Velero image changes require promotion evidence"
+            if rule.get("description") == "Velero verifier image changes require promotion evidence"
         ),
         None,
     )
     if infra_rule is None or velero_rule is None or rules.index(velero_rule) <= rules.index(infra_rule):
         fail("production Velero Renovate exception must follow infrastructure automerge")
     if (
-        velero_rule.get("matchManagers") != ["kubernetes"]
-        or velero_rule.get("matchFileNames") != ["k8s/velero/verify-backups-cronjob.yaml"]
+        velero_rule.get("matchManagers") != ["dockerfile"]
+        or velero_rule.get("matchFileNames") != ["docker/backup-verifier.Dockerfile"]
         or velero_rule.get("matchPackageNames") != ["velero/velero"]
         or velero_rule.get("pinDigests") is not False
         or velero_rule.get("automerge") is not False
@@ -1461,7 +1470,7 @@ def main() -> int:
     ):
         fail("production Velero Renovate exception must disable automated digest projection and merge")
     velero_manual_rule = next(
-        (rule for rule in rules if rule.get("description") == "Velero Renovate PRs require a transactional CLI checksum update"),
+        (rule for rule in rules if rule.get("description") == "Velero Renovate PRs require a transactional verifier Dockerfile update"),
         None,
     )
     if (
@@ -1469,7 +1478,7 @@ def main() -> int:
         or velero_manual_rule.get("matchManagers") != ["custom.regex"]
         or velero_manual_rule.get("matchPackageNames") != ["velero/velero"]
         or velero_manual_rule.get("prBodyNotes") != [
-            "Run `python3 dev-tools/maintenance/update-workflow-tool.py velero <version> --velero-chart-version <chart-version> --image-evidence-file <path>` before merging so the Velero chart, image digest, and CLI archive checksum are verified and updated together."
+            "Run `python3 dev-tools/maintenance/update-workflow-tool.py velero <version> --velero-dockerfile <path> --velero-chart-version <chart-version> --image-evidence-file <path>` before merging so the Velero chart, verifier Dockerfile image digest, and CLI archive checksum are verified and updated together."
         ]
     ):
         fail("Velero custom manager updates must carry the transactional updater PR note")

@@ -1,3 +1,33 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: verify-velero-backups
+  namespace: firemud
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: verify-velero-backups-reader
+  namespace: velero
+rules:
+  - apiGroups: ["velero.io"]
+    resources: ["backups"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: verify-velero-backups-reader
+  namespace: velero
+subjects:
+  - kind: ServiceAccount
+    name: verify-velero-backups
+    namespace: firemud
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: verify-velero-backups-reader
+---
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -9,64 +39,24 @@ spec:
     spec:
       template:
         spec:
+          serviceAccountName: verify-velero-backups
           containers:
-          - name: check
-            image: velero/velero:v1.18.2@sha256:37396519f399536e5f01427d723565ae69294ec3fb5625cf1c87c09eaa9de16b
-            command: ["/bin/sh", "-c", "/scripts/verify-backups.sh"]
-            volumeMounts:
-            - name: script
-              mountPath: /scripts
+            - name: check
+              image: ghcr.io/benhook1013/backup-verifier:9c41b19b3417a004d5a70de70468de94b97805f2@sha256:f92597ca04dbd8a1821813965a95cf237c85de78db40fe91b6b539513605c60f
+              env:
+                - name: VELERO_NAMESPACE
+                  value: velero
+              securityContext:
+                allowPrivilegeEscalation: false
+                runAsNonRoot: true
+                runAsUser: 65532
+                runAsGroup: 65532
+                readOnlyRootFilesystem: true
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  cpu: 100m
+                  memory: 128Mi
           restartPolicy: OnFailure
-          volumes:
-          - name: script
-            configMap:
-              name: verify-backups-script
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: verify-backups-script
-  namespace: firemud
-data:
-  verify-backups.sh: |
-    #!/usr/bin/env bash
-    # Verify that Velero backups exist and the object store is reachable.
-    # Intended for periodic checks via CI or a Kubernetes CronJob.
-    set -euo pipefail
-    
-    NAMESPACE=${FIREMUD_K8S_NAMESPACE:-firemud}
-    
-    # Ensure Velero CLI is available
-    command -v velero >/dev/null 2>&1 || {
-      echo "Velero CLI not found" >&2
-      exit 1
-    }
-    
-    # List backups and ensure at least one exists
-    BACKUP_COUNT=$(velero backup get -n "$NAMESPACE" --no-headers | wc -l || true)
-    if [ "$BACKUP_COUNT" -eq 0 ]; then
-      echo "No Velero backups found in namespace $NAMESPACE" >&2
-      exit 1
-    fi
-    
-    echo "Found $BACKUP_COUNT Velero backups in $NAMESPACE"
-
-    if [ -n "${PG_DUMP_BUCKET:-}" ]; then
-      command -v aws >/dev/null 2>&1 || {
-        echo "aws CLI not found" >&2
-        exit 1
-      }
-      AWS_ENDPOINT_ARGS=()
-      if [ -n "${PG_DUMP_ENDPOINT:-}" ]; then
-        AWS_ENDPOINT_ARGS=(--endpoint-url "$PG_DUMP_ENDPOINT")
-      fi
-      KEY=$(aws s3api list-objects-v2 --bucket "$PG_DUMP_BUCKET" \
-            --prefix "15min/" \
-            "${AWS_ENDPOINT_ARGS[@]}" \
-            --query 'sort_by(Contents,&LastModified)[-1].Key' --output text 2>/dev/null || echo None)
-      if [ "$KEY" = "None" ]; then
-        echo "No pg_dump files found in bucket $PG_DUMP_BUCKET" >&2
-        exit 1
-      fi
-      echo "Latest pg_dump: $KEY"
-    fi

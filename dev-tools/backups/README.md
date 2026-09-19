@@ -27,13 +27,16 @@ This directory contains FireMUD backup tooling for three different lanes:
   - Intended for local cluster/operator workflows, not the normal Docker Compose lane.
 
 - `verify-backups.sh`
-  - Checks that Velero backups exist and that optional pg-dump object storage is reachable.
+  - Checks that Velero backups exist in `VELERO_NAMESPACE` (default `velero`) and that optional pg-dump object storage is reachable.
+  - `FIREMUD_K8S_NAMESPACE` remains a contextual target/drill label; it does not select or filter the Velero backup listing.
   - It does not prove immutable lineage, artifact readability, restore-tool compatibility, or player-facing readiness.
   - Used by the manual backup/restore workflow as existence/reachability evidence only.
 
 - `smoke-backup-verifier-image.sh`
   - Runs the published backup-verifier image's focused CI smoke: Bash, AWS CLI, the pinned Velero CLI, verifier-script syntax, and non-root execution.
   - Local Docker is optional for this repository check; the image build and smoke run in the runtime-image CI jobs.
+
+The checked-in `k8s/velero/verify-backups-cronjob.yaml` runs the CI-verified, digest-pinned `backup-verifier` image as a non-root UID. Its `firemud` ServiceAccount is bound only to `get` and `list` on Velero `backups` in the `velero` namespace. The CronJob is existence/reachability evidence only; it does not prove immutable lineage, artifact readability, restore-tool compatibility, or player-facing readiness.
 
 ## Choosing The Right Script
 

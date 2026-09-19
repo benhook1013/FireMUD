@@ -125,6 +125,21 @@ def replace_velero_terraform_projection(
     return text[: release_match.start()] + release + text[release_end:]
 
 
+def replace_velero_dockerfile_projection(
+    text: str, velero_version: str, image_digest: str
+) -> str:
+    """Update the independently built verifier image's pinned Velero stage."""
+
+    updated, count = re.subn(
+        r"(?m)^FROM velero/velero:v\d+\.\d+\.\d+@sha256:[0-9a-f]{64}(\s+AS\s+velero-cli)$",
+        rf"FROM velero/velero:v{velero_version}@{image_digest}\g<1>",
+        text,
+    )
+    if count != 1:
+        raise SystemExit("expected exactly one Velero verifier Dockerfile projection")
+    return updated
+
+
 def staged_file(path: Path, text: str, *, preserve_mode: bool = False) -> Path:
     existing_mode = None
     if preserve_mode:
@@ -473,7 +488,9 @@ def main() -> None:
     )
     parser.add_argument("--authority", type=Path, default=REPOSITORY_ROOT / "config/workflow-tool-versions.env")
     parser.add_argument(
-        "--velero-manifest", type=Path, default=REPOSITORY_ROOT / "k8s/velero/verify-backups-cronjob.yaml"
+        "--velero-dockerfile",
+        type=Path,
+        default=REPOSITORY_ROOT / "docker/backup-verifier.Dockerfile",
     )
     parser.add_argument(
         "--terraform-file", type=Path, default=REPOSITORY_ROOT / "k8s/terraform-production/main.tf"
@@ -505,12 +522,12 @@ def main() -> None:
         parser.error("Velero chart version must have exactly three numeric parts")
 
     resolved_authority = args.authority.resolve()
-    resolved_velero_manifest = args.velero_manifest.resolve()
+    resolved_velero_dockerfile = args.velero_dockerfile.resolve()
     resolved_terraform_file = args.terraform_file.resolve()
     allowed_target_sets = [
         frozenset((resolved_authority,)),
-        frozenset((resolved_authority, resolved_velero_manifest)),
-        frozenset((resolved_authority, resolved_velero_manifest, resolved_terraform_file)),
+        frozenset((resolved_authority, resolved_velero_dockerfile)),
+        frozenset((resolved_authority, resolved_velero_dockerfile, resolved_terraform_file)),
     ]
     with authority_lock(args.authority):
         reconcile_recovery_journal(args.authority, allowed_target_sets)
@@ -545,28 +562,24 @@ def main() -> None:
         stem = CHECKSUM_STEMS[prefix]
         authority = replace(authority, f"{stem}_CHECKSUM_VERSION", args.version)
         authority = replace(authority, f"{stem}_SHA256", matches[0])
-        manifest = None
+        dockerfile = None
         terraform = None
         if args.tool == "velero":
             if image_digest is None:
                 raise SystemExit("Velero image digest could not be resolved")
             authority = replace(authority, "VELERO_CHART_VERSION", args.velero_chart_version)
             authority = replace(authority, "VELERO_IMAGE_DIGEST", image_digest)
-            manifest = args.velero_manifest.read_text(encoding="utf-8")
-            manifest, count = re.subn(
-                r"image: velero/velero:v\d+\.\d+\.\d+(?:@sha256:[0-9a-f]{64})?",
-                f"image: velero/velero:v{args.version}@{image_digest}",
-                manifest,
+            dockerfile = args.velero_dockerfile.read_text(encoding="utf-8")
+            dockerfile = replace_velero_dockerfile_projection(
+                dockerfile, args.version, image_digest
             )
-            if count != 1:
-                raise SystemExit("expected one Velero image projection")
             terraform = args.terraform_file.read_text(encoding="utf-8")
             terraform = replace_velero_terraform_projection(
                 terraform, args.velero_chart_version, args.version, image_digest
             )
         updates = [(args.authority, authority)]
-        if manifest is not None:
-            updates.append((args.velero_manifest, manifest))
+        if dockerfile is not None:
+            updates.append((args.velero_dockerfile, dockerfile))
         if terraform is not None:
             updates.append((args.terraform_file, terraform))
         transactional_write(updates, authority=args.authority)

@@ -32,6 +32,8 @@ require_contains "$smoke" 'docker run --rm --entrypoint /bin/bash'
 require_contains "$smoke" 'command -v bash'
 require_contains "$smoke" 'command -v aws'
 require_contains "$smoke" 'command -v velero'
+require_contains "$smoke" 'velero version --client-only'
+require_contains "$smoke" 'aws --version 2>&1'
 require_contains "$smoke" 'bash -n /opt/firemud/backups/verify-backups.sh'
 # shellcheck disable=SC2016 # Assert the literal command embedded in the smoke helper.
 require_contains "$smoke" '[[ "$(id -u)" != 0 ]]'

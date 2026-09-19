@@ -12,6 +12,10 @@ docker run --rm --entrypoint /bin/bash "$image" -ceu '
   command -v bash >/dev/null
   command -v aws >/dev/null
   command -v velero >/dev/null
+  velero_version="$(velero version --client-only)"
+  [[ -n "$velero_version" ]] || { echo "Velero client version output was empty" >&2; exit 1; }
+  aws_version="$(aws --version 2>&1)"
+  [[ -n "$aws_version" ]] || { echo "AWS CLI version output was empty" >&2; exit 1; }
   test -r /opt/firemud/backups/verify-backups.sh
   test -r /opt/firemud/backups/pg-dump-s3-selection.shlib
   bash -n /opt/firemud/backups/verify-backups.sh

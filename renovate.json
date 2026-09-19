@@ -209,7 +209,7 @@
       "platformAutomerge": false
     },
     {
-      "description": "Velero Renovate PRs require a transactional CLI checksum update",
+      "description": "Velero Renovate PRs require a transactional verifier Dockerfile update",
       "matchManagers": [
         "custom.regex"
       ],
@@ -217,16 +217,16 @@
         "velero/velero"
       ],
       "prBodyNotes": [
-        "Run `python3 dev-tools/maintenance/update-workflow-tool.py velero <version> --velero-chart-version <chart-version> --image-evidence-file <path>` before merging so the Velero chart, image digest, and CLI archive checksum are verified and updated together."
+        "Run `python3 dev-tools/maintenance/update-workflow-tool.py velero <version> --velero-dockerfile <path> --velero-chart-version <chart-version> --image-evidence-file <path>` before merging so the Velero chart, verifier Dockerfile image digest, and CLI archive checksum are verified and updated together."
       ]
     },
     {
-      "description": "Production Velero image changes require promotion evidence",
+      "description": "Velero verifier image changes require promotion evidence",
       "matchManagers": [
-        "kubernetes"
+        "dockerfile"
       ],
       "matchFileNames": [
-        "k8s/velero/verify-backups-cronjob.yaml"
+        "docker/backup-verifier.Dockerfile"
       ],
       "matchPackageNames": [
         "velero/velero"
