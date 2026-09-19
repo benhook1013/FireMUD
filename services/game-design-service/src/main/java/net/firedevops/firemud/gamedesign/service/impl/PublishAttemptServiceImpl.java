@@ -4,6 +4,8 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.function.Supplier;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
@@ -35,7 +37,43 @@ public class PublishAttemptServiceImpl implements PublishAttemptService {
 
   @Override
   @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public <T> T executeScriptPatchTransaction(Supplier<T> operation) {
+    try {
+      return operation.get();
+    } catch (RuntimeException ex) {
+      throw new ScriptPatchTransactionException(ex);
+    }
+  }
+
+  @Override
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
   public void createAttempt(VersionDto version, PublishType publishType, String publishWorkflowId) {
+    createAttempt(version, publishType, publishWorkflowId, null, null);
+  }
+
+  @Override
+  @Transactional
+  public void createScriptPatchAttempt(
+      VersionDto version,
+      String publishWorkflowId,
+      Long baseVersionId,
+      String requestDigest) {
+    createAttempt(version, PublishType.SCRIPT_PATCH, publishWorkflowId, baseVersionId, requestDigest);
+  }
+
+  @Override
+  @Transactional
+  public void recordScriptPatchParticipantDigests(
+      String publishWorkflowId, List<PublishParticipantDigestDto> participantDigests) {
+    recordParticipantDigestsInCurrentTransaction(publishWorkflowId, participantDigests);
+  }
+
+  private void createAttempt(
+      VersionDto version,
+      PublishType publishType,
+      String publishWorkflowId,
+      Long baseVersionId,
+      String requestDigest) {
     Objects.requireNonNull(version, "version must not be null");
     PublishAttempt attempt = new PublishAttempt();
     attempt.setTenantId(version.tenantId());
@@ -44,12 +82,25 @@ public class PublishAttemptServiceImpl implements PublishAttemptService {
     attempt.setVersionId(version.id());
     attempt.setVersionNumber(version.versionNumber());
     attempt.setScriptPatchVersion(version.scriptPatchVersion());
+    attempt.setBaseVersionId(baseVersionId);
+    attempt.setRequestDigest(requestDigest);
     publishAttemptRepository.save(attempt);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public Optional<PublishAttempt> findByPublishWorkflowId(String publishWorkflowId) {
+    return publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId);
   }
 
   @Override
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public void recordParticipantDigests(
+      String publishWorkflowId, List<PublishParticipantDigestDto> participantDigests) {
+    recordParticipantDigestsInCurrentTransaction(publishWorkflowId, participantDigests);
+  }
+
+  private void recordParticipantDigestsInCurrentTransaction(
       String publishWorkflowId, List<PublishParticipantDigestDto> participantDigests) {
     PublishAttempt attempt = requireAttempt(publishWorkflowId);
     participantDigestRepository.deleteByPublishAttemptId(attempt.getId());
@@ -58,8 +109,18 @@ public class PublishAttemptServiceImpl implements PublishAttemptService {
   }
 
   @Override
+  @Transactional
+  public void markScriptPatchSucceeded(String publishWorkflowId) {
+    markSucceededInCurrentTransaction(publishWorkflowId);
+  }
+
+  @Override
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public void markSucceeded(String publishWorkflowId) {
+    markSucceededInCurrentTransaction(publishWorkflowId);
+  }
+
+  private void markSucceededInCurrentTransaction(String publishWorkflowId) {
     PublishAttempt attempt = requireAttempt(publishWorkflowId);
     attempt.setStatus(PublishAttemptStatus.SUCCEEDED);
     attempt.setFailureCode(null);
@@ -69,8 +130,20 @@ public class PublishAttemptServiceImpl implements PublishAttemptService {
   }
 
   @Override
+  @Transactional
+  public void markScriptPatchFailed(
+      String publishWorkflowId, String failureCode, String failureMessage) {
+    markFailedInCurrentTransaction(publishWorkflowId, failureCode, failureMessage);
+  }
+
+  @Override
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public void markFailed(String publishWorkflowId, String failureCode, String failureMessage) {
+    markFailedInCurrentTransaction(publishWorkflowId, failureCode, failureMessage);
+  }
+
+  private void markFailedInCurrentTransaction(
+      String publishWorkflowId, String failureCode, String failureMessage) {
     PublishAttempt attempt = requireAttempt(publishWorkflowId);
     attempt.setStatus(PublishAttemptStatus.FAILED);
     attempt.setFailureCode(failureCode);

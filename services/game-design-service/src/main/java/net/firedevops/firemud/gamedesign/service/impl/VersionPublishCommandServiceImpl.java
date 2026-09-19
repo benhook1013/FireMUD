@@ -77,9 +77,11 @@ public class VersionPublishCommandServiceImpl {
   }
 
   @Transactional
-  public VersionDto publishFullVersion(String tenantId, String notes, String publishWorkflowId) {
+  public VersionDto publishFullVersion(
+      String tenantId, String notes, String publishRequestId, String publishWorkflowId) {
     PublishWorkflowSnapshot snapshot =
-        reconcileFullVersionPublish(new PublishWorkflowRequest(tenantId, notes, publishWorkflowId));
+        reconcileFullVersionPublish(
+            new PublishWorkflowRequest(tenantId, notes, publishRequestId, publishWorkflowId));
     if (!snapshot.isSucceeded()) {
       throw publishFailure(snapshot.failureCode(), snapshot.failureMessage());
     }
@@ -129,7 +131,8 @@ public class VersionPublishCommandServiceImpl {
     ExportedAssetManifest exportedManifest = null;
     try {
       List<PublishParticipantDigestDto> participantDigests =
-          publishGateService.collectFullVersionParticipantDigests(dto);
+          publishGateService.collectFullVersionParticipantDigests(
+              dto, request.publishRequestId(), request.publishWorkflowId());
       publishGateService.assertGatePassed(dto, participantDigests);
       publishAttemptService.recordParticipantDigests(
           request.publishWorkflowId(), participantDigests);

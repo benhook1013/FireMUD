@@ -9,6 +9,7 @@ import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.gamedesign.dto.AppliedWorldDesignMutationDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto;
@@ -62,32 +63,65 @@ public class WorldManagementClient
   }
 
   public PublishParticipantDigestDto getDraftDesignDigestForVersion(
-      String tenantId, long versionId) {
+      PublicationDigestRequestBinding binding) {
     var response =
         stub()
             .getDraftDesignDigest(
                 GetDraftDesignDigestRequest.newBuilder()
-                    .setTenantId(tenantId)
-                    .setVersionId(String.valueOf(versionId))
+                    .setTenantId(binding.tenantId())
+                    .setVersionId(requireFullVersionId(binding))
+                    .setPublishRequestId(binding.publishRequestId())
+                    .setDerivedWorkflowIdentity(binding.derivedWorkflowIdentity())
+                    .setRequestDigest(binding.requestDigest())
                     .build());
     if (response.hasError() && !response.getError().getCode().isBlank()) {
       return new PublishParticipantDigestDto(
           "WORLD_MANAGEMENT",
-          String.valueOf(versionId),
+          binding.versionId(),
           null,
           null,
           null,
           response.getError().getCode(),
           response.getError().getMessage());
     }
+    String mismatch = responseBindingMismatch(response, binding);
+    if (mismatch != null) {
+      return new PublishParticipantDigestDto(
+          "WORLD_MANAGEMENT",
+          binding.versionId(),
+          null,
+          null,
+          null,
+          "RESPONSE_BINDING_MISMATCH",
+          mismatch);
+    }
     return new PublishParticipantDigestDto(
         "WORLD_MANAGEMENT",
-        response.getScopeValue(),
+        response.getVersionId(),
         response.getAppliedCommitId(),
         response.getContentDigest(),
         response.getDigestSchemaVersion(),
         null,
         null);
+  }
+
+  private String requireFullVersionId(PublicationDigestRequestBinding binding) {
+    if (binding.scopeKind() != PublicationDigestRequestBinding.ScopeKind.FULL_VERSION) {
+      throw new IllegalArgumentException("full-version binding required");
+    }
+    return binding.versionId();
+  }
+
+  private String responseBindingMismatch(
+      net.firedevops.firemud.worldmanagement.v1.GetDraftDesignDigestResponse response,
+      PublicationDigestRequestBinding binding) {
+    if (!binding.tenantId().equals(response.getTenantId())
+        || !response.hasVersionId()
+        || !binding.versionId().equals(response.getVersionId())
+        || !response.getBaseVersionId().isEmpty()) {
+      return "owner returned tenant or typed full-version scope that does not match request";
+    }
+    return null;
   }
 
   public AppliedWorldDesignMutationDto applyWorldDesignMutation(

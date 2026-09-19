@@ -15,7 +15,11 @@ public interface VersionService {
       throws Exception;
 
   VersionDto publishScriptPatchVersion(
-      String tenantId, Long baseVersionId, String scriptPatchVersion, String notes)
+      String tenantId,
+      Long baseVersionId,
+      String scriptPatchVersion,
+      String notes,
+      String publishRequestId)
       throws Exception;
 
   VersionDto getPublishedScriptPatchVersion(String tenantId, String scriptPatchVersion);
