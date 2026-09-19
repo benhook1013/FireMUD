@@ -55,9 +55,11 @@ class FakeSession:
     def __init__(self, chunks=None):
         self.chunks = list(chunks or [])
         self.sent = []
+        self.wire_sent = []
         self.closed = False
 
     def sendall(self, payload):
+        self.wire_sent.append(payload)
         self.sent.append(payload.decode("iso-8859-1"))
 
     def recv(self, _size=None):
@@ -308,6 +310,39 @@ assert secret not in json.dumps(login_step_results)
 assert login_step_results[0]["command"] == "LOGIN demo@example.test [REDACTED]"
 assert "OK LOGIN account=demo" in login_output.getvalue()
 assert "Diagnostic credential=[REDACTED]; proof remains visible." in login_output.getvalue()
+
+
+iac_secret = "p\u00ffss"
+iac_login_command = f"LOGIN demo@example.test {iac_secret}"
+iac_login_response = f"{iac_login_command}\nOK LOGIN account=demo\n"
+iac_session = CommandResponseSession(["OK SAY\n", iac_login_response])
+iac_step_results = []
+with contextlib.redirect_stdout(io.StringIO()):
+    smoke_common.send_telnet_command_and_expect(
+        iac_session,
+        [],
+        "SAY \u00ff",
+        ["OK SAY"],
+        "SAY",
+        1,
+        drain_timeout=0,
+    )
+    iac_response = smoke_common.send_telnet_command_and_expect(
+        iac_session,
+        [],
+        iac_login_command,
+        ["OK LOGIN"],
+        "LOGIN",
+        1,
+        drain_timeout=0,
+        step_results=iac_step_results,
+    )
+assert iac_session.wire_sent == [
+    b"SAY \xff\xff\r\n",
+    b"LOGIN demo@example.test p\xff\xffss\r\n",
+]
+assert iac_secret in iac_response
+assert iac_secret not in json.dumps(iac_step_results)
 
 
 logon_command = f"LOGON demo@example.test {secret}"

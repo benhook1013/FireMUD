@@ -513,7 +513,8 @@ def send_telnet_command_and_expect(
 ):
     start_index = len(responses)
     started_at = time.time()
-    sock.sendall(f"{line}\r\n".encode("iso-8859-1"))
+    command_bytes = line.encode("iso-8859-1").replace(b"\xff", b"\xff\xff")
+    sock.sendall(command_bytes + b"\r\n")
     response = wait_for_incremental_response(
         lambda: recv_until_socket(sock, "", 0.5),
         responses,

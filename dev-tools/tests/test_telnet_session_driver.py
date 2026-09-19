@@ -346,6 +346,24 @@ class TelnetSessionDriverTest(unittest.TestCase):
             self.assertEqual(store.latest_cursor(), 0)
             self.assertFalse(transcript.exists())
 
+    def test_read_does_not_create_missing_transcript_parent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "missing" / "session.jsonl"
+            store = telnet_session.EvidenceStore(transcript)
+
+            self.assertEqual(store.read(), [])
+            self.assertEqual(store.latest_cursor(), 0)
+            self.assertFalse(transcript.parent.exists())
+
+            completed = subprocess.run(
+                [sys.executable, str(TOOL_PATH), "read", "--transcript", str(transcript)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(completed.stdout.strip(), "next_cursor=0")
+            self.assertFalse(transcript.parent.exists())
+
     def test_read_skips_malformed_records_and_preserves_later_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             transcript = Path(directory) / "session.jsonl"
@@ -934,6 +952,60 @@ class TelnetSessionDriverTest(unittest.TestCase):
             self.assertNotIn("next_cursor=", "".join(output))
             self.assertEqual([r["seq"] for r in session.store.read()], sorted(r["seq"] for r in session.store.read()))
             self.assertEqual(stat.S_IMODE(transcript.stat().st_mode), 0o600)
+
+    def test_outbound_iac_is_escaped_and_login_echo_remains_redacted(self):
+        secret = "p\u00ffss"
+        commands = []
+
+        def handler(connection):
+            for expected in (
+                b"SAY \xff\xff\r\n",
+                b"LOGIN demo@example.com p\xff\xffss\r\n",
+            ):
+                command = b""
+                while not command.endswith(b"\r\n"):
+                    command += connection.recv(1)
+                commands.append(command)
+                connection.sendall(command)
+            time.sleep(0.08)
+
+        server = FakeServer(handler)
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "session.jsonl"
+            output = []
+            session = telnet_session.TelnetSession(
+                "127.0.0.1",
+                server.port,
+                transcript,
+                output=output.append,
+                tls_enabled=False,
+            )
+            session.connect()
+            session.send_command("SAY \u00ff")
+            session.send_command(f"LOGIN demo@example.com {secret}")
+            wait_for(
+                session.store,
+                lambda rows: any(
+                    row.get("text") == "LOGIN demo@example.com [REDACTED]"
+                    for row in rows
+                ),
+            )
+            session.close("iac_escape_complete")
+            server.close_and_check()
+
+            self.assertEqual(
+                commands,
+                [
+                    b"SAY \xff\xff\r\n",
+                    b"LOGIN demo@example.com p\xff\xffss\r\n",
+                ],
+            )
+            transcript_text = transcript.read_text(encoding="utf-8")
+            rendered = "\n".join(output)
+            self.assertNotIn(secret, transcript_text)
+            self.assertNotIn(secret, rendered)
+            self.assertIn("LOGIN demo@example.com [REDACTED]", transcript_text)
+            self.assertIn("LOGIN demo@example.com [REDACTED]", rendered)
 
     def test_idle_timeout_record_and_command_reset_are_serialized(self):
         class CoordinatedSocket:
