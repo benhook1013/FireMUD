@@ -319,7 +319,8 @@ public class EntityManagementGrpcService
         (tenantId, versionId, templateType, templateId) -> false,
         gameplaySessionAttestationService,
         meterRegistry,
-        new EffectPayloadParser(new ObjectMapper()));
+        new EffectPayloadParser(new ObjectMapper()),
+        "");
   }
 
   @Override

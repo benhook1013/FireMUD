@@ -95,6 +95,9 @@ public class AutomationScriptingGrpcService
     this.meterRegistry = meterRegistry;
   }
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification = "Fail-fast startup is intentional if required RPC dependencies are missing.")
   @org.springframework.beans.factory.annotation.Autowired
   public AutomationScriptingGrpcService(
       PingService pingService,
@@ -120,6 +123,9 @@ public class AutomationScriptingGrpcService
     this.publicationReadGuard = configuredPublicationReadGuard(workloadNamespace);
   }
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification = "Fail-fast startup is intentional if required RPC dependencies are missing.")
   public AutomationScriptingGrpcService(
       PingService pingService,
       ScriptDefinitionService scriptService,

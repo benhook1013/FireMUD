@@ -54,11 +54,9 @@ public class PublishAttemptServiceImpl implements PublishAttemptService {
   @Override
   @Transactional
   public void createScriptPatchAttempt(
-      VersionDto version,
-      String publishWorkflowId,
-      Long baseVersionId,
-      String requestDigest) {
-    createAttempt(version, PublishType.SCRIPT_PATCH, publishWorkflowId, baseVersionId, requestDigest);
+      VersionDto version, String publishWorkflowId, Long baseVersionId, String requestDigest) {
+    createAttempt(
+        version, PublishType.SCRIPT_PATCH, publishWorkflowId, baseVersionId, requestDigest);
   }
 
   @Override

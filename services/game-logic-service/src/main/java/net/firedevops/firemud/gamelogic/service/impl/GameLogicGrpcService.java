@@ -88,6 +88,7 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
       value = "EI_EXPOSE_REP2",
       justification = "MeterRegistry is thread-safe and only stored")
   private final MeterRegistry meterRegistry;
+
   private PublicationReadGuard publicationReadGuard;
 
   @Autowired
@@ -245,8 +246,7 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
     if (publicationReadGuard == null) {
       throw new AdminAuthorizationException("Publication read authorization is not configured");
     }
-    publicationReadGuard.requirePublicationRead(
-        PublicationReadGuard.GAME_LOGIC_DIGEST_METHOD);
+    publicationReadGuard.requirePublicationRead(PublicationReadGuard.GAME_LOGIC_DIGEST_METHOD);
   }
 
   private static PublicationReadGuard configuredPublicationReadGuard(String workloadNamespace) {
