@@ -5,7 +5,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUN_OWNED_COMPOSE_HELPER="$ROOT_DIR/dev-tools/smoke/run-owned-compose.sh"
 
 python3 - <<'PY' "$ROOT_DIR"
+import socket
+import ssl
 import sys
+import threading
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,7 +16,12 @@ root = Path(sys.argv[1])
 sys.path.insert(0, str(root / "dev-tools" / "smoke"))
 
 import smoke_common
-from smoke_common import run_telnet_smoke_session, run_transport_session, run_websocket_smoke_session
+from smoke_common import (
+    open_telnet_session,
+    run_telnet_smoke_session,
+    run_transport_session,
+    run_websocket_smoke_session,
+)
 
 
 class FakeSession:
@@ -75,6 +83,110 @@ telnet_responses = run_telnet_smoke_session(
 assert telnet_responses == ["OK WORLDS\n"]
 assert opened[0].sent == ["WORLDS\r\n"]
 assert opened[0].closed is True
+
+
+class FakeTlsContext:
+    def __init__(self, wrapped_session):
+        self.wrapped_session = wrapped_session
+        self.server_hostname = None
+
+    def wrap_socket(self, raw_socket, server_hostname):
+        assert raw_socket is raw_tls_socket
+        self.server_hostname = server_hostname
+        return self.wrapped_session
+
+
+raw_tls_socket = FakeSession()
+wrapped_tls_session = FakeSession(["OK WORLDS\n"])
+tls_context = FakeTlsContext(wrapped_tls_session)
+with patch(
+    "smoke_common.socket.create_connection", return_value=raw_tls_socket
+) as create_connection, patch(
+    "smoke_common.ssl.create_default_context", return_value=tls_context
+) as create_default_context:
+    tls_responses = run_telnet_smoke_session(
+        "preview.example.test",
+        32042,
+        [("WORLDS", ["OK WORLDS"], "WORLDS")],
+        1,
+        tls=True,
+        ca_file="/etc/ssl/certs/preview-ca.pem",
+        server_hostname="preview.example.test",
+    )
+assert tls_responses == ["OK WORLDS\n"]
+create_connection.assert_called_once_with(
+    ("preview.example.test", 32042), timeout=1
+)
+create_default_context.assert_called_once_with(
+    cafile="/etc/ssl/certs/preview-ca.pem"
+)
+assert tls_context.server_hostname == "preview.example.test"
+assert wrapped_tls_session.sent == ["WORLDS\r\n"]
+assert wrapped_tls_session.closed is True
+assert raw_tls_socket.closed is False
+
+
+plaintext_socket = FakeSession(["OK WORLDS\n"])
+with patch(
+    "smoke_common.socket.create_connection", return_value=plaintext_socket
+) as create_plaintext_connection, patch(
+    "smoke_common.ssl.create_default_context"
+) as create_plaintext_context:
+    assert open_telnet_session("example.test", 2323, 1) is plaintext_socket
+create_plaintext_connection.assert_called_once_with(("example.test", 2323), timeout=1)
+create_plaintext_context.assert_not_called()
+
+
+certificate_dir = root / "services" / "common-test-support" / "src" / "testFixtures" / "resources" / "certs"
+server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+server_context.load_cert_chain(
+    certfile=str(certificate_dir / "dev-cert.pem"),
+    keyfile=str(certificate_dir / "dev-key.pem"),
+)
+server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server_socket.bind(("127.0.0.1", 0))
+server_socket.listen(1)
+server_socket.settimeout(5)
+server_port = server_socket.getsockname()[1]
+server_commands = []
+server_errors = []
+
+
+def serve_tls_telnet():
+    try:
+        raw_connection, _address = server_socket.accept()
+        with raw_connection:
+            with server_context.wrap_socket(
+                raw_connection,
+                server_side=True,
+            ) as tls_connection:
+                command = tls_connection.recv(4096)
+                server_commands.append(command)
+                tls_connection.sendall(b"OK WORLDS\n")
+    except Exception as exc:
+        server_errors.append(exc)
+
+
+server_thread = threading.Thread(target=serve_tls_telnet, daemon=True)
+server_thread.start()
+try:
+    local_tls_responses = run_telnet_smoke_session(
+        "127.0.0.1",
+        server_port,
+        [("WORLDS", ["OK WORLDS"], "WORLDS")],
+        5,
+        tls=True,
+        ca_file=str(certificate_dir / "dev-ca.pem"),
+        server_hostname="localhost",
+    )
+finally:
+    server_socket.close()
+    server_thread.join(timeout=5)
+assert not server_thread.is_alive(), "local TLS server thread did not finish"
+assert not server_errors, f"local TLS server failed: {server_errors!r}"
+assert server_commands == [b"WORLDS\r\n"]
+assert local_tls_responses == ["OK WORLDS\n"]
 
 
 opened_ws = []
