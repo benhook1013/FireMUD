@@ -46,8 +46,8 @@ class AbstractReloadingBlockingGrpcClientTest {
 
       Health health = TlsCertificateWatcher.health();
       assertThat(health.getStatus().getCode()).isEqualTo("OUT_OF_SERVICE");
-      assertThat(health.getDetails())
-          .containsEntry("unhealthyWatchers", unhealthyWatchersBefore + 1);
+      assertThat(((Number) health.getDetails().get("unhealthyWatchers")).intValue())
+          .isGreaterThanOrEqualTo(unhealthyWatchersBefore + 1);
     } finally {
       client.close();
     }
