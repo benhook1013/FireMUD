@@ -117,8 +117,7 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
   @Override
   public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
     PathContainer path = exchange.getRequest().getPath().pathWithinApplication();
-    GameplayRouteClassifier.Classification route =
-        GameplayRouteClassifier.classify(path);
+    GameplayRouteClassifier.Classification route = GameplayRouteClassifier.classify(path);
     if (!route.gameplayRoute()) {
       return chain.filter(exchange);
     }

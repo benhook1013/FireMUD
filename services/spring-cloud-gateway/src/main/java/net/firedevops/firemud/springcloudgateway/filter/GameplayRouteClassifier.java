@@ -7,8 +7,7 @@ import org.springframework.web.util.pattern.PathPatternParser;
 /** Classifies paths using the same PathPattern semantics as the gameplay handler mapping. */
 final class GameplayRouteClassifier {
   private static final PathPatternParser PATH_PATTERN_PARSER = new PathPatternParser();
-  private static final PathPattern EXACT_GAMEPLAY_ROUTE =
-      PATH_PATTERN_PARSER.parse("/ws/game");
+  private static final PathPattern EXACT_GAMEPLAY_ROUTE = PATH_PATTERN_PARSER.parse("/ws/game");
   private static final PathPattern WILDCARD_GAMEPLAY_ROUTE =
       PATH_PATTERN_PARSER.parse("/ws/game/**");
 

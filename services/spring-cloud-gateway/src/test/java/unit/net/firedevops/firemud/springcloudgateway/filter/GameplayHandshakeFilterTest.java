@@ -123,11 +123,7 @@ class GameplayHandshakeFilterTest {
       assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
           .as("path=%s", path)
           .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_REJECTED);
-      assertThat(
-              exchange
-                  .getResponse()
-                  .getHeaders()
-                  .getFirst("X-Firemud-Handshake-Error-Reason"))
+      assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Reason"))
           .as("path=%s", path)
           .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_UNSUPPORTED_CARRIER_OR_ROUTE);
     }
@@ -169,11 +165,7 @@ class GameplayHandshakeFilterTest {
       assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
           .as("path=%s", path)
           .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_REJECTED);
-      assertThat(
-              exchange
-                  .getResponse()
-                  .getHeaders()
-                  .getFirst("X-Firemud-Handshake-Error-Reason"))
+      assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Reason"))
           .as("path=%s", path)
           .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_UNSUPPORTED_CARRIER_OR_ROUTE);
     }

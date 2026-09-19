@@ -13,6 +13,7 @@ import net.firedevops.firemud.common.health.DependencyReadinessSupport;
 import net.firedevops.firemud.common.health.ReadinessTransitionTracker;
 import net.firedevops.firemud.common.security.JwtUtil;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.stereotype.Component;
@@ -43,6 +44,7 @@ public class GameplayRouteReadinessHealthIndicator implements HealthIndicator {
       value = "CT_CONSTRUCTOR_THROW",
       justification =
           "Dependency lookup is framework-owned; construction failure should fail startup loudly.")
+  @Autowired
   public GameplayRouteReadinessHealthIndicator(
       @Value("${local.server.port:${server.port:8080}}") int serverPort,
       ReadinessTransitionTracker readinessTransitionTracker,
@@ -54,6 +56,10 @@ public class GameplayRouteReadinessHealthIndicator implements HealthIndicator {
         HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build());
   }
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Rejecting a null test client should fail construction before the indicator is used.")
   GameplayRouteReadinessHealthIndicator(
       int serverPort,
       ReadinessTransitionTracker readinessTransitionTracker,
