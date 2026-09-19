@@ -218,9 +218,14 @@ class HostedIdentityScopeServiceTest {
 
     assertEquals(
         List.of(
-            "pr-42-tls", "pr-42-telnet-tls", "pr-42-gateway-internal-ws", "pr-42-tcp-proxy-bridge",
-            "pr-42-grpc-game-design-service", "pr-42-grpc-world-management-service",
-            "pr-42-grpc-entity-management-service", "pr-42-grpc-game-logic-service",
+            "pr-42-tls",
+            "pr-42-telnet-tls",
+            "pr-42-gateway-internal-ws",
+            "pr-42-tcp-proxy-bridge",
+            "pr-42-grpc-game-design-service",
+            "pr-42-grpc-world-management-service",
+            "pr-42-grpc-entity-management-service",
+            "pr-42-grpc-game-logic-service",
             "pr-42-grpc-automation-scripting-service"),
         HostedIdentityScopeService.requiredCertificateNames(plan));
   }

@@ -1704,12 +1704,7 @@ class CertificateMaterialServiceTest {
       when(secretClient.runtimeSecrets().withName(name)).thenReturn(projectionResource);
       when(projectionResource.get())
           .thenReturn(
-              ownedSecret(
-                  plan,
-                  role,
-                  name,
-                  data,
-                  acceptedAnnotations(revision, "1".repeat(64))));
+              ownedSecret(plan, role, name, data, acceptedAnnotations(revision, "1".repeat(64))));
       Resource<Secret> sourceResource = mock(Resource.class);
       when(secretClient.identitySecrets().withName(sourceName)).thenReturn(sourceResource);
       when(sourceResource.get()).thenReturn(certManagerSource(plan, role, sourceName, data));

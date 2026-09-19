@@ -82,8 +82,7 @@ public class DeploymentRolloutService {
         String role = HostedIdentityContract.grpcPublicationRole(workload);
         String revision = grpcPublicationRevisions.get(role);
         if (revision == null) {
-          throw new IllegalArgumentException(
-              "gRPC publication revision is required: " + workload);
+          throw new IllegalArgumentException("gRPC publication revision is required: " + workload);
         }
         revisionsByDeployment
             .computeIfAbsent(workload, ignored -> new LinkedHashMap<>())

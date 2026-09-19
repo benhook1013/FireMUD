@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
 import java.util.Map;
@@ -126,13 +125,10 @@ class CertificateResourceFactoryTest {
             "game-design-service.pr-42.svc.cluster.local"),
         certificateSpec.get("dnsNames"));
     assertEquals(
-        java.util.List.of(
-            "digital signature", "key encipherment", "server auth", "client auth"),
+        java.util.List.of("digital signature", "key encipherment", "server auth", "client auth"),
         certificateSpec.get("usages"));
     assertSecretTemplate(
-        certificateSpec,
-        plan,
-        HostedIdentityContract.grpcPublicationRole("game-design-service"));
+        certificateSpec, plan, HostedIdentityContract.grpcPublicationRole("game-design-service"));
   }
 
   @Test
@@ -148,7 +144,8 @@ class CertificateResourceFactoryTest {
 
     assertEquals(5, publicMethods.size());
     assertEquals(
-        java.util.Set.of("ingress", "telnet", "gatewayInternalWs", "tcpProxyBridge", "grpcPublication"),
+        java.util.Set.of(
+            "ingress", "telnet", "gatewayInternalWs", "tcpProxyBridge", "grpcPublication"),
         publicMethods.stream()
             .map(java.lang.reflect.Method::getName)
             .collect(java.util.stream.Collectors.toUnmodifiableSet()));

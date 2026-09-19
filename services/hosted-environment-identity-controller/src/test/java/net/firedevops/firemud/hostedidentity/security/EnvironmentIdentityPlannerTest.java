@@ -41,8 +41,10 @@ class EnvironmentIdentityPlannerTest {
             "tcp-proxy-service"),
         plan.grpcConsumers());
     assertEquals(
-        "pr-42-grpc-game-design-service", plan.grpcPublicationSourceSecretName("game-design-service"));
-    assertEquals("firemud-grpc-game-design-service", plan.grpcPublicationSecretName("game-design-service"));
+        "pr-42-grpc-game-design-service",
+        plan.grpcPublicationSourceSecretName("game-design-service"));
+    assertEquals(
+        "firemud-grpc-game-design-service", plan.grpcPublicationSecretName("game-design-service"));
     assertEquals(
         "spiffe://firemud/ns/pr-42/sa/game-design-service",
         plan.grpcPublicationUriSan("game-design-service"));

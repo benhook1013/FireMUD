@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamelogic.security;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -10,6 +11,20 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
 class JwtUsageTest {
+  @Test
+  void detectsAuthorizationHeaderReferenceForms() {
+    assertTrue(containsAuthorizationHeaderReference("Metadata.Key.of(\"Authorization\", ...)"));
+    assertTrue(containsAuthorizationHeaderReference("request.header(HttpHeaders.AUTHORIZATION)"));
+    assertTrue(containsAuthorizationHeaderReference("AUTHORIZATION_HEADER"));
+  }
+
+  @Test
+  void authorizationExceptionNamesAreNotHeaderReferences() {
+    assertFalse(
+        containsAuthorizationHeaderReference(
+            "throw new AdminAuthorizationException(\"publication read denied\")"));
+  }
+
   @Test
   void noJwtReferencesInMainSources() throws IOException {
     try (Stream<Path> paths = Files.walk(Path.of("src/main/java"))) {
@@ -34,12 +49,19 @@ class JwtUsageTest {
                       content.contains("SessionContext"),
                       p + " should not reference SessionContext");
                   assertFalse(
-                      content.contains("Authorization"),
-                      p + " should not mention Authorization header");
+                      containsAuthorizationHeaderReference(content),
+                      p + " should not reference the Authorization HTTP header");
                 } catch (IOException e) {
                   throw new RuntimeException(e);
                 }
               });
     }
+  }
+
+  private static boolean containsAuthorizationHeaderReference(String content) {
+    return content.contains("\"Authorization\"")
+        || content.contains("\"authorization\"")
+        || content.contains("HttpHeaders.AUTHORIZATION")
+        || content.contains("AUTHORIZATION_HEADER");
   }
 }

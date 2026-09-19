@@ -84,7 +84,9 @@ class DeploymentRolloutServiceTest {
       String revision =
           "game-logic-service".equals(workload) ? "publication-old" : "publication-current";
       when(graph.resources().get(workload).get())
-          .thenReturn(readyDeployment(workload, Map.of(HostedIdentityContract.GRPC_REVISION_ANNOTATION, revision), 3L));
+          .thenReturn(
+              readyDeployment(
+                  workload, Map.of(HostedIdentityContract.GRPC_REVISION_ANNOTATION, revision), 3L));
     }
     ReplaceDeletable<Deployment> lockedGameLogic = mock(ReplaceDeletable.class);
     when(graph.resources().get("game-logic-service").lockResourceVersion("rv-3"))

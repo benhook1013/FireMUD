@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
@@ -153,7 +154,7 @@ public class CertificateResourceFactory {
     if (renewBefore != null
         || HostedIdentityProperties.INTERNAL_CERTIFICATE_DURATION.equals(duration)) {
       HostedIdentityProperties.requireValidGrpcRenewBefore(renewBefore);
-      spec.put("renewBefore", certManagerDuration(renewBefore));
+      spec.put("renewBefore", certManagerDuration(Objects.requireNonNull(renewBefore)));
     }
     resource.setAdditionalProperties(Map.of("spec", spec));
     return resource;

@@ -1577,23 +1577,20 @@ class HostedIdentityReconcilerSafetyTest {
       when(batch.grpc(any())).thenReturn(material(plan, HostedIdentityContract.GRPC_ROLE, "5"));
       when(batch.grpcPublication(anyString()))
           .thenAnswer(
-              invocation ->
-                  {
-                    String workload = invocation.getArgument(0, String.class);
-                    String fingerprintDigit =
-                        switch (workload) {
-                          case "game-design-service" -> "6";
-                          case "world-management-service" -> "7";
-                          case "entity-management-service" -> "8";
-                          case "game-logic-service" -> "9";
-                          case "automation-scripting-service" -> "a";
-                          default -> throw new IllegalArgumentException(workload);
-                        };
-                    return material(
-                        plan,
-                        HostedIdentityContract.grpcPublicationRole(workload),
-                        fingerprintDigit);
-                  });
+              invocation -> {
+                String workload = invocation.getArgument(0, String.class);
+                String fingerprintDigit =
+                    switch (workload) {
+                      case "game-design-service" -> "6";
+                      case "world-management-service" -> "7";
+                      case "entity-management-service" -> "8";
+                      case "game-logic-service" -> "9";
+                      case "automation-scripting-service" -> "a";
+                      default -> throw new IllegalArgumentException(workload);
+                    };
+                return material(
+                    plan, HostedIdentityContract.grpcPublicationRole(workload), fingerprintDigit);
+              });
       when(projections.project(
               org.mockito.ArgumentMatchers.eq(client),
               org.mockito.ArgumentMatchers.eq(plan),

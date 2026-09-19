@@ -17,8 +17,8 @@ import javax.net.ssl.SSLSession;
 /**
  * The authenticated workload identity carried by an internal gRPC peer certificate.
  *
- * <p>This type is deliberately backed only by the peer TLS session. Headers, JWT claims, DNS
- * names, common names, and certificate fingerprints are not identity sources for this contract.
+ * <p>This type is deliberately backed only by the peer TLS session. Headers, JWT claims, DNS names,
+ * common names, and certificate fingerprints are not identity sources for this contract.
  */
 public record GrpcPeerIdentity(String uri, String namespace, String service) {
   public static final Context.Key<GrpcPeerIdentity> CONTEXT_KEY =
@@ -140,8 +140,7 @@ public record GrpcPeerIdentity(String uri, String namespace, String service) {
 
   public static boolean isValidNamespace(String namespace) {
     return namespace != null
-        && Pattern.matches(
-            "(?=.{1,63}$)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", namespace);
+        && Pattern.matches("(?=.{1,63}$)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", namespace);
   }
 
   private static boolean isUriSan(List<?> alternativeName) {
