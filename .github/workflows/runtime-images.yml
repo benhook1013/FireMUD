@@ -220,7 +220,8 @@ jobs:
                     }
                     const values = new Map();
                     for (const [index, line] of content.split(/\r\n|\n|\r/).entries()) {
-                      if (line === "" || line.startsWith("#")) {
+                      const trimmedLine = line.trim();
+                      if (trimmedLine === "" || trimmedLine.startsWith("#")) {
                         continue;
                       }
                       const match = line.match(/^([A-Z][A-Z0-9_]*)=(\S+)$/);
@@ -367,7 +368,7 @@ jobs:
           egress-policy: audit
 
       - name: ⬇️ Checkout Code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ needs.image-meta.outputs.checkout_ref }}
           persist-credentials: false
@@ -376,7 +377,7 @@ jobs:
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5
 
       - name: Login to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -475,7 +476,7 @@ jobs:
           egress-policy: audit
 
       - name: ⬇️ Checkout Code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ needs.image-meta.outputs.checkout_ref }}
           persist-credentials: false
@@ -501,7 +502,7 @@ jobs:
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5
 
       - name: Login to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -567,7 +568,7 @@ jobs:
           egress-policy: audit
 
       - name: Checkout trusted branch commit
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ needs.image-meta.outputs.checkout_ref }}
           persist-credentials: false
@@ -661,7 +662,7 @@ jobs:
           }
 
       - name: Login to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -723,7 +724,7 @@ jobs:
           egress-policy: audit
 
       - name: Checkout trusted branch commit
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ needs.image-meta.outputs.checkout_ref }}
           persist-credentials: false
@@ -743,7 +744,7 @@ jobs:
           cache-read-only: false
 
       - name: Login to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -835,7 +836,7 @@ jobs:
           }
 
       - name: Login to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -918,7 +919,7 @@ jobs:
           egress-policy: audit
 
       - name: Checkout PR merge
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ needs.image-meta.outputs.checkout_ref }}
           persist-credentials: false
@@ -1060,7 +1061,7 @@ jobs:
           egress-policy: audit
 
       - name: Checkout PR merge
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ needs.image-meta.outputs.checkout_ref }}
           persist-credentials: false

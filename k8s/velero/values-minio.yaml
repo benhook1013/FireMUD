@@ -7,6 +7,7 @@ configuration:
       config:
         region: minio
         s3Url: http://minio.minio.svc.cluster.local:9000
+        s3ForcePathStyle: "true"
         insecureSkipTLSVerify: true
 credentials:
   useSecret: true

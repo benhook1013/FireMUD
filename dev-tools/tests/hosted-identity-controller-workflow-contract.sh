@@ -146,6 +146,7 @@ for required in (
     "knownWorkflowToolKeys",
     "Promise.all",
     'data.encoding !== "base64"',
+    "const trimmedLine = line.trim();",
     'key.startsWith("VELERO_")',
     "authorityChanged",
     "nonAuthorityPaths",
@@ -291,6 +292,13 @@ assert {call["owner"] for call in non_velero_only["apiCalls"]} == {
     "fork-owner",
 }
 assert all(call["path"] == authority_path for call in non_velero_only["apiCalls"])
+
+whitespace_only = run_scope(
+    [authority_path],
+    head_content=authority_text.replace("TRIVY_VERSION=", " \t\nTRIVY_VERSION=", 1),
+)
+assert whitespace_only["outputs"]["runtime_smoke_required"] == "false"
+assert not whitespace_only["warnings"]
 
 velero_only = run_scope(
     [authority_path], head_content=authority_with(VELERO_VERSION="99.0.0")

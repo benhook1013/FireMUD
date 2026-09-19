@@ -4,6 +4,7 @@ set -euo pipefail
 : "${KUBECONFIG:?KUBECONFIG must point to the disposable proof cluster}"
 command -v helm >/dev/null 2>&1 || { echo "helm is required" >&2; exit 1; }
 command -v kubectl >/dev/null 2>&1 || { echo "kubectl is required" >&2; exit 1; }
+command -v python3 >/dev/null 2>&1 || { echo "python3 is required" >&2; exit 1; }
 
 work_dir="$(mktemp -d)"
 temp_id="$(basename "$work_dir" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')"

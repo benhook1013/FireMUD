@@ -241,6 +241,11 @@ if "docker logs firemud-helm-proof 2>&1 | grep -F 'k3s is up and running' >/dev/
 if "--disable=metrics-server" not in job_text:
     raise SystemExit("Helm transaction proof must disable the optional metrics server so optional aggregated API discovery cannot affect the proof")
 script = (root / "dev-tools/validation/helm-transaction-proof.sh").read_text()
+python3_preflight = 'command -v python3 >/dev/null 2>&1 || { echo "python3 is required" >&2; exit 1; }'
+if python3_preflight not in script:
+    raise SystemExit("Helm proof script must preflight python3 with a clear error")
+if script.index(python3_preflight) > script.index('work_dir="$(mktemp -d)"'):
+    raise SystemExit("Helm proof must preflight python3 before creating temporary proof state")
 for command in ("helm install", "helm upgrade", "helm history", "helm rollback", "helm status"):
     if command not in script:
         raise SystemExit(f"Helm proof script must exercise {command}")

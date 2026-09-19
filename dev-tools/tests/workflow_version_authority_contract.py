@@ -1249,6 +1249,18 @@ def main() -> int:
         or minio_locations[0].get("name") != "default"
     ):
         fail("MinIO Velero values must name their backup storage location default")
+    minio_config = minio_locations[0].get("config")
+    if (
+        not isinstance(minio_config, dict)
+        or minio_config.get("region") != "minio"
+        or minio_config.get("s3Url") != "http://minio.minio.svc.cluster.local:9000"
+        or minio_config.get("s3ForcePathStyle") != "true"
+        or minio_config.get("insecureSkipTLSVerify") is not True
+    ):
+        fail("MinIO Velero values must retain the endpoint/TLS settings and force S3 path style")
+    minio_readme = (root / "k8s/velero/README.md").read_text()
+    if minio_readme.count('s3ForcePathStyle: "true"') != 1:
+        fail("MinIO Velero README snippet must document s3ForcePathStyle: \"true\"")
 
     negative_release = (
         'resource "helm_release" "velero" {\n'
