@@ -51,6 +51,7 @@ public final class TelnetServer {
   private final int maxConnections;
   private final int maxConnectionsPerIp;
   private final int maxLineBytes;
+  private final int maxBufferedLines;
   private final String defaultGameInstanceId;
   private final String defaultTenantId;
   private final String defaultWorldSlug;
@@ -92,6 +93,7 @@ public final class TelnetServer {
       @Value("${TCP_PROXY_MAX_CONNECTIONS:0}") int maxConnections,
       @Value("${TCP_PROXY_MAX_CONNECTIONS_PER_IP:0}") int maxConnectionsPerIp,
       @Value("${TCP_PROXY_MAX_LINE_BYTES:4096}") int maxLineBytes,
+      @Value("${TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES:64}") int maxBufferedLines,
       @Value("${TCP_PROXY_DEFAULT_GAME_INSTANCE_ID:}") String defaultGameInstanceId,
       @Value("${TCP_PROXY_DEFAULT_TENANT_ID:}") String defaultTenantId,
       @Value("${TCP_PROXY_DEFAULT_WORLD_SLUG:}") String defaultWorldSlug,
@@ -113,6 +115,11 @@ public final class TelnetServer {
     this.maxConnections = maxConnections;
     this.maxConnectionsPerIp = maxConnectionsPerIp;
     this.maxLineBytes = maxLineBytes;
+    this.maxBufferedLines = maxBufferedLines;
+    if (maxBufferedLines <= 0) {
+      throw new IllegalArgumentException(
+          "TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES must be positive");
+    }
     this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry");
     this.connectionCounter = meterRegistry.counter("tcpproxy.connections.total");
     this.discardedCommandCounter = meterRegistry.counter("tcpproxy.telnet.discarded");
@@ -171,6 +178,47 @@ public final class TelnetServer {
     }
   }
 
+  TelnetServer(
+      int port,
+      boolean tlsEnabled,
+      String certPath,
+      String keyPath,
+      boolean advertiseMcp,
+      int maxConnections,
+      int maxConnectionsPerIp,
+      int maxLineBytes,
+      String defaultGameInstanceId,
+      String defaultTenantId,
+      String defaultWorldSlug,
+      String defaultRealmSlug,
+      String defaultPointerVersion,
+      MeterRegistry meterRegistry,
+      TcpProxyEventService eventService,
+      GatewayGameplayReadinessProbe gatewayGameplayReadinessProbe,
+      GatewayWebSocketClient gatewayWebSocketClient,
+      RuntimeIdentity runtimeIdentity) {
+    this(
+        port,
+        tlsEnabled,
+        certPath,
+        keyPath,
+        advertiseMcp,
+        maxConnections,
+        maxConnectionsPerIp,
+        maxLineBytes,
+        TelnetServerHandler.DEFAULT_MAX_BUFFERED_LINES,
+        defaultGameInstanceId,
+        defaultTenantId,
+        defaultWorldSlug,
+        defaultRealmSlug,
+        defaultPointerVersion,
+        meterRegistry,
+        eventService,
+        gatewayGameplayReadinessProbe,
+        gatewayWebSocketClient,
+        runtimeIdentity);
+  }
+
   public TelnetServer(
       int port,
       boolean tlsEnabled,
@@ -193,6 +241,50 @@ public final class TelnetServer {
         maxConnections,
         maxConnectionsPerIp,
         maxLineBytes,
+        TelnetServerHandler.DEFAULT_MAX_BUFFERED_LINES,
+        null,
+        null,
+        null,
+        null,
+        null,
+        meterRegistry,
+        eventService,
+        gatewayGameplayReadinessProbe,
+        gatewayWebSocketClient,
+        new RuntimeIdentity(
+            "tcp-proxy-service",
+            "tcp-proxy-test",
+            null,
+            java.time.Instant.EPOCH,
+            null,
+            null,
+            null));
+  }
+
+  TelnetServer(
+      int port,
+      boolean tlsEnabled,
+      String certPath,
+      String keyPath,
+      boolean advertiseMcp,
+      int maxConnections,
+      int maxConnectionsPerIp,
+      int maxLineBytes,
+      int maxBufferedLines,
+      MeterRegistry meterRegistry,
+      TcpProxyEventService eventService,
+      GatewayGameplayReadinessProbe gatewayGameplayReadinessProbe,
+      GatewayWebSocketClient gatewayWebSocketClient) {
+    this(
+        port,
+        tlsEnabled,
+        certPath,
+        keyPath,
+        advertiseMcp,
+        maxConnections,
+        maxConnectionsPerIp,
+        maxLineBytes,
+        maxBufferedLines,
         null,
         null,
         null,
@@ -297,7 +389,8 @@ public final class TelnetServer {
                               defaultWorldSlug,
                               defaultRealmSlug,
                               defaultPointerVersion,
-                              runtimeIdentity));
+                              runtimeIdentity,
+                              TelnetServer.this.maxBufferedLines));
                 }
               });
       serverChannel = b.bind(port).sync().channel();
