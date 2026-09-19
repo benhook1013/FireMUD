@@ -178,29 +178,50 @@ def _comment_hosted_review_id(body: str) -> int | None:
     return marker_ids[0] if len(marker_ids) == 1 else None
 
 
+def _is_parsed_hosted_checkpoint(body: str) -> bool:
+    """Return whether a body has the same valid Hosted checkpoint shape we parse."""
+
+    first_line = next(
+        (line for line in body.splitlines() if line.strip() and not line[0].isspace()),
+        None,
+    )
+    if first_line is None:
+        return False
+    heading = CHECKPOINT_HEADING.fullmatch(first_line)
+    if heading is None or heading.group("type") != "Hosted":
+        return False
+    suffix_text = heading.group("suffix").split(r"\n", 1)[0]
+    if CHECKPOINT_SUFFIX.fullmatch(suffix_text) is None:
+        return False
+    return int(heading.group("accepted")) <= int(heading.group("raw_found"))
+
+
 def hosted_marker_audit(comments: list[dict[str, Any]]) -> dict[str, Any]:
-    """Inspect every Hosted marker, including malformed and duplicate variants."""
+    """Inspect markers attached to parsed Hosted checkpoints only."""
 
     marker_ids: list[int] = []
     malformed = 0
     duplicate = 0
     for comment in comments:
         body = comment.get("body") if isinstance(comment, dict) else None
-        if not isinstance(body, str):
+        if not isinstance(body, str) or not _is_parsed_hosted_checkpoint(body):
             continue
         found: list[int] = []
+        malformed_in_comment = False
         for line in body.splitlines()[1:]:
             stripped = line.strip()
             if not stripped.startswith("<!-- firemud-hosted-review:"):
                 continue
             match = HOSTED_MARKER.fullmatch(stripped)
             if match is None:
+                malformed_in_comment = True
                 malformed += 1
             else:
                 found.append(int(match.group("review_id")))
         if len(found) > 1:
             duplicate += 1
-        marker_ids.extend(found)
+        if not malformed_in_comment and len(found) == 1:
+            marker_ids.extend(found)
     return {
         "marker_ids": sorted(set(marker_ids)),
         "malformed_count": malformed,
@@ -366,10 +387,7 @@ def collect_report(
     hosted_review_checkpoint: dict[str, Any] = {
         "available": False,
         "completed_count": None,
-        "marked_count": sum(
-            checkpoint.type == "Hosted" and checkpoint.hosted_review_id is not None
-            for checkpoint in checkpoints
-        ),
+        "marked_count": len(marker_audit["marker_ids"]),
         "missing_count": None,
         "missing_review_ids": [],
         "malformed_count": marker_audit["malformed_count"],

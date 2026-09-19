@@ -11,11 +11,12 @@ if grep -Eq 'POSTGRES\.(start|stop)\(' "$SAGA_TEST"; then
   exit 1
 fi
 
-mapfile -t bare_annotations < <(
-  rg -l -U '^\s*@Testcontainers\s*$' "$ROOT_DIR/services" --glob '*.java' \
-    | sed "s#^$ROOT_DIR/##" \
-    | sort
-)
+bare_annotations=()
+while IFS= read -r -d '' java_file; do
+  if grep -Eq '^[[:space:]]*@Testcontainers[[:space:]]*$' "$java_file"; then
+    bare_annotations+=("${java_file#"$ROOT_DIR/"}")
+  fi
+done < <(find "$ROOT_DIR/services" -type f -name '*.java' -print0)
 if ((${#bare_annotations[@]} != 1)) || [[ "${bare_annotations[0]}" != "$IN_PROCESS_TEST" ]]; then
   printf 'unexpected bare @Testcontainers annotation(s):\n' >&2
   printf '  %s\n' "${bare_annotations[@]}" >&2

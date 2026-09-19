@@ -24,6 +24,7 @@ PROVIDER_TIMEOUT_SECONDS = 180
 HUMAN_TIME_ZONE = ZoneInfo("Pacific/Auckland")
 EXACT_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
 REVIEWED_SHA = re.compile(r"^[0-9a-fA-F]{7,40}$")
+ARCHIVED_TRIGGER_RECORD = re.compile(r"^trigger-([1-9][0-9]*)\.json$")
 RUN_ID = re.compile(r"^run\.[A-Za-z0-9]{1,32}$")
 LOC_METADATA_LINE = re.compile(
     r"^<!-- firemud:cloc-report:metadata (?P<payload>\{.*\}) -->$"
@@ -533,7 +534,56 @@ def hosted_trigger_record_path(repo: str, pr_number: int) -> Path | None:
         / "trigger.json"
     )
     try:
-        return candidate if candidate.is_file() else None
+        if candidate.is_file():
+            return candidate
+        if not candidate.parent.is_dir() or candidate.parent.is_symlink():
+            return None
+        archived: list[tuple[int, Path]] = []
+        for path in candidate.parent.iterdir():
+            match = ARCHIVED_TRIGGER_RECORD.fullmatch(path.name)
+            if match is None or path.is_symlink() or not path.is_file():
+                continue
+            trigger_id = int(match.group(1))
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+                trigger = record.get("trigger") if isinstance(record, dict) else None
+                retirement = record.get("retirement") if isinstance(record, dict) else None
+                evidence = retirement.get("evidence") if isinstance(retirement, dict) else None
+                if (
+                    not isinstance(record, dict)
+                    or record.get("schema_version") != 1
+                    or record.get("status") != "retired"
+                    or record.get("repository") != repo
+                    or record.get("pr_number") != pr_number
+                    or not isinstance(record.get("head_sha"), str)
+                    or EXACT_SHA.fullmatch(record["head_sha"]) is None
+                    or not isinstance(trigger, dict)
+                    or trigger.get("id") != trigger_id
+                    or trigger.get("type") != "full"
+                    or trigger.get("command") != "@coderabbitai full review"
+                    or not isinstance(trigger.get("created_at"), str)
+                    or _timestamp(trigger["created_at"], "archived trigger created_at") is None
+                    or not isinstance(trigger.get("url"), str)
+                    or not trigger["url"]
+                    or not isinstance(retirement, dict)
+                    or retirement.get("action") != "operator_retire"
+                    or not isinstance(retirement.get("retired_at"), str)
+                    or _timestamp(retirement["retired_at"], "archived retirement timestamp") is None
+                    or not isinstance(retirement.get("reason"), str)
+                    or not retirement["reason"]
+                    or retirement.get("trigger_comment_id") != trigger_id
+                    or not isinstance(retirement.get("expected_head_sha"), str)
+                    or EXACT_SHA.fullmatch(retirement["expected_head_sha"]) is None
+                    or not isinstance(evidence, dict)
+                    or evidence.get("state") not in {"active", "timed_out"}
+                    or evidence.get("captured_head_sha") != record["head_sha"]
+                    or evidence.get("current_head_sha") != retirement["expected_head_sha"]
+                ):
+                    continue
+            except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                continue
+            archived.append((trigger_id, path))
+        return max(archived, key=lambda item: item[0])[1] if archived else None
     except OSError:
         return None
 

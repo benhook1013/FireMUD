@@ -1532,7 +1532,7 @@ def trigger_state(
         or REVIEW_COMMAND_TYPES.get(
             normalize_command(captured_comment.get("body") or "")
         )
-        != "full"
+        != trigger_type
         or captured_comment.get("createdAt") != trigger_created_at
         or captured_comment.get("url") != trigger_url
     ):

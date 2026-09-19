@@ -196,6 +196,38 @@ class CheckpointReporterTest(unittest.TestCase):
         self.assertEqual(audit["duplicate_count"], 1)
         self.assertTrue(any("901" in warning for warning in report["warnings"]))
 
+    def test_marker_in_unparsed_comment_cannot_cover_a_completed_review(self) -> None:
+        comments = [
+            {
+                "id": 203,
+                "body": "A quoted example uses <!-- firemud-hosted-review: 903 -->",
+                "created_at": "2026-09-10T00:00:00Z",
+            },
+            {
+                "id": 204,
+                "body": "**Hosted: 1 found / 0 accepted** · `abcdef1`",
+                "created_at": "2026-09-10T00:01:00Z",
+            },
+        ]
+        reviews = [
+            {
+                "id": 903,
+                "user": {"login": "coderabbitai"},
+                "state": "COMMENTED",
+                "submitted_at": "2026-09-10T00:02:00Z",
+                "commit_id": "a" * 40,
+            }
+        ]
+        with patch.object(self.reporter, "fetch_hosted_reviews", return_value=reviews):
+            report = self.reporter.collect_report(
+                comments, 0, "owner/repo", 42, check_hosted_reviews=True
+            )
+
+        audit = report["hosted_review_checkpoint"]
+        self.assertEqual(audit["marked_count"], 0)
+        self.assertEqual(audit["missing_review_ids"], [903])
+        self.assertTrue(any("903" in warning for warning in report["warnings"]))
+
     def test_hosted_review_audit_reports_unavailable_without_failing_checkpoint_extraction(self) -> None:
         with patch.object(
             self.reporter,

@@ -241,6 +241,18 @@ class TriggerStateTests(unittest.TestCase):
         self.assertEqual(limited["state"], "rate_limited")
         self.assertIsNone(limited["trigger_state"]["cooldown_until"])
 
+        incremental = comment(30, "owner", "@coderabbitai review", TRIGGER_AT)
+        incremental_result = self.manual_wait(
+            payload(
+                [
+                    incremental,
+                    comment(31, "coderabbitai", "Review rate limited", "2026-09-14T01:00:01Z"),
+                ]
+            )
+        )
+        self.assertEqual(incremental_result["state"], "rate_limited")
+        self.assertEqual(incremental_result["request"]["type"], "incremental")
+
     def test_manual_wait_fails_closed_on_head_change_and_newer_request(self) -> None:
         initial = payload([trigger_comment()])
         changed = payload([trigger_comment()], head=FRESH_HEAD)
