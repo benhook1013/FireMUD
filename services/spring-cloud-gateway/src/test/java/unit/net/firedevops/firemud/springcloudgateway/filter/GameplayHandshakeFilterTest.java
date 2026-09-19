@@ -76,6 +76,110 @@ class GameplayHandshakeFilterTest {
   }
 
   @Test
+  void rejectsMatrixParameterGameplayRoutesEvenWithCookieCarrier() {
+    GameplayHandshakeFilter filter =
+        new GameplayHandshakeFilter(
+            new JwtUtil(SECRET, 30_000L),
+            TEST_RUNTIME_IDENTITY,
+            null,
+            environmentWithProfiles("test"));
+    String token =
+        new JwtUtil(SECRET, 30_000L)
+            .generateToken(
+                "7",
+                Map.of(
+                    "aud", "gameplay-connect",
+                    "accountId", "7",
+                    "tenantId", "1",
+                    "worldSlug", "demo",
+                    "realmSlug", "production",
+                    "gameInstanceId", "42",
+                    "pointerVersion", "17",
+                    "connectScopeId", "scope-matrix",
+                    "requestId", "req-matrix",
+                    "jti", "jti-matrix"));
+
+    for (String path : new String[] {"/ws/game;probe", "/ws;probe/game", "/ws/game;probe/child"}) {
+      AtomicBoolean delegated = new AtomicBoolean();
+      MockServerWebExchange exchange =
+          MockServerWebExchange.from(
+              MockServerHttpRequest.get(path)
+                  .cookie(new HttpCookie(GameplayHandshakeFilter.CONNECT_TOKEN_COOKIE, token))
+                  .build());
+
+      filter
+          .filter(
+              exchange,
+              e -> {
+                delegated.set(true);
+                return Mono.empty();
+              })
+          .block();
+
+      assertThat(delegated).as("path=%s", path).isFalse();
+      assertThat(exchange.getResponse().getStatusCode())
+          .as("path=%s", path)
+          .isEqualTo(HttpStatus.FORBIDDEN);
+      assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
+          .as("path=%s", path)
+          .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_REJECTED);
+      assertThat(
+              exchange
+                  .getResponse()
+                  .getHeaders()
+                  .getFirst("X-Firemud-Handshake-Error-Reason"))
+          .as("path=%s", path)
+          .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_UNSUPPORTED_CARRIER_OR_ROUTE);
+    }
+  }
+
+  @Test
+  void rejectsMatrixParameterGameplayRoutesBeforeTrustedProxyBypass() {
+    GameplayHandshakeFilter filter =
+        new GameplayHandshakeFilter(
+            new JwtUtil(SECRET, 30_000L),
+            TEST_RUNTIME_IDENTITY,
+            null,
+            environmentWithProfiles("test"));
+
+    for (String path : new String[] {"/ws/game;probe", "/ws;probe/game", "/ws/game;probe/child"}) {
+      AtomicBoolean delegated = new AtomicBoolean();
+      MockServerWebExchange exchange =
+          MockServerWebExchange.from(
+              MockServerHttpRequest.get(path)
+                  .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
+                  .header(GameplayHandshakeFilter.PROXY_CONNECTION_ID_HEADER, "conn-matrix")
+                  .header(GameplayHandshakeFilter.GAME_INSTANCE_ID_HEADER, "42")
+                  .header(GameplayHandshakeFilter.TENANT_ID_HEADER, "1")
+                  .build());
+
+      filter
+          .filter(
+              exchange,
+              e -> {
+                delegated.set(true);
+                return Mono.empty();
+              })
+          .block();
+
+      assertThat(delegated).as("path=%s", path).isFalse();
+      assertThat(exchange.getResponse().getStatusCode())
+          .as("path=%s", path)
+          .isEqualTo(HttpStatus.FORBIDDEN);
+      assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
+          .as("path=%s", path)
+          .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_REJECTED);
+      assertThat(
+              exchange
+                  .getResponse()
+                  .getHeaders()
+                  .getFirst("X-Firemud-Handshake-Error-Reason"))
+          .as("path=%s", path)
+          .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_UNSUPPORTED_CARRIER_OR_ROUTE);
+    }
+  }
+
+  @Test
   void rejectsFirstPartyHandshakeWithMalformedNumericClaim() {
     GameplayHandshakeFilter filter =
         new GameplayHandshakeFilter(

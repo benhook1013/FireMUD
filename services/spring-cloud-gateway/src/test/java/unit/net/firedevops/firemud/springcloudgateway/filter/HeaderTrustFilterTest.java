@@ -74,6 +74,35 @@ class HeaderTrustFilterTest {
   }
 
   @Test
+  void treatsMatrixParameterGameplayPathsAsSessionRoutes() {
+    HeaderTrustFilter filter = legacyFilter(new GatewayHeaderTrustProperties());
+
+    for (String path : new String[] {"/ws/game;probe", "/ws;probe/game", "/ws/game;probe/child"}) {
+      MockServerHttpRequest request =
+          MockServerHttpRequest.get(path)
+              .remoteAddress(new InetSocketAddress("1.2.3.4", 0))
+              .header("X-Proxy-Client-IP", "203.0.113.99")
+              .build();
+      MockServerWebExchange exchange = MockServerWebExchange.from(request);
+      AtomicReference<ServerWebExchange> delegated = new AtomicReference<>();
+
+      filter
+          .filter(
+              exchange,
+              candidate -> {
+                delegated.set(candidate);
+                return Mono.empty();
+              })
+          .block();
+
+      assertThat(delegated.get()).as("path=%s", path).isNull();
+      assertThat(exchange.getResponse().getStatusCode())
+          .as("path=%s", path)
+          .isEqualTo(HttpStatus.FORBIDDEN);
+    }
+  }
+
+  @Test
   void stripsSpoofedGatewayOwnedAdmissionContextButPreservesMigrationCarrierAndLocale() {
     HeaderTrustFilter filter = legacyFilter(new GatewayHeaderTrustProperties());
 

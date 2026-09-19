@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.Ordered;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.server.PathContainer;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.WebFilter;
@@ -57,9 +58,10 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
 
   @Override
   public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
-    String path = exchange.getRequest().getPath().pathWithinApplication().value();
-    boolean isGameplayRoute = isGameplayRoute(path);
-    boolean isSessionRoute = isGameplayRoute || path.startsWith("/api/session/");
+    PathContainer path = exchange.getRequest().getPath().pathWithinApplication();
+    boolean isGameplayRoute = GameplayRouteClassifier.classify(path).gameplayRoute();
+    boolean isSessionRoute =
+        isGameplayRoute || path.value().startsWith("/api/session/");
 
     InetAddress remoteAddress = remoteInetAddress(exchange);
     boolean trustedTcpProxy = tcpProxyTrustPolicy.isTrusted(exchange, remoteAddress);
@@ -227,10 +229,6 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
         headers.remove(headerName);
       }
     }
-  }
-
-  private static boolean isGameplayRoute(String path) {
-    return path.equals("/ws/game") || path.startsWith("/ws/game/");
   }
 
   private String deriveClientIpFromForwardedHeaders(

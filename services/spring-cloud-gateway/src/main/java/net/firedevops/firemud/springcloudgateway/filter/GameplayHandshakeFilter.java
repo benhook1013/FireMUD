@@ -28,6 +28,7 @@ import org.springframework.core.env.Environment;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.http.HttpCookie;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.server.PathContainer;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -115,9 +116,18 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
 
   @Override
   public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
-    String path = exchange.getRequest().getPath().pathWithinApplication().value();
-    if (!isGameplayRoute(path)) {
+    PathContainer path = exchange.getRequest().getPath().pathWithinApplication();
+    GameplayRouteClassifier.Classification route =
+        GameplayRouteClassifier.classify(path);
+    if (!route.gameplayRoute()) {
       return chain.filter(exchange);
+    }
+    if (route.matrixParameter()) {
+      return reject(
+          exchange,
+          CONNECT_TOKEN_REJECTED,
+          CONNECT_TOKEN_UNSUPPORTED_CARRIER_OR_ROUTE,
+          "connect token rejected");
     }
 
     if (isTrustedTcpProxy(exchange)) {
@@ -262,10 +272,6 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
   private boolean isTrustedTcpProxy(ServerWebExchange exchange) {
     return StringUtils.hasText(
         exchange.getRequest().getHeaders().getFirst(PROXY_CONNECTION_ID_HEADER));
-  }
-
-  private static boolean isGameplayRoute(String path) {
-    return path.equals("/ws/game") || path.startsWith("/ws/game/");
   }
 
   private static boolean mismatched(
