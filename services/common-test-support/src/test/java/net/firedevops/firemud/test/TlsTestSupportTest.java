@@ -19,13 +19,13 @@ class TlsTestSupportTest {
   }
 
   @Test
-  void recognizesPrematureCloseExceptionDirectlyAndInCauseChain() {
+  void rejectsPrematureCloseExceptionWithoutTlsEvidence() {
     Throwable prematureCloseException = PrematureCloseException.TEST_EXCEPTION;
-    assertThat(TlsTestSupport.isTlsHandshakeRejection(prematureCloseException)).isTrue();
+    assertThat(TlsTestSupport.isTlsHandshakeRejection(prematureCloseException)).isFalse();
     assertThat(
             TlsTestSupport.isTlsHandshakeRejection(
                 new IllegalStateException("client request failed", prematureCloseException)))
-        .isTrue();
+        .isFalse();
   }
 
   @ParameterizedTest

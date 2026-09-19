@@ -115,11 +115,9 @@ public final class TelnetServerHandler extends SimpleChannelInboundHandler<Strin
   private final Set<CompletableFuture<WebSocket>> outstandingSends = ConcurrentHashMap.newKeySet();
   private final AtomicReference<CompletableFuture<WebSocket>> inFlightGatewayConnection =
       new AtomicReference<>();
-  // The lock order is intentionally one-way. A drainBuffer completion may run inline while the
-  // intrinsic monitor is held, and its failure path may separately acquire lifecycle locks.
-  // Heartbeat completions run outside that monitor and may acquire lifecycle locks on failure.
-  // Code holding either lifecycle lock must not reverse into the intrinsic monitor or nest the
-  // lifecycle locks.
+  // drainBuffer updates send state under bufferLifecycleLock, then registers its completion
+  // outside that lock. The completion reacquires the lock for state updates before doing any
+  // disconnect work. Keep lifecycle locks one-way and never nest them.
   private final Object webSocketLifecycleLock = new Object();
   private final Object bufferLifecycleLock = new Object();
   private final Object gatewayTextLifecycleLock = new Object();
@@ -466,7 +464,7 @@ public final class TelnetServerHandler extends SimpleChannelInboundHandler<Strin
         });
   }
 
-  private synchronized void drainBuffer() {
+  private void drainBuffer() {
     CompletableFuture<WebSocket> sendFuture;
     synchronized (bufferLifecycleLock) {
       WebSocket socket = webSocket.get();

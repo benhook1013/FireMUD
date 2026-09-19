@@ -58,6 +58,9 @@ server:
     min-response-size: 1024
 
 firemud:
+  tls:
+    readiness-gate:
+      enabled: false
   auth:
     grpc:
       force-internal-service-outbound: true

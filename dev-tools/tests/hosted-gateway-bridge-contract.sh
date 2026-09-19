@@ -24,6 +24,23 @@ sed \
   -e 's/__TCP_PROXY_ADDITIONAL_SERVICE_PORTS__//g' \
   "$CHART_DIR/values-hosted-shared.example.yaml" >"$TMP_DIR/values.yaml"
 
+python3 "$ROOT_DIR/dev-tools/hosted/preview/render-preview-values.py" \
+  "$CHART_DIR/values-hosted-shared.example.yaml" \
+  "$TMP_DIR/rendered-preview-values.yaml" \
+  42 pr-42 pr-42 pr-42.preview.example.test test 32042
+python3 "$ROOT_DIR/dev-tools/hosted/dev-demo/render-dev-demo-values.py" \
+  "$CHART_DIR/values-hosted-shared.example.yaml" \
+  "$TMP_DIR/rendered-dev-demo-values.yaml" \
+  dev-identity dev-demo dev.preview.firedevops.net test 32016
+if ! grep -q '^    trustEnvironment: pr-preview$' "$TMP_DIR/rendered-preview-values.yaml"; then
+  echo "preview renderer did not select pr-preview trust environment" >&2
+  exit 1
+fi
+if ! grep -q '^    trustEnvironment: dev-demo-cluster$' "$TMP_DIR/rendered-dev-demo-values.yaml"; then
+  echo "dev-demo renderer did not select dev-demo-cluster trust environment" >&2
+  exit 1
+fi
+
 helm template pr-42 "$CHART_DIR" \
   --namespace pr-42 \
   -f "$TMP_DIR/values.yaml" \
@@ -168,6 +185,16 @@ for dependency in {
         raise SystemExit(f"Proxy egress policy omitted required dependency {dependency}")
 PY
 
+helm template dev-demo "$CHART_DIR" \
+  --namespace dev-identity \
+  -f "$TMP_DIR/rendered-dev-demo-values.yaml" \
+  >"$TMP_DIR/dev-demo-rendered.yaml"
+if ! grep -A1 'name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT' "$TMP_DIR/dev-demo-rendered.yaml" \
+    | grep -Eq 'value: "?dev-demo-cluster"?'; then
+  echo "dev-demo Helm render did not retain dev-demo-cluster trust environment" >&2
+  exit 1
+fi
+
 for unsafe_override in \
   'previewStack.services[9].serviceType=NodePort' \
   'previewStack.services[9].ports[0].nodePort=32042'; do
@@ -182,6 +209,47 @@ for unsafe_override in \
   if ! grep -q 'tcp-proxy-service must' "$TMP_DIR/unsafe-error"; then
     echo "unsafe hosted TCP Proxy override failed for an unexpected reason: $unsafe_override" >&2
     cat "$TMP_DIR/unsafe-error" >&2
+    exit 1
+  fi
+done
+
+for invalid_trust_environment in '' unsupported-environment; do
+  if helm template invalid-trust-environment-pr-42 "$CHART_DIR" \
+    --namespace pr-42 \
+    -f "$TMP_DIR/values.yaml" \
+    --set "previewStack.gatewayWsTls.trustEnvironment=${invalid_trust_environment}" \
+    >"$TMP_DIR/invalid-trust-environment.yaml" 2>"$TMP_DIR/invalid-trust-environment-error"; then
+    echo "invalid Gateway trust environment unexpectedly rendered: ${invalid_trust_environment:-empty}" >&2
+    exit 1
+  fi
+  if ! grep -q 'previewStack.gatewayWsTls.trustEnvironment must be' "$TMP_DIR/invalid-trust-environment-error"; then
+    echo "invalid Gateway trust environment failed for an unexpected reason: ${invalid_trust_environment:-empty}" >&2
+    cat "$TMP_DIR/invalid-trust-environment-error" >&2
+    exit 1
+  fi
+done
+
+for mismatch in \
+  'preview.prNumber=0 previewStack.gatewayWsTls.trustEnvironment=pr-preview' \
+  'preview.prNumber=42 previewStack.gatewayWsTls.trustEnvironment=dev-demo-cluster' \
+  'preview.prNumber='; do
+  read -r -a mismatch_args <<<"$mismatch"
+  set_args=()
+  for arg in "${mismatch_args[@]}"; do
+    set_args+=(--set "$arg")
+  done
+  if helm template mismatched-trust-environment-pr-42 "$CHART_DIR" \
+    --namespace pr-42 \
+    -f "$TMP_DIR/values.yaml" \
+    "${set_args[@]}" \
+    >"$TMP_DIR/mismatched-trust-environment.yaml" 2>"$TMP_DIR/mismatched-trust-environment-error"; then
+    echo "mismatched Gateway trust environment unexpectedly rendered: $mismatch" >&2
+    exit 1
+  fi
+  if ! grep -Eq 'preview\.prNumber|previewStack\.gatewayWsTls\.trustEnvironment' \
+      "$TMP_DIR/mismatched-trust-environment-error"; then
+    echo "mismatched Gateway trust environment failed for an unexpected reason: $mismatch" >&2
+    cat "$TMP_DIR/mismatched-trust-environment-error" >&2
     exit 1
   fi
 done

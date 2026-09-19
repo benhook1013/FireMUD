@@ -1,11 +1,13 @@
 package net.firedevops.firemud.common.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.mockito.Mockito.mock;
 
 import net.firedevops.firemud.common.health.TlsCertificateReadinessHealthEndpointGroupsPostProcessor;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.health.actuate.endpoint.HealthEndpointGroups;
 import org.springframework.boot.health.actuate.endpoint.HealthEndpointGroupsPostProcessor;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
@@ -48,6 +50,25 @@ class CommonCoreAutoConfigurationTest {
             });
   }
 
+  @Test
+  void bindsReadinessGatePropertyForTcpProxy() {
+    contextRunner
+        .withPropertyValues(
+            "spring.application.name=tcp-proxy-service",
+            "firemud.tls.readiness-gate.enabled=false")
+        .run(
+            context -> {
+              assertThat(context)
+                  .hasSingleBean(TlsCertificateReadinessHealthEndpointGroupsPostProcessor.class);
+              HealthEndpointGroups groups = mock(HealthEndpointGroups.class);
+              assertSame(
+                  groups,
+                  context
+                      .getBean(TlsCertificateReadinessHealthEndpointGroupsPostProcessor.class)
+                      .postProcessHealthEndpointGroups(groups));
+            });
+  }
+
   @Configuration(proxyBeanMethods = false)
   static class CustomPostProcessorConfiguration {
     @Bean
@@ -60,7 +81,7 @@ class CommonCoreAutoConfigurationTest {
   static class CustomTlsReadinessPostProcessorConfiguration {
     @Bean
     TlsCertificateReadinessHealthEndpointGroupsPostProcessor tlsReadinessPostProcessor() {
-      return new TlsCertificateReadinessHealthEndpointGroupsPostProcessor("custom-service");
+      return new TlsCertificateReadinessHealthEndpointGroupsPostProcessor(true);
     }
   }
 }

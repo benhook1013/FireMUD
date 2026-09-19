@@ -14,6 +14,11 @@ import org.springframework.core.env.StandardEnvironment;
 
 class GatewayTcpProxyListenerPropertiesTest {
   @Test
+  void defaultsListenerToLoopback() {
+    assertThat(new GatewayTcpProxyListenerProperties().getBindAddress()).isEqualTo("127.0.0.1");
+  }
+
+  @Test
   void bindsIsoInstantExpiry() {
     StandardEnvironment environment = environmentWithExpiry("2026-09-17T10:00:00Z");
     GatewayTcpProxyListenerProperties properties = new GatewayTcpProxyListenerProperties();

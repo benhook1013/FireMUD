@@ -8,3 +8,4 @@ previewStack:
     enabled: false
     servicePort: 443
     targetPort: 8443
+    trustEnvironment: pr-preview

@@ -7,13 +7,24 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 RENDERED="$TMP_DIR/rendered.yaml"
+VALUES="$TMP_DIR/preview-values.yaml"
 if ! command -v helm >/dev/null 2>&1; then
   echo "helm is required to render the JWKS contract" >&2
   exit 1
 fi
 
+python3 "$ROOT_DIR/dev-tools/hosted/preview/render-preview-values.py" \
+  "$CHART_DIR/values-hosted-shared.example.yaml" \
+  "$VALUES" \
+  123 \
+  pr-123 \
+  pr-123 \
+  pr-123.preview.firedevops.net \
+  pr-123-deadbeef \
+  32000
+
 helm template contract "$CHART_DIR" \
-  -f "$CHART_DIR/values-hosted-shared.example.yaml" \
+  -f "$VALUES" \
   >"$RENDERED"
 
 awk '
@@ -23,7 +34,7 @@ awk '
   skip && /^  [^ ]/ { skip = 0 }
   !skip { print }
 ' \
-  "$CHART_DIR/values-hosted-shared.example.yaml" \
+  "$VALUES" \
   >"$TMP_DIR/values-without-jwt.yaml"
 if grep -q '^  jwt:$' "$TMP_DIR/values-without-jwt.yaml" ||
   ! grep -q '^  resources:$' "$TMP_DIR/values-without-jwt.yaml" ||
@@ -44,7 +55,7 @@ for jwt_case in omitted null; do
       ;;
     null)
       if ! helm template nil-guard "$CHART_DIR" \
-        -f "$CHART_DIR/values-hosted-shared.example.yaml" \
+        -f "$VALUES" \
         --set previewStack.jwt=null \
         >"$TMP_DIR/nil-guard-$jwt_case.out" 2>"$TMP_DIR/nil-guard-$jwt_case.err"; then
         echo "full Helm chart failed when previewStack.jwt was $jwt_case" >&2

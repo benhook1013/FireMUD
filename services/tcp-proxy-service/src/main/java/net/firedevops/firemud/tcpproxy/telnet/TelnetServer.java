@@ -75,10 +75,8 @@ public final class TelnetServer {
   private final Map<String, java.util.concurrent.atomic.AtomicInteger> connectionsByIp =
       new ConcurrentHashMap<>();
   private volatile int boundPort;
-  private final EventLoopGroup bossGroup =
-      new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
-  private final EventLoopGroup workerGroup =
-      new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
+  private EventLoopGroup bossGroup;
+  private EventLoopGroup workerGroup;
   private Channel serverChannel;
   private final AtomicBoolean running = new AtomicBoolean(false);
   private SslContext sslContext;
@@ -336,7 +334,14 @@ public final class TelnetServer {
     if (!running.compareAndSet(false, true)) {
       return;
     }
+    EventLoopGroup allocatedBossGroup = null;
+    EventLoopGroup allocatedWorkerGroup = null;
     try {
+      allocatedBossGroup =
+          new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+      allocatedWorkerGroup = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
+      bossGroup = allocatedBossGroup;
+      workerGroup = allocatedWorkerGroup;
       ServerBootstrap b = new ServerBootstrap();
       b.group(bossGroup, workerGroup)
           .channel(NioServerSocketChannel.class)
@@ -397,11 +402,13 @@ public final class TelnetServer {
       logger.info("Telnet server started on port {}", boundPort);
     } catch (InterruptedException e) {
       running.set(false);
+      shutdownEventLoopGroups(allocatedBossGroup, allocatedWorkerGroup);
       Thread.currentThread().interrupt();
       throw e;
     } catch (Exception e) {
       running.set(false);
       serverChannel = null;
+      shutdownEventLoopGroups(allocatedBossGroup, allocatedWorkerGroup);
       String message = "Telnet server failed to start";
       logger.error(message, e);
       throw new IllegalStateException(message, e);
@@ -422,9 +429,26 @@ public final class TelnetServer {
     } finally {
       serverChannel = null;
     }
-    bossGroup.shutdownGracefully();
-    workerGroup.shutdownGracefully();
+    shutdownEventLoopGroups(bossGroup, workerGroup);
+    bossGroup = null;
+    workerGroup = null;
     logger.info("Telnet server stopped");
+  }
+
+  private void shutdownEventLoopGroups(
+      EventLoopGroup allocatedBossGroup, EventLoopGroup allocatedWorkerGroup) {
+    if (allocatedBossGroup != null) {
+      allocatedBossGroup.shutdownGracefully();
+    }
+    if (allocatedWorkerGroup != null) {
+      allocatedWorkerGroup.shutdownGracefully();
+    }
+    if (bossGroup == allocatedBossGroup) {
+      bossGroup = null;
+    }
+    if (workerGroup == allocatedWorkerGroup) {
+      workerGroup = null;
+    }
   }
 
   /** Expose the configured port for testing purposes. */

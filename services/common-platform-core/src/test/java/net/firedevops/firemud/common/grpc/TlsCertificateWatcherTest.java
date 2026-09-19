@@ -543,7 +543,7 @@ class TlsCertificateWatcherTest {
 
   @Test
   @Timeout(15)
-  void failedCallbackRetriesRepeatedlyUntilTheAttemptCap(@TempDir Path directory) throws Exception {
+  void failedCallbackRetriesContinueAfterTheAttemptCap(@TempDir Path directory) throws Exception {
     Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
     AtomicInteger attempts = new AtomicInteger();
     Logger logger = (Logger) LoggerFactory.getLogger(TlsCertificateWatcher.class);
@@ -562,17 +562,17 @@ class TlsCertificateWatcherTest {
               })) {
         invokeReloadCallback(watcher, false);
         scheduleCallbackRetry(watcher);
-        for (int retry = 0; retry < 10; retry++) {
+        for (int retry = 0; retry < 12; retry++) {
           runScheduledCallbackRetry(watcher);
         }
-        assertEquals(11, attempts.get());
+        assertEquals(13, attempts.get());
         assertFalse(watcher.isHealthy());
         assertEquals(
             1,
             appender.list.stream()
                 .filter(event -> event.getFormattedMessage().contains("callback retries exhausted"))
                 .count());
-        assertTrue(scheduledCallbackRetry(watcher) == null);
+        assertTrue(scheduledCallbackRetry(watcher) != null);
         retryExecutor(watcher).shutdownNow();
       }
     } finally {

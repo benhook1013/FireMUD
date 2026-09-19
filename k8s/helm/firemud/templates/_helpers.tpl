@@ -50,8 +50,19 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- if or (not (hasKey $preview "prNumber")) (and (empty $prNumber) (ne (toString $prNumber) "0")) -}}
 {{- fail "preview.prNumber is required when Gateway WebSocket TLS is enabled" -}}
 {{- end -}}
-{{/* A raw shared-values Helm render keeps the unresolved placeholder; it is
-      still a PR preview for trust-profile purposes. */}}
+{{- $prNumberText := toString $prNumber -}}
+{{- if and (ne $prNumberText "0") (not (regexMatch "^[1-9][0-9]*$" $prNumberText)) -}}
+{{- fail "preview.prNumber must be 0 or a positive integer when Gateway WebSocket TLS is enabled" -}}
+{{- end -}}
+{{- $gatewayWsTls := $root.Values.previewStack.gatewayWsTls | default (dict) -}}
+{{- $trustEnvironment := get $gatewayWsTls "trustEnvironment" -}}
+{{- if or (empty $trustEnvironment) (not (has $trustEnvironment (list "pr-preview" "dev-demo-cluster"))) -}}
+{{- fail "previewStack.gatewayWsTls.trustEnvironment must be pr-preview or dev-demo-cluster when Gateway WebSocket TLS is enabled" -}}
+{{- end -}}
+{{- $expectedTrustEnvironment := ternary "dev-demo-cluster" "pr-preview" (eq $prNumberText "0") -}}
+{{- if ne $trustEnvironment $expectedTrustEnvironment -}}
+{{- fail (printf "previewStack.gatewayWsTls.trustEnvironment must be %s for preview.prNumber %s" $expectedTrustEnvironment $prNumberText) -}}
+{{- end -}}
 - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED
   value: "true"
 - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS
@@ -65,7 +76,7 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_CLIENT_CA_PATH
   value: /gateway-ws-server-tls/ca.crt
 - name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT
-  value: {{ ternary "dev-demo-cluster" "pr-preview" (eq (toString $prNumber) "0") | quote }}
+  value: {{ $trustEnvironment | quote }}
 - name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE
   value: production_uri
 - name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN

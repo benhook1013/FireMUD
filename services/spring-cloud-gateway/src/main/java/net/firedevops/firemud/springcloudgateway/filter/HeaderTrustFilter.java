@@ -101,19 +101,10 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
     if (trustedTcpProxy && isSessionRoute) {
       try {
         incomingRoutingBundle = validateRoutingBundle(exchange.getRequest().getHeaders());
-      } catch (RuntimeException ex) {
-        LOG.debug("Rejecting session route: invalid trusted proxy routing bundle", ex);
-        exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
-        return exchange.getResponse().setComplete();
-      }
-    }
-
-    if (trustedTcpProxy && isSessionRoute) {
-      try {
         TrustedTcpProxyIdentity.validateIncoming(
             incomingProxyTenantId, incomingProxyGameInstanceId);
       } catch (RuntimeException ex) {
-        LOG.debug("Rejecting session route: invalid trusted proxy identity", ex);
+        LOG.debug("Rejecting session route: invalid trusted proxy routing or identity", ex);
         exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
         return exchange.getResponse().setComplete();
       }
