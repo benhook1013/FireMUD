@@ -96,9 +96,6 @@ spec:
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
-            {{- if $mountGatewayWsServerTls }}
-{{ include "firemud.gatewayWsServerEnv" (dict "root" $ "targetPort" $gatewayWsTlsTargetPort) | nindent 12 }}
-            {{- end }}
           {{- else }}
           env:
             {{- if $service.mountGrpcTls }}
@@ -117,9 +114,12 @@ spec:
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
-            {{- if $mountGatewayWsClientTls }}
+          {{- end }}
+          {{- if $mountGatewayWsServerTls }}
+{{ include "firemud.gatewayWsServerEnv" (dict "root" $ "targetPort" $gatewayWsTlsTargetPort) | nindent 12 }}
+          {{- end }}
+          {{- if $mountGatewayWsClientTls }}
 {{ include "firemud.gatewayWsClientEnv" (dict "root" $ "servicePort" $gatewayWsTlsServicePort) | nindent 12 }}
-            {{- end }}
           {{- end }}
           {{- if $service.envFromShared }}
           envFrom:

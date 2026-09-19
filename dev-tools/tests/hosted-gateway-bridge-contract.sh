@@ -136,6 +136,12 @@ if gateway_proxy_rules != [{
     "ports": [{"protocol": "TCP", "port": 8443}],
 }]:
     raise SystemExit("Gateway ingress policy did not restrict exactly the proxy to 8443")
+if any(
+    rule.get("from") == [{"podSelector": {}}]
+    and rule.get("ports") == [{"protocol": "TCP", "port": 8080}]
+    for rule in gateway_policy["ingress"]
+):
+    raise SystemExit("Gateway ingress policy broadly exposed port 8080 to every pod")
 if any(rule.get("ports") == [{"protocol": "TCP", "port": 6565}] for rule in gateway_policy["ingress"]):
     raise SystemExit("Gateway ingress policy unexpectedly exposed the gRPC port")
 proxy_policy = named("NetworkPolicy", "tcp-proxy-service-egress")["spec"]
@@ -180,10 +186,59 @@ for unsafe_override in \
   fi
 done
 
-helm template standalone "$CHART_DIR" -f "$CHART_DIR/values.yaml" >"$TMP_DIR/standalone.yaml"
-if grep -q 'spring-cloud-gateway-mtls\|FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED' "$TMP_DIR/standalone.yaml"; then
-  echo "standalone defaults unexpectedly rendered the hosted Gateway bridge" >&2
-  exit 1
-fi
+helm template disabled-pr-42 "$CHART_DIR" \
+  --namespace pr-42 \
+  -f "$TMP_DIR/values.yaml" \
+  --set previewStack.enabled=true \
+  --set previewStack.gatewayWsTls.enabled=false \
+  --set previewStack.services[8].mountGatewayWsServerTls=false \
+  --set previewStack.services[9].mountGatewayWsClientTls=false \
+  >"$TMP_DIR/disabled-bridge.yaml"
+python3 - <<'PY' "$TMP_DIR/disabled-bridge.yaml"
+import pathlib
+import sys
+
+import yaml
+
+documents = [
+    document
+    for document in yaml.safe_load_all(pathlib.Path(sys.argv[1]).read_text())
+    if isinstance(document, dict)
+]
+
+for deployment_name in ("spring-cloud-gateway", "tcp-proxy-service"):
+    matches = [
+        document
+        for document in documents
+        if document.get("kind") == "Deployment"
+        and document.get("metadata", {}).get("name") == deployment_name
+    ]
+    if len(matches) != 1:
+        raise SystemExit(
+            f"disabled hosted test values rendered {len(matches)} {deployment_name} Deployments"
+        )
+    containers = matches[0]["spec"]["template"]["spec"]["containers"]
+    container = next(item for item in containers if item["name"] == deployment_name)
+    env_names = {item["name"] for item in container.get("env", [])}
+    bridge_env_names = {
+        name
+        for name in env_names
+        if name.startswith("FIREMUD_GATEWAY_TCP_PROXY_TLS_")
+        or name.startswith("FIREMUD_GATEWAY_WS_")
+        or name == "GATEWAY_WS_URL"
+    }
+    if bridge_env_names:
+        raise SystemExit(
+            f"disabled hosted {deployment_name} workload rendered Gateway bridge env: "
+            f"{sorted(bridge_env_names)}"
+        )
+
+if any(
+    document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "spring-cloud-gateway-mtls"
+    for document in documents
+):
+    raise SystemExit("disabled hosted test values unexpectedly rendered the Gateway mTLS Service")
+PY
 
 echo "hosted Gateway WebSocket mTLS Helm contract passed"
