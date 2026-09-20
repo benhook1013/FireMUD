@@ -96,6 +96,44 @@ class EntityManagementGrpcServiceTest {
         .run(action);
   }
 
+  private static GrpcPeerIdentity peer(String service) {
+    return new GrpcPeerIdentity(
+        "spiffe://firemud/ns/" + TEST_NAMESPACE + "/sa/" + service, TEST_NAMESPACE, service);
+  }
+
+  private static void runWithPeer(GrpcPeerIdentity peer, Runnable action) {
+    Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer).run(action);
+  }
+
+  private static GetDraftDesignDigestResponse invokeDigest(
+      EntityManagementGrpcService service, GetDraftDesignDigestRequest request) {
+    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    service.getDraftDesignDigest(
+        request,
+        new StreamObserver<>() {
+          @Override
+          public void onNext(GetDraftDesignDigestResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+    return ref.get();
+  }
+
+  private static GetDraftDesignDigestResponse invokeDigestWithPeer(
+      EntityManagementGrpcService service,
+      GetDraftDesignDigestRequest request,
+      GrpcPeerIdentity peer) {
+    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    runWithPeer(peer, () -> ref.set(invokeDigest(service, request)));
+    return ref.get();
+  }
+
   private static GetDraftDesignDigestRequest fullDigestRequest(String tenantId, String versionId) {
     PublicationDigestRequestBinding binding =
         PublicationDigestRequestBinding.full(tenantId, versionId, "request-7");
@@ -311,6 +349,70 @@ class EntityManagementGrpcServiceTest {
         });
     assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
     Mockito.verifyNoInteractions(digestService);
+  }
+
+  @Test
+  void getDraftDesignDigestRejectsWrongPeerBeforeReadingDigest() {
+    EntityDraftDesignDigestService digestService =
+        Mockito.mock(EntityDraftDesignDigestService.class);
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(CharacterService.class),
+            digestService,
+            Mockito.mock(EquipmentService.class),
+            Mockito.mock(InventoryService.class),
+            Mockito.mock(ContainerService.class),
+            Mockito.mock(RoomEntityService.class),
+            effectReplayService(),
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService(),
+            new SimpleMeterRegistry(),
+            publicationReadGuard());
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "forged-but-not-authoritative", "instance-1");
+
+    GetDraftDesignDigestResponse response =
+        invokeDigestWithPeer(
+            service, fullDigestRequest("1", "7"), peer("world-management-service"));
+
+    assertEquals("PERMISSION_DENIED", response.getError().getCode());
+    verifyNoInteractions(digestService);
+  }
+
+  @Test
+  void getDraftDesignDigestRejectsUserOrAdminJwtBeforeReadingDigest() {
+    EntityDraftDesignDigestService digestService =
+        Mockito.mock(EntityDraftDesignDigestService.class);
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(CharacterService.class),
+            digestService,
+            Mockito.mock(EquipmentService.class),
+            Mockito.mock(InventoryService.class),
+            Mockito.mock(ContainerService.class),
+            Mockito.mock(RoomEntityService.class),
+            effectReplayService(),
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService(),
+            new SimpleMeterRegistry(),
+            publicationReadGuard());
+
+    runWithPeer(
+        peer("game-design-service"),
+        () -> {
+          SessionContext.setContext("42", List.of(), Map.of(), false, "game-design-service", null);
+          assertEquals(
+              "PERMISSION_DENIED",
+              invokeDigest(service, fullDigestRequest("1", "7")).getError().getCode());
+          SessionContext.setContext(
+              "42", List.of("platformAdmin"), Map.of(), false, "game-design-service", null);
+          assertEquals(
+              "PERMISSION_DENIED",
+              invokeDigest(service, fullDigestRequest("1", "7")).getError().getCode());
+        });
+    verifyNoInteractions(digestService);
   }
 
   @Test

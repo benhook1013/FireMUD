@@ -209,19 +209,16 @@ public class AutomationScriptingGrpcService
           Status.UNAVAILABLE.withDescription(ex.getMessage()).asRuntimeException());
       return;
     } catch (IllegalArgumentException ex) {
-      response
-          .setAdmissionReason("invalid_argument")
-          .setError(
-              GrpcAppErrors.error(
-                  meterRegistry,
-                  logger,
-                  "TriggerScriptEvent",
-                  "INVALID_ARGUMENT",
-                  ex.getMessage()));
+      GrpcAppErrors.error(
+          meterRegistry, logger, "TriggerScriptEvent", "INVALID_ARGUMENT", ex.getMessage());
+      responseObserver.onError(
+          Status.INVALID_ARGUMENT.withDescription(ex.getMessage()).asRuntimeException());
+      return;
     } catch (AdminAuthorizationException ex) {
-      response
-          .setAdmissionReason("permission_denied")
-          .setError(authorizationError("TriggerScriptEvent", ex));
+      ErrorDetail detail = authorizationError("TriggerScriptEvent", ex);
+      responseObserver.onError(
+          Status.PERMISSION_DENIED.withDescription(detail.getMessage()).asRuntimeException());
+      return;
     }
     responseObserver.onNext(response.build());
     responseObserver.onCompleted();
@@ -433,9 +430,9 @@ public class AutomationScriptingGrpcService
       GetDraftDesignDigestRequest request,
       StreamObserver<GetDraftDesignDigestResponse> responseObserver) {
     try {
+      requirePublicationRead();
       PublicationDigestRequestBinding binding = publicationBinding(request);
       binding.validateSupplied(request.getDerivedWorkflowIdentity(), request.getRequestDigest());
-      requirePublicationRead();
       var digest =
           binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.FULL_VERSION
               ? scriptDesignDigestService.getDraftDesignDigestForVersion(

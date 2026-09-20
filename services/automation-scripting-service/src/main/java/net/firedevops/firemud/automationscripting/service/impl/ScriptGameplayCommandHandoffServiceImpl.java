@@ -825,6 +825,9 @@ public class ScriptGameplayCommandHandoffServiceImpl
     event.setBindingId(normalize(workItem.getBindingId()));
     event.setPluginId(normalize(workItem.getPluginId()));
     event.setPluginVersionId(normalize(workItem.getPluginVersionId()));
+    event.setScriptPinEpoch(workItem.getScriptPinEpoch());
+    event.setPluginActivationEpoch(workItem.getPluginActivationEpoch());
+    event.setLifecycleRevision(workItem.getLifecycleRevision());
     event.setWorkItemId(workItem.getId());
     event.setCommandOrdinal(command.ordinal());
     event.setAutomationDispatchId(dispatchId);
@@ -848,6 +851,14 @@ public class ScriptGameplayCommandHandoffServiceImpl
     event.setHandoffOutcome(outcome);
     event.setHandoffReason(reason);
     event.setObservedAt(now);
+    handoffEventRepository
+        .findByTenantIdAndWorkItemIdAndCommandOrdinal(
+            workItem.getTenantId(), workItem.getId(), command.ordinal())
+        .ifPresent(
+            existing -> {
+              event.setId(existing.getId());
+              event.setRowVersion(existing.getRowVersion());
+            });
     handoffEventRepository.save(event);
   }
 

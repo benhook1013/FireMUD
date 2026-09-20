@@ -167,6 +167,7 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
       GetDraftDesignDigestRequest request,
       StreamObserver<GetDraftDesignDigestResponse> responseObserver) {
     try {
+      requirePublicationRead();
       if (request.getScopeCase() != GetDraftDesignDigestRequest.ScopeCase.VERSION_ID) {
         responseObserver.onNext(
             GetDraftDesignDigestResponse.newBuilder()
@@ -188,7 +189,6 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
           PublicationDigestRequestBinding.full(
               request.getTenantId(), request.getVersionId(), request.getPublishRequestId());
       binding.validateSupplied(request.getDerivedWorkflowIdentity(), request.getRequestDigest());
-      requirePublicationRead();
       var digest =
           gameLogicDraftDesignDigestService.getDraftDesignDigest(
               request.getTenantId(), request.getVersionId());

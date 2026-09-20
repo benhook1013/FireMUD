@@ -213,7 +213,7 @@ public class ScriptHandoffEventRepository {
         .fetch(this::toEntity);
   }
 
-  /** Returns the single durable logical child projection for a work-item command. */
+  /** Returns the single durable logical child projection for one tenant-qualified command. */
   public Optional<ScriptHandoffEvent> findByTenantIdAndWorkItemIdAndCommandOrdinal(
       String tenantId, Long workItemId, int commandOrdinal) {
     if (tenantId == null || tenantId.isBlank() || workItemId == null) {

@@ -329,6 +329,7 @@ public class EntityManagementGrpcService
       GetDraftDesignDigestRequest request,
       StreamObserver<GetDraftDesignDigestResponse> responseObserver) {
     try {
+      requirePublicationRead();
       if (request.getScopeCase() != GetDraftDesignDigestRequest.ScopeCase.VERSION_ID) {
         responseObserver.onNext(
             GetDraftDesignDigestResponse.newBuilder()
@@ -350,7 +351,6 @@ public class EntityManagementGrpcService
           PublicationDigestRequestBinding.full(
               request.getTenantId(), request.getVersionId(), request.getPublishRequestId());
       binding.validateSupplied(request.getDerivedWorkflowIdentity(), request.getRequestDigest());
-      requirePublicationRead();
       var digest =
           entityDraftDesignDigestService.getDraftDesignDigest(
               request.getTenantId(), request.getVersionId());

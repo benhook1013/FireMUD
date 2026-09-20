@@ -92,6 +92,7 @@ public class ScriptEventIngressAuditRepository {
       return insertIfAbsentByIdentity(entity).audit();
     }
     requireCoherentPinTuple(entity);
+    requireCoherentPluginFence(entity);
     requireCanonicalRequestDigest(entity.getRequestDigest());
     findById(entity.getId())
         .ifPresent(persisted -> requireMatchingImmutableIdentity(entity, persisted));
@@ -113,6 +114,10 @@ public class ScriptEventIngressAuditRepository {
             .set(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_ID, entity.getScriptId())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.PLUGIN_ID, entity.getPluginId())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.PLUGIN_VERSION_ID, entity.getPluginVersionId())
+            .set(
+                SCRIPT_EVENT_INGRESS_AUDIT.PLUGIN_ACTIVATION_EPOCH,
+                entity.getPluginActivationEpoch())
+            .set(SCRIPT_EVENT_INGRESS_AUDIT.LIFECYCLE_REVISION, entity.getLifecycleRevision())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_TYPE, entity.getEventType())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION, entity.getEventSchemaVersion())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.QUOTA_CLASS, entity.getQuotaClass())
@@ -215,6 +220,7 @@ public class ScriptEventIngressAuditRepository {
       throw new IllegalArgumentException("A new script event ingress audit is required");
     }
     requireCoherentPinTuple(entity);
+    requireCoherentPluginFence(entity);
     requireCanonicalRequestDigest(entity.getRequestDigest());
     String normalizedRequestId = blankToNull(entity.getScriptPinControlPlaneRequestId());
     for (int attempt = 0; attempt < MAX_EVENT_INGRESS_INSERT_ATTEMPTS; attempt++) {
@@ -230,6 +236,7 @@ public class ScriptEventIngressAuditRepository {
         ScriptEventIngressAudit existingAudit = existing.orElseThrow();
         requireMatchingPinOwnerEvidence(
             normalizedRequestId, existingAudit.getScriptPinControlPlaneRequestId());
+        requireMatchingPluginFence(entity, existingAudit);
         return new IdempotentInsertResult(existingAudit, false);
       }
     }
@@ -273,6 +280,7 @@ public class ScriptEventIngressAuditRepository {
           if (!inserted) {
             requireMatchingPinOwnerEvidence(
                 normalizedRequestId, audit.getScriptPinControlPlaneRequestId());
+            requireMatchingPluginFence(entity, audit);
           }
           return new IdempotentInsertResult(audit, inserted);
         });
@@ -337,6 +345,35 @@ public class ScriptEventIngressAuditRepository {
     }
     if (!Objects.equals(submitted.getRequestDigest(), persisted.getRequestDigest())) {
       throw new IllegalArgumentException(IMMUTABLE_IDENTITY_CONFLICT_PREFIX + "request_digest");
+    }
+    if (submitted.getPluginActivationEpoch() != persisted.getPluginActivationEpoch()) {
+      throw new IllegalArgumentException(
+          IMMUTABLE_IDENTITY_CONFLICT_PREFIX + "plugin_activation_epoch");
+    }
+    if (submitted.getLifecycleRevision() != persisted.getLifecycleRevision()) {
+      throw new IllegalArgumentException(IMMUTABLE_IDENTITY_CONFLICT_PREFIX + "lifecycle_revision");
+    }
+  }
+
+  private static void requireCoherentPluginFence(ScriptEventIngressAudit entity) {
+    long activationEpoch = entity.getPluginActivationEpoch();
+    long lifecycleRevision = entity.getLifecycleRevision();
+    if (activationEpoch < 0L || lifecycleRevision < 0L) {
+      throw new IllegalArgumentException("plugin fence values must be non-negative");
+    }
+    if ((activationEpoch == 0L) != (lifecycleRevision == 0L)) {
+      throw new IllegalArgumentException(
+          "plugin_activation_epoch and lifecycle_revision must both be zero or both be positive");
+    }
+  }
+
+  private static void requireMatchingPluginFence(
+      ScriptEventIngressAudit requested, ScriptEventIngressAudit existing) {
+    if (requested.getPluginActivationEpoch() != existing.getPluginActivationEpoch()) {
+      throw new IllegalStateException("plugin_activation_epoch conflicts with existing identity");
+    }
+    if (requested.getLifecycleRevision() != existing.getLifecycleRevision()) {
+      throw new IllegalStateException("lifecycle_revision conflicts with existing identity");
     }
   }
 
@@ -435,6 +472,7 @@ public class ScriptEventIngressAuditRepository {
   }
 
   private void populate(ScriptEventIngressAuditRecord record, ScriptEventIngressAudit entity) {
+    requireCoherentPluginFence(entity);
     record.setTenantId(entity.getTenantId());
     record.setGameInstanceId(entity.getGameInstanceId());
     record.setRegionId(entity.getRegionId());
@@ -448,6 +486,8 @@ public class ScriptEventIngressAuditRepository {
     record.setScriptId(entity.getScriptId());
     record.setPluginId(entity.getPluginId());
     record.setPluginVersionId(entity.getPluginVersionId());
+    record.setPluginActivationEpoch(entity.getPluginActivationEpoch());
+    record.setLifecycleRevision(entity.getLifecycleRevision());
     record.setScriptPinEpoch(entity.getScriptPinEpoch());
     record.set(
         SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
@@ -496,6 +536,10 @@ public class ScriptEventIngressAuditRepository {
     entity.setScriptId(record.get(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_ID));
     entity.setPluginId(record.get(SCRIPT_EVENT_INGRESS_AUDIT.PLUGIN_ID));
     entity.setPluginVersionId(record.get(SCRIPT_EVENT_INGRESS_AUDIT.PLUGIN_VERSION_ID));
+    Long pluginActivationEpoch = record.get(SCRIPT_EVENT_INGRESS_AUDIT.PLUGIN_ACTIVATION_EPOCH);
+    entity.setPluginActivationEpoch(pluginActivationEpoch == null ? 0L : pluginActivationEpoch);
+    Long lifecycleRevision = record.get(SCRIPT_EVENT_INGRESS_AUDIT.LIFECYCLE_REVISION);
+    entity.setLifecycleRevision(lifecycleRevision == null ? 0L : lifecycleRevision);
     Long scriptPinEpoch = record.get(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH);
     entity.setScriptPinEpoch(scriptPinEpoch);
     entity.setScriptPinControlPlaneRequestId(

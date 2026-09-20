@@ -726,6 +726,8 @@ class ScriptWorkItemRepositoryTest {
     record.setTenantId("tenant-1");
     record.setGameInstanceId("game-1");
     record.setScriptPinEpoch(pinEpoch);
+    record.setPluginActivationEpoch(0L);
+    record.setLifecycleRevision(0L);
     record.setCreatedAt(LocalDateTime.parse("2026-08-01T00:00:00"));
     record.setUpdatedAt(LocalDateTime.parse("2026-08-01T00:00:01"));
     record.setRowVersion(rowVersion);

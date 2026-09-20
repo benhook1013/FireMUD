@@ -22,6 +22,7 @@ import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneC
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptOutboxProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
+import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptHandoffEvent;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptDeadLetterReplayRepository;
@@ -37,6 +38,7 @@ import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessPr
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutStatus;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
+import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
@@ -2524,12 +2526,15 @@ class ScriptWorkItemServiceImplTest {
     item.setScriptEventId("event-2");
     item.setSourceService("game-session-service");
     item.setCreatedAt(Instant.ofEpochMilli(100));
+    ScriptEventAudit audit = new ScriptEventAudit();
+    ScriptEventIngressAudit ingressAudit = new ScriptEventIngressAudit();
     ScriptPatchPinProjectionService pinProjectionService =
         Mockito.mock(ScriptPatchPinProjectionService.class);
     PluginRuntimeStateService pluginRuntimeStateService =
         Mockito.mock(PluginRuntimeStateService.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptEventIngressAuditRepository ingressAuditRepository = ingressAuditRepository();
     when(workItemRepository.findById(78L)).thenReturn(Optional.of(item));
     when(workItemRepository.save(item)).thenReturn(item);
     when(auditRepository.findByWorkItemId(78L)).thenReturn(Optional.of(audit));
@@ -2574,12 +2579,14 @@ class ScriptWorkItemServiceImplTest {
                     "admin",
                     System.currentTimeMillis(),
                     null,
-                    null)));
+                    null,
+                    1L,
+                    1L)));
     ScriptWorkItemService service =
         service(
             workItemRepository,
             auditRepository,
-            ingressAuditRepository(),
+            ingressAuditRepository,
             Mockito.mock(ScriptHandoffEventRepository.class),
             outboxProperties(),
             admissionStateService(),

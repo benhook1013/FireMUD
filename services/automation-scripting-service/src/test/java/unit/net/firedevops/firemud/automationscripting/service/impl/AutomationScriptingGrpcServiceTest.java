@@ -50,6 +50,11 @@ import org.mockito.Mockito;
 
 class AutomationScriptingGrpcServiceTest {
   private static final String TEST_NAMESPACE = "test";
+  private static final GrpcPeerIdentity WRONG_PEER =
+      new GrpcPeerIdentity(
+          "spiffe://firemud/ns/test/sa/world-management-service",
+          TEST_NAMESPACE,
+          "world-management-service");
 
   private static PublicationReadGuard publicationReadGuard() {
     return new PublicationReadGuard(TEST_NAMESPACE);
@@ -242,6 +247,40 @@ class AutomationScriptingGrpcServiceTest {
   }
 
   @Test
+  void getDraftDesignDigestRejectsWrongPeerAndUserOrAdminJwt() {
+    ScriptDesignDigestService digestService = Mockito.mock(ScriptDesignDigestService.class);
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(ScriptDefinitionService.class),
+            digestService,
+            Mockito.mock(ScriptVersionService.class),
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            Mockito.mock(ScriptEventIngressService.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(NpcFormationService.class),
+            new SimpleMeterRegistry(),
+            publicationReadGuard());
+    GetDraftDesignDigestRequest request = fullDigestRequest("1", "7");
+
+    SessionContext.setContext(null, List.of(), Map.of(), true, "game-design-service", "instance-1");
+    withPeer(
+        WRONG_PEER,
+        () ->
+            assertEquals("PERMISSION_DENIED", invokeDigest(service, request).getError().getCode()));
+
+    runAsGameDesign(
+        () -> {
+          SessionContext.setContext("42", List.of(), Map.of(), false, "game-design-service", null);
+          assertEquals("PERMISSION_DENIED", invokeDigest(service, request).getError().getCode());
+          SessionContext.setContext(
+              "42", List.of("platformAdmin"), Map.of(), false, "game-design-service", null);
+          assertEquals("PERMISSION_DENIED", invokeDigest(service, request).getError().getCode());
+        });
+    Mockito.verifyNoInteractions(digestService);
+  }
+
+  @Test
   void getDraftDesignDigestRejectsWrongDigestBeforeOwnerRead() {
     ScriptDesignDigestService digestService = Mockito.mock(ScriptDesignDigestService.class);
     AutomationScriptingGrpcService service =
@@ -254,10 +293,29 @@ class AutomationScriptingGrpcServiceTest {
             Mockito.mock(ScriptEventIngressService.class),
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(NpcFormationService.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            publicationReadGuard());
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    runAsGameDesign(
+        () ->
+            ref.set(
+                invokeDigest(
+                    service,
+                    fullDigestRequest("1", "7").toBuilder()
+                        .setRequestDigest("0".repeat(64))
+                        .build())));
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    Mockito.verifyNoInteractions(digestService);
+  }
+
+  private GetDraftDesignDigestResponse invokeDigest(
+      AutomationScriptingGrpcService service, GetDraftDesignDigestRequest request) {
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
     service.getDraftDesignDigest(
-        fullDigestRequest("1", "7").toBuilder().setRequestDigest("0".repeat(64)).build(),
+        request,
         new StreamObserver<>() {
           @Override
           public void onNext(GetDraftDesignDigestResponse value) {
@@ -270,9 +328,17 @@ class AutomationScriptingGrpcServiceTest {
           @Override
           public void onCompleted() {}
         });
+    return ref.get();
+  }
 
-    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    Mockito.verifyNoInteractions(digestService);
+  private static void withPeer(GrpcPeerIdentity peer, Runnable action) {
+    Context context = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
+    Context previous = context.attach();
+    try {
+      action.run();
+    } finally {
+      context.detach(previous);
+    }
   }
 
   @Test
@@ -500,6 +566,49 @@ class AutomationScriptingGrpcServiceTest {
     assertNull(response.get());
     assertEquals(Status.Code.UNAVAILABLE, Status.fromThrowable(error.get()).getCode());
     assertEquals("ingress_in_progress", Status.fromThrowable(error.get()).getDescription());
+  }
+
+  @Test
+  void triggerScriptEventReturnsInvalidArgumentAsTransportError() {
+    SessionContext.setContext(
+        "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
+    ScriptEventIngressService ingressService = Mockito.mock(ScriptEventIngressService.class);
+    Mockito.when(ingressService.admit(Mockito.any()))
+        .thenThrow(new IllegalArgumentException("payload_json exceeds input envelope limit"));
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(ScriptDefinitionService.class),
+            Mockito.mock(ScriptDesignDigestService.class),
+            Mockito.mock(ScriptVersionService.class),
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            ingressService,
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(NpcFormationService.class),
+            new SimpleMeterRegistry());
+    AtomicReference<TriggerScriptEventResponse> response = new AtomicReference<>();
+    AtomicReference<Throwable> error = new AtomicReference<>();
+    service.triggerScriptEvent(
+        TriggerScriptEventRequest.getDefaultInstance(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(TriggerScriptEventResponse value) {
+            response.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            error.set(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+    assertNull(response.get());
+    assertEquals(Status.INVALID_ARGUMENT.getCode(), Status.fromThrowable(error.get()).getCode());
+    assertEquals(
+        "payload_json exceeds input envelope limit",
+        Status.fromThrowable(error.get()).getDescription());
   }
 
   @Test

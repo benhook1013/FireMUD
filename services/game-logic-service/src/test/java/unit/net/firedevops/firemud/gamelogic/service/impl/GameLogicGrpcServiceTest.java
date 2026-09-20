@@ -51,11 +51,17 @@ import net.firedevops.firemud.gamelogic.v1.PickupVisibleRoomItemRequest;
 import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class GameLogicGrpcServiceTest {
   private static final String TEST_NAMESPACE = "test";
+  private static final GrpcPeerIdentity WRONG_PEER =
+      new GrpcPeerIdentity(
+          "spiffe://firemud/ns/test/sa/world-management-service",
+          TEST_NAMESPACE,
+          "world-management-service");
 
   private static PublicationReadGuard publicationReadGuard() {
     return new PublicationReadGuard(TEST_NAMESPACE);
@@ -86,6 +92,11 @@ class GameLogicGrpcServiceTest {
 
   private GameLogicDraftDesignDigestService mockDigestService() {
     return Mockito.mock(GameLogicDraftDesignDigestService.class);
+  }
+
+  @AfterEach
+  void clearSessionContext() {
+    SessionContext.clear();
   }
 
   private GameplaySessionAttestationService mockAttestationService() {
@@ -335,6 +346,80 @@ class GameLogicGrpcServiceTest {
         });
     assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
     Mockito.verifyNoInteractions(digestService);
+  }
+
+  @Test
+  void getDraftDesignDigestRejectsWrongPeerAndUserOrAdminJwt() {
+    GameLogicDraftDesignDigestService digestService = mockDigestService();
+    GameLogicGrpcService service = newDigestService(digestService);
+    GetDraftDesignDigestRequest request = fullDigestRequest("1", "7");
+
+    SessionContext.setContext(null, List.of(), Map.of(), true, "game-design-service", "instance-1");
+    withPeer(
+        WRONG_PEER,
+        () ->
+            assertEquals(
+                "PERMISSION_DENIED", invokeDigest(service, request).getError().getCode()));
+
+    withPeer(
+        new GrpcPeerIdentity(
+            "spiffe://firemud/ns/test/sa/game-design-service",
+            TEST_NAMESPACE,
+            "game-design-service"),
+        () -> {
+          SessionContext.setContext("42", List.of(), Map.of(), false, "game-design-service", null);
+          assertEquals("PERMISSION_DENIED", invokeDigest(service, request).getError().getCode());
+          SessionContext.setContext(
+              "42", List.of("platformAdmin"), Map.of(), false, "game-design-service", null);
+          assertEquals("PERMISSION_DENIED", invokeDigest(service, request).getError().getCode());
+        });
+    Mockito.verifyNoInteractions(digestService);
+  }
+
+  private GameLogicGrpcService newDigestService(GameLogicDraftDesignDigestService digestService) {
+    return new GameLogicGrpcService(
+        new PingServiceImpl(),
+        new CommandServiceImpl(
+            new DefaultCommandParser(),
+            new SimpleCommandProcessor(new EventDispatcher(), new NoOpScriptingHook())),
+        Mockito.mock(LookAggregationService.class),
+        Mockito.mock(CommunicationAggregationService.class),
+        Mockito.mock(MoveAggregationService.class),
+        Mockito.mock(ItemRuntimeService.class),
+        digestService,
+        mockAttestationService(),
+        new SimpleMeterRegistry(),
+        publicationReadGuard());
+  }
+
+  private GetDraftDesignDigestResponse invokeDigest(
+      GameLogicGrpcService service, GetDraftDesignDigestRequest request) {
+    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    service.getDraftDesignDigest(
+        request,
+        new StreamObserver<>() {
+          @Override
+          public void onNext(GetDraftDesignDigestResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+    return ref.get();
+  }
+
+  private static void withPeer(GrpcPeerIdentity peer, Runnable action) {
+    Context context = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
+    Context previous = context.attach();
+    try {
+      action.run();
+    } finally {
+      context.detach(previous);
+    }
   }
 
   @Test
