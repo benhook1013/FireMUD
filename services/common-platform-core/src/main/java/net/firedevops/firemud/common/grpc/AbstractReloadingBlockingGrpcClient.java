@@ -44,17 +44,25 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
   }
 
   protected final void initReloadingClient() throws SSLException, IOException {
-    reloadChannel();
     if (tlsProps.isPlaintext() || !GrpcTlsReloadPolicy.isEnabled()) {
+      reloadChannel();
       return;
     }
-    watcher =
-        TlsCertificateWatcher.createAndStart(
-            List.of(
-                Path.of(tlsProps.getCertChain()),
-                Path.of(tlsProps.getPrivateKey()),
-                Path.of(tlsProps.getCaCert())),
-            this::safeReload);
+
+    try {
+      watcher =
+          new TlsCertificateWatcher(
+              List.of(
+                  Path.of(tlsProps.getCertChain()),
+                  Path.of(tlsProps.getPrivateKey()),
+                  Path.of(tlsProps.getCaCert())),
+              this::safeReload);
+      reloadChannel();
+      watcher.start();
+    } catch (IOException | RuntimeException e) {
+      cleanupAfterInitialisationFailure(e);
+      throw e;
+    }
   }
 
   protected final synchronized void reloadChannel() throws SSLException {
@@ -64,11 +72,18 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
     }
     ManagedChannel newChannel =
         channelFactory.buildChannel(target, defaultPort(), tlsProps, keepAliveEnabled());
+    TStub newStub;
+    try {
+      newStub = buildStub(newChannel);
+    } catch (RuntimeException | Error e) {
+      newChannel.shutdown();
+      throw e;
+    }
     if (channel != null) {
       channel.shutdown();
     }
     channel = newChannel;
-    stub = buildStub(channel);
+    stub = newStub;
   }
 
   protected final TStub stub() {
@@ -113,6 +128,29 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
     } catch (SSLException e) {
       logger.error("Failed to reload gRPC channel", e);
       throw new IllegalStateException("Failed to reload gRPC channel", e);
+    }
+  }
+
+  private void cleanupAfterInitialisationFailure(Throwable failure) {
+    TlsCertificateWatcher initialWatcher = watcher;
+    watcher = null;
+    if (initialWatcher != null) {
+      try {
+        initialWatcher.close();
+      } catch (IOException | RuntimeException cleanupFailure) {
+        failure.addSuppressed(cleanupFailure);
+      }
+    }
+
+    ManagedChannel initialChannel = channel;
+    channel = null;
+    stub = null;
+    if (initialChannel != null) {
+      try {
+        initialChannel.shutdown();
+      } catch (RuntimeException cleanupFailure) {
+        failure.addSuppressed(cleanupFailure);
+      }
     }
   }
 }
