@@ -688,6 +688,40 @@ class GameplayHandshakeFilterTest {
   }
 
   @Test
+  void trustedTcpProxyHandshakeRemovesConnectTokenCookieAndPreservesOtherCookies() {
+    GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
+    props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
+    props.getTcpProxy().setInsecureTrustedCidrs(java.util.List.of("10.0.0.0/8"));
+    HeaderTrustFilter headerTrustFilter = HeaderTrustFilterTest.legacyFilter(props);
+    GameplayHandshakeFilter filter =
+        new GameplayHandshakeFilter(
+            new JwtUtil(SECRET, 30_000L),
+            TEST_RUNTIME_IDENTITY,
+            null,
+            environmentWithProfiles("test"));
+
+    MockServerHttpRequest request =
+        MockServerHttpRequest.get("/ws/game/test")
+            .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
+            .header("X-Proxy-Client-IP", "203.0.113.99")
+            .header("X-Proxy-Connection-Id", "conn-123")
+            .header("X-Proxy-Game-Instance-Id", "42")
+            .header("X-Proxy-Tenant-Id", "1")
+            .header("Cookie", "Firemud-Connect-Token=token; session=abc")
+            .build();
+
+    ServerWebExchange mutatedExchange =
+        filterThroughChain(
+            filter, filterThroughChain(headerTrustFilter, MockServerWebExchange.from(request)));
+
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connection-Mode"))
+        .isEqualTo(GameplayHandshakeFilter.CONNECTION_MODE_TRUSTED_TCP_PROXY);
+    assertThat(mutatedExchange.getRequest().getHeaders().get("Cookie"))
+        .containsExactly("session=abc");
+    assertThat(mutatedExchange.getResponse().getStatusCode()).isNull();
+  }
+
+  @Test
   void trustedTcpProxyHandshakePreservesCompleteRoutingBundle() {
     GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
     props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
