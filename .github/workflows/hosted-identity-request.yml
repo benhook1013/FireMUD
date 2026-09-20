@@ -350,6 +350,7 @@ jobs:
           merge-sha: ${{ needs.validate-target.outputs.merge_sha }}
           image-tag: ${{ needs.validate-target.outputs.image_tag }}
           preview-hostname: ${{ needs.validate-target.outputs.hostname }}
+          certificate-identity-mode: ${{ needs.validate-target.outputs.certificate_identity_mode }}
 
       - name: Revalidate exact PR source binding before image wait
         env:
@@ -470,6 +471,7 @@ jobs:
           merge-sha: ${{ needs.validate-target.outputs.merge_sha }}
           image-tag: ${{ needs.validate-target.outputs.image_tag }}
           preview-hostname: ${{ needs.validate-target.outputs.hostname }}
+          certificate-identity-mode: ${{ needs.validate-target.outputs.certificate_identity_mode }}
 
       - name: Write runtime kubeconfig
         uses: ./.github/actions/write-kubeconfig

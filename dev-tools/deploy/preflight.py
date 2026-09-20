@@ -4163,9 +4163,7 @@ def validate_hosted_private_bridge_values(
         and port.get("targetPort") == TCP_PROXY_TELNET_SERVICE_PORT
         and port.get("protocol", "TCP") == "TCP"
     ]
-    if len(private_ports) != 1 or (
-        not allow_public_telnet and len(service_ports) != 1
-    ):
+    if len(private_ports) != 1 or len(service_ports) != 1:
         issues.append(
             "private hosted bridge TCP Proxy Service requires exactly one private listener with port 2323, targetPort 2323, and protocol TCP"
         )

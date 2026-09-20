@@ -9480,6 +9480,46 @@ if module.hosted_bridge_success_message("operator") != (
 ):
     raise SystemExit("hosted-bridge operator success does not confirm projection readiness")
 
+public_surplus_port_documents = list(
+    yaml.safe_load_all(render_path.read_text(encoding="utf-8"))
+)
+public_surplus_port_service = next(
+    document
+    for document in public_surplus_port_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+public_surplus_port_service["spec"]["ports"].append(
+    {
+        "name": "metrics",
+        "port": 9090,
+        "targetPort": 9090,
+        "protocol": "TCP",
+    }
+)
+public_surplus_port_path = tmp / "hosted-bridge-contract-public-surplus-port.yaml"
+public_surplus_port_path.write_text(
+    yaml.safe_dump_all(public_surplus_port_documents, sort_keys=False),
+    encoding="utf-8",
+)
+public_surplus_port = run_hosted(
+    public_surplus_port_path,
+    "--expected-hosted-telnet-node-port",
+    str(node_port),
+)
+if public_surplus_port.returncode == 0:
+    raise SystemExit("hosted-bridge accepted a public Service with a surplus non-NodePort port")
+public_surplus_port_result = json.loads(public_surplus_port.stdout)
+if (
+    public_surplus_port_result.get("status") != "fail"
+    or "requires exactly one private listener"
+    not in public_surplus_port_result.get("message", "")
+):
+    raise SystemExit(
+        "hosted-bridge public surplus-port result was not explicit: "
+        f"{public_surplus_port_result}"
+    )
+
 duplicate_mount_documents = list(
     yaml.safe_load_all(render_path.read_text(encoding="utf-8"))
 )

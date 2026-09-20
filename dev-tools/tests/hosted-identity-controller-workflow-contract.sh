@@ -854,6 +854,7 @@ expected_artifact_inputs = {
     "merge-sha",
     "image-tag",
     "preview-hostname",
+    "certificate-identity-mode",
 }
 assert set(artifact_action["inputs"]) == expected_artifact_inputs
 assert all(
@@ -895,6 +896,7 @@ assert artifact_validation["env"] == {
     "MERGE_SHA": "${{ inputs['merge-sha'] }}",
     "IMAGE_TAG": "${{ inputs['image-tag'] }}",
     "PREVIEW_HOSTNAME": "${{ inputs['preview-hostname'] }}",
+    "CERTIFICATE_IDENTITY_MODE": "${{ inputs['certificate-identity-mode'] }}",
 }
 artifact_validation_run = artifact_validation["run"]
 assert "set -euo pipefail" in artifact_validation_run
@@ -914,6 +916,7 @@ for validation_argument in (
     '"$MERGE_SHA"',
     '"$IMAGE_TAG"',
     '"$PREVIEW_HOSTNAME"',
+    '"$CERTIFICATE_IDENTITY_MODE"',
 ):
     assert artifact_validation_run.count(validation_argument) == 1, validation_argument
 triggers = workflow.get("on", workflow.get(True))
@@ -1641,6 +1644,7 @@ expected_artifact_call = {
         "merge-sha": "${{ needs.validate-target.outputs.merge_sha }}",
         "image-tag": "${{ needs.validate-target.outputs.image_tag }}",
         "preview-hostname": "${{ needs.validate-target.outputs.hostname }}",
+        "certificate-identity-mode": "${{ needs.validate-target.outputs.certificate_identity_mode }}",
     },
 }
 for artifact_job_name in ("prepare-runtime", "deploy-runtime"):
@@ -4154,6 +4158,21 @@ grep -Fxq \
   'preview artifact rejected: Deployment/account-service.spec.template is not an object' \
   "$null_template_error"
 
+# The trusted composite action must always supply the mode as the final
+# validator argument.  A missing argument fails closed at the CLI boundary;
+# an unrecognized value fails closed inside the validator.
+missing_mode_error="$TEMP_DIR/missing-certificate-identity-mode-error"
+if python3 "$artifact_validator" \
+  "$null_template_metadata" "$null_template_manifest" example/FireMUD 42 42 \
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  cccccccccccccccccccccccccccccccccccccccc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  pr-42.preview.example.test >"$TEMP_DIR/missing-mode-output" \
+  2>"$missing_mode_error"; then
+  echo "preview artifact validator accepted a missing certificate identity mode" >&2
+  exit 1
+fi
+grep -Fq 'usage: validate-preview-artifact.py' "$missing_mode_error"
+
 # Fixed-image infrastructure pods are accepted only in the exact shape emitted
 # by the hosted chart. In particular, a PR render cannot turn those trusted
 # images into a Secret-reading or arbitrary-command execution primitive.
@@ -4318,6 +4337,15 @@ validate_target(prepared, "pr-42", 32000, "hosted-controller")
 prepared_documents = list(yaml.safe_load_all(prepared.read_text(encoding="utf-8")))
 if any(document["metadata"].get("namespace") != "pr-42" for document in prepared_documents):
     raise SystemExit("trusted runtime preparation left a namespace implicit")
+for invalid_mode in ("", "untrusted"):
+    try:
+        validate_target(prepared, "pr-42", 32000, invalid_mode)
+    except ValueError as exc:
+        assert str(exc) == "preview certificate identity mode is not canonical"
+    else:
+        raise SystemExit(
+            f"runtime target validator accepted invalid certificate identity mode {invalid_mode!r}"
+        )
 
 
 def expect_rejected(case_name, mutation, expected_message=None):
@@ -4621,7 +4649,7 @@ env \
   TEST_EXPECTED_MERGE_SHA=cccccccccccccccccccccccccccccccccccccccc \
   TEST_GH_COUNT="$TEMP_DIR/source-binding-stage.gh-count" \
   TEST_APPLY_LOG="$TEMP_DIR/source-binding-stage.log" \
-  bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+  bash "$ROOT_DIR/dev-tools/hosted/preview/revalidate-preview-source-binding.sh" \
     42 \
     aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
     bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
