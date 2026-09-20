@@ -33,6 +33,145 @@ def load_validator():
 VALIDATOR = load_validator()
 
 
+class PreviewArtifactServiceValidationTest(unittest.TestCase):
+    validator = VALIDATOR
+
+    def _tcp_proxy_service(
+        self, *, service_type="ClusterIP", port=2323, target_port=2323
+    ):
+        expected_spec = copy.deepcopy(
+            self.validator.EXPECTED_SERVICE_SPECS["tcp-proxy-service"]
+        )
+        expected_spec["type"] = service_type
+        expected_spec["ports"][0]["port"] = port
+        expected_spec["ports"][0]["targetPort"] = target_port
+        return {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {"name": "tcp-proxy-service"},
+            "spec": expected_spec,
+        }
+
+    def test_hosted_controller_accepts_private_tcp_proxy_service(self):
+        self.validator.validate_services(
+            [self._tcp_proxy_service()], "hosted-controller"
+        )
+
+    def test_hosted_controller_rejects_public_tcp_proxy_service(self):
+        with self.assertRaisesRegex(
+            ValueError, "Service/tcp-proxy-service has an unsafe service type"
+        ):
+            self.validator.validate_services(
+                [self._tcp_proxy_service(service_type="NodePort")],
+                "hosted-controller",
+            )
+
+    def test_hosted_controller_rejects_wrong_tcp_proxy_port(self):
+        with self.assertRaisesRegex(
+            ValueError, "Service/tcp-proxy-service has an unexpected port set"
+        ):
+            self.validator.validate_services(
+                [self._tcp_proxy_service(port=2324)], "hosted-controller"
+            )
+
+    def _tcp_proxy_deployment(self, *, include_telnet_tls):
+        mounts = [
+            {"name": "grpc-tls", "mountPath": "/tls", "readOnly": True},
+            {
+                "name": "jwt-signing-keys",
+                "mountPath": "/var/run/secrets/firemud/jwt",
+                "readOnly": True,
+            },
+        ]
+        volumes = [
+            {"name": "grpc-tls", "secret": {"secretName": "firemud-grpc-tls"}},
+            {
+                "name": "jwt-signing-keys",
+                "secret": {"secretName": "jwt-signing-keys"},
+            },
+        ]
+        if include_telnet_tls:
+            mounts.append(
+                {
+                    "name": "telnet-tls",
+                    "mountPath": "/telnet-tls",
+                    "readOnly": True,
+                }
+            )
+            volumes.append(
+                {
+                    "name": "telnet-tls",
+                    "secret": {"secretName": "pr-42-telnet-tls"},
+                }
+            )
+        mounts.append(
+            {
+                "name": "gateway-ws-client-tls",
+                "mountPath": "/gateway-ws-client-tls",
+                "readOnly": True,
+            }
+        )
+        volumes.append(
+            {
+                "name": "gateway-ws-client-tls",
+                "secret": {
+                    "secretName": "pr-42-tcp-proxy-bridge",
+                    "items": [
+                        {"key": "tls.crt", "path": "tls.crt"},
+                        {"key": "tls.key", "path": "tls.key"},
+                        {"key": "ca.crt", "path": "ca.crt"},
+                    ],
+                },
+            }
+        )
+        return {
+            "kind": "Deployment",
+            "metadata": {"name": "tcp-proxy-service"},
+            "spec": {
+                "template": {
+                    "spec": {
+                        "serviceAccountName": "firemud-app",
+                        "containers": [
+                            {
+                                "name": "tcp-proxy-service",
+                                "volumeMounts": mounts,
+                            }
+                        ],
+                        "volumes": volumes,
+                    }
+                }
+            },
+        }
+
+    def test_hosted_controller_accepts_private_tcp_proxy_consumers(self):
+        with patch.object(self.validator, "SERVICE_IMAGES", {"tcp-proxy-service"}):
+            self.validator.validate_service_consumers(
+                [self._tcp_proxy_deployment(include_telnet_tls=False)],
+                "pr-42",
+                "hosted-controller",
+            )
+
+    def test_hosted_controller_rejects_public_telnet_consumer(self):
+        with (
+            patch.object(self.validator, "SERVICE_IMAGES", {"tcp-proxy-service"}),
+            self.assertRaisesRegex(
+                ValueError,
+                "Deployment/tcp-proxy-service has duplicate or unexpected identity consumers",
+            ),
+        ):
+            self.validator.validate_service_consumers(
+                [self._tcp_proxy_deployment(include_telnet_tls=True)],
+                "pr-42",
+                "hosted-controller",
+            )
+
+    def test_standalone_requires_public_telnet_consumer(self):
+        with patch.object(self.validator, "SERVICE_IMAGES", {"tcp-proxy-service"}):
+            self.validator.validate_service_consumers(
+                [self._tcp_proxy_deployment(include_telnet_tls=True)], "pr-42"
+            )
+
+
 class PreviewArtifactSecretReferenceTest(unittest.TestCase):
     validator = VALIDATOR
 

@@ -1086,9 +1086,14 @@ def validate_runtime_target(
         )
 
 
-def validate_service_consumers(documents: list[dict], expected_namespace: str) -> None:
+def validate_service_consumers(
+    documents: list[dict],
+    expected_namespace: str,
+    certificate_identity_mode: str = "standalone",
+) -> None:
     """Keep identity-managed TLS references limited to the chart consumers."""
 
+    _validate_certificate_identity_mode(certificate_identity_mode)
     deployments = {
         document.get("metadata", {}).get("name"): document
         for document in documents
@@ -1116,10 +1121,11 @@ def validate_service_consumers(documents: list[dict], expected_namespace: str) -
         if service == "account-service":
             expected_mounts["jwt-jwks"] = ("/var/run/secrets/firemud/jwks", "jwt-jwks")
         if service == "tcp-proxy-service":
-            expected_mounts["telnet-tls"] = (
-                "/telnet-tls",
-                f"{expected_namespace}-telnet-tls",
-            )
+            if certificate_identity_mode == "standalone":
+                expected_mounts["telnet-tls"] = (
+                    "/telnet-tls",
+                    f"{expected_namespace}-telnet-tls",
+                )
             expected_mounts["gateway-ws-client-tls"] = (
                 "/gateway-ws-client-tls",
                 f"{expected_namespace}-tcp-proxy-bridge",
@@ -1188,9 +1194,12 @@ def validate_service_consumers(documents: list[dict], expected_namespace: str) -
                         fail(f"Deployment/{service} has an unsafe {volume_name} projection")
 
 
-def validate_services(documents: list[dict]) -> None:
+def validate_services(
+    documents: list[dict], certificate_identity_mode: str = "standalone"
+) -> None:
     """Require the exact trusted preview Service specs."""
 
+    _validate_certificate_identity_mode(certificate_identity_mode)
     for document in documents:
         if document.get("kind") != "Service":
             continue
@@ -1199,6 +1208,11 @@ def validate_services(documents: list[dict]) -> None:
         expected_spec = EXPECTED_SERVICE_SPECS.get(name)
         if expected_spec is None:
             fail(f"Service/{name} is not an approved preview Service")
+        if (
+            name == "tcp-proxy-service"
+            and certificate_identity_mode == "hosted-controller"
+        ):
+            expected_spec = {**expected_spec, "type": "ClusterIP"}
         expected_type = expected_spec.get("type", "ClusterIP")
         if spec.get("type", "ClusterIP") != expected_type:
             fail(f"Service/{name} has an unsafe service type")
@@ -1556,10 +1570,12 @@ def validate_manifest(
         missing = sorted(expected_objects - seen)
         extra = sorted(seen - expected_objects)
         fail(f"manifest object set is not closed (missing={missing}, extra={extra})")
-    validate_services(documents)
+    validate_services(documents, certificate_identity_mode)
     validate_network_policies(documents, certificate_identity_mode)
     validate_infrastructure_deployments(documents)
-    validate_service_consumers(documents, expected_namespace)
+    validate_service_consumers(
+        documents, expected_namespace, certificate_identity_mode
+    )
 
 
 def validate_metadata(
