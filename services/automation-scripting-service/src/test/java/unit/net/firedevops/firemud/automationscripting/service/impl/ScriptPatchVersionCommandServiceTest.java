@@ -1,6 +1,8 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -34,6 +36,7 @@ class ScriptPatchVersionCommandServiceTest {
     scheduleInstanceService = mock(ScriptScheduleInstanceService.class);
     scriptEventIngressService = mock(ScriptEventIngressService.class);
     readinessProjectionService = mock(ScriptPatchReadinessProjectionService.class);
+    when(readinessProjectionService.beginPatchReadiness(any(), any(), anyInt())).thenReturn(true);
     service =
         new ScriptPatchVersionCommandService(
             repository,
@@ -86,5 +89,56 @@ class ScriptPatchVersionCommandServiceTest {
     org.assertj.core.api.Assertions.assertThat(request.getScriptId()).isEqualTo("npc-barkeep");
     org.assertj.core.api.Assertions.assertThat(request.getScriptEventId())
         .isEqualTo("onload:1:v1-script.1:npc-barkeep");
+  }
+
+  @Test
+  void notifyUpdateRejectsDuplicateScriptNamesBeforeReadinessAdmission() {
+    assertThatThrownBy(
+            () -> service.notifyUpdate("1", "v1-script.1", List.of("npc-barkeep", "npc-barkeep")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("exactly one definition per unique requested name");
+
+    verifyNoInteractions(
+        repository,
+        scheduleDefinitionService,
+        scheduleInstanceService,
+        scriptEventIngressService,
+        readinessProjectionService);
+  }
+
+  @Test
+  void notifyUpdateRejectsMissingDefinitionBeforeReadinessAdmission() {
+    when(repository.findByTenantIdAndScriptVersionAndNameIn(
+            1L, "v1-script.1", List.of("npc-barkeep")))
+        .thenReturn(List.of());
+
+    assertThatThrownBy(() -> service.notifyUpdate("1", "v1-script.1", List.of("npc-barkeep")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("exactly one definition per unique requested name");
+
+    verifyNoInteractions(
+        scheduleDefinitionService,
+        scheduleInstanceService,
+        scriptEventIngressService,
+        readinessProjectionService);
+  }
+
+  @Test
+  void notifyUpdateSkipsDownstreamWorkForExistingReadinessIdentity() {
+    ScriptDefinition def = new ScriptDefinition();
+    def.setTenantId(1L);
+    def.setName("npc-barkeep");
+    def.setDefinition("{}");
+    when(repository.findByTenantIdAndScriptVersionAndNameIn(
+            1L, "v1-script.1", List.of("npc-barkeep")))
+        .thenReturn(List.of(def));
+    when(readinessProjectionService.beginPatchReadiness("1", "v1-script.1", 1)).thenReturn(false);
+
+    org.assertj.core.api.Assertions.assertThat(
+            service.notifyUpdate("1", "v1-script.1", List.of("npc-barkeep")))
+        .isFalse();
+    verify(readinessProjectionService).beginPatchReadiness("1", "v1-script.1", 1);
+    verifyNoInteractions(
+        scheduleDefinitionService, scheduleInstanceService, scriptEventIngressService);
   }
 }
