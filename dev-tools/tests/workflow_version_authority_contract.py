@@ -1002,6 +1002,12 @@ def main() -> int:
         )
 
     ci_text = (workflows / "ci.yml").read_text()
+    if (
+        'echo "CHROME_PATH=$chrome_path"' not in ci_text
+        or '} >> "$GITHUB_ENV"' not in ci_text
+        or '--chrome-path "$CHROME_PATH"' not in ci_text
+    ):
+        fail("ci.yml axe audit must select the exact pinned Chrome for Testing binary")
     buf_curl_pattern = (
         r"(?m)^\s*curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \\\n"
         r"\s*--connect-timeout 10 --max-time 60 \\\n"

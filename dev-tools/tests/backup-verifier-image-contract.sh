@@ -144,8 +144,8 @@ if checkout.get("with") != {
 condition = job.get("if", "")
 for required in (
     "github.event_name != 'pull_request'",
-    "github.ref == 'refs/heads/main'",
-    "github.ref == 'refs/heads/develop'",
+    "needs.image-meta.outputs.head_branch == 'main'",
+    "needs.image-meta.outputs.head_branch == 'develop'",
 ):
     if required not in condition:
         raise SystemExit("Backup verifier publisher must remain default-branch-only")

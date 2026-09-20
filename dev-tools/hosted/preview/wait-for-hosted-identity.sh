@@ -96,7 +96,7 @@ read_kubectl_json() {
   exit "$kubectl_status"
 }
 
-# shellcheck disable=SC2317 # ShellCheck does not follow EXIT trap callbacks.
+# shellcheck disable=SC2317,SC2329 # ShellCheck does not follow EXIT trap callbacks.
 cleanup_kubectl_error_file() {
   rm -f -- "$kubectl_error_file"
 }

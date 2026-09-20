@@ -183,6 +183,14 @@ PY
 assert_branch_publication_contract \
   "$ROOT_DIR/.github/workflows/runtime-images.yml" \
   "$ROOT_DIR/.github/workflows/docker-images.yml"
+grep -Fq 'const validFileEntries = changedFiles.every((file) =>' "$ROOT_DIR/.github/workflows/runtime-images.yml" || {
+  echo "PR runtime smoke detection must validate every changed-file entry" >&2
+  exit 1
+}
+grep -Fq '|| !validFileEntries' "$ROOT_DIR/.github/workflows/runtime-images.yml" || {
+  echo "malformed changed-file entries must require both PR smoke scopes" >&2
+  exit 1
+}
 
 grep -Fq '.github/workflows/runtime-images.yml' "$base_image_waiter" || {
   echo "base-image waiter must derive services from runtime-images.yml" >&2

@@ -893,8 +893,11 @@ jobs:
           ln -s "$chrome_path" "$chrome_bin_dir/google-chrome"
           export PATH="$chrome_bin_dir:$PATH"
           echo "$chrome_bin_dir" >> "$GITHUB_PATH"
-          echo "CHROMEDRIVER_PATH=$chromedriver_path" >> "$GITHUB_ENV"
-          echo "CHROME_BIN_DIR=$chrome_bin_dir" >> "$GITHUB_ENV"
+          {
+            echo "CHROMEDRIVER_PATH=$chromedriver_path"
+            echo "CHROME_PATH=$chrome_path"
+            echo "CHROME_BIN_DIR=$chrome_bin_dir"
+          } >> "$GITHUB_ENV"
           [[ "$(command -v google-chrome)" == "$chrome_bin_dir/google-chrome" ]] || { echo "Pinned Chrome wrapper was not selected" >&2; exit 1; }
           [[ "$(google-chrome --product-version)" == "$CHROME_FOR_TESTING_VERSION" ]] || { echo "Pinned Chrome version mismatch" >&2; exit 1; }
           [[ "$("$chromedriver_path" --version | awk '{print $2}')" == "$CHROMEDRIVER_VERSION" ]] || { echo "Pinned ChromeDriver version mismatch" >&2; exit 1; }
@@ -908,7 +911,8 @@ jobs:
           trap 'kill $SERVER_PID' EXIT
           npx wait-on http://localhost:5000/index.html
           [[ "$(command -v google-chrome)" == "$CHROME_BIN_DIR/google-chrome" ]]
-          npx axe http://localhost:5000/index.html --chromedriver-path "$CHROMEDRIVER_PATH" --chrome-options="--no-sandbox" --exit
+          [[ "$("$CHROME_PATH" --product-version)" == "${{ steps.workflow-tool-versions.outputs.chrome-for-testing-version }}" ]]
+          npx axe http://localhost:5000/index.html --chromedriver-path "$CHROMEDRIVER_PATH" --chrome-path "$CHROME_PATH" --chrome-options="--no-sandbox" --exit
 
   # Gradle module validation matrix
   build-and-test:

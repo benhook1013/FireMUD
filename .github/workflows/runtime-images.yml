@@ -192,7 +192,14 @@ jobs:
                   (response) => response.data
                 );
                 const expectedFileCount = context.payload.pull_request.changed_files;
-                if (!Number.isInteger(expectedFileCount) || changedFiles.length !== expectedFileCount) {
+                const validFileEntries = changedFiles.every((file) =>
+                  file &&
+                  typeof file.filename === "string" &&
+                  file.filename.length > 0 &&
+                  (file.previous_filename === undefined ||
+                    (typeof file.previous_filename === "string" && file.previous_filename.length > 0))
+                );
+                if (!Number.isInteger(expectedFileCount) || changedFiles.length !== expectedFileCount || !validFileEntries) {
                   core.warning("PR smoke scope detection was incomplete; running both local smokes.");
                 } else {
                   const paths = changedFiles.flatMap((file) =>
