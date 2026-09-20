@@ -4,6 +4,7 @@ import static net.firedevops.firemud.accountservice.jooq.Tables.ACCOUNTS;
 import static net.firedevops.firemud.accountservice.jooq.Tables.EMAIL_VERIFICATION_TOKEN;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.time.LocalDateTime;
 import java.util.Optional;
 import net.firedevops.firemud.accountservice.entity.EmailVerificationToken;
 import org.jooq.DSLContext;
@@ -64,6 +65,44 @@ public class EmailVerificationTokenRepository {
     dsl.deleteFrom(EMAIL_VERIFICATION_TOKEN)
         .where(EMAIL_VERIFICATION_TOKEN.ACCOUNT_ID.eq(accountId))
         .execute();
+  }
+
+  /** Deletes at most {@code batchSize} expired rows in deterministic expiry/id order. */
+  public int deleteExpired(LocalDateTime capturedNow, int batchSize) {
+    validateCleanupArguments(capturedNow, batchSize);
+    return dsl.deleteFrom(EMAIL_VERIFICATION_TOKEN)
+        .where(
+            EMAIL_VERIFICATION_TOKEN.ID.in(
+                dsl.select(EMAIL_VERIFICATION_TOKEN.ID)
+                    .from(EMAIL_VERIFICATION_TOKEN)
+                    .where(EMAIL_VERIFICATION_TOKEN.EXPIRES_AT.lt(capturedNow))
+                    .orderBy(
+                        EMAIL_VERIFICATION_TOKEN.EXPIRES_AT.asc(),
+                        EMAIL_VERIFICATION_TOKEN.ID.asc())
+                    .limit(batchSize)))
+        .execute();
+  }
+
+  public Optional<LocalDateTime> findOldestExpiredAt(LocalDateTime capturedNow) {
+    if (capturedNow == null) {
+      throw new IllegalArgumentException("capturedNow must not be null");
+    }
+    return Optional.ofNullable(
+        dsl.select(EMAIL_VERIFICATION_TOKEN.EXPIRES_AT)
+            .from(EMAIL_VERIFICATION_TOKEN)
+            .where(EMAIL_VERIFICATION_TOKEN.EXPIRES_AT.lt(capturedNow))
+            .orderBy(EMAIL_VERIFICATION_TOKEN.EXPIRES_AT.asc(), EMAIL_VERIFICATION_TOKEN.ID.asc())
+            .limit(1)
+            .fetchOne(EMAIL_VERIFICATION_TOKEN.EXPIRES_AT));
+  }
+
+  private static void validateCleanupArguments(LocalDateTime capturedNow, int batchSize) {
+    if (capturedNow == null) {
+      throw new IllegalArgumentException("capturedNow must not be null");
+    }
+    if (batchSize <= 0) {
+      throw new IllegalArgumentException("batchSize must be positive");
+    }
   }
 
   private org.jooq.SelectOnConditionStep<? extends Record> baseSelect() {
