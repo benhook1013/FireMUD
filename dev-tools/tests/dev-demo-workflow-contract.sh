@@ -343,14 +343,23 @@ for bridge_run, label in (
 ):
     if bridge_run.count("python3 ./dev-tools/deploy/preflight.py hosted-bridge") != 1:
         raise SystemExit(f"dev-demo {label} hosted-bridge proof must invoke preflight exactly once")
-    if "--expected-hosted-telnet-node-port" in bridge_run:
+    if bridge_run.count("--expected-hosted-telnet-node-port") != 1:
         raise SystemExit(
-            f"dev-demo {label} hosted-bridge proof must not require the public Telnet NodePort"
+            f"dev-demo {label} hosted-bridge proof must require the public Telnet NodePort"
         )
-    if "needs.dev-demo-plan.outputs.telnet_port" in bridge_run or "TELNET_PORT" in bridge_run:
+    if bridge_run.count("needs.dev-demo-plan.outputs.telnet_port") != 1:
         raise SystemExit(
-            f"dev-demo {label} private hosted-bridge proof must not consume the public Telnet port"
+            f"dev-demo {label} hosted-bridge proof must consume the derived public Telnet port"
         )
+    if bridge_run.index("--expected-hosted-telnet-node-port") > bridge_run.index(
+        "needs.dev-demo-plan.outputs.telnet_port"
+    ):
+        raise SystemExit(
+            f"dev-demo {label} hosted-bridge proof must pass the expected port flag before its value"
+        )
+
+if 'if [[ "$CERTIFICATE_IDENTITY_MODE" == "hosted-controller" ]]; then' not in static_bridge_run:
+    raise SystemExit("dev-demo static hosted-bridge proof must remain gated on hosted-controller mode")
 
 runtime_rollout_condition = deploy_by_name["Wait for dev-demo runtime rollouts"].get("if", "")
 if "steps.certificate-identity.outputs.mode == 'hosted-controller'" not in runtime_rollout_condition:

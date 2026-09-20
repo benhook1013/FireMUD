@@ -314,7 +314,9 @@ jobs:
               python3 ./dev-tools/deploy/preflight.py hosted-bridge \
               /tmp/dev-demo-rendered.yaml \
               "${{ needs.dev-demo-plan.outputs.namespace }}" \
-              "${{ needs.dev-demo-plan.outputs.release_name }}"
+              "${{ needs.dev-demo-plan.outputs.release_name }}" \
+              --expected-hosted-telnet-node-port \
+              "${{ needs.dev-demo-plan.outputs.telnet_port }}"
           fi
           kubectl apply --dry-run=server -n "${{ needs.dev-demo-plan.outputs.namespace }}" -f /tmp/dev-demo-rendered.yaml
           wc -l /tmp/dev-demo-rendered.yaml
@@ -417,7 +419,9 @@ jobs:
           echo "DEV_DEMO_STAGE=operator-preflight" >> "$GITHUB_ENV"
           FIREMUD_PREFLIGHT_CONTEXT=operator \
             python3 ./dev-tools/deploy/preflight.py hosted-bridge \
-            "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$RELEASE_NAME"
+            "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$RELEASE_NAME" \
+            --expected-hosted-telnet-node-port \
+            "${{ needs.dev-demo-plan.outputs.telnet_port }}"
 
       - name: Export demo smoke defaults
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}

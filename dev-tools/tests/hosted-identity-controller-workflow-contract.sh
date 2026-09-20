@@ -2338,12 +2338,14 @@ preflight_command_start = dev_demo_preflight.index(
 assert preflight_start < preflight_command_start < preflight_end
 preflight_lines = [line.strip() for line in dev_demo_preflight.splitlines()]
 preflight_line_start = preflight_lines.index("FIREMUD_PREFLIGHT_CONTEXT=ci-static \\")
-assert preflight_lines[preflight_line_start : preflight_line_start + 5] == [
+assert preflight_lines[preflight_line_start : preflight_line_start + 7] == [
     "FIREMUD_PREFLIGHT_CONTEXT=ci-static \\",
     "python3 ./dev-tools/deploy/preflight.py hosted-bridge \\",
     "/tmp/dev-demo-rendered.yaml \\",
     '"${{ needs.dev-demo-plan.outputs.namespace }}" \\',
-    '"${{ needs.dev-demo-plan.outputs.release_name }}"',
+    '"${{ needs.dev-demo-plan.outputs.release_name }}" \\',
+    "--expected-hosted-telnet-node-port \\",
+    '"${{ needs.dev-demo-plan.outputs.telnet_port }}"',
 ]
 render_position = dev_demo_preflight.index(">/tmp/dev-demo-rendered.yaml")
 dry_run_position = dev_demo_preflight.index("kubectl apply --dry-run=server")
@@ -2361,7 +2363,8 @@ assert operator_step["if"] == (
 operator_run = operator_step["run"]
 assert "FIREMUD_PREFLIGHT_CONTEXT=operator" in operator_run
 assert "python3 ./dev-tools/deploy/preflight.py hosted-bridge" in operator_run
-assert '--expected-hosted-telnet-node-port' not in operator_run
+assert operator_run.count("--expected-hosted-telnet-node-port") == 1
+assert operator_run.count("needs.dev-demo-plan.outputs.telnet_port") == 1
 
 preview_plan_steps = preview_workflow["jobs"]["preview-plan"]["steps"]
 preview_plan_outputs = preview_workflow["jobs"]["preview-plan"]["outputs"]

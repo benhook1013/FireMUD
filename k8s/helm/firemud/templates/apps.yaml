@@ -1,10 +1,6 @@
 {{- if .Values.previewStack.enabled }}
 {{- $preview := $.Values.preview | default (dict) }}
-{{- $certificateIdentity := .Values.previewStack.certificateIdentity | default (dict) }}
-{{- $certificateIdentityMode := $certificateIdentity.mode | default "standalone" }}
-{{- if and (ne $certificateIdentityMode "standalone") (ne $certificateIdentityMode "hosted-controller") }}
-{{- fail "previewStack.certificateIdentity.mode must be standalone or hosted-controller" }}
-{{- end }}
+{{- $certificateIdentityMode := include "firemud.certificateIdentityMode" . | trim }}
 {{- $previewJwt := .Values.previewStack.jwt | default (dict) }}
 {{- $telnetTls := .Values.previewStack.telnetTls | default (dict) }}
 {{- $gatewayWsTls := .Values.previewStack.gatewayWsTls | default (dict) }}

@@ -579,9 +579,11 @@ if proxy_deployments[0]["spec"].get("strategy") != {"type": "Recreate"}:
     raise SystemExit("dev-demo TCP Proxy Deployment must use the Recreate strategy")
 PY
 
-for unsafe_override in \
-  "previewStack.services[${proxy_index}].ports[0].nodePort=32042" \
-  "previewStack.telnetTls.enabled=false previewStack.services[${proxy_index}].serviceType=NodePort"; do
+for unsafe_case in \
+  "previewStack.services[${proxy_index}].ports[0].nodePort=32042|tcp-proxy-service nodePort requires serviceType NodePort or LoadBalancer" \
+  "previewStack.telnetTls.enabled=false previewStack.services[${proxy_index}].serviceType=NodePort|tcp-proxy-service must remain ClusterIP while Telnet TLS is disabled"; do
+  unsafe_override=${unsafe_case%%|*}
+  expected_unsafe_error=${unsafe_case#*|}
   read -r -a unsafe_args <<<"$unsafe_override"
   set_args=()
   for arg in "${unsafe_args[@]}"; do
@@ -595,7 +597,7 @@ for unsafe_override in \
     echo "unsafe hosted TCP Proxy override unexpectedly rendered: $unsafe_override" >&2
     exit 1
   fi
-  if ! grep -q 'tcp-proxy-service' "$TMP_DIR/unsafe-error"; then
+  if ! grep -Fq "$expected_unsafe_error" "$TMP_DIR/unsafe-error"; then
     echo "unsafe hosted TCP Proxy override failed for an unexpected reason: $unsafe_override" >&2
     cat "$TMP_DIR/unsafe-error" >&2
     exit 1
