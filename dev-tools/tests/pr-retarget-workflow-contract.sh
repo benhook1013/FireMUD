@@ -461,6 +461,7 @@ require_contains "$preview_path" 'ref: ${{ github.event.repository.default_branc
 require_contains "$preview_path" "github.event_name == 'pull_request_target'"
 require_contains "$preview_path" "github.event_name == 'repository_dispatch'"
 require_contains "$preview_path" 'github.event.pull_request.head.repo.full_name == github.repository'
+require_contains "$preview_path" 'EVENT_BASE_REF: ${{ github.event.pull_request.base.ref }}'
 if grep -Fq 'github.event.pull_request.merge_commit_sha' "$preview_path"; then
   echo "Preview source must resolve a fresh REST test merge, not trust the event payload" >&2
   exit 1
@@ -468,6 +469,11 @@ fi
 require_contains "$preview_path" 'MERGE_RETRY_LIMIT=5'
 require_contains "$preview_path" 'Preview merge computation unavailable'
 require_contains "$preview_path" 'Stale preview head SHA'
+require_contains "$preview_path" 'Stale preview base branch'
+require_contains "$preview_path" 'git/ref/heads/${CURRENT_BASE_REF}'
+require_contains "$preview_path" 'commits/${MERGE_SHA}'
+require_contains "$preview_path" 'MERGE_PARENTS'
+require_contains "$preview_path" 'Preview merge provenance unavailable'
 assert_job_contains preview.yml preview-plan 'resolve-preview-image-tag.sh'
 assert_job_contains preview.yml preview-plan 'Expected the PR head or immutable base SHA.'
 assert_job_contains preview.yml preview-plan 'preview.firedevops.net'
@@ -507,6 +513,9 @@ require_contains "$trusted_preview_path" 'validate-preview-intent.py'
 require_contains "$trusted_preview_path" 'repository="$(jq -r'
 require_contains "$trusted_preview_path" '[[ "$repository" == "$GITHUB_REPOSITORY" ]]'
 require_contains "$trusted_preview_path" '[[ "$base_ref" == main || "$base_ref" == develop ]]'
+require_contains "$trusted_preview_path" 'git/ref/heads/${ref}'
+require_contains "$trusted_preview_path" 'commits/${merge_sha}'
+require_contains "$trusted_preview_path" 'has_exact_test_merge_parents'
 require_contains "$trusted_preview_path" 'labels_json="$(jq -c'
 require_contains "$trusted_preview_path" 'preview-eligibility.py'
 require_contains "$trusted_preview_path" '[[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]] || emit_no_action'

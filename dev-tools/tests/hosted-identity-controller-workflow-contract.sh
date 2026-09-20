@@ -2180,10 +2180,14 @@ assert preview_derive_run.count(
 assert "PULL_REQUEST_JSON=" in preview_derive_run
 assert ".head.sha" in preview_derive_run
 assert ".base.sha" in preview_derive_run
+assert ".base.ref" in preview_derive_run
+assert 'git/ref/heads/${CURRENT_BASE_REF}' in preview_derive_run
+assert 'commits/${MERGE_SHA}' in preview_derive_run
 assert ".mergeable" in preview_derive_run
 assert ".mergeable_state" in preview_derive_run
 assert "MERGE_RETRY_LIMIT=5" in preview_derive_run
-assert "Stale preview base SHA" in preview_derive_run
+assert "Stale preview base branch" in preview_derive_run
+assert "Preview merge provenance unavailable" in preview_derive_run
 assert "Preview merge conflict" in preview_derive_run
 assert "Preview merge computation unavailable" in preview_derive_run
 assert "EVENT_MERGE_SHA" not in preview_derive_step["env"]
@@ -2851,7 +2855,7 @@ for source, target in {
     "${{ github.event.action }}": "$EVENT_ACTION",
     "${{ github.event.pull_request.number }}": "$EVENT_PR_NUMBER",
     "${{ github.event.pull_request.head.sha }}": "$EVENT_HEAD_SHA",
-    "${{ github.event.pull_request.base.sha }}": "$EVENT_BASE_SHA",
+    "${{ github.event.pull_request.base.ref }}": "$EVENT_BASE_REF",
 }.items():
     body = body.replace(source, target)
 Path(sys.argv[2]).write_text(
@@ -2868,6 +2872,28 @@ set -euo pipefail
 [[ "$1" == api ]]
 if [[ "$2" == repos/example/FireMUD/pulls/901/files\?per_page=100 ]]; then
   printf '%s\n' "${PREVIEW_DERIVE_CHANGED_FILES:-docs/readme.md}"
+  exit 0
+fi
+if [[ $# -eq 2 && "$2" == repos/example/FireMUD/git/ref/heads/* ]]; then
+  printf '%s\n' "$*" >>"${PREVIEW_DERIVE_GH_LOG:?}"
+  jq -nc \
+    --arg ref "refs/heads/${2##*/}" \
+    --arg sha "${PREVIEW_DERIVE_AUTHORITATIVE_BASE_SHA:?}" \
+    '{ref:$ref,object:{type:"commit",sha:$sha}}'
+  exit 0
+fi
+if [[ $# -eq 2 && "$2" == repos/example/FireMUD/commits/* ]]; then
+  printf '%s\n' "$*" >>"${PREVIEW_DERIVE_GH_LOG:?}"
+  jq -nc \
+    --arg base "${PREVIEW_DERIVE_MERGE_PARENT_BASE:?}" \
+    --arg head "${PREVIEW_DERIVE_MERGE_PARENT_HEAD:?}" \
+    'if env.PREVIEW_DERIVE_MERGE_PARENT_SHAPE == "one" then
+       {parents:[{sha:$base}]}
+     elif env.PREVIEW_DERIVE_MERGE_PARENT_SHAPE == "reverse" then
+       {parents:[{sha:$head},{sha:$base}]}
+     else
+       {parents:[{sha:$base},{sha:$head}]}
+     end'
   exit 0
 fi
 [[ $# -eq 2 && "$2" == repos/example/FireMUD/pulls/* ]]
@@ -2889,7 +2915,7 @@ preview_derive_base_upper=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
 preview_derive_base_lower=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 preview_derive_merge_upper=CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
 preview_derive_merge_lower=cccccccccccccccccccccccccccccccccccccccc
-preview_derive_pr_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"sha\":\"$preview_derive_base_upper\"},\"mergeable\":true,\"mergeable_state\":\"clean\",\"merge_commit_sha\":\"$preview_derive_merge_upper\"}"
+preview_derive_pr_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"ref\":\"develop\",\"sha\":\"$preview_derive_base_upper\"},\"mergeable\":true,\"mergeable_state\":\"clean\",\"merge_commit_sha\":\"$preview_derive_merge_upper\"}"
 run_preview_derive_dispatch() {
   local input_pr_number="$1"
   local input_head_sha="$2"
@@ -2917,6 +2943,10 @@ run_preview_derive_dispatch() {
     GITHUB_SHA="$preview_derive_head_lower" \
     PREVIEW_DERIVE_CHANGED_FILES="${PREVIEW_DERIVE_CHANGED_FILES:-docs/readme.md}" \
     PREVIEW_DERIVE_PR_JSON="${PREVIEW_DERIVE_PR_JSON:-$preview_derive_pr_json}" \
+    PREVIEW_DERIVE_AUTHORITATIVE_BASE_SHA="${PREVIEW_DERIVE_AUTHORITATIVE_BASE_SHA:-$preview_derive_base_lower}" \
+    PREVIEW_DERIVE_MERGE_PARENT_BASE="${PREVIEW_DERIVE_MERGE_PARENT_BASE:-$preview_derive_base_lower}" \
+    PREVIEW_DERIVE_MERGE_PARENT_HEAD="${PREVIEW_DERIVE_MERGE_PARENT_HEAD:-$preview_derive_head_lower}" \
+    PREVIEW_DERIVE_MERGE_PARENT_SHAPE="${PREVIEW_DERIVE_MERGE_PARENT_SHAPE:-two}" \
     PREVIEW_DERIVE_PR_JSON_1="${PREVIEW_DERIVE_PR_JSON_1:-}" \
     PREVIEW_DERIVE_PR_JSON_2="${PREVIEW_DERIVE_PR_JSON_2:-}" \
     PREVIEW_DERIVE_PR_JSON_3="${PREVIEW_DERIVE_PR_JSON_3:-}" \
@@ -2943,8 +2973,10 @@ grep -Fxq "head_sha=$preview_derive_head_lower" "$preview_derive_output"
 grep -Fxq "image_tag=$preview_derive_base_lower" "$preview_derive_output"
 grep -Fxq "base_sha=$preview_derive_base_lower" "$preview_derive_output"
 grep -Fxq "merge_sha=$preview_derive_merge_lower" "$preview_derive_output"
-test "$(wc -l <"${preview_derive_output}.gh.log")" -eq 1
+test "$(wc -l <"${preview_derive_output}.gh.log")" -eq 3
 grep -Fxq 'api repos/example/FireMUD/pulls/901' "${preview_derive_output}.gh.log"
+grep -Fxq 'api repos/example/FireMUD/git/ref/heads/develop' "${preview_derive_output}.gh.log"
+grep -Fxq 'api repos/example/FireMUD/commits/'"$preview_derive_merge_lower" "${preview_derive_output}.gh.log"
 
 preview_derive_runtime_output="$TEMP_DIR/preview-derive-runtime.output"
 PREVIEW_DERIVE_CHANGED_FILES='.github/workflows/runtime-images.yml' run_preview_derive_dispatch \
@@ -2968,17 +3000,17 @@ run_preview_derive_dispatch \
   "$TEMP_DIR/preview-derive-snapshot.error"
 grep -Fxq "head_sha=$preview_derive_head_lower" "$preview_derive_snapshot_output"
 grep -Fxq "base_sha=$preview_derive_base_lower" "$preview_derive_snapshot_output"
-test "$(wc -l <"${preview_derive_snapshot_output}.gh.log")" -eq 1
+test "$(wc -l <"${preview_derive_snapshot_output}.gh.log")" -eq 3
 
 for invalid_snapshot_case in missing-head malformed-base; do
   invalid_snapshot_output="$TEMP_DIR/preview-derive-${invalid_snapshot_case}.output"
   case "$invalid_snapshot_case" in
     missing-head)
       invalid_snapshot_json="{\"head\":{\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"sha\":\"$preview_derive_base_upper\"}}"
-      expected_snapshot_error='::error title=Invalid pull request metadata::Expected string current head and base SHAs.'
+      expected_snapshot_error='::error title=Invalid pull request metadata::Expected string current head SHA, base branch, and base SHA.'
       ;;
     malformed-base)
-      invalid_snapshot_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"sha\":\"not-a-sha\"},\"mergeable\":true,\"mergeable_state\":\"clean\",\"merge_commit_sha\":\"$preview_derive_merge_upper\"}"
+      invalid_snapshot_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"ref\":\"develop\",\"sha\":\"not-a-sha\"},\"mergeable\":true,\"mergeable_state\":\"clean\",\"merge_commit_sha\":\"$preview_derive_merge_upper\"}"
       expected_snapshot_error='::error title=Invalid pull request metadata::Expected 40-character hexadecimal current head and base SHAs.'
       ;;
   esac
@@ -3027,7 +3059,7 @@ run_preview_derive_dispatch \
   "$TEMP_DIR/preview-derive-default.error"
 grep -Fxq "image_tag=${preview_derive_base_lower}" "$preview_derive_default_output"
 
-preview_derive_pending_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"sha\":\"$preview_derive_base_upper\"},\"mergeable\":null,\"mergeable_state\":\"unknown\"}"
+preview_derive_pending_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"ref\":\"develop\",\"sha\":\"$preview_derive_base_upper\"},\"mergeable\":null,\"mergeable_state\":\"unknown\"}"
 preview_derive_pending_output="$TEMP_DIR/preview-derive-pending.output"
 PREVIEW_MERGE_RETRY_DELAY_SECONDS=0 \
 PREVIEW_DERIVE_PR_JSON_1="$preview_derive_pending_json" \
@@ -3043,7 +3075,7 @@ run_preview_derive_dispatch \
 grep -Fxq "merge_sha=${preview_derive_merge_lower}" "$preview_derive_pending_output"
 test "$(<"${preview_derive_pending_output}.calls")" -eq 2
 
-preview_derive_conflict_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"sha\":\"$preview_derive_base_upper\"},\"mergeable\":false,\"mergeable_state\":\"dirty\"}"
+preview_derive_conflict_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"ref\":\"develop\",\"sha\":\"$preview_derive_base_upper\"},\"mergeable\":false,\"mergeable_state\":\"dirty\"}"
 preview_derive_conflict_output="$TEMP_DIR/preview-derive-conflict.output"
 if PREVIEW_DERIVE_PR_JSON_1="$preview_derive_conflict_json" run_preview_derive_dispatch \
   901 \
@@ -3097,6 +3129,7 @@ run_preview_derive_target() {
     EVENT_ACTION=synchronize \
     EVENT_PR_NUMBER=901 \
     EVENT_HEAD_SHA="$input_head_sha" \
+    EVENT_BASE_REF=develop \
     EVENT_BASE_SHA="$input_base_sha" \
     CLIENT_PR_NUMBER='' \
     CLIENT_HEAD_SHA='' \
@@ -3105,7 +3138,11 @@ run_preview_derive_target() {
     GITHUB_REPOSITORY=example/FireMUD \
     GH_TOKEN=fake \
     GITHUB_SHA="$preview_derive_head_lower" \
-    PREVIEW_DERIVE_PR_JSON="$preview_derive_pr_json" \
+    PREVIEW_DERIVE_PR_JSON="${PREVIEW_DERIVE_PR_JSON:-$preview_derive_pr_json}" \
+    PREVIEW_DERIVE_AUTHORITATIVE_BASE_SHA="${PREVIEW_DERIVE_AUTHORITATIVE_BASE_SHA:-$preview_derive_base_lower}" \
+    PREVIEW_DERIVE_MERGE_PARENT_BASE="${PREVIEW_DERIVE_MERGE_PARENT_BASE:-$preview_derive_base_lower}" \
+    PREVIEW_DERIVE_MERGE_PARENT_HEAD="${PREVIEW_DERIVE_MERGE_PARENT_HEAD:-$preview_derive_head_lower}" \
+    PREVIEW_DERIVE_MERGE_PARENT_SHAPE="${PREVIEW_DERIVE_MERGE_PARENT_SHAPE:-two}" \
     PREVIEW_DERIVE_PR_JSON_1='' \
     PREVIEW_DERIVE_PR_JSON_2='' \
     PREVIEW_DERIVE_PR_JSON_3='' \
@@ -3132,17 +3169,123 @@ grep -Fxq \
   "$TEMP_DIR/preview-derive-stale-head.error"
 
 preview_derive_stale_base_output="$TEMP_DIR/preview-derive-stale-base.output"
-if run_preview_derive_target \
+run_preview_derive_target \
   "$preview_derive_head_lower" \
   "$preview_derive_head_lower" \
   "$preview_derive_stale_base_output" \
-  "$TEMP_DIR/preview-derive-stale-base.error"; then
-  echo "preview plan accepted a stale pull_request_target base SHA" >&2
+  "$TEMP_DIR/preview-derive-stale-base.error"
+grep -Fxq "base_sha=$preview_derive_base_lower" "$preview_derive_stale_base_output"
+grep -Fxq "image_tag=$preview_derive_base_lower" "$preview_derive_stale_base_output"
+
+preview_derive_stale_rest_output="$TEMP_DIR/preview-derive-stale-rest.output"
+stale_rest_pr_json="${preview_derive_pr_json/$preview_derive_base_upper/DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD}"
+PREVIEW_DERIVE_PR_JSON="$stale_rest_pr_json" \
+  run_preview_derive_dispatch \
+    901 \
+    "$preview_derive_head_lower" \
+    deploy \
+    '' \
+    preview.firedevops.net \
+    "$preview_derive_stale_rest_output" \
+    "$TEMP_DIR/preview-derive-stale-rest.error"
+grep -Fxq "base_sha=$preview_derive_base_lower" "$preview_derive_stale_rest_output"
+grep -Fxq "image_tag=$preview_derive_base_lower" "$preview_derive_stale_rest_output"
+
+preview_derive_branch_advance_output="$TEMP_DIR/preview-derive-branch-advance.output"
+if PREVIEW_MERGE_RETRY_DELAY_SECONDS=0 \
+  PREVIEW_DERIVE_AUTHORITATIVE_BASE_SHA=dddddddddddddddddddddddddddddddddddddddd \
+  run_preview_derive_dispatch \
+    901 \
+    "$preview_derive_head_lower" \
+    deploy \
+    '' \
+    preview.firedevops.net \
+    "$preview_derive_branch_advance_output" \
+    "$TEMP_DIR/preview-derive-branch-advance.error"; then
+  echo "preview plan accepted a branch advance without an aligned test merge" >&2
   exit 1
 fi
 grep -Fxq \
-  '::error title=Stale preview base SHA::Supplied base SHA does not equal the current pull request base.' \
-  "$TEMP_DIR/preview-derive-stale-base.error"
+  '::error title=Preview merge provenance unavailable::The generated test merge parents are not exactly the authoritative base branch and current head.' \
+  "$TEMP_DIR/preview-derive-branch-advance.error"
+
+for invalid_merge_case in wrong-parent wrong-head; do
+  invalid_merge_output="$TEMP_DIR/preview-derive-${invalid_merge_case}.output"
+  invalid_merge_error="$TEMP_DIR/preview-derive-${invalid_merge_case}.error"
+  merge_parent_base="$preview_derive_base_lower"
+  merge_parent_head="$preview_derive_head_lower"
+  if [[ "$invalid_merge_case" == wrong-parent ]]; then
+    merge_parent_base=dddddddddddddddddddddddddddddddddddddddd
+  else
+    merge_parent_head=dddddddddddddddddddddddddddddddddddddddd
+  fi
+  if PREVIEW_MERGE_RETRY_DELAY_SECONDS=0 \
+    PREVIEW_DERIVE_MERGE_PARENT_BASE="$merge_parent_base" \
+    PREVIEW_DERIVE_MERGE_PARENT_HEAD="$merge_parent_head" \
+    run_preview_derive_dispatch \
+      901 \
+      "$preview_derive_head_lower" \
+      deploy \
+      '' \
+      preview.firedevops.net \
+      "$invalid_merge_output" \
+      "$invalid_merge_error"; then
+    echo "preview plan accepted ${invalid_merge_case} test-merge parents" >&2
+    exit 1
+  fi
+  grep -Fxq \
+    '::error title=Preview merge provenance unavailable::The generated test merge parents are not exactly the authoritative base branch and current head.' \
+    "$invalid_merge_error"
+done
+
+for invalid_merge_shape in wrong-order malformed-count; do
+  invalid_merge_output="$TEMP_DIR/preview-derive-${invalid_merge_shape}.output"
+  invalid_merge_error="$TEMP_DIR/preview-derive-${invalid_merge_shape}.error"
+  merge_parent_base="$preview_derive_base_lower"
+  merge_parent_head="$preview_derive_head_lower"
+  merge_parent_shape=two
+  expected_merge_shape_error='::error title=Preview merge provenance unavailable::The generated test merge parents are not exactly the authoritative base branch and current head.'
+  if [[ "$invalid_merge_shape" == wrong-order ]]; then
+    merge_parent_base="$preview_derive_head_lower"
+    merge_parent_head="$preview_derive_base_lower"
+  else
+    merge_parent_shape=one
+    expected_merge_shape_error='::error title=Preview merge provenance unavailable::The generated test merge did not expose exactly two canonical parents after 5 attempts.'
+  fi
+  if PREVIEW_MERGE_RETRY_DELAY_SECONDS=0 \
+    PREVIEW_DERIVE_MERGE_PARENT_BASE="$merge_parent_base" \
+    PREVIEW_DERIVE_MERGE_PARENT_HEAD="$merge_parent_head" \
+    PREVIEW_DERIVE_MERGE_PARENT_SHAPE="$merge_parent_shape" \
+    run_preview_derive_dispatch \
+      901 \
+      "$preview_derive_head_lower" \
+      deploy \
+      '' \
+      preview.firedevops.net \
+      "$invalid_merge_output" \
+      "$invalid_merge_error"; then
+    echo "preview plan accepted ${invalid_merge_shape} test-merge parent shape" >&2
+    exit 1
+  fi
+  grep -Fxq \
+    "$expected_merge_shape_error" \
+    "$invalid_merge_error"
+done
+
+preview_derive_retarget_output="$TEMP_DIR/preview-derive-retarget.output"
+retarget_pr_json="${preview_derive_pr_json/develop/main}"
+if EVENT_BASE_REF=develop PREVIEW_DERIVE_PR_JSON="$retarget_pr_json" \
+  run_preview_derive_target \
+    "$preview_derive_head_lower" \
+    "$preview_derive_base_lower" \
+    "$preview_derive_retarget_output" \
+    "$TEMP_DIR/preview-derive-retarget.error"; then
+  echo "preview plan accepted a retargeted pull_request_target base branch" >&2
+  exit 1
+fi
+grep -Fxq \
+  '::error title=Stale preview base branch::Supplied base branch does not equal the current pull request base branch.' \
+  "$TEMP_DIR/preview-derive-retarget.error"
 
 hostile_dispatch_marker="$TEMP_DIR/hostile-dispatch-executed"
 hostile_dispatch_payload="\"; printf injected >\"$hostile_dispatch_marker\"; #"
@@ -4477,7 +4620,7 @@ mkdir -p "$apply_stub_dir"
 cat >"$apply_stub_dir/gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ $# -eq 2 && "$1" == api && "$2" == "repos/example/FireMUD/pulls/42" ]]
+[[ $# -eq 2 && "$1" == api ]]
 count=0
 if [[ -f "${TEST_GH_COUNT:?}" ]]; then
   count="$(<"$TEST_GH_COUNT")"
@@ -4491,6 +4634,9 @@ head_sha="${TEST_EXPECTED_HEAD:?}"
 repository_name=example/FireMUD
 base_sha="${TEST_EXPECTED_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
 merge_sha="${TEST_EXPECTED_MERGE_SHA:-cccccccccccccccccccccccccccccccccccccccc}"
+authoritative_base_sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+merge_parent_base="$authoritative_base_sha"
+merge_parent_head="$head_sha"
 case "${TEST_APPLY_SCENARIO:?}" in
   success)
     ;;
@@ -4498,12 +4644,12 @@ case "${TEST_APPLY_SCENARIO:?}" in
     state=closed
     ;;
   closed-second)
-    if (( count == 2 )); then
+    if (( count == 4 )); then
       state=closed
     fi
     ;;
   stale-second)
-    if (( count == 2 )); then
+    if (( count == 5 )); then
       head_sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
     fi
     ;;
@@ -4512,6 +4658,16 @@ case "${TEST_APPLY_SCENARIO:?}" in
     ;;
   wrong-base)
     base_sha=dddddddddddddddddddddddddddddddddddddddd
+    authoritative_base_sha=dddddddddddddddddddddddddddddddddddddddd
+    ;;
+  stale-rest)
+    base_sha=dddddddddddddddddddddddddddddddddddddddd
+    ;;
+  wrong-parent)
+    merge_parent_base=dddddddddddddddddddddddddddddddddddddddd
+    ;;
+  wrong-head)
+    merge_parent_head=dddddddddddddddddddddddddddddddddddddddd
     ;;
   wrong-merge)
     merge_sha=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
@@ -4520,6 +4676,20 @@ case "${TEST_APPLY_SCENARIO:?}" in
     exit 2
     ;;
 esac
+if [[ "$2" == repos/example/FireMUD/git/ref/heads/develop ]]; then
+  jq -nc \
+    --arg sha "$authoritative_base_sha" \
+    '{ref:"refs/heads/develop",object:{type:"commit",sha:$sha}}'
+  exit 0
+fi
+if [[ "$2" == repos/example/FireMUD/commits/* ]]; then
+  jq -nc \
+    --arg base "$merge_parent_base" \
+    --arg head "$merge_parent_head" \
+    '{parents:[{sha:$base},{sha:$head}]}'
+  exit 0
+fi
+[[ "$2" == "repos/example/FireMUD/pulls/42" ]]
 jq -nc \
   --arg state "$state" \
   --arg head "$head_sha" \
@@ -4620,22 +4790,41 @@ run_apply_fixture closed-first \
   "gh-1" \
   "Preview source binding changed"
 run_apply_fixture closed-second \
-  "gh-1 gh-2" \
+  "gh-1 gh-2 gh-3 gh-4" \
   "pull request is not open"
 run_apply_fixture stale-second \
-  "gh-1 gh-2" \
-  "head is stale"
+  "gh-1 gh-2 gh-3 gh-4 dry-run gh-5" \
+  "current PR head, state, or repository"
 run_apply_fixture wrong-repository \
   "gh-1" \
   "Preview source binding changed"
 run_apply_fixture wrong-base \
-  "gh-1" \
+  "gh-1 gh-2" \
   "Preview source binding changed"
 run_apply_fixture wrong-merge \
-  "gh-1" \
+  "gh-1 gh-2" \
   "Preview source binding changed"
 run_apply_fixture success \
-  "gh-1 gh-2 dry-run gh-3 gh-4 apply deployed-head=firemud.dev/last-preview-head-sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  "gh-1 gh-2 gh-3 gh-4 dry-run gh-5 gh-6 gh-7 gh-8 apply deployed-head=firemud.dev/last-preview-head-sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+stale_rest_source_log="$TEMP_DIR/stale-rest-source.log"
+: >"$stale_rest_source_log"
+env \
+  PATH="$apply_stub_dir:$PATH" \
+  GH_TOKEN=fake \
+  GITHUB_REPOSITORY=example/FireMUD \
+  TEST_APPLY_SCENARIO=stale-rest \
+  TEST_EXPECTED_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  TEST_EXPECTED_BASE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+  TEST_EXPECTED_MERGE_SHA=cccccccccccccccccccccccccccccccccccccccc \
+  TEST_GH_COUNT="$TEMP_DIR/stale-rest-source.gh-count" \
+  TEST_APPLY_LOG="$stale_rest_source_log" \
+  bash "$ROOT_DIR/dev-tools/hosted/preview/revalidate-preview-source-binding.sh" \
+    42 \
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+    cccccccccccccccccccccccccccccccccccccccc
+test "$(paste -sd ' ' "$stale_rest_source_log")" = "gh-1 gh-2 gh-3"
 
 stage_error="$TEMP_DIR/source-binding-stage.error"
 set +e
@@ -5517,8 +5706,9 @@ case "$resource" in
       --arg head "${TEST_PR_HEAD_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
       --arg repository "${TEST_PR_HEAD_REPOSITORY:-example/FireMUD}" \
       --arg base_ref "${TEST_PR_BASE_REF:-develop}" \
+      --arg base_sha "${TEST_PR_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
       --argjson labels "${TEST_PR_LABELS_JSON:-[]}" \
-      '{state:$state,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",labels:$labels}'
+      '{state:$state,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:$base_sha},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",labels:$labels}'
     ;;
   repos/example/FireMUD/actions/runs/42/artifacts\?per_page=100)
     if [[ -n "${FAKE_ARTIFACTS_JSON:-}" ]]; then
@@ -5526,6 +5716,30 @@ case "$resource" in
     else
       printf '%s' '[{"artifacts":[]}]'
     fi
+    ;;
+  repos/example/FireMUD/git/ref/heads/*)
+    if [[ -n "${TARGET_GH_LOG:-}" ]]; then
+      printf '%s\n' "$*" >>"$TARGET_GH_LOG"
+    fi
+    jq -nc \
+      --arg ref "refs/heads/${resource##*/}" \
+      --arg sha "${TEST_AUTHORITATIVE_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
+      '{ref:$ref,object:{type:"commit",sha:$sha}}'
+    ;;
+  repos/example/FireMUD/commits/*)
+    if [[ -n "${TARGET_GH_LOG:-}" ]]; then
+      printf '%s\n' "$*" >>"$TARGET_GH_LOG"
+    fi
+    jq -nc \
+      --arg base "${TEST_MERGE_PARENT_BASE:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
+      --arg head "${TEST_MERGE_PARENT_HEAD:-${TEST_PR_HEAD_SHA:-cccccccccccccccccccccccccccccccccccccccc}}" \
+      'if env.TEST_MERGE_PARENT_SHAPE == "one" then
+         {parents:[{sha:$base}]}
+       elif env.TEST_MERGE_PARENT_SHAPE == "reverse" then
+         {parents:[{sha:$head},{sha:$base}]}
+       else
+         {parents:[{sha:$base},{sha:$head}]}
+       end'
     ;;
   repos/example/FireMUD/pulls/900/files\?per_page=100)
     printf '%s' '[]'
@@ -5591,9 +5805,11 @@ run_deploy_target_fixture() {
   local output="$TEMP_DIR/deploy-target-${scenario}.output"
   local stdout="$TEMP_DIR/deploy-target-${scenario}.stdout"
   local stderr="$TEMP_DIR/deploy-target-${scenario}.stderr"
+  local target_gh_log="$TEMP_DIR/deploy-target-${scenario}.target-gh.log"
   local status
 
   : >"$output"
+  : >"$target_gh_log"
   set +e
   (
     cd "$ROOT_DIR"
@@ -5609,12 +5825,18 @@ run_deploy_target_fixture() {
       DEFAULT_BRANCH=develop \
       ARTIFACT_DIRECTORY="$TEMP_DIR/deploy-target-${scenario}-artifact" \
       SOURCE_GH_LOG="$TEMP_DIR/deploy-target-${scenario}.gh.log" \
+      TARGET_GH_LOG="$target_gh_log" \
       GITHUB_OUTPUT="$output" \
       FAKE_WORKFLOW_RUN_JSON="${FAKE_FIXTURE_WORKFLOW_RUN_JSON:-$valid_workflow_run_json}" \
       FAKE_ARTIFACTS_JSON="${FAKE_FIXTURE_ARTIFACTS_JSON:-$valid_artifacts_json}" \
       FAKE_ARTIFACT_FILES="${FAKE_FIXTURE_ARTIFACT_FILES:-valid}" \
       FAKE_METADATA_BASE_SHA="${FAKE_FIXTURE_METADATA_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
       FAKE_METADATA_MERGE_SHA="${FAKE_FIXTURE_METADATA_MERGE_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
+      TEST_PR_BASE_SHA="${FAKE_FIXTURE_PR_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
+      TEST_AUTHORITATIVE_BASE_SHA="${FAKE_FIXTURE_AUTHORITATIVE_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
+      TEST_MERGE_PARENT_BASE="${FAKE_FIXTURE_MERGE_PARENT_BASE:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
+      TEST_MERGE_PARENT_HEAD="${FAKE_FIXTURE_MERGE_PARENT_HEAD:-cccccccccccccccccccccccccccccccccccccccc}" \
+      TEST_MERGE_PARENT_SHAPE="${FAKE_FIXTURE_MERGE_PARENT_SHAPE:-two}" \
       TEST_PR_LABELS_JSON="${FAKE_FIXTURE_PR_LABELS_JSON:-[]}" \
       VALID_RENDER_MANIFEST="$target_rendered_manifest" \
       bash "$TEMP_DIR/target.sh"
@@ -5635,6 +5857,28 @@ run_deploy_target_fixture() {
 
 run_deploy_target_fixture valid 0 'action=deploy'
 grep -Fxq "artifact_name=${canonical_artifact_name}" "$TEMP_DIR/deploy-target-valid.output"
+test "$(cat "$TEMP_DIR/deploy-target-valid.target-gh.log")" = $'api repos/example/FireMUD/git/ref/heads/develop\napi repos/example/FireMUD/commits/cccccccccccccccccccccccccccccccccccccccc'
+
+FAKE_FIXTURE_PR_BASE_SHA=dddddddddddddddddddddddddddddddddddddddd \
+  run_deploy_target_fixture stale-rest-base 0 'action=deploy'
+grep -Fxq "action=deploy" "$TEMP_DIR/deploy-target-stale-rest-base.output"
+test "$(cat "$TEMP_DIR/deploy-target-stale-rest-base.target-gh.log")" = $'api repos/example/FireMUD/git/ref/heads/develop\napi repos/example/FireMUD/commits/cccccccccccccccccccccccccccccccccccccccc'
+
+FAKE_FIXTURE_AUTHORITATIVE_BASE_SHA=dddddddddddddddddddddddddddddddddddddddd \
+  run_deploy_target_fixture wrong-authoritative-base 0 \
+    'Ignoring source render whose generated test merge is not bound to the authoritative base and current head.'
+FAKE_FIXTURE_MERGE_PARENT_BASE=dddddddddddddddddddddddddddddddddddddddd \
+  run_deploy_target_fixture wrong-merge-parent 0 \
+    'Ignoring source render whose generated test merge is not bound to the authoritative base and current head.'
+FAKE_FIXTURE_MERGE_PARENT_HEAD=dddddddddddddddddddddddddddddddddddddddd \
+  run_deploy_target_fixture wrong-merge-head 0 \
+    'Ignoring source render whose generated test merge is not bound to the authoritative base and current head.'
+FAKE_FIXTURE_MERGE_PARENT_SHAPE=reverse \
+  run_deploy_target_fixture wrong-merge-order 0 \
+    'Ignoring source render whose generated test merge is not bound to the authoritative base and current head.'
+FAKE_FIXTURE_MERGE_PARENT_SHAPE=one \
+  run_deploy_target_fixture malformed-merge-parents 0 \
+    'Ignoring source render whose generated test merge is not bound to the authoritative base and current head.'
 
 # workflow_run.head_sha identifies the source/default-branch workflow run here,
 # while the PR head remains bound by the current PR and artifact metadata.
@@ -5672,7 +5916,10 @@ FAKE_FIXTURE_WORKFLOW_RUN_JSON='{"conclusion":"success","head_sha":"cccccccccccc
     'Ignoring source run with unsupported event push.'
 unset FAKE_FIXTURE_ARTIFACTS_JSON FAKE_FIXTURE_ARTIFACT_FILES \
   FAKE_FIXTURE_METADATA_BASE_SHA FAKE_FIXTURE_METADATA_MERGE_SHA \
-  FAKE_FIXTURE_PR_LABELS_JSON FAKE_FIXTURE_WORKFLOW_RUN_JSON
+  FAKE_FIXTURE_PR_LABELS_JSON FAKE_FIXTURE_WORKFLOW_RUN_JSON \
+  FAKE_FIXTURE_PR_BASE_SHA FAKE_FIXTURE_AUTHORITATIVE_BASE_SHA \
+  FAKE_FIXTURE_MERGE_PARENT_BASE FAKE_FIXTURE_MERGE_PARENT_HEAD \
+  FAKE_FIXTURE_MERGE_PARENT_SHAPE
 
 run_target_without_pull_request_metadata() {
   local scenario="$1"

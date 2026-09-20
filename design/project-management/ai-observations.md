@@ -59,3 +59,8 @@ Entry format:
   - Context: preview deployment secrets were available to a branch-selectable workflow on a persistent self-hosted runner; new workflow code routes privileged jobs through the default branch.
   - Observation: an existing PR branch can retain its old workflow revision after the corrected default-branch workflow merges, and an unrestricted GitHub environment can still release secrets to that old revision.
   - Expected pattern: alongside the code change, restrict privileged GitHub environments to the trusted deployment branch and clear or rotate credentials exposed by old runner state; verify the live environment policies before declaring the trust boundary effective.
+
+- `2026-09-20`: Preview provenance must bind the live base ref to the generated merge parents
+  - Context: a PR's REST `base.sha` lagged the live `develop` ref while its generated test merge still had the correct base and head parents.
+  - Observation: comparing the artifact to REST `base.sha` rejected a sound render, while simply ignoring the mismatch would also admit a genuinely stale test merge.
+  - Expected pattern: resolve the allowed base branch ref directly, require exactly ordered merge parents `[live base SHA, current PR head SHA]`, and repeat that binding in the trusted lifecycle before mutation; treat REST `base.sha` as metadata, not authority.
