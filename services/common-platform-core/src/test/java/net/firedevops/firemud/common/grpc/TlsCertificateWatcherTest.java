@@ -47,15 +47,15 @@ class TlsCertificateWatcherTest {
   }
 
   @Test
-  void registrationRetryBackoffGrowsAndCaps() {
-    assertEquals(100, TlsCertificateWatcher.registrationRetryDelay(1).toMillis());
-    assertEquals(200, TlsCertificateWatcher.registrationRetryDelay(2).toMillis());
-    assertEquals(400, TlsCertificateWatcher.registrationRetryDelay(3).toMillis());
-    assertEquals(800, TlsCertificateWatcher.registrationRetryDelay(4).toMillis());
-    assertEquals(1_600, TlsCertificateWatcher.registrationRetryDelay(5).toMillis());
-    assertEquals(25_600, TlsCertificateWatcher.registrationRetryDelay(9).toMillis());
-    assertEquals(30_000, TlsCertificateWatcher.registrationRetryDelay(10).toMillis());
-    assertEquals(30_000, TlsCertificateWatcher.registrationRetryDelay(20).toMillis());
+  void retryBackoffGrowsAndCaps() {
+    assertEquals(100, TlsCertificateWatcher.retryDelay(1).toMillis());
+    assertEquals(200, TlsCertificateWatcher.retryDelay(2).toMillis());
+    assertEquals(400, TlsCertificateWatcher.retryDelay(3).toMillis());
+    assertEquals(800, TlsCertificateWatcher.retryDelay(4).toMillis());
+    assertEquals(1_600, TlsCertificateWatcher.retryDelay(5).toMillis());
+    assertEquals(25_600, TlsCertificateWatcher.retryDelay(9).toMillis());
+    assertEquals(30_000, TlsCertificateWatcher.retryDelay(10).toMillis());
+    assertEquals(30_000, TlsCertificateWatcher.retryDelay(20).toMillis());
   }
 
   @Test
@@ -86,6 +86,23 @@ class TlsCertificateWatcherTest {
       assertThrows(
           ClosedWatchServiceException.class,
           () -> ((WatchService) watchServiceField.get(watcher)).take());
+    } finally {
+      watcher.close();
+    }
+  }
+
+  @Test
+  void closedWatcherCannotStartOrPoisonHealth(@TempDir Path directory) throws Exception {
+    Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
+    WatcherCounts baseline = watcherCounts(TlsCertificateWatcher.health());
+    TlsCertificateWatcher watcher = new TlsCertificateWatcher(List.of(certificate), () -> {});
+
+    try {
+      watcher.close();
+
+      assertThrows(IllegalStateException.class, watcher::start);
+      assertFalse(watcher.isRunning());
+      assertHealthDelta(baseline, 0, 0, 0, TlsCertificateWatcher.health());
     } finally {
       watcher.close();
     }
@@ -582,7 +599,7 @@ class TlsCertificateWatcherTest {
 
     try {
       try (TlsCertificateWatcher watcher =
-          TlsCertificateWatcher.createAndStart(
+          new TlsCertificateWatcher(
               List.of(certificate),
               () -> {
                 attempts.incrementAndGet();

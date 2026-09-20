@@ -11,6 +11,7 @@ import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.health.actuate.endpoint.HealthEndpointGroup;
 import org.springframework.boot.health.actuate.endpoint.HealthEndpointGroups;
 import org.springframework.boot.health.actuate.endpoint.HealthEndpointGroupsPostProcessor;
+import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -90,6 +91,15 @@ class CommonCoreAutoConfigurationTest {
         .withPropertyValues("firemud.tls.readiness-gate.enabled=true")
         .run(
             context -> {
+              assertThat(context)
+                  .hasBean(
+                      TlsCertificateReadinessHealthEndpointGroupsPostProcessor
+                          .TLS_CERTIFICATE_RELOAD_CONTRIBUTOR);
+              assertThat(
+                      context.getBean(
+                          TlsCertificateReadinessHealthEndpointGroupsPostProcessor
+                              .TLS_CERTIFICATE_RELOAD_CONTRIBUTOR))
+                  .isInstanceOf(HealthIndicator.class);
               HealthEndpointGroups groups = mock(HealthEndpointGroups.class);
               HealthEndpointGroup readiness = mock(HealthEndpointGroup.class);
               when(groups.get("readiness")).thenReturn(readiness);
