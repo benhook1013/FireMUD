@@ -14,6 +14,8 @@ import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.EmailVerificationTokenRepository;
 import net.firedevops.firemud.accountservice.repository.PasswordResetTokenRepository;
+import net.firedevops.firemud.common.LoggingUtil;
+import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -25,6 +27,7 @@ import org.springframework.stereotype.Component;
     justification =
         "Injected Spring repositories are internal collaborators; invalid cleanup configuration must fail startup.")
 public class ExpiredCredentialCleanupJob {
+  private static final Logger logger = LoggingUtil.getLogger(ExpiredCredentialCleanupJob.class);
   private static final String PASSWORD_RESET = "password_reset";
   private static final String EMAIL_VERIFICATION = "email_verification";
   private static final String EMAIL_LOGIN_CHALLENGE = "email_login_challenge";
@@ -36,6 +39,9 @@ public class ExpiredCredentialCleanupJob {
   private final Counter passwordResetDeleted;
   private final Counter emailVerificationDeleted;
   private final Counter emailLoginChallengeDeleted;
+  private final Counter passwordResetFailures;
+  private final Counter emailVerificationFailures;
+  private final Counter emailLoginChallengeFailures;
   private final AtomicLong passwordResetLagSeconds = new AtomicLong();
   private final AtomicLong emailVerificationLagSeconds = new AtomicLong();
   private final AtomicLong emailLoginChallengeLagSeconds = new AtomicLong();
@@ -62,6 +68,9 @@ public class ExpiredCredentialCleanupJob {
     this.passwordResetDeleted = deletedCounter(meterRegistry, PASSWORD_RESET);
     this.emailVerificationDeleted = deletedCounter(meterRegistry, EMAIL_VERIFICATION);
     this.emailLoginChallengeDeleted = deletedCounter(meterRegistry, EMAIL_LOGIN_CHALLENGE);
+    this.passwordResetFailures = failureCounter(meterRegistry, PASSWORD_RESET);
+    this.emailVerificationFailures = failureCounter(meterRegistry, EMAIL_VERIFICATION);
+    this.emailLoginChallengeFailures = failureCounter(meterRegistry, EMAIL_LOGIN_CHALLENGE);
     registerLagGauge(meterRegistry, PASSWORD_RESET, passwordResetLagSeconds);
     registerLagGauge(meterRegistry, EMAIL_VERIFICATION, emailVerificationLagSeconds);
     registerLagGauge(meterRegistry, EMAIL_LOGIN_CHALLENGE, emailLoginChallengeLagSeconds);
@@ -73,26 +82,67 @@ public class ExpiredCredentialCleanupJob {
       timeUnit = TimeUnit.MILLISECONDS)
   public void cleanupExpiredCredentials() {
     LocalDateTime capturedNow = LocalDateTime.now(ZoneOffset.UTC);
-    int passwordResetRows = passwordResetTokenRepository.deleteExpired(capturedNow, batchSize);
-    int emailVerificationRows =
-        emailVerificationTokenRepository.deleteExpired(capturedNow, batchSize);
-    int emailLoginChallengeRows =
-        emailLoginChallengeRepository.deleteExpired(capturedNow, batchSize);
+    cleanupPasswordReset(capturedNow);
+    cleanupEmailVerification(capturedNow);
+    cleanupEmailLoginChallenge(capturedNow);
+  }
 
-    passwordResetDeleted.increment(passwordResetRows);
-    emailVerificationDeleted.increment(emailVerificationRows);
-    emailLoginChallengeDeleted.increment(emailLoginChallengeRows);
-    passwordResetLagSeconds.set(
-        lagSeconds(capturedNow, passwordResetTokenRepository.findOldestExpiredAt(capturedNow)));
-    emailVerificationLagSeconds.set(
-        lagSeconds(capturedNow, emailVerificationTokenRepository.findOldestExpiredAt(capturedNow)));
-    emailLoginChallengeLagSeconds.set(
-        lagSeconds(capturedNow, emailLoginChallengeRepository.findOldestExpiredAt(capturedNow)));
+  private void cleanupPasswordReset(LocalDateTime capturedNow) {
+    try {
+      passwordResetDeleted.increment(
+          passwordResetTokenRepository.deleteExpired(capturedNow, batchSize));
+      passwordResetLagSeconds.set(
+          lagSeconds(capturedNow, passwordResetTokenRepository.findOldestExpiredAt(capturedNow)));
+    } catch (RuntimeException ex) {
+      passwordResetFailures.increment();
+      logger.warn(
+          "Expired credential cleanup step failed for family {} ({})",
+          PASSWORD_RESET,
+          ex.getClass().getSimpleName());
+    }
+  }
+
+  private void cleanupEmailVerification(LocalDateTime capturedNow) {
+    try {
+      emailVerificationDeleted.increment(
+          emailVerificationTokenRepository.deleteExpired(capturedNow, batchSize));
+      emailVerificationLagSeconds.set(
+          lagSeconds(
+              capturedNow, emailVerificationTokenRepository.findOldestExpiredAt(capturedNow)));
+    } catch (RuntimeException ex) {
+      emailVerificationFailures.increment();
+      logger.warn(
+          "Expired credential cleanup step failed for family {} ({})",
+          EMAIL_VERIFICATION,
+          ex.getClass().getSimpleName());
+    }
+  }
+
+  private void cleanupEmailLoginChallenge(LocalDateTime capturedNow) {
+    try {
+      emailLoginChallengeDeleted.increment(
+          emailLoginChallengeRepository.deleteExpired(capturedNow, batchSize));
+      emailLoginChallengeLagSeconds.set(
+          lagSeconds(capturedNow, emailLoginChallengeRepository.findOldestExpiredAt(capturedNow)));
+    } catch (RuntimeException ex) {
+      emailLoginChallengeFailures.increment();
+      logger.warn(
+          "Expired credential cleanup step failed for family {} ({})",
+          EMAIL_LOGIN_CHALLENGE,
+          ex.getClass().getSimpleName());
+    }
   }
 
   private static Counter deletedCounter(MeterRegistry meterRegistry, String family) {
     return Counter.builder("account.credentials.cleanup.deleted")
         .description("Expired Account credential rows deleted")
+        .tag("family", family)
+        .register(meterRegistry);
+  }
+
+  private static Counter failureCounter(MeterRegistry meterRegistry, String family) {
+    return Counter.builder("account.credentials.cleanup.failure")
+        .description("Expired Account credential cleanup family failures")
         .tag("family", family)
         .register(meterRegistry);
   }

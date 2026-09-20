@@ -93,6 +93,81 @@ class ExpiredCredentialCleanupJobTest {
   }
 
   @Test
+  void cleanupContinuesAfterFamilyFailureAndKeepsSuccessfulDeleteCounts() {
+    PasswordResetTokenRepository passwordReset = mock(PasswordResetTokenRepository.class);
+    EmailVerificationTokenRepository emailVerification =
+        mock(EmailVerificationTokenRepository.class);
+    AccountEmailLoginChallengeRepository emailLoginChallenge =
+        mock(AccountEmailLoginChallengeRepository.class);
+    when(passwordReset.deleteExpired(any(), eq(5)))
+        .thenThrow(new RuntimeException("password reset unavailable"));
+    when(emailVerification.deleteExpired(any(), eq(5))).thenReturn(3);
+    when(emailVerification.findOldestExpiredAt(any()))
+        .thenThrow(new RuntimeException("verification lag unavailable"));
+    when(emailLoginChallenge.deleteExpired(any(), eq(5))).thenReturn(4);
+    when(emailLoginChallenge.findOldestExpiredAt(any())).thenReturn(Optional.empty());
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    ExpiredCredentialCleanupJob job =
+        new ExpiredCredentialCleanupJob(
+            passwordReset, emailVerification, emailLoginChallenge, meterRegistry, 5, 60_000);
+
+    job.cleanupExpiredCredentials();
+
+    verify(passwordReset).deleteExpired(any(), eq(5));
+    verify(emailVerification).deleteExpired(any(), eq(5));
+    verify(emailLoginChallenge).deleteExpired(any(), eq(5));
+    assertThat(
+            meterRegistry
+                .get("account.credentials.cleanup.deleted")
+                .tag("family", "password_reset")
+                .counter()
+                .count())
+        .isZero();
+    assertThat(
+            meterRegistry
+                .get("account.credentials.cleanup.deleted")
+                .tag("family", "email_verification")
+                .counter()
+                .count())
+        .isEqualTo(3);
+    assertThat(
+            meterRegistry
+                .get("account.credentials.cleanup.deleted")
+                .tag("family", "email_login_challenge")
+                .counter()
+                .count())
+        .isEqualTo(4);
+    assertThat(
+            meterRegistry
+                .get("account.credentials.cleanup.lag.seconds")
+                .tag("family", "email_verification")
+                .gauge()
+                .value())
+        .isZero();
+    assertThat(
+            meterRegistry
+                .get("account.credentials.cleanup.failure")
+                .tag("family", "password_reset")
+                .counter()
+                .count())
+        .isEqualTo(1);
+    assertThat(
+            meterRegistry
+                .get("account.credentials.cleanup.failure")
+                .tag("family", "email_verification")
+                .counter()
+                .count())
+        .isEqualTo(1);
+    assertThat(
+            meterRegistry
+                .get("account.credentials.cleanup.failure")
+                .tag("family", "email_login_challenge")
+                .counter()
+                .count())
+        .isZero();
+  }
+
+  @Test
   void cleanupConfigurationMustBePositive() {
     PasswordResetTokenRepository passwordReset = mock(PasswordResetTokenRepository.class);
     EmailVerificationTokenRepository emailVerification =
