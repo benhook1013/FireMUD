@@ -76,13 +76,23 @@ def checkouts(job: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def permissions(value: Any) -> list[str]:
-    if not isinstance(value, dict):
+    if value is None:
         return []
+    if not isinstance(value, dict):
+        raise AssertionError("workflow permissions must be an explicit mapping")
     return [
         f"{key}: {permission}"
         for key, permission in value.items()
         if isinstance(permission, str)
     ]
+
+
+try:
+    permissions("write-all")
+except AssertionError:
+    pass
+else:
+    raise AssertionError("scalar write-all permissions escaped source checking")
 
 
 preview = load(preview_path)
@@ -342,11 +352,28 @@ if "validate-preview-artifact.py" not in trusted_text:
 
 # Credential files must stay in runner.temp and be removed. The old helper
 # writes ${HOME}/.kube/config; no workflow may call it or recreate that path.
-workflow_paths = sorted(workflow_dir.glob("*.yml"))
-for path in workflow_paths:
-    source = path.read_text(encoding="utf-8")
-    if re.search(r"persist-runner-kubeconfig|HOME[^\n]*\.kube|\.kube/config", source):
-        raise AssertionError(f"{path.name} persists a runner-home kubeconfig")
+def reject_runner_home_kubeconfig(directory: Path) -> None:
+    workflow_paths = sorted(
+        path
+        for path in directory.iterdir()
+        if path.is_file() and path.suffix in {".yml", ".yaml"}
+    )
+    for path in workflow_paths:
+        source = path.read_text(encoding="utf-8")
+        if re.search(r"persist-runner-kubeconfig|HOME[^\n]*\.kube|\.kube/config", source):
+            raise AssertionError(f"{path.name} persists a runner-home kubeconfig")
+
+
+reject_runner_home_kubeconfig(workflow_dir)
+with tempfile.TemporaryDirectory() as temporary:
+    forbidden_yaml = Path(temporary) / "hostile.yaml"
+    forbidden_yaml.write_text("echo $HOME/.kube/config\n", encoding="utf-8")
+    try:
+        reject_runner_home_kubeconfig(Path(temporary))
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError(".yaml runner-home kubeconfig persistence escaped checking")
 
 required_cleanup_jobs = ("destroy-runtime", "retire-identity")
 for job_name in required_cleanup_jobs:

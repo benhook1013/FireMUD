@@ -2563,7 +2563,7 @@ preview_run_scripts = [
 canonical_pr_number_pattern = '"$PR_NUMBER" =~ ^[1-9][0-9]{0,50}$'
 assert sum(
     script.count(canonical_pr_number_pattern) for script in preview_run_scripts
-) >= 1
+) == 1
 assert not any(
     '"$PR_NUMBER" =~ ^[1-9][0-9]*$' in script for script in preview_run_scripts
 )

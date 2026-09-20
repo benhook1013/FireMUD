@@ -299,8 +299,8 @@ whitespace_only = run_scope(
     head_content=authority_text.replace("TRIVY_VERSION=", " \t\nTRIVY_VERSION=", 1),
 )
 whitespace_runtime = whitespace_only["outputs"]["runtime_smoke_required"]
-assert whitespace_runtime in {"false", "true"}
-assert bool(whitespace_only["warnings"]) == (whitespace_runtime == "true")
+assert whitespace_runtime == "false"
+assert not whitespace_only["warnings"]
 
 velero_only = run_scope(
     [authority_path], head_content=authority_with(VELERO_VERSION="99.0.0")
@@ -2123,10 +2123,17 @@ assert image_tag_validation in preview_derive_run
 assert "Invalid preview domain" in preview_derive_run
 assert preview_derive_run.count(
     'gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}"'
-) == 2
+) == 1
 assert "PULL_REQUEST_JSON=" in preview_derive_run
 assert ".head.sha" in preview_derive_run
 assert ".base.sha" in preview_derive_run
+assert ".mergeable" in preview_derive_run
+assert ".mergeable_state" in preview_derive_run
+assert "MERGE_RETRY_LIMIT=5" in preview_derive_run
+assert "Stale preview base SHA" in preview_derive_run
+assert "Preview merge conflict" in preview_derive_run
+assert "Preview merge computation unavailable" in preview_derive_run
+assert "EVENT_MERGE_SHA" not in preview_derive_step["env"]
 for output in (
     'gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}"',
     'echo "hostname=${PREVIEW_HOSTNAME}"',
@@ -2812,7 +2819,14 @@ if [[ "$2" == repos/example/FireMUD/pulls/901/files\?per_page=100 ]]; then
 fi
 [[ $# -eq 2 && "$2" == repos/example/FireMUD/pulls/* ]]
 printf '%s\n' "$*" >>"${PREVIEW_DERIVE_GH_LOG:?}"
-printf '%s\n' "${PREVIEW_DERIVE_PR_JSON:?}"
+call_count=0
+if [[ -f "${PREVIEW_DERIVE_CALL_COUNT:?}" ]]; then
+  call_count="$(<"$PREVIEW_DERIVE_CALL_COUNT")"
+fi
+call_count=$((call_count + 1))
+printf '%s\n' "$call_count" >"$PREVIEW_DERIVE_CALL_COUNT"
+sequence_name="PREVIEW_DERIVE_PR_JSON_${call_count}"
+printf '%s\n' "${!sequence_name:-${PREVIEW_DERIVE_PR_JSON:?}}"
 SH
 chmod +x "$preview_derive_stub_dir/gh"
 
@@ -2822,7 +2836,7 @@ preview_derive_base_upper=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
 preview_derive_base_lower=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 preview_derive_merge_upper=CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
 preview_derive_merge_lower=cccccccccccccccccccccccccccccccccccccccc
-preview_derive_pr_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"sha\":\"$preview_derive_base_upper\"},\"merge_commit_sha\":\"$preview_derive_merge_upper\"}"
+preview_derive_pr_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"sha\":\"$preview_derive_base_upper\"},\"mergeable\":true,\"mergeable_state\":\"clean\",\"merge_commit_sha\":\"$preview_derive_merge_upper\"}"
 run_preview_derive_dispatch() {
   local input_pr_number="$1"
   local input_head_sha="$2"
@@ -2850,6 +2864,13 @@ run_preview_derive_dispatch() {
     GITHUB_SHA="$preview_derive_head_lower" \
     PREVIEW_DERIVE_CHANGED_FILES="${PREVIEW_DERIVE_CHANGED_FILES:-docs/readme.md}" \
     PREVIEW_DERIVE_PR_JSON="${PREVIEW_DERIVE_PR_JSON:-$preview_derive_pr_json}" \
+    PREVIEW_DERIVE_PR_JSON_1="${PREVIEW_DERIVE_PR_JSON_1:-}" \
+    PREVIEW_DERIVE_PR_JSON_2="${PREVIEW_DERIVE_PR_JSON_2:-}" \
+    PREVIEW_DERIVE_PR_JSON_3="${PREVIEW_DERIVE_PR_JSON_3:-}" \
+    PREVIEW_DERIVE_PR_JSON_4="${PREVIEW_DERIVE_PR_JSON_4:-}" \
+    PREVIEW_DERIVE_PR_JSON_5="${PREVIEW_DERIVE_PR_JSON_5:-}" \
+    PREVIEW_DERIVE_CALL_COUNT="${output_path}.calls" \
+    PREVIEW_MERGE_RETRY_DELAY_SECONDS="${PREVIEW_MERGE_RETRY_DELAY_SECONDS:-2}" \
     PREVIEW_DERIVE_GH_LOG="${output_path}.gh.log" \
     GITHUB_OUTPUT="$output_path" \
     bash "$preview_derive_step" >"${output_path}.stdout" 2>"$error_path"
@@ -2901,11 +2922,11 @@ for invalid_snapshot_case in missing-head malformed-base; do
   case "$invalid_snapshot_case" in
     missing-head)
       invalid_snapshot_json="{\"head\":{\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"sha\":\"$preview_derive_base_upper\"}}"
-      expected_snapshot_error='::error title=Invalid pull request metadata::Expected string head, base, and merge SHAs.'
+      expected_snapshot_error='::error title=Invalid pull request metadata::Expected string current head and base SHAs.'
       ;;
     malformed-base)
-      invalid_snapshot_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"sha\":\"not-a-sha\"},\"merge_commit_sha\":\"$preview_derive_merge_upper\"}"
-      expected_snapshot_error='::error title=Invalid pull request metadata::Expected 40-character hexadecimal head, base, and merge SHAs.'
+      invalid_snapshot_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"sha\":\"not-a-sha\"},\"mergeable\":true,\"mergeable_state\":\"clean\",\"merge_commit_sha\":\"$preview_derive_merge_upper\"}"
+      expected_snapshot_error='::error title=Invalid pull request metadata::Expected 40-character hexadecimal current head and base SHAs.'
       ;;
   esac
   if PREVIEW_DERIVE_PR_JSON="$invalid_snapshot_json" run_preview_derive_dispatch \
@@ -2952,6 +2973,124 @@ run_preview_derive_dispatch \
   "$preview_derive_default_output" \
   "$TEMP_DIR/preview-derive-default.error"
 grep -Fxq "image_tag=${preview_derive_base_lower}" "$preview_derive_default_output"
+
+preview_derive_pending_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"sha\":\"$preview_derive_base_upper\"},\"mergeable\":null,\"mergeable_state\":\"unknown\"}"
+preview_derive_pending_output="$TEMP_DIR/preview-derive-pending.output"
+PREVIEW_MERGE_RETRY_DELAY_SECONDS=0 \
+PREVIEW_DERIVE_PR_JSON_1="$preview_derive_pending_json" \
+PREVIEW_DERIVE_PR_JSON_2="$preview_derive_pr_json" \
+run_preview_derive_dispatch \
+  901 \
+  "$preview_derive_head_lower" \
+  deploy \
+  '' \
+  preview.firedevops.net \
+  "$preview_derive_pending_output" \
+  "$TEMP_DIR/preview-derive-pending.error"
+grep -Fxq "merge_sha=${preview_derive_merge_lower}" "$preview_derive_pending_output"
+test "$(<"${preview_derive_pending_output}.calls")" -eq 2
+
+preview_derive_conflict_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"sha\":\"$preview_derive_base_upper\"},\"mergeable\":false,\"mergeable_state\":\"dirty\"}"
+preview_derive_conflict_output="$TEMP_DIR/preview-derive-conflict.output"
+if PREVIEW_DERIVE_PR_JSON_1="$preview_derive_conflict_json" run_preview_derive_dispatch \
+  901 \
+  "$preview_derive_head_lower" \
+  deploy \
+  '' \
+  preview.firedevops.net \
+  "$preview_derive_conflict_output" \
+  "$TEMP_DIR/preview-derive-conflict.error"; then
+  echo "preview plan accepted a conflicting pull request test merge" >&2
+  exit 1
+fi
+grep -Fxq \
+  '::error title=Preview merge conflict::The current pull request cannot be rendered because GitHub reports a conflicting test merge.' \
+  "$TEMP_DIR/preview-derive-conflict.error"
+test "$(<"${preview_derive_conflict_output}.calls")" -eq 1
+
+preview_derive_exhaustion_output="$TEMP_DIR/preview-derive-exhaustion.output"
+if PREVIEW_MERGE_RETRY_DELAY_SECONDS=0 \
+  PREVIEW_DERIVE_PR_JSON_1="$preview_derive_pending_json" \
+  PREVIEW_DERIVE_PR_JSON_2="$preview_derive_pending_json" \
+  PREVIEW_DERIVE_PR_JSON_3="$preview_derive_pending_json" \
+  PREVIEW_DERIVE_PR_JSON_4="$preview_derive_pending_json" \
+  PREVIEW_DERIVE_PR_JSON_5="$preview_derive_pending_json" \
+  run_preview_derive_dispatch \
+    901 \
+    "$preview_derive_head_lower" \
+    deploy \
+    '' \
+    preview.firedevops.net \
+    "$preview_derive_exhaustion_output" \
+    "$TEMP_DIR/preview-derive-exhaustion.error"; then
+  echo "preview plan accepted an unresolved pull request test merge" >&2
+  exit 1
+fi
+grep -Fxq \
+  '::error title=Preview merge computation unavailable::GitHub did not report a ready test merge after 5 attempts.' \
+  "$TEMP_DIR/preview-derive-exhaustion.error"
+test "$(<"${preview_derive_exhaustion_output}.calls")" -eq 5
+
+run_preview_derive_target() {
+  local input_head_sha="$1"
+  local input_base_sha="$2"
+  local output_path="$3"
+  local error_path="$4"
+  env \
+    PATH="$preview_derive_stub_dir:$PATH" \
+    EVENT_NAME=pull_request_target \
+    GITHUB_REF=refs/heads/develop \
+    DEFAULT_BRANCH=develop \
+    EVENT_ACTION=synchronize \
+    EVENT_PR_NUMBER=901 \
+    EVENT_HEAD_SHA="$input_head_sha" \
+    EVENT_BASE_SHA="$input_base_sha" \
+    CLIENT_PR_NUMBER='' \
+    CLIENT_HEAD_SHA='' \
+    CLIENT_PREVIEW_DOMAIN='' \
+    CLIENT_ACTION='' \
+    CLIENT_IMAGE_TAG='' \
+    GITHUB_REPOSITORY=example/FireMUD \
+    GH_TOKEN=fake \
+    GITHUB_SHA="$preview_derive_head_lower" \
+    PREVIEW_DERIVE_PR_JSON="$preview_derive_pr_json" \
+    PREVIEW_DERIVE_PR_JSON_1='' \
+    PREVIEW_DERIVE_PR_JSON_2='' \
+    PREVIEW_DERIVE_PR_JSON_3='' \
+    PREVIEW_DERIVE_PR_JSON_4='' \
+    PREVIEW_DERIVE_PR_JSON_5='' \
+    PREVIEW_DERIVE_CALL_COUNT="${output_path}.calls" \
+    PREVIEW_MERGE_RETRY_DELAY_SECONDS=0 \
+    PREVIEW_DERIVE_GH_LOG="${output_path}.gh.log" \
+    GITHUB_OUTPUT="$output_path" \
+    bash "$preview_derive_step" >"${output_path}.stdout" 2>"$error_path"
+}
+
+preview_derive_stale_head_output="$TEMP_DIR/preview-derive-stale-head.output"
+if run_preview_derive_target \
+  "$preview_derive_base_lower" \
+  "$preview_derive_base_lower" \
+  "$preview_derive_stale_head_output" \
+  "$TEMP_DIR/preview-derive-stale-head.error"; then
+  echo "preview plan accepted a stale pull_request_target head SHA" >&2
+  exit 1
+fi
+grep -Fxq \
+  '::error title=Stale preview head SHA::Supplied head SHA does not equal the current pull request head.' \
+  "$TEMP_DIR/preview-derive-stale-head.error"
+
+preview_derive_stale_base_output="$TEMP_DIR/preview-derive-stale-base.output"
+if run_preview_derive_target \
+  "$preview_derive_head_lower" \
+  "$preview_derive_head_lower" \
+  "$preview_derive_stale_base_output" \
+  "$TEMP_DIR/preview-derive-stale-base.error"; then
+  echo "preview plan accepted a stale pull_request_target base SHA" >&2
+  exit 1
+fi
+grep -Fxq \
+  '::error title=Stale preview base SHA::Supplied base SHA does not equal the current pull request base.' \
+  "$TEMP_DIR/preview-derive-stale-base.error"
 
 hostile_dispatch_marker="$TEMP_DIR/hostile-dispatch-executed"
 hostile_dispatch_payload="\"; printf injected >\"$hostile_dispatch_marker\"; #"

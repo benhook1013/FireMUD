@@ -77,7 +77,6 @@ jobs:
           EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          EVENT_MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
         run: |
           set -euo pipefail
 
@@ -90,7 +89,7 @@ jobs:
             PR_NUMBER="$EVENT_PR_NUMBER"
             HEAD_SHA="$EVENT_HEAD_SHA"
             BASE_SHA="$EVENT_BASE_SHA"
-            MERGE_SHA="$EVENT_MERGE_SHA"
+            MERGE_SHA=""
             ACTION=deploy
             PREVIEW_DOMAIN=preview.firedevops.net
             IMAGE_TAG=""
@@ -141,43 +140,88 @@ jobs:
             exit 1
           fi
 
-          if [[ "$EVENT_NAME" == repository_dispatch ]]; then
+          MERGE_RETRY_LIMIT=5
+          MERGE_RETRY_DELAY_SECONDS="${PREVIEW_MERGE_RETRY_DELAY_SECONDS:-2}"
+          if [[ ! "$MERGE_RETRY_DELAY_SECONDS" =~ ^[0-9]+$ ]]; then
+            echo "::error title=Invalid preview merge retry delay::Expected a non-negative integer number of seconds." >&2
+            exit 1
+          fi
+          MERGE_ATTEMPT=0
+          while :; do
+            MERGE_ATTEMPT=$((MERGE_ATTEMPT + 1))
             PULL_REQUEST_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
             if [[ "$(jq -r '.head.repo.full_name // empty' <<<"$PULL_REQUEST_JSON")" != "$GITHUB_REPOSITORY" ]]; then
-              echo "::error title=Untrusted preview pull request::Manual preview dispatches require a pull request from this repository." >&2
+              echo "::error title=Untrusted preview pull request::Preview operations require a pull request from this repository." >&2
               exit 1
             fi
             if ! CURRENT_HEAD_SHA="$(jq -er '.head.sha | select(type == "string")' <<<"$PULL_REQUEST_JSON")" ||
-              ! BASE_SHA="$(jq -er '.base.sha | select(type == "string")' <<<"$PULL_REQUEST_JSON")" ||
-              ! MERGE_SHA="$(jq -er '.merge_commit_sha | select(type == "string")' <<<"$PULL_REQUEST_JSON")"; then
-              echo "::error title=Invalid pull request metadata::Expected string head, base, and merge SHAs." >&2
+              ! CURRENT_BASE_SHA="$(jq -er '.base.sha | select(type == "string")' <<<"$PULL_REQUEST_JSON")"; then
+              echo "::error title=Invalid pull request metadata::Expected string current head and base SHAs." >&2
               exit 1
             fi
             if [[ ! "$CURRENT_HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]] ||
-              [[ ! "$BASE_SHA" =~ ^[0-9A-Fa-f]{40}$ ]] ||
-              [[ ! "$MERGE_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
-              echo "::error title=Invalid pull request metadata::Expected 40-character hexadecimal head, base, and merge SHAs." >&2
+              [[ ! "$CURRENT_BASE_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+              echo "::error title=Invalid pull request metadata::Expected 40-character hexadecimal current head and base SHAs." >&2
               exit 1
             fi
             CURRENT_HEAD_SHA="${CURRENT_HEAD_SHA,,}"
-            BASE_SHA="${BASE_SHA,,}"
-            MERGE_SHA="${MERGE_SHA,,}"
-            if [[ "$HEAD_SHA" != "$CURRENT_HEAD_SHA" ]]; then
+            CURRENT_BASE_SHA="${CURRENT_BASE_SHA,,}"
+            if [[ "${HEAD_SHA,,}" != "$CURRENT_HEAD_SHA" ]]; then
               echo "::error title=Stale preview head SHA::Supplied head SHA does not equal the current pull request head." >&2
               exit 1
             fi
-          elif [[ -z "$MERGE_SHA" ]]; then
-            PULL_REQUEST_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-            if ! MERGE_SHA="$(jq -er '(.merge_commit_sha // empty) | select(type == "string")' <<<"$PULL_REQUEST_JSON")"; then
-              echo "::error title=Missing preview merge ref::The pull request has no exact merge commit for rendering." >&2
+            if [[ "$EVENT_NAME" == pull_request_target && "${BASE_SHA,,}" != "$CURRENT_BASE_SHA" ]]; then
+              echo "::error title=Stale preview base SHA::Supplied base SHA does not equal the current pull request base." >&2
               exit 1
             fi
-          fi
+            HEAD_SHA="$CURRENT_HEAD_SHA"
+            BASE_SHA="$CURRENT_BASE_SHA"
+
+            if [[ "$ACTION" != deploy ]]; then
+              break
+            fi
+
+            MERGEABLE="$(jq -r 'if (.mergeable | type) == "boolean" then (.mergeable | tostring) elif .mergeable == null then "null" else "invalid" end' <<<"$PULL_REQUEST_JSON")"
+            MERGEABLE_STATE="$(jq -r 'if .mergeable_state == null then "unknown" elif (.mergeable_state | type) == "string" then .mergeable_state else "invalid" end' <<<"$PULL_REQUEST_JSON")"
+            if [[ "$MERGEABLE" == invalid || "$MERGEABLE_STATE" == invalid ]]; then
+              echo "::error title=Invalid pull request merge metadata::Expected boolean mergeable and string mergeable_state fields." >&2
+              exit 1
+            fi
+            if [[ "$MERGEABLE" == false || "$MERGEABLE_STATE" == dirty || "$MERGEABLE_STATE" == conflicting ]]; then
+              echo "::error title=Preview merge conflict::The current pull request cannot be rendered because GitHub reports a conflicting test merge." >&2
+              exit 1
+            fi
+            if [[ "$MERGEABLE" == null || "$MERGEABLE_STATE" == unknown ]]; then
+              if (( MERGE_ATTEMPT >= MERGE_RETRY_LIMIT )); then
+                echo "::error title=Preview merge computation unavailable::GitHub did not report a ready test merge after ${MERGE_RETRY_LIMIT} attempts." >&2
+                exit 1
+              fi
+              sleep "$MERGE_RETRY_DELAY_SECONDS"
+              continue
+            fi
+            if [[ "$MERGEABLE" != true ]]; then
+              echo "::error title=Invalid pull request merge metadata::Expected mergeable to be true, false, or null." >&2
+              exit 1
+            fi
+            if ! MERGE_SHA="$(jq -er '.merge_commit_sha | select(type == "string")' <<<"$PULL_REQUEST_JSON")"; then
+              echo "::error title=Missing preview merge ref::GitHub reported a mergeable pull request without a computed test-merge commit." >&2
+              exit 1
+            fi
+            if [[ ! "$MERGE_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+              echo "::error title=Invalid preview merge ref::Expected a 40-character hexadecimal test-merge SHA." >&2
+              exit 1
+            fi
+            MERGE_SHA="${MERGE_SHA,,}"
+            break
+          done
 
           if [[ ! "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]] ||
-            [[ ! "$BASE_SHA" =~ ^[0-9A-Fa-f]{40}$ ]] ||
-            [[ ! "$MERGE_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
-            echo "::error title=Invalid preview SHA::Expected 40-character hexadecimal head, base, and merge SHAs." >&2
+            [[ ! "$BASE_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+            echo "::error title=Invalid preview SHA::Expected 40-character hexadecimal head and base SHAs." >&2
+            exit 1
+          fi
+          if [[ "$ACTION" == deploy && ! "$MERGE_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+            echo "::error title=Invalid preview SHA::Expected a 40-character hexadecimal merge SHA for deploy." >&2
             exit 1
           fi
           HEAD_SHA="${HEAD_SHA,,}"
