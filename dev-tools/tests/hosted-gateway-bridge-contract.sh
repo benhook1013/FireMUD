@@ -167,6 +167,23 @@ proxy_ports = proxy_service["spec"].get("ports") or []
 if len(proxy_ports) != 1 or proxy_ports[0].get("port") != 2323 or "nodePort" in proxy_ports[0]:
     raise SystemExit("Hosted TCP Proxy Service must expose only private port 2323 without nodePort")
 
+identity_mode_label = "firemud.dev/certificate-identity-mode"
+for document in (proxy_deployment, proxy_service):
+    labels = document.get("metadata", {}).get("labels", {})
+    if labels.get(identity_mode_label) != "hosted-controller":
+        raise SystemExit(
+            f"hosted TCP Proxy {document['kind']} did not render the hosted-controller identity mode label"
+        )
+labelled_objects = {
+    (document.get("kind"), document.get("metadata", {}).get("name"))
+    for document in documents
+    if identity_mode_label in document.get("metadata", {}).get("labels", {})
+}
+if labelled_objects != {("Deployment", "tcp-proxy-service"), ("Service", "tcp-proxy-service")}:
+    raise SystemExit(
+        "certificate identity mode label rendered on an unexpected hosted object"
+    )
+
 account_policy = named("NetworkPolicy", "account-service-controller-ingress")["spec"]
 if account_policy != {
     "podSelector": {"matchLabels": {"app": "account-service"}},
@@ -274,6 +291,32 @@ if any(
 ):
     raise SystemExit(
         "standalone certificate identity mode unexpectedly rendered the hosted controller Account ingress policy"
+    )
+for kind in ("Deployment", "Service"):
+    matches = [
+        document
+        for document in documents
+        if document.get("kind") == kind
+        and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    ]
+    if len(matches) != 1:
+        raise SystemExit(
+            f"expected exactly one standalone tcp-proxy-service {kind}, found {len(matches)}"
+        )
+    labels = matches[0].get("metadata", {}).get("labels", {})
+    if labels.get("firemud.dev/certificate-identity-mode") != "standalone":
+        raise SystemExit(
+            f"standalone TCP Proxy {kind} did not render the standalone identity mode label"
+        )
+labelled_objects = {
+    (document.get("kind"), document.get("metadata", {}).get("name"))
+    for document in documents
+    if "firemud.dev/certificate-identity-mode"
+    in document.get("metadata", {}).get("labels", {})
+}
+if labelled_objects != {("Deployment", "tcp-proxy-service"), ("Service", "tcp-proxy-service")}:
+    raise SystemExit(
+        "certificate identity mode label rendered on an unexpected standalone object"
     )
 gateway_policies = [
     document

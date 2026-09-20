@@ -1,4 +1,6 @@
 {{- if .Values.previewStack.enabled }}
+{{- $certificateIdentity := .Values.previewStack.certificateIdentity | default (dict) }}
+{{- $certificateIdentityMode := $certificateIdentity.mode | default "standalone" }}
 {{- $previewJwt := .Values.previewStack.jwt | default (dict) }}
 {{- $gatewayWsTls := .Values.previewStack.gatewayWsTls | default (dict) }}
 {{- $gatewayWsTlsEnabled := $gatewayWsTls.enabled | default false }}
@@ -51,6 +53,9 @@ metadata:
   name: {{ $service.name }}
   labels:
 {{ include "firemud.commonLabels" $ | indent 4 }}
+{{- if eq $service.name "tcp-proxy-service" }}
+    firemud.dev/certificate-identity-mode: {{ $certificateIdentityMode | quote }}
+{{- end }}
 spec:
   replicas: {{ default 1 $service.replicaCount }}
   selector:
@@ -238,6 +243,9 @@ metadata:
   name: {{ $service.name }}
   labels:
 {{ include "firemud.commonLabels" $ | indent 4 }}
+{{- if eq $service.name "tcp-proxy-service" }}
+    firemud.dev/certificate-identity-mode: {{ $certificateIdentityMode | quote }}
+{{- end }}
 spec:
   selector:
     app: {{ $service.name }}
