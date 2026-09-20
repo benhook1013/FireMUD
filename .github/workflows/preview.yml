@@ -10,7 +10,6 @@ on:
       - 'design/**'
       - 'dev-tools/docs/**'
       - 'dev-tools/validation/**/*.py'
-      - 'mkdocs.yml'
     types:
       - opened
       - synchronize
