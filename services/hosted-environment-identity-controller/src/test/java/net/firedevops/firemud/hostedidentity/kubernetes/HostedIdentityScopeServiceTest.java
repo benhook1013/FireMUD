@@ -56,9 +56,15 @@ import org.yaml.snakeyaml.Yaml;
 class HostedIdentityScopeServiceTest {
   private static final String RUNTIME_SCOPE_MARKER =
       "object.metadata.name == 'firemud-hosted-runtime-scope'";
+  private static final String IDENTITY_SCOPE_MARKER =
+      "object.metadata.name == 'firemud-hosted-identity-scope'";
+  private static final String CEL_IDENTITY_SECRET_PREFIX =
+      "(((object.metadata.namespace == 'dev' || "
+          + "object.metadata.namespace == 'dev-identity') ? 'dev' : "
+          + "object.metadata.labels['firemud.dev/identity-name'])";
   // These test-only helpers parse the checked-in CEL subset: single-quoted strings, no nested
   // exists calls, and at most one list equality for each requested rule field.
-  private static final Pattern CEL_STRING_LITERAL = Pattern.compile("'([^']+)'");
+  private static final Pattern CEL_STRING_LITERAL = Pattern.compile("'([^']*)'");
   private static final Map<String, String> ROLE_LABELS =
       Map.of(
           "app.kubernetes.io/name",
@@ -259,6 +265,25 @@ class HostedIdentityScopeServiceTest {
     assertEquals(
         HostedIdentityScopeService.requiredDeploymentNames(planner.plan("dev-demo")),
         admittedDeploymentNames);
+  }
+
+  @Test
+  void identitySecretNamesExactlyMatchAdmissionAllowlistsForPreviewAndDev() throws IOException {
+    EnvironmentIdentityPlanner planner =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties());
+    for (String identityName : List.of("pr-42", "dev-demo")) {
+      EnvironmentIdentityPlan plan = planner.plan(identityName);
+      List<String> generatedSecretNames = HostedIdentityScopeService.identitySecretNames(plan);
+
+      assertEquals(
+          generatedSecretNames,
+          admittedIdentitySecretNames(plan, List.of("get")),
+          identityName + " identity Secret get allowlist");
+      assertEquals(
+          generatedSecretNames,
+          admittedIdentitySecretNames(plan, List.of("update", "patch", "delete")),
+          identityName + " identity Secret mutation allowlist");
+    }
   }
 
   @Test
@@ -877,6 +902,56 @@ class HostedIdentityScopeServiceTest {
         .orElseThrow(() -> new AssertionError("runtime deployment resourceNames must exist"));
   }
 
+  private static List<String> admittedIdentitySecretNames(
+      EnvironmentIdentityPlan plan, List<String> verbs) throws IOException {
+    Path admissionPath = findRepositoryFile("k8s/hosted-identity-controller/admission.yaml");
+    Map<?, ?> scopeRolePolicy;
+    try (var reader = Files.newBufferedReader(admissionPath)) {
+      scopeRolePolicy =
+          java.util.stream.StreamSupport.stream(new Yaml().loadAll(reader).spliterator(), false)
+              .filter(Objects::nonNull)
+              .map(Map.class::cast)
+              .filter(document -> "ValidatingAdmissionPolicy".equals(document.get("kind")))
+              .filter(
+                  document ->
+                      "firemud-hosted-identity-scope-roles"
+                          .equals(((Map<?, ?>) document.get("metadata")).get("name")))
+              .findFirst()
+              .orElseThrow(() -> new AssertionError("scope-role admission policy must exist"));
+    }
+    Map<?, ?> spec = (Map<?, ?>) scopeRolePolicy.get("spec");
+    List<?> validations = (List<?>) spec.get("validations");
+    List<String> identityScopeExpressions =
+        validations.stream()
+            .map(Map.class::cast)
+            .map(validation -> validation.get("expression"))
+            .filter(String.class::isInstance)
+            .map(String.class::cast)
+            .filter(expression -> expression.contains(IDENTITY_SCOPE_MARKER))
+            .toList();
+    assertEquals(
+        1,
+        identityScopeExpressions.size(),
+        "exactly one identity-scope admission branch must exist");
+    List<String> secretRules =
+        celExistsRuleBodies(identityScopeExpressions.get(0)).stream()
+            .filter(
+                rule ->
+                    Optional.of(List.of("")).equals(celListEquality(rule, "apiGroups"))
+                        && Optional.of(List.of("secrets"))
+                            .equals(celListEquality(rule, "resources"))
+                        && Optional.of(verbs).equals(celListEquality(rule, "verbs"))
+                        && celListExpressions(rule, "resourceNames").isPresent())
+            .toList();
+    assertEquals(
+        1,
+        secretRules.size(),
+        "identity Secret allowlist must have exactly one matching Role rule");
+    return celListExpressions(secretRules.get(0), "resourceNames").orElseThrow().stream()
+        .map(expression -> evaluateIdentitySecretName(expression, plan))
+        .toList();
+  }
+
   private static List<String> celExistsRuleBodies(String expression) {
     String marker = "object.rules.exists(r,";
     java.util.ArrayList<String> rules = new java.util.ArrayList<>();
@@ -909,13 +984,89 @@ class HostedIdentityScopeServiceTest {
   }
 
   private static Optional<List<String>> celListEquality(String expression, String field) {
-    Pattern equality = Pattern.compile("r\\." + Pattern.quote(field) + "\\s*==\\s*\\[([^\\]]*)]");
-    var matches = equality.matcher(expression).results().toList();
-    if (matches.isEmpty()) {
+    Optional<List<String>> expressions = celListExpressions(expression, field);
+    if (expressions.isEmpty()) {
       return Optional.empty();
     }
-    assertEquals(1, matches.size(), "CEL rule must contain one equality for " + field);
-    return Optional.of(celStringLiterals(matches.get(0).group(1)));
+    return Optional.of(
+        expressions.get().stream()
+            .map(
+                element -> {
+                  var literal = CEL_STRING_LITERAL.matcher(element);
+                  assertTrue(literal.matches(), "CEL list element must be a string literal");
+                  return literal.group(1);
+                })
+            .toList());
+  }
+
+  private static Optional<List<String>> celListExpressions(String expression, String field) {
+    String marker = "r." + field + " == [";
+    int markerStart = expression.indexOf(marker);
+    if (markerStart < 0) {
+      return Optional.empty();
+    }
+    int listStart = markerStart + marker.length();
+    int listEnd = matchingClosingBracket(expression, listStart);
+    assertTrue(listEnd >= 0, "unterminated CEL list equality for " + field);
+    return Optional.of(splitCelList(expression.substring(listStart, listEnd)));
+  }
+
+  private static int matchingClosingBracket(String expression, int listStart) {
+    int bracketDepth = 1;
+    boolean inString = false;
+    for (int index = listStart; index < expression.length(); index++) {
+      char current = expression.charAt(index);
+      if (current == '\'' && (index == 0 || expression.charAt(index - 1) != '\\')) {
+        inString = !inString;
+      } else if (!inString && current == '[') {
+        bracketDepth++;
+      } else if (!inString && current == ']' && --bracketDepth == 0) {
+        return index;
+      }
+    }
+    return -1;
+  }
+
+  private static List<String> splitCelList(String expression) {
+    java.util.ArrayList<String> elements = new java.util.ArrayList<>();
+    int elementStart = 0;
+    int parenthesisDepth = 0;
+    int bracketDepth = 0;
+    boolean inString = false;
+    for (int index = 0; index < expression.length(); index++) {
+      char current = expression.charAt(index);
+      if (current == '\'' && (index == 0 || expression.charAt(index - 1) != '\\')) {
+        inString = !inString;
+      } else if (!inString && current == '(') {
+        parenthesisDepth++;
+      } else if (!inString && current == ')') {
+        parenthesisDepth--;
+      } else if (!inString && current == '[') {
+        bracketDepth++;
+      } else if (!inString && current == ']') {
+        bracketDepth--;
+      } else if (!inString && current == ',' && parenthesisDepth == 0 && bracketDepth == 0) {
+        elements.add(expression.substring(elementStart, index).trim());
+        elementStart = index + 1;
+      }
+    }
+    elements.add(expression.substring(elementStart).trim());
+    return List.copyOf(elements);
+  }
+
+  private static String evaluateIdentitySecretName(
+      String expression, EnvironmentIdentityPlan plan) {
+    var literal = CEL_STRING_LITERAL.matcher(expression.trim());
+    if (literal.matches()) {
+      return literal.group(1);
+    }
+    var suffix = Pattern.compile("\\+\\s*'([^']+)'\\s*\\)*$").matcher(expression.trim());
+    assertTrue(suffix.find(), "identity Secret name expression must append a string suffix");
+    assertEquals(
+        CEL_IDENTITY_SECRET_PREFIX,
+        expression.trim().substring(0, suffix.start()).trim(),
+        "identity Secret name expression must use the canonical environment prefix");
+    return plan.runtimeNamespace() + suffix.group(1);
   }
 
   private static Path findRepositoryFile(String relativePath) {

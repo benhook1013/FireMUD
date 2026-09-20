@@ -40,6 +40,9 @@ if [[ "${1:-}" == "--workload" ]]; then
   workload_request="$(mktemp)"
   workload_serial="$(mktemp)"
   trap 'rm -f "$workload_config" "$workload_request" "$workload_serial"' EXIT
+  # OpenSSL versions differ on whether an empty -CAserial file can seed a new
+  # certificate. Initialize a unique serial explicitly before signing.
+  openssl rand -hex 16 >"$workload_serial"
   cat >"$workload_config" <<EOF
 [req]
 distinguished_name = req_distinguished_name
@@ -66,7 +69,10 @@ EOF
   openssl req -new -key "$output_key" -config "$workload_config" -out "$workload_request"
   openssl x509 -req -in "$workload_request" -CA "$ca_cert" -CAkey "$ca_key" \
     -CAserial "$workload_serial" -out "$output_cert" -days 365 -sha256 \
-    -extensions v3_req -extfile "$workload_config" >/dev/null 2>&1
+    -extensions v3_req -extfile "$workload_config" >/dev/null || {
+    echo "failed to sign publication workload certificate: $workload" >&2
+    exit 1
+  }
   chmod 644 "$output_cert"
   chmod 600 "$output_key"
   exit 0
