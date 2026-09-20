@@ -529,7 +529,7 @@ class PreviewArtifactMetadataTest(unittest.TestCase):
     def _metadata_fixture(manifest_path):
         return {
             "schemaVersion": 1,
-            "event": "pull_request",
+            "event": "pull_request_target",
             "repository": "example/FireMUD",
             "sourceWorkflow": ".github/workflows/preview.yml",
             "sourceRunId": 42,
@@ -598,6 +598,68 @@ class PreviewArtifactMetadataTest(unittest.TestCase):
                         "pr-42.preview.example.test",
                     )
                 validate_manifest.assert_not_called()
+
+    def test_metadata_event_specific_action_schema(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest_path = Path(directory) / "manifest.yaml"
+            metadata_path = Path(directory) / "metadata.json"
+            manifest_path.write_text("placeholder", encoding="utf-8")
+
+            dispatch_metadata = self._metadata_fixture(manifest_path)
+            dispatch_metadata.update({"event": "repository_dispatch", "action": "deploy"})
+            metadata_path.write_text(json.dumps(dispatch_metadata), encoding="utf-8")
+            with patch.object(self.validator, "validate_manifest"):
+                self.validator.validate_metadata(
+                    metadata_path,
+                    manifest_path,
+                    "example/FireMUD",
+                    "42",
+                    "42",
+                    "base-42",
+                    "head-42",
+                    "merge-42",
+                    "pr-42-head-42",
+                    "pr-42.preview.example.test",
+                )
+
+            dispatch_metadata["action"] = "destroy"
+            metadata_path.write_text(json.dumps(dispatch_metadata), encoding="utf-8")
+            with self.assertRaisesRegex(
+                ValueError, "repository_dispatch render metadata action must be deploy"
+            ):
+                self.validator.validate_metadata(
+                    metadata_path,
+                    manifest_path,
+                    "example/FireMUD",
+                    "42",
+                    "42",
+                    "base-42",
+                    "head-42",
+                    "merge-42",
+                    "pr-42-head-42",
+                    "pr-42.preview.example.test",
+                )
+
+            pull_request_metadata = self._metadata_fixture(manifest_path)
+            pull_request_metadata["action"] = "destroy"
+            metadata_path.write_text(
+                json.dumps(pull_request_metadata), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(
+                ValueError, r"metadata contains unsupported fields: \['action'\]"
+            ):
+                self.validator.validate_metadata(
+                    metadata_path,
+                    manifest_path,
+                    "example/FireMUD",
+                    "42",
+                    "42",
+                    "base-42",
+                    "head-42",
+                    "merge-42",
+                    "pr-42-head-42",
+                    "pr-42.preview.example.test",
+                )
 
     def test_metadata_uses_canonical_pr_number_for_manifest_namespace(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -672,6 +734,23 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
             "spec": spec,
         }
 
+    def _preview_ingress(self, *, namespace=None):
+        metadata = {
+            "name": "firemud-preview",
+            "labels": {
+                **self.validator._expected_top_level_labels(),
+                "app.kubernetes.io/instance": "pr-42",
+            },
+        }
+        if namespace is not None:
+            metadata["namespace"] = namespace
+        return {
+            "apiVersion": "networking.k8s.io/v1",
+            "kind": "Ingress",
+            "metadata": metadata,
+            "spec": {},
+        }
+
     def test_injection_rejects_missing_namespace_before_reading_artifact(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "missing.yaml"
@@ -706,6 +785,75 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
             prepared = yaml.safe_load(destination.read_text(encoding="utf-8"))
             self.assertEqual(prepared["metadata"]["namespace"], "pr-42")
             self.assertEqual(prepared["spec"]["ports"][0]["nodePort"], 32000)
+
+    def test_standalone_injects_only_trusted_ingress_issuer(self):
+        trusted_values = yaml.safe_load(
+            (ROOT / "k8s/helm/firemud/values-hosted-shared.example.yaml").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            trusted_values["previewStack"]["ingress"]["clusterIssuer"],
+            self.validator.CANONICAL_INGRESS_ISSUER,
+        )
+        documents = [
+            self._tcp_proxy_service({"ports": [{"port": 2323}]}),
+            self._preview_ingress(),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.yaml"
+            prepared = Path(directory) / "prepared.yaml"
+            source.write_text(yaml.safe_dump_all(documents), encoding="utf-8")
+            self.validator.inject_telnet_port(
+                source, prepared, 32000, "pr-42", "standalone"
+            )
+            result = list(yaml.safe_load_all(prepared.read_text(encoding="utf-8")))
+            self.assertNotIn("annotations", result[0]["metadata"])
+            self.assertEqual(
+                result[1]["metadata"]["annotations"],
+                {"cert-manager.io/cluster-issuer": "letsencrypt-prod"},
+            )
+            self.validator.validate_runtime_target(prepared, "pr-42", 32000, "standalone")
+            with self.assertRaisesRegex(ValueError, "unsupported fields"):
+                self.validator.validate_runtime_target(
+                    prepared, "pr-42", 32000, "hosted-controller"
+                )
+            for annotations in (
+                {"cert-manager.io/cluster-issuer": "attacker"},
+                {
+                    "cert-manager.io/cluster-issuer": "letsencrypt-prod",
+                    "unexpected": "value",
+                },
+            ):
+                with self.subTest(annotations=annotations):
+                    result[1]["metadata"]["annotations"] = annotations
+                    prepared.write_text(yaml.safe_dump_all(result), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "unsafe certificate issuer"):
+                        self.validator.validate_runtime_target(
+                            prepared, "pr-42", 32000, "standalone"
+                        )
+
+    def test_standalone_injection_rejects_missing_ingress_or_source_annotations(self):
+        service = self._tcp_proxy_service({"ports": [{"port": 2323}]})
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.yaml"
+            prepared = Path(directory) / "prepared.yaml"
+            source.write_text(yaml.safe_dump(service), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "exactly one preview Ingress"):
+                self.validator.inject_telnet_port(
+                    source, prepared, 32000, "pr-42", "standalone"
+                )
+            self.assertFalse(prepared.exists())
+            ingress = self._preview_ingress()
+            ingress["metadata"]["annotations"] = {
+                "cert-manager.io/cluster-issuer": "attacker"
+            }
+            source.write_text(yaml.safe_dump_all([service, ingress]), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "unsupported fields"):
+                self.validator.inject_telnet_port(
+                    source, prepared, 32000, "pr-42", "standalone"
+                )
+            self.assertFalse(prepared.exists())
 
     def test_expected_top_level_label_mismatches_report_expected_and_actual(self):
         expected_labels = {

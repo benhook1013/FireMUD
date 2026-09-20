@@ -136,15 +136,9 @@ target_validator = target_validator_path.read_text(encoding="utf-8")
 reconcile_script = reconcile_script_path.read_text(encoding="utf-8")
 mode_action = yaml.safe_load(mode_action_path.read_text(encoding="utf-8"))
 
-dispatch_inputs = workflow[True]["workflow_dispatch"]["inputs"]
-if dispatch_inputs["hostname"]["description"] != (
-    "Only dev.preview.firedevops.net is accepted"
-):
-    raise SystemExit("dev-demo hostname input must document its only accepted value")
-if dispatch_inputs["telnet_port"]["description"] != (
-    "Only TCP NodePort 32016 is accepted"
-):
-    raise SystemExit("dev-demo Telnet port input must document its only accepted value")
+repository_dispatch = workflow[True]["repository_dispatch"]
+if repository_dispatch != {"types": ["dev-demo"]}:
+    raise SystemExit("dev-demo must use the typed repository_dispatch handoff")
 
 expected_mode_step = {
     "name": "Resolve certificate identity mode",
@@ -173,8 +167,8 @@ if reconciler["jobs"]["reconcile-dev-demo"]["timeout-minutes"] != 9:
 
 plan_steps = workflow["jobs"]["dev-demo-plan"]["steps"]
 expected_run_name = (
-    "Develop Dev Demo Environment ${{ inputs.action || 'deploy' }} "
-    "head-${{ inputs.head_sha || github.sha }}"
+    "Develop Dev Demo Environment ${{ github.event.client_payload.action || 'deploy' }} "
+    "head-${{ github.event.client_payload.head_sha || github.sha }}"
 )
 if workflow.get("run-name") != expected_run_name:
     raise SystemExit("dev-demo lifecycle lacks the immutable action/target run name")
@@ -207,7 +201,7 @@ if not (
 
 with tempfile.NamedTemporaryFile() as output:
     derive_fixture = derive_run.replace(
-        "${{ github.event_name }}", "workflow_dispatch"
+        "${{ github.event_name }}", "repository_dispatch"
     ).replace("${{ github.sha }}", "f" * 40)
     fixture_env = os.environ.copy()
     fixture_env.update(
@@ -285,7 +279,7 @@ requester_check = deploy_by_name["Check Hosted identity requester credentials"]
 if requester_check.get("id") != "requester-credentials":
     raise SystemExit("dev-demo deploy requester credential check must publish a stable step output")
 if requester_check.get("env") != {
-    "REQUESTER_KUBECONFIG": "${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}"
+    "REQUESTER_KUBECONFIG": "${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}"
 }:
     raise SystemExit("dev-demo deploy requester credential check reads the wrong secret")
 for required in (
@@ -365,7 +359,7 @@ requester_writer = deploy_by_name["Write hosted identity requester kubeconfig"]
 if requester_writer.get("uses") != "./.github/actions/write-kubeconfig":
     raise SystemExit("dev-demo Active requester must use the canonical kubeconfig action")
 if requester_writer.get("with") != {
-    "content": "${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}",
+    "content": "${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}",
     "path": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
     "export-to-github-env": "false",
 }:
@@ -543,7 +537,7 @@ destroy_requester_check = destroy_by_name["Check Hosted identity requester crede
 if destroy_requester_check.get("id") != "requester-credentials":
     raise SystemExit("dev-demo destroy requester credential check must publish a stable step output")
 if destroy_requester_check.get("env") != {
-    "REQUESTER_KUBECONFIG": "${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}"
+    "REQUESTER_KUBECONFIG": "${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}"
 }:
     raise SystemExit("dev-demo destroy requester credential check reads the wrong secret")
 for required in (
@@ -615,7 +609,7 @@ if "DEV_DEMO_RUNTIME_KUBECONFIG" in destroy_runtime_kubeconfig["run"]:
     raise SystemExit("dev-demo destroy retained an unnecessary runtime kubeconfig restore variable")
 destroy_requester_writer = destroy_by_name["Write hosted identity requester kubeconfig"]
 if destroy_requester_writer.get("with") != {
-    "content": "${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}",
+    "content": "${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}",
     "path": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
     "export-to-github-env": "false",
 }:
@@ -1681,7 +1675,7 @@ has_typed_field() {
 
 branch_endpoint="repos/${GITHUB_REPOSITORY}/branches/develop"
 runs_endpoint="repos/${GITHUB_REPOSITORY}/actions/workflows/dev-demo.yml/runs"
-dispatch_endpoint="repos/${GITHUB_REPOSITORY}/actions/workflows/dev-demo.yml/dispatches"
+dispatch_endpoint="repos/${GITHUB_REPOSITORY}/dispatches"
 
 if [[ "$endpoint" == "$branch_endpoint" ]]; then
   if [[ "$method" != GET || "$method_explicit" != false \
@@ -1701,12 +1695,12 @@ fi
 if [[ "$endpoint" == "$dispatch_endpoint" ]]; then
   if [[ "$method" != POST || "$method_explicit" != true || -n "$jq_filter" \
     || ${#raw_fields[@]} -ne 6 || ${#typed_fields[@]} -ne 0 ]] \
-    || ! has_raw_field 'ref=develop' \
-    || ! has_raw_field 'inputs[action]=deploy' \
-    || ! has_raw_field "inputs[image_tag]=${TEST_HEAD_SHA}" \
-    || ! has_raw_field "inputs[head_sha]=${TEST_HEAD_SHA}" \
-    || ! has_raw_field 'inputs[hostname]=dev.preview.firedevops.net' \
-    || ! has_raw_field 'inputs[telnet_port]=32016'; then
+    || ! has_raw_field 'event_type=dev-demo' \
+    || ! has_raw_field 'client_payload[action]=deploy' \
+    || ! has_raw_field "client_payload[image_tag]=${TEST_HEAD_SHA}" \
+    || ! has_raw_field "client_payload[head_sha]=${TEST_HEAD_SHA}" \
+    || ! has_raw_field 'client_payload[hostname]=dev.preview.firedevops.net' \
+    || ! has_raw_field 'client_payload[telnet_port]=32016'; then
     echo "unexpected gh dev-demo dispatch" >&2
     exit 2
   fi

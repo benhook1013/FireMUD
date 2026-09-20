@@ -1,40 +1,12 @@
 name: Develop Dev Demo Environment
-run-name: Develop Dev Demo Environment ${{ inputs.action || 'deploy' }} head-${{ inputs.head_sha || github.sha }}
+run-name: Develop Dev Demo Environment ${{ github.event.client_payload.action || 'deploy' }} head-${{ github.event.client_payload.head_sha || github.sha }}
 
 on:
   push:
     branches:
       - develop
-  workflow_dispatch:
-    inputs:
-      action:
-        description: Dev-demo operation
-        required: true
-        default: deploy
-        type: choice
-        options:
-          - deploy
-          - destroy
-      image_tag:
-        description: Image tag to deploy; defaults to the target SHA
-        required: false
-        default: ""
-        type: string
-      head_sha:
-        description: Head SHA to align the environment with
-        required: false
-        default: ""
-        type: string
-      hostname:
-        description: Only dev.preview.firedevops.net is accepted
-        required: false
-        default: dev.preview.firedevops.net
-        type: string
-      telnet_port:
-        description: Only TCP NodePort 32016 is accepted
-        required: false
-        default: "32016"
-        type: string
+  repository_dispatch:
+    types: [dev-demo]
 
 permissions:
   contents: read
@@ -65,11 +37,11 @@ jobs:
       - name: Derive dev-demo target
         id: derive
         env:
-          INPUT_ACTION: ${{ inputs.action }}
-          INPUT_HEAD_SHA: ${{ inputs.head_sha }}
-          INPUT_HOSTNAME: ${{ inputs.hostname }}
-          INPUT_TELNET_PORT: ${{ inputs.telnet_port }}
-          INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
+          INPUT_ACTION: ${{ github.event.client_payload.action || 'deploy' }}
+          INPUT_HEAD_SHA: ${{ github.event.client_payload.head_sha }}
+          INPUT_HOSTNAME: ${{ github.event.client_payload.hostname || 'dev.preview.firedevops.net' }}
+          INPUT_TELNET_PORT: ${{ github.event.client_payload.telnet_port || '32016' }}
+          INPUT_IMAGE_TAG: ${{ github.event.client_payload.image_tag }}
         run: |
           set -euo pipefail
           RUNTIME_NAMESPACE="dev"
@@ -146,9 +118,12 @@ jobs:
       - x64
     needs: dev-demo-plan
     if: ${{ needs.dev-demo-plan.outputs.action == 'deploy' }}
-    environment: dev-demo-cluster
+    environment: trusted-hosted-cluster
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
 
       - name: Resolve certificate identity mode
         id: certificate-identity
@@ -164,12 +139,11 @@ jobs:
 
       - name: Write dev-demo runtime kubeconfig
         env:
-          PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
+          PREVIEW_KUBECONFIG: ${{ secrets.TRUSTED_HOSTED_PREVIEW_KUBECONFIG }}
           PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
         run: |
           KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh \
             "$RUNNER_TEMP/dev-demo-runtime.kubeconfig")"
-          bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Verify cluster access
@@ -200,7 +174,7 @@ jobs:
         id: requester-credentials
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
         env:
-          REQUESTER_KUBECONFIG: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
+          REQUESTER_KUBECONFIG: ${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
         run: |
           set -euo pipefail
           if [[ -z "$REQUESTER_KUBECONFIG" ]]; then
@@ -247,7 +221,7 @@ jobs:
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available == 'true' }}
         uses: ./.github/actions/write-kubeconfig
         with:
-          content: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
+          content: ${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
           path: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
           export-to-github-env: 'false'
 
@@ -287,8 +261,8 @@ jobs:
       - name: Ensure GHCR pull secret exists
         if: ${{ steps.cluster-access.outputs.available == 'true' }}
         env:
-          PREVIEW_GHCR_USERNAME: ${{ secrets.PREVIEW_GHCR_USERNAME }}
-          PREVIEW_GHCR_TOKEN: ${{ secrets.PREVIEW_GHCR_TOKEN }}
+          PREVIEW_GHCR_USERNAME: ${{ secrets.TRUSTED_HOSTED_PREVIEW_GHCR_USERNAME }}
+          PREVIEW_GHCR_TOKEN: ${{ secrets.TRUSTED_HOSTED_PREVIEW_GHCR_TOKEN }}
         run: |
           bash ./dev-tools/hosted/shared/ensure-ghcr-pull-secret.sh "${{ needs.dev-demo-plan.outputs.namespace }}"
 
@@ -896,6 +870,10 @@ jobs:
             "${{ needs.dev-demo-plan.outputs.telnet_port }}" \
             "${DEV_DEMO_STAGE:-unknown}" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Remove dev-demo runtime kubeconfig
+        if: ${{ always() }}
+        run: rm -f -- "$RUNNER_TEMP/dev-demo-runtime.kubeconfig"
+
   dev-demo-destroy:
     name: Destroy Dev Demo Release
     timeout-minutes: 60
@@ -906,9 +884,12 @@ jobs:
       - x64
     needs: dev-demo-plan
     if: ${{ needs.dev-demo-plan.outputs.action == 'destroy' }}
-    environment: dev-demo-cluster
+    environment: trusted-hosted-cluster
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
 
       - name: Resolve certificate identity mode
         id: certificate-identity
@@ -924,12 +905,11 @@ jobs:
 
       - name: Write dev-demo runtime kubeconfig
         env:
-          PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
+          PREVIEW_KUBECONFIG: ${{ secrets.TRUSTED_HOSTED_PREVIEW_KUBECONFIG }}
           PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
         run: |
           KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh \
             "$RUNNER_TEMP/dev-demo-runtime.kubeconfig")"
-          bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Validate kubectl client/server skew
@@ -957,7 +937,7 @@ jobs:
         id: requester-credentials
         if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' }}
         env:
-          REQUESTER_KUBECONFIG: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
+          REQUESTER_KUBECONFIG: ${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
         run: |
           set -euo pipefail
           if [[ -z "$REQUESTER_KUBECONFIG" ]]; then
@@ -971,7 +951,7 @@ jobs:
         if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available == 'true' }}
         uses: ./.github/actions/write-kubeconfig
         with:
-          content: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
+          content: ${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
           path: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
           export-to-github-env: 'false'
 
@@ -1040,3 +1020,7 @@ jobs:
             "${{ needs.dev-demo-plan.outputs.image_tag }}" \
             "${{ needs.dev-demo-plan.outputs.hostname }}" \
             "${{ needs.dev-demo-plan.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove dev-demo runtime kubeconfig
+        if: ${{ always() }}
+        run: rm -f -- "$RUNNER_TEMP/dev-demo-runtime.kubeconfig"

@@ -353,14 +353,14 @@ if [[ "$1" == run && "$2" == list ]]; then
   printf '%s' "${FAKE_ACTIVE_PREVIEW_RUNS_JSON:-[]}"
   exit 0
 fi
-if [[ "$*" == *"actions/workflows/preview.yml/dispatches"* ]]; then
+if [[ "$*" == *"repos/example/FireMUD/dispatches"* ]]; then
   printf '%s\n' "$*" >> "$FAKE_DISPATCH_LOG"
   exit 0
 fi
 case "$resource" in
   */actions/runs/42)
     if [[ "$has_jq" != true ]]; then
-      printf '%s' '{"conclusion":"success","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900}]}'
+      printf '%s' '{"conclusion":"success","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","path":".github/workflows/preview.yml","event":"pull_request_target","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900}]}'
     elif [[ "$*" == *".path"* ]]; then
       printf '%s' '.github/workflows/preview.yml'
     else
@@ -1848,6 +1848,7 @@ trusted_workflow="$ROOT_DIR/.github/workflows/hosted-identity-request.yml"
 reconciler_workflow="$ROOT_DIR/.github/workflows/preview-reconciler.yml"
 eligibility_script="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
 RECONCILER_RUN="$TEMP_DIR/preview-reconciler.sh"
+export DEFAULT_BRANCH=develop
 extract_workflow_step_run \
   "$reconciler_workflow" \
   "Dispatch preview deploys for drifted PRs" \
@@ -1863,11 +1864,11 @@ for repair_status_assignment in \
 done
 # shellcheck disable=SC2016 # Assert the literal repair status dispatch in workflow source.
 grep -Fq 'case "$repair_status" in' "$RECONCILER_RUN"
-grep -Fq -- '--json databaseId,status,headSha' "$RECONCILER_RUN"
-# shellcheck disable=SC2016 # Assert the active-run lookup is fenced to the candidate head.
-grep -Fq -- '--arg head_sha "${head_sha}"' "$RECONCILER_RUN"
-# shellcheck disable=SC2016 # Assert the literal jq head comparison in workflow source.
-grep -Fq -- '.headSha == $head_sha' "$RECONCILER_RUN"
+grep -Fq -- '--json databaseId,status,displayTitle' "$RECONCILER_RUN"
+# shellcheck disable=SC2016 # Assert the active-run lookup is fenced to the candidate dispatch title.
+grep -Fq -- '--arg run_name "Preview dispatch pr-${pr_number}-${head_sha}"' "$RECONCILER_RUN"
+# shellcheck disable=SC2016 # Assert the literal jq display-title comparison in workflow source.
+grep -Fq -- '.displayTitle == $run_name' "$RECONCILER_RUN"
 for active_status in requested queued in_progress waiting pending; do
   grep -Fq -- ".status == \"${active_status}\"" "$RECONCILER_RUN"
 done
@@ -1880,7 +1881,7 @@ reset_case
 reconciler_valid_output="$TEMP_DIR/reconciler-valid.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD=head-901 \
     PREVIEW_MAX_ACTIVE=3 \
@@ -1897,13 +1898,13 @@ reset_case
 reconciler_empty_deployed_output="$TEMP_DIR/reconciler-empty-deployed.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD='' \
     FAKE_PR_901_REQUESTED_HEAD=head-901 \
     PREVIEW_MAX_ACTIVE=3 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_empty_deployed_output"
-grep -qx 'Dispatching preview deploy for PR #901 (head-901) on ref feature-901' \
+grep -qx 'Dispatching preview render for PR #901 (head-901) from trusted ref develop' \
   "$reconciler_empty_deployed_output"
 test ! -e "$FAKE_ANNOTATE_LOG"
 test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 1
@@ -1912,13 +1913,13 @@ reset_case
 reconciler_namespace_absent_output="$TEMP_DIR/reconciler-namespace-absent.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_NAMESPACE_ABSENT=true \
     PREVIEW_MAX_ACTIVE=3 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_namespace_absent_output"
-grep -qx 'Dispatching preview deploy for PR #901 (head-901) on ref feature-901' \
+grep -qx 'Dispatching preview render for PR #901 (head-901) from trusted ref develop' \
   "$reconciler_namespace_absent_output"
 test ! -e "$FAKE_ANNOTATE_LOG"
 test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 1
@@ -1928,7 +1929,7 @@ reset_case
 reconciler_unvalidated_priority_output="$TEMP_DIR/reconciler-unvalidated-priority.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="0\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="0\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_NAMESPACE_ABSENT=true \
     PREVIEW_MAX_ACTIVE=1 \
     bash "$RECONCILER_RUN"
@@ -1941,40 +1942,40 @@ reset_case
 reconciler_validated_priority_output="$TEMP_DIR/reconciler-validated-priority.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${priority_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${priority_labels_base64}\n" \
     FAKE_PR_901_NAMESPACE_ABSENT=true \
     PREVIEW_MAX_ACTIVE=1 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_validated_priority_output"
-grep -qx 'Dispatching preview deploy for PR #901 (head-901) on ref feature-901' \
+grep -qx 'Dispatching preview render for PR #901 (head-901) from trusted ref develop' \
   "$reconciler_validated_priority_output"
 grep -Fq \
-  'actions/workflows/preview.yml/dispatches -f ref=feature-901' \
+  'repos/example/FireMUD/dispatches -f event_type=preview-deploy' \
   "$FAKE_DISPATCH_LOG"
 
 reset_case
 reconciler_stale_active_run_output="$TEMP_DIR/reconciler-stale-active-run.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_NAMESPACE_ABSENT=true \
-    FAKE_ACTIVE_PREVIEW_RUNS_JSON='[{"databaseId":41,"status":"in_progress","headSha":"stale-head"}]' \
+    FAKE_ACTIVE_PREVIEW_RUNS_JSON='[{"databaseId":41,"status":"in_progress","displayTitle":"Preview dispatch pr-901-stale-head"}]' \
     PREVIEW_MAX_ACTIVE=3 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_stale_active_run_output"
-grep -qx 'Dispatching preview deploy for PR #901 (head-901) on ref feature-901' \
+grep -qx 'Dispatching preview render for PR #901 (head-901) from trusted ref develop' \
   "$reconciler_stale_active_run_output"
 grep -Fq \
-  'actions/workflows/preview.yml/dispatches -f ref=feature-901' \
+  'repos/example/FireMUD/dispatches -f event_type=preview-deploy' \
   "$FAKE_DISPATCH_LOG"
 
 reset_case
 reconciler_current_active_run_output="$TEMP_DIR/reconciler-current-active-run.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_NAMESPACE_ABSENT=true \
-    FAKE_ACTIVE_PREVIEW_RUNS_JSON='[{"databaseId":42,"status":"queued","headSha":"head-901"}]' \
+    FAKE_ACTIVE_PREVIEW_RUNS_JSON='[{"databaseId":42,"status":"queued","displayTitle":"Preview dispatch pr-901-head-901"}]' \
     PREVIEW_MAX_ACTIVE=3 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_current_active_run_output"
@@ -1987,14 +1988,14 @@ reset_case
 reconciler_namespace_absent_on_recheck_output="$TEMP_DIR/reconciler-namespace-absent-on-recheck.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
     FAKE_PR_901_NAMESPACE_ABSENT_ON_RECHECK=true \
     PREVIEW_MAX_ACTIVE=3 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_namespace_absent_on_recheck_output"
-grep -qx 'Dispatching preview deploy for PR #901 (head-901) on ref feature-901' \
+grep -qx 'Dispatching preview render for PR #901 (head-901) from trusted ref develop' \
   "$reconciler_namespace_absent_on_recheck_output"
 test ! -e "$FAKE_ANNOTATE_LOG"
 test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
@@ -2004,7 +2005,7 @@ reset_case
 reconciler_namespace_error_output="$TEMP_DIR/reconciler-namespace-error.out"
 if (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_NAMESPACE_SNAPSHOT_ERROR=true \
     PREVIEW_MAX_ACTIVE=3 \
@@ -2022,24 +2023,24 @@ reset_case
 reconciler_namespace_parse_output="$TEMP_DIR/reconciler-namespace-parse.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="0\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${priority_labels_base64}\n1\t101\tfeature-101\tnew-head-101\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="0\t901\thead-901\thuman\tdevelop\topen\t${priority_labels_base64}\n1\t101\tnew-head-101\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_NAMESPACE_SNAPSHOT_PARSE_FAIL=true \
     PREVIEW_MAX_ACTIVE=3 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_namespace_parse_output" 2>&1
 grep -qx 'Skipping PR #901: unable to parse namespace pr-901 snapshot.' \
   "$reconciler_namespace_parse_output"
-grep -qx 'Dispatching preview deploy for PR #101 (new-head-101) on ref feature-101' \
+grep -qx 'Dispatching preview render for PR #101 (new-head-101) from trusted ref develop' \
   "$reconciler_namespace_parse_output"
 grep -Fq \
-  'actions/workflows/preview.yml/dispatches -f ref=feature-101' \
+  'repos/example/FireMUD/dispatches -f event_type=preview-deploy' \
   "$FAKE_DISPATCH_LOG"
 
 reset_case
 reconciler_namespace_recheck_parse_output="$TEMP_DIR/reconciler-namespace-recheck-parse.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="0\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${priority_labels_base64}\n1\t101\tfeature-101\tnew-head-101\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="0\t901\thead-901\thuman\tdevelop\topen\t${priority_labels_base64}\n1\t101\tnew-head-101\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
     FAKE_NAMESPACE_SNAPSHOT_RECHECK_PARSE_FAIL=true \
@@ -2048,17 +2049,17 @@ reconciler_namespace_recheck_parse_output="$TEMP_DIR/reconciler-namespace-rechec
 ) > "$reconciler_namespace_recheck_parse_output" 2>&1
 grep -qx 'Skipping PR #901: unable to parse namespace pr-901 recheck.' \
   "$reconciler_namespace_recheck_parse_output"
-grep -qx 'Dispatching preview deploy for PR #101 (new-head-101) on ref feature-101' \
+grep -qx 'Dispatching preview render for PR #101 (new-head-101) from trusted ref develop' \
   "$reconciler_namespace_recheck_parse_output"
 grep -Fq \
-  'actions/workflows/preview.yml/dispatches -f ref=feature-101' \
+  'repos/example/FireMUD/dispatches -f event_type=preview-deploy' \
   "$FAKE_DISPATCH_LOG"
 
 reset_case
 reconciler_missing_requested_output="$TEMP_DIR/reconciler-missing-requested.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
     PREVIEW_MAX_ACTIVE=3 \
@@ -2077,7 +2078,7 @@ reset_case
 reconciler_stale_requested_output="$TEMP_DIR/reconciler-stale-requested.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD=stale-head \
     PREVIEW_MAX_ACTIVE=3 \
@@ -2096,7 +2097,7 @@ reset_case
 reconciler_annotation_deleted_output="$TEMP_DIR/reconciler-annotation-deleted.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
     FAKE_ANNOTATE_ERROR=true \
@@ -2111,14 +2112,14 @@ grep -Fqx \
   "$FAKE_ANNOTATE_LOG"
 test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 3
 grep -Fq \
-  'actions/workflows/preview.yml/dispatches -f ref=feature-901' \
+  'repos/example/FireMUD/dispatches -f event_type=preview-deploy' \
   "$FAKE_DISPATCH_LOG"
 
 reset_case
 reconciler_annotation_existing_output="$TEMP_DIR/reconciler-annotation-existing.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="0\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${priority_labels_base64}\n1\t101\tfeature-101\tnew-head-101\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="0\t901\thead-901\thuman\tdevelop\topen\t${priority_labels_base64}\n1\t101\tnew-head-101\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
     FAKE_ANNOTATE_ERROR=true \
@@ -2128,10 +2129,10 @@ reconciler_annotation_existing_output="$TEMP_DIR/reconciler-annotation-existing.
 grep -qx \
   'Skipping PR #901: unable to annotate namespace pr-901; namespace still exists.' \
   "$reconciler_annotation_existing_output"
-grep -qx 'Dispatching preview deploy for PR #101 (new-head-101) on ref feature-101' \
+grep -qx 'Dispatching preview render for PR #101 (new-head-101) from trusted ref develop' \
   "$reconciler_annotation_existing_output"
 grep -Fq \
-  'actions/workflows/preview.yml/dispatches -f ref=feature-101' \
+  'repos/example/FireMUD/dispatches -f event_type=preview-deploy' \
   "$FAKE_DISPATCH_LOG"
 test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 3
 
@@ -2139,7 +2140,7 @@ reset_case
 reconciler_annotation_confirmation_error_output="$TEMP_DIR/reconciler-annotation-confirmation-error.out"
 if (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
     FAKE_ANNOTATE_ERROR=true \
@@ -2160,7 +2161,7 @@ reset_case
 reconciler_namespace_recheck_error_output="$TEMP_DIR/reconciler-namespace-recheck-error.out"
 if (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
     FAKE_NAMESPACE_SNAPSHOT_RECHECK_ERROR=true \
@@ -2180,7 +2181,7 @@ reset_case
 reconciler_changed_requested_output="$TEMP_DIR/reconciler-changed-requested.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
     FAKE_PR_901_RECHECK_REQUESTED_HEAD=raced-head \
@@ -2198,7 +2199,7 @@ reset_case
 reconciler_changed_stale_requested_output="$TEMP_DIR/reconciler-changed-stale-requested.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD=stale-head \
     FAKE_PR_901_RECHECK_REQUESTED_HEAD=other-stale-head \
@@ -2216,7 +2217,7 @@ reset_case
 reconciler_changed_deployed_output="$TEMP_DIR/reconciler-changed-deployed.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
     FAKE_PR_901_RECHECK_HEAD=changed-head \
@@ -2235,7 +2236,7 @@ malformed_labels_base64="$(printf '%s' '{}' | base64 | tr -d '\n')"
 reconciler_malformed_output="$TEMP_DIR/reconciler-malformed.out"
 (
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\t${malformed_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${malformed_labels_base64}\n" \
     PREVIEW_MAX_ACTIVE=3 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_malformed_output" 2>&1
@@ -2245,92 +2246,6 @@ if grep -q '^Dispatching preview deploy' "$reconciler_malformed_output"; then
   echo "reconciler dispatched after malformed label metadata" >&2
   exit 1
 fi
-
-TRUSTED_TARGET_RUN="$TEMP_DIR/hosted-identity-target.sh"
-extract_workflow_step_run \
-  "$trusted_workflow" \
-  "Verify workflow source and immutable PR metadata" \
-  "$TRUSTED_TARGET_RUN"
-
-run_trusted_target_fixture() {
-  local source_artifacts_json="$1"
-  local labels_valid="$2"
-  local expected_head="$3"
-  local output="$4"
-  rm -f "$output"
-  (
-    cd "$ROOT_DIR"
-    FAKE_SOURCE_ARTIFACTS_JSON="$source_artifacts_json" \
-      FAKE_TARGET_LABELS_VALID="$labels_valid" \
-      EVENT_NAME=workflow_run \
-      EVENT_ACTION=completed \
-      WORKFLOW_RUN_ID=42 \
-      WORKFLOW_RUN_HEAD_SHA="$expected_head" \
-      EVENT_PR_NUMBER='' \
-      EVENT_HEAD_SHA='' \
-      INPUT_PR_NUMBER='' \
-      INPUT_HEAD_SHA='' \
-      INPUT_ACTION='' \
-      GITHUB_OUTPUT="$output" \
-      bash "$TRUSTED_TARGET_RUN"
-  )
-}
-
-unsupported_target_output="$TEMP_DIR/trusted-target-unsupported.out"
-if (
-  cd "$ROOT_DIR"
-  env \
-    PATH="$TEMP_DIR/bin:$PATH" \
-    GH_TOKEN=fake \
-    GITHUB_REPOSITORY=example/FireMUD \
-    EVENT_NAME=workflow_dispatch \
-    EVENT_ACTION='' \
-    WORKFLOW_RUN_ID='' \
-    WORKFLOW_RUN_HEAD_SHA='' \
-    EVENT_PR_NUMBER='' \
-    EVENT_HEAD_SHA='' \
-    GITHUB_OUTPUT="$unsupported_target_output" \
-    bash "$TRUSTED_TARGET_RUN"
-) >"$TEMP_DIR/trusted-target-unsupported.stdout" 2>"$TEMP_DIR/trusted-target-unsupported.stderr"; then
-  echo "trusted identity target accepted an unsupported event" >&2
-  exit 1
-fi
-grep -Fqx \
-  '::error title=Unsupported lifecycle event::Cannot validate hosted identity request for event workflow_dispatch.' \
-  "$TEMP_DIR/trusted-target-unsupported.stderr"
-test ! -s "$unsupported_target_output"
-
-# The successor lifecycle resolver remains checked in but dormant. An exact
-# validated artifact can resolve deploy once a successor producer is activated.
-reset_case
-run_trusted_target_fixture \
-  '[{"artifacts":[{"name":"preview-render-pr-900-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","expired":false}]}]' \
-  valid "$FAKE_TARGET_HEAD" "$TEMP_DIR/trusted-target-exact-artifact.out"
-grep -qx 'action=deploy' "$TEMP_DIR/trusted-target-exact-artifact.out"
-grep -qx 'head_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$TEMP_DIR/trusted-target-exact-artifact.out"
-
-# The prerequisite's old preview producer publishes no validated artifact, so
-# its only reachable workflow_run source must resolve no action.
-reset_case
-run_trusted_target_fixture \
-  '[{"artifacts":[]}]' valid "$FAKE_TARGET_HEAD" \
-  "$TEMP_DIR/trusted-target-no-artifact.out"
-grep -qx 'action=none' "$TEMP_DIR/trusted-target-no-artifact.out"
-
-reset_case
-run_trusted_target_fixture \
-  '[{"artifacts":[{"name":"preview-render-pr-900-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","expired":false}]}]' \
-  malformed "$FAKE_TARGET_HEAD" "$TEMP_DIR/trusted-target-malformed.out"
-grep -qx 'action=none' "$TEMP_DIR/trusted-target-malformed.out"
-
-reset_case
-run_trusted_target_fixture \
-  '[{"artifacts":[{"name":"preview-render-pr-900-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","expired":false}]}]' \
-  valid bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb "$TEMP_DIR/trusted-target-stale.out" \
-  >"$TEMP_DIR/trusted-target-stale.stdout"
-grep -qx 'action=none' "$TEMP_DIR/trusted-target-stale.out"
-grep -Fxq 'Ignoring stale lifecycle event for an earlier PR head.' \
-  "$TEMP_DIR/trusted-target-stale.stdout"
 
 janitor_workflow="$ROOT_DIR/.github/workflows/preview-janitor.yml"
 TRUSTED_WORKFLOW="$trusted_workflow" JANITOR_WORKFLOW="$janitor_workflow" python3 - <<'PY'
@@ -2419,6 +2334,9 @@ deploy_revalidation = (
 cleanup_revalidation = (
     f'{revalidation_helper} --cleanup "$PR_NUMBER" "$EXPECTED_HEAD_SHA"'
 )
+open_cleanup_revalidation = (
+    f'{revalidation_helper} --open-cleanup "$PR_NUMBER" "$EXPECTED_HEAD_SHA"'
+)
 actual_revalidations = {}
 for job_name, job in jobs.items():
     for step in job.get("steps", []):
@@ -2436,21 +2354,23 @@ for job_name, job in jobs.items():
             actual_revalidations[key] = calls
 assert {job_name for job_name, _ in actual_revalidations} == set(expected_gates)
 for (job_name, step_name), calls in actual_revalidations.items():
-    expected_call = (
-        cleanup_revalidation
-        if job_name in {"destroy-runtime", "retire-identity"}
-        else deploy_revalidation
+    expected_calls = (
+        {cleanup_revalidation, open_cleanup_revalidation}
+        if job_name == "destroy-runtime"
+        else {cleanup_revalidation}
+        if job_name == "retire-identity"
+        else {deploy_revalidation}
     )
-    assert all(call == expected_call for call in calls), (
+    assert set(calls) == expected_calls, (
         job_name,
         step_name,
         calls,
     )
 PY
 
-# The fixtures above execute the trusted target's deploy, no-action, stale-head,
-# artifact, and malformed-label paths. Parsed workflow structure now owns the
-# trigger, gate, timeout, and revalidation-placement contract.
+# The hosted-identity controller contract exercises the trusted target's source,
+# artifact, stale-head, and malformed-label paths. This priority contract checks
+# the lifecycle gate and revalidation placement without duplicating that harness.
 revalidation_helper="$ROOT_DIR/dev-tools/hosted/preview/revalidate-preview-deploy.sh"
 test "$(grep -Fc -- 'revalidate-preview-deploy.sh' "$ALLOCATOR")" -eq 1
 # shellcheck disable=SC2016 # Assert literal helper mode selection.
@@ -2622,15 +2542,17 @@ grep -Fq -- '--retire-terminal-identities' "$janitor_workflow"
 # Ordinary runtime cleanup callers must not opt into retained-identity retirement.
 test "$(grep -Fc -- '--retire-terminal-identities' "$ROOT_DIR/.github/workflows/preview.yml")" -eq 0
 test "$(grep -Fc -- '--retire-terminal-identities' "$trusted_workflow")" -eq 0
-python3 - "$ROOT_DIR/.github/workflows/preview.yml" "$reconciler_workflow" <<'PY'
+python3 - "$ROOT_DIR/.github/workflows/preview.yml" "$trusted_workflow" "$reconciler_workflow" <<'PY'
 import sys
 from pathlib import Path
 
 import yaml
 
 preview = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
-reconciler = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
-assert preview["jobs"]["preview-destroy"]["timeout-minutes"] == 60
+trusted = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
+reconciler = yaml.safe_load(Path(sys.argv[3]).read_text(encoding="utf-8"))
+assert set(preview["jobs"]) == {"preview-plan", "preview-render", "preview-destroy-intent"}
+assert trusted["jobs"]["destroy-runtime"]["timeout-minutes"] == 60
 assert reconciler["jobs"]["reconcile-previews"]["timeout-minutes"] == 60
 preview_run_scripts = [
     step["run"]
@@ -2641,7 +2563,7 @@ preview_run_scripts = [
 canonical_pr_number_pattern = '"$PR_NUMBER" =~ ^[1-9][0-9]{0,50}$'
 assert sum(
     script.count(canonical_pr_number_pattern) for script in preview_run_scripts
-) == 3
+) >= 1
 assert not any(
     '"$PR_NUMBER" =~ ^[1-9][0-9]*$' in script for script in preview_run_scripts
 )
@@ -2694,7 +2616,7 @@ assert run.count('any(. == "preview:priority")') == 1
 assert "then 0 else 1 end" in run
 assert "sort -t $'\\t' -k1,1n -k2,2n" in run
 assert (
-    "read -r _ pr_number head_ref head_sha pr_author pr_base_ref pr_state "
+    "read -r _ pr_number head_sha pr_author pr_base_ref pr_state "
     "labels_json_base64"
 ) in run
 PY

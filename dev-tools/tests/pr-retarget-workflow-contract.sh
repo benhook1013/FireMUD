@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016 # This contract intentionally matches literal workflow and source expressions.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -320,8 +321,8 @@ pr_image_publisher_path="$ROOT_DIR/.github/workflows/publish-pr-runtime-images.y
 smoke_path="$ROOT_DIR/.github/workflows/smoke.yml"
 image_wait_path="$ROOT_DIR/dev-tools/hosted/shared/wait-for-runtime-images.sh"
 preview_path="$ROOT_DIR/.github/workflows/preview.yml"
+trusted_preview_path="$ROOT_DIR/.github/workflows/hosted-identity-request.yml"
 preview_reconciler_path="$ROOT_DIR/.github/workflows/preview-reconciler.yml"
-preview_janitor_path="$ROOT_DIR/.github/workflows/preview-janitor.yml"
 preview_comment_publisher_path="$ROOT_DIR/dev-tools/hosted/preview/publish-preview-comment.js"
 preview_comment_test_path="$ROOT_DIR/dev-tools/tests/publish-preview-comment.test.cjs"
 
@@ -407,37 +408,124 @@ if grep -Eq '^concurrency:' "$preview_path"; then
   echo "Preview workflow must not cancel an active lifecycle from workflow-level concurrency" >&2
   exit 1
 fi
-assert_job_contains preview.yml preview-plan "group: preview-plan-\${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.pr_number || github.ref }}"
+assert_job_contains preview.yml preview-plan "group: preview-plan-\${{ github.event_name == 'pull_request_target' && github.event.pull_request.number || github.event.client_payload.pr_number || github.ref }}"
 assert_job_contains preview.yml preview-plan 'cancel-in-progress: true'
-for job in preview-deploy preview-destroy; do
-  assert_job_contains preview.yml "$job" 'group: preview-allocation-lifecycle'
-  assert_job_contains preview.yml "$job" 'cancel-in-progress: false'
-  assert_job_contains preview.yml "$job" 'queue: max'
-  assert_job_contains preview.yml "$job" 'persist-credentials: false'
-done
-require_contains "$preview_janitor_path" 'group: preview-allocation-lifecycle'
-require_contains "$preview_janitor_path" 'cancel-in-progress: false'
-require_contains "$preview_janitor_path" 'queue: max'
-if grep -Eq '^concurrency:' "$preview_janitor_path"; then
-  echo "Preview janitor must not cancel an active lifecycle from workflow-level concurrency" >&2
-  exit 1
-fi
 assert_job_excludes preview.yml preview-plan 'Publish preview lifecycle state'
 assert_job_excludes preview.yml preview-plan 'firemud-preview-summary'
 assert_job_excludes preview.yml preview-plan 'publish-preview-comment.js'
 assert_job_excludes preview.yml preview-plan 'write-preview-summary.sh'
-for job in preview-deploy preview-destroy; do
-  assert_job_contains preview.yml "$job" 'publish-preview-comment.js'
-  assert_job_contains preview.yml "$job" 'publishPreviewComment({'
+if grep -Eq '^  preview-(deploy|destroy):' "$preview_path"; then
+  echo "Preview source workflow must not contain privileged deploy or destroy jobs" >&2
+  exit 1
+fi
+for forbidden in \
+  'self-hosted' \
+  'environment: pr-preview' \
+  'secrets.' \
+  'issues: write' \
+  'pull-requests: write' \
+  'packages: write' \
+  'kubectl ' \
+  'helm upgrade'; do
+  if grep -Fq -- "$forbidden" "$preview_path"; then
+    echo "Preview source workflow must not contain privileged source-side content: $forbidden" >&2
+    exit 1
+  fi
 done
-assert_job_contains preview.yml preview-deploy 'mode: "deploying"'
-assert_job_contains preview.yml preview-deploy 'markerPolicy: "preserve-reclaimed"'
-assert_job_contains preview.yml preview-deploy 'statePolicy: "expected-open"'
-assert_job_contains preview.yml preview-destroy 'mode: "cleanup"'
-assert_job_contains preview.yml preview-destroy 'markerPolicy: "replace"'
-assert_job_contains preview.yml preview-destroy 'statePolicy ='
-assert_job_contains preview.yml preview-destroy '"expected-closed"'
-assert_job_contains preview.yml preview-destroy '"manual-any"'
+require_contains "$preview_path" 'run-name: ${{ github.event_name == '
+require_contains "$preview_path" "format('Preview dispatch pr-{0}-{1}', github.event.client_payload.pr_number, github.event.client_payload.head_sha)"
+require_contains "$preview_path" 'contents: read'
+require_contains "$preview_path" 'pull-requests: read'
+require_contains "$preview_path" 'pull_request_target:'
+require_contains "$preview_path" 'types: [preview-deploy, preview-destroy]'
+require_contains "$preview_path" '      - opened'
+require_contains "$preview_path" '      - synchronize'
+require_contains "$preview_path" '      - reopened'
+require_contains "$preview_path" '      - labeled'
+require_contains "$preview_path" 'CLIENT_HEAD_SHA: ${{ github.event.client_payload.head_sha }}'
+require_contains "$preview_path" 'CLIENT_IMAGE_TAG: ${{ github.event.client_payload.image_tag }}'
+require_contains "$preview_path" 'CLIENT_PREVIEW_DOMAIN: ${{ github.event.client_payload.preview_domain }}'
+if grep -Fq 'workflow_dispatch:' "$preview_path"; then
+  echo "Preview source workflow must not expose a branch-selectable workflow_dispatch trigger" >&2
+  exit 1
+fi
+if grep -Eq '^      - closed$' "$preview_path"; then
+  echo "Preview source workflow must leave close cleanup to the trusted workflow" >&2
+  exit 1
+fi
+require_contains "$preview_path" 'Check out trusted default branch for preview plan'
+require_contains "$preview_path" 'ref: ${{ github.event.repository.default_branch }}'
+require_contains "$preview_path" "github.event_name == 'pull_request_target'"
+require_contains "$preview_path" "github.event_name == 'repository_dispatch'"
+require_contains "$preview_path" 'github.event.pull_request.head.repo.full_name == github.repository'
+require_contains "$preview_path" 'github.event.pull_request.merge_commit_sha'
+require_contains "$preview_path" 'Stale preview head SHA'
+assert_job_contains preview.yml preview-plan 'resolve-preview-image-tag.sh'
+assert_job_contains preview.yml preview-plan 'current PR head or base SHA as image tag'
+assert_job_contains preview.yml preview-plan 'preview.firedevops.net'
+assert_job_contains preview.yml preview-render 'runs-on: ubuntu-latest'
+assert_job_contains preview.yml preview-render "needs.preview-plan.outputs.action == 'deploy'"
+assert_job_contains preview.yml preview-render 'ref: refs/pull/${{ needs.preview-plan.outputs.pr_number }}/merge'
+assert_job_contains preview.yml preview-render 'fetch-depth: 2'
+assert_job_contains preview.yml preview-render 'expected_merge_parents="$MERGE_SHA $BASE_SHA $HEAD_SHA"'
+assert_job_contains preview.yml preview-render 'The checked-out merge ref is not the planned two-parent merge'
+assert_job_contains preview.yml preview-render 'forbidden = {'
+assert_job_contains preview.yml preview-render 'render contains forbidden object not in explicit exclusion allowlist'
+assert_job_contains preview.yml preview-render 'validate-preview-artifact.py'
+assert_job_contains preview.yml preview-render 'sanitize "$filtered" "$sanitized"'
+for binding in manifestSha256 repository sourceRunId prNumber baseSha headSha mergeSha imageTag hostname; do
+  assert_job_contains preview.yml preview-render "$binding"
+done
+assert_job_contains preview.yml preview-render 'if $event == "repository_dispatch" then {action:$action}'
+assert_job_contains preview.yml preview-render 'name: preview-render-pr-${{ needs.preview-plan.outputs.pr_number }}-${{ needs.preview-plan.outputs.head_sha }}'
+assert_job_contains preview.yml preview-destroy-intent 'runs-on: ubuntu-latest'
+assert_job_contains preview.yml preview-destroy-intent "github.event_name == 'repository_dispatch'"
+assert_job_contains preview.yml preview-destroy-intent "needs.preview-plan.outputs.action == 'destroy'"
+assert_job_contains preview.yml preview-destroy-intent '--arg event repository_dispatch'
+assert_job_contains preview.yml preview-destroy-intent 'schemaVersion:1,event:$event,action:$action'
+assert_job_contains preview.yml preview-destroy-intent 'name: preview-intent-pr-${{ needs.preview-plan.outputs.pr_number }}-${{ needs.preview-plan.outputs.head_sha }}'
+assert_job_excludes preview.yml preview-destroy-intent "github.event_name == 'pull_request'"
+
+# The trusted default-branch workflow owns all runtime and identity mutations.
+require_contains "$trusted_preview_path" "github.event.workflow_run.head_repository.full_name == github.repository"
+require_contains "$trusted_preview_path" "github.event.workflow_run.event == 'pull_request_target' || github.event.workflow_run.event == 'repository_dispatch'"
+require_contains "$trusted_preview_path" "github.event_name == 'pull_request_target' && github.event.action == 'closed'"
+require_contains "$trusted_preview_path" 'require_source_field head-branch "$DEFAULT_BRANCH"'
+require_contains "$trusted_preview_path" 'preview-(render|intent)-pr-'
+require_contains "$trusted_preview_path" 'preview-${ARTIFACT_KIND}-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}'
+require_contains "$trusted_preview_path" 'metadata_event="$(jq -r'
+require_contains "$trusted_preview_path" 'metadata_action="$(jq -r'
+require_contains "$trusted_preview_path" 'validate-preview-intent.py'
+require_contains "$trusted_preview_path" 'repository="$(jq -r'
+require_contains "$trusted_preview_path" '[[ "$repository" == "$GITHUB_REPOSITORY" ]]'
+require_contains "$trusted_preview_path" '[[ "$base_ref" == main || "$base_ref" == develop ]]'
+require_contains "$trusted_preview_path" 'labels_json="$(jq -c'
+require_contains "$trusted_preview_path" 'preview-eligibility.py'
+require_contains "$trusted_preview_path" '[[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]] || emit_no_action'
+require_contains "$trusted_preview_path" 'Preview source binding changed'
+require_contains "$trusted_preview_path" 'CLEANUP_STATE=open'
+require_contains "$trusted_preview_path" 'RETIRE_IDENTITY=true'
+require_contains "$trusted_preview_path" "needs.validate-target.outputs.cleanup_state == 'open'"
+require_contains "$trusted_preview_path" '--open-cleanup "$PR_NUMBER" "$EXPECTED_HEAD_SHA"'
+require_contains "$trusted_preview_path" '--cleanup "$PR_NUMBER" "$EXPECTED_HEAD_SHA"'
+require_contains "$trusted_preview_path" "needs.validate-target.outputs.retire_identity == 'true'"
+for job in prepare-runtime deploy-runtime destroy-runtime retire-identity; do
+  assert_job_contains hosted-identity-request.yml "$job" 'runs-on:'
+  assert_job_contains hosted-identity-request.yml "$job" 'self-hosted'
+  assert_job_contains hosted-identity-request.yml "$job" 'environment: trusted-hosted-cluster'
+done
+require_contains "$preview_reconciler_path" '--branch "${DEFAULT_BRANCH}"'
+require_contains "$preview_reconciler_path" '--json databaseId,status,displayTitle'
+require_contains "$preview_reconciler_path" '"Preview dispatch pr-${pr_number}-${head_sha}"'
+require_contains "$preview_reconciler_path" '"repos/${GITHUB_REPOSITORY}/dispatches"'
+require_contains "$preview_reconciler_path" '-f event_type=preview-deploy'
+require_contains "$preview_reconciler_path" 'client_payload[head_sha]=${head_sha}'
+require_contains "$preview_reconciler_path" 'client_payload[action]=deploy'
+if grep -Fq 'actions/workflows/preview.yml/dispatches' "$preview_reconciler_path" ||
+  grep -Fq 'inputs[ref]=' "$preview_reconciler_path"; then
+  echo "Preview reconciler must use typed repository_dispatch from the default branch" >&2
+  exit 1
+fi
 for duplicate in \
   'const isBotAuthored' \
   'const isWorkflowComment' \
@@ -461,69 +549,19 @@ for helper in \
   'module.exports = { publishPreviewComment };'; do
   require_contains "$preview_comment_publisher_path" "$helper"
 done
-if [[ "$(grep -Fc 'publish-preview-comment.js' "$preview_path")" -ne 4 ]]; then
-  echo "Preview workflow must load the canonical publisher from all four comment steps" >&2
-  exit 1
-fi
-assert_job_contains preview.yml preview-destroy 'Revalidate preview cleanup target before deletion'
-assert_job_contains preview.yml preview-destroy 'const requiresClosedState ='
-assert_job_contains preview.yml preview-destroy 'context.eventName === "pull_request" && context.payload.action === "closed"'
-assert_job_contains preview.yml preview-destroy '(requiresClosedState && currentPullRequest.state !== "closed") ||'
-assert_job_contains preview.yml preview-destroy 'currentPullRequest.head?.sha !== expectedHeadSha'
-# shellcheck disable=SC2016 # This assertion intentionally matches literal JavaScript template syntax.
-assert_job_contains preview.yml preview-destroy 'expected ${requiresClosedState ? "closed" : "any"}/${expectedHeadSha}'
-assert_job_contains preview.yml preview-destroy 'core.setFailed('
-require_ordered_sequence "$preview_path" \
-  'Revalidate preview cleanup target before deletion' \
-  'context.eventName === "pull_request" && context.payload.action === "closed"' \
-  '(requiresClosedState && currentPullRequest.state !== "closed") ||' \
-  'currentPullRequest.head?.sha !== expectedHeadSha' \
-  'Delete preview namespace and release'
-for job in preview-deploy preview-destroy; do
-  assert_job_contains preview.yml "$job" 'always() && !cancelled()'
-done
 if grep -Fq 'Clear previous preview summary comments' "$preview_path"; then
   echo "Preview workflow must update the canonical summary instead of clearing it" >&2
   exit 1
 fi
-require_contains "$preview_path" 'PREVIEW_CLEANUP_OUTCOME'
-require_contains "$preview_path" '? "removed"'
-require_contains "$preview_path" 'mode: "deploying"'
-require_contains "$preview_path" 'mode: "cleanup"'
+require_contains "$trusted_preview_path" 'mode: "deploying"'
+require_contains "$trusted_preview_path" 'mode: "success"'
+require_contains "$trusted_preview_path" 'mode: "removed"'
 for mode in deploying target unavailable success cleanup removed reclaimed failure; do
   require_contains "$ROOT_DIR/dev-tools/hosted/preview/write-preview-summary.sh" "  $mode)"
 done
 require_contains "$ROOT_DIR/dev-tools/hosted/preview/write-preview-summary.sh" '## ✅ Preview Removed'
 require_contains "$ROOT_DIR/dev-tools/hosted/preview/write-preview-summary.sh" '- Web: pending'
 require_contains "$ROOT_DIR/dev-tools/hosted/preview/write-preview-summary.sh" '- TCP: pending'
-# shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
-require_contains "$preview_reconciler_path" '--workflow "${preview_workflow_name}"'
-# shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
-require_contains "$preview_reconciler_path" '--branch "${head_ref}"'
-require_contains "$preview_reconciler_path" "gh api --paginate \"repos/\${GITHUB_REPOSITORY}/pulls?state=open&per_page=100\""
-require_contains "$preview_reconciler_path" "sort -t \$'\\t' -k1,1n -k2,2n"
-require_contains "$preview_reconciler_path" '--json databaseId,status,headSha'
-# shellcheck disable=SC2016 # These assertions intentionally match literal shell and jq source.
-require_contains "$preview_reconciler_path" '--arg head_sha "${head_sha}"'
-# shellcheck disable=SC2016 # This assertion intentionally matches literal jq source.
-require_contains_block "$preview_reconciler_path" '                          .headSha == $head_sha
-                          and (
-                            .status == "requested"
-                            or .status == "queued"
-                            or .status == "in_progress"
-                            or .status == "waiting"
-                            or .status == "pending"
-                          )'
-# shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.
-if grep -Fq 'available_slots=$((available_slots - 1))' "$preview_reconciler_path"; then
-  echo "Preview reconciler must not decrement capacity after dispatching its single repair" >&2
-  exit 1
-fi
-if grep -Fq 'displayTitle == "PR Preview Environment"' "$preview_reconciler_path"; then
-  echo "Preview reconciler must not identify PR-triggered runs by display title" >&2
-  exit 1
-fi
-
 for job in image-meta pr-local-smoke; do
   assert_job_condition runtime-images.yml "$job" "$required_condition"
 done
