@@ -19,8 +19,9 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
   private final Logger logger;
 
   private ManagedChannel channel;
-  private TStub stub;
+  private volatile TStub stub;
   private TlsCertificateWatcher watcher;
+  private boolean closed;
 
   protected AbstractReloadingBlockingGrpcClient(
       ServiceEndpointsProperties endpoints,
@@ -66,6 +67,9 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
   }
 
   protected final synchronized void reloadChannel() throws SSLException {
+    if (closed) {
+      return;
+    }
     String target = configuredTarget(endpoints);
     if (target == null || target.isEmpty()) {
       target = defaultTarget();
@@ -114,11 +118,26 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
 
   @Override
   public void close() throws IOException {
-    if (watcher != null) {
-      watcher.close();
+    TlsCertificateWatcher watcherToClose;
+    synchronized (this) {
+      closed = true;
+      watcherToClose = watcher;
+      watcher = null;
     }
-    if (channel != null) {
-      channel.shutdown();
+    try {
+      if (watcherToClose != null) {
+        watcherToClose.close();
+      }
+    } finally {
+      ManagedChannel channelToShutdown;
+      synchronized (this) {
+        channelToShutdown = channel;
+        channel = null;
+        stub = null;
+      }
+      if (channelToShutdown != null) {
+        channelToShutdown.shutdown();
+      }
     }
   }
 
@@ -142,9 +161,12 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
       }
     }
 
-    ManagedChannel initialChannel = channel;
-    channel = null;
-    stub = null;
+    ManagedChannel initialChannel;
+    synchronized (this) {
+      initialChannel = channel;
+      channel = null;
+      stub = null;
+    }
     if (initialChannel != null) {
       try {
         initialChannel.shutdown();

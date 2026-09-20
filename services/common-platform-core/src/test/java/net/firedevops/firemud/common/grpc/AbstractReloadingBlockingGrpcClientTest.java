@@ -2,6 +2,7 @@ package net.firedevops.firemud.common.grpc;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 import io.grpc.ManagedChannel;
 import java.io.IOException;
@@ -20,6 +21,22 @@ import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.health.contributor.Health;
 
 class AbstractReloadingBlockingGrpcClientTest {
+  @Test
+  void closePreventsLateReloadFromReplacingTheShutdownChannel() throws Exception {
+    CommonGrpcClientProperties grpc = new CommonGrpcClientProperties();
+    grpc.setPlaintext(true);
+    CountingChannelFactory factory = new CountingChannelFactory();
+    TestClient client = new TestClient(new ServiceEndpointsProperties(), grpc, factory);
+
+    client.init();
+    client.close();
+    client.close();
+    client.reloadChannel();
+
+    assertThat(factory.buildAttempts.get()).isEqualTo(1);
+    verify(factory.channel).shutdown();
+  }
+
   @Test
   void certificateChangeDuringInitialChannelBuildTriggersReload(@TempDir Path directory)
       throws Exception {
@@ -100,6 +117,18 @@ class AbstractReloadingBlockingGrpcClientTest {
         throw new SSLException("simulated certificate reload failure");
       }
       return mock(ManagedChannel.class);
+    }
+  }
+
+  private static final class CountingChannelFactory extends GrpcChannelFactory {
+    private final AtomicInteger buildAttempts = new AtomicInteger();
+    private final ManagedChannel channel = mock(ManagedChannel.class);
+
+    @Override
+    public ManagedChannel buildChannel(
+        String target, int defaultPort, CommonGrpcClientProperties properties, boolean keepAlive) {
+      buildAttempts.incrementAndGet();
+      return channel;
     }
   }
 
