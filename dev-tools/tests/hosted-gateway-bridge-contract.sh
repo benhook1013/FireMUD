@@ -18,7 +18,7 @@ python3 "$ROOT_DIR/dev-tools/hosted/preview/render-preview-values.py" \
 python3 "$ROOT_DIR/dev-tools/hosted/dev-demo/render-dev-demo-values.py" \
   "$CHART_DIR/values-hosted-shared.example.yaml" \
   "$TMP_DIR/rendered-dev-demo-values.yaml" \
-  dev-identity dev-demo dev.preview.firedevops.net test 32016
+  dev dev-demo dev.preview.firedevops.net test 32016
 if ! grep -q '^    trustEnvironment: pr-preview$' "$TMP_DIR/values.yaml"; then
   echo "preview renderer did not select pr-preview trust environment" >&2
   exit 1
@@ -99,10 +99,68 @@ def env_map(deployment):
     container = next(item for item in containers if item["name"] == deployment["metadata"]["name"])
     return container, {item["name"]: item.get("value") for item in container.get("env", [])}
 
+def assert_restricted_workload(document, expected_uid):
+    workload_name = document["metadata"]["name"]
+    pod_spec = document["spec"]["template"]["spec"]
+    pod_security = pod_spec.get("securityContext") or {}
+    expected_pod_security = {
+        "runAsNonRoot": True,
+        "runAsUser": expected_uid,
+        "runAsGroup": expected_uid,
+        "fsGroup": expected_uid,
+        "seccompProfile": {"type": "RuntimeDefault"},
+    }
+    for field, expected in expected_pod_security.items():
+        if pod_security.get(field) != expected:
+            raise SystemExit(
+                f"{workload_name} pod securityContext {field} did not render as {expected!r}: "
+                f"{pod_security.get(field)!r}"
+            )
+    containers = pod_spec.get("containers") or []
+    if not containers:
+        raise SystemExit(f"{workload_name} rendered without containers")
+    for container in containers:
+        container_name = container.get("name", "<unnamed>")
+        security = container.get("securityContext") or {}
+        expected_container_security = {
+            "allowPrivilegeEscalation": False,
+            "runAsUser": expected_uid,
+            "runAsGroup": expected_uid,
+            "capabilities": {"drop": ["ALL"]},
+        }
+        for field, expected in expected_container_security.items():
+            if security.get(field) != expected:
+                raise SystemExit(
+                    f"{workload_name}/{container_name} container securityContext {field} "
+                    f"did not render as {expected!r}: {security.get(field)!r}"
+                )
+
+infrastructure_uids = {
+    "postgres": 999,
+    "redis-coord": 999,
+    "redis-cache": 999,
+    "minio": 1000,
+}
+deployments = [document for document in documents if document.get("kind") == "Deployment"]
+if not deployments:
+    raise SystemExit("expected rendered application and infrastructure Deployments")
+for deployment in deployments:
+    deployment_name = deployment["metadata"]["name"]
+    assert_restricted_workload(
+        deployment, infrastructure_uids.get(deployment_name, 1000)
+    )
+seed_job = named("Job", "firemud-seed")
+assert_restricted_workload(seed_job, 1000)
+
 gateway_deployment = named("Deployment", "spring-cloud-gateway")
 proxy_deployment = named("Deployment", "tcp-proxy-service")
 gateway, gateway_env = env_map(gateway_deployment)
 proxy, proxy_env = env_map(proxy_deployment)
+postgres, postgres_env = env_map(named("Deployment", "postgres"))
+if postgres_env.get("PGDATA") != "/var/lib/postgresql/data/pgdata":
+    raise SystemExit(
+        "PostgreSQL PGDATA did not render as /var/lib/postgresql/data/pgdata"
+    )
 expected_gateway = {
     "FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED": "true",
     "FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS": "0.0.0.0",
@@ -350,7 +408,7 @@ if controller_rules:
 PY
 
 helm template dev-demo "$CHART_DIR" \
-  --namespace dev-identity \
+  --namespace dev \
   -f "$TMP_DIR/rendered-dev-demo-values.yaml" \
   >"$TMP_DIR/dev-demo-rendered.yaml"
 if ! grep -A1 'name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT' "$TMP_DIR/dev-demo-rendered.yaml" \
