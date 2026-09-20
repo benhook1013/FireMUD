@@ -78,6 +78,7 @@ public class PasswordResetTokenRepository {
                     .where(PASSWORD_RESET_TOKEN.EXPIRES_AT.lt(capturedNow))
                     .orderBy(PASSWORD_RESET_TOKEN.EXPIRES_AT.asc(), PASSWORD_RESET_TOKEN.ID.asc())
                     .limit(batchSize)))
+        .and(PASSWORD_RESET_TOKEN.EXPIRES_AT.lt(capturedNow))
         .execute();
   }
 

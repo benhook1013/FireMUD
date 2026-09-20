@@ -80,6 +80,7 @@ public class EmailVerificationTokenRepository {
                         EMAIL_VERIFICATION_TOKEN.EXPIRES_AT.asc(),
                         EMAIL_VERIFICATION_TOKEN.ID.asc())
                     .limit(batchSize)))
+        .and(EMAIL_VERIFICATION_TOKEN.EXPIRES_AT.lt(capturedNow))
         .execute();
   }
 
