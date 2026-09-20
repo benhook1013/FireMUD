@@ -1762,9 +1762,9 @@ for ca_proof in \
   'ca.crt and ca.key do not match'; do
   require_literal "$BOOTSTRAP" "$ca_proof"
 done
-require_literal "$BOOTSTRAP" 'extract_named_yaml_document "$temporary_manifest" ClusterIssuer'
-require_literal "$BOOTSTRAP" 'firemud-ca-issuer "$cluster_issuer_manifest"'
-require_literal "$BOOTSTRAP" '-f "$cluster_issuer_manifest"'
+require_literal "$BOOTSTRAP" "extract_named_yaml_document \"\$temporary_manifest\" ClusterIssuer"
+require_literal "$BOOTSTRAP" "firemud-ca-issuer \"\$cluster_issuer_manifest\""
+require_literal "$BOOTSTRAP" "-f \"\$cluster_issuer_manifest\""
 require_literal "$BOOTSTRAP" 'ClusterIssuer/firemud-ca-issuer did not become Ready=True'
 require_literal "$BOOTSTRAP" 'get clusterissuer firemud-ca-issuer'
 require_literal "$BOOTSTRAP" "HostedEnvironmentIdentity CRD is not Established=True"
