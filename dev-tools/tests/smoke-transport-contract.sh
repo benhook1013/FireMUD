@@ -798,24 +798,24 @@ assert [result["response"] for result in command_plan_results] == [
     "OK SAY hello",
 ]
 assert command_plan_session.closed is True
-class FakeTlsContext:
+class SessionFakeTlsContext:
     def __init__(self, wrapped_session):
         self.wrapped_session = wrapped_session
         self.server_hostname = None
 
     def wrap_socket(self, raw_socket, server_hostname):
-        assert raw_socket is raw_tls_socket
+        assert raw_socket is session_raw_tls_socket
         self.server_hostname = server_hostname
         return self.wrapped_session
 
 
-raw_tls_socket = FakeSession()
-wrapped_tls_session = FakeSession(["OK WORLDS\n"])
-tls_context = FakeTlsContext(wrapped_tls_session)
+session_raw_tls_socket = FakeSession()
+session_wrapped_tls_socket = FakeSession(["OK WORLDS\n"])
+session_tls_context = SessionFakeTlsContext(session_wrapped_tls_socket)
 with patch(
-    "smoke_common.socket.create_connection", return_value=raw_tls_socket
+    "smoke_common.socket.create_connection", return_value=session_raw_tls_socket
 ) as create_connection, patch(
-    "smoke_common.ssl.create_default_context", return_value=tls_context
+    "smoke_common.ssl.create_default_context", return_value=session_tls_context
 ) as create_default_context:
     tls_responses = run_telnet_smoke_session(
         "preview.example.test",
@@ -833,10 +833,10 @@ create_connection.assert_called_once_with(
 create_default_context.assert_called_once_with(
     cafile="/etc/ssl/certs/preview-ca.pem"
 )
-assert tls_context.server_hostname == "preview.example.test"
-assert wrapped_tls_session.sent == ["WORLDS\r\n"]
-assert wrapped_tls_session.closed is True
-assert raw_tls_socket.closed is False
+assert session_tls_context.server_hostname == "preview.example.test"
+assert session_wrapped_tls_socket.sent == ["WORLDS\r\n"]
+assert session_wrapped_tls_socket.closed is True
+assert session_raw_tls_socket.closed is False
 
 
 plaintext_socket = FakeSession(["OK WORLDS\n"])

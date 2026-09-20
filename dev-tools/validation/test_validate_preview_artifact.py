@@ -984,9 +984,7 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
             )
         metadata = {
             "name": "tcp-proxy-service",
-            "labels": VALIDATOR._expected_object_labels(
-                "Service", "tcp-proxy-service", "pr-42"
-            ),
+            "labels": VALIDATOR._expected_object_labels("pr-42"),
         }
         if mode is not None:
             metadata["labels"][self.validator.CERTIFICATE_IDENTITY_LABEL] = mode
@@ -1239,9 +1237,7 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
                 )
 
     def test_expected_top_level_label_mismatches_report_expected_and_actual(self):
-        expected_labels = VALIDATOR._expected_object_labels(
-            "Service", "tcp-proxy-service", "pr-42"
-        )
+        expected_labels = VALIDATOR._expected_object_labels("pr-42")
         for label, expected_value in expected_labels.items():
             document = self._tcp_proxy_service({})
             document["metadata"]["labels"] = {
@@ -1738,7 +1734,7 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
                     if document["metadata"]["name"] == "spring-cloud-gateway-egress"
                 )
                 gateway_egress["spec"]["egress"][1]["ports"][0]["port"] = 6565
-                with self.assertRaisesRegex(ValueError, "unsafe exception"):
+                with self.assertRaisesRegex(ValueError, "unsafe spec"):
                     self.validator.validate_network_policies(broadened, mode)
 
         hosted_broad = copy.deepcopy(hosted)

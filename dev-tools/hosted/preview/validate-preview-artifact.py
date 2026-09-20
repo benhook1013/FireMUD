@@ -140,10 +140,10 @@ HOSTED_REDACTED_CONFIG_KEYS = frozenset(
     {"ASSET_STORE_ACCESS_KEY", "ASSET_STORE_SECRET_KEY"}
 )
 GATEWAY_HTTP_ROUTE_APPS = (
-    "account-service",
-    "game-design-service",
     "game-session-service",
     "logging-admin-service",
+    "game-design-service",
+    "account-service",
     "social-groups-service",
 )
 EXPECTED_TOP_LEVEL_LABELS = {
@@ -159,9 +159,7 @@ def _expected_top_level_labels() -> dict[str, str]:
     }
 
 
-def _expected_object_labels(
-    kind: object, name: object, expected_namespace: str
-) -> dict[str, str]:
+def _expected_object_labels(expected_namespace: str) -> dict[str, str]:
     return {
         **_expected_top_level_labels(),
         "app.kubernetes.io/instance": expected_namespace,
@@ -680,9 +678,7 @@ def _validate_object_metadata(
     metadata = _require_mapping(document.get("metadata"), f"{kind}.metadata")
     name = metadata.get("name")
     allowed_fields = {"name", "namespace", "labels"}
-    if allow_trusted_ingress_annotation:
-        allowed_fields.add("annotations")
-    if allow_trusted_allocated_telnet_port:
+    if allow_trusted_ingress_annotation or allow_trusted_allocated_telnet_port:
         allowed_fields.add("annotations")
     unexpected_fields = set(metadata) - allowed_fields
     if unexpected_fields:
@@ -690,10 +686,7 @@ def _validate_object_metadata(
             f"{kind}/{name} metadata contains unsupported fields: "
             f"{sorted(unexpected_fields)}"
         )
-    expected_labels = {
-        **_expected_top_level_labels(),
-        "app.kubernetes.io/instance": expected_namespace,
-    }
+    expected_labels = _expected_object_labels(expected_namespace)
     if certificate_identity_mode is not None:
         _validate_certificate_identity_mode(certificate_identity_mode)
         if _is_tcp_proxy_identity_object(document):
@@ -1732,60 +1725,7 @@ def validate_network_policies(
         policies["spring-cloud-gateway-egress"].get("spec"),
         "NetworkPolicy/spring-cloud-gateway-egress.spec",
     )
-    expected_gateway_egress = {
-        "podSelector": {"matchLabels": {"app": "spring-cloud-gateway"}},
-        "policyTypes": ["Egress"],
-        "egress": [
-            {
-                "to": [
-                    {
-                        "namespaceSelector": {
-                            "matchLabels": {
-                                "kubernetes.io/metadata.name": "kube-system"
-                            }
-                        },
-                        "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
-                    }
-                ],
-                "ports": [
-                    {"protocol": "UDP", "port": 53},
-                    {"protocol": "TCP", "port": 53},
-                ],
-            },
-            {
-                "to": [
-                    {
-                        "podSelector": {
-                            "matchExpressions": [
-                                {
-                                    "key": "app",
-                                    "operator": "In",
-                                    "values": [
-                                        "game-session-service",
-                                        "logging-admin-service",
-                                        "game-design-service",
-                                        "account-service",
-                                        "social-groups-service",
-                                    ],
-                                }
-                            ]
-                        }
-                    }
-                ],
-                "ports": [{"protocol": "TCP", "port": 8080}],
-            },
-            {
-                "to": [{"podSelector": {"matchLabels": {"app": "redis-cache"}}}],
-                "ports": [{"protocol": "TCP", "port": 6379}],
-            },
-            {
-                "to": [{"podSelector": {"matchLabels": {"app": "otel-collector"}}}],
-                "ports": [{"protocol": "TCP", "port": 4317}],
-            },
-        ],
-    }
-    if gateway_egress != expected_gateway_egress:
-        fail("NetworkPolicy/spring-cloud-gateway-egress has an unsafe exception")
+    _validate_gateway_egress_policy({"spec": gateway_egress})
 
     proxy_egress = _require_mapping(
         policies["tcp-proxy-service-egress"].get("spec"),
