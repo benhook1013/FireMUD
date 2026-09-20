@@ -10,6 +10,8 @@ final class GameplayRouteClassifier {
   private static final PathPattern EXACT_GAMEPLAY_ROUTE = PATH_PATTERN_PARSER.parse("/ws/game");
   private static final PathPattern WILDCARD_GAMEPLAY_ROUTE =
       PATH_PATTERN_PARSER.parse("/ws/game/**");
+  private static final PathPattern SESSION_API_ROUTE =
+      PATH_PATTERN_PARSER.parse("/api/session/**");
 
   private GameplayRouteClassifier() {}
 
@@ -23,6 +25,10 @@ final class GameplayRouteClassifier {
                 .map(PathContainer.PathSegment.class::cast)
                 .anyMatch(segment -> segment.value().indexOf(';') >= 0);
     return new Classification(gameplayRoute, matrixParameter);
+  }
+
+  static boolean sessionApiRoute(PathContainer path) {
+    return SESSION_API_ROUTE.matches(path);
   }
 
   record Classification(boolean gameplayRoute, boolean matrixParameter) {}

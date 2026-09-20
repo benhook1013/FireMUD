@@ -61,7 +61,7 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
   public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
     PathContainer path = exchange.getRequest().getPath().pathWithinApplication();
     boolean isGameplayRoute = GameplayRouteClassifier.classify(path).gameplayRoute();
-    boolean isSessionRoute = isGameplayRoute || path.value().startsWith("/api/session/");
+    boolean isSessionRoute = isGameplayRoute || GameplayRouteClassifier.sessionApiRoute(path);
 
     InetAddress remoteAddress = remoteInetAddress(exchange);
     boolean trustedTcpProxy = tcpProxyTrustPolicy.isTrusted(exchange, remoteAddress);

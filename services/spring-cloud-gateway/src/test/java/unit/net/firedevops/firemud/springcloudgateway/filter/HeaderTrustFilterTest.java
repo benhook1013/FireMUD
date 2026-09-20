@@ -102,6 +102,19 @@ class HeaderTrustFilterTest {
   }
 
   @Test
+  void treatsMatrixParameterSessionApiPathsAsSessionRoutes() {
+    HeaderTrustFilter filter = legacyFilter(new GatewayHeaderTrustProperties());
+    MockServerHttpRequest request =
+        MockServerHttpRequest.get("/api/session;v=1/ping")
+            .remoteAddress(new InetSocketAddress("1.2.3.4", 0))
+            .header("X-Proxy-Client-IP", "203.0.113.99")
+            .build();
+    MockServerWebExchange exchange = MockServerWebExchange.from(request);
+
+    assertForbiddenWithoutDelegation(filter, exchange, "matrix-parameter session API path");
+  }
+
+  @Test
   void stripsSpoofedGatewayOwnedAdmissionContextButPreservesMigrationCarrierAndLocale() {
     HeaderTrustFilter filter = legacyFilter(new GatewayHeaderTrustProperties());
 
