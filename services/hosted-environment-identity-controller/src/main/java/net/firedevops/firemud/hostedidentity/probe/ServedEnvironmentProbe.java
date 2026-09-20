@@ -630,7 +630,9 @@ public class ServedEnvironmentProbe {
     byte[] nonceBytes = new byte[16];
     WEBSOCKET_NONCE_SOURCE.nextBytes(nonceBytes);
     String nonce = Base64.getEncoder().encodeToString(nonceBytes);
-    String connectionId = Base64.getUrlEncoder().withoutPadding().encodeToString(nonceBytes);
+    byte[] connectionIdBytes = new byte[16];
+    WEBSOCKET_NONCE_SOURCE.nextBytes(connectionIdBytes);
+    String connectionId = Base64.getUrlEncoder().withoutPadding().encodeToString(connectionIdBytes);
     String expectedAccept = websocketAccept(nonce);
     OutputStream output = socket.getOutputStream();
     output.write(
