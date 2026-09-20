@@ -1726,6 +1726,23 @@ deployed_step_index = next(
     if step.get("name") == "Record exact deployed preview head"
 )
 assert requested_step_index < apply_step_index < deployed_step_index
+standalone_certificates = deploy_by_name["Prepare standalone preview transport certificates"]
+assert standalone_certificates["if"] == (
+    "${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' }}"
+)
+assert standalone_certificates["env"] == {
+    "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}"
+}
+assert standalone_certificates["run"].splitlines() == [
+    "set -euo pipefail",
+    'bash ./dev-tools/hosted/shared/ensure-grpc-tls-secret.sh "$RUNTIME_NAMESPACE"',
+    'bash ./dev-tools/hosted/preview/ensure-standalone-transport-certificates.sh "$RUNTIME_NAMESPACE"',
+]
+assert (
+    requested_step_index
+    < deploy_steps.index(standalone_certificates)
+    < apply_step_index
+)
 apply_step = deploy_steps[apply_step_index]
 deployed_step = deploy_steps[deployed_step_index]
 assert apply_step["id"] == "deploy-runtime-artifact"

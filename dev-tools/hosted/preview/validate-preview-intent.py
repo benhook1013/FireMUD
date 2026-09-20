@@ -10,7 +10,6 @@ import sys
 import typing
 from pathlib import Path
 
-
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 PR_NUMBER_RE = re.compile(r"^[1-9][0-9]{0,50}$")
 SOURCE_WORKFLOW = ".github/workflows/preview.yml"
