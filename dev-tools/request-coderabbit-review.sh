@@ -265,8 +265,22 @@ if [[ -f "$record" ]]; then
   fi
   if [[ "$existing_state" == "rate_limited" ]]; then
     cooldown="$(jq -r '.trigger_state.cooldown_until // empty' <<<"$existing_json")"
-    [[ -n "$cooldown" ]] || die "existing rate limit has no attributable cooldown; adjudicate before retrying (record: $record)"
-    if ! python3 - "$cooldown" <<'PY'
+    if [[ -z "$cooldown" ]]; then
+      response_at="$(jq -r '.trigger_state.response_created_at // empty' <<<"$existing_json")"
+      attributed="$(jq -r '.trigger_state.attributed // false' <<<"$existing_json")"
+      [[ "$attributed" == "true" && -n "$response_at" ]] ||
+        die "rate limit has no verified terminal response or cooldown (record: $record)"
+      if ! python3 - "$response_at" <<'PY'
+from datetime import datetime, timedelta, timezone
+import sys
+
+response_at = datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00"))
+raise SystemExit(0 if response_at + timedelta(hours=1) <= datetime.now(timezone.utc) else 1)
+PY
+      then
+        die "rate limit has no stated cooldown; retry only one hour after its terminal response"
+      fi
+    elif ! python3 - "$cooldown" <<'PY'
 from datetime import datetime, timezone
 import sys
 

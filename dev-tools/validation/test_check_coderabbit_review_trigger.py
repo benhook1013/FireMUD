@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -427,16 +428,23 @@ Your included review limit is currently reached under our [Fair Usage Limits Pol
                 self.assertFalse(state.terminal)
 
     def test_rate_limit_without_expiry_is_terminal_with_unknown_cooldown(self) -> None:
-        state = self.state(
-            [
-                trigger_comment(),
-                comment(
-                    11, "coderabbitai", "Review rate limited", "2026-09-14T01:00:01Z"
-                ),
-            ]
-        )
+        comments = [
+            trigger_comment(),
+            comment(11, "coderabbitai", "Review rate limited", "2026-09-14T01:00:01Z"),
+        ]
+        state = self.state(comments)
         self.assertEqual(state.state, "rate_limited")
         self.assertIsNone(state.cooldown_until)
+        self.assertFalse(CHECKER.summarize(REPO, PR, payload(comments)).latest_review_request_rate_limited)
+
+        recent_at = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+        recent_comments = [
+            comment(10, "owner", "@coderabbitai full review", recent_at),
+            comment(11, "coderabbitai", "Review rate limited", recent_at),
+        ]
+        recent_summary = CHECKER.summarize(REPO, PR, payload(recent_comments))
+        self.assertTrue(recent_summary.latest_review_request_rate_limited)
+        self.assertFalse(recent_summary.retrigger_review_allowed)
 
     def test_completed_comment_must_match_captured_head(self) -> None:
         template = "<!-- walkthrough_start -->\nReviewing files that changed from the base of the PR and between `{base}` and `{head}`\nFiles selected for processing (2)"

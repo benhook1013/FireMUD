@@ -57,6 +57,14 @@ if [[ "$1 $2" == "api graphql" ]]; then
       if [[ -f "$MOCK_STATE/second-posted" ]]; then
         comments='[{"id":"IC_test","databaseId":101,"author":{"login":"owner"},"body":"@coderabbitai full review","createdAt":"2026-09-14T01:00:00Z","updatedAt":"2026-09-14T01:00:00Z","url":"https://example.test/comments/101"},{"id":"IC_response","databaseId":102,"author":{"login":"coderabbitai"},"body":"<!-- This is an auto-generated reply by CodeRabbit -->\n<!-- CodeRabbit review command invocation: v2:example -->\n<details>\n<summary>Action not completed</summary>\n\nReview rate limited.\n\nYour included review limit is currently reached. Your next included review will be available in 19 seconds.\n\n</details>","createdAt":"2026-09-14T01:00:01Z","updatedAt":"2026-09-14T01:00:27Z","url":"https://example.test/comments/102"},{"id":"IC_test_followup","databaseId":103,"author":{"login":"owner"},"body":"@coderabbitai full review","createdAt":"2026-09-14T01:01:00Z","updatedAt":"2026-09-14T01:01:00Z","url":"https://example.test/comments/103"},{"id":"IC_response_followup","databaseId":104,"author":{"login":"coderabbitai"},"body":"<!-- This is an auto-generated reply by CodeRabbit -->\n<!-- CodeRabbit review command invocation: v2:followup -->\n<details>\n<summary>Action not completed</summary>\n\nReview rate limited.\n\nYour included review limit is currently reached. Your next included review will be available in 19 seconds.\n\n</details>","createdAt":"2026-09-14T01:01:01Z","updatedAt":"2026-09-14T01:01:27Z","url":"https://example.test/comments/104"}]'
       fi
+      if [[ -f "$MOCK_STATE/no-cooldown" ]]; then
+        comments="$(jq -c 'map(if .author.login == "coderabbitai" then .body |= (split("Your included review limit is currently reached. Your next included review will be available in 19 seconds.") | join("")) else . end)' <<<"$comments")"
+      fi
+      if [[ -f "$MOCK_STATE/recent-no-cooldown" ]]; then
+        request_at="$(date -u -d '2 minutes ago' +'%Y-%m-%dT%H:%M:%SZ')"
+        response_at="$(date -u -d '1 minute ago' +'%Y-%m-%dT%H:%M:%SZ')"
+        comments="$(jq -c --arg request_at "$request_at" --arg response_at "$response_at" 'map(if .databaseId == 101 then .createdAt = $request_at | .updatedAt = $request_at elif .databaseId == 102 then .createdAt = $response_at | .updatedAt = $response_at else . end)' <<<"$comments")"
+      fi
     fi
   fi
   jq -n --argjson comments "$comments" '{data:{repository:{pullRequest:{headRefOid:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",commits:{nodes:[{commit:{oid:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",committedDate:"2026-09-14T00:00:00Z"}}]},reviewThreads:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}},comments:{nodes:$comments,pageInfo:{hasNextPage:false,endCursor:null}},reviews:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}}}}}}'
@@ -72,6 +80,9 @@ if [[ "$1" == "api" && "$2" == "repos/owner/repo/issues/42/comments" ]]; then
   touch "$MOCK_STATE/posted"
   id=101
   created_at='2026-09-14T01:00:00Z'
+  if [[ -f "$MOCK_STATE/recent-no-cooldown" ]]; then
+    created_at="$(date -u -d '2 minutes ago' +'%Y-%m-%dT%H:%M:%SZ')"
+  fi
   if [[ "$count" == "2" ]]; then
     id=103
     created_at='2026-09-14T01:01:00Z'
@@ -217,5 +228,24 @@ fi
 [[ "$(jq -r '.trigger_state.response_id' "$TMP_DIR/rate-limited-followup-check.out")" == "104" ]]
 [[ "$(jq -r '.trigger_state.state' "$TMP_DIR/rate-limited-followup-check.out")" == "rate_limited" ]]
 [[ "$(jq -r '.trigger_state.attributed' "$TMP_DIR/rate-limited-followup-check.out")" == "true" ]]
+
+rm -f "$record" "$record_dir"/trigger-* "$MOCK_STATE/posted" "$MOCK_STATE/second-posted" \
+  "$MOCK_STATE/count" "$MOCK_STATE/pr-view-count"
+touch "$MOCK_STATE/no-cooldown"
+(cd "$TEST_REPO" && PATH="$MOCK_BIN:$PATH" dev-tools/request-coderabbit-review.sh 42 --repo owner/repo) >"$TMP_DIR/no-cooldown-first.out"
+(cd "$TEST_REPO" && PATH="$MOCK_BIN:$PATH" dev-tools/request-coderabbit-review.sh 42 --repo owner/repo) >"$TMP_DIR/no-cooldown-second.out"
+[[ "$(<"$MOCK_STATE/count")" == "2" ]]
+[[ "$(jq -r '.trigger.id' "$record_dir/trigger-101.json")" == "101" ]]
+[[ "$(jq -r '.trigger.id' "$record")" == "103" ]]
+
+rm -f "$record" "$record_dir"/trigger-* "$MOCK_STATE/posted" "$MOCK_STATE/second-posted" \
+  "$MOCK_STATE/count" "$MOCK_STATE/pr-view-count"
+touch "$MOCK_STATE/recent-no-cooldown"
+(cd "$TEST_REPO" && PATH="$MOCK_BIN:$PATH" dev-tools/request-coderabbit-review.sh 42 --repo owner/repo) >"$TMP_DIR/recent-no-cooldown-first.out"
+if (cd "$TEST_REPO" && PATH="$MOCK_BIN:$PATH" dev-tools/request-coderabbit-review.sh 42 --repo owner/repo) >"$TMP_DIR/recent-no-cooldown-second.out" 2>&1; then
+  exit 1
+fi
+grep -q 'retry only one hour after its terminal response' "$TMP_DIR/recent-no-cooldown-second.out"
+[[ "$(<"$MOCK_STATE/count")" == "1" ]]
 
 echo "hosted CodeRabbit trigger wrapper contract checks passed"
