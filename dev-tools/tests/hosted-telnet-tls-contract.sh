@@ -136,6 +136,35 @@ for invalid_listener in missing duplicate; do
     exit 1
   fi
 done
+cp "$TMP_DIR/values-controller.yaml" "$TMP_DIR/values-controller-missing-mount.yaml"
+python3 - "$TMP_DIR/values-controller-missing-mount.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+values = yaml.safe_load(path.read_text(encoding="utf-8"))
+for service in values["previewStack"]["services"]:
+    if service["name"] == "tcp-proxy-service":
+        service["mountTelnetTls"] = False
+        break
+else:
+    raise SystemExit("tcp-proxy-service fixture is missing")
+path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+TELNET_TLS_MOUNT_ERROR="previewStack.services.tcp-proxy-service.mountTelnetTls must be true for public hosted-controller Telnet TLS"
+if helm template invalid-missing-telnet-mount "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/values-controller-missing-mount.yaml" \
+  --namespace pr-42 >/dev/null 2>"$TMP_DIR/invalid-missing-telnet-mount.err"; then
+  echo "chart rendered public hosted-controller TCP Proxy without the Telnet TLS mount" >&2
+  exit 1
+fi
+if ! grep -Fq "$TELNET_TLS_MOUNT_ERROR" "$TMP_DIR/invalid-missing-telnet-mount.err"; then
+  echo "chart did not report the expected missing Telnet TLS mount diagnostic" >&2
+  sed -n '1,20p' "$TMP_DIR/invalid-missing-telnet-mount.err" >&2
+  exit 1
+fi
 python3 - "$TMP_DIR/values-controller.yaml" "$TMP_DIR/values-controller-sentinel.yaml" <<'PY'
 import sys
 from pathlib import Path

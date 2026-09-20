@@ -69,6 +69,9 @@
 {{- $publicTelnetService := and (eq $service.name "tcp-proxy-service") (or (eq $serviceType "NodePort") (eq $serviceType "LoadBalancer")) }}
 {{- $telnetPort := "" }}
 {{- if and $publicTelnetService (eq $certificateIdentityMode "hosted-controller") }}
+{{- if not $service.mountTelnetTls }}
+{{- fail "previewStack.services.tcp-proxy-service.mountTelnetTls must be true for public hosted-controller Telnet TLS" }}
+{{- end }}
 {{- $telnetListenerCount := 0 }}
 {{- range $port := $service.ports }}
 {{- if eq (toString $port.port) "2323" }}
