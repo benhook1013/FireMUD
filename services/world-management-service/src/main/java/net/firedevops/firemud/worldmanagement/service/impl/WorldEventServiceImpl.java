@@ -44,6 +44,10 @@ public class WorldEventServiceImpl implements WorldEventService {
   @Override
   @Timed(value = "worldEvent.schedule")
   public WorldEventDto scheduleEvent(WorldEventDto dto) {
+    if ("WEATHER_CHANGE".equals(dto.eventType())) {
+      throw new IllegalStateException(
+          "WEATHER_CHANGE_UNAVAILABLE: weather aggregate and effect fence are not established");
+    }
     WorldEvent entity = mapper.toEntity(dto);
     if (entity.getExecuteAt() == null) {
       entity.setExecuteAt(LocalDateTime.now());
@@ -56,6 +60,11 @@ public class WorldEventServiceImpl implements WorldEventService {
                   () ->
                       new IllegalArgumentException(
                           "REGION_INSTANCE_NOT_FOUND: runtime region instance not found"));
+      if (!dto.tenantId().equals(regionInstance.getTenantId())
+          || !dto.gameInstanceId().equals(regionInstance.getGameInstanceId())) {
+        throw new IllegalArgumentException(
+            "REGION_INSTANCE_SCOPE_MISMATCH: runtime region is outside the event scope");
+      }
       entity.setRegionInstance(regionInstance);
     }
     eventRepository.save(entity);
@@ -70,23 +79,20 @@ public class WorldEventServiceImpl implements WorldEventService {
     LocalDateTime now = LocalDateTime.now();
     List<WorldEvent> events =
         eventRepository.findDueEventsForShard(now, worldProperties.getLocalShardId());
+    int processedCount = 0;
     for (WorldEvent event : events) {
-      handleEvent(event);
+      if ("WEATHER_CHANGE".equals(event.getEventType())) {
+        // Retained weather events cannot become an admitted mutation while the selector is open.
+        continue;
+      }
       event.setProcessed(true);
       event.setProcessedAt(now);
       eventRepository.save(event);
       eventsProcessedCounter.increment();
+      processedCount++;
     }
-    if (!events.isEmpty()) {
-      logger.debug("Processed {} world events", events.size());
-    }
-  }
-
-  private void handleEvent(WorldEvent event) {
-    if ("WEATHER_CHANGE".equals(event.getEventType()) && event.getRegionInstance() != null) {
-      RegionInstance regionInstance = event.getRegionInstance();
-      regionInstance.setWeather(event.getEventData());
-      regionInstanceRepository.save(regionInstance);
+    if (processedCount > 0) {
+      logger.debug("Processed {} world events", processedCount);
     }
   }
 }

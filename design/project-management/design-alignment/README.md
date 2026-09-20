@@ -37,7 +37,7 @@ This compact checklist preserves the last recorded section map and status from t
 | 4A | Script ingress, sandbox, and runtime execution | Pending |
 | 4B | Scheduling, quotas, reload, and operational fairness | Pending |
 | 5A | API, message, identifier, tenant, time, and authorization primitives | Historically complete; recorded complete through the merged 5A slice in PR #2662 |
-| 5B | SQL, migration, schema, and retention | In progress and unfinished; selected PR #2677 is paused, PRs #2678 and #2679 remain parked, and merged PR #2698 does not establish whole-5B completion |
+| 5B | SQL, migration, schema, and retention | In progress and unfinished across four ordered PR-owned subsections: [#2808](https://github.com/benhook1013/FireMUD/pull/2808) owns front persistence, publication/readiness, and control-plane adapters; [#2678](https://github.com/benhook1013/FireMUD/pull/2678) owns admission, handoff, scheduling, pin/lifecycle fences, and publication workload identity; [#2804](https://github.com/benhook1013/FireMUD/pull/2804) owns exact publication requests/digests and transaction recovery; [#2679](https://github.com/benhook1013/FireMUD/pull/2679) owns post-admission execution, replay, and retention. None alone establishes whole-5B completion. |
 | 5C | Redis roles and cache/rate-limit semantics | Unfinished prepared work; later 5C material is preserved with the 5D work in PR #2661 and needs current reconciliation |
 | 5D | Idempotency, outbox, replay, saga, and workflow patterns | Unfinished prepared work; later 5D material is preserved with the 5C work in PR #2661 and needs current reconciliation |
 | 6A | Gateway routes, traffic planes, sharding, and close taxonomy | Pending |

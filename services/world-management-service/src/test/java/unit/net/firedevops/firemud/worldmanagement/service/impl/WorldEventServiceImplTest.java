@@ -40,7 +40,7 @@ class WorldEventServiceImplTest {
   @Test
   void scheduleEventSetsExecuteAt() {
     WorldEventDto request =
-        new WorldEventDto(null, 1L, 41L, null, "WEATHER_CHANGE", "rainy", null, false, null);
+        new WorldEventDto(null, 1L, 41L, null, "REGION_NOTICE", "notice", null, false, null);
     when(eventRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
     WorldEventDto result = service.scheduleEvent(request);
     assertNotNull(result.executeAt());
@@ -48,7 +48,32 @@ class WorldEventServiceImplTest {
   }
 
   @Test
-  void processDueEventsUpdatesWeather() {
+  void scheduleWeatherFailsClosedBeforeAnyLookupOrInsert() {
+    WorldEventDto request =
+        new WorldEventDto(null, 1L, 41L, 7L, "WEATHER_CHANGE", "rainy", null, false, null);
+
+    assertThrows(IllegalStateException.class, () -> service.scheduleEvent(request));
+
+    verifyNoInteractions(regionInstanceRepository, eventRepository);
+  }
+
+  @Test
+  void scheduleRegionEventRejectsAnotherRuntimeScope() {
+    RegionInstance regionInstance = new RegionInstance();
+    regionInstance.setId(7L);
+    regionInstance.setTenantId(2L);
+    regionInstance.setGameInstanceId(41L);
+    when(regionInstanceRepository.findById(7L)).thenReturn(java.util.Optional.of(regionInstance));
+    WorldEventDto request =
+        new WorldEventDto(null, 1L, 41L, 7L, "REGION_NOTICE", "notice", null, false, null);
+
+    assertThrows(IllegalArgumentException.class, () -> service.scheduleEvent(request));
+
+    verify(eventRepository, never()).save(any());
+  }
+
+  @Test
+  void processDueEventsLeavesRetainedWeatherUnprocessedAndNonMutating() {
     RegionInstance regionInstance = new RegionInstance();
     regionInstance.setId(1L);
     WorldEvent event = new WorldEvent();
@@ -61,13 +86,30 @@ class WorldEventServiceImplTest {
 
     when(eventRepository.findDueEventsForShard(any(), anyInt()))
         .thenReturn(Collections.singletonList(event));
-    when(regionInstanceRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+    service.processDueEvents();
+
+    assertFalse(event.isProcessed());
+    assertNull(regionInstance.getWeather());
+    verifyNoInteractions(regionInstanceRepository);
+    verify(eventRepository, never()).save(any());
+    assertEquals(0, meterRegistry.counter("world_events_processed_total").count());
+  }
+
+  @Test
+  void processDueEventsStillCompletesNonWeatherEvents() {
+    WorldEvent event = new WorldEvent();
+    event.setGameInstanceId(41L);
+    event.setEventType("REGION_NOTICE");
+    event.setExecuteAt(LocalDateTime.now().minusMinutes(1));
+    event.setProcessed(false);
+    when(eventRepository.findDueEventsForShard(any(), anyInt()))
+        .thenReturn(Collections.singletonList(event));
 
     service.processDueEvents();
 
     assertTrue(event.isProcessed());
-    assertEquals("sunny", regionInstance.getWeather());
-    verify(regionInstanceRepository).save(regionInstance);
-    verify(eventRepository, times(1)).save(event);
+    verify(eventRepository).save(event);
+    assertEquals(1, meterRegistry.counter("world_events_processed_total").count());
   }
 }
