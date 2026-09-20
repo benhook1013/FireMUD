@@ -69,6 +69,15 @@
 {{- $publicTelnetService := and (eq $service.name "tcp-proxy-service") (or (eq $serviceType "NodePort") (eq $serviceType "LoadBalancer")) }}
 {{- $telnetPort := "" }}
 {{- if and $publicTelnetService (eq $certificateIdentityMode "hosted-controller") }}
+{{- $telnetListenerCount := 0 }}
+{{- range $port := $service.ports }}
+{{- if eq (toString $port.port) "2323" }}
+{{- $telnetListenerCount = add1 $telnetListenerCount }}
+{{- end }}
+{{- end }}
+{{- if ne $telnetListenerCount 1 }}
+{{- fail "previewStack.services.tcp-proxy-service must declare exactly one port: 2323 for hosted-controller public Telnet TLS" }}
+{{- end }}
 {{- $telnetPort = required "preview.telnetPort is required for hosted-controller TCP Proxy" (get $preview "telnetPort") }}
 {{- if eq (toString $telnetPort) "__TELNET_PORT__" }}
 {{- fail "preview.telnetPort must be resolved before rendering hosted-controller TCP Proxy" }}

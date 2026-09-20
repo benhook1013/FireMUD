@@ -82,6 +82,60 @@ service = next(
 assert service["metadata"]["annotations"]["firemud.dev/allocated-telnet-port"] == "32042"
 assert next(port for port in service["spec"]["ports"] if port["port"] == 2323)["nodePort"] == 32042
 PY
+python3 - "$TMP_DIR/values-controller.yaml" \
+  "$TMP_DIR/values-controller-missing-listener.yaml" \
+  "$TMP_DIR/values-controller-duplicate-listener.yaml" <<'PY'
+import copy
+import sys
+from pathlib import Path
+
+import yaml
+
+source = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+proxy = next(
+    service
+    for service in source["previewStack"]["services"]
+    if service["name"] == "tcp-proxy-service"
+)
+canonical_listener = next(
+    port for port in proxy["ports"] if str(port["port"]) == "2323"
+)
+
+missing = copy.deepcopy(source)
+missing_proxy = next(
+    service
+    for service in missing["previewStack"]["services"]
+    if service["name"] == "tcp-proxy-service"
+)
+missing_proxy["ports"] = [
+    port for port in missing_proxy["ports"] if str(port["port"]) != "2323"
+]
+
+duplicate = copy.deepcopy(source)
+duplicate_proxy = next(
+    service
+    for service in duplicate["previewStack"]["services"]
+    if service["name"] == "tcp-proxy-service"
+)
+duplicate_proxy["ports"].append(copy.deepcopy(canonical_listener))
+
+for output_path, values in zip(sys.argv[2:], (missing, duplicate)):
+    Path(output_path).write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+TELNET_LISTENER_COUNT_ERROR="previewStack.services.tcp-proxy-service must declare exactly one port: 2323 for hosted-controller public Telnet TLS"
+for invalid_listener in missing duplicate; do
+  if helm template "invalid-${invalid_listener}-telnet-listener" "$ROOT_DIR/k8s/helm/firemud" \
+    -f "$TMP_DIR/values-controller-${invalid_listener}-listener.yaml" \
+    --namespace pr-42 >/dev/null 2>"$TMP_DIR/invalid-${invalid_listener}-listener.err"; then
+    echo "chart rendered hosted-controller TCP Proxy with ${invalid_listener} Telnet listener" >&2
+    exit 1
+  fi
+  if ! grep -Fq "$TELNET_LISTENER_COUNT_ERROR" "$TMP_DIR/invalid-${invalid_listener}-listener.err"; then
+    echo "chart did not report the expected ${invalid_listener} Telnet listener diagnostic" >&2
+    sed -n '1,20p' "$TMP_DIR/invalid-${invalid_listener}-listener.err" >&2
+    exit 1
+  fi
+done
 python3 - "$TMP_DIR/values-controller.yaml" "$TMP_DIR/values-controller-sentinel.yaml" <<'PY'
 import sys
 from pathlib import Path
