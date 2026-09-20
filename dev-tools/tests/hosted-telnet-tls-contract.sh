@@ -84,7 +84,8 @@ assert next(port for port in service["spec"]["ports"] if port["port"] == 2323)["
 PY
 python3 - "$TMP_DIR/values-controller.yaml" \
   "$TMP_DIR/values-controller-missing-listener.yaml" \
-  "$TMP_DIR/values-controller-duplicate-listener.yaml" <<'PY'
+  "$TMP_DIR/values-controller-duplicate-listener.yaml" \
+  "$TMP_DIR/values-controller-extra-listener.yaml" <<'PY'
 import copy
 import sys
 from pathlib import Path
@@ -119,11 +120,26 @@ duplicate_proxy = next(
 )
 duplicate_proxy["ports"].append(copy.deepcopy(canonical_listener))
 
-for output_path, values in zip(sys.argv[2:], (missing, duplicate)):
+extra = copy.deepcopy(source)
+extra_proxy = next(
+    service
+    for service in extra["previewStack"]["services"]
+    if service["name"] == "tcp-proxy-service"
+)
+extra_proxy["ports"].append(
+    {
+        "name": "unexpected",
+        "port": 2325,
+        "targetPort": 2325,
+        "protocol": "TCP",
+    }
+)
+
+for output_path, values in zip(sys.argv[2:], (missing, duplicate, extra)):
     Path(output_path).write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
 PY
 TELNET_LISTENER_COUNT_ERROR="previewStack.services.tcp-proxy-service must declare exactly one port: 2323 for hosted-controller public Telnet TLS"
-for invalid_listener in missing duplicate; do
+for invalid_listener in missing duplicate extra; do
   if helm template "invalid-${invalid_listener}-telnet-listener" "$ROOT_DIR/k8s/helm/firemud" \
     -f "$TMP_DIR/values-controller-${invalid_listener}-listener.yaml" \
     --namespace pr-42 >/dev/null 2>"$TMP_DIR/invalid-${invalid_listener}-listener.err"; then

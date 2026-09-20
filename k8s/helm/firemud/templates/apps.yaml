@@ -72,13 +72,15 @@
 {{- fail "previewStack.services.tcp-proxy-service.mountTelnetTls must be true for public TCP Proxy Telnet TLS" }}
 {{- end }}
 {{- if and $publicTelnetService (eq $certificateIdentityMode "hosted-controller") }}
+{{- $telnetPortCount := 0 }}
 {{- $telnetListenerCount := 0 }}
 {{- range $port := $service.ports }}
+{{- $telnetPortCount = add1 $telnetPortCount }}
 {{- if eq (toString $port.port) "2323" }}
 {{- $telnetListenerCount = add1 $telnetListenerCount }}
 {{- end }}
 {{- end }}
-{{- if ne $telnetListenerCount 1 }}
+{{- if or (ne $telnetPortCount 1) (ne $telnetListenerCount 1) }}
 {{- fail "previewStack.services.tcp-proxy-service must declare exactly one port: 2323 for hosted-controller public Telnet TLS" }}
 {{- end }}
 {{- $telnetPort = required "preview.telnetPort is required for hosted-controller TCP Proxy" (get $preview "telnetPort") }}

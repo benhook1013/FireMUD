@@ -253,38 +253,6 @@ assert_production_change_requires_attestation() {
   assert_balanced_preflight_group "Missing-attestation failure for $fixture_path"
 }
 
-assert_shared_rendered_path_runs_production_preflight() {
-  local fixture_path="$1"
-  (
-    # shellcheck disable=SC1091
-    source "$REPO_ROOT/dev-tools/deploy/validate-kustomize-overlays.sh"
-    changed_files_between_base_and_head() {
-      printf '%s\n' "$fixture_path"
-    }
-    python3() {
-      if [[ "$#" -eq 2 && "$1" = "$REPO_ROOT/dev-tools/deploy/preflight.py" && "$2" = production \
-        && "${FIREMUD_PREFLIGHT_CONTEXT:-}" = ci-static \
-        && "${FIREMUD_DEPLOYMENT_REF:-}" = "$(git rev-parse HEAD)" \
-        && "${FIREMUD_PREFLIGHT_OUTPUT:-}" = /tmp/firemud-preflight-production.json \
-        && -z "${FIREMUD_PROMOTION_ATTESTATION:-}" \
-        && -z "${FIREMUD_BACKUP_READINESS_EVIDENCE:-}" ]]; then
-        printf 'validated shared production preflight\n'
-        return 0
-      fi
-      echo "Production preflight received incorrect arguments or environment" >&2
-      return 1
-    }
-    GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop run_preflight_policy_checks
-  ) >"$OUTPUT_FILE" 2>&1
-
-  grep -q "validated shared production preflight" "$OUTPUT_FILE" || {
-    echo "Shared/static Kubernetes change did not enter production rendered-manifest preflight: $fixture_path" >&2
-    cat "$OUTPUT_FILE" >&2
-    exit 1
-  }
-  assert_balanced_preflight_group "Shared rendered production preflight for $fixture_path"
-}
-
 assert_shared_change_runs_ordinary_overlay_checks() {
   local fixture_path="$1"
   (

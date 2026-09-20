@@ -285,6 +285,7 @@ jobs:
           bash ./dev-tools/tests/preview-eligibility-contract.sh
           bash ./dev-tools/tests/preview-priority-contract.sh
           bash ./dev-tools/tests/hosted-gateway-bridge-contract.sh
+          bash ./dev-tools/tests/gameplay-bridge-network-policy-contract.sh
           bash ./dev-tools/tests/preview-runner-isolation-contract.sh
           bash ./dev-tools/tests/preview-standalone-transport-certificates-contract.sh
           bash ./dev-tools/tests/hosted-identity-controller-manifest-contract.sh
@@ -555,9 +556,6 @@ jobs:
 
       - name: 🧪 Validate hosted Telnet TLS contract
         run: bash ./dev-tools/tests/hosted-telnet-tls-contract.sh
-
-      - name: 🧪 Validate hosted Gateway bridge contract
-        run: bash ./dev-tools/tests/hosted-gateway-bridge-contract.sh
 
   helm-transaction-proof:
     name: Helm Transaction Proof

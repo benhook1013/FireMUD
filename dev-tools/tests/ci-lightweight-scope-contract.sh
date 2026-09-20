@@ -97,17 +97,32 @@ def find_step(workflow, job_id, name_suffix, label):
     return matches[0]
 
 
+def require_no_step(workflow, job_id, name_suffix, label):
+    steps = value_at(workflow, ("jobs", job_id, "steps"), label)
+    matches = [
+        step
+        for step in steps
+        if isinstance(step, dict)
+        and isinstance(step.get("name"), str)
+        and step["name"].endswith(name_suffix)
+    ]
+    if matches:
+        raise SystemExit(
+            f"{label}: unexpected {name_suffix!r} step in jobs/{job_id}"
+        )
+
+
 CI_GATING_STEPS = (
     (
         "helm-render-validation",
         "Validate hosted Telnet TLS contract",
         "bash ./dev-tools/tests/hosted-telnet-tls-contract.sh",
     ),
-    (
-        "helm-render-validation",
-        "Validate hosted Gateway bridge contract",
-        "bash ./dev-tools/tests/hosted-gateway-bridge-contract.sh",
-    ),
+)
+
+DEV_TOOL_CONTRACT_COMMANDS = (
+    "bash ./dev-tools/tests/hosted-gateway-bridge-contract.sh",
+    "bash ./dev-tools/tests/gameplay-bridge-network-policy-contract.sh",
 )
 
 
@@ -134,6 +149,38 @@ def mutate_gating_step(workflow, job_id, name_suffix, changes):
     mutated = copy.deepcopy(workflow)
     step = find_step(mutated, job_id, name_suffix, "mutated ci workflow")
     step.update(changes)
+    return mutated
+
+
+def require_dev_tool_contract_command(workflow, command):
+    label = f"ci dev-tool contract command {command!r}"
+    step = find_step(
+        workflow,
+        "dev-tool-contract-checks",
+        "Validate dev tool contracts",
+        "ci workflow",
+    )
+    run = value_at(step, ("run",), label)
+    if not isinstance(run, str) or not any(
+        line.strip() == command for line in run.splitlines()
+    ):
+        raise SystemExit(
+            f"{label}: command must appear as an executable run-block line"
+        )
+
+
+def mutate_dev_tool_contract_command(workflow, command):
+    mutated = copy.deepcopy(workflow)
+    step = find_step(
+        mutated,
+        "dev-tool-contract-checks",
+        "Validate dev tool contracts",
+        "mutated ci workflow",
+    )
+    run = value_at(step, ("run",), "mutated ci workflow")
+    step["run"] = "\n".join(
+        line for line in run.splitlines() if line.strip() != command
+    )
     return mutated
 
 
@@ -353,6 +400,12 @@ require_equal(
     "ci workflow",
 )
 validate_ci_script_execution(ci)
+require_no_step(
+    ci,
+    "helm-render-validation",
+    "Validate hosted Gateway bridge contract",
+    "ci workflow",
+)
 for job_id, name_suffix, command in CI_GATING_STEPS:
     for description, changes in (
         ("missing command", {"run": "true"}),
@@ -369,6 +422,16 @@ for job_id, name_suffix, command in CI_GATING_STEPS:
         raise SystemExit(
             f"ci script execution contract accepted {name_suffix} {description}"
         )
+for command in DEV_TOOL_CONTRACT_COMMANDS:
+    require_dev_tool_contract_command(ci, command)
+    mutation = mutate_dev_tool_contract_command(ci, command)
+    try:
+        require_dev_tool_contract_command(mutation, command)
+    except SystemExit:
+        continue
+    raise SystemExit(
+        f"ci dev-tool contract execution accepted removal of {command}"
+    )
 require_contains(
     complete_contract_step,
     ("run",),
