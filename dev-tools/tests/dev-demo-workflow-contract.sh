@@ -38,6 +38,8 @@ contains_literal() {
 }
 
 bash -n "$standalone_grpc_tls" "$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh"
+# These are literal source snippets; expansion would change what the contract checks.
+# shellcheck disable=SC2016
 for required in \
   'ca_secret="firemud-grpc-ca"' \
   'if ! secret_exists "$shared_secret"; then' \
