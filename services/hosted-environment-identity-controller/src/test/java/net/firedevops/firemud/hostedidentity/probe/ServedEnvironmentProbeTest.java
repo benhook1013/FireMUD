@@ -2,6 +2,7 @@ package net.firedevops.firemud.hostedidentity.probe;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -452,17 +453,39 @@ class ServedEnvironmentProbeTest {
     assertTrue(fixture.result().ready());
     assertEquals("websocket-upgrade", fixture.result().reason());
     assertEquals("GET /ws/game HTTP/1.1", fixture.request().split("\r\n")[0]);
-    assertEquals(
-        identityHostname + ":" + fixture.port(), requestHeader(fixture.request(), "Host"));
+    assertEquals(identityHostname + ":" + fixture.port(), requestHeader(fixture.request(), "Host"));
     assertEquals("websocket", requestHeader(fixture.request(), "Upgrade"));
     assertEquals("Upgrade", requestHeader(fixture.request(), "Connection"));
     assertEquals("13", requestHeader(fixture.request(), "Sec-WebSocket-Version"));
     assertEquals("127.0.0.1", requestHeader(fixture.request(), "X-Proxy-Client-IP"));
     assertEquals("1", requestHeader(fixture.request(), "X-Proxy-Game-Instance-Id"));
     assertEquals("1", requestHeader(fixture.request(), "X-Proxy-Tenant-Id"));
-    assertEquals(
-        "gateway-readiness-probe",
-        requestHeader(fixture.request(), "X-Proxy-Connection-Id"));
+    String connectionId = requestHeader(fixture.request(), "X-Proxy-Connection-Id");
+    assertNotNull(connectionId);
+    assertTrue(connectionId.matches("[A-Za-z0-9_-]{22}"));
+  }
+
+  @Test
+  void successiveInternalBridgeProbesUseDistinctConnectionIds() throws Exception {
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    Secret material = generatedMaterial(plan);
+    String trustAnchor = fingerprint(material.getData().get("ca.crt"));
+    String leaf = fingerprint(material.getData().get("tls.crt"));
+    String identityHostname = "account-service.pr-42.svc.cluster.local";
+
+    HostedEnvironmentProbeFixture first =
+        bridgeFixture(material, trustAnchor, leaf, identityHostname, BridgeResponse.SUCCESS);
+    HostedEnvironmentProbeFixture second =
+        bridgeFixture(material, trustAnchor, leaf, identityHostname, BridgeResponse.SUCCESS);
+
+    String firstConnectionId = requestHeader(first.request(), "X-Proxy-Connection-Id");
+    String secondConnectionId = requestHeader(second.request(), "X-Proxy-Connection-Id");
+    assertNotNull(firstConnectionId);
+    assertNotNull(secondConnectionId);
+    assertNotEquals(firstConnectionId, secondConnectionId);
+    assertTrue(firstConnectionId.matches("[A-Za-z0-9_-]{22}"));
+    assertTrue(secondConnectionId.matches("[A-Za-z0-9_-]{22}"));
   }
 
   @Test
@@ -494,11 +517,7 @@ class ServedEnvironmentProbeTest {
     for (BridgeResponse response : List.of(BridgeResponse.BAD_STATUS, BridgeResponse.FORBIDDEN)) {
       HostedEnvironmentProbeFixture fixture =
           bridgeFixture(
-              material,
-              trustAnchor,
-              leaf,
-              "account-service.pr-42.svc.cluster.local",
-              response);
+              material, trustAnchor, leaf, "account-service.pr-42.svc.cluster.local", response);
 
       assertFalse(fixture.result().ready(), response.name());
       assertEquals("websocket-upgrade-rejected", fixture.result().reason(), response.name());
@@ -641,8 +660,7 @@ class ServedEnvironmentProbeTest {
                   port,
                   material,
                   leaf);
-      return new HostedEnvironmentProbeFixture(
-          result, accepted.get(10, TimeUnit.SECONDS), port);
+      return new HostedEnvironmentProbeFixture(result, accepted.get(10, TimeUnit.SECONDS), port);
     }
   }
 

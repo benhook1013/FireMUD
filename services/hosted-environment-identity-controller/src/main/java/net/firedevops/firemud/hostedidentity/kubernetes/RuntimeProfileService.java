@@ -23,6 +23,10 @@ public class RuntimeProfileService {
   private static final int PREVIEW_TELNET_PORT_ALLOCATION_WIDTH = 16;
   private static final String TCP_PROXY_SERVICE_NAME = "tcp-proxy-service";
   private static final int TCP_PROXY_TELNET_PORT = 2323;
+  private static final String TCP_PROXY_TELNET_PORT_NAME = "tcp-2323";
+  private static final String TCP_PROTOCOL = "TCP";
+  private static final Map<String, String> TCP_PROXY_SERVICE_SELECTOR =
+      Map.of("app", TCP_PROXY_SERVICE_NAME);
 
   private final HostedIdentityProperties properties;
 
@@ -140,63 +144,78 @@ public class RuntimeProfileService {
               + " Service type does not match exposure mode: expected "
               + expectedType);
     }
-    if (HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(exposureMode)
-        && service.getSpec().getExternalIPs() != null
-        && !service.getSpec().getExternalIPs().isEmpty()) {
+    if (!TCP_PROXY_SERVICE_SELECTOR.equals(service.getSpec().getSelector())) {
       throw new IllegalStateException(
-          "private runtime " + TCP_PROXY_SERVICE_NAME + " Service cannot carry external IPs");
+          "runtime "
+              + TCP_PROXY_SERVICE_NAME
+              + " Service selector does not match canonical selector");
+    }
+    if (service.getSpec().getExternalIPs() != null
+        && !service.getSpec().getExternalIPs().isEmpty()) {
+      String exposure =
+          HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(exposureMode)
+              ? "private"
+              : "public";
+      throw new IllegalStateException(
+          exposure + " runtime " + TCP_PROXY_SERVICE_NAME + " Service cannot carry external IPs");
     }
     List<ServicePort> ports = service.getSpec().getPorts();
     if (ports == null || ports.isEmpty()) {
       throw new IllegalStateException(
           "runtime " + TCP_PROXY_SERVICE_NAME + " Service has no ports");
     }
-
-    int telnetPortMatches = 0;
-    int nodePortCount = 0;
-    for (ServicePort servicePort : ports) {
-      if (servicePort == null || servicePort.getPort() == null) {
-        throw new IllegalStateException(
-            "runtime " + TCP_PROXY_SERVICE_NAME + " Service has a malformed port");
-      }
-      Integer nodePort = servicePort.getNodePort();
-      if (nodePort != null) {
-        nodePortCount++;
-      }
-      if (!Integer.valueOf(TCP_PROXY_TELNET_PORT).equals(servicePort.getPort())) {
-        continue;
-      }
-      telnetPortMatches++;
-      if (telnetPortMatches > 1) {
-        throw new IllegalStateException(
-            "runtime " + TCP_PROXY_SERVICE_NAME + " Service has duplicate Telnet ports");
-      }
-      if (HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(exposureMode)) {
-        if (nodePort != null) {
-          throw new IllegalStateException(
-              "private runtime " + TCP_PROXY_SERVICE_NAME + " Service cannot carry a NodePort");
-        }
-      } else if (!Integer.valueOf(telnetPort).equals(nodePort)) {
-        throw new IllegalStateException(
-            "public runtime "
-                + TCP_PROXY_SERVICE_NAME
-                + " Service Telnet NodePort does not match the trusted allocation");
-      }
-    }
-    if (telnetPortMatches != 1) {
+    if (ports.size() != 1) {
       throw new IllegalStateException(
-          "runtime " + TCP_PROXY_SERVICE_NAME + " Service must expose exactly one Telnet port");
+          "runtime "
+              + TCP_PROXY_SERVICE_NAME
+              + " Service must expose exactly one canonical Telnet port");
     }
+
+    ServicePort servicePort = ports.get(0);
+    if (servicePort == null || servicePort.getPort() == null) {
+      throw new IllegalStateException(
+          "runtime " + TCP_PROXY_SERVICE_NAME + " Service has a malformed port");
+    }
+    if (!Integer.valueOf(TCP_PROXY_TELNET_PORT).equals(servicePort.getPort())) {
+      throw new IllegalStateException(
+          "runtime "
+              + TCP_PROXY_SERVICE_NAME
+              + " Service must expose exactly one canonical Telnet port");
+    }
+    if (!TCP_PROXY_TELNET_PORT_NAME.equals(servicePort.getName())) {
+      throw new IllegalStateException(
+          "runtime "
+              + TCP_PROXY_SERVICE_NAME
+              + " Service Telnet port must be named "
+              + TCP_PROXY_TELNET_PORT_NAME);
+    }
+    String protocol = servicePort.getProtocol();
+    // Kubernetes defaults an omitted ServicePort protocol to TCP in the live object.
+    if (protocol != null && !TCP_PROTOCOL.equals(protocol)) {
+      throw new IllegalStateException(
+          "runtime " + TCP_PROXY_SERVICE_NAME + " Service Telnet port protocol must be TCP");
+    }
+    var targetPort = servicePort.getTargetPort();
+    // Kubernetes defaults an omitted targetPort to the Service port. A named or other
+    // explicit targetPort is not equivalent to the canonical numeric backend port.
+    if (targetPort != null
+        && (!Integer.valueOf(TCP_PROXY_TELNET_PORT).equals(targetPort.getIntVal())
+            || targetPort.getStrVal() != null)) {
+      throw new IllegalStateException(
+          "runtime " + TCP_PROXY_SERVICE_NAME + " Service Telnet targetPort must be 2323");
+    }
+
+    Integer nodePort = servicePort.getNodePort();
     if (HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(exposureMode)) {
-      if (nodePortCount != 0) {
+      if (nodePort != null) {
         throw new IllegalStateException(
             "private runtime " + TCP_PROXY_SERVICE_NAME + " Service cannot carry a NodePort");
       }
-    } else if (nodePortCount != 1) {
+    } else if (!Integer.valueOf(telnetPort).equals(nodePort)) {
       throw new IllegalStateException(
           "public runtime "
               + TCP_PROXY_SERVICE_NAME
-              + " Service must carry exactly one trusted NodePort");
+              + " Service Telnet NodePort does not match the trusted allocation");
     }
   }
 

@@ -1334,9 +1334,10 @@ def validate_services(
             if service_type not in {"ClusterIP", "NodePort"}:
                 fail(f"Service/{name} has an unsafe service type")
             expected_spec = {**expected_spec, "type": service_type}
-        expected_type = expected_spec.get("type", "ClusterIP")
-        if spec.get("type", "ClusterIP") != expected_type:
-            fail(f"Service/{name} has an unsafe service type")
+        else:
+            expected_type = expected_spec.get("type", "ClusterIP")
+            if spec.get("type", "ClusterIP") != expected_type:
+                fail(f"Service/{name} has an unsafe service type")
         if spec.get("selector") != expected_spec["selector"]:
             fail(f"Service/{name} has an unsafe selector")
         service_ports = _require_mapping_list(

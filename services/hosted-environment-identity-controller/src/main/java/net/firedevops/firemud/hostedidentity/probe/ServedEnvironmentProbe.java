@@ -67,18 +67,15 @@ public class ServedEnvironmentProbe {
   private static final int IO_TIMEOUT_MILLIS = 8000;
   private static final Duration TOTAL_PROBE_TIMEOUT_SLACK = Duration.ofSeconds(1);
   static final Duration TOTAL_PROBE_TIMEOUT =
-      Duration.ofMillis(CONNECT_TIMEOUT_MILLIS + IO_TIMEOUT_MILLIS)
-          .plus(TOTAL_PROBE_TIMEOUT_SLACK);
+      Duration.ofMillis(CONNECT_TIMEOUT_MILLIS + IO_TIMEOUT_MILLIS).plus(TOTAL_PROBE_TIMEOUT_SLACK);
   private static final int GRPC_PORT = 6565;
   private static final int MAX_HTTP_STATUS_LINE_BYTES = 256;
   private static final int MAX_HTTP_RESPONSE_HEADER_LINES = 128;
   private static final int MAX_HTTP_RESPONSE_HEADER_BYTES = 8192;
-  private static final String WEBSOCKET_ACCEPT_MAGIC =
-      "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+  private static final String WEBSOCKET_ACCEPT_MAGIC = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
   private static final String BRIDGE_PROBE_PATH = "/ws/game";
   private static final String BRIDGE_PROBE_TENANT_ID = "1";
   private static final String BRIDGE_PROBE_GAME_INSTANCE_ID = "1";
-  private static final String BRIDGE_PROBE_CONNECTION_ID = "gateway-readiness-probe";
   private static final String BRIDGE_PROBE_CLIENT_IP = "127.0.0.1";
   private static final SecureRandom WEBSOCKET_NONCE_SOURCE = new SecureRandom();
   private static final String GRPC_PROBE_SERVICE = "account-service";
@@ -213,10 +210,12 @@ public class ServedEnvironmentProbe {
     List<RunningProbe> probes = new ArrayList<>();
     probes.add(startProbe(ProbeName.HTTPS, () -> httpsProbe.check(plan.hostname(), 443)));
     if (HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE.equals(exposureMode)) {
-      probes.add(startProbe(ProbeName.TELNET, () -> telnetProbe.check(plan.hostname(), telnetPort)));
+      probes.add(
+          startProbe(ProbeName.TELNET, () -> telnetProbe.check(plan.hostname(), telnetPort)));
     }
     probes.add(
-        startProbe(ProbeName.BRIDGE, () -> bridgeProbe.check(plan.gatewayInternalWsDnsName(), 443)));
+        startProbe(
+            ProbeName.BRIDGE, () -> bridgeProbe.check(plan.gatewayInternalWsDnsName(), 443)));
     probes.add(
         startProbe(
             ProbeName.GRPC,
@@ -631,6 +630,7 @@ public class ServedEnvironmentProbe {
     byte[] nonceBytes = new byte[16];
     WEBSOCKET_NONCE_SOURCE.nextBytes(nonceBytes);
     String nonce = Base64.getEncoder().encodeToString(nonceBytes);
+    String connectionId = Base64.getUrlEncoder().withoutPadding().encodeToString(nonceBytes);
     String expectedAccept = websocketAccept(nonce);
     OutputStream output = socket.getOutputStream();
     output.write(
@@ -656,7 +656,7 @@ public class ServedEnvironmentProbe {
                 + BRIDGE_PROBE_TENANT_ID
                 + "\r\n"
                 + "X-Proxy-Connection-Id: "
-                + BRIDGE_PROBE_CONNECTION_ID
+                + connectionId
                 + "\r\n\r\n")
             .getBytes(StandardCharsets.ISO_8859_1));
     output.flush();
@@ -710,8 +710,7 @@ public class ServedEnvironmentProbe {
     List<String> headerLines = new ArrayList<>();
     int headerBytes = 0;
     while (true) {
-      String line =
-          readHttpLine(input, MAX_HTTP_RESPONSE_HEADER_BYTES - headerBytes);
+      String line = readHttpLine(input, MAX_HTTP_RESPONSE_HEADER_BYTES - headerBytes);
       if (line == null) {
         return null;
       }
@@ -759,9 +758,7 @@ public class ServedEnvironmentProbe {
         return null;
       }
       if (next == '\n') {
-        return carriageReturn
-            ? new String(line, 0, length, StandardCharsets.ISO_8859_1)
-            : null;
+        return carriageReturn ? new String(line, 0, length, StandardCharsets.ISO_8859_1) : null;
       }
       if (carriageReturn || length == line.length) {
         return null;
@@ -880,8 +877,7 @@ public class ServedEnvironmentProbe {
     if (expectedFingerprint == null || expectedFingerprint.isBlank()) {
       throw new IllegalStateException("expected served leaf fingerprint is required");
     }
-    SSLSocket socket =
-        trackSocket((SSLSocket) SSLSocketFactory.getDefault().createSocket());
+    SSLSocket socket = trackSocket((SSLSocket) SSLSocketFactory.getDefault().createSocket());
     return openTlsSocket(hostname, port, expectedFingerprint, socket);
   }
 

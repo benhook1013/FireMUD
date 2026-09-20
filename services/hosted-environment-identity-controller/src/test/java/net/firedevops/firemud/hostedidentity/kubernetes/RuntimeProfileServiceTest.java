@@ -1,5 +1,6 @@
 package net.firedevops.firemud.hostedidentity.kubernetes;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -9,10 +10,12 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import io.fabric8.kubernetes.api.model.IntOrString;
 import io.fabric8.kubernetes.api.model.Namespace;
 import io.fabric8.kubernetes.api.model.NamespaceBuilder;
 import io.fabric8.kubernetes.api.model.Service;
 import io.fabric8.kubernetes.api.model.ServiceBuilder;
+import io.fabric8.kubernetes.api.model.ServicePort;
 import io.fabric8.kubernetes.api.model.ServicePortBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
@@ -326,11 +329,7 @@ class RuntimeProfileServiceTest {
                 "a".repeat(40),
                 null,
                 HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE));
-    stubTcpProxyService(
-        client,
-        plan,
-        "ClusterIP",
-        null);
+    stubTcpProxyService(client, plan, "ClusterIP", null);
 
     RuntimeProfileService.RuntimeProfile profile = service.read(client, plan);
 
@@ -379,8 +378,7 @@ class RuntimeProfileServiceTest {
         assertThrows(IllegalStateException.class, () -> service.read(client, plan)).getMessage());
 
     when(namespace.get())
-        .thenReturn(
-            previewRuntimeNamespace("a".repeat(40), "a".repeat(40), "32002", "internal"));
+        .thenReturn(previewRuntimeNamespace("a".repeat(40), "a".repeat(40), "32002", "internal"));
     assertEquals(
         "runtime Namespace has an invalid firemud.dev/preview-exposure-mode label",
         assertThrows(IllegalStateException.class, () -> service.read(client, plan)).getMessage());
@@ -494,8 +492,7 @@ class RuntimeProfileServiceTest {
             IllegalStateException.class,
             () -> service.validateTcpProxyService(client, plan, profile));
 
-    assertEquals(
-        "runtime tcp-proxy-service Service is absent or malformed", failure.getMessage());
+    assertEquals("runtime tcp-proxy-service Service is absent or malformed", failure.getMessage());
   }
 
   @Test
@@ -509,10 +506,7 @@ class RuntimeProfileServiceTest {
     when(namespaces.withName(plan.runtimeNamespace())).thenReturn(namespace);
     when(namespace.get())
         .thenReturn(previewRuntimeNamespace("a".repeat(40), "a".repeat(40), "32002"));
-    stubTcpProxyService(
-        client,
-        plan,
-        new KubernetesClientException("forbidden", 403, null));
+    stubTcpProxyService(client, plan, new KubernetesClientException("forbidden", 403, null));
 
     RuntimeProfileService.RuntimeProfile profile = service.read(client, plan);
     IllegalStateException failure =
@@ -540,18 +534,7 @@ class RuntimeProfileServiceTest {
                 "a".repeat(40),
                 null,
                 HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE));
-    stubTcpProxyService(
-        client,
-        plan,
-        new ServiceBuilder()
-            .withNewSpec()
-            .withType("ClusterIP")
-            .withPorts(
-                List.of(
-                    new ServicePortBuilder().withPort(2323).build(),
-                    new ServicePortBuilder().withPort(9090).withNodePort(32002).build()))
-            .endSpec()
-            .build());
+    stubTcpProxyService(client, plan, tcpProxyService("ClusterIP", 32002));
 
     RuntimeProfileService.RuntimeProfile profile = service.read(client, plan);
     IllegalStateException failure =
@@ -560,8 +543,7 @@ class RuntimeProfileServiceTest {
             () -> service.validateTcpProxyService(client, plan, profile));
 
     assertEquals(
-        "private runtime tcp-proxy-service Service cannot carry a NodePort",
-        failure.getMessage());
+        "private runtime tcp-proxy-service Service cannot carry a NodePort", failure.getMessage());
   }
 
   @Test
@@ -613,6 +595,159 @@ class RuntimeProfileServiceTest {
   }
 
   @Test
+  void runtimeProfileRejectsWrongAndEmptyTcpProxySelectors() {
+    var plan = planner.plan("pr-42");
+    String expectedMessage =
+        "runtime tcp-proxy-service Service selector does not match canonical selector";
+
+    assertEquals(
+        expectedMessage,
+        validateTcpProxyServiceFailure(
+                plan,
+                previewRuntimeNamespace("a".repeat(40), "a".repeat(40), "32002"),
+                tcpProxyServiceWithSelector("NodePort", 32002, Map.of("app", "wrong-tcp-proxy")))
+            .getMessage());
+    assertEquals(
+        expectedMessage,
+        validateTcpProxyServiceFailure(
+                plan,
+                previewRuntimeNamespace("a".repeat(40), "a".repeat(40), "32002"),
+                tcpProxyServiceWithSelector("NodePort", 32002, Map.of()))
+            .getMessage());
+  }
+
+  @Test
+  void runtimeProfileRejectsNonCanonicalTcpProxyPortFields() {
+    var plan = planner.plan("pr-42");
+    Namespace namespace = previewRuntimeNamespace("a".repeat(40), "a".repeat(40), "32002");
+
+    assertEquals(
+        "runtime tcp-proxy-service Service Telnet port must be named tcp-2323",
+        validateTcpProxyServiceFailure(
+                plan,
+                namespace,
+                tcpProxyServiceWithPort(
+                    "NodePort",
+                    32002,
+                    tcpProxyPort(32002, "tcp-wrong", "TCP", new IntOrString(2323))))
+            .getMessage());
+    assertEquals(
+        "runtime tcp-proxy-service Service Telnet port protocol must be TCP",
+        validateTcpProxyServiceFailure(
+                plan,
+                namespace,
+                tcpProxyServiceWithPort(
+                    "NodePort",
+                    32002,
+                    tcpProxyPort(32002, "tcp-2323", "UDP", new IntOrString(2323))))
+            .getMessage());
+    assertEquals(
+        "runtime tcp-proxy-service Service Telnet targetPort must be 2323",
+        validateTcpProxyServiceFailure(
+                plan,
+                namespace,
+                tcpProxyServiceWithPort(
+                    "NodePort",
+                    32002,
+                    tcpProxyPort(32002, "tcp-2323", "TCP", new IntOrString(2324))))
+            .getMessage());
+  }
+
+  @Test
+  void runtimeProfileRejectsExtraTcpProxyServicePorts() {
+    var plan = planner.plan("pr-42");
+    Service serviceWithExtraPort =
+        new ServiceBuilder()
+            .withNewSpec()
+            .withType("NodePort")
+            .withSelector(Map.of("app", "tcp-proxy-service"))
+            .withPorts(
+                List.of(
+                    canonicalTcpProxyPort(32002),
+                    new ServicePortBuilder()
+                        .withName("metrics")
+                        .withPort(9090)
+                        .withProtocol("TCP")
+                        .withTargetPort(new IntOrString(9090))
+                        .build()))
+            .endSpec()
+            .build();
+
+    IllegalStateException failure =
+        validateTcpProxyServiceFailure(
+            plan,
+            previewRuntimeNamespace("a".repeat(40), "a".repeat(40), "32002"),
+            serviceWithExtraPort);
+
+    assertEquals(
+        "runtime tcp-proxy-service Service must expose exactly one canonical Telnet port",
+        failure.getMessage());
+  }
+
+  @Test
+  void publicRuntimeRejectsExternalIps() {
+    var plan = planner.plan("pr-42");
+    Service serviceWithExternalIp =
+        new ServiceBuilder()
+            .withNewSpec()
+            .withType("NodePort")
+            .withSelector(Map.of("app", "tcp-proxy-service"))
+            .withExternalIPs("203.0.113.10")
+            .withPorts(canonicalTcpProxyPort(32002))
+            .endSpec()
+            .build();
+
+    IllegalStateException failure =
+        validateTcpProxyServiceFailure(
+            plan,
+            previewRuntimeNamespace("a".repeat(40), "a".repeat(40), "32002"),
+            serviceWithExternalIp);
+
+    assertEquals(
+        "public runtime tcp-proxy-service Service cannot carry external IPs", failure.getMessage());
+  }
+
+  @Test
+  void canonicalTcpProxyServicePassesForPublicAndPrivateModes() {
+    var publicPlan = planner.plan("pr-42");
+    assertDoesNotThrow(
+        () ->
+            validateTcpProxyService(
+                publicPlan,
+                previewRuntimeNamespace("a".repeat(40), "a".repeat(40), "32002"),
+                tcpProxyService("NodePort", 32002)));
+
+    var privatePlan = planner.plan("pr-42");
+    assertDoesNotThrow(
+        () ->
+            validateTcpProxyService(
+                privatePlan,
+                previewRuntimeNamespace(
+                    "a".repeat(40),
+                    "a".repeat(40),
+                    null,
+                    HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE),
+                tcpProxyService("ClusterIP", null)));
+  }
+
+  @Test
+  void runtimeProfileAcceptsKubernetesDefaultedProtocolAndTargetPort() {
+    var plan = planner.plan("pr-42");
+    Service defaultedPortService =
+        tcpProxyServiceWithPort(
+            "NodePort",
+            32002,
+            new ServicePortBuilder().withName("tcp-2323").withPort(2323).build());
+
+    assertDoesNotThrow(
+        () ->
+            validateTcpProxyService(
+                plan,
+                previewRuntimeNamespace("a".repeat(40), "a".repeat(40), "32002"),
+                defaultedPortService));
+  }
+
+  @Test
   @SuppressWarnings({"rawtypes", "unchecked"})
   void preDeployRuntimeProfileDoesNotRequireTcpProxyService() {
     var plan = planner.plan("pr-42");
@@ -621,8 +756,7 @@ class RuntimeProfileServiceTest {
     Resource<Namespace> namespace = mock(Resource.class);
     when(client.namespaces()).thenReturn(namespaces);
     when(namespaces.withName(plan.runtimeNamespace())).thenReturn(namespace);
-    when(namespace.get())
-        .thenReturn(previewRuntimeNamespace("a".repeat(40), null, "32002"));
+    when(namespace.get()).thenReturn(previewRuntimeNamespace("a".repeat(40), null, "32002"));
 
     RuntimeProfileService.RuntimeProfile profile = service.read(client, plan);
 
@@ -652,8 +786,9 @@ class RuntimeProfileServiceTest {
         new ServiceBuilder()
             .withNewSpec()
             .withType("ClusterIP")
+            .withSelector(Map.of("app", "tcp-proxy-service"))
             .withExternalIPs("203.0.113.10")
-            .withPorts(new ServicePortBuilder().withPort(2323).build())
+            .withPorts(canonicalTcpProxyPort(null))
             .endSpec()
             .build());
 
@@ -728,10 +863,7 @@ class RuntimeProfileServiceTest {
   private static Namespace previewRuntimeNamespace(
       String requestedHead, String deployedHead, String port) {
     return previewRuntimeNamespace(
-        requestedHead,
-        deployedHead,
-        port,
-        HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE);
+        requestedHead, deployedHead, port, HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE);
   }
 
   private static Namespace previewRuntimeNamespace(
@@ -791,10 +923,40 @@ class RuntimeProfileServiceTest {
   }
 
   @SuppressWarnings({"rawtypes", "unchecked"})
+  private IllegalStateException validateTcpProxyServiceFailure(
+      EnvironmentIdentityPlan plan, Namespace namespace, Service tcpProxyService) {
+    KubernetesClient client = mock(KubernetesClient.class);
+    NonNamespaceOperation namespaces = mock(NonNamespaceOperation.class);
+    Resource<Namespace> namespaceResource = mock(Resource.class);
+    when(client.namespaces()).thenReturn(namespaces);
+    when(namespaces.withName(plan.runtimeNamespace())).thenReturn(namespaceResource);
+    when(namespaceResource.get()).thenReturn(namespace);
+    stubTcpProxyService(client, plan, tcpProxyService);
+
+    RuntimeProfileService.RuntimeProfile profile = service.read(client, plan);
+    return assertThrows(
+        IllegalStateException.class, () -> service.validateTcpProxyService(client, plan, profile));
+  }
+
+  @SuppressWarnings({"rawtypes", "unchecked"})
+  private void validateTcpProxyService(
+      EnvironmentIdentityPlan plan, Namespace namespace, Service tcpProxyService) {
+    KubernetesClient client = mock(KubernetesClient.class);
+    NonNamespaceOperation namespaces = mock(NonNamespaceOperation.class);
+    Resource<Namespace> namespaceResource = mock(Resource.class);
+    when(client.namespaces()).thenReturn(namespaces);
+    when(namespaces.withName(plan.runtimeNamespace())).thenReturn(namespaceResource);
+    when(namespaceResource.get()).thenReturn(namespace);
+    stubTcpProxyService(client, plan, tcpProxyService);
+
+    RuntimeProfileService.RuntimeProfile profile = service.read(client, plan);
+    service.validateTcpProxyService(client, plan, profile);
+  }
+
+  @SuppressWarnings({"rawtypes", "unchecked"})
   private static void stubTcpProxyService(
       KubernetesClient client, EnvironmentIdentityPlan plan, String type, Integer nodePort) {
-    stubTcpProxyService(
-        client, plan, type == null ? null : tcpProxyService(type, nodePort));
+    stubTcpProxyService(client, plan, type == null ? null : tcpProxyService(type, nodePort));
   }
 
   @SuppressWarnings({"rawtypes", "unchecked"})
@@ -821,15 +983,50 @@ class RuntimeProfileServiceTest {
   }
 
   private static Service tcpProxyService(String type, Integer nodePort) {
-    ServicePortBuilder servicePort = new ServicePortBuilder().withPort(2323);
-    if (nodePort != null) {
-      servicePort.withNodePort(nodePort);
+    return tcpProxyServiceWithPort(type, nodePort, canonicalTcpProxyPort(nodePort));
+  }
+
+  private static Service tcpProxyServiceWithSelector(
+      String type, Integer nodePort, Map<String, String> selector) {
+    return new ServiceBuilder()
+        .withNewSpec()
+        .withType(type)
+        .withSelector(selector)
+        .withPorts(canonicalTcpProxyPort(nodePort))
+        .endSpec()
+        .build();
+  }
+
+  private static Service tcpProxyServiceWithPort(
+      String type, Integer nodePort, ServicePort servicePort) {
+    ServicePort effectivePort = servicePort;
+    if (nodePort != null && servicePort.getNodePort() == null) {
+      effectivePort = servicePort.toBuilder().withNodePort(nodePort).build();
     }
     return new ServiceBuilder()
         .withNewSpec()
         .withType(type)
-        .withPorts(servicePort.build())
+        .withSelector(Map.of("app", "tcp-proxy-service"))
+        .withPorts(effectivePort)
         .endSpec()
         .build();
+  }
+
+  private static ServicePort canonicalTcpProxyPort(Integer nodePort) {
+    return tcpProxyPort(nodePort, "tcp-2323", "TCP", new IntOrString(2323));
+  }
+
+  private static ServicePort tcpProxyPort(
+      Integer nodePort, String name, String protocol, IntOrString targetPort) {
+    ServicePortBuilder servicePort =
+        new ServicePortBuilder()
+            .withName(name)
+            .withPort(2323)
+            .withProtocol(protocol)
+            .withTargetPort(targetPort);
+    if (nodePort != null) {
+      servicePort.withNodePort(nodePort);
+    }
+    return servicePort.build();
   }
 }
