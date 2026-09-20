@@ -2,8 +2,10 @@ package net.firedevops.firemud.automationscripting.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
@@ -47,7 +49,7 @@ public class ScriptPatchVersionCommandService {
   }
 
   @Timed(value = "script.version.notify")
-  public void notifyUpdate(
+  public boolean notifyUpdate(
       String tenantId, String scriptPatchVersion, List<String> affectedScripts) {
     long tenantKey = RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
     logger.info(
@@ -57,12 +59,28 @@ public class ScriptPatchVersionCommandService {
         affectedScripts.size());
     if (affectedScripts.isEmpty()) {
       logger.info("No scripts provided for patch {}", scriptPatchVersion);
-      return;
+      return false;
+    }
+    Set<String> requestedNames = new HashSet<>(affectedScripts);
+    if (requestedNames.size() != affectedScripts.size()) {
+      throw new IllegalArgumentException(
+          "affectedScripts must resolve exactly one definition per unique requested name");
     }
     List<ScriptDefinition> defs =
         repository.findByTenantIdAndScriptVersionAndNameIn(
             tenantKey, scriptPatchVersion, affectedScripts);
-    readinessProjectionService.beginPatchReadiness(tenantId, scriptPatchVersion, defs.size());
+    Set<String> resolvedNames =
+        defs.stream().map(ScriptDefinition::getName).collect(java.util.stream.Collectors.toSet());
+    if (defs.size() != requestedNames.size()
+        || defs.stream().map(ScriptDefinition::getName).distinct().count() != requestedNames.size()
+        || !requestedNames.equals(resolvedNames)) {
+      throw new IllegalArgumentException(
+          "affectedScripts must resolve exactly one definition per unique requested name");
+    }
+    if (!readinessProjectionService.beginPatchReadiness(
+        tenantId, scriptPatchVersion, defs.size())) {
+      return false;
+    }
     defs.forEach(def -> admitOnLoad(tenantId, scriptPatchVersion, def));
     scheduleDefinitionService.refreshPatchSchedules(
         tenantId, scriptPatchVersion, defs, affectedScripts);
@@ -73,6 +91,7 @@ public class ScriptPatchVersionCommandService {
       map.put(def.getName(), def.getDefinition());
     }
     logger.info("Reloaded {} scripts for patch {}", defs.size(), scriptPatchVersion);
+    return true;
   }
 
   private void admitOnLoad(

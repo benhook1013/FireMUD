@@ -112,4 +112,70 @@ class WorldEventServiceImplTest {
     verify(eventRepository).save(event);
     assertEquals(1, meterRegistry.counter("world_events_processed_total").count());
   }
+
+  @Test
+  void processDueEventsLeavesCrossTenantRegionEventUnprocessed() {
+    RegionInstance regionInstance = new RegionInstance();
+    regionInstance.setId(7L);
+    regionInstance.setTenantId(2L);
+    regionInstance.setGameInstanceId(41L);
+    WorldEvent event = dueRegionEvent(1L, 41L, regionInstance);
+
+    when(eventRepository.findDueEventsForShard(any(), anyInt()))
+        .thenReturn(Collections.singletonList(event));
+
+    service.processDueEvents();
+
+    assertFalse(event.isProcessed());
+    verify(eventRepository, never()).save(any());
+    assertEquals(0, meterRegistry.counter("world_events_processed_total").count());
+  }
+
+  @Test
+  void processDueEventsLeavesCrossInstanceRegionEventUnprocessed() {
+    RegionInstance regionInstance = new RegionInstance();
+    regionInstance.setId(7L);
+    regionInstance.setTenantId(1L);
+    regionInstance.setGameInstanceId(42L);
+    WorldEvent event = dueRegionEvent(1L, 41L, regionInstance);
+
+    when(eventRepository.findDueEventsForShard(any(), anyInt()))
+        .thenReturn(Collections.singletonList(event));
+
+    service.processDueEvents();
+
+    assertFalse(event.isProcessed());
+    verify(eventRepository, never()).save(any());
+    assertEquals(0, meterRegistry.counter("world_events_processed_total").count());
+  }
+
+  @Test
+  void processDueEventsCompletesValidRegionEvent() {
+    RegionInstance regionInstance = new RegionInstance();
+    regionInstance.setId(7L);
+    regionInstance.setTenantId(1L);
+    regionInstance.setGameInstanceId(41L);
+    WorldEvent event = dueRegionEvent(1L, 41L, regionInstance);
+
+    when(eventRepository.findDueEventsForShard(any(), anyInt()))
+        .thenReturn(Collections.singletonList(event));
+
+    service.processDueEvents();
+
+    assertTrue(event.isProcessed());
+    verify(eventRepository).save(event);
+    assertEquals(1, meterRegistry.counter("world_events_processed_total").count());
+  }
+
+  private WorldEvent dueRegionEvent(
+      Long tenantId, Long gameInstanceId, RegionInstance regionInstance) {
+    WorldEvent event = new WorldEvent();
+    event.setTenantId(tenantId);
+    event.setGameInstanceId(gameInstanceId);
+    event.setRegionInstance(regionInstance);
+    event.setEventType("REGION_NOTICE");
+    event.setExecuteAt(LocalDateTime.now().minusMinutes(1));
+    event.setProcessed(false);
+    return event;
+  }
 }

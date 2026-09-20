@@ -59,6 +59,65 @@ class ScriptPatchReadinessProjectionServiceImplTest {
   }
 
   @Test
+  void doesNotReopenTerminalReadinessIdentity() {
+    for (String terminalStatus : List.of("READY", "FAILED", "ROLLED_BACK", "SUPERSEDED")) {
+      ScriptPatchReadinessProjectionRepository repository =
+          Mockito.mock(ScriptPatchReadinessProjectionRepository.class);
+      ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+      ScriptPatchReadinessProjection projection = new ScriptPatchReadinessProjection();
+      projection.setTenantId("1");
+      projection.setScriptPatchVersion("patch-terminal-" + terminalStatus);
+      projection.setReadinessStatus(terminalStatus);
+      projection.setStatusReason("original-reason");
+      projection.setSupersededByScriptPatchVersion("original-superseding-patch");
+      projection.setLastChangedAt(Instant.ofEpochMilli(123));
+      when(repository.findByTenantIdAndScriptPatchVersion("1", "patch-terminal-" + terminalStatus))
+          .thenReturn(Optional.of(projection));
+
+      ScriptPatchReadinessProjectionServiceImpl service =
+          new ScriptPatchReadinessProjectionServiceImpl(repository, workItemRepository);
+
+      service.beginPatchReadiness("1", "patch-terminal-" + terminalStatus, 4);
+
+      assertThat(projection.getReadinessStatus()).isEqualTo(terminalStatus);
+      assertThat(projection.getStatusReason()).isEqualTo("original-reason");
+      assertThat(projection.getLastChangedAt()).isEqualTo(Instant.ofEpochMilli(123));
+      Mockito.verify(repository, Mockito.never())
+          .findByTenantIdAndReadinessStatusInOrderByLastChangedAtAsc(Mockito.any(), Mockito.any());
+      Mockito.verify(repository, Mockito.never()).save(Mockito.any());
+      Mockito.verifyNoInteractions(workItemRepository);
+    }
+  }
+
+  @Test
+  void doesNotResetActiveReadinessIdentityWhenRetried() {
+    ScriptPatchReadinessProjectionRepository repository =
+        Mockito.mock(ScriptPatchReadinessProjectionRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptPatchReadinessProjection projection = new ScriptPatchReadinessProjection();
+    projection.setTenantId("1");
+    projection.setScriptPatchVersion("patch-active");
+    projection.setReadinessStatus("ONLOAD_RUNNING");
+    projection.setStatusReason("tenant_readiness_running");
+    projection.setLastChangedAt(Instant.ofEpochMilli(123));
+    when(repository.findByTenantIdAndScriptPatchVersion("1", "patch-active"))
+        .thenReturn(Optional.of(projection));
+
+    ScriptPatchReadinessProjectionServiceImpl service =
+        new ScriptPatchReadinessProjectionServiceImpl(repository, workItemRepository);
+
+    service.beginPatchReadiness("1", "patch-active", 0);
+
+    assertThat(projection.getReadinessStatus()).isEqualTo("ONLOAD_RUNNING");
+    assertThat(projection.getStatusReason()).isEqualTo("tenant_readiness_running");
+    assertThat(projection.getLastChangedAt()).isEqualTo(Instant.ofEpochMilli(123));
+    Mockito.verify(repository, Mockito.never())
+        .findByTenantIdAndReadinessStatusInOrderByLastChangedAtAsc(Mockito.any(), Mockito.any());
+    Mockito.verify(repository, Mockito.never()).save(Mockito.any());
+    Mockito.verifyNoInteractions(workItemRepository);
+  }
+
+  @Test
   void doesNotReopenSupersededPatchAfterLateOnLoadCompletion() {
     ScriptPatchReadinessProjectionRepository repository =
         Mockito.mock(ScriptPatchReadinessProjectionRepository.class);

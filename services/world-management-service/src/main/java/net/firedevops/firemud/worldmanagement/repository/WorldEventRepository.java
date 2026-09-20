@@ -24,12 +24,6 @@ public class WorldEventRepository {
     this.dsl = dsl;
   }
 
-  public List<WorldEvent> findByProcessedFalseAndExecuteAtBefore(LocalDateTime time) {
-    return dsl.selectFrom(WORLD_EVENT)
-        .where(WORLD_EVENT.PROCESSED.isFalse().and(WORLD_EVENT.EXECUTE_AT.le(time)))
-        .fetch(this::toEntity);
-  }
-
   public long countByTenantIdAndGameInstanceId(Long tenantId, Long gameInstanceId) {
     return dsl.fetchCount(
         WORLD_EVENT,
@@ -46,9 +40,15 @@ public class WorldEventRepository {
   public List<WorldEvent> findDueEventsForShard(LocalDateTime time, Integer shardId) {
     return dsl.select(WORLD_EVENT.fields())
         .select(REGION_INSTANCE.SHARD_ID)
+        .select(REGION_INSTANCE.TENANT_ID, REGION_INSTANCE.GAME_INSTANCE_ID)
         .from(WORLD_EVENT)
         .leftJoin(REGION_INSTANCE)
-        .on(WORLD_EVENT.REGION_INSTANCE_ID.eq(REGION_INSTANCE.ID))
+        .on(
+            WORLD_EVENT
+                .REGION_INSTANCE_ID
+                .eq(REGION_INSTANCE.ID)
+                .and(WORLD_EVENT.TENANT_ID.eq(REGION_INSTANCE.TENANT_ID))
+                .and(WORLD_EVENT.GAME_INSTANCE_ID.eq(REGION_INSTANCE.GAME_INSTANCE_ID)))
         .where(
             WORLD_EVENT
                 .PROCESSED
@@ -117,6 +117,10 @@ public class WorldEventRepository {
     entity.setRegionInstance(
         JooqWorldManagementRepositorySupport.partialRegionInstance(
             record.get(WORLD_EVENT.REGION_INSTANCE_ID)));
+    if (entity.getRegionInstance() != null && record.field(REGION_INSTANCE.TENANT_ID) != null) {
+      entity.getRegionInstance().setTenantId(record.get(REGION_INSTANCE.TENANT_ID));
+      entity.getRegionInstance().setGameInstanceId(record.get(REGION_INSTANCE.GAME_INSTANCE_ID));
+    }
     entity.setEventType(record.get(WORLD_EVENT.EVENT_TYPE));
     entity.setEventData(record.get(WORLD_EVENT.EVENT_DATA));
     entity.setExecuteAt(record.get(WORLD_EVENT.EXECUTE_AT));

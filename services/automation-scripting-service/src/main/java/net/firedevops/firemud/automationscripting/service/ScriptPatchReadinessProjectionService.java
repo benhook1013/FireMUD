@@ -5,7 +5,8 @@ import java.util.Optional;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
 
 public interface ScriptPatchReadinessProjectionService {
-  void beginPatchReadiness(String tenantId, String scriptPatchVersion, int affectedScriptCount);
+  /** Returns true only when this call admitted a previously unseen readiness identity. */
+  boolean beginPatchReadiness(String tenantId, String scriptPatchVersion, int affectedScriptCount);
 
   void refreshFromOnLoadWorkItems(String tenantId, String scriptPatchVersion);
 

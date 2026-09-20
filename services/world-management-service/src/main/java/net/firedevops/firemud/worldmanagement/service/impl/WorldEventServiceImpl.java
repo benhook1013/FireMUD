@@ -85,6 +85,10 @@ public class WorldEventServiceImpl implements WorldEventService {
         // Retained weather events cannot become an admitted mutation while the selector is open.
         continue;
       }
+      if (!hasMatchingRegionScope(event)) {
+        // A retained or bypass-inserted row must not mutate or be acknowledged outside its scope.
+        continue;
+      }
       event.setProcessed(true);
       event.setProcessedAt(now);
       eventRepository.save(event);
@@ -94,5 +98,14 @@ public class WorldEventServiceImpl implements WorldEventService {
     if (processedCount > 0) {
       logger.debug("Processed {} world events", processedCount);
     }
+  }
+
+  private boolean hasMatchingRegionScope(WorldEvent event) {
+    RegionInstance region = event.getRegionInstance();
+    return region == null
+        || (event.getTenantId() != null
+            && event.getTenantId().equals(region.getTenantId())
+            && event.getGameInstanceId() != null
+            && event.getGameInstanceId().equals(region.getGameInstanceId()));
   }
 }

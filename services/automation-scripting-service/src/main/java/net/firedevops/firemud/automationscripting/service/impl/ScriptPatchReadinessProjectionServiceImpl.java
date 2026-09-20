@@ -11,6 +11,8 @@ import net.firedevops.firemud.automationscripting.repository.ScriptPatchReadines
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessProjectionService;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,32 +22,49 @@ import org.springframework.transaction.annotation.Transactional;
     justification = "Injected repositories are retained only as internal Spring collaborators.")
 public class ScriptPatchReadinessProjectionServiceImpl
     implements ScriptPatchReadinessProjectionService {
+  private static final int READINESS_SCOPE_LOCK_NAMESPACE = 0x41535052;
   private static final List<String> ACTIVE_STATUSES =
       List.of("PENDING_VALIDATION", "ONLOAD_RUNNING");
   private static final List<String> CANCELABLE_ONLOAD_WORK_STATUSES = List.of("PENDING_EVALUATION");
 
   private final ScriptPatchReadinessProjectionRepository repository;
   private final ScriptWorkItemRepository workItemRepository;
+  private final DSLContext dsl;
 
   public ScriptPatchReadinessProjectionServiceImpl(
       ScriptPatchReadinessProjectionRepository repository,
       ScriptWorkItemRepository workItemRepository) {
+    this(repository, workItemRepository, null);
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public ScriptPatchReadinessProjectionServiceImpl(
+      ScriptPatchReadinessProjectionRepository repository,
+      ScriptWorkItemRepository workItemRepository,
+      DSLContext dsl) {
     this.repository = repository;
     this.workItemRepository = workItemRepository;
+    this.dsl = dsl;
   }
 
   @Override
   @Transactional
-  public void beginPatchReadiness(
+  public boolean beginPatchReadiness(
       String tenantId, String scriptPatchVersion, int affectedScriptCount) {
     requireText(tenantId, "tenant_id");
     requireText(scriptPatchVersion, "script_patch_version");
+    lockTenantMutationScope(tenantId);
+    Optional<ScriptPatchReadinessProjection> existing =
+        repository.findByTenantIdAndScriptPatchVersion(tenantId, scriptPatchVersion);
+    if (existing.isPresent()) {
+      // A readiness identity is immutable once admitted. Retries must not reopen a terminal
+      // projection or reset an in-flight one; the durable ingress identity separately makes the
+      // corresponding onLoad admission idempotent.
+      return false;
+    }
     Instant now = Instant.now();
     supersedeOlderActivePatches(tenantId, scriptPatchVersion, now);
-    ScriptPatchReadinessProjection projection =
-        repository
-            .findByTenantIdAndScriptPatchVersion(tenantId, scriptPatchVersion)
-            .orElseGet(ScriptPatchReadinessProjection::new);
+    ScriptPatchReadinessProjection projection = new ScriptPatchReadinessProjection();
     projection.setTenantId(tenantId);
     projection.setScriptPatchVersion(scriptPatchVersion);
     projection.setSupersededByScriptPatchVersion("");
@@ -58,11 +77,13 @@ public class ScriptPatchReadinessProjectionServiceImpl
     }
     projection.setLastChangedAt(now);
     repository.save(projection);
+    return true;
   }
 
   @Override
   @Transactional
   public void refreshFromOnLoadWorkItems(String tenantId, String scriptPatchVersion) {
+    lockTenantMutationScope(tenantId);
     Optional<ScriptPatchReadinessProjection> maybeProjection =
         repository.findByTenantIdAndScriptPatchVersion(tenantId, scriptPatchVersion);
     if (maybeProjection.isEmpty()) {
@@ -141,6 +162,15 @@ public class ScriptPatchReadinessProjectionServiceImpl
               .filter(projection -> !scriptPatchVersion.equals(projection.getScriptPatchVersion()))
               .toList());
     }
+  }
+
+  /** Serializes readiness projection mutations for one tenant in PostgreSQL transactions. */
+  private void lockTenantMutationScope(String tenantId) {
+    if (dsl == null || dsl.dialect().family() != SQLDialect.POSTGRES) {
+      return;
+    }
+    dsl.execute(
+        "select pg_advisory_xact_lock(?, ?)", READINESS_SCOPE_LOCK_NAMESPACE, tenantId.hashCode());
   }
 
   private void cancelPendingOnLoadWork(String tenantId, String scriptPatchVersion, Instant now) {
