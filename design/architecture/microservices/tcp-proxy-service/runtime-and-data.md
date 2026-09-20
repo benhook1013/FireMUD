@@ -4,7 +4,7 @@ The target runtime/data contract keeps TCP Proxy stateless at the gameplay bound
 
 ## Implementation Status
 
-Immediate closure on established bridge loss and the current close mapping and shutdown classification are implemented as described in [Operations](./operations.md#implementation-status). Preserving every valid authenticated Gateway token, including standalone `session_replaced` and `service_restart`, remains target-only behavior; current handler mapping and classification remain the Operations implementation status. The target identity-bearing TCP Proxy Deployment strategy is `Recreate`, but the hosted Helm template currently omits that strategy and therefore retains Kubernetes' default rollout behavior; configuring the chart remains an implementation gap. See [Bridge Lifecycle Ownership](#bridge-lifecycle-ownership) for the local runtime invariants.
+Immediate closure on established bridge loss and the current close mapping and shutdown classification are implemented as described in [Operations](./operations.md#implementation-status). Preserving every valid authenticated Gateway token, including standalone `session_replaced` and `service_restart`, remains target-only behavior; current handler mapping and classification remain the Operations implementation status. The identity-bearing TCP Proxy Deployment now configures the required `Recreate` strategy in the hosted Helm template, with preview and dev-demo render assertions; live rollout and alert-suppression proof remain operational follow-up. See [Bridge Lifecycle Ownership](#bridge-lifecycle-ownership) for the local runtime invariants.
 
 ## Redis Role and Prefixes
 

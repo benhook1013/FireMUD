@@ -156,6 +156,8 @@ gateway_deployment = named("Deployment", "spring-cloud-gateway")
 proxy_deployment = named("Deployment", "tcp-proxy-service")
 gateway, gateway_env = env_map(gateway_deployment)
 proxy, proxy_env = env_map(proxy_deployment)
+if proxy_deployment["spec"].get("strategy") != {"type": "Recreate"}:
+    raise SystemExit("preview TCP Proxy Deployment must use the Recreate strategy")
 postgres, postgres_env = env_map(named("Deployment", "postgres"))
 if postgres_env.get("PGDATA") != "/var/lib/postgresql/data/pgdata":
     raise SystemExit(
@@ -416,6 +418,30 @@ if ! grep -A1 'name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT' "$TMP_DIR/dev-
   echo "dev-demo Helm render did not retain dev-demo-cluster trust environment" >&2
   exit 1
 fi
+python3 - <<'PY' "$TMP_DIR/dev-demo-rendered.yaml"
+import pathlib
+import sys
+
+import yaml
+
+documents = [
+    document
+    for document in yaml.safe_load_all(pathlib.Path(sys.argv[1]).read_text())
+    if isinstance(document, dict)
+]
+proxy_deployments = [
+    document
+    for document in documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+]
+if len(proxy_deployments) != 1:
+    raise SystemExit(
+        f"expected exactly one dev-demo tcp-proxy-service Deployment, found {len(proxy_deployments)}"
+    )
+if proxy_deployments[0]["spec"].get("strategy") != {"type": "Recreate"}:
+    raise SystemExit("dev-demo TCP Proxy Deployment must use the Recreate strategy")
+PY
 
 for unsafe_override in \
   "previewStack.services[${proxy_index}].serviceType=NodePort" \
