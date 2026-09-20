@@ -1,4 +1,6 @@
 {{- if and .Values.previewStack.enabled (.Values.previewStack.networkPolicies.enabled) }}
+{{- $certificateIdentity := .Values.previewStack.certificateIdentity | default (dict) }}
+{{- $certificateIdentityMode := $certificateIdentity.mode | default "standalone" }}
 {{- $gatewayWsTls := .Values.previewStack.gatewayWsTls | default (dict) }}
 {{- $gatewayWsTlsTargetPort := 8443 }}
 {{- if $gatewayWsTls.enabled }}
@@ -98,6 +100,33 @@ spec:
       ports:
         - protocol: TCP
           port: 9000
+{{- if eq $certificateIdentityMode "hosted-controller" }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: account-service-hosted-controller-ingress
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: account-service
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: firemud-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: hosted-environment-identity-controller
+              app.kubernetes.io/component: controller
+      ports:
+        - protocol: TCP
+          port: 6565
+{{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

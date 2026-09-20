@@ -167,6 +167,29 @@ proxy_ports = proxy_service["spec"].get("ports") or []
 if len(proxy_ports) != 1 or proxy_ports[0].get("port") != 2323 or "nodePort" in proxy_ports[0]:
     raise SystemExit("Hosted TCP Proxy Service must expose only private port 2323 without nodePort")
 
+account_policy = named("NetworkPolicy", "account-service-hosted-controller-ingress")["spec"]
+if account_policy != {
+    "podSelector": {"matchLabels": {"app": "account-service"}},
+    "policyTypes": ["Ingress"],
+    "ingress": [{
+        "from": [{
+            "namespaceSelector": {
+                "matchLabels": {"kubernetes.io/metadata.name": "firemud-system"}
+            },
+            "podSelector": {
+                "matchLabels": {
+                    "app.kubernetes.io/name": "hosted-environment-identity-controller",
+                    "app.kubernetes.io/component": "controller",
+                }
+            },
+        }],
+        "ports": [{"protocol": "TCP", "port": 6565}],
+    }],
+}:
+    raise SystemExit(
+        "Hosted Account ingress policy must allow only the identity controller to TCP 6565"
+    )
+
 gateway_policy = named("NetworkPolicy", "spring-cloud-gateway-ingress")["spec"]
 if gateway_policy["podSelector"] != {"matchLabels": {"app": "spring-cloud-gateway"}}:
     raise SystemExit("Gateway ingress policy selected an unexpected workload")
@@ -209,6 +232,32 @@ for dependency in {
 }:
     if dependency not in required_proxy_egress:
         raise SystemExit(f"Proxy egress policy omitted required dependency {dependency}")
+PY
+
+helm template standalone-pr-42 "$CHART_DIR" \
+  --namespace pr-42 \
+  -f "$TMP_DIR/values.yaml" \
+  --set previewStack.certificateIdentity.mode=standalone \
+  >"$TMP_DIR/standalone-rendered.yaml"
+python3 - <<'PY' "$TMP_DIR/standalone-rendered.yaml"
+import pathlib
+import sys
+
+import yaml
+
+documents = [
+    document
+    for document in yaml.safe_load_all(pathlib.Path(sys.argv[1]).read_text())
+    if isinstance(document, dict)
+]
+if any(
+    document.get("kind") == "NetworkPolicy"
+    and document.get("metadata", {}).get("name") == "account-service-hosted-controller-ingress"
+    for document in documents
+):
+    raise SystemExit(
+        "standalone certificate identity mode unexpectedly rendered the hosted controller Account ingress policy"
+    )
 PY
 
 helm template dev-demo "$CHART_DIR" \
