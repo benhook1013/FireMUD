@@ -74,7 +74,9 @@ helm template pr-42 "$CHART_DIR" \
 
 python3 - <<'PY' "$TMP_DIR/rendered.yaml"
 import pathlib
+import subprocess
 import sys
+import tempfile
 
 import yaml
 
@@ -158,11 +160,66 @@ gateway, gateway_env = env_map(gateway_deployment)
 proxy, proxy_env = env_map(proxy_deployment)
 if proxy_deployment["spec"].get("strategy") != {"type": "Recreate"}:
     raise SystemExit("preview TCP Proxy Deployment must use the Recreate strategy")
-postgres, postgres_env = env_map(named("Deployment", "postgres"))
+postgres_deployment = named("Deployment", "postgres")
+postgres, postgres_env = env_map(postgres_deployment)
 if postgres_env.get("PGDATA") != "/var/lib/postgresql/data/pgdata":
     raise SystemExit(
         "PostgreSQL PGDATA did not render as /var/lib/postgresql/data/pgdata"
     )
+postgres_pod_spec = postgres_deployment["spec"]["template"]["spec"]
+postgres_init_containers = postgres_pod_spec.get("initContainers") or []
+if len(postgres_init_containers) != 1:
+    raise SystemExit(
+        "PostgreSQL must render exactly one data-layout guard init container"
+    )
+postgres_layout_guard = postgres_init_containers[0]
+if postgres_layout_guard.get("name") != "postgres-data-layout-check":
+    raise SystemExit("PostgreSQL data-layout guard has an unexpected name")
+if postgres_layout_guard.get("image") != postgres["image"]:
+    raise SystemExit("PostgreSQL data-layout guard must use the PostgreSQL image")
+if postgres_layout_guard.get("command") != ["sh", "-ec"]:
+    raise SystemExit("PostgreSQL data-layout guard must execute a shell check")
+if postgres_layout_guard.get("volumeMounts") != [{
+    "name": "postgres-data",
+    "mountPath": "/var/lib/postgresql/data",
+    "readOnly": True,
+}]:
+    raise SystemExit(
+        "PostgreSQL data-layout guard must read the PostgreSQL PVC read-only"
+    )
+guard_script = (postgres_layout_guard.get("args") or [None])[0]
+if (
+    not isinstance(guard_script, str)
+    or 'data_root="/var/lib/postgresql/data"' not in guard_script
+    or '"${data_root}/PG_VERSION"' not in guard_script
+):
+    raise SystemExit("PostgreSQL data-layout guard did not inspect the legacy PG_VERSION marker")
+for layout, expected_returncode in (("legacy", 1), ("fresh", 0), ("nested", 0)):
+    with tempfile.TemporaryDirectory() as data_root:
+        data_root_path = pathlib.Path(data_root)
+        if layout == "legacy":
+            (data_root_path / "PG_VERSION").write_text("16\n")
+        elif layout == "nested":
+            nested_path = data_root_path / "pgdata"
+            nested_path.mkdir()
+            (nested_path / "PG_VERSION").write_text("16\n")
+        rendered_guard_script = guard_script.replace(
+            "/var/lib/postgresql/data", data_root
+        )
+        guard_result = subprocess.run(
+            ["sh", "-ec", rendered_guard_script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if guard_result.returncode != expected_returncode:
+            raise SystemExit(
+                f"PostgreSQL data-layout guard returned {guard_result.returncode} for {layout} layout"
+            )
+        if layout == "legacy" and "legacy root PG_VERSION" not in guard_result.stderr:
+            raise SystemExit(
+                "PostgreSQL data-layout guard did not clearly reject the legacy root marker"
+            )
 expected_gateway = {
     "FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED": "true",
     "FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS": "0.0.0.0",
@@ -476,6 +533,22 @@ for invalid_trust_environment in '' unsupported-environment; do
     exit 1
   fi
 done
+
+if helm template invalid-certificate-identity-mode-pr-42 "$CHART_DIR" \
+  --namespace pr-42 \
+  -f "$TMP_DIR/values.yaml" \
+  --set previewStack.certificateIdentity.mode=unsupported-mode \
+  >"$TMP_DIR/invalid-certificate-identity-mode.yaml" \
+  2>"$TMP_DIR/invalid-certificate-identity-mode-error"; then
+  echo "unsupported certificate identity mode unexpectedly rendered" >&2
+  exit 1
+fi
+if ! grep -q 'previewStack.certificateIdentity.mode must be standalone or hosted-controller' \
+    "$TMP_DIR/invalid-certificate-identity-mode-error"; then
+  echo "unsupported certificate identity mode failed for an unexpected reason" >&2
+  cat "$TMP_DIR/invalid-certificate-identity-mode-error" >&2
+  exit 1
+fi
 
 for mismatch in \
   'preview.prNumber=0 previewStack.gatewayWsTls.trustEnvironment=pr-preview' \

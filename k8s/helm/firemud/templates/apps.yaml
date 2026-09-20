@@ -1,6 +1,9 @@
 {{- if .Values.previewStack.enabled }}
 {{- $certificateIdentity := .Values.previewStack.certificateIdentity | default (dict) }}
 {{- $certificateIdentityMode := $certificateIdentity.mode | default "standalone" }}
+{{- if and (ne $certificateIdentityMode "standalone") (ne $certificateIdentityMode "hosted-controller") }}
+{{- fail "previewStack.certificateIdentity.mode must be standalone or hosted-controller" }}
+{{- end }}
 {{- $previewJwt := .Values.previewStack.jwt | default (dict) }}
 {{- $gatewayWsTls := .Values.previewStack.gatewayWsTls | default (dict) }}
 {{- $gatewayWsTlsEnabled := $gatewayWsTls.enabled | default false }}

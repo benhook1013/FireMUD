@@ -171,6 +171,22 @@ class TelnetServerHandlerTest {
     return ws;
   }
 
+  private TelnetServerHandler.WebSocketConnector capturingConnector(
+      AtomicReference<WebSocket.Listener> listenerRef,
+      CompletableFuture<WebSocket> pendingConnection) {
+    return (clientIp,
+            proxyConnectionId,
+            sessionId,
+            tenantId,
+            worldSlug,
+            realmSlug,
+            pointerVersion,
+            listener) -> {
+      listenerRef.set(listener);
+      return pendingConnection;
+    };
+  }
+
   @Test
   void bufferedInputFlushedOnWebSocketConnect() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
@@ -215,17 +231,7 @@ class TelnetServerHandlerTest {
         newHandler(
             registry,
             false,
-            (ip,
-                proxyConnectionId,
-                gameInstanceId,
-                tenantId,
-                worldSlug,
-                realmSlug,
-                pointerVersion,
-                listener) -> {
-              listenerRef.set(listener);
-              return pendingConnection;
-            });
+            capturingConnector(listenerRef, pendingConnection));
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     EventExecutor executor = mock(EventExecutor.class);
@@ -258,17 +264,7 @@ class TelnetServerHandlerTest {
         newHandler(
             registry,
             false,
-            (ip,
-                proxyConnectionId,
-                gameInstanceId,
-                tenantId,
-                worldSlug,
-                realmSlug,
-                pointerVersion,
-                listener) -> {
-              listenerRef.set(listener);
-              return pendingConnection;
-            });
+            capturingConnector(listenerRef, pendingConnection));
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     ChannelFuture closeFuture = mock(ChannelFuture.class);
     Channel channel = mock(Channel.class);
@@ -584,17 +580,7 @@ class TelnetServerHandlerTest {
         newHandler(
             registry,
             false,
-            (ip,
-                proxyConnectionId,
-                session,
-                tenant,
-                worldSlug,
-                realmSlug,
-                pointerVersion,
-                listener) -> {
-              listenerRef.set(listener);
-              return pendingConnection;
-            });
+            capturingConnector(listenerRef, pendingConnection));
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -761,17 +747,7 @@ class TelnetServerHandlerTest {
         newHandler(
             registry,
             false,
-            (ip,
-                proxyConnectionId,
-                session,
-                tenant,
-                worldSlug,
-                realmSlug,
-                pointerVersion,
-                listener) -> {
-              listenerRef.set(listener);
-              return pendingConnection;
-            });
+            capturingConnector(listenerRef, pendingConnection));
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     ChannelFuture closeFuture = mock(ChannelFuture.class);
     Channel channel = mock(Channel.class);
@@ -807,17 +783,7 @@ class TelnetServerHandlerTest {
         newHandler(
             registry,
             false,
-            (ip,
-                proxyConnectionId,
-                session,
-                tenant,
-                worldSlug,
-                realmSlug,
-                pointerVersion,
-                listener) -> {
-              listenerRef.set(listener);
-              return pendingConnection;
-            });
+            capturingConnector(listenerRef, pendingConnection));
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     ChannelFuture closeFuture = mock(ChannelFuture.class);
     Channel channel = mock(Channel.class);

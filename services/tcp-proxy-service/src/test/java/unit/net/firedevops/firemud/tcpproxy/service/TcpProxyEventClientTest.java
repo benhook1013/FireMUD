@@ -26,6 +26,7 @@ import net.firedevops.firemud.common.grpc.ResolvedGrpcTlsMaterial;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
 import net.firedevops.firemud.tcpproxy.v1.TcpProxyServiceGrpc;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
 
 class TcpProxyEventClientTest {
@@ -103,8 +104,9 @@ class TcpProxyEventClientTest {
   }
 
   @Test
-  void initRegistersCertificateWatcherBeforeInitialChannelBuild() throws Exception {
-    Path certificate = Files.createTempFile("tcp-proxy-event-client", ".crt");
+  void initRegistersCertificateWatcherBeforeInitialChannelBuild(@TempDir Path tempDir)
+      throws Exception {
+    Path certificate = tempDir.resolve("tcp-proxy-event-client.crt");
     Files.writeString(certificate, "initial");
 
     ServiceEndpointsProperties endpoints = mock(ServiceEndpointsProperties.class);
@@ -171,13 +173,12 @@ class TcpProxyEventClientTest {
       releaseInitialBuild.countDown();
       initThread.join(5_000);
       client.close();
-      Files.deleteIfExists(certificate);
     }
   }
 
   @Test
-  void initFailureCleansUpWatcherAndChannel() throws Exception {
-    Path certificate = Files.createTempFile("tcp-proxy-event-client", ".crt");
+  void initFailureCleansUpWatcherAndChannel(@TempDir Path tempDir) throws Exception {
+    Path certificate = tempDir.resolve("tcp-proxy-event-client.crt");
     Files.writeString(certificate, "initial");
 
     ServiceEndpointsProperties endpoints = mock(ServiceEndpointsProperties.class);
@@ -213,7 +214,6 @@ class TcpProxyEventClientTest {
       org.junit.jupiter.api.Assertions.assertNull(getField(client, "tlsMaterial"));
     } finally {
       client.close();
-      Files.deleteIfExists(certificate);
     }
   }
 
