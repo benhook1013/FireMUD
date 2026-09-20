@@ -13,7 +13,7 @@ fail() {
   exit 1
 }
 
-for required_command in base64 kubectl openssl python3 sha256sum; do
+for required_command in base64 helm kubectl openssl python3 sha256sum; do
   command -v "$required_command" >/dev/null 2>&1 || \
     fail "$required_command is required"
 done
@@ -3113,11 +3113,175 @@ with tempfile.TemporaryDirectory() as directory:
 PY
 
 rendered="$(mktemp)"
-trap 'rm -f "$rendered"' EXIT
+helm_rendered="$(mktemp)"
+trap 'rm -f "$rendered" "$helm_rendered"' EXIT
 kubectl kustomize "$MANIFEST_DIR" >"$rendered"
 require_literal "$rendered" "kind: CustomResourceDefinition"
 require_literal "$rendered" "kind: ValidatingAdmissionPolicy"
 require_literal "$rendered" "kind: Deployment"
 check_rbac_wildcards "$rendered"
+
+if ! helm template hosted-identity-contract "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$ROOT_DIR/k8s/helm/firemud/values-hosted-shared.example.yaml" \
+  >"$helm_rendered"; then
+  fail "Helm chart render failed for values-hosted-shared.example.yaml"
+fi
+python3 - "$helm_rendered" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+
+def fail(message):
+    raise SystemExit(f"Helm gRPC publication contract: {message}")
+
+
+def exactly_one(items, description):
+    if len(items) != 1:
+        fail(f"expected exactly one {description}, found {len(items)}")
+    return items[0]
+
+
+documents = [
+    document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+deployments = {}
+for document in documents:
+    if document.get("kind") != "Deployment":
+        continue
+    name = document.get("metadata", {}).get("name")
+    if name:
+        deployments.setdefault(name, []).append(document)
+
+publication_services = (
+    "game-design-service",
+    "world-management-service",
+    "entity-management-service",
+    "game-logic-service",
+    "automation-scripting-service",
+)
+shared_services = (
+    "account-service",
+    "game-session-service",
+    "logging-admin-service",
+    "social-groups-service",
+    "spring-cloud-gateway",
+    "tcp-proxy-service",
+)
+
+
+def deployment_for(service):
+    return exactly_one(deployments.get(service, []), f"Deployment/{service}")
+
+
+def workload_container(deployment, service):
+    pod_spec = deployment.get("spec", {}).get("template", {}).get("spec", {})
+    containers = pod_spec.get("containers")
+    if not isinstance(containers, list):
+        fail(f"Deployment/{service} has no container list")
+    return exactly_one(
+        [container for container in containers if container.get("name") == service],
+        f"container/{service}",
+    ), pod_spec
+
+
+def named_entry(entries, name, description):
+    if not isinstance(entries, list):
+        fail(f"{description} is not a list")
+    return exactly_one(
+        [entry for entry in entries if isinstance(entry, dict) and entry.get("name") == name],
+        f"{description}/{name}",
+    )
+
+
+def env_map(container, service):
+    entries = container.get("env")
+    if not isinstance(entries, list):
+        fail(f"Deployment/{service} container has no env list")
+    return {
+        entry.get("name"): entry
+        for entry in entries
+        if isinstance(entry, dict) and entry.get("name")
+    }
+
+
+def assert_paths_and_mount(container, service, cert_path, key_path):
+    env = env_map(container, service)
+    expected_paths = {
+        "FIREMUD_GRPC_CERT_CHAIN_PATH": cert_path,
+        "FIREMUD_GRPC_PRIVATE_KEY_PATH": key_path,
+        "FIREMUD_GRPC_CA_CERT_PATH": "/tls/ca.crt",
+    }
+    for name, value in expected_paths.items():
+        if env.get(name, {}).get("value") != value:
+            fail(
+                f"Deployment/{service} {name} must be {value!r}, "
+                f"found {env.get(name)!r}"
+            )
+    mount = named_entry(
+        container.get("volumeMounts"),
+        "grpc-tls",
+        f"Deployment/{service} volumeMounts",
+    )
+    if mount.get("mountPath") != "/tls" or mount.get("readOnly") is not True:
+        fail(f"Deployment/{service} grpc-tls must mount read-only at /tls")
+
+
+for service in publication_services:
+    deployment = deployment_for(service)
+    container, pod_spec = workload_container(deployment, service)
+    assert_paths_and_mount(container, service, "/tls/tls.crt", "/tls/tls.key")
+    env = env_map(container, service)
+    namespace_identity = env.get("FIREMUD_GRPC_WORKLOAD_NAMESPACE")
+    if namespace_identity != {
+        "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+        "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
+    }:
+        fail(
+            f"Deployment/{service} must derive FIREMUD_GRPC_WORKLOAD_NAMESPACE "
+            f"from metadata.namespace, found {namespace_identity!r}"
+        )
+    grpc_volume = named_entry(
+        pod_spec.get("volumes"),
+        "grpc-tls",
+        f"Deployment/{service} volumes",
+    )
+    secret_name = grpc_volume.get("secret", {}).get("secretName")
+    expected_secret = f"firemud-grpc-{service}"
+    if secret_name != expected_secret:
+        if secret_name == "firemud-grpc-tls":
+            fail(
+                f"Deployment/{service} publication workload falls back to "
+                "shared firemud-grpc-tls"
+            )
+        fail(
+            f"Deployment/{service} grpc-tls must use {expected_secret}, "
+            f"found {secret_name!r}"
+        )
+
+for service in shared_services:
+    deployment = deployment_for(service)
+    container, pod_spec = workload_container(deployment, service)
+    assert_paths_and_mount(container, service, "/tls/client.crt", "/tls/client.key")
+    if "FIREMUD_GRPC_WORKLOAD_NAMESPACE" in env_map(container, service):
+        fail(
+            f"Deployment/{service} shared transport unexpectedly declares "
+            "FIREMUD_GRPC_WORKLOAD_NAMESPACE"
+        )
+    grpc_volume = named_entry(
+        pod_spec.get("volumes"),
+        "grpc-tls",
+        f"Deployment/{service} volumes",
+    )
+    secret_name = grpc_volume.get("secret", {}).get("secretName")
+    if secret_name != "firemud-grpc-tls":
+        fail(
+            f"Deployment/{service} shared grpc-tls must use firemud-grpc-tls, "
+            f"found {secret_name!r}"
+        )
+PY
 
 echo "hosted identity controller manifest contract passed"
