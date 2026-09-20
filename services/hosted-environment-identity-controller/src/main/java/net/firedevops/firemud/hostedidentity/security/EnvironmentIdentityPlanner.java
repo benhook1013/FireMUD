@@ -1,9 +1,12 @@
 package net.firedevops.firemud.hostedidentity.security;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
+import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import org.springframework.stereotype.Component;
 
@@ -14,16 +17,11 @@ public class EnvironmentIdentityPlanner {
   private static final List<String> GRPC_CONSUMERS =
       List.of(
           "account-service",
-          "automation-scripting-service",
-          "entity-management-service",
-          "game-design-service",
-          "game-logic-service",
           "game-session-service",
           "logging-admin-service",
           "social-groups-service",
           "spring-cloud-gateway",
-          "tcp-proxy-service",
-          "world-management-service");
+          "tcp-proxy-service");
 
   private final HostedIdentityProperties properties;
 
@@ -58,6 +56,16 @@ public class EnvironmentIdentityPlanner {
       throw new IllegalArgumentException(exception.getMessage(), exception);
     }
     String materialPrefix = runtimeNamespace;
+    Map<String, String> publicationCertificates = new LinkedHashMap<>();
+    Map<String, String> publicationSecrets = new LinkedHashMap<>();
+    Map<String, String> publicationSourceSecrets = new LinkedHashMap<>();
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      String role = HostedIdentityContract.grpcPublicationRole(workload);
+      String sourceName = materialPrefix + "-grpc-" + workload;
+      publicationCertificates.put(role, sourceName);
+      publicationSourceSecrets.put(role, sourceName);
+      publicationSecrets.put(role, "firemud-grpc-" + workload);
+    }
     return new EnvironmentIdentityPlan(
         name,
         properties.getControlNamespace(),
@@ -80,7 +88,10 @@ public class EnvironmentIdentityPlanner {
         properties.getTelnetIssuer(),
         properties.getGrpcIssuer(),
         properties.getCaSecretName(),
-        GRPC_CONSUMERS);
+        GRPC_CONSUMERS,
+        publicationCertificates,
+        publicationSecrets,
+        publicationSourceSecrets);
   }
 
   public List<String> grpcConsumers() {

@@ -1,6 +1,7 @@
 package net.firedevops.firemud.hostedidentity.model;
 
 import java.util.List;
+import java.util.Map;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 
 public record EnvironmentIdentityPlan(
@@ -25,9 +26,15 @@ public record EnvironmentIdentityPlan(
     String telnetIssuer,
     String grpcIssuer,
     String caSecretName,
-    List<String> grpcConsumers) {
+    List<String> grpcConsumers,
+    Map<String, String> grpcPublicationCertificateNames,
+    Map<String, String> grpcPublicationSecretNames,
+    Map<String, String> grpcPublicationSourceSecretNames) {
   public EnvironmentIdentityPlan {
     grpcConsumers = List.copyOf(grpcConsumers);
+    grpcPublicationCertificateNames = Map.copyOf(grpcPublicationCertificateNames);
+    grpcPublicationSecretNames = Map.copyOf(grpcPublicationSecretNames);
+    grpcPublicationSourceSecretNames = Map.copyOf(grpcPublicationSourceSecretNames);
   }
 
   public String secretName(String role) {
@@ -37,8 +44,42 @@ public record EnvironmentIdentityPlan(
       case HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE -> gatewayInternalWsSecretName;
       case HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE -> tcpProxyBridgeSecretName;
       case HostedIdentityContract.GRPC_ROLE -> grpcSecretName;
-      default -> throw new IllegalArgumentException("unsupported identity role: " + role);
+      default -> {
+        if (HostedIdentityContract.isGrpcPublicationRole(role)) {
+          String secretName = grpcPublicationSecretNames.get(role);
+          if (secretName != null) {
+            yield secretName;
+          }
+        }
+        throw new IllegalArgumentException("unsupported identity role: " + role);
+      }
     };
+  }
+
+  public String grpcPublicationCertificateName(String workload) {
+    return grpcPublicationCertificateNames.get(
+        HostedIdentityContract.grpcPublicationRole(workload));
+  }
+
+  public String grpcPublicationSecretName(String workload) {
+    return grpcPublicationSecretNames.get(HostedIdentityContract.grpcPublicationRole(workload));
+  }
+
+  public String grpcPublicationSourceSecretName(String workload) {
+    return grpcPublicationSourceSecretNames.get(
+        HostedIdentityContract.grpcPublicationRole(workload));
+  }
+
+  public String grpcPublicationUriSan(String workload) {
+    return "spiffe://firemud/ns/" + runtimeNamespace + "/sa/" + workload;
+  }
+
+  public List<String> grpcPublicationDnsNames(String workload) {
+    return List.of(
+        workload,
+        workload + "." + runtimeNamespace,
+        workload + "." + runtimeNamespace + ".svc",
+        workload + "." + runtimeNamespace + ".svc.cluster.local");
   }
 
   public EnvironmentIdentityPlan withGrpcConsumers(List<String> consumers) {
@@ -64,6 +105,9 @@ public record EnvironmentIdentityPlan(
         telnetIssuer,
         grpcIssuer,
         caSecretName,
-        consumers);
+        consumers,
+        grpcPublicationCertificateNames,
+        grpcPublicationSecretNames,
+        grpcPublicationSourceSecretNames);
   }
 }

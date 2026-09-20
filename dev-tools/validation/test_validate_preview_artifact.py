@@ -412,6 +412,20 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
             "containers": [
                 {
                     "name": "account-service",
+                    "env": [
+                        {
+                            "name": "FIREMUD_GRPC_CERT_CHAIN_PATH",
+                            "value": "/tls/client.crt",
+                        },
+                        {
+                            "name": "FIREMUD_GRPC_PRIVATE_KEY_PATH",
+                            "value": "/tls/client.key",
+                        },
+                        {
+                            "name": "FIREMUD_GRPC_CA_CERT_PATH",
+                            "value": "/tls/ca.crt",
+                        },
+                    ],
                     "volumeMounts": [
                         {"name": "grpc-tls", "mountPath": "/tls", "readOnly": True},
                         {

@@ -28,6 +28,33 @@ waiter="$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh"
 annotator="$ROOT_DIR/dev-tools/hosted/dev-demo/annotate-dev-demo-namespace.sh"
 target_validator="$ROOT_DIR/dev-tools/hosted/dev-demo/validate-dev-demo-target.sh"
 runtime_rollout_waiter="$ROOT_DIR/dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh"
+standalone_grpc_tls="$ROOT_DIR/dev-tools/hosted/shared/ensure-grpc-tls-secret.sh"
+
+contains_literal() {
+  grep -Fq -- "$2" "$1" || {
+    echo "$1 must contain: $2" >&2
+    exit 1
+  }
+}
+
+bash -n "$standalone_grpc_tls" "$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh"
+for required in \
+  'ca_secret="firemud-grpc-ca"' \
+  'if ! secret_exists "$shared_secret"; then' \
+  'if secret_exists "$ca_secret"; then' \
+  'if secret_exists "$secret_name"; then' \
+  'URI:${expected_uri}' \
+  '"${workload}.${namespace}.svc.cluster.local"' \
+  'source_name="${namespace}-grpc-${workload}"' \
+  '--from-file=tls.crt="$workload_cert"' \
+  '--from-file=tls.key="$workload_key"' \
+  '  game-design-service' \
+  '  world-management-service' \
+  '  entity-management-service' \
+  '  game-logic-service' \
+  '  automation-scripting-service'; do
+  contains_literal "$standalone_grpc_tls" "$required"
+done
 python3 "$runner_label_validator" --self-test
 python3 "$runner_label_validator" "$workflow" "$reconciler"
 [[ -x "$runtime_rollout_waiter" ]] || {
