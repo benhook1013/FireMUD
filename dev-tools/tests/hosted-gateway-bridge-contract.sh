@@ -167,7 +167,7 @@ proxy_ports = proxy_service["spec"].get("ports") or []
 if len(proxy_ports) != 1 or proxy_ports[0].get("port") != 2323 or "nodePort" in proxy_ports[0]:
     raise SystemExit("Hosted TCP Proxy Service must expose only private port 2323 without nodePort")
 
-account_policy = named("NetworkPolicy", "account-service-hosted-controller-ingress")["spec"]
+account_policy = named("NetworkPolicy", "account-service-controller-ingress")["spec"]
 if account_policy != {
     "podSelector": {"matchLabels": {"app": "account-service"}},
     "policyTypes": ["Ingress"],
@@ -269,7 +269,7 @@ documents = [
 ]
 if any(
     document.get("kind") == "NetworkPolicy"
-    and document.get("metadata", {}).get("name") == "account-service-hosted-controller-ingress"
+    and document.get("metadata", {}).get("name") == "account-service-controller-ingress"
     for document in documents
 ):
     raise SystemExit(
