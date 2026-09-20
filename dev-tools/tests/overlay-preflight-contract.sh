@@ -656,8 +656,6 @@ module.validate_gateway_ws_network_policy = lambda documents, secret_name: []
 strategy_issue = (
     "TCP Proxy bridge Deployment strategy must be Recreate for planned identity replacement"
 )
-if proxy.get("spec", {}).get("strategy") != {"type": "Recreate"}:
-    raise SystemExit(f"{environment} canonical render failed bridge rollout validation")
 _, current_issues = module.validate_gateway_ws_values(documents, expected)
 if strategy_issue in current_issues:
     raise SystemExit(f"{environment} canonical render failed bridge rollout validation")

@@ -23,6 +23,7 @@ import threading
 from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import NamedTuple
 
 IAC = 255
 WILL = 251
@@ -334,6 +335,152 @@ def _is_credential_only_redaction(pattern: bytes, replacement: bytes) -> bool:
     return replacement == b"[REDACTED]"
 
 
+class _RedactionCandidate(NamedTuple):
+    start: int
+    pattern: bytes
+    replacement: bytes
+    credential_only: bool
+    search_pattern: bytes
+    exact_at_start: bool
+
+
+class _RedactionMatch(NamedTuple):
+    candidate: _RedactionCandidate
+    matched: int
+
+
+class _RedactionMatcher:
+    """Select and classify redaction matches without owning stream state."""
+
+    def __init__(self, patterns: Iterable[tuple[bytes, bytes]]):
+        self.patterns = tuple(
+            (pattern, replacement)
+            for pattern, replacement in patterns
+            if pattern
+        )
+
+    def _find_candidates(
+        self, combined: bytes, folded_combined: bytes, cursor: int
+    ) -> list[_RedactionCandidate]:
+        candidates = []
+        for pattern, replacement in self.patterns:
+            credential_only = _is_credential_only_redaction(pattern, replacement)
+            search_pattern = (
+                _ascii_casefold_bytes(pattern) if credential_only else pattern
+            )
+            search_data = folded_combined if credential_only else combined
+            # Track complete matches separately, but retain the earliest
+            # first-byte candidate so a preceding near-match cannot be
+            # skipped in favor of a later credential occurrence.
+            exact_start = search_data.find(search_pattern, cursor)
+            start = search_data.find(search_pattern[:1], cursor)
+            if start >= 0:
+                candidates.append(
+                    _RedactionCandidate(
+                        start=start,
+                        pattern=pattern,
+                        replacement=replacement,
+                        credential_only=credential_only,
+                        search_pattern=search_pattern,
+                        exact_at_start=exact_start == start,
+                    )
+                )
+        return candidates
+
+    @staticmethod
+    def _match_length(
+        candidate: _RedactionCandidate,
+        combined: bytes,
+        folded_combined: bytes,
+    ) -> int:
+        start = candidate.start
+        search_data = folded_combined if candidate.credential_only else combined
+        available = min(len(candidate.search_pattern), len(combined) - start)
+        matched = 0
+        while (
+            matched < available
+            and search_data[start + matched] == candidate.search_pattern[matched]
+        ):
+            matched += 1
+        return matched
+
+    def _drop_alias_near_matches(
+        self,
+        candidates: list[_RedactionCandidate],
+        combined: bytes,
+        folded_combined: bytes,
+        cursor: int,
+    ) -> list[_RedactionCandidate]:
+        exact_candidates = [
+            candidate
+            for candidate in candidates
+            if (
+                (folded_combined if candidate.credential_only else combined).find(
+                    candidate.search_pattern, cursor
+                )
+                >= 0
+            )
+        ]
+        if not exact_candidates:
+            return candidates
+
+        alias_candidates = []
+        for candidate in candidates:
+            # A credential can itself begin with LOGIN or LOGON. Inferring the
+            # candidate kind from its bytes would skip the normalized matching
+            # needed for that credential.
+            if candidate.exact_at_start or not candidate.credential_only:
+                continue
+            alias_match = re.match(rb"(?i)(LOGIN|LOGON)([ \t])", candidate.pattern)
+            if alias_match is None:
+                continue
+            matched = self._match_length(candidate, combined, folded_combined)
+            alias_length = len(alias_match.group(1))
+            if matched == alias_length or matched == alias_length + 1:
+                alias_candidates.append(candidate)
+
+        if not alias_candidates:
+            return candidates
+        filtered_candidates = [
+            candidate for candidate in candidates if candidate not in alias_candidates
+        ]
+        return filtered_candidates or candidates
+
+    def select_candidate(
+        self, combined: bytes, folded_combined: bytes, cursor: int
+    ) -> _RedactionMatch | None:
+        candidates = self._find_candidates(combined, folded_combined, cursor)
+        if not candidates:
+            return None
+
+        candidates = self._drop_alias_near_matches(
+            candidates, combined, folded_combined, cursor
+        )
+        start = min(candidate.start for candidate in candidates)
+        matching_candidates = [
+            candidate for candidate in candidates if candidate.start == start
+        ]
+        matches = [
+            _RedactionMatch(
+                candidate=candidate,
+                matched=self._match_length(candidate, combined, folded_combined),
+            )
+            for candidate in matching_candidates
+        ]
+        return max(matches, key=lambda match: match.matched)
+
+    @staticmethod
+    def classify_near_match(match: _RedactionMatch) -> bool:
+        """Return whether a partial match already includes credential bytes."""
+        candidate = match.candidate
+        if candidate.credential_only:
+            return True
+        login_prefix = re.match(
+            rb"(?i)^[ \t]*(?:LOGIN|LOGON)[ \t]+\S+[ \t]+", candidate.pattern
+        )
+        return match.matched > login_prefix.end()
+
+
 def _display_text(text: str) -> str:
     """Make received control characters visible without changing evidence."""
     rendered = []
@@ -594,117 +741,32 @@ class TelnetSession:
         previous_tail = self.redaction_tail
         combined = previous_tail + data
         self.redaction_tail = b""
-        patterns = tuple(
-            (pattern, replacement)
-            for pattern, replacement in self.redaction_patterns
-            if pattern
-        )
-        if not patterns:
+        matcher = _RedactionMatcher(self.redaction_patterns)
+        if not matcher.patterns:
             return combined
 
         folded_combined = _ascii_casefold_bytes(combined)
         safe = bytearray()
         cursor = 0
         while cursor < len(combined):
-            candidates = []
-            for pattern, replacement in patterns:
-                credential_only = _is_credential_only_redaction(pattern, replacement)
-                search_pattern = (
-                    _ascii_casefold_bytes(pattern) if credential_only else pattern
-                )
-                search_data = folded_combined if credential_only else combined
-                # Track complete matches separately, but retain the earliest
-                # first-byte candidate so a preceding near-match cannot be
-                # skipped in favor of a later credential occurrence.
-                exact_start = search_data.find(search_pattern, cursor)
-                start = search_data.find(search_pattern[:1], cursor)
-                if start >= 0:
-                    candidates.append(
-                        (
-                            start,
-                            pattern,
-                            replacement,
-                            credential_only,
-                            search_pattern,
-                            exact_start == start,
-                        )
-                    )
-            if not candidates:
+            redaction_match = matcher.select_candidate(
+                combined, folded_combined, cursor
+            )
+            if redaction_match is None:
                 safe.extend(combined[cursor:])
                 break
 
-            # Keep the earliest candidate fail-closed. The one exception is
-            # the command's own LOGIN/LOGON prefix being mistaken for a
-            # credential that starts with the same alias; only discard that
-            # candidate when it diverges immediately after the alias and a
-            # complete credential match exists later in this buffer.
-            exact_candidates = [
-                candidate
-                for candidate in candidates
-                if (
-                    (folded_combined if candidate[3] else combined).find(
-                        candidate[4], cursor
-                    )
-                    >= 0
-                )
-            ]
-            if exact_candidates:
-                alias_candidates = []
-                for candidate in candidates:
-                    start, pattern, _, credential_only, search_pattern, exact = candidate
-                    if exact or not credential_only:
-                        continue
-                    alias_match = re.match(rb"(?i)(LOGIN|LOGON)([ \t])", pattern)
-                    if alias_match is None:
-                        continue
-                    search_data = folded_combined
-                    alias_length = len(alias_match.group(1))
-                    matched = 0
-                    while (
-                        matched < len(search_pattern)
-                        and start + matched < len(combined)
-                        and search_data[start + matched] == search_pattern[matched]
-                    ):
-                        matched += 1
-                    if matched == alias_length or matched == alias_length + 1:
-                        alias_candidates.append(candidate)
-                if alias_candidates:
-                    filtered_candidates = [
-                        candidate
-                        for candidate in candidates
-                        if candidate not in alias_candidates
-                    ]
-                    if filtered_candidates:
-                        candidates = filtered_candidates
-            start = min(candidate[0] for candidate in candidates)
-            matching_candidates = [candidate for candidate in candidates if candidate[0] == start]
-            matches = []
-            for _, pattern, replacement, credential_only, search_pattern, _ in matching_candidates:
-                matched = 0
-                available = min(len(search_pattern), len(combined) - start)
-                search_data = folded_combined if credential_only else combined
-                while (
-                    matched < available
-                    and search_data[start + matched] == search_pattern[matched]
-                ):
-                    matched += 1
-                matches.append((matched, pattern, replacement, credential_only))
-            matched, pattern, replacement, credential_only = max(
-                matches, key=lambda item: item[0]
-            )
+            candidate = redaction_match.candidate
+            start = candidate.start
+            matched = redaction_match.matched
 
             safe.extend(combined[cursor:start])
-            if matched == len(pattern):
-                safe.extend(replacement)
+            if matched == len(candidate.pattern):
+                safe.extend(candidate.replacement)
                 cursor = start + matched
                 continue
 
-            login_prefix = None
-            if not credential_only:
-                login_prefix = re.match(
-                    rb"(?i)^[ \t]*(?:LOGIN|LOGON)[ \t]+\S+[ \t]+", pattern
-                )
-            includes_credential = credential_only or matched > login_prefix.end()
+            includes_credential = matcher.classify_near_match(redaction_match)
             if start + matched == len(combined):
                 if not final:
                     self.redaction_tail = combined[start:]
@@ -721,7 +783,7 @@ class TelnetSession:
             # retains the existing fail-closed near-match behavior; a
             # credential-only near-match is suppressed only once it has
             # established a meaningful prefix.
-            if credential_only and matched < 2:
+            if candidate.credential_only and matched < 2:
                 safe.extend(combined[start : start + matched])
                 cursor = start + matched
                 continue
