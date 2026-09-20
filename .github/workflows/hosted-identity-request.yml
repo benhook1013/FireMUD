@@ -444,8 +444,9 @@ jobs:
 
   deploy-runtime:
     name: Prepare Validated Preview Runtime
-    # Keep the shared lifecycle lock around allocation, identity projection,
-    # and deployment; the pre-apply projection wait is bounded to 15 minutes.
+    # Keep the shared lifecycle lock around allocation, runtime reset, identity
+    # projection, and deployment; the pre-apply projection wait is bounded to
+    # 15 minutes.
     timeout-minutes: 45
     runs-on:
       - self-hosted
@@ -454,6 +455,8 @@ jobs:
       - x64
     needs: [validate-target, prepare-runtime]
     if: ${{ needs.validate-target.outputs.action == 'deploy' && needs.prepare-runtime.result == 'success' }}
+    outputs:
+      runtime_namespace_uid: ${{ steps.record-runtime-namespace-uid.outputs.uid }}
     environment: trusted-hosted-cluster
     concurrency:
       group: preview-allocation-lifecycle
@@ -566,6 +569,34 @@ jobs:
             exit 1
           }
           echo "port=$port" >> "$GITHUB_OUTPUT"
+
+      - name: Revalidate exact PR target before clean runtime redeploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          EXPECTED_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          EXPECTED_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
+        run: |
+          set -euo pipefail
+          bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
+          bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA" \
+            "before clean runtime redeploy"
+
+      - name: Delete exact preview runtime namespace before recreate
+        env:
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          [[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]] || {
+            echo "::error title=Invalid preview runtime namespace::Expected pr-${PR_NUMBER}." >&2
+            exit 1
+          }
+          bash ./dev-tools/hosted/shared/delete-hosted-namespace.sh \
+            "$RUNTIME_NAMESPACE" "$RUNTIME_NAMESPACE"
 
       - name: Create and annotate exact preview runtime namespace
         env:
@@ -725,6 +756,53 @@ jobs:
             "firemud.dev/last-preview-head-sha=${HEAD_SHA}" \
             --overwrite >/dev/null
 
+      - name: Record exact deployed runtime Namespace UID
+        id: record-runtime-namespace-uid
+        if: ${{ steps.deploy-runtime-artifact.outcome == 'success' }}
+        env:
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]] || {
+            echo "::error title=Invalid preview runtime namespace::Expected pr-${PR_NUMBER}." >&2
+            exit 1
+          }
+          [[ "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error title=Invalid preview head SHA::Expected exactly 40 lowercase hexadecimal characters." >&2
+            exit 1
+          }
+          namespace_json="$(kubectl get namespace "$RUNTIME_NAMESPACE" --ignore-not-found -o json)"
+          [[ -n "$namespace_json" ]] || {
+            echo "::error title=Missing deployed preview runtime namespace::Expected ${RUNTIME_NAMESPACE}." >&2
+            exit 1
+          }
+          if ! runtime_uid="$(jq -er \
+            --arg expected_namespace "$RUNTIME_NAMESPACE" \
+            --arg expected_pr_number "$PR_NUMBER" \
+            --arg expected_head_sha "$EXPECTED_HEAD_SHA" \
+            '(
+              .metadata as $metadata
+              | ($metadata.labels // {}) as $labels
+              | ($metadata.annotations // {}) as $annotations
+              | select($metadata.name == $expected_namespace)
+              | select($metadata.uid | type == "string" and length > 0)
+              | select($labels["firemud.dev/preview"] == "true")
+              | select($labels["firemud.dev/pr-number"] == $expected_pr_number)
+              | select($annotations["firemud.dev/requested-preview-head-sha"] == $expected_head_sha)
+              | select($annotations["firemud.dev/last-preview-head-sha"] == $expected_head_sha)
+              | $metadata.uid
+            )' <<<"$namespace_json")"; then
+            echo "::error title=Invalid deployed preview runtime ownership::Expected canonical preview ownership and requested/deployed head annotations for ${RUNTIME_NAMESPACE}." >&2
+            exit 1
+          fi
+          [[ "$runtime_uid" =~ ^[^[:space:]]+$ ]] || {
+            echo "::error title=Invalid deployed preview runtime Namespace UID::Expected a non-empty Namespace UID." >&2
+            exit 1
+          }
+          echo "uid=$runtime_uid" >> "$GITHUB_OUTPUT"
+
       - name: Publish trusted preview deployment failure
         if: ${{ !cancelled() && failure() }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
@@ -799,6 +877,61 @@ jobs:
         run: |
           bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
             "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
+
+      - name: Capture exact runtime Namespace UID before verification
+        id: capture-runtime-namespace
+        env:
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+          EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID: ${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}
+        run: |
+          set -euo pipefail
+          [[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]] || {
+            echo "::error title=Invalid preview runtime namespace::Expected pr-${PR_NUMBER}." >&2
+            exit 1
+          }
+          [[ "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error title=Invalid preview head SHA::Expected exactly 40 lowercase hexadecimal characters." >&2
+            exit 1
+          }
+          [[ -n "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID" ]] || {
+            echo "::error title=Missing deployed preview runtime Namespace UID::The deploy job did not publish its post-apply Namespace UID." >&2
+            exit 1
+          }
+          namespace_json="$(kubectl get namespace "$RUNTIME_NAMESPACE" --ignore-not-found -o json)"
+          [[ -n "$namespace_json" ]] || {
+            echo "::error title=Missing preview runtime namespace::Expected ${RUNTIME_NAMESPACE}." >&2
+            exit 1
+          }
+          if ! runtime_uid="$(jq -er \
+            --arg expected_namespace "$RUNTIME_NAMESPACE" \
+            --arg expected_pr_number "$PR_NUMBER" \
+            --arg expected_head_sha "$EXPECTED_HEAD_SHA" \
+            '(
+              .metadata as $metadata
+              | ($metadata.labels // {}) as $labels
+              | ($metadata.annotations // {}) as $annotations
+              | select($metadata.name == $expected_namespace)
+              | select($metadata.uid | type == "string" and length > 0)
+              | select($labels["firemud.dev/preview"] == "true")
+              | select($labels["firemud.dev/pr-number"] == $expected_pr_number)
+              | select($annotations["firemud.dev/requested-preview-head-sha"] == $expected_head_sha)
+              | select($annotations["firemud.dev/last-preview-head-sha"] == $expected_head_sha)
+              | $metadata.uid
+            )' <<<"$namespace_json")"; then
+            echo "::error title=Invalid preview runtime namespace ownership::Expected canonical preview ownership and head annotations for ${RUNTIME_NAMESPACE}." >&2
+            exit 1
+          fi
+          [[ "$runtime_uid" =~ ^[^[:space:]]+$ ]] || {
+            echo "::error title=Invalid preview runtime namespace UID::Expected a non-empty Namespace UID." >&2
+            exit 1
+          }
+          [[ "$runtime_uid" == "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID" ]] || {
+            echo "::error title=Preview runtime Namespace UID does not match deploy::Expected ${EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID}; observed ${runtime_uid}." >&2
+            exit 1
+          }
+          echo "uid=$runtime_uid" >> "$GITHUB_OUTPUT"
 
       - name: Wait for exact controller identity projection
         if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
@@ -886,6 +1019,62 @@ jobs:
           : "${TCP_PORT:?runtime-port step must provide the allocated NodePort}"
           bash ./dev-tools/hosted/shared/hosted-login-look-smoke.sh
 
+      - name: Revalidate exact source binding and runtime Namespace UID before success publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          EXPECTED_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          EXPECTED_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+          EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID: ${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}
+          CAPTURED_RUNTIME_NAMESPACE_UID: ${{ steps.capture-runtime-namespace.outputs.uid }}
+        run: |
+          set -euo pipefail
+          bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA" \
+            "before success publication"
+          [[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]] || {
+            echo "::error title=Invalid preview runtime namespace::Expected pr-${PR_NUMBER}." >&2
+            exit 1
+          }
+          [[ -n "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID" ]] || {
+            echo "::error title=Missing preview runtime Namespace UID::The verification UID fence was not captured." >&2
+            exit 1
+          }
+          [[ "$CAPTURED_RUNTIME_NAMESPACE_UID" == "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID" ]] || {
+            echo "::error title=Preview runtime Namespace UID handoff changed::Expected ${EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID}; captured ${CAPTURED_RUNTIME_NAMESPACE_UID:-empty}." >&2
+            exit 1
+          }
+          namespace_json="$(kubectl get namespace "$RUNTIME_NAMESPACE" --ignore-not-found -o json)"
+          [[ -n "$namespace_json" ]] || {
+            echo "::error title=Preview runtime namespace UID fence failed::Namespace ${RUNTIME_NAMESPACE} is absent." >&2
+            exit 1
+          }
+          if ! observed_uid="$(jq -er \
+            --arg expected_namespace "$RUNTIME_NAMESPACE" \
+            --arg expected_pr_number "$PR_NUMBER" \
+            --arg expected_head_sha "$EXPECTED_HEAD_SHA" \
+            '(
+              .metadata as $metadata
+              | ($metadata.labels // {}) as $labels
+              | ($metadata.annotations // {}) as $annotations
+              | select($metadata.name == $expected_namespace)
+              | select($metadata.uid | type == "string" and length > 0)
+              | select($labels["firemud.dev/preview"] == "true")
+              | select($labels["firemud.dev/pr-number"] == $expected_pr_number)
+              | select($annotations["firemud.dev/requested-preview-head-sha"] == $expected_head_sha)
+              | select($annotations["firemud.dev/last-preview-head-sha"] == $expected_head_sha)
+              | $metadata.uid
+            )' <<<"$namespace_json")"; then
+            echo "::error title=Preview runtime namespace UID fence failed::Namespace ${RUNTIME_NAMESPACE} is absent or no longer has canonical ownership and head annotations." >&2
+            exit 1
+          fi
+          [[ "$observed_uid" == "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID" ]] || {
+            echo "::error title=Preview runtime namespace UID changed::Expected ${EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID}; observed ${observed_uid}." >&2
+            exit 1
+          }
+
       - name: Publish trusted preview success
         if: ${{ success() }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
@@ -920,11 +1109,60 @@ jobs:
           PREVIEW_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
           PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
           PREVIEW_EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+          EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID: ${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}
         with:
           script: |
+            const { execFileSync } = require("node:child_process");
             const { publishPreviewComment } = require(
               `${process.env.GITHUB_WORKSPACE}/dev-tools/hosted/preview/publish-preview-comment.js`
             );
+            let namespaceJson = "";
+            let kubectlError = null;
+            try {
+              namespaceJson = execFileSync(
+                "kubectl",
+                [
+                  "get",
+                  "namespace",
+                  process.env.RUNTIME_NAMESPACE,
+                  "--ignore-not-found",
+                  "-o",
+                  "json",
+                ],
+                { encoding: "utf8" },
+              );
+            } catch (error) {
+              kubectlError = error;
+            }
+            if (kubectlError) {
+              core.warning(
+                `Unable to compare the current preview Namespace UID before failure publication; preserving failure reporting: ${kubectlError.message}`,
+              );
+            } else if (namespaceJson.trim()) {
+              let observedUid = "";
+              try {
+                const namespace = JSON.parse(namespaceJson);
+                observedUid =
+                  typeof namespace?.metadata?.uid === "string"
+                    ? namespace.metadata.uid
+                    : "";
+              } catch (error) {
+                core.warning(
+                  `Current preview Namespace JSON was malformed before failure publication; preserving failure reporting: ${error.message}`,
+                );
+              }
+              if (
+                observedUid &&
+                process.env.EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID &&
+                observedUid !== process.env.EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID
+              ) {
+                core.notice(
+                  `Skipping stale preview verification failure publication because current Namespace UID ${observedUid} differs from this deploy's UID ${process.env.EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID}.`,
+                );
+                return;
+              }
+            }
             await publishPreviewComment({
               github,
               context,
