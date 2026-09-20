@@ -18,6 +18,8 @@ public class ScriptScheduleInstance {
   private String pluginId = "";
   private String pluginVersionId = "";
   private String bindingId = "";
+  private long pluginActivationEpoch;
+  private long lifecycleRevision;
   private String eventType;
   private String scheduleDefinitionId;
   private String scheduleKind;

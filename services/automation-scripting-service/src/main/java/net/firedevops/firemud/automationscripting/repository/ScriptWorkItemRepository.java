@@ -388,6 +388,7 @@ public class ScriptWorkItemRepository {
   }
 
   public ScriptWorkItem save(ScriptWorkItem entity) {
+    requireCoherentPluginFence(entity);
     if (entity.getId() == null) {
       return insertIfAbsentByTriggerIdentity(entity).workItem();
     }
@@ -407,6 +408,8 @@ public class ScriptWorkItemRepository {
             .set(SCRIPT_WORK_ITEMS.BINDING_ID, blankToEmpty(entity.getBindingId()))
             .set(SCRIPT_WORK_ITEMS.PLUGIN_ID, blankToEmpty(entity.getPluginId()))
             .set(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID, blankToEmpty(entity.getPluginVersionId()))
+            .set(SCRIPT_WORK_ITEMS.PLUGIN_ACTIVATION_EPOCH, entity.getPluginActivationEpoch())
+            .set(SCRIPT_WORK_ITEMS.LIFECYCLE_REVISION, entity.getLifecycleRevision())
             .set(SCRIPT_WORK_ITEMS.TARGET_SCOPE_TYPE, entity.getTargetScopeType())
             .set(SCRIPT_WORK_ITEMS.TARGET_SCOPE_ID, entity.getTargetScopeId())
             .set(SCRIPT_WORK_ITEMS.EVENT_TYPE, entity.getEventType())
@@ -462,6 +465,7 @@ public class ScriptWorkItemRepository {
     if (entity.getId() != null) {
       throw new IllegalArgumentException("A new script work item is required");
     }
+    requireCoherentPluginFence(entity);
     String normalizedRequestId = normalizedScriptPinControlPlaneRequestId(entity);
     for (int attempt = 0; attempt < MAX_TRIGGER_IDENTITY_INSERT_ATTEMPTS; attempt++) {
       Optional<TriggerIdentityInsertResult> insertResult = insertTriggerIdentity(entity);
@@ -470,6 +474,7 @@ public class ScriptWorkItemRepository {
         if (!result.inserted()) {
           requireMatchingPinOwnerEvidence(
               normalizedRequestId, result.workItem().getScriptPinControlPlaneRequestId());
+          requireMatchingPluginFence(entity, result.workItem());
         }
         return new IdempotentInsertResult(result.workItem(), result.inserted());
       }
@@ -497,6 +502,7 @@ public class ScriptWorkItemRepository {
       if (existing.isPresent()) {
         requireMatchingPinOwnerEvidence(
             normalizedRequestId, existing.orElseThrow().getScriptPinControlPlaneRequestId());
+        requireMatchingPluginFence(entity, existing.orElseThrow());
         return new IdempotentInsertResult(existing.orElseThrow(), false);
       }
     }
@@ -724,6 +730,7 @@ public class ScriptWorkItemRepository {
   }
 
   private void populate(ScriptWorkItemsRecord record, ScriptWorkItem entity) {
+    requireCoherentPluginFence(entity);
     record.setTenantId(entity.getTenantId());
     record.setGameInstanceId(entity.getGameInstanceId());
     record.setRegionId(entity.getRegionId());
@@ -737,6 +744,8 @@ public class ScriptWorkItemRepository {
     record.setBindingId(blankToEmpty(entity.getBindingId()));
     record.setPluginId(blankToEmpty(entity.getPluginId()));
     record.setPluginVersionId(blankToEmpty(entity.getPluginVersionId()));
+    record.setPluginActivationEpoch(entity.getPluginActivationEpoch());
+    record.setLifecycleRevision(entity.getLifecycleRevision());
     record.setTargetScopeType(entity.getTargetScopeType());
     record.setTargetScopeId(entity.getTargetScopeId());
     record.setEventType(entity.getEventType());
@@ -793,6 +802,28 @@ public class ScriptWorkItemRepository {
     }
   }
 
+  private static void requireCoherentPluginFence(ScriptWorkItem entity) {
+    long activationEpoch = entity.getPluginActivationEpoch();
+    long lifecycleRevision = entity.getLifecycleRevision();
+    if (activationEpoch < 0L || lifecycleRevision < 0L) {
+      throw new IllegalArgumentException("plugin fence values must be non-negative");
+    }
+    if ((activationEpoch == 0L) != (lifecycleRevision == 0L)) {
+      throw new IllegalArgumentException(
+          "plugin_activation_epoch and lifecycle_revision must both be zero or both be positive");
+    }
+  }
+
+  private static void requireMatchingPluginFence(
+      ScriptWorkItem requested, ScriptWorkItem existing) {
+    if (requested.getPluginActivationEpoch() != existing.getPluginActivationEpoch()) {
+      throw new IllegalStateException("plugin_activation_epoch conflicts with existing identity");
+    }
+    if (requested.getLifecycleRevision() != existing.getLifecycleRevision()) {
+      throw new IllegalStateException("lifecycle_revision conflicts with existing identity");
+    }
+  }
+
   private ScriptWorkItem toEntity(Record record) {
     ScriptWorkItem entity = new ScriptWorkItem();
     entity.setId(record.get(SCRIPT_WORK_ITEMS.ID));
@@ -809,6 +840,10 @@ public class ScriptWorkItemRepository {
     entity.setBindingId(blankToEmpty(record.get(SCRIPT_WORK_ITEMS.BINDING_ID)));
     entity.setPluginId(blankToEmpty(record.get(SCRIPT_WORK_ITEMS.PLUGIN_ID)));
     entity.setPluginVersionId(blankToEmpty(record.get(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID)));
+    Long pluginActivationEpoch = record.get(SCRIPT_WORK_ITEMS.PLUGIN_ACTIVATION_EPOCH);
+    entity.setPluginActivationEpoch(pluginActivationEpoch == null ? 0L : pluginActivationEpoch);
+    Long lifecycleRevision = record.get(SCRIPT_WORK_ITEMS.LIFECYCLE_REVISION);
+    entity.setLifecycleRevision(lifecycleRevision == null ? 0L : lifecycleRevision);
     entity.setTargetScopeType(record.get(SCRIPT_WORK_ITEMS.TARGET_SCOPE_TYPE));
     entity.setTargetScopeId(record.get(SCRIPT_WORK_ITEMS.TARGET_SCOPE_ID));
     entity.setEventType(record.get(SCRIPT_WORK_ITEMS.EVENT_TYPE));

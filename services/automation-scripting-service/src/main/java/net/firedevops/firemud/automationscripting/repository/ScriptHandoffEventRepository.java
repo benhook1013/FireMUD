@@ -138,6 +138,22 @@ public class ScriptHandoffEventRepository {
         .fetch(this::toEntity);
   }
 
+  /** Returns the durable logical child projection for one tenant-qualified command. */
+  public Optional<ScriptHandoffEvent> findByTenantIdAndWorkItemIdAndCommandOrdinal(
+      String tenantId, Long workItemId, int commandOrdinal) {
+    if (tenantId == null || tenantId.isBlank() || workItemId == null) {
+      return Optional.empty();
+    }
+    return dsl.selectFrom(SCRIPT_HANDOFF_EVENTS)
+        .where(
+            SCRIPT_HANDOFF_EVENTS
+                .TENANT_ID
+                .eq(tenantId)
+                .and(SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID.eq(workItemId))
+                .and(SCRIPT_HANDOFF_EVENTS.COMMAND_ORDINAL.eq(commandOrdinal)))
+        .fetchOptional(this::toEntity);
+  }
+
   public ScriptHandoffEvent save(ScriptHandoffEvent entity) {
     requireCoherentPinTuple(entity);
     if (entity.getId() == null) {

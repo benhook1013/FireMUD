@@ -37,7 +37,9 @@ class AutomationPluginControlPlaneServiceTest {
                         44L,
                         "",
                         ""),
-                    null)));
+                    null,
+                    0L,
+                    0L)));
     var service =
         new AutomationPluginControlPlaneService(
             pluginRuntimeStateService,
