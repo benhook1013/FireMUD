@@ -11,6 +11,7 @@ import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjecti
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.AutomationAdmissionMode;
+import net.firedevops.firemud.automationscripting.v1.GetAutomationDrainStatusRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptDeadLettersRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptHandoffEventsRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptScheduleInstancesRequest;
@@ -68,6 +69,57 @@ class AutomationPatchControlPlaneServiceTest {
   void clearSessionContext() {
     SessionContext.clear();
   }
+
+  @Test
+  void exposesCanonicalMissingAdmissionStateDiagnostic() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(workItemService.getAutomationDrainStatus("1", "game-1", "region-1"))
+        .thenReturn(
+            new ScriptWorkItemService.AutomationDrainStatusSummary(
+                "1",
+                "game-1",
+                "region-1",
+                false,
+                "NORMAL",
+                0L,
+                "",
+                "",
+                "NOT_FOUND",
+                "",
+                0L,
+                0L,
+                0L,
+                0L,
+                100L));
+    AutomationPatchControlPlaneService service =
+        newService(
+            workItemService,
+            Mockito.mock(AutomationAdmissionStateService.class),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            new ScriptRuntimeProperties(),
+            Mockito.mock(GameSessionControlPlaneClient.class));
+
+    var response =
+        service.getAutomationDrainStatus(
+            GetAutomationDrainStatusRequest.newBuilder()
+                .setTenantId("1")
+                .setGameInstanceId("game-1")
+                .setRegionId("region-1")
+                .build());
+
+    assertThat(response.getStatePresent()).isFalse();
+    assertThat(response.getAdmissionMode())
+        .isEqualTo(AutomationAdmissionMode.AUTOMATION_ADMISSION_MODE_NORMAL);
+    assertThat(response.getAdmissionEpoch()).isZero();
+    assertThat(response.getControlPlaneRequestId()).isEmpty();
+    assertThat(response.getTargetMode())
+        .isEqualTo(AutomationAdmissionMode.AUTOMATION_ADMISSION_MODE_UNSPECIFIED);
+    assertThat(response.getOutcome()).isEqualTo("NOT_FOUND");
+    assertThat(response.getRequestFingerprint()).isEmpty();
+    assertThat(response.getAcknowledgedAtMs()).isZero();
+  }
+
 
   private static AdmissionPointerControlPlaneEntry currentPointer(
       String worldSlug, String realmSlug, long pointerVersion) {
