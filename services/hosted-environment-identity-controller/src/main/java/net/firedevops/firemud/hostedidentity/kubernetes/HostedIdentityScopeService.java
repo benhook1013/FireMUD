@@ -120,23 +120,7 @@ public class HostedIdentityScopeService {
   }
 
   private static void ensureIdentity(KubernetesClient client, EnvironmentIdentityPlan plan) {
-    List<String> identitySecretNames =
-        new java.util.ArrayList<>(
-            List.of(
-                plan.ingressSecretName(),
-                plan.telnetSecretName(),
-                plan.gatewayInternalWsSecretName(),
-                plan.tcpProxyBridgeSecretName(),
-                plan.grpcSecretName(),
-                plan.ingressSecretName() + "-previous",
-                plan.telnetSecretName() + "-previous",
-                plan.gatewayInternalWsSecretName() + "-previous",
-                plan.tcpProxyBridgeSecretName() + "-previous",
-                plan.grpcSecretName() + "-previous"));
-    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
-      identitySecretNames.add(plan.grpcPublicationSourceSecretName(workload));
-      identitySecretNames.add(plan.grpcPublicationSourceSecretName(workload) + "-previous");
-    }
+    List<String> identitySecretNames = identitySecretNames(plan);
     Role desired =
         role(
             plan.identityNamespace(),
@@ -174,6 +158,27 @@ public class HostedIdentityScopeService {
                 rule(List.of(""), List.of("secrets"), List.of(), List.of("create"))));
     ensureRole(client, plan.identityNamespace(), desired);
     ensureBinding(client, plan.identityNamespace(), ROLE_NAME, labels(plan), ROLE_NAME, plan);
+  }
+
+  static List<String> identitySecretNames(EnvironmentIdentityPlan plan) {
+    List<String> names =
+        new java.util.ArrayList<>(
+            List.of(
+                plan.ingressSecretName(),
+                plan.telnetSecretName(),
+                plan.gatewayInternalWsSecretName(),
+                plan.tcpProxyBridgeSecretName(),
+                plan.grpcSecretName(),
+                plan.ingressSecretName() + "-previous",
+                plan.telnetSecretName() + "-previous",
+                plan.gatewayInternalWsSecretName() + "-previous",
+                plan.tcpProxyBridgeSecretName() + "-previous",
+                plan.grpcSecretName() + "-previous"));
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      names.add(plan.grpcPublicationSourceSecretName(workload));
+      names.add(plan.grpcPublicationSourceSecretName(workload) + "-previous");
+    }
+    return List.copyOf(names);
   }
 
   private static void ensureRuntime(KubernetesClient client, EnvironmentIdentityPlan plan) {

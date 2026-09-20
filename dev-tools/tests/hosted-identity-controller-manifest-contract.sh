@@ -1723,7 +1723,8 @@ for portable_render_fragment in \
   'mv -f "$temporary_rendered_manifest" "$temporary_manifest"'; do
   require_literal "$BOOTSTRAP" "$portable_render_fragment"
 done
-require_literal "$ADMISSION" "'firemud-grpc-tls-previous'] &&"
+require_literal "$ADMISSION" "'firemud-grpc-tls-previous', "
+require_literal "$ADMISSION" "'-grpc-automation-scripting-service-previous')] &&"
 require_literal "$ADMISSION" "request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' ||"
 require_literal "$BOOTSTRAP" "crd_deadline=\$((SECONDS + WAIT_SECONDS))"
 # shellcheck disable=SC2016 # Match the literal bootstrap default.
