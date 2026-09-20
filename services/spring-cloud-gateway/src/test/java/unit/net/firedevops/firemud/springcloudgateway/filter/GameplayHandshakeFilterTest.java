@@ -462,6 +462,43 @@ class GameplayHandshakeFilterTest {
   }
 
   @Test
+  void removesConnectTokenFromMalformedQuotedCookiePair() {
+    GameplayHandshakeFilter filter =
+        new GameplayHandshakeFilter(
+            new JwtUtil(SECRET, 30_000L),
+            TEST_RUNTIME_IDENTITY,
+            null,
+            environmentWithProfiles("test"));
+    String token =
+        new JwtUtil(SECRET, 30_000L)
+            .generateToken(
+                "7",
+                Map.of(
+                    "aud", "gameplay-connect",
+                    "accountId", "7",
+                    "tenantId", "1",
+                    "worldSlug", "demo",
+                    "realmSlug", "production",
+                    "gameInstanceId", "42",
+                    "pointerVersion", "18",
+                    "connectScopeId", "scope-malformed-cookie",
+                    "requestId", "req-malformed-cookie",
+                    "jti", "jti-malformed-cookie"));
+
+    MockServerHttpRequest request =
+        MockServerHttpRequest.get("/ws/game/test")
+            .cookie(new HttpCookie(GameplayHandshakeFilter.CONNECT_TOKEN_COOKIE, token))
+            .header("Cookie", "unmatched=\"unterminated; Firemud-Connect-Token=shadow")
+            .build();
+
+    ServerWebExchange mutatedExchange =
+        filterThroughChain(filter, MockServerWebExchange.from(request));
+
+    assertThat(mutatedExchange.getRequest().getHeaders().get("Cookie"))
+        .containsExactly("unmatched=\"unterminated");
+  }
+
+  @Test
   void rejectsPublicHeaderCarrierEvenWhenCookieCarrierIsAlsoPresent() {
     GameplayHandshakeFilter filter =
         new GameplayHandshakeFilter(

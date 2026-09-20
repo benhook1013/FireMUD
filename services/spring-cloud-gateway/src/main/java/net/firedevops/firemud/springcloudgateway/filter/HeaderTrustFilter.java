@@ -43,7 +43,6 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
   private static final String HDR_PROXY_CONNECTION_ID = "X-Proxy-Connection-Id";
   private static final String HDR_PROXY_GAME_INSTANCE_ID = "X-Proxy-Game-Instance-Id";
   private static final String HDR_PROXY_TENANT_ID = "X-Proxy-Tenant-Id";
-  private static final String HDR_FIREMUD_CONNECT_TOKEN = "X-Firemud-Connect-Token";
   private static final String HDR_FIREMUD_LOCALE = "X-Firemud-Locale";
 
   private final CidrSet trustedForwardedProxies;

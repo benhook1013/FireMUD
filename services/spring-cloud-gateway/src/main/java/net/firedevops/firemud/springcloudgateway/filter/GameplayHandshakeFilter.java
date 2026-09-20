@@ -11,7 +11,6 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -388,27 +387,8 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
 
   @Nullable
   private static String removeConnectTokenCookie(String cookieHeader) {
-    List<String> cookiePairs = new ArrayList<>();
-    int pairStart = 0;
-    boolean quoted = false;
-    boolean escaped = false;
-    for (int index = 0; index < cookieHeader.length(); index++) {
-      char character = cookieHeader.charAt(index);
-      if (character == '"' && !escaped) {
-        quoted = !quoted;
-      } else if (character == ';' && !quoted) {
-        cookiePairs.add(cookieHeader.substring(pairStart, index));
-        pairStart = index + 1;
-      }
-      escaped = character == '\\' && !escaped;
-      if (character != '\\') {
-        escaped = false;
-      }
-    }
-    cookiePairs.add(cookieHeader.substring(pairStart));
-
     StringBuilder filtered = new StringBuilder(cookieHeader.length());
-    for (String cookiePair : cookiePairs) {
+    for (String cookiePair : cookieHeader.split(";")) {
       String trimmedPair = cookiePair.trim();
       int equalsIndex = trimmedPair.indexOf('=');
       if (equalsIndex > 0
