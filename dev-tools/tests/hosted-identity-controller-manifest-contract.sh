@@ -404,6 +404,14 @@ assert hostname["pattern"] == (
     r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"
 )
 status_properties = schema["properties"]["status"]["properties"]["profile"]["properties"]
+profile_schema = schema["properties"]["status"]["properties"]["profile"]
+profile_rules = [validation["rule"] for validation in profile_schema["x-kubernetes-validations"]]
+assert profile_rules == [
+    "!has(self.exposureMode) || !has(self.telnetPort) || (self.exposureMode == 'private' && self.telnetPort == 0) || (self.exposureMode == 'public' && self.telnetPort >= 1024)"
+]
+assert profile_schema["x-kubernetes-validations"][0]["message"] == (
+    "private profiles must set telnetPort to 0 and public profiles must set telnetPort to at least 1024"
+)
 assert re.fullmatch(
     status_properties["identityNamespace"]["pattern"],
     maximum_preview_name + "-identity",

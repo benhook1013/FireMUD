@@ -182,7 +182,7 @@ grep -Fq 'did not become Ready' "$TEMP_DIR/failed.err" || {
 }
 
 if PATH="$FAKE_BIN:$PATH" FAKE_KUBECTL_STATE="$STATE_DIR" \
-  FAKE_KUBECTL_INCOMPLETE=true CERTIFICATE_WAIT_TIMEOUT_SECONDS=1 "$SCRIPT" pr-42 \
+  FAKE_KUBECTL_INCOMPLETE=true CERTIFICATE_WAIT_TIMEOUT_SECONDS=10 "$SCRIPT" pr-42 \
   >"$TEMP_DIR/incomplete.out" 2>"$TEMP_DIR/incomplete.err"; then
   echo "incomplete projected Secret was accepted" >&2
   exit 1
