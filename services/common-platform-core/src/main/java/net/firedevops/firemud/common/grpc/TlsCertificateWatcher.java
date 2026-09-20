@@ -37,8 +37,8 @@ public class TlsCertificateWatcher implements AutoCloseable {
   private static final Logger logger = LoggingUtil.getLogger(TlsCertificateWatcher.class);
   private static final Duration RELOAD_DEBOUNCE = Duration.ofMillis(100);
   private static final Duration MAX_RELOAD_DELAY = Duration.ofSeconds(1);
-  private static final Duration INITIAL_REGISTRATION_RETRY_DELAY = Duration.ofMillis(100);
-  private static final Duration MAX_REGISTRATION_RETRY_DELAY = Duration.ofSeconds(30);
+  private static final Duration INITIAL_RETRY_DELAY = Duration.ofMillis(100);
+  private static final Duration MAX_RETRY_DELAY = Duration.ofSeconds(30);
   private static final int MAX_RETRY_ATTEMPTS = 10;
   private static final Duration SHUTDOWN_GRACE_PERIOD = Duration.ofSeconds(5);
   private static final Duration SHUTDOWN_FORCE_PERIOD = Duration.ofMillis(100);
@@ -261,15 +261,15 @@ public class TlsCertificateWatcher implements AutoCloseable {
         logger.error(
             "TLS certificate reload callback retries reached {} attempts; continuing at capped delay {}",
             MAX_RETRY_ATTEMPTS,
-            MAX_REGISTRATION_RETRY_DELAY);
+            MAX_RETRY_DELAY);
       }
-      Duration retryDelay = registrationRetryDelay(retryAttempt);
+      Duration delay = retryDelay(retryAttempt);
       callbackRetryAttempts = retryAttempt;
       retryScheduled = true;
       try {
         retryTask =
             retryExecutor.schedule(
-                this::retryReloadCallback, retryDelay.toNanos(), TimeUnit.NANOSECONDS);
+                this::retryReloadCallback, delay.toNanos(), TimeUnit.NANOSECONDS);
       } catch (RuntimeException e) {
         retryScheduled = false;
         logger.error("TLS certificate watcher could not schedule a bounded reload retry", e);
@@ -356,13 +356,13 @@ public class TlsCertificateWatcher implements AutoCloseable {
         return;
       }
       int retryAttempt = Math.min(MAX_RETRY_ATTEMPTS, registrationRetryAttempts + 1);
-      Duration retryDelay = registrationRetryDelay(retryAttempt);
+      Duration delay = retryDelay(retryAttempt);
       registrationRetryAttempts = retryAttempt;
       registrationRetryScheduled = true;
       try {
         registrationRetryTask =
             retryExecutor.schedule(
-                this::retryMissingRegistrations, retryDelay.toNanos(), TimeUnit.NANOSECONDS);
+                this::retryMissingRegistrations, delay.toNanos(), TimeUnit.NANOSECONDS);
       } catch (RuntimeException e) {
         registrationRetryScheduled = false;
         logger.error("TLS certificate watcher could not schedule a registration retry", e);
@@ -370,9 +370,9 @@ public class TlsCertificateWatcher implements AutoCloseable {
     }
   }
 
-  static Duration registrationRetryDelay(int attempt) {
-    long delayNanos = INITIAL_REGISTRATION_RETRY_DELAY.toNanos();
-    long maximumNanos = MAX_REGISTRATION_RETRY_DELAY.toNanos();
+  static Duration retryDelay(int attempt) {
+    long delayNanos = INITIAL_RETRY_DELAY.toNanos();
+    long maximumNanos = MAX_RETRY_DELAY.toNanos();
     for (int i = 1; i < attempt && delayNanos < maximumNanos; i++) {
       delayNanos =
           Math.min(maximumNanos, delayNanos > maximumNanos / 2 ? maximumNanos : delayNanos * 2);
@@ -581,13 +581,15 @@ public class TlsCertificateWatcher implements AutoCloseable {
       ACTIVE_WATCHERS.remove(this);
     }
 
-    boolean callbacksStopped = awaitActiveCallbacks(SHUTDOWN_GRACE_PERIOD);
+    long shutdownGraceDeadline = System.nanoTime() + SHUTDOWN_GRACE_PERIOD.toNanos();
+    boolean callbacksStopped = awaitActiveCallbacks(remainingShutdownGrace(shutdownGraceDeadline));
     if (!callbacksStopped) {
       interruptActiveCallbacks();
       awaitActiveCallbacks(SHUTDOWN_FORCE_PERIOD);
     }
 
-    boolean threadStopped = awaitThreadTermination(thread, SHUTDOWN_GRACE_PERIOD);
+    boolean threadStopped =
+        awaitThreadTermination(thread, remainingShutdownGrace(shutdownGraceDeadline));
     if (!threadStopped && thread != Thread.currentThread()) {
       thread.interrupt();
       awaitThreadTermination(thread, SHUTDOWN_FORCE_PERIOD);
@@ -595,7 +597,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
 
     retryExecutor.shutdown();
     if (retryExecutorThread.get() != Thread.currentThread()) {
-      if (!awaitRetryExecutorTermination(SHUTDOWN_GRACE_PERIOD)) {
+      if (!awaitRetryExecutorTermination(remainingShutdownGrace(shutdownGraceDeadline))) {
         retryExecutor.shutdownNow();
         awaitRetryExecutorTermination(SHUTDOWN_FORCE_PERIOD);
       }
@@ -604,5 +606,10 @@ public class TlsCertificateWatcher implements AutoCloseable {
     if (closeFailure != null) {
       throw closeFailure;
     }
+  }
+
+  private static Duration remainingShutdownGrace(long deadlineNanos) {
+    long remainingNanos = deadlineNanos - System.nanoTime();
+    return Duration.ofNanos(Math.max(0, remainingNanos));
   }
 }

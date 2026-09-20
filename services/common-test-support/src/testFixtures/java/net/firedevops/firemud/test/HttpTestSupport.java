@@ -60,7 +60,7 @@ public final class HttpTestSupport {
   public static void awaitReadiness(String url, Duration timeout) throws InterruptedException {
     long deadline = System.nanoTime() + timeout.toNanos();
     IOException lastIOException = null;
-    String lastSuccessfulResponseBody = null;
+    String lastResponseBody = null;
     while (true) {
       long remainingNanos = deadline - System.nanoTime();
       if (remainingNanos <= 0) {
@@ -71,7 +71,8 @@ public final class HttpTestSupport {
             getResponse(
                 url,
                 Duration.ofNanos(Math.min(Math.max(1, remainingNanos), PROBE_TIMEOUT.toNanos())));
-        lastSuccessfulResponseBody = response.body();
+        lastResponseBody = response.body();
+        lastIOException = null;
         if (isReady(response)) {
           return;
         }
@@ -98,8 +99,8 @@ public final class HttpTestSupport {
       }
     }
     String message = "Timed out waiting for HTTP readiness at " + url;
-    if (lastSuccessfulResponseBody != null) {
-      message += "; last successful response body: " + lastSuccessfulResponseBody;
+    if (lastResponseBody != null) {
+      message += "; last response body: " + lastResponseBody;
     }
     AssertionError failure = new AssertionError(message);
     if (lastIOException != null) {
