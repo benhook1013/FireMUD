@@ -72,6 +72,7 @@ EXPECTED_NAMES = {
         "internal-services-egress",
         "account-service-controller-ingress",
         "spring-cloud-gateway-ingress",
+        "spring-cloud-gateway-egress",
         "tcp-proxy-service-egress",
     },
 }
@@ -1466,6 +1467,65 @@ def validate_network_policies(
     }
     if gateway_ingress != expected_gateway_ingress:
         fail("NetworkPolicy/spring-cloud-gateway-ingress has an unsafe exception")
+
+    gateway_egress = _require_mapping(
+        policies["spring-cloud-gateway-egress"].get("spec"),
+        "NetworkPolicy/spring-cloud-gateway-egress.spec",
+    )
+    expected_gateway_egress = {
+        "podSelector": {"matchLabels": {"app": "spring-cloud-gateway"}},
+        "policyTypes": ["Egress"],
+        "egress": [
+            {
+                "to": [
+                    {
+                        "namespaceSelector": {
+                            "matchLabels": {
+                                "kubernetes.io/metadata.name": "kube-system"
+                            }
+                        },
+                        "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+                    }
+                ],
+                "ports": [
+                    {"protocol": "UDP", "port": 53},
+                    {"protocol": "TCP", "port": 53},
+                ],
+            },
+            {
+                "to": [
+                    {
+                        "podSelector": {
+                            "matchExpressions": [
+                                {
+                                    "key": "app",
+                                    "operator": "In",
+                                    "values": [
+                                        "game-session-service",
+                                        "logging-admin-service",
+                                        "game-design-service",
+                                        "account-service",
+                                        "social-groups-service",
+                                    ],
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "ports": [{"protocol": "TCP", "port": 8080}],
+            },
+            {
+                "to": [{"podSelector": {"matchLabels": {"app": "redis-cache"}}}],
+                "ports": [{"protocol": "TCP", "port": 6379}],
+            },
+            {
+                "to": [{"podSelector": {"matchLabels": {"app": "otel-collector"}}}],
+                "ports": [{"protocol": "TCP", "port": 4317}],
+            },
+        ],
+    }
+    if gateway_egress != expected_gateway_egress:
+        fail("NetworkPolicy/spring-cloud-gateway-egress has an unsafe exception")
 
     proxy_egress = _require_mapping(
         policies["tcp-proxy-service-egress"].get("spec"),

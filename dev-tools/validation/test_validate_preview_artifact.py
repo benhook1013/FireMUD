@@ -1351,6 +1351,54 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
                 "ports": [{"protocol": "TCP", "port": 9200}],
             },
         ]
+        gateway_egress = [
+            {
+                "to": [
+                    {
+                        "namespaceSelector": {
+                            "matchLabels": {
+                                "kubernetes.io/metadata.name": "kube-system"
+                            }
+                        },
+                        "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+                    }
+                ],
+                "ports": [
+                    {"protocol": "UDP", "port": 53},
+                    {"protocol": "TCP", "port": 53},
+                ],
+            },
+            {
+                "to": [
+                    {
+                        "podSelector": {
+                            "matchExpressions": [
+                                {
+                                    "key": "app",
+                                    "operator": "In",
+                                    "values": [
+                                        "game-session-service",
+                                        "logging-admin-service",
+                                        "game-design-service",
+                                        "account-service",
+                                        "social-groups-service",
+                                    ],
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "ports": [{"protocol": "TCP", "port": 8080}],
+            },
+            {
+                "to": [{"podSelector": {"matchLabels": {"app": "redis-cache"}}}],
+                "ports": [{"protocol": "TCP", "port": 6379}],
+            },
+            {
+                "to": [{"podSelector": {"matchLabels": {"app": "otel-collector"}}}],
+                "ports": [{"protocol": "TCP", "port": 4317}],
+            },
+        ]
         documents = [
             self._policy_document(
                 name, spec
@@ -1383,6 +1431,16 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
                         },
                         "policyTypes": ["Ingress"],
                         "ingress": gateway_ingress,
+                    },
+                ),
+                self._policy_document(
+                    "spring-cloud-gateway-egress",
+                    {
+                        "podSelector": {
+                            "matchLabels": {"app": "spring-cloud-gateway"}
+                        },
+                        "policyTypes": ["Egress"],
+                        "egress": gateway_egress,
                     },
                 ),
                 self._policy_document(
@@ -1530,6 +1588,31 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
         ]
         with self.assertRaisesRegex(ValueError, "runtime NetworkPolicy set is not closed"):
             self.validator.validate_network_policies(missing_account, "hosted-controller")
+
+        for mode in ("standalone", "hosted-controller"):
+            with self.subTest(mode=mode, case="missing gateway egress"):
+                missing_gateway_egress = [
+                    document
+                    for document in self._policy_documents(mode)
+                    if document["metadata"]["name"] != "spring-cloud-gateway-egress"
+                ]
+                with self.assertRaisesRegex(
+                    ValueError, "runtime NetworkPolicy set is not closed"
+                ):
+                    self.validator.validate_network_policies(
+                        missing_gateway_egress, mode
+                    )
+
+            with self.subTest(mode=mode, case="broadened gateway egress"):
+                broadened = copy.deepcopy(self._policy_documents(mode))
+                gateway_egress = next(
+                    document
+                    for document in broadened
+                    if document["metadata"]["name"] == "spring-cloud-gateway-egress"
+                )
+                gateway_egress["spec"]["egress"][1]["ports"][0]["port"] = 6565
+                with self.assertRaisesRegex(ValueError, "unsafe exception"):
+                    self.validator.validate_network_policies(broadened, mode)
 
         hosted_broad = copy.deepcopy(hosted)
         gateway = next(
