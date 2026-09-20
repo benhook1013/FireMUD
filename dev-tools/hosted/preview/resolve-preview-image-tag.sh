@@ -70,20 +70,48 @@ if [[ -n "${pr_number}" && -n "${base_image_tag}" ]]; then
     echo "unable to read pull request ${pr_number}; refusing to select base images" >&2
     exit 1
   fi
+  if [[ "$(jq -r '.head.repo.full_name // empty' <<<"${pull_request_json}")" != "${GITHUB_REPOSITORY}" ]] ||
+    [[ "$(jq -r '.base.repo.full_name // empty' <<<"${pull_request_json}")" != "${GITHUB_REPOSITORY}" ]]; then
+    echo "pull request ${pr_number} is not owned by the current repository; refusing to select base images" >&2
+    exit 1
+  fi
   if ! expected_file_count="$(jq -er '.changed_files | select(type == "number" and floor == . and . > 0)' <<<"${pull_request_json}")"; then
     echo "pull request ${pr_number} did not provide a positive changed-file count; refusing to select base images" >&2
     exit 1
   fi
-  if ! current_base_sha="$(jq -er '.base.sha | select(type == "string")' <<<"${pull_request_json}")" ||
-    [[ ! "${current_base_sha}" =~ ^[0-9a-fA-F]{40}$ ]] ||
-    [[ "${current_base_sha,,}" != "${base_image_tag}" ]]; then
-    echo "pull request ${pr_number} base SHA is missing or does not match the requested base image; refusing to select base images" >&2
+  if ! current_base_ref="$(jq -er '.base.ref | select(type == "string" and length > 0)' <<<"${pull_request_json}")" ||
+    [[ ! "${current_base_ref}" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+    echo "pull request ${pr_number} base ref is missing or invalid; refusing to select base images" >&2
     exit 1
   fi
+  if ! current_base_ref_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${current_base_ref}")" ||
+    ! current_base_sha="$(jq -er '.object.sha | select(type == "string")' <<<"${current_base_ref_json}")" ||
+    [[ ! "${current_base_sha}" =~ ^[0-9a-fA-F]{40}$ ]] ||
+    [[ "${current_base_sha,,}" != "${base_image_tag}" ]]; then
+    echo "pull request ${pr_number} current base branch ref is missing or does not match the requested base image; refusing to select base images" >&2
+    exit 1
+  fi
+  current_base_sha="${current_base_sha,,}"
+  if ! current_head_sha="$(jq -er '.head.sha | select(type == "string")' <<<"${pull_request_json}")" ||
+    [[ ! "${current_head_sha}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    echo "pull request ${pr_number} head SHA is missing or invalid; refusing to select images" >&2
+    exit 1
+  fi
+  current_head_sha="${current_head_sha,,}"
   if ! current_merge_sha="$(jq -er '.merge_commit_sha | select(type == "string")' <<<"${pull_request_json}")" ||
     [[ ! "${current_merge_sha}" =~ ^[0-9a-fA-F]{40}$ ]] ||
     [[ "${current_merge_sha,,}" != "${merge_sha}" ]]; then
     echo "pull request ${pr_number} merge SHA is missing or does not match the requested tested merge; refusing to select images" >&2
+    exit 1
+  fi
+  if ! merge_commit_json="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${merge_sha}")" ||
+    ! jq -e \
+      --arg merge_sha "${merge_sha}" \
+      --arg base_sha "${current_base_sha}" \
+      --arg head_sha "${current_head_sha}" \
+      '.sha == $merge_sha and (.parents | type) == "array" and (.parents | length) == 2 and .parents[0].sha == $base_sha and .parents[1].sha == $head_sha' \
+      <<<"${merge_commit_json}" >/dev/null; then
+    echo "pull request ${pr_number} merge commit does not have the exact current base/head parents; refusing to select images" >&2
     exit 1
   fi
 

@@ -18,11 +18,27 @@ cat > "$TEMP_DIR/gh" <<'EOF'
 set -euo pipefail
 if [[ "$*" == *"/pulls/7" ]]; then
   if [[ "${GH_FIXTURE:-}" == empty ]]; then
-    printf '%s' '{"changed_files":0,"base":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"merge_commit_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
+    printf '%s' '{"changed_files":0,"base":{"ref":"develop","sha":"dddddddddddddddddddddddddddddddddddddddd","repo":{"full_name":"example/firemud"}},"head":{"sha":"cccccccccccccccccccccccccccccccccccccccc","repo":{"full_name":"example/firemud"}},"merge_commit_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
   elif [[ "${GH_FIXTURE:-}" == incomplete ]]; then
-    printf '%s' '{"changed_files":2,"base":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"merge_commit_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
+    printf '%s' '{"changed_files":2,"base":{"ref":"develop","sha":"dddddddddddddddddddddddddddddddddddddddd","repo":{"full_name":"example/firemud"}},"head":{"sha":"cccccccccccccccccccccccccccccccccccccccc","repo":{"full_name":"example/firemud"}},"merge_commit_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
   else
-    printf '%s' '{"changed_files":1,"base":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"merge_commit_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
+    head_sha=cccccccccccccccccccccccccccccccccccccccc
+    if [[ "${GH_FIXTURE:-}" == stale_head ]]; then
+      head_sha=dddddddddddddddddddddddddddddddddddddddd
+    fi
+    printf '%s' '{"changed_files":1,"base":{"ref":"develop","sha":"dddddddddddddddddddddddddddddddddddddddd","repo":{"full_name":"example/firemud"}},"head":{"sha":"'"$head_sha"'","repo":{"full_name":"example/firemud"}},"merge_commit_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
+  fi
+  exit 0
+fi
+if [[ "$*" == *"/git/ref/heads/develop"* ]]; then
+  printf '%s' '{"ref":"refs/heads/develop","object":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
+  exit 0
+fi
+if [[ "$*" == *"/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"* ]]; then
+  if [[ "${GH_FIXTURE:-}" == stale_parents ]]; then
+    printf '%s' '{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","parents":[{"sha":"dddddddddddddddddddddddddddddddddddddddd"},{"sha":"cccccccccccccccccccccccccccccccccccccccc"}]}'
+  else
+    printf '%s' '{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","parents":[{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},{"sha":"cccccccccccccccccccccccccccccccccccccccc"}]}'
   fi
   exit 0
 fi
@@ -101,6 +117,14 @@ if GH_FIXTURE=incomplete bash "$RESOLVER" "$merge_sha" 7 "$base_sha" >/dev/null 
 fi
 if GH_FIXTURE=runtime bash "$RESOLVER" "dddddddddddddddddddddddddddddddddddddd" 7 "$base_sha" >/dev/null 2>&1; then
   echo "resolver accepted a stale tested merge SHA" >&2
+  exit 1
+fi
+if GH_FIXTURE=stale_parents bash "$RESOLVER" "$merge_sha" 7 "$base_sha" >/dev/null 2>&1; then
+  echo "resolver accepted a merge commit with stale parents" >&2
+  exit 1
+fi
+if GH_FIXTURE=stale_head bash "$RESOLVER" "$merge_sha" 7 "$base_sha" >/dev/null 2>&1; then
+  echo "resolver accepted a merge commit for a stale PR head" >&2
   exit 1
 fi
 

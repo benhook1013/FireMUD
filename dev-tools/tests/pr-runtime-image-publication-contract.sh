@@ -18,15 +18,26 @@ require_contains 'pr-merge-'
 require_contains 'pr-runtime-provenance.json'
 require_contains 'source run title does not contain exact PR/base/head/merge/mode metadata'
 require_contains 'source workflow API path is not the trusted runtime-images workflow'
+require_contains 'source workflow API event differs from the event'
+require_contains 'typed refresh source run is not on the repository default branch'
 require_contains 'current pull request merge SHA differs from source metadata'
+require_contains 'current base branch ref SHA differs from source metadata'
+require_contains 'merge commit parents do not exactly match declared base and head SHAs'
 require_contains 'runtime service manifest is not the exact allowed service list'
 require_contains 'runtime provenance JSON schema contains missing or extra keys'
 require_contains 'registry remains untouched'
 require_contains 'docker manifest inspect "$image"'
+require_contains '--request HEAD'
+require_contains 'refusing to infer absence'
+require_contains 'https://ghcr.io/token'
+require_contains 'Authorization: Bearer'
+require_contains 'GHCR_TOKEN'
 require_contains 'source_image_ids=()'
 require_contains 'docker pull "$image"'
 require_contains 'does not match the validated source artifact'
 require_contains 'uses: ./.github/actions/setup-gh'
+require_contains 'group: publish-pr-merge-images-${{ github.event.workflow_run.display_title }}'
+require_contains 'cancel-in-progress: false'
 if grep -Fq -- 'pr-runtime-images-${{ github.event.workflow_run.head_sha }}' "$WORKFLOW"; then
   echo "publisher must not fall back to a PR head-SHA artifact name" >&2
   exit 1
@@ -115,6 +126,12 @@ EOF
 cat > "$fixture_dir/pull-request.json" <<EOF
 {"number":${pr_number},"state":"open","head":{"sha":"${head_sha}","ref":"feature/ci","repo":{"full_name":"${repository}"}},"base":{"sha":"${base_sha}","ref":"develop","repo":{"full_name":"${repository}"}},"merge_commit_sha":"${merge_sha}"}
 EOF
+cat > "$fixture_dir/merge-commit.json" <<EOF
+{"sha":"${merge_sha}","parents":[{"sha":"${base_sha}"},{"sha":"${head_sha}"}]}
+EOF
+cat > "$fixture_dir/base-ref.json" <<EOF
+{"ref":"refs/heads/develop","object":{"sha":"${base_sha}"}}
+EOF
 
 cat > "$fake_bin/gh" <<'EOF'
 #!/usr/bin/env bash
@@ -123,6 +140,8 @@ set -euo pipefail
 case "${2:-}" in
   repos/benhook1013/FireMUD/actions/runs/4242) cat "$FIXTURE_DIR/source-run.json" ;;
   repos/benhook1013/FireMUD/pulls/42) cat "$FIXTURE_DIR/pull-request.json" ;;
+  repos/benhook1013/FireMUD/git/ref/heads/develop) cat "$FIXTURE_DIR/base-ref.json" ;;
+  repos/benhook1013/FireMUD/commits/cccccccccccccccccccccccccccccccccccccccc) cat "$FIXTURE_DIR/merge-commit.json" ;;
   *) echo "unexpected endpoint: ${2:-}" >&2; exit 2 ;;
 esac
 EOF
@@ -135,6 +154,9 @@ EOF
 chmod +x "$fake_bin/docker"
 
 run_validation() {
+  local source_event="${1:-pull_request}"
+  local source_branch="${2:-feature/ci}"
+  local source_sha="${3:-$head_sha}"
   local environment_file="$fixture_dir/github-env"
   : > "$environment_file"
   PATH="$fake_bin:$PATH" \
@@ -145,13 +167,14 @@ run_validation() {
   SOURCE_RUN_ID="$source_run_id" \
   SOURCE_RUN_URL="https://example.test/runs/$source_run_id" \
   SOURCE_RUN_TITLE="$source_title" \
-  SOURCE_RUN_EVENT='pull_request' \
+  SOURCE_RUN_EVENT="$source_event" \
   SOURCE_RUN_CONCLUSION='success' \
-  SOURCE_HEAD_BRANCH='feature/ci' \
-  SOURCE_HEAD_SHA="$head_sha" \
+  SOURCE_HEAD_BRANCH="$source_branch" \
+  SOURCE_HEAD_SHA="$source_sha" \
   SOURCE_HEAD_REPOSITORY="$repository" \
   SOURCE_RUN_REPOSITORY="$repository" \
   SOURCE_WORKFLOW_ID="$workflow_id" \
+  DEFAULT_BRANCH='develop' \
   GITHUB_ENV="$environment_file" \
   GH_TOKEN='test-token' \
   python3 "$validation_script"
@@ -164,6 +187,70 @@ if [[ -e "$fixture_dir/registry-marker" ]]; then
   echo "valid source validation reached a registry operation" >&2
   exit 1
 fi
+
+default_branch_sha='eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+python3 - "$fixture_dir/pull-request.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload["base"]["sha"] = "d" * 40
+path.write_text(json.dumps(payload), encoding="utf-8")
+PY
+python3 - "$fixture_dir/source-run.json" "$default_branch_sha" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload.update({"event": "repository_dispatch", "head_sha": sys.argv[2], "head_branch": "develop"})
+path.write_text(json.dumps(payload), encoding="utf-8")
+PY
+run_validation repository_dispatch develop "$default_branch_sha"
+grep -Fxq "IMAGE_TAG=pr-merge-$merge_sha" "$fixture_dir/github-env"
+if [[ -e "$fixture_dir/registry-marker" ]]; then
+  echo "typed refresh source validation reached a registry operation" >&2
+  exit 1
+fi
+
+python3 - "$fixture_dir/source-run.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload["event"] = "workflow_dispatch"
+path.write_text(json.dumps(payload), encoding="utf-8")
+PY
+if run_validation repository_dispatch develop "$default_branch_sha"; then
+  echo "typed refresh validation accepted a source run with the wrong API event" >&2
+  exit 1
+fi
+
+python3 - "$fixture_dir/source-run.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload.update({"event": "pull_request", "head_sha": "a" * 40, "head_branch": "feature/ci"})
+path.write_text(json.dumps(payload), encoding="utf-8")
+PY
+python3 - "$fixture_dir/pull-request.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload["base"]["sha"] = "b" * 40
+path.write_text(json.dumps(payload), encoding="utf-8")
+PY
 
 python3 - "$fixture_dir/pull-request.json" <<'PY'
 import json
@@ -255,8 +342,28 @@ case "${1:-}" in
 esac
 EOF
 chmod +x "$fake_bin/docker"
+cat > "$fake_bin/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == *"https://ghcr.io/token"* ]]; then
+  printf '{"token":"mock-registry-token"}\n'
+  exit 0
+fi
+if [[ -n "${CURL_STATUS:-}" ]]; then
+  printf '%s\n' "$CURL_STATUS"
+  exit 0
+fi
+image_url="${*: -1}"
+if [[ "$image_url" == *"/account-service/manifests/"* ]]; then
+  printf '200\n'
+else
+  printf '404\n'
+fi
+EOF
+chmod +x "$fake_bin/curl"
 rm -f "$fixture_dir/registry-marker" "$fixture_dir/pull-state"
 if PR_RUNTIME_ARTIFACT_DIR="$artifact_dir" IMAGE_TAG="pr-merge-$merge_sha" \
+   GHCR_USERNAME='test-user' GHCR_TOKEN='test-token' GITHUB_STEP_SUMMARY="$fixture_dir/summary" \
    PULL_STATE="$fixture_dir/pull-state" REGISTRY_MARKER="$fixture_dir/registry-marker" \
    PATH="$fake_bin:$PATH" bash "$publisher_script"; then
   echo "publisher accepted a mismatched pre-existing image tag" >&2
@@ -264,6 +371,19 @@ if PR_RUNTIME_ARTIFACT_DIR="$artifact_dir" IMAGE_TAG="pr-merge-$merge_sha" \
 fi
 if [[ -e "$fixture_dir/registry-marker" ]]; then
   echo "publisher pushed a missing tag before rejecting a mismatched existing tag" >&2
+  exit 1
+fi
+
+rm -f "$fixture_dir/registry-marker" "$fixture_dir/pull-state"
+if CURL_STATUS=503 PR_RUNTIME_ARTIFACT_DIR="$artifact_dir" IMAGE_TAG="pr-merge-$merge_sha" \
+   GHCR_USERNAME='test-user' GHCR_TOKEN='test-token' GITHUB_STEP_SUMMARY="$fixture_dir/summary" \
+   PULL_STATE="$fixture_dir/pull-state" REGISTRY_MARKER="$fixture_dir/registry-marker" \
+   PATH="$fake_bin:$PATH" bash "$publisher_script"; then
+  echo "publisher treated a registry 5xx as an absent immutable tag" >&2
+  exit 1
+fi
+if [[ -e "$fixture_dir/registry-marker" ]]; then
+  echo "publisher attempted a push after an unknown registry preflight failure" >&2
   exit 1
 fi
 

@@ -206,10 +206,10 @@ jobs:
           }
           pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
           repository="$(jq -r '.head.repo.full_name // empty' <<<"$pull_request_json")"
+          base_repository="$(jq -r '.base.repo.full_name // empty' <<<"$pull_request_json")"
           base_ref="$(jq -r '.base.ref // empty' <<<"$pull_request_json")"
           state="$(jq -r '.state // empty' <<<"$pull_request_json")"
           current_head_sha="$(jq -r '.head.sha // empty' <<<"$pull_request_json")"
-          base_sha="$(jq -r '.base.sha // empty' <<<"$pull_request_json")"
           merge_sha="$(jq -r '.merge_commit_sha // empty' <<<"$pull_request_json")"
           if ! EXPECTED_HEAD_SHA="$(normalize_sha "$EXPECTED_HEAD_SHA")"; then
             emit_no_action "Ignoring lifecycle event with an invalid expected head SHA."
@@ -217,9 +217,19 @@ jobs:
           if ! current_head_sha="$(normalize_sha "$current_head_sha")"; then
             emit_no_action "Ignoring pull request metadata with an invalid current head SHA."
           fi
-          [[ "$base_sha" =~ ^[0-9a-fA-F]{40}$ ]] || emit_no_action \
-            "Ignoring lifecycle event with an invalid current base SHA."
-          base_sha="${base_sha,,}"
+          [[ "$repository" == "$GITHUB_REPOSITORY" ]] || emit_no_action \
+            "Ignoring pull request metadata because its head repository is not trusted."
+          [[ "$base_repository" == "$GITHUB_REPOSITORY" ]] || emit_no_action \
+            "Ignoring pull request metadata because its base repository is not trusted."
+          [[ "$base_ref" =~ ^[A-Za-z0-9._/-]+$ ]] || emit_no_action \
+            "Ignoring lifecycle event with an invalid current base ref."
+          if ! current_base_ref_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${base_ref}")"; then
+            emit_no_action "Ignoring lifecycle event because the current base branch ref could not be read."
+          fi
+          if ! base_sha="$(jq -er '.object.sha | select(type == "string")' <<<"$current_base_ref_json")" ||
+            ! base_sha="$(normalize_sha "$base_sha")"; then
+            emit_no_action "Ignoring lifecycle event with an invalid current base branch ref SHA."
+          fi
           if [[ "$ACTION" == deploy ]]; then
             [[ "$merge_sha" =~ ^[0-9a-fA-F]{40}$ ]] || emit_no_action \
               "Ignoring lifecycle event without the current pull-request test-merge SHA."
@@ -229,6 +239,18 @@ jobs:
           [[ "$merge_sha" =~ ^[0-9a-fA-F]{40}$ ]] || emit_no_action \
             "Ignoring lifecycle event with an invalid current merge SHA."
           merge_sha="${merge_sha,,}"
+          if [[ "$ACTION" == deploy ]]; then
+            if ! merge_commit_json="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${merge_sha}")"; then
+              emit_no_action "Ignoring lifecycle event because the current pull-request merge commit could not be read."
+            fi
+            jq -e \
+              --arg merge_sha "$merge_sha" \
+              --arg base_sha "$base_sha" \
+              --arg head_sha "$current_head_sha" \
+              '.sha == $merge_sha and (.parents | type) == "array" and (.parents | length) == 2 and .parents[0].sha == $base_sha and .parents[1].sha == $head_sha' \
+              <<<"$merge_commit_json" >/dev/null || emit_no_action \
+                "Ignoring lifecycle event whose merge commit parents are stale or do not match the current base and head."
+          fi
           if [[ "$EVENT_NAME" == workflow_run && "$ARTIFACT_KIND" == render ]]; then
             if ! ARTIFACT_BASE_SHA="$(normalize_sha "$ARTIFACT_BASE_SHA")"; then
               emit_no_action "Ignoring render artifact with an invalid base SHA."

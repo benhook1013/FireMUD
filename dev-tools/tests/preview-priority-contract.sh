@@ -2581,7 +2581,12 @@ import yaml
 preview = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
 trusted = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
 reconciler = yaml.safe_load(Path(sys.argv[3]).read_text(encoding="utf-8"))
-assert set(preview["jobs"]) == {"preview-plan", "preview-render", "preview-destroy-intent"}
+assert set(preview["jobs"]) == {
+    "preview-plan",
+    "preview-runtime-base-refresh",
+    "preview-render",
+    "preview-destroy-intent",
+}
 assert trusted["jobs"]["destroy-runtime"]["timeout-minutes"] == 60
 assert reconciler["jobs"]["reconcile-previews"]["timeout-minutes"] == 60
 preview_run_scripts = [

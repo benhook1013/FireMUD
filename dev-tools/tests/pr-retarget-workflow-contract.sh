@@ -382,18 +382,178 @@ assert_job_contains smoke.yml smoke-gate 'github.rest.pulls.get'
 assert_job_contains smoke.yml smoke-gate 'pullRequest.state !== "open"'
 assert_job_contains smoke.yml smoke-gate 'pullRequest.head.sha !== headSha'
 assert_job_contains smoke.yml smoke-gate 'pullRequest.base.ref !== baseRef'
+assert_job_excludes smoke.yml smoke-gate 'pullRequest.base.sha'
+assert_job_contains smoke.yml smoke-gate 'github.rest.git.getRef'
+assert_job_contains smoke.yml smoke-gate 'github.rest.repos.getCommit'
+assert_job_contains smoke.yml smoke-gate 'parents.length !== 2'
+assert_job_contains smoke.yml smoke-gate 'parents[0]?.sha !== currentBaseSha'
+assert_job_contains smoke.yml smoke-gate 'parents[1]?.sha !== headSha'
+assert_job_contains smoke.yml smoke-gate 'const expectedRuntimeEvent = eventIdentityMatches(currentIdentity)'
+assert_job_contains smoke.yml smoke-gate 'event: expectedRuntimeEvent'
+assert_job_contains smoke.yml smoke-gate 'run.event !== expectedRuntimeEvent'
+assert_job_contains smoke.yml smoke-gate 'expectedRuntimeEvent === "repository_dispatch"'
+assert_job_contains smoke.yml smoke-gate 'run.event === "repository_dispatch"'
+assert_job_contains smoke.yml smoke-gate 'no trusted refresh dispatch exists or it did not complete'
+assert_job_contains smoke.yml smoke-gate 'The stale pull_request source is not accepted.'
+assert_job_contains smoke.yml smoke-gate 'job.name === "PR Full-Stack Smoke"'
+assert_job_contains smoke.yml smoke-gate 'step.name === "Run credential-free full-stack smoke"'
+assert_job_contains smoke.yml smoke-gate 'Stopping stale smoke gate before accepting full-stack proof'
+assert_job_contains smoke.yml smoke-gate 'continue smokeGatePolling'
+assert_job_excludes smoke.yml smoke-gate 'github.rest.repos.createDispatchEvent'
+
+run_image_meta_exact_parent_fixture() {
+  python3 - "$runtime_images_path" <<'PY'
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+
+workflow_path = Path(sys.argv[1])
+workflow_source = workflow_path.read_text(encoding="utf-8")
+predicate = (
+    ".sha == $merge_sha and (.parents | type) == \"array\" and "
+    "(.parents | length) == 2 and .parents[0].sha == $base_sha and "
+    ".parents[1].sha == $head_sha"
+)
+if predicate not in workflow_source:
+    raise SystemExit("runtime image metadata must retain the exact ordered-parent predicate")
+
+
+def sha(prefix, fill):
+    return prefix + fill * (40 - len(prefix))
+
+
+stale_event_base = sha("d253", "a")
+current_base = sha("7d995", "b")
+head = sha("731", "c")
+merge = sha("156", "d")
+merge_commit = {
+    "sha": merge,
+    "parents": [{"sha": current_base}, {"sha": head}],
+}
+
+
+def image_meta_output(event_name, base_sha):
+    completed = subprocess.run(
+        [
+            "jq",
+            "-e",
+            "--arg",
+            "base_sha",
+            base_sha,
+            "--arg",
+            "head_sha",
+            head,
+            "--arg",
+            "merge_sha",
+            merge,
+            predicate,
+        ],
+        input=json.dumps(merge_commit),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return None
+    return {
+        "event": event_name,
+        "base_sha": base_sha,
+        "head_sha": head,
+        "merge_sha": merge,
+    }
+
+
+if image_meta_output("pull_request", stale_event_base) is not None:
+    raise SystemExit("stale ordinary PR tuple must not produce runtime metadata")
+refresh_output = image_meta_output("repository_dispatch", current_base)
+if refresh_output is None or refresh_output["event"] != "repository_dispatch":
+    raise SystemExit("valid typed refresh tuple must produce runtime metadata")
+if refresh_output["base_sha"] != current_base or refresh_output["head_sha"] != head or refresh_output["merge_sha"] != merge:
+    raise SystemExit("typed refresh metadata did not preserve the exact current tuple")
+
+event_tuple = {"base_sha": stale_event_base, "head_sha": head, "merge_sha": merge}
+current_tuple = {"base_sha": current_base, "head_sha": head, "merge_sha": merge}
+
+
+def smoke_gate_accepts(run_event, run_title):
+    expected_event = "pull_request" if event_tuple == current_tuple else "repository_dispatch"
+    expected_title = (
+        f"Build Runtime Images secure-pr-artifact pr-2825 base-{current_tuple['base_sha']} "
+        f"head-{current_tuple['head_sha']} merge-{current_tuple['merge_sha']} mode-required"
+    )
+    return run_event == expected_event and run_title == expected_title
+
+
+stale_title = (
+    f"Build Runtime Images secure-pr-artifact pr-2825 base-{stale_event_base} "
+    f"head-{head} merge-{merge} mode-required"
+)
+refresh_title = (
+    f"Build Runtime Images secure-pr-artifact pr-2825 base-{current_base} "
+    f"head-{head} merge-{merge} mode-required"
+)
+if smoke_gate_accepts("pull_request", stale_title):
+    raise SystemExit("Smoke Gate must reject a stale ordinary pull_request run")
+if not smoke_gate_accepts("repository_dispatch", refresh_title):
+    raise SystemExit("Smoke Gate must select the exact typed refresh run for a stale tuple")
+PY
+}
+
+run_image_meta_exact_parent_fixture
 
 require_contains "$runtime_images_path" 'types: [opened, synchronize, reopened, edited]'
+require_contains "$runtime_images_path" 'types: [pr-runtime-base-refresh]'
+require_contains "$runtime_images_path" 'repository_dispatch:'
 require_contains "$runtime_images_path" "&& 'metadata' || 'required' }}"
 require_contains "$runtime_images_path" '  cancel-in-progress: true'
 require_contains "$runtime_images_path" 'run-name: Build Runtime Images '
 require_contains "$runtime_images_path" "format('secure-pr-artifact pr-{0}"
 require_contains "$runtime_images_path" 'github.event.pull_request.base.sha'
 require_contains "$runtime_images_path" 'github.event.pull_request.head.sha'
+require_contains "$runtime_images_path" 'github.event.client_payload.base_sha'
+require_contains "$runtime_images_path" 'github.event.client_payload.head_sha'
+require_contains "$runtime_images_path" 'github.event.client_payload.merge_sha'
 require_contains "$runtime_images_path" 'github.sha'
 require_contains "$runtime_images_path" 'mode-{4}'
+require_contains "$runtime_images_path" 'Runtime PR refresh must run from the repository default branch.'
+require_contains "$runtime_images_path" 'Runtime PR refresh base SHA is not the current ${BASE_REF} branch ref.'
+require_contains "$runtime_images_path" 'Runtime PR refresh payload is stale, conflicted, fork-owned, closed, or has an invalid merge tuple.'
+require_contains "$runtime_images_path" 'Runtime PR refresh merge commit does not have the exact current base/head parents.'
+require_contains "$runtime_images_path" "PR event merge commit does not have the event's exact base/head parents; refusing a stale PR artifact."
+require_contains "$runtime_images_path" 'GH_TOKEN: ${{ github.token }}'
+require_contains "$runtime_images_path" "format('trusted-branch branch-{0} sha-{1}'"
+require_contains "$runtime_images_path" "format('base-refresh-only branch-{0} sha-{1} ci-{2}'"
 require_contains "$runtime_images_path" '### PR runtime images and applicable full-stack smoke'
 require_contains "$runtime_images_path" 'built the PR merge commit and runs full-stack smoke when required by change scope'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'github.event.workflow_run.event == '\''push'\'''
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'github.event.workflow_run.status == '\''completed'\'''
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'github.event.workflow_run.head_repository.full_name == github.repository'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'contents: write'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'github.rest.git.getRef'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'github.rest.pulls.list'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'github.rest.repos.getCommit'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'currentBaseRef !== baseBranch'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'parents.length !== 2'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'parents[0] !== baseSha'
+assert_job_excludes runtime-images.yml dispatch-pr-base-refreshes '.base.sha'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'event_type: "pr-runtime-base-refresh"'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'pr_number: tuple.prNumber'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'base_sha: tuple.baseSha'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'head_sha: tuple.headSha'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'merge_sha: tuple.mergeSha'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'event_type: "preview-deploy"'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'action: "deploy"'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'preview_domain: "preview.firedevops.net"'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes '".github/actions/load-workflow-tool-versions/"'
+assert_job_excludes runtime-images.yml dispatch-pr-base-refreshes 'packages: write'
+assert_job_excludes runtime-images.yml dispatch-pr-base-refreshes 'environment:'
+assert_job_excludes runtime-images.yml dispatch-pr-base-refreshes 'secrets.'
+assert_job_contains runtime-images.yml pr-local-smoke 'github.event_name == '\''repository_dispatch'\'''
+assert_job_contains runtime-images.yml pr-local-smoke 'BASE_SHA="${{ needs.image-meta.outputs.base_sha }}"'
+assert_job_contains runtime-images.yml pr-local-smoke 'MERGE_SHA="${{ needs.image-meta.outputs.merge_sha }}"'
+assert_job_contains runtime-images.yml pr-controller-smoke 'github.event_name == '\''repository_dispatch'\'''
 require_contains "$image_wait_path" 'display_title = run.get("display_title", "")'
 require_contains "$image_wait_path" 'display_title.startswith("Build Runtime Images trusted-branch ")'
 require_contains "$image_wait_path" 'and f"sha-{head_sha}" in tokens'
@@ -875,9 +1035,9 @@ if (assert_job_excludes runtime-images.yml missing-job 'pull-requests: write') 2
   exit 1
 fi
 
-require_contains "$smoke_path" 'const baseSha = context.payload.pull_request.base.sha;'
+require_contains "$smoke_path" 'const eventBaseSha = context.payload.pull_request.base.sha;'
 require_contains "$smoke_path" 'const baseRef = context.payload.pull_request.base.ref;'
-require_contains "$smoke_path" 'const mergeSha = context.sha;'
+require_contains "$smoke_path" 'const eventMergeSha = context.sha;'
 require_contains "$smoke_path" 'github.rest.pulls.get({'
 require_contains "$smoke_path" 'pullRequest.state !== "open" ||'
 require_contains "$smoke_path" 'pullRequest.head.sha !== headSha ||'
@@ -904,20 +1064,19 @@ require_contains "$smoke_path" 'pollIteration % pullRequestCheckInterval === 0'
 require_contains "$smoke_path" 'Stopping obsolete smoke gate for'
 require_ordered_sequence \
   "$smoke_path" \
-  'if (await isCurrentPullRequestObsolete("Stopping obsolete smoke gate for")) {' \
+  'if (resolvedIdentity?.obsolete) {' \
   'return;' \
   'github.rest.actions.listWorkflowRuns,'
 require_branch_return \
   "$smoke_path" \
-  'if (await isCurrentPullRequestObsolete("Stopping obsolete smoke gate for")) {'
-require_contains "$smoke_path" 'head_sha: headSha,'
+  'if (resolvedIdentity?.obsolete) {'
 require_contains "$smoke_path" 'mode-required'
 require_contains "$smoke_path" 'Build Runtime Images secure-pr-artifact pr-'
 require_contains "$smoke_path" 'run.display_title !== expectedDisplayTitle'
 require_contains "$smoke_path" 'const pullRequests = run.pull_requests ?? [];'
 require_contains "$smoke_path" 'pullRequests.length === 0 || pullRequests.some'
-require_contains "$smoke_path" 'pullRequest.base?.sha === baseSha'
-require_contains "$smoke_path" 'pullRequest.head?.sha === headSha'
+require_contains "$smoke_path" 'pullRequest.head?.sha === currentIdentity.headSha'
+require_contains "$smoke_path" 'workflowRunQuery.head_sha = currentIdentity.headSha;'
 require_contains "$smoke_path" 'github.rest.actions.listJobsForWorkflowRun'
 require_contains "$smoke_path" 'job.name === "PR Full-Stack Smoke"'
 require_contains "$smoke_path" 'step.name === "Run credential-free full-stack smoke"'
@@ -1189,6 +1348,18 @@ const github = {
           state: "open",
           head: { sha: headSha },
           base: { sha: baseSha, ref: "develop" },
+          merge_commit_sha: mergeSha,
+        },
+      }),
+    },
+    git: {
+      getRef: async () => ({ data: { object: { sha: baseSha } } }),
+    },
+    repos: {
+      getCommit: async () => ({
+        data: {
+          sha: mergeSha,
+          parents: [{ sha: baseSha }, { sha: headSha }],
         },
       }),
     },

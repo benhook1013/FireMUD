@@ -286,8 +286,17 @@ if previous:
     entries[0]["previous_filename"] = previous
 print(json.dumps([entries]))
 PY
+elif [[ "$*" == *"/git/ref/heads/develop"* ]]; then
+  printf '%s\n' '{"ref":"refs/heads/develop","object":{"sha":"cccccccccccccccccccccccccccccccccccccccc"}}'
+elif [[ "$*" == *"/commits/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"* ]]; then
+  parent_base=cccccccccccccccccccccccccccccccccccccccc
+  parent_head=dddddddddddddddddddddddddddddddddddddddd
+  if [[ "${FAKE_GH_STALE_PARENTS:-}" == "1" ]]; then
+    parent_base=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+  fi
+  printf '%s\n' '{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","parents":[{"sha":"'"$parent_base"'"},{"sha":"'"$parent_head"'"}]}'
 else
-  printf '%s\n' '{"changed_files":1,"base":{"sha":"cccccccccccccccccccccccccccccccccccccccc"},"merge_commit_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}'
+  printf '%s\n' '{"changed_files":1,"base":{"ref":"develop","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"benhook1013/FireMUD"}},"head":{"sha":"'"${FAKE_GH_HEAD_SHA:-dddddddddddddddddddddddddddddddddddddddd}"'","repo":{"full_name":"benhook1013/FireMUD"}},"merge_commit_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}'
 fi
 EOF
 chmod 700 "$fixture_dir/gh"
@@ -564,6 +573,36 @@ grep -Fq 'refusing to select base images' "$fixture_dir/api-failure-error" || {
 }
 [[ ! -s "$fixture_dir/api-failure-output" ]] || {
   echo "resolver emitted an image tag after the PR-files API failed" >&2
+  exit 1
+}
+
+if (
+  PATH="$fixture_dir:$PATH" \
+  FAKE_GH_STALE_PARENTS=1 \
+  GH_TOKEN=contract-token \
+  GITHUB_REPOSITORY=benhook1013/FireMUD \
+  bash "$resolver" "$merge_sha" 2786 "$base_image_tag"
+) >"$fixture_dir/stale-parent-output" 2>"$fixture_dir/stale-parent-error"; then
+  echo "resolver accepted a merge commit with stale parents" >&2
+  exit 1
+fi
+grep -Fq 'exact current base/head parents' "$fixture_dir/stale-parent-error" || {
+  echo "resolver did not reject stale merge parents" >&2
+  exit 1
+}
+
+if (
+  PATH="$fixture_dir:$PATH" \
+  FAKE_GH_HEAD_SHA=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee \
+  GH_TOKEN=contract-token \
+  GITHUB_REPOSITORY=benhook1013/FireMUD \
+  bash "$resolver" "$merge_sha" 2786 "$base_image_tag"
+) >"$fixture_dir/stale-head-output" 2>"$fixture_dir/stale-head-error"; then
+  echo "resolver accepted a merge commit for a stale head" >&2
+  exit 1
+fi
+grep -Fq 'exact current base/head parents' "$fixture_dir/stale-head-error" || {
+  echo "resolver did not reject a stale merge head" >&2
   exit 1
 }
 

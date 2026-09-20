@@ -89,7 +89,9 @@ def is_matching_run(run):
             and len(tokens) == 6
         )
 
-    if run.get("event") != "pull_request":
+    # A base refresh is dispatched as the typed pr-runtime-base-refresh event;
+    # the workflow-run API exposes its source only as repository_dispatch.
+    if run.get("event") not in {"pull_request", "repository_dispatch"}:
         return False
     display_title = run.get("display_title", "")
     tokens = display_title.split()
@@ -252,7 +254,7 @@ while (( SECONDS < deadline )); do
     if (( elapsed_seconds >= missing_workflow_timeout_seconds )); then
       printf 'No runtime-images workflow appeared for %s after %ss.\n' \
         "${image_tag}" "${elapsed_seconds}" >&2
-      printf 'This usually means the runtime-images pull_request trigger did not fire for the head SHA.\n' >&2
+      printf 'The PR image source or trusted current-base refresh did not appear for the exact merge SHA.\n' >&2
       exit 1
     fi
 
@@ -265,7 +267,7 @@ while (( SECONDS < deadline )); do
   if [[ "${run_status}" == "completed" && "${run_conclusion}" == "success" ]]; then
     printf 'Matching runtime-images workflow %s succeeded for %s after %ss.\n' \
       "${run_id}" "${image_tag}" "$((SECONDS - start_epoch))"
-    if [[ "${wait_mode}" == "pull-request" && "${run_event}" == "pull_request" ]]; then
+    if [[ "${wait_mode}" == "pull-request" && ("${run_event}" == "pull_request" || "${run_event}" == "repository_dispatch") ]]; then
       wait_for_pr_publisher
     fi
     exit 0

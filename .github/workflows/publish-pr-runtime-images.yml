@@ -10,13 +10,15 @@ run-name: Publish PR Runtime Images ${{ github.event.workflow_run.display_title 
 permissions: {}
 
 concurrency:
-  group: publish-pr-merge-images-${{ github.event.workflow_run.head_sha }}
+  # PR refresh runs execute from the default branch, so serialize on the exact
+  # merge-bound source title rather than the source run's default-branch SHA.
+  group: publish-pr-merge-images-${{ github.event.workflow_run.display_title }}
   cancel-in-progress: false
 
 jobs:
   publish:
     name: Publish Fixed PR Merge Image Tags
-    if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository }}
+    if: ${{ (github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'repository_dispatch') && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository }}
     runs-on: ubuntu-latest
     permissions:
       # This trusted default-branch workflow reads one successful run artifact and publishes immutable merge tags.
@@ -61,6 +63,7 @@ jobs:
           SOURCE_HEAD_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
           SOURCE_RUN_REPOSITORY: ${{ github.event.workflow_run.repository.full_name }}
           SOURCE_WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 - <<'PY'
@@ -86,6 +89,7 @@ jobs:
               "backup-verifier",
           ]
           SHA_PATTERN = r"[0-9a-f]{40}"
+          SOURCE_WORKFLOW_PATH = ".github/workflows/runtime-images.yml"
           TITLE_PATTERN = re.compile(
               rf"^Build Runtime Images secure-pr-artifact "
               rf"pr-([1-9][0-9]*) base-({SHA_PATTERN}) head-({SHA_PATTERN}) "
@@ -128,10 +132,12 @@ jobs:
           pr_number, base_sha, head_sha, merge_sha = title_match.groups()
           pr_number_int = int(pr_number)
           source_head_sha = required_environment("SOURCE_HEAD_SHA")
-          if source_head_sha != head_sha:
-              fail("event head SHA disagrees with source run title")
-          if required_environment("SOURCE_RUN_EVENT") != "pull_request":
-              fail("source event is not pull_request")
+          # runtime-images.yml admits only the typed pr-runtime-base-refresh
+          # repository_dispatch for this source class; workflow_run exposes
+          # that dispatch subtype as the generic repository_dispatch event.
+          source_event = required_environment("SOURCE_RUN_EVENT")
+          if source_event not in {"pull_request", "repository_dispatch"}:
+              fail("source event is not an allowed PR image source")
           if required_environment("SOURCE_RUN_CONCLUSION") != "success":
               fail("source workflow did not succeed")
           if required_environment("SOURCE_HEAD_REPOSITORY") != repository:
@@ -149,16 +155,19 @@ jobs:
               fail("source workflow identity changed between event and API")
           if source_run.get("name") != source_title:
               fail("source workflow API name differs from its exact run title")
-          if source_run.get("path") != ".github/workflows/runtime-images.yml":
+          if source_run.get("path") != SOURCE_WORKFLOW_PATH:
               fail("source workflow API path is not the trusted runtime-images workflow")
-          if source_run.get("event") != "pull_request":
-              fail("source workflow API event is not pull_request")
+          if source_run.get("event") != source_event:
+              fail("source workflow API event differs from the event")
           if source_run.get("status") != "completed" or source_run.get("conclusion") != "success":
               fail("source workflow API run is not a completed success")
           if source_run.get("display_title") != source_title:
               fail("source workflow API title differs from the event")
-          if source_run.get("head_sha") != head_sha:
-              fail("source workflow API head SHA differs from the title")
+          source_head_sha = required_environment("SOURCE_HEAD_SHA")
+          if not re.fullmatch(SHA_PATTERN, source_head_sha):
+              fail("source workflow head SHA is not a lowercase 40-character commit SHA")
+          if source_run.get("head_sha") != source_head_sha:
+              fail("source workflow API head SHA differs from the event")
           if source_run.get("head_branch") != required_environment("SOURCE_HEAD_BRANCH"):
               fail("source workflow API branch differs from the event")
           if (source_run.get("repository") or {}).get("full_name") != repository:
@@ -166,24 +175,46 @@ jobs:
           if (source_run.get("head_repository") or {}).get("full_name") != repository:
               fail("source workflow API head repository is not the current repository")
 
+          source_head_branch = required_environment("SOURCE_HEAD_BRANCH")
+          if source_event == "pull_request":
+              if source_head_sha != head_sha:
+                  fail("pull-request source head SHA disagrees with source run title")
+          else:
+              default_branch = required_environment("DEFAULT_BRANCH")
+              if not default_branch or source_head_branch != default_branch:
+                  fail("typed refresh source run is not on the repository default branch")
+
           pull_request = gh_json(f"repos/{repository}/pulls/{pr_number_int}")
           if pull_request.get("number") != pr_number_int or pull_request.get("state") != "open":
               fail("source pull request is not the current open pull request")
           if (pull_request.get("head") or {}).get("sha") != head_sha:
               fail("current pull request head SHA differs from source metadata")
-          if (pull_request.get("head") or {}).get("ref") != required_environment("SOURCE_HEAD_BRANCH"):
+          if source_event == "pull_request" and (pull_request.get("head") or {}).get("ref") != source_head_branch:
               fail("current pull request head branch differs from source metadata")
           if (pull_request.get("head", {}).get("repo") or {}).get("full_name") != repository:
               fail("current pull request head repository is not the current repository")
           base = pull_request.get("base") or {}
           if base.get("repo", {}).get("full_name") != repository:
               fail("current pull request base repository is not the current repository")
-          if base.get("ref") not in {"main", "develop"}:
+          base_ref = base.get("ref")
+          if base_ref not in {"main", "develop"}:
               fail("current pull request base ref is outside the runtime workflow contract")
-          if base.get("sha") != base_sha:
-              fail("current pull request base SHA differs from source metadata")
+          current_base_ref = gh_json(f"repos/{repository}/git/ref/heads/{base_ref}")
+          if (current_base_ref.get("object") or {}).get("sha") != base_sha:
+              fail("current base branch ref SHA differs from source metadata")
           if pull_request.get("merge_commit_sha") != merge_sha:
               fail("current pull request merge SHA differs from source metadata")
+
+          merge_commit = gh_json(f"repos/{repository}/commits/{merge_sha}")
+          if merge_commit.get("sha") != merge_sha:
+              fail("merge commit API SHA differs from source metadata")
+          merge_parent_shas = [
+              parent.get("sha")
+              for parent in merge_commit.get("parents", [])
+              if isinstance(parent, dict)
+          ]
+          if merge_parent_shas != [base_sha, head_sha]:
+              fail("merge commit parents do not exactly match declared base and head SHAs")
 
           artifact_root = Path(os.environ.get("PR_RUNTIME_ARTIFACT_ROOT", "/tmp/pr-runtime-artifacts"))
           if not artifact_root.is_dir():
@@ -236,6 +267,8 @@ jobs:
               env_file.write(f"IMAGE_TAG={image_tag}\n")
               env_file.write(f"PR_RUNTIME_ARTIFACT_DIR={artifact_dir}\n")
               env_file.write(f"PR_NUMBER={pr_number}\n")
+              env_file.write(f"PR_HEAD_BRANCH={pull_request['head']['ref']}\n")
+              env_file.write(f"SOURCE_RUN_HEAD_SHA={source_head_sha}\n")
               env_file.write(f"BASE_SHA={base_sha}\n")
               env_file.write(f"HEAD_SHA={head_sha}\n")
               env_file.write(f"MERGE_SHA={merge_sha}\n")
@@ -251,6 +284,8 @@ jobs:
           SOURCE_RUN_URL: ${{ github.event.workflow_run.html_url }}
           SOURCE_RUN_TITLE: ${{ github.event.workflow_run.display_title }}
           SOURCE_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SOURCE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          PR_HEAD_BRANCH: ${{ env.PR_HEAD_BRANCH }}
         run: |
           python3 - <<'PY'
           import os
@@ -263,8 +298,8 @@ jobs:
 
           - Source workflow run: [{os.environ['SOURCE_RUN_ID']}]({os.environ['SOURCE_RUN_URL']})
           - Source run title: <code>{markdown_code(os.environ['SOURCE_RUN_TITLE'])}</code>
-          - PR head branch: <code>{markdown_code(os.environ['SOURCE_HEAD_BRANCH'])}</code>
-          - PR head SHA: `{os.environ['HEAD_SHA']}`
+          - Source workflow branch/SHA: <code>{markdown_code(os.environ['SOURCE_HEAD_BRANCH'])}</code> / `{os.environ['SOURCE_HEAD_SHA']}`
+          - Current PR head branch/SHA: <code>{markdown_code(os.environ.get('PR_HEAD_BRANCH', '<validated>'))}</code> / `{os.environ['HEAD_SHA']}`
           - Tested merge SHA and immutable image tag: `{os.environ['MERGE_SHA']}` / `{os.environ['IMAGE_TAG']}`
 
           GitHub displays this run in the default-branch context because `workflow_run` uses the trusted workflow definition. It publishes only the successful source run's exact merge-SHA artifact after validating current PR identity and provenance, and does not check out PR source.
@@ -286,6 +321,9 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish fixed PR image tags
+        env:
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -313,6 +351,52 @@ jobs:
             echo "PR runtime service inventory is empty; nothing was published." >&2
             exit 1
           fi
+
+          declare -A registry_tokens=()
+          registry_manifest_state() {
+            local image="$1"
+            local image_path="${image#ghcr.io/}"
+            local repository_path="${image_path%:*}"
+            local tag="${image_path##*:}"
+            local manifest_url="https://ghcr.io/v2/${repository_path}/manifests/${tag}"
+            local registry_token="${registry_tokens[$repository_path]:-}"
+            local status
+
+            [[ -n "${GHCR_USERNAME:-}" && -n "${GHCR_TOKEN:-}" ]] || {
+              echo "GHCR credentials are unavailable for authenticated manifest preflight: $image" >&2
+              return 1
+            }
+            if [[ -z "$registry_token" ]]; then
+              if ! registry_token="$(curl --silent --show-error --location --fail \
+                --user "${GHCR_USERNAME}:${GHCR_TOKEN}" \
+                --get \
+                --data-urlencode 'service=ghcr.io' \
+                --data-urlencode "scope=repository:${repository_path}:pull" \
+                --header 'Accept: application/json' \
+                'https://ghcr.io/token' | jq -er '.token // .access_token // empty')"; then
+                echo "GHCR bearer-token exchange failed for $image; refusing to infer absence." >&2
+                return 1
+              fi
+              registry_tokens["$repository_path"]="$registry_token"
+            fi
+            # `docker manifest inspect "$image"` conflates a 404 with auth,
+            # registry, and network failures, so it is never an absence check.
+            if ! status="$(curl --silent --show-error --location --request HEAD \
+              --header "Authorization: Bearer ${registry_token}" \
+              --header 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+              --output /dev/null --write-out '%{http_code}' "$manifest_url")"; then
+              echo "Authenticated OCI manifest HEAD failed for $image; refusing to infer absence." >&2
+              return 1
+            fi
+            case "$status" in
+              200) printf 'existing\n' ;;
+              404) printf 'missing\n' ;;
+              *)
+                echo "Authenticated OCI manifest HEAD returned HTTP ${status} for $image; refusing to push." >&2
+                return 1
+                ;;
+            esac
+          }
 
           declare -A source_image_ids=()
           for service in "${services[@]}"; do
@@ -342,46 +426,43 @@ jobs:
             echo "Fixed image tag already exists with the validated source image ID; preserving first publication: $image"
           }
 
+          # Resolve every target before the first push. A registry/auth/network
+          # failure is not equivalent to an absent immutable tag.
           existing_services=()
+          missing_services=()
           for service in "${services[@]}"; do
             image="ghcr.io/benhook1013/${service}:${IMAGE_TAG}"
-            if docker manifest inspect "$image" >/dev/null 2>&1; then
+            if ! state="$(registry_manifest_state "$image")"; then
+              echo "Immutable target preflight failed for $image; nothing was published." >&2
+              exit 1
+            fi
+            if [[ "$state" == existing ]]; then
               existing_services+=("$service")
+            else
+              missing_services+=("$service")
             fi
           done
           for service in "${existing_services[@]}"; do
             verify_existing_target "$service"
           done
 
-          missing_source_images=()
-          for service in "${services[@]}"; do
+          available_services=("${existing_services[@]}")
+          for service in "${missing_services[@]}"; do
             image="ghcr.io/benhook1013/${service}:${IMAGE_TAG}"
-            if [[ -z "${source_image_ids[$service]}" ]]; then
-              echo "Required source artifact image for $service is missing: $image." >&2
-              missing_source_images+=("$image")
-            fi
-          done
-          if (( ${#missing_source_images[@]} > 0 )); then
-            echo "Required source artifact is incomplete; ${#missing_source_images[@]} runtime image(s) are missing. Nothing was published." >&2
-            exit 1
-          fi
-
-          available_services=()
-          for service in "${services[@]}"; do
-            image="ghcr.io/benhook1013/${service}:${IMAGE_TAG}"
-            if docker manifest inspect "$image" >/dev/null 2>&1; then
-              verify_existing_target "$service"
-              available_services+=("$service")
-              continue
-            fi
-
             max_push_attempts=3
             push_attempt=1
             while true; do
               if docker push "$image"; then
+                # A successful client push is not publication proof until the
+                # authenticated target resolves to the exact source image ID.
+                verify_existing_target "$service"
                 break
               fi
-              if docker manifest inspect "$image" >/dev/null 2>&1; then
+              if ! state="$(registry_manifest_state "$image")"; then
+                echo "Unable to classify $image after a failed push; refusing to infer absence." >&2
+                exit 1
+              fi
+              if [[ "$state" == existing ]]; then
                 verify_existing_target "$service"
                 break
               fi
@@ -394,12 +475,7 @@ jobs:
                     reached_failure=true
                   fi
                   if [[ "$reached_failure" == true ]]; then
-                    candidate_image="ghcr.io/benhook1013/${candidate_service}:${IMAGE_TAG}"
-                    if docker manifest inspect "$candidate_image" >/dev/null 2>&1; then
-                      available_services+=("$candidate_service")
-                    else
-                      unpublished_services+=("$candidate_service")
-                    fi
+                    unpublished_services+=("$candidate_service")
                   fi
                 done
                 {
@@ -413,7 +489,7 @@ jobs:
                     printf -- '- `%s`\n' "${available_services[@]}"
                   fi
                   echo
-                  echo "Unpublished fixed tags:"
+                  echo "Unpublished fixed tags (not rechecked after the failed push):"
                   if ((${#unpublished_services[@]} == 0)); then
                     echo "- None"
                   else
