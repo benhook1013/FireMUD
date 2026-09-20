@@ -710,7 +710,8 @@ public class ServedEnvironmentProbe {
     List<String> headerLines = new ArrayList<>();
     int headerBytes = 0;
     while (true) {
-      String line = readHttpLine(input, MAX_HTTP_RESPONSE_HEADER_BYTES);
+      String line =
+          readHttpLine(input, MAX_HTTP_RESPONSE_HEADER_BYTES - headerBytes);
       if (line == null) {
         return null;
       }

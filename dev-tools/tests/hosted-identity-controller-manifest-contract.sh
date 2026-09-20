@@ -450,7 +450,7 @@ for text_value in \
   firemud-hosted-identity-scope-rolebindings \
   certificaterequests \
   'object.rules.size() == 7' \
-  'object.rules.size() == 3' \
+  'object.rules.size() == 4' \
   'object.rules.all' \
   'object.subjects.size() == 1' \
   "object.roleRef.apiGroup == 'rbac.authorization.k8s.io'" \
@@ -942,11 +942,16 @@ assert "object.metadata.labels.size() ==" not in role_expression
 assert "object.metadata.labels.all(k," in role_expression
 assert "!k.startsWith('firemud.dev/')" in role_expression
 assert "object.rules.size() == 7" in role_expression
-assert "object.rules.size() == 3" in role_expression
+assert "object.rules.size() == 4" in role_expression
 assert "'firemud-grpc-ca'" not in role_expression
 assert "r.resources == ['certificaterequests']" in role_expression
 assert "r.verbs == ['list']" in role_expression
 normalized_role_expression = " ".join(role_expression.split())
+assert (
+    "r.apiGroups == [''] && r.resources == ['services'] && "
+    "r.resourceNames == ['tcp-proxy-service'] && r.verbs == ['get']"
+) in normalized_role_expression
+assert normalized_role_expression.count("r.resources == ['services']") == 1
 namespace_controller_scope_delete = (
     f"(request.userInfo.username == '{namespace_controller}' && "
     "request.operation == 'DELETE' && "
@@ -989,6 +994,9 @@ for unsafe_rule in (
     assert not policy_rule_has_no_wildcards_or_non_resource_urls(unsafe_rule)
 for unused_runtime_read in (
     "r.resources == ['services', 'pods']",
+    "r.resources == ['services'] && r.verbs == ['list', 'watch']",
+    "r.resources == ['services'] && r.resourceNames == ['tcp-proxy-service', 'other-service']",
+    "r.resources == ['services'] && r.resourceNames == ['tcp-proxy-service'] && r.verbs == ['get', 'list']",
     "r.resources == ['ingresses']",
     "r.resources == ['deployments'] && r.verbs == ['list', 'watch']",
 ):

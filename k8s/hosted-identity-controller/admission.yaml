@@ -523,7 +523,7 @@ spec:
               (!has(r.resourceNames) || r.resourceNames.size() == 0))) ||
            (object.metadata.name == 'firemud-hosted-runtime-scope' &&
             object.metadata.namespace.matches('^(dev|pr-[1-9][0-9]{0,50})$') &&
-            object.rules.size() == 3 &&
+            object.rules.size() == 4 &&
             object.rules.exists(r,
               r.apiGroups == [''] &&
               r.resources == ['secrets'] &&
@@ -534,6 +534,11 @@ spec:
               r.resources == ['secrets'] &&
               r.verbs == ['create'] &&
               (!has(r.resourceNames) || r.resourceNames.size() == 0)) &&
+            object.rules.exists(r,
+              r.apiGroups == [''] &&
+              r.resources == ['services'] &&
+              r.resourceNames == ['tcp-proxy-service'] &&
+              r.verbs == ['get']) &&
             object.rules.exists(r,
               r.apiGroups == ['apps'] &&
               r.resources == ['deployments'] &&

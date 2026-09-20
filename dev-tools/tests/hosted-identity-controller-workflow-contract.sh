@@ -31,6 +31,7 @@ mode_action="$ROOT_DIR/.github/actions/resolve-certificate-identity-mode/action.
 artifact_action="$ROOT_DIR/.github/actions/download-validated-preview-artifact/action.yml"
 requester="$ROOT_DIR/dev-tools/hosted/shared/request-hosted-identity.sh"
 artifact_validator="$ROOT_DIR/dev-tools/hosted/preview/validate-preview-artifact.py"
+telnet_port_resolver="$ROOT_DIR/dev-tools/hosted/preview/resolve-preview-telnet-port.sh"
 render_preview_values="$ROOT_DIR/dev-tools/hosted/preview/render-preview-values.py"
 preview_annotator="$ROOT_DIR/dev-tools/hosted/preview/annotate-preview-namespace.sh"
 runtime_rollout_waiter="$ROOT_DIR/dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh"
@@ -757,7 +758,7 @@ for required in \
   contains "$requester" "$required"
 done
 
-python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" "$janitor" "$mode_action" "$runtime" "$artifact_action" "$push_verified_image" "$waiter" <<'PY'
+python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" "$janitor" "$mode_action" "$runtime" "$artifact_action" "$push_verified_image" "$waiter" "$telnet_port_resolver" <<'PY'
 import os
 import re
 import subprocess
@@ -783,6 +784,7 @@ push_verified_image_text = push_verified_image.read_text(encoding="utf-8")
 assert push_verified_image.is_file()
 assert push_verified_image.stat().st_mode & 0o111
 waiter = Path(sys.argv[12])
+telnet_port_resolver = Path(sys.argv[13])
 
 for job_name in ("validate-target", "prepare-runtime", "deploy-runtime"):
     caller_python_steps = [
@@ -1784,7 +1786,6 @@ privileged_validation_guards = {
     ),
     "Create and annotate exact preview runtime namespace": (
         ('[[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]] || {', "Invalid preview runtime namespace"),
-        ('case "$EXPOSURE_MODE" in', "Invalid preview exposure mode"),
         (
             '[[ "$ALLOCATION_TIMESTAMP" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[^[:space:]]+Z$ ]] || {',
             "Invalid allocation timestamp",
@@ -1805,7 +1806,43 @@ assert '"$RUNTIME_NAMESPACE" "$TELNET_PORT"' in inject_step
 assert '"${{ needs.validate-target.outputs.certificate_identity_mode }}"' in inject_step
 assert '"${{ needs.validate-target.outputs.exposure_mode }}"' in inject_step
 assert '"$EXPOSURE_MODE"' in inject_step
-for step_name in ("Allocate stable preview Telnet port", "Create and annotate exact preview runtime namespace"):
+telnet_port_resolver_call = (
+    'bash ./dev-tools/hosted/preview/resolve-preview-telnet-port.sh \\\n'
+    '  "$EXPOSURE_MODE" "$ALLOCATED_TELNET_PORT"'
+)
+for step_name in (
+    "Create and annotate exact preview runtime namespace",
+    "Inject trusted allocated Telnet port",
+    "Apply validated PR runtime artifact",
+):
+    assert deploy_by_name[step_name]["run"].count(telnet_port_resolver_call) == 1
+assert telnet_port_resolver.is_file()
+assert telnet_port_resolver.stat().st_mode & 0o111
+assert subprocess.run(
+    ["bash", str(telnet_port_resolver), "private", ""],
+    capture_output=True,
+    text=True,
+    check=True,
+).stdout == "0\n"
+assert subprocess.run(
+    ["bash", str(telnet_port_resolver), "public", "32015"],
+    capture_output=True,
+    text=True,
+    check=True,
+).stdout == "32015\n"
+for arguments, expected_error in (
+    (("untrusted", "32000"), "Invalid preview exposure mode"),
+    (("public", "31999"), "Invalid allocated Telnet port"),
+    (("public", "32016"), "Invalid allocated Telnet port"),
+):
+    result = subprocess.run(
+        ["bash", str(telnet_port_resolver), *arguments],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert expected_error in result.stderr
+for step_name in ("Allocate stable preview Telnet port",):
     assert "actual value was ${" in deploy_by_name[step_name]["run"]
 assert "Validate trusted preview runtime target" not in deploy_by_name
 assert "Final revalidate open PR before server dry-run and apply" not in deploy_by_name

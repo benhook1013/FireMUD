@@ -1201,12 +1201,7 @@ def determine_exposure_mode(
     service_spec = _require_mapping(
         services[0].get("spec"), "Service/tcp-proxy-service.spec"
     )
-    service_type = service_spec.get("type", "ClusterIP")
-    if service_type == "ClusterIP":
-        return "private"
-    if service_type == "NodePort":
-        return "public"
-    fail("validated TCP Proxy Service has no canonical exposure mode")
+    return _exposure_mode_for_service_type(service_spec.get("type", "ClusterIP"))
 
 
 def validate_service_consumers(

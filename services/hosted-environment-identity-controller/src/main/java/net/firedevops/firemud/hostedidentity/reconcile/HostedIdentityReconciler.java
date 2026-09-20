@@ -419,6 +419,21 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
               + "); fresh convergence is required",
           false);
     }
+    if (current.deployedHeadMatchesRequest()) {
+      try {
+        runtimeProfileService.validateTcpProxyService(client, plan, current);
+      } catch (IllegalStateException exception) {
+        return new RuntimeProfileValidation(
+            null,
+            HostedEnvironmentIdentityStatus.Phase.Blocked,
+            "RuntimeProfileInvalid",
+            "runtime TCP Proxy Service became malformed at "
+                + boundary
+                + ": "
+                + boundedMessage(exception),
+            false);
+      }
+    }
     return new RuntimeProfileValidation(current, null, null, null, true);
   }
 

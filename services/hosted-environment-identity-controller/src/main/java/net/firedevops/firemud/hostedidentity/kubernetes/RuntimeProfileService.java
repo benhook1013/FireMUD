@@ -2,6 +2,8 @@ package net.firedevops.firemud.hostedidentity.kubernetes;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.fabric8.kubernetes.api.model.Namespace;
+import io.fabric8.kubernetes.api.model.Service;
+import io.fabric8.kubernetes.api.model.ServicePort;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import java.util.ArrayList;
 import java.util.List;
@@ -19,6 +21,8 @@ import org.springframework.stereotype.Component;
 @Component
 public class RuntimeProfileService {
   private static final int PREVIEW_TELNET_PORT_ALLOCATION_WIDTH = 16;
+  private static final String TCP_PROXY_SERVICE_NAME = "tcp-proxy-service";
+  private static final int TCP_PROXY_TELNET_PORT = 2323;
 
   private final HostedIdentityProperties properties;
 
@@ -91,8 +95,109 @@ public class RuntimeProfileService {
                 "parsed Telnet port is outside the configured allocation"));
       }
     }
+    // Runtime Namespace preparation and identity projection may precede Helm's Service apply.
+    // The reconciler applies validateTcpProxyService only after deployed-head evidence exists.
     return new RuntimeProfile(
         namespace.getMetadata().getUid(), requestedHead, deployedHead, exposureMode, port, true);
+  }
+
+  public void validateTcpProxyService(
+      KubernetesClient client, EnvironmentIdentityPlan plan, RuntimeProfile runtimeProfile) {
+    if (runtimeProfile == null || !runtimeProfile.present()) {
+      throw new IllegalStateException("cannot validate a non-present runtime profile");
+    }
+    validateTcpProxyService(
+        client, plan, runtimeProfile.exposureMode(), runtimeProfile.telnetPort());
+  }
+
+  private static void validateTcpProxyService(
+      KubernetesClient client, EnvironmentIdentityPlan plan, String exposureMode, int telnetPort) {
+    Service service;
+    try {
+      service =
+          client
+              .services()
+              .inNamespace(plan.runtimeNamespace())
+              .withName(TCP_PROXY_SERVICE_NAME)
+              .get();
+    } catch (RuntimeException exception) {
+      throw new IllegalStateException(
+          "runtime " + TCP_PROXY_SERVICE_NAME + " Service could not be read", exception);
+    }
+    if (service == null || service.getSpec() == null) {
+      throw new IllegalStateException(
+          "runtime " + TCP_PROXY_SERVICE_NAME + " Service is absent or malformed");
+    }
+
+    String expectedType =
+        HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(exposureMode)
+            ? "ClusterIP"
+            : "NodePort";
+    if (!expectedType.equals(service.getSpec().getType())) {
+      throw new IllegalStateException(
+          "runtime "
+              + TCP_PROXY_SERVICE_NAME
+              + " Service type does not match exposure mode: expected "
+              + expectedType);
+    }
+    if (HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(exposureMode)
+        && service.getSpec().getExternalIPs() != null
+        && !service.getSpec().getExternalIPs().isEmpty()) {
+      throw new IllegalStateException(
+          "private runtime " + TCP_PROXY_SERVICE_NAME + " Service cannot carry external IPs");
+    }
+    List<ServicePort> ports = service.getSpec().getPorts();
+    if (ports == null || ports.isEmpty()) {
+      throw new IllegalStateException(
+          "runtime " + TCP_PROXY_SERVICE_NAME + " Service has no ports");
+    }
+
+    int telnetPortMatches = 0;
+    int nodePortCount = 0;
+    for (ServicePort servicePort : ports) {
+      if (servicePort == null || servicePort.getPort() == null) {
+        throw new IllegalStateException(
+            "runtime " + TCP_PROXY_SERVICE_NAME + " Service has a malformed port");
+      }
+      Integer nodePort = servicePort.getNodePort();
+      if (nodePort != null) {
+        nodePortCount++;
+      }
+      if (!Integer.valueOf(TCP_PROXY_TELNET_PORT).equals(servicePort.getPort())) {
+        continue;
+      }
+      telnetPortMatches++;
+      if (telnetPortMatches > 1) {
+        throw new IllegalStateException(
+            "runtime " + TCP_PROXY_SERVICE_NAME + " Service has duplicate Telnet ports");
+      }
+      if (HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(exposureMode)) {
+        if (nodePort != null) {
+          throw new IllegalStateException(
+              "private runtime " + TCP_PROXY_SERVICE_NAME + " Service cannot carry a NodePort");
+        }
+      } else if (!Integer.valueOf(telnetPort).equals(nodePort)) {
+        throw new IllegalStateException(
+            "public runtime "
+                + TCP_PROXY_SERVICE_NAME
+                + " Service Telnet NodePort does not match the trusted allocation");
+      }
+    }
+    if (telnetPortMatches != 1) {
+      throw new IllegalStateException(
+          "runtime " + TCP_PROXY_SERVICE_NAME + " Service must expose exactly one Telnet port");
+    }
+    if (HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(exposureMode)) {
+      if (nodePortCount != 0) {
+        throw new IllegalStateException(
+            "private runtime " + TCP_PROXY_SERVICE_NAME + " Service cannot carry a NodePort");
+      }
+    } else if (nodePortCount != 1) {
+      throw new IllegalStateException(
+          "public runtime "
+              + TCP_PROXY_SERVICE_NAME
+              + " Service must carry exactly one trusted NodePort");
+    }
   }
 
   /**
@@ -231,12 +336,6 @@ public class RuntimeProfileService {
         || HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE.equals(exposureMode);
   }
 
-  private static void requireLabel(Map<String, String> labels, String key, String expected) {
-    if (!expected.equals(labels.get(key))) {
-      throw new IllegalStateException("runtime Namespace has an invalid " + key + " label");
-    }
-  }
-
   private static void requireLabel(Map<String, String> labels, String key, String... expected) {
     for (String value : expected) {
       if (value.equals(labels.get(key))) {
@@ -253,21 +352,6 @@ public class RuntimeProfileService {
       String exposureMode,
       int telnetPort,
       boolean present) {
-    public RuntimeProfile(
-        String runtimeNamespaceUid,
-        String requestedHeadSha,
-        String deployedHeadSha,
-        int telnetPort,
-        boolean present) {
-      this(
-          runtimeNamespaceUid,
-          requestedHeadSha,
-          deployedHeadSha,
-          HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
-          telnetPort,
-          present);
-    }
-
     public boolean deployedHeadMatchesRequest() {
       return present
           && requestedHeadSha != null
