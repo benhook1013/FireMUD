@@ -167,7 +167,7 @@ class TelnetServerTest {
                     Mockito.mock(TcpProxyEventService.class),
                     readyProbe(),
                     client));
-    assertTrue(ex.getMessage().contains("gatewayUri"));
+    assertEquals("gatewayUri", ex.getMessage());
   }
 
   @Test
