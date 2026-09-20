@@ -1513,9 +1513,16 @@ for text_value in \
   policyTypes: '- Ingress' '- Egress' 'ingress: []' 'k8s-app: kube-dns' \
   'port: 53' 'port: 443' 'port: 6443' \
   'port: 32001' 'port: 32016' 'port: 6565' 'firemud.dev/preview: "true"' \
-  'firemud.dev/dev-demo: "true"' 'cannot select the apiserver or a public hostname' \
-  'except:' '169.254.0.0/16' 'fe80::/10'; do
+  'firemud.dev/dev-demo: "true"' 'cannot identify an API server or public hostname' \
+  '__API_SERVICE_IPV4_CIDR_REQUIRED__' '__API_ENDPOINT_IPV4_CIDR_REQUIRED__' \
+  '__PUBLIC_PROBE_IPV4_CIDR_REQUIRED__' 'app: spring-cloud-gateway' 'port: 8443' \
+  'kubernetes.io/metadata.name: kube-system' 'app.kubernetes.io/name: traefik' \
+  'app.kubernetes.io/instance: traefik-kube-system' \
+  'app: tcp-proxy-service' 'port: 2323' 'post-DNAT behavior'; do
   require_literal "$NETWORKPOLICY" "$text_value"
+done
+for broad_cidr in '0.0.0.0/0' '::/0' '169.254.0.0/16' 'fe80::/10'; do
+  forbid_literal "$NETWORKPOLICY" "$broad_cidr"
 done
 NETWORKPOLICY="$NETWORKPOLICY" python3 - <<'PY'
 import os
@@ -1531,20 +1538,102 @@ api_rules = [
     if any(port.get("port") == 6443 for port in rule.get("ports", []))
 ]
 assert len(api_rules) == 1, "controller Kubernetes API 6443 egress rule is missing"
-assert any(port.get("port") == 443 for port in api_rules[0]["ports"]), (
-    "controller Kubernetes API egress must retain 443 alongside 6443"
-)
+assert api_rules[0]["to"] == [
+    {"ipBlock": {"cidr": "__API_ENDPOINT_IPV4_CIDR_REQUIRED__"}}
+]
+service_rules = [
+    rule for rule in policy["spec"]["egress"]
+    if any(port.get("port") == 443 for port in rule.get("ports", []))
+    and any(
+        target.get("ipBlock", {}).get("cidr")
+        == "__API_SERVICE_IPV4_CIDR_REQUIRED__"
+        for target in rule.get("to", [])
+    )
+]
+assert len(service_rules) == 1, "controller Kubernetes API Service 443 rule is missing"
+assert service_rules[0]["ports"] == [{"protocol": "TCP", "port": 443}]
 telnet_rules = [
     rule
     for rule in policy["spec"]["egress"]
-    if rule.get("ports")
-    == [{"protocol": "TCP", "port": port} for port in range(32000, 32017)]
+    if any(port.get("port") == 32000 for port in rule.get("ports", []))
 ]
 assert len(telnet_rules) == 1, "controller Telnet NodePort egress rule is missing"
 assert telnet_rules[0]["to"] == [
-    {"ipBlock": {"cidr": "0.0.0.0/0", "except": ["169.254.0.0/16"]}},
-    {"ipBlock": {"cidr": "::/0", "except": ["fe80::/10"]}},
-], "controller Telnet NodePort egress must exclude IPv4 and IPv6 link-local ranges"
+    {"ipBlock": {"cidr": "__PUBLIC_PROBE_IPV4_CIDR_REQUIRED__"}}
+]
+assert telnet_rules[0]["ports"] == [
+    {"protocol": "TCP", "port": 443},
+    *[{"protocol": "TCP", "port": port} for port in range(32000, 32017)],
+]
+gateway_targets = [
+    target
+    for rule in policy["spec"]["egress"]
+    for target in rule.get("to", [])
+    if target.get("podSelector", {}).get("matchLabels") == {
+        "app": "spring-cloud-gateway"
+    }
+]
+assert len(gateway_targets) == 2, "scoped Gateway egress selectors are missing"
+assert {
+    tuple(sorted(target["namespaceSelector"]["matchLabels"].items()))
+    for target in gateway_targets
+} == {
+    (("firemud.dev/dev-demo", "true"),),
+    (("firemud.dev/preview", "true"),),
+}
+gateway_rules = [
+    rule
+    for rule in policy["spec"]["egress"]
+    if any(
+        target.get("podSelector", {}).get("matchLabels")
+        == {"app": "spring-cloud-gateway"}
+        for target in rule.get("to", [])
+    )
+]
+assert len(gateway_rules) == 1
+assert gateway_rules[0]["ports"] == [
+    {"protocol": "TCP", "port": 443},
+    {"protocol": "TCP", "port": 8443},
+]
+traefik_rules = [
+    rule
+    for rule in policy["spec"]["egress"]
+    if any(
+        target.get("namespaceSelector", {}).get("matchLabels")
+        == {"kubernetes.io/metadata.name": "kube-system"}
+        and target.get("podSelector", {}).get("matchLabels")
+        == {
+            "app.kubernetes.io/name": "traefik",
+            "app.kubernetes.io/instance": "traefik-kube-system",
+        }
+        for target in rule.get("to", [])
+    )
+]
+assert len(traefik_rules) == 1, "scoped Traefik egress selector is missing"
+assert traefik_rules[0]["ports"] == [{"protocol": "TCP", "port": 8443}]
+tcp_proxy_targets = [
+    target
+    for rule in policy["spec"]["egress"]
+    if any(port.get("port") == 2323 for port in rule.get("ports", []))
+    for target in rule.get("to", [])
+]
+assert len(tcp_proxy_targets) == 2, "scoped TCP Proxy target-port selectors are missing"
+assert {
+    tuple(sorted(target["namespaceSelector"]["matchLabels"].items()))
+    for target in tcp_proxy_targets
+} == {
+    (("firemud.dev/dev-demo", "true"),),
+    (("firemud.dev/preview", "true"),),
+}
+for target in tcp_proxy_targets:
+    assert target["podSelector"]["matchLabels"] == {"app": "tcp-proxy-service"}
+tcp_proxy_rules = [
+    rule
+    for rule in policy["spec"]["egress"]
+    if any(port.get("port") == 2323 for port in rule.get("ports", []))
+]
+assert len(tcp_proxy_rules) == 1
+assert tcp_proxy_rules[0]["ports"] == [{"protocol": "TCP", "port": 2323}]
 grpc_targets = [
     target
     for rule in policy["spec"]["egress"]
@@ -1561,16 +1650,6 @@ for target in grpc_targets:
     assert target.get("podSelector", {}).get("matchLabels") == {
         "app": "account-service"
     }, target
-
-gateway_targets = [
-    target
-    for rule in policy["spec"]["egress"]
-    for target in rule.get("to", [])
-    if target.get("podSelector", {}).get("matchLabels") == {
-        "app": "spring-cloud-gateway"
-    }
-]
-assert not gateway_targets, "destination-broad TCP/443 makes a Gateway selector rule inert"
 PY
 for text_value in \
   FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR \
@@ -1584,12 +1663,24 @@ for text_value in \
   --server-side \
   --field-manager \
   'kubectl kustomize' \
+  '--cert-manager-namespace' \
+  'CERT_MANAGER_NAMESPACE="cert-manager"' \
+  'Kubernetes DNS namespace label of at most 63 characters' \
   'rollout status' \
   'kubectl auth can-i' \
   'get secret ghcr-preview-pull -o json' \
   'kubernetes.io/dockerconfigjson' \
   'paused|observe|active' \
   --grpc-trust-anchor-sha256 \
+  --api-service-ipv4 \
+  --api-endpoint-ipv4 \
+  --public-probe-ipv4 \
+  'must be supplied together' \
+  'required for observe or active mode' \
+  'safe IPv4 address' \
+  'dev.preview.firedevops.net' \
+  'kubernetes.default Service ClusterIP' \
+  'kubernetes.default API endpoint' \
   'GRPC_TRUST_ANCHOR_SHA256" =~ ^[0-9a-f]{64}$' \
   'integer between 1 and 3600' \
   '@sha256:[0-9a-f]{64}'; do
@@ -1610,9 +1701,17 @@ assert "@sha256:" in source[verify:]
 policy_apply = source.index('-f "$namespace_guard_policy_manifest"')
 binding_apply = source.index('-f "$namespace_guard_binding_manifest"', policy_apply)
 policy_read = source.index("namespace_guard_failure_policy=", binding_apply)
-full_apply = source.index('-f "$temporary_manifest"', policy_read)
+issuer_extract = source.index(
+    'extract_named_yaml_document "$temporary_manifest" ClusterIssuer',
+    policy_read,
+)
+issuer_apply = source.index('-f "$cluster_issuer_manifest"', issuer_extract)
+issuer_wait = source.index("\nwait_for_ca_issuer_ready\n")
+full_apply = source.index('-f "$temporary_manifest"', issuer_wait)
+rollout = source.index('kubectl -n "$CONTROL_NAMESPACE" rollout status', full_apply)
 pull_secret_read = source.index('get secret ghcr-preview-pull -o json')
 assert pull_secret_read < policy_apply < binding_apply < policy_read < full_apply
+assert policy_read < issuer_extract < issuer_apply < issuer_wait < full_apply < rollout
 PY
 for admission_name in \
   firemud-hosted-identity-main \
@@ -1661,6 +1760,11 @@ forbid_literal "$BOOTSTRAP" 'if ((SECONDS >= crd_deadline)); then'
 require_literal "$BOOTSTRAP" 'sleep 1'
 for ca_proof in \
   'get secret firemud-grpc-ca' \
+  'CERT_MANAGER_NAMESPACE="cert-manager"' \
+  'kubernetes.io/tls' \
+  "tls.crt\\ntls.key" \
+  'does not match firemud-system/firemud-grpc-ca ca.crt' \
+  'does not match firemud-system/firemud-grpc-ca ca.key' \
   "ca.crt\\nca.key" \
   "openssl x509 -outform DER" \
   "openssl verify" \
@@ -1683,6 +1787,11 @@ for ca_proof in \
   'ca.crt and ca.key do not match'; do
   require_literal "$BOOTSTRAP" "$ca_proof"
 done
+require_literal "$BOOTSTRAP" "extract_named_yaml_document \"\$temporary_manifest\" ClusterIssuer"
+require_literal "$BOOTSTRAP" "firemud-ca-issuer \"\$cluster_issuer_manifest\""
+require_literal "$BOOTSTRAP" "-f \"\$cluster_issuer_manifest\""
+require_literal "$BOOTSTRAP" 'ClusterIssuer/firemud-ca-issuer did not become Ready=True'
+require_literal "$BOOTSTRAP" 'get clusterissuer firemud-ca-issuer'
 require_literal "$BOOTSTRAP" "HostedEnvironmentIdentity CRD is not Established=True"
 BOOTSTRAP="$BOOTSTRAP" python3 - <<'PY'
 import os
@@ -1718,6 +1827,11 @@ for forbidden_controller_root_operation in ("create", "update", "delete"):
 assert source.count("expect_can_i ") == 14
 assert "hostedenvironmentidentities/finalizers.platform.firemud.dev" not in source
 assert source.count("controller_activation_mode read") == 2
+namespace_validation = source.index(
+    'if ! [[ "$CERT_MANAGER_NAMESPACE" =~ ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$ ]]; then'
+)
+kubectl_presence_check = source.index('command -v kubectl', namespace_validation)
+assert namespace_validation < kubectl_presence_check
 assert (
     'controller_activation_mode replace \\\n'
     '    "$initial_activation_mode" "$ACTIVATION_MODE"'
@@ -1726,6 +1840,23 @@ assert "/FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE/{n;" not in source
 assert '[[ "$rendered_activation_mode" == "$initial_activation_mode" ]]' in source
 assert '[[ "$rendered_activation_mode" == "$ACTIVATION_MODE" ]]' in source
 assert source.count('[[ "$rendered_activation_mode" == "$initial_activation_mode" ]]') == 1
+for address_option in (
+    "--api-service-ipv4",
+    "--api-endpoint-ipv4",
+    "--public-probe-ipv4",
+):
+    assert address_option in source
+for policy_marker in (
+    "__API_SERVICE_IPV4_CIDR_REQUIRED__",
+    "__API_ENDPOINT_IPV4_CIDR_REQUIRED__",
+    "__PUBLIC_PROBE_IPV4_CIDR_REQUIRED__",
+):
+    assert policy_marker in source
+assert "127.0.0.1/32" in source
+assert "verify_live_network_policy_destinations" in source
+assert source.rindex("verify_live_network_policy_destinations") < source.index(
+    "kubectl apply"
+), "live destination verification must precede the first cluster write"
 cleanup_trap = source.index("trap cleanup EXIT")
 first_temporary_file = source.index('temporary_manifest="$(mktemp)"')
 assert cleanup_trap < first_temporary_file
@@ -1750,6 +1881,18 @@ record_event() {
 }
 
 if [[ "${1:-}" == "kustomize" ]]; then
+  if [[ "${FAKE_MISSING_CA_ISSUER:-0}" != 1 ]]; then
+    cat <<'YAML'
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: firemud-ca-issuer
+spec:
+  ca:
+    secretName: firemud-grpc-ca
+---
+YAML
+  fi
   cat <<'YAML'
 apiVersion: apps/v1
 kind: Deployment
@@ -1766,6 +1909,116 @@ spec:
               value: __GRPC_TRUST_ANCHOR_SHA256_REQUIRED__
             - value: __ACTIVATION_MODE_REQUIRED__
               name: FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: firemud-hosted-identity-controller-egress
+  namespace: firemud-system
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: hosted-environment-identity-controller
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: __API_SERVICE_IPV4_CIDR_REQUIRED__
+      ports:
+        - protocol: TCP
+          port: 443
+    - to:
+        - ipBlock:
+            cidr: __API_ENDPOINT_IPV4_CIDR_REQUIRED__
+      ports:
+        - protocol: TCP
+          port: 6443
+    - to:
+        - ipBlock:
+            cidr: __PUBLIC_PROBE_IPV4_CIDR_REQUIRED__
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 32000
+        - protocol: TCP
+          port: 32001
+        - protocol: TCP
+          port: 32002
+        - protocol: TCP
+          port: 32003
+        - protocol: TCP
+          port: 32004
+        - protocol: TCP
+          port: 32005
+        - protocol: TCP
+          port: 32006
+        - protocol: TCP
+          port: 32007
+        - protocol: TCP
+          port: 32008
+        - protocol: TCP
+          port: 32009
+        - protocol: TCP
+          port: 32010
+        - protocol: TCP
+          port: 32011
+        - protocol: TCP
+          port: 32012
+        - protocol: TCP
+          port: 32013
+        - protocol: TCP
+          port: 32014
+        - protocol: TCP
+          port: 32015
+        - protocol: TCP
+          port: 32016
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              firemud.dev/preview: "true"
+          podSelector:
+            matchLabels:
+              app: spring-cloud-gateway
+        - namespaceSelector:
+            matchLabels:
+              firemud.dev/dev-demo: "true"
+          podSelector:
+            matchLabels:
+              app: spring-cloud-gateway
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 8443
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+              app.kubernetes.io/instance: traefik-kube-system
+      ports:
+        - protocol: TCP
+          port: 8443
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              firemud.dev/preview: "true"
+          podSelector:
+            matchLabels:
+              app: tcp-proxy-service
+        - namespaceSelector:
+            matchLabels:
+              firemud.dev/dev-demo: "true"
+          podSelector:
+            matchLabels:
+              app: tcp-proxy-service
+      ports:
+        - protocol: TCP
+          port: 2323
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
@@ -1806,6 +2059,20 @@ if [[ "${1:-}" == "auth" && "${2:-}" == "whoami" ]]; then
 system:masters}"
   exit 0
 fi
+if [[ "$*" == *"get service kubernetes"* ]]; then
+  record_event api-service-read
+  printf '%s' "${FAKE_API_SERVICE_IPV4:-10.43.0.1}"
+  exit 0
+fi
+if [[ "$*" == *"get endpoints kubernetes"* ]]; then
+  record_event api-endpoint-read
+  if [[ "${FAKE_API_ENDPOINT_MULTIPLE:-0}" == 1 ]]; then
+    printf '%s\n' "{\"subsets\":[{\"addresses\":[{\"ip\":\"${FAKE_API_ENDPOINT_IPV4:-77.42.29.156}\"},{\"ip\":\"10.43.0.2\"}],\"ports\":[{\"port\":6443}]}]}"
+  else
+    printf '%s\n' "{\"subsets\":[{\"addresses\":[{\"ip\":\"${FAKE_API_ENDPOINT_IPV4:-77.42.29.156}\"}],\"ports\":[{\"port\":6443}]}]}"
+  fi
+  exit 0
+fi
 if [[ "${1:-}" == "apply" ]]; then
   manifest=''
   previous=''
@@ -1816,6 +2083,15 @@ if [[ "${1:-}" == "apply" ]]; then
     previous="$argument"
   done
   [[ -n "$manifest" ]] || exit 2
+  if [[ -n "${FAKE_RENDERED_MANIFEST_PATH:-}" ]] &&
+    grep -q '^kind: NetworkPolicy$' "$manifest"; then
+    cp "$manifest" "$FAKE_RENDERED_MANIFEST_PATH"
+  fi
+  if [[ "$(grep -c '^kind:' "$manifest")" == 1 ]] &&
+    grep -q '^kind: ClusterIssuer$' "$manifest"; then
+    record_event apply:issuer
+    exit 0
+  fi
   if [[ "$(grep -c '^kind:' "$manifest")" == 1 ]] &&
     grep -q '^kind: ValidatingAdmissionPolicy$' "$manifest"; then
     [[ "${FAKE_EVENT_LOG:-}" == *active-events ]] || record_event guard-policy
@@ -1912,6 +2188,51 @@ if [[ "${1:-}" == "-n" && "${2:-}" == "firemud-system" && "${3:-}" == "get" && "
   esac
   exit 0
 fi
+if [[ "${1:-}" == "-n" && "${2:-}" == "${FAKE_CERT_MANAGER_NAMESPACE:-cert-manager}" && "${3:-}" == "get" && "${4:-}" == "secret" && "${5:-}" == "firemud-grpc-ca" ]]; then
+  record_event ca-copy-read
+  case "${FAKE_CA_COPY_MODE:-valid}" in
+    missing)
+      printf 'not found\n' >&2
+      exit 1
+      ;;
+    wrong-type)
+      if [[ "$*" == *'{.type}'* ]]; then
+        printf 'Opaque'
+      else
+        exit 2
+      fi
+      ;;
+    wrong-keys)
+      if [[ "$*" == *'{.type}'* ]]; then
+        printf 'kubernetes.io/tls'
+      elif [[ "$*" == *'go-template='* ]]; then
+        printf 'ca.crt\nca.key\n'
+      else
+        exit 2
+      fi
+      ;;
+    valid|mismatch-cert|mismatch-key)
+      case "$*" in
+        *'{.type}'*) printf 'kubernetes.io/tls' ;;
+        *'go-template='*) printf 'tls.crt\ntls.key\n' ;;
+        *'{.data.tls\.crt}'*)
+          base64 --wrap=0 <"${FAKE_CA_COPY_CERT:-$FAKE_CA_CERT}"
+          ;;
+        *'{.data.tls\.key}'*)
+          base64 --wrap=0 <"${FAKE_CA_COPY_KEY:-$FAKE_CA_KEY}"
+          ;;
+        *) exit 2 ;;
+      esac
+      ;;
+    *) exit 2 ;;
+  esac
+  exit 0
+fi
+if [[ "${1:-}" == "get" && "${2:-}" == "clusterissuer" && "${3:-}" == "firemud-ca-issuer" ]]; then
+  record_event issuer-read
+  printf '%s' "${FAKE_ISSUER_READY:-True}"
+  exit 0
+fi
 if [[ "${1:-}" == "get" && "${2:-}" == "validatingadmissionpolicy" ]]; then
   if [[ "${FAKE_MISSING_POLICY:-0}" == 1 ]]; then
     echo "not found" >&2
@@ -1984,6 +2305,49 @@ printf 'unexpected fake gh invocation: %s\n' "$*" >&2
 exit 2
 SH
 chmod +x "$bootstrap_test_dir/gh"
+cat >"$bootstrap_test_dir/getent" <<'SH'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+if [[ "${1:-}" == "ahostsv4" && "${2:-}" == "dev.preview.firedevops.net" ]]; then
+  case "${FAKE_PUBLIC_PROBE_DNS_MODE:-valid}" in
+    no-record)
+      exit 0
+      ;;
+    error)
+      printf 'simulated resolver failure\n' >&2
+      exit 2
+      ;;
+    multiple)
+      printf '%s STREAM dev.preview.firedevops.net\n' "77.42.29.156"
+      printf '%s STREAM dev.preview.firedevops.net\n' "77.42.29.157"
+      exit 0
+      ;;
+    valid)
+      ;;
+    *)
+      exit 2
+      ;;
+  esac
+  printf '%s STREAM dev.preview.firedevops.net\n' "${FAKE_PUBLIC_PROBE_DNS_IPV4:-77.42.29.156}"
+  exit 0
+fi
+exit 2
+SH
+chmod +x "$bootstrap_test_dir/getent"
+no_getent_path="$bootstrap_test_dir/no-getent-path"
+mkdir -p "$no_getent_path"
+for command_name in \
+  bash env dirname grep awk sort wc mktemp sed mv rm cat base64 openssl sha256sum sleep; do
+  ln -s "$(command -v "$command_name")" "$no_getent_path/$command_name"
+done
+fixture_python3="$(command -v python3)"
+cat >"$no_getent_path/python3" <<'SH'
+#!/usr/bin/env bash
+exec "${FIXTURE_CANONICAL_PYTHON3:?}" "$@"
+SH
+chmod +x "$no_getent_path/python3"
+ln -s "$bootstrap_test_dir/kubectl" "$no_getent_path/kubectl"
+ln -s "$bootstrap_test_dir/gh" "$no_getent_path/gh"
 attestation_log="$bootstrap_test_dir/attestation-events"
 export PATH="$bootstrap_test_dir:$PATH"
 export FAKE_ATTESTATION_LOG="$attestation_log"
@@ -2064,8 +2428,57 @@ bootstrap_fingerprint="$(
 )"
 [[ "$bootstrap_fingerprint" =~ ^[0-9a-f]{64}$ ]] || \
   fail "could not compute the fixture gRPC CA fingerprint"
+network_policy_args=(
+  --api-service-ipv4 10.43.0.1
+  --api-endpoint-ipv4 77.42.29.156
+  --public-probe-ipv4 77.42.29.156
+)
 export FAKE_CA_CERT="$bootstrap_ca_cert"
 export FAKE_CA_KEY="$bootstrap_ca_key"
+rendered_manifest_path="$bootstrap_test_dir/rendered-manifest"
+export FAKE_RENDERED_MANIFEST_PATH="$rendered_manifest_path"
+
+for invalid_address in \
+  10.43.0 \
+  127.0.0.1 \
+  169.254.1.1 \
+  224.0.0.1 \
+  255.255.255.255; do
+  invalid_events="$bootstrap_test_dir/invalid-${invalid_address//./-}-events"
+  if FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 FAKE_EVENT_LOG="$invalid_events" \
+    PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+    --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode observe \
+    --api-service-ipv4 "$invalid_address" \
+    --api-endpoint-ipv4 77.42.29.156 \
+    --public-probe-ipv4 77.42.29.156 --wait-seconds 1 \
+    >"$bootstrap_output" 2>"$bootstrap_error"; then
+    fail "bootstrap accepted unsafe or malformed IPv4 address $invalid_address"
+  fi
+  require_literal "$bootstrap_error" "safe IPv4 address"
+  [[ ! -s "$invalid_events" ]] || fail "bootstrap wrote cluster state for $invalid_address"
+done
+
+partial_events="$bootstrap_test_dir/partial-address-events"
+if FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 FAKE_EVENT_LOG="$partial_events" \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" \
+  --api-service-ipv4 10.43.0.1 --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted a partial exact-destination address set"
+fi
+require_literal "$bootstrap_error" "must be supplied together"
+[[ ! -s "$partial_events" ]] || fail "bootstrap wrote cluster state for partial address input"
+
+active_missing_events="$bootstrap_test_dir/active-missing-address-events"
+if FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 FAKE_EVENT_LOG="$active_missing_events" \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active \
+  --wait-seconds 1 >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted active mode without exact destination addresses"
+fi
+require_literal "$bootstrap_error" "required for observe or active mode"
+[[ ! -s "$active_missing_events" ]] || fail "active bootstrap wrote cluster state without addresses"
+
 legacy_bootstrap_events="$bootstrap_test_dir/legacy-events"
 legacy_bootstrap_image='ghcr.io/benhook1013/hosted-environment-identity-controller@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 if ! FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 PATH="$bootstrap_test_dir:$PATH" \
@@ -2075,6 +2488,252 @@ if ! FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 PATH="$bootstrap_test_dir:$PATH"
   fail "bootstrap rejected expected auth can-i no results: $(cat "$bootstrap_error")"
 fi
 require_literal "$bootstrap_output" "activation=paused"
+RENDERED_MANIFEST="$rendered_manifest_path" python3 - <<'PY'
+import os
+from pathlib import Path
+
+import yaml
+
+documents = list(
+    yaml.safe_load_all(Path(os.environ["RENDERED_MANIFEST"]).read_text(encoding="utf-8"))
+)
+policy = next(document for document in documents if document.get("kind") == "NetworkPolicy")
+address_cidrs = [
+    target["ipBlock"]["cidr"]
+    for rule in policy["spec"]["egress"]
+    for target in rule.get("to", [])
+    if "ipBlock" in target
+]
+assert address_cidrs == [
+    "127.0.0.1/32",
+    "127.0.0.1/32",
+    "127.0.0.1/32",
+], address_cidrs
+assert all("REQUIRED" not in cidr for cidr in address_cidrs)
+gateway_rule = next(
+    rule
+    for rule in policy["spec"]["egress"]
+    if any(
+        target.get("podSelector", {}).get("matchLabels")
+        == {"app": "spring-cloud-gateway"}
+        for target in rule.get("to", [])
+    )
+)
+assert gateway_rule["ports"] == [
+    {"protocol": "TCP", "port": 443},
+    {"protocol": "TCP", "port": 8443},
+]
+traefik_rule = next(
+    rule
+    for rule in policy["spec"]["egress"]
+    if any(
+        target.get("namespaceSelector", {}).get("matchLabels")
+        == {"kubernetes.io/metadata.name": "kube-system"}
+        and target.get("podSelector", {}).get("matchLabels")
+        == {
+            "app.kubernetes.io/name": "traefik",
+            "app.kubernetes.io/instance": "traefik-kube-system",
+        }
+        for target in rule.get("to", [])
+    )
+)
+assert traefik_rule["ports"] == [{"protocol": "TCP", "port": 8443}]
+tcp_proxy_rule = next(
+    rule
+    for rule in policy["spec"]["egress"]
+    if any(port.get("port") == 2323 for port in rule.get("ports", []))
+)
+assert tcp_proxy_rule["ports"] == [{"protocol": "TCP", "port": 2323}]
+assert {
+    tuple(sorted(target["namespaceSelector"]["matchLabels"].items()))
+    for target in tcp_proxy_rule["to"]
+} == {
+    (("firemud.dev/dev-demo", "true"),),
+    (("firemud.dev/preview", "true"),),
+}
+for target in tcp_proxy_rule["to"]:
+    assert target["podSelector"]["matchLabels"] == {"app": "tcp-proxy-service"}
+PY
+exact_address_events="$bootstrap_test_dir/exact-address-events"
+if ! FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 FAKE_EVENT_LOG="$exact_address_events" \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode paused \
+  --api-service-ipv4 10.43.0.1 \
+  --api-endpoint-ipv4 77.42.29.156 \
+  --public-probe-ipv4 77.42.29.156 --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap rejected exact observed destination addresses: $(cat "$bootstrap_error")"
+fi
+RENDERED_MANIFEST="$rendered_manifest_path" python3 - <<'PY'
+import os
+from pathlib import Path
+
+import yaml
+
+documents = list(
+    yaml.safe_load_all(Path(os.environ["RENDERED_MANIFEST"]).read_text(encoding="utf-8"))
+)
+policy = next(document for document in documents if document.get("kind") == "NetworkPolicy")
+address_cidrs = [
+    target["ipBlock"]["cidr"]
+    for rule in policy["spec"]["egress"]
+    for target in rule.get("to", [])
+    if "ipBlock" in target
+]
+assert address_cidrs == [
+    "10.43.0.1/32",
+    "77.42.29.156/32",
+    "77.42.29.156/32",
+], address_cidrs
+assert all("REQUIRED" not in cidr for cidr in address_cidrs)
+public_rule = next(
+    rule
+    for rule in policy["spec"]["egress"]
+    if any(port.get("port") == 32000 for port in rule.get("ports", []))
+)
+assert public_rule["ports"] == [
+    {"protocol": "TCP", "port": 443},
+    *[{"protocol": "TCP", "port": port} for port in range(32000, 32017)],
+], public_rule["ports"]
+traefik_rule = next(
+    rule
+    for rule in policy["spec"]["egress"]
+    if any(
+        target.get("namespaceSelector", {}).get("matchLabels")
+        == {"kubernetes.io/metadata.name": "kube-system"}
+        and target.get("podSelector", {}).get("matchLabels")
+        == {
+            "app.kubernetes.io/name": "traefik",
+            "app.kubernetes.io/instance": "traefik-kube-system",
+        }
+        for target in rule.get("to", [])
+    )
+)
+assert traefik_rule["ports"] == [{"protocol": "TCP", "port": 8443}]
+tcp_proxy_rule = next(
+    rule
+    for rule in policy["spec"]["egress"]
+    if any(port.get("port") == 2323 for port in rule.get("ports", []))
+)
+assert tcp_proxy_rule["ports"] == [{"protocol": "TCP", "port": 2323}]
+assert {
+    tuple(sorted(target["namespaceSelector"]["matchLabels"].items()))
+    for target in tcp_proxy_rule["to"]
+} == {
+    (("firemud.dev/dev-demo", "true"),),
+    (("firemud.dev/preview", "true"),),
+}
+for target in tcp_proxy_rule["to"]:
+    assert target["podSelector"]["matchLabels"] == {"app": "tcp-proxy-service"}
+PY
+no_resolver_events="$bootstrap_test_dir/no-resolver-events"
+if ! FIXTURE_CANONICAL_PYTHON3="$fixture_python3" PATH="$no_getent_path" \
+  python3 -c 'import yaml'; then
+  fail "restricted resolver fixture cannot import PyYAML with the canonical Python executable"
+fi
+if FIXTURE_CANONICAL_PYTHON3="$fixture_python3" \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 FAKE_EVENT_LOG="$no_resolver_events" \
+  PATH="$no_getent_path" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode observe \
+  --api-service-ipv4 10.43.0.1 \
+  --api-endpoint-ipv4 77.42.29.156 \
+  --public-probe-ipv4 77.42.29.156 --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted exact addresses without a DNS resolver"
+fi
+if ! grep -Fq "getent is required to validate the fixed dev.preview.firedevops.net IPv4 A record" "$bootstrap_error"; then
+  sed -n '1,25p' "$bootstrap_error" >&2
+  fail "bootstrap did not report the missing DNS resolver"
+fi
+if grep -q '^apply:' "$no_resolver_events" 2>/dev/null; then
+  fail "bootstrap wrote cluster state without a DNS resolver"
+fi
+for dns_mode in no-record error multiple; do
+  dns_events="$bootstrap_test_dir/dns-${dns_mode}-events"
+  if FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 FAKE_EVENT_LOG="$dns_events" \
+    FAKE_PUBLIC_PROBE_DNS_MODE="$dns_mode" \
+    PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+    --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode observe \
+    --api-service-ipv4 10.43.0.1 \
+    --api-endpoint-ipv4 77.42.29.156 \
+    --public-probe-ipv4 77.42.29.156 --wait-seconds 1 \
+    >"$bootstrap_output" 2>"$bootstrap_error"; then
+    fail "bootstrap accepted fixed DNS mode $dns_mode"
+  fi
+  case "$dns_mode" in
+    no-record)
+      require_literal "$bootstrap_error" "fixed dev.preview.firedevops.net IPv4 A record is missing"
+      ;;
+    error)
+      require_literal "$bootstrap_error" "unable to resolve the fixed dev.preview.firedevops.net IPv4 A record"
+      ;;
+    multiple)
+      require_literal "$bootstrap_error" "must match the fixed dev.preview.firedevops.net IPv4 A record"
+      ;;
+  esac
+  if grep -q '^apply:' "$dns_events" 2>/dev/null; then
+    fail "bootstrap wrote cluster state after fixed DNS mode $dns_mode"
+  fi
+done
+mismatch_events="$bootstrap_test_dir/mismatched-readback-events"
+if FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 FAKE_EVENT_LOG="$mismatch_events" \
+  FAKE_API_SERVICE_IPV4=10.43.0.2 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode observe \
+  --api-service-ipv4 10.43.0.1 \
+  --api-endpoint-ipv4 77.42.29.156 \
+  --public-probe-ipv4 77.42.29.156 --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted mismatched live API Service readback"
+fi
+require_literal "$bootstrap_error" "does not match kubernetes.default Service ClusterIP"
+if grep -q '^apply:' "$mismatch_events" 2>/dev/null; then
+  fail "bootstrap wrote cluster state after mismatched live API Service readback"
+fi
+endpoint_mismatch_events="$bootstrap_test_dir/mismatched-endpoint-readback-events"
+if FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 FAKE_EVENT_LOG="$endpoint_mismatch_events" \
+  FAKE_API_ENDPOINT_IPV4=77.42.29.157 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode observe \
+  --api-service-ipv4 10.43.0.1 \
+  --api-endpoint-ipv4 77.42.29.156 \
+  --public-probe-ipv4 77.42.29.156 --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted mismatched live API endpoint readback"
+fi
+require_literal "$bootstrap_error" "must match the single observed kubernetes.default endpoint"
+if grep -q '^apply:' "$endpoint_mismatch_events" 2>/dev/null; then
+  fail "bootstrap wrote cluster state after mismatched live API endpoint readback"
+fi
+multiple_endpoint_events="$bootstrap_test_dir/multiple-endpoint-readback-events"
+if FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 FAKE_EVENT_LOG="$multiple_endpoint_events" \
+  FAKE_API_ENDPOINT_MULTIPLE=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode observe \
+  --api-service-ipv4 10.43.0.1 \
+  --api-endpoint-ipv4 77.42.29.156 \
+  --public-probe-ipv4 77.42.29.156 --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted multiple observed Kubernetes API endpoints"
+fi
+require_literal "$bootstrap_error" "must match the single observed kubernetes.default endpoint"
+if grep -q '^apply:' "$multiple_endpoint_events" 2>/dev/null; then
+  fail "bootstrap wrote cluster state after multiple observed API endpoints"
+fi
+public_dns_mismatch_events="$bootstrap_test_dir/mismatched-public-dns-events"
+if FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 FAKE_EVENT_LOG="$public_dns_mismatch_events" \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode observe \
+  --api-service-ipv4 10.43.0.1 \
+  --api-endpoint-ipv4 77.42.29.156 \
+  --public-probe-ipv4 77.42.29.157 --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted a public probe address that mismatched fixed DNS"
+fi
+require_literal "$bootstrap_error" "must match the fixed dev.preview.firedevops.net IPv4 A record"
+if grep -q '^apply:' "$public_dns_mismatch_events" 2>/dev/null; then
+  fail "bootstrap wrote cluster state after mismatched public probe DNS readback"
+fi
 verbose_openssl_dir="$bootstrap_test_dir/verbose-openssl"
 mkdir -p "$verbose_openssl_dir"
 cat >"$verbose_openssl_dir/openssl" <<'SH'
@@ -2306,7 +2965,8 @@ if ! FAKE_EVENT_LOG="$active_event_log" \
   FAKE_CA_CERT="$bootstrap_ca_cert" FAKE_CA_KEY="$bootstrap_ca_key" \
   FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
   PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
-  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active --wait-seconds 1 \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active \
+  "${network_policy_args[@]}" --wait-seconds 1 \
   >"$bootstrap_output" 2>"$bootstrap_error"; then
   fail "bootstrap rejected the verified pause-first active transition: $(cat "$bootstrap_error")"
 fi
@@ -2323,7 +2983,10 @@ mapfile -t active_events <"$active_event_log"
 auth_checks=0
 first_ca_index=-1
 active_apply_index=-1
-first_apply_index=-1
+first_issuer_apply_index=-1
+first_full_apply_index=-1
+first_issuer_index=-1
+first_rollout_index=-1
 for index in "${!active_events[@]}"; do
   case "${active_events[$index]}" in
     auth-check)
@@ -2335,18 +2998,145 @@ for index in "${!active_events[@]}"; do
       fi
       ;;
     apply:*)
-      if (( first_apply_index < 0 )); then
-        first_apply_index="$index"
+      if [[ "${active_events[$index]}" == "apply:issuer" ]]; then
+        if (( first_issuer_apply_index < 0 )); then
+          first_issuer_apply_index="$index"
+        fi
+      elif (( first_full_apply_index < 0 )); then
+        first_full_apply_index="$index"
       fi
       [[ "${active_events[$index]}" == "apply:active" ]] && active_apply_index="$index"
+      ;;
+    issuer-read)
+      if (( first_issuer_index < 0 )); then
+        first_issuer_index="$index"
+      fi
+      ;;
+    rollout)
+      if (( first_rollout_index < 0 )); then
+        first_rollout_index="$index"
+      fi
       ;;
   esac
 done
 [[ "$auth_checks" -eq 14 ]] || fail "active bootstrap did not run all authorization probes"
-(( first_ca_index >= 0 && first_ca_index < first_apply_index )) || \
+(( first_ca_index >= 0 && first_ca_index < first_issuer_apply_index )) || \
   fail "active bootstrap did not verify the gRPC CA before its first cluster write"
+(( first_issuer_apply_index >= 0 && first_issuer_apply_index < first_issuer_index &&
+  first_issuer_index < first_full_apply_index && first_full_apply_index < first_rollout_index )) || \
+  fail "active bootstrap did not wait for the CA ClusterIssuer before the full controller apply"
 (( active_apply_index > first_ca_index )) || \
   fail "active bootstrap applied active mode before verifying the gRPC CA"
+issuer_missing_events="$bootstrap_test_dir/issuer-missing-events"
+if FAKE_EVENT_LOG="$issuer_missing_events" FAKE_MISSING_CA_ISSUER=1 \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active \
+  "${network_policy_args[@]}" --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted a rendered manifest without firemud-ca-issuer"
+fi
+require_literal "$bootstrap_error" "expected exactly one ClusterIssuer/firemud-ca-issuer in the rendered manifest"
+grep -Fxq guard-policy "$issuer_missing_events" || fail "bootstrap did not apply the namespace guard policy before missing issuer rejection"
+grep -Fxq guard-binding "$issuer_missing_events" || fail "bootstrap did not apply the namespace guard binding before missing issuer rejection"
+if grep -Eq '^(apply:issuer|apply:paused|apply:active|rollout)$' "$issuer_missing_events"; then
+  fail "bootstrap wrote the issuer or full manifest after missing issuer rejection"
+fi
+custom_namespace_events="$bootstrap_test_dir/custom-cert-manager-namespace-events"
+if ! FAKE_EVENT_LOG="$custom_namespace_events" FAKE_CERT_MANAGER_NAMESPACE=firemud-cert-manager \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --cert-manager-namespace firemud-cert-manager \
+  --wait-seconds 1 >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap rejected a valid non-default cert-manager namespace: $(cat "$bootstrap_error")"
+fi
+grep -Fxq ca-copy-read "$custom_namespace_events" || fail "bootstrap did not read the configured non-default cert-manager namespace"
+invalid_namespace_too_long="$(python3 -c 'print("n" * 64)')"
+for invalid_cert_manager_namespace in Cert-manager firemud_cert_manager firemud- "$invalid_namespace_too_long"; do
+  invalid_namespace_events="$bootstrap_test_dir/invalid-cert-manager-namespace-${invalid_cert_manager_namespace//[^A-Za-z0-9]/-}-events"
+  if FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 FAKE_EVENT_LOG="$invalid_namespace_events" \
+    PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+    --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" \
+    --cert-manager-namespace "$invalid_cert_manager_namespace" --wait-seconds 1 \
+    >"$bootstrap_output" 2>"$bootstrap_error"; then
+    fail "bootstrap accepted invalid cert-manager namespace $invalid_cert_manager_namespace"
+  fi
+  require_literal "$bootstrap_error" "--cert-manager-namespace must be a lowercase Kubernetes DNS namespace label of at most 63 characters"
+  [[ ! -s "$invalid_namespace_events" ]] || fail "bootstrap contacted Kubernetes for invalid cert-manager namespace $invalid_cert_manager_namespace"
+done
+copy_failure_modes=(missing wrong-type wrong-keys)
+for copy_failure_mode in "${copy_failure_modes[@]}"; do
+  copy_failure_events="$bootstrap_test_dir/ca-copy-${copy_failure_mode}-events"
+  if FAKE_EVENT_LOG="$copy_failure_events" FAKE_CA_COPY_MODE="$copy_failure_mode" \
+    FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+    PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+    --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active \
+    "${network_policy_args[@]}" --wait-seconds 1 \
+    >"$bootstrap_output" 2>"$bootstrap_error"; then
+    fail "bootstrap accepted ${copy_failure_mode} cert-manager gRPC CA copy"
+  fi
+  case "$copy_failure_mode" in
+    missing)
+      require_literal "$bootstrap_error" "missing cert-manager cert-manager/firemud-grpc-ca prerequisite"
+      ;;
+    wrong-type)
+      require_literal "$bootstrap_error" "cert-manager cert-manager/firemud-grpc-ca must be a kubernetes.io/tls Secret"
+      ;;
+    wrong-keys)
+      require_literal "$bootstrap_error" "must contain exactly the tls.crt and tls.key data keys"
+      ;;
+  esac
+  grep -Fxq ca-read "$copy_failure_events" || fail "bootstrap did not read the control-plane CA for ${copy_failure_mode}"
+  grep -Fxq ca-copy-read "$copy_failure_events" || fail "bootstrap did not read the cert-manager CA copy for ${copy_failure_mode}"
+  if grep -Eq '^(guard-policy|guard-binding|apply:.*|rollout)$' "$copy_failure_events"; then
+    fail "bootstrap wrote cluster state after rejecting ${copy_failure_mode} cert-manager gRPC CA copy"
+  fi
+done
+copy_mismatch_events="$bootstrap_test_dir/ca-copy-mismatch-events"
+if FAKE_EVENT_LOG="$copy_mismatch_events" FAKE_CA_COPY_MODE=mismatch-cert \
+  FAKE_CA_COPY_CERT="$bootstrap_ec_ca_cert" \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active \
+  "${network_policy_args[@]}" --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted a mismatched cert-manager gRPC CA certificate copy"
+fi
+require_literal "$bootstrap_error" "tls.crt does not match firemud-system/firemud-grpc-ca ca.crt"
+if grep -Eq '^(guard-policy|guard-binding|apply:.*|rollout)$' "$copy_mismatch_events"; then
+  fail "bootstrap wrote cluster state after rejecting a mismatched cert-manager gRPC CA certificate copy"
+fi
+key_copy_mismatch_events="$bootstrap_test_dir/ca-key-copy-mismatch-events"
+if FAKE_EVENT_LOG="$key_copy_mismatch_events" FAKE_CA_COPY_MODE=mismatch-key \
+  FAKE_CA_COPY_KEY="$bootstrap_mismatched_ca_key" \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active \
+  "${network_policy_args[@]}" --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted a mismatched cert-manager gRPC CA private-key copy"
+fi
+require_literal "$bootstrap_error" "tls.key does not match firemud-system/firemud-grpc-ca ca.key"
+if grep -Eq '^(guard-policy|guard-binding|apply:.*|rollout)$' "$key_copy_mismatch_events"; then
+  fail "bootstrap wrote cluster state after rejecting a mismatched cert-manager gRPC CA private-key copy"
+fi
+issuer_unready_events="$bootstrap_test_dir/issuer-unready-events"
+if FAKE_EVENT_LOG="$issuer_unready_events" FAKE_ISSUER_READY=False \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active \
+  "${network_policy_args[@]}" --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap claimed controller activation while the CA ClusterIssuer was unready"
+fi
+require_literal "$bootstrap_error" "ClusterIssuer/firemud-ca-issuer did not become Ready=True"
+grep -Fxq guard-policy "$issuer_unready_events" || fail "bootstrap did not apply the namespace guard policy before issuer wait"
+grep -Fxq guard-binding "$issuer_unready_events" || fail "bootstrap did not apply the namespace guard binding before issuer wait"
+grep -Fxq apply:issuer "$issuer_unready_events" || fail "bootstrap did not apply the rendered CA ClusterIssuer before issuer wait"
+grep -Fxq issuer-read "$issuer_unready_events" || fail "bootstrap did not wait for the CA ClusterIssuer"
+if grep -Eq '^(apply:paused|apply:active|rollout)$' "$issuer_unready_events"; then
+  fail "bootstrap applied the full controller manifest or rolled out before the CA ClusterIssuer became Ready"
+fi
 unsupported_openssl_dir="$bootstrap_test_dir/unsupported-openssl"
 mkdir -p "$unsupported_openssl_dir"
 cat >"$unsupported_openssl_dir/openssl" <<'SH'
@@ -2364,7 +3154,8 @@ unsupported_openssl_event_log="$bootstrap_test_dir/unsupported-openssl-events"
 if FAKE_EVENT_LOG="$unsupported_openssl_event_log" \
   FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
   PATH="$unsupported_openssl_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
-  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active --wait-seconds 1 \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active \
+  "${network_policy_args[@]}" --wait-seconds 1 \
   >"$bootstrap_output" 2>"$bootstrap_error"; then
   fail "bootstrap accepted openssl verify without -no-CAstore support"
 fi
@@ -2382,7 +3173,7 @@ for activation_mode in paused observe active; do
     FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
     PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
     --grpc-trust-anchor-sha256 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' \
-    --activation-mode "$activation_mode" --wait-seconds 1 \
+    --activation-mode "$activation_mode" "${network_policy_args[@]}" --wait-seconds 1 \
     >"$bootstrap_output" 2>"$bootstrap_error"; then
     fail "bootstrap accepted a mismatched gRPC CA fingerprint in ${activation_mode} mode"
   fi
@@ -2401,7 +3192,8 @@ if FAKE_EVENT_LOG="$expired_event_log" \
   FAKE_CA_CERT="$bootstrap_expired_ca_cert" FAKE_CA_KEY="$bootstrap_expired_ca_key" \
   FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
   PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
-  --grpc-trust-anchor-sha256 "$expired_fingerprint" --activation-mode active --wait-seconds 1 \
+  --grpc-trust-anchor-sha256 "$expired_fingerprint" --activation-mode active \
+  "${network_policy_args[@]}" --wait-seconds 1 \
   >"$bootstrap_output" 2>"$bootstrap_error"; then
   fail "bootstrap accepted an expired gRPC CA certificate"
 fi
@@ -2419,7 +3211,8 @@ if FAKE_EVENT_LOG="$non_ca_event_log" \
   FAKE_CA_CERT="$bootstrap_non_ca_cert" FAKE_CA_KEY="$bootstrap_non_ca_key" \
   FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
   PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
-  --grpc-trust-anchor-sha256 "$non_ca_fingerprint" --activation-mode active --wait-seconds 1 \
+  --grpc-trust-anchor-sha256 "$non_ca_fingerprint" --activation-mode active \
+  "${network_policy_args[@]}" --wait-seconds 1 \
   >"$bootstrap_output" 2>"$bootstrap_error"; then
   fail "bootstrap accepted a certificate without CA Basic Constraints"
 fi
@@ -2439,7 +3232,7 @@ if FAKE_EVENT_LOG="$no_key_cert_sign_event_log" \
   FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
   PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
   --grpc-trust-anchor-sha256 "$no_key_cert_sign_fingerprint" \
-  --activation-mode active --wait-seconds 1 \
+  --activation-mode active "${network_policy_args[@]}" --wait-seconds 1 \
   >"$bootstrap_output" 2>"$bootstrap_error"; then
   fail "bootstrap accepted a gRPC CA certificate without keyCertSign"
 fi
@@ -2452,7 +3245,8 @@ if FAKE_EVENT_LOG="$key_list_error_event_log" FAKE_CA_KEY_LIST_ERROR=1 \
   FAKE_CA_CERT="$bootstrap_ca_cert" FAKE_CA_KEY="$bootstrap_ca_key" \
   FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
   PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
-  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active --wait-seconds 1 \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active \
+  "${network_policy_args[@]}" --wait-seconds 1 \
   >"$bootstrap_output" 2>"$bootstrap_error"; then
   fail "bootstrap accepted a failed gRPC CA data-key listing"
 fi
@@ -2465,7 +3259,8 @@ if FAKE_EVENT_LOG="$key_mismatch_event_log" \
   FAKE_CA_CERT="$bootstrap_ca_cert" FAKE_CA_KEY="$bootstrap_mismatched_ca_key" \
   FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
   PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
-  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active --wait-seconds 1 \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active \
+  "${network_policy_args[@]}" --wait-seconds 1 \
   >"$bootstrap_output" 2>"$bootstrap_error"; then
   fail "bootstrap accepted a gRPC CA certificate and private-key mismatch"
 fi
@@ -2483,7 +3278,8 @@ if FAKE_EVENT_LOG="$ec_event_log" \
   FAKE_CA_CERT="$bootstrap_ec_ca_cert" FAKE_CA_KEY="$bootstrap_ec_ca_key" \
   FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
   PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
-  --grpc-trust-anchor-sha256 "$ec_fingerprint" --activation-mode active --wait-seconds 1 \
+  --grpc-trust-anchor-sha256 "$ec_fingerprint" --activation-mode active \
+  "${network_policy_args[@]}" --wait-seconds 1 \
   >"$bootstrap_output" 2>"$bootstrap_error"; then
   fail "bootstrap accepted an EC gRPC CA"
 fi
@@ -2496,7 +3292,8 @@ if FAKE_EVENT_LOG="$ec_key_event_log" \
   FAKE_CA_CERT="$bootstrap_ca_cert" FAKE_CA_KEY="$bootstrap_ec_ca_key" \
   FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
   PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
-  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active --wait-seconds 1 \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active \
+  "${network_policy_args[@]}" --wait-seconds 1 \
   >"$bootstrap_output" 2>"$bootstrap_error"; then
   fail "bootstrap accepted an EC gRPC CA private key"
 fi
@@ -2509,7 +3306,8 @@ if FAKE_EVENT_LOG="$pkcs1_event_log" \
   FAKE_CA_CERT="$bootstrap_ca_cert" FAKE_CA_KEY="$bootstrap_pkcs1_ca_key" \
   FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
   PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
-  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active --wait-seconds 1 \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active \
+  "${network_policy_args[@]}" --wait-seconds 1 \
   >"$bootstrap_output" 2>"$bootstrap_error"; then
   fail "bootstrap accepted a non-PKCS8 gRPC CA private key"
 fi
@@ -2522,7 +3320,8 @@ if FAKE_EVENT_LOG="$encrypted_key_event_log" \
   FAKE_CA_CERT="$bootstrap_ca_cert" FAKE_CA_KEY="$bootstrap_encrypted_ca_key" \
   FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
   PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
-  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active --wait-seconds 1 \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active \
+  "${network_policy_args[@]}" --wait-seconds 1 \
   >"$bootstrap_output" 2>"$bootstrap_error"; then
   fail "bootstrap accepted an encrypted PKCS8 gRPC CA private key"
 fi

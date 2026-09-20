@@ -5,9 +5,12 @@ mode=deploy
 if [[ "${1:-}" == --cleanup ]]; then
   mode=cleanup
   shift
+elif [[ "${1:-}" == --open-cleanup ]]; then
+  mode=open-cleanup
+  shift
 fi
 if [[ $# -ne 2 ]]; then
-  echo "usage: $0 [--cleanup] <pr_number> <expected_head_sha>" >&2
+  echo "usage: $0 [--cleanup|--open-cleanup] <pr_number> <expected_head_sha>" >&2
   exit 1
 fi
 
@@ -30,7 +33,7 @@ if [[ -z "${GITHUB_REPOSITORY:-}" || -z "${GH_TOKEN:-}" ]]; then
 fi
 
 refuse_preview() {
-  if [[ "$mode" == cleanup ]]; then
+  if [[ "$mode" != deploy ]]; then
     echo "::error::Refusing preview cleanup for PR #${pr_number}: $1"
     echo "Refusing preview cleanup for PR #${pr_number}: $1" >&2
   else

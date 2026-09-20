@@ -3,7 +3,8 @@ name: Preview Namespace Janitor
 on:
   schedule:
     - cron: "17 3 * * *"
-  workflow_dispatch:
+  repository_dispatch:
+    types: [preview-janitor]
 
 permissions:
   contents: read
@@ -18,7 +19,7 @@ jobs:
       - preview
       - linux
       - x64
-    environment: pr-preview
+    environment: trusted-hosted-cluster
     concurrency:
       group: preview-allocation-lifecycle
       cancel-in-progress: false
@@ -26,6 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
       - name: Set up canonical GitHub CLI
@@ -45,18 +47,17 @@ jobs:
 
       - name: Write preview kubeconfig
         env:
-          PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
+          PREVIEW_KUBECONFIG: ${{ secrets.TRUSTED_HOSTED_PREVIEW_KUBECONFIG }}
           PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
         run: |
           KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"
-          bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
           echo "PREVIEW_RUNTIME_KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Check hosted identity requester credentials
         id: requester-credentials
         if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' }}
         env:
-          REQUESTER_KUBECONFIG: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
+          REQUESTER_KUBECONFIG: ${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
         run: |
           set -euo pipefail
           if [[ -z "$REQUESTER_KUBECONFIG" ]]; then
@@ -70,7 +71,7 @@ jobs:
         if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available == 'true' }}
         uses: ./.github/actions/write-kubeconfig
         with:
-          content: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
+          content: ${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
           path: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
           export-to-github-env: 'false'
 
@@ -112,3 +113,7 @@ jobs:
       - name: Remove hosted identity requester kubeconfig
         if: ${{ always() }}
         run: rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"
+
+      - name: Remove preview runtime kubeconfig
+        if: ${{ always() }}
+        run: rm -f -- "${PREVIEW_RUNTIME_KUBECONFIG:-$RUNNER_TEMP/preview-kubeconfig.yaml}"

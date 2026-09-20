@@ -884,8 +884,8 @@ metadata:
   name: hobby-tcp-proxy-bridge
 type: Opaque
 stringData:
-  client.crt: bridge-client
-  client.key: bridge-key
+  tls.crt: bridge-client
+  tls.key: bridge-key
   ca.crt: bridge-ca
 ---
 apiVersion: v1
@@ -926,11 +926,11 @@ spec:
             - name: GATEWAY_WS_URL
               value: wss://spring-cloud-gateway-mtls.firemud.svc.cluster.local/ws/game
             - name: FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH
-              value: /tls/client.crt
+              value: /gateway-ws-client-tls/tls.crt
             - name: FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH
-              value: /tls/client.key
+              value: /gateway-ws-client-tls/tls.key
             - name: FIREMUD_GATEWAY_WS_CA_CERT_PATH
-              value: /tls/ca.crt
+              value: /gateway-ws-client-tls/ca.crt
           envFrom:
             - secretRef:
                 name: postgres-credentials
@@ -938,7 +938,7 @@ spec:
                 name: firemud-config
           volumeMounts:
             - name: hobby-tcp-proxy-bridge
-              mountPath: /tls
+              mountPath: /gateway-ws-client-tls
               readOnly: true
             - name: grpc-tls
               mountPath: /grpc-tls
@@ -951,10 +951,10 @@ spec:
           secret:
             secretName: hobby-tcp-proxy-bridge
             items:
-              - key: client.crt
-                path: client.crt
-              - key: client.key
-                path: client.key
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
               - key: ca.crt
                 path: ca.crt
         - name: grpc-tls
@@ -3556,13 +3556,13 @@ account_container = next(
 account_container.setdefault("env", []).extend(
     [
         {"name": "GATEWAY_WS_URL", "value": "wss://spring-cloud-gateway-mtls.firemud.svc.cluster.local:443/ws/game"},
-        {"name": "FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH", "value": "/tls/client.crt"},
-        {"name": "FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH", "value": "/tls/client.key"},
-        {"name": "FIREMUD_GATEWAY_WS_CA_CERT_PATH", "value": "/tls/ca.crt"},
+        {"name": "FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH", "value": "/gateway-ws-client-tls/tls.crt"},
+        {"name": "FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH", "value": "/gateway-ws-client-tls/tls.key"},
+        {"name": "FIREMUD_GATEWAY_WS_CA_CERT_PATH", "value": "/gateway-ws-client-tls/ca.crt"},
     ]
 )
 account_container.setdefault("volumeMounts", []).append(
-    {"name": "hobby-tcp-proxy-bridge", "mountPath": "/tls", "readOnly": True}
+    {"name": "hobby-tcp-proxy-bridge", "mountPath": "/gateway-ws-client-tls", "readOnly": True}
 )
 account_deployment["spec"]["template"]["spec"].setdefault("volumes", []).append(
     {"name": "hobby-tcp-proxy-bridge", "secret": {"secretName": "hobby-tcp-proxy-bridge"}}
@@ -3586,9 +3586,9 @@ def set_bridge_env(documents, name, value):
 
 
 for path_name, expected_path in (
-    ("FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH", "/tls/client.crt"),
-    ("FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH", "/tls/client.key"),
-    ("FIREMUD_GATEWAY_WS_CA_CERT_PATH", "/tls/ca.crt"),
+    ("FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH", "/gateway-ws-client-tls/tls.crt"),
+    ("FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH", "/gateway-ws-client-tls/tls.key"),
+    ("FIREMUD_GATEWAY_WS_CA_CERT_PATH", "/gateway-ws-client-tls/ca.crt"),
 ):
     bridge_path_documents = copy.deepcopy(rendered_documents)
     set_bridge_url(bridge_path_documents, canonical_bridge_url)
@@ -3613,7 +3613,7 @@ bridge_mount_container["volumeMounts"] = [
 _, bridge_mount_issues = module.validate_gateway_ws_values(
     bridge_mount_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
 )
-if not any("dedicated read-only Secret-backed /tls mount" in issue for issue in bridge_mount_issues):
+if not any("dedicated read-only Secret-backed /gateway-ws-client-tls mount" in issue for issue in bridge_mount_issues):
     raise SystemExit(f"missing bridge client mount was accepted: {bridge_mount_issues}")
 
 bridge_readonly_documents = copy.deepcopy(rendered_documents)
@@ -3630,7 +3630,7 @@ next(
 _, bridge_readonly_issues = module.validate_gateway_ws_values(
     bridge_readonly_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
 )
-if not any("dedicated read-only Secret-backed /tls mount" in issue for issue in bridge_readonly_issues):
+if not any("dedicated read-only Secret-backed /gateway-ws-client-tls mount" in issue for issue in bridge_readonly_issues):
     raise SystemExit(f"writable bridge client mount was accepted: {bridge_readonly_issues}")
 
 bridge_secret_documents = copy.deepcopy(rendered_documents)
@@ -3661,7 +3661,7 @@ bridge_subpath_container = next(
 )
 next(
     mount for mount in bridge_subpath_container["volumeMounts"] if mount.get("name") == "hobby-tcp-proxy-bridge"
-)["subPath"] = "client.crt"
+)["subPath"] = "tls.crt"
 _, bridge_subpath_issues = module.validate_gateway_ws_values(
     bridge_subpath_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
 )
@@ -3676,7 +3676,7 @@ bridge_items_volume = next(
     for volume in document["spec"]["template"]["spec"]["volumes"]
     if volume.get("name") == "hobby-tcp-proxy-bridge"
 )
-bridge_items_volume["secret"]["items"] = [{"key": "client.crt"}]
+bridge_items_volume["secret"]["items"] = [{"key": "tls.crt"}]
 _, bridge_items_issues = module.validate_gateway_ws_values(
     bridge_items_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
 )
@@ -3689,8 +3689,8 @@ for case_name, mutate in (
         lambda volume: volume["secret"].__setitem__(
             "items",
             [
-                {"key": "client.crt", "path": "client.crt"},
-                {"key": "client.key", "path": "client.key"},
+                {"key": "tls.crt", "path": "tls.crt"},
+                {"key": "tls.key", "path": "tls.key"},
                 {"key": "ca.crt", "path": "ca.crt"},
                 {"key": "extra", "path": "extra"},
             ],
@@ -3709,8 +3709,8 @@ for case_name, mutate in (
         lambda volume: volume["secret"].__setitem__(
             "items",
             [
-                {"key": ["client.crt"], "path": "client.crt"},
-                {"key": "client.key", "path": "client.key"},
+                {"key": ["tls.crt"], "path": "tls.crt"},
+                {"key": "tls.key", "path": "tls.key"},
                 {"key": "ca.crt", "path": "ca.crt"},
             ],
         ),
@@ -3743,7 +3743,7 @@ next(
 _, bridge_identity_issues = module.validate_gateway_ws_values(
     bridge_identity_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
 )
-if not any("dedicated read-only Secret-backed /tls mount" in issue for issue in bridge_identity_issues):
+if not any("dedicated read-only Secret-backed /gateway-ws-client-tls mount" in issue for issue in bridge_identity_issues):
     raise SystemExit(f"bridge client reused the gRPC Secret identity without failing: {bridge_identity_issues}")
 
 bridge_same_identity_documents = copy.deepcopy(rendered_documents)
@@ -3760,7 +3760,7 @@ next(
 _, bridge_same_identity_issues = module.validate_gateway_ws_values(
     bridge_same_identity_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
 )
-if not any("dedicated read-only Secret-backed /tls mount" in issue for issue in bridge_same_identity_issues):
+if not any("dedicated read-only Secret-backed /gateway-ws-client-tls mount" in issue for issue in bridge_same_identity_issues):
     raise SystemExit(f"bridge client reused the gRPC Secret identity without failing: {bridge_same_identity_issues}")
 
 bridge_missing_grpc_path_documents = copy.deepcopy(rendered_documents)
@@ -9208,17 +9208,17 @@ spec:
             - name: GATEWAY_WS_URL
               value: wss://spring-cloud-gateway-mtls.__NAMESPACE__.svc.cluster.local/ws/game
             - name: FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH
-              value: /tls/client.crt
+              value: /gateway-ws-client-tls/tls.crt
             - name: FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH
-              value: /tls/client.key
+              value: /gateway-ws-client-tls/tls.key
             - name: FIREMUD_GATEWAY_WS_CA_CERT_PATH
-              value: /tls/ca.crt
+              value: /gateway-ws-client-tls/ca.crt
             - name: FIREMUD_GRPC_CERT_CHAIN_PATH
-              value: /grpc-tls/client.crt
+              value: /tls/client.crt
             - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
-              value: /grpc-tls/client.key
+              value: /tls/client.key
             - name: FIREMUD_GRPC_CA_CERT_PATH
-              value: /grpc-tls/ca.crt
+              value: /tls/ca.crt
             - name: TCP_PROXY_TLS_ENABLED
               value: "true"
             - name: TCP_PROXY_TELNET_MODE
@@ -9228,24 +9228,24 @@ spec:
             - name: TCP_PROXY_TLS_KEY
               value: /telnet-tls/tls.key
           volumeMounts:
-            - name: bridge
-              mountPath: /tls
+            - name: gateway-ws-client-tls
+              mountPath: /gateway-ws-client-tls
               readOnly: true
             - name: grpc
-              mountPath: /grpc-tls
+              mountPath: /tls
               readOnly: true
             - name: telnet
               mountPath: /telnet-tls
               readOnly: true
       volumes:
-        - name: bridge
+        - name: gateway-ws-client-tls
           secret:
             secretName: __RELEASE__-tcp-proxy-bridge
             items:
-              - key: client.crt
-                path: client.crt
-              - key: client.key
-                path: client.key
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
               - key: ca.crt
                 path: ca.crt
         - name: grpc
@@ -9276,6 +9276,24 @@ def run_hosted(path, *extra_args):
         text=True,
         check=False,
     )
+
+
+private_documents = list(yaml.safe_load_all(render_path.read_text(encoding="utf-8")))
+private_service = next(
+    document
+    for document in private_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+private_service["spec"]["type"] = "ClusterIP"
+private_service["spec"]["ports"][0].pop("nodePort", None)
+private_service.get("metadata", {}).get("annotations", {}).pop(
+    "firemud.dev/allocated-telnet-port", None
+)
+private_render_path = tmp / "hosted-private-bridge-contract.yaml"
+private_render_path.write_text(
+    yaml.safe_dump_all(private_documents, sort_keys=False), encoding="utf-8"
+)
 
 
 malformed_invocation = subprocess.run(
@@ -9335,6 +9353,108 @@ if invalid_context.returncode == 0 or invalid_context.stderr.strip() != (
     )
 
 
+private_valid = run_hosted(private_render_path)
+if private_valid.returncode != 0:
+    raise SystemExit(
+        f"hosted-bridge accepted private bridge fixture failure: "
+        f"{private_valid.stderr}{private_valid.stdout}"
+    )
+private_valid_result = json.loads(private_valid.stdout)
+if (
+    private_valid_result.get("status") != "pass"
+    or "Private Gateway bridge TLS and certificate identity alignment is valid"
+    not in private_valid_result.get("message", "")
+):
+    raise SystemExit(
+        f"hosted-bridge did not prove the private bridge without public Telnet: "
+        f"{private_valid_result}"
+    )
+
+private_surplus_port_documents = copy.deepcopy(private_documents)
+private_surplus_port_service = next(
+    document
+    for document in private_surplus_port_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+private_surplus_port_service["spec"]["ports"].append(
+    {
+        "name": "metrics",
+        "port": 9090,
+        "targetPort": 9090,
+        "protocol": "TCP",
+    }
+)
+private_surplus_port_issues = module.validate_hosted_private_bridge_values(
+    private_surplus_port_documents,
+    required_identity_mode="hosted-controller",
+    target_namespace=namespace,
+)
+if not any(
+    "requires exactly one private listener" in issue
+    for issue in private_surplus_port_issues
+):
+    raise SystemExit(
+        "hosted-bridge accepted a private Service with a surplus port: "
+        f"{private_surplus_port_issues}"
+    )
+
+private_wrong_client_documents = copy.deepcopy(private_documents)
+private_wrong_client_volume = next(
+    volume
+    for volume in next(
+        document
+        for document in private_wrong_client_documents
+        if document.get("kind") == "Deployment"
+        and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    )["spec"]["template"]["spec"]["volumes"]
+    if volume.get("name") == "gateway-ws-client-tls"
+)
+private_wrong_client_volume["secret"]["secretName"] = "wrong-private-bridge-secret"
+private_wrong_client_path = tmp / "hosted-private-bridge-wrong-client.yaml"
+private_wrong_client_path.write_text(
+    yaml.safe_dump_all(private_wrong_client_documents, sort_keys=False),
+    encoding="utf-8",
+)
+private_wrong_client = run_hosted(private_wrong_client_path)
+if private_wrong_client.returncode == 0:
+    raise SystemExit("hosted-bridge accepted a private bridge mount using the wrong client Secret")
+private_wrong_client_result = json.loads(private_wrong_client.stdout)
+if (
+    private_wrong_client_result.get("status") != "fail"
+    or "Gateway WebSocket bridge mount must reference Secret"
+    not in private_wrong_client_result.get("message", "")
+):
+    raise SystemExit(
+        "hosted-bridge private wrong-client result was not explicit: "
+        f"{private_wrong_client_result}"
+    )
+
+private_wrong_identity_documents = copy.deepcopy(private_documents)
+private_wrong_identity_deployment = next(
+    document
+    for document in private_wrong_identity_documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+private_wrong_identity_deployment["metadata"]["labels"][
+    "firemud.dev/certificate-identity-mode"
+] = "standalone"
+private_wrong_identity_issues = module.validate_hosted_private_bridge_values(
+    private_wrong_identity_documents,
+    required_identity_mode="hosted-controller",
+    target_namespace=namespace,
+)
+if not any(
+    "certificate identity mode labels must match" in issue
+    for issue in private_wrong_identity_issues
+):
+    raise SystemExit(
+        "hosted-bridge accepted a private bridge identity-mode mismatch: "
+        f"{private_wrong_identity_issues}"
+    )
+
+
 valid = run_hosted(
     render_path,
     "--expected-hosted-telnet-node-port",
@@ -9346,7 +9466,7 @@ valid_result = json.loads(valid.stdout)
 if valid_result != {
     "category": "apply-blocking",
     "message": (
-        "Gateway bridge and direct Telnet TLS alignment is valid; "
+        "Private Gateway bridge and public direct Telnet TLS alignment is valid; "
         "ci-static did not check controller-projected Secret readiness"
     ),
     "policyId": "PREFLIGHT-BRIDGE-001",
@@ -9355,10 +9475,50 @@ if valid_result != {
 }:
     raise SystemExit(f"hosted-bridge did not emit its canonical pass result: {valid_result}")
 if module.hosted_bridge_success_message("operator") != (
-    "Gateway bridge and direct Telnet TLS alignment is valid; "
+    "Private Gateway bridge TLS and certificate identity alignment is valid; "
     "controller-projected Secret readiness is confirmed"
 ):
     raise SystemExit("hosted-bridge operator success does not confirm projection readiness")
+
+public_surplus_port_documents = list(
+    yaml.safe_load_all(render_path.read_text(encoding="utf-8"))
+)
+public_surplus_port_service = next(
+    document
+    for document in public_surplus_port_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+public_surplus_port_service["spec"]["ports"].append(
+    {
+        "name": "metrics",
+        "port": 9090,
+        "targetPort": 9090,
+        "protocol": "TCP",
+    }
+)
+public_surplus_port_path = tmp / "hosted-bridge-contract-public-surplus-port.yaml"
+public_surplus_port_path.write_text(
+    yaml.safe_dump_all(public_surplus_port_documents, sort_keys=False),
+    encoding="utf-8",
+)
+public_surplus_port = run_hosted(
+    public_surplus_port_path,
+    "--expected-hosted-telnet-node-port",
+    str(node_port),
+)
+if public_surplus_port.returncode == 0:
+    raise SystemExit("hosted-bridge accepted a public Service with a surplus non-NodePort port")
+public_surplus_port_result = json.loads(public_surplus_port.stdout)
+if (
+    public_surplus_port_result.get("status") != "fail"
+    or "requires exactly one private listener"
+    not in public_surplus_port_result.get("message", "")
+):
+    raise SystemExit(
+        "hosted-bridge public surplus-port result was not explicit: "
+        f"{public_surplus_port_result}"
+    )
 
 duplicate_mount_documents = list(
     yaml.safe_load_all(render_path.read_text(encoding="utf-8"))
@@ -9664,7 +9824,11 @@ out_of_range_path = tmp / "hosted-bridge-contract-out-of-range.yaml"
 out_of_range_path.write_text(
     yaml.safe_dump_all(out_of_range_documents, sort_keys=False), encoding="utf-8"
 )
-out_of_range = run_hosted(out_of_range_path)
+out_of_range = run_hosted(
+    out_of_range_path,
+    "--expected-hosted-telnet-node-port",
+    str(node_port),
+)
 if out_of_range.returncode == 0:
     raise SystemExit("hosted-bridge accepted an out-of-range allocated Telnet port")
 out_of_range_result = json.loads(out_of_range.stdout)

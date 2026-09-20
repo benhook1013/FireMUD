@@ -34,6 +34,9 @@ inputs:
   preview-hostname:
     description: Exact preview hostname bound to the source pull request
     required: true
+  certificate-identity-mode:
+    description: Exact certificate identity mode selected by the trusted target validator
+    required: true
 runs:
   using: composite
   steps:
@@ -62,10 +65,12 @@ runs:
         MERGE_SHA: ${{ inputs['merge-sha'] }}
         IMAGE_TAG: ${{ inputs['image-tag'] }}
         PREVIEW_HOSTNAME: ${{ inputs['preview-hostname'] }}
+        CERTIFICATE_IDENTITY_MODE: ${{ inputs['certificate-identity-mode'] }}
       run: |
         set -euo pipefail
         python3 "$GITHUB_ACTION_PATH/../../../dev-tools/hosted/preview/validate-preview-artifact.py" \
           "$ARTIFACT_DIRECTORY/preview-metadata.json" \
           "$ARTIFACT_DIRECTORY/preview-rendered-sanitized.yaml" \
           "$SOURCE_REPOSITORY" "$SOURCE_RUN_ID" "$PR_NUMBER" "$BASE_SHA" \
-          "$HEAD_SHA" "$MERGE_SHA" "$IMAGE_TAG" "$PREVIEW_HOSTNAME"
+          "$HEAD_SHA" "$MERGE_SHA" "$IMAGE_TAG" "$PREVIEW_HOSTNAME" \
+          "$CERTIFICATE_IDENTITY_MODE"

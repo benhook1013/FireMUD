@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 resolver="$ROOT_DIR/dev-tools/hosted/preview/resolve-preview-image-tag.sh"
 base_image_waiter="$ROOT_DIR/dev-tools/hosted/preview/wait-for-base-images.sh"
 preview_workflow="$ROOT_DIR/.github/workflows/preview.yml"
+trusted_workflow="$ROOT_DIR/.github/workflows/hosted-identity-request.yml"
 
 command -v python3 >/dev/null 2>&1 || {
   echo "python3 with PyYAML is required for the preview image-tag contract." >&2
@@ -26,49 +27,52 @@ import yaml
 workflow_path = Path(sys.argv[1])
 workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8")) or {}
 expected_condition = (
-    "steps.effective-image-tag.outputs.image_tag == "
-    "needs.preview-plan.outputs.base_sha"
+    "needs.validate-target.outputs.image_tag == "
+    "needs.validate-target.outputs.base_sha"
 )
 expected_waiter = (
-    'bash ./dev-tools/hosted/preview/wait-for-base-images.sh '
-    '"${{ steps.effective-image-tag.outputs.image_tag }}"'
+    'bash ./dev-tools/hosted/preview/wait-for-base-images.sh'
 )
 matches = []
 for job_id, job in workflow.get("jobs", {}).items():
     if not isinstance(job, dict):
         continue
     for index, step in enumerate(job.get("steps", [])):
-        if isinstance(step, dict) and step.get("name") == "Reuse immutable base runtime images":
+        if isinstance(step, dict) and step.get("name") == "Wait for immutable base runtime images":
             matches.append((job_id, index, step, job.get("steps", [])))
 
 if len(matches) != 1:
     raise SystemExit(
-        "preview workflow must contain exactly one Reuse immutable base runtime images step"
+        "trusted workflow must contain exactly one Wait for immutable base runtime images step"
     )
 
 job_id, index, step, steps = matches[0]
 condition = step.get("if")
 if not isinstance(condition, str) or expected_condition not in condition:
     raise SystemExit(
-        "Reuse immutable base runtime images must be guarded by the exact base-SHA equality"
+        "Wait for immutable base runtime images must be guarded by the exact base-SHA equality"
     )
 
 run = step.get("run")
-if not isinstance(run, str) or expected_waiter not in run:
+if (
+    not isinstance(run, str)
+    or expected_waiter not in run
+    or '"${{ needs.validate-target.outputs.base_sha }}"' not in run
+):
     raise SystemExit(
-        "Reuse immutable base runtime images must invoke wait-for-base-images.sh"
+        "Wait for immutable base runtime images must invoke wait-for-base-images.sh"
     )
 
 required_run_fragments = (
-    'DOCKER_CONFIG="$(mktemp -d)"',
+    'docker_config="$(mktemp -d -- "$RUNNER_TEMP/preview-base-docker-config.XXXXXX")"',
     "export DOCKER_CONFIG",
     "trap cleanup_docker_config EXIT",
-    'rm -rf -- "$DOCKER_CONFIG"',
+    'rm -rf -- "$docker_config"',
 )
 missing_fragments = [fragment for fragment in required_run_fragments if fragment not in run]
 if missing_fragments:
     raise SystemExit(
-        "Reuse immutable base runtime images must use a fresh isolated Docker config "
+        "Wait for immutable base runtime images must use a fresh isolated Docker config "
         f"with guarded cleanup; missing {missing_fragments!r}"
     )
 
@@ -84,7 +88,7 @@ for preceding_step in steps[:index]:
         and login_inputs.get("registry") == "ghcr.io"
     ):
         raise SystemExit(
-            "no GHCR login credential may precede Reuse immutable base runtime images"
+            "no GHCR login credential may precede Wait for immutable base runtime images"
         )
 PY
 }
@@ -98,11 +102,19 @@ PY
   exit 1
 }
 
-grep -Fq 'steps.effective-image-tag.outputs.image_tag != needs.preview-plan.outputs.base_sha' "$preview_workflow" || {
+grep -Fq 'needs.validate-target.outputs.image_tag != needs.validate-target.outputs.base_sha' "$trusted_workflow" || {
   echo "preview must wait for a runtime-image workflow when it selects a PR image" >&2
   exit 1
 }
-assert_base_image_reuse_contract "$preview_workflow"
+grep -Fq 'resolve-preview-image-tag.sh' "$preview_workflow" || {
+  echo "credential-free preview source must render the resolved image tag" >&2
+  exit 1
+}
+grep -Fq 'resolve-preview-image-tag.sh' "$trusted_workflow" || {
+  echo "trusted lifecycle must independently resolve the image tag" >&2
+  exit 1
+}
+assert_base_image_reuse_contract "$trusted_workflow"
 grep -Fq '.github/workflows/docker-images.yml' "$base_image_waiter" || {
   echo "base-image waiter must derive services from docker-images.yml" >&2
   exit 1
@@ -116,7 +128,7 @@ fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$fixture_dir"' EXIT
 
 negative_base_reuse_workflow="$fixture_dir/negative-base-reuse.yml"
-cp "$preview_workflow" "$negative_base_reuse_workflow"
+cp "$trusted_workflow" "$negative_base_reuse_workflow"
 python3 - "$negative_base_reuse_workflow" <<'PY'
 import sys
 from pathlib import Path
@@ -126,16 +138,16 @@ import yaml
 workflow_path = Path(sys.argv[1])
 workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
 expected_condition = (
-    "steps.effective-image-tag.outputs.image_tag == "
-    "needs.preview-plan.outputs.base_sha"
+    "needs.validate-target.outputs.image_tag == "
+    "needs.validate-target.outputs.base_sha"
 )
 for job in workflow["jobs"].values():
     if not isinstance(job, dict):
         continue
     steps = job.get("steps", [])
     for index, step in enumerate(steps):
-        if isinstance(step, dict) and step.get("name") == "Reuse immutable base runtime images":
-            step["if"] = "${{ steps.effective-image-tag.outputs.image_tag != needs.preview-plan.outputs.base_sha }}"
+        if isinstance(step, dict) and step.get("name") == "Wait for immutable base runtime images":
+            step["if"] = "${{ needs.validate-target.outputs.image_tag != needs.validate-target.outputs.base_sha }}"
             steps.insert(
                 index,
                 {
@@ -150,7 +162,7 @@ for job in workflow["jobs"].values():
         continue
     break
 else:
-    raise SystemExit("negative fixture could not find the base-image reuse step")
+    raise SystemExit("negative fixture could not find the base-image wait step")
 PY
 if assert_base_image_reuse_contract "$negative_base_reuse_workflow" \
   >"$fixture_dir/negative-base-reuse-output" 2>&1; then
