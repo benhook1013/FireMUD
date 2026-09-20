@@ -303,6 +303,10 @@ jobs:
                 exit 1
                 ;;
             esac
+            if [[ "$exposure_mode" == private && "${{ steps.certificate-identity.outputs.mode }}" != hosted-controller ]]; then
+              echo "::error title=Unsupported private preview identity::Private bridge proof requires hosted-controller identity." >&2
+              exit 1
+            fi
           elif [[ "$ACTION" == destroy && "$EVENT_NAME" == workflow_run ]]; then
             [[ "$ARTIFACT_KIND" == intent ]] || emit_no_action \
               "Ignoring repository dispatch destroy without a canonical destroy intent artifact."
@@ -578,22 +582,8 @@ jobs:
             echo "::error title=Invalid preview runtime namespace::Expected pr-${PR_NUMBER}." >&2
             exit 1
           }
-          case "$EXPOSURE_MODE" in
-            private)
-              TELNET_PORT=0
-              ;;
-            public)
-              TELNET_PORT="$ALLOCATED_TELNET_PORT"
-              [[ "$TELNET_PORT" =~ ^32(00[0-9]|01[0-5])$ ]] || {
-                echo "::error title=Invalid allocated Telnet port::Expected a port from 32000 through 32015; actual value was ${TELNET_PORT:-empty}." >&2
-                exit 1
-              }
-              ;;
-            *)
-              echo "::error title=Invalid preview exposure mode::Expected private or public; actual ${EXPOSURE_MODE:-empty}." >&2
-              exit 1
-              ;;
-          esac
+          TELNET_PORT="$(bash ./dev-tools/hosted/preview/resolve-preview-telnet-port.sh \
+            "$EXPOSURE_MODE" "$ALLOCATED_TELNET_PORT")"
           [[ "$ALLOCATION_TIMESTAMP" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[^[:space:]]+Z$ ]] || {
             echo "::error title=Invalid allocation timestamp::Expected a UTC timestamp ending in Z without whitespace." >&2
             exit 1
@@ -664,14 +654,8 @@ jobs:
           ALLOCATED_TELNET_PORT: ${{ steps.allocate-telnet-port.outputs.port }}
         run: |
           set -euo pipefail
-          if [[ "$EXPOSURE_MODE" == private ]]; then
-            TELNET_PORT=0
-          elif [[ "$EXPOSURE_MODE" == public ]]; then
-            TELNET_PORT="$ALLOCATED_TELNET_PORT"
-          else
-            echo "::error title=Invalid preview exposure mode::Expected private or public; actual ${EXPOSURE_MODE:-empty}." >&2
-            exit 1
-          fi
+          TELNET_PORT="$(bash ./dev-tools/hosted/preview/resolve-preview-telnet-port.sh \
+            "$EXPOSURE_MODE" "$ALLOCATED_TELNET_PORT")"
           python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
             inject "$ARTIFACT_DIR/preview-rendered-sanitized.yaml" \
             "$RUNNER_TEMP/preview-rendered-with-port.yaml" \
@@ -704,14 +688,8 @@ jobs:
           ALLOCATED_TELNET_PORT: ${{ steps.allocate-telnet-port.outputs.port }}
         run: |
           set -euo pipefail
-          if [[ "$EXPOSURE_MODE" == private ]]; then
-            TELNET_PORT=0
-          elif [[ "$EXPOSURE_MODE" == public ]]; then
-            TELNET_PORT="$ALLOCATED_TELNET_PORT"
-          else
-            echo "::error title=Invalid preview exposure mode::Expected private or public; actual ${EXPOSURE_MODE:-empty}." >&2
-            exit 1
-          fi
+          TELNET_PORT="$(bash ./dev-tools/hosted/preview/resolve-preview-telnet-port.sh \
+            "$EXPOSURE_MODE" "$ALLOCATED_TELNET_PORT")"
           python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
             runtime-target "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$TELNET_PORT" \
             "${{ needs.validate-target.outputs.certificate_identity_mode }}" \

@@ -13,10 +13,15 @@ image_tag="$4"
 hostname="$5"
 telnet_port="$6"
 failure_stage="${7:-}"
-exposure_mode="${PREVIEW_EXPOSURE_MODE:-public}"
+exposure_mode="${PREVIEW_EXPOSURE_MODE:-unavailable}"
 
-if [[ "$exposure_mode" != private && "$exposure_mode" != public ]]; then
+if [[ -n "${PREVIEW_EXPOSURE_MODE:-}" &&
+  "$exposure_mode" != private && "$exposure_mode" != public ]]; then
   echo "PREVIEW_EXPOSURE_MODE must be private or public" >&2
+  exit 1
+fi
+if [[ "$mode" == success && "$exposure_mode" == unavailable ]]; then
+  echo "PREVIEW_EXPOSURE_MODE must be private or public for success summaries" >&2
   exit 1
 fi
 
@@ -41,6 +46,10 @@ public_tcp_line() {
   esac
 }
 
+mode_neutral_tcp_line() {
+  echo "- TCP: unavailable"
+}
+
 case "$mode" in
   deploying)
     cat <<EOF
@@ -53,8 +62,10 @@ case "$mode" in
 EOF
     if [[ "$exposure_mode" == private ]]; then
       private_bridge_line pending
-    else
+    elif [[ "$exposure_mode" == public ]]; then
       public_tcp_line pending
+    else
+      mode_neutral_tcp_line
     fi
     ;;
   target)
@@ -68,8 +79,10 @@ EOF
 EOF
     if [[ "$exposure_mode" == private ]]; then
       private_bridge_line pending
-    else
+    elif [[ "$exposure_mode" == public ]]; then
       public_tcp_line target
+    else
+      mode_neutral_tcp_line
     fi
     ;;
   unavailable)
@@ -83,8 +96,10 @@ EOF
 EOF
     if [[ "$exposure_mode" == private ]]; then
       private_bridge_line unavailable
-    else
+    elif [[ "$exposure_mode" == public ]]; then
       public_tcp_line unavailable
+    else
+      mode_neutral_tcp_line
     fi
     echo "- Unavailable stage: \`${failure_stage:-cluster-access}\`"
     ;;
@@ -99,8 +114,10 @@ EOF
 EOF
     if [[ "$exposure_mode" == private ]]; then
       private_bridge_line ready
-    else
+    elif [[ "$exposure_mode" == public ]]; then
       public_tcp_line ready
+    else
+      mode_neutral_tcp_line
     fi
     ;;
   reclaimed)
@@ -127,7 +144,7 @@ EOF
     if [[ "$exposure_mode" == private ]]; then
       private_bridge_line unavailable
     else
-      echo "- TCP: unavailable"
+      mode_neutral_tcp_line
     fi
     ;;
   removed)
@@ -151,8 +168,10 @@ EOF
 EOF
     if [[ "$exposure_mode" == private ]]; then
       private_bridge_line unavailable
-    else
+    elif [[ "$exposure_mode" == public ]]; then
       public_tcp_line unavailable
+    else
+      mode_neutral_tcp_line
     fi
     echo "- Failed stage: \`${failure_stage:-unknown}\`"
     ;;

@@ -172,6 +172,13 @@ public class HostedIdentityScopeService {
   }
 
   private static void ensureRuntime(KubernetesClient client, EnvironmentIdentityPlan plan) {
+    Role desired = runtimeRole(plan);
+    ensureRole(client, plan.runtimeNamespace(), desired);
+    ensureBinding(
+        client, plan.runtimeNamespace(), RUNTIME_ROLE_NAME, labels(plan), RUNTIME_ROLE_NAME, plan);
+  }
+
+  static Role runtimeRole(EnvironmentIdentityPlan plan) {
     Role desired =
         role(
             plan.runtimeNamespace(),
@@ -192,13 +199,16 @@ public class HostedIdentityScopeService {
                 // restricted to the named runtime Secrets.
                 rule(List.of(""), List.of("secrets"), List.of(), List.of("create")),
                 rule(
+                    List.of(""),
+                    List.of("services"),
+                    List.of("tcp-proxy-service"),
+                    List.of("get")),
+                rule(
                     List.of("apps"),
                     List.of("deployments"),
                     requiredDeploymentNames(plan),
                     List.of("get", "update", "patch"))));
-    ensureRole(client, plan.runtimeNamespace(), desired);
-    ensureBinding(
-        client, plan.runtimeNamespace(), RUNTIME_ROLE_NAME, labels(plan), RUNTIME_ROLE_NAME, plan);
+    return desired;
   }
 
   static List<String> requiredDeploymentNames(EnvironmentIdentityPlan plan) {

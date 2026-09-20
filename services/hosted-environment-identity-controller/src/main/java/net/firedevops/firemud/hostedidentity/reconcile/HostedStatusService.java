@@ -177,10 +177,14 @@ public class HostedStatusService {
     if (previous == null || !current.present()) {
       return previous == null && !currentPresent(current);
     }
+    String previousExposureMode =
+        previous.getExposureMode() == null
+            ? HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE
+            : previous.getExposureMode();
     return Objects.equals(current.runtimeNamespaceUid(), previous.getRuntimeNamespaceUid())
         && Objects.equals(current.requestedHeadSha(), previous.getRequestedHeadSha())
         && Objects.equals(current.deployedHeadSha(), previous.getDeployedHeadSha())
-        && Objects.equals(current.exposureMode(), previous.getExposureMode())
+        && Objects.equals(current.exposureMode(), previousExposureMode)
         && Objects.equals(current.telnetPort(), previous.getTelnetPort());
   }
 

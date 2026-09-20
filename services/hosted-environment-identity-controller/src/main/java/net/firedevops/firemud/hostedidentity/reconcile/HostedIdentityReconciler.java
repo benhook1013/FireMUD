@@ -230,31 +230,17 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
                 () ->
                     runtimeProjection(
                         plan, runtimeProfile, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE));
-        if (HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE.equals(
-            runtimeProfile.exposureMode())) {
-          probes =
-              servedEnvironmentProbe.probe(
-                  plan,
-                  runtimeProfile.telnetPort(),
-                  ingress.summary().certificateFingerprint(),
-                  telnet.summary().certificateFingerprint(),
-                  bridgeMaterial,
-                  gatewayInternalWs.summary().certificateFingerprint(),
-                  grpc.source(),
-                  grpc.summary().certificateFingerprint());
-        } else {
-          probes =
-              servedEnvironmentProbe.probe(
-                  plan,
-                  runtimeProfile.exposureMode(),
-                  runtimeProfile.telnetPort(),
-                  ingress.summary().certificateFingerprint(),
-                  telnet.summary().certificateFingerprint(),
-                  bridgeMaterial,
-                  gatewayInternalWs.summary().certificateFingerprint(),
-                  grpc.source(),
-                  grpc.summary().certificateFingerprint());
-        }
+        probes =
+            servedEnvironmentProbe.probe(
+                plan,
+                runtimeProfile.exposureMode(),
+                runtimeProfile.telnetPort(),
+                ingress.summary().certificateFingerprint(),
+                telnet.summary().certificateFingerprint(),
+                bridgeMaterial,
+                gatewayInternalWs.summary().certificateFingerprint(),
+                grpc.source(),
+                grpc.summary().certificateFingerprint());
       } else {
         probes = new ServedEnvironmentProbe.ProbeResult(false, "rollout-pending");
       }
@@ -432,6 +418,21 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
               + RuntimeProfileService.changedFields(expected, current)
               + "); fresh convergence is required",
           false);
+    }
+    if (current.deployedHeadMatchesRequest()) {
+      try {
+        runtimeProfileService.validateTcpProxyService(client, plan, current);
+      } catch (IllegalStateException exception) {
+        return new RuntimeProfileValidation(
+            null,
+            HostedEnvironmentIdentityStatus.Phase.Blocked,
+            "RuntimeProfileInvalid",
+            "runtime TCP Proxy Service became malformed at "
+                + boundary
+                + ": "
+                + boundedMessage(exception),
+            false);
+      }
     }
     return new RuntimeProfileValidation(current, null, null, null, true);
   }
@@ -683,17 +684,19 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       return null;
     }
     HostedEnvironmentIdentityStatus.RuntimeProfile profile = resource.getStatus().getProfile();
+    String exposureMode = profile.getExposureMode();
+    if (exposureMode == null) {
+      exposureMode = HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE;
+    }
     if (profile.getRuntimeNamespaceUid() == null
         || profile.getRuntimeNamespaceUid().isBlank()
         || !canonicalHead(profile.getRequestedHeadSha())
         || !optionalCanonicalHead(profile.getDeployedHeadSha())
-        || !RuntimeProfileService.isValidExposureMode(profile.getExposureMode())
+        || !RuntimeProfileService.isValidExposureMode(exposureMode)
         || profile.getTelnetPort() == null
-        || (!HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(
-                    profile.getExposureMode())
+        || (!HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(exposureMode)
                 && !runtimeProfileService.isValidTelnetPort(plan, profile.getTelnetPort()))
-        || (HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(
-                    profile.getExposureMode())
+        || (HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(exposureMode)
                 && profile.getTelnetPort() != 0)) {
       return null;
     }
@@ -701,7 +704,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
         profile.getRuntimeNamespaceUid(),
         profile.getRequestedHeadSha(),
         profile.getDeployedHeadSha(),
-        profile.getExposureMode(),
+        exposureMode,
         profile.getTelnetPort(),
         true);
   }

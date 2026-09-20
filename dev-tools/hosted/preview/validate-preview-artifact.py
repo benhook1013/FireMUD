@@ -150,28 +150,38 @@ def _validate_certificate_identity_mode(certificate_identity_mode: str) -> None:
 def _resolve_exposure_mode(
     certificate_identity_mode: str | None,
     exposure_mode: str | None,
+    service_type: str | None = None,
 ) -> str:
+    """Resolve exposure from the validated TCP Proxy Service shape.
+
+    Certificate identity and transport exposure are independent contracts.  An
+    explicit exposure argument is therefore only checked against the Service
+    shape, never inferred from the certificate identity mode.
+    """
+
     if certificate_identity_mode is not None:
         _validate_certificate_identity_mode(certificate_identity_mode)
-    if exposure_mode is None:
-        if certificate_identity_mode == "hosted-controller":
-            return "private"
-        return "public"
-    if exposure_mode not in EXPOSURE_MODES:
+    if exposure_mode is not None and exposure_mode not in EXPOSURE_MODES:
         fail("preview exposure mode is not canonical")
-    if certificate_identity_mode is not None:
-        expected_mode = (
-            "private"
-            if certificate_identity_mode == "hosted-controller"
-            else "public"
+    if service_type is None:
+        if exposure_mode is None:
+            fail("preview exposure mode requires a validated TCP Proxy Service")
+        return exposure_mode
+    expected_mode = _exposure_mode_for_service_type(service_type)
+    if exposure_mode is not None and exposure_mode != expected_mode:
+        fail(
+            "preview exposure mode does not match TCP Proxy Service type: "
+            f"expected {expected_mode!r}, actual {exposure_mode!r}"
         )
-        if exposure_mode != expected_mode:
-            fail(
-                "preview exposure mode "
-                f"{exposure_mode!r} is incompatible with certificate identity mode "
-                f"{certificate_identity_mode!r}"
-            )
-    return exposure_mode
+    return expected_mode
+
+
+def _exposure_mode_for_service_type(service_type: object) -> str:
+    if service_type == "ClusterIP":
+        return "private"
+    if service_type == "NodePort":
+        return "public"
+    fail("validated TCP Proxy Service has no canonical exposure mode")
 
 
 def _expected_names_for_mode(certificate_identity_mode: str) -> dict[str, set[str]]:
@@ -964,22 +974,10 @@ def inject_telnet_port(
         fail("preview runtime namespace is required")
     if not re.fullmatch(r"pr-[1-9][0-9]{0,50}", expected_namespace):
         fail(f"runtime namespace is not canonical: {expected_namespace!r}")
-    legacy_shape_validation = (
-        certificate_identity_mode is None and exposure_mode is None
-    )
-    exposure_mode = _resolve_exposure_mode(
-        certificate_identity_mode,
-        exposure_mode,
-    )
-    if exposure_mode == "private" and port != 0:
-        fail("private preview runtime target requires sentinel Telnet port 0")
-    if exposure_mode == "public" and not (
-        MIN_PREVIEW_TELNET_PORT <= port <= MAX_PREVIEW_TELNET_PORT
-    ):
-        fail(
-            "preview telnet port must be between "
-            f"{MIN_PREVIEW_TELNET_PORT} and {MAX_PREVIEW_TELNET_PORT}"
-        )
+    if certificate_identity_mode is not None:
+        _validate_certificate_identity_mode(certificate_identity_mode)
+    if exposure_mode is not None and exposure_mode not in EXPOSURE_MODES:
+        fail("preview exposure mode is not canonical")
     documents = list(yaml.safe_load_all(source.read_text(encoding="utf-8")))
     matches = []
     ingress_matches = 0
@@ -1032,15 +1030,20 @@ def inject_telnet_port(
         service.get("spec"), "Service/tcp-proxy-service.spec"
     )
     service_type = service_spec.get("type", "ClusterIP")
-    if not legacy_shape_validation:
-        expected_service_type = (
-            "ClusterIP" if exposure_mode == "private" else "NodePort"
+    exposure_mode = _resolve_exposure_mode(
+        certificate_identity_mode,
+        exposure_mode,
+        service_type,
+    )
+    if exposure_mode == "private" and port != 0:
+        fail("private preview runtime target requires sentinel Telnet port 0")
+    if exposure_mode == "public" and not (
+        MIN_PREVIEW_TELNET_PORT <= port <= MAX_PREVIEW_TELNET_PORT
+    ):
+        fail(
+            "preview telnet port must be between "
+            f"{MIN_PREVIEW_TELNET_PORT} and {MAX_PREVIEW_TELNET_PORT}"
         )
-        if service_type != expected_service_type:
-            fail(
-                "preview exposure mode does not match TCP Proxy Service type: "
-                f"expected {expected_service_type!r}, actual {service_type!r}"
-            )
     if exposure_mode == "private":
         if "nodePort" in matches[0]:
             fail("private preview render must not contain a NodePort")
@@ -1065,13 +1068,10 @@ def validate_runtime_target(
 
     if not re.fullmatch(r"pr-[1-9][0-9]{0,50}", expected_namespace):
         fail(f"runtime namespace is not canonical: {expected_namespace!r}")
-    legacy_shape_validation = (
-        certificate_identity_mode is None and exposure_mode is None
-    )
-    exposure_mode = _resolve_exposure_mode(
-        certificate_identity_mode,
-        exposure_mode,
-    )
+    if certificate_identity_mode is not None:
+        _validate_certificate_identity_mode(certificate_identity_mode)
+    if exposure_mode is not None and exposure_mode not in EXPOSURE_MODES:
+        fail("preview exposure mode is not canonical")
     documents = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
     if not documents:
         fail("prepared preview render is empty")
@@ -1143,6 +1143,12 @@ def validate_runtime_target(
         fail(
             "Service/tcp-proxy-service must contain exactly one declared TCP port 2323"
         )
+    service_type = service_spec.get("type", "ClusterIP")
+    exposure_mode = _resolve_exposure_mode(
+        certificate_identity_mode,
+        exposure_mode,
+        service_type,
+    )
     if exposure_mode == "private" and expected_port != 0:
         fail("private preview runtime target requires sentinel Telnet port 0")
     if exposure_mode == "public" and not (
@@ -1152,16 +1158,6 @@ def validate_runtime_target(
             "preview telnet port must be between "
             f"{MIN_PREVIEW_TELNET_PORT} and {MAX_PREVIEW_TELNET_PORT}"
         )
-    service_type = service_spec.get("type", "ClusterIP")
-    if not legacy_shape_validation:
-        expected_service_type = (
-            "ClusterIP" if exposure_mode == "private" else "NodePort"
-        )
-        if service_type != expected_service_type:
-            fail(
-                "preview exposure mode does not match TCP Proxy Service type: "
-                f"expected {expected_service_type!r}, actual {service_type!r}"
-            )
     port_index, _declared_port = declared_ports[0]
     if exposure_mode == "private":
         if service_type != "ClusterIP":
@@ -1205,22 +1201,20 @@ def determine_exposure_mode(
     service_spec = _require_mapping(
         services[0].get("spec"), "Service/tcp-proxy-service.spec"
     )
-    service_type = service_spec.get("type", "ClusterIP")
-    if service_type == "ClusterIP":
-        return "private"
-    if service_type == "NodePort":
-        return "public"
-    fail("validated TCP Proxy Service has no canonical exposure mode")
+    return _exposure_mode_for_service_type(service_spec.get("type", "ClusterIP"))
 
 
 def validate_service_consumers(
     documents: list[dict],
     expected_namespace: str,
-    certificate_identity_mode: str = "standalone",
+    certificate_identity_mode: str,
+    exposure_mode: str,
 ) -> None:
     """Keep identity-managed TLS references limited to the chart consumers."""
 
     _validate_certificate_identity_mode(certificate_identity_mode)
+    if exposure_mode not in EXPOSURE_MODES:
+        fail("preview exposure mode is not canonical")
     deployments = {
         document.get("metadata", {}).get("name"): document
         for document in documents
@@ -1248,7 +1242,7 @@ def validate_service_consumers(
         if service == "account-service":
             expected_mounts["jwt-jwks"] = ("/var/run/secrets/firemud/jwks", "jwt-jwks")
         if service == "tcp-proxy-service":
-            if certificate_identity_mode == "standalone":
+            if exposure_mode == "public":
                 expected_mounts["telnet-tls"] = (
                     "/telnet-tls",
                     f"{expected_namespace}-telnet-tls",
@@ -1335,14 +1329,15 @@ def validate_services(
         expected_spec = EXPECTED_SERVICE_SPECS.get(name)
         if expected_spec is None:
             fail(f"Service/{name} is not an approved preview Service")
-        if (
-            name == "tcp-proxy-service"
-            and certificate_identity_mode == "hosted-controller"
-        ):
-            expected_spec = {**expected_spec, "type": "ClusterIP"}
-        expected_type = expected_spec.get("type", "ClusterIP")
-        if spec.get("type", "ClusterIP") != expected_type:
-            fail(f"Service/{name} has an unsafe service type")
+        if name == "tcp-proxy-service":
+            service_type = spec.get("type")
+            if service_type not in {"ClusterIP", "NodePort"}:
+                fail(f"Service/{name} has an unsafe service type")
+            expected_spec = {**expected_spec, "type": service_type}
+        else:
+            expected_type = expected_spec.get("type", "ClusterIP")
+            if spec.get("type", "ClusterIP") != expected_type:
+                fail(f"Service/{name} has an unsafe service type")
         if spec.get("selector") != expected_spec["selector"]:
             fail(f"Service/{name} has an unsafe selector")
         service_ports = _require_mapping_list(
@@ -1700,9 +1695,19 @@ def validate_manifest(
     validate_services(documents, certificate_identity_mode)
     validate_network_policies(documents, certificate_identity_mode)
     validate_infrastructure_deployments(documents)
-    validate_service_consumers(
-        documents, expected_namespace, certificate_identity_mode
-    )
+    if ("Service", "tcp-proxy-service") in expected_objects:
+        tcp_proxy_service = next(
+            document
+            for document in documents
+            if document["kind"] == "Service"
+            and document["metadata"]["name"] == "tcp-proxy-service"
+        )
+        exposure_mode = _exposure_mode_for_service_type(
+            tcp_proxy_service["spec"].get("type", "ClusterIP")
+        )
+        validate_service_consumers(
+            documents, expected_namespace, certificate_identity_mode, exposure_mode
+        )
 
 
 def validate_metadata(
