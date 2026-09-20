@@ -1212,11 +1212,14 @@ def determine_exposure_mode(
 def validate_service_consumers(
     documents: list[dict],
     expected_namespace: str,
-    certificate_identity_mode: str = "standalone",
+    certificate_identity_mode: str,
+    exposure_mode: str,
 ) -> None:
     """Keep identity-managed TLS references limited to the chart consumers."""
 
     _validate_certificate_identity_mode(certificate_identity_mode)
+    if exposure_mode not in EXPOSURE_MODES:
+        fail("preview exposure mode is not canonical")
     deployments = {
         document.get("metadata", {}).get("name"): document
         for document in documents
@@ -1244,7 +1247,7 @@ def validate_service_consumers(
         if service == "account-service":
             expected_mounts["jwt-jwks"] = ("/var/run/secrets/firemud/jwks", "jwt-jwks")
         if service == "tcp-proxy-service":
-            if certificate_identity_mode == "standalone":
+            if exposure_mode == "public":
                 expected_mounts["telnet-tls"] = (
                     "/telnet-tls",
                     f"{expected_namespace}-telnet-tls",
@@ -1696,9 +1699,19 @@ def validate_manifest(
     validate_services(documents, certificate_identity_mode)
     validate_network_policies(documents, certificate_identity_mode)
     validate_infrastructure_deployments(documents)
-    validate_service_consumers(
-        documents, expected_namespace, certificate_identity_mode
-    )
+    if ("Service", "tcp-proxy-service") in expected_objects:
+        tcp_proxy_service = next(
+            document
+            for document in documents
+            if document["kind"] == "Service"
+            and document["metadata"]["name"] == "tcp-proxy-service"
+        )
+        exposure_mode = _exposure_mode_for_service_type(
+            tcp_proxy_service["spec"].get("type", "ClusterIP")
+        )
+        validate_service_consumers(
+            documents, expected_namespace, certificate_identity_mode, exposure_mode
+        )
 
 
 def validate_metadata(

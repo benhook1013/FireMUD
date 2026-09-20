@@ -146,9 +146,32 @@ class PreviewArtifactServiceValidationTest(unittest.TestCase):
                 [self._tcp_proxy_deployment(include_telnet_tls=False)],
                 "pr-42",
                 "hosted-controller",
+                "private",
             )
 
-    def test_hosted_controller_rejects_public_telnet_consumer(self):
+    def test_hosted_controller_public_requires_telnet_consumer(self):
+        with patch.object(self.validator, "SERVICE_IMAGES", {"tcp-proxy-service"}):
+            self.validator.validate_service_consumers(
+                [self._tcp_proxy_deployment(include_telnet_tls=True)],
+                "pr-42",
+                "hosted-controller",
+                "public",
+            )
+        with (
+            patch.object(self.validator, "SERVICE_IMAGES", {"tcp-proxy-service"}),
+            self.assertRaisesRegex(
+                ValueError,
+                "Deployment/tcp-proxy-service has duplicate or unexpected identity consumers",
+            ),
+        ):
+            self.validator.validate_service_consumers(
+                [self._tcp_proxy_deployment(include_telnet_tls=False)],
+                "pr-42",
+                "hosted-controller",
+                "public",
+            )
+
+    def test_private_rejects_public_telnet_consumer(self):
         with (
             patch.object(self.validator, "SERVICE_IMAGES", {"tcp-proxy-service"}),
             self.assertRaisesRegex(
@@ -160,12 +183,16 @@ class PreviewArtifactServiceValidationTest(unittest.TestCase):
                 [self._tcp_proxy_deployment(include_telnet_tls=True)],
                 "pr-42",
                 "hosted-controller",
+                "private",
             )
 
     def test_standalone_requires_public_telnet_consumer(self):
         with patch.object(self.validator, "SERVICE_IMAGES", {"tcp-proxy-service"}):
             self.validator.validate_service_consumers(
-                [self._tcp_proxy_deployment(include_telnet_tls=True)], "pr-42"
+                [self._tcp_proxy_deployment(include_telnet_tls=True)],
+                "pr-42",
+                "standalone",
+                "public",
             )
 
     def test_standalone_rejects_private_tcp_proxy_consumer(self):
@@ -177,7 +204,10 @@ class PreviewArtifactServiceValidationTest(unittest.TestCase):
             ),
         ):
             self.validator.validate_service_consumers(
-                [self._tcp_proxy_deployment(include_telnet_tls=False)], "pr-42"
+                [self._tcp_proxy_deployment(include_telnet_tls=False)],
+                "pr-42",
+                "standalone",
+                "public",
             )
 
 
@@ -597,7 +627,9 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
                     patch.object(self.validator, "SERVICE_IMAGES", {"account-service"}),
                     self.assertRaisesRegex(ValueError, f"{field} is not a list of objects"),
                 ):
-                    self.validator.validate_service_consumers([invalid], "pr-42")
+                    self.validator.validate_service_consumers(
+                        [invalid], "pr-42", "standalone", "public"
+                    )
 
 
 class PreviewArtifactPersistentVolumeClaimTest(unittest.TestCase):
