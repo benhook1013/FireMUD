@@ -60,7 +60,7 @@ server:
 firemud:
   tls:
     readiness-gate:
-      enabled: false
+      enabled: ${FIREMUD_TLS_READINESS_GATE_ENABLED:false}
   auth:
     grpc:
       force-internal-service-outbound: true
