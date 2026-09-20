@@ -155,6 +155,7 @@ for file in \
   "$MANIFEST_DIR/crd.yaml" \
   "$MANIFEST_DIR/admission.yaml" \
   "$MANIFEST_DIR/rbac.yaml" \
+  "$MANIFEST_DIR/issuer.yaml" \
   "$MANIFEST_DIR/deployment.yaml" \
   "$MANIFEST_DIR/networkpolicy.yaml" \
   "$MANIFEST_DIR/README.md" \
@@ -278,6 +279,7 @@ KUSTOMIZATION="$MANIFEST_DIR/kustomization.yaml"
 CRD="$MANIFEST_DIR/crd.yaml"
 ADMISSION="$MANIFEST_DIR/admission.yaml"
 RBAC="$MANIFEST_DIR/rbac.yaml"
+ISSUER="$MANIFEST_DIR/issuer.yaml"
 DEPLOYMENT="$MANIFEST_DIR/deployment.yaml"
 NETWORKPOLICY="$MANIFEST_DIR/networkpolicy.yaml"
 BOOTSTRAP="$CONTROLLER_DIR/bootstrap-hosted-identity-controller.sh"
@@ -285,9 +287,32 @@ TRACKER="$ROOT_DIR/design/project-management/implementation-tracking/platform-op
 PROJECTION="$ROOT_DIR/services/hosted-environment-identity-controller/src/main/java/net/firedevops/firemud/hostedidentity/kubernetes/SecretProjectionService.java"
 GRPC_GENERATOR="$ROOT_DIR/services/hosted-environment-identity-controller/src/main/java/net/firedevops/firemud/hostedidentity/security/GrpcTransportBundleGenerator.java"
 
-for resource in namespace serviceaccounts crd admission rbac deployment networkpolicy; do
+for resource in namespace serviceaccounts crd admission rbac issuer deployment networkpolicy; do
   require_literal "$KUSTOMIZATION" "- $resource.yaml"
 done
+for issuer_readme_marker in \
+  "## Fixed bridge CA issuer prerequisite" \
+  "firemud-grpc-ca\` in cert-manager's configured cluster-resource namespace" \
+  "Do not place a requester kubeconfig in an unrestricted \`pr-preview\` or \`dev-demo-cluster\` environment or in a PR-controlled workflow"; do
+  require_literal "$MANIFEST_DIR/README.md" "$issuer_readme_marker"
+done
+ISSUER="$ISSUER" python3 - <<'PY'
+import os
+from pathlib import Path
+
+import yaml
+
+issuer_documents = list(yaml.safe_load_all(Path(os.environ["ISSUER"]).read_text()))
+assert len(issuer_documents) == 1
+issuer = issuer_documents[0]
+assert issuer["apiVersion"] == "cert-manager.io/v1"
+assert issuer["kind"] == "ClusterIssuer"
+assert issuer["metadata"] == {"name": "firemud-ca-issuer"}
+assert issuer["spec"] == {"ca": {"secretName": "firemud-grpc-ca"}}
+issuer_text = Path(os.environ["ISSUER"]).read_text()
+for forbidden in ("ca.crt", "ca.key", "tls.crt", "tls.key", "keyData", "certData"):
+    assert forbidden not in issuer_text
+PY
 require_literal "$MANIFEST_DIR/namespace.yaml" "name: firemud-system"
 require_literal "$MANIFEST_DIR/namespace.yaml" "fixed control-plane labels must be restored"
 for namespace_label in \
@@ -3070,6 +3095,9 @@ trap 'rm -f "$rendered"' EXIT
 kubectl kustomize "$MANIFEST_DIR" >"$rendered"
 require_literal "$rendered" "kind: CustomResourceDefinition"
 require_literal "$rendered" "kind: ValidatingAdmissionPolicy"
+require_literal "$rendered" "kind: ClusterIssuer"
+require_literal "$rendered" "name: firemud-ca-issuer"
+require_literal "$rendered" "secretName: firemud-grpc-ca"
 require_literal "$rendered" "kind: Deployment"
 check_rbac_wildcards "$rendered"
 

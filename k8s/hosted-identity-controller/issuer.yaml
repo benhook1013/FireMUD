@@ -1,0 +1,10 @@
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: firemud-ca-issuer
+spec:
+  ca:
+    # cert-manager resolves ClusterIssuer CA secrets from its configured
+    # cluster-resource namespace. The operator provisions this Secret; this
+    # manifest deliberately contains no CA key or certificate material.
+    secretName: firemud-grpc-ca
