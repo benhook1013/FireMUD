@@ -447,6 +447,8 @@ class GameplayHandshakeFilterTest {
     MockServerHttpRequest request =
         MockServerHttpRequest.get("/ws/game/test")
             .cookie(new HttpCookie(GameplayHandshakeFilter.CONNECT_TOKEN_COOKIE, token))
+            .header("Cookie", "session=\"quoted%20value\"; duplicate=first")
+            .header("Cookie", "duplicate=second")
             .build();
 
     ServerWebExchange mutatedExchange =
@@ -455,6 +457,9 @@ class GameplayHandshakeFilterTest {
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connection-Mode"))
         .isEqualTo(GameplayHandshakeFilter.CONNECTION_MODE_FIRST_PARTY_WEB);
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Tenant-Id")).isEqualTo("1");
+    assertThat(mutatedExchange.getRequest().getHeaders().get("Cookie"))
+        .containsExactly(
+            "session=\"quoted%20value\"; duplicate=first", "duplicate=second");
   }
 
   @Test
@@ -594,6 +599,7 @@ class GameplayHandshakeFilterTest {
                 .getHeaders()
                 .getFirst(GameplayHandshakeFilter.TRANSPORT_SESSION_HEADER))
         .matches("\\d+");
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("Cookie")).isNull();
   }
 
   @Test

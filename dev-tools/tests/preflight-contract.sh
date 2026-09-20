@@ -3498,6 +3498,27 @@ _, strategy_issues = module.validate_gateway_ws_values(
 if strategy_issue not in strategy_issues:
     raise SystemExit(f"TCP Proxy render without Recreate was accepted: {strategy_issues}")
 
+gateway_strategy_counterexample = copy.deepcopy(rendered_documents)
+gateway_deployment = next(
+    document
+    for document in gateway_strategy_counterexample
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+gateway_deployment["metadata"]["name"] = "spring-cloud-gateway"
+gateway_deployment["spec"].pop("strategy", None)
+gateway_container = gateway_deployment["spec"]["template"]["spec"]["containers"][0]
+gateway_container["name"] = "spring-cloud-gateway"
+_, gateway_strategy_issues = module.validate_gateway_ws_values(
+    gateway_strategy_counterexample,
+    yaml.safe_load(current_expected_path.read_text(encoding="utf-8")),
+)
+if strategy_issue in gateway_strategy_issues:
+    raise SystemExit(
+        "Gateway bridge Deployment incorrectly required Recreate: "
+        f"{gateway_strategy_issues}"
+    )
+
 non_deployment_strategy_mutation = copy.deepcopy(rendered_documents)
 non_deployment_bridge = next(
     document

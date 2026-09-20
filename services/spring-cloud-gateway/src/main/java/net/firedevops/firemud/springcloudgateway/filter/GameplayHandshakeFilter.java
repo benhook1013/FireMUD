@@ -11,7 +11,9 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -27,6 +29,7 @@ import org.springframework.core.Ordered;
 import org.springframework.core.env.Environment;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.http.HttpCookie;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.PathContainer;
 import org.springframework.lang.Nullable;
@@ -215,6 +218,7 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
                             exchange,
                             headers -> {
                               headers.remove(CONNECT_TOKEN_HEADER);
+                              removeConnectTokenCookie(headers);
                               headers.remove(HANDSHAKE_ERROR_CLASS_HEADER);
                               headers.set(CONNECT_CONTEXT_HEADER, connectContext);
                               headers.set(CONNECTION_MODE_HEADER, CONNECTION_MODE_FIRST_PARTY_WEB);
@@ -363,6 +367,63 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
       ServerWebExchange exchange,
       java.util.function.Consumer<org.springframework.http.HttpHeaders> op) {
     return exchange.mutate().request(request -> request.headers(op)).build();
+  }
+
+  private static void removeConnectTokenCookie(HttpHeaders headers) {
+    List<String> cookieHeaders = headers.get(HttpHeaders.COOKIE);
+    if (cookieHeaders != null) {
+      cookieHeaders = List.copyOf(cookieHeaders);
+    }
+    headers.remove(HttpHeaders.COOKIE);
+    if (cookieHeaders == null) {
+      return;
+    }
+    for (String cookieHeader : cookieHeaders) {
+      String filteredCookieHeader = removeConnectTokenCookie(cookieHeader);
+      if (filteredCookieHeader != null) {
+        headers.add(HttpHeaders.COOKIE, filteredCookieHeader);
+      }
+    }
+  }
+
+  @Nullable
+  private static String removeConnectTokenCookie(String cookieHeader) {
+    List<String> cookiePairs = new ArrayList<>();
+    int pairStart = 0;
+    boolean quoted = false;
+    boolean escaped = false;
+    for (int index = 0; index < cookieHeader.length(); index++) {
+      char character = cookieHeader.charAt(index);
+      if (character == '"' && !escaped) {
+        quoted = !quoted;
+      } else if (character == ';' && !quoted) {
+        cookiePairs.add(cookieHeader.substring(pairStart, index));
+        pairStart = index + 1;
+      }
+      escaped = character == '\\' && !escaped;
+      if (character != '\\') {
+        escaped = false;
+      }
+    }
+    cookiePairs.add(cookieHeader.substring(pairStart));
+
+    StringBuilder filtered = new StringBuilder(cookieHeader.length());
+    for (String cookiePair : cookiePairs) {
+      String trimmedPair = cookiePair.trim();
+      int equalsIndex = trimmedPair.indexOf('=');
+      if (equalsIndex > 0
+          && CONNECT_TOKEN_COOKIE.equals(trimmedPair.substring(0, equalsIndex).trim())) {
+        continue;
+      }
+      if (trimmedPair.isEmpty()) {
+        continue;
+      }
+      if (filtered.length() > 0) {
+        filtered.append("; ");
+      }
+      filtered.append(trimmedPair);
+    }
+    return filtered.length() == 0 ? null : filtered.toString();
   }
 
   RuntimeLoggingContext openLoggingContext(ServerWebExchange exchange) {

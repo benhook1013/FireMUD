@@ -3937,9 +3937,11 @@ def validate_gateway_ws_values(
             bridge_containers.append((container, volumes))
         if not bridge_containers:
             continue
-        if document.get("kind") == "Deployment" and (document.get("spec") or {}).get(
-            "strategy"
-        ) != {"type": "Recreate"}:
+        if (
+            document.get("kind") == "Deployment"
+            and metadata_name(document) == "tcp-proxy-service"
+            and (document.get("spec") or {}).get("strategy") != {"type": "Recreate"}
+        ):
             issues.append(
                 "TCP Proxy bridge Deployment strategy must be Recreate for planned identity replacement"
             )
