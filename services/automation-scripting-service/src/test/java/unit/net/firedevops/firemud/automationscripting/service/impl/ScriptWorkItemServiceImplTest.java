@@ -1921,7 +1921,9 @@ class ScriptWorkItemServiceImplTest {
                     "admin",
                     System.currentTimeMillis(),
                     null,
-                    null)));
+                    null,
+                    1L,
+                    1L)));
     ScriptWorkItemService service =
         service(
             workItemRepository,

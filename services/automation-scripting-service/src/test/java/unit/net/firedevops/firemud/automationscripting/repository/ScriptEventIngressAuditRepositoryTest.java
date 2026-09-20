@@ -46,6 +46,51 @@ class ScriptEventIngressAuditRepositoryTest {
   }
 
   @Test
+  void insertAndHydratePluginFencePersistsBothValues() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    ScriptEventIngressAuditRecord row = pinnedIngressRow("pin-request-1");
+    row.setPluginActivationEpoch(4L);
+    row.setLifecycleRevision(8L);
+    MockDataProvider provider =
+        context -> {
+          Field<Boolean> insertedField = DSL.field("xmax = 0", Boolean.class).as("inserted");
+          List<Field<?>> fields = new ArrayList<>();
+          Collections.addAll(fields, SCRIPT_EVENT_INGRESS_AUDIT.fields());
+          fields.add(insertedField);
+          Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
+          returned.from(row);
+          returned.set(insertedField, true);
+          Result<Record> result = resultDsl.newResult(fields.toArray(new Field<?>[0]));
+          result.add(returned);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptEventIngressAuditRepository repository =
+        new ScriptEventIngressAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+    ScriptEventIngressAudit entity = pinnedIngressEntity("pin-request-1");
+    entity.setPluginActivationEpoch(4L);
+    entity.setLifecycleRevision(8L);
+
+    ScriptEventIngressAudit saved = repository.insertIfAbsentByIdentity(entity).audit();
+
+    assertThat(saved.getPluginActivationEpoch()).isEqualTo(4L);
+    assertThat(saved.getLifecycleRevision()).isEqualTo(8L);
+  }
+
+  @Test
+  void insertRejectsAConflictingPluginFencePair() {
+    ScriptEventIngressAuditRepository repository =
+        new ScriptEventIngressAuditRepository(DSL.using(SQLDialect.POSTGRES));
+    ScriptEventIngressAudit entity = pinnedIngressEntity("pin-request-1");
+    entity.setPluginActivationEpoch(4L);
+
+    assertThatThrownBy(() -> repository.insertIfAbsentByIdentity(entity))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(
+            "plugin_activation_epoch and lifecycle_revision must both be zero or both be positive");
+  }
+
+  @Test
   void rejectsNewClaimWithoutCanonicalRequestDigest() {
     ScriptEventIngressAuditRepository repository =
         new ScriptEventIngressAuditRepository(DSL.using(SQLDialect.POSTGRES));
@@ -635,6 +680,8 @@ class ScriptEventIngressAuditRepositoryTest {
     row.setScriptPatchVersion("patch-1");
     row.setScriptPinEpoch(2L);
     row.setScriptPinControlPlaneRequestId(requestId);
+    row.setPluginActivationEpoch(0L);
+    row.setLifecycleRevision(0L);
     row.setScriptEventId("event-1");
     row.setSourceService("game-session-service");
     return row;
