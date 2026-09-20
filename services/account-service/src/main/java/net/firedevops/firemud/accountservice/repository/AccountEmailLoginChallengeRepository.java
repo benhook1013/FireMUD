@@ -89,6 +89,7 @@ public class AccountEmailLoginChallengeRepository {
                         ACCOUNT_EMAIL_LOGIN_CHALLENGE.EXPIRES_AT.asc(),
                         ACCOUNT_EMAIL_LOGIN_CHALLENGE.ID.asc())
                     .limit(batchSize)))
+        .and(ACCOUNT_EMAIL_LOGIN_CHALLENGE.EXPIRES_AT.lt(capturedNow))
         .execute();
   }
 
