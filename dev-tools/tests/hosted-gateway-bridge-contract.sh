@@ -361,6 +361,54 @@ if any(
     raise SystemExit("Gateway ingress policy broadly exposed port 8080 to every pod")
 if any(rule.get("ports") == [{"protocol": "TCP", "port": 6565}] for rule in gateway_policy["ingress"]):
     raise SystemExit("Gateway ingress policy unexpectedly exposed the gRPC port")
+gateway_egress_policy = named("NetworkPolicy", "spring-cloud-gateway-egress")["spec"]
+if gateway_egress_policy != {
+    "podSelector": {"matchLabels": {"app": "spring-cloud-gateway"}},
+    "policyTypes": ["Egress"],
+    "egress": [
+        {
+            "to": [{
+                "namespaceSelector": {
+                    "matchLabels": {"kubernetes.io/metadata.name": "kube-system"}
+                },
+                "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+            }],
+            "ports": [
+                {"protocol": "UDP", "port": 53},
+                {"protocol": "TCP", "port": 53},
+            ],
+        },
+        {
+            "to": [{
+                "podSelector": {
+                    "matchExpressions": [{
+                        "key": "app",
+                        "operator": "In",
+                        "values": [
+                            "game-session-service",
+                            "logging-admin-service",
+                            "game-design-service",
+                            "account-service",
+                            "social-groups-service",
+                        ],
+                    }],
+                }
+            }],
+            "ports": [{"protocol": "TCP", "port": 8080}],
+        },
+        {
+            "to": [{"podSelector": {"matchLabels": {"app": "redis-cache"}}}],
+            "ports": [{"protocol": "TCP", "port": 6379}],
+        },
+        {
+            "to": [{"podSelector": {"matchLabels": {"app": "otel-collector"}}}],
+            "ports": [{"protocol": "TCP", "port": 4317}],
+        },
+    ],
+}:
+    raise SystemExit(
+        "Gateway egress policy must allow only DNS, canonical HTTP routes, Redis cache, and OTEL"
+    )
 proxy_policy = named("NetworkPolicy", "tcp-proxy-service-egress")["spec"]
 proxy_gateway_rules = [
     rule for rule in proxy_policy["egress"]
@@ -628,6 +676,14 @@ if any(
     for document in documents
 ):
     raise SystemExit("disabled hosted test values unexpectedly rendered the Gateway mTLS Service")
+if any(
+    document.get("kind") == "NetworkPolicy"
+    and document.get("metadata", {}).get("name") == "spring-cloud-gateway-egress"
+    for document in documents
+):
+    raise SystemExit(
+        "disabled hosted test values unexpectedly rendered the Gateway egress policy"
+    )
 PY
 
 echo "hosted Gateway WebSocket mTLS Helm contract passed"
