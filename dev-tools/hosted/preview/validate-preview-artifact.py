@@ -327,38 +327,77 @@ def _infrastructure_deployment_spec(
     }
 
 
+POSTGRES_DATA_LAYOUT_CHECK_INIT_CONTAINER = {
+    "name": "postgres-data-layout-check",
+    "securityContext": {
+        "allowPrivilegeEscalation": False,
+        "readOnlyRootFilesystem": True,
+        "runAsUser": 999,
+        "runAsGroup": 999,
+        "capabilities": {"drop": ["ALL"]},
+    },
+    "image": "postgres:16",
+    "command": ["sh", "-ec"],
+    "args": [
+        """data_root="/var/lib/postgresql/data"
+if [ ! -d "$data_root" ] || [ ! -r "$data_root" ] || [ ! -x "$data_root" ]; then
+  echo "refusing to start PostgreSQL: cannot inspect mounted data directory ${data_root}" >&2
+  exit 1
+fi
+if [ -e "${data_root}/PG_VERSION" ]; then
+  echo "refusing to start PostgreSQL: legacy root PG_VERSION found at ${data_root}/PG_VERSION; migrate the PVC before using nested PGDATA=/var/lib/postgresql/data/pgdata" >&2
+  exit 1
+fi
+"""
+    ],
+    "volumeMounts": [
+        {
+            "name": "postgres-data",
+            "mountPath": "/var/lib/postgresql/data",
+            "readOnly": True,
+        }
+    ],
+}
+
+
+POSTGRES_INFRASTRUCTURE_DEPLOYMENT_SPEC = _infrastructure_deployment_spec(
+    "postgres",
+    999,
+    "postgres:16",
+    ["postgres", "-c", "max_connections=200"],
+    5432,
+    "postgres-data",
+    "/var/lib/postgresql/data",
+    [
+        {"name": "PGDATA", "value": "/var/lib/postgresql/data/pgdata"},
+        {"name": "POSTGRES_DB", "value": "firemud"},
+        {
+            "name": "POSTGRES_USER",
+            "valueFrom": {
+                "secretKeyRef": {
+                    "name": "firemud-secret",
+                    "key": "FIREMUD_POSTGRES_USER",
+                }
+            },
+        },
+        {
+            "name": "POSTGRES_PASSWORD",
+            "valueFrom": {
+                "secretKeyRef": {
+                    "name": "firemud-secret",
+                    "key": "FIREMUD_POSTGRES_PASSWORD",
+                }
+            },
+        },
+    ],
+)
+POSTGRES_INFRASTRUCTURE_DEPLOYMENT_SPEC["template"]["spec"]["initContainers"] = [
+    copy.deepcopy(POSTGRES_DATA_LAYOUT_CHECK_INIT_CONTAINER)
+]
+
+
 EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS = {
-    "postgres": _infrastructure_deployment_spec(
-        "postgres",
-        999,
-        "postgres:16",
-        ["postgres", "-c", "max_connections=200"],
-        5432,
-        "postgres-data",
-        "/var/lib/postgresql/data",
-        [
-            {"name": "PGDATA", "value": "/var/lib/postgresql/data/pgdata"},
-            {"name": "POSTGRES_DB", "value": "firemud"},
-            {
-                "name": "POSTGRES_USER",
-                "valueFrom": {
-                    "secretKeyRef": {
-                        "name": "firemud-secret",
-                        "key": "FIREMUD_POSTGRES_USER",
-                    }
-                },
-            },
-            {
-                "name": "POSTGRES_PASSWORD",
-                "valueFrom": {
-                    "secretKeyRef": {
-                        "name": "firemud-secret",
-                        "key": "FIREMUD_POSTGRES_PASSWORD",
-                    }
-                },
-            },
-        ],
-    ),
+    "postgres": POSTGRES_INFRASTRUCTURE_DEPLOYMENT_SPEC,
     "redis-coord": _infrastructure_deployment_spec(
         "redis-coord",
         999,

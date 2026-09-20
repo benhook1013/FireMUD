@@ -704,6 +704,73 @@ class PreviewArtifactPersistentVolumeClaimTest(unittest.TestCase):
                 self._validate(self._document("postgres-data", spec))
 
 
+class PreviewArtifactInfrastructureDeploymentTest(unittest.TestCase):
+    validator = VALIDATOR
+
+    @staticmethod
+    def _document(name, spec):
+        return {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {"name": name},
+            "spec": copy.deepcopy(spec),
+        }
+
+    def _all_documents(self, specs=None):
+        if specs is None:
+            specs = self.validator.EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS
+        return [
+            self._document(name, spec) for name, spec in specs.items()
+        ]
+
+    def test_accepts_exact_postgres_layout_guard_and_infrastructure_specs(self):
+        self.validator.validate_infrastructure_deployments(self._all_documents())
+
+    def test_rejects_missing_postgres_layout_guard(self):
+        specs = copy.deepcopy(self.validator.EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS)
+        specs["postgres"]["template"]["spec"].pop("initContainers")
+        with self.assertRaisesRegex(
+            ValueError,
+            re.escape("Deployment/postgres has an unsafe infrastructure spec"),
+        ):
+            self.validator.validate_infrastructure_deployments(self._all_documents(specs))
+
+    def test_rejects_modified_postgres_layout_guard(self):
+        for case, mutate in (
+            (
+                "script",
+                lambda container: container["args"].__setitem__(
+                    0, container["args"][0] + "echo changed\n"
+                ),
+            ),
+            ("image", lambda container: container.__setitem__("image", "postgres:17")),
+            (
+                "mount",
+                lambda container: container["volumeMounts"][0].__setitem__(
+                    "readOnly", False
+                ),
+            ),
+            (
+                "security",
+                lambda container: container["securityContext"].__setitem__(
+                    "readOnlyRootFilesystem", False
+                ),
+            ),
+        ):
+            with self.subTest(case=case):
+                specs = copy.deepcopy(
+                    self.validator.EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS
+                )
+                mutate(specs["postgres"]["template"]["spec"]["initContainers"][0])
+                with self.assertRaisesRegex(
+                    ValueError,
+                    re.escape("Deployment/postgres has an unsafe infrastructure spec"),
+                ):
+                    self.validator.validate_infrastructure_deployments(
+                        self._all_documents(specs)
+                    )
+
+
 class PreviewArtifactMetadataTest(unittest.TestCase):
     validator = VALIDATOR
 
