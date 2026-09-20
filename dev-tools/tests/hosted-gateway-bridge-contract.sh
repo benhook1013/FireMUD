@@ -193,15 +193,32 @@ if account_policy != {
 gateway_policy = named("NetworkPolicy", "spring-cloud-gateway-ingress")["spec"]
 if gateway_policy["podSelector"] != {"matchLabels": {"app": "spring-cloud-gateway"}}:
     raise SystemExit("Gateway ingress policy selected an unexpected workload")
-gateway_proxy_rules = [
+gateway_proxy_rule = {
+    "from": [{"podSelector": {"matchLabels": {"app": "tcp-proxy-service"}}}],
+    "ports": [{"protocol": "TCP", "port": 8443}],
+}
+gateway_controller_rule = {
+    "from": [{
+        "namespaceSelector": {
+            "matchLabels": {"kubernetes.io/metadata.name": "firemud-system"}
+        },
+        "podSelector": {
+            "matchLabels": {
+                "app.kubernetes.io/name": "hosted-environment-identity-controller",
+                "app.kubernetes.io/component": "controller",
+            }
+        },
+    }],
+    "ports": [{"protocol": "TCP", "port": 8443}],
+}
+gateway_8443_rules = [
     rule for rule in gateway_policy["ingress"]
     if rule.get("ports") == [{"protocol": "TCP", "port": 8443}]
 ]
-if gateway_proxy_rules != [{
-    "from": [{"podSelector": {"matchLabels": {"app": "tcp-proxy-service"}}}],
-    "ports": [{"protocol": "TCP", "port": 8443}],
-}]:
-    raise SystemExit("Gateway ingress policy did not restrict exactly the proxy to 8443")
+if gateway_8443_rules != [gateway_proxy_rule, gateway_controller_rule]:
+    raise SystemExit(
+        "Gateway ingress policy did not restrict exactly the proxy and identity controller to 8443"
+    )
 if any(
     rule.get("from") == [{"podSelector": {}}]
     and rule.get("ports") == [{"protocol": "TCP", "port": 8080}]
@@ -257,6 +274,35 @@ if any(
 ):
     raise SystemExit(
         "standalone certificate identity mode unexpectedly rendered the hosted controller Account ingress policy"
+    )
+gateway_policies = [
+    document
+    for document in documents
+    if document.get("kind") == "NetworkPolicy"
+    and document.get("metadata", {}).get("name") == "spring-cloud-gateway-ingress"
+]
+if len(gateway_policies) != 1:
+    raise SystemExit(
+        f"expected exactly one standalone spring-cloud-gateway-ingress policy, found {len(gateway_policies)}"
+    )
+controller_rules = [
+    rule
+    for rule in gateway_policies[0]["spec"].get("ingress", [])
+    if rule.get("from") == [{
+        "namespaceSelector": {
+            "matchLabels": {"kubernetes.io/metadata.name": "firemud-system"}
+        },
+        "podSelector": {
+            "matchLabels": {
+                "app.kubernetes.io/name": "hosted-environment-identity-controller",
+                "app.kubernetes.io/component": "controller",
+            }
+        },
+    }]
+]
+if controller_rules:
+    raise SystemExit(
+        "standalone certificate identity mode unexpectedly admitted the hosted controller to Gateway ingress"
     )
 PY
 
