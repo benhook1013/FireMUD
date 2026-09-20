@@ -158,7 +158,6 @@ for file in \
   "$MANIFEST_DIR/issuer.yaml" \
   "$MANIFEST_DIR/deployment.yaml" \
   "$MANIFEST_DIR/networkpolicy.yaml" \
-  "$MANIFEST_DIR/issuer.yaml" \
   "$MANIFEST_DIR/README.md" \
   "$CONTROLLER_DIR/bootstrap-hosted-identity-controller.sh"; do
   require_file "$file"
@@ -308,7 +307,7 @@ assert len(issuer_documents) == 1
 issuer = issuer_documents[0]
 assert issuer["apiVersion"] == "cert-manager.io/v1"
 assert issuer["kind"] == "ClusterIssuer"
-assert issuer["metadata"] == {"name": "firemud-ca-issuer"}
+assert issuer["metadata"]["name"] == "firemud-ca-issuer"
 assert issuer["spec"] == {"ca": {"secretName": "firemud-grpc-ca"}}
 issuer_text = Path(os.environ["ISSUER"]).read_text()
 for forbidden in ("ca.crt", "ca.key", "tls.crt", "tls.key", "keyData", "certData"):

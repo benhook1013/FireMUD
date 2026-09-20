@@ -1095,11 +1095,10 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "$REQUESTER_KUBECONFIG" ]]; then
-            echo "Hosted identity requester credentials are unavailable; skipping identity retirement."
-            echo "available=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "::error title=Missing Hosted identity requester credentials::Cannot retire hosted identity without the trusted requester kubeconfig." >&2
+            exit 1
           fi
+          echo "available=true" >> "$GITHUB_OUTPUT"
       - name: Write requester kubeconfig
         if: ${{ steps.requester-credentials.outputs.available == 'true' }}
         uses: ./.github/actions/write-kubeconfig

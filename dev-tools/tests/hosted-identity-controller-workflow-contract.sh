@@ -2305,11 +2305,13 @@ assert requester_credentials["env"] == {
 }
 for required in (
     '[[ -z "$REQUESTER_KUBECONFIG" ]]',
-    'available=false',
     'available=true',
-    "skipping identity retirement",
+    '::error title=Missing Hosted identity requester credentials::Cannot retire hosted identity without the trusted requester kubeconfig.',
+    'exit 1',
 ):
     assert required in requester_credentials["run"]
+assert 'available=false' not in requester_credentials["run"]
+assert "skipping identity retirement" not in requester_credentials["run"]
 requester_writer = retire_by_name["Write requester kubeconfig"]
 assert requester_writer["if"] == "${{ steps.requester-credentials.outputs.available == 'true' }}"
 assert requester_writer["with"]["export-to-github-env"] == "false"
