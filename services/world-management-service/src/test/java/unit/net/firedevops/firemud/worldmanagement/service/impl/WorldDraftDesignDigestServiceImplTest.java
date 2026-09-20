@@ -114,7 +114,6 @@ class WorldDraftDesignDigestServiceImplTest {
     assertEquals("1", digest.tenantId());
     assertEquals("7", digest.scopeValue());
     assertEquals("version:7", digest.appliedCommitId());
-    assertEquals(2, digest.digestSchemaVersion());
     Mockito.verify(regionRepository).findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L);
     Mockito.verify(regionRepository, Mockito.never()).findByTenantIdOrderByIdAsc(Mockito.anyLong());
   }

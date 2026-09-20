@@ -84,10 +84,7 @@ public class ScriptPatchReadinessProjectionServiceImpl
     } else if (onLoadWorkItems.stream()
         .anyMatch(item -> "DEAD_LETTERED".equals(item.getStatus()))) {
       projection.setReadinessStatus("FAILED");
-      projection.setStatusReason(latestDeadLetterReason(onLoadWorkItems, "onload_failed"));
-    } else if (onLoadWorkItems.stream().anyMatch(this::isFailedOnLoadCancellation)) {
-      projection.setReadinessStatus("FAILED");
-      projection.setStatusReason("onload_budget_exceeded");
+      projection.setStatusReason(latestCanceledReason(onLoadWorkItems, "onload_failed"));
     } else if (onLoadWorkItems.stream().anyMatch(this::isActiveOnLoadStatus)) {
       projection.setReadinessStatus("ONLOAD_RUNNING");
       projection.setStatusReason("tenant_readiness_running");
@@ -170,25 +167,10 @@ public class ScriptPatchReadinessProjectionServiceImpl
     };
   }
 
-  private boolean isFailedOnLoadCancellation(ScriptWorkItem item) {
-    return "CANCELED".equals(item.getStatus())
-        && "onload_budget_exceeded".equals(item.getCancelReason());
-  }
-
   private static String latestCanceledReason(List<ScriptWorkItem> workItems, String fallback) {
     return workItems.stream()
         .filter(
             item -> "DEAD_LETTERED".equals(item.getStatus()) || "CANCELED".equals(item.getStatus()))
-        .sorted(Comparator.comparing(ScriptWorkItem::getUpdatedAt).reversed())
-        .map(ScriptWorkItem::getCancelReason)
-        .filter(reason -> reason != null && !reason.isBlank())
-        .findFirst()
-        .orElse(fallback);
-  }
-
-  private static String latestDeadLetterReason(List<ScriptWorkItem> workItems, String fallback) {
-    return workItems.stream()
-        .filter(item -> "DEAD_LETTERED".equals(item.getStatus()))
         .sorted(Comparator.comparing(ScriptWorkItem::getUpdatedAt).reversed())
         .map(ScriptWorkItem::getCancelReason)
         .filter(reason -> reason != null && !reason.isBlank())

@@ -846,7 +846,7 @@ coverage_drift:
     note: Payment/subscription foundations exist, but the unreviewed MS-AA-PAYMENT-INSTRUMENT wallet and payment-instrument contract is not currently routable and has no accepted ADR.
 routes:
   # These live REST adapters are intentionally recorded as target-only until
-  # their current service-local reachability and caller-supplied tenant selectors are
+  # their current public reachability and caller-supplied tenant selectors are
   # replaced by the owner-bound contracts in the service documents.
   - service: entity-management-service
     route: POST /crafting/recipes
@@ -925,7 +925,7 @@ routes:
       any_of: [tenantAdmin]
     implementation_status:
       known_drift:
-        - service_local_controller_is_unauthenticated_and_accepts_caller_tenant_id
+        - current_openapi_security_is_empty_and_controller_accepts_caller_tenant_id
         - leader_npc_tenant_ownership_is_not_checked
   - service: automation-scripting-service
     route: POST /formations/{id}/members
@@ -951,7 +951,7 @@ routes:
       any_of: [tenantAdmin]
     implementation_status:
       known_drift:
-        - service_local_controller_is_unauthenticated_and_tenant_selector_is_caller_supplied
+        - current_openapi_security_is_empty_and_tenant_selector_is_caller_supplied
         - member_npc_tenant_ownership_is_not_checked
   - service: automation-scripting-service
     route: GET /formations/{id}/members
@@ -977,7 +977,7 @@ routes:
       any_of: [tenantAdmin]
     implementation_status:
       known_drift:
-        - service_local_controller_is_unauthenticated_and_tenant_selector_is_caller_supplied
+        - current_openapi_security_is_empty_and_tenant_selector_is_caller_supplied
         - cross_tenant_formation_and_member_read_is_not_proved_denied
   - service: game-session-service
     route: GET /actuator/settings/effective
