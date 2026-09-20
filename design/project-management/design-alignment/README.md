@@ -40,7 +40,7 @@ Existing 5B implementation work remains open in PRs #2808, #2678, #2804, and #26
 | 3C | Release lifecycle and activation | Queued | — | — |
 | 4A | Script ingress, sandbox, and runtime execution | Queued | — | — |
 | 4B | Scheduling, quotas, reload, and operational fairness | Queued | — | — |
-| 5A | API, message, identifier, tenant, time, and authorization primitives | Next | — | — |
+| 5A | API, message, identifier, tenant, time, and authorization primitives | In progress | — | Fresh pass 1 at `36b6e3209` covered 17/17 substantive allocated sources (8 raw observations: 6 confirmed roots, 1 unverified clock-API question, 1 adjacent 5C handoff). gRPC outcomes, Account runtime-read exposure, numeric cross-boundary IDs, gameplay attestation, JWT/workload identity, and Gateway connect-carrier drift remain with their canonical service/shared-runtime trackers; the shared-library Redis status claim was corrected locally, with role-specific client work retained by 5C. An operator-binding contract conflict and fresh taper remain open. |
 | 5B-Schema | SQL/Flyway/jOOQ, schema and identifier migration | Queued | — | — |
 | 5B-Publication | Durable version/publication/readiness state | Queued | — | — |
 | 5B-Retention | Retention classes, cleanup, horizons, contraction | Queued | — | — |
