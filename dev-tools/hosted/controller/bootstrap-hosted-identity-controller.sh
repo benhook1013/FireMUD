@@ -17,6 +17,12 @@ ACTIVATION_MODE="paused"
 IMAGE_REF="${FIREMUD_HOSTED_IDENTITY_CONTROLLER_IMAGE:-}"
 GRPC_TRUST_ANCHOR_SHA256="${FIREMUD_HOSTED_IDENTITY_GRPC_TRUST_ANCHOR_SHA256:-}"
 WAIT_SECONDS="${FIREMUD_HOSTED_IDENTITY_BOOTSTRAP_TIMEOUT_SECONDS:-480}"
+API_SERVICE_IPV4=""
+API_ENDPOINT_IPV4=""
+PUBLIC_PROBE_IPV4=""
+API_SERVICE_IPV4_SET=0
+API_ENDPOINT_IPV4_SET=0
+PUBLIC_PROBE_IPV4_SET=0
 
 fail() {
   echo "hosted identity bootstrap: $*" >&2
@@ -33,6 +39,12 @@ Options:
   --image IMAGE           immutable controller image (also accepted by env)
   --grpc-trust-anchor-sha256 SHA256
                            required gRPC CA SHA-256 fingerprint (also accepted by env)
+  --api-service-ipv4 ADDRESS
+                           observed kubernetes.default Service ClusterIP
+  --api-endpoint-ipv4 ADDRESS
+                           observed Kubernetes API endpoint address
+  --public-probe-ipv4 ADDRESS
+                           fixed public preview probe address
 USAGE
   exit 2
 }
@@ -59,6 +71,24 @@ while (($# > 0)); do
       GRPC_TRUST_ANCHOR_SHA256="$2"
       shift 2
       ;;
+    --api-service-ipv4)
+      (($# >= 2)) || usage
+      API_SERVICE_IPV4="$2"
+      API_SERVICE_IPV4_SET=1
+      shift 2
+      ;;
+    --api-endpoint-ipv4)
+      (($# >= 2)) || usage
+      API_ENDPOINT_IPV4="$2"
+      API_ENDPOINT_IPV4_SET=1
+      shift 2
+      ;;
+    --public-probe-ipv4)
+      (($# >= 2)) || usage
+      PUBLIC_PROBE_IPV4="$2"
+      PUBLIC_PROBE_IPV4_SET=1
+      shift 2
+      ;;
     --help|-h)
       usage
       ;;
@@ -82,6 +112,15 @@ case "$ACTIVATION_MODE" in
   paused|observe|active) ;;
   *) fail "--activation-mode must be paused, observe, or active" ;;
 esac
+address_argument_count=$((
+  API_SERVICE_IPV4_SET + API_ENDPOINT_IPV4_SET + PUBLIC_PROBE_IPV4_SET
+))
+if ((address_argument_count > 0 && address_argument_count < 3)); then
+  fail "--api-service-ipv4, --api-endpoint-ipv4, and --public-probe-ipv4 must be supplied together"
+fi
+if [[ "$ACTIVATION_MODE" != paused && "$address_argument_count" != 3 ]]; then
+  fail "--api-service-ipv4, --api-endpoint-ipv4, and --public-probe-ipv4 are required for observe or active mode"
+fi
 initial_activation_mode="$ACTIVATION_MODE"
 if [[ "$ACTIVATION_MODE" == "active" ]]; then
   # Install into a paused state first.  This prevents a fresh or partially
@@ -99,6 +138,50 @@ command -v gh >/dev/null 2>&1 || fail "gh is required to verify controller image
 command -v python3 >/dev/null 2>&1 || fail "python3 is required to parse rendered manifests"
 python3 -c 'import yaml' >/dev/null 2>&1 || fail "PyYAML is required to parse rendered manifests"
 [[ -d "$MANIFEST_DIR" ]] || fail "missing manifest directory: $MANIFEST_DIR"
+
+validate_ipv4_address() {
+  local option_name="$1"
+  local address="$2"
+  if ! python3 - "$address" <<'PY'
+import ipaddress
+import sys
+
+try:
+    address = ipaddress.ip_address(sys.argv[1])
+except ValueError:
+    raise SystemExit(1)
+if not isinstance(address, ipaddress.IPv4Address):
+    raise SystemExit(1)
+if (
+    address.is_unspecified
+    or address.is_loopback
+    or address.is_link_local
+    or address.is_multicast
+    or address.is_reserved
+    or int(address) >> 24 == 0
+    or address == ipaddress.IPv4Address("255.255.255.255")
+):
+    raise SystemExit(1)
+PY
+  then
+    fail "$option_name must be a safe IPv4 address"
+  fi
+}
+
+if ((address_argument_count == 3)); then
+  validate_ipv4_address --api-service-ipv4 "$API_SERVICE_IPV4"
+  validate_ipv4_address --api-endpoint-ipv4 "$API_ENDPOINT_IPV4"
+  validate_ipv4_address --public-probe-ipv4 "$PUBLIC_PROBE_IPV4"
+  API_SERVICE_CIDR="$API_SERVICE_IPV4/32"
+  API_ENDPOINT_CIDR="$API_ENDPOINT_IPV4/32"
+  PUBLIC_PROBE_CIDR="$PUBLIC_PROBE_IPV4/32"
+else
+  # Paused mode remains a break-glass install path, but it must still be
+  # deny-only when exact operator observations are unavailable.
+  API_SERVICE_CIDR="127.0.0.1/32"
+  API_ENDPOINT_CIDR="127.0.0.1/32"
+  PUBLIC_PROBE_CIDR="127.0.0.1/32"
+fi
 umask 077
 
 temporary_manifest=""
@@ -403,6 +486,73 @@ print(yaml.safe_dump(matches[0], sort_keys=False), end="")
 PY
 }
 
+validate_public_probe_dns() {
+  # Exact-address bootstrap is fail-closed when the fixed dev-demo A record
+  # cannot be read or does not resolve to exactly the supplied address.
+  command -v getent >/dev/null 2>&1 || \
+    fail "getent is required to validate the fixed dev.preview.firedevops.net IPv4 A record"
+  local resolved_addresses resolved_count
+  if ! resolved_addresses="$(
+    getent ahostsv4 dev.preview.firedevops.net 2>/dev/null |
+      awk '{print $1}' |
+      LC_ALL=C sort -u
+  )"; then
+    fail "unable to resolve the fixed dev.preview.firedevops.net IPv4 A record"
+  fi
+  [[ -n "$resolved_addresses" ]] || \
+    fail "the fixed dev.preview.firedevops.net IPv4 A record is missing"
+  resolved_count="$(wc -l <<<"$resolved_addresses")"
+  if [[ "$resolved_count" != 1 || "$resolved_addresses" != "$PUBLIC_PROBE_IPV4" ]]; then
+    fail "--public-probe-ipv4 must match the fixed dev.preview.firedevops.net IPv4 A record ($resolved_addresses)"
+  fi
+}
+
+verify_live_network_policy_destinations() {
+  local observed_service_ipv4 endpoint_json
+  if ! observed_service_ipv4="$(kubectl -n default get service kubernetes \
+    -o jsonpath='{.spec.clusterIP}')"; then
+    fail "unable to read the kubernetes.default Service ClusterIP"
+  fi
+  [[ "$observed_service_ipv4" == "$API_SERVICE_IPV4" ]] || \
+    fail "--api-service-ipv4 does not match kubernetes.default Service ClusterIP ($observed_service_ipv4)"
+  if ! endpoint_json="$(kubectl -n default get endpoints kubernetes -o json)"; then
+    fail "unable to read the kubernetes.default API endpoint"
+  fi
+  if ! ENDPOINT_JSON="$endpoint_json" python3 - "$API_ENDPOINT_IPV4" <<'PY'
+import os
+import json
+import sys
+
+target_address = sys.argv[1]
+try:
+    endpoints = json.loads(os.environ["ENDPOINT_JSON"])
+except json.JSONDecodeError:
+    raise SystemExit(1)
+
+usable_addresses = set()
+for subset in endpoints.get("subsets", []):
+    addresses = {
+        address.get("ip")
+        for address in subset.get("addresses", [])
+        if isinstance(address, dict)
+    }
+    ports = {
+        port.get("port")
+        for port in subset.get("ports", [])
+        if isinstance(port, dict)
+    }
+    if 6443 in ports:
+        usable_addresses.update(addresses)
+
+if len(usable_addresses) == 1 and target_address in usable_addresses:
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+  then
+    fail "--api-endpoint-ipv4 must match the single observed kubernetes.default endpoint on TCP/6443"
+  fi
+}
+
 # Render privately so the checked-in base cannot silently acquire a mutable
 # image tag or an activation mode.  Server-side apply below remains the only
 # cluster write path.
@@ -410,7 +560,10 @@ kubectl kustomize "$MANIFEST_DIR" >"$temporary_manifest"
 replace_manifest \
   -e "s#ghcr.io/benhook1013/firemud-hosted-identity-controller@sha256:__IMAGE_DIGEST_REQUIRED__#$IMAGE_REF#g" \
   -e "s#value: __GRPC_TRUST_ANCHOR_SHA256_REQUIRED__#value: $GRPC_TRUST_ANCHOR_SHA256#g" \
-  -e "s#value: __ACTIVATION_MODE_REQUIRED__#value: $initial_activation_mode#g"
+  -e "s#value: __ACTIVATION_MODE_REQUIRED__#value: $initial_activation_mode#g" \
+  -e "s#cidr: __API_SERVICE_IPV4_CIDR_REQUIRED__#cidr: $API_SERVICE_CIDR#g" \
+  -e "s#cidr: __API_ENDPOINT_IPV4_CIDR_REQUIRED__#cidr: $API_ENDPOINT_CIDR#g" \
+  -e "s#cidr: __PUBLIC_PROBE_IPV4_CIDR_REQUIRED__#cidr: $PUBLIC_PROBE_CIDR#g"
 grep -Fq -- "$IMAGE_REF" "$temporary_manifest" || fail "immutable image replacement did not occur"
 grep -Fq -- "value: $GRPC_TRUST_ANCHOR_SHA256" "$temporary_manifest" || fail "gRPC trust-anchor replacement did not occur"
 if ! rendered_activation_mode="$(controller_activation_mode read)"; then
@@ -420,8 +573,18 @@ fi
   fail "activation mode replacement did not produce exactly one expected value"
 if grep -Fq -- "__IMAGE_DIGEST_REQUIRED__" "$temporary_manifest" || \
    grep -Fq -- "__GRPC_TRUST_ANCHOR_SHA256_REQUIRED__" "$temporary_manifest" || \
-   grep -Fq -- "__ACTIVATION_MODE_REQUIRED__" "$temporary_manifest"; then
+   grep -Fq -- "__ACTIVATION_MODE_REQUIRED__" "$temporary_manifest" || \
+   grep -Fq -- "__API_SERVICE_IPV4_CIDR_REQUIRED__" "$temporary_manifest" || \
+   grep -Fq -- "__API_ENDPOINT_IPV4_CIDR_REQUIRED__" "$temporary_manifest" || \
+   grep -Fq -- "__PUBLIC_PROBE_IPV4_CIDR_REQUIRED__" "$temporary_manifest"; then
   fail "rendered manifests still contain a required-input marker"
+fi
+
+if ((address_argument_count == 3)); then
+  validate_public_probe_dns
+  # These readbacks intentionally precede every cluster write, including the
+  # namespace admission guard applied below.
+  verify_live_network_policy_destinations
 fi
 
 # Every activation mode installs a controller that consumes this fixed trust
