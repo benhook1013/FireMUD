@@ -113,6 +113,9 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
     if (!runtimeStateMatchesScope(tenantId, gameInstanceId, runtimeState)) {
       return;
     }
+    if (!hasPositiveScriptPinEpoch(runtimeState)) {
+      return;
+    }
     Optional<ScriptPatchPinProjection> existing =
         repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
     if (!acceptObservation(existing.orElse(null), runtimeState)) {
@@ -133,6 +136,10 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
     return runtimeState != null
         && tenantId.equals(runtimeState.getTenantId())
         && gameInstanceId.equals(runtimeState.getGameInstanceId());
+  }
+
+  private static boolean hasPositiveScriptPinEpoch(GameInstanceRuntimeState runtimeState) {
+    return runtimeState != null && runtimeState.getScriptPinEpoch() > 0;
   }
 
   /**
@@ -206,6 +213,9 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
       String gameInstanceId,
       GameInstanceRuntimeState runtimeState,
       Instant now) {
+    if (!hasPositiveScriptPinEpoch(runtimeState)) {
+      return projection;
+    }
     RoutingBundleSupport.RoutingBundle routingBundle =
         RoutingBundleSupport.fromRuntimeState(runtimeState);
     projection.setTenantId(tenantId);
