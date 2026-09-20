@@ -304,10 +304,10 @@ fi
 echo "Dispatching dev-demo deploy for develop head ${desired_head_sha}"
 gh api \
   --method POST \
-  "repos/${GITHUB_REPOSITORY}/actions/workflows/dev-demo.yml/dispatches" \
-  -f ref="develop" \
-  -f 'inputs[action]=deploy' \
-  -f "inputs[image_tag]=${desired_head_sha}" \
-  -f "inputs[head_sha]=${desired_head_sha}" \
-  -f 'inputs[hostname]=dev.preview.firedevops.net' \
-  -f 'inputs[telnet_port]=32016'
+  "repos/${GITHUB_REPOSITORY}/dispatches" \
+  -f event_type=dev-demo \
+  -f 'client_payload[action]=deploy' \
+  -f "client_payload[image_tag]=${desired_head_sha}" \
+  -f "client_payload[head_sha]=${desired_head_sha}" \
+  -f 'client_payload[hostname]=dev.preview.firedevops.net' \
+  -f 'client_payload[telnet_port]=32016'

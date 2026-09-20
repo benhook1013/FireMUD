@@ -162,7 +162,8 @@ hosted_workflow_names = (
 )
 hosted_workflows = {}
 required_hosted_skew_jobs = {
-    "preview.yml": ("preview-deploy", "preview-destroy"),
+    # PR-owned preview work must not receive kubeconfig or run cluster checks.
+    "preview.yml": (),
     "dev-demo.yml": ("dev-demo-deploy", "dev-demo-destroy"),
     "preview-reconciler.yml": ("reconcile-previews",),
     "dev-demo-reconciler.yml": ("reconcile-dev-demo",),
@@ -252,18 +253,18 @@ hosted_wrong_order_fixture["jobs"]["prune-stale-preview-namespaces"]["steps"].in
 )
 expect_rejected(hosted_wrong_order_fixture, "hosted wrong-order fixture")
 
-# A workflow-level invocation must not satisfy a different cluster-using job.
-multi_job_removal_fixture = copy.deepcopy(hosted_workflows["preview.yml"])
-multi_job_removal_fixture["jobs"]["preview-destroy"]["steps"] = [
+# A check in one trusted cluster job must not satisfy another cluster job.
+multi_job_removal_fixture = copy.deepcopy(hosted_workflows["hosted-identity-request.yml"])
+multi_job_removal_fixture["jobs"]["destroy-runtime"]["steps"] = [
     step
-    for step in multi_job_removal_fixture["jobs"]["preview-destroy"]["steps"]
+    for step in multi_job_removal_fixture["jobs"]["destroy-runtime"]["steps"]
     if skew_script not in str(step.get("run", ""))
 ]
 expect_rejected(
     multi_job_removal_fixture,
     "multi-job removal fixture",
     "must invoke the shared kubectl version skew preflight exactly once",
-    required_jobs=required_hosted_skew_jobs["preview.yml"],
+    required_jobs=required_hosted_skew_jobs["hosted-identity-request.yml"],
 )
 PY
 

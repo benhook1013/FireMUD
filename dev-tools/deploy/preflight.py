@@ -54,7 +54,8 @@ Environment variables:
                                      readiness budget (default: 300, maximum: 900)
 
 The hosted-bridge form reuses PREFLIGHT-BRIDGE-001 before preview/dev-demo
-apply. The optional expected port adds an exact trusted post-render Telnet
+apply and validates the private Gateway/TCP Proxy bridge. The optional
+expected port additionally requests an exact trusted post-render public Telnet
 NodePort check. Set FIREMUD_PREFLIGHT_CONTEXT=ci-static to validate only the
 candidate manifest; operator context also verifies controller-projected TLS
 Secret keys.
@@ -118,13 +119,13 @@ JWT_CUSTODY_MODES = (
 IMPLEMENTED_JWT_CUSTODY_MODE = "LEGACY_SECRET_DIAGNOSTIC"
 LEGACY_PLAYER_JWKS_REF = "secret://firemud/jwt-jwks"
 BRIDGE_WS_PATHS = {
-    "FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH": "/tls/client.crt",
-    "FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH": "/tls/client.key",
-    "FIREMUD_GATEWAY_WS_CA_CERT_PATH": "/tls/ca.crt",
+    "FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH": "/gateway-ws-client-tls/tls.crt",
+    "FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH": "/gateway-ws-client-tls/tls.key",
+    "FIREMUD_GATEWAY_WS_CA_CERT_PATH": "/gateway-ws-client-tls/ca.crt",
 }
 BRIDGE_WS_SECRET_ITEM_PATHS = {
-    "client.crt": "client.crt",
-    "client.key": "client.key",
+    "tls.crt": "tls.crt",
+    "tls.key": "tls.key",
     "ca.crt": "ca.crt",
 }
 TCP_PROXY_TELNET_SERVICE_PORT = 2323
@@ -4047,14 +4048,14 @@ def validate_gateway_ws_values(
                 ):
                     issues.append(
                         "Gateway WebSocket bridge Secret volume items must select exactly "
-                        "client.crt->client.crt, client.key->client.key, and ca.crt->ca.crt"
+                        "tls.crt->tls.crt, tls.key->tls.key, and ca.crt->ca.crt"
                     )
                     return False
                 item_pairs = {(item["key"], item["path"]) for item in items}
                 if item_pairs != expected_item_pairs:
                     issues.append(
                         "Gateway WebSocket bridge Secret volume items must select exactly "
-                        "client.crt->client.crt, client.key->client.key, and ca.crt->ca.crt"
+                        "tls.crt->tls.crt, tls.key->tls.key, and ca.crt->ca.crt"
                     )
                     return False
                 return True
@@ -4063,7 +4064,7 @@ def validate_gateway_ws_values(
                 mount
                 for mount in container.get("volumeMounts") or []
                 if isinstance(mount, dict)
-                and mount.get("mountPath") == "/tls"
+                and mount.get("mountPath") == "/gateway-ws-client-tls"
                 and mount.get("readOnly") is True
                 and volumes.get(mount.get("name"))
                 and volumes.get(mount.get("name")) not in grpc_secret_names
@@ -4071,7 +4072,7 @@ def validate_gateway_ws_values(
             ]
             if len(bridge_mounts) != 1:
                 issues.append(
-                    "exactly one dedicated read-only Secret-backed /tls mount is required for the Gateway WebSocket bridge"
+                    "exactly one dedicated read-only Secret-backed /gateway-ws-client-tls mount is required for the Gateway WebSocket bridge"
                 )
             value = env.get("GATEWAY_WS_URL")
             if not value:
@@ -4110,6 +4111,112 @@ def validate_gateway_ws_values(
     elif len(set(values)) != 1:
         issues.append("effective GATEWAY_WS_URL values conflict across workloads")
     return values, issues
+
+
+def validate_hosted_private_bridge_values(
+    documents: list[dict[str, Any]],
+    required_identity_mode: str | None = None,
+    *,
+    target_namespace: str = "firemud",
+    allow_public_telnet: bool = False,
+) -> list[str]:
+    """Validate the private hosted TCP Proxy bridge boundary.
+
+    The hosted-controller parent owns an internal ClusterIP TCP Proxy and its
+    controller-projected bridge identity. Public direct-TLS Telnet exposure is
+    a separate child boundary and is validated only when a caller explicitly
+    requests the expected public NodePort assertion.
+    """
+    if required_identity_mode is not None and required_identity_mode not in {
+        "standalone",
+        "hosted-controller",
+    }:
+        raise ValueError("required certificate identity mode is invalid")
+    if not isinstance(target_namespace, str) or not target_namespace:
+        raise ValueError("target namespace is required")
+
+    issues: list[str] = []
+    tcp_services = [
+        document
+        for document in documents
+        if document.get("kind") == "Service"
+        and metadata_name(document) == "tcp-proxy-service"
+        and rendered_namespace_matches(
+            document, target_namespace, default_namespace=target_namespace
+        )
+    ]
+    if len(tcp_services) != 1:
+        issues.append(
+            "private hosted bridge requires exactly one tcp-proxy-service Service"
+        )
+        return issues
+    tcp_service = tcp_services[0]
+    service_spec = tcp_service.get("spec") or {}
+    if not allow_public_telnet and service_spec.get("type", "ClusterIP") != "ClusterIP":
+        issues.append("private hosted bridge TCP Proxy Service must remain ClusterIP")
+    service_ports = service_spec.get("ports") or []
+    private_ports = [
+        port
+        for port in service_ports
+        if isinstance(port, dict)
+        and port.get("port") == TCP_PROXY_TELNET_SERVICE_PORT
+        and port.get("targetPort") == TCP_PROXY_TELNET_SERVICE_PORT
+        and port.get("protocol", "TCP") == "TCP"
+    ]
+    if len(private_ports) != 1 or len(service_ports) != 1:
+        issues.append(
+            "private hosted bridge TCP Proxy Service requires exactly one private listener with port 2323, targetPort 2323, and protocol TCP"
+        )
+    if not allow_public_telnet and any(
+        isinstance(port, dict) and "nodePort" in port for port in service_ports
+    ):
+        issues.append(
+            "private hosted bridge TCP Proxy Service must not declare a public nodePort"
+        )
+
+    deployments = [
+        document
+        for document in documents
+        if document.get("kind") == "Deployment"
+        and metadata_name(document) == "tcp-proxy-service"
+        and rendered_namespace_matches(
+            document, target_namespace, default_namespace=target_namespace
+        )
+    ]
+    if len(deployments) != 1:
+        issues.append(
+            "private hosted bridge requires exactly one tcp-proxy-service Deployment"
+        )
+        return issues
+    deployment = deployments[0]
+
+    identity_mode_label = "firemud.dev/certificate-identity-mode"
+
+    def labeled_identity_mode(document: dict[str, Any]) -> Any:
+        metadata = document.get("metadata") or {}
+        labels = metadata.get("labels") or {}
+        return labels.get(identity_mode_label) if isinstance(labels, dict) else None
+
+    service_mode = labeled_identity_mode(tcp_service)
+    deployment_mode = labeled_identity_mode(deployment)
+    if service_mode is None or deployment_mode is None:
+        issues.append(
+            "private hosted bridge TCP Proxy Service and Deployment require explicit certificate identity mode labels"
+        )
+    elif service_mode != deployment_mode:
+        issues.append(
+            "private hosted bridge TCP Proxy Service and Deployment certificate identity mode labels must match"
+        )
+    identity_mode = service_mode if service_mode is not None else deployment_mode
+    if identity_mode not in {"standalone", "hosted-controller"}:
+        issues.append(
+            "private hosted bridge TCP Proxy certificate identity mode must be standalone or hosted-controller"
+        )
+    elif required_identity_mode is not None and identity_mode != required_identity_mode:
+        issues.append(
+            f"private hosted bridge TCP Proxy certificate identity mode must be {required_identity_mode}"
+        )
+    return issues
 
 
 def path_is_under_mount(path: str, mount_path: str) -> bool:
@@ -4493,29 +4600,46 @@ def label_bridge_validation_issues(
     ]
 
 
+def label_hosted_bridge_validation_issues(
+    gateway_issues: list[str],
+    private_bridge_issues: list[str],
+    public_telnet_issues: list[str],
+) -> list[str]:
+    """Label private bridge and optional public Telnet failures separately."""
+    return [
+        *(f"Gateway bridge: {issue}" for issue in gateway_issues),
+        *(f"Private bridge: {issue}" for issue in private_bridge_issues),
+        *(f"Public Telnet: {issue}" for issue in public_telnet_issues),
+    ]
+
+
 def bridge_validation_failure_message(bridge_issues: list[str]) -> str:
-    """Describe either transport without making a Telnet-only failure look Gateway-only."""
-    return "Bridge and Telnet transport validation failed: " + "; ".join(bridge_issues)
+    """Describe the hosted bridge boundary and its separately requested children."""
+    return "Hosted bridge validation failed: " + "; ".join(bridge_issues)
 
 
-def bridge_validation_result(bridge_issues: list[str]) -> tuple[str, str]:
-    """Build the canonical shared bridge policy result."""
+def bridge_validation_result(
+    bridge_issues: list[str], includes_public_telnet: bool = False
+) -> tuple[str, str]:
+    """Build the canonical private bridge policy result."""
     if bridge_issues:
         return "fail", bridge_validation_failure_message(bridge_issues)
-    return "pass", "Gateway bridge and direct Telnet TLS alignment is valid"
+    if includes_public_telnet:
+        return "pass", "Private Gateway bridge and public direct Telnet TLS alignment is valid"
+    return "pass", "Private Gateway bridge TLS and certificate identity alignment is valid"
 
 
-def hosted_bridge_success_message(context: str) -> str:
-    """Distinguish static manifest proof from live controller-projection proof."""
+def hosted_bridge_success_message(
+    context: str, includes_public_telnet: bool = False
+) -> str:
+    """Distinguish private/static proof from optional public/live proof."""
+    if includes_public_telnet:
+        base_message = "Private Gateway bridge and public direct Telnet TLS alignment is valid"
+    else:
+        base_message = "Private Gateway bridge TLS and certificate identity alignment is valid"
     if context == "operator":
-        return (
-            "Gateway bridge and direct Telnet TLS alignment is valid; "
-            "controller-projected Secret readiness is confirmed"
-        )
-    return (
-        "Gateway bridge and direct Telnet TLS alignment is valid; "
-        "ci-static did not check controller-projected Secret readiness"
-    )
+        return f"{base_message}; controller-projected Secret readiness is confirmed"
+    return f"{base_message}; ci-static did not check controller-projected Secret readiness"
 
 
 def primary_containers(document: dict[str, Any]) -> list[tuple[str | None, dict[str, Any], dict[str, str | None]]]:
@@ -6699,15 +6823,25 @@ def hosted_bridge_preflight(
             )
 
     _, gateway_issues = validate_gateway_ws_values(documents, expected)
-    telnet_issues = validate_hosted_telnet_tls_values(
+    private_bridge_issues = validate_hosted_private_bridge_values(
         documents,
         required_identity_mode="hosted-controller",
-        expected_hosted_telnet_node_port=expected_hosted_telnet_node_port,
         target_namespace=namespace,
+        allow_public_telnet=expected_hosted_telnet_node_port is not None,
     )
+    public_telnet_issues: list[str] = []
+    if expected_hosted_telnet_node_port is not None:
+        public_telnet_issues = validate_hosted_telnet_tls_values(
+            documents,
+            required_identity_mode="hosted-controller",
+            expected_hosted_telnet_node_port=expected_hosted_telnet_node_port,
+            target_namespace=namespace,
+        )
     issues = [
         *release_identity_issues,
-        *label_bridge_validation_issues(gateway_issues, telnet_issues),
+        *label_hosted_bridge_validation_issues(
+            gateway_issues, private_bridge_issues, public_telnet_issues
+        ),
     ]
     if context == "operator" and not issues:
         try:
@@ -6737,9 +6871,13 @@ def hosted_bridge_preflight(
                 secret_ready_timeout_seconds,
             )
         )
-    status, message = bridge_validation_result(issues)
+    status, message = bridge_validation_result(
+        issues, includes_public_telnet=expected_hosted_telnet_node_port is not None
+    )
     if status == "pass":
-        message = hosted_bridge_success_message(context)
+        message = hosted_bridge_success_message(
+            context, includes_public_telnet=expected_hosted_telnet_node_port is not None
+        )
     print(
         json.dumps(
             {

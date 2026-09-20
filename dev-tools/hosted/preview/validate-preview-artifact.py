@@ -125,6 +125,9 @@ EXPECTED_SECRET_REFS = {
     "minio-credentials",
     "firemud-grpc-tls",
 }
+CANONICAL_INGRESS_ISSUER = "letsencrypt-prod"
+CERTIFICATE_IDENTITY_MODES = {"standalone", "hosted-controller"}
+CERTIFICATE_IDENTITY_LABEL = "firemud.dev/certificate-identity-mode"
 EXPECTED_TOP_LEVEL_LABELS = {
     "app.kubernetes.io/name": "firemud",
     "app.kubernetes.io/managed-by": "Helm",
@@ -136,6 +139,30 @@ def _expected_top_level_labels() -> dict[str, str]:
         **EXPECTED_TOP_LEVEL_LABELS,
         "helm.sh/chart": _expected_chart_label(TRUSTED_CHART_METADATA),
     }
+
+
+def _validate_certificate_identity_mode(certificate_identity_mode: str) -> None:
+    if certificate_identity_mode not in CERTIFICATE_IDENTITY_MODES:
+        fail("preview certificate identity mode is not canonical")
+
+
+def _expected_names_for_mode(certificate_identity_mode: str) -> dict[str, set[str]]:
+    _validate_certificate_identity_mode(certificate_identity_mode)
+    expected_names = {
+        kind: set(names) for kind, names in EXPECTED_NAMES.items()
+    }
+    if certificate_identity_mode == "standalone":
+        expected_names["NetworkPolicy"].discard(
+            "account-service-controller-ingress"
+        )
+    return expected_names
+
+
+def _is_tcp_proxy_identity_object(document: dict) -> bool:
+    return document.get("kind") in {"Deployment", "Service"} and (
+        isinstance(document.get("metadata"), dict)
+        and document["metadata"].get("name") == "tcp-proxy-service"
+    )
 
 
 def _application_service_spec(
@@ -492,13 +519,20 @@ def _require_mapping_list(value: object, path: str) -> list[dict]:
     return value
 
 
-def _validate_object_metadata(document: dict, expected_namespace: str) -> dict:
+def _validate_object_metadata(
+    document: dict,
+    expected_namespace: str,
+    allow_trusted_ingress_annotation: bool = False,
+    certificate_identity_mode: str | None = None,
+) -> dict:
     """Require the exact Helm-authored metadata admitted into the trusted apply."""
 
     kind = document.get("kind", "object")
     metadata = _require_mapping(document.get("metadata"), f"{kind}.metadata")
     name = metadata.get("name")
     allowed_fields = {"name", "namespace", "labels"}
+    if allow_trusted_ingress_annotation:
+        allowed_fields.add("annotations")
     unexpected_fields = set(metadata) - allowed_fields
     if unexpected_fields:
         fail(
@@ -509,6 +543,10 @@ def _validate_object_metadata(document: dict, expected_namespace: str) -> dict:
         **_expected_top_level_labels(),
         "app.kubernetes.io/instance": expected_namespace,
     }
+    if certificate_identity_mode is not None:
+        _validate_certificate_identity_mode(certificate_identity_mode)
+        if _is_tcp_proxy_identity_object(document):
+            expected_labels[CERTIFICATE_IDENTITY_LABEL] = certificate_identity_mode
     actual_labels = metadata.get("labels")
     if isinstance(actual_labels, dict):
         # Identify the first missing or mismatched required label; exact equality below
@@ -884,6 +922,7 @@ def inject_telnet_port(
     destination: Path,
     port: int,
     expected_namespace: str | None = None,
+    certificate_identity_mode: str | None = None,
 ) -> None:
     """Add only trusted runtime target data after artifact validation."""
 
@@ -896,18 +935,33 @@ def inject_telnet_port(
             "preview telnet port must be between "
             f"{MIN_PREVIEW_TELNET_PORT} and {MAX_PREVIEW_TELNET_PORT}"
         )
+    if certificate_identity_mode is not None:
+        _validate_certificate_identity_mode(certificate_identity_mode)
     documents = list(yaml.safe_load_all(source.read_text(encoding="utf-8")))
     matches = []
+    ingress_matches = 0
     for document in documents:
         if not isinstance(document, dict):
             fail("validated preview render contains a non-object document")
-        metadata = _validate_object_metadata(document, expected_namespace)
+        metadata = _validate_object_metadata(
+            document,
+            expected_namespace,
+            certificate_identity_mode=certificate_identity_mode,
+        )
         namespace = metadata.get("namespace")
         if namespace not in (None, expected_namespace):
             fail(
                 f"{document.get('kind')}/{metadata.get('name')} targets namespace {namespace!r}"
             )
+        if "annotations" in metadata:
+            fail("validated preview render retains untrusted annotations")
         metadata["namespace"] = expected_namespace
+        if document.get("kind") == "Ingress" and metadata.get("name") == "firemud-preview":
+            ingress_matches += 1
+            if certificate_identity_mode == "standalone":
+                metadata["annotations"] = {
+                    "cert-manager.io/cluster-issuer": CANONICAL_INGRESS_ISSUER
+                }
         if document.get("kind") != "Service":
             continue
         if metadata.get("name") != "tcp-proxy-service":
@@ -920,6 +974,8 @@ def inject_telnet_port(
                 matches.append(service_port)
     if len(matches) != 1:
         fail("validated preview render must contain exactly one TCP Proxy Telnet port")
+    if certificate_identity_mode == "standalone" and ingress_matches != 1:
+        fail("validated preview render must contain exactly one preview Ingress")
     if "nodePort" in matches[0]:
         fail("validated preview render already contains a NodePort")
     matches[0]["nodePort"] = port
@@ -929,7 +985,12 @@ def inject_telnet_port(
     )
 
 
-def validate_runtime_target(path: Path, expected_namespace: str, expected_port: int) -> None:
+def validate_runtime_target(
+    path: Path,
+    expected_namespace: str,
+    expected_port: int,
+    certificate_identity_mode: str | None = None,
+) -> None:
     """Verify the only trusted mutations made after closed artifact validation."""
 
     if not re.fullmatch(r"pr-[1-9][0-9]{0,50}", expected_namespace):
@@ -939,20 +1000,45 @@ def validate_runtime_target(path: Path, expected_namespace: str, expected_port: 
             "preview telnet port must be between "
             f"{MIN_PREVIEW_TELNET_PORT} and {MAX_PREVIEW_TELNET_PORT}"
         )
+    if certificate_identity_mode is not None:
+        _validate_certificate_identity_mode(certificate_identity_mode)
     documents = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
     if not documents:
         fail("prepared preview render is empty")
     node_ports: list[tuple[str, object, object]] = []
+    ingress_matches = 0
     for index, document in enumerate(documents):
         if not isinstance(document, dict):
             fail(f"prepared preview document {index} is not an object")
-        metadata = _validate_object_metadata(document, expected_namespace)
+        metadata = _validate_object_metadata(
+            document,
+            expected_namespace,
+            allow_trusted_ingress_annotation=(
+                certificate_identity_mode == "standalone"
+                and document.get("kind") == "Ingress"
+                and isinstance(document.get("metadata"), dict)
+                and document["metadata"].get("name") == "firemud-preview"
+            ),
+            certificate_identity_mode=certificate_identity_mode,
+        )
         name = metadata.get("name")
         if metadata.get("namespace") != expected_namespace:
             fail(
                 f"{document.get('kind')}/{name} must explicitly target namespace "
                 f"{expected_namespace!r}"
             )
+        annotations = metadata.get("annotations")
+        if document.get("kind") == "Ingress" and name == "firemud-preview":
+            ingress_matches += 1
+            expected_annotations = (
+                {"cert-manager.io/cluster-issuer": CANONICAL_INGRESS_ISSUER}
+                if certificate_identity_mode == "standalone"
+                else None
+            )
+            if annotations != expected_annotations:
+                fail("prepared preview Ingress has an unsafe certificate issuer")
+        elif annotations is not None:
+            fail(f"prepared {document.get('kind')}/{name} has untrusted annotations")
         if document.get("kind") in {"Deployment", "Job"}:
             _validate_workload_selector_metadata(document)
         for location, value in walk(document):
@@ -968,6 +1054,8 @@ def validate_runtime_target(path: Path, expected_namespace: str, expected_port: 
         fail(
             "prepared preview render must contain exactly one Service/tcp-proxy-service"
         )
+    if certificate_identity_mode == "standalone" and ingress_matches != 1:
+        fail("prepared preview render must contain exactly one preview Ingress")
     service_spec = _require_mapping(
         tcp_proxy_services[0].get("spec"),
         "Service/tcp-proxy-service.spec",
@@ -1147,9 +1235,13 @@ def _validate_internal_network_policies(policies: dict[str, dict]) -> None:
             fail(f"NetworkPolicy/{name} has an unsafe spec")
 
 
-def validate_network_policies(documents: list[dict]) -> None:
+def validate_network_policies(
+    documents: list[dict],
+    certificate_identity_mode: str = "hosted-controller",
+) -> None:
     """Keep the runtime policy set and every allowed traffic exception exact."""
 
+    _validate_certificate_identity_mode(certificate_identity_mode)
     raw_policies = [
         document for document in documents if document.get("kind") == "NetworkPolicy"
     ]
@@ -1157,7 +1249,9 @@ def validate_network_policies(documents: list[dict]) -> None:
         document.get("metadata", {}).get("name"): document
         for document in raw_policies
     }
-    expected_names = EXPECTED_NAMES["NetworkPolicy"]
+    expected_names = _expected_names_for_mode(certificate_identity_mode)[
+        "NetworkPolicy"
+    ]
     if len(raw_policies) != len(policies) or set(policies) != expected_names:
         fail(
             "runtime NetworkPolicy set is not closed "
@@ -1166,14 +1260,6 @@ def validate_network_policies(documents: list[dict]) -> None:
         )
     _validate_internal_network_policies(policies)
 
-    controller_policy = policies["account-service-controller-ingress"]
-    spec = _require_mapping(
-        controller_policy.get("spec"), "NetworkPolicy/account-service-controller-ingress.spec"
-    )
-    if spec.get("podSelector") != {"matchLabels": {"app": "account-service"}}:
-        fail("NetworkPolicy/account-service-controller-ingress selects an unsafe workload")
-    if spec.get("policyTypes") != ["Ingress"]:
-        fail("NetworkPolicy/account-service-controller-ingress must only govern ingress")
     expected_from = {
         "namespaceSelector": {
             "matchLabels": {"kubernetes.io/metadata.name": "firemud-system"}
@@ -1185,43 +1271,62 @@ def validate_network_policies(documents: list[dict]) -> None:
             }
         },
     }
-    expected_ingress = [{"from": [expected_from], "ports": [{"protocol": "TCP", "port": 6565}]}]
-    if spec.get("ingress") != expected_ingress:
-        fail("NetworkPolicy/account-service-controller-ingress has an unsafe exception")
+    if certificate_identity_mode == "hosted-controller":
+        controller_policy = policies["account-service-controller-ingress"]
+        spec = _require_mapping(
+            controller_policy.get("spec"),
+            "NetworkPolicy/account-service-controller-ingress.spec",
+        )
+        if spec.get("podSelector") != {"matchLabels": {"app": "account-service"}}:
+            fail(
+                "NetworkPolicy/account-service-controller-ingress selects an unsafe workload"
+            )
+        if spec.get("policyTypes") != ["Ingress"]:
+            fail(
+                "NetworkPolicy/account-service-controller-ingress must only govern ingress"
+            )
+        expected_ingress = [
+            {"from": [expected_from], "ports": [{"protocol": "TCP", "port": 6565}]}
+        ]
+        if spec.get("ingress") != expected_ingress:
+            fail(
+                "NetworkPolicy/account-service-controller-ingress has an unsafe exception"
+            )
 
     gateway_ingress = _require_mapping(
         policies["spring-cloud-gateway-ingress"].get("spec"),
         "NetworkPolicy/spring-cloud-gateway-ingress.spec",
     )
+    expected_gateway_ingress_rules = [
+        {
+            "from": [{"podSelector": {"matchLabels": {"app": "tcp-proxy-service"}}}],
+            "ports": [{"protocol": "TCP", "port": 8443}],
+        },
+        {
+            "from": [
+                {
+                    "namespaceSelector": {
+                        "matchLabels": {"kubernetes.io/metadata.name": "kube-system"}
+                    },
+                    "podSelector": {
+                        "matchLabels": {"app.kubernetes.io/name": "traefik"}
+                    },
+                }
+            ],
+            "ports": [{"protocol": "TCP", "port": 8080}],
+        },
+    ]
+    if certificate_identity_mode == "hosted-controller":
+        expected_gateway_ingress_rules.append(
+            {
+                "from": [expected_from],
+                "ports": [{"protocol": "TCP", "port": 8443}],
+            }
+        )
     expected_gateway_ingress = {
         "podSelector": {"matchLabels": {"app": "spring-cloud-gateway"}},
         "policyTypes": ["Ingress"],
-        "ingress": [
-            {
-                "from": [{"podSelector": {"matchLabels": {"app": "tcp-proxy-service"}}}],
-                "ports": [{"protocol": "TCP", "port": 8443}],
-            },
-            {
-                "from": [
-                    {
-                        "namespaceSelector": {
-                            "matchLabels": {"kubernetes.io/metadata.name": "kube-system"}
-                        },
-                        "podSelector": {
-                            "matchLabels": {"app.kubernetes.io/name": "traefik"}
-                        },
-                    }
-                ],
-                "ports": [{"protocol": "TCP", "port": 8080}],
-            },
-            {
-                "from": [{"podSelector": {}}],
-                "ports": [
-                    {"protocol": "TCP", "port": 8080},
-                    {"protocol": "TCP", "port": 6565},
-                ],
-            },
-        ],
+        "ingress": expected_gateway_ingress_rules,
     }
     if gateway_ingress != expected_gateway_ingress:
         fail("NetworkPolicy/spring-cloud-gateway-ingress has an unsafe exception")
@@ -1259,6 +1364,14 @@ def validate_network_policies(documents: list[dict]) -> None:
                     {"podSelector": {"matchLabels": {"app": "game-session-service"}}}
                 ],
                 "ports": [{"protocol": "TCP", "port": 6565}],
+            },
+            {
+                "to": [{"podSelector": {"matchLabels": {"app": "otel-collector"}}}],
+                "ports": [{"protocol": "TCP", "port": 4317}],
+            },
+            {
+                "to": [{"podSelector": {"matchLabels": {"app": "elasticsearch"}}}],
+                "ports": [{"protocol": "TCP", "port": 9200}],
             },
         ],
     }
@@ -1366,7 +1479,15 @@ def validate_manifest(
     expected_namespace: str,
     expected_image_tag: str,
     expected_hostname: str,
+    certificate_identity_mode: str = "hosted-controller",
 ) -> None:
+    _validate_certificate_identity_mode(certificate_identity_mode)
+    expected_names = _expected_names_for_mode(certificate_identity_mode)
+    expected_objects = {
+        (kind, name)
+        for kind, names in expected_names.items()
+        for name in names
+    }
     documents = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
     if not documents:
         fail("manifest is empty")
@@ -1377,11 +1498,15 @@ def validate_manifest(
         identity = (document.get("apiVersion"), document.get("kind"))
         if identity not in EXPECTED_KINDS:
             fail(f"manifest contains unsupported object {identity}")
-        metadata = _validate_object_metadata(document, expected_namespace)
+        metadata = _validate_object_metadata(
+            document,
+            expected_namespace,
+            certificate_identity_mode=certificate_identity_mode,
+        )
         name = metadata.get("name")
         if not isinstance(name, str) or not NAME_RE.fullmatch(name):
             fail(f"manifest object has unsafe name: {name!r}")
-        if name not in EXPECTED_NAMES[document["kind"]]:
+        if name not in expected_names[document["kind"]]:
             fail(f"manifest contains unexpected {document['kind']}/{name}")
         _validate_firemud_config_shape(document)
         if document["kind"] in {"Deployment", "Job"}:
@@ -1427,12 +1552,12 @@ def validate_manifest(
             _validate_workload_selector_metadata(document)
         if document["kind"] == "PersistentVolumeClaim":
             _validate_persistent_volume_claim(document)
-    if seen != EXPECTED_OBJECTS:
-        missing = sorted(EXPECTED_OBJECTS - seen)
-        extra = sorted(seen - EXPECTED_OBJECTS)
+    if seen != expected_objects:
+        missing = sorted(expected_objects - seen)
+        extra = sorted(seen - expected_objects)
         fail(f"manifest object set is not closed (missing={missing}, extra={extra})")
     validate_services(documents)
-    validate_network_policies(documents)
+    validate_network_policies(documents, certificate_identity_mode)
     validate_infrastructure_deployments(documents)
     validate_service_consumers(documents, expected_namespace)
 
@@ -1448,16 +1573,23 @@ def validate_metadata(
     merge_sha: str,
     image_tag: str,
     hostname: str,
+    certificate_identity_mode: str = "hosted-controller",
 ) -> None:
+    _validate_certificate_identity_mode(certificate_identity_mode)
     metadata = _require_mapping(
         json.loads(path.read_text(encoding="utf-8")), "metadata"
     )
     if not isinstance(pr_number, str) or re.fullmatch(r"[1-9][0-9]*", pr_number) is None:
         fail("PR number must be a positive canonical decimal string")
     normalized_pr_number = int(pr_number)
+    event = metadata.get("event")
+    if event not in {"pull_request_target", "repository_dispatch"}:
+        fail("metadata event must be pull_request_target or repository_dispatch")
+    if event == "repository_dispatch" and metadata.get("action") != "deploy":
+        fail("repository_dispatch render metadata action must be deploy")
     expected = {
         "schemaVersion": 1,
-        "event": "pull_request",
+        "event": event,
         "repository": repository,
         "sourceWorkflow": ".github/workflows/preview.yml",
         "sourceRunId": int(source_run_id),
@@ -1468,6 +1600,8 @@ def validate_metadata(
         "hostname": hostname,
         "imageTag": image_tag,
     }
+    if event == "repository_dispatch":
+        expected["action"] = "deploy"
     allowed_fields = set(expected) | {"manifestSha256"}
     unexpected_fields = set(metadata) - allowed_fields
     if unexpected_fields:
@@ -1481,7 +1615,13 @@ def validate_metadata(
     digest = hashlib.sha256(manifest.read_bytes()).hexdigest()
     if metadata.get("manifestSha256") != digest:
         fail("manifest checksum does not match metadata")
-    validate_manifest(manifest, f"pr-{normalized_pr_number}", image_tag, hostname)
+    validate_manifest(
+        manifest,
+        f"pr-{normalized_pr_number}",
+        image_tag,
+        hostname,
+        certificate_identity_mode,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1494,33 +1634,39 @@ def main(argv: list[str] | None = None) -> int:
             print(f"preview artifact rejected: {exc}", file=sys.stderr)
             return 1
         return 0
-    if command == "inject" and len(args) == 6:
+    if command == "inject" and len(args) == 7:
         try:
             inject_telnet_port(
                 source=Path(args[2]),
                 destination=Path(args[3]),
                 port=int(args[5]),
                 expected_namespace=args[4],
+                certificate_identity_mode=args[6],
             )
         except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:
             print(f"preview Telnet port injection rejected: {exc}", file=sys.stderr)
             return 1
         return 0
-    if command == "runtime-target" and len(args) == 5:
+    if command == "runtime-target" and len(args) == 6:
         try:
-            validate_runtime_target(Path(args[2]), args[3], int(args[4]))
+            validate_runtime_target(
+                Path(args[2]),
+                args[3],
+                int(args[4]),
+                args[5],
+            )
         except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:
             print(f"preview runtime target rejected: {exc}", file=sys.stderr)
             return 1
         return 0
-    if len(args) != 11:
+    if len(args) != 12:
         print(
             "usage: validate-preview-artifact.py <metadata> <manifest> <repository> "
             "<source-run-id> <pr-number> <base-sha> <head-sha> <merge-sha> "
-            "<image-tag> <hostname>\n"
+            "<image-tag> <hostname> <standalone|hosted-controller>\n"
             "       validate-preview-artifact.py sanitize <render> <output>\n"
-            "       validate-preview-artifact.py inject <render> <output> <namespace> <port>\n"
-            "       validate-preview-artifact.py runtime-target <render> <namespace> <port>",
+            "       validate-preview-artifact.py inject <render> <output> <namespace> <port> <standalone|hosted-controller>\n"
+            "       validate-preview-artifact.py runtime-target <render> <namespace> <port> <standalone|hosted-controller>",
             file=sys.stderr,
         )
         return 2

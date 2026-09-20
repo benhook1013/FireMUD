@@ -3,11 +3,12 @@ name: Preview Reconciler
 on:
   schedule:
     - cron: "*/5 * * * *"
-  workflow_dispatch:
+  repository_dispatch:
+    types: [preview-reconcile]
 
 permissions:
-  actions: write
-  contents: read
+  actions: read
+  contents: write
   pull-requests: read
 
 concurrency:
@@ -23,10 +24,11 @@ jobs:
       - preview
       - linux
       - x64
-    environment: pr-preview
+    environment: trusted-hosted-cluster
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
       - name: Set up canonical Python
@@ -39,11 +41,10 @@ jobs:
 
       - name: Write preview kubeconfig
         env:
-          PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
+          PREVIEW_KUBECONFIG: ${{ secrets.TRUSTED_HOSTED_PREVIEW_KUBECONFIG }}
           PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
         run: |
           KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"
-          bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Verify preview cluster access
@@ -59,6 +60,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PREVIEW_MAX_ACTIVE: ${{ vars.PREVIEW_MAX_ACTIVE }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
           preview_workflow_name="PR Preview Environment"
@@ -164,9 +166,9 @@ jobs:
           available_slots=$((max_active - active_count))
           dispatch_sent=false
           gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
-            --jq '.[] | [(if (.labels | map(.name) | any(. == "preview:priority")) then 0 else 1 end), .number, .head.ref, .head.sha, .user.login, .base.ref, .state, (.labels | map({name: .name}) | tojson | @base64)] | @tsv' \
+            --jq '.[] | [(if (.labels | map(.name) | any(. == "preview:priority")) then 0 else 1 end), .number, .head.sha, .user.login, .base.ref, .state, (.labels | map({name: .name}) | tojson | @base64)] | @tsv' \
             | sort -t $'\t' -k1,1n -k2,2n |
-          while IFS=$'\t' read -r _ pr_number head_ref head_sha pr_author pr_base_ref pr_state labels_json_base64; do
+          while IFS=$'\t' read -r _ pr_number head_sha pr_author pr_base_ref pr_state labels_json_base64; do
             if ! labels_json="$(printf '%s' "$labels_json_base64" | base64 --decode 2>/dev/null)" ||
               [[ -z "$labels_json" ]] ||
               ! jq -e 'type == "array"' <<<"$labels_json" >/dev/null; then
@@ -190,7 +192,6 @@ jobs:
             fi
 
             namespace="pr-${pr_number}"
-            desired_image_tag="${head_sha}"
             namespace_exists=false
             current_head_sha=""
             requested_head_sha=""
@@ -254,15 +255,14 @@ jobs:
             active_preview_run_id="$(
               gh run list \
                 --workflow "${preview_workflow_name}" \
-                --branch "${head_ref}" \
-                --commit "${head_sha}" \
-                --limit 20 \
-                --json databaseId,status,headSha \
-                | jq -r --arg head_sha "${head_sha}" '
+                --branch "${DEFAULT_BRANCH}" \
+                --limit 100 \
+                --json databaseId,status,displayTitle \
+                | jq -r --arg run_name "Preview dispatch pr-${pr_number}-${head_sha}" '
                     first(
                       .[]
                       | select(
-                          .headSha == $head_sha
+                          .displayTitle == $run_name
                           and (
                             .status == "requested"
                             or .status == "queued"
@@ -281,15 +281,18 @@ jobs:
               continue
             fi
 
-            echo "Dispatching preview deploy for PR #${pr_number} (${head_sha}) on ref ${head_ref}"
+            echo "Dispatching preview render for PR #${pr_number} (${head_sha}) from trusted ref ${DEFAULT_BRANCH}"
             gh api \
               --method POST \
-              "repos/${GITHUB_REPOSITORY}/actions/workflows/preview.yml/dispatches" \
-              -f ref="${head_ref}" \
-              -f 'inputs[action]=deploy' \
-              -f "inputs[pr_number]=${pr_number}" \
-              -f "inputs[image_tag]=${desired_image_tag}" \
-              -f "inputs[head_sha]=${head_sha}" \
-              -f 'inputs[preview_domain]=preview.firedevops.net'
+              "repos/${GITHUB_REPOSITORY}/dispatches" \
+              -f event_type=preview-deploy \
+              -f 'client_payload[action]=deploy' \
+              -f "client_payload[pr_number]=${pr_number}" \
+              -f "client_payload[head_sha]=${head_sha}" \
+              -f 'client_payload[preview_domain]=preview.firedevops.net'
             dispatch_sent=true
           done
+
+      - name: Remove preview kubeconfig
+        if: ${{ always() }}
+        run: rm -f -- "$RUNNER_TEMP/preview-kubeconfig.yaml"
