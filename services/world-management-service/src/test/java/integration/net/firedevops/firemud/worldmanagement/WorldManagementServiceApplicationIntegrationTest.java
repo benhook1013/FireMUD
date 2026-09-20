@@ -185,14 +185,15 @@ class WorldManagementServiceApplicationIntegrationTest {
         .set(WORLD_INSTANCE.VERSION_STATE_EPOCH, 1L)
         .set(WORLD_INSTANCE.STATUS, "ACTIVE")
         .execute();
-    Long regionId = dsl.insertInto(REGION_INSTANCE)
-        .set(REGION_INSTANCE.TENANT_ID, tenantId)
-        .set(REGION_INSTANCE.GAME_INSTANCE_ID, gameInstanceId)
-        .set(REGION_INSTANCE.WORLD_INSTANCE_ID, worldInstanceId)
-        .set(REGION_INSTANCE.SHARD_ID, 0)
-        .set(REGION_INSTANCE.NAME, "event-test-region-" + worldInstanceId)
-        .returning(REGION_INSTANCE.ID)
-        .fetchOne(REGION_INSTANCE.ID);
+    Long regionId =
+        dsl.insertInto(REGION_INSTANCE)
+            .set(REGION_INSTANCE.TENANT_ID, tenantId)
+            .set(REGION_INSTANCE.GAME_INSTANCE_ID, gameInstanceId)
+            .set(REGION_INSTANCE.WORLD_INSTANCE_ID, worldInstanceId)
+            .set(REGION_INSTANCE.SHARD_ID, 0)
+            .set(REGION_INSTANCE.NAME, "event-test-region-" + worldInstanceId)
+            .returning(REGION_INSTANCE.ID)
+            .fetchOne(REGION_INSTANCE.ID);
     if (regionId == null) {
       throw new IllegalStateException("region insert did not return an id");
     }
