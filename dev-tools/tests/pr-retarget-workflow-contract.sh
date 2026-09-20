@@ -443,7 +443,10 @@ require_contains "$preview_path" '      - synchronize'
 require_contains "$preview_path" '      - reopened'
 require_contains "$preview_path" '      - labeled'
 require_contains "$preview_path" 'CLIENT_HEAD_SHA: ${{ github.event.client_payload.head_sha }}'
-require_contains "$preview_path" 'CLIENT_IMAGE_TAG: ${{ github.event.client_payload.image_tag }}'
+if grep -Fq 'CLIENT_IMAGE_TAG: ${{ github.event.client_payload.image_tag }}' "$preview_path"; then
+  echo "Preview source must resolve the effective image tag independently of dispatch payload image_tag" >&2
+  exit 1
+fi
 require_contains "$preview_path" 'CLIENT_PREVIEW_DOMAIN: ${{ github.event.client_payload.preview_domain }}'
 if grep -Fq 'workflow_dispatch:' "$preview_path"; then
   echo "Preview source workflow must not expose a branch-selectable workflow_dispatch trigger" >&2
@@ -466,7 +469,7 @@ require_contains "$preview_path" 'MERGE_RETRY_LIMIT=5'
 require_contains "$preview_path" 'Preview merge computation unavailable'
 require_contains "$preview_path" 'Stale preview head SHA'
 assert_job_contains preview.yml preview-plan 'resolve-preview-image-tag.sh'
-assert_job_contains preview.yml preview-plan 'current PR head or base SHA as image tag'
+assert_job_contains preview.yml preview-plan 'Expected the PR head or immutable base SHA.'
 assert_job_contains preview.yml preview-plan 'preview.firedevops.net'
 assert_job_contains preview.yml preview-render 'runs-on: ubuntu-latest'
 assert_job_contains preview.yml preview-render "needs.preview-plan.outputs.action == 'deploy'"
@@ -527,6 +530,14 @@ require_contains "$preview_reconciler_path" '"repos/${GITHUB_REPOSITORY}/dispatc
 require_contains "$preview_reconciler_path" '-f event_type=preview-deploy'
 require_contains "$preview_reconciler_path" 'client_payload[head_sha]=${head_sha}'
 require_contains "$preview_reconciler_path" 'client_payload[action]=deploy'
+if grep -Fq 'desired_image_tag=' "$preview_reconciler_path"; then
+  echo "Preview reconciler must not retain an unused desired image tag" >&2
+  exit 1
+fi
+if grep -Fq 'client_payload[image_tag]' "$preview_reconciler_path"; then
+  echo "Preview reconciler must let the trusted consumer resolve the effective image tag" >&2
+  exit 1
+fi
 if grep -Fq 'actions/workflows/preview.yml/dispatches' "$preview_reconciler_path" ||
   grep -Fq 'inputs[ref]=' "$preview_reconciler_path"; then
   echo "Preview reconciler must use typed repository_dispatch from the default branch" >&2

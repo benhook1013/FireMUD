@@ -290,7 +290,8 @@ jobs:
               "$ARTIFACT_DIRECTORY/preview-rendered-sanitized.yaml" \
               "$GITHUB_REPOSITORY" "$SOURCE_RUN_ID" "$PR_NUMBER" "$base_sha" \
               "$current_head_sha" "$merge_sha" "$effective_image_tag" \
-              "pr-${PR_NUMBER}.preview.firedevops.net"
+              "pr-${PR_NUMBER}.preview.firedevops.net" \
+              "${{ steps.certificate-identity.outputs.mode }}"
           elif [[ "$ACTION" == destroy && "$EVENT_NAME" == workflow_run ]]; then
             [[ "$ARTIFACT_KIND" == intent ]] || emit_no_action \
               "Ignoring repository dispatch destroy without a canonical destroy intent artifact."

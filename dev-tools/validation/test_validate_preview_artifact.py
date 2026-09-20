@@ -231,9 +231,11 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
         validation_order = []
         original_metadata_validator = validator._validate_object_metadata
 
-        def record_metadata(document, expected_namespace):
+        def record_metadata(document, expected_namespace, **kwargs):
             validation_order.append("metadata")
-            return original_metadata_validator(document, expected_namespace)
+            return original_metadata_validator(
+                document, expected_namespace, **kwargs
+            )
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "manifest.yaml"
@@ -561,6 +563,7 @@ class PreviewArtifactMetadataTest(unittest.TestCase):
                     "c" * 40,
                     "pr-42-head-42",
                     "pr-42.preview.example.test",
+                    "hosted-controller",
                 ]
 
                 with redirect_stderr(stderr):
@@ -688,6 +691,7 @@ class PreviewArtifactMetadataTest(unittest.TestCase):
                 "pr-42",
                 "pr-42-head-42",
                 "pr-42.preview.example.test",
+                "hosted-controller",
             )
 
     def test_metadata_rejects_noncanonical_pr_number_forms(self):
@@ -717,7 +721,7 @@ class PreviewArtifactMetadataTest(unittest.TestCase):
 class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
     validator = VALIDATOR
 
-    def _tcp_proxy_service(self, spec, *, namespace=None):
+    def _tcp_proxy_service(self, spec, *, namespace=None, mode=None):
         metadata = {
             "name": "tcp-proxy-service",
             "labels": {
@@ -725,6 +729,8 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
                 "app.kubernetes.io/instance": "pr-42",
             },
         }
+        if mode is not None:
+            metadata["labels"][self.validator.CERTIFICATE_IDENTITY_LABEL] = mode
         if namespace is not None:
             metadata["namespace"] = namespace
         return {
@@ -797,7 +803,9 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
             self.validator.CANONICAL_INGRESS_ISSUER,
         )
         documents = [
-            self._tcp_proxy_service({"ports": [{"port": 2323}]}),
+            self._tcp_proxy_service(
+                {"ports": [{"port": 2323}]}, mode="standalone"
+            ),
             self._preview_ingress(),
         ]
         with tempfile.TemporaryDirectory() as directory:
@@ -814,7 +822,9 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
                 {"cert-manager.io/cluster-issuer": "letsencrypt-prod"},
             )
             self.validator.validate_runtime_target(prepared, "pr-42", 32000, "standalone")
-            with self.assertRaisesRegex(ValueError, "unsupported fields"):
+            with self.assertRaisesRegex(
+                ValueError, "certificate-identity-mode.*expected 'hosted-controller'"
+            ):
                 self.validator.validate_runtime_target(
                     prepared, "pr-42", 32000, "hosted-controller"
                 )
@@ -834,7 +844,9 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
                         )
 
     def test_standalone_injection_rejects_missing_ingress_or_source_annotations(self):
-        service = self._tcp_proxy_service({"ports": [{"port": 2323}]})
+        service = self._tcp_proxy_service(
+            {"ports": [{"port": 2323}]}, mode="standalone"
+        )
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "source.yaml"
             prepared = Path(directory) / "prepared.yaml"
@@ -939,6 +951,322 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
                 self.assertFalse(destination.exists())
 
 
+class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
+    validator = VALIDATOR
+
+    def _labels(self, mode=None):
+        labels = {
+            **self.validator._expected_top_level_labels(),
+            "app.kubernetes.io/instance": "pr-42",
+        }
+        if mode is not None:
+            labels[self.validator.CERTIFICATE_IDENTITY_LABEL] = mode
+        return labels
+
+    def _metadata_document(self, kind, name, mode=None):
+        return {
+            "apiVersion": (
+                "apps/v1" if kind == "Deployment" else "v1"
+            ),
+            "kind": kind,
+            "metadata": {"name": name, "labels": self._labels(mode)},
+        }
+
+    def _policy_document(self, name, spec):
+        return {
+            "apiVersion": "networking.k8s.io/v1",
+            "kind": "NetworkPolicy",
+            "metadata": {"name": name, "labels": self._labels()},
+            "spec": copy.deepcopy(spec),
+        }
+
+    @staticmethod
+    def _controller_from():
+        return {
+            "namespaceSelector": {
+                "matchLabels": {"kubernetes.io/metadata.name": "firemud-system"}
+            },
+            "podSelector": {
+                "matchLabels": {
+                    "app.kubernetes.io/name": "hosted-environment-identity-controller",
+                    "app.kubernetes.io/component": "controller",
+                }
+            },
+        }
+
+    def _policy_documents(self, mode):
+        controller_from = self._controller_from()
+        gateway_ingress = [
+            {
+                "from": [
+                    {"podSelector": {"matchLabels": {"app": "tcp-proxy-service"}}}
+                ],
+                "ports": [{"protocol": "TCP", "port": 8443}],
+            },
+            {
+                "from": [
+                    {
+                        "namespaceSelector": {
+                            "matchLabels": {
+                                "kubernetes.io/metadata.name": "kube-system"
+                            }
+                        },
+                        "podSelector": {
+                            "matchLabels": {"app.kubernetes.io/name": "traefik"}
+                        },
+                    }
+                ],
+                "ports": [{"protocol": "TCP", "port": 8080}],
+            },
+        ]
+        if mode == "hosted-controller":
+            gateway_ingress.append(
+                {
+                    "from": [controller_from],
+                    "ports": [{"protocol": "TCP", "port": 8443}],
+                }
+            )
+        proxy_egress = [
+            {
+                "to": [
+                    {
+                        "namespaceSelector": {
+                            "matchLabels": {
+                                "kubernetes.io/metadata.name": "kube-system"
+                            }
+                        },
+                        "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+                    }
+                ],
+                "ports": [
+                    {"protocol": "UDP", "port": 53},
+                    {"protocol": "TCP", "port": 53},
+                ],
+            },
+            {
+                "to": [{"podSelector": {"matchLabels": {"app": "spring-cloud-gateway"}}}],
+                "ports": [{"protocol": "TCP", "port": 8443}],
+            },
+            {
+                "to": [{"podSelector": {"matchLabels": {"app": "game-session-service"}}}],
+                "ports": [{"protocol": "TCP", "port": 6565}],
+            },
+            {
+                "to": [{"podSelector": {"matchLabels": {"app": "otel-collector"}}}],
+                "ports": [{"protocol": "TCP", "port": 4317}],
+            },
+            {
+                "to": [{"podSelector": {"matchLabels": {"app": "elasticsearch"}}}],
+                "ports": [{"protocol": "TCP", "port": 9200}],
+            },
+        ]
+        documents = [
+            self._policy_document(
+                name, spec
+            )
+            for name, spec in self.validator.EXPECTED_INTERNAL_NETWORK_POLICY_SPECS.items()
+        ]
+        if mode == "hosted-controller":
+            documents.append(
+                self._policy_document(
+                    "account-service-controller-ingress",
+                    {
+                        "podSelector": {"matchLabels": {"app": "account-service"}},
+                        "policyTypes": ["Ingress"],
+                        "ingress": [
+                            {
+                                "from": [controller_from],
+                                "ports": [{"protocol": "TCP", "port": 6565}],
+                            }
+                        ],
+                    },
+                )
+            )
+        documents.extend(
+            [
+                self._policy_document(
+                    "spring-cloud-gateway-ingress",
+                    {
+                        "podSelector": {
+                            "matchLabels": {"app": "spring-cloud-gateway"}
+                        },
+                        "policyTypes": ["Ingress"],
+                        "ingress": gateway_ingress,
+                    },
+                ),
+                self._policy_document(
+                    "tcp-proxy-service-egress",
+                    {
+                        "podSelector": {
+                            "matchLabels": {"app": "tcp-proxy-service"}
+                        },
+                        "policyTypes": ["Egress"],
+                        "egress": proxy_egress,
+                    },
+                ),
+            ]
+        )
+        return documents
+
+    def test_both_modes_require_the_exact_tcp_proxy_identity_labels(self):
+        for mode in ("standalone", "hosted-controller"):
+            with self.subTest(mode=mode):
+                for kind in ("Deployment", "Service"):
+                    self.validator._validate_object_metadata(
+                        self._metadata_document(kind, "tcp-proxy-service", mode),
+                        "pr-42",
+                        certificate_identity_mode=mode,
+                    )
+                self.validator.validate_network_policies(
+                    self._policy_documents(mode), mode
+                )
+
+    def test_identity_label_rejects_missing_spoofed_extra_and_elsewhere(self):
+        for mode in ("standalone", "hosted-controller"):
+            valid = self._metadata_document("Service", "tcp-proxy-service", mode)
+            spoofed_mode = (
+                "standalone"
+                if mode == "hosted-controller"
+                else "hosted-controller"
+            )
+            cases = {
+                "missing": lambda document: document["metadata"]["labels"].pop(
+                    self.validator.CERTIFICATE_IDENTITY_LABEL
+                ),
+                "spoofed": lambda document, spoofed_mode=spoofed_mode: document[
+                    "metadata"
+                ]["labels"].__setitem__(
+                    self.validator.CERTIFICATE_IDENTITY_LABEL,
+                    spoofed_mode,
+                ),
+                "extra": lambda document: document["metadata"]["labels"].__setitem__(
+                    "firemud.dev/untrusted", "capture"
+                ),
+                "elsewhere": lambda document, mode=mode: document[
+                    "metadata"
+                ]["labels"].__setitem__(
+                    self.validator.CERTIFICATE_IDENTITY_LABEL, mode
+                ),
+            }
+            for name, mutation in cases.items():
+                with self.subTest(mode=mode, case=name):
+                    document = copy.deepcopy(valid)
+                    if name == "elsewhere":
+                        document["metadata"]["name"] = "account-service"
+                    mutation(document)
+                    with self.assertRaises(ValueError):
+                        self.validator._validate_object_metadata(
+                            document,
+                            "pr-42",
+                            certificate_identity_mode=mode,
+                        )
+
+    def test_identity_labels_survive_sanitize_injection_and_runtime_target(self):
+        for mode in ("standalone", "hosted-controller"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                source = Path(directory) / "source.yaml"
+                sanitized = Path(directory) / "sanitized.yaml"
+                prepared = Path(directory) / "prepared.yaml"
+                service = {
+                    "apiVersion": "v1",
+                    "kind": "Service",
+                    "metadata": {
+                        "name": "tcp-proxy-service",
+                        "labels": self._labels(mode),
+                    },
+                    "spec": {"ports": [{"port": 2323}]},
+                }
+                ingress = {
+                    "apiVersion": "networking.k8s.io/v1",
+                    "kind": "Ingress",
+                    "metadata": {
+                        "name": "firemud-preview",
+                        "labels": self._labels(),
+                        "annotations": {"untrusted.example/annotation": "drop"},
+                    },
+                    "spec": {},
+                }
+                source.write_text(
+                    yaml.safe_dump_all([service, ingress]), encoding="utf-8"
+                )
+                self.validator.sanitize(source, sanitized)
+                sanitized_documents = list(
+                    yaml.safe_load_all(sanitized.read_text(encoding="utf-8"))
+                )
+                self.assertEqual(
+                    sanitized_documents[0]["metadata"]["labels"], self._labels(mode)
+                )
+                self.validator.inject_telnet_port(
+                    sanitized,
+                    prepared,
+                    32000,
+                    "pr-42",
+                    mode,
+                )
+                prepared_documents = list(
+                    yaml.safe_load_all(prepared.read_text(encoding="utf-8"))
+                )
+                self.assertEqual(
+                    prepared_documents[0]["metadata"]["labels"], self._labels(mode)
+                )
+                self.validator.validate_runtime_target(
+                    prepared, "pr-42", 32000, mode
+                )
+
+    def test_mode_specific_policy_sets_and_rules_are_closed(self):
+        hosted = self._policy_documents("hosted-controller")
+        standalone = self._policy_documents("standalone")
+        with self.assertRaisesRegex(ValueError, "runtime NetworkPolicy set is not closed"):
+            self.validator.validate_network_policies(
+                standalone
+                + [
+                    self._policy_document(
+                        "account-service-controller-ingress", {}
+                    )
+                ],
+                "standalone",
+            )
+        missing_account = [
+            document
+            for document in hosted
+            if document["metadata"]["name"] != "account-service-controller-ingress"
+        ]
+        with self.assertRaisesRegex(ValueError, "runtime NetworkPolicy set is not closed"):
+            self.validator.validate_network_policies(missing_account, "hosted-controller")
+
+        hosted_broad = copy.deepcopy(hosted)
+        gateway = next(
+            document
+            for document in hosted_broad
+            if document["metadata"]["name"] == "spring-cloud-gateway-ingress"
+        )
+        gateway["spec"]["ingress"].append(
+            {
+                "from": [{"podSelector": {}}],
+                "ports": [{"protocol": "TCP", "port": 6565}],
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "unsafe exception"):
+            self.validator.validate_network_policies(hosted_broad, "hosted-controller")
+
+        standalone_controller = copy.deepcopy(standalone)
+        standalone_gateway = next(
+            document
+            for document in standalone_controller
+            if document["metadata"]["name"] == "spring-cloud-gateway-ingress"
+        )
+        standalone_gateway["spec"]["ingress"].append(
+            {
+                "from": [self._controller_from()],
+                "ports": [{"protocol": "TCP", "port": 8443}],
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "unsafe exception"):
+            self.validator.validate_network_policies(
+                standalone_controller, "standalone"
+            )
+
+
 class PreviewArtifactCommandLineTest(unittest.TestCase):
     validator = VALIDATOR
 
@@ -980,6 +1308,7 @@ class PreviewArtifactCommandLineTest(unittest.TestCase):
                         str(prepared_manifest),
                         "pr-42",
                         "32000",
+                        "hosted-controller",
                     ]
                     with (
                         patch.object(
@@ -1009,6 +1338,58 @@ class PreviewArtifactCommandLineTest(unittest.TestCase):
                 )
             )
 
+    def test_runtime_mutation_commands_require_certificate_identity_mode(self):
+        for command, command_arguments in (
+            (
+                "inject",
+                ["source.yaml", "destination.yaml", "pr-42", "32000"],
+            ),
+            (
+                "runtime-target",
+                ["prepared.yaml", "pr-42", "32000"],
+            ),
+        ):
+            with self.subTest(command=command), redirect_stderr(io.StringIO()):
+                self.assertEqual(
+                    self.validator.main(
+                        [str(SCRIPT), command, *command_arguments]
+                    ),
+                    2,
+                )
+
+    def test_artifact_validation_requires_certificate_identity_mode(self):
+        arguments = [
+            str(SCRIPT),
+            "metadata.json",
+            "manifest.yaml",
+            "example/FireMUD",
+            "123",
+            "42",
+            "a" * 40,
+            "b" * 40,
+            "c" * 40,
+            "head-tag",
+            "pr-42.preview.example.test",
+        ]
+        missing_mode_stderr = io.StringIO()
+        with redirect_stderr(missing_mode_stderr):
+            self.assertEqual(self.validator.main(arguments), 2)
+        self.assertTrue(
+            missing_mode_stderr.getvalue().startswith(
+                "usage: validate-preview-artifact.py"
+            )
+        )
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            self.assertEqual(
+                self.validator.main([*arguments, "untrusted-mode"]),
+                1,
+            )
+        self.assertEqual(
+            stderr.getvalue(),
+            "preview artifact rejected: preview certificate identity mode is not canonical\n",
+        )
+
     def test_subcommand_named_metadata_paths_use_default_validation(self):
         for metadata_path in ("sanitize", "inject", "runtime-target"):
             argv = [
@@ -1023,6 +1404,7 @@ class PreviewArtifactCommandLineTest(unittest.TestCase):
                 "c" * 40,
                 "head-tag",
                 "pr-42.preview.example.test",
+                "hosted-controller",
             ]
             with (
                 self.subTest(metadata_path=metadata_path),

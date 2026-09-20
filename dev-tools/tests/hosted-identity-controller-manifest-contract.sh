@@ -1638,6 +1638,9 @@ for text_value in \
   --server-side \
   --field-manager \
   'kubectl kustomize' \
+  '--cert-manager-namespace' \
+  'CERT_MANAGER_NAMESPACE="cert-manager"' \
+  'Kubernetes DNS namespace label of at most 63 characters' \
   'rollout status' \
   'kubectl auth can-i' \
   'get secret ghcr-preview-pull -o json' \
@@ -1673,9 +1676,17 @@ assert "@sha256:" in source[verify:]
 policy_apply = source.index('-f "$namespace_guard_policy_manifest"')
 binding_apply = source.index('-f "$namespace_guard_binding_manifest"', policy_apply)
 policy_read = source.index("namespace_guard_failure_policy=", binding_apply)
-full_apply = source.index('-f "$temporary_manifest"', policy_read)
+issuer_extract = source.index(
+    'extract_named_yaml_document "$temporary_manifest" ClusterIssuer',
+    policy_read,
+)
+issuer_apply = source.index('-f "$cluster_issuer_manifest"', issuer_extract)
+issuer_wait = source.index("\nwait_for_ca_issuer_ready\n")
+full_apply = source.index('-f "$temporary_manifest"', issuer_wait)
+rollout = source.index('kubectl -n "$CONTROL_NAMESPACE" rollout status', full_apply)
 pull_secret_read = source.index('get secret ghcr-preview-pull -o json')
 assert pull_secret_read < policy_apply < binding_apply < policy_read < full_apply
+assert policy_read < issuer_extract < issuer_apply < issuer_wait < full_apply < rollout
 PY
 for admission_name in \
   firemud-hosted-identity-main \
@@ -1724,6 +1735,11 @@ forbid_literal "$BOOTSTRAP" 'if ((SECONDS >= crd_deadline)); then'
 require_literal "$BOOTSTRAP" 'sleep 1'
 for ca_proof in \
   'get secret firemud-grpc-ca' \
+  'CERT_MANAGER_NAMESPACE="cert-manager"' \
+  'kubernetes.io/tls' \
+  "tls.crt\\ntls.key" \
+  'does not match firemud-system/firemud-grpc-ca ca.crt' \
+  'does not match firemud-system/firemud-grpc-ca ca.key' \
   "ca.crt\\nca.key" \
   "openssl x509 -outform DER" \
   "openssl verify" \
@@ -1746,6 +1762,11 @@ for ca_proof in \
   'ca.crt and ca.key do not match'; do
   require_literal "$BOOTSTRAP" "$ca_proof"
 done
+require_literal "$BOOTSTRAP" 'extract_named_yaml_document "$temporary_manifest" ClusterIssuer'
+require_literal "$BOOTSTRAP" 'firemud-ca-issuer "$cluster_issuer_manifest"'
+require_literal "$BOOTSTRAP" '-f "$cluster_issuer_manifest"'
+require_literal "$BOOTSTRAP" 'ClusterIssuer/firemud-ca-issuer did not become Ready=True'
+require_literal "$BOOTSTRAP" 'get clusterissuer firemud-ca-issuer'
 require_literal "$BOOTSTRAP" "HostedEnvironmentIdentity CRD is not Established=True"
 BOOTSTRAP="$BOOTSTRAP" python3 - <<'PY'
 import os
@@ -1781,6 +1802,11 @@ for forbidden_controller_root_operation in ("create", "update", "delete"):
 assert source.count("expect_can_i ") == 14
 assert "hostedenvironmentidentities/finalizers.platform.firemud.dev" not in source
 assert source.count("controller_activation_mode read") == 2
+namespace_validation = source.index(
+    'if ! [[ "$CERT_MANAGER_NAMESPACE" =~ ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$ ]]; then'
+)
+kubectl_presence_check = source.index('command -v kubectl', namespace_validation)
+assert namespace_validation < kubectl_presence_check
 assert (
     'controller_activation_mode replace \\\n'
     '    "$initial_activation_mode" "$ACTIVATION_MODE"'
@@ -1830,6 +1856,18 @@ record_event() {
 }
 
 if [[ "${1:-}" == "kustomize" ]]; then
+  if [[ "${FAKE_MISSING_CA_ISSUER:-0}" != 1 ]]; then
+    cat <<'YAML'
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: firemud-ca-issuer
+spec:
+  ca:
+    secretName: firemud-grpc-ca
+---
+YAML
+  fi
   cat <<'YAML'
 apiVersion: apps/v1
 kind: Deployment
@@ -2020,8 +2058,14 @@ if [[ "${1:-}" == "apply" ]]; then
     previous="$argument"
   done
   [[ -n "$manifest" ]] || exit 2
-  if [[ -n "${FAKE_RENDERED_MANIFEST_PATH:-}" ]]; then
+  if [[ -n "${FAKE_RENDERED_MANIFEST_PATH:-}" ]] &&
+    grep -q '^kind: NetworkPolicy$' "$manifest"; then
     cp "$manifest" "$FAKE_RENDERED_MANIFEST_PATH"
+  fi
+  if [[ "$(grep -c '^kind:' "$manifest")" == 1 ]] &&
+    grep -q '^kind: ClusterIssuer$' "$manifest"; then
+    record_event apply:issuer
+    exit 0
   fi
   if [[ "$(grep -c '^kind:' "$manifest")" == 1 ]] &&
     grep -q '^kind: ValidatingAdmissionPolicy$' "$manifest"; then
@@ -2117,6 +2161,51 @@ if [[ "${1:-}" == "-n" && "${2:-}" == "firemud-system" && "${3:-}" == "get" && "
     *'{.data.ca\.key}'*) base64 --wrap=0 <"$FAKE_CA_KEY" ;;
     *) exit 2 ;;
   esac
+  exit 0
+fi
+if [[ "${1:-}" == "-n" && "${2:-}" == "${FAKE_CERT_MANAGER_NAMESPACE:-cert-manager}" && "${3:-}" == "get" && "${4:-}" == "secret" && "${5:-}" == "firemud-grpc-ca" ]]; then
+  record_event ca-copy-read
+  case "${FAKE_CA_COPY_MODE:-valid}" in
+    missing)
+      printf 'not found\n' >&2
+      exit 1
+      ;;
+    wrong-type)
+      if [[ "$*" == *'{.type}'* ]]; then
+        printf 'Opaque'
+      else
+        exit 2
+      fi
+      ;;
+    wrong-keys)
+      if [[ "$*" == *'{.type}'* ]]; then
+        printf 'kubernetes.io/tls'
+      elif [[ "$*" == *'go-template='* ]]; then
+        printf 'ca.crt\nca.key\n'
+      else
+        exit 2
+      fi
+      ;;
+    valid|mismatch-cert|mismatch-key)
+      case "$*" in
+        *'{.type}'*) printf 'kubernetes.io/tls' ;;
+        *'go-template='*) printf 'tls.crt\ntls.key\n' ;;
+        *'{.data.tls\.crt}'*)
+          base64 --wrap=0 <"${FAKE_CA_COPY_CERT:-$FAKE_CA_CERT}"
+          ;;
+        *'{.data.tls\.key}'*)
+          base64 --wrap=0 <"${FAKE_CA_COPY_KEY:-$FAKE_CA_KEY}"
+          ;;
+        *) exit 2 ;;
+      esac
+      ;;
+    *) exit 2 ;;
+  esac
+  exit 0
+fi
+if [[ "${1:-}" == "get" && "${2:-}" == "clusterissuer" && "${3:-}" == "firemud-ca-issuer" ]]; then
+  record_event issuer-read
+  printf '%s' "${FAKE_ISSUER_READY:-True}"
   exit 0
 fi
 if [[ "${1:-}" == "get" && "${2:-}" == "validatingadmissionpolicy" ]]; then
@@ -2869,7 +2958,10 @@ mapfile -t active_events <"$active_event_log"
 auth_checks=0
 first_ca_index=-1
 active_apply_index=-1
-first_apply_index=-1
+first_issuer_apply_index=-1
+first_full_apply_index=-1
+first_issuer_index=-1
+first_rollout_index=-1
 for index in "${!active_events[@]}"; do
   case "${active_events[$index]}" in
     auth-check)
@@ -2881,18 +2973,145 @@ for index in "${!active_events[@]}"; do
       fi
       ;;
     apply:*)
-      if (( first_apply_index < 0 )); then
-        first_apply_index="$index"
+      if [[ "${active_events[$index]}" == "apply:issuer" ]]; then
+        if (( first_issuer_apply_index < 0 )); then
+          first_issuer_apply_index="$index"
+        fi
+      elif (( first_full_apply_index < 0 )); then
+        first_full_apply_index="$index"
       fi
       [[ "${active_events[$index]}" == "apply:active" ]] && active_apply_index="$index"
+      ;;
+    issuer-read)
+      if (( first_issuer_index < 0 )); then
+        first_issuer_index="$index"
+      fi
+      ;;
+    rollout)
+      if (( first_rollout_index < 0 )); then
+        first_rollout_index="$index"
+      fi
       ;;
   esac
 done
 [[ "$auth_checks" -eq 14 ]] || fail "active bootstrap did not run all authorization probes"
-(( first_ca_index >= 0 && first_ca_index < first_apply_index )) || \
+(( first_ca_index >= 0 && first_ca_index < first_issuer_apply_index )) || \
   fail "active bootstrap did not verify the gRPC CA before its first cluster write"
+(( first_issuer_apply_index >= 0 && first_issuer_apply_index < first_issuer_index &&
+  first_issuer_index < first_full_apply_index && first_full_apply_index < first_rollout_index )) || \
+  fail "active bootstrap did not wait for the CA ClusterIssuer before the full controller apply"
 (( active_apply_index > first_ca_index )) || \
   fail "active bootstrap applied active mode before verifying the gRPC CA"
+issuer_missing_events="$bootstrap_test_dir/issuer-missing-events"
+if FAKE_EVENT_LOG="$issuer_missing_events" FAKE_MISSING_CA_ISSUER=1 \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active \
+  "${network_policy_args[@]}" --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted a rendered manifest without firemud-ca-issuer"
+fi
+require_literal "$bootstrap_error" "expected exactly one ClusterIssuer/firemud-ca-issuer in the rendered manifest"
+grep -Fxq guard-policy "$issuer_missing_events" || fail "bootstrap did not apply the namespace guard policy before missing issuer rejection"
+grep -Fxq guard-binding "$issuer_missing_events" || fail "bootstrap did not apply the namespace guard binding before missing issuer rejection"
+if grep -Eq '^(apply:issuer|apply:paused|apply:active|rollout)$' "$issuer_missing_events"; then
+  fail "bootstrap wrote the issuer or full manifest after missing issuer rejection"
+fi
+custom_namespace_events="$bootstrap_test_dir/custom-cert-manager-namespace-events"
+if ! FAKE_EVENT_LOG="$custom_namespace_events" FAKE_CERT_MANAGER_NAMESPACE=firemud-cert-manager \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --cert-manager-namespace firemud-cert-manager \
+  --wait-seconds 1 >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap rejected a valid non-default cert-manager namespace: $(cat "$bootstrap_error")"
+fi
+grep -Fxq ca-copy-read "$custom_namespace_events" || fail "bootstrap did not read the configured non-default cert-manager namespace"
+invalid_namespace_too_long="$(python3 -c 'print("n" * 64)')"
+for invalid_cert_manager_namespace in Cert-manager firemud_cert_manager firemud- "$invalid_namespace_too_long"; do
+  invalid_namespace_events="$bootstrap_test_dir/invalid-cert-manager-namespace-${invalid_cert_manager_namespace//[^A-Za-z0-9]/-}-events"
+  if FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 FAKE_EVENT_LOG="$invalid_namespace_events" \
+    PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+    --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" \
+    --cert-manager-namespace "$invalid_cert_manager_namespace" --wait-seconds 1 \
+    >"$bootstrap_output" 2>"$bootstrap_error"; then
+    fail "bootstrap accepted invalid cert-manager namespace $invalid_cert_manager_namespace"
+  fi
+  require_literal "$bootstrap_error" "--cert-manager-namespace must be a lowercase Kubernetes DNS namespace label of at most 63 characters"
+  [[ ! -s "$invalid_namespace_events" ]] || fail "bootstrap contacted Kubernetes for invalid cert-manager namespace $invalid_cert_manager_namespace"
+done
+copy_failure_modes=(missing wrong-type wrong-keys)
+for copy_failure_mode in "${copy_failure_modes[@]}"; do
+  copy_failure_events="$bootstrap_test_dir/ca-copy-${copy_failure_mode}-events"
+  if FAKE_EVENT_LOG="$copy_failure_events" FAKE_CA_COPY_MODE="$copy_failure_mode" \
+    FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+    PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+    --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active \
+    "${network_policy_args[@]}" --wait-seconds 1 \
+    >"$bootstrap_output" 2>"$bootstrap_error"; then
+    fail "bootstrap accepted ${copy_failure_mode} cert-manager gRPC CA copy"
+  fi
+  case "$copy_failure_mode" in
+    missing)
+      require_literal "$bootstrap_error" "missing cert-manager cert-manager/firemud-grpc-ca prerequisite"
+      ;;
+    wrong-type)
+      require_literal "$bootstrap_error" "cert-manager cert-manager/firemud-grpc-ca must be a kubernetes.io/tls Secret"
+      ;;
+    wrong-keys)
+      require_literal "$bootstrap_error" "must contain exactly the tls.crt and tls.key data keys"
+      ;;
+  esac
+  grep -Fxq ca-read "$copy_failure_events" || fail "bootstrap did not read the control-plane CA for ${copy_failure_mode}"
+  grep -Fxq ca-copy-read "$copy_failure_events" || fail "bootstrap did not read the cert-manager CA copy for ${copy_failure_mode}"
+  if grep -Eq '^(guard-policy|guard-binding|apply:.*|rollout)$' "$copy_failure_events"; then
+    fail "bootstrap wrote cluster state after rejecting ${copy_failure_mode} cert-manager gRPC CA copy"
+  fi
+done
+copy_mismatch_events="$bootstrap_test_dir/ca-copy-mismatch-events"
+if FAKE_EVENT_LOG="$copy_mismatch_events" FAKE_CA_COPY_MODE=mismatch-cert \
+  FAKE_CA_COPY_CERT="$bootstrap_ec_ca_cert" \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active \
+  "${network_policy_args[@]}" --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted a mismatched cert-manager gRPC CA certificate copy"
+fi
+require_literal "$bootstrap_error" "tls.crt does not match firemud-system/firemud-grpc-ca ca.crt"
+if grep -Eq '^(guard-policy|guard-binding|apply:.*|rollout)$' "$copy_mismatch_events"; then
+  fail "bootstrap wrote cluster state after rejecting a mismatched cert-manager gRPC CA certificate copy"
+fi
+key_copy_mismatch_events="$bootstrap_test_dir/ca-key-copy-mismatch-events"
+if FAKE_EVENT_LOG="$key_copy_mismatch_events" FAKE_CA_COPY_MODE=mismatch-key \
+  FAKE_CA_COPY_KEY="$bootstrap_mismatched_ca_key" \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active \
+  "${network_policy_args[@]}" --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted a mismatched cert-manager gRPC CA private-key copy"
+fi
+require_literal "$bootstrap_error" "tls.key does not match firemud-system/firemud-grpc-ca ca.key"
+if grep -Eq '^(guard-policy|guard-binding|apply:.*|rollout)$' "$key_copy_mismatch_events"; then
+  fail "bootstrap wrote cluster state after rejecting a mismatched cert-manager gRPC CA private-key copy"
+fi
+issuer_unready_events="$bootstrap_test_dir/issuer-unready-events"
+if FAKE_EVENT_LOG="$issuer_unready_events" FAKE_ISSUER_READY=False \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active \
+  "${network_policy_args[@]}" --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap claimed controller activation while the CA ClusterIssuer was unready"
+fi
+require_literal "$bootstrap_error" "ClusterIssuer/firemud-ca-issuer did not become Ready=True"
+grep -Fxq guard-policy "$issuer_unready_events" || fail "bootstrap did not apply the namespace guard policy before issuer wait"
+grep -Fxq guard-binding "$issuer_unready_events" || fail "bootstrap did not apply the namespace guard binding before issuer wait"
+grep -Fxq apply:issuer "$issuer_unready_events" || fail "bootstrap did not apply the rendered CA ClusterIssuer before issuer wait"
+grep -Fxq issuer-read "$issuer_unready_events" || fail "bootstrap did not wait for the CA ClusterIssuer"
+if grep -Eq '^(apply:paused|apply:active|rollout)$' "$issuer_unready_events"; then
+  fail "bootstrap applied the full controller manifest or rolled out before the CA ClusterIssuer became Ready"
+fi
 unsupported_openssl_dir="$bootstrap_test_dir/unsupported-openssl"
 mkdir -p "$unsupported_openssl_dir"
 cat >"$unsupported_openssl_dir/openssl" <<'SH'

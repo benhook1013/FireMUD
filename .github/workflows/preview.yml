@@ -71,7 +71,6 @@ jobs:
           CLIENT_ACTION: ${{ github.event.client_payload.action }}
           CLIENT_PR_NUMBER: ${{ github.event.client_payload.pr_number }}
           CLIENT_HEAD_SHA: ${{ github.event.client_payload.head_sha }}
-          CLIENT_IMAGE_TAG: ${{ github.event.client_payload.image_tag }}
           CLIENT_PREVIEW_DOMAIN: ${{ github.event.client_payload.preview_domain }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -96,7 +95,6 @@ jobs:
           elif [[ "$EVENT_NAME" == repository_dispatch ]]; then
             PR_NUMBER="$CLIENT_PR_NUMBER"
             HEAD_SHA="$CLIENT_HEAD_SHA"
-            IMAGE_TAG="$CLIENT_IMAGE_TAG"
             PREVIEW_DOMAIN="$CLIENT_PREVIEW_DOMAIN"
             BASE_SHA=""
             MERGE_SHA=""
@@ -228,12 +226,6 @@ jobs:
           BASE_SHA="${BASE_SHA,,}"
           MERGE_SHA="${MERGE_SHA,,}"
 
-          if [[ "$EVENT_NAME" == repository_dispatch ]]; then
-            if [[ -n "$IMAGE_TAG" && "$IMAGE_TAG" != "$HEAD_SHA" && "$IMAGE_TAG" != "$BASE_SHA" ]]; then
-              echo "::error title=Noncanonical preview image tag::Manual preview dispatches may use only the current PR head or base SHA as image tag." >&2
-              exit 1
-            fi
-          fi
           IMAGE_TAG="$HEAD_SHA"
           if [[ "$ACTION" == deploy ]]; then
             IMAGE_TAG="$(bash ./dev-tools/hosted/preview/resolve-preview-image-tag.sh \

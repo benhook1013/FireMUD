@@ -11,6 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 MANIFEST_DIR="$REPO_ROOT/k8s/hosted-identity-controller"
 CONTROL_NAMESPACE="firemud-system"
+CERT_MANAGER_NAMESPACE="cert-manager"
 DEPLOYMENT_NAME="firemud-hosted-identity-controller"
 FIELD_MANAGER="firemud-hosted-identity-bootstrap"
 ACTIVATION_MODE="paused"
@@ -39,6 +40,8 @@ Options:
   --image IMAGE           immutable controller image (also accepted by env)
   --grpc-trust-anchor-sha256 SHA256
                            required gRPC CA SHA-256 fingerprint (also accepted by env)
+  --cert-manager-namespace NAMESPACE
+                           cert-manager cluster-resource namespace (default: cert-manager)
   --api-service-ipv4 ADDRESS
                            observed kubernetes.default Service ClusterIP
   --api-endpoint-ipv4 ADDRESS
@@ -69,6 +72,11 @@ while (($# > 0)); do
     --grpc-trust-anchor-sha256)
       (($# >= 2)) || usage
       GRPC_TRUST_ANCHOR_SHA256="$2"
+      shift 2
+      ;;
+    --cert-manager-namespace)
+      (($# >= 2)) || usage
+      CERT_MANAGER_NAMESPACE="$2"
       shift 2
       ;;
     --api-service-ipv4)
@@ -108,6 +116,9 @@ done
   fail "--image must be the approved controller repository pinned by a 64-hex sha256 digest"
 [[ "$GRPC_TRUST_ANCHOR_SHA256" =~ ^[0-9a-f]{64}$ ]] || \
   fail "--grpc-trust-anchor-sha256 or FIREMUD_HOSTED_IDENTITY_GRPC_TRUST_ANCHOR_SHA256 must be a 64-hex fingerprint"
+if ! [[ "$CERT_MANAGER_NAMESPACE" =~ ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$ ]]; then
+  fail "--cert-manager-namespace must be a lowercase Kubernetes DNS namespace label of at most 63 characters"
+fi
 case "$ACTIVATION_MODE" in
   paused|observe|active) ;;
   *) fail "--activation-mode must be paused, observe, or active" ;;
@@ -188,13 +199,15 @@ temporary_manifest=""
 temporary_rendered_manifest=""
 namespace_guard_policy_manifest=""
 namespace_guard_binding_manifest=""
+cluster_issuer_manifest=""
 cleanup() {
   local temporary_path
   for temporary_path in \
     "$temporary_manifest" \
     "$temporary_rendered_manifest" \
     "$namespace_guard_policy_manifest" \
-    "$namespace_guard_binding_manifest"; do
+    "$namespace_guard_binding_manifest" \
+    "$cluster_issuer_manifest"; do
     [[ -z "$temporary_path" ]] || rm -f -- "$temporary_path"
   done
 }
@@ -202,10 +215,14 @@ trap cleanup EXIT
 temporary_manifest="$(mktemp)"
 namespace_guard_policy_manifest="$(mktemp)"
 namespace_guard_binding_manifest="$(mktemp)"
+cluster_issuer_manifest="$(mktemp)"
 
 verify_grpc_ca_prerequisite() {
   local openssl_verify_help
   local secret_type ca_keys encoded_certificate encoded_key actual_fingerprint
+  local cert_manager_secret_type cert_manager_keys encoded_cert_manager_certificate
+  local encoded_cert_manager_key control_certificate_sha256 control_key_sha256
+  local cert_manager_certificate_sha256 cert_manager_key_sha256
   local ca_basic_constraints ca_key_usage
   local certificate_public_key_sha256 private_key_public_key_sha256
   command -v base64 >/dev/null 2>&1 || fail "base64 is required to validate the gRPC CA"
@@ -305,6 +322,57 @@ verify_grpc_ca_prerequisite() {
   )" || fail "firemud-grpc-ca ca.key is not a valid private key"
   [[ "$certificate_public_key_sha256" == "$private_key_public_key_sha256" ]] || \
     fail "firemud-grpc-ca ca.crt and ca.key do not match"
+
+  cert_manager_secret_type="$(kubectl -n "$CERT_MANAGER_NAMESPACE" get secret firemud-grpc-ca \
+    -o jsonpath='{.type}' 2>/dev/null)" || \
+    fail "missing cert-manager $CERT_MANAGER_NAMESPACE/firemud-grpc-ca prerequisite"
+  [[ "$cert_manager_secret_type" == "kubernetes.io/tls" ]] || \
+    fail "cert-manager $CERT_MANAGER_NAMESPACE/firemud-grpc-ca must be a kubernetes.io/tls Secret"
+  # shellcheck disable=SC2016 # The dollar-prefixed names are literal kubectl Go-template variables.
+  if ! cert_manager_keys="$(kubectl -n "$CERT_MANAGER_NAMESPACE" get secret firemud-grpc-ca \
+    -o go-template='{{range $key, $value := .data}}{{printf "%s\n" $key}}{{end}}' | LC_ALL=C sort)"; then
+    fail "cert-manager $CERT_MANAGER_NAMESPACE/firemud-grpc-ca data-key listing failed"
+  fi
+  [[ "$cert_manager_keys" == $'tls.crt\ntls.key' ]] || \
+    fail "cert-manager $CERT_MANAGER_NAMESPACE/firemud-grpc-ca must contain exactly the tls.crt and tls.key data keys"
+  encoded_cert_manager_certificate="$(kubectl -n "$CERT_MANAGER_NAMESPACE" get secret firemud-grpc-ca \
+    -o jsonpath='{.data.tls\.crt}')" || \
+    fail "cert-manager $CERT_MANAGER_NAMESPACE/firemud-grpc-ca tls.crt read failed"
+  [[ -n "$encoded_cert_manager_certificate" ]] || \
+    fail "cert-manager $CERT_MANAGER_NAMESPACE/firemud-grpc-ca tls.crt is empty"
+  encoded_cert_manager_key="$(kubectl -n "$CERT_MANAGER_NAMESPACE" get secret firemud-grpc-ca \
+    -o jsonpath='{.data.tls\.key}')" || \
+    fail "cert-manager $CERT_MANAGER_NAMESPACE/firemud-grpc-ca tls.key read failed"
+  [[ -n "$encoded_cert_manager_key" ]] || \
+    fail "cert-manager $CERT_MANAGER_NAMESPACE/firemud-grpc-ca tls.key is empty"
+  control_certificate_sha256="$(
+    printf '%s' "$encoded_certificate" |
+      base64 --decode |
+      sha256sum |
+      awk '{print $1}'
+  )" || fail "firemud-grpc-ca ca.crt could not be read for cert-manager comparison"
+  cert_manager_certificate_sha256="$(
+    printf '%s' "$encoded_cert_manager_certificate" |
+      base64 --decode |
+      sha256sum |
+      awk '{print $1}'
+  )" || fail "cert-manager $CERT_MANAGER_NAMESPACE/firemud-grpc-ca tls.crt is not valid encoded data"
+  [[ "$control_certificate_sha256" == "$cert_manager_certificate_sha256" ]] || \
+    fail "cert-manager $CERT_MANAGER_NAMESPACE/firemud-grpc-ca tls.crt does not match firemud-system/firemud-grpc-ca ca.crt"
+  control_key_sha256="$(
+    printf '%s' "$encoded_key" |
+      base64 --decode |
+      sha256sum |
+      awk '{print $1}'
+  )" || fail "firemud-grpc-ca ca.key could not be read for cert-manager comparison"
+  cert_manager_key_sha256="$(
+    printf '%s' "$encoded_cert_manager_key" |
+      base64 --decode |
+      sha256sum |
+      awk '{print $1}'
+  )" || fail "cert-manager $CERT_MANAGER_NAMESPACE/firemud-grpc-ca tls.key is not valid encoded data"
+  [[ "$control_key_sha256" == "$cert_manager_key_sha256" ]] || \
+    fail "cert-manager $CERT_MANAGER_NAMESPACE/firemud-grpc-ca tls.key does not match firemud-system/firemud-grpc-ca ca.key"
 }
 
 # The default verifier predicate is SLSA build provenance. Verify the exact OCI
@@ -553,6 +621,24 @@ PY
   fi
 }
 
+wait_for_ca_issuer_ready() {
+  local issuer_deadline issuer_remaining issuer_ready
+  issuer_deadline=$((SECONDS + WAIT_SECONDS))
+  while :; do
+    issuer_remaining=$((issuer_deadline - SECONDS))
+    if ((issuer_remaining <= 0)); then
+      fail "ClusterIssuer/firemud-ca-issuer did not become Ready=True"
+    fi
+    if issuer_ready="$(kubectl get clusterissuer firemud-ca-issuer \
+      --request-timeout="${issuer_remaining}s" \
+      -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" &&
+      [[ "$issuer_ready" == "True" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+}
+
 # Render privately so the checked-in base cannot silently acquire a mutable
 # image tag or an activation mode.  Server-side apply below remains the only
 # cluster write path.
@@ -618,6 +704,14 @@ namespace_guard_binding_actions="$(kubectl get validatingadmissionpolicybinding 
   fail "namespace guard admission policy binding lookup failed before namespace lifecycle grant"
 [[ "$namespace_guard_binding_actions" == "Deny" ]] || \
   fail "namespace guard admission policy binding must contain exactly validationActions Deny before namespace lifecycle grant"
+
+extract_named_yaml_document "$temporary_manifest" ClusterIssuer \
+  firemud-ca-issuer "$cluster_issuer_manifest"
+kubectl apply \
+  --server-side \
+  --field-manager="$FIELD_MANAGER" \
+  -f "$cluster_issuer_manifest"
+wait_for_ca_issuer_ready
 
 kubectl apply \
   --server-side \

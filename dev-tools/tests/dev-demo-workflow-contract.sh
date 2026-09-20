@@ -334,6 +334,24 @@ for name in identity_steps:
     ):
         if required not in condition:
             raise SystemExit(f"{name} is not fail-closed behind {required}")
+
+static_bridge_run = deploy_by_name["Validate dev-demo chart render"]["run"]
+operator_bridge_run = deploy_by_name["Validate controller-projected dev-demo identity"]["run"]
+for bridge_run, label in (
+    (static_bridge_run, "static"),
+    (operator_bridge_run, "operator"),
+):
+    if bridge_run.count("python3 ./dev-tools/deploy/preflight.py hosted-bridge") != 1:
+        raise SystemExit(f"dev-demo {label} hosted-bridge proof must invoke preflight exactly once")
+    if "--expected-hosted-telnet-node-port" in bridge_run:
+        raise SystemExit(
+            f"dev-demo {label} hosted-bridge proof must not require the public Telnet NodePort"
+        )
+    if "needs.dev-demo-plan.outputs.telnet_port" in bridge_run or "TELNET_PORT" in bridge_run:
+        raise SystemExit(
+            f"dev-demo {label} private hosted-bridge proof must not consume the public Telnet port"
+        )
+
 runtime_rollout_condition = deploy_by_name["Wait for dev-demo runtime rollouts"].get("if", "")
 if "steps.certificate-identity.outputs.mode == 'hosted-controller'" not in runtime_rollout_condition:
     raise SystemExit("dev-demo runtime rollout wait is not fail-closed behind hosted-controller mode")

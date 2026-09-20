@@ -1567,6 +1567,8 @@ assert janitor_runtime_cleanup_step.get("run") == (
 )
 target_step = next(step for step in validate_job["steps"] if step.get("id") == "target")
 target_script = target_step["run"]
+assert target_script.count("validate-preview-artifact.py") == 1
+assert '"${{ steps.certificate-identity.outputs.mode }}"' in target_script
 assert target_script.count('download_source_artifact "$ARTIFACT_NAME"') == 1
 assert target_script.count('metadata_event="$(jq -r') == 1
 workflow_run_start = target_script.index('if [[ "$EVENT_NAME" == workflow_run ]]; then')
@@ -1783,6 +1785,7 @@ for step_name, guards in privileged_validation_guards.items():
         assert f"::error title={error_title}::" in step_run
 inject_step = deploy_by_name["Inject trusted allocated Telnet port"]["run"]
 assert '"$RUNTIME_NAMESPACE" "$TELNET_PORT"' in inject_step
+assert '"${{ needs.validate-target.outputs.certificate_identity_mode }}"' in inject_step
 for step_name in ("Allocate stable preview Telnet port", "Create and annotate exact preview runtime namespace"):
     assert "actual value was ${" in deploy_by_name[step_name]["run"]
 assert "Validate trusted preview runtime target" not in deploy_by_name
@@ -1798,6 +1801,7 @@ assert apply_step["env"]["EXPECTED_HEAD_SHA"] == "${{ needs.validate-target.outp
 assert apply_step["env"]["EXPECTED_BASE_SHA"] == "${{ needs.validate-target.outputs.base_sha }}"
 assert apply_step["env"]["EXPECTED_MERGE_SHA"] == "${{ needs.validate-target.outputs.merge_sha }}"
 assert apply_run.count(target_validation) == 1
+assert '"${{ needs.validate-target.outputs.certificate_identity_mode }}"' in apply_run
 assert apply_run.count(revalidate_target) == 2
 source_binding_helper = (
     "bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh"
@@ -2086,13 +2090,12 @@ preflight_command_start = dev_demo_preflight.index(
 assert preflight_start < preflight_command_start < preflight_end
 preflight_lines = [line.strip() for line in dev_demo_preflight.splitlines()]
 preflight_line_start = preflight_lines.index("FIREMUD_PREFLIGHT_CONTEXT=ci-static \\")
-assert preflight_lines[preflight_line_start : preflight_line_start + 6] == [
+assert preflight_lines[preflight_line_start : preflight_line_start + 5] == [
     "FIREMUD_PREFLIGHT_CONTEXT=ci-static \\",
     "python3 ./dev-tools/deploy/preflight.py hosted-bridge \\",
     "/tmp/dev-demo-rendered.yaml \\",
     '"${{ needs.dev-demo-plan.outputs.namespace }}" \\',
-    '"${{ needs.dev-demo-plan.outputs.release_name }}" \\',
-    '--expected-hosted-telnet-node-port "${{ needs.dev-demo-plan.outputs.telnet_port }}"',
+    '"${{ needs.dev-demo-plan.outputs.release_name }}"',
 ]
 render_position = dev_demo_preflight.index(">/tmp/dev-demo-rendered.yaml")
 dry_run_position = dev_demo_preflight.index("kubectl apply --dry-run=server")
@@ -2110,7 +2113,7 @@ assert operator_step["if"] == (
 operator_run = operator_step["run"]
 assert "FIREMUD_PREFLIGHT_CONTEXT=operator" in operator_run
 assert "python3 ./dev-tools/deploy/preflight.py hosted-bridge" in operator_run
-assert '--expected-hosted-telnet-node-port "$TELNET_PORT"' in operator_run
+assert '--expected-hosted-telnet-node-port' not in operator_run
 
 preview_plan_steps = preview_workflow["jobs"]["preview-plan"]["steps"]
 preview_plan_outputs = preview_workflow["jobs"]["preview-plan"]["outputs"]
@@ -2138,11 +2141,11 @@ preview_derive_run = preview_derive_step["run"]
 for payload_name, env_name in (
     ("action", "CLIENT_ACTION"),
     ("head_sha", "CLIENT_HEAD_SHA"),
-    ("image_tag", "CLIENT_IMAGE_TAG"),
     ("preview_domain", "CLIENT_PREVIEW_DOMAIN"),
     ("pr_number", "CLIENT_PR_NUMBER"),
 ):
     assert preview_derive_step["env"][env_name] == f"${{{{ github.event.client_payload.{payload_name} }}}}"
+assert "CLIENT_IMAGE_TAG" not in preview_derive_step["env"]
 assert "${{ inputs." not in preview_derive_run
 assert "set -euo pipefail" in preview_derive_run
 pr_number_validation = '[[ ! "$PR_NUMBER" =~ ^[1-9][0-9]{0,50}$ ]]'
@@ -2156,7 +2159,7 @@ assert 'BASE_SHA="${BASE_SHA,,}"' in preview_derive_run
 assert 'PR_NUMBER="$CLIENT_PR_NUMBER"' in preview_derive_run
 assert 'HEAD_SHA="$CLIENT_HEAD_SHA"' in preview_derive_run
 assert 'if [[ "$CLIENT_ACTION" != "$ACTION" ]]' in preview_derive_run
-assert 'IMAGE_TAG="$CLIENT_IMAGE_TAG"' in preview_derive_run
+assert "CLIENT_IMAGE_TAG" not in preview_derive_run
 assert 'PREVIEW_DOMAIN="$CLIENT_PREVIEW_DOMAIN"' in preview_derive_run
 assert preview_derive_run.index('HEAD_SHA="${HEAD_SHA,,}"') < preview_derive_run.index(
     'if [[ "$ACTION" == deploy ]]'
@@ -3095,7 +3098,6 @@ run_preview_derive_target() {
     CLIENT_HEAD_SHA='' \
     CLIENT_PREVIEW_DOMAIN='' \
     CLIENT_ACTION='' \
-    CLIENT_IMAGE_TAG='' \
     GITHUB_REPOSITORY=example/FireMUD \
     GH_TOKEN=fake \
     GITHUB_SHA="$preview_derive_head_lower" \
@@ -3180,46 +3182,17 @@ for invalid_dispatch_case in hostile-pr hostile-sha invalid-action; do
   test ! -e "$hostile_dispatch_marker"
 done
 
-preview_image_tag_128="$(printf 'z%.0s' {1..128})"
-preview_derive_tag_128_output="$TEMP_DIR/preview-derive-tag-128.output"
-if run_preview_derive_dispatch \
+preview_image_tag_129="$(printf 'z%.0s' {1..129})"
+preview_derive_ignored_tag_output="$TEMP_DIR/preview-derive-ignored-tag.output"
+run_preview_derive_dispatch \
   901 \
   "$preview_derive_head_lower" \
   deploy \
-  "$preview_image_tag_128" \
-  preview.firedevops.net \
-  "$preview_derive_tag_128_output" \
-  "$TEMP_DIR/preview-derive-tag-128.error"; then
-  echo "preview plan accepted a tampered workflow-dispatch image tag" >&2
-  exit 1
-fi
-grep -Fq '::error title=Noncanonical preview image tag::' \
-  "$TEMP_DIR/preview-derive-tag-128.error"
-
-preview_image_tag_129="$(printf 'z%.0s' {1..129})"
-invalid_image_index=0
-for invalid_image_tag in \
   "$preview_image_tag_129" \
-  'bad/tag' \
-  $'bad"\nforged-output'; do
-  invalid_image_index=$((invalid_image_index + 1))
-  invalid_image_output="$TEMP_DIR/preview-derive-invalid-image-${invalid_image_index}.output"
-  invalid_image_error="$TEMP_DIR/preview-derive-invalid-image-${invalid_image_index}.error"
-  if run_preview_derive_dispatch \
-    901 \
-    "$preview_derive_head_lower" \
-    deploy \
-    "$invalid_image_tag" \
-    preview.firedevops.net \
-    "$invalid_image_output" \
-    "$invalid_image_error"; then
-    echo "preview plan accepted invalid workflow-dispatch image tag" >&2
-    exit 1
-  fi
-  grep -Fq '::error title=Noncanonical preview image tag::' "$invalid_image_error"
-  test ! -s "$invalid_image_output"
-  grep -Fxq 'api repos/example/FireMUD/pulls/901' "${invalid_image_output}.gh.log"
-done
+  preview.firedevops.net \
+  "$preview_derive_ignored_tag_output" \
+  "$TEMP_DIR/preview-derive-ignored-tag.error"
+grep -Fxq "image_tag=${preview_derive_base_lower}" "$preview_derive_ignored_tag_output"
 
 invalid_domain_index=0
 for invalid_preview_domain in \
@@ -4172,7 +4145,7 @@ if python3 "$artifact_validator" \
   "$null_template_metadata" "$null_template_manifest" example/FireMUD 42 42 \
   bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   cccccccccccccccccccccccccccccccccccccccc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-  pr-42.preview.example.test \
+  pr-42.preview.example.test hosted-controller \
   >"$TEMP_DIR/null-template-validate-output" 2>"$null_template_error"; then
   echo "preview artifact validator accepted an explicit-null pod template" >&2
   exit 1
@@ -4305,6 +4278,7 @@ documents = [
             "labels": {
                 **validator["_expected_top_level_labels"](),
                 "app.kubernetes.io/instance": "pr-42",
+                "firemud.dev/certificate-identity-mode": "hosted-controller",
             },
         },
         "spec": {"ports": [{"port": 2323}]},
@@ -4339,8 +4313,8 @@ documents = [
     },
 ]
 source.write_text(yaml.safe_dump_all(documents), encoding="utf-8")
-inject(source, prepared, 32000, "pr-42")
-validate_target(prepared, "pr-42", 32000)
+inject(source, prepared, 32000, "pr-42", "hosted-controller")
+validate_target(prepared, "pr-42", 32000, "hosted-controller")
 prepared_documents = list(yaml.safe_load_all(prepared.read_text(encoding="utf-8")))
 if any(document["metadata"].get("namespace") != "pr-42" for document in prepared_documents):
     raise SystemExit("trusted runtime preparation left a namespace implicit")
@@ -4352,7 +4326,7 @@ def expect_rejected(case_name, mutation, expected_message=None):
     path = tmp / f"runtime-target-{case_name}.yaml"
     path.write_text(yaml.safe_dump_all(mutated), encoding="utf-8")
     try:
-        validate_target(path, "pr-42", 32000)
+        validate_target(path, "pr-42", 32000, "hosted-controller")
     except ValueError as exc:
         if expected_message is not None and expected_message not in str(exc):
             raise AssertionError((case_name, str(exc))) from exc
@@ -4428,7 +4402,7 @@ expect_rejected(
     "unsafe selector",
 )
 try:
-    validate_target(prepared, "pr-42", 32001)
+    validate_target(prepared, "pr-42", 32001, "hosted-controller")
 except ValueError:
     pass
 else:
@@ -5430,6 +5404,7 @@ target_run = target["run"]
 for source, replacement in {
     "${{ github.event.pull_request.number }}": "$EVENT_PR_NUMBER",
     "${{ github.event.pull_request.head.sha }}": "$EVENT_HEAD_SHA",
+    "${{ steps.certificate-identity.outputs.mode }}": "hosted-controller",
 }.items():
     target_run = target_run.replace(source, replacement)
 Path(sys.argv[2]).write_text(target_run, encoding="utf-8")
