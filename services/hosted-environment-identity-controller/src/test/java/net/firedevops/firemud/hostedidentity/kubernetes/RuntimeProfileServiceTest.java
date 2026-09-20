@@ -699,7 +699,8 @@ class RuntimeProfileServiceTest {
             .endSpec()
             .build();
     assertEquals(
-        expected, validateTcpProxyServiceFailure(plan, namespace, serviceWithoutPorts).getMessage());
+        expected,
+        validateTcpProxyServiceFailure(plan, namespace, serviceWithoutPorts).getMessage());
 
     Service serviceWithEmptyPorts =
         new ServiceBuilder()
@@ -710,7 +711,8 @@ class RuntimeProfileServiceTest {
             .endSpec()
             .build();
     assertEquals(
-        expected, validateTcpProxyServiceFailure(plan, namespace, serviceWithEmptyPorts).getMessage());
+        expected,
+        validateTcpProxyServiceFailure(plan, namespace, serviceWithEmptyPorts).getMessage());
   }
 
   @Test
