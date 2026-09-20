@@ -1784,8 +1784,23 @@ revalidate_target = "bash ./dev-tools/hosted/preview/revalidate-preview-deploy.s
 assert apply_step["env"]["GH_TOKEN"] == "${{ github.token }}"
 assert apply_step["env"]["PR_NUMBER"] == "${{ needs.validate-target.outputs.pr_number }}"
 assert apply_step["env"]["EXPECTED_HEAD_SHA"] == "${{ needs.validate-target.outputs.head_sha }}"
+assert apply_step["env"]["EXPECTED_BASE_SHA"] == "${{ needs.validate-target.outputs.base_sha }}"
+assert apply_step["env"]["EXPECTED_MERGE_SHA"] == "${{ needs.validate-target.outputs.merge_sha }}"
 assert apply_run.count(target_validation) == 1
 assert apply_run.count(revalidate_target) == 2
+source_binding_helper = (
+    "bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh"
+)
+assert trusted_source.count(source_binding_helper) == 7
+assert trusted_source.count('pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"') == 1
+assert "current_pull_request_json" not in trusted_source
+assert "(.head.repo.full_name == $repository)" not in trusted_source
+for stage in (
+    "before privileged runtime mutation",
+    "before capacity reclaim",
+    "before the identity request",
+):
+    assert stage in trusted_source
 dry_run = "kubectl apply --dry-run=server"
 actual_apply = "kubectl apply --server-side"
 validation_position = apply_run.index(target_validation)
@@ -1793,11 +1808,15 @@ first_revalidation = apply_run.index(revalidate_target)
 dry_run_position = apply_run.index(dry_run)
 second_revalidation = apply_run.index(revalidate_target, first_revalidation + 1)
 actual_apply_position = apply_run.index(actual_apply)
+first_source_binding = apply_run.index(source_binding_helper)
+second_source_binding = apply_run.index(
+    source_binding_helper, first_source_binding + 1
+)
 assert (
     validation_position
-    < first_revalidation
+    < first_source_binding
     < dry_run_position
-    < second_revalidation
+    < second_source_binding
     < actual_apply_position
 )
 apply_lines = []
@@ -1818,9 +1837,8 @@ assert apply_lines[dry_run_line - 1] == '"$PR_NUMBER" "$EXPECTED_HEAD_SHA"'
 assert apply_lines[dry_run_line + 1] == revalidate_target + " \\"
 assert apply_lines[dry_run_line + 2] == '"$PR_NUMBER" "$EXPECTED_HEAD_SHA"'
 assert actual_apply_line == dry_run_line + 3
-assert apply_run.count('gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}"') == 2
-assert apply_run.count('.base.sha == $expected_base') == 2
-assert apply_run.count('.merge_commit_sha // .head.sha) == $expected_merge') == 2
+assert apply_run.count(source_binding_helper) == 2
+assert apply_run.count('current_pull_request_json') == 0
 
 deploy_failure = next(
     step
@@ -4457,6 +4475,9 @@ printf 'gh-%s\n' "$count" >>"${TEST_APPLY_LOG:?}"
 
 state=open
 head_sha="${TEST_EXPECTED_HEAD:?}"
+repository_name=example/FireMUD
+base_sha="${TEST_EXPECTED_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
+merge_sha="${TEST_EXPECTED_MERGE_SHA:-cccccccccccccccccccccccccccccccccccccccc}"
 case "${TEST_APPLY_SCENARIO:?}" in
   success)
     ;;
@@ -4473,6 +4494,15 @@ case "${TEST_APPLY_SCENARIO:?}" in
       head_sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
     fi
     ;;
+  wrong-repository)
+    repository_name=attacker/FireMUD
+    ;;
+  wrong-base)
+    base_sha=dddddddddddddddddddddddddddddddddddddddd
+    ;;
+  wrong-merge)
+    merge_sha=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+    ;;
   *)
     exit 2
     ;;
@@ -4480,9 +4510,10 @@ esac
 jq -nc \
   --arg state "$state" \
   --arg head "$head_sha" \
-  --arg base "${TEST_EXPECTED_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
-  --arg merge "${TEST_EXPECTED_MERGE_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
-  '{state:$state,head:{sha:$head,repo:{full_name:"example/FireMUD"}},base:{ref:"develop",sha:$base},merge_commit_sha:$merge,user:{login:"trusted-user"},labels:[]}'
+  --arg repository "$repository_name" \
+  --arg base "$base_sha" \
+  --arg merge "$merge_sha" \
+  '{state:$state,head:{sha:$head,repo:{full_name:$repository}},base:{ref:"develop",sha:$base},merge_commit_sha:$merge,user:{login:"trusted-user"},labels:[]}'
 SH
 cat >"$apply_stub_dir/kubectl" <<'SH'
 #!/usr/bin/env bash
@@ -4581,8 +4612,43 @@ run_apply_fixture closed-second \
 run_apply_fixture stale-second \
   "gh-1 gh-2" \
   "head is stale"
+run_apply_fixture wrong-repository \
+  "gh-1" \
+  "Preview source binding changed"
+run_apply_fixture wrong-base \
+  "gh-1" \
+  "Preview source binding changed"
+run_apply_fixture wrong-merge \
+  "gh-1" \
+  "Preview source binding changed"
 run_apply_fixture success \
   "gh-1 gh-2 dry-run gh-3 gh-4 apply deployed-head=firemud.dev/last-preview-head-sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+stage_error="$TEMP_DIR/source-binding-stage.error"
+set +e
+env \
+  PATH="$apply_stub_dir:$PATH" \
+  GH_TOKEN=fake \
+  GITHUB_REPOSITORY=example/FireMUD \
+  TEST_APPLY_SCENARIO=wrong-repository \
+  TEST_EXPECTED_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  TEST_EXPECTED_BASE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+  TEST_EXPECTED_MERGE_SHA=cccccccccccccccccccccccccccccccccccccccc \
+  TEST_GH_COUNT="$TEMP_DIR/source-binding-stage.gh-count" \
+  TEST_APPLY_LOG="$TEMP_DIR/source-binding-stage.log" \
+  bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+    42 \
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+    cccccccccccccccccccccccccccccccccccccccc \
+    "before stage test" \
+  2>"$stage_error"
+stage_status=$?
+set -e
+[[ "$stage_status" -ne 0 ]]
+grep -Fq \
+  "validated artifact before stage test." \
+  "$stage_error"
 
 mixed_case_head=AaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAa
 source_preview_log="$TEMP_DIR/source-preview-head.log"

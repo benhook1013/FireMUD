@@ -7,8 +7,8 @@ readonly PUBLIC_ISSUER='letsencrypt-prod'
 readonly INTERNAL_ISSUER='firemud-ca-issuer'
 
 certificate_wait_timeout_seconds="${CERTIFICATE_WAIT_TIMEOUT_SECONDS:-$DEFAULT_CERTIFICATE_WAIT_TIMEOUT_SECONDS}"
-if [[ ! "$certificate_wait_timeout_seconds" =~ ^[1-9][0-9]*$ ]] ||
-  ((certificate_wait_timeout_seconds > 3600)); then
+if [[ ! "$certificate_wait_timeout_seconds" =~ ^[1-9][0-9]{0,3}$ ]] ||
+  ((10#$certificate_wait_timeout_seconds > 3600)); then
   echo "CERTIFICATE_WAIT_TIMEOUT_SECONDS must be an integer between 1 and 3600" >&2
   exit 2
 fi

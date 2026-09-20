@@ -85,6 +85,16 @@ assert_rejected 'runtime namespace must be canonical pr-N' dev
 assert_rejected 'usage:' pr-42 ignored-override
 test ! -e "$STATE_DIR/applied.yaml"
 
+if PATH="$FAKE_BIN:$PATH" FAKE_KUBECTL_STATE="$STATE_DIR" \
+  CERTIFICATE_WAIT_TIMEOUT_SECONDS=999999999999999999999999999999999 \
+  "$SCRIPT" pr-42 >"$TEMP_DIR/timeout.out" 2>"$TEMP_DIR/timeout.err"; then
+  echo "accepted overflowing certificate timeout" >&2
+  exit 1
+fi
+grep -Fq 'CERTIFICATE_WAIT_TIMEOUT_SECONDS must be an integer between 1 and 3600' \
+  "$TEMP_DIR/timeout.err"
+test ! -e "$STATE_DIR/applied.yaml"
+
 PATH="$FAKE_BIN:$PATH" \
 FAKE_KUBECTL_STATE="$STATE_DIR" \
 "$SCRIPT" pr-42 >"$TEMP_DIR/success.out"

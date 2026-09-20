@@ -299,7 +299,6 @@ jobs:
               "Ignoring render artifact whose PR number is not the canonical target."
             [[ "$(normalize_sha "$metadata_head_sha")" == "$EXPECTED_HEAD_SHA" ]] || emit_no_action \
               "Ignoring render artifact whose head SHA is stale or mismatched."
-            merge_sha="${merge_sha:-$current_head_sha}"
             python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
               "$ARTIFACT_DIRECTORY/preview-metadata.json" \
               "$ARTIFACT_DIRECTORY/preview-rendered-sanitized.yaml" \
@@ -374,21 +373,8 @@ jobs:
           EXPECTED_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
         run: |
           set -euo pipefail
-          pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          jq -e \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --arg expected_head "$EXPECTED_HEAD_SHA" \
-            --arg expected_base "$EXPECTED_BASE_SHA" \
-            --arg expected_merge "$EXPECTED_MERGE_SHA" \
-            '(.state == "open") and
-             (.head.repo.full_name == $repository) and
-             (.head.sha == $expected_head) and
-             (.base.sha == $expected_base) and
-             ((.merge_commit_sha // .head.sha) == $expected_merge)' \
-            <<<"$pull_request_json" >/dev/null || {
-              echo "::error title=Preview source binding changed::The current PR head, base, merge, or repository no longer matches the validated artifact." >&2
-              exit 1
-            }
+          bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA"
 
       - name: Revalidate open PR before waiting for runtime images
         env:
@@ -525,21 +511,9 @@ jobs:
           EXPECTED_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
         run: |
           set -euo pipefail
-          current_pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          jq -e \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --arg expected_head "$EXPECTED_HEAD_SHA" \
-            --arg expected_base "$EXPECTED_BASE_SHA" \
-            --arg expected_merge "$EXPECTED_MERGE_SHA" \
-            '(.state == "open") and
-             (.head.repo.full_name == $repository) and
-             (.head.sha == $expected_head) and
-             (.base.sha == $expected_base) and
-             ((.merge_commit_sha // .head.sha) == $expected_merge)' \
-            <<<"$current_pull_request_json" >/dev/null || {
-              echo "::error title=Preview source binding changed::The current PR head, base, merge, or repository no longer matches the validated artifact before privileged runtime mutation." >&2
-              exit 1
-            }
+          bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA" \
+            "before privileged runtime mutation"
 
       - name: Prune stale runtime namespaces
         env:
@@ -555,21 +529,9 @@ jobs:
           EXPECTED_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
         run: |
           set -euo pipefail
-          current_pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          jq -e \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --arg expected_head "$EXPECTED_HEAD_SHA" \
-            --arg expected_base "$EXPECTED_BASE_SHA" \
-            --arg expected_merge "$EXPECTED_MERGE_SHA" \
-            '(.state == "open") and
-             (.head.repo.full_name == $repository) and
-             (.head.sha == $expected_head) and
-             (.base.sha == $expected_base) and
-             ((.merge_commit_sha // .head.sha) == $expected_merge)' \
-            <<<"$current_pull_request_json" >/dev/null || {
-              echo "::error title=Preview source binding changed::The current PR head, base, merge, or repository no longer matches the validated artifact before capacity reclaim." >&2
-              exit 1
-            }
+          bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA" \
+            "before capacity reclaim"
 
       - name: Enforce priority-aware preview capacity
         id: allocate-capacity
@@ -643,21 +605,9 @@ jobs:
           set -euo pipefail
           bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
             "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
-          current_pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          jq -e \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --arg expected_head "$EXPECTED_HEAD_SHA" \
-            --arg expected_base "$EXPECTED_BASE_SHA" \
-            --arg expected_merge "$EXPECTED_MERGE_SHA" \
-            '(.state == "open") and
-             (.head.repo.full_name == $repository) and
-             (.head.sha == $expected_head) and
-             (.base.sha == $expected_base) and
-             ((.merge_commit_sha // .head.sha) == $expected_merge)' \
-            <<<"$current_pull_request_json" >/dev/null || {
-              echo "::error title=Preview source binding changed::The current PR head, base, merge, or repository no longer matches the validated artifact before the identity request." >&2
-              exit 1
-            }
+          bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA" \
+            "before the identity request"
 
       - name: Apply canonical Active request
         if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
@@ -718,6 +668,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          EXPECTED_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          EXPECTED_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
           ARTIFACT_PATH: ${{ runner.temp }}/preview-rendered-with-port.yaml
           TELNET_PORT: ${{ steps.allocate-telnet-port.outputs.port }}
@@ -726,39 +678,13 @@ jobs:
           python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
             runtime-target "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$TELNET_PORT" \
             "${{ needs.validate-target.outputs.certificate_identity_mode }}"
-          current_pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          jq -e \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --arg expected_head "$EXPECTED_HEAD_SHA" \
-            --arg expected_base "${{ needs.validate-target.outputs.base_sha }}" \
-            --arg expected_merge "${{ needs.validate-target.outputs.merge_sha }}" \
-            '(.state == "open") and
-             (.head.repo.full_name == $repository) and
-             (.head.sha == $expected_head) and
-             (.base.sha == $expected_base) and
-             ((.merge_commit_sha // .head.sha) == $expected_merge)' \
-            <<<"$current_pull_request_json" >/dev/null || {
-              echo "::error title=Preview source binding changed::The current PR head, base, merge, or repository no longer matches the validated artifact." >&2
-              exit 1
-            }
+          bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA"
           bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
             "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
           kubectl apply --dry-run=server --server-side --field-manager=trusted-hosted-preview -n "$RUNTIME_NAMESPACE" -f "$ARTIFACT_PATH"
-          current_pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          jq -e \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --arg expected_head "$EXPECTED_HEAD_SHA" \
-            --arg expected_base "${{ needs.validate-target.outputs.base_sha }}" \
-            --arg expected_merge "${{ needs.validate-target.outputs.merge_sha }}" \
-            '(.state == "open") and
-             (.head.repo.full_name == $repository) and
-             (.head.sha == $expected_head) and
-             (.base.sha == $expected_base) and
-             ((.merge_commit_sha // .head.sha) == $expected_merge)' \
-            <<<"$current_pull_request_json" >/dev/null || {
-              echo "::error title=Preview source binding changed::The current PR head, base, merge, or repository no longer matches the validated artifact." >&2
-              exit 1
-            }
+          bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA"
           bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
             "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
           kubectl apply --server-side --field-manager=trusted-hosted-preview -n "$RUNTIME_NAMESPACE" -f "$ARTIFACT_PATH"
@@ -904,21 +830,8 @@ jobs:
           EXPECTED_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
         run: |
           set -euo pipefail
-          pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          jq -e \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --arg expected_head "$EXPECTED_HEAD_SHA" \
-            --arg expected_base "$EXPECTED_BASE_SHA" \
-            --arg expected_merge "$EXPECTED_MERGE_SHA" \
-            '(.state == "open") and
-             (.head.repo.full_name == $repository) and
-             (.head.sha == $expected_head) and
-             (.base.sha == $expected_base) and
-             ((.merge_commit_sha // .head.sha) == $expected_merge)' \
-            <<<"$pull_request_json" >/dev/null || {
-              echo "::error title=Preview source binding changed::The current PR head, base, merge, or repository no longer matches the validated artifact." >&2
-              exit 1
-            }
+          bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA"
 
       - name: Publish trusted preview deployment state
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9

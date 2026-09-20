@@ -458,7 +458,12 @@ require_contains "$preview_path" 'ref: ${{ github.event.repository.default_branc
 require_contains "$preview_path" "github.event_name == 'pull_request_target'"
 require_contains "$preview_path" "github.event_name == 'repository_dispatch'"
 require_contains "$preview_path" 'github.event.pull_request.head.repo.full_name == github.repository'
-require_contains "$preview_path" 'github.event.pull_request.merge_commit_sha'
+if grep -Fq 'github.event.pull_request.merge_commit_sha' "$preview_path"; then
+  echo "Preview source must resolve a fresh REST test merge, not trust the event payload" >&2
+  exit 1
+fi
+require_contains "$preview_path" 'MERGE_RETRY_LIMIT=5'
+require_contains "$preview_path" 'Preview merge computation unavailable'
 require_contains "$preview_path" 'Stale preview head SHA'
 assert_job_contains preview.yml preview-plan 'resolve-preview-image-tag.sh'
 assert_job_contains preview.yml preview-plan 'current PR head or base SHA as image tag'
@@ -502,7 +507,8 @@ require_contains "$trusted_preview_path" '[[ "$base_ref" == main || "$base_ref" 
 require_contains "$trusted_preview_path" 'labels_json="$(jq -c'
 require_contains "$trusted_preview_path" 'preview-eligibility.py'
 require_contains "$trusted_preview_path" '[[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]] || emit_no_action'
-require_contains "$trusted_preview_path" 'Preview source binding changed'
+require_contains "$trusted_preview_path" 'revalidate-preview-source-binding.sh'
+require_contains "$ROOT_DIR/dev-tools/hosted/preview/revalidate-preview-source-binding.sh" 'Preview source binding changed'
 require_contains "$trusted_preview_path" 'CLEANUP_STATE=open'
 require_contains "$trusted_preview_path" 'RETIRE_IDENTITY=true'
 require_contains "$trusted_preview_path" "needs.validate-target.outputs.cleanup_state == 'open'"
