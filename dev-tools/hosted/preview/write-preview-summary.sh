@@ -13,6 +13,33 @@ image_tag="$4"
 hostname="$5"
 telnet_port="$6"
 failure_stage="${7:-}"
+exposure_mode="${PREVIEW_EXPOSURE_MODE:-public}"
+
+if [[ "$exposure_mode" != private && "$exposure_mode" != public ]]; then
+  echo "PREVIEW_EXPOSURE_MODE must be private or public" >&2
+  exit 1
+fi
+
+private_bridge_line() {
+  local state="$1"
+  case "$state" in
+    pending) echo "- TCP: private Gateway ↔ TCP Proxy bridge pending" ;;
+    ready) echo "- TCP: private Gateway ↔ TCP Proxy bridge verified (no public Telnet)" ;;
+    unavailable) echo "- TCP: private Gateway ↔ TCP Proxy bridge unavailable (no public Telnet)" ;;
+    *) echo "- TCP: private Gateway ↔ TCP Proxy bridge ${state} (no public Telnet)" ;;
+  esac
+}
+
+public_tcp_line() {
+  local state="$1"
+  case "$state" in
+    pending) echo "- TCP: pending" ;;
+    target) echo "- TCP: \`${hostname} ${telnet_port}\`" ;;
+    unavailable) echo "- TCP: \`telnet ${hostname} ${telnet_port}\`" ;;
+    ready) echo "- TCP: \`telnet ${hostname} ${telnet_port}\`" ;;
+    *) echo "- TCP: \`${state}\`" ;;
+  esac
+}
 
 case "$mode" in
   deploying)
@@ -23,8 +50,12 @@ case "$mode" in
 - Head SHA: \`${head_sha}\`
 - Image tag: \`${image_tag}\`
 - Web: pending
-- TCP: pending
 EOF
+    if [[ "$exposure_mode" == private ]]; then
+      private_bridge_line pending
+    else
+      public_tcp_line pending
+    fi
     ;;
   target)
     cat <<EOF
@@ -34,8 +65,12 @@ EOF
 - Head SHA: \`${head_sha}\`
 - Image tag: \`${image_tag}\`
 - Web: https://${hostname}
-- TCP: \`${hostname} ${telnet_port}\`
 EOF
+    if [[ "$exposure_mode" == private ]]; then
+      private_bridge_line pending
+    else
+      public_tcp_line target
+    fi
     ;;
   unavailable)
     cat <<EOF
@@ -45,9 +80,13 @@ EOF
 - Head SHA: \`${head_sha}\`
 - Image tag: \`${image_tag}\`
 - Web: https://${hostname}
-- TCP: \`telnet ${hostname} ${telnet_port}\`
-- Unavailable stage: \`${failure_stage:-cluster-access}\`
 EOF
+    if [[ "$exposure_mode" == private ]]; then
+      private_bridge_line unavailable
+    else
+      public_tcp_line unavailable
+    fi
+    echo "- Unavailable stage: \`${failure_stage:-cluster-access}\`"
     ;;
   success)
     cat <<EOF
@@ -57,8 +96,12 @@ EOF
 - Head SHA: \`${head_sha}\`
 - Image tag: \`${image_tag}\`
 - Web: https://${hostname}
-- TCP: \`telnet ${hostname} ${telnet_port}\`
 EOF
+    if [[ "$exposure_mode" == private ]]; then
+      private_bridge_line ready
+    else
+      public_tcp_line ready
+    fi
     ;;
   reclaimed)
     cat <<EOF
@@ -80,8 +123,12 @@ EOF
 - PR: #${pr_number}
 - Head SHA: \`${head_sha}\`
 - Previous host: https://${hostname}
-- TCP: unavailable
 EOF
+    if [[ "$exposure_mode" == private ]]; then
+      private_bridge_line unavailable
+    else
+      echo "- TCP: unavailable"
+    fi
     ;;
   removed)
     cat <<EOF
@@ -101,9 +148,13 @@ EOF
 - Head SHA: \`${head_sha}\`
 - Image tag: \`${image_tag}\`
 - Web: https://${hostname}
-- TCP: \`telnet ${hostname} ${telnet_port}\`
-- Failed stage: \`${failure_stage:-unknown}\`
 EOF
+    if [[ "$exposure_mode" == private ]]; then
+      private_bridge_line unavailable
+    else
+      public_tcp_line unavailable
+    fi
+    echo "- Failed stage: \`${failure_stage:-unknown}\`"
     ;;
   *)
     echo "unknown mode: ${mode}" >&2

@@ -41,6 +41,7 @@ public class RuntimeProfileService {
     }
     validateRuntimeLabels(plan, namespace.getMetadata().getLabels());
     Map<String, String> annotations = namespace.getMetadata().getAnnotations();
+    String exposureMode = exposureMode(plan, namespace.getMetadata().getLabels());
     String requestedHead;
     String deployedHead;
     if (HostedIdentityContract.isDevDemo(plan.name())) {
@@ -66,23 +67,32 @@ public class RuntimeProfileService {
         HostedIdentityContract.isDevDemo(plan.name())
             ? properties.getDevDemoTelnetPortAnnotation()
             : properties.getPreviewTelnetPortAnnotation();
-    String portValue = annotations == null ? null : annotations.get(portAnnotation);
-    if (portValue == null || portValue.isBlank()) {
-      throw new IllegalStateException("runtime Namespace has no canonical Telnet port identity");
-    }
     int port;
-    try {
-      port = Integer.parseInt(portValue);
-    } catch (NumberFormatException exception) {
-      throw invalidTelnetPortIdentity(portValue, exception);
-    }
-    if (!isValidTelnetPort(plan, port)) {
-      throw invalidTelnetPortIdentity(
-          portValue,
-          new IllegalArgumentException("parsed Telnet port is outside the configured allocation"));
+    if (HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(exposureMode)) {
+      if (annotations != null && annotations.containsKey(portAnnotation)) {
+        throw new IllegalStateException(
+            "private runtime Namespace cannot carry a canonical Telnet port identity");
+      }
+      port = 0;
+    } else {
+      String portValue = annotations == null ? null : annotations.get(portAnnotation);
+      if (portValue == null || portValue.isBlank()) {
+        throw new IllegalStateException("runtime Namespace has no canonical Telnet port identity");
+      }
+      try {
+        port = Integer.parseInt(portValue);
+      } catch (NumberFormatException exception) {
+        throw invalidTelnetPortIdentity(portValue, exception);
+      }
+      if (!isValidTelnetPort(plan, port)) {
+        throw invalidTelnetPortIdentity(
+            portValue,
+            new IllegalArgumentException(
+                "parsed Telnet port is outside the configured allocation"));
+      }
     }
     return new RuntimeProfile(
-        namespace.getMetadata().getUid(), requestedHead, deployedHead, port, true);
+        namespace.getMetadata().getUid(), requestedHead, deployedHead, exposureMode, port, true);
   }
 
   /**
@@ -113,6 +123,11 @@ public class RuntimeProfileService {
         value(expected, RuntimeProfile::deployedHeadSha),
         value(actual, RuntimeProfile::deployedHeadSha))) {
       changed.add("deployed head");
+    }
+    if (!Objects.equals(
+        value(expected, RuntimeProfile::exposureMode),
+        value(actual, RuntimeProfile::exposureMode))) {
+      changed.add("exposure mode");
     }
     if (!Objects.equals(
         value(expected, RuntimeProfile::telnetPort), value(actual, RuntimeProfile::telnetPort))) {
@@ -154,7 +169,7 @@ public class RuntimeProfileService {
         "runtime Namespace has an invalid Telnet port identity: " + portValue, cause);
   }
 
-  boolean isValidTelnetPort(EnvironmentIdentityPlan plan, int port) {
+  public boolean isValidTelnetPort(EnvironmentIdentityPlan plan, int port) {
     if (port < 1 || port > 65535) {
       return false;
     }
@@ -178,6 +193,14 @@ public class RuntimeProfileService {
           labels,
           "firemud.dev/environment-class",
           HostedIdentityContract.environmentClass(plan.name()));
+      String exposureMode = labels.get(HostedIdentityContract.PREVIEW_EXPOSURE_MODE_LABEL);
+      if (exposureMode != null
+          && !HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE.equals(exposureMode)) {
+        throw new IllegalStateException(
+            "runtime Namespace has an invalid "
+                + HostedIdentityContract.PREVIEW_EXPOSURE_MODE_LABEL
+                + " label");
+      }
       return;
     }
     if (!plan.name().startsWith("pr-")) {
@@ -185,6 +208,27 @@ public class RuntimeProfileService {
     }
     requireLabel(labels, "firemud.dev/preview", "true");
     requireLabel(labels, "firemud.dev/pr-number", plan.name().substring("pr-".length()));
+    requireLabel(
+        labels,
+        HostedIdentityContract.PREVIEW_EXPOSURE_MODE_LABEL,
+        HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE,
+        HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE);
+  }
+
+  private static String exposureMode(EnvironmentIdentityPlan plan, Map<String, String> labels) {
+    if (HostedIdentityContract.isDevDemo(plan.name())) {
+      return HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE;
+    }
+    String mode = labels.get(HostedIdentityContract.PREVIEW_EXPOSURE_MODE_LABEL);
+    if (!isValidExposureMode(mode)) {
+      throw new IllegalStateException("runtime Namespace has an invalid preview exposure mode");
+    }
+    return mode;
+  }
+
+  public static boolean isValidExposureMode(String exposureMode) {
+    return HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(exposureMode)
+        || HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE.equals(exposureMode);
   }
 
   private static void requireLabel(Map<String, String> labels, String key, String expected) {
@@ -193,12 +237,37 @@ public class RuntimeProfileService {
     }
   }
 
+  private static void requireLabel(Map<String, String> labels, String key, String... expected) {
+    for (String value : expected) {
+      if (value.equals(labels.get(key))) {
+        return;
+      }
+    }
+    throw new IllegalStateException("runtime Namespace has an invalid " + key + " label");
+  }
+
   public record RuntimeProfile(
       String runtimeNamespaceUid,
       String requestedHeadSha,
       String deployedHeadSha,
+      String exposureMode,
       int telnetPort,
       boolean present) {
+    public RuntimeProfile(
+        String runtimeNamespaceUid,
+        String requestedHeadSha,
+        String deployedHeadSha,
+        int telnetPort,
+        boolean present) {
+      this(
+          runtimeNamespaceUid,
+          requestedHeadSha,
+          deployedHeadSha,
+          HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+          telnetPort,
+          present);
+    }
+
     public boolean deployedHeadMatchesRequest() {
       return present
           && requestedHeadSha != null
@@ -206,7 +275,7 @@ public class RuntimeProfileService {
     }
 
     public static RuntimeProfile absent() {
-      return new RuntimeProfile(null, null, null, 0, false);
+      return new RuntimeProfile(null, null, null, null, 0, false);
     }
   }
 }

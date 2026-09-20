@@ -1374,7 +1374,7 @@ if [[ $# -eq 6 && "$1" == get && "$2" == namespace && ( "$3" == dev || "$3" == p
     --arg requested_annotation "$requested_annotation" \
     --arg deployed_annotation "$deployed_annotation" \
     --arg telnet_annotation "$telnet_annotation" '
-      {metadata:{uid:"runtime-uid",annotations:{}}}
+      {metadata:{uid:"runtime-uid",labels:{"firemud.dev/preview-exposure-mode":"public"},annotations:{}}}
       | if $requested == "__missing__" then .
         else .metadata.annotations[$requested_annotation] = $requested end
       | if $deployed == "__missing__" then .
@@ -1410,7 +1410,7 @@ if [[ $# -eq 8 && "$1" == -n && "$2" == firemud-system && "$3" == get && "$4" ==
                else .observedGeneration = $parsed_ready_generation
                end)
           ],
-          profile:{runtimeNamespaceUid:$profile_uid,telnetPort:$telnet_port},
+          profile:{runtimeNamespaceUid:$profile_uid,exposureMode:"public",telnetPort:$telnet_port},
           ingress:{revision:$revision},
           telnet:{revision:$revision},
           gatewayInternalWs:{revision:$revision},

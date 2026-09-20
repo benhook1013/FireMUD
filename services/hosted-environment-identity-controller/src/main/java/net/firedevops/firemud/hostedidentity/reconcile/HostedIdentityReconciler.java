@@ -224,20 +224,37 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
               () -> assertRuntimeProfileCurrent(plan, runtimeProfile, "rollout mutation"));
       ServedEnvironmentProbe.ProbeResult probes;
       if (rollout.ready()) {
-        probes =
-            servedEnvironmentProbe.probe(
-                plan,
-                runtimeProfile.telnetPort(),
-                ingress.summary().certificateFingerprint(),
-                telnet.summary().certificateFingerprint(),
-                bridgeProbeMaterial(
-                    tcpProxyBridge,
-                    () ->
-                        runtimeProjection(
-                            plan, runtimeProfile, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE)),
-                gatewayInternalWs.summary().certificateFingerprint(),
-                grpc.source(),
-                grpc.summary().certificateFingerprint());
+        Secret bridgeMaterial =
+            bridgeProbeMaterial(
+                tcpProxyBridge,
+                () ->
+                    runtimeProjection(
+                        plan, runtimeProfile, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE));
+        if (HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE.equals(
+            runtimeProfile.exposureMode())) {
+          probes =
+              servedEnvironmentProbe.probe(
+                  plan,
+                  runtimeProfile.telnetPort(),
+                  ingress.summary().certificateFingerprint(),
+                  telnet.summary().certificateFingerprint(),
+                  bridgeMaterial,
+                  gatewayInternalWs.summary().certificateFingerprint(),
+                  grpc.source(),
+                  grpc.summary().certificateFingerprint());
+        } else {
+          probes =
+              servedEnvironmentProbe.probe(
+                  plan,
+                  runtimeProfile.exposureMode(),
+                  runtimeProfile.telnetPort(),
+                  ingress.summary().certificateFingerprint(),
+                  telnet.summary().certificateFingerprint(),
+                  bridgeMaterial,
+                  gatewayInternalWs.summary().certificateFingerprint(),
+                  grpc.source(),
+                  grpc.summary().certificateFingerprint());
+        }
       } else {
         probes = new ServedEnvironmentProbe.ProbeResult(false, "rollout-pending");
       }
@@ -570,7 +587,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
     }
     if (runtimeProfile.present()) {
       RuntimeProfileService.RuntimeProfile observedProfile =
-          previouslyObservedRuntimeProfile(resource);
+          previouslyObservedRuntimeProfile(resource, plan);
       if (observedProfile == null) {
         return status(
             resource,
@@ -661,7 +678,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
   }
 
   private RuntimeProfileService.RuntimeProfile previouslyObservedRuntimeProfile(
-      HostedEnvironmentIdentity resource) {
+      HostedEnvironmentIdentity resource, EnvironmentIdentityPlan plan) {
     if (resource.getStatus() == null || resource.getStatus().getProfile() == null) {
       return null;
     }
@@ -670,15 +687,21 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
         || profile.getRuntimeNamespaceUid().isBlank()
         || !canonicalHead(profile.getRequestedHeadSha())
         || !optionalCanonicalHead(profile.getDeployedHeadSha())
+        || !RuntimeProfileService.isValidExposureMode(profile.getExposureMode())
         || profile.getTelnetPort() == null
-        || profile.getTelnetPort() < 1
-        || profile.getTelnetPort() > 65535) {
+        || (!HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(
+                    profile.getExposureMode())
+                && !runtimeProfileService.isValidTelnetPort(plan, profile.getTelnetPort()))
+        || (HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(
+                    profile.getExposureMode())
+                && profile.getTelnetPort() != 0)) {
       return null;
     }
     return new RuntimeProfileService.RuntimeProfile(
         profile.getRuntimeNamespaceUid(),
         profile.getRequestedHeadSha(),
         profile.getDeployedHeadSha(),
+        profile.getExposureMode(),
         profile.getTelnetPort(),
         true);
   }

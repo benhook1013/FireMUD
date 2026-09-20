@@ -33,6 +33,157 @@ def load_validator():
 VALIDATOR = load_validator()
 
 
+class PreviewArtifactServiceValidationTest(unittest.TestCase):
+    validator = VALIDATOR
+
+    def _tcp_proxy_service(
+        self, *, service_type="ClusterIP", port=2323, target_port=2323
+    ):
+        expected_spec = copy.deepcopy(
+            self.validator.EXPECTED_SERVICE_SPECS["tcp-proxy-service"]
+        )
+        expected_spec["type"] = service_type
+        expected_spec["ports"][0]["port"] = port
+        expected_spec["ports"][0]["targetPort"] = target_port
+        return {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {"name": "tcp-proxy-service"},
+            "spec": expected_spec,
+        }
+
+    def test_hosted_controller_accepts_private_tcp_proxy_service(self):
+        self.validator.validate_services(
+            [self._tcp_proxy_service()], "hosted-controller"
+        )
+
+    def test_hosted_controller_rejects_public_tcp_proxy_service(self):
+        with self.assertRaisesRegex(
+            ValueError, "Service/tcp-proxy-service has an unsafe service type"
+        ):
+            self.validator.validate_services(
+                [self._tcp_proxy_service(service_type="NodePort")],
+                "hosted-controller",
+            )
+
+    def test_hosted_controller_rejects_wrong_tcp_proxy_port(self):
+        with self.assertRaisesRegex(
+            ValueError, "Service/tcp-proxy-service has an unexpected port set"
+        ):
+            self.validator.validate_services(
+                [self._tcp_proxy_service(port=2324)], "hosted-controller"
+            )
+
+    def _tcp_proxy_deployment(self, *, include_telnet_tls):
+        mounts = [
+            {"name": "grpc-tls", "mountPath": "/tls", "readOnly": True},
+            {
+                "name": "jwt-signing-keys",
+                "mountPath": "/var/run/secrets/firemud/jwt",
+                "readOnly": True,
+            },
+        ]
+        volumes = [
+            {"name": "grpc-tls", "secret": {"secretName": "firemud-grpc-tls"}},
+            {
+                "name": "jwt-signing-keys",
+                "secret": {"secretName": "jwt-signing-keys"},
+            },
+        ]
+        if include_telnet_tls:
+            mounts.append(
+                {
+                    "name": "telnet-tls",
+                    "mountPath": "/telnet-tls",
+                    "readOnly": True,
+                }
+            )
+            volumes.append(
+                {
+                    "name": "telnet-tls",
+                    "secret": {"secretName": "pr-42-telnet-tls"},
+                }
+            )
+        mounts.append(
+            {
+                "name": "gateway-ws-client-tls",
+                "mountPath": "/gateway-ws-client-tls",
+                "readOnly": True,
+            }
+        )
+        volumes.append(
+            {
+                "name": "gateway-ws-client-tls",
+                "secret": {
+                    "secretName": "pr-42-tcp-proxy-bridge",
+                    "items": [
+                        {"key": "tls.crt", "path": "tls.crt"},
+                        {"key": "tls.key", "path": "tls.key"},
+                        {"key": "ca.crt", "path": "ca.crt"},
+                    ],
+                },
+            }
+        )
+        return {
+            "kind": "Deployment",
+            "metadata": {"name": "tcp-proxy-service"},
+            "spec": {
+                "template": {
+                    "spec": {
+                        "serviceAccountName": "firemud-app",
+                        "containers": [
+                            {
+                                "name": "tcp-proxy-service",
+                                "volumeMounts": mounts,
+                            }
+                        ],
+                        "volumes": volumes,
+                    }
+                }
+            },
+        }
+
+    def test_hosted_controller_accepts_private_tcp_proxy_consumers(self):
+        with patch.object(self.validator, "SERVICE_IMAGES", {"tcp-proxy-service"}):
+            self.validator.validate_service_consumers(
+                [self._tcp_proxy_deployment(include_telnet_tls=False)],
+                "pr-42",
+                "hosted-controller",
+            )
+
+    def test_hosted_controller_rejects_public_telnet_consumer(self):
+        with (
+            patch.object(self.validator, "SERVICE_IMAGES", {"tcp-proxy-service"}),
+            self.assertRaisesRegex(
+                ValueError,
+                "Deployment/tcp-proxy-service has duplicate or unexpected identity consumers",
+            ),
+        ):
+            self.validator.validate_service_consumers(
+                [self._tcp_proxy_deployment(include_telnet_tls=True)],
+                "pr-42",
+                "hosted-controller",
+            )
+
+    def test_standalone_requires_public_telnet_consumer(self):
+        with patch.object(self.validator, "SERVICE_IMAGES", {"tcp-proxy-service"}):
+            self.validator.validate_service_consumers(
+                [self._tcp_proxy_deployment(include_telnet_tls=True)], "pr-42"
+            )
+
+    def test_standalone_rejects_private_tcp_proxy_consumer(self):
+        with (
+            patch.object(self.validator, "SERVICE_IMAGES", {"tcp-proxy-service"}),
+            self.assertRaisesRegex(
+                ValueError,
+                "Deployment/tcp-proxy-service has duplicate or unexpected identity consumers",
+            ),
+        ):
+            self.validator.validate_service_consumers(
+                [self._tcp_proxy_deployment(include_telnet_tls=False)], "pr-42"
+            )
+
+
 class PreviewArtifactSecretReferenceTest(unittest.TestCase):
     validator = VALIDATOR
 
@@ -722,6 +873,12 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
     validator = VALIDATOR
 
     def _tcp_proxy_service(self, spec, *, namespace=None, mode=None):
+        spec = copy.deepcopy(spec)
+        if mode is not None:
+            spec.setdefault(
+                "type",
+                "NodePort" if mode == "standalone" else "ClusterIP",
+            )
         metadata = {
             "name": "tcp-proxy-service",
             "labels": {
@@ -866,6 +1023,81 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
                     source, prepared, 32000, "pr-42", "standalone"
                 )
             self.assertFalse(prepared.exists())
+
+    def test_private_injection_preserves_cluster_ip_and_rejects_telnet_port(self):
+        service = self._tcp_proxy_service(
+            {"ports": [{"name": "tcp-2323", "port": 2323}]},
+            mode="hosted-controller",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.yaml"
+            prepared = Path(directory) / "prepared.yaml"
+            source.write_text(yaml.safe_dump(service), encoding="utf-8")
+            self.validator.inject_telnet_port(
+                source, prepared, 0, "pr-42", "hosted-controller"
+            )
+            result = yaml.safe_load(prepared.read_text(encoding="utf-8"))
+            self.assertNotIn("nodePort", result["spec"]["ports"][0])
+            with self.assertRaisesRegex(ValueError, "sentinel Telnet port 0"):
+                self.validator.inject_telnet_port(
+                    source, prepared, 32000, "pr-42", "hosted-controller"
+                )
+
+    def test_explicit_exposure_mode_rejects_unsupported_identity_pairings(self):
+        for identity_mode, exposure_mode, port in (
+            ("standalone", "private", 0),
+            ("hosted-controller", "public", 32000),
+        ):
+            with self.subTest(identity_mode=identity_mode), tempfile.TemporaryDirectory() as directory:
+                source = Path(directory) / "missing-source.yaml"
+                destination = Path(directory) / "destination.yaml"
+                with self.assertRaisesRegex(
+                    ValueError, "incompatible with certificate identity mode"
+                ):
+                    self.validator.inject_telnet_port(
+                        source,
+                        destination,
+                        port,
+                        "pr-42",
+                        identity_mode,
+                        exposure_mode,
+                    )
+                self.assertFalse(destination.exists())
+                with self.assertRaisesRegex(
+                    ValueError, "incompatible with certificate identity mode"
+                ):
+                    self.validator.validate_runtime_target(
+                        source,
+                        "pr-42",
+                        port,
+                        identity_mode,
+                        exposure_mode,
+                    )
+
+    def test_exposure_mode_is_derived_from_tcp_proxy_service_shape(self):
+        for service_type, expected_mode, identity_mode in (
+            ("ClusterIP", "private", "hosted-controller"),
+            ("NodePort", "public", "standalone"),
+        ):
+            with self.subTest(service_type=service_type), tempfile.TemporaryDirectory() as directory:
+                source = Path(directory) / "source.yaml"
+                spec = copy.deepcopy(
+                    self.validator.EXPECTED_SERVICE_SPECS["tcp-proxy-service"]
+                )
+                spec["type"] = service_type
+                source.write_text(
+                    yaml.safe_dump(
+                        self._tcp_proxy_service(
+                            spec,
+                            mode=identity_mode,
+                        )
+                    ),
+                    encoding="utf-8",
+                )
+                self.assertEqual(
+                    expected_mode,
+                    self.validator.determine_exposure_mode(source, identity_mode),
+                )
 
     def test_expected_top_level_label_mismatches_report_expected_and_actual(self):
         expected_labels = {
@@ -1174,7 +1406,10 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
                         "name": "tcp-proxy-service",
                         "labels": self._labels(mode),
                     },
-                    "spec": {"ports": [{"port": 2323}]},
+                    "spec": {
+                        "type": "NodePort" if mode == "standalone" else "ClusterIP",
+                        "ports": [{"port": 2323}],
+                    },
                 }
                 ingress = {
                     "apiVersion": "networking.k8s.io/v1",
@@ -1199,7 +1434,7 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
                 self.validator.inject_telnet_port(
                     sanitized,
                     prepared,
-                    32000,
+                    0 if mode == "hosted-controller" else 32000,
                     "pr-42",
                     mode,
                 )
@@ -1210,7 +1445,10 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
                     prepared_documents[0]["metadata"]["labels"], self._labels(mode)
                 )
                 self.validator.validate_runtime_target(
-                    prepared, "pr-42", 32000, mode
+                    prepared,
+                    "pr-42",
+                    0 if mode == "hosted-controller" else 32000,
+                    mode,
                 )
 
     def test_mode_specific_policy_sets_and_rules_are_closed(self):
@@ -1309,6 +1547,7 @@ class PreviewArtifactCommandLineTest(unittest.TestCase):
                         "pr-42",
                         "32000",
                         "hosted-controller",
+                        "private",
                     ]
                     with (
                         patch.object(
@@ -1355,6 +1594,32 @@ class PreviewArtifactCommandLineTest(unittest.TestCase):
                         [str(SCRIPT), command, *command_arguments]
                     ),
                     2,
+                )
+
+    def test_runtime_mutation_commands_require_exposure_mode(self):
+        for command, command_arguments in (
+            (
+                "inject",
+                ["source.yaml", "destination.yaml", "pr-42", "32000", "standalone"],
+            ),
+            (
+                "runtime-target",
+                ["prepared.yaml", "pr-42", "32000", "standalone"],
+            ),
+        ):
+            with self.subTest(command=command):
+                stderr = io.StringIO()
+                with redirect_stderr(stderr):
+                    self.assertEqual(
+                        self.validator.main(
+                            [str(SCRIPT), command, *command_arguments]
+                        ),
+                        2,
+                    )
+                self.assertTrue(
+                    stderr.getvalue().startswith(
+                        "usage: validate-preview-artifact.py"
+                    )
                 )
 
     def test_artifact_validation_requires_certificate_identity_mode(self):
