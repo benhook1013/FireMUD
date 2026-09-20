@@ -267,8 +267,7 @@ class AutomationScriptingGrpcServiceTest {
     withPeer(
         WRONG_PEER,
         () ->
-            assertEquals(
-                "PERMISSION_DENIED", invokeDigest(service, request).getError().getCode()));
+            assertEquals("PERMISSION_DENIED", invokeDigest(service, request).getError().getCode()));
 
     runAsGameDesign(
         () -> {
@@ -304,8 +303,7 @@ class AutomationScriptingGrpcServiceTest {
             ref.set(
                 invokeDigest(
                     service,
-                    fullDigestRequest("1", "7")
-                        .toBuilder()
+                    fullDigestRequest("1", "7").toBuilder()
                         .setRequestDigest("0".repeat(64))
                         .build())));
 
