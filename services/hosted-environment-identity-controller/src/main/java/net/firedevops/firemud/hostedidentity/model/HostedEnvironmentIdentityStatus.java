@@ -2,7 +2,6 @@ package net.firedevops.firemud.hostedidentity.model;
 
 import java.util.ArrayList;
 import java.util.List;
-import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 
 public class HostedEnvironmentIdentityStatus {
   private Long observedGeneration;
@@ -260,9 +259,7 @@ public class HostedEnvironmentIdentityStatus {
     }
 
     public String getExposureMode() {
-      return exposureMode == null
-          ? HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE
-          : exposureMode;
+      return exposureMode;
     }
 
     public void setExposureMode(String exposureMode) {

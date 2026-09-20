@@ -1,6 +1,7 @@
 package net.firedevops.firemud.hostedidentity.probe;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -12,6 +13,8 @@ import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPairGenerator;
@@ -436,6 +439,95 @@ class ServedEnvironmentProbeTest {
   }
 
   @Test
+  void internalBridgeProbeRequiresAWebSocketUpgradeAndSendsTrustedProxyIdentity() throws Exception {
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    Secret material = generatedMaterial(plan);
+    String trustAnchor = fingerprint(material.getData().get("ca.crt"));
+    String leaf = fingerprint(material.getData().get("tls.crt"));
+    String identityHostname = "account-service.pr-42.svc.cluster.local";
+    HostedEnvironmentProbeFixture fixture =
+        bridgeFixture(material, trustAnchor, leaf, identityHostname, BridgeResponse.SUCCESS);
+
+    assertTrue(fixture.result().ready());
+    assertEquals("websocket-upgrade", fixture.result().reason());
+    assertEquals("GET /ws/game HTTP/1.1", fixture.request().split("\r\n")[0]);
+    assertEquals(
+        identityHostname + ":" + fixture.port(), requestHeader(fixture.request(), "Host"));
+    assertEquals("websocket", requestHeader(fixture.request(), "Upgrade"));
+    assertEquals("Upgrade", requestHeader(fixture.request(), "Connection"));
+    assertEquals("13", requestHeader(fixture.request(), "Sec-WebSocket-Version"));
+    assertEquals("127.0.0.1", requestHeader(fixture.request(), "X-Proxy-Client-IP"));
+    assertEquals("1", requestHeader(fixture.request(), "X-Proxy-Game-Instance-Id"));
+    assertEquals("1", requestHeader(fixture.request(), "X-Proxy-Tenant-Id"));
+    assertEquals(
+        "gateway-readiness-probe",
+        requestHeader(fixture.request(), "X-Proxy-Connection-Id"));
+  }
+
+  @Test
+  void internalBridgeProbeDoesNotTreatTlsOnlyAsReady() throws Exception {
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    Secret material = generatedMaterial(plan);
+    String trustAnchor = fingerprint(material.getData().get("ca.crt"));
+    String leaf = fingerprint(material.getData().get("tls.crt"));
+    HostedEnvironmentProbeFixture fixture =
+        bridgeFixture(
+            material,
+            trustAnchor,
+            leaf,
+            "account-service.pr-42.svc.cluster.local",
+            BridgeResponse.NO_RESPONSE);
+
+    assertFalse(fixture.result().ready());
+    assertEquals("websocket-upgrade-rejected", fixture.result().reason());
+  }
+
+  @Test
+  void internalBridgeProbeRejectsNonUpgradeStatus() throws Exception {
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    Secret material = generatedMaterial(plan);
+    String trustAnchor = fingerprint(material.getData().get("ca.crt"));
+    String leaf = fingerprint(material.getData().get("tls.crt"));
+    for (BridgeResponse response : List.of(BridgeResponse.BAD_STATUS, BridgeResponse.FORBIDDEN)) {
+      HostedEnvironmentProbeFixture fixture =
+          bridgeFixture(
+              material,
+              trustAnchor,
+              leaf,
+              "account-service.pr-42.svc.cluster.local",
+              response);
+
+      assertFalse(fixture.result().ready(), response.name());
+      assertEquals("websocket-upgrade-rejected", fixture.result().reason(), response.name());
+    }
+  }
+
+  @Test
+  void internalBridgeProbeRejectsMalformedOrMissingWebSocketUpgradeHeaders() throws Exception {
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    Secret material = generatedMaterial(plan);
+    String trustAnchor = fingerprint(material.getData().get("ca.crt"));
+    String leaf = fingerprint(material.getData().get("tls.crt"));
+    String identityHostname = "account-service.pr-42.svc.cluster.local";
+
+    for (BridgeResponse response :
+        List.of(
+            BridgeResponse.MALFORMED_ACCEPT,
+            BridgeResponse.MISSING_ACCEPT,
+            BridgeResponse.MISSING_UPGRADE,
+            BridgeResponse.MISSING_CONNECTION)) {
+      HostedEnvironmentProbeFixture fixture =
+          bridgeFixture(material, trustAnchor, leaf, identityHostname, response);
+      assertFalse(fixture.result().ready(), response.name());
+      assertEquals("websocket-upgrade-rejected", fixture.result().reason(), response.name());
+    }
+  }
+
+  @Test
   void internalGrpcProbeRejectsAHandshakeWithoutHttp2() throws Exception {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
@@ -529,6 +621,109 @@ class ServedEnvironmentProbeTest {
     return GrpcMaterialFixture.generate(plan);
   }
 
+  private static HostedEnvironmentProbeFixture bridgeFixture(
+      Secret material,
+      String trustAnchor,
+      String leaf,
+      String identityHostname,
+      BridgeResponse response)
+      throws Exception {
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    properties.setGrpcTrustAnchorSha256(trustAnchor);
+    try (SSLServerSocket server = mutualTlsServer(material, trustAnchor)) {
+      CompletableFuture<String> accepted = serveBridge(server, response);
+      int port = server.getLocalPort();
+      ServedEnvironmentProbe.ProbeResult result =
+          new ServedEnvironmentProbe(properties)
+              .bridge(
+                  InetAddress.getLoopbackAddress().getHostAddress(),
+                  identityHostname,
+                  port,
+                  material,
+                  leaf);
+      return new HostedEnvironmentProbeFixture(
+          result, accepted.get(10, TimeUnit.SECONDS), port);
+    }
+  }
+
+  private static CompletableFuture<String> serveBridge(
+      SSLServerSocket server, BridgeResponse response) {
+    return CompletableFuture.supplyAsync(
+        () -> {
+          try (SSLSocket peer = (SSLSocket) server.accept()) {
+            peer.startHandshake();
+            String request = readRequest(peer.getInputStream());
+            if (response == BridgeResponse.NO_RESPONSE) {
+              return request;
+            }
+            String nonce = requestHeader(request, "Sec-WebSocket-Key");
+            String accept =
+                response == BridgeResponse.MALFORMED_ACCEPT
+                    ? "not-the-request-accept"
+                    : websocketAccept(nonce);
+            StringBuilder payload =
+                new StringBuilder()
+                    .append(
+                        response == BridgeResponse.BAD_STATUS
+                            ? "HTTP/1.1 200 OK"
+                            : response == BridgeResponse.FORBIDDEN
+                                ? "HTTP/1.1 403 Forbidden"
+                                : "HTTP/1.1 101 Switching Protocols")
+                    .append("\r\n");
+            if (response != BridgeResponse.MISSING_UPGRADE) {
+              payload.append("Upgrade: websocket\r\n");
+            }
+            if (response != BridgeResponse.MISSING_CONNECTION) {
+              payload.append("Connection: Upgrade\r\n");
+            }
+            if (response != BridgeResponse.MISSING_ACCEPT) {
+              payload.append("Sec-WebSocket-Accept: ").append(accept).append("\r\n");
+            }
+            payload.append("\r\n");
+            OutputStream output = peer.getOutputStream();
+            output.write(payload.toString().getBytes(StandardCharsets.ISO_8859_1));
+            output.flush();
+            return request;
+          } catch (Exception exception) {
+            throw new IllegalStateException(exception);
+          }
+        });
+  }
+
+  private static String readRequest(InputStream input) throws IOException {
+    StringBuilder request = new StringBuilder();
+    while (request.length() < 8192) {
+      int next = input.read();
+      if (next < 0) {
+        return request.toString();
+      }
+      request.append((char) next);
+      if (request.toString().endsWith("\r\n\r\n")) {
+        return request.toString();
+      }
+    }
+    throw new IOException("request headers exceeded test bound");
+  }
+
+  private static String requestHeader(String request, String name) {
+    for (String line : request.split("\r\n")) {
+      int separator = line.indexOf(':');
+      if (separator > 0 && name.equalsIgnoreCase(line.substring(0, separator))) {
+        return line.substring(separator + 1).trim();
+      }
+    }
+    return null;
+  }
+
+  private static String websocketAccept(String nonce) throws Exception {
+    byte[] digest =
+        MessageDigest.getInstance("SHA-1")
+            .digest(
+                (nonce + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+                    .getBytes(StandardCharsets.ISO_8859_1));
+    return Base64.getEncoder().encodeToString(digest);
+  }
+
   private static SSLServerSocket mutualTlsServer(
       Secret material, String trustAnchor, String... applicationProtocols) throws Exception {
     SSLServerSocket server =
@@ -608,4 +803,18 @@ class ServedEnvironmentProbeTest {
       return new ServedEnvironmentProbe.ProbeResult(true, "ready");
     }
   }
+
+  private enum BridgeResponse {
+    SUCCESS,
+    NO_RESPONSE,
+    BAD_STATUS,
+    FORBIDDEN,
+    MALFORMED_ACCEPT,
+    MISSING_ACCEPT,
+    MISSING_UPGRADE,
+    MISSING_CONNECTION
+  }
+
+  private record HostedEnvironmentProbeFixture(
+      ServedEnvironmentProbe.ProbeResult result, String request, int port) {}
 }

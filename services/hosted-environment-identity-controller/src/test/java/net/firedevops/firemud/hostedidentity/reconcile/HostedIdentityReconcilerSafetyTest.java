@@ -679,7 +679,7 @@ class HostedIdentityReconcilerSafetyTest {
   }
 
   @Test
-  void retiredIntentTerminatesLiveBridgeEndpointsBeforeMaterialRemoval() {
+  void retiredIntentTerminatesLiveBridgeEndpointsWithLegacyPublicProfile() {
     HostedIdentityProperties properties =
         initializedProperties(HostedIdentityProperties.ActivationMode.ACTIVE);
     KubernetesClient client = mock(KubernetesClient.class);
@@ -730,7 +730,6 @@ class HostedIdentityReconcilerSafetyTest {
     priorProfile.setRuntimeNamespaceUid(runtimeProfile.runtimeNamespaceUid());
     priorProfile.setRequestedHeadSha(runtimeProfile.requestedHeadSha());
     priorProfile.setDeployedHeadSha(runtimeProfile.deployedHeadSha());
-    priorProfile.setExposureMode(HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE);
     priorProfile.setTelnetPort(runtimeProfile.telnetPort());
     priorStatus.setProfile(priorProfile);
     resource.setStatus(priorStatus);

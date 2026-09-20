@@ -157,6 +157,7 @@ for file in \
   "$MANIFEST_DIR/rbac.yaml" \
   "$MANIFEST_DIR/deployment.yaml" \
   "$MANIFEST_DIR/networkpolicy.yaml" \
+  "$MANIFEST_DIR/issuer.yaml" \
   "$MANIFEST_DIR/README.md" \
   "$CONTROLLER_DIR/bootstrap-hosted-identity-controller.sh"; do
   require_file "$file"
@@ -290,6 +291,13 @@ for resource in namespace serviceaccounts crd admission rbac deployment networkp
 done
 require_literal "$MANIFEST_DIR/namespace.yaml" "name: firemud-system"
 require_literal "$MANIFEST_DIR/namespace.yaml" "fixed control-plane labels must be restored"
+for issuer_label in \
+  "app.kubernetes.io/name: hosted-environment-identity-controller" \
+  "app.kubernetes.io/component: certificate-issuer" \
+  "app.kubernetes.io/part-of: firemud" \
+  "firemud.dev/managed-by: hosted-identity-controller"; do
+  require_literal "$MANIFEST_DIR/issuer.yaml" "$issuer_label"
+done
 for namespace_label in \
   "pod-security.kubernetes.io/enforce: restricted" \
   "pod-security.kubernetes.io/enforce-version: v1.34" \

@@ -669,17 +669,19 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       return null;
     }
     HostedEnvironmentIdentityStatus.RuntimeProfile profile = resource.getStatus().getProfile();
+    String exposureMode = profile.getExposureMode();
+    if (exposureMode == null) {
+      exposureMode = HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE;
+    }
     if (profile.getRuntimeNamespaceUid() == null
         || profile.getRuntimeNamespaceUid().isBlank()
         || !canonicalHead(profile.getRequestedHeadSha())
         || !optionalCanonicalHead(profile.getDeployedHeadSha())
-        || !RuntimeProfileService.isValidExposureMode(profile.getExposureMode())
+        || !RuntimeProfileService.isValidExposureMode(exposureMode)
         || profile.getTelnetPort() == null
-        || (!HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(
-                    profile.getExposureMode())
+        || (!HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(exposureMode)
                 && !runtimeProfileService.isValidTelnetPort(plan, profile.getTelnetPort()))
-        || (HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(
-                    profile.getExposureMode())
+        || (HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(exposureMode)
                 && profile.getTelnetPort() != 0)) {
       return null;
     }
@@ -687,7 +689,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
         profile.getRuntimeNamespaceUid(),
         profile.getRequestedHeadSha(),
         profile.getDeployedHeadSha(),
-        profile.getExposureMode(),
+        exposureMode,
         profile.getTelnetPort(),
         true);
   }

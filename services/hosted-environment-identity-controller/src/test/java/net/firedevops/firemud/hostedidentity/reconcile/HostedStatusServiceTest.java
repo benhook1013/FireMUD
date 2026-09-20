@@ -28,6 +28,32 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
 @ExtendWith(OutputCaptureExtension.class)
 class HostedStatusServiceTest {
   @Test
+  void runtimeProfilePreservesAnAbsentExposureMode() {
+    RuntimeProfile profile = new RuntimeProfile();
+    HostedEnvironmentIdentityStatus status = new HostedEnvironmentIdentityStatus();
+
+    assertNull(profile.getExposureMode());
+    status.setProfile(profile);
+
+    assertNull(status.getProfile().getExposureMode());
+  }
+
+  @Test
+  void legacyPublicProfileWithoutExposureModeMatchesCurrentPublicRuntime() {
+    RuntimeProfile previous = new RuntimeProfile();
+    previous.setRuntimeNamespaceUid("uid");
+    previous.setRequestedHeadSha("a".repeat(40));
+    previous.setDeployedHeadSha("a".repeat(40));
+    previous.setTelnetPort(32002);
+
+    assertTrue(
+        HostedStatusService.profileMatches(
+            previous,
+            new RuntimeProfileService.RuntimeProfile(
+                "uid", "a".repeat(40), "a".repeat(40), 32002, true)));
+  }
+
+  @Test
   void runtimeNamespaceRecreationInvalidatesPreviouslyReadyTuple() {
     RuntimeProfile previous = new RuntimeProfile();
     previous.setRuntimeNamespaceUid("uid-before");
