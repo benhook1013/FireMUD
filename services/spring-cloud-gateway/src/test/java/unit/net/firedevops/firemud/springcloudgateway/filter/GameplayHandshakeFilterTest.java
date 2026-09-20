@@ -458,8 +458,7 @@ class GameplayHandshakeFilterTest {
         .isEqualTo(GameplayHandshakeFilter.CONNECTION_MODE_FIRST_PARTY_WEB);
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Tenant-Id")).isEqualTo("1");
     assertThat(mutatedExchange.getRequest().getHeaders().get("Cookie"))
-        .containsExactly(
-            "session=\"quoted%20value\"; duplicate=first", "duplicate=second");
+        .containsExactly("session=\"quoted%20value\"; duplicate=first", "duplicate=second");
   }
 
   @Test
