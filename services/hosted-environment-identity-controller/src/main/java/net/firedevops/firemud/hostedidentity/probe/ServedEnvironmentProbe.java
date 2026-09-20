@@ -41,12 +41,13 @@ import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManagerFactory;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
+import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-/** Probes the derived public HTTPS and TLS-Telnet endpoints without accepting arbitrary hosts. */
+/** Probes the derived endpoints without accepting arbitrary hosts or exposure-mode fallbacks. */
 @Component
 public class ServedEnvironmentProbe {
   static final class HandshakePolicyRejectedException extends IllegalStateException {
@@ -90,12 +91,36 @@ public class ServedEnvironmentProbe {
       String expectedGrpcLeafSha256) {
     return probe(
         plan,
+        HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
         telnetPort,
         (hostname, port) -> https(hostname, port, expectedIngressLeafSha256),
         (hostname, port) -> telnet(hostname, port, expectedTelnetLeafSha256),
         (hostname, port) ->
             bridge(hostname, port, tcpProxyBridgeMaterial, expectedGatewayInternalWsLeafSha256),
-        (hostname, port) -> grpc(hostname, port, grpcMaterial, expectedGrpcLeafSha256));
+        (hostname, port) -> grpc(hostname, port, grpcMaterial, expectedGrpcLeafSha256),
+        TOTAL_PROBE_TIMEOUT);
+  }
+
+  public ProbeResult probe(
+      EnvironmentIdentityPlan plan,
+      String exposureMode,
+      int telnetPort,
+      String expectedIngressLeafSha256,
+      String expectedTelnetLeafSha256,
+      Secret tcpProxyBridgeMaterial,
+      String expectedGatewayInternalWsLeafSha256,
+      Secret grpcMaterial,
+      String expectedGrpcLeafSha256) {
+    return probe(
+        plan,
+        exposureMode,
+        telnetPort,
+        (hostname, port) -> https(hostname, port, expectedIngressLeafSha256),
+        (hostname, port) -> telnet(hostname, port, expectedTelnetLeafSha256),
+        (hostname, port) ->
+            bridge(hostname, port, tcpProxyBridgeMaterial, expectedGatewayInternalWsLeafSha256),
+        (hostname, port) -> grpc(hostname, port, grpcMaterial, expectedGrpcLeafSha256),
+        TOTAL_PROBE_TIMEOUT);
   }
 
   ProbeResult probe(
@@ -106,7 +131,14 @@ public class ServedEnvironmentProbe {
       EndpointProbe bridgeProbe,
       EndpointProbe grpcProbe) {
     return probe(
-        plan, telnetPort, httpsProbe, telnetProbe, bridgeProbe, grpcProbe, TOTAL_PROBE_TIMEOUT);
+        plan,
+        HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+        telnetPort,
+        httpsProbe,
+        telnetProbe,
+        bridgeProbe,
+        grpcProbe,
+        TOTAL_PROBE_TIMEOUT);
   }
 
   ProbeResult probe(
@@ -117,25 +149,75 @@ public class ServedEnvironmentProbe {
       EndpointProbe bridgeProbe,
       EndpointProbe grpcProbe,
       Duration timeout) {
-    List<RunningProbe> probes =
-        List.of(
-            startProbe(ProbeName.HTTPS, () -> httpsProbe.check(plan.hostname(), 443)),
-            startProbe(ProbeName.TELNET, () -> telnetProbe.check(plan.hostname(), telnetPort)),
-            startProbe(
-                ProbeName.BRIDGE, () -> bridgeProbe.check(plan.gatewayInternalWsDnsName(), 443)),
-            startProbe(
-                ProbeName.GRPC,
-                () -> {
-                  try {
-                    return grpcProbe.check(grpcHostname(plan), GRPC_PORT);
-                  } catch (IllegalArgumentException exception) {
-                    LOGGER.debug(
-                        "gRPC probe rejected material or configuration for runtime Namespace {}",
-                        plan.runtimeNamespace(),
-                        exception);
-                    return new ProbeResult(false, "grpc-material-or-configuration-invalid");
-                  }
-                }));
+    return probe(
+        plan,
+        HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+        telnetPort,
+        httpsProbe,
+        telnetProbe,
+        bridgeProbe,
+        grpcProbe,
+        timeout);
+  }
+
+  ProbeResult probe(
+      EnvironmentIdentityPlan plan,
+      String exposureMode,
+      int telnetPort,
+      EndpointProbe httpsProbe,
+      EndpointProbe telnetProbe,
+      EndpointProbe bridgeProbe,
+      EndpointProbe grpcProbe) {
+    return probe(
+        plan,
+        exposureMode,
+        telnetPort,
+        httpsProbe,
+        telnetProbe,
+        bridgeProbe,
+        grpcProbe,
+        TOTAL_PROBE_TIMEOUT);
+  }
+
+  ProbeResult probe(
+      EnvironmentIdentityPlan plan,
+      String exposureMode,
+      int telnetPort,
+      EndpointProbe httpsProbe,
+      EndpointProbe telnetProbe,
+      EndpointProbe bridgeProbe,
+      EndpointProbe grpcProbe,
+      Duration timeout) {
+    if (!HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(exposureMode)
+        && !HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE.equals(exposureMode)) {
+      return new ProbeResult(false, "exposure-mode-invalid");
+    }
+    if (HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(exposureMode)
+        ? telnetPort != 0
+        : telnetPort < 1 || telnetPort > 65535) {
+      return new ProbeResult(false, "exposure-mode-port-contradiction");
+    }
+    List<RunningProbe> probes = new ArrayList<>();
+    probes.add(startProbe(ProbeName.HTTPS, () -> httpsProbe.check(plan.hostname(), 443)));
+    if (HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE.equals(exposureMode)) {
+      probes.add(startProbe(ProbeName.TELNET, () -> telnetProbe.check(plan.hostname(), telnetPort)));
+    }
+    probes.add(
+        startProbe(ProbeName.BRIDGE, () -> bridgeProbe.check(plan.gatewayInternalWsDnsName(), 443)));
+    probes.add(
+        startProbe(
+            ProbeName.GRPC,
+            () -> {
+              try {
+                return grpcProbe.check(grpcHostname(plan), GRPC_PORT);
+              } catch (IllegalArgumentException exception) {
+                LOGGER.debug(
+                    "gRPC probe rejected material or configuration for runtime Namespace {}",
+                    plan.runtimeNamespace(),
+                    exception);
+                return new ProbeResult(false, "grpc-material-or-configuration-invalid");
+              }
+            }));
     long deadline = System.nanoTime() + timeout.toNanos();
     try {
       List<CompletedProbe> results = new ArrayList<>(probes.size());

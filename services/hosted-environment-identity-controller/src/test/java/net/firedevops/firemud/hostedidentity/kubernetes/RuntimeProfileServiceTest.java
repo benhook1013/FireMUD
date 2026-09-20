@@ -92,12 +92,26 @@ class RuntimeProfileServiceTest {
 
     var previewPlan = planner.plan("pr-42");
     RuntimeProfileService.validateRuntimeLabels(
-        previewPlan, Map.of("firemud.dev/preview", "true", "firemud.dev/pr-number", "42"));
+        previewPlan,
+        Map.of(
+            "firemud.dev/preview",
+            "true",
+            "firemud.dev/pr-number",
+            "42",
+            HostedIdentityContract.PREVIEW_EXPOSURE_MODE_LABEL,
+            HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE));
     assertThrows(
         IllegalStateException.class,
         () ->
             RuntimeProfileService.validateRuntimeLabels(
-                previewPlan, Map.of("firemud.dev/preview", "true", "firemud.dev/pr-number", "43")));
+                previewPlan,
+                Map.of(
+                    "firemud.dev/preview",
+                    "true",
+                    "firemud.dev/pr-number",
+                    "43",
+                    HostedIdentityContract.PREVIEW_EXPOSURE_MODE_LABEL,
+                    HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE)));
   }
 
   @Test
@@ -237,6 +251,89 @@ class RuntimeProfileServiceTest {
             expected,
             new RuntimeProfileService.RuntimeProfile(
                 "other-uid", "b".repeat(40), "b".repeat(40), 32003, true)));
+    var privateProfile =
+        new RuntimeProfileService.RuntimeProfile(
+            "runtime-uid",
+            "a".repeat(40),
+            "a".repeat(40),
+            HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE,
+            0,
+            true);
+    assertFalse(RuntimeProfileService.exactlyMatches(expected, privateProfile));
+    assertEquals(
+        "exposure mode, Telnet port",
+        RuntimeProfileService.changedFields(expected, privateProfile));
+  }
+
+  @Test
+  @SuppressWarnings({"rawtypes", "unchecked"})
+  void privatePreviewUsesAZeroSentinelAndDoesNotRequireATelnetAnnotation() {
+    var plan = planner.plan("pr-42");
+    KubernetesClient client = mock(KubernetesClient.class);
+    NonNamespaceOperation namespaces = mock(NonNamespaceOperation.class);
+    Resource<Namespace> namespace = mock(Resource.class);
+    when(client.namespaces()).thenReturn(namespaces);
+    when(namespaces.withName(plan.runtimeNamespace())).thenReturn(namespace);
+    when(namespace.get())
+        .thenReturn(
+            previewRuntimeNamespace(
+                "a".repeat(40),
+                "a".repeat(40),
+                null,
+                HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE));
+
+    RuntimeProfileService.RuntimeProfile profile = service.read(client, plan);
+
+    assertEquals(HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE, profile.exposureMode());
+    assertEquals(0, profile.telnetPort());
+  }
+
+  @Test
+  @SuppressWarnings({"rawtypes", "unchecked"})
+  void privatePreviewRejectsAContradictoryTelnetAnnotation() {
+    var plan = planner.plan("pr-42");
+    KubernetesClient client = mock(KubernetesClient.class);
+    NonNamespaceOperation namespaces = mock(NonNamespaceOperation.class);
+    Resource<Namespace> namespace = mock(Resource.class);
+    when(client.namespaces()).thenReturn(namespaces);
+    when(namespaces.withName(plan.runtimeNamespace())).thenReturn(namespace);
+    when(namespace.get())
+        .thenReturn(
+            previewRuntimeNamespace(
+                "a".repeat(40),
+                "a".repeat(40),
+                "32002",
+                HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE));
+
+    IllegalStateException failure =
+        assertThrows(IllegalStateException.class, () -> service.read(client, plan));
+
+    assertEquals(
+        "private runtime Namespace cannot carry a canonical Telnet port identity",
+        failure.getMessage());
+  }
+
+  @Test
+  @SuppressWarnings({"rawtypes", "unchecked"})
+  void previewExposureModeIsRequiredAndMustBeCanonical() {
+    var plan = planner.plan("pr-42");
+    KubernetesClient client = mock(KubernetesClient.class);
+    NonNamespaceOperation namespaces = mock(NonNamespaceOperation.class);
+    Resource<Namespace> namespace = mock(Resource.class);
+    when(client.namespaces()).thenReturn(namespaces);
+    when(namespaces.withName(plan.runtimeNamespace())).thenReturn(namespace);
+    when(namespace.get())
+        .thenReturn(previewRuntimeNamespace("a".repeat(40), "a".repeat(40), "32002", null));
+    assertEquals(
+        "runtime Namespace has an invalid firemud.dev/preview-exposure-mode label",
+        assertThrows(IllegalStateException.class, () -> service.read(client, plan)).getMessage());
+
+    when(namespace.get())
+        .thenReturn(
+            previewRuntimeNamespace("a".repeat(40), "a".repeat(40), "32002", "internal"));
+    assertEquals(
+        "runtime Namespace has an invalid firemud.dev/preview-exposure-mode label",
+        assertThrows(IllegalStateException.class, () -> service.read(client, plan)).getMessage());
   }
 
   @Test
@@ -307,6 +404,27 @@ class RuntimeProfileServiceTest {
 
   @Test
   @SuppressWarnings({"rawtypes", "unchecked"})
+  void devDemoIsAlwaysPublicAndRejectsPrivateExposureLabel() {
+    var plan = planner.plan("dev-demo");
+    KubernetesClient client = mock(KubernetesClient.class);
+    NonNamespaceOperation namespaces = mock(NonNamespaceOperation.class);
+    Resource<Namespace> namespace = mock(Resource.class);
+    when(client.namespaces()).thenReturn(namespaces);
+    when(namespaces.withName(plan.runtimeNamespace())).thenReturn(namespace);
+    when(namespace.get())
+        .thenReturn(
+            devDemoRuntimeNamespace(
+                "a".repeat(40),
+                "a".repeat(40),
+                HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE));
+
+    assertEquals(
+        "runtime Namespace has an invalid firemud.dev/preview-exposure-mode label",
+        assertThrows(IllegalStateException.class, () -> service.read(client, plan)).getMessage());
+  }
+
+  @Test
+  @SuppressWarnings({"rawtypes", "unchecked"})
   void runtimeProfileRejectsIncompleteOrInvalidRuntimeIdentity() {
     var plan = planner.plan("pr-42");
     KubernetesClient client = mock(KubernetesClient.class);
@@ -364,12 +482,27 @@ class RuntimeProfileServiceTest {
 
   private static Namespace previewRuntimeNamespace(
       String requestedHead, String deployedHead, String port) {
+    return previewRuntimeNamespace(
+        requestedHead,
+        deployedHead,
+        port,
+        HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE);
+  }
+
+  private static Namespace previewRuntimeNamespace(
+      String requestedHead, String deployedHead, String port, String exposureMode) {
+    Map<String, String> labels =
+        new java.util.LinkedHashMap<>(
+            Map.of("firemud.dev/preview", "true", "firemud.dev/pr-number", "42"));
+    if (exposureMode != null) {
+      labels.put(HostedIdentityContract.PREVIEW_EXPOSURE_MODE_LABEL, exposureMode);
+    }
     var builder =
         new NamespaceBuilder()
             .withNewMetadata()
             .withName("pr-42")
             .withUid("runtime-uid")
-            .withLabels(Map.of("firemud.dev/preview", "true", "firemud.dev/pr-number", "42"));
+            .withLabels(labels);
     if (requestedHead != null) {
       builder.addToAnnotations("firemud.dev/requested-preview-head-sha", requestedHead);
     }
@@ -383,6 +516,11 @@ class RuntimeProfileServiceTest {
   }
 
   private static Namespace devDemoRuntimeNamespace(String requestedHead, String deployedHead) {
+    return devDemoRuntimeNamespace(requestedHead, deployedHead, null);
+  }
+
+  private static Namespace devDemoRuntimeNamespace(
+      String requestedHead, String deployedHead, String exposureMode) {
     var builder =
         new NamespaceBuilder()
             .withNewMetadata()
@@ -395,6 +533,9 @@ class RuntimeProfileServiceTest {
                     "firemud.dev/environment-class",
                     HostedIdentityContract.DEV_DEMO_ENVIRONMENT_CLASS))
             .addToAnnotations("firemud.dev/last-dev-demo-telnet-port", "32016");
+    if (exposureMode != null) {
+      builder.addToLabels(HostedIdentityContract.PREVIEW_EXPOSURE_MODE_LABEL, exposureMode);
+    }
     if (requestedHead != null) {
       builder.addToAnnotations("firemud.dev/requested-dev-demo-head-sha", requestedHead);
     }

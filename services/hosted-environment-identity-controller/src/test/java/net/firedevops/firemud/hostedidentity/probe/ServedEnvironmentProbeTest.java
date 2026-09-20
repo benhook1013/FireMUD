@@ -33,6 +33,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import javax.net.ssl.SSLServerSocket;
 import javax.net.ssl.SSLSocket;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
+import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import net.firedevops.firemud.hostedidentity.security.EnvironmentIdentityPlanner;
 import net.firedevops.firemud.hostedidentity.security.GrpcMaterialFixture;
@@ -103,6 +104,63 @@ class ServedEnvironmentProbeTest {
     assertEquals(
         "served-bridge-and-grpc-accepted",
         probe.probe(plan, 32001, ready, ready, ready, ready).reason());
+  }
+
+  @Test
+  void privateReadinessSkipsOnlyThePublicTelnetProbe() {
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
+    List<String> endpoints = Collections.synchronizedList(new ArrayList<>());
+    ServedEnvironmentProbe.EndpointProbe ready =
+        (hostname, port) -> {
+          endpoints.add(hostname + ":" + port);
+          return new ServedEnvironmentProbe.ProbeResult(true, "ready");
+        };
+
+    ServedEnvironmentProbe.ProbeResult result =
+        new ServedEnvironmentProbe(properties)
+            .probe(
+                plan,
+                HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE,
+                0,
+                ready,
+                (hostname, port) ->
+                    new ServedEnvironmentProbe.ProbeResult(false, "public-telnet-must-not-run"),
+                ready,
+                ready);
+
+    assertTrue(result.ready());
+    assertEquals("served-bridge-and-grpc-accepted", result.reason());
+    assertEquals(
+        Set.of(
+            "pr-42.preview.firedevops.net:443",
+            "spring-cloud-gateway-mtls.pr-42.svc.cluster.local:443",
+            "account-service.pr-42.svc.cluster.local:6565"),
+        Set.copyOf(endpoints));
+    assertEquals(3, endpoints.size());
+  }
+
+  @Test
+  void privateReadinessRejectsAContradictoryPortWithoutFallingBackToPublic() {
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
+    ServedEnvironmentProbe.EndpointProbe mustNotRun =
+        (hostname, port) -> {
+          throw new AssertionError("contradictory private probe must fail before dialing");
+        };
+
+    assertEquals(
+        "exposure-mode-port-contradiction",
+        new ServedEnvironmentProbe(properties)
+            .probe(
+                plan,
+                HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE,
+                32001,
+                mustNotRun,
+                mustNotRun,
+                mustNotRun,
+                mustNotRun)
+            .reason());
   }
 
   @Test

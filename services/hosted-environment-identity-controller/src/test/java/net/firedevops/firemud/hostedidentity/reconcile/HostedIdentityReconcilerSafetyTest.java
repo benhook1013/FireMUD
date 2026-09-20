@@ -695,6 +695,7 @@ class HostedIdentityReconcilerSafetyTest {
         new RuntimeProfileService.RuntimeProfile(
             "runtime-uid", "a".repeat(40), "a".repeat(40), 32000, true);
     when(runtime.read(any(), any())).thenReturn(runtimeProfile);
+    when(runtime.isValidTelnetPort(any(), anyInt())).thenReturn(true);
     DeploymentRolloutService rollout = mock(DeploymentRolloutService.class);
     when(rollout.stopBridges(
             org.mockito.ArgumentMatchers.eq(client),
@@ -726,6 +727,7 @@ class HostedIdentityReconcilerSafetyTest {
     priorProfile.setRuntimeNamespaceUid(runtimeProfile.runtimeNamespaceUid());
     priorProfile.setRequestedHeadSha(runtimeProfile.requestedHeadSha());
     priorProfile.setDeployedHeadSha(runtimeProfile.deployedHeadSha());
+    priorProfile.setExposureMode(HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE);
     priorProfile.setTelnetPort(runtimeProfile.telnetPort());
     priorStatus.setProfile(priorProfile);
     resource.setStatus(priorStatus);
@@ -835,6 +837,7 @@ class HostedIdentityReconcilerSafetyTest {
     priorProfile.setRuntimeNamespaceUid("original-uid");
     priorProfile.setRequestedHeadSha("a".repeat(40));
     priorProfile.setDeployedHeadSha("a".repeat(40));
+    priorProfile.setExposureMode(HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE);
     priorProfile.setTelnetPort(32000);
     priorStatus.setProfile(priorProfile);
     resource.setStatus(priorStatus);
@@ -1647,6 +1650,7 @@ class HostedIdentityReconcilerSafetyTest {
       when(namespaces.withName("pr-42-identity")).thenReturn(identityNamespace);
       when(identityNamespace.get()).thenReturn(buildIdentityNamespace(false));
       when(runtime.read(any(), any())).thenReturn(RuntimeProfileService.RuntimeProfile.absent());
+      when(runtime.isValidTelnetPort(any(), anyInt())).thenReturn(true);
 
       stubOwnedScope();
       stubMaterialLookups();

@@ -47,6 +47,27 @@ class HostedStatusServiceTest {
   }
 
   @Test
+  void exposureModeTransitionInvalidatesPreviouslyReadyTuple() {
+    RuntimeProfile previous = new RuntimeProfile();
+    previous.setExposureMode(HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE);
+    previous.setRuntimeNamespaceUid("uid");
+    previous.setRequestedHeadSha("a".repeat(40));
+    previous.setDeployedHeadSha("a".repeat(40));
+    previous.setTelnetPort(32002);
+
+    assertFalse(
+        HostedStatusService.profileMatches(
+            previous,
+            new RuntimeProfileService.RuntimeProfile(
+                "uid",
+                "a".repeat(40),
+                "a".repeat(40),
+                HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE,
+                0,
+                true)));
+  }
+
+  @Test
   void readyConditionIsClearedForTelnetPortDrift() {
     HostedEnvironmentIdentity resource = new HostedEnvironmentIdentity();
     resource.setMetadata(

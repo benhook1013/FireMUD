@@ -127,6 +127,7 @@ EXPECTED_SECRET_REFS = {
 }
 CANONICAL_INGRESS_ISSUER = "letsencrypt-prod"
 CERTIFICATE_IDENTITY_MODES = {"standalone", "hosted-controller"}
+EXPOSURE_MODES = {"private", "public"}
 CERTIFICATE_IDENTITY_LABEL = "firemud.dev/certificate-identity-mode"
 EXPECTED_TOP_LEVEL_LABELS = {
     "app.kubernetes.io/name": "firemud",
@@ -144,6 +145,33 @@ def _expected_top_level_labels() -> dict[str, str]:
 def _validate_certificate_identity_mode(certificate_identity_mode: str) -> None:
     if certificate_identity_mode not in CERTIFICATE_IDENTITY_MODES:
         fail("preview certificate identity mode is not canonical")
+
+
+def _resolve_exposure_mode(
+    certificate_identity_mode: str | None,
+    exposure_mode: str | None,
+) -> str:
+    if certificate_identity_mode is not None:
+        _validate_certificate_identity_mode(certificate_identity_mode)
+    if exposure_mode is None:
+        if certificate_identity_mode == "hosted-controller":
+            return "private"
+        return "public"
+    if exposure_mode not in EXPOSURE_MODES:
+        fail("preview exposure mode is not canonical")
+    if certificate_identity_mode is not None:
+        expected_mode = (
+            "private"
+            if certificate_identity_mode == "hosted-controller"
+            else "public"
+        )
+        if exposure_mode != expected_mode:
+            fail(
+                "preview exposure mode "
+                f"{exposure_mode!r} is incompatible with certificate identity mode "
+                f"{certificate_identity_mode!r}"
+            )
+    return exposure_mode
 
 
 def _expected_names_for_mode(certificate_identity_mode: str) -> dict[str, set[str]]:
@@ -923,20 +951,35 @@ def inject_telnet_port(
     port: int,
     expected_namespace: str | None = None,
     certificate_identity_mode: str | None = None,
+    exposure_mode: str | None = None,
 ) -> None:
-    """Add only trusted runtime target data after artifact validation."""
+    """Add only trusted runtime target data after artifact validation.
+
+    Public previews receive the allocator-owned NodePort.  Private previews
+    deliberately receive no port mutation; the zero argument is only the
+    controller's internal sentinel and is never written to the Service.
+    """
 
     if expected_namespace is None:
         fail("preview runtime namespace is required")
     if not re.fullmatch(r"pr-[1-9][0-9]{0,50}", expected_namespace):
         fail(f"runtime namespace is not canonical: {expected_namespace!r}")
-    if not MIN_PREVIEW_TELNET_PORT <= port <= MAX_PREVIEW_TELNET_PORT:
+    legacy_shape_validation = (
+        certificate_identity_mode is None and exposure_mode is None
+    )
+    exposure_mode = _resolve_exposure_mode(
+        certificate_identity_mode,
+        exposure_mode,
+    )
+    if exposure_mode == "private" and port != 0:
+        fail("private preview runtime target requires sentinel Telnet port 0")
+    if exposure_mode == "public" and not (
+        MIN_PREVIEW_TELNET_PORT <= port <= MAX_PREVIEW_TELNET_PORT
+    ):
         fail(
             "preview telnet port must be between "
             f"{MIN_PREVIEW_TELNET_PORT} and {MAX_PREVIEW_TELNET_PORT}"
         )
-    if certificate_identity_mode is not None:
-        _validate_certificate_identity_mode(certificate_identity_mode)
     documents = list(yaml.safe_load_all(source.read_text(encoding="utf-8")))
     matches = []
     ingress_matches = 0
@@ -976,9 +1019,35 @@ def inject_telnet_port(
         fail("validated preview render must contain exactly one TCP Proxy Telnet port")
     if certificate_identity_mode == "standalone" and ingress_matches != 1:
         fail("validated preview render must contain exactly one preview Ingress")
-    if "nodePort" in matches[0]:
-        fail("validated preview render already contains a NodePort")
-    matches[0]["nodePort"] = port
+    services = [
+        document
+        for document in documents
+        if document.get("kind") == "Service"
+        and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    ]
+    if len(services) != 1:
+        fail("validated preview render must contain exactly one TCP Proxy Service")
+    service = services[0]
+    service_spec = _require_mapping(
+        service.get("spec"), "Service/tcp-proxy-service.spec"
+    )
+    service_type = service_spec.get("type", "ClusterIP")
+    if not legacy_shape_validation:
+        expected_service_type = (
+            "ClusterIP" if exposure_mode == "private" else "NodePort"
+        )
+        if service_type != expected_service_type:
+            fail(
+                "preview exposure mode does not match TCP Proxy Service type: "
+                f"expected {expected_service_type!r}, actual {service_type!r}"
+            )
+    if exposure_mode == "private":
+        if "nodePort" in matches[0]:
+            fail("private preview render must not contain a NodePort")
+    else:
+        if "nodePort" in matches[0]:
+            fail("validated preview render already contains a NodePort")
+        matches[0]["nodePort"] = port
     destination.write_text(
         "---\n".join(yaml.safe_dump(document, sort_keys=False) for document in documents),
         encoding="utf-8",
@@ -990,18 +1059,19 @@ def validate_runtime_target(
     expected_namespace: str,
     expected_port: int,
     certificate_identity_mode: str | None = None,
+    exposure_mode: str | None = None,
 ) -> None:
     """Verify the only trusted mutations made after closed artifact validation."""
 
     if not re.fullmatch(r"pr-[1-9][0-9]{0,50}", expected_namespace):
         fail(f"runtime namespace is not canonical: {expected_namespace!r}")
-    if not MIN_PREVIEW_TELNET_PORT <= expected_port <= MAX_PREVIEW_TELNET_PORT:
-        fail(
-            "preview telnet port must be between "
-            f"{MIN_PREVIEW_TELNET_PORT} and {MAX_PREVIEW_TELNET_PORT}"
-        )
-    if certificate_identity_mode is not None:
-        _validate_certificate_identity_mode(certificate_identity_mode)
+    legacy_shape_validation = (
+        certificate_identity_mode is None and exposure_mode is None
+    )
+    exposure_mode = _resolve_exposure_mode(
+        certificate_identity_mode,
+        exposure_mode,
+    )
     documents = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
     if not documents:
         fail("prepared preview render is empty")
@@ -1073,17 +1143,74 @@ def validate_runtime_target(
         fail(
             "Service/tcp-proxy-service must contain exactly one declared TCP port 2323"
         )
-    port_index, _declared_port = declared_ports[0]
-    expected = (
-        "Service/tcp-proxy-service",
-        f"object.spec.ports[{port_index}].nodePort",
-        expected_port,
-    )
-    if node_ports != [expected]:
+    if exposure_mode == "private" and expected_port != 0:
+        fail("private preview runtime target requires sentinel Telnet port 0")
+    if exposure_mode == "public" and not (
+        MIN_PREVIEW_TELNET_PORT <= expected_port <= MAX_PREVIEW_TELNET_PORT
+    ):
         fail(
-            "prepared preview render must contain only the exact allocated TCP Proxy "
-            f"NodePort {expected_port}; observed {node_ports!r}"
+            "preview telnet port must be between "
+            f"{MIN_PREVIEW_TELNET_PORT} and {MAX_PREVIEW_TELNET_PORT}"
         )
+    service_type = service_spec.get("type", "ClusterIP")
+    if not legacy_shape_validation:
+        expected_service_type = (
+            "ClusterIP" if exposure_mode == "private" else "NodePort"
+        )
+        if service_type != expected_service_type:
+            fail(
+                "preview exposure mode does not match TCP Proxy Service type: "
+                f"expected {expected_service_type!r}, actual {service_type!r}"
+            )
+    port_index, _declared_port = declared_ports[0]
+    if exposure_mode == "private":
+        if service_type != "ClusterIP":
+            fail("private preview TCP Proxy Service must remain ClusterIP")
+        if node_ports:
+            fail(
+                "private preview render must not contain a NodePort; "
+                f"observed {node_ports!r}"
+            )
+    else:
+        expected = (
+            "Service/tcp-proxy-service",
+            f"object.spec.ports[{port_index}].nodePort",
+            expected_port,
+        )
+        if node_ports != [expected]:
+            fail(
+                "prepared preview render must contain only the exact allocated TCP Proxy "
+                f"NodePort {expected_port}; observed {node_ports!r}"
+            )
+
+
+def determine_exposure_mode(
+    path: Path, certificate_identity_mode: str
+) -> str:
+    """Derive the trusted public/private proof mode from the validated Service shape."""
+
+    _validate_certificate_identity_mode(certificate_identity_mode)
+    documents = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
+    if not documents:
+        fail("validated preview render is empty")
+    validate_services(documents, certificate_identity_mode)
+    services = [
+        document
+        for document in documents
+        if document.get("kind") == "Service"
+        and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    ]
+    if len(services) != 1:
+        fail("validated preview render must contain exactly one TCP Proxy Service")
+    service_spec = _require_mapping(
+        services[0].get("spec"), "Service/tcp-proxy-service.spec"
+    )
+    service_type = service_spec.get("type", "ClusterIP")
+    if service_type == "ClusterIP":
+        return "private"
+    if service_type == "NodePort":
+        return "public"
+    fail("validated TCP Proxy Service has no canonical exposure mode")
 
 
 def validate_service_consumers(
@@ -1650,7 +1777,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"preview artifact rejected: {exc}", file=sys.stderr)
             return 1
         return 0
-    if command == "inject" and len(args) == 7:
+    if command == "inject" and len(args) == 8:
         try:
             inject_telnet_port(
                 source=Path(args[2]),
@@ -1658,21 +1785,30 @@ def main(argv: list[str] | None = None) -> int:
                 port=int(args[5]),
                 expected_namespace=args[4],
                 certificate_identity_mode=args[6],
+                exposure_mode=args[7],
             )
         except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:
             print(f"preview Telnet port injection rejected: {exc}", file=sys.stderr)
             return 1
         return 0
-    if command == "runtime-target" and len(args) == 6:
+    if command == "runtime-target" and len(args) == 7:
         try:
             validate_runtime_target(
                 Path(args[2]),
                 args[3],
                 int(args[4]),
                 args[5],
+                args[6],
             )
         except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:
             print(f"preview runtime target rejected: {exc}", file=sys.stderr)
+            return 1
+        return 0
+    if command == "exposure-mode" and len(args) == 4:
+        try:
+            print(determine_exposure_mode(Path(args[2]), args[3]))
+        except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:
+            print(f"preview exposure mode rejected: {exc}", file=sys.stderr)
             return 1
         return 0
     if len(args) != 12:
@@ -1681,8 +1817,9 @@ def main(argv: list[str] | None = None) -> int:
             "<source-run-id> <pr-number> <base-sha> <head-sha> <merge-sha> "
             "<image-tag> <hostname> <standalone|hosted-controller>\n"
             "       validate-preview-artifact.py sanitize <render> <output>\n"
-            "       validate-preview-artifact.py inject <render> <output> <namespace> <port> <standalone|hosted-controller>\n"
-            "       validate-preview-artifact.py runtime-target <render> <namespace> <port> <standalone|hosted-controller>",
+            "       validate-preview-artifact.py inject <render> <output> <namespace> <port> <standalone|hosted-controller> <private|public>\n"
+            "       validate-preview-artifact.py runtime-target <render> <namespace> <port> <standalone|hosted-controller> <private|public>\n"
+            "       validate-preview-artifact.py exposure-mode <render> <standalone|hosted-controller>",
             file=sys.stderr,
         )
         return 2
