@@ -18,7 +18,7 @@ Execution claims commit `PENDING_EVALUATION -> EVALUATING` before the per-item p
 
 Terminal cleanup locks and rechecks each eligible `HANDED_OFF` or `CANCELED` parent and its handoff children, detaches retained audit links, then deletes only unheld handoff children and eligible parents in one transaction. A retained replay result or active handoff hold blocks parent deletion; replay results and audit evidence are not age-disposed by this cleanup. Automatic `DEAD_LETTERED` age- and row-cap deletion fails closed because the live schema cannot prove whole-bundle recovery disposition or evidence-retention eligibility. Repository unit proof covers the child-first SQL order and fail-closed dead-letter paths; PostgreSQL retention cases exist but require Docker/Testcontainers and remain unexecuted in the current local environment.
 
-The `xmax = 0` insert discriminator used by the `ScriptWorkItem` and `ScriptEventAudit` repositories remains without PostgreSQL integration proof; current unit/mock evidence does not establish INSERT-versus-conflict-update behavior against PostgreSQL.
+The `xmax = 0` insert discriminator used by the `ScriptWorkItem` and `ScriptEventAudit` repositories has PostgreSQL integration cases for INSERT-versus-conflict-update behavior in [AutomationClaimAndRetentionRepositoryIntegrationTest](../../../services/automation-scripting-service/src/test/java/integration/net/firedevops/firemud/automationscripting/repository/AutomationClaimAndRetentionRepositoryIntegrationTest.java); those Testcontainers cases compile but skipped locally without Docker, so executed PostgreSQL proof remains outstanding.
 
 ### Script-transition reconciliation
 

@@ -237,6 +237,52 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   }
 
   @Test
+  void handlerAuditInsertDiscriminatorPreservesTenantIdentityOnDuplicate() {
+    ScriptEventAudit first = handlerAudit("tenant-handler-audit");
+
+    ScriptEventAuditRepository.IdempotentInsertResult inserted =
+        eventAuditRepository.insertIfAbsentByHandlerIdentity(first);
+
+    assertThat(inserted.inserted()).isTrue();
+    assertThat(inserted.audit().getId()).isNotNull();
+    assertThat(dsl.fetchCount(SCRIPT_EVENT_AUDIT)).isEqualTo(1);
+
+    ScriptEventAudit duplicate = handlerAudit("tenant-handler-audit");
+    duplicate.setSourceService("duplicate-service");
+    duplicate.setFinalOutcome("DUPLICATE_ATTEMPT");
+    duplicate.setFinalReason("duplicate-attempt");
+
+    ScriptEventAuditRepository.IdempotentInsertResult existing =
+        eventAuditRepository.insertIfAbsentByHandlerIdentity(duplicate);
+
+    assertThat(existing.inserted()).isFalse();
+    assertThat(existing.audit().getId()).isEqualTo(inserted.audit().getId());
+    assertThat(existing.audit().getTenantId()).isEqualTo("tenant-handler-audit");
+    assertThat(existing.audit().getScriptEventId()).isEqualTo("handler-event-1");
+    assertThat(existing.audit().getSourceService()).isEqualTo("automation-scripting-service");
+    assertThat(existing.audit().getFinalOutcome()).isEqualTo("HANDLER_ACCEPTED");
+    assertThat(dsl.fetchCount(SCRIPT_EVENT_AUDIT)).isEqualTo(1);
+    assertThat(
+            dsl.fetchCount(
+                SCRIPT_EVENT_AUDIT, SCRIPT_EVENT_AUDIT.TENANT_ID.eq("tenant-handler-audit")))
+        .isEqualTo(1);
+
+    ScriptEventAudit conflictingOwnerEvidence = handlerAudit("tenant-handler-audit");
+    conflictingOwnerEvidence.setScriptPinControlPlaneRequestId("pin-request-2");
+
+    assertThatThrownBy(
+            () -> eventAuditRepository.insertIfAbsentByHandlerIdentity(conflictingOwnerEvidence))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("script_pin_control_plane_request_id conflicts with existing identity");
+    assertThat(
+            dsl.fetchValue(
+                SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
+                SCRIPT_EVENT_AUDIT.ID.eq(inserted.audit().getId())))
+        .isEqualTo("pin-request-1");
+    assertThat(dsl.fetchCount(SCRIPT_EVENT_AUDIT)).isEqualTo(1);
+  }
+
+  @Test
   void scriptOnlyPluginIdentityDefaultsToEmptyAndLookupFindsTheCanonicalRow() {
     dsl.insertInto(SCRIPT_WORK_ITEMS)
         .set(SCRIPT_WORK_ITEMS.TENANT_ID, "tenant-script-only")
@@ -1014,6 +1060,29 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     audit.setFinalReason("accepted");
     audit.setCreatedAt(OLD);
     audit.setUpdatedAt(OLD);
+    return audit;
+  }
+
+  private ScriptEventAudit handlerAudit(String tenantId) {
+    ScriptEventAudit audit = new ScriptEventAudit();
+    audit.setTenantId(tenantId);
+    audit.setGameInstanceId("instance-handler-audit");
+    audit.setRegionId("region-handler-audit");
+    audit.setRegionEpoch(1L);
+    audit.setEntityId("entity-handler-audit");
+    audit.setPlayableStateScope("INSTANCE");
+    audit.setScriptId("script-handler-audit");
+    audit.setEventType("onEnterRegion");
+    audit.setEventSchemaVersion("v1");
+    audit.setScriptPatchVersion("patch-handler-audit");
+    audit.setScriptPinEpoch(2L);
+    audit.setScriptPinControlPlaneRequestId("pin-request-1");
+    audit.setScriptEventId("handler-event-1");
+    audit.setSourceService("automation-scripting-service");
+    audit.setTriggerMode("EVENT");
+    audit.setFinalStage("HANDLER");
+    audit.setFinalOutcome("HANDLER_ACCEPTED");
+    audit.setFinalReason("accepted");
     return audit;
   }
 
