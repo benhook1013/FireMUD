@@ -66,11 +66,11 @@ contains() {
   }
 }
 
-contains "$runtime" 'services/hosted-environment-identity-controller/**'
+contains "$runtime" 'services/**'
 # shellcheck disable=SC2016 # These assertions intentionally match literal publisher shell.
-contains "$publisher" 'if ! docker image inspect "$image" >/dev/null 2>&1; then'
+contains "$publisher" 'source_image_id="$(docker image inspect --format'
 # shellcheck disable=SC2016 # This assertion intentionally matches literal publisher shell.
-contains "$publisher" 'Required source artifact image for $service is missing: $image.'
+contains "$publisher" 'Required source artifact image for $service has no inspectable image ID: $image.'
 contains "$build_gradle" '"buildHostedEnvironmentIdentityControllerImage"'
 python3 - "$build_gradle" <<'PY'
 import sys
@@ -91,7 +91,7 @@ if grep -Fq -- '*.jar' "$controller_dockerfile"; then
   echo "$controller_dockerfile must copy only the canonical controller artifact" >&2
   exit 1
 fi
-python3 - "$runtime" "$publisher" "$workflow_tool_authority" <<'PY'
+python3 - "$runtime" "$publisher" <<'PY'
 import json
 import re
 import subprocess
@@ -109,6 +109,7 @@ for required_path in (
     ".python-version",
     "config/python/smoke-requirements.txt",
     "config/python/smoke-requirements.in",
+    "services/**",
 ):
     assert required_path in pull_request["paths"], required_path
 image_meta = workflow["jobs"]["image-meta"]
@@ -143,18 +144,18 @@ for required in (
     "PR smoke scope detection failed; running both local smokes:",
     'core.setOutput("runtime_smoke_required", String(runtimeSmokeRequired))',
     'core.setOutput("controller_smoke_required", String(controllerSmokeRequired))',
-    "github.rest.repos.getContent",
     "workflowToolAuthorityPath",
-    "knownWorkflowToolKeys",
-    "Promise.all",
-    'data.encoding !== "base64"',
-    "const trimmedLine = line.trim();",
-    'key.startsWith("VELERO_")',
     "authorityChanged",
     "nonAuthorityPaths",
-    "Workflow tool authority comparison was incomplete; running full-stack smoke:",
 ):
     assert required in smoke_scope_script, required
+for obsolete in (
+    "github.rest.repos.getContent",
+    "knownWorkflowToolKeys",
+    "veleroAuthorityChanged",
+    "Workflow tool authority comparison was incomplete; running full-stack smoke:",
+):
+    assert obsolete not in smoke_scope_script, obsolete
 
 runtime_prefixes_script = smoke_scope_script[
     smoke_scope_script.index("const runtimePrefixes"):
@@ -180,33 +181,10 @@ controller_scope_script = smoke_scope_script[
 ]
 assert "services/hosted-environment-identity-controller/" in controller_scope_script
 
-authority_text = Path(sys.argv[3]).read_text(encoding="utf-8")
-base_sha = "a" * 40
-head_sha = "b" * 40
-
-
-def authority_with(**changes):
-    lines = []
-    for line in authority_text.splitlines():
-        if line and not line.startswith("#") and "=" in line:
-            key = line.split("=", 1)[0]
-            if key in changes:
-                line = f"{key}={changes[key]}"
-        lines.append(line)
-    return "\n".join(lines) + "\n"
-
-
-def run_scope(changed_paths, *, head_content=None, api_error=False, changed_file_count=None):
-    if head_content is None:
-        head_content = authority_text
+def run_scope(changed_paths, *, changed_file_count=None):
     node_source = """
 const scopeScript = %s;
-const baseSha = %s;
-const headSha = %s;
-const baseContent = %s;
-const headContent = %s;
 const changedFiles = %s;
-const apiError = %s;
 const apiCalls = [];
 const warnings = [];
 const outputs = {};
@@ -214,21 +192,7 @@ const github = {
   paginate: async () => changedFiles,
   rest: {
     pulls: { listFiles: async () => undefined },
-    repos: {
-      getContent: async ({ owner, repo, path, ref }) => {
-        apiCalls.push({ owner, repo, path, ref });
-        if (apiError) throw new Error("simulated API failure");
-        const content = ref === baseSha ? baseContent : headContent;
-        return {
-          data: {
-            type: "file",
-            path,
-            encoding: "base64",
-            content: Buffer.from(content, "utf8").toString("base64"),
-          },
-        };
-      },
-    },
+    repos: {},
   },
 };
 const context = {
@@ -239,8 +203,8 @@ const context = {
     pull_request: {
       number: 2786,
       changed_files: %s,
-      base: { sha: baseSha },
-      head: { sha: headSha, repo: { full_name: "fork-owner/fork-repo" } },
+      base: { sha: "a".repeat(40) },
+      head: { sha: "b".repeat(40), repo: { full_name: "fork-owner/fork-repo" } },
     },
   },
 };
@@ -258,12 +222,7 @@ await runner(github, context, core);
 process.stdout.write(JSON.stringify({ outputs, warnings, apiCalls }));
 """ % (
         json.dumps(smoke_scope_script),
-        json.dumps(base_sha),
-        json.dumps(head_sha),
-        json.dumps(authority_text),
-        json.dumps(head_content),
         json.dumps([{"filename": path} for path in changed_paths]),
-        json.dumps(api_error),
         json.dumps(
             len(changed_paths)
             if changed_file_count is None
@@ -282,59 +241,12 @@ process.stdout.write(JSON.stringify({ outputs, warnings, apiCalls }));
 
 
 authority_path = "config/workflow-tool-versions.env"
-non_velero_only = run_scope(
-    [authority_path], head_content=authority_with(TRIVY_VERSION="99.0.0")
-)
-assert non_velero_only["outputs"] == {
-    "runtime_smoke_required": "false",
+authority_change = run_scope([authority_path])
+assert authority_change["outputs"] == {
+    "runtime_smoke_required": "true",
     "controller_smoke_required": "false",
 }
-assert {call["owner"] for call in non_velero_only["apiCalls"]} == {
-    "base-owner",
-    "fork-owner",
-}
-assert all(call["path"] == authority_path for call in non_velero_only["apiCalls"])
-
-whitespace_only = run_scope(
-    [authority_path],
-    head_content=authority_text.replace("TRIVY_VERSION=", " \t\nTRIVY_VERSION=", 1),
-)
-whitespace_runtime = whitespace_only["outputs"]["runtime_smoke_required"]
-assert whitespace_runtime == "false"
-assert not whitespace_only["warnings"]
-
-velero_only = run_scope(
-    [authority_path], head_content=authority_with(VELERO_VERSION="99.0.0")
-)
-assert velero_only["outputs"]["runtime_smoke_required"] == "true"
-
-mixed_authority = run_scope(
-    [authority_path],
-    head_content=authority_with(VELERO_VERSION="99.0.0", TRIVY_VERSION="99.0.0"),
-)
-assert mixed_authority["outputs"]["runtime_smoke_required"] == "true"
-
-unknown_key = run_scope(
-    [authority_path], head_content=authority_text + "UNKNOWN_TOOL_VERSION=1.0.0\n"
-)
-assert unknown_key["outputs"]["runtime_smoke_required"] == "true"
-assert unknown_key["warnings"]
-
-missing_key = run_scope(
-    [authority_path],
-    head_content="\n".join(
-        line
-        for line in authority_text.splitlines()
-        if not line.startswith("TRIVY_VERSION=")
-    )
-    + "\n",
-)
-assert missing_key["outputs"]["runtime_smoke_required"] == "true"
-assert missing_key["warnings"]
-
-api_failure = run_scope([authority_path], api_error=True)
-assert api_failure["outputs"]["runtime_smoke_required"] == "true"
-assert api_failure["warnings"]
+assert authority_change["apiCalls"] == []
 
 incomplete_file_list = run_scope([authority_path], changed_file_count=2)
 assert incomplete_file_list["outputs"] == {
@@ -1048,8 +960,8 @@ publisher_script = next(
     for step in publisher_steps
     if step.get("name") == "Publish fixed PR image tags"
 )
-missing_image_check = 'if ! docker image inspect "$image" >/dev/null 2>&1; then'
-assert 'service_manifest=/tmp/pr-runtime-images/pr-runtime-services.txt' in publisher_script
+missing_image_check = 'source_image_id="$(docker image inspect --format'
+assert 'service_manifest="$PR_RUNTIME_ARTIFACT_DIR/pr-runtime-services.txt"' in publisher_script
 assert 'declare -A seen_services=()' in publisher_script
 assert 'Malformed PR runtime service inventory entry' in publisher_script
 assert 'Duplicate PR runtime service inventory entry' in publisher_script
@@ -1057,21 +969,23 @@ assert 'PR runtime service inventory is empty; nothing was published.' in publis
 assert re.search(r"services=\(\s+account-service", publisher_script) is None
 assert missing_image_check in publisher_script
 assert publisher_script.count(
-    'echo "Required source artifact image for $service is missing: $image." >&2'
+    'echo "Required source artifact image for $service has no inspectable image ID: $image." >&2'
 ) == 1
-assert 'missing_source_images+=("$image")' in publisher_script
-assert 'if (( ${#missing_source_images[@]} > 0 )); then' in publisher_script
-preflight_index = publisher_script.index(missing_image_check)
 inventory_index = publisher_script.index(
-    'service_manifest=/tmp/pr-runtime-images/pr-runtime-services.txt'
+    'service_manifest="$PR_RUNTIME_ARTIFACT_DIR/pr-runtime-services.txt"'
 )
-failure_index = publisher_script.index(
-    'echo "Required source artifact is incomplete; ${#missing_source_images[@]} runtime image(s) are missing. Nothing was published." >&2'
+source_id_index = publisher_script.index(
+    'declare -A source_image_ids=()'
+)
+existing_scan_index = publisher_script.index(
+    'existing_services=()'
 )
 publish_index = publisher_script.index(
     'if docker manifest inspect "$image" >/dev/null 2>&1; then'
 )
-assert inventory_index < preflight_index < failure_index < publish_index
+assert inventory_index < source_id_index < existing_scan_index < publish_index
+assert 'verify_existing_target "$service"' in publisher_script
+assert 'does not match the validated source artifact' in publisher_script
 for obsolete_optional_controller_fragment in (
     "hosted-environment-identity-controller; do",
     "hosted-environment-identity-controller\\n",
@@ -1101,15 +1015,14 @@ exit 99
         fixture_env.update(
             DOCKER_CALLS=str(docker_calls),
             IMAGE_TAG="fixture-head",
+            PR_RUNTIME_ARTIFACT_DIR=str(fixture_root),
             PATH=f"{fixture_root}:{fixture_env['PATH']}",
         )
         result = subprocess.run(
             [
                 "bash",
                 "-c",
-                publisher_script.replace(
-                    "/tmp/pr-runtime-images/pr-runtime-services.txt", str(manifest_path)
-                ),
+                publisher_script,
             ],
             check=False,
             env=fixture_env,
@@ -1138,16 +1051,13 @@ with tempfile.TemporaryDirectory() as publisher_fixture_dir:
     fixture_root = Path(publisher_fixture_dir)
     docker_calls = fixture_root / "docker-calls"
     manifest_path = fixture_root / "pr-runtime-services.txt"
-    manifest_path.write_text("account-service\ntcp-proxy-service\n", encoding="utf-8")
+    manifest_path.write_text("account-service\n", encoding="utf-8")
     fake_docker = fixture_root / "docker"
     fake_docker.write_text(
         """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$DOCKER_CALLS"
 if [[ "$1 $2" == "image inspect" ]]; then
-  case "$3" in
-    *account-service*|*tcp-proxy-service*) exit 1 ;;
-    *) exit 0 ;;
-  esac
+  exit 1
 fi
 if [[ "$1 $2" == "manifest inspect" ]]; then
   exit 1
@@ -1164,15 +1074,14 @@ exit 99
     fixture_env.update(
         DOCKER_CALLS=str(docker_calls),
         IMAGE_TAG="fixture-head",
+        PR_RUNTIME_ARTIFACT_DIR=str(fixture_root),
         PATH=f"{fixture_root}:{fixture_env['PATH']}",
     )
     result = subprocess.run(
         [
             "bash",
             "-c",
-            publisher_script.replace(
-                "/tmp/pr-runtime-images/pr-runtime-services.txt", str(manifest_path)
-            ),
+                publisher_script,
         ],
         check=False,
         env=fixture_env,
@@ -1181,11 +1090,9 @@ exit 99
         text=True,
     )
     assert result.returncode == 1, result
-    assert "account-service is missing" in result.stderr
-    assert "tcp-proxy-service is missing" in result.stderr
-    assert "2 runtime image(s) are missing. Nothing was published." in result.stderr
+    assert "account-service has no inspectable image ID" in result.stderr
     calls = docker_calls.read_text(encoding="utf-8").splitlines()
-    assert len([call for call in calls if call.startswith("image inspect ")]) == 2
+    assert len([call for call in calls if call.startswith("image inspect ")]) == 1
     assert not any(call.startswith("manifest inspect ") for call in calls)
     assert not any(call.startswith("push ") for call in calls)
 
@@ -1204,6 +1111,7 @@ with tempfile.TemporaryDirectory() as partial_publish_fixture_dir:
         """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$DOCKER_CALLS"
 if [[ "$1 $2" == "image inspect" ]]; then
+  printf 'sha256:source-image\n'
   exit 0
 fi
 if [[ "$1 $2" == "manifest inspect" ]]; then
@@ -1211,6 +1119,9 @@ if [[ "$1 $2" == "manifest inspect" ]]; then
     *account-service*|*entity-management-service*) exit 0 ;;
     *) exit 1 ;;
   esac
+fi
+if [[ "$1" == pull ]]; then
+  exit 0
 fi
 if [[ "$1" == push ]]; then
   exit 1
@@ -1227,15 +1138,14 @@ exit 99
         DOCKER_CALLS=str(docker_calls),
         GITHUB_STEP_SUMMARY=str(summary),
         IMAGE_TAG="fixture-head",
+        PR_RUNTIME_ARTIFACT_DIR=str(fixture_root),
         PATH=f"{fixture_root}:{fixture_env['PATH']}",
     )
     result = subprocess.run(
         [
             "bash",
             "-c",
-            publisher_script.replace(
-                "/tmp/pr-runtime-images/pr-runtime-services.txt", str(manifest_path)
-            ),
+                publisher_script,
         ],
         check=False,
         env=fixture_env,
@@ -1269,6 +1179,7 @@ with tempfile.TemporaryDirectory() as publication_race_fixture_dir:
         """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$DOCKER_CALLS"
 if [[ "$1 $2" == "image inspect" ]]; then
+  printf 'sha256:source-image\n'
   exit 0
 fi
 if [[ "$1 $2" == "manifest inspect" ]]; then
@@ -1278,13 +1189,16 @@ if [[ "$1 $2" == "manifest inspect" ]]; then
   fi
   count=$((count + 1))
   printf '%s' "$count" > "$MANIFEST_CALLS"
-  if ((count <= 4)); then
+  if ((count <= 3)); then
     exit 1
   fi
   exit 0
 fi
 if [[ "$1" == push ]]; then
   exit 1
+fi
+if [[ "$1" == pull ]]; then
+  exit 0
 fi
 exit 99
 """,
@@ -1299,15 +1213,14 @@ exit 99
         GITHUB_STEP_SUMMARY=str(summary),
         IMAGE_TAG="fixture-head",
         MANIFEST_CALLS=str(manifest_calls),
+        PR_RUNTIME_ARTIFACT_DIR=str(fixture_root),
         PATH=f"{fixture_root}:{fixture_env['PATH']}",
     )
     result = subprocess.run(
         [
             "bash",
             "-c",
-            publisher_script.replace(
-                "/tmp/pr-runtime-images/pr-runtime-services.txt", str(manifest_path)
-            ),
+                publisher_script,
         ],
         check=False,
         env=fixture_env,
@@ -1315,15 +1228,11 @@ exit 99
         stderr=subprocess.PIPE,
         text=True,
     )
-    assert result.returncode == 1, result
-    assert "Failed to publish" in result.stderr
-    summary_text = summary.read_text(encoding="utf-8")
-    available_section, unpublished_section = summary_text.split(
-        "Unpublished fixed tags:", maxsplit=1
-    )
-    assert "`account-service`" in available_section
-    assert unpublished_section.strip() == "- None"
-    assert "- ``" not in unpublished_section
+    assert result.returncode == 0, result
+    calls = docker_calls.read_text(encoding="utf-8").splitlines()
+    assert len([call for call in calls if call.startswith("push ")]) == 2
+    assert len([call for call in calls if call.startswith("pull ")]) == 1
+    assert not summary.exists()
 
 runtime_jobs = runtime_workflow["jobs"]
 trusted_build = runtime_jobs["build-runtime-images"]
@@ -1358,9 +1267,9 @@ assert "hosted-environment-identity-controller" not in matrix_entries
 controller_build_job = runtime_jobs["build-hosted-identity-controller"]
 assert controller_build_job["needs"] == ["image-meta", "build-base-image"]
 assert controller_build_job["timeout-minutes"] == 25
-assert all(token in controller_build_job["if"] for token in (
-    "github.event_name != 'pull_request'", "github.ref == 'refs/heads/main'", "github.ref == 'refs/heads/develop'"
-))
+assert "github.event_name != 'pull_request'" in controller_build_job["if"]
+assert "needs.image-meta.outputs.head_branch == 'develop'" in controller_build_job["if"]
+assert "needs.image-meta.outputs.head_branch == 'main'" in controller_build_job["if"]
 assert controller_build_job["permissions"] == {
     "contents": "read",
     "packages": "read",
@@ -1432,15 +1341,13 @@ assert controller_publish_job["needs"] == [
     "build-hosted-identity-controller",
 ]
 assert controller_publish_job["timeout-minutes"] == 25
-assert all(token in controller_publish_job["if"] for token in (
-    "always()",
-    "github.event_name != 'pull_request'",
-    "github.ref == 'refs/heads/main'",
-    "github.ref == 'refs/heads/develop'",
-    "needs.image-meta.result == 'success'",
-    "needs.build-base-image.result == 'success'",
-    "needs.build-hosted-identity-controller.result == 'success'",
-))
+assert "always()" in controller_publish_job["if"]
+assert "github.event_name != 'pull_request'" in controller_publish_job["if"]
+assert "needs.image-meta.outputs.head_branch == 'develop'" in controller_publish_job["if"]
+assert "needs.image-meta.outputs.head_branch == 'main'" in controller_publish_job["if"]
+assert "needs.image-meta.result == 'success'" in controller_publish_job["if"]
+assert "needs.build-base-image.result == 'success'" in controller_publish_job["if"]
+assert "needs.build-hosted-identity-controller.result == 'success'" in controller_publish_job["if"]
 assert controller_publish_job["permissions"] == {
     "contents": "read",
     "packages": "write",
@@ -2047,8 +1954,8 @@ prepare_by_name = {
     for step in jobs["prepare-runtime"]["steps"]
     if isinstance(step, dict)
 }
-assert "Wait for fixed-head runtime images" in prepare_by_name
-assert "Wait for fixed-head runtime images" not in deploy_by_name
+assert "Wait for tested PR merge runtime images" in prepare_by_name
+assert "Wait for tested PR merge runtime images" not in deploy_by_name
 assert "Wait for exact controller identity readiness" not in deploy_by_name
 assert "Wait for runtime rollouts before operator validation" not in deploy_by_name
 
@@ -2417,8 +2324,9 @@ assert preview_derive_run.index('HEAD_SHA="${HEAD_SHA,,}"') < preview_derive_run
 )
 assert 'resolve-preview-image-tag.sh' in preview_derive_run
 assert 'IMAGE_TAG="$HEAD_SHA"' in preview_derive_run
-assert 'IMAGE_TAG" != "$BASE_SHA"' in preview_derive_run
-image_tag_validation = '[[ "$IMAGE_TAG" != "$HEAD_SHA" && "$IMAGE_TAG" != "$BASE_SHA" ]]'
+assert 'EXPECTED_MERGE_IMAGE_TAG="pr-merge-${MERGE_SHA}"' in preview_derive_run
+assert 'IMAGE_TAG" != "$EXPECTED_MERGE_IMAGE_TAG"' in preview_derive_run
+image_tag_validation = '[[ "$IMAGE_TAG" != "$EXPECTED_MERGE_IMAGE_TAG" && "$IMAGE_TAG" != "$BASE_SHA" ]]'
 assert image_tag_validation in preview_derive_run
 assert "Invalid preview domain" in preview_derive_run
 assert preview_derive_run.count(
@@ -3134,7 +3042,7 @@ cat >"$preview_derive_stub_dir/gh" <<'SH'
 set -euo pipefail
 [[ "$1" == api ]]
 if [[ "$2" == repos/example/FireMUD/pulls/901/files\?per_page=100 ]]; then
-  printf '%s\n' "${PREVIEW_DERIVE_CHANGED_FILES:-docs/readme.md}"
+  jq -cn --arg filename "${PREVIEW_DERIVE_CHANGED_FILES:-docs/readme.md}" '[[{filename: $filename}]]'
   exit 0
 fi
 [[ $# -eq 2 && "$2" == repos/example/FireMUD/pulls/* ]]
@@ -3156,7 +3064,7 @@ preview_derive_base_upper=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
 preview_derive_base_lower=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 preview_derive_merge_upper=CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
 preview_derive_merge_lower=cccccccccccccccccccccccccccccccccccccccc
-preview_derive_pr_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"sha\":\"$preview_derive_base_upper\"},\"mergeable\":true,\"mergeable_state\":\"clean\",\"merge_commit_sha\":\"$preview_derive_merge_upper\"}"
+preview_derive_pr_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"sha\":\"$preview_derive_base_upper\"},\"changed_files\":1,\"mergeable\":true,\"mergeable_state\":\"clean\",\"merge_commit_sha\":\"$preview_derive_merge_upper\"}"
 run_preview_derive_dispatch() {
   local input_pr_number="$1"
   local input_head_sha="$2"
@@ -3210,7 +3118,7 @@ grep -Fxq "head_sha=$preview_derive_head_lower" "$preview_derive_output"
 grep -Fxq "image_tag=$preview_derive_base_lower" "$preview_derive_output"
 grep -Fxq "base_sha=$preview_derive_base_lower" "$preview_derive_output"
 grep -Fxq "merge_sha=$preview_derive_merge_lower" "$preview_derive_output"
-test "$(wc -l <"${preview_derive_output}.gh.log")" -eq 1
+test "$(wc -l <"${preview_derive_output}.gh.log")" -eq 2
 grep -Fxq 'api repos/example/FireMUD/pulls/901' "${preview_derive_output}.gh.log"
 
 preview_derive_runtime_output="$TEMP_DIR/preview-derive-runtime.output"
@@ -3222,7 +3130,7 @@ PREVIEW_DERIVE_CHANGED_FILES='.github/workflows/runtime-images.yml' run_preview_
   preview.firedevops.net \
   "$preview_derive_runtime_output" \
   "$TEMP_DIR/preview-derive-runtime.error"
-grep -Fxq "image_tag=$preview_derive_head_lower" "$preview_derive_runtime_output"
+grep -Fxq "image_tag=pr-merge-$preview_derive_merge_lower" "$preview_derive_runtime_output"
 
 preview_derive_snapshot_output="$TEMP_DIR/preview-derive-snapshot.output"
 run_preview_derive_dispatch \
@@ -3235,7 +3143,7 @@ run_preview_derive_dispatch \
   "$TEMP_DIR/preview-derive-snapshot.error"
 grep -Fxq "head_sha=$preview_derive_head_lower" "$preview_derive_snapshot_output"
 grep -Fxq "base_sha=$preview_derive_base_lower" "$preview_derive_snapshot_output"
-test "$(wc -l <"${preview_derive_snapshot_output}.gh.log")" -eq 1
+test "$(wc -l <"${preview_derive_snapshot_output}.gh.log")" -eq 2
 
 for invalid_snapshot_case in missing-head malformed-base; do
   invalid_snapshot_output="$TEMP_DIR/preview-derive-${invalid_snapshot_case}.output"
@@ -3308,7 +3216,7 @@ run_preview_derive_dispatch \
   "$preview_derive_pending_output" \
   "$TEMP_DIR/preview-derive-pending.error"
 grep -Fxq "merge_sha=${preview_derive_merge_lower}" "$preview_derive_pending_output"
-test "$(<"${preview_derive_pending_output}.calls")" -eq 2
+test "$(<"${preview_derive_pending_output}.calls")" -eq 3
 
 preview_derive_conflict_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"sha\":\"$preview_derive_base_upper\"},\"mergeable\":false,\"mergeable_state\":\"dirty\"}"
 preview_derive_conflict_output="$TEMP_DIR/preview-derive-conflict.output"
@@ -5826,7 +5734,7 @@ case "$resource" in
       --arg repository "${TEST_PR_HEAD_REPOSITORY:-example/FireMUD}" \
       --arg base_ref "${TEST_PR_BASE_REF:-develop}" \
       --argjson labels "${TEST_PR_LABELS_JSON:-[]}" \
-      '{state:$state,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",labels:$labels}'
+      '{state:$state,changed_files:1,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",labels:$labels}'
     ;;
   repos/example/FireMUD/actions/runs/42/artifacts\?per_page=100)
     if [[ -n "${FAKE_ARTIFACTS_JSON:-}" ]]; then
@@ -5836,7 +5744,7 @@ case "$resource" in
     fi
     ;;
   repos/example/FireMUD/pulls/900/files\?per_page=100)
-    printf '%s' '[]'
+    printf '%s' '[[{"filename":"docs/readme.md"}]]'
     ;;
   *)
     printf 'unexpected fake gh invocation: %s\n' "$*" >&2

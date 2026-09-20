@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -lt 1 ]]; then
-  echo "usage: $0 <image_tag>" >&2
+if [[ $# -ne 1 && $# -ne 3 ]]; then
+  echo "usage: $0 <image_tag> | $0 <merge_sha> <base_sha> <head_sha>" >&2
   exit 1
 fi
 
@@ -11,7 +11,27 @@ if [[ -z "${GH_TOKEN:-}" || -z "${GITHUB_REPOSITORY:-}" ]]; then
   exit 1
 fi
 
-image_tag="$1"
+if [[ $# -eq 1 ]]; then
+  wait_mode=branch
+  image_tag="$1"
+  merge_sha=""
+  base_sha=""
+  head_sha="$1"
+else
+  wait_mode=pull-request
+  merge_sha="$1"
+  base_sha="$2"
+  head_sha="$3"
+  for value_name in merge_sha base_sha head_sha; do
+    value="${!value_name}"
+    if [[ ! "$value" =~ ^[0-9a-fA-F]{40}$ ]]; then
+      echo "${value_name} must be exactly 40 hexadecimal characters" >&2
+      exit 1
+    fi
+    printf -v "$value_name" '%s' "${value,,}"
+  done
+  image_tag="pr-merge-${merge_sha}"
+fi
 timeout_seconds="${HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS:-${PREVIEW_IMAGE_WAIT_TIMEOUT_SECONDS:-1800}}"
 sleep_seconds="${HOSTED_IMAGE_WAIT_SLEEP_SECONDS:-${PREVIEW_IMAGE_WAIT_SLEEP_SECONDS:-10}}"
 missing_workflow_timeout_seconds="${HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS:-${PREVIEW_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS:-180}}"
@@ -38,7 +58,7 @@ read_run_state() {
 import json
 import sys
 
-head_sha = sys.argv[1]
+wait_mode, image_tag, merge_sha, base_sha, head_sha = sys.argv[1:]
 try:
     payload = json.load(sys.stdin)
 except json.JSONDecodeError:
@@ -58,15 +78,26 @@ if any(not isinstance(run, dict) for run in workflow_runs):
     raise SystemExit(1)
 
 def is_matching_run(run):
-    if run.get("head_sha") != head_sha:
-        return False
-    if run.get("event") != "pull_request":
-        return True
+    if wait_mode == "branch":
+        display_title = run.get("display_title", "")
+        tokens = display_title.split()
+        return (
+            run.get("event") == "workflow_run"
+            and display_title.startswith("Build Runtime Images trusted-branch ")
+            and "branch-develop" in tokens
+            and f"sha-{head_sha}" in tokens
+            and len(tokens) == 6
+        )
 
+    if run.get("event") != "pull_request":
+        return False
     display_title = run.get("display_title", "")
+    tokens = display_title.split()
     return (
         display_title.startswith("Build Runtime Images secure-pr-artifact ")
-        and f" head-{head_sha} " in display_title
+        and f"base-{base_sha}" in tokens
+        and f"head-{head_sha}" in tokens
+        and f"merge-{merge_sha}" in tokens
         and display_title.endswith(" mode-required")
     )
 
@@ -85,16 +116,16 @@ print(
         run.get("event", ""),
     )
 )
-' "${image_tag}"
+' "${wait_mode}" "${image_tag}" "${merge_sha}" "${base_sha}" "${head_sha}"
 }
 
 read_publisher_state() {
   python3 -c '
 import json
+import re
 import sys
 
-head_sha = sys.argv[1]
-expected_title = f"Publish PR Runtime Images head-{head_sha}"
+wait_mode, image_tag, merge_sha, base_sha, head_sha = sys.argv[1:]
 try:
     payload = json.load(sys.stdin)
 except json.JSONDecodeError:
@@ -112,9 +143,22 @@ workflow_runs = [
 ]
 if any(not isinstance(run, dict) for run in workflow_runs):
     raise SystemExit(1)
-matching_runs = [
-    run for run in workflow_runs if run.get("display_title") == expected_title
-]
+if wait_mode == "pull-request":
+    matching_runs = [
+        run for run in workflow_runs
+        if (tokens := run.get("display_title", "").split())[:8] == [
+            "Publish", "PR", "Runtime", "Images", "Build", "Runtime", "Images",
+            "secure-pr-artifact",
+        ]
+        and len(tokens) == 13
+        and re.fullmatch(r"pr-[1-9][0-9]{0,50}", tokens[8])
+        and tokens[9] == f"base-{base_sha}"
+        and tokens[10] == f"head-{head_sha}"
+        and tokens[11] == f"merge-{merge_sha}"
+        and tokens[12] == "mode-required"
+    ]
+else:
+    matching_runs = []
 if not matching_runs:
     print("missing")
     raise SystemExit(0)
@@ -128,7 +172,7 @@ print(
         run.get("html_url", ""),
     )
 )
-' "${image_tag}"
+' "${wait_mode}" "${image_tag}" "${merge_sha}" "${base_sha}" "${head_sha}"
 }
 
 wait_for_pr_publisher() {
@@ -221,7 +265,7 @@ while (( SECONDS < deadline )); do
   if [[ "${run_status}" == "completed" && "${run_conclusion}" == "success" ]]; then
     printf 'Matching runtime-images workflow %s succeeded for %s after %ss.\n' \
       "${run_id}" "${image_tag}" "$((SECONDS - start_epoch))"
-    if [[ "${run_event}" == "pull_request" ]]; then
+    if [[ "${wait_mode}" == "pull-request" && "${run_event}" == "pull_request" ]]; then
       wait_for_pr_publisher
     fi
     exit 0

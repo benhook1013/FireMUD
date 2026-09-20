@@ -18,6 +18,9 @@ jobs:
   changes:
     name: Detect Smoke-Relevant Changes
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     if: ${{ github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     outputs:
       run_smoke_full: ${{ steps.compute.outputs.run_smoke_full }}
@@ -32,15 +35,38 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
-            const files = await github.paginate(
+            const fileEntries = await github.paginate(
               github.rest.pulls.listFiles,
               {
                 ...context.repo,
                 pull_number: context.payload.pull_request.number,
                 per_page: 100,
               },
-              (response) => response.data.map((file) => file.filename)
+              (response) => response.data
             );
+
+            const expectedFileCount = context.payload.pull_request.changed_files;
+            const fileListComplete =
+              Number.isInteger(expectedFileCount) && expectedFileCount === fileEntries.length;
+            const fileEntriesValid = fileEntries.every((file) =>
+              file &&
+              typeof file === "object" &&
+              typeof file.filename === "string" &&
+              file.filename.length > 0 &&
+              (file.previous_filename === undefined ||
+                (typeof file.previous_filename === "string" && file.previous_filename.length > 0))
+            );
+            const files = fileEntriesValid
+              ? fileEntries.flatMap((file) =>
+                  [file.filename, file.previous_filename].filter(Boolean)
+                )
+              : [];
+
+            if (!fileListComplete || !fileEntriesValid) {
+              core.warning("PR file-list detection was incomplete; requiring full-stack smoke.");
+              core.setOutput("run_smoke_full", "true");
+              return;
+            }
 
             const docsOnlyPredicate = (file) =>
               file === "AGENTS.md" ||
@@ -58,36 +84,34 @@ jobs:
               "gradle/",
               "protos/",
               "docker/",
-              "services/account-service/",
-              "services/automation-scripting-service/",
-              "services/common-library/",
-              "services/common-data-runtime/",
-              "services/common-platform-core/",
-              "services/common-saga/",
-              "services/common-security/",
-              "services/common-test-support/",
-              "services/common-web-support/",
-              "services/entity-management-service/",
-              "services/game-design-service/",
-              "services/game-logic-service/",
-              "services/game-session-service/",
-              "services/logging-admin-service/",
-              "services/social-groups-service/",
-              "services/spring-cloud-gateway/",
-              "services/tcp-proxy-service/",
-              "services/world-management-service/",
+              "services/",
+              ".github/actions/load-workflow-tool-versions/",
+              ".github/actions/setup-python/",
+              "dev-tools/smoke/",
             ];
             const fullRelevantFiles = new Set([
               "build.gradle.kts",
               "settings.gradle.kts",
               "gradle.properties",
+              "gradlew",
+              "gradlew.bat",
+              ".dockerignore",
+              ".python-version",
+              ".github/actions/load-workflow-tool-versions/action.yml",
               ".github/workflows/smoke.yml",
               ".github/workflows/smoke-full.yml",
               ".github/workflows/runtime-images.yml",
               ".github/workflows/publish-pr-runtime-images.yml",
+              "config/workflow-tool-versions.env",
+              "config/python/smoke-requirements.txt",
+              "config/python/smoke-requirements.in",
               "dev-tools/build-compose-service-jars.sh",
               "dev-tools/build-local-smoke-images.sh",
+              "dev-tools/backups/verify-backups.sh",
+              "dev-tools/backups/pg-dump-s3-selection.shlib",
+              "dev-tools/backups/smoke-backup-verifier-image.sh",
               "dev-tools/certs/generate-dev-certs.sh",
+              "dev-tools/hosted/controller/smoke-paused-controller-image.sh",
               "dev-tools/verify-compose-health.sh",
               "dev-tools/verify-fresh-bootstrap.sh",
               "dev-tools/verify-restart-state.sh",
@@ -561,14 +585,16 @@ jobs:
                 }
 
                 let fullSmokeJob = null;
+                let fullSmokeStep = null;
                 async function failNonTerminalSnapshot(reason) {
                   if (await isCurrentPullRequestObsolete("Stopping obsolete stale-snapshot smoke gate for")) {
                     return;
                   }
                   core.setFailed(
-                    `Runtime images run ${matching.id} did not expose a terminal PR Full-Stack Smoke job ` +
+                    `Runtime images run ${matching.id} did not expose a terminal PR Full-Stack Smoke job and smoke step ` +
                     `${reason}: ` +
-                    `${fullSmokeJob?.status ?? "missing"}/${fullSmokeJob?.conclusion ?? "unknown"}`
+                    `job=${fullSmokeJob?.status ?? "missing"}/${fullSmokeJob?.conclusion ?? "unknown"}, ` +
+                    `step=${fullSmokeStep?.status ?? "missing"}/${fullSmokeStep?.conclusion ?? "unknown"}`
                   );
                 }
                 const maxCompletedJobSnapshotRetries = 8;
@@ -600,8 +626,13 @@ jobs:
                   fullSmokeJob = jobs.find(
                     (job) => job.name === "PR Full-Stack Smoke"
                   ) ?? null;
+                  fullSmokeStep = fullSmokeJob?.steps?.find(
+                    (step) => step.name === "Run credential-free full-stack smoke"
+                  ) ?? null;
                   if (fullSmokeJob?.status === "completed") {
-                    break;
+                    if (fullSmokeStep?.status === "completed") {
+                      break;
+                    }
                   }
                   if (completedJobSnapshotAttempt < maxCompletedJobSnapshotRetries) {
                     const remainingBeforeSnapshotSleepMs = timeoutMs - (Date.now() - started);
@@ -610,8 +641,9 @@ jobs:
                       return;
                     }
                     core.info(
-                      `Runtime images run ${matching.id} succeeded but its PR Full-Stack Smoke job snapshot is not terminal yet: ` +
-                      `${fullSmokeJob?.status ?? "missing"}/${fullSmokeJob?.conclusion ?? "unknown"}; ` +
+                      `Runtime images run ${matching.id} succeeded but its PR Full-Stack Smoke job/step snapshot is not terminal yet: ` +
+                      `job=${fullSmokeJob?.status ?? "missing"}/${fullSmokeJob?.conclusion ?? "unknown"}, ` +
+                      `step=${fullSmokeStep?.status ?? "missing"}/${fullSmokeStep?.conclusion ?? "unknown"}; ` +
                       `retrying ${completedJobSnapshotAttempt + 1}/${maxCompletedJobSnapshotRetries}`
                     );
                     await new Promise((resolve) => setTimeout(
@@ -634,6 +666,16 @@ jobs:
                   core.setFailed(
                     `Runtime images run ${matching.id} succeeded, but PR Full-Stack Smoke job did not complete successfully: ` +
                     `job=${fullSmokeJob?.status ?? "missing"}/${fullSmokeJob?.conclusion ?? "unknown"}`
+                  );
+                  return;
+                }
+                if (fullSmokeStep?.conclusion !== "success") {
+                  if (await isCurrentPullRequestObsolete("Stopping obsolete skipped full-smoke gate for")) {
+                    return;
+                  }
+                  core.setFailed(
+                    `Runtime images run ${matching.id} succeeded, but its credential-free full-stack smoke step did not pass: ` +
+                    `step=${fullSmokeStep?.status ?? "missing"}/${fullSmokeStep?.conclusion ?? "unknown"}`
                   );
                   return;
                 }

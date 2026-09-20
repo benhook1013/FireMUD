@@ -41,13 +41,40 @@ jobs:
             const pullRequest = pullRequests[0];
             const issueNumber = pullRequest.number;
             const headSha = context.payload.workflow_run.head_sha;
+            const { data: currentPullRequest } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: issueNumber,
+            });
+            if (currentPullRequest.head?.sha !== headSha) {
+              core.info("The source run belongs to a superseded pull-request head.");
+              return;
+            }
+            const baseSha = currentPullRequest.base?.sha;
+            if (!baseSha) {
+              throw new Error("The current pull-request base SHA is unavailable.");
+            }
+            const sourceWorkflowPath = context.payload.workflow_run.path;
+            const sourceWorkflowName = ({
+              ".github/workflows/codeql.yml": "CodeQL Analysis",
+              ".github/workflows/license-scan.yml": "License Checks",
+            })[sourceWorkflowPath];
+            const expectedSourceTitle = `${sourceWorkflowName} pr-${issueNumber} base-${baseSha} head-${headSha}`;
+            if (
+              currentPullRequest.state !== "open" ||
+              !sourceWorkflowName ||
+              context.payload.workflow_run.name !== expectedSourceTitle ||
+              context.payload.workflow_run.display_title !== expectedSourceTitle
+            ) {
+              core.info("The source run is not bound to the current open pull-request base and head.");
+              return;
+            }
             const detailChecks = [
-              ["CodeQL analysis (java)", "CodeQL Analysis (java)"],
-              ["CodeQL analysis (javascript-typescript)", "CodeQL Analysis (javascript-typescript)"],
+              ["CodeQL analysis (java)", "CodeQL Analysis (java)", "codeql"],
+              ["CodeQL analysis (javascript-typescript)", "CodeQL Analysis (javascript-typescript)", "codeql"],
             ];
             const gateChecks = [
-              ["CodeQL gate", "CodeQL Gate"],
-              ["License gate", "License Gate"],
+              ["CodeQL gate", "CodeQL Gate", "codeql"],
+              ["License gate", "License Gate", "license"],
             ];
             const terminalConclusions = new Set([
               "success",
@@ -67,106 +94,152 @@ jobs:
               return "⏭️";
             };
 
-            const { data: codeqlRunResponse } = await github.rest.actions.listWorkflowRuns({
-              ...context.repo,
-              workflow_id: "codeql.yml",
-              event: "pull_request",
-              head_sha: headSha,
-              per_page: 100,
-            });
+            const parseTimestamp = (value) => {
+              const parsed = Date.parse(value || "");
+              return Number.isNaN(parsed) ? -1 : parsed;
+            };
 
-            const codeqlRunForHead = codeqlRunResponse.workflow_runs.find(
-              (workflowRun) => workflowRun?.head_sha === headSha
-            );
+            const numericIdentity = (value) => {
+              const parsed = Number(value);
+              return Number.isFinite(parsed) ? parsed : -1;
+            };
 
-            const normalizeStatus = (checkRun, checkName) => {
+            const compareWorkflowRuns = (left, right) => {
+              const createdAtDiff = parseTimestamp(left?.created_at) - parseTimestamp(right?.created_at);
+              if (createdAtDiff !== 0) return createdAtDiff;
+              const attemptDiff = numericIdentity(left?.run_attempt) - numericIdentity(right?.run_attempt);
+              if (attemptDiff !== 0) return attemptDiff;
+              return numericIdentity(left?.id) - numericIdentity(right?.id);
+            };
+
+            const selectLatestWorkflowRun = (workflowRuns) => {
+              const candidates = (Array.isArray(workflowRuns) ? workflowRuns : []).filter(
+                (workflowRun) =>
+                  workflowRun?.event === "pull_request" &&
+                  workflowRun?.head_sha === headSha
+              );
+              return candidates.reduce(
+                (latest, candidate) =>
+                  !latest || compareWorkflowRuns(candidate, latest) > 0 ? candidate : latest,
+                null
+              );
+            };
+
+            const workflowRunFor = async (workflowId) => {
+              const workflowName = workflowId === "codeql.yml" ? "CodeQL Analysis" : "License Checks";
+              const expectedTitle = `${workflowName} pr-${issueNumber} base-${baseSha} head-${headSha}`;
+              const workflowRuns = await github.paginate(github.rest.actions.listWorkflowRuns, {
+                ...context.repo,
+                workflow_id: workflowId,
+                event: "pull_request",
+                head_sha: headSha,
+                per_page: 100,
+              });
+              return selectLatestWorkflowRun(
+                workflowRuns.filter((workflowRun) => workflowRun?.display_title === expectedTitle)
+              );
+            };
+
+            const checkRunWorkflowId = (checkRun) => {
+              const match = String(checkRun?.details_url || "").match(/\/actions\/runs\/(\d+)(?:\/|$)/);
+              return match?.[1] || null;
+            };
+
+            const compareCheckRuns = (left, right) => {
+              const leftTimestamp = Math.max(
+                parseTimestamp(left?.completed_at),
+                parseTimestamp(left?.started_at),
+                parseTimestamp(left?.created_at)
+              );
+              const rightTimestamp = Math.max(
+                parseTimestamp(right?.completed_at),
+                parseTimestamp(right?.started_at),
+                parseTimestamp(right?.created_at)
+              );
+              if (leftTimestamp !== rightTimestamp) return leftTimestamp - rightTimestamp;
+              return numericIdentity(left?.id) - numericIdentity(right?.id);
+            };
+
+            const selectLatestCheckRun = (checkRuns, checkName, workflowRun) => {
+              if (!workflowRun?.id) return null;
+              const workflowRunId = String(workflowRun.id);
+              const candidates = (Array.isArray(checkRuns) ? checkRuns : []).filter(
+                (checkRun) =>
+                  checkRun?.name === checkName &&
+                  checkRunWorkflowId(checkRun) === workflowRunId
+              );
+              return candidates.reduce(
+                (latest, candidate) =>
+                  !latest || compareCheckRuns(candidate, latest) > 0 ? candidate : latest,
+                null
+              );
+            };
+
+            const normalizeStatus = (checkRun, checkName, workflowRun) => {
               if (!checkRun) {
                 if (
                   checkName.startsWith("CodeQL Analysis (") &&
-                  codeqlRunForHead?.status === "completed"
+                  workflowRun?.status === "completed"
                 ) {
                   return "skipped";
                 }
+                if (workflowRun?.status === "completed") {
+                  return workflowRun.conclusion ?? "pending";
+                }
+                if (workflowRun?.status) return workflowRun.status;
                 return "pending";
               }
               if (checkRun.status !== "completed") return checkRun.status;
               return checkRun.conclusion ?? "pending";
             };
 
-            const statusPriority = (value) => {
-              switch (value) {
-                case "in_progress":
-                  return 7;
-                case "queued":
-                  return 6;
-                case "pending":
-                  return 5;
-                case "success":
-                  return 4;
-                case "failure":
-                case "timed_out":
-                case "action_required":
-                  return 3;
-                case "neutral":
-                case "skipped":
-                  return 2;
-                case "cancelled":
-                  return 1;
-                default:
-                  return 0;
-              }
-            };
-
             const loadChecks = async () => {
-              const { data } = await github.rest.checks.listForRef({
+              return github.paginate(github.rest.checks.listForRef, {
                 ...context.repo,
                 ref: headSha,
                 per_page: 100,
               });
-              return data.check_runs;
             };
 
-            const resolveStatuses = (checkRuns) =>
-              [...gateChecks, ...detailChecks].map(([label, checkName]) => {
+            const resolveStatuses = (checkRuns, workflowRuns) =>
+              [...gateChecks, ...detailChecks].map(([label, checkName, workflowKey]) => {
                 const isCodeQlAnalysis = checkName.startsWith("CodeQL Analysis (");
                 const emptyMatrixCodeQlCheck =
                   "CodeQL Analysis ($" + "{{ matrix.language }})";
-                const candidates = (Array.isArray(checkRuns) ? checkRuns : [])
-                  .filter(
-                    (checkRun) =>
-                      checkRun?.name === checkName ||
-                      (isCodeQlAnalysis &&
-                        checkRun?.name === emptyMatrixCodeQlCheck)
-                  )
-                  .map((checkRun) => ({
-                    checkRun,
-                    status: normalizeStatus(checkRun, checkName),
-                  }))
-                  .sort((a, b) => {
-                    const priorityDiff = statusPriority(b.status) - statusPriority(a.status);
-                    if (priorityDiff !== 0) {
-                      return priorityDiff;
-                    }
-                    return (b.checkRun?.id ?? 0) - (a.checkRun?.id ?? 0);
-                  });
-                return [label, candidates[0]?.status ?? normalizeStatus(null, checkName)];
+                const workflowRun = workflowRuns?.[workflowKey] || null;
+                const selectedCheckRun = selectLatestCheckRun(
+                  checkRuns,
+                  checkName,
+                  workflowRun
+                ) || (isCodeQlAnalysis
+                  ? selectLatestCheckRun(checkRuns, emptyMatrixCodeQlCheck, workflowRun)
+                  : null);
+                return [label, normalizeStatus(selectedCheckRun, checkName, workflowRun)];
               });
 
-            let checks = resolveStatuses(await loadChecks());
+            let workflowRuns = {
+              codeql: await workflowRunFor("codeql.yml"),
+              license: await workflowRunFor("license-scan.yml"),
+            };
+            let checks = resolveStatuses(await loadChecks(), workflowRuns);
             for (let attempt = 0; attempt < 30; attempt += 1) {
               const allCompleted = checks.every(([, result]) => terminalConclusions.has(result));
               if (allCompleted) {
                 break;
               }
               await new Promise((resolve) => setTimeout(resolve, 10000));
-              checks = resolveStatuses(await loadChecks());
+              workflowRuns = {
+                codeql: await workflowRunFor("codeql.yml"),
+                license: await workflowRunFor("license-scan.yml"),
+              };
+              checks = resolveStatuses(await loadChecks(), workflowRuns);
             }
 
             const gateResults = checks.slice(0, gateChecks.length);
             const detailResults = checks.slice(gateChecks.length);
 
             const failedChecks = gateResults.filter(([, result]) =>
-              ["failure", "timed_out", "action_required"].includes(result)
+              ["failure", "cancelled", "timed_out", "action_required"].includes(result)
             );
             const pendingChecks = gateResults.filter(([, result]) =>
               ["pending", "in_progress", "queued"].includes(result)
@@ -190,23 +263,49 @@ jobs:
               ...detailResults.map(([name, result]) => `- ${statusIcon(result)} ${name}: \`${result}\``),
             ].join("\n");
 
-            const { data: comments } = await github.rest.issues.listComments({
+            const { data: finalPullRequest } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: issueNumber,
+            });
+            if (
+              finalPullRequest.state !== "open" ||
+              finalPullRequest.head?.sha !== headSha ||
+              finalPullRequest.base?.sha !== baseSha
+            ) {
+              core.info("The pull-request base or head changed while static analysis was being summarized.");
+              return;
+            }
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
               ...context.repo,
               issue_number: issueNumber,
+              per_page: 100,
             });
 
             const summaryComments = comments.filter((comment) =>
-              comment.body.startsWith("### Static Analysis Summary")
+              comment.user?.login === "github-actions[bot]" &&
+              comment.body?.startsWith("### Static Analysis Summary")
             );
-            const existing = summaryComments[0];
-
-            if (summaryComments.length > 1) {
-              for (const comment of summaryComments.slice(1)) {
-                await github.rest.issues.deleteComment({
-                  ...context.repo,
-                  comment_id: comment.id,
-                });
+            const commentTimestamp = (comment) => {
+              const parsed = Date.parse(comment.updated_at || comment.created_at || "");
+              return Number.isNaN(parsed) ? -1 : parsed;
+            };
+            const existing = summaryComments.reduce((latest, comment) => {
+              if (!latest) return comment;
+              const latestTimestamp = commentTimestamp(latest);
+              const candidateTimestamp = commentTimestamp(comment);
+              if (candidateTimestamp !== latestTimestamp) {
+                return candidateTimestamp > latestTimestamp ? comment : latest;
               }
+              return Number(comment.id) > Number(latest.id) ? comment : latest;
+            }, null);
+
+            for (const comment of summaryComments) {
+              if (comment.id === existing?.id) continue;
+              await github.rest.issues.deleteComment({
+                ...context.repo,
+                comment_id: comment.id,
+              });
             }
 
             if (existing) {

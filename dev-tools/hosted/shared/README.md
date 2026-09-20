@@ -23,8 +23,8 @@ These scripts are shared because they manage infrastructure or validation behavi
   - creates or updates the hosted environment's gRPC TLS secret from the local development cert helper
 
 - `wait-for-runtime-images.sh`
-  - waits for the `runtime-images.yml` workflow to validate the requested image tag
-  - for pull-request runs, also waits for the trusted `publish-pr-runtime-images.yml` workflow to publish the fixed tag
+  - for a pull request, waits for a `runtime-images.yml` run whose exact base, head, and test-merge identities match, then waits for the trusted publisher to publish the immutable `pr-merge-<merge-sha>` tag
+  - with one SHA argument, retains the branch/dev-demo waiter behavior
 
 - `hosted-login-look-smoke.sh`
   - runs the canonical hosted TCP LOGIN -> PLAY -> LOOK smoke proof against the exposed environment
@@ -36,4 +36,4 @@ These scripts are shared because they manage infrastructure or validation behavi
 - `show-rollout-diagnostics.sh`
   - prints the canonical hosted rollout failure view for both preview lanes, including blocked readiness reasons, service/target ports, safe config summaries, secret/TLS summaries, events, describes, and current plus previous logs for problematic pods
 
-Preview-only image handling uses [`../preview/resolve-preview-image-tag.sh`](../preview/resolve-preview-image-tag.sh) to select the requested preview tag or the immutable base-commit tag when no runtime-image trigger paths changed. When the base tag is selected, [`../preview/wait-for-base-images.sh`](../preview/wait-for-base-images.sh) checks that each base runtime image is available in GHCR before deployment.
+Preview-only image handling uses [`../preview/resolve-preview-image-tag.sh`](../preview/resolve-preview-image-tag.sh) to select the immutable `pr-merge-<merge-sha>` tag for a runtime-changing pull request, or the immutable base-commit tag when no runtime-image trigger paths changed. The resolver rejects incomplete file metadata before allowing base-image reuse. When the base tag is selected, [`../preview/wait-for-base-images.sh`](../preview/wait-for-base-images.sh) checks that each base runtime image is available in GHCR before deployment.
