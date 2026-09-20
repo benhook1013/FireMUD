@@ -350,6 +350,7 @@ class HostedIdentityReconcilerSafetyTest {
         .thenReturn(new DeploymentRolloutService.RolloutResult(true, true, true));
     when(fixture.probes.probe(
             any(),
+            anyString(),
             anyInt(),
             anyString(),
             anyString(),
@@ -400,6 +401,7 @@ class HostedIdentityReconcilerSafetyTest {
         .thenReturn(new DeploymentRolloutService.RolloutResult(true, true, true));
     when(fixture.probes.probe(
             any(),
+            anyString(),
             anyInt(),
             anyString(),
             anyString(),
@@ -569,6 +571,7 @@ class HostedIdentityReconcilerSafetyTest {
         .thenReturn(new DeploymentRolloutService.RolloutResult(true, true, true));
     when(fixture.probes.probe(
             any(),
+            anyString(),
             anyInt(),
             anyString(),
             anyString(),
@@ -1368,6 +1371,7 @@ class HostedIdentityReconcilerSafetyTest {
     when(absent.get()).thenReturn(null);
     when(fixture.probes.probe(
             any(),
+            anyString(),
             anyInt(),
             anyString(),
             anyString(),

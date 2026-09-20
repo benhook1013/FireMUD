@@ -195,7 +195,7 @@ class PreviewArtifactServiceValidationTest(unittest.TestCase):
                 "public",
             )
 
-    def test_standalone_rejects_private_tcp_proxy_consumer(self):
+    def test_standalone_public_requires_telnet_consumer(self):
         with (
             patch.object(self.validator, "SERVICE_IMAGES", {"tcp-proxy-service"}),
             self.assertRaisesRegex(

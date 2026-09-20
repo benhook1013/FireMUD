@@ -230,31 +230,17 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
                 () ->
                     runtimeProjection(
                         plan, runtimeProfile, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE));
-        if (HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE.equals(
-            runtimeProfile.exposureMode())) {
-          probes =
-              servedEnvironmentProbe.probe(
-                  plan,
-                  runtimeProfile.telnetPort(),
-                  ingress.summary().certificateFingerprint(),
-                  telnet.summary().certificateFingerprint(),
-                  bridgeMaterial,
-                  gatewayInternalWs.summary().certificateFingerprint(),
-                  grpc.source(),
-                  grpc.summary().certificateFingerprint());
-        } else {
-          probes =
-              servedEnvironmentProbe.probe(
-                  plan,
-                  runtimeProfile.exposureMode(),
-                  runtimeProfile.telnetPort(),
-                  ingress.summary().certificateFingerprint(),
-                  telnet.summary().certificateFingerprint(),
-                  bridgeMaterial,
-                  gatewayInternalWs.summary().certificateFingerprint(),
-                  grpc.source(),
-                  grpc.summary().certificateFingerprint());
-        }
+        probes =
+            servedEnvironmentProbe.probe(
+                plan,
+                runtimeProfile.exposureMode(),
+                runtimeProfile.telnetPort(),
+                ingress.summary().certificateFingerprint(),
+                telnet.summary().certificateFingerprint(),
+                bridgeMaterial,
+                gatewayInternalWs.summary().certificateFingerprint(),
+                grpc.source(),
+                grpc.summary().certificateFingerprint());
       } else {
         probes = new ServedEnvironmentProbe.ProbeResult(false, "rollout-pending");
       }
