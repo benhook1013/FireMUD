@@ -31,7 +31,8 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
   private static final String MIGRATION_LOCATION =
       "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
 
-  @Container static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  @Container
+  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
   private DSLContext dsl;
   private String schema;
@@ -59,7 +60,8 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
   }
 
   @Test
-  void failedReceiptIsImmutableAndLifecycleAdvisoryLockSerializesConcurrentActivation() throws Exception {
+  void failedReceiptIsImmutableAndLifecycleAdvisoryLockSerializesConcurrentActivation()
+      throws Exception {
     PluginRuntimeRequestHistoryRepository history = new PluginRuntimeRequestHistoryRepository(dsl);
     PluginRuntimeRequestHistory first = failedReceipt("drain-1", "digest-a");
     PluginRuntimeRequestHistory saved = history.insertOrGet(first);
@@ -82,8 +84,7 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
               () ->
                   dsl.transaction(
                       configuration -> {
-                        new PluginRuntimeStateRepository(
-                                DSL.using(configuration))
+                        new PluginRuntimeStateRepository(DSL.using(configuration))
                             .lockLifecycleScope("1", "game-1", "plugin-1");
                         firstHasLock.countDown();
                         await(releaseFirst);
@@ -94,8 +95,7 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
               () ->
                   dsl.transaction(
                       configuration -> {
-                        new PluginRuntimeStateRepository(
-                                DSL.using(configuration))
+                        new PluginRuntimeStateRepository(DSL.using(configuration))
                             .lockLifecycleScope("1", "game-1", "plugin-1");
                       }));
       Thread.sleep(100);
@@ -128,15 +128,15 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setDriverClassName("org.postgresql.Driver");
     String baseUrl = postgres.getJdbcUrl();
-    dataSource.setUrl(baseUrl + (baseUrl.contains("?") ? "&" : "?") + "currentSchema=" + targetSchema);
+    dataSource.setUrl(
+        baseUrl + (baseUrl.contains("?") ? "&" : "?") + "currentSchema=" + targetSchema);
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     return dataSource;
   }
 
   private DSLContext adminDsl() {
-    return DSL.using(
-        postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+    return DSL.using(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
   }
 
   private static void await(CountDownLatch latch) {
