@@ -76,16 +76,20 @@ trap 'rm -rf "$fixture_dir"' EXIT
 # malformed profiles. This sources only the target helper functions so the
 # contract remains independent of Kubernetes and tests the exact checks used
 # before an existing Secret is projected again.
+echo "dev-demo certificate fixture: begin" >&2
 certificate_fixture_dir="$fixture_dir/certificates"
 mkdir -p "$certificate_fixture_dir"
+echo "dev-demo certificate fixture: generating CA" >&2
 openssl req -x509 -newkey rsa:2048 -nodes \
   -keyout "$certificate_fixture_dir/ca.key" \
   -out "$certificate_fixture_dir/ca.crt" \
   -days 365 -subj '/CN=FireMUD standalone contract CA' >/dev/null 2>&1
+echo "dev-demo certificate fixture: generating canonical workload certificate" >&2
 "$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh" --workload \
   "$certificate_fixture_dir/ca.crt" "$certificate_fixture_dir/ca.key" \
   "$certificate_fixture_dir/valid.crt" "$certificate_fixture_dir/valid.key" \
   pr-42 game-design-service
+echo "dev-demo certificate fixture: canonical workload certificate generated" >&2
 
 make_profile_certificate() {
   local name="$1"
@@ -96,6 +100,7 @@ make_profile_certificate() {
   local key="$certificate_fixture_dir/${name}.key"
   local csr="$certificate_fixture_dir/${name}.csr"
   local serial="$certificate_fixture_dir/${name}.srl"
+  echo "dev-demo certificate fixture: generating profile ${name}" >&2
   cat >"$config" <<EOF
 [req]
 distinguished_name = req_distinguished_name
@@ -125,6 +130,7 @@ EOF
     -CAkey "$certificate_fixture_dir/ca.key" \
     -CAserial "$serial" -CAcreateserial -out "$certificate_fixture_dir/${name}.crt" \
     -days 365 -sha256 -extensions v3_req -extfile "$config" >/dev/null 2>&1
+  echo "dev-demo certificate fixture: profile ${name} generated" >&2
 }
 
 make_profile_certificate \
@@ -133,6 +139,7 @@ make_profile_certificate \
   missing-key-usage critical,CA:false critical,digitalSignature serverAuth,clientAuth
 make_profile_certificate \
   missing-eku critical,CA:false critical,digitalSignature,keyEncipherment serverAuth
+echo "dev-demo certificate fixture: malformed profiles generated" >&2
 
 validator_source="$certificate_fixture_dir/validate-workload-certificate.sh"
 {
@@ -147,6 +154,7 @@ validator_source="$certificate_fixture_dir/validate-workload-certificate.sh"
     capture { print }
   ' "$standalone_grpc_tls"
 } >"$validator_source"
+echo "dev-demo certificate fixture: validator extracted" >&2
 
 if ! (
   # shellcheck disable=SC2030 # The extracted validator reads this subshell-local namespace.
@@ -161,6 +169,7 @@ if ! (
   echo "canonical standalone workload certificate was rejected" >&2
   exit 1
 fi
+echo "dev-demo certificate fixture: canonical workload certificate accepted" >&2
 
 expect_invalid_workload_profile() {
   local name="$1"
@@ -191,6 +200,7 @@ expect_invalid_workload_profile() {
 expect_invalid_workload_profile ca-leaf 'workload certificate must be a non-CA leaf'
 expect_invalid_workload_profile missing-key-usage 'key usage must be exactly digitalSignature/keyEncipherment'
 expect_invalid_workload_profile missing-eku 'EKU must be exactly serverAuth/clientAuth'
+echo "dev-demo certificate fixture: malformed profiles rejected" >&2
 
 expect_mode() {
   local expected="$1"
