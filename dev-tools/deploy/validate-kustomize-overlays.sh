@@ -47,7 +47,20 @@ render_overlay() {
 }
 
 extract_images() {
-  grep -E '^[[:space:]]*image:[[:space:]]*' | sed -E 's/^[[:space:]]*image:[[:space:]]*//' | awk '{print $1}' | sort -u
+  local matches
+  if matches="$(grep -E '^[[:space:]]*image:[[:space:]]*')"; then
+    :
+  else
+    local status=$?
+    if [ "$status" -eq 1 ]; then
+      # grep returns 1 for a valid render with no image fields. Report an
+      # empty successful extraction so the caller can emit its exact diagnostic.
+      return 0
+    fi
+    return "$status"
+  fi
+
+  printf '%s\n' "$matches" | sed -E 's/^[[:space:]]*image:[[:space:]]*//' | awk '{print $1}' | sort -u
 }
 
 check_images_exist() {

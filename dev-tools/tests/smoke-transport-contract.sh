@@ -4,6 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUN_OWNED_COMPOSE_HELPER="$ROOT_DIR/dev-tools/smoke/run-owned-compose.sh"
 
+command -v openssl >/dev/null 2>&1 || {
+    echo "openssl is required to generate TLS certificates for this smoke contract" >&2
+    exit 1
+}
+
 python3 - <<'PY' "$ROOT_DIR"
 import contextlib
 import io

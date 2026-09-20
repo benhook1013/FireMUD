@@ -203,6 +203,69 @@ grep -q "registry inspection failed" "$OUTPUT_FILE" || {
   exit 1
 }
 
+if bash -s "$VALIDATOR" >"$OUTPUT_FILE" 2>&1 <<'BASH'
+  set -e
+  # shellcheck disable=SC1091
+  # shellcheck disable=SC1090
+  source "$1"
+  render_overlay() {
+    printf '%s\n' \
+      'kind: ConfigMap' \
+      'metadata:' \
+      '  name: no-images'
+  }
+  docker() {
+    echo "unexpected docker invocation: $*" >&2
+    return 1
+  }
+  check_images_exist "contract" "$ROOT_DIR/k8s/overlays/stage"
+BASH
+then
+  echo "Overlay image validation accepted a rendered overlay with no images" >&2
+  exit 1
+fi
+
+grep -Fxq "No images found in rendered contract overlay" "$OUTPUT_FILE" || {
+  echo "Empty image extraction did not reach the intended diagnostic" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
+}
+if grep -q "unexpected docker invocation" "$OUTPUT_FILE"; then
+  echo "Empty image extraction attempted registry inspection" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
+fi
+if [[ "$(grep -Fxc '::endgroup::' "$OUTPUT_FILE")" -ne 2 ]]; then
+  echo "Empty image extraction did not close both render and image-check groups" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
+fi
+
+if bash -s "$VALIDATOR" >"$OUTPUT_FILE" 2>&1 <<'BASH'
+  set -e
+  # shellcheck disable=SC1091
+  # shellcheck disable=SC1090
+  source "$1"
+  render_overlay() {
+    printf '%s\n' \
+      'image: ghcr.io/benhook1013/example-service@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  }
+  grep() {
+    return 2
+  }
+  check_images_exist "contract" "$ROOT_DIR/k8s/overlays/stage"
+BASH
+then
+  echo "Overlay image validation masked an image-extraction failure" >&2
+  exit 1
+fi
+
+if grep -q "No images found in rendered contract overlay" "$OUTPUT_FILE"; then
+  echo "Image-extraction failure incorrectly reached the empty-image diagnostic" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
+fi
+
 assert_balanced_preflight_group() {
   local context="$1"
   if ! awk '

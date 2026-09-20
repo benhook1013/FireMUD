@@ -78,6 +78,8 @@ if public_rules != [
     }
 ]:
     raise SystemExit(f"expected exactly one dual-stack public TCP/8080 ingress rule: {public_rules}")
+if len(ingress) != 3:
+    raise SystemExit(f"base Gateway policy must contain exactly the three ingress allowlist rules: {ingress}")
 if any(
     peer == {"podSelector": {}}
     for rule in ingress

@@ -61,6 +61,15 @@ class CommonCoreAutoConfigurationTest {
         .run(
             context -> {
               assertThat(context)
+                  .hasBean(
+                      TlsCertificateReadinessHealthEndpointGroupsPostProcessor
+                          .TLS_CERTIFICATE_RELOAD_CONTRIBUTOR);
+              assertThat(
+                      context.getBean(
+                          TlsCertificateReadinessHealthEndpointGroupsPostProcessor
+                              .TLS_CERTIFICATE_RELOAD_CONTRIBUTOR))
+                  .isInstanceOf(HealthIndicator.class);
+              assertThat(context)
                   .hasSingleBean(TlsCertificateReadinessHealthEndpointGroupsPostProcessor.class);
               HealthEndpointGroups groups = mock(HealthEndpointGroups.class);
               assertSame(
