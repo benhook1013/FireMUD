@@ -2516,7 +2516,10 @@ if FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 FAKE_EVENT_LOG="$no_resolver_event
   >"$bootstrap_output" 2>"$bootstrap_error"; then
   fail "bootstrap accepted exact addresses without a DNS resolver"
 fi
-require_literal "$bootstrap_error" "getent is required to validate the fixed dev.preview.firedevops.net IPv4 A record"
+if ! grep -Fq "getent is required to validate the fixed dev.preview.firedevops.net IPv4 A record" "$bootstrap_error"; then
+  sed -n '1,25p' "$bootstrap_error" >&2
+  fail "bootstrap did not report the missing DNS resolver"
+fi
 if grep -q '^apply:' "$no_resolver_events" 2>/dev/null; then
   fail "bootstrap wrote cluster state without a DNS resolver"
 fi
