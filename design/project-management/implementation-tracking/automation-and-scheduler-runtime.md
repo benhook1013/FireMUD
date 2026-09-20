@@ -6,6 +6,8 @@ This is a non-normative implementation tracker for automation and scheduler runt
 
 ## Current Status
 
+Adjudicated retention identity gap: `npc_memory` is live but latent and remains unclassified for replacement. Its replacement admission is blocked pending owner classification, mapping, and proof; see the [Automation runtime/data owner contract](../../architecture/microservices/automation-scripting-service/runtime-and-data.md#runtime-data-model).
+
 The bounded implementation slices recorded here are complete at their stated boundaries. This tracker is the permanent reader-facing implementation record for the live automation ingress, scheduling, execution, handoff, readiness, and runtime/operator projection contracts.
 
 Current residual: the legacy NPC formation REST controllers are removed and `/formations` fails closed at the service-local HTTP boundary. Formation behavior remains `partial`: internal gRPC methods retain only the global admin-role guard, not the target tenant-bound `tenantAdmin` check, and do not prove Entity-owned leader/member NPC tenant/namespace ownership. HTTP 404 proof is not internal authorization/ownership proof; exact internal binding and cross-tenant negative tests remain open.
