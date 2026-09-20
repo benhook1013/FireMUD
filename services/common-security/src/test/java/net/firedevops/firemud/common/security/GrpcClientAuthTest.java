@@ -51,6 +51,29 @@ class GrpcClientAuthTest {
   }
 
   @Test
+  void publicationReadsUseInternalTokenEvenWithOperatorContext() {
+    CapturingChannel channel = new CapturingChannel();
+    TestStub customized =
+        GrpcClientAuth.attach(new TestStub(channel, CallOptions.DEFAULT), jwtUtil, runtimeIdentity);
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+
+    for (String fullMethodName : PublicationReadGuard.PUBLICATION_READ_METHODS) {
+      customized.invoke(fullMethodName);
+      String token = bearerToken(channel.lastAuthorization());
+      assertThat(jwtUtil.parseToken(token).getPayload().getSubject())
+          .isEqualTo("service:game-logic-service");
+      assertThat(jwtUtil.parseToken(token).getPayload().get("internalService", Boolean.class))
+          .isTrue();
+      assertThat(jwtUtil.parseToken(token).getPayload().get("accountId", String.class)).isNull();
+    }
+
+    customized.invoke();
+    assertThat(
+            jwtUtil.parseToken(bearerToken(channel.lastAuthorization())).getPayload().getSubject())
+        .isEqualTo("42");
+  }
+
+  @Test
   void attachInternalUsesFreshInternalTokenPerCall() {
     CapturingChannel channel = new CapturingChannel();
     TestStub stub = new TestStub(channel, CallOptions.DEFAULT);
@@ -107,7 +130,13 @@ class GrpcClientAuthTest {
     }
 
     private void invoke() {
-      ClientCall<Empty, Empty> call = getChannel().newCall(METHOD, getCallOptions());
+      invoke(METHOD.getFullMethodName());
+    }
+
+    private void invoke(String fullMethodName) {
+      MethodDescriptor<Empty, Empty> method =
+          METHOD.toBuilder().setFullMethodName(fullMethodName).build();
+      ClientCall<Empty, Empty> call = getChannel().newCall(method, getCallOptions());
       call.start(new ClientCall.Listener<>() {}, new Metadata());
       call.sendMessage(Empty.getDefaultInstance());
       call.halfClose();

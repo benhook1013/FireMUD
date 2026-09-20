@@ -121,17 +121,22 @@ public class HostedIdentityScopeService {
 
   private static void ensureIdentity(KubernetesClient client, EnvironmentIdentityPlan plan) {
     List<String> identitySecretNames =
-        List.of(
-            plan.ingressSecretName(),
-            plan.telnetSecretName(),
-            plan.gatewayInternalWsSecretName(),
-            plan.tcpProxyBridgeSecretName(),
-            plan.grpcSecretName(),
-            plan.ingressSecretName() + "-previous",
-            plan.telnetSecretName() + "-previous",
-            plan.gatewayInternalWsSecretName() + "-previous",
-            plan.tcpProxyBridgeSecretName() + "-previous",
-            plan.grpcSecretName() + "-previous");
+        new java.util.ArrayList<>(
+            List.of(
+                plan.ingressSecretName(),
+                plan.telnetSecretName(),
+                plan.gatewayInternalWsSecretName(),
+                plan.tcpProxyBridgeSecretName(),
+                plan.grpcSecretName(),
+                plan.ingressSecretName() + "-previous",
+                plan.telnetSecretName() + "-previous",
+                plan.gatewayInternalWsSecretName() + "-previous",
+                plan.tcpProxyBridgeSecretName() + "-previous",
+                plan.grpcSecretName() + "-previous"));
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      identitySecretNames.add(plan.grpcPublicationSourceSecretName(workload));
+      identitySecretNames.add(plan.grpcPublicationSourceSecretName(workload) + "-previous");
+    }
     Role desired =
         role(
             plan.identityNamespace(),
@@ -181,12 +186,7 @@ public class HostedIdentityScopeService {
                 rule(
                     List.of(""),
                     List.of("secrets"),
-                    List.of(
-                        plan.ingressSecretName(),
-                        plan.telnetSecretName(),
-                        plan.gatewayInternalWsSecretName(),
-                        plan.tcpProxyBridgeSecretName(),
-                        plan.grpcSecretName()),
+                    runtimeSecretNames(plan),
                     List.of("get", "update", "patch", "delete")),
                 // Kubernetes ignores resourceNames for CREATE, so Secret creation cannot be
                 // restricted to the named runtime Secrets.
@@ -203,16 +203,40 @@ public class HostedIdentityScopeService {
 
   static List<String> requiredDeploymentNames(EnvironmentIdentityPlan plan) {
     LinkedHashSet<String> names = new LinkedHashSet<>(plan.grpcConsumers());
+    names.addAll(HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS);
     names.addAll(DeploymentRolloutService.BRIDGE_DEPLOYMENTS);
     return List.copyOf(names);
   }
 
   static List<String> requiredCertificateNames(EnvironmentIdentityPlan plan) {
-    return List.of(
-        plan.ingressCertificateName(),
-        plan.telnetCertificateName(),
-        plan.gatewayInternalWsCertificateName(),
-        plan.tcpProxyBridgeCertificateName());
+    List<String> names =
+        new java.util.ArrayList<>(
+            List.of(
+                plan.ingressCertificateName(),
+                plan.telnetCertificateName(),
+                plan.gatewayInternalWsCertificateName(),
+                plan.tcpProxyBridgeCertificateName()));
+    names.addAll(
+        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
+            .map(plan::grpcPublicationCertificateName)
+            .toList());
+    return List.copyOf(names);
+  }
+
+  static List<String> runtimeSecretNames(EnvironmentIdentityPlan plan) {
+    List<String> names =
+        new java.util.ArrayList<>(
+            List.of(
+                plan.ingressSecretName(),
+                plan.telnetSecretName(),
+                plan.gatewayInternalWsSecretName(),
+                plan.tcpProxyBridgeSecretName(),
+                plan.grpcSecretName()));
+    names.addAll(
+        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
+            .map(plan::grpcPublicationSecretName)
+            .toList());
+    return List.copyOf(names);
   }
 
   private static Role role(

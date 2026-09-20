@@ -34,3 +34,11 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- define "firemud.grpcSecretName" -}}
 {{- default "firemud-grpc-tls" .Values.previewStack.grpcTls.secretName -}}
 {{- end -}}
+
+{{- define "firemud.grpcSecretNameForService" -}}
+{{- if has .serviceName (list "game-design-service" "world-management-service" "entity-management-service" "game-logic-service" "automation-scripting-service") -}}
+{{- printf "firemud-grpc-%s" .serviceName -}}
+{{- else -}}
+{{- include "firemud.grpcSecretName" .root -}}
+{{- end -}}
+{{- end -}}
