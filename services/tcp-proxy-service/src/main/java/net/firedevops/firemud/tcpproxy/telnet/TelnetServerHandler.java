@@ -1102,13 +1102,22 @@ public final class TelnetServerHandler extends SimpleChannelInboundHandler<Strin
           int fragmentBytes = utf8ByteLength(fragment);
           synchronized (gatewayTextLifecycleLock) {
             if (!closing) {
-              if (fragmentBytes > MAX_GATEWAY_TEXT_BYTES - gatewayTextBufferBytes) {
+              int splitSurrogateBytes =
+                  !gatewayTextBuffer.isEmpty()
+                          && !fragment.isEmpty()
+                          && Character.isHighSurrogate(
+                              gatewayTextBuffer.charAt(gatewayTextBuffer.length() - 1))
+                          && Character.isLowSurrogate(fragment.charAt(0))
+                      ? 2
+                      : 0;
+              int prospectiveFragmentBytes = fragmentBytes + splitSurrogateBytes;
+              if (prospectiveFragmentBytes > MAX_GATEWAY_TEXT_BYTES - gatewayTextBufferBytes) {
                 gatewayTextBuffer.setLength(0);
                 gatewayTextBufferBytes = 0;
                 overflow = true;
               } else {
                 gatewayTextBuffer.append(fragment);
-                gatewayTextBufferBytes += fragmentBytes;
+                gatewayTextBufferBytes += prospectiveFragmentBytes;
                 if (last) {
                   completeLine = gatewayTextBuffer.toString();
                   gatewayTextBuffer.setLength(0);

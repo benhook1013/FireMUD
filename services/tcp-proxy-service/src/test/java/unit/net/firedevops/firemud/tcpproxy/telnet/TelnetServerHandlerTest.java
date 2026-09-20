@@ -2214,6 +2214,99 @@ class TelnetServerHandlerTest {
   }
 
   @Test
+  void splitSurrogateAtExactGatewayTextLimitIsAccepted() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    AtomicReference<WebSocket.Listener> listenerRef = new AtomicReference<>();
+    RecordingWebSocket gateway = new RecordingWebSocket();
+    TelnetServerHandler handler =
+        newHandler(
+            registry,
+            false,
+            () -> true,
+            (ip,
+                proxyConnectionId,
+                session,
+                tenant,
+                worldSlug,
+                realmSlug,
+                pointerVersion,
+                listener) -> {
+              listenerRef.set(listener);
+              listener.onOpen(gateway);
+              return CompletableFuture.completedFuture(gateway);
+            },
+            64);
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    try {
+      when(ctx.channel()).thenReturn(channel);
+      when(ctx.executor()).thenReturn(executor);
+      when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+      when(ctx.writeAndFlush(any())).thenReturn(null);
+
+      String prefix = "a".repeat(TelnetServerHandler.MAX_GATEWAY_TEXT_BYTES - 4);
+      handler.channelActive(ctx);
+      Mockito.clearInvocations(ctx);
+      listenerRef.get().onText(gateway, prefix + "\uD83D", false);
+      listenerRef.get().onText(gateway, "\uDE00", true);
+
+      verify(ctx).writeAndFlush(prefix + "😀\n");
+    } finally {
+      executor.shutdownGracefully();
+    }
+  }
+
+  @Test
+  void splitSurrogateJustOverGatewayTextLimitFailsClosed() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    AtomicReference<WebSocket.Listener> listenerRef = new AtomicReference<>();
+    RecordingWebSocket gateway = new RecordingWebSocket();
+    TelnetServerHandler handler =
+        newHandler(
+            registry,
+            false,
+            () -> true,
+            (ip,
+                proxyConnectionId,
+                session,
+                tenant,
+                worldSlug,
+                realmSlug,
+                pointerVersion,
+                listener) -> {
+              listenerRef.set(listener);
+              listener.onOpen(gateway);
+              return CompletableFuture.completedFuture(gateway);
+            },
+            64);
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    ChannelFuture closeFuture = mock(ChannelFuture.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    try {
+      when(ctx.channel()).thenReturn(channel);
+      when(ctx.executor()).thenReturn(executor);
+      when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+      when(ctx.writeAndFlush(any())).thenReturn(closeFuture);
+      when(closeFuture.addListener(any(ChannelFutureListener.class))).thenReturn(closeFuture);
+
+      String prefix = "a".repeat(TelnetServerHandler.MAX_GATEWAY_TEXT_BYTES - 3);
+      handler.channelActive(ctx);
+      Mockito.clearInvocations(ctx);
+      listenerRef.get().onText(gateway, prefix + "\uD83D", false);
+      listenerRef.get().onText(gateway, "\uDE00", true);
+
+      verify(ctx)
+          .writeAndFlush(
+              "DISCONNECT policy_violation Gateway response exceeded the maximum text limit\n");
+      verify(closeFuture).addListener(ChannelFutureListener.CLOSE);
+    } finally {
+      executor.shutdownGracefully();
+    }
+  }
+
+  @Test
   void gatewayMissingCloseMetadataFallsBackToBackendUnavailable() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     AtomicReference<WebSocket.Listener> listenerRef = new AtomicReference<>();
