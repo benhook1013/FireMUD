@@ -3380,7 +3380,7 @@ def assert_rejected(call, expected):
 
 missing_application_deployments = sorted(validator.SERVICE_IMAGES)
 assert_rejected(
-    lambda: validator.validate_service_consumers([], "pr-42"),
+    lambda: validator.validate_service_consumers([], "pr-42", "standalone", "public"),
     "preview application Deployment set is incomplete; missing: "
     + ", ".join(
         f"Deployment/{name}" for name in missing_application_deployments
@@ -3478,7 +3478,7 @@ for source_kind, volume_name, service in (
     malformed_volume[source_kind] = ["not-a-mapping"]
     assert_rejected(
         lambda documents=malformed_documents: validator.validate_service_consumers(
-            documents, "pr-42"
+            documents, "pr-42", "standalone", "public"
         ),
         f"Deployment/{service}.spec.template.spec.volumes[{volume_name}].{source_kind} is not an object",
     )
