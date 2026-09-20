@@ -130,9 +130,9 @@ public class VersionPublishCommandServiceImpl {
     try {
       List<PublishParticipantDigestDto> participantDigests =
           publishGateService.collectFullVersionParticipantDigests(dto);
+      publishGateService.assertGatePassed(dto, participantDigests);
       publishAttemptService.recordParticipantDigests(
           request.publishWorkflowId(), participantDigests);
-      publishGateService.assertGatePassed(dto, participantDigests);
       recordedParticipantDigestService.assertMatchesRecordedDigests(
           dto.tenantId(), PublishType.FULL_VERSION, participantDigests);
       exportedManifest = assetExportService.exportAssets(request.tenantId(), dto.versionNumber());
