@@ -1,16 +1,21 @@
 package net.firedevops.firemud.automationscripting.repository;
 
 import static net.firedevops.firemud.automationscripting.jooq.tables.Scripts.SCRIPTS;
+import static org.jooq.impl.DSL.field;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptsRecord;
 import net.firedevops.firemud.automationscripting.model.ScriptDefinitionIdentityConflictException;
 import org.jooq.DSLContext;
+import org.jooq.Field;
 import org.jooq.Record;
+import org.jooq.SelectFieldOrAsterisk;
 import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 
@@ -19,6 +24,9 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class ScriptDefinitionRepository {
+  private static final Field<Boolean> INSERTED_ROW =
+      field("xmax = 0", Boolean.class).as("inserted");
+
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP",
       justification = "The mutable definition is the repository save result contract.")
@@ -131,49 +139,34 @@ public class ScriptDefinitionRepository {
   private SaveResult insertOrGetByIdentity(ScriptDefinition entity) {
     ScriptsRecord record = dsl.newRecord(SCRIPTS);
     populate(record, entity);
-    Optional<ScriptDefinition> inserted =
-        dsl.insertInto(SCRIPTS)
-            .set(record)
-            .onConflict(SCRIPTS.TENANT_ID, SCRIPTS.VERSION, SCRIPTS.NAME)
-            .doNothing()
-            .returning()
-            .fetchOptional(this::toEntity);
-    if (inserted.isPresent()) {
-      ScriptDefinition winner = inserted.get();
-      if (!sameIdentity(winner, entity)) {
-        throw new IllegalStateException(
-            "script definition identity insert returned an unexpected row");
-      }
-      return new SaveResult(winner, true);
-    }
-
-    Optional<ScriptDefinition> updated =
-        dsl.update(SCRIPTS)
-            .set(SCRIPTS.DEFINITION, entity.getDefinition())
-            .set(
-                SCRIPTS.ROW_VERSION,
-                DSL.when(
-                        SCRIPTS.DEFINITION.isDistinctFrom(entity.getDefinition()),
-                        SCRIPTS.ROW_VERSION.add(1))
-                    .otherwise(SCRIPTS.ROW_VERSION))
-            .where(
-                SCRIPTS
-                    .TENANT_ID
-                    .eq(entity.getTenantId())
-                    .and(SCRIPTS.VERSION.eq(entity.getScriptVersion()))
-                    .and(SCRIPTS.NAME.eq(entity.getName())))
-            .returning()
-            .fetchOptional(this::toEntity);
-    ScriptDefinition winner =
-        updated.orElseThrow(
+    List<SelectFieldOrAsterisk> returningFields = new ArrayList<>();
+    Collections.addAll(returningFields, SCRIPTS.fields());
+    returningFields.add(INSERTED_ROW);
+    return dsl.insertInto(SCRIPTS)
+        .set(record)
+        .onConflict(SCRIPTS.TENANT_ID, SCRIPTS.VERSION, SCRIPTS.NAME)
+        .doUpdate()
+        .set(SCRIPTS.DEFINITION, DSL.excluded(SCRIPTS.DEFINITION))
+        .set(
+            SCRIPTS.ROW_VERSION,
+            DSL.when(
+                    SCRIPTS.DEFINITION.isDistinctFrom(DSL.excluded(SCRIPTS.DEFINITION)),
+                    SCRIPTS.ROW_VERSION.add(1))
+                .otherwise(SCRIPTS.ROW_VERSION))
+        .returningResult(returningFields)
+        .fetchOptional(
+            returned -> {
+              ScriptDefinition definition = toEntity(returned);
+              if (!sameIdentity(definition, entity)) {
+                throw new IllegalStateException(
+                    "script definition identity upsert returned an unexpected row");
+              }
+              return new SaveResult(definition, Boolean.TRUE.equals(returned.get(INSERTED_ROW)));
+            })
+        .orElseThrow(
             () ->
                 new IllegalStateException(
-                    "script definition identity conflict row disappeared during save"));
-    if (!sameIdentity(winner, entity)) {
-      throw new IllegalStateException(
-          "script definition identity update returned an unexpected row");
-    }
-    return new SaveResult(winner, false);
+                    "script definition identity upsert did not return a row"));
   }
 
   public List<ScriptDefinition> saveAll(Collection<ScriptDefinition> entities) {

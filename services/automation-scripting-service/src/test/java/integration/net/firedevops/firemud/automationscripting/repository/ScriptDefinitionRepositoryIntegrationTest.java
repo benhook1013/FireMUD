@@ -15,12 +15,17 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.model.ScriptDefinitionIdentityConflictException;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
+import org.jooq.ExecuteContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.jooq.impl.DefaultConfiguration;
+import org.jooq.impl.DefaultExecuteListener;
+import org.jooq.impl.DefaultExecuteListenerProvider;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -71,6 +76,33 @@ class ScriptDefinitionRepositoryIntegrationTest {
       adminDsl().execute("DROP SCHEMA " + schema + " CASCADE");
       schema = null;
     }
+  }
+
+  @Test
+  void insertOrReplaceUsesOnePostgresUpsertStatementPerSave() {
+    AtomicInteger statementCount = new AtomicInteger();
+    DefaultConfiguration configuration = new DefaultConfiguration();
+    configuration.set(dataSource(schema));
+    configuration.set(SQLDialect.POSTGRES);
+    configuration.set(
+        new DefaultExecuteListenerProvider(
+            new DefaultExecuteListener() {
+              @Override
+              public void executeStart(ExecuteContext context) {
+                statementCount.incrementAndGet();
+              }
+            }));
+    ScriptDefinitionRepository countedRepository =
+        new ScriptDefinitionRepository(DSL.using(configuration));
+
+    ScriptDefinition initial = countedRepository.save(script("{\"value\":1}"));
+    assertThat(statementCount).hasValue(1);
+
+    statementCount.set(0);
+    ScriptDefinition replacement = countedRepository.save(script("{\"value\":2}"));
+    assertThat(statementCount).hasValue(1);
+    assertThat(replacement.getId()).isEqualTo(initial.getId());
+    assertThat(replacement.getRowVersion()).isEqualTo(1);
   }
 
   @Test
