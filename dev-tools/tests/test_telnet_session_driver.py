@@ -1782,6 +1782,62 @@ class TelnetSessionDriverTest(unittest.TestCase):
                         f"{command_name.lower()}  DEMO@EXAMPLE.COM [REDACTED]\r\n",
                     )
 
+    def test_login_alias_near_match_does_not_crash_receiver(self):
+        secret = "LOGIN inner-secret"
+
+        def handler(connection):
+            command = b""
+            while not command.endswith(b"\r\n"):
+                command += connection.recv(1)
+            self.assertEqual(
+                command,
+                b"LOGIN demo@example.com LOGIN inner-secret\r\n",
+            )
+            connection.sendall(
+                b"login demo@example.com login inner-secret\r\n"
+                b"A later room line.\r\n"
+            )
+            time.sleep(0.08)
+
+        server = FakeServer(handler)
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "session.jsonl"
+            output = []
+            session = telnet_session.TelnetSession(
+                "127.0.0.1",
+                server.port,
+                transcript,
+                output=output.append,
+                tls_enabled=False,
+            )
+            session.connect()
+            session.send_command(f"LOGIN demo@example.com {secret}")
+            records = wait_for(
+                session.store,
+                lambda rows: any(
+                    row.get("text") == "A later room line.\r\n" for row in rows
+                ),
+            )
+            records = wait_for(
+                session.store,
+                lambda rows: any(
+                    row.get("event") == "disconnect"
+                    and row.get("reason") == "remote_eof"
+                    for row in rows
+                ),
+            )
+            session.close("alias_near_match_complete")
+            server.close_and_check()
+
+            transcript_text = transcript.read_text(encoding="utf-8")
+            rendered = "\n".join(output)
+            received = [
+                row["text"] for row in records if row.get("event") == "received"
+            ]
+            self.assertEqual(received, ["A later room line.\r\n"])
+            self.assertNotIn(secret.lower(), transcript_text.lower())
+            self.assertNotIn(secret.lower(), rendered.lower())
+
     def test_login_redaction_does_not_skip_earlier_variant_for_later_exact_match(self):
         secret = "LOGIN inner-secret"
         earlier_variant = "login inner-secrex"

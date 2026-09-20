@@ -669,7 +669,13 @@ class TelnetSession:
                     if matched == alias_length or matched == alias_length + 1:
                         alias_candidates.append(candidate)
                 if alias_candidates:
-                    candidates = [candidate for candidate in candidates if candidate not in alias_candidates]
+                    filtered_candidates = [
+                        candidate
+                        for candidate in candidates
+                        if candidate not in alias_candidates
+                    ]
+                    if filtered_candidates:
+                        candidates = filtered_candidates
             start = min(candidate[0] for candidate in candidates)
             matching_candidates = [candidate for candidate in candidates if candidate[0] == start]
             matches = []

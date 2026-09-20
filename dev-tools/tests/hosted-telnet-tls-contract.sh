@@ -153,7 +153,7 @@ else:
     raise SystemExit("tcp-proxy-service fixture is missing")
 path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
 PY
-TELNET_TLS_MOUNT_ERROR="previewStack.services.tcp-proxy-service.mountTelnetTls must be true for public hosted-controller Telnet TLS"
+TELNET_TLS_MOUNT_ERROR="previewStack.services.tcp-proxy-service.mountTelnetTls must be true for public TCP Proxy Telnet TLS"
 if helm template invalid-missing-telnet-mount "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values-controller-missing-mount.yaml" \
   --namespace pr-42 >/dev/null 2>"$TMP_DIR/invalid-missing-telnet-mount.err"; then
@@ -265,6 +265,34 @@ path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
 PY
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values.yaml" --namespace pr-42 >"$TMP_DIR/rendered.yaml"
+cp "$TMP_DIR/values.yaml" "$TMP_DIR/values-standalone-missing-mount.yaml"
+python3 - "$TMP_DIR/values-standalone-missing-mount.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+values = yaml.safe_load(path.read_text(encoding="utf-8"))
+for service in values["previewStack"]["services"]:
+    if service["name"] == "tcp-proxy-service":
+        service["mountTelnetTls"] = False
+        break
+else:
+    raise SystemExit("tcp-proxy-service fixture is missing")
+path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+if helm template invalid-standalone-missing-telnet-mount "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/values-standalone-missing-mount.yaml" \
+  --namespace pr-42 >/dev/null 2>"$TMP_DIR/invalid-standalone-missing-telnet-mount.err"; then
+  echo "chart rendered standalone public TCP Proxy without the Telnet TLS mount" >&2
+  exit 1
+fi
+if ! grep -Fq "$TELNET_TLS_MOUNT_ERROR" "$TMP_DIR/invalid-standalone-missing-telnet-mount.err"; then
+  echo "chart did not report the expected standalone missing Telnet TLS mount diagnostic" >&2
+  sed -n '1,20p' "$TMP_DIR/invalid-standalone-missing-telnet-mount.err" >&2
+  exit 1
+fi
 cp "$TMP_DIR/values.yaml" "$TMP_DIR/values-omitted.yaml"
 python3 - "$TMP_DIR/values-omitted.yaml" <<'PY'
 import sys

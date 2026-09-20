@@ -34,6 +34,56 @@ if tcp_proxy_rules != [
     }
 ]:
     raise SystemExit(f"expected exactly one TCP Proxy TCP/8443 ingress rule: {tcp_proxy_rules}")
+traefik_rules = [
+    rule
+    for rule in ingress
+    if rule.get("from") == [
+        {
+            "namespaceSelector": {
+                "matchLabels": {"kubernetes.io/metadata.name": "kube-system"}
+            },
+            "podSelector": {"matchLabels": {"app.kubernetes.io/name": "traefik"}},
+        }
+    ]
+]
+if traefik_rules != [
+    {
+        "from": [
+            {
+                "namespaceSelector": {
+                    "matchLabels": {"kubernetes.io/metadata.name": "kube-system"}
+                },
+                "podSelector": {"matchLabels": {"app.kubernetes.io/name": "traefik"}},
+            }
+        ],
+        "ports": [{"protocol": "TCP", "port": 8080}],
+    }
+]:
+    raise SystemExit(f"expected exactly one kube-system Traefik TCP/8080 ingress rule: {traefik_rules}")
+public_rules = [
+    rule
+    for rule in ingress
+    if rule.get("from") == [
+        {"ipBlock": {"cidr": "0.0.0.0/0"}},
+        {"ipBlock": {"cidr": "::/0"}},
+    ]
+]
+if public_rules != [
+    {
+        "from": [
+            {"ipBlock": {"cidr": "0.0.0.0/0"}},
+            {"ipBlock": {"cidr": "::/0"}},
+        ],
+        "ports": [{"protocol": "TCP", "port": 8080}],
+    }
+]:
+    raise SystemExit(f"expected exactly one dual-stack public TCP/8080 ingress rule: {public_rules}")
+if any(
+    peer == {"podSelector": {}}
+    for rule in ingress
+    for peer in rule.get("from", [])
+):
+    raise SystemExit("base Gateway policy must not allow TCP ingress from every same-namespace pod")
 if any(
     port.get("protocol") == "TCP" and port.get("port") == 6565
     for rule in ingress

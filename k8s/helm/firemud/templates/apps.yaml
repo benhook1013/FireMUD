@@ -68,10 +68,10 @@
 {{- $serviceType := default "ClusterIP" $service.serviceType }}
 {{- $publicTelnetService := and (eq $service.name "tcp-proxy-service") (or (eq $serviceType "NodePort") (eq $serviceType "LoadBalancer")) }}
 {{- $telnetPort := "" }}
-{{- if and $publicTelnetService (eq $certificateIdentityMode "hosted-controller") }}
-{{- if not $service.mountTelnetTls }}
-{{- fail "previewStack.services.tcp-proxy-service.mountTelnetTls must be true for public hosted-controller Telnet TLS" }}
+{{- if and $publicTelnetService $telnetTlsEnabled (not $service.mountTelnetTls) }}
+{{- fail "previewStack.services.tcp-proxy-service.mountTelnetTls must be true for public TCP Proxy Telnet TLS" }}
 {{- end }}
+{{- if and $publicTelnetService (eq $certificateIdentityMode "hosted-controller") }}
 {{- $telnetListenerCount := 0 }}
 {{- range $port := $service.ports }}
 {{- if eq (toString $port.port) "2323" }}
