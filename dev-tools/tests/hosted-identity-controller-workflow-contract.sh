@@ -1524,6 +1524,11 @@ janitor_cleanup_step = next(
     for step in janitor_steps
     if step.get("name") == "Remove hosted identity requester kubeconfig"
 )
+janitor_runtime_cleanup_step = next(
+    step
+    for step in janitor_steps
+    if step.get("name") == "Remove preview runtime kubeconfig"
+)
 assert janitor_requester_step["with"] == {
     "content": "${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}",
     "path": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
@@ -1556,8 +1561,14 @@ assert janitor_cleanup_step.get("if") == "${{ always() }}"
 assert janitor_cleanup_step.get("run") == (
     'rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"'
 )
+assert janitor_runtime_cleanup_step.get("if") == "${{ always() }}"
+assert janitor_runtime_cleanup_step.get("run") == (
+    'rm -f -- "${PREVIEW_RUNTIME_KUBECONFIG:-$RUNNER_TEMP/preview-kubeconfig.yaml}"'
+)
 target_step = next(step for step in validate_job["steps"] if step.get("id") == "target")
 target_script = target_step["run"]
+assert target_script.count('download_source_artifact "$ARTIFACT_NAME"') == 1
+assert target_script.count('metadata_event="$(jq -r') == 1
 workflow_run_start = target_script.index('if [[ "$EVENT_NAME" == workflow_run ]]; then')
 destroy_branch_start = target_script.index(
     'elif [[ "$EVENT_NAME" == pull_request_target ]]; then', workflow_run_start

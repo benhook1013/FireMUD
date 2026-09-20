@@ -116,4 +116,4 @@ jobs:
 
       - name: Remove preview runtime kubeconfig
         if: ${{ always() }}
-        run: rm -f -- "$RUNNER_TEMP/preview-kubeconfig.yaml"
+        run: rm -f -- "${PREVIEW_RUNTIME_KUBECONFIG:-$RUNNER_TEMP/preview-kubeconfig.yaml}"

@@ -283,16 +283,6 @@ jobs:
               "Ignoring source artifact whose name is not bound to its canonical PR head."
           fi
           if [[ "$ACTION" == deploy ]]; then
-            if [[ -z "$ARTIFACT_NAME" ]]; then
-              ARTIFACT_NAME="preview-render-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}"
-            fi
-            if [[ "$ARTIFACT_KIND" != render ]]; then
-              download_source_artifact "$ARTIFACT_NAME"
-              require_exact_files "preview-metadata.json,preview-rendered-sanitized.yaml"
-            fi
-            metadata_event="$(jq -r '.event // empty' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
-            [[ "$metadata_event" == "$SOURCE_EVENT" ]] || emit_no_action \
-              "Ignoring render artifact whose event does not match its source run."
             metadata_pr_number="$(jq -er '.prNumber | select(type == "number" and floor == .)' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
             metadata_head_sha="$(jq -er '.headSha | select(type == "string")' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
             [[ "$metadata_pr_number" == "$PR_NUMBER" ]] || emit_no_action \
