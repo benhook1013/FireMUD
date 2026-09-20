@@ -20,33 +20,35 @@ Completed phases: capability allocation, implementation/proof reconciliation, cr
 
 ### Corpus section programme status
 
-This compact checklist preserves the last recorded section map and status from the historical corpus programme. It is a non-normative planning record: later work may supersede a row, a row marked complete records historical evidence rather than fresh current-head proof, and pending rows require reconciliation of preserved preparation before resuming. The lane owner updates this table when a section actually completes; individual 5B pull requests retain their own tracking.
+This is the sole live corpus section-status index for a fresh whole-corpus review restart after the completed ADR work. The [whole-corpus authority review plan](./whole-corpus-authority-review-plan.md) defines the section boundaries and method; this subsection records the current status and one main PR slot per section. Prior merged reviews and pull requests are historical evidence only and do not establish completion of this restart. Section ownership and main PR assignment remain unconfirmed until the restart establishes them.
 
-| Section | Original scope | Status |
-| --- | --- | --- |
-| 1A | Identity, entitlement, and hosted terms | Pending |
-| 1B | Admission, session continuity, and reconnect | Pending |
-| 1C | Commands, output, and frontend presentation | Pending |
-| 1D | Social, communication, and moderation-facing UX | Pending |
-| 2A | Tick scheduling and region authority | Pending |
-| 2B | Mutation and spatial authority | Pending; historical Weather work needs reconciliation |
-| 2C | Gameplay entities, effects, and economy | Pending |
-| 3A | Authored content and extension packaging | Pending |
-| 3B | Settings, policy, and effective configuration | Pending |
-| 3C | Release lifecycle and activation | Pending |
-| 4A | Script ingress, sandbox, and runtime execution | Pending |
-| 4B | Scheduling, quotas, reload, and operational fairness | Pending |
-| 5A | API, message, identifier, tenant, time, and authorization primitives | Historically complete; recorded complete through the merged 5A slice in PR #2662 |
-| 5B | SQL, migration, schema, and retention | In progress and unfinished; selected PR #2677 is paused, PRs #2678 and #2679 remain parked, and merged PR #2698 does not establish whole-5B completion |
-| 5C | Redis roles and cache/rate-limit semantics | Unfinished prepared work; later 5C material is preserved with the 5D work in PR #2661 and needs current reconciliation |
-| 5D | Idempotency, outbox, replay, saga, and workflow patterns | Unfinished prepared work; later 5D material is preserved with the 5C work in PR #2661 and needs current reconciliation |
-| 6A | Gateway routes, traffic planes, sharding, and close taxonomy | Pending |
-| 6B | WebSocket, Telnet, protocol bridge, and session transport | Pending |
-| 6C | Logging & Admin/operator ingress and action authorization | Pending |
-| 6D | Environments, deployment, assets, backup, and delivery | Pending |
-| 7A | Logs, metrics, tracing, SLOs, and degraded operation | Pending; no detailed status found in recovered records |
-| 7B | Verification boundaries, recovery evidence, and compliance | Pending; no detailed status found in recovered records |
-| 7C | Incident and operational proof surfaces | Pending |
+Existing 5B implementation work remains open in PRs #2808, #2678, #2804, and #2679. Their attribution and any repackaging into a future main PR will be adjudicated after 5A; these PRs and older merged reviews remain historical implementation/review evidence and do not count as completed restart section reviews.
+
+| Section | Original scope | Status | Main PR |
+| --- | --- | --- | --- |
+| 1A | Identity, entitlement, and hosted terms | Queued | — |
+| 1B | Admission, session continuity, and reconnect | Queued | — |
+| 1C | Commands, output, and frontend presentation | Queued | — |
+| 1D | Social, communication, and moderation-facing UX | Queued | — |
+| 2A | Tick scheduling and region authority | Queued | — |
+| 2B | Mutation and spatial authority | Queued | — |
+| 2C | Gameplay entities, effects, and economy | Queued | — |
+| 3A | Authored content and extension packaging | Queued | — |
+| 3B | Settings, policy, and effective configuration | Queued | — |
+| 3C | Release lifecycle and activation | Queued | — |
+| 4A | Script ingress, sandbox, and runtime execution | Queued | — |
+| 4B | Scheduling, quotas, reload, and operational fairness | Queued | — |
+| 5A | API, message, identifier, tenant, time, and authorization primitives | Next | — |
+| 5B | SQL, migration, schema, and retention | Queued | — |
+| 5C | Redis roles and cache/rate-limit semantics | Queued | — |
+| 5D | Idempotency, outbox, replay, saga, and workflow patterns | Queued | — |
+| 6A | Gateway routes, traffic planes, sharding, and close taxonomy | Queued | — |
+| 6B | WebSocket, Telnet, protocol bridge, and session transport | Queued | — |
+| 6C | Logging & Admin/operator ingress and action authorization | Queued | — |
+| 6D | Environments, deployment, assets, backup, and delivery | Queued | — |
+| 7A | Logs, metrics, tracing, SLOs, and degraded operation | Queued | — |
+| 7B | Verification boundaries, recovery evidence, and compliance | Queued | — |
+| 7C | Incident and operational proof surfaces | Queued | — |
 
 ## Implementation Status
 
