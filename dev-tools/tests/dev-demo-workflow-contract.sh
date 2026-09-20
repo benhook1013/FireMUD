@@ -47,6 +47,12 @@ for required in \
   'if secret_exists "$secret_name"; then' \
   'URI:${expected_uri}' \
   '"${workload}.${namespace}.svc.cluster.local"' \
+  'basic_constraints' \
+  'workload certificate must be a non-CA leaf' \
+  'key_usage' \
+  'DigitalSignature,KeyEncipherment' \
+  'extended_key_usage' \
+  'TLSWebServerAuthentication,TLSWebClientAuthentication' \
   'source_name="${namespace}-grpc-${workload}"' \
   '--from-file=tls.crt="$workload_cert"' \
   '--from-file=tls.key="$workload_key"' \
@@ -65,6 +71,126 @@ python3 "$runner_label_validator" "$workflow" "$reconciler"
 }
 fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$fixture_dir"' EXIT
+
+# Exercise the standalone reuse validator with one canonical leaf and three
+# malformed profiles. This sources only the target helper functions so the
+# contract remains independent of Kubernetes and tests the exact checks used
+# before an existing Secret is projected again.
+certificate_fixture_dir="$fixture_dir/certificates"
+mkdir -p "$certificate_fixture_dir"
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout "$certificate_fixture_dir/ca.key" \
+  -out "$certificate_fixture_dir/ca.crt" \
+  -days 365 -subj '/CN=FireMUD standalone contract CA' >/dev/null 2>&1
+"$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh" --workload \
+  "$certificate_fixture_dir/ca.crt" "$certificate_fixture_dir/ca.key" \
+  "$certificate_fixture_dir/valid.crt" "$certificate_fixture_dir/valid.key" \
+  pr-42 game-design-service
+
+make_profile_certificate() {
+  local name="$1"
+  local basic_constraints="$2"
+  local key_usage="$3"
+  local extended_key_usage="$4"
+  local config="$certificate_fixture_dir/${name}.cnf"
+  local key="$certificate_fixture_dir/${name}.key"
+  local csr="$certificate_fixture_dir/${name}.csr"
+  local serial="$certificate_fixture_dir/${name}.srl"
+  cat >"$config" <<EOF
+[req]
+distinguished_name = req_distinguished_name
+req_extensions = v3_req
+prompt = no
+
+[req_distinguished_name]
+CN = firemud-grpc-game-design-service
+
+[v3_req]
+basicConstraints = ${basic_constraints}
+keyUsage = ${key_usage}
+extendedKeyUsage = ${extended_key_usage}
+subjectAltName = @alt_names
+
+[alt_names]
+URI.1 = spiffe://firemud/ns/pr-42/sa/game-design-service
+DNS.1 = game-design-service
+DNS.2 = game-design-service.pr-42
+DNS.3 = game-design-service.pr-42.svc
+DNS.4 = game-design-service.pr-42.svc.cluster.local
+EOF
+  openssl genrsa -out "$key" 2048 >/dev/null 2>&1
+  openssl req -new -key "$key" -config "$config" -out "$csr" >/dev/null 2>&1
+  openssl x509 -req -in "$csr" \
+    -CA "$certificate_fixture_dir/ca.crt" \
+    -CAkey "$certificate_fixture_dir/ca.key" \
+    -CAserial "$serial" -CAcreateserial -out "$certificate_fixture_dir/${name}.crt" \
+    -days 365 -sha256 -extensions v3_req -extfile "$config" >/dev/null 2>&1
+}
+
+make_profile_certificate \
+  ca-leaf critical,CA:true critical,keyCertSign,cRLSign serverAuth,clientAuth
+make_profile_certificate \
+  missing-key-usage critical,CA:false critical,digitalSignature serverAuth,clientAuth
+make_profile_certificate \
+  missing-eku critical,CA:false critical,digitalSignature,keyEncipherment serverAuth
+
+validator_source="$certificate_fixture_dir/validate-workload-certificate.sh"
+{
+  awk '
+    /^assert_key_matches_certificate\(\)/ { capture = 1 }
+    /^ca_bundle_contains\(\)/ { capture = 0 }
+    capture { print }
+  ' "$standalone_grpc_tls"
+  awk '
+    /^validate_workload_certificate\(\)/ { capture = 1 }
+    /^shared_ca=/ { capture = 0 }
+    capture { print }
+  ' "$standalone_grpc_tls"
+} >"$validator_source"
+
+if ! (
+  # shellcheck disable=SC2030 # The extracted validator reads this subshell-local namespace.
+  export namespace=pr-42
+  # shellcheck disable=SC1090 # The test extracts the exact target function body.
+  source "$validator_source"
+  validate_workload_certificate \
+    "$certificate_fixture_dir/valid.crt" \
+    "$certificate_fixture_dir/valid.key" \
+    game-design-service
+); then
+  echo "canonical standalone workload certificate was rejected" >&2
+  exit 1
+fi
+
+expect_invalid_workload_profile() {
+  local name="$1"
+  local expected_message="$2"
+  local output
+  if output="$(
+    {
+      # shellcheck disable=SC2031 # The extracted validator reads this command-substitution namespace.
+      export namespace=pr-42
+      # shellcheck disable=SC1090 # The test extracts the exact target function body.
+      source "$validator_source"
+      validate_workload_certificate \
+        "$certificate_fixture_dir/${name}.crt" \
+        "$certificate_fixture_dir/${name}.key" \
+        game-design-service
+    } 2>&1
+  )"; then
+    echo "accepted invalid standalone certificate profile: ${name}" >&2
+    exit 1
+  fi
+  [[ "$output" == *"$expected_message"* ]] || {
+    echo "invalid ${name} profile lacked diagnostic: ${expected_message}" >&2
+    printf '%s\n' "$output" >&2
+    exit 1
+  }
+}
+
+expect_invalid_workload_profile ca-leaf 'workload certificate must be a non-CA leaf'
+expect_invalid_workload_profile missing-key-usage 'key usage must be exactly digitalSignature/keyEncipherment'
+expect_invalid_workload_profile missing-eku 'EKU must be exactly serverAuth/clientAuth'
 
 expect_mode() {
   local expected="$1"
@@ -770,6 +896,13 @@ for required in (
     '"${projection_prefix}-gateway-internal-ws|gateway-internal-ws|tls.crt,tls.key,ca.crt"',
     '"${projection_prefix}-tcp-proxy-bridge|tcp-proxy-bridge|tls.crt,tls.key,ca.crt"',
     '"firemud-grpc-tls|grpc|tls.crt,tls.key,ca.crt,client.crt,client.key"',
+    'publication_workloads=(',
+    'firemud-grpc-${workload}|grpc-publication-${workload}|tls.crt,tls.key,ca.crt',
+    '    game-design-service',
+    '    world-management-service',
+    '    entity-management-service',
+    '    game-logic-service',
+    '    automation-scripting-service',
     '.metadata.labels["firemud.dev/managed-by"] == "hosted-identity-controller"',
     '.metadata.labels["firemud.dev/identity-name"] == $identity',
     '.metadata.labels["firemud.dev/role"] == $role',
