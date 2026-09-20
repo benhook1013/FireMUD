@@ -9,8 +9,10 @@ import net.firedevops.firemud.common.grpc.CommonGrpcServerConfiguration;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcServerTlsReloader;
 import net.firedevops.firemud.common.grpc.GrpcTlsMaterialResolver;
+import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
 import net.firedevops.firemud.common.health.HttpEndpointAvailabilityChecker;
 import net.firedevops.firemud.common.health.ReadinessTransitionTracker;
+import net.firedevops.firemud.common.health.TlsCertificateReadinessHealthEndpointGroupsPostProcessor;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.runtime.RuntimeIdentityController;
 import net.firedevops.firemud.common.runtime.RuntimeIdentityFactory;
@@ -31,6 +33,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication.Type;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.health.actuate.endpoint.HealthEndpointGroupsPostProcessor;
+import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.boot.info.BuildProperties;
 import org.springframework.boot.info.GitProperties;
 import org.springframework.boot.micrometer.metrics.autoconfigure.MeterRegistryCustomizer;
@@ -152,6 +156,25 @@ public class CommonCoreAutoConfiguration {
   @ConditionalOnMissingBean
   public ReadinessTransitionTracker readinessTransitionTracker(MeterRegistry meterRegistry) {
     return new ReadinessTransitionTracker(meterRegistry);
+  }
+
+  @Bean(
+      name =
+          TlsCertificateReadinessHealthEndpointGroupsPostProcessor
+              .TLS_CERTIFICATE_RELOAD_CONTRIBUTOR)
+  @ConditionalOnMissingBean(
+      name =
+          TlsCertificateReadinessHealthEndpointGroupsPostProcessor
+              .TLS_CERTIFICATE_RELOAD_CONTRIBUTOR)
+  public HealthIndicator tlsCertificateReloadHealthIndicator() {
+    return TlsCertificateWatcher::health;
+  }
+
+  @Bean
+  @ConditionalOnMissingBean(TlsCertificateReadinessHealthEndpointGroupsPostProcessor.class)
+  public HealthEndpointGroupsPostProcessor tlsCertificateReadinessHealthEndpointGroupsPostProcessor(
+      @Value("${firemud.tls.readiness-gate.enabled:false}") boolean readinessGateEnabled) {
+    return new TlsCertificateReadinessHealthEndpointGroupsPostProcessor(readinessGateEnabled);
   }
 
   @Configuration(proxyBeanMethods = false)
