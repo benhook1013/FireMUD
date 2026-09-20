@@ -92,6 +92,23 @@ class TlsCertificateWatcherTest {
   }
 
   @Test
+  void closedWatcherCannotStartOrPoisonHealth(@TempDir Path directory) throws Exception {
+    Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
+    WatcherCounts baseline = watcherCounts(TlsCertificateWatcher.health());
+    TlsCertificateWatcher watcher = new TlsCertificateWatcher(List.of(certificate), () -> {});
+
+    try {
+      watcher.close();
+
+      assertThrows(IllegalStateException.class, watcher::start);
+      assertFalse(watcher.isRunning());
+      assertHealthDelta(baseline, 0, 0, 0, TlsCertificateWatcher.health());
+    } finally {
+      watcher.close();
+    }
+  }
+
+  @Test
   void healthyWatcherReportsWatching(@TempDir Path directory) throws Exception {
     Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
     WatcherCounts baseline = watcherCounts(TlsCertificateWatcher.health());

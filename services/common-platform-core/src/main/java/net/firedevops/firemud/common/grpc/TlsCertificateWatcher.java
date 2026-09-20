@@ -60,6 +60,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
   private final Object callbackStateMonitor = new Object();
   private final Object retryMonitor = new Object();
   private final Object registrationMonitor = new Object();
+  private final Object lifecycleMonitor = new Object();
   private final Set<Thread> activeCallbacks = ConcurrentHashMap.newKeySet();
   private ScheduledFuture<?> retryTask;
   private boolean retryScheduled;
@@ -68,6 +69,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
   private ScheduledFuture<?> registrationRetryTask;
   private boolean registrationRetryScheduled;
   private int registrationRetryAttempts;
+  private boolean closed;
   private final Thread thread;
 
   public static TlsCertificateWatcher createAndStart(List<Path> files, Runnable onChange)
@@ -138,22 +140,27 @@ public class TlsCertificateWatcher implements AutoCloseable {
   }
 
   public void start() {
-    if (!started.compareAndSet(false, true)) {
-      throw new IllegalThreadStateException("TLS certificate watcher has already been started");
-    }
-    ACTIVE_WATCHERS.add(this);
-    try {
-      thread.start();
-    } catch (RuntimeException e) {
-      ACTIVE_WATCHERS.remove(this);
-      retryExecutor.shutdownNow();
-      running.set(false);
-      try {
-        watchService.close();
-      } catch (IOException closeFailure) {
-        e.addSuppressed(closeFailure);
+    synchronized (lifecycleMonitor) {
+      if (closed) {
+        throw new IllegalStateException("TLS certificate watcher has been closed");
       }
-      throw e;
+      if (!started.compareAndSet(false, true)) {
+        throw new IllegalThreadStateException("TLS certificate watcher has already been started");
+      }
+      ACTIVE_WATCHERS.add(this);
+      try {
+        thread.start();
+      } catch (RuntimeException e) {
+        ACTIVE_WATCHERS.remove(this);
+        retryExecutor.shutdownNow();
+        running.set(false);
+        try {
+          watchService.close();
+        } catch (IOException closeFailure) {
+          e.addSuppressed(closeFailure);
+        }
+        throw e;
+      }
     }
   }
 
@@ -556,7 +563,13 @@ public class TlsCertificateWatcher implements AutoCloseable {
 
   @Override
   public void close() throws IOException {
-    running.set(false);
+    synchronized (lifecycleMonitor) {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      running.set(false);
+    }
     synchronized (retryMonitor) {
       retryScheduled = false;
       registrationRetryScheduled = false;
