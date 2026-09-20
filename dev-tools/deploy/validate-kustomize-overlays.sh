@@ -27,7 +27,7 @@ production_policy_applies_to_changes() {
 
   while IFS= read -r changed_file; do
     case "$changed_file" in
-      k8s/overlays/prod|k8s/overlays/prod/*|k8s/base|k8s/base/*|k8s/postgres|k8s/postgres/*|k8s/velero|k8s/velero/*)
+      k8s/overlays/prod|k8s/overlays/prod/*)
         return 0
         ;;
     esac

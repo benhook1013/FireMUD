@@ -204,12 +204,12 @@ grep -q "registry inspection failed" "$OUTPUT_FILE" || {
 }
 
 assert_production_change_requires_attestation() {
+  local test_changed_file="$1"
   if (
     # shellcheck disable=SC1091
     source "$REPO_ROOT/dev-tools/deploy/validate-kustomize-overlays.sh"
-    export TEST_CHANGED_FILE="$1"
     changed_files_between_base_and_head() {
-      printf '%s\n' "$TEST_CHANGED_FILE"
+      printf '%s\n' "$test_changed_file"
     }
     GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop run_preflight_policy_checks
   ) >"$OUTPUT_FILE" 2>&1; then
@@ -225,11 +225,34 @@ assert_production_change_requires_attestation() {
 }
 
 for changed_file in \
-  'k8s/overlays/prod/kustomization.yaml' \
+  'k8s/overlays/prod' \
+  'k8s/overlays/prod/kustomization.yaml'; do
+  assert_production_change_requires_attestation "$changed_file"
+done
+
+assert_nonproduction_change_skips_attestation() {
+  local test_changed_file="$1"
+  (
+    # shellcheck disable=SC1091
+    source "$REPO_ROOT/dev-tools/deploy/validate-kustomize-overlays.sh"
+    changed_files_between_base_and_head() {
+      printf '%s\n' "$test_changed_file"
+    }
+    GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop run_preflight_policy_checks
+  ) >"$OUTPUT_FILE" 2>&1
+
+  grep -q "Skipping static preflight policy enforcement" "$OUTPUT_FILE" || {
+    echo "Non-production change unexpectedly required production attestation: $1" >&2
+    cat "$OUTPUT_FILE" >&2
+    exit 1
+  }
+}
+
+for changed_file in \
   'k8s/base/account-service.yaml' \
   'k8s/postgres/pg-dump-cronjob.yaml' \
   'k8s/velero/schedule.yaml'; do
-  assert_production_change_requires_attestation "$changed_file"
+  assert_nonproduction_change_skips_attestation "$changed_file"
 done
 
 if (
@@ -330,13 +353,81 @@ grep -q "Skipping static preflight policy enforcement" "$OUTPUT_FILE" || {
     echo "unexpected python3 invocation: $*" >&2
     return 1
   }
-  export GITHUB_EVENT_NAME=pull_request
-  export GITHUB_BASE_REF=develop
-  main
+  GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop main
   if [[ "$production_preflight_invoked" != "true" ]]; then
     echo "Validator main did not invoke canonical production preflight" >&2
     exit 1
   fi
 )
+
+if ! (
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/dev-tools/deploy/validate-kustomize-overlays.sh"
+  changed_files_between_base_and_head() {
+    printf '%s\n' 'k8s/base/account-service.yaml'
+  }
+  kubectl_render_trace="$(mktemp)"
+  docker_image_inspect_trace="$(mktemp)"
+  trap 'rm -f "$kubectl_render_trace" "$docker_image_inspect_trace"' EXIT
+  python3_invoked="false"
+  kubectl() {
+    if [[ "${1:-}" != "kustomize" ]]; then
+      echo "unexpected kubectl invocation: $*" >&2
+      return 1
+    fi
+    printf '%s\n' "${2:-}" >>"$kubectl_render_trace"
+    printf '%s\n' \
+      'apiVersion: v1' \
+      'kind: ConfigMap' \
+      'metadata:' \
+      '  name: contract' \
+      'data:' \
+      '  image: ghcr.io/benhook1013/example-service@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  }
+  docker() {
+    if [[ "${1:-}" = image && "${2:-}" = inspect ]]; then
+      printf '%s\n' "${3:-}" >>"$docker_image_inspect_trace"
+      return 0
+    fi
+    echo "unexpected docker invocation: $*" >&2
+    return 1
+  }
+  python3() {
+    python3_invoked="true"
+    echo "unexpected production preflight invocation: $*" >&2
+    return 1
+  }
+  GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop main
+  if [[ "$python3_invoked" != "false" ]]; then
+    echo "Shared-base validation unexpectedly invoked production preflight" >&2
+    exit 1
+  fi
+  mapfile -t kubectl_render_calls <"$kubectl_render_trace"
+  mapfile -t docker_image_inspect_calls <"$docker_image_inspect_trace"
+  if [[ "${#kubectl_render_calls[@]}" -ne 3 ]]; then
+    echo "Expected stage backup-marker plus stage/prod image renders, got ${#kubectl_render_calls[@]}" >&2
+    exit 1
+  fi
+  if [[ "${kubectl_render_calls[0]}" != "$ROOT_DIR/k8s/overlays/stage" || \
+    "${kubectl_render_calls[1]}" != "$ROOT_DIR/k8s/overlays/stage" || \
+    "${kubectl_render_calls[2]}" != "$ROOT_DIR/k8s/overlays/prod" ]]; then
+    printf 'Unexpected overlay render sequence: %s\n' "${kubectl_render_calls[*]}" >&2
+    exit 1
+  fi
+  if [[ "${#docker_image_inspect_calls[@]}" -ne 2 ]]; then
+    echo "Expected both stage/prod image validations, got ${#docker_image_inspect_calls[@]}" >&2
+    exit 1
+  fi
+) >"$OUTPUT_FILE" 2>&1; then
+  echo "Shared-base main-path validation contract failed" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
+fi
+
+grep -q "Skipping static preflight policy enforcement" "$OUTPUT_FILE" || {
+  echo "Shared-base main path did not skip production attestation enforcement" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
+}
 
 echo "overlay preflight contract checks passed"
