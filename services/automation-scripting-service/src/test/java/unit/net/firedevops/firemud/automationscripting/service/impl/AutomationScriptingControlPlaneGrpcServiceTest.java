@@ -1979,7 +1979,18 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
     Mockito.when(workItemService.replayDeadLetters(Mockito.any()))
-        .thenReturn(new ScriptWorkItemService.ReplayResult(2L, 1L));
+        .thenReturn(
+            new ScriptWorkItemService.ReplayResult(
+                2L,
+                1L,
+                List.of(
+                    new ScriptWorkItemService.ReplayItemResult(
+                        "77", "retried_evaluation", "", "", 4L),
+                    new ScriptWorkItemService.ReplayItemResult(
+                        "88", "resumed_dispatch", "", "", 5L),
+                    new ScriptWorkItemService.ReplayItemResult(
+                        "99", "rejected", "recovery_in_progress", "", 6L)),
+                "replay-fingerprint"));
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             workItemService,
@@ -2001,6 +2012,49 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().hasError()).isFalse();
     assertThat(ref.get().getReplayedCount()).isEqualTo(2L);
     assertThat(ref.get().getRejectedCount()).isEqualTo(1L);
+    assertThat(ref.get().getRequestFingerprint()).isEqualTo("replay-fingerprint");
+    assertThat(ref.get().getResultsList()).hasSize(3);
+    assertThat(ref.get().getResults(0).getWorkItemId()).isEqualTo("77");
+    assertThat(ref.get().getResults(0).getOutcome()).isEqualTo("retried_evaluation");
+    assertThat(ref.get().getResults(0).getFailureGeneration()).isEqualTo(4L);
+    assertThat(ref.get().getResults(1).getWorkItemId()).isEqualTo("88");
+    assertThat(ref.get().getResults(1).getOutcome()).isEqualTo("resumed_dispatch");
+    assertThat(ref.get().getResults(1).getFailureGeneration()).isEqualTo(5L);
+    assertThat(ref.get().getResults(2).getWorkItemId()).isEqualTo("99");
+    assertThat(ref.get().getResults(2).getOutcome()).isEqualTo("rejected");
+    assertThat(ref.get().getResults(2).getRejectionReason()).isEqualTo("recovery_in_progress");
+    assertThat(ref.get().getResults(2).getFailureGeneration()).isEqualTo(6L);
+  }
+
+  @Test
+  void mapsEmptyReplayResultListWithoutFabricatingItems() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(workItemService.replayDeadLetters(Mockito.any()))
+        .thenReturn(new ScriptWorkItemService.ReplayResult(0L, 0L, List.of(), "empty-fingerprint"));
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<ReplayDeadLetteredWorkItemsResponse> ref = new AtomicReference<>();
+
+    service.replayDeadLetteredWorkItems(
+        ReplayDeadLetteredWorkItemsRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .addWorkItemIds("77")
+            .setControlPlaneRequestId("request-empty")
+            .setReason("retry")
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getReplayedCount()).isZero();
+    assertThat(ref.get().getRejectedCount()).isZero();
+    assertThat(ref.get().getResultsList()).isEmpty();
+    assertThat(ref.get().getRequestFingerprint()).isEqualTo("empty-fingerprint");
   }
 
   @Test

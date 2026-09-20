@@ -753,6 +753,12 @@ public class ScriptGameplayCommandHandoffServiceImpl
           now);
       return;
     }
+    // A terminal failure is a distinct dead-letter transition unless this item was
+    // already terminal. Replay moves it back to PENDING_EVALUATION first, so the
+    // next terminal failure advances the generation exactly once.
+    if (!STATUS_DEAD_LETTERED.equals(workItem.getStatus())) {
+      workItem.setFailureGeneration(Math.addExact(workItem.getFailureGeneration(), 1L));
+    }
     workItem.setStatus(STATUS_DEAD_LETTERED);
     String failureReason = ScriptHandoffOutcomeSupport.canonicalInfrastructureReason(result);
     workItem.setCancelReason(failureReason);
