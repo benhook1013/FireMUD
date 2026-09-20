@@ -151,7 +151,7 @@ for required in (
         raise SystemExit("Backup verifier publisher must remain default-branch-only")
 PY
 require_count "$runtime" 'uses: ./.github/actions/load-workflow-tool-versions' 2
-require_count "$runtime" 'config/workflow-tool-versions.env' 2
+require_count "$runtime" 'config/workflow-tool-versions.env' 3
 # shellcheck disable=SC2016 # Assert literal workflow expressions and shell fragments.
 require_count "$runtime" 'VELERO_VERSION: ${{ steps.workflow-tool-versions.outputs.velero-version }}' 2
 # shellcheck disable=SC2016 # Assert literal workflow expressions and shell fragments.
