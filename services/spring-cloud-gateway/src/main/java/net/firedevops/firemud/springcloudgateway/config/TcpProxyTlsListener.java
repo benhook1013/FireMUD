@@ -114,6 +114,11 @@ public final class TcpProxyTlsListener implements SmartLifecycle {
     if (untilExpiry == null) {
       return;
     }
+    if (untilExpiry.isZero() || untilExpiry.isNegative()) {
+      LOG.warn(
+          "TCP Proxy internal TLS listener trust profile was already expired at listener startup; terminating listener and bridges profile={}",
+          trustPolicy.profileName());
+    }
     long delayMillis = Math.max(1L, untilExpiry.toMillis());
     expiryExecutor =
         Executors.newSingleThreadScheduledExecutor(

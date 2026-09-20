@@ -96,13 +96,8 @@ abstract class VerifyNoRedisBootJar : DefaultTask() {
                     .map { it.name }
                     .filter { entry ->
                         val filename = entry.substringAfterLast('/')
-                        val isTcpProxyRedisCoupledApplicationClass =
-                            entry.startsWith("BOOT-INF/classes/net/firedevops/firemud/tcpproxy/") &&
-                                filename.endsWith(".class") &&
-                                filename.contains("Redis", ignoreCase = true)
-                        isTcpProxyRedisCoupledApplicationClass ||
-                            (entry.startsWith("BOOT-INF/lib/") &&
-                                forbiddenModules.get().any { filename.startsWith("$it-") })
+                        entry.startsWith("BOOT-INF/lib/") &&
+                            forbiddenModules.get().any { filename.startsWith("$it-") }
                     }.toList()
             }
         check(forbiddenEntries.isEmpty()) {

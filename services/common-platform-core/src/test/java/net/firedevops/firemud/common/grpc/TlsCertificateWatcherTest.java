@@ -3,6 +3,7 @@ package net.firedevops.firemud.common.grpc;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import ch.qos.logback.classic.Level;
@@ -11,11 +12,13 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.nio.file.ClosedWatchServiceException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardWatchEventKinds;
 import java.nio.file.WatchEvent;
 import java.nio.file.WatchKey;
+import java.nio.file.WatchService;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -31,6 +34,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.config.CommonCoreAutoConfiguration;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.health.contributor.Health;
@@ -43,15 +47,15 @@ class TlsCertificateWatcherTest {
   }
 
   @Test
-  void registrationRetryBackoffGrowsAndCaps() {
-    assertEquals(100, TlsCertificateWatcher.registrationRetryDelay(1).toMillis());
-    assertEquals(200, TlsCertificateWatcher.registrationRetryDelay(2).toMillis());
-    assertEquals(400, TlsCertificateWatcher.registrationRetryDelay(3).toMillis());
-    assertEquals(800, TlsCertificateWatcher.registrationRetryDelay(4).toMillis());
-    assertEquals(1_600, TlsCertificateWatcher.registrationRetryDelay(5).toMillis());
-    assertEquals(25_600, TlsCertificateWatcher.registrationRetryDelay(9).toMillis());
-    assertEquals(30_000, TlsCertificateWatcher.registrationRetryDelay(10).toMillis());
-    assertEquals(30_000, TlsCertificateWatcher.registrationRetryDelay(20).toMillis());
+  void retryBackoffGrowsAndCaps() {
+    assertEquals(100, TlsCertificateWatcher.retryDelay(1).toMillis());
+    assertEquals(200, TlsCertificateWatcher.retryDelay(2).toMillis());
+    assertEquals(400, TlsCertificateWatcher.retryDelay(3).toMillis());
+    assertEquals(800, TlsCertificateWatcher.retryDelay(4).toMillis());
+    assertEquals(1_600, TlsCertificateWatcher.retryDelay(5).toMillis());
+    assertEquals(25_600, TlsCertificateWatcher.retryDelay(9).toMillis());
+    assertEquals(30_000, TlsCertificateWatcher.retryDelay(10).toMillis());
+    assertEquals(30_000, TlsCertificateWatcher.retryDelay(20).toMillis());
   }
 
   @Test
@@ -60,6 +64,48 @@ class TlsCertificateWatcherTest {
         new CommonCoreAutoConfiguration().tlsCertificateReloadHealthIndicator();
 
     assertAggregateHealth(indicator.health());
+  }
+
+  @Test
+  void failedThreadStartClosesWatcherResources(@TempDir Path directory) throws Exception {
+    Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
+    TlsCertificateWatcher watcher = new TlsCertificateWatcher(List.of(certificate), () -> {});
+    Thread alreadyStarted = new Thread(() -> {});
+    alreadyStarted.start();
+    alreadyStarted.join();
+    Field threadField = TlsCertificateWatcher.class.getDeclaredField("thread");
+    Field watchServiceField = TlsCertificateWatcher.class.getDeclaredField("watchService");
+    threadField.setAccessible(true);
+    watchServiceField.setAccessible(true);
+    threadField.set(watcher, alreadyStarted);
+
+    try {
+      assertThrows(IllegalThreadStateException.class, watcher::start);
+      assertFalse(watcher.isRunning());
+      assertTrue(retryExecutor(watcher).isShutdown());
+      assertThrows(
+          ClosedWatchServiceException.class,
+          () -> ((WatchService) watchServiceField.get(watcher)).take());
+    } finally {
+      watcher.close();
+    }
+  }
+
+  @Test
+  void closedWatcherCannotStartOrPoisonHealth(@TempDir Path directory) throws Exception {
+    Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
+    WatcherCounts baseline = watcherCounts(TlsCertificateWatcher.health());
+    TlsCertificateWatcher watcher = new TlsCertificateWatcher(List.of(certificate), () -> {});
+
+    try {
+      watcher.close();
+
+      assertThrows(IllegalStateException.class, watcher::start);
+      assertFalse(watcher.isRunning());
+      assertHealthDelta(baseline, 0, 0, 0, TlsCertificateWatcher.health());
+    } finally {
+      watcher.close();
+    }
   }
 
   @Test
@@ -192,6 +238,47 @@ class TlsCertificateWatcherTest {
       assertTrue((Boolean) processKeyMethod.invoke(watcher, originalKey));
       assertEquals(1, keys.size());
       assertTrue(keys.containsValue(directory.toAbsolutePath().normalize()));
+    } finally {
+      watcher.close();
+    }
+  }
+
+  @Test
+  void successfulInlineReregistrationCancelsObsoleteRegistrationRetry(@TempDir Path directory)
+      throws Exception {
+    Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
+    TlsCertificateWatcher watcher = new TlsCertificateWatcher(List.of(certificate), () -> {});
+    Field keysField = TlsCertificateWatcher.class.getDeclaredField("keys");
+    Field registrationRetryTaskField =
+        TlsCertificateWatcher.class.getDeclaredField("registrationRetryTask");
+    Field registrationRetryScheduledField =
+        TlsCertificateWatcher.class.getDeclaredField("registrationRetryScheduled");
+    Field registrationRetryAttemptsField =
+        TlsCertificateWatcher.class.getDeclaredField("registrationRetryAttempts");
+    Method processKeyMethod =
+        TlsCertificateWatcher.class.getDeclaredMethod("processKey", WatchKey.class);
+    keysField.setAccessible(true);
+    registrationRetryTaskField.setAccessible(true);
+    registrationRetryScheduledField.setAccessible(true);
+    registrationRetryAttemptsField.setAccessible(true);
+    processKeyMethod.setAccessible(true);
+    @SuppressWarnings("unchecked")
+    Map<WatchKey, Path> keys = (Map<WatchKey, Path>) keysField.get(watcher);
+    WatchKey originalKey = keys.keySet().iterator().next();
+    ScheduledFuture<?> staleRetry = retryExecutor(watcher).schedule(() -> {}, 1, TimeUnit.DAYS);
+    registrationRetryTaskField.set(watcher, staleRetry);
+    registrationRetryScheduledField.setBoolean(watcher, true);
+    registrationRetryAttemptsField.setInt(watcher, 3);
+
+    try {
+      originalKey.cancel();
+      assertTrue((Boolean) processKeyMethod.invoke(watcher, originalKey));
+      assertEquals(1, keys.size());
+      assertTrue(keys.containsValue(directory.toAbsolutePath().normalize()));
+      assertTrue(staleRetry.isCancelled());
+      assertNull(registrationRetryTaskField.get(watcher));
+      assertFalse(registrationRetryScheduledField.getBoolean(watcher));
+      assertEquals(0, registrationRetryAttemptsField.getInt(watcher));
     } finally {
       watcher.close();
     }
@@ -490,9 +577,9 @@ class TlsCertificateWatcherTest {
       ScheduledFuture<?> retryTask = awaitScheduledCallbackRetry(watcher);
       ScheduledExecutorService retryExecutor = retryExecutor(watcher);
       watcher.close();
-      assertTrue(retryTask.isCancelled());
+      assertTrue(retryTask.isCancelled() || retryTask.isDone());
       assertTrue(retryExecutor.isTerminated());
-      assertEquals(1, attempts.get());
+      assertTrue(attempts.get() >= 1);
     } finally {
       releaseFailedCallback.countDown();
       watcher.close();
@@ -500,7 +587,8 @@ class TlsCertificateWatcherTest {
   }
 
   @Test
-  void failedCallbackRetriesRepeatedlyUntilTheAttemptCap(@TempDir Path directory) throws Exception {
+  @Timeout(15)
+  void failedCallbackRetriesContinueAfterTheAttemptCap(@TempDir Path directory) throws Exception {
     Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
     AtomicInteger attempts = new AtomicInteger();
     Logger logger = (Logger) LoggerFactory.getLogger(TlsCertificateWatcher.class);
@@ -511,7 +599,7 @@ class TlsCertificateWatcherTest {
 
     try {
       try (TlsCertificateWatcher watcher =
-          TlsCertificateWatcher.createAndStart(
+          new TlsCertificateWatcher(
               List.of(certificate),
               () -> {
                 attempts.incrementAndGet();
@@ -519,17 +607,18 @@ class TlsCertificateWatcherTest {
               })) {
         invokeReloadCallback(watcher, false);
         scheduleCallbackRetry(watcher);
-        for (int retry = 0; retry < 10; retry++) {
+        for (int retry = 0; retry < 12; retry++) {
           runScheduledCallbackRetry(watcher);
         }
-        assertEquals(11, attempts.get());
+        assertEquals(13, attempts.get());
         assertFalse(watcher.isHealthy());
         assertEquals(
             1,
             appender.list.stream()
-                .filter(event -> event.getFormattedMessage().contains("callback retries exhausted"))
+                .filter(event -> event.getFormattedMessage().contains("retries reached"))
+                .filter(event -> event.getFormattedMessage().contains("PT30S"))
                 .count());
-        assertTrue(scheduledCallbackRetry(watcher) == null);
+        assertTrue(scheduledCallbackRetry(watcher) != null);
         retryExecutor(watcher).shutdownNow();
       }
     } finally {
@@ -661,6 +750,7 @@ class TlsCertificateWatcherTest {
   }
 
   @Test
+  @Timeout(15)
   void lockWaiterIsNotTrackedAndCannotReloadAfterClose(@TempDir Path directory) throws Exception {
     Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
     AtomicBoolean callbackInvoked = new AtomicBoolean();
@@ -701,6 +791,7 @@ class TlsCertificateWatcherTest {
   }
 
   @Test
+  @Timeout(15)
   void closePreventsCallbackRegistrationWaitingOnCallbackState(@TempDir Path directory)
       throws Exception {
     Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");

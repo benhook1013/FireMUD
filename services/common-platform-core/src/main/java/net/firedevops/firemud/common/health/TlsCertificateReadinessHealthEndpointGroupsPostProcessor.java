@@ -12,7 +12,7 @@ import org.springframework.boot.health.actuate.endpoint.HealthEndpointGroupsPost
 import org.springframework.boot.health.actuate.endpoint.HttpCodeStatusMapper;
 import org.springframework.boot.health.actuate.endpoint.StatusAggregator;
 
-/** Ensures TLS certificate reload health gates the actuator readiness group. */
+/** When enabled, ensures TLS certificate reload health gates the actuator readiness group. */
 public final class TlsCertificateReadinessHealthEndpointGroupsPostProcessor
     implements HealthEndpointGroupsPostProcessor {
 
@@ -21,15 +21,15 @@ public final class TlsCertificateReadinessHealthEndpointGroupsPostProcessor
   static final String READINESS_GROUP = "readiness";
   public static final String TLS_CERTIFICATE_RELOAD_CONTRIBUTOR = "tlsCertificateReload";
 
-  private final boolean enabled;
+  private final boolean readinessGateEnabled;
 
-  public TlsCertificateReadinessHealthEndpointGroupsPostProcessor(boolean enabled) {
-    this.enabled = enabled;
+  public TlsCertificateReadinessHealthEndpointGroupsPostProcessor(boolean readinessGateEnabled) {
+    this.readinessGateEnabled = readinessGateEnabled;
   }
 
   @Override
   public HealthEndpointGroups postProcessHealthEndpointGroups(HealthEndpointGroups groups) {
-    if (!enabled) {
+    if (!readinessGateEnabled) {
       return groups;
     }
     HealthEndpointGroup readiness = groups.get(READINESS_GROUP);

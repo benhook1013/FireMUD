@@ -79,6 +79,7 @@ FAILED_REVIEW_PATTERN = re.compile(
 )
 ACTIONABLE_COMMENTS_MARKER = "**Actionable comments posted:"
 OUTSIDE_DIFF_MARKER = "Outside diff range comments"
+OUTSIDE_DIFF_ALT_MARKER = "Outside the diff"
 DUPLICATE_COMMENTS_MARKER = "Duplicate comments"
 REVIEW_SCOPE_PATTERN = re.compile(
     r"Reviewing files that changed from the base of the PR and between\s+"
@@ -111,6 +112,9 @@ class ReviewSummary:
     unresolved_total: int
     latest_explicit_review_request_at: str | None
     latest_explicit_review_request_type: str | None
+    latest_explicit_review_request_id: int | None
+    latest_explicit_review_request_url: str | None
+    latest_explicit_review_request_command: str | None
     latest_coderabbit_review_finished_at: str | None
     explicit_review_after_latest_commit: bool
     review_finished_after_latest_request: bool
@@ -151,6 +155,7 @@ class TriggerState:
     response_url: str | None
     cooldown_until: str | None
     reason: str
+    trigger_command: str | None = None
     age_seconds: int | None = None
     manual_adjudication_required: bool = False
 
@@ -176,6 +181,14 @@ def parse_args() -> argparse.Namespace:
         "--wait",
         action="store_true",
         help="Block until the trigger reaches a terminal state",
+    )
+    parser.add_argument(
+        "--wait-latest-request",
+        action="store_true",
+        help=(
+            "Wait for the latest explicit manual Hosted request using an in-memory pin; "
+            "never creates a durable trigger record"
+        ),
     )
     parser.add_argument(
         "--timeout",
@@ -521,6 +534,13 @@ def extract_section_count(body: str, marker: str) -> int:
     return int(match.group(1)) if match else 0
 
 
+def outside_diff_count(body: str) -> int:
+    return max(
+        extract_section_count(body, OUTSIDE_DIFF_MARKER),
+        extract_section_count(body, OUTSIDE_DIFF_ALT_MARKER),
+    )
+
+
 def actionable_summary_candidate(
     author: str,
     body: str,
@@ -536,6 +556,7 @@ def actionable_summary_candidate(
         for marker in (
             ACTIONABLE_COMMENTS_MARKER,
             OUTSIDE_DIFF_MARKER,
+            OUTSIDE_DIFF_ALT_MARKER,
             DUPLICATE_COMMENTS_MARKER,
         )
     ):
@@ -551,7 +572,7 @@ def actionable_summary_candidate(
     return (
         timestamp_dt,
         url,
-        extract_section_count(body, OUTSIDE_DIFF_MARKER),
+        outside_diff_count(body),
         extract_section_count(body, DUPLICATE_COMMENTS_MARKER),
     )
 
@@ -586,6 +607,7 @@ def is_substantive_review_body(body: str) -> bool:
             SUBSTANTIVE_REVIEW_MARKER,
             ACTIONABLE_COMMENTS_MARKER,
             OUTSIDE_DIFF_MARKER,
+            OUTSIDE_DIFF_ALT_MARKER,
             DUPLICATE_COMMENTS_MARKER,
             FINAL_REVIEW_RISK_COVERAGE_MARKER,
         )
@@ -637,7 +659,7 @@ def matching_zero_finding_summary(
         if not (legacy_zero_layout or risk_coverage_zero_layout):
             continue
         if (
-            extract_section_count(body, OUTSIDE_DIFF_MARKER) > 0
+            outside_diff_count(body) > 0
             or extract_section_count(body, DUPLICATE_COMMENTS_MARKER) > 0
         ):
             continue
@@ -673,7 +695,10 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
     latest_explicit_review_request_at: str | None = None
     latest_explicit_review_request_dt: datetime | None = None
     latest_explicit_review_request_type: str | None = None
-    review_requests: list[tuple[datetime, str]] = []
+    latest_explicit_review_request_id: int | None = None
+    latest_explicit_review_request_url: str | None = None
+    latest_explicit_review_request_command: str | None = None
+    review_requests: list[tuple[datetime, str, int | None, str | None, str]] = []
     substantive_review_evidence: list[tuple[datetime, str]] = []
     plan_ceiling_evidence: list[datetime] = []
     latest_coderabbit_review_finished_at: str | None = None
@@ -699,7 +724,15 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
             and command_type is not None
             and created_at_dt is not None
         ):
-            review_requests.append((created_at_dt, command_type))
+            review_requests.append(
+                (
+                    created_at_dt,
+                    command_type,
+                    immutable_database_id(comment),
+                    comment.get("url") if isinstance(comment.get("url"), str) else None,
+                    normalize_command(body),
+                )
+            )
             if (
                 latest_explicit_review_request_dt is None
                 or created_at_dt > latest_explicit_review_request_dt
@@ -768,8 +801,18 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
             plan_ceiling_evidence.append(submitted_at_dt)
 
     if review_requests:
-        latest_request_dt, latest_explicit_review_request_type = max(
-            review_requests, key=lambda request: request[0]
+        (
+            latest_request_dt,
+            latest_explicit_review_request_type,
+            latest_explicit_review_request_id,
+            latest_explicit_review_request_url,
+            latest_explicit_review_request_command,
+        ) = max(
+            review_requests,
+            key=lambda request: (
+                request[0],
+                request[2] if request[2] is not None else -1,
+            ),
         )
         latest_explicit_review_request_dt = latest_request_dt
 
@@ -815,7 +858,7 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         latest_incremental_request_dt = latest_explicit_review_request_dt
         prior_full_requests = [
             request_dt
-            for request_dt, request_type in review_requests
+            for request_dt, request_type, _, _, _ in review_requests
             if request_type == "full" and request_dt < latest_incremental_request_dt
         ]
         latest_full_request_dt = max(prior_full_requests, default=None)
@@ -944,7 +987,12 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
     latest_review_request_rate_limited = (
         not rate_limit_superseded_by_substantive_review
         and (
-            latest_rate_limit_without_expiry
+            (
+                latest_rate_limit_without_expiry
+                and latest_rate_limit_at_dt is not None
+                and latest_rate_limit_at_dt + timedelta(hours=1)
+                > datetime.now(timezone.utc)
+            )
             or (
                 latest_rate_limit_until_dt is not None
                 and latest_rate_limit_until_dt > datetime.now(timezone.utc)
@@ -1074,6 +1122,9 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         unresolved_total=unresolved_total,
         latest_explicit_review_request_at=latest_explicit_review_request_at,
         latest_explicit_review_request_type=latest_explicit_review_request_type,
+        latest_explicit_review_request_id=latest_explicit_review_request_id,
+        latest_explicit_review_request_url=latest_explicit_review_request_url,
+        latest_explicit_review_request_command=latest_explicit_review_request_command,
         latest_coderabbit_review_finished_at=latest_coderabbit_review_finished_at,
         explicit_review_after_latest_commit=explicit_review_after_latest_commit,
         review_finished_after_latest_request=review_finished_after_latest_request,
@@ -1127,11 +1178,304 @@ def load_trigger_record(path: str, repo: str, pr_number: int) -> dict[str, Any]:
     return record
 
 
+ARCHIVED_TRIGGER_RECORD_PATTERN = re.compile(r"^trigger-([1-9][0-9]*)\.json$")
+
+
+def _git_common_dir() -> Path | None:
+    """Resolve the shared Git directory for read-only trigger discovery."""
+
+    root = Path(__file__).resolve().parents[2]
+    dot_git = root / ".git"
+    if dot_git.is_dir():
+        return dot_git
+    try:
+        pointer = dot_git.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        return None
+    if not pointer.startswith("gitdir:"):
+        return None
+    worktree_git_dir = Path(pointer.partition(":")[2].strip())
+    if not worktree_git_dir.is_absolute():
+        worktree_git_dir = (root / worktree_git_dir).resolve()
+    try:
+        common_pointer = (worktree_git_dir / "commondir").read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        return None
+    common_dir = Path(common_pointer)
+    if not common_dir.is_absolute():
+        common_dir = (worktree_git_dir / common_dir).resolve()
+    return common_dir if common_dir.is_dir() else None
+
+
+def default_trigger_record_paths(repo: str, pr_number: int) -> list[Path]:
+    """Find current and archived durable records without writing or locking them."""
+
+    common_dir = _git_common_dir()
+    if common_dir is None:
+        return []
+    record_dir = (
+        common_dir
+        / "coderabbit-review-logs"
+        / "hosted"
+        / repo.replace("/", "_")
+        / f"pr-{pr_number}"
+    )
+    try:
+        if not record_dir.is_dir() or record_dir.is_symlink():
+            return []
+        current = record_dir / "trigger.json"
+        paths = [current] if current.is_file() and not current.is_symlink() else []
+        archived = []
+        for path in record_dir.iterdir():
+            match = ARCHIVED_TRIGGER_RECORD_PATTERN.fullmatch(path.name)
+            if match is not None and path.is_file() and not path.is_symlink():
+                archived.append((int(match.group(1)), path))
+        paths.extend(path for _, path in sorted(archived, reverse=True))
+        return paths
+    except OSError:
+        return []
+
+
+TIMED_OUT_TRIGGER_REASON = "bounded wait expired before a terminal CodeRabbit response"
+
+
+def valid_timeout_evidence(record: dict[str, Any]) -> bool:
+    """Validate the persisted bounded-wait timeout shape used by trigger_state."""
+
+    timeout = record.get("timeout")
+    if not isinstance(timeout, dict):
+        return False
+    timeout_at = timeout.get("at")
+    try:
+        return (
+            isinstance(timeout_at, str)
+            and parse_timestamp(timeout_at) is not None
+            and timeout.get("observed_state") in {"awaiting_response", "active"}
+            and timeout.get("reason") == TIMED_OUT_TRIGGER_REASON
+        )
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
+def read_json_regular_file(
+    path: Path, *, directory_fd: int | None = None
+) -> dict[str, Any] | None:
+    """Read one regular JSON file without following a symbolic link."""
+
+    descriptor = -1
+    try:
+        flags = (
+            os.O_RDONLY
+            | os.O_CLOEXEC
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+        )
+        open_path: str | Path = path.name if directory_fd is not None else path
+        if directory_fd is None:
+            descriptor = os.open(open_path, flags)
+        else:
+            descriptor = os.open(open_path, flags, dir_fd=directory_fd)
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return None
+        with os.fdopen(descriptor, "r", encoding="utf-8") as archive_file:
+            descriptor = -1
+            value = json.load(archive_file)
+        return value if isinstance(value, dict) else None
+    except (OSError, TypeError, ValueError, RecursionError, json.JSONDecodeError):
+        return None
+    finally:
+        if descriptor != -1:
+            os.close(descriptor)
+
+
+def load_archived_trigger_records(
+    current_record_path: str | Path | None,
+) -> dict[int, dict[str, Any]]:
+    """Load only canonical retired records beside the current private record."""
+
+    if current_record_path is None:
+        return {}
+    parent = Path(current_record_path).parent
+    directory_fd = -1
+    try:
+        parent_stat = parent.lstat()
+        if (
+            stat.S_ISLNK(parent_stat.st_mode)
+            or not stat.S_ISDIR(parent_stat.st_mode)
+            or parent_stat.st_mode & 0o077
+        ):
+            return {}
+        directory_flags = (
+            os.O_RDONLY
+            | os.O_CLOEXEC
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        directory_fd = os.open(parent, directory_flags)
+        opened_parent_stat = os.fstat(directory_fd)
+        if (
+            not stat.S_ISDIR(opened_parent_stat.st_mode)
+            or opened_parent_stat.st_mode & 0o077
+            or (
+                opened_parent_stat.st_dev,
+                opened_parent_stat.st_ino,
+            )
+            != (parent_stat.st_dev, parent_stat.st_ino)
+        ):
+            return {}
+
+        archived: dict[int, dict[str, Any]] = {}
+        entries = os.listdir(directory_fd)
+        for entry in entries:
+            match = ARCHIVED_TRIGGER_RECORD_PATTERN.fullmatch(entry)
+            if match is None:
+                continue
+            record = read_json_regular_file(Path(entry), directory_fd=directory_fd)
+            if record is not None:
+                archived[int(match.group(1))] = record
+        return archived
+    except (OSError, TypeError, ValueError):
+        return {}
+    finally:
+        if directory_fd != -1:
+            os.close(directory_fd)
+
+
+def retired_archive_matches(
+    archive: dict[str, Any],
+    live_comment: dict[str, Any],
+    repo: str,
+    pr_number: int,
+    archive_trigger_id: int,
+) -> bool:
+    """Validate one archived retirement record against its live predecessor."""
+
+    try:
+        if not isinstance(archive, dict) or not isinstance(live_comment, dict):
+            return False
+        if (
+            type(archive.get("schema_version")) is not int
+            or archive.get("schema_version") != 1
+            or archive.get("repository") != repo
+            or type(archive.get("pr_number")) is not int
+            or archive.get("pr_number") != pr_number
+            or archive.get("status") != "retired"
+        ):
+            return False
+        captured_head = archive.get("head_sha")
+        if not isinstance(captured_head, str) or not re.fullmatch(
+            r"[0-9a-fA-F]{40}", captured_head
+        ):
+            return False
+
+        trigger = archive.get("trigger")
+        if not isinstance(trigger, dict):
+            return False
+        trigger_id = trigger.get("id")
+        trigger_created_at = trigger.get("created_at")
+        trigger_url = trigger.get("url")
+        trigger_created_dt = (
+            parse_timestamp(trigger_created_at)
+            if isinstance(trigger_created_at, str)
+            else None
+        )
+        if (
+            type(trigger_id) is not int
+            or trigger_id <= 0
+            or trigger_id != archive_trigger_id
+            or trigger.get("type") != "full"
+            or trigger.get("command") != "@coderabbitai full review"
+            or trigger_created_dt is None
+            or not isinstance(trigger_url, str)
+            or not trigger_url
+        ):
+            return False
+
+        live_id = immutable_database_id(live_comment)
+        live_created_at = live_comment.get("createdAt")
+        live_url = live_comment.get("url")
+        live_created_dt = parse_timestamp(live_created_at)
+        if (
+            not isinstance(live_url, str)
+            or not live_url
+            or live_id != trigger_id
+            or REVIEW_COMMAND_TYPES.get(
+                normalize_command(live_comment.get("body") or "")
+            )
+            != "full"
+            or not isinstance(live_created_at, str)
+            or live_created_dt is None
+            or trigger_created_at != live_created_at
+        ):
+            return False
+        if trigger_url != live_url:
+            return False
+
+        retirement = archive.get("retirement")
+        if not isinstance(retirement, dict):
+            return False
+        retired_at = retirement.get("retired_at")
+        retirement_reason = retirement.get("reason")
+        retired_dt = (
+            parse_timestamp(retired_at) if isinstance(retired_at, str) else None
+        )
+        if (
+            retirement.get("action") != "operator_retire"
+            or retired_dt is None
+            or trigger_created_dt is None
+            or retired_dt < trigger_created_dt
+            or not isinstance(retirement_reason, str)
+        ):
+            return False
+        validate_retirement_reason(retirement_reason)
+        if type(retirement.get("trigger_comment_id")) is not int or retirement.get(
+            "trigger_comment_id"
+        ) != trigger_id:
+            return False
+
+        expected_head = retirement.get("expected_head_sha")
+        evidence = retirement.get("evidence")
+        if (
+            not isinstance(expected_head, str)
+            or not re.fullmatch(r"[0-9a-fA-F]{40}", expected_head)
+            or not isinstance(evidence, dict)
+            or evidence.get("state") not in {"active", "timed_out"}
+            or not isinstance(evidence.get("captured_head_sha"), str)
+            or not re.fullmatch(
+                r"[0-9a-fA-F]{40}", evidence["captured_head_sha"]
+            )
+            or evidence["captured_head_sha"].casefold() != captured_head.casefold()
+            or not isinstance(evidence.get("current_head_sha"), str)
+            or not re.fullmatch(
+                r"[0-9a-fA-F]{40}", evidence["current_head_sha"]
+            )
+            or evidence["current_head_sha"].casefold() != expected_head.casefold()
+        ):
+            return False
+        if evidence["state"] == "timed_out" and not valid_timeout_evidence(archive):
+            return False
+    except (
+        AttributeError,
+        IndexError,
+        KeyError,
+        TypeError,
+        ValueError,
+        OverflowError,
+        RecursionError,
+    ):
+        return False
+    return True
+
+
 def trigger_state(
     repo: str,
     pr_number: int,
     payload: dict[str, Any],
     record: dict[str, Any],
+    current_record_path: str | Path | None = None,
+    *,
+    allow_incremental: bool = False,
+    pinned_trigger_id: int | None = None,
 ) -> TriggerState:
     pr = payload["data"]["repository"]["pullRequest"]
     current_head = pr["headRefOid"]
@@ -1161,13 +1505,16 @@ def trigger_state(
     trigger_created_at = trigger.get("created_at")
     trigger_url = trigger.get("url")
     trigger_type = trigger.get("type")
+    trigger_command = normalize_command(trigger.get("command") or "")
     if (
         not isinstance(trigger_id, int)
         or trigger_id <= 0
         or parse_timestamp(trigger_created_at) is None
         or not isinstance(trigger_url, str)
         or not trigger_url
-        or trigger_type != "full"
+        or trigger_type not in ({"full", "incremental"} if allow_incremental else {"full"})
+        or trigger_command
+        != ("@coderabbitai full review" if trigger_type == "full" else "@coderabbitai review")
     ):
         raise ValueError("trigger record has invalid immutable trigger fields")
     trigger_dt = parse_timestamp(trigger_created_at)
@@ -1211,6 +1558,7 @@ def trigger_state(
         "trigger_created_at": trigger_created_at,
         "trigger_url": trigger_url,
         "trigger_type": trigger_type,
+        "trigger_command": trigger_command,
     }
     if record.get("status") in {
         "posted_boundary_changed",
@@ -1244,7 +1592,7 @@ def trigger_state(
         or REVIEW_COMMAND_TYPES.get(
             normalize_command(captured_comment.get("body") or "")
         )
-        != "full"
+        != trigger_type
         or captured_comment.get("createdAt") != trigger_created_at
         or captured_comment.get("url") != trigger_url
     ):
@@ -1284,7 +1632,16 @@ def trigger_state(
             reason="the stale trigger was explicitly retired by an operator",
             age_seconds=age_seconds(trigger_dt),
         )
-    if any(created_dt == trigger_dt for created_dt, _ in other_triggers):
+    if any(
+        created_dt == trigger_dt
+        and not (
+            allow_incremental
+            and pinned_trigger_id is not None
+            and immutable_database_id(other_comment) is not None
+            and immutable_database_id(other_comment) < pinned_trigger_id
+        )
+        for created_dt, other_comment in other_triggers
+    ):
         return TriggerState(
             "ambiguous",
             True,
@@ -1302,38 +1659,71 @@ def trigger_state(
     )
 
     if prior_triggers:
-        prior_dt = max(prior_triggers, key=lambda item: item[0])[0]
-        prior_terminal = False
-        for comment in comments:
-            if (comment.get("author") or {}).get("login", "") != "coderabbitai":
-                continue
-            created_dt = parse_timestamp(comment.get("createdAt"))
-            if created_dt is None or not (prior_dt < created_dt < trigger_dt):
-                continue
-            body = comment.get("body") or ""
-            detection_body = (
-                body if REVIEW_LIMIT_MARKER in body else unquoted_body(body)
+        archived_records = load_archived_trigger_records(current_record_path)
+        prior_triggers.sort(key=lambda item: item[0])
+        for index, (prior_dt, prior_comment) in enumerate(prior_triggers):
+            prior_id = immutable_database_id(prior_comment)
+            archived = (
+                archived_records.get(prior_id) if prior_id is not None else None
             )
-            cooldown = parse_review_rate_limit_until(detection_body, created_dt)
             if (
-                is_substantive_review_body(body)
-                or NOOP_REVIEW_MARKER in body
-                or FAILED_REVIEW_PATTERN.search(unquoted_body(body))
-                or cooldown is not None
-                or is_finished_review_reply(body)
+                archived is not None
+                and prior_id is not None
+                and retired_archive_matches(
+                    archived, prior_comment, repo, pr_number, prior_id
+                )
             ):
-                prior_terminal = True
-        for review in (pr.get("reviews") or {}).get("nodes", []):
-            submitted_dt = parse_timestamp(review.get("submittedAt"))
-            if (
-                (review.get("author") or {}).get("login", "") == "coderabbitai"
-                and review.get("state") != "DISMISSED"
-                and submitted_dt is not None
-                and prior_dt < submitted_dt < trigger_dt
-                and is_substantive_review_body(review.get("body") or "")
-            ):
-                prior_terminal = True
-        if not prior_terminal:
+                continue
+            prior_end = (
+                prior_triggers[index + 1][0]
+                if index + 1 < len(prior_triggers)
+                else trigger_dt
+            )
+            prior_terminal = False
+            for comment in comments:
+                if (comment.get("author") or {}).get("login", "") != "coderabbitai":
+                    continue
+                created_dt = parse_timestamp(comment.get("createdAt"))
+                if created_dt is None or not (prior_dt < created_dt < prior_end):
+                    continue
+                body = comment.get("body") or ""
+                detection_body = (
+                    body if REVIEW_LIMIT_MARKER in body else unquoted_body(body)
+                )
+                cooldown = parse_review_rate_limit_until(detection_body, created_dt)
+                if (
+                    is_substantive_review_body(body)
+                    or NOOP_REVIEW_MARKER in body
+                    or FAILED_REVIEW_PATTERN.search(unquoted_body(body))
+                    or REVIEW_LIMIT_MARKER in body
+                    or REVIEW_LIMIT_STATUS_PATTERN.search(detection_body)
+                    or REVIEW_LIMIT_COMPLETE_MESSAGE_PATTERN.search(detection_body)
+                    or cooldown is not None
+                    or is_finished_review_reply(body)
+                ):
+                    prior_terminal = True
+            for review in (pr.get("reviews") or {}).get("nodes", []):
+                submitted_dt = parse_timestamp(review.get("submittedAt"))
+                if (
+                    (review.get("author") or {}).get("login", "") == "coderabbitai"
+                    and review.get("state") != "DISMISSED"
+                    and submitted_dt is not None
+                    and prior_dt < submitted_dt < prior_end
+                    and is_substantive_review_body(review.get("body") or "")
+                ):
+                    prior_terminal = True
+                if (
+                    (review.get("author") or {}).get("login", "") == "coderabbitai"
+                    and review.get("state") != "DISMISSED"
+                    and submitted_dt is not None
+                    and prior_end < submitted_dt < trigger_dt
+                    and is_substantive_review_body(review.get("body") or "")
+                ):
+                    # A subsequent full review completed before this trigger. The
+                    # older unanswered request cannot still be the active review.
+                    prior_terminal = True
+            if prior_terminal:
+                continue
             return TriggerState(
                 "ambiguous",
                 True,
@@ -1368,8 +1758,8 @@ def trigger_state(
             or REVIEW_LIMIT_COMPLETE_MESSAGE_PATTERN.search(detection_body)
         ):
             until = parse_review_rate_limit_until(detection_body, created_dt)
+            state = "rate_limited"
             if until is not None:
-                state = "rate_limited"
                 cooldown = until.isoformat()
         elif NOOP_REVIEW_MARKER in body:
             state = "noop"
@@ -1428,15 +1818,9 @@ def trigger_state(
                 reason="a later review trigger arrived before an attributable response",
             )
         if record.get("status") == "timed_out":
-            timeout = record.get("timeout")
-            if (
-                not isinstance(timeout, dict)
-                or parse_timestamp(timeout.get("at")) is None
-                or timeout.get("observed_state") not in {"awaiting_response", "active"}
-                or timeout.get("reason")
-                != "bounded wait expired before a terminal CodeRabbit response"
-            ):
+            if not valid_timeout_evidence(record):
                 raise ValueError("timed-out trigger record has invalid timeout evidence")
+            timeout = record["timeout"]
             timeout_reason = (
                 timeout.get("reason")
                 if isinstance(timeout, dict)
@@ -1539,6 +1923,228 @@ def trigger_state(
     )
 
 
+def explicit_review_requests(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return externally posted review commands with immutable identity fields."""
+
+    pr = payload["data"]["repository"]["pullRequest"]
+    requests: list[dict[str, Any]] = []
+    for comment in pr["comments"]["nodes"]:
+        author = (comment.get("author") or {}).get("login", "")
+        command_type = REVIEW_COMMAND_TYPES.get(normalize_command(comment.get("body") or ""))
+        created_at = comment.get("createdAt")
+        created_dt = parse_timestamp(created_at)
+        comment_id = immutable_database_id(comment)
+        if author == "coderabbitai" or command_type is None or created_dt is None:
+            continue
+        requests.append(
+            {
+                "id": comment_id,
+                "type": command_type,
+                "command": normalize_command(comment.get("body") or ""),
+                "created_at": created_at,
+                "url": comment.get("url") if isinstance(comment.get("url"), str) else None,
+                "_created_dt": created_dt,
+            }
+        )
+    return sorted(requests, key=lambda item: (item["_created_dt"], item["id"] or 0))
+
+
+def manual_wait_result(
+    repo: str,
+    pr_number: int,
+    input_path: str | None,
+    timeout: float,
+    poll_interval: float,
+    canonical_record: dict[str, Any] | list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Wait for one pinned manual request without persisting trigger state."""
+
+    initial_payload = load_payload(input_path, repo, pr_number)
+    initial_pr = initial_payload["data"]["repository"]["pullRequest"]
+    pinned_head = initial_pr.get("headRefOid")
+    if not isinstance(pinned_head, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", pinned_head):
+        raise ValueError("manual waiter could not pin an exact pull-request head")
+    requests = explicit_review_requests(initial_payload)
+    result_base: dict[str, Any] = {
+        "operation": "wait_latest_request",
+        "repository": repo,
+        "pr_number": pr_number,
+        "provenance": "manual/unrecorded",
+        "head_sha": pinned_head,
+    }
+    if not requests:
+        return {
+            **result_base,
+            "status": "unavailable",
+            "state": "unavailable",
+            "terminal": True,
+            "reason": "no explicit Hosted review request is present",
+        }
+
+    latest_dt = requests[-1]["_created_dt"]
+    latest = [request for request in requests if request["_created_dt"] == latest_dt]
+    latest_ids = [request["id"] for request in latest]
+    if (
+        any(request["id"] is None or request["url"] is None for request in latest)
+        or len(set(latest_ids)) != len(latest_ids)
+    ):
+        return {
+            **result_base,
+            "provenance": "ambiguous/overlapping",
+            "status": "ambiguous",
+            "state": "ambiguous",
+            "terminal": True,
+            "reason": "latest explicit requests do not have one immutable comment identity",
+        }
+    pinned = max(latest, key=lambda request: request["id"])
+    request = {key: value for key, value in pinned.items() if not key.startswith("_")}
+    result_base["request"] = request
+
+    canonical_records = (
+        canonical_record
+        if isinstance(canonical_record, list)
+        else [canonical_record]
+        if isinstance(canonical_record, dict)
+        else []
+    )
+    for durable_record in canonical_records:
+        trigger = durable_record.get("trigger")
+        if not isinstance(trigger, dict):
+            continue
+        if trigger.get("id") == pinned["id"]:
+            identity = {
+                "id": trigger.get("id"),
+                "created_at": trigger.get("created_at"),
+                "url": trigger.get("url"),
+                "type": trigger.get("type"),
+                "command": normalize_command(trigger.get("command") or ""),
+            }
+            pinned_identity = {
+                key: pinned[key]
+                for key in ("id", "created_at", "url", "type", "command")
+            }
+            if identity != pinned_identity or durable_record.get("head_sha") != pinned_head:
+                return {
+                    **result_base,
+                    "provenance": "ambiguous/overlapping",
+                    "status": "ambiguous",
+                    "state": "ambiguous",
+                    "terminal": True,
+                    "reason": "a durable trigger record conflicts with the pinned manual request identity",
+                }
+            return {
+                **result_base,
+                "provenance": "canonical-recorded",
+                "status": "refused",
+                "state": "canonical-recorded",
+                "terminal": True,
+                "reason": "the latest request belongs to the canonical durable trigger record; use --wait",
+            }
+
+    manual_record = {
+        "schema_version": 1,
+        "status": "posted",
+        "repository": repo,
+        "pr_number": pr_number,
+        "head_sha": pinned_head,
+        "trigger": {
+            "id": pinned["id"],
+            "created_at": pinned["created_at"],
+            "url": pinned["url"],
+            "type": pinned["type"],
+            "command": f"@coderabbitai {'full review' if pinned['type'] == 'full' else 'review'}",
+        },
+    }
+
+    def poll(current_payload: dict[str, Any]) -> dict[str, Any] | None:
+        current_pr = current_payload["data"]["repository"]["pullRequest"]
+        current_head = current_pr.get("headRefOid")
+        if not isinstance(current_head, str) or current_head.casefold() != pinned_head.casefold():
+            return {
+                **result_base,
+                "provenance": "ambiguous/overlapping",
+                "status": "head_changed",
+                "state": "ambiguous",
+                "terminal": True,
+                "reason": "pull-request head changed while waiting for the manual request",
+            }
+        current_requests = explicit_review_requests(current_payload)
+        exact = [request for request in current_requests if request["id"] == pinned["id"]]
+        if len(exact) != 1 or any(
+            exact[0].get(field) != pinned.get(field)
+            for field in ("type", "command", "created_at", "url")
+        ):
+            return {
+                **result_base,
+                "provenance": "ambiguous/overlapping",
+                "status": "ambiguous",
+                "state": "ambiguous",
+                "terminal": True,
+                "reason": "the pinned manual request no longer has the same immutable identity",
+            }
+        later = [request for request in current_requests if request["_created_dt"] > pinned["_created_dt"]]
+        same_time_other = [
+            request
+            for request in current_requests
+            if request["_created_dt"] == pinned["_created_dt"]
+            and request["id"] is not None
+            and request["id"] > pinned["id"]
+        ]
+        if later:
+            return {
+                **result_base,
+                "provenance": "ambiguous/overlapping",
+                "status": "superseded",
+                "state": "superseded",
+                "terminal": True,
+                "reason": "another explicit review request superseded the pinned manual request",
+            }
+        if same_time_other:
+            return {
+                **result_base,
+                "provenance": "ambiguous/overlapping",
+                "status": "ambiguous",
+                "state": "ambiguous",
+                "terminal": True,
+                "reason": "another same-time explicit request makes attribution ambiguous",
+            }
+        state = trigger_state(
+            repo,
+            pr_number,
+            current_payload,
+            manual_record,
+            allow_incremental=True,
+            pinned_trigger_id=pinned["id"],
+        )
+        if state.terminal:
+            return {
+                **result_base,
+                "status": state.state,
+                "state": state.state,
+                "terminal": True,
+                "reason": state.reason,
+                "trigger_state": state.__dict__,
+            }
+        return None
+
+    deadline = time.monotonic() + timeout
+    while True:
+        current_payload = load_payload(input_path, repo, pr_number)
+        terminal = poll(current_payload)
+        if terminal is not None:
+            return terminal
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return {
+                **result_base,
+                "status": "timed_out",
+                "state": "timed_out",
+                "terminal": True,
+                "reason": "manual Hosted request wait expired before a terminal response",
+            }
+        time.sleep(min(poll_interval, remaining))
+
+
 RETIREMENT_REASON_MAX_LENGTH = 240
 LINE_SEPARATOR_CODEPOINTS = {0x7F, 0x85, 0x2028, 0x2029}
 
@@ -1580,18 +2186,10 @@ def retire_trigger_record(
         raise ValueError(
             "trigger record is not a posted or persisted bounded-wait trigger; retirement is manual"
         )
-    if record_status == "timed_out":
-        timeout = record.get("timeout")
-        if (
-            not isinstance(timeout, dict)
-            or parse_timestamp(timeout.get("at")) is None
-            or timeout.get("observed_state") not in {"awaiting_response", "active"}
-            or timeout.get("reason")
-            != "bounded wait expired before a terminal CodeRabbit response"
-        ):
-            raise ValueError("timed-out trigger record has invalid timeout evidence")
+    if record_status == "timed_out" and not valid_timeout_evidence(record):
+        raise ValueError("timed-out trigger record has invalid timeout evidence")
     summary = summarize(repo, pr_number, payload)
-    state = trigger_state(repo, pr_number, payload, record)
+    state = trigger_state(repo, pr_number, payload, record, path)
     if state.trigger_comment_id != trigger_id:
         raise ValueError("trigger identity does not match the durable record")
     current_head = payload["data"]["repository"]["pullRequest"].get("headRefOid")
@@ -1608,9 +2206,27 @@ def retire_trigger_record(
         and state.head_sha.casefold() == expected_head_sha.casefold()
     ):
         raise ValueError("cannot retire a trigger with an attributable active review")
-    if state.state == "ambiguous":
+    captured_trigger_dt = parse_timestamp(state.trigger_created_at)
+    latest_request_dt = parse_timestamp(summary.latest_explicit_review_request_at)
+    latest_review_dt = parse_timestamp(summary.latest_coderabbit_review_finished_at)
+    later_completed_review = (
+        state.state == "ambiguous"
+        and state.reason
+        in {
+            "a later review trigger arrived before an attributable response",
+            "a later review trigger arrived while the captured request was active",
+            "an earlier review trigger has no terminal response before the captured trigger",
+        }
+        and record["head_sha"].casefold() != expected_head_sha.casefold()
+        and latest_request_dt is not None
+        and captured_trigger_dt is not None
+        and latest_request_dt > captured_trigger_dt
+        and summary.review_finished_after_latest_request
+        and latest_review_dt is not None
+    )
+    if state.state == "ambiguous" and not later_completed_review:
         raise ValueError("cannot retire a trigger with ambiguous response evidence")
-    if state.state not in {"timed_out", "active"}:
+    if state.state not in {"timed_out", "active"} and not later_completed_review:
         if record_status == "posted" and state.state == "awaiting_response":
             raise ValueError(
                 "posted trigger has no active response or persisted timeout evidence"
@@ -1636,6 +2252,14 @@ def retire_trigger_record(
             "state": state.state,
             "captured_head_sha": record["head_sha"],
             "current_head_sha": state.current_head_sha,
+            **(
+                {
+                    "superseding_request_at": summary.latest_explicit_review_request_at,
+                    "superseding_review_finished_at": summary.latest_coderabbit_review_finished_at,
+                }
+                if later_completed_review
+                else {}
+            ),
         },
     }
     atomic_write_json(Path(path), retired_record)
@@ -1659,6 +2283,33 @@ def retire_trigger_record(
 def emit_retirement_text(result: dict[str, Any]) -> None:
     for key, value in result.items():
         print(f"{key}={value}")
+
+
+def emit_manual_wait_text(result: dict[str, Any]) -> None:
+    print(f"operation={result['operation']}")
+    print(f"provenance={result['provenance']}")
+    print(f"repository={result['repository']}")
+    print(f"pr_number={result['pr_number']}")
+    print(f"head_sha={result.get('head_sha', 'none')}")
+    request = result.get("request")
+    if isinstance(request, dict):
+        print(f"request_id={request.get('id', 'none')}")
+        print(f"request_type={request.get('type', 'none')}")
+        print(f"request_created_at={request.get('created_at', 'none')}")
+        print(f"request_url={request.get('url', 'none')}")
+    print(f"status={result['status']}")
+    print(f"state={result['state']}")
+    print(f"terminal={str(result.get('terminal', False)).lower()}")
+    print(f"reason={result['reason']}")
+    if result.get("provenance") == "manual/unrecorded" and result["state"] in {
+        "active",
+        "awaiting_response",
+        "timed_out",
+    }:
+        print(
+            "warning=MANUAL HOSTED REQUEST HAS NO DURABLE POSTING RECORD; "
+            "DO NOT RETRY OR OVERLAP IT WITHOUT ADJUDICATION"
+        )
 
 
 def persist_timeout_if_current(
@@ -1732,6 +2383,16 @@ def emit_text(summary: ReviewSummary) -> None:
     )
     print(
         f"latest_explicit_review_request_type={summary.latest_explicit_review_request_type or 'none'}"
+    )
+    print(
+        f"latest_explicit_review_request_id={summary.latest_explicit_review_request_id or 'none'}"
+    )
+    print(
+        f"latest_explicit_review_request_url={summary.latest_explicit_review_request_url or 'none'}"
+    )
+    print(
+        "latest_explicit_review_request_command="
+        f"{summary.latest_explicit_review_request_command or 'none'}"
     )
     print(
         f"latest_coderabbit_review_finished_at={summary.latest_coderabbit_review_finished_at or 'none'}"
@@ -1837,6 +2498,25 @@ def main() -> int:
     if args.retire_trigger is not None and args.wait:
         print("error=--retire-trigger cannot be combined with --wait", file=sys.stderr)
         return 2
+    if args.wait_latest_request and args.wait:
+        print(
+            "error=--wait-latest-request cannot be combined with --wait",
+            file=sys.stderr,
+        )
+        return 2
+    if args.wait_latest_request and args.retire_trigger is not None:
+        print(
+            "error=--wait-latest-request cannot be combined with --retire-trigger",
+            file=sys.stderr,
+        )
+        return 2
+    if args.wait_latest_request and args.trigger_record:
+        print(
+            "error=--wait-latest-request cannot be combined with --trigger-record; "
+            "manual waits refuse durable trigger ownership",
+            file=sys.stderr,
+        )
+        return 2
     if args.wait and not args.trigger_record:
         print("error=--wait requires --trigger-record", file=sys.stderr)
         return 2
@@ -1856,6 +2536,23 @@ def main() -> int:
             if args.trigger_record
             else None
         )
+        if args.wait_latest_request:
+            discovered_records = []
+            for path in default_trigger_record_paths(args.repo, args.pr):
+                discovered_records.append(load_trigger_record(path, args.repo, args.pr))
+            result = manual_wait_result(
+                args.repo,
+                args.pr,
+                args.input,
+                args.timeout,
+                args.poll_interval,
+                discovered_records,
+            )
+            if args.json:
+                print(json.dumps(result, indent=2, sort_keys=True))
+            else:
+                emit_manual_wait_text(result)
+            return 0 if result.get("state") == "completed" else 1
         if args.retire_trigger is not None:
             payload = load_payload(args.input, args.repo, args.pr)
             result = retire_trigger_record(
@@ -1877,7 +2574,9 @@ def main() -> int:
             payload = load_payload(args.input, args.repo, args.pr)
             summary = summarize(args.repo, args.pr, payload)
             state = (
-                trigger_state(args.repo, args.pr, payload, record) if record else None
+                trigger_state(args.repo, args.pr, payload, record, args.trigger_record)
+                if record
+                else None
             )
             if not args.wait or state is None or state.terminal:
                 break

@@ -38,15 +38,24 @@ if [[ "$1 $2" == "pr view" ]]; then
 fi
 if [[ "$1 $2" == "api graphql" ]]; then
   comments='[]'
-  if [[ "$scenario" == "retirement" || "$scenario" == "retirement-active" || "$scenario" == "retirement-ambiguous" || "$scenario" == "retry" ]]; then
+  if [[ "$scenario" == "retirement" || "$scenario" == "retirement-active" || "$scenario" == "retirement-ambiguous" || "$scenario" == "retirement-later-active" || "$scenario" == "retirement-superseded" || "$scenario" == "retry" ]]; then
     comments="[$trigger]"
   fi
   if [[ "$scenario" == "retirement-active" ]]; then
     comments="$(jq -cn --argjson trigger "$trigger" '[$trigger] + [{databaseId:102,author:{login:"coderabbitai"},body:"Full review triggered",createdAt:"2026-09-14T01:00:01Z",updatedAt:"2026-09-14T01:00:01Z",url:"https://example.test/comments/102"}]')"
   elif [[ "$scenario" == "retirement-ambiguous" ]]; then
     comments="$(jq -cn --argjson trigger "$trigger" '[$trigger] + [{databaseId:103,author:{login:"other"},body:"@coderabbitai full review",createdAt:"2026-09-14T01:00:00Z",updatedAt:"2026-09-14T01:00:00Z",url:"https://example.test/comments/103"}]')"
+  elif [[ "$scenario" == "retirement-later-active" || "$scenario" == "retirement-superseded" ]]; then
+    comments="$(jq -cn --argjson trigger "$trigger" '[$trigger] + [
+      {databaseId:102,author:{login:"coderabbitai"},body:"Full review triggered",createdAt:"2026-09-14T01:00:01Z",updatedAt:"2026-09-14T01:00:01Z",url:"https://example.test/comments/102"},
+      {databaseId:103,author:{login:"owner"},body:"@coderabbitai full review",createdAt:"2026-09-14T03:00:00Z",updatedAt:"2026-09-14T03:00:00Z",url:"https://example.test/comments/103"}
+    ]')"
   fi
-  jq -n --arg head "$head_sha" --argjson comments "$comments" '{data:{repository:{pullRequest:{headRefOid:$head,commits:{nodes:[{commit:{oid:$head,committedDate:"2026-09-14T02:00:00Z"}}]},reviewThreads:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}},comments:{nodes:$comments,pageInfo:{hasNextPage:false,endCursor:null}},reviews:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}}}}}}'
+  reviews='[]'
+  if [[ "$scenario" == "retirement-superseded" ]]; then
+    reviews="$(jq -cn --arg head "$head_sha" '[{databaseId:105,author:{login:"coderabbitai"},state:"COMMENTED",submittedAt:"2026-09-14T03:10:00Z",body:"<!-- walkthrough_start -->",commit:{oid:$head},url:"https://example.test/reviews/105"}]')"
+  fi
+  jq -n --arg head "$head_sha" --argjson comments "$comments" --argjson reviews "$reviews" '{data:{repository:{pullRequest:{headRefOid:$head,commits:{nodes:[{commit:{oid:$head,committedDate:"2026-09-14T02:00:00Z"}}]},reviewThreads:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}},comments:{nodes:$comments,pageInfo:{hasNextPage:false,endCursor:null}},reviews:{nodes:$reviews,pageInfo:{hasNextPage:false,endCursor:null}}}}}}'
   exit 0
 fi
 if [[ "$1" == "api" && "$2" == "repos/owner/repo/issues/42/comments" ]]; then
@@ -169,5 +178,24 @@ cp "$TMP_DIR/posted-record.json" "$RECORD"
 [[ "$(cat "$MOCK_STATE/post-count")" == "1" ]]
 [[ "$(jq -r '.trigger.id' "$RECORD")" == "104" ]]
 [[ "$(jq -r '.status' "$(dirname "$RECORD")/trigger-101.json")" == "retired" ]]
+
+cp "$TMP_DIR/posted-record.json" "$RECORD"
+if (cd "$TEST_REPO" && PATH="$MOCK_BIN:$PATH" MOCK_SCENARIO=retirement-later-active \
+  dev-tools/request-coderabbit-review.sh 42 --repo owner/repo \
+  --retire-trigger 101 --expected-head-sha "$HEAD" --reason "operator adjudication") \
+  >"$TMP_DIR/later-active.out" 2>&1; then
+  exit 1
+fi
+grep -q 'ambiguous response evidence' "$TMP_DIR/later-active.out"
+[[ "$(jq -r '.status' "$RECORD")" == "posted" ]]
+
+(cd "$TEST_REPO" && PATH="$MOCK_BIN:$PATH" MOCK_SCENARIO=retirement-superseded \
+  dev-tools/request-coderabbit-review.sh 42 --repo owner/repo \
+  --retire-trigger 101 --expected-head-sha "$HEAD" \
+  --reason "a later full review completed on a newer head" >"$TMP_DIR/superseded.json")
+[[ "$(jq -r '.status' "$RECORD")" == "retired" ]]
+[[ "$(jq -r '.retirement.evidence.state' "$RECORD")" == "ambiguous" ]]
+[[ "$(jq -r '.retirement.evidence.superseding_request_at' "$RECORD")" == "2026-09-14T03:00:00Z" ]]
+[[ "$(jq -r '.retirement.evidence.superseding_review_finished_at' "$RECORD")" == "2026-09-14T03:10:00Z" ]]
 
 echo "CodeRabbit trigger retirement contract checks passed"

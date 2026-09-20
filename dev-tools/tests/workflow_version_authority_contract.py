@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -18,6 +19,14 @@ def main() -> int:
     root = Path(os.environ.get("FIREMUD_REPO_ROOT", Path(__file__).resolve().parents[2]))
     workflows = root / ".github/workflows"
     actions = root / ".github/actions"
+
+    updater_spec = importlib.util.spec_from_file_location(
+        "workflow_tool_updater", root / "dev-tools/maintenance/update-workflow-tool.py"
+    )
+    if updater_spec is None or updater_spec.loader is None:
+        raise SystemExit("could not load workflow tool updater")
+    updater = importlib.util.module_from_spec(updater_spec)
+    updater_spec.loader.exec_module(updater)
 
     def fail(m):
         raise SystemExit(m)
@@ -129,6 +138,8 @@ def main() -> int:
     versions = ["KUBECTL", "HELM", "GH", "BUF", "KUBECONFORM", "VELERO", "ACTIONLINT", "TRIVY", "LYCHEE", "ORT", "ZAP"]
     if any(not re.fullmatch(r"\d+\.\d+\.\d+", a.get(f"{x}_VERSION", "")) for x in versions):
         fail("all workflow tools must have exact versions")
+    if not re.fullmatch(r"\d+\.\d+\.\d+", a.get("VELERO_CHART_VERSION", "")):
+        fail("Velero chart authority must have an exact three-part version")
     pairs = {
         "KUBECTL": "KUBECTL_LINUX_AMD64",
         "HELM": "HELM_LINUX_AMD64",
@@ -150,7 +161,7 @@ def main() -> int:
     expected = (
         {f"{x}_VERSION" for x in versions}
         | {f"{s}_{suffix}" for s in pairs.values() for suffix in ("CHECKSUM_VERSION", "SHA256")}
-        | {"VELERO_IMAGE_DIGEST", "ORT_DIGEST", "ZAP_DIGEST"}
+        | {"VELERO_CHART_VERSION", "VELERO_IMAGE_DIGEST", "ORT_DIGEST", "ZAP_DIGEST"}
     )
     if set(a) != expected:
         fail("workflow tool authority has unexpected or missing keys")
@@ -273,11 +284,59 @@ def main() -> int:
     def run_has_gh(run):
         return bool(re.search(r"(^|[;&|()\s])gh(?:\s|$)", run))
 
+    executable_helper_suffixes = {".cjs", ".js", ".py", ".sh"}
+
+    def is_executable_helper(path):
+        if path.suffix in executable_helper_suffixes:
+            return True
+        try:
+            if path.is_file() and path.stat().st_mode & 0o111:
+                return True
+            with path.open(encoding="utf-8", errors="ignore") as stream:
+                return stream.readline().startswith("#!")
+        except OSError:
+            return False
+
+    def is_executable_file(path):
+        try:
+            return path.is_file() and bool(path.stat().st_mode & 0o111)
+        except OSError:
+            return False
+
+    explicit_reference_pattern = re.compile(
+        r"(?:^|[;&|()\s])(?:(?:/usr/bin/)?(?:bash|sh|dash|zsh|ksh|python|python3)"
+        r"(?:\s+-[A-Za-z0-9][A-Za-z0-9_-]*)*(?:\s+--)?|source|\.)\s+"
+        r"(?P<quote>['\"])?(?:(?:\./)|(?:\$ROOT_DIR/)|(?:\$\{ROOT_DIR\}/)|"
+        r"(?:\$GITHUB_ACTION_PATH/(?:\.\./)+)|(?:\$\{GITHUB_ACTION_PATH\}/(?:\.\./)+))?"
+        r"(?P<path>(?:dev-tools|services)/[A-Za-z0-9_./-]+)"
+        r"(?(quote)(?P=quote)|(?![A-Za-z0-9_./'\"-]))",
+        flags=re.MULTILINE,
+    )
+
+    direct_reference_pattern = re.compile(
+        r"(?:^|[;&|()])[ \t]*(?:if[ \t]+)?(?:![ \t]*)?"
+        r"(?P<quote>['\"])?(?:(?:\./)|(?:\$ROOT_DIR/)|(?:\$\{ROOT_DIR\}/)|"
+        r"(?:\$GITHUB_ACTION_PATH/(?:\.\./)+)|(?:\$\{GITHUB_ACTION_PATH\}/(?:\.\./)+))?"
+        r"(?P<path>(?:dev-tools|services)/[A-Za-z0-9_./-]+)"
+        r"(?(quote)(?P=quote)|(?![A-Za-z0-9_./'\"-]))",
+        flags=re.MULTILINE,
+    )
+
+    def explicit_references(text):
+        references = {root / match.group("path") for match in explicit_reference_pattern.finditer(text)}
+        references.update(
+            root / match.group("path")
+            for match in direct_reference_pattern.finditer(text)
+            if is_executable_file(root / match.group("path"))
+        )
+        return references
+
     def references(text):
+        explicitly_invoked = explicit_references(text)
         result = set()
         for name in re.findall(r"(?:\./)?((?:dev-tools|services)/[A-Za-z0-9_./-]+)", text):
             path = root / name.rstrip("\"'")
-            if path.is_file():
+            if path.is_file() and (path in explicitly_invoked or is_executable_helper(path)):
                 result.add(path)
         return result
 
@@ -296,6 +355,25 @@ def main() -> int:
             parts.extend(helper_text(source, seen))
         return parts
 
+    def explicitly_invoked_helper_text(text, seen=None):
+        # Dependency profiles follow invoked helpers, not executable-looking paths stored as data.
+        seen = set() if seen is None else seen
+        parts = [text]
+        for path in explicit_references(text):
+            if path in seen:
+                continue
+            seen.add(path)
+            if not path.is_file():
+                continue
+            if path not in referenced_file_cache:
+                try:
+                    referenced_file_cache[path] = path.read_text(errors="ignore")
+                except OSError:
+                    continue
+            source = referenced_file_cache[path]
+            parts.extend(explicitly_invoked_helper_text(source, seen))
+        return parts
+
     workflow_expansion_cache = {}
 
     def expand_text(text):
@@ -303,21 +381,62 @@ def main() -> int:
             workflow_expansion_cache[text] = "\n".join(helper_text(text))
         return workflow_expansion_cache[text]
 
-    def composite_python_profile(uses):
+    conditional_contract_profile = (
+        "${{ (needs.changes.outputs.lightweight_only == 'true' && "
+        "needs.changes.outputs.design_docs_changed == 'true' && "
+        "needs.changes.outputs.validation_python_changed != 'true') && 'yaml' || 'ci' }}"
+    )
+    ci_branch_expression = "needs.changes.outputs.lightweight_only != 'true'"
+
+    def guarantees_ci_branch(step):
+        # The real consumer uses this exact guard; do not infer arbitrary expression semantics here.
+        guard = step.get("if")
+        if not isinstance(guard, str):
+            return False
+        expression = guard.strip()
+        if expression.startswith("${{") or expression.endswith("}}"):
+            if not (expression.startswith("${{") and expression.endswith("}}")):
+                return False
+            expression = expression[3:-2].strip()
+        while expression.startswith("(") and expression.endswith(")"):
+            expression = expression[1:-1].strip()
+        return expression == ci_branch_expression
+
+    def setup_python_profile(path, step, *, allow_conditional=False):
+        with_input = step.get("with", {})
+        if not isinstance(with_input, dict):
+            fail(f"{path}: setup-python with input must be a mapping")
+        profile = with_input.get("requirements", "none")
+        valid_profiles = {"yaml", "ci", "smoke", "docs", "none"}
+        if allow_conditional:
+            valid_profiles.add(conditional_contract_profile)
+        if not isinstance(profile, str) or profile not in valid_profiles:
+            fail(f"{path}: invalid Python dependency profile")
+        return profile
+
+    def composite_python_profile(uses, stack=()):
         if not uses.startswith("./.github/actions/"):
             return None
         action_path = root / uses[2:] / "action.yml"
         if not action_path.is_file():
             return None
+        if action_path in stack:
+            fail(f"{action_path}: recursive composite Python setup")
         action = yaml.safe_load(action_path.read_text(encoding="utf-8")) or {}
+        effective_profile = None
         for step in action.get("runs", {}).get("steps", []):
-            if (
-                isinstance(step, dict)
-                and step.get("uses") == "./.github/actions/setup-python"
-                and step.get("with", {}).get("requirements") in {"yaml", "ci", "smoke", "docs", "none"}
-            ):
-                return step["with"]["requirements"]
-        return None
+            if not isinstance(step, dict):
+                continue
+            step_uses = str(step.get("uses", ""))
+            if step_uses == "./.github/actions/setup-python":
+                effective_profile = setup_python_profile(action_path, step)
+            elif action_path.parent.name == "setup-python" and step_uses.startswith("actions/setup-python@"):
+                effective_profile = "none"
+            elif step_uses.startswith("./.github/actions/"):
+                nested_profile = composite_python_profile(step_uses, (*stack, action_path))
+                if nested_profile is not None:
+                    effective_profile = nested_profile
+        return effective_profile
 
     for composite in (
         "./.github/actions/download-validated-preview-artifact",
@@ -326,8 +445,9 @@ def main() -> int:
         if composite_python_profile(composite) != "yaml":
             fail(f"{composite} must expose its canonical YAML Python profile")
 
-    def python_needs(expanded_text):
-        if "python3" not in expanded_text:
+    def python_needs(text):
+        expanded_text = "\n".join(explicitly_invoked_helper_text(text))
+        if not re.search(r"(^|[;&|()\s])(?:/usr/bin/)?python3?(?:\s|$)", expanded_text):
             return None
         if re.search(r"(^|\n)\s*import websocket\b", expanded_text):
             return "smoke"
@@ -341,6 +461,339 @@ def main() -> int:
 
     def has_gh_consumer(expanded_text):
         return run_has_gh(expanded_text)
+
+    def validate_composite_steps(path, steps):
+        effective_profile = None
+        setup_gh = False
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            uses = str(step.get("uses", ""))
+            run = str(step.get("run", ""))
+            expanded_text = expand_text(run)
+            need = python_needs(run)
+            gh_consumer = has_gh_consumer(expanded_text)
+            if uses == "./.github/actions/setup-python":
+                effective_profile = setup_python_profile(path, step)
+            elif path.parent.name == "setup-python" and uses.startswith("actions/setup-python@"):
+                effective_profile = "none"
+            elif uses.startswith("./.github/actions/"):
+                nested_profile = composite_python_profile(uses)
+                if nested_profile is not None:
+                    effective_profile = nested_profile
+            setup_gh |= uses == "./.github/actions/setup-gh"
+            if uses.startswith("actions/setup-python@") and path.parent.name != "setup-python":
+                fail(f"{path}: bypasses setup-python wrapper")
+            if need is not None:
+                if effective_profile is None:
+                    fail(f"{path}: Python consumer lacks setup")
+                if need != "none":
+                    compatible_profiles = {"yaml", "ci"} if need == "yaml" else {need}
+                    if effective_profile not in compatible_profiles:
+                        fail(f"{path}: Python consumer lacks its pinned dependency profile")
+            if gh_consumer and not setup_gh:
+                fail(f"{path}: gh consumer lacks setup")
+
+    def validate_workflow_python_steps(path, job_name, steps):
+        checkout = False
+        py = False
+        effective_profile = None
+        setup_count = 0
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            uses = str(step.get("uses", ""))
+            run = str(step.get("run", ""))
+            if uses.startswith("actions/checkout@"):
+                checkout = True
+            if uses.startswith("actions/setup-python@"):
+                fail(f"{path.name}:{job_name}: bypasses canonical setup-python action")
+            if uses == "./.github/actions/setup-python":
+                setup_count += 1
+                if not checkout:
+                    fail(f"{path.name}:{job_name}: Python setup before checkout")
+                py = True
+                effective_profile = setup_python_profile(
+                    f"{path.name}:{job_name}",
+                    step,
+                    allow_conditional=path.name == "ci.yml" and job_name == "dev-tool-contract-checks",
+                )
+            elif uses.startswith("./.github/actions/"):
+                composite_profile = composite_python_profile(uses)
+                if composite_profile is not None:
+                    py = True
+                    effective_profile = composite_profile
+            need = python_needs(run)
+            if need is not None and not py:
+                fail(f"{path.name}:{job_name}: direct or helper Python consumer uses ambient runner Python")
+            if need == "yaml":
+                profile_matches = effective_profile in {"yaml", "ci", conditional_contract_profile}
+            elif need in {"smoke", "ci", "docs"}:
+                profile_matches = effective_profile == need or (
+                    effective_profile == conditional_contract_profile and guarantees_ci_branch(step)
+                )
+            else:
+                profile_matches = effective_profile == need
+            if need == "yaml" and not profile_matches:
+                fail(f"{path.name}:{job_name}: PyYAML helper lacks its pinned dependency profile")
+            if need in {"smoke", "ci", "docs"} and not profile_matches:
+                fail(f"{path.name}:{job_name}: {need} helper lacks its pinned dependency profile")
+        return setup_count
+
+    if python_needs("bash ./dev-tools/tests/dev-tools-readme-contract.sh") == "smoke":
+        fail("documentation/data references must not imply the smoke dependency profile")
+    if python_needs("bash ./services/game-session-service/websocket-login-look-smoke.sh") != "smoke":
+        fail("invoked WebSocket smoke helper must retain the smoke dependency profile")
+
+    with tempfile.TemporaryDirectory(prefix="workflow-authority-", dir=root / "dev-tools") as helper_dir:
+        helper_relative = Path(helper_dir).relative_to(root).as_posix()
+        ignored = subprocess.run(
+            ["git", "check-ignore", "--quiet", "--no-index", "--", f"{helper_relative}/extensionless-helper"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if ignored.returncode != 0:
+            fail("workflow authority fixtures must be ignored under dev-tools")
+        helper = Path(helper_dir) / "extensionless-helper"
+        shebang_helper = Path(helper_dir) / "shebang-helper"
+        suffix_helper = Path(helper_dir) / "other-suffix.bash"
+        data = Path(helper_dir) / "extensionless-data"
+        executable_data = Path(helper_dir) / "extensionless-executable-data"
+        invoked = Path(helper_dir) / "extensionless-invoked"
+        invoked_suffix = Path(helper_dir) / "invoked.bash"
+        python_smoke_helper = Path(helper_dir) / "python-smoke-helper"
+        composite_python_helper = Path(helper_dir) / "composite-python-helper"
+        composite_yaml_helper = Path(helper_dir) / "composite-yaml-helper"
+        composite_none_helper = Path(helper_dir) / "composite-none-helper"
+        composite_gh_helper = Path(helper_dir) / "composite-gh-helper"
+        helper.write_text("# option terminator helper\n", encoding="utf-8")
+        shebang_helper.write_text("#!/usr/bin/env bash\n# extensionless helper\n", encoding="utf-8")
+        suffix_helper.write_text("#!/usr/bin/env bash\n# suffix helper\n", encoding="utf-8")
+        data.write_text("extensionless data\n", encoding="utf-8")
+        executable_data.write_text("extensionless executable data\n", encoding="utf-8")
+        invoked.write_text("# explicit interpreter helper\n", encoding="utf-8")
+        invoked_suffix.write_text("# explicit interpreter suffix helper\n", encoding="utf-8")
+        python_smoke_helper.write_text("#!/usr/bin/env python3\nimport websocket\n", encoding="utf-8")
+        composite_python_helper.write_text("python3 - <<'PY'\nimport websocket\nPY\n", encoding="utf-8")
+        composite_yaml_helper.write_text("python3 - <<'PY'\nimport yaml\nPY\n", encoding="utf-8")
+        composite_none_helper.write_text("python3 - <<'PY'\nprint('dependency free')\nPY\n", encoding="utf-8")
+        composite_gh_helper.write_text("gh --version\n", encoding="utf-8")
+        executable_data.chmod(0o755)
+        python_smoke_helper.chmod(0o755)
+        helper_reference = f"bash -- ./{helper.relative_to(root).as_posix()}"
+        shebang_reference = f"bash ./{shebang_helper.relative_to(root).as_posix()}"
+        suffix_reference = f"bash ./{suffix_helper.relative_to(root).as_posix()}"
+        data_reference = f"documentation mentions ./{data.relative_to(root).as_posix()}"
+        invoked_reference = f"bash ./{invoked.relative_to(root).as_posix()}"
+        invoked_suffix_reference = f"python3 ./{invoked_suffix.relative_to(root).as_posix()}"
+        python_smoke_reference = f"python ./{python_smoke_helper.relative_to(root).as_posix()}"
+        sourced_reference = f"source ./{invoked.relative_to(root).as_posix()}"
+        dotted_reference = f". ./{invoked_suffix.relative_to(root).as_posix()}"
+        quoted_invoked_reference = f"bash './{invoked.relative_to(root).as_posix()}'"
+        quoted_terminated_reference = f"bash -e -- './{invoked.relative_to(root).as_posix()}'"
+        quoted_invoked_suffix_reference = f'python3 "./{invoked_suffix.relative_to(root).as_posix()}"'
+        quoted_sourced_reference = f"source './{invoked.relative_to(root).as_posix()}'"
+        quoted_dotted_reference = f'. "./{invoked_suffix.relative_to(root).as_posix()}"'
+        mismatched_quote_reference = f"bash './{invoked.relative_to(root).as_posix()}\""
+        executable_data_reference = f"bash ./{executable_data.relative_to(root).as_posix()}"
+        direct_python_smoke_reference = f"./{python_smoke_helper.relative_to(root).as_posix()}"
+        composite_python_reference = f"bash ./{composite_python_helper.relative_to(root).as_posix()}"
+        composite_yaml_reference = f"bash ./{composite_yaml_helper.relative_to(root).as_posix()}"
+        composite_none_reference = f"bash ./{composite_none_helper.relative_to(root).as_posix()}"
+        composite_gh_reference = f"bash ./{composite_gh_helper.relative_to(root).as_posix()}"
+        if helper not in references(helper_reference):
+            fail("extensionless helper after an option terminator was not detected")
+        if "# option terminator helper" not in expand_text(helper_reference):
+            fail("extensionless helper after an option terminator was not expanded")
+        if shebang_helper not in references(shebang_reference):
+            fail("extensionless helper with a shebang was not detected")
+        if "# extensionless helper" not in expand_text(shebang_reference):
+            fail("extensionless helper with a shebang was not expanded")
+        if suffix_helper not in references(suffix_reference):
+            fail("helper with an unlisted suffix and a shebang was not detected")
+        if data in references(data_reference):
+            fail("extensionless data without an invocation was treated as an executable helper")
+        if invoked not in references(invoked_reference):
+            fail("extensionless helper passed to an explicit interpreter was not detected")
+        if "# explicit interpreter helper" not in expand_text(invoked_reference):
+            fail("extensionless helper passed to an explicit interpreter was not expanded")
+        if invoked_suffix not in references(invoked_suffix_reference):
+            fail("helper with an unlisted suffix passed to an explicit interpreter was not detected")
+        if python_needs(python_smoke_reference) != "smoke":
+            fail("invoked Python helper must retain the smoke dependency profile")
+        if python_needs(direct_python_smoke_reference) != "smoke":
+            fail("directly executed Python helper must retain the smoke dependency profile")
+        if invoked not in references(quoted_invoked_reference):
+            fail("quoted extensionless helper passed to bash was not detected")
+        if invoked not in references(quoted_terminated_reference):
+            fail("quoted extensionless helper after an option terminator was not detected")
+        if invoked_suffix not in references(quoted_invoked_suffix_reference):
+            fail("quoted helper with an unlisted suffix passed to Python was not detected")
+        if invoked not in references(sourced_reference):
+            fail("extensionless helper sourced without a shebang was not detected")
+        if invoked_suffix not in references(dotted_reference):
+            fail("helper with an unlisted suffix dot-sourced without a shebang was not detected")
+        if invoked not in references(quoted_sourced_reference):
+            fail("quoted extensionless helper sourced without a shebang was not detected")
+        if invoked_suffix not in references(quoted_dotted_reference):
+            fail("quoted helper with an unlisted suffix dot-sourced without a shebang was not detected")
+        if invoked in references(mismatched_quote_reference):
+            fail("explicit helper invocation accepts mismatched quote delimiters")
+        if executable_data not in references(executable_data_reference):
+            fail("extensionless executable file was not detected")
+        if "extensionless executable data" not in expand_text(executable_data_reference):
+            fail("extensionless executable file was not expanded")
+
+        composite_fixture = root / ".github/actions/workflow-authority-fixture/action.yml"
+
+        validate_composite_steps(composite_fixture, ["malformed YAML step"])
+
+        def expect_composite_failure(steps, expected_message):
+            try:
+                validate_composite_steps(composite_fixture, steps)
+            except SystemExit as error:
+                if expected_message not in str(error):
+                    fail(f"composite fixture failed for an unexpected reason: {error}")
+            else:
+                fail(f"composite fixture unexpectedly passed: {expected_message}")
+
+        python_steps = [{"run": composite_python_reference}]
+        expect_composite_failure(python_steps, "Python consumer lacks setup")
+        expect_composite_failure(
+            [{"uses": "./.github/actions/setup-python", "with": {"requirements": "none"}}, *python_steps],
+            "Python consumer lacks its pinned dependency profile",
+        )
+        validate_composite_steps(
+            composite_fixture,
+            [{"uses": "./.github/actions/setup-python", "with": {"requirements": "smoke"}}, *python_steps],
+        )
+        validate_composite_steps(
+            composite_fixture,
+            [
+                {"uses": "./.github/actions/setup-python", "with": {"requirements": "smoke"}},
+                {"uses": "./.github/actions/setup-python", "with": {"requirements": "none"}},
+            ],
+        )
+        expect_composite_failure(
+            [
+                {"uses": "./.github/actions/setup-python", "with": {"requirements": "smoke"}},
+                {"uses": "./.github/actions/setup-python", "with": {"requirements": "none"}},
+                *python_steps,
+            ],
+            "Python consumer lacks its pinned dependency profile",
+        )
+        yaml_steps = [{"run": composite_yaml_reference}]
+        validate_composite_steps(
+            composite_fixture,
+            [{"uses": "./.github/actions/setup-python", "with": {"requirements": "yaml"}}, *yaml_steps],
+        )
+        validate_composite_steps(
+            composite_fixture,
+            [{"uses": "./.github/actions/resolve-certificate-identity-mode"}, *yaml_steps],
+        )
+        expect_composite_failure(
+            [
+                {"uses": "./.github/actions/resolve-certificate-identity-mode"},
+                {"uses": "./.github/actions/setup-python", "with": {"requirements": "none"}},
+                *yaml_steps,
+            ],
+            "Python consumer lacks its pinned dependency profile",
+        )
+        none_steps = [{"run": composite_none_reference}]
+        expect_composite_failure(none_steps, "Python consumer lacks setup")
+        validate_composite_steps(
+            composite_fixture,
+            [{"uses": "./.github/actions/setup-python", "with": {"requirements": "smoke"}}, *none_steps],
+        )
+        validate_composite_steps(
+            composite_fixture,
+            [{"uses": "./.github/actions/setup-python", "with": {"requirements": "yaml"}}, *none_steps],
+        )
+        gh_steps = [{"run": composite_gh_reference}]
+        expect_composite_failure(gh_steps, "gh consumer lacks setup")
+        validate_composite_steps(composite_fixture, [{"uses": "./.github/actions/setup-gh"}, *gh_steps])
+
+        workflow_fixture = root / ".github/workflows/workflow-authority-fixture.yml"
+
+        def expect_workflow_failure(
+            steps, expected_message, *, path=workflow_fixture, job_name="profile-sequencing"
+        ):
+            try:
+                validate_workflow_python_steps(path, job_name, steps)
+            except SystemExit as error:
+                if expected_message not in str(error):
+                    fail(f"workflow fixture failed for an unexpected reason: {error}")
+            else:
+                fail(f"workflow fixture unexpectedly passed: {expected_message}")
+
+        workflow_checkout = {"uses": "actions/checkout@test-fixture"}
+        validate_workflow_python_steps(
+            workflow_fixture,
+            "profile-sequencing",
+            [
+                workflow_checkout,
+                {"uses": "./.github/actions/setup-python", "with": {"requirements": "smoke"}},
+                *python_steps,
+            ],
+        )
+        expect_workflow_failure(
+            [
+                workflow_checkout,
+                {"uses": "./.github/actions/setup-python", "with": {"requirements": "smoke"}},
+                {"uses": "./.github/actions/setup-python", "with": {"requirements": "none"}},
+                *python_steps,
+            ],
+            "profile-sequencing: smoke helper lacks its pinned dependency profile",
+        )
+
+        conditional_setup = {
+            "uses": "./.github/actions/setup-python",
+            "with": {"requirements": conditional_contract_profile},
+        }
+        ci_workflow_fixture = workflows / "ci.yml"
+        guarded_ci_consumer = {
+            "if": "${{ needs.changes.outputs.lightweight_only != 'true' }}",
+            "run": "python3 -m ruff --version",
+        }
+        guarded_smoke_consumer = {
+            "if": guarded_ci_consumer["if"],
+            "run": python_smoke_reference,
+        }
+        guarded_docs_consumer = {
+            "if": guarded_ci_consumer["if"],
+            "run": "python3 -m mkdocs build --clean",
+        }
+        validate_workflow_python_steps(
+            ci_workflow_fixture,
+            "dev-tool-contract-checks",
+            [
+                workflow_checkout,
+                conditional_setup,
+                guarded_ci_consumer,
+                guarded_smoke_consumer,
+                guarded_docs_consumer,
+            ],
+        )
+        expect_workflow_failure(
+            [workflow_checkout, conditional_setup, {"run": guarded_ci_consumer["run"]}],
+            "ci.yml:dev-tool-contract-checks: ci helper lacks its pinned dependency profile",
+            path=ci_workflow_fixture,
+            job_name="dev-tool-contract-checks",
+        )
+        expect_workflow_failure(
+            [workflow_checkout, conditional_setup, {"run": python_smoke_reference}],
+            "ci.yml:dev-tool-contract-checks: smoke helper lacks its pinned dependency profile",
+            path=ci_workflow_fixture,
+            job_name="dev-tool-contract-checks",
+        )
+        expect_workflow_failure(
+            [workflow_checkout, conditional_setup, {"run": "python3 -m mkdocs build --clean"}],
+            "ci.yml:dev-tool-contract-checks: docs helper lacks its pinned dependency profile",
+            path=ci_workflow_fixture,
+            job_name="dev-tool-contract-checks",
+        )
 
     workflow_paths = sorted((*workflows.glob("*.yml"), *workflows.glob("*.yaml")))
 
@@ -386,19 +839,15 @@ def main() -> int:
         if "config/workflow-tool-versions.env" in paths:
             fail(f"license-scan.yml {group} filter must not match the entire tool authority file")
 
-    conditional_contract_profile = (
-        "${{ (needs.changes.outputs.lightweight_only == 'true' && "
-        "needs.changes.outputs.design_docs_changed == 'true' && "
-        "needs.changes.outputs.validation_python_changed != 'true') && 'yaml' || 'ci' }}"
-    )
     node_count = python_count = gh_count = 0
     for path in workflow_paths:
         for job_name, job in (load(path).get("jobs") or {}).items():
             if not isinstance(job, dict):
                 continue
-            checkout = py = gh_setup_seen = loader = False
-            python_profiles = set()
-            for step in job.get("steps", []):
+            steps = job.get("steps", [])
+            python_count += validate_workflow_python_steps(path, job_name, steps)
+            checkout = gh_setup_seen = loader = False
+            for step in steps:
                 if not isinstance(step, dict):
                     continue
                 uses = str(step.get("uses", ""))
@@ -417,41 +866,12 @@ def main() -> int:
                         or "node-version" in step.get("with", {})
                     ):
                         fail(f"{path.name}:{job_name}: invalid Node authority consumption")
-                if uses.startswith("actions/setup-python@"):
-                    fail(f"{path.name}:{job_name}: bypasses canonical setup-python action")
-                if uses == "./.github/actions/setup-python":
-                    python_count += 1
-                    if not checkout:
-                        fail(f"{path.name}:{job_name}: Python setup before checkout")
-                    py = True
-                    selected_profile = step.get("with", {}).get("requirements", "none")
-                    python_profiles.add(selected_profile)
-                    valid_profiles = {"none", "yaml", "ci", "smoke", "docs"}
-                    if path.name == "ci.yml" and job_name == "dev-tool-contract-checks":
-                        valid_profiles.add(conditional_contract_profile)
-                    if selected_profile not in valid_profiles:
-                        fail(f"{path.name}:{job_name}: invalid Python dependency profile")
-                composite_profile = composite_python_profile(uses)
-                if composite_profile is not None:
-                    py = True
-                    python_profiles.add(composite_profile)
                 if uses == "./.github/actions/setup-gh":
                     gh_count += 1
                     if not checkout:
                         fail(f"{path.name}:{job_name}: gh setup before checkout")
                     gh_setup_seen = True
                 expanded_text = expand_text(run)
-                need = python_needs(expanded_text)
-                if need is not None and not py:
-                    fail(f"{path.name}:{job_name}: direct or helper Python consumer uses ambient runner Python")
-                if need == "yaml" and not python_profiles.intersection({"yaml", "ci", conditional_contract_profile}):
-                    fail(f"{path.name}:{job_name}: PyYAML helper lacks its pinned dependency profile")
-                if (
-                    need in {"smoke", "ci", "docs"}
-                    and need not in python_profiles
-                    and conditional_contract_profile not in python_profiles
-                ):
-                    fail(f"{path.name}:{job_name}: {need} helper lacks its pinned dependency profile")
                 if has_gh_consumer(expanded_text) and not gh_setup_seen:
                     fail(f"{path.name}:{job_name}: direct or helper gh consumer is not preceded by canonical setup-gh")
                 if uses.startswith("oss-review-toolkit/ort-ci-github-action@") and (
@@ -496,20 +916,7 @@ def main() -> int:
         fail("trusted publisher checkout requires contents: read")
 
     for path in sorted(actions.glob("*/action.yml")):
-        setup_py = setup_gh = False
-        for step in load(path).get("runs", {}).get("steps", []):
-            uses = str(step.get("uses", ""))
-            run = str(step.get("run", ""))
-            setup_py |= uses == "./.github/actions/setup-python" or (
-                path.parent.name == "setup-python" and uses.startswith("actions/setup-python@")
-            )
-            setup_gh |= uses == "./.github/actions/setup-gh"
-            if uses.startswith("actions/setup-python@") and path.parent.name != "setup-python":
-                fail(f"{path}: bypasses setup-python wrapper")
-            if "python3" in run and not setup_py:
-                fail(f"{path}: Python consumer lacks setup")
-            if run_has_gh(run) and not setup_gh:
-                fail(f"{path}: gh consumer lacks setup")
+        validate_composite_steps(path, load(path).get("runs", {}).get("steps", []))
 
     text = "\n".join(p.read_text() for p in workflow_paths)
     for forbidden in (
@@ -780,21 +1187,122 @@ def main() -> int:
         if set(paths) != {".node-version", lockfile}:
             fail(f"ci.yml {cache_id} key must hash .node-version and {lockfile}")
 
-    velero_manifest = (root / "k8s/velero/verify-backups-cronjob.yaml").read_text()
-    velero_images = re.findall(r"image: velero/velero:[^\s]+", velero_manifest)
-    allowed_velero_images = {
-        f"image: velero/velero:v{a['VELERO_VERSION']}",
-        f"image: velero/velero:v{a['VELERO_VERSION']}@{a['VELERO_IMAGE_DIGEST']}",
-    }
-    if len(velero_images) != 1 or velero_images[0] not in allowed_velero_images:
-        fail("Velero image version/digest projection is stale")
+    def extract_hcl_block(text, header):
+        """Return the exact text for one updater-scanned HCL block."""
+        span = updater.find_hcl_block_span(text, header)
+        if span is None:
+            return None
+        return text[span[0] : span[1]]
+
+    def has_hcl_set_value(block, name, value):
+        """Match one exact Helm set block, keeping its name/value association."""
+        pattern = (
+            rf'(?ms)^[ \t]*set[ \t]*\{{\s*'
+            rf'name[ \t]*=[ \t]*"{re.escape(name)}"\s*'
+            rf'value[ \t]*=[ \t]*"{re.escape(value)}"\s*'
+            rf'\}}[ \t]*$'
+        )
+        return re.search(pattern, block) is not None
+
+    fixture = (
+        'resource "helm_release" "velero" {\n'
+        '  description = "literal } remains inside this block"\n'
+        '  # line comment with a closing brace }\n'
+        '  /* block comment with a closing brace } */\n'
+        '  version = "canonical"\n'
+        '}\n'
+        'resource "helm_release" "following" {\n'
+        '  version = "following-only"\n'
+        '}\n'
+    )
+    fixture_block = extract_hcl_block(fixture, 'resource "helm_release" "velero"')
+    if fixture_block is None or 'version = "canonical"' not in fixture_block:
+        fail("Terraform HCL block extraction dropped the canonical version")
+    if 'version = "following-only"' in fixture_block:
+        fail("Terraform HCL block extraction consumed a following resource")
+
+    velero_terraform = (root / "k8s/terraform-production/main.tf").read_text()
+    if velero_terraform.count('resource "helm_release" "velero"') != 1:
+        fail("Terraform must define exactly one Velero Helm release")
+    velero_release = extract_hcl_block(velero_terraform, 'resource "helm_release" "velero"')
+    if velero_release is None:
+        fail("Terraform Velero Helm release block is unterminated")
+    chart_pattern = rf'(?m)^[ \t]*version[ \t]*=[ \t]*"{re.escape(a["VELERO_CHART_VERSION"])}"[ \t]*$'
+    if re.search(chart_pattern, velero_release) is None:
+        fail("Terraform Velero Helm release must pin the canonical chart version")
+    if not has_hcl_set_value(velero_release, "image.tag", f'v{a["VELERO_VERSION"]}'):
+        fail("Terraform Velero Helm release must pin the canonical server image tag")
+    if not has_hcl_set_value(velero_release, "image.digest", a["VELERO_IMAGE_DIGEST"]):
+        fail("Terraform Velero Helm release must pin the canonical server image digest")
+    if not has_hcl_set_value(velero_release, "configuration.backupStorageLocation[0].name", "default"):
+        fail("Terraform Velero Helm release must name its default backup storage location")
+    minio_values = yaml.safe_load((root / "k8s/velero/values-minio.yaml").read_text())
+    minio_locations = (
+        (minio_values.get("configuration") or {}).get("backupStorageLocation")
+        if isinstance(minio_values, dict)
+        else None
+    )
+    if (
+        not isinstance(minio_locations, list)
+        or len(minio_locations) != 1
+        or not isinstance(minio_locations[0], dict)
+        or minio_locations[0].get("name") != "default"
+    ):
+        fail("MinIO Velero values must name their backup storage location default")
+    minio_config = minio_locations[0].get("config")
+    if (
+        not isinstance(minio_config, dict)
+        or minio_config.get("region") != "minio"
+        or minio_config.get("s3Url") != "http://minio.minio.svc.cluster.local:9000"
+        or minio_config.get("s3ForcePathStyle") != "true"
+        or minio_config.get("insecureSkipTLSVerify") is not True
+    ):
+        fail("MinIO Velero values must retain the endpoint/TLS settings and force S3 path style")
+    minio_readme = (root / "k8s/velero/README.md").read_text()
+    if minio_readme.count('s3ForcePathStyle: "true"') != 1:
+        fail("MinIO Velero README snippet must document s3ForcePathStyle: \"true\"")
+
+    negative_release = (
+        'resource "helm_release" "velero" {\n'
+        f'  # version = "{a["VELERO_CHART_VERSION"]}"\n'
+        '  version = "not-canonical"\n'
+        '  set {\n'
+        f'    name = "unrelated.tag"\n    value = "v{a["VELERO_VERSION"]}"\n'
+        '  }\n'
+        '  set {\n'
+        '    name = "image.tag"\n    value = "not-canonical"\n'
+        '  }\n'
+        '  set {\n'
+        f'    name = "unrelated.digest"\n    value = "{a["VELERO_IMAGE_DIGEST"]}"\n'
+        '  }\n'
+        '  set {\n'
+        '    name = "image.digest"\n    value = "sha256:not-canonical"\n'
+        '  }\n'
+        '}\n'
+    )
+    if re.search(chart_pattern, negative_release) is not None:
+        fail("Velero chart assertion accepted a commented assignment")
+    if has_hcl_set_value(negative_release, "image.tag", f'v{a["VELERO_VERSION"]}'):
+        fail("Velero image tag assertion accepted an unrelated Helm set")
+    if has_hcl_set_value(negative_release, "image.digest", a["VELERO_IMAGE_DIGEST"]):
+        fail("Velero image digest assertion accepted an unrelated Helm set")
+
+    velero_cronjob_path = root / "k8s/velero/verify-backups-cronjob.yaml"
+    if not velero_cronjob_path.is_file():
+        fail("backup verifier CronJob manifest is missing")
+    verifier_dockerfile = (root / "docker/backup-verifier.Dockerfile").read_text()
+    expected_velero_stage = (
+        f"FROM velero/velero:v{a['VELERO_VERSION']}@{a['VELERO_IMAGE_DIGEST']} AS velero-cli"
+    )
+    if verifier_dockerfile.count(expected_velero_stage) != 1:
+        fail("backup verifier Dockerfile Velero projection is stale")
 
     renovate = json.loads((root / "renovate.json").read_text())
     if not {"nodenv", "pyenv", "pip_requirements", "custom.regex"} <= set(renovate["enabledManagers"]):
         fail("Renovate managers incomplete")
     custom_managers = renovate.get("customManagers", [])
-    if len(custom_managers) != 3:
-        fail("Renovate must define version, Velero image, and ORT/ZAP image authority managers")
+    if len(custom_managers) != 11:
+        fail("Renovate must define three version-only, five checksum-backed, one Velero chart, one Velero image, and one ORT/ZAP image authority manager")
 
     def translate_renovate_pattern(pattern_source):
         return re.sub(r"\(\?<([A-Za-z_])", r"(?P<\1", pattern_source)
@@ -832,7 +1340,6 @@ def main() -> int:
         "LYCHEE": "lycheeverse/lychee",
     }
     expected_image_dep_names = {
-        "VELERO": "velero/velero",
         "ORT": "ghcr.io/oss-review-toolkit/ort",
         "ZAP": "ghcr.io/zaproxy/zaproxy",
     }
@@ -842,75 +1349,187 @@ def main() -> int:
     expected_renovate_dependencies.update(
         (expected_image_dep_names[x], a[f"{x}_VERSION"]) for x in expected_image_dep_names
     )
+    expected_renovate_dependencies.update((("velero", a["VELERO_CHART_VERSION"]),))
+    expected_renovate_dependencies.update((("velero/velero", a["VELERO_VERSION"]),))
     matched = Counter()
-    velero_image_managers = [
-        manager for manager in custom_managers if manager.get("depNameTemplate") == "velero/velero"
+    version_only_specs = {
+        "KUBECTL": "kubernetes/kubernetes",
+        "HELM": "helm/helm",
+        "ACTIONLINT": "rhysd/actionlint",
+    }
+    attachment_specs = {
+        "GH": ("cli/cli", "v{{{currentValue}}}", "semver", "^v", "GH_LINUX_AMD64"),
+        "BUF": ("bufbuild/buf", "v{{{currentValue}}}", "semver", "^v", "BUF_LINUX_X86_64"),
+        "KUBECONFORM": (
+            "yannh/kubeconform",
+            "v{{{currentValue}}}",
+            "semver",
+            "^v",
+            "KUBECONFORM_LINUX_AMD64",
+        ),
+        "TRIVY": ("aquasecurity/trivy", "v{{{currentValue}}}", "semver", "^v", "TRIVY_LINUX_AMD64"),
+        "LYCHEE": (
+            "lycheeverse/lychee",
+            "lychee-v{{{currentValue}}}",
+            "regex:^lychee-v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$",
+            "^lychee-v",
+            "LYCHEE_LINUX_X86_64_MUSL",
+        ),
+    }
+    attachment_managers = [
+        manager for manager in custom_managers if manager.get("datasourceTemplate") == "github-release-attachments"
     ]
-    if len(velero_image_managers) != 1:
-        fail("Renovate must define exactly one Velero image manager")
-    velero_image_manager = velero_image_managers[0]
-    if (
-        velero_image_manager.get("autoReplaceStringTemplate")
-        != "# renovate-image: datasource=docker depName=velero/velero\nVELERO_VERSION={{{replace '^v' '' newValue}}}\nVELERO_IMAGE_DIGEST={{{newDigest}}}"
-    ):
-        fail("Velero image manager must atomically replace its version and digest using supported fields")
-    if velero_image_manager.get("matchStringsStrategy", "any") != "any":
-        fail("Velero image manager must expose one complete authority-block match")
-    if velero_image_manager.get("currentValueTemplate") != "v{{{currentValue}}}":
-        fail("Velero image manager must expose a v-prefixed current value")
-    if any(
-        unsupported in velero_image_manager["autoReplaceStringTemplate"]
-        for unsupported in ("authorityPrefix", "authoritySuffix")
-    ):
-        fail("Velero image manager must not reference unsupported custom capture groups")
-    docker_managers = [manager for manager in custom_managers if manager.get("versioningTemplate") == "docker"]
-    if len(docker_managers) != 2:
-        fail("Renovate must define separate Velero and ORT/ZAP Docker managers")
-    ort_zap_image_managers = [manager for manager in docker_managers if manager is not velero_image_manager]
-    if len(ort_zap_image_managers) != 1:
-        fail("Renovate must define exactly one ORT/ZAP image manager")
-    ort_zap_image_manager = ort_zap_image_managers[0]
-    if "currentValueTemplate" in ort_zap_image_manager or "autoReplaceStringTemplate" in ort_zap_image_manager:
-        fail("ORT/ZAP image manager must not inherit Velero value or replacement templates")
+    if len(attachment_managers) != len(attachment_specs):
+        fail("Renovate must define one github-release-attachments manager for each checksum-backed tool")
     authority_text = ap.read_text()
-    velero_pattern_sources = velero_image_manager.get("matchStrings") or []
+    for key, dep_name in version_only_specs.items():
+        managers = [
+            manager
+            for manager in custom_managers
+            if manager.get("datasourceTemplate") == "github-releases"
+            and manager.get("depNameTemplate") == dep_name
+        ]
+        if len(managers) != 1:
+            fail(f"Renovate must define exactly one version-only manager for {dep_name}")
+        manager = managers[0]
+        if manager.get("versioningTemplate") != "semver":
+            fail(f"{dep_name} version-only manager must use semver")
+        if manager.get("extractVersionTemplate") != "^v(?<version>.*)$":
+            fail(f"{dep_name} version-only manager must strip the release tag prefix")
+        if manager.get("currentValueTemplate") != "{{{currentValue}}}":
+            fail(f"{dep_name} version-only manager must preserve the raw authority version")
+        if "autoReplaceStringTemplate" in manager:
+            fail(f"{dep_name} version-only manager must leave checksum repair to the updater")
+        patterns = manager.get("matchStrings") or []
+        if len(patterns) != 1:
+            fail(f"{dep_name} version-only manager must define one version match pattern")
+        try:
+            pattern = compile_re2_pattern(patterns[0])
+        except (re.error, TypeError) as error:
+            fail(f"{dep_name} version-only manager pattern is invalid: {error}")
+        matches_for_manager = list(pattern.finditer(authority_text))
+        if len(matches_for_manager) != 1 or matches_for_manager[0].group("currentValue") != a[key + "_VERSION"]:
+            fail(f"{dep_name} version-only manager must match the authority version exactly once")
+    for key, (dep_name, current_value_template, versioning, release_prefix, checksum_stem) in attachment_specs.items():
+        managers = [manager for manager in attachment_managers if manager.get("depNameTemplate") == dep_name]
+        if len(managers) != 1:
+            fail(f"Renovate must define exactly one checksum manager for {dep_name}")
+        manager = managers[0]
+        if manager.get("currentValueTemplate") != current_value_template:
+            fail(f"{dep_name} checksum manager must expose its release tag prefix")
+        if "extractVersionTemplate" in manager:
+            fail(f"{dep_name} checksum manager must preserve the raw release tag for attachment lookup")
+        if manager.get("versioningTemplate") != versioning:
+            fail(f"{dep_name} checksum manager has an unexpected versioning scheme")
+        patterns = manager.get("matchStrings") or []
+        if len(patterns) != 1:
+            fail(f"{dep_name} checksum manager must define one complete authority-block pattern")
+        marker = f"# renovate-version: datasource=github-release-attachments depName={dep_name}"
+        if marker not in authority_text or authority_text.count(marker) != 1:
+            fail(f"{dep_name} authority must define exactly one raw-release attachment marker")
+        if "extractVersion" in patterns[0]:
+            fail(f"{dep_name} checksum marker must not strip the release tag before attachment lookup")
+        try:
+            pattern = compile_re2_pattern(patterns[0])
+        except (re.error, TypeError) as error:
+            fail(f"{dep_name} checksum manager pattern is invalid: {error}")
+        matches_for_manager = list(pattern.finditer(authority_text))
+        if len(matches_for_manager) != 1:
+            fail(f"{dep_name} checksum manager must match exactly one authority block")
+        match = matches_for_manager[0]
+        if match.group("currentValue") != a[key + "_VERSION"]:
+            fail(f"{dep_name} checksum manager must match the authority version")
+        if match.group("currentChecksumVersion") != a[checksum_stem + "_CHECKSUM_VERSION"]:
+            fail(f"{dep_name} checksum manager must capture the checksum version")
+        if match.group("currentDigest") != a[checksum_stem + "_SHA256"]:
+            fail(f"{dep_name} checksum manager must capture the archive checksum")
+        replacement = manager.get("autoReplaceStringTemplate", "")
+        if "{{{newDigest}}}" not in replacement or "_CHECKSUM_VERSION=" not in replacement or "_SHA256=" not in replacement:
+            fail(f"{dep_name} checksum manager must replace version and checksum authority together")
+        if "extractVersion" in replacement or marker not in replacement:
+            fail(f"{dep_name} replacement must preserve the raw-release marker")
+        new_value_token = "{{{replace '" + release_prefix + "' '' newValue}}}"
+        raw_release_tag = f"{release_prefix.removeprefix('^')}9.9.9"
+        rendered_replacement = replacement.replace(new_value_token, "9.9.9").replace(
+            "{{{newDigest}}}", "d" * 64
+        )
+        rendered_match = pattern.fullmatch(rendered_replacement)
+        if rendered_match is None or rendered_match.group("currentValue") != "9.9.9":
+            fail(f"{dep_name} checksum manager replacement must preserve one complete authority block")
+        if rendered_match.group("currentChecksumVersion") != "9.9.9" or rendered_match.group("currentDigest") != "d" * 64:
+            fail(f"{dep_name} checksum manager replacement must update both checksum fields")
+        if key == "LYCHEE":
+            versioning_pattern = re.compile(translate_renovate_pattern(versioning.removeprefix("regex:")))
+            versioning_match = versioning_pattern.fullmatch(raw_release_tag)
+            if versioning_match is None or versioning_match.groupdict() != {
+                "major": "9",
+                "minor": "9",
+                "patch": "9",
+            }:
+                fail(f"{dep_name} versioning must compare numeric releases while accepting the raw tag")
+    velero_chart_managers = [manager for manager in custom_managers if manager.get("depNameTemplate") == "velero"]
+    if len(velero_chart_managers) != 1:
+        fail("Renovate must define exactly one Velero chart manager")
+    velero_chart_manager = velero_chart_managers[0]
+    if (
+        velero_chart_manager.get("datasourceTemplate") != "helm"
+        or velero_chart_manager.get("registryUrlTemplate") != "https://vmware-tanzu.github.io/helm-charts"
+        or velero_chart_manager.get("versioningTemplate") != "semver"
+        or velero_chart_manager.get("currentValueTemplate") != "{{{currentValue}}}"
+        or "autoReplaceStringTemplate" in velero_chart_manager
+    ):
+        fail("Velero chart manager must signal Helm releases without automatic projection")
+    velero_chart_pattern_sources = velero_chart_manager.get("matchStrings", [None])
+    if len(velero_chart_pattern_sources) != 1:
+        fail("Velero chart manager must define one match pattern")
+    try:
+        velero_chart_pattern = compile_re2_pattern(velero_chart_pattern_sources[0])
+    except (re.error, TypeError) as error:
+        fail(f"Velero chart manager pattern is invalid: {error}")
+    velero_chart_matches = list(velero_chart_pattern.finditer(authority_text))
+    if len(velero_chart_matches) != 1 or velero_chart_matches[0].group("currentValue") != a["VELERO_CHART_VERSION"]:
+        fail("Velero chart manager must match the canonical chart authority exactly once")
+    velero_managers = [manager for manager in custom_managers if manager.get("depNameTemplate") == "velero/velero"]
+    if len(velero_managers) != 1:
+        fail("Renovate must define exactly one Velero image manager")
+    velero_manager = velero_managers[0]
+    if (
+        velero_manager.get("datasourceTemplate") != "docker"
+        or velero_manager.get("versioningTemplate") != "docker"
+        or velero_manager.get("currentValueTemplate") != "v{{{currentValue}}}"
+    ):
+        fail("Velero manager must track Docker releases with the v tag prefix")
+    velero_pattern_sources = velero_manager.get("matchStrings", [None])
     if len(velero_pattern_sources) != 1:
-        fail("Velero image manager must define one atomic version-and-digest match pattern")
+        fail("Velero image manager must define one match pattern")
     try:
         velero_pattern = compile_re2_pattern(velero_pattern_sources[0])
     except (re.error, TypeError) as error:
         fail(f"Velero image manager pattern is invalid: {error}")
     velero_matches = list(velero_pattern.finditer(authority_text))
     if len(velero_matches) != 1:
-        fail("Velero image manager must match exactly one atomic version-and-digest block")
+        fail("Velero image manager must match exactly one authority block")
     velero_match = velero_matches[0]
-    if "vmware-tanzu/velero" in authority_text:
-        fail("workflow tool authority must not retain the stale vmware-tanzu/velero marker")
-    if velero_match.group("currentValue") != a["VELERO_VERSION"]:
-        fail("Velero image manager must match the authority image version")
-    if velero_match.group("currentDigest") != a["VELERO_IMAGE_DIGEST"]:
-        fail("Velero image manager must match the authority image digest")
-    new_velero_value = "v9.9.9"
-    new_velero_digest = "sha256:" + "b" * 64
-    def render_velero_template(template):
-        rendered = template.replace("{{{newDigest}}}", new_velero_digest)
-        rendered = rendered.replace(
-            "{{{replace '^v' '' newValue}}}", re.sub(r"^v", "", new_velero_value)
-        )
-        return rendered
+    if (
+        velero_match.group("currentValue") != a["VELERO_VERSION"]
+        or velero_match.group("currentDigest") != a["VELERO_IMAGE_DIGEST"]
+    ):
+        fail("Velero image manager must match the canonical image authority")
+    velero_replacement = velero_manager.get("autoReplaceStringTemplate", "")
+    if "VELERO_VERSION=" not in velero_replacement or "VELERO_IMAGE_DIGEST={{{newDigest}}}" not in velero_replacement:
+        fail("Velero image manager must update its image version and digest")
 
-    replacement = render_velero_template(velero_image_manager["autoReplaceStringTemplate"])
-    expected_replacement = velero_match.group(0).replace(
-        f"VELERO_VERSION={a['VELERO_VERSION']}", "VELERO_VERSION=9.9.9"
-    ).replace(a["VELERO_IMAGE_DIGEST"], new_velero_digest)
-    if replacement != expected_replacement:
-        fail("Velero image manager replacement must atomically update the complete image authority block")
-    updated_authority = authority_text.replace(velero_match.group(0), replacement, 1)
-    expected_authority = authority_text.replace(
-        f"VELERO_VERSION={a['VELERO_VERSION']}", "VELERO_VERSION=9.9.9", 1
-    ).replace(a["VELERO_IMAGE_DIGEST"], new_velero_digest, 1)
-    if updated_authority != expected_authority:
-        fail("Velero image manager replacement must preserve adjacent checksum authority")
+    docker_managers = [
+        manager
+        for manager in custom_managers
+        if manager.get("versioningTemplate") == "docker" and manager.get("depNameTemplate") != "velero/velero"
+    ]
+    if len(docker_managers) != 1:
+        fail("Renovate must define exactly one ORT/ZAP Docker manager")
+    ort_zap_image_managers = docker_managers
+    ort_zap_image_manager = ort_zap_image_managers[0]
+    if "currentValueTemplate" in ort_zap_image_manager or "autoReplaceStringTemplate" in ort_zap_image_manager:
+        fail("ORT/ZAP image manager must not inherit Velero value or replacement templates")
     ort_zap_pattern_sources = ort_zap_image_manager.get("matchStrings", [None])
     if len(ort_zap_pattern_sources) != 1:
         fail("ORT/ZAP image manager must define one match pattern")
@@ -958,36 +1577,43 @@ def main() -> int:
     if matched != expected_renovate_dependencies:
         fail("Renovate does not discover every workflow tool authority exactly once")
     rules = renovate.get("packageRules", [])
-    runtime_major_rule = next(
-        (rule for rule in rules if rule.get("description") == "Keep canonical Node and Python runtime majors"), None
-    )
-    if runtime_major_rule != {
-        "description": "Keep canonical Node and Python runtime majors",
-        "matchManagers": ["nodenv", "pyenv"],
-        "matchUpdateTypes": ["major"],
-        "enabled": False,
-    }:
-        fail("Renovate must disable only major Node and Python runtime authority updates")
     infra_rule = next((rule for rule in rules if rule.get("groupName") == "infrastructure non-major updates"), None)
     velero_rule = next(
         (
             rule
             for rule in rules
-            if rule.get("description") == "Production Velero image changes require promotion evidence"
+            if rule.get("description") == "Velero verifier image changes require promotion evidence"
         ),
         None,
     )
     if infra_rule is None or velero_rule is None or rules.index(velero_rule) <= rules.index(infra_rule):
         fail("production Velero Renovate exception must follow infrastructure automerge")
     if (
-        velero_rule.get("matchManagers") != ["kubernetes"]
-        or velero_rule.get("matchFileNames") != ["k8s/velero/verify-backups-cronjob.yaml"]
+        velero_rule.get("matchManagers") != ["dockerfile"]
+        or velero_rule.get("matchFileNames") != ["docker/backup-verifier.Dockerfile"]
         or velero_rule.get("matchPackageNames") != ["velero/velero"]
         or velero_rule.get("pinDigests") is not False
         or velero_rule.get("automerge") is not False
         or velero_rule.get("enabled") is not False
     ):
         fail("production Velero Renovate exception must disable automated digest projection and merge")
+    velero_manual_rule = next(
+        (rule for rule in rules if rule.get("description") == "Velero Renovate PRs require a transactional verifier Dockerfile update"),
+        None,
+    )
+    if (
+        velero_manual_rule is None
+        or velero_manual_rule.get("matchManagers") != ["custom.regex"]
+        or velero_manual_rule.get("matchPackageNames") != ["velero", "velero/velero"]
+        or velero_manual_rule.get("prBodyNotes") != [
+            "Run `python3 dev-tools/maintenance/update-workflow-tool.py velero <version> --velero-dockerfile <path> --terraform-file <path> --velero-chart-version <chart-version> --image-evidence-file <path>` before merging so the Velero chart, verifier Dockerfile image digest, Terraform projection, and CLI archive checksum are verified and updated together."
+        ]
+    ):
+        fail("Velero custom manager updates must carry the transactional updater PR note")
+    if "# renovate-image: datasource=docker depName=velero/velero" not in authority_text:
+        fail("Velero authority must retain its Renovate image manager marker")
+    if "# renovate-chart: datasource=helm depName=velero registryUrl=https://vmware-tanzu.github.io/helm-charts" not in authority_text:
+        fail("Velero authority must retain its Renovate chart manager marker")
 
     proto = (root / "gradle/proto-convention.gradle").read_text()
     if (

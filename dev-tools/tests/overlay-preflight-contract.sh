@@ -66,7 +66,7 @@ expected_steps = {
     },
     "🧰 Set up kubectl": {"uses": "./.github/actions/setup-kubectl"},
     "🐳 Set up Docker": {
-        "uses": "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e",
+        "uses": "docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069",
     },
     "🔐 Login to GHCR": {
         "uses": "docker/login-action@dbcb813823bdd20940b903addbd779551569679f",
@@ -324,7 +324,7 @@ assert_shared_change_runs_ordinary_overlay_checks() {
     exit 1
   }
   if [[ "$fixture_path" = k8s/overlays/stage/kustomization.yaml ]]; then
-    grep -Fqx 'Skipping production promotion preflight because no production promotion inputs are present.' "$OUTPUT_FILE" || {
+    grep -Fqx 'Skipping static preflight policy enforcement because no production attestation context is present.' "$OUTPUT_FILE" || {
       echo "Non-rendering change did not skip production promotion preflight: $fixture_path" >&2
       cat "$OUTPUT_FILE" >&2
       exit 1
@@ -335,21 +335,16 @@ assert_shared_change_runs_ordinary_overlay_checks() {
 
 for changed_file in \
   'k8s/overlays/prod/kustomization.yaml' \
-  'design/operations/deployments/production/backup-readiness/deploy-123.json'; do
+  'k8s/base/account-service.yaml' \
+  'k8s/postgres/pg-dump-cronjob.yaml'; do
   assert_production_change_requires_attestation "$changed_file"
 done
 
 for changed_file in \
-  'k8s/base/account-service.yaml' \
-  'k8s/overlays/stage/kustomization.yaml'; do
-  assert_shared_change_runs_ordinary_overlay_checks "$changed_file"
-done
-
-for changed_file in \
-  'k8s/base/account-service.yaml' \
-  'k8s/postgres/pg-dump-cronjob.yaml' \
+  'k8s/overlays/stage/kustomization.yaml' \
+  'design/operations/deployments/production/backup-readiness/deploy-123.json' \
   'k8s/velero/schedule.yaml'; do
-  assert_shared_rendered_path_runs_production_preflight "$changed_file"
+  assert_shared_change_runs_ordinary_overlay_checks "$changed_file"
 done
 
 if (
@@ -358,6 +353,7 @@ if (
   changed_files_between_base_and_head() {
     printf '%s\n' \
       'k8s/overlays/prod/kustomization.yaml' \
+      'k8s/base/account-service.yaml' \
       'design/operations/deployments/production/attestations/one.json' \
       'design/operations/deployments/production/attestations/two.json'
   }
@@ -378,7 +374,9 @@ if ! (
   # shellcheck disable=SC1091
   source "$REPO_ROOT/dev-tools/deploy/validate-kustomize-overlays.sh"
   changed_files_between_base_and_head() {
-    printf '%s\n' 'design/operations/deployments/production/attestations/deploy-123.json'
+    printf '%s\n' \
+      'k8s/overlays/prod/kustomization.yaml' \
+      'design/operations/deployments/production/attestations/deploy-123.json'
   }
   python3() {
     if [[ "${1:-}" == "-" ]]; then
@@ -421,7 +419,9 @@ assert_roll_forward_backup_count_rejected() {
     # shellcheck disable=SC1091
     source "$REPO_ROOT/dev-tools/deploy/validate-kustomize-overlays.sh"
     changed_files_between_base_and_head() {
-      printf '%s\n' 'design/operations/deployments/production/attestations/deploy-123.json'
+      printf '%s\n' \
+        'k8s/overlays/prod/kustomization.yaml' \
+        'design/operations/deployments/production/attestations/deploy-123.json'
       if [[ "${#fixture_backup_files[@]}" -gt 0 ]]; then
         printf '%s\n' "${fixture_backup_files[@]}"
       fi
@@ -460,6 +460,7 @@ if ! (
   source "$REPO_ROOT/dev-tools/deploy/validate-kustomize-overlays.sh"
   changed_files_between_base_and_head() {
     printf '%s\n' \
+      'k8s/overlays/prod/kustomization.yaml' \
       'design/operations/deployments/production/attestations/deploy-123.json' \
       'design/operations/deployments/production/backup-readiness/deploy-123.json'
   }
@@ -563,7 +564,9 @@ if (
   # shellcheck disable=SC1091
   source "$REPO_ROOT/dev-tools/deploy/validate-kustomize-overlays.sh"
   changed_files_between_base_and_head() {
-    printf '%s\n' 'design/operations/deployments/production/attestations/preflight-failure.json'
+    printf '%s\n' \
+      'k8s/overlays/prod/kustomization.yaml' \
+      'design/operations/deployments/production/attestations/preflight-failure.json'
   }
   python3() {
     if [[ "${1:-}" == "-" ]]; then
@@ -595,7 +598,7 @@ assert_balanced_preflight_group "Production preflight failure"
   GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop run_preflight_policy_checks
 ) >"$OUTPUT_FILE" 2>&1
 
-grep -q "Skipping production promotion preflight" "$OUTPUT_FILE" || {
+grep -q "Skipping static preflight policy enforcement because no production attestation context is present." "$OUTPUT_FILE" || {
   echo "Non-production overlay validation did not take the policy-skip path" >&2
   cat "$OUTPUT_FILE" >&2
   exit 1
@@ -653,6 +656,8 @@ module.validate_gateway_ws_network_policy = lambda documents, secret_name: []
 strategy_issue = (
     "TCP Proxy bridge Deployment strategy must be Recreate for planned identity replacement"
 )
+if proxy.get("spec", {}).get("strategy") != {"type": "Recreate"}:
+    raise SystemExit(f"{environment} canonical render failed bridge rollout validation")
 _, current_issues = module.validate_gateway_ws_values(documents, expected)
 if strategy_issue in current_issues:
     raise SystemExit(f"{environment} canonical render failed bridge rollout validation")
@@ -664,7 +669,7 @@ mutated_proxy = next(
     if document.get("kind") == "Deployment"
     and document.get("metadata", {}).get("name") == "tcp-proxy-service"
 )
-mutated_proxy["spec"].pop("strategy")
+mutated_proxy["spec"].pop("strategy", None)
 _, mutation_issues = module.validate_gateway_ws_values(mutation, expected)
 if strategy_issue not in mutation_issues:
     raise SystemExit(
@@ -672,5 +677,24 @@ if strategy_issue not in mutation_issues:
     )
 PY
 done
+
+if ! (
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/dev-tools/deploy/validate-kustomize-overlays.sh"
+  changed_files_between_base_and_head() {
+    printf '%s\n' 'k8s/velero/verify-backups-cronjob.yaml'
+  }
+  GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop run_preflight_policy_checks
+) >"$OUTPUT_FILE" 2>&1; then
+  echo "Standalone Velero preflight validation failed; captured output follows:" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
+fi
+
+grep -q "Skipping static preflight policy enforcement" "$OUTPUT_FILE" || {
+  echo "Standalone Velero pre-release assets incorrectly required production attestation" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
+}
 
 echo "overlay preflight contract checks passed"

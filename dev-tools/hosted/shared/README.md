@@ -12,9 +12,6 @@ These scripts are shared because they manage infrastructure or validation behavi
 - `write-kubeconfig.sh`
   - writes the runner kubeconfig file from the configured secret payload
 
-- `persist-runner-kubeconfig.sh`
-  - persists the generated kubeconfig into the runner's standard kubeconfig location
-
 - `delete-hosted-namespace.sh`
   - requires the runtime namespace and Helm release name, and validates that both are canonical and match before deletion
   - deletes the exact ownership-validated runtime namespace under a UID precondition and waits for Kubernetes cascading cleanup to make it absent
@@ -32,5 +29,11 @@ These scripts are shared because they manage infrastructure or validation behavi
 - `hosted-login-look-smoke.sh`
   - runs the canonical hosted TCP LOGIN -> PLAY -> LOOK smoke proof against the exposed environment
 
+- `push-verified-image.sh`
+  - retries one trusted Docker image push up to three times with 5-second and 10-second backoff
+  - extracts exactly one valid sha256 digest from the successful push output and writes `digest=` to `GITHUB_OUTPUT`; failed-attempt output is never reused
+
 - `show-rollout-diagnostics.sh`
   - prints the canonical hosted rollout failure view for both preview lanes, including blocked readiness reasons, service/target ports, safe config summaries, secret/TLS summaries, events, describes, and current plus previous logs for problematic pods
+
+Preview-only image handling uses [`../preview/resolve-preview-image-tag.sh`](../preview/resolve-preview-image-tag.sh) to select the requested preview tag or the immutable base-commit tag when no runtime-image trigger paths changed. When the base tag is selected, [`../preview/wait-for-base-images.sh`](../preview/wait-for-base-images.sh) checks that each base runtime image is available in GHCR before deployment.

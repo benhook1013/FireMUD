@@ -373,10 +373,10 @@ class TcpProxyTlsListenerTest {
   }
 
   @Test
-  void trustProfileExpiryPreservesServerHandleWhenDisposalFails() throws Exception {
+  void alreadyExpiredTrustProfileSchedulesImmediateTermination() throws Exception {
     GatewayTcpProxyListenerProperties properties = tlsProperties(0);
     TcpProxyTrustPolicy policy = mock(TcpProxyTrustPolicy.class);
-    when(policy.timeUntilProfileExpiry()).thenReturn(Duration.ofMillis(1));
+    when(policy.timeUntilProfileExpiry()).thenReturn(Duration.ZERO);
     when(policy.profileName()).thenReturn("breakglass_fingerprint");
     TcpProxyTlsListener listener =
         new TcpProxyTlsListener(properties, policy, mock(HttpHandler.class));

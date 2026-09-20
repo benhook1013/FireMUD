@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 if [[ -z "${PREVIEW_KUBECONFIG:-}" ]]; then
   echo "PREVIEW_KUBECONFIG is required" >&2

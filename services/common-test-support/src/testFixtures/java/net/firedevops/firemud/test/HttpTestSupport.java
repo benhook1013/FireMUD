@@ -17,7 +17,10 @@ import tools.jackson.databind.json.JsonMapper;
 
 /** Shared HTTP helpers for integration tests that should not depend on TestRestTemplate beans. */
 public final class HttpTestSupport {
+  private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(1);
   private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
+  private static final HttpClient READINESS_HTTP_CLIENT =
+      HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
   static final Duration PROBE_TIMEOUT = Duration.ofSeconds(1);
   private static final ObjectMapper JSON_MAPPER =
       JsonMapper.builder().enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).build();
@@ -57,7 +60,7 @@ public final class HttpTestSupport {
   public static void awaitReadiness(String url, Duration timeout) throws InterruptedException {
     long deadline = System.nanoTime() + timeout.toNanos();
     IOException lastIOException = null;
-    String lastSuccessfulResponseBody = null;
+    String lastResponseBody = null;
     while (true) {
       long remainingNanos = deadline - System.nanoTime();
       if (remainingNanos <= 0) {
@@ -68,7 +71,8 @@ public final class HttpTestSupport {
             getResponse(
                 url,
                 Duration.ofNanos(Math.min(Math.max(1, remainingNanos), PROBE_TIMEOUT.toNanos())));
-        lastSuccessfulResponseBody = response.body();
+        lastResponseBody = response.body();
+        lastIOException = null;
         if (isReady(response)) {
           return;
         }
@@ -95,8 +99,8 @@ public final class HttpTestSupport {
       }
     }
     String message = "Timed out waiting for HTTP readiness at " + url;
-    if (lastSuccessfulResponseBody != null) {
-      message += "; last successful response body: " + lastSuccessfulResponseBody;
+    if (lastResponseBody != null) {
+      message += "; last response body: " + lastResponseBody;
     }
     AssertionError failure = new AssertionError(message);
     if (lastIOException != null) {
@@ -134,7 +138,8 @@ public final class HttpTestSupport {
       throws IOException, InterruptedException {
     HttpRequest request =
         HttpRequest.newBuilder(URI.create(url)).timeout(requestTimeout).GET().build();
-    return HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+    return READINESS_HTTP_CLIENT.send(
+        request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
   }
 
   public static String postJsonBody(String url, String requestBody)

@@ -1,17 +1,40 @@
 {{- if .Values.previewStack.enabled }}
 {{- $preview := $.Values.preview | default (dict) }}
+{{- $certificateIdentity := .Values.previewStack.certificateIdentity | default (dict) }}
+{{- $certificateIdentityMode := $certificateIdentity.mode | default "standalone" }}
+{{- if and (ne $certificateIdentityMode "standalone") (ne $certificateIdentityMode "hosted-controller") }}
+{{- fail "previewStack.certificateIdentity.mode must be standalone or hosted-controller" }}
+{{- end }}
 {{- $previewJwt := .Values.previewStack.jwt | default (dict) }}
 {{- $telnetTls := .Values.previewStack.telnetTls | default (dict) }}
 {{- $gatewayWsTls := .Values.previewStack.gatewayWsTls | default (dict) }}
-{{- $gatewayWsTlsTargetPort := "" }}
-{{- $gatewayWsTlsServicePort := "" }}
-{{- $gatewayWsServerTlsMountConfigured := false }}
-{{- $gatewayWsClientTlsMountConfigured := false }}
-{{- if $gatewayWsTls.enabled }}
+{{- $gatewayWsTlsEnabled := $gatewayWsTls.enabled | default false }}
+{{- $gatewayWsTlsTargetPort := 8443 }}
+{{- $gatewayWsTlsServicePort := 443 }}
+{{- $telnetTlsEnabled := $telnetTls.enabled | default false }}
+{{- range $configuredService := .Values.previewStack.services }}
+{{- if eq $configuredService.name "tcp-proxy-service" }}
+{{- $configuredServiceType := default "ClusterIP" $configuredService.serviceType }}
+{{- if and (not $telnetTlsEnabled) (or (eq $configuredServiceType "NodePort") (eq $configuredServiceType "LoadBalancer")) }}
+{{- fail "tcp-proxy-service must remain ClusterIP while Telnet TLS is disabled" }}
+{{- end }}
+{{- range $configuredPort := $configuredService.ports }}
+{{- if and $configuredPort.nodePort (not (or (eq $configuredServiceType "NodePort") (eq $configuredServiceType "LoadBalancer"))) }}
+{{- fail "tcp-proxy-service nodePort requires serviceType NodePort or LoadBalancer" }}
+{{- end }}
+{{- if and (not $telnetTlsEnabled) $configuredPort.nodePort }}
+{{- fail "tcp-proxy-service must not declare a nodePort while Telnet TLS is disabled" }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if $gatewayWsTlsEnabled }}
 {{- $gatewayWsTlsTargetPort = required "previewStack.gatewayWsTls.targetPort is required when Gateway WebSocket TLS is enabled" $gatewayWsTls.targetPort }}
 {{- $gatewayWsTlsServicePort = required "previewStack.gatewayWsTls.servicePort is required when Gateway WebSocket TLS is enabled" $gatewayWsTls.servicePort }}
 {{- end }}
-{{- if $gatewayWsTls.enabled }}
+{{- $gatewayWsServerTlsMountConfigured := false }}
+{{- $gatewayWsClientTlsMountConfigured := false }}
+{{- if $gatewayWsTlsEnabled }}
 {{- range $service := .Values.previewStack.services }}
 {{- if and (eq $service.name "spring-cloud-gateway") $service.mountGatewayWsServerTls }}
 {{- $gatewayWsServerTlsMountConfigured = true }}
@@ -45,19 +68,19 @@
 {{- $managedTelnetEnv := list "TCP_PROXY_TELNET_MODE" "TCP_PROXY_TLS_ENABLED" "TCP_PROXY_TLS_CERT" "TCP_PROXY_TLS_KEY" }}
 {{- $managedGatewayWsServerEnv := list "FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED" "FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS" "FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT" "FIREMUD_GATEWAY_TCP_PROXY_TLS_CERT_CHAIN_PATH" "FIREMUD_GATEWAY_TCP_PROXY_TLS_PRIVATE_KEY_PATH" "FIREMUD_GATEWAY_TCP_PROXY_TLS_CLIENT_CA_PATH" "FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT" "FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE" "FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN" }}
 {{- $managedGatewayWsClientEnv := list "GATEWAY_WS_URL" "FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH" "FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH" "FIREMUD_GATEWAY_WS_CA_CERT_PATH" }}
-{{- $certificateIdentityMode := include "firemud.certificateIdentityMode" . | trim }}
 {{- range $service := .Values.previewStack.services }}
 {{- $serviceType := default "ClusterIP" $service.serviceType }}
+{{- $publicTelnetService := and (eq $service.name "tcp-proxy-service") (or (eq $serviceType "NodePort") (eq $serviceType "LoadBalancer")) }}
 {{- $telnetPort := "" }}
-{{- if and (eq $service.name "tcp-proxy-service") (eq $certificateIdentityMode "hosted-controller") }}
+{{- if and $publicTelnetService (eq $certificateIdentityMode "hosted-controller") }}
 {{- $telnetPort = required "preview.telnetPort is required for hosted-controller TCP Proxy" (get $preview "telnetPort") }}
 {{- if eq (toString $telnetPort) "__TELNET_PORT__" }}
 {{- fail "preview.telnetPort must be resolved before rendering hosted-controller TCP Proxy" }}
 {{- end }}
 {{- end }}
 {{- $mountTelnetTls := and (eq $service.name "tcp-proxy-service") $service.mountTelnetTls $telnetTls.enabled }}
-{{- $mountGatewayWsServerTls := and (eq $service.name "spring-cloud-gateway") $service.mountGatewayWsServerTls $gatewayWsTls.enabled }}
-{{- $mountGatewayWsClientTls := and (eq $service.name "tcp-proxy-service") $service.mountGatewayWsClientTls $gatewayWsTls.enabled }}
+{{- $mountGatewayWsServerTls := and (eq $service.name "spring-cloud-gateway") $service.mountGatewayWsServerTls $gatewayWsTlsEnabled }}
+{{- $mountGatewayWsClientTls := and (eq $service.name "tcp-proxy-service") $service.mountGatewayWsClientTls $gatewayWsTlsEnabled }}
 {{- $gatewayWsTlsTargetPortDeclared := false }}
 {{- if $mountGatewayWsServerTls }}
 {{- range $port := $service.ports }}
@@ -89,7 +112,7 @@ metadata:
   {{- end }}
 spec:
   replicas: {{ default 1 $service.replicaCount }}
-  {{- if and (eq $service.name "tcp-proxy-service") $mountGatewayWsClientTls }}
+  {{- if eq $service.name "tcp-proxy-service" }}
   # A TCP Proxy bridge-identity withdrawal must not leave an old pod serving
   # while a replacement is blocked on a missing/revoked controller projection.
   strategy:
@@ -285,7 +308,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: {{ $service.name }}
-  {{- if and (eq $service.name "tcp-proxy-service") (eq $certificateIdentityMode "hosted-controller") }}
+  {{- if and $publicTelnetService (eq $certificateIdentityMode "hosted-controller") }}
   annotations:
     firemud.dev/allocated-telnet-port: {{ $telnetPort | quote }}
   {{- end }}
@@ -304,10 +327,7 @@ spec:
       name: {{ $portName }}
       targetPort: {{ $port.targetPort }}
       protocol: TCP
-      {{- if and (eq $certificateIdentityMode "hosted-controller") (eq $service.name "tcp-proxy-service") (eq (int $port.port) 2323) }}
-      {{- if not (or (eq $serviceType "NodePort") (eq $serviceType "LoadBalancer")) }}
-      {{- fail "hosted-controller TCP Proxy nodePort requires serviceType NodePort or LoadBalancer" }}
-      {{- end }}
+      {{- if and (eq $certificateIdentityMode "hosted-controller") $publicTelnetService (eq (int $port.port) 2323) }}
       nodePort: {{ $telnetPort }}
       {{- else if $port.nodePort }}
       nodePort: {{ $port.nodePort }}
@@ -315,7 +335,7 @@ spec:
     {{- end }}
   type: {{ $serviceType }}
 {{- end }}
-{{- if $gatewayWsTls.enabled }}
+{{- if $gatewayWsTlsEnabled }}
 ---
 apiVersion: v1
 kind: Service

@@ -81,7 +81,7 @@ firemud:
         reconnect-delay-ms: 250
     tcp-proxy-listener:
       enabled: ${FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED:false}
-      bind-address: ${FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS:0.0.0.0}
+      bind-address: ${FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS:127.0.0.1}
       port: ${FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT:8443}
       certificate-chain-path: ${FIREMUD_GATEWAY_TCP_PROXY_TLS_CERT_CHAIN_PATH:}
       private-key-path: ${FIREMUD_GATEWAY_TCP_PROXY_TLS_PRIVATE_KEY_PATH:}

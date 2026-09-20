@@ -28,6 +28,32 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
 @ExtendWith(OutputCaptureExtension.class)
 class HostedStatusServiceTest {
   @Test
+  void runtimeProfilePreservesAnAbsentExposureMode() {
+    RuntimeProfile profile = new RuntimeProfile();
+    HostedEnvironmentIdentityStatus status = new HostedEnvironmentIdentityStatus();
+
+    assertNull(profile.getExposureMode());
+    status.setProfile(profile);
+
+    assertNull(status.getProfile().getExposureMode());
+  }
+
+  @Test
+  void legacyPublicProfileWithoutExposureModeMatchesCurrentPublicRuntime() {
+    RuntimeProfile previous = new RuntimeProfile();
+    previous.setRuntimeNamespaceUid("uid");
+    previous.setRequestedHeadSha("a".repeat(40));
+    previous.setDeployedHeadSha("a".repeat(40));
+    previous.setTelnetPort(32002);
+
+    assertTrue(
+        HostedStatusService.profileMatches(
+            previous,
+            new RuntimeProfileService.RuntimeProfile(
+                "uid", "a".repeat(40), "a".repeat(40), HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE, 32002, true)));
+  }
+
+  @Test
   void runtimeNamespaceRecreationInvalidatesPreviouslyReadyTuple() {
     RuntimeProfile previous = new RuntimeProfile();
     previous.setRuntimeNamespaceUid("uid-before");
@@ -36,14 +62,35 @@ class HostedStatusServiceTest {
     previous.setTelnetPort(32002);
     var current =
         new RuntimeProfileService.RuntimeProfile(
-            "uid-after", "head-after", "head-after", 32002, true);
+            "uid-after", "head-after", "head-after", HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE, 32002, true);
 
     assertFalse(HostedStatusService.profileMatches(previous, current));
     assertTrue(
         HostedStatusService.profileMatches(
             previous,
             new RuntimeProfileService.RuntimeProfile(
-                "uid-before", "head-before", "head-before", 32002, true)));
+                "uid-before", "head-before", "head-before", HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE, 32002, true)));
+  }
+
+  @Test
+  void exposureModeTransitionInvalidatesPreviouslyReadyTuple() {
+    RuntimeProfile previous = new RuntimeProfile();
+    previous.setExposureMode(HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE);
+    previous.setRuntimeNamespaceUid("uid");
+    previous.setRequestedHeadSha("a".repeat(40));
+    previous.setDeployedHeadSha("a".repeat(40));
+    previous.setTelnetPort(32002);
+
+    assertFalse(
+        HostedStatusService.profileMatches(
+            previous,
+            new RuntimeProfileService.RuntimeProfile(
+                "uid",
+                "a".repeat(40),
+                "a".repeat(40),
+                HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE,
+                0,
+                true)));
   }
 
   @Test
@@ -69,7 +116,7 @@ class HostedStatusServiceTest {
         new HostedStatusService(new EnvironmentIdentityPlanner(new HostedIdentityProperties()));
     RuntimeProfileService.RuntimeProfile current =
         new RuntimeProfileService.RuntimeProfile(
-            "uid", "a".repeat(40), "a".repeat(40), 32003, true);
+            "uid", "a".repeat(40), "a".repeat(40), HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE, 32003, true);
     HostedEnvironmentIdentityStatus.RoleStatus role =
         HostedStatusService.role(
             "sha256:" + "b".repeat(64), 1L, 1L, "c".repeat(64), "cert-manager", "accepted");
@@ -114,7 +161,7 @@ class HostedStatusServiceTest {
 
     var changed =
         new RuntimeProfileService.RuntimeProfile(
-            "uid-after", "head-after", "head-after", 32002, true);
+            "uid-after", "head-after", "head-after", HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE, 32002, true);
     service.status(
         resource,
         HostedEnvironmentIdentityStatus.Phase.Ready,
@@ -146,7 +193,7 @@ class HostedStatusServiceTest {
         new HostedStatusService(new EnvironmentIdentityPlanner(new HostedIdentityProperties()));
     var observed =
         new RuntimeProfileService.RuntimeProfile(
-            "uid-observed", "head-observed", "head-observed", 32002, true);
+            "uid-observed", "head-observed", "head-observed", HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE, 32002, true);
 
     HostedEnvironmentIdentityStatus status =
         service.status(
@@ -385,7 +432,7 @@ class HostedStatusServiceTest {
         new HostedStatusService(new EnvironmentIdentityPlanner(new HostedIdentityProperties()));
     var runtimeProfile =
         new RuntimeProfileService.RuntimeProfile(
-            "uid", "a".repeat(40), "a".repeat(40), 32001, true);
+            "uid", "a".repeat(40), "a".repeat(40), HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE, 32001, true);
 
     service.status(
         resource,
@@ -469,7 +516,7 @@ class HostedStatusServiceTest {
         new HostedStatusService(new EnvironmentIdentityPlanner(new HostedIdentityProperties()));
     var profile =
         new RuntimeProfileService.RuntimeProfile(
-            "uid", "a".repeat(40), "a".repeat(40), 32001, true);
+            "uid", "a".repeat(40), "a".repeat(40), HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE, 32001, true);
     var role = new HostedEnvironmentIdentityStatus.RoleStatus();
     role.setRevision("sha256:" + "b".repeat(64));
     HostedEnvironmentIdentityStatus.RoleStatus[] roles = {role, role, role, role, role};
@@ -521,7 +568,7 @@ class HostedStatusServiceTest {
         new HostedStatusService(new EnvironmentIdentityPlanner(new HostedIdentityProperties()));
     var profile =
         new RuntimeProfileService.RuntimeProfile(
-            "uid", "a".repeat(40), "b".repeat(40), 32016, true);
+            "uid", "a".repeat(40), "b".repeat(40), HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE, 32016, true);
     var role = new HostedEnvironmentIdentityStatus.RoleStatus();
     role.setRevision("sha256:" + "c".repeat(64));
 

@@ -115,11 +115,9 @@ public final class TelnetServerHandler extends SimpleChannelInboundHandler<Strin
   private final Set<CompletableFuture<WebSocket>> outstandingSends = ConcurrentHashMap.newKeySet();
   private final AtomicReference<CompletableFuture<WebSocket>> inFlightGatewayConnection =
       new AtomicReference<>();
-  // The lock order is intentionally one-way. A drainBuffer completion may run inline while the
-  // intrinsic monitor is held, and its failure path may separately acquire lifecycle locks.
-  // Heartbeat completions run outside that monitor and may acquire lifecycle locks on failure.
-  // Code holding either lifecycle lock must not reverse into the intrinsic monitor or nest the
-  // lifecycle locks.
+  // drainBuffer updates send state under bufferLifecycleLock, then registers its completion
+  // outside that lock. The completion reacquires the lock for state updates before doing any
+  // disconnect work. Keep lifecycle locks one-way and never nest them.
   private final Object webSocketLifecycleLock = new Object();
   private final Object bufferLifecycleLock = new Object();
   private final Object gatewayTextLifecycleLock = new Object();
@@ -466,7 +464,7 @@ public final class TelnetServerHandler extends SimpleChannelInboundHandler<Strin
         });
   }
 
-  private synchronized void drainBuffer() {
+  private void drainBuffer() {
     CompletableFuture<WebSocket> sendFuture;
     synchronized (bufferLifecycleLock) {
       WebSocket socket = webSocket.get();
@@ -1101,16 +1099,25 @@ public final class TelnetServerHandler extends SimpleChannelInboundHandler<Strin
           String completeLine = null;
           boolean overflow = false;
           String fragment = data == null ? "" : data.toString();
-          int fragmentBytes = fragment.getBytes(StandardCharsets.UTF_8).length;
+          int fragmentBytes = utf8ByteLength(fragment);
           synchronized (gatewayTextLifecycleLock) {
             if (!closing) {
-              if (fragmentBytes > MAX_GATEWAY_TEXT_BYTES - gatewayTextBufferBytes) {
+              int splitSurrogateBytes =
+                  !gatewayTextBuffer.isEmpty()
+                          && !fragment.isEmpty()
+                          && Character.isHighSurrogate(
+                              gatewayTextBuffer.charAt(gatewayTextBuffer.length() - 1))
+                          && Character.isLowSurrogate(fragment.charAt(0))
+                      ? 2
+                      : 0;
+              int prospectiveFragmentBytes = fragmentBytes + splitSurrogateBytes;
+              if (prospectiveFragmentBytes > MAX_GATEWAY_TEXT_BYTES - gatewayTextBufferBytes) {
                 gatewayTextBuffer.setLength(0);
                 gatewayTextBufferBytes = 0;
                 overflow = true;
               } else {
                 gatewayTextBuffer.append(fragment);
-                gatewayTextBufferBytes += fragmentBytes;
+                gatewayTextBufferBytes += prospectiveFragmentBytes;
                 if (last) {
                   completeLine = gatewayTextBuffer.toString();
                   gatewayTextBuffer.setLength(0);
@@ -1229,6 +1236,28 @@ public final class TelnetServerHandler extends SimpleChannelInboundHandler<Strin
   }
 
   private static final byte IAC = (byte) 255;
+
+  private static int utf8ByteLength(String value) {
+    int length = 0;
+    for (int index = 0; index < value.length(); index++) {
+      char character = value.charAt(index);
+      if (character <= 0x7F) {
+        length++;
+      } else if (character <= 0x7FF) {
+        length += 2;
+      } else if (Character.isHighSurrogate(character)
+          && index + 1 < value.length()
+          && Character.isLowSurrogate(value.charAt(index + 1))) {
+        length += 4;
+        index++;
+      } else if (Character.isSurrogate(character)) {
+        length++;
+      } else {
+        length += 3;
+      }
+    }
+    return length;
+  }
 
   private static final byte WILL = (byte) 251;
   private static final byte WONT = (byte) 252;

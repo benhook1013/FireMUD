@@ -47,7 +47,7 @@ public class GrpcServerTlsReloader {
     }
   }
 
-  private synchronized void reload() {
+  synchronized void reload() {
     try {
       logger.info("TLS certificates changed; restarting gRPC server");
       logger.info("Stopping gRPC server to reload TLS certificates");

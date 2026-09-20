@@ -33,45 +33,33 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-    # A NetworkPolicy cannot select the apiserver or a public hostname.  The
-    # hosted k3s kubernetes.default Service is exposed on ClusterIP :443 and
-    # DNATs to the hosted node API endpoint :6443; kube-router evaluates the
-    # post-DNAT port.
-    # The controller therefore needs TCP/443 and TCP/6443 to the API endpoint,
-    # while retaining 443 for the fixed, derived public HTTPS identity endpoint.
-    # This destination-broad 443 allowance also carries the exact Gateway TLS
-    # probe; a later selector rule could not narrow the union. The application
-    # must still enforce its exact SNI/SAN/issuer allowlist; this is intentionally
-    # not presented as unrestricted destination trust.
+    # NetworkPolicy cannot identify an API server or public hostname. The
+    # trusted bootstrap replaces these required markers with observed IPv4
+    # /32 CIDRs in a private render. No broad destination CIDR is permitted.
+    # kubernetes.default is exposed on its ClusterIP :443 and DNATs to the
+    # hosted node API endpoint :6443; kube-router's post-DNAT behavior must be
+    # proven live before this policy is treated as an operational boundary.
     - to:
         - ipBlock:
-            cidr: 0.0.0.0/0
-            except:
-              - 169.254.0.0/16
-        - ipBlock:
-            cidr: ::/0
-            except:
-              - fe80::/10
+            cidr: __API_SERVICE_IPV4_CIDR_REQUIRED__
       ports:
         - protocol: TCP
           port: 443
-        - protocol: TCP
-          port: 6443
-    # Hosted Telnet uses preview allocator NodePorts 32000-32015 plus the fixed
-    # dev-demo NodePort 32016.
-    # The controller probes only the port derived from the canonical identity;
-    # Keep each NodePort explicit because the deployed policy enforcement
-    # version's support for NetworkPolicy endPort ranges is not guaranteed.
     - to:
         - ipBlock:
-            cidr: 0.0.0.0/0
-            except:
-              - 169.254.0.0/16
-        - ipBlock:
-            cidr: ::/0
-            except:
-              - fe80::/10
+            cidr: __API_ENDPOINT_IPV4_CIDR_REQUIRED__
       ports:
+        - protocol: TCP
+          port: 6443
+    # The fixed public probe address carries HTTPS and the preview allocator's
+    # NodePorts 32000-32015 plus fixed dev-demo port 32016. Keep each NodePort
+    # explicit because support for NetworkPolicy endPort ranges is not assumed.
+    - to:
+        - ipBlock:
+            cidr: __PUBLIC_PROBE_IPV4_CIDR_REQUIRED__
+      ports:
+        - protocol: TCP
+          port: 443
         - protocol: TCP
           port: 32000
         - protocol: TCP
@@ -106,6 +94,60 @@ spec:
           port: 32015
         - protocol: TCP
           port: 32016
+    # The hosted k3s LoadBalancer path DNATs public HTTPS to the kube-system
+    # Traefik target port. Select only the observed Traefik pods rather than
+    # reopening controller egress to the node or the kube-system namespace.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+              app.kubernetes.io/instance: traefik-kube-system
+      ports:
+        - protocol: TCP
+          port: 8443
+    # The Gateway identity probe is in-cluster. Select only Gateway pods in
+    # externally owned canonical preview and dev-demo namespaces, and allow
+    # the Service/target ports used by the private bridge probe.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              firemud.dev/preview: "true"
+          podSelector:
+            matchLabels:
+              app: spring-cloud-gateway
+        - namespaceSelector:
+            matchLabels:
+              firemud.dev/dev-demo: "true"
+          podSelector:
+            matchLabels:
+              app: spring-cloud-gateway
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 8443
+    # Public TCP Proxy NodePorts are DNATed to the selected runtime pod's
+    # listener. Keep this target-port rule scoped to the canonical preview and
+    # dev-demo namespaces and the TCP Proxy workload label.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              firemud.dev/preview: "true"
+          podSelector:
+            matchLabels:
+              app: tcp-proxy-service
+        - namespaceSelector:
+            matchLabels:
+              firemud.dev/dev-demo: "true"
+          podSelector:
+            matchLabels:
+              app: tcp-proxy-service
+      ports:
+        - protocol: TCP
+          port: 2323
     # Ready additionally requires an mTLS handshake to the fixed Account gRPC
     # Service using the current projected leaf. Runtime Namespace labels are
     # externally owned and validated before the controller reaches this probe.

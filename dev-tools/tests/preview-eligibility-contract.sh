@@ -47,6 +47,14 @@ revalidate_cleanup() {
     --expected-head-sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 }
 
+revalidate_open_cleanup() {
+  local pull_request_json="$1"
+  printf '%s' "$pull_request_json" | python3 "$SCRIPT" \
+    --revalidate-open-cleanup \
+    --expected-repository example/FireMUD \
+    --expected-head-sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+}
+
 assert_revalidation_refused() {
   local mode="$1"
   local pull_request_json="$2"
@@ -74,6 +82,15 @@ valid_automation_pull_request='{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaa
 revalidate_deploy "$valid_automation_pull_request"
 valid_cleanup_pull_request='{"state":"closed","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}}}'
 revalidate_cleanup "$valid_cleanup_pull_request"
+revalidate_open_cleanup "$valid_pull_request"
+assert_revalidation_refused \
+  --revalidate-open-cleanup \
+  "$valid_cleanup_pull_request" \
+  'pull request is not open (state=closed)'
+assert_revalidation_refused \
+  --revalidate-open-cleanup \
+  '{"state":"open","head":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","repo":{"full_name":"example/FireMUD"}}}' \
+  'head is stale (expected=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, current=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)'
 if cleanup_refusal="$(revalidate_cleanup "$valid_pull_request")"; then
   echo "Cleanup revalidation unexpectedly accepted an open pull request" >&2
   exit 1
@@ -358,7 +375,7 @@ run_workflow_eligibility() {
 event_metadata_output="$TEMP_DIR/event-metadata.out"
 (
   cd "$ROOT_DIR"
-  EVENT_NAME=pull_request \
+  EVENT_NAME=pull_request_target \
     EVENT_ACTION=synchronize \
     PR_USER_LOGIN=human \
     PR_BASE_REF=develop \
@@ -379,7 +396,7 @@ grep -qx 'priority=true' "$event_eligibility_output"
 malformed_event_metadata_output="$TEMP_DIR/malformed-event-metadata.out"
 (
   cd "$ROOT_DIR"
-  EVENT_NAME=pull_request \
+  EVENT_NAME=pull_request_target \
     EVENT_ACTION=synchronize \
     PR_USER_LOGIN=human \
     PR_BASE_REF=develop \
@@ -483,7 +500,7 @@ dispatch_metadata_output="$TEMP_DIR/dispatch-metadata.out"
   cd "$ROOT_DIR"
   FAKE_GH_LOG="$TEMP_DIR/gh.log" \
     FAKE_PULL_REQUEST_JSON='{"state":"open","base":{"ref":"develop"},"user":{"login":"human"},"labels":[{"name":"preview:priority","color":"ffffff"},{"name":"custom:label"}]}' \
-    EVENT_NAME=workflow_dispatch \
+    EVENT_NAME=repository_dispatch \
     EVENT_ACTION='' \
     PR_USER_LOGIN='' \
     PR_BASE_REF='' \

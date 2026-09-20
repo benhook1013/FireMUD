@@ -43,6 +43,24 @@ class TlsCertificateReadinessHealthEndpointGroupsPostProcessorTest {
   }
 
   @Test
+  void gatesTcpProxyReadinessWhenExplicitlyEnabled() {
+    HealthEndpointGroups original = mock(HealthEndpointGroups.class);
+    HealthEndpointGroup readiness = mock(HealthEndpointGroup.class);
+    when(original.get("readiness")).thenReturn(readiness);
+
+    HealthEndpointGroups processed =
+        new TlsCertificateReadinessHealthEndpointGroupsPostProcessor(true)
+            .postProcessHealthEndpointGroups(original);
+
+    assertTrue(
+        processed
+            .get("readiness")
+            .isMember(
+                TlsCertificateReadinessHealthEndpointGroupsPostProcessor
+                    .TLS_CERTIFICATE_RELOAD_CONTRIBUTOR));
+  }
+
+  @Test
   void addsTlsCertificateReloadToReadinessWithoutChangingOtherGroupBehavior() {
     HealthEndpointGroup primary = mock(HealthEndpointGroup.class);
     HealthEndpointGroup readiness = mock(HealthEndpointGroup.class);

@@ -2,12 +2,17 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 SCRIPT = Path(__file__).with_name("check-coderabbit-review.py")
 SPEC = importlib.util.spec_from_file_location("check_coderabbit_review", SCRIPT)
@@ -20,6 +25,8 @@ REPO = "owner/repo"
 PR = 42
 HEAD = "a" * 40
 TRIGGER_AT = "2026-09-14T01:00:00Z"
+FRESH_HEAD = "c" * 40
+FRESH_TRIGGER_AT = "2026-09-14T02:00:00Z"
 
 
 def comment(
@@ -43,6 +50,10 @@ def comment(
 
 def trigger_comment() -> dict[str, object]:
     return comment(10, "owner", "@coderabbitai full review", TRIGGER_AT)
+
+
+def fresh_trigger_comment() -> dict[str, object]:
+    return comment(20, "owner", "@coderabbitai full review", FRESH_TRIGGER_AT)
 
 
 def finished_reply() -> dict[str, object]:
@@ -80,17 +91,19 @@ Files selected for processing (24)
 def payload(
     comments: list[dict[str, object]] | None = None,
     reviews: list[dict[str, object]] | None = None,
+    *,
+    head: str = HEAD,
 ) -> dict[str, object]:
     return {
         "data": {
             "repository": {
                 "pullRequest": {
-                    "headRefOid": HEAD,
+                    "headRefOid": head,
                     "commits": {
                         "nodes": [
                             {
                                 "commit": {
-                                    "oid": HEAD,
+                                    "oid": head,
                                     "committedDate": "2026-09-14T00:00:00Z",
                                 }
                             }
@@ -138,16 +151,155 @@ def timed_out_record() -> dict[str, object]:
     return timed_out
 
 
+def fresh_record() -> dict[str, object]:
+    current = json.loads(json.dumps(record()))
+    current["trigger"] = {
+        "id": 20,
+        "created_at": FRESH_TRIGGER_AT,
+        "url": "https://example.test/comments/20",
+        "type": "full",
+        "command": "@coderabbitai full review",
+    }
+    return current
+
+
+def retired_archive_record(
+    trigger_record: dict[str, object] | None = None,
+    *,
+    evidence_state: str = "active",
+    expected_head: str = HEAD,
+) -> dict[str, object]:
+    archived = json.loads(json.dumps(trigger_record or record()))
+    trigger = archived["trigger"]
+    archived["status"] = "retired"
+    archived["retirement"] = {
+        "action": "operator_retire",
+        "retired_at": "2026-09-14T01:30:00Z",
+        "reason": "bounded wait timed out; no current review evidence",
+        "trigger_comment_id": trigger["id"],
+        "expected_head_sha": expected_head,
+        "evidence": {
+            "state": evidence_state,
+            "captured_head_sha": archived["head_sha"],
+            "current_head_sha": expected_head,
+        },
+    }
+    return archived
+
+
 class TriggerStateTests(unittest.TestCase):
     def state(
         self,
         comments: list[dict[str, object]] | None = None,
         reviews: list[dict[str, object]] | None = None,
         trigger_record: dict[str, object] | None = None,
+        trigger_record_path: str | Path | None = None,
     ) -> object:
         return CHECKER.trigger_state(
-            REPO, PR, payload(comments, reviews), trigger_record or record()
+            REPO,
+            PR,
+            payload(comments, reviews),
+            trigger_record or record(),
+            trigger_record_path,
         )
+
+    def manual_wait(self, current_payload: dict[str, object], timeout: float = 0) -> dict[str, object]:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", delete=False) as file:
+            json.dump(current_payload, file)
+            input_path = file.name
+        try:
+            return CHECKER.manual_wait_result(REPO, PR, input_path, timeout, 0.1)
+        finally:
+            Path(input_path).unlink()
+
+    def test_manual_wait_pins_highest_numeric_id_for_same_timestamp(self) -> None:
+        first = trigger_comment()
+        second = comment(12, "owner", "@coderabbitai full review", TRIGGER_AT)
+        result = self.manual_wait(payload([first, second]))
+        self.assertEqual(result["request"]["id"], 12)
+        self.assertEqual(result["state"], "timed_out")
+        self.assertEqual(result["provenance"], "manual/unrecorded")
+
+    def test_manual_wait_rejects_duplicate_or_missing_identity(self) -> None:
+        duplicate = self.manual_wait(payload([trigger_comment(), trigger_comment()]))
+        self.assertEqual((duplicate["state"], duplicate["provenance"]), ("ambiguous", "ambiguous/overlapping"))
+        missing = trigger_comment()
+        missing.pop("databaseId")
+        missing_result = self.manual_wait(payload([missing]))
+        self.assertEqual(missing_result["state"], "ambiguous")
+
+    def test_manual_wait_completed_and_rate_limited_requests(self) -> None:
+        completed_comments = [trigger_comment(), finished_reply(), zero_finding_summary()]
+        completed = self.manual_wait(payload(completed_comments))
+        self.assertEqual((completed["state"], completed["status"]), ("completed", "completed"))
+
+        limited = self.manual_wait(
+            payload(
+                [
+                    trigger_comment(),
+                    comment(11, "coderabbitai", "Review rate limited", "2026-09-14T01:00:01Z"),
+                ]
+            )
+        )
+        self.assertEqual(limited["state"], "rate_limited")
+        self.assertIsNone(limited["trigger_state"]["cooldown_until"])
+
+        incremental = comment(30, "owner", "@coderabbitai review", TRIGGER_AT)
+        incremental_result = self.manual_wait(
+            payload(
+                [
+                    incremental,
+                    comment(31, "coderabbitai", "Review rate limited", "2026-09-14T01:00:01Z"),
+                ]
+            )
+        )
+        self.assertEqual(incremental_result["state"], "rate_limited")
+        self.assertEqual(incremental_result["request"]["type"], "incremental")
+
+    def test_manual_wait_fails_closed_on_head_change_and_newer_request(self) -> None:
+        initial = payload([trigger_comment()])
+        changed = payload([trigger_comment()], head=FRESH_HEAD)
+        with patch.object(CHECKER, "load_payload", side_effect=[initial, changed]):
+            head_result = CHECKER.manual_wait_result(REPO, PR, "ignored", 10, 0.1)
+        self.assertEqual(head_result["status"], "head_changed")
+
+        newer = payload([trigger_comment(), fresh_trigger_comment()])
+        with patch.object(CHECKER, "load_payload", side_effect=[initial, newer]):
+            newer_result = CHECKER.manual_wait_result(REPO, PR, "ignored", 10, 0.1)
+        self.assertEqual(newer_result["status"], "superseded")
+
+    def test_manual_wait_cli_rejects_auto_discovered_canonical_record_without_mutation(self) -> None:
+        current_payload = payload([trigger_comment()])
+        with tempfile.TemporaryDirectory() as directory:
+            input_path = Path(directory) / "payload.json"
+            record_path = Path(directory) / "trigger.json"
+            input_path.write_text(json.dumps(current_payload), encoding="utf-8")
+            record_path.write_text(json.dumps(record()), encoding="utf-8")
+            before = record_path.read_text(encoding="utf-8")
+            output = io.StringIO()
+            argv = [
+                "check-coderabbit-review.py",
+                "--repo",
+                REPO,
+                "--pr",
+                str(PR),
+                "--input",
+                str(input_path),
+                "--wait-latest-request",
+                "--timeout",
+                "0",
+                "--json",
+            ]
+            with (
+                patch.object(CHECKER, "default_trigger_record_paths", return_value=[record_path]),
+                patch.object(sys, "argv", argv),
+                redirect_stdout(output),
+            ):
+                exit_code = CHECKER.main()
+
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(json.loads(output.getvalue())["state"], "canonical-recorded")
+            self.assertEqual(record_path.read_text(encoding="utf-8"), before)
 
     def test_awaiting_response_ignores_old_same_time_pending_and_edited_timestamps(
         self,
@@ -275,16 +427,24 @@ Your included review limit is currently reached under our [Fair Usage Limits Pol
                 self.assertEqual(state.state, "awaiting_response")
                 self.assertFalse(state.terminal)
 
-    def test_empty_rate_limit_snapshot_does_not_qualify(self) -> None:
-        state = self.state(
-            [
-                trigger_comment(),
-                comment(
-                    11, "coderabbitai", "Review rate limited", "2026-09-14T01:00:01Z"
-                ),
-            ]
-        )
-        self.assertEqual(state.state, "awaiting_response")
+    def test_rate_limit_without_expiry_is_terminal_with_unknown_cooldown(self) -> None:
+        comments = [
+            trigger_comment(),
+            comment(11, "coderabbitai", "Review rate limited", "2026-09-14T01:00:01Z"),
+        ]
+        state = self.state(comments)
+        self.assertEqual(state.state, "rate_limited")
+        self.assertIsNone(state.cooldown_until)
+        self.assertFalse(CHECKER.summarize(REPO, PR, payload(comments)).latest_review_request_rate_limited)
+
+        recent_at = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+        recent_comments = [
+            comment(10, "owner", "@coderabbitai full review", recent_at),
+            comment(11, "coderabbitai", "Review rate limited", recent_at),
+        ]
+        recent_summary = CHECKER.summarize(REPO, PR, payload(recent_comments))
+        self.assertTrue(recent_summary.latest_review_request_rate_limited)
+        self.assertFalse(recent_summary.retrigger_review_allowed)
 
     def test_completed_comment_must_match_captured_head(self) -> None:
         template = "<!-- walkthrough_start -->\nReviewing files that changed from the base of the PR and between `{base}` and `{head}`\nFiles selected for processing (2)"
@@ -319,6 +479,29 @@ Your included review limit is currently reached under our [Fair Usage Limits Pol
         }
         state = self.state(reviews=[review])
         self.assertEqual((state.state, state.response_id), ("completed", 55))
+
+    def test_outside_the_diff_review_layout_is_terminal(self) -> None:
+        review = {
+            "databaseId": 55,
+            "author": {"login": "coderabbitai"},
+            "body": f"""**⚠️ Outside the diff (1)**
+
+Reviewing files that changed from the base of the PR and between {'b' * 40} and {HEAD}.
+Files selected for processing (20)""",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-14T01:03:00Z",
+            "url": "https://example.test/reviews/55",
+            "commit": {"oid": HEAD},
+        }
+        comments = [trigger_comment(), finished_reply()]
+        state = self.state(comments, [review])
+        self.assertEqual((state.state, state.response_id), ("completed", 55))
+
+        summary = CHECKER.summarize(REPO, PR, payload(comments, [review]))
+        self.assertTrue(summary.review_finished_after_latest_request)
+        self.assertTrue(summary.substantive_review_after_latest_commit)
+        self.assertEqual(summary.outside_diff_actionable_comments, 1)
+        self.assertFalse(summary.ok)
 
     def test_interleaved_and_same_time_triggers_are_ambiguous(self) -> None:
         for created_at in (TRIGGER_AT, "2026-09-14T01:00:01Z"):
@@ -376,6 +559,26 @@ Your included review limit is currently reached under our [Fair Usage Limits Pol
         ]
         self.assertEqual(self.state(comments).state, "active")
 
+    def test_later_completed_review_supersedes_older_unanswered_trigger(self) -> None:
+        comments = [
+            comment(7, "owner", "@coderabbitai full review", "2026-09-14T00:57:00Z"),
+            comment(8, "coderabbitai", "Full review triggered", "2026-09-14T00:57:01Z"),
+            comment(9, "owner", "@coderabbitai full review", "2026-09-14T00:58:00Z"),
+            trigger_comment(),
+            comment(11, "coderabbitai", "Full review triggered", "2026-09-14T01:00:01Z"),
+        ]
+        completed_later_review = {
+            "databaseId": 12,
+            "author": {"login": "coderabbitai"},
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-14T00:59:00Z",
+            "body": "<!-- walkthrough_start -->",
+            "commit": {"oid": HEAD},
+            "url": "https://example.test/reviews/12",
+        }
+        self.assertEqual(self.state(comments, [completed_later_review]).state, "active")
+        self.assertEqual(self.state(comments).state, "ambiguous")
+
     def test_prior_zero_finding_trigger_does_not_poison_rate_limit_attribution(
         self,
     ) -> None:
@@ -397,6 +600,217 @@ Your included review limit is currently reached under our [Fair Usage Limits Pol
         state = self.state(comments)
         self.assertEqual((state.state, state.response_id), ("rate_limited", 11))
         self.assertTrue(state.attributed)
+
+    def test_validated_retired_predecessor_allows_fresh_active_trigger_attribution_and_retirement(
+        self,
+    ) -> None:
+        current_record = fresh_record()
+        comments = [
+            trigger_comment(),
+            fresh_trigger_comment(),
+            comment(
+                21,
+                "coderabbitai",
+                "Full review triggered",
+                "2026-09-14T02:00:01Z",
+            ),
+        ]
+        current_payload = payload(comments, head=FRESH_HEAD)
+        current_payload["data"]["repository"]["pullRequest"]["commits"]["nodes"][0][
+            "commit"
+        ]["committedDate"] = "2026-09-14T03:00:00Z"
+        with tempfile.TemporaryDirectory() as directory:
+            record_path = Path(directory) / "trigger.json"
+            record_path.write_text(json.dumps(current_record), encoding="utf-8")
+            (Path(directory) / "trigger-10.json").write_text(
+                json.dumps(retired_archive_record()), encoding="utf-8"
+            )
+            state = CHECKER.trigger_state(
+                REPO, PR, current_payload, current_record, record_path
+            )
+            result = CHECKER.retire_trigger_record(
+                str(record_path),
+                REPO,
+                PR,
+                20,
+                FRESH_HEAD,
+                "fresh active trigger is stale after the PR advanced",
+                current_payload,
+            )
+            persisted = json.loads(record_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            (state.state, state.response_id, state.attributed), ("active", 21, True)
+        )
+        self.assertEqual(result["status"], "retired")
+        self.assertEqual(persisted["status"], "retired")
+        self.assertEqual(persisted["retirement"]["evidence"]["state"], "active")
+
+    def test_mismatched_retired_predecessor_archive_remains_ambiguous_and_refused(
+        self,
+    ) -> None:
+        current_record = fresh_record()
+        comments = [trigger_comment(), fresh_trigger_comment()]
+        current_payload = payload(comments, head=FRESH_HEAD)
+        mismatched_archive = retired_archive_record()
+        mismatched_archive["repository"] = "other/repo"
+        with tempfile.TemporaryDirectory() as directory:
+            record_path = Path(directory) / "trigger.json"
+            record_path.write_text(json.dumps(current_record), encoding="utf-8")
+            (Path(directory) / "trigger-10.json").write_text(
+                json.dumps(mismatched_archive), encoding="utf-8"
+            )
+            state = CHECKER.trigger_state(
+                REPO, PR, current_payload, current_record, record_path
+            )
+            with self.assertRaisesRegex(ValueError, "ambiguous response evidence"):
+                CHECKER.retire_trigger_record(
+                    str(record_path),
+                    REPO,
+                    PR,
+                    20,
+                    FRESH_HEAD,
+                    "operator adjudication",
+                    current_payload,
+                )
+
+        self.assertEqual((state.state, state.attributed), ("ambiguous", False))
+
+    def test_timed_out_retired_predecessor_requires_original_timeout_evidence(self) -> None:
+        current_record = fresh_record()
+        comments = [
+            trigger_comment(),
+            fresh_trigger_comment(),
+            comment(
+                21,
+                "coderabbitai",
+                "Full review triggered",
+                "2026-09-14T02:00:01Z",
+            ),
+        ]
+        current_payload = payload(comments, head=FRESH_HEAD)
+        archive = retired_archive_record(evidence_state="timed_out")
+        archive["timeout"] = timed_out_record()["timeout"]
+        with tempfile.TemporaryDirectory() as directory:
+            record_path = Path(directory) / "trigger.json"
+            record_path.write_text(json.dumps(current_record), encoding="utf-8")
+            archive_path = Path(directory) / "trigger-10.json"
+            archive_path.write_text(json.dumps(archive), encoding="utf-8")
+
+            valid_state = CHECKER.trigger_state(
+                REPO, PR, current_payload, current_record, record_path
+            )
+            archive["timeout"] = {"at": "2026-09-14T01:30:00Z"}
+            archive_path.write_text(json.dumps(archive), encoding="utf-8")
+            invalid_state = CHECKER.trigger_state(
+                REPO, PR, current_payload, current_record, record_path
+            )
+
+        self.assertEqual(
+            (valid_state.state, valid_state.response_id, valid_state.attributed),
+            ("active", 21, True),
+        )
+        self.assertEqual((invalid_state.state, invalid_state.attributed), ("ambiguous", False))
+
+    def test_retired_predecessor_requires_a_nonempty_live_url(self) -> None:
+        current_record = fresh_record()
+        archive = retired_archive_record()
+        for live_url in (None, "", [], {}):
+            with self.subTest(live_url=live_url):
+                predecessor = trigger_comment()
+                predecessor["url"] = live_url
+                comments = [predecessor, fresh_trigger_comment()]
+                with tempfile.TemporaryDirectory() as directory:
+                    record_path = Path(directory) / "trigger.json"
+                    record_path.write_text(
+                        json.dumps(current_record), encoding="utf-8"
+                    )
+                    (Path(directory) / "trigger-10.json").write_text(
+                        json.dumps(archive), encoding="utf-8"
+                    )
+                    state = CHECKER.trigger_state(
+                        REPO,
+                        PR,
+                        payload(comments),
+                        current_record,
+                        record_path,
+                    )
+                self.assertEqual((state.state, state.attributed), ("ambiguous", False))
+
+    def test_additional_unretired_predecessor_remains_ambiguous(self) -> None:
+        current_record = fresh_record()
+        comments = [
+            comment(9, "owner", "@coderabbitai full review", "2026-09-14T00:55:00Z"),
+            trigger_comment(),
+            fresh_trigger_comment(),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            record_path = Path(directory) / "trigger.json"
+            record_path.write_text(json.dumps(current_record), encoding="utf-8")
+            (Path(directory) / "trigger-10.json").write_text(
+                json.dumps(retired_archive_record()), encoding="utf-8"
+            )
+            state = CHECKER.trigger_state(
+                REPO, PR, payload(comments), current_record, record_path
+            )
+
+        self.assertEqual((state.state, state.attributed), ("ambiguous", False))
+
+    def test_malformed_noncanonical_and_symlink_archives_do_not_suppress_ambiguity(
+        self,
+    ) -> None:
+        current_record = fresh_record()
+        comments = [trigger_comment(), fresh_trigger_comment()]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            record_path = root / "trigger.json"
+            record_path.write_text(json.dumps(current_record), encoding="utf-8")
+            outside = root.parent / f"{root.name}-retired.json"
+            outside.write_text(json.dumps(retired_archive_record()), encoding="utf-8")
+            malformed_path = root / "trigger-10.json"
+            malformed_path.write_text("{malformed", encoding="utf-8")
+            state = CHECKER.trigger_state(
+                REPO, PR, payload(comments), current_record, record_path
+            )
+            malformed_path.unlink()
+            self.assertEqual((state.state, state.attributed), ("ambiguous", False))
+            deep_path = root / "trigger-10.json"
+            deep_path.write_text("[" * 1200 + "]" * 1200, encoding="utf-8")
+            state = CHECKER.trigger_state(
+                REPO, PR, payload(comments), current_record, record_path
+            )
+            deep_path.unlink()
+            self.assertEqual((state.state, state.attributed), ("ambiguous", False))
+            for archive_name in ("trigger-10.json.bak", "trigger-010.json"):
+                with self.subTest(archive_name=archive_name):
+                    archive_path = root / archive_name
+                    archive_path.write_text(
+                        json.dumps(retired_archive_record()), encoding="utf-8"
+                    )
+                    state = CHECKER.trigger_state(
+                        REPO, PR, payload(comments), current_record, record_path
+                    )
+                    archive_path.unlink()
+                    self.assertEqual(
+                        (state.state, state.attributed), ("ambiguous", False)
+                    )
+            symlink_path = root / "trigger-10.json"
+            symlink_path.symlink_to(outside)
+            state = CHECKER.trigger_state(
+                REPO, PR, payload(comments), current_record, record_path
+            )
+            symlink_path.unlink()
+            outside.unlink()
+            fifo_path = root / "trigger-10.json"
+            if hasattr(os, "mkfifo"):
+                os.mkfifo(fifo_path)
+                state = CHECKER.trigger_state(
+                    REPO, PR, payload(comments), current_record, record_path
+                )
+                fifo_path.unlink()
+                self.assertEqual((state.state, state.attributed), ("ambiguous", False))
+
+        self.assertEqual((state.state, state.attributed), ("ambiguous", False))
 
     def test_missing_trigger_and_posting_reservation_are_unattributed(self) -> None:
         missing = self.state([])

@@ -3,11 +3,12 @@ name: Dev Demo Reconciler
 on:
   schedule:
     - cron: "*/10 * * * *"
-  workflow_dispatch:
+  repository_dispatch:
+    types: [dev-demo-reconcile]
 
 permissions:
-  actions: write
-  contents: read
+  actions: read
+  contents: write
 
 concurrency:
   group: dev-demo-reconciler-${{ github.workflow }}
@@ -22,10 +23,11 @@ jobs:
       - preview
       - linux
       - x64
-    environment: dev-demo-cluster
+    environment: trusted-hosted-cluster
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
       - name: Set up canonical Python dependencies
@@ -38,17 +40,17 @@ jobs:
 
       - name: Write preview kubeconfig
         env:
-          PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
+          PREVIEW_KUBECONFIG: ${{ secrets.TRUSTED_HOSTED_PREVIEW_KUBECONFIG }}
           PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
         run: |
           KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"
-          bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Verify cluster access
         run: |
           kubectl get namespace kube-system >/dev/null
           kubectl auth can-i list namespaces --all-namespaces
+          bash ./dev-tools/hosted/shared/check-kubectl-version-skew.sh
 
       - name: Ensure GitHub CLI is available
         uses: ./.github/actions/setup-gh
@@ -58,3 +60,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           bash ./dev-tools/hosted/dev-demo/reconcile-dev-demo.sh
+
+      - name: Remove preview kubeconfig
+        if: ${{ always() }}
+        run: rm -f -- "$RUNNER_TEMP/preview-kubeconfig.yaml"

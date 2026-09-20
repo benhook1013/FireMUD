@@ -12,5 +12,5 @@ previewStack:
     targetPort: 8443
     # ClusterIssuer for standalone internal bridge Certificates; this is not the public Telnet issuer.
     clusterIssuer: firemud-ca-issuer
-    # Empty infers pr-preview or dev-demo-cluster from preview.prNumber; otherwise use a canonical runtime environment.
-    trustEnvironment: ""
+    # Hosted preview and dev-demo values must select their canonical trust environment explicitly.
+    trustEnvironment: pr-preview

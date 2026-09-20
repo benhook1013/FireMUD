@@ -27,8 +27,7 @@ import org.springframework.web.server.WebFilterChain;
 import reactor.core.publisher.Mono;
 
 class HeaderTrustFilterTest {
-  private static final Clock TCP_PROXY_CERTIFICATE_CLOCK =
-      Clock.fixed(Instant.parse("2026-09-15T00:00:00Z"), ZoneOffset.UTC);
+  private static final Clock TCP_PROXY_CERTIFICATE_CLOCK = tcpProxyCertificateClock();
 
   private static final String TCP_PROXY_URI = "spiffe://firemud/ns/firemud/sa/tcp-proxy-service";
 
@@ -760,16 +759,31 @@ class HeaderTrustFilterTest {
   }
 
   private static SslInfo authenticatedTcpProxyPeer() throws Exception {
+    SslInfo sslInfo = mock(SslInfo.class);
+    when(sslInfo.getPeerCertificates())
+        .thenReturn(new X509Certificate[] {loadTcpProxyCertificate()});
+    return sslInfo;
+  }
+
+  private static Clock tcpProxyCertificateClock() {
+    try {
+      X509Certificate certificate = loadTcpProxyCertificate();
+      long notBefore = certificate.getNotBefore().getTime();
+      long notAfter = certificate.getNotAfter().getTime();
+      long midpoint = notBefore + (notAfter - notBefore) / 2;
+      return Clock.fixed(Instant.ofEpochMilli(midpoint), ZoneOffset.UTC);
+    } catch (Exception exception) {
+      throw new ExceptionInInitializerError(exception);
+    }
+  }
+
+  private static X509Certificate loadTcpProxyCertificate() throws Exception {
     try (InputStream certificateStream =
         Objects.requireNonNull(
             HeaderTrustFilterTest.class.getResourceAsStream("/certs/tcp-proxy-client.pem"),
             "missing TCP Proxy client certificate fixture")) {
-      X509Certificate certificate =
-          (X509Certificate)
-              CertificateFactory.getInstance("X.509").generateCertificate(certificateStream);
-      SslInfo sslInfo = mock(SslInfo.class);
-      when(sslInfo.getPeerCertificates()).thenReturn(new X509Certificate[] {certificate});
-      return sslInfo;
+      return (X509Certificate)
+          CertificateFactory.getInstance("X.509").generateCertificate(certificateStream);
     }
   }
 }

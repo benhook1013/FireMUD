@@ -136,15 +136,9 @@ target_validator = target_validator_path.read_text(encoding="utf-8")
 reconcile_script = reconcile_script_path.read_text(encoding="utf-8")
 mode_action = yaml.safe_load(mode_action_path.read_text(encoding="utf-8"))
 
-dispatch_inputs = workflow[True]["workflow_dispatch"]["inputs"]
-if dispatch_inputs["hostname"]["description"] != (
-    "Only dev.preview.firedevops.net is accepted"
-):
-    raise SystemExit("dev-demo hostname input must document its only accepted value")
-if dispatch_inputs["telnet_port"]["description"] != (
-    "Only TCP NodePort 32016 is accepted"
-):
-    raise SystemExit("dev-demo Telnet port input must document its only accepted value")
+repository_dispatch = workflow[True]["repository_dispatch"]
+if repository_dispatch != {"types": ["dev-demo"]}:
+    raise SystemExit("dev-demo must use the typed repository_dispatch handoff")
 
 expected_mode_step = {
     "name": "Resolve certificate identity mode",
@@ -173,8 +167,8 @@ if reconciler["jobs"]["reconcile-dev-demo"]["timeout-minutes"] != 9:
 
 plan_steps = workflow["jobs"]["dev-demo-plan"]["steps"]
 expected_run_name = (
-    "Develop Dev Demo Environment ${{ inputs.action || 'deploy' }} "
-    "head-${{ inputs.head_sha || github.sha }}"
+    "Develop Dev Demo Environment ${{ github.event.client_payload.action || 'deploy' }} "
+    "head-${{ github.event.client_payload.head_sha || github.sha }}"
 )
 if workflow.get("run-name") != expected_run_name:
     raise SystemExit("dev-demo lifecycle lacks the immutable action/target run name")
@@ -191,15 +185,26 @@ for required in (
     if required not in derive_run:
         raise SystemExit(f"dev-demo plan lacks pre-mutation validation: {required}")
 normalization = 'HEAD_SHA="${HEAD_SHA,,}"'
+deploy_event_sha = 'EVENT_SHA="${{ github.sha }}"'
+deploy_head_match = 'if [[ "$HEAD_SHA" != "$EVENT_SHA" ]]'
 image_tag_default = 'IMAGE_TAG="${HEAD_SHA}"'
 head_validation = '[[ ! "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]'
 head_output = 'echo "head_sha=${HEAD_SHA}"'
-for required in (normalization, image_tag_default, head_validation, head_output):
+for required in (
+    normalization,
+    deploy_event_sha,
+    deploy_head_match,
+    image_tag_default,
+    head_validation,
+    head_output,
+):
     if required not in derive_run:
         raise SystemExit(f"dev-demo plan lacks normalized head handling: {required}")
 if not (
     derive_run.index(head_validation)
     < derive_run.index(normalization)
+    < derive_run.index(deploy_event_sha)
+    < derive_run.index(deploy_head_match)
     < derive_run.index(image_tag_default)
     < derive_run.index(head_output)
 ):
@@ -207,13 +212,13 @@ if not (
 
 with tempfile.NamedTemporaryFile() as output:
     derive_fixture = derive_run.replace(
-        "${{ github.event_name }}", "workflow_dispatch"
+        "${{ github.event_name }}", "repository_dispatch"
     ).replace("${{ github.sha }}", "f" * 40)
     fixture_env = os.environ.copy()
     fixture_env.update(
         {
             "INPUT_ACTION": "deploy",
-            "INPUT_HEAD_SHA": "ABCDEF1234567890ABCDEF1234567890ABCDEF12",
+            "INPUT_HEAD_SHA": "F" * 40,
             "INPUT_HOSTNAME": "dev.preview.firedevops.net",
             "INPUT_TELNET_PORT": "32016",
             "INPUT_IMAGE_TAG": "",
@@ -226,7 +231,7 @@ with tempfile.NamedTemporaryFile() as output:
     derived_outputs = dict(
         line.decode("utf-8").rstrip("\n").split("=", 1) for line in output
     )
-normalized_fixture_head = "abcdef1234567890abcdef1234567890abcdef12"
+normalized_fixture_head = "f" * 40
 if derived_outputs.get("head_sha") != normalized_fixture_head:
     raise SystemExit("dev-demo plan did not normalize an uppercase dispatch head")
 if derived_outputs.get("image_tag") != normalized_fixture_head:
@@ -234,9 +239,62 @@ if derived_outputs.get("image_tag") != normalized_fixture_head:
 if derived_outputs.get("release_name") != "dev":
     raise SystemExit("dev-demo plan did not derive the canonical dev release identity")
 
+with tempfile.NamedTemporaryFile() as mismatched_output:
+    mismatched_env = fixture_env.copy()
+    mismatched_env.update(
+        {
+            "INPUT_HEAD_SHA": "b" * 40,
+            "GITHUB_OUTPUT": mismatched_output.name,
+        }
+    )
+    mismatched = subprocess.run(
+        ["bash", "-c", derive_fixture],
+        check=False,
+        env=mismatched_env,
+        capture_output=True,
+        text=True,
+    )
+    if mismatched.returncode == 0:
+        raise SystemExit("dev-demo deploy accepted a dispatch head that mismatched github.sha")
+    if "Deploy head SHA must match the GitHub event SHA" not in mismatched.stderr:
+        raise SystemExit("dev-demo deploy mismatch lacked the fail-closed SHA diagnostic")
+
+with tempfile.NamedTemporaryFile() as destroy_output:
+    destroy_env = fixture_env.copy()
+    destroy_env.update(
+        {
+            "INPUT_ACTION": "destroy",
+            "INPUT_HEAD_SHA": "b" * 40,
+            "GITHUB_OUTPUT": destroy_output.name,
+        }
+    )
+    subprocess.run(["bash", "-c", derive_fixture], check=True, env=destroy_env)
+    destroy_output.seek(0)
+    destroy_outputs = dict(
+        line.decode("utf-8").rstrip("\n").split("=", 1) for line in destroy_output
+    )
+    if (
+        destroy_outputs.get("action") != "destroy"
+        or destroy_outputs.get("head_sha") != "b" * 40
+    ):
+        raise SystemExit("dev-demo destroy must accept its older recorded head")
+
 deploy_steps = workflow["jobs"]["dev-demo-deploy"]["steps"]
 deploy_by_name = {step.get("name"): step for step in deploy_steps if isinstance(step, dict)}
 deploy_names = [step.get("name") for step in deploy_steps if isinstance(step, dict)]
+deploy_checkouts = [
+    step
+    for step in deploy_steps
+    if str(step.get("uses", "")).startswith("actions/checkout@")
+]
+if len(deploy_checkouts) != 1:
+    raise SystemExit("dev-demo deploy must define exactly one checkout")
+if deploy_checkouts[0].get("with", {}).get("ref") != "${{ needs.dev-demo-plan.outputs.head_sha }}":
+    raise SystemExit("dev-demo deploy checkout must pin the planned head SHA")
+if deploy_checkouts[0].get("with", {}).get("persist-credentials") is not False:
+    raise SystemExit("dev-demo deploy checkout must not persist credentials")
+if workflow["jobs"]["dev-demo-deploy"].get("environment") != "trusted-hosted-cluster":
+    raise SystemExit("dev-demo deploy must retain the protected hosted-cluster environment")
 if deploy_by_name["Resolve certificate identity mode"] != expected_mode_step:
     raise SystemExit("dev-demo deploy must use the shared certificate identity action exactly")
 ordered = (
@@ -276,6 +334,24 @@ for name in identity_steps:
     ):
         if required not in condition:
             raise SystemExit(f"{name} is not fail-closed behind {required}")
+
+static_bridge_run = deploy_by_name["Validate dev-demo chart render"]["run"]
+operator_bridge_run = deploy_by_name["Validate controller-projected dev-demo identity"]["run"]
+for bridge_run, label in (
+    (static_bridge_run, "static"),
+    (operator_bridge_run, "operator"),
+):
+    if bridge_run.count("python3 ./dev-tools/deploy/preflight.py hosted-bridge") != 1:
+        raise SystemExit(f"dev-demo {label} hosted-bridge proof must invoke preflight exactly once")
+    if "--expected-hosted-telnet-node-port" in bridge_run:
+        raise SystemExit(
+            f"dev-demo {label} hosted-bridge proof must not require the public Telnet NodePort"
+        )
+    if "needs.dev-demo-plan.outputs.telnet_port" in bridge_run or "TELNET_PORT" in bridge_run:
+        raise SystemExit(
+            f"dev-demo {label} private hosted-bridge proof must not consume the public Telnet port"
+        )
+
 runtime_rollout_condition = deploy_by_name["Wait for dev-demo runtime rollouts"].get("if", "")
 if "steps.certificate-identity.outputs.mode == 'hosted-controller'" not in runtime_rollout_condition:
     raise SystemExit("dev-demo runtime rollout wait is not fail-closed behind hosted-controller mode")
@@ -285,7 +361,7 @@ requester_check = deploy_by_name["Check Hosted identity requester credentials"]
 if requester_check.get("id") != "requester-credentials":
     raise SystemExit("dev-demo deploy requester credential check must publish a stable step output")
 if requester_check.get("env") != {
-    "REQUESTER_KUBECONFIG": "${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}"
+    "REQUESTER_KUBECONFIG": "${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}"
 }:
     raise SystemExit("dev-demo deploy requester credential check reads the wrong secret")
 for required in (
@@ -365,7 +441,7 @@ requester_writer = deploy_by_name["Write hosted identity requester kubeconfig"]
 if requester_writer.get("uses") != "./.github/actions/write-kubeconfig":
     raise SystemExit("dev-demo Active requester must use the canonical kubeconfig action")
 if requester_writer.get("with") != {
-    "content": "${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}",
+    "content": "${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}",
     "path": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
     "export-to-github-env": "false",
 }:
@@ -467,6 +543,19 @@ if success_condition != expected_success_condition:
 destroy_steps = workflow["jobs"]["dev-demo-destroy"]["steps"]
 destroy_by_name = {step.get("name"): step for step in destroy_steps if isinstance(step, dict)}
 destroy_names = [step.get("name") for step in destroy_steps if isinstance(step, dict)]
+destroy_checkouts = [
+    step
+    for step in destroy_steps
+    if str(step.get("uses", "")).startswith("actions/checkout@")
+]
+if len(destroy_checkouts) != 1:
+    raise SystemExit("dev-demo destroy must define exactly one checkout")
+if destroy_checkouts[0].get("with", {}).get("ref") != "${{ github.event.repository.default_branch }}":
+    raise SystemExit("dev-demo destroy checkout must remain pinned to trusted default-branch code")
+if destroy_checkouts[0].get("with", {}).get("persist-credentials") is not False:
+    raise SystemExit("dev-demo destroy checkout must not persist credentials")
+if workflow["jobs"]["dev-demo-destroy"].get("environment") != "trusted-hosted-cluster":
+    raise SystemExit("dev-demo destroy must retain the protected hosted-cluster environment")
 if destroy_by_name["Resolve certificate identity mode"] != expected_mode_step:
     raise SystemExit("dev-demo destroy must use the shared certificate identity action exactly")
 destroy_order = (
@@ -545,7 +634,7 @@ destroy_requester_check = destroy_by_name["Check Hosted identity requester crede
 if destroy_requester_check.get("id") != "requester-credentials":
     raise SystemExit("dev-demo destroy requester credential check must publish a stable step output")
 if destroy_requester_check.get("env") != {
-    "REQUESTER_KUBECONFIG": "${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}"
+    "REQUESTER_KUBECONFIG": "${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}"
 }:
     raise SystemExit("dev-demo destroy requester credential check reads the wrong secret")
 for required in (
@@ -650,7 +739,7 @@ if "DEV_DEMO_RUNTIME_KUBECONFIG" in destroy_runtime_kubeconfig["run"]:
     raise SystemExit("dev-demo destroy retained an unnecessary runtime kubeconfig restore variable")
 destroy_requester_writer = destroy_by_name["Write hosted identity requester kubeconfig"]
 if destroy_requester_writer.get("with") != {
-    "content": "${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}",
+    "content": "${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}",
     "path": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
     "export-to-github-env": "false",
 }:
@@ -1320,7 +1409,7 @@ if [[ $# -eq 6 && "$1" == get && "$2" == namespace && ( "$3" == dev || "$3" == p
     --arg requested_annotation "$requested_annotation" \
     --arg deployed_annotation "$deployed_annotation" \
     --arg telnet_annotation "$telnet_annotation" '
-      {metadata:{uid:"runtime-uid",annotations:{}}}
+      {metadata:{uid:"runtime-uid",labels:{"firemud.dev/preview-exposure-mode":"public"},annotations:{}}}
       | if $requested == "__missing__" then .
         else .metadata.annotations[$requested_annotation] = $requested end
       | if $deployed == "__missing__" then .
@@ -1356,7 +1445,7 @@ if [[ $# -eq 8 && "$1" == -n && "$2" == firemud-system && "$3" == get && "$4" ==
                else .observedGeneration = $parsed_ready_generation
                end)
           ],
-          profile:{runtimeNamespaceUid:$profile_uid,telnetPort:$telnet_port},
+          profile:{runtimeNamespaceUid:$profile_uid,exposureMode:"public",telnetPort:$telnet_port},
           ingress:{revision:$revision},
           telnet:{revision:$revision},
           gatewayInternalWs:{revision:$revision},
@@ -1716,7 +1805,7 @@ has_typed_field() {
 
 branch_endpoint="repos/${GITHUB_REPOSITORY}/branches/develop"
 runs_endpoint="repos/${GITHUB_REPOSITORY}/actions/workflows/dev-demo.yml/runs"
-dispatch_endpoint="repos/${GITHUB_REPOSITORY}/actions/workflows/dev-demo.yml/dispatches"
+dispatch_endpoint="repos/${GITHUB_REPOSITORY}/dispatches"
 
 if [[ "$endpoint" == "$branch_endpoint" ]]; then
   if [[ "$method" != GET || "$method_explicit" != false \
@@ -1736,12 +1825,12 @@ fi
 if [[ "$endpoint" == "$dispatch_endpoint" ]]; then
   if [[ "$method" != POST || "$method_explicit" != true || -n "$jq_filter" \
     || ${#raw_fields[@]} -ne 6 || ${#typed_fields[@]} -ne 0 ]] \
-    || ! has_raw_field 'ref=develop' \
-    || ! has_raw_field 'inputs[action]=deploy' \
-    || ! has_raw_field "inputs[image_tag]=${TEST_HEAD_SHA}" \
-    || ! has_raw_field "inputs[head_sha]=${TEST_HEAD_SHA}" \
-    || ! has_raw_field 'inputs[hostname]=dev.preview.firedevops.net' \
-    || ! has_raw_field 'inputs[telnet_port]=32016'; then
+    || ! has_raw_field 'event_type=dev-demo' \
+    || ! has_raw_field 'client_payload[action]=deploy' \
+    || ! has_raw_field "client_payload[image_tag]=${TEST_HEAD_SHA}" \
+    || ! has_raw_field "client_payload[head_sha]=${TEST_HEAD_SHA}" \
+    || ! has_raw_field 'client_payload[hostname]=dev.preview.firedevops.net' \
+    || ! has_raw_field 'client_payload[telnet_port]=32016'; then
     echo "unexpected gh dev-demo dispatch" >&2
     exit 2
   fi

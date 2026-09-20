@@ -54,11 +54,11 @@ Environment variables:
                                      readiness budget (default: 300, maximum: 900)
 
 The hosted-bridge form reuses PREFLIGHT-BRIDGE-001 before preview/dev-demo
-apply. The optional expected port adds an exact trusted post-render Telnet
-NodePort check; without it, hosted-controller renders use the allocator annotation
-and matching explicit Telnet nodePort already emitted by the chart.
-Set FIREMUD_PREFLIGHT_CONTEXT=ci-static to validate only the candidate manifest;
-operator context also verifies the controller-projected TLS Secret keys.
+apply and validates the private Gateway/TCP Proxy bridge. The optional
+expected port additionally requests an exact trusted post-render public Telnet
+NodePort check. Set FIREMUD_PREFLIGHT_CONTEXT=ci-static to validate only the
+candidate manifest; operator context also verifies controller-projected TLS
+Secret keys.
 """
 
 
@@ -128,48 +128,7 @@ BRIDGE_WS_SECRET_ITEM_PATHS = {
     "tls.key": "tls.key",
     "ca.crt": "ca.crt",
 }
-GATEWAY_WS_SERVER_PATHS = {
-    "FIREMUD_GATEWAY_TCP_PROXY_TLS_CERT_CHAIN_PATH": "/gateway-ws-server-tls/tls.crt",
-    "FIREMUD_GATEWAY_TCP_PROXY_TLS_PRIVATE_KEY_PATH": "/gateway-ws-server-tls/tls.key",
-    "FIREMUD_GATEWAY_TCP_PROXY_TLS_CLIENT_CA_PATH": "/gateway-ws-server-tls/ca.crt",
-}
-GATEWAY_WS_SERVER_SECRET_ITEM_PATHS = BRIDGE_WS_SECRET_ITEM_PATHS
-GATEWAY_WS_LISTENER_PORT = 8443
 TCP_PROXY_TELNET_SERVICE_PORT = 2323
-GATEWAY_WS_APPROVED_TRUST_PROFILES = frozenset(
-    {"production_uri", "migration_dns", "breakglass_fingerprint"}
-)
-GATEWAY_WS_TRUST_PROFILE_SETTING_NAMES = {
-    "production_uri": frozenset(
-        {"FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN"}
-    ),
-    "migration_dns": frozenset(
-        {
-            "FIREMUD_GATEWAY_TCP_PROXY_TRUST_DNS_SAN",
-            "FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_OWNER",
-            "FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_REASON",
-            "FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_EXPIRES_AT",
-        }
-    ),
-    "breakglass_fingerprint": frozenset(
-        {
-            "FIREMUD_GATEWAY_TCP_PROXY_TRUST_FINGERPRINT_SHA256",
-            "FIREMUD_GATEWAY_TCP_PROXY_TRUST_INCIDENT_REFERENCE",
-            "FIREMUD_GATEWAY_TCP_PROXY_TRUST_BREAKGLASS_EXPIRES_AT",
-        }
-    ),
-    "development_cidr": frozenset(
-        {"FIREMUD_GATEWAY_TCP_PROXY_TRUST_DEVELOPMENT_CIDR"}
-    ),
-}
-GATEWAY_WS_TRUST_PROFILE_SETTING_NAMES_ALL = frozenset().union(
-    *GATEWAY_WS_TRUST_PROFILE_SETTING_NAMES.values()
-)
-GATEWAY_WS_TRUST_DNS_RE = re.compile(
-    r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)"
-    r"(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*"
-)
-GATEWAY_WS_TRUST_FINGERPRINT_RE = re.compile(r"[0-9a-f]{64}")
 TELNET_TLS_REQUIRED_PATHS = {
     "TCP_PROXY_TLS_CERT": "/telnet-tls/tls.crt",
     "TCP_PROXY_TLS_KEY": "/telnet-tls/tls.key",
@@ -178,10 +137,6 @@ GRPC_TLS_PATH_NAMES = (
     "FIREMUD_GRPC_CERT_CHAIN_PATH",
     "FIREMUD_GRPC_PRIVATE_KEY_PATH",
     "FIREMUD_GRPC_CA_CERT_PATH",
-)
-TELNET_TLS_PATH_NAMES = (
-    "TCP_PROXY_TLS_CERT",
-    "TCP_PROXY_TLS_KEY",
 )
 BASE_SECRET_COMPLIANCE_CLASSES = frozenset(
     {
@@ -3150,20 +3105,6 @@ def workload_namespace(document: dict[str, Any]) -> str:
     return metadata_namespace(document) or "firemud"
 
 
-def primary_workload_namespace(documents: list[dict[str, Any]]) -> str:
-    namespaces = {
-        workload_namespace(document)
-        for document in documents
-        if primary_containers(document)
-    }
-    if len(namespaces) > 1:
-        raise ValueError(
-            "primary workload namespace is ambiguous across rendered workloads: "
-            + ", ".join(sorted(namespaces))
-        )
-    return next(iter(namespaces), "firemud")
-
-
 def effective_container_env(
     documents: list[dict[str, Any]],
     document: dict[str, Any],
@@ -3968,365 +3909,17 @@ def canonical_gateway_ws_endpoint(
     service = services[0]
     if (service.get("spec") or {}).get("type", "ClusterIP") != "ClusterIP":
         return None, ["Gateway mTLS Service must remain ClusterIP/internal-only"]
-    if any(
-        field in (service.get("spec") or {})
-        for field in ("externalIPs", "externalName", "loadBalancerIP", "loadBalancerClass")
-    ):
-        return None, ["Gateway mTLS Service must not declare external exposure fields"]
     ports = [entry for entry in (service.get("spec") or {}).get("ports") or [] if isinstance(entry, dict)]
-    if (
-        len(ports) != 1
-        or ports[0].get("targetPort") != GATEWAY_WS_LISTENER_PORT
-        or ports[0].get("protocol", "TCP") != "TCP"
-    ):
-        return None, [
-            "Gateway mTLS Service must expose exactly one TCP port to targetPort 8443"
-        ]
-    service_port = ports[0].get("port")
-    if (
-        isinstance(service_port, bool)
-        or not isinstance(service_port, int)
-        or not 1 <= service_port <= 65535
-    ):
-        return None, [
-            "Gateway mTLS Service port must be an integer in range 1..65535"
-        ]
-    if (service.get("spec") or {}).get("selector") != {"app": "spring-cloud-gateway"}:
-        return None, ["Gateway mTLS Service must select only app=spring-cloud-gateway"]
+    if len(ports) != 1 or not isinstance(ports[0].get("port"), int):
+        return None, ["Gateway mTLS Service must expose exactly one numeric port"]
     host = f"spring-cloud-gateway-mtls.{namespace}.svc.cluster.local"
     return f"{host}:{ports[0]['port']}", []
 
 
-def secret_volume_mount_issues(
-    document: dict[str, Any],
-    container: dict[str, Any],
-    *,
-    mount_path: str,
-    secret_name: str,
-    item_paths: dict[str, str],
-    label: str,
-) -> tuple[set[str], list[str]]:
-    pod_spec = (((document.get("spec") or {}).get("template") or {}).get("spec") or {})
-    volume_definitions = {
-        volume.get("name"): volume
-        for volume in pod_spec.get("volumes") or []
-        if isinstance(volume, dict) and volume.get("name")
-    }
-    matching_mounts = [
-        mount
-        for mount in container.get("volumeMounts") or []
-        if isinstance(mount, dict) and mount.get("mountPath") == mount_path
-    ]
-    issues: list[str] = []
-    referenced_secrets: set[str] = set()
-    if len(matching_mounts) != 1:
-        return referenced_secrets, [f"{label} requires exactly one {mount_path} mount"]
-    mount = matching_mounts[0]
-    if mount.get("readOnly") is not True:
-        issues.append(f"{label} {mount_path} mount must be read-only")
-    for field in ("subPath", "subPathExpr"):
-        if field in mount:
-            issues.append(f"{label} Secret mount must not use {field}")
-    volume = volume_definitions.get(mount.get("name")) or {}
-    secret = volume.get("secret") if isinstance(volume, dict) else None
-    actual_secret = secret.get("secretName") if isinstance(secret, dict) else None
-    if isinstance(actual_secret, str) and actual_secret:
-        referenced_secrets.add(actual_secret)
-    if actual_secret != secret_name:
-        issues.append(f"{label} mount must reference Secret {secret_name}")
-    items = secret.get("items") if isinstance(secret, dict) else None
-    expected_pairs = set(item_paths.items())
-    if (
-        not isinstance(items, list)
-        or len(items) != len(expected_pairs)
-        or any(
-            not isinstance(item, dict)
-            or set(item) != {"key", "path"}
-            or not isinstance(item.get("key"), str)
-            or not isinstance(item.get("path"), str)
-            for item in items
-        )
-        or {(item["key"], item["path"]) for item in items} != expected_pairs
-    ):
-        rendered_pairs = ", ".join(
-            f"{key}->{path}" for key, path in sorted(expected_pairs)
-        )
-        issues.append(f"{label} Secret items must select exactly {rendered_pairs}")
-    return referenced_secrets, issues
-
-
-def validate_gateway_ws_trust_profile(
-    env: dict[str, str],
-    namespace: str,
-    expected_environment: Any,
-    *,
-    evaluation_time: dt.datetime | None = None,
-) -> list[str]:
-    """Validate the one environment-bound trust profile on the Gateway listener."""
-    evaluated_at = normalize_evaluation_time(evaluation_time)
-    issues: list[str] = []
-    profile_name = "FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE"
-    selected_profile = env.get(profile_name)
-    if selected_profile not in GATEWAY_WS_APPROVED_TRUST_PROFILES:
-        if selected_profile == "development_cidr":
-            issues.append(
-                "development_cidr is forbidden for hosted/player-facing Gateway "
-                f"environment {expected_environment!r}"
-            )
-        else:
-            approved = ", ".join(sorted(GATEWAY_WS_APPROVED_TRUST_PROFILES))
-            issues.append(
-                f"{profile_name} must select exactly one approved non-development "
-                f"profile: {approved}"
-            )
-        return issues
-
-    selected_settings = GATEWAY_WS_TRUST_PROFILE_SETTING_NAMES[selected_profile]
-    inactive_settings = sorted(
-        name
-        for name in GATEWAY_WS_TRUST_PROFILE_SETTING_NAMES_ALL
-        if name not in selected_settings
-        and isinstance(env.get(name), str)
-        and env[name].strip()
-    )
-    if inactive_settings:
-        issues.append(
-            f"{selected_profile} listener must not configure inactive trust-profile "
-            "settings: "
-            + ", ".join(inactive_settings)
-        )
-
-    def required_value(name: str) -> str | None:
-        value = env.get(name)
-        if not isinstance(value, str) or not value.strip():
-            issues.append(f"{name} is required for {selected_profile}")
-            return None
-        return value.strip()
-
-    def validate_expiry(name: str) -> None:
-        value = required_value(name)
-        if value is None:
-            return
-        try:
-            expires_at = parse_timestamp(value, name)
-        except TIMESTAMP_ERRORS:
-            issues.append(f"{name} must be an RFC 3339 instant")
-            return
-        if not expires_at > evaluated_at:
-            issues.append(f"{name} must be in the future")
-
-    if selected_profile == "production_uri":
-        expected_uri = f"spiffe://firemud/ns/{namespace}/sa/tcp-proxy-service"
-        uri_san_name = "FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN"
-        raw_uri_san = env.get(uri_san_name)
-        uri_san = required_value(uri_san_name)
-        if (
-            uri_san is not None
-            and isinstance(raw_uri_san, str)
-            and raw_uri_san != uri_san
-        ):
-            issues.append(f"{uri_san_name} must not contain surrounding whitespace")
-        if uri_san is not None and uri_san != expected_uri:
-            issues.append(
-                "FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN must be exactly "
-                f"{expected_uri!r}"
-            )
-    elif selected_profile == "migration_dns":
-        dns_san_name = "FIREMUD_GATEWAY_TCP_PROXY_TRUST_DNS_SAN"
-        raw_dns_san = env.get(dns_san_name)
-        dns_san = required_value(dns_san_name)
-        if (
-            dns_san is not None
-            and isinstance(raw_dns_san, str)
-            and raw_dns_san != dns_san
-        ):
-            issues.append(f"{dns_san_name} must not contain surrounding whitespace")
-        if dns_san is not None:
-            normalized_dns_san = dns_san.lower()
-            if (
-                normalized_dns_san != dns_san
-                or not GATEWAY_WS_TRUST_DNS_RE.fullmatch(normalized_dns_san)
-            ):
-                issues.append(
-                    "FIREMUD_GATEWAY_TCP_PROXY_TRUST_DNS_SAN must be one exact "
-                    "lowercase ASCII DNS name"
-                )
-        required_value("FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_OWNER")
-        required_value("FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_REASON")
-        validate_expiry("FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_EXPIRES_AT")
-    else:
-        fingerprint = required_value(
-            "FIREMUD_GATEWAY_TCP_PROXY_TRUST_FINGERPRINT_SHA256"
-        )
-        if fingerprint is not None:
-            normalized_fingerprint = fingerprint.lower().replace(":", "")
-            if not GATEWAY_WS_TRUST_FINGERPRINT_RE.fullmatch(
-                normalized_fingerprint
-            ):
-                issues.append(
-                    "FIREMUD_GATEWAY_TCP_PROXY_TRUST_FINGERPRINT_SHA256 must be "
-                    "one exact SHA-256 leaf fingerprint"
-                )
-        required_value("FIREMUD_GATEWAY_TCP_PROXY_TRUST_INCIDENT_REFERENCE")
-        validate_expiry("FIREMUD_GATEWAY_TCP_PROXY_TRUST_BREAKGLASS_EXPIRES_AT")
-
-    return issues
-
-
-def validate_gateway_ws_listener(
-    documents: list[dict[str, Any]],
-    expected: dict[str, Any],
-    *,
-    evaluation_time: dt.datetime | None = None,
-) -> tuple[set[str], list[str]]:
-    listener_ref = parse_binding_ref(
-        get(expected, "internalBindings.certificates.gatewayInternalWsListenerRef")
-    )
-    if (
-        listener_ref is None
-        or listener_ref[0] != "cert-manager"
-        or not listener_ref[1]
-        or len(listener_ref[2]) != 1
-    ):
-        return set(), [
-            "internalBindings.certificates.gatewayInternalWsListenerRef must be a cert-manager binding with one namespace-local name"
-        ]
-    namespace = listener_ref[1]
-    secret_name = listener_ref[2][0]
-    deployments = [
-        document
-        for document in documents
-        if document.get("kind") == "Deployment"
-        and metadata_name(document) == "spring-cloud-gateway"
-        and rendered_namespace_matches(document, namespace, default_namespace=namespace)
-    ]
-    if len(deployments) != 1:
-        return set(), ["exactly one rendered spring-cloud-gateway Deployment is required"]
-    document = deployments[0]
-    gateway_strategy = (document.get("spec") or {}).get("strategy")
-    if (
-        gateway_strategy is not None
-        and (
-            not isinstance(gateway_strategy, dict)
-            or gateway_strategy.get("type") != "RollingUpdate"
-        )
-    ):
-        issues = [
-            "Gateway bridge Deployment strategy must be RollingUpdate or omitted so Kubernetes uses its default for ordinary availability-preserving replacement; emergency identity withdrawal requires controller termination and is not proven by this rendered strategy"
-        ]
-    else:
-        issues = []
-    containers = [
-        container
-        for container in (((document.get("spec") or {}).get("template") or {}).get("spec") or {}).get("containers") or []
-        if isinstance(container, dict) and container.get("name") == "spring-cloud-gateway"
-    ]
-    if len(containers) != 1:
-        return set(), issues + [
-            "Gateway Deployment must contain one spring-cloud-gateway container"
-        ]
-    container = containers[0]
-    listener_prefixes = (
-        "FIREMUD_GATEWAY_TCP_PROXY_TLS_",
-        "FIREMUD_GATEWAY_TCP_PROXY_TRUST_",
-    )
-    legacy_prefix = "FIREMUD_GATEWAY_HEADER_TRUST_TCP_PROXY_"
-    env, env_issues = effective_container_env(
-        documents,
-        document,
-        container,
-        relevant_prefixes=(*listener_prefixes, legacy_prefix),
-    )
-    issues.extend(env_issues)
-    expected_environment = get(expected, "environment")
-    expected_environment_valid = (
-        isinstance(expected_environment, str) and bool(expected_environment.strip())
-    )
-    if not expected_environment_valid:
-        issues.append("expected environment must be a non-empty string")
-    expected_values = {
-        "FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED": "true",
-        "FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS": "0.0.0.0",
-        "FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT": str(GATEWAY_WS_LISTENER_PORT),
-        **GATEWAY_WS_SERVER_PATHS,
-    }
-    if expected_environment_valid:
-        expected_values["FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT"] = expected_environment
-    for name, expected_value in expected_values.items():
-        if env.get(name) != expected_value:
-            issues.append(f"{name} must be exactly {expected_value!r}")
-    known_listener_names = {
-        *expected_values,
-        "FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE",
-        *GATEWAY_WS_TRUST_PROFILE_SETTING_NAMES_ALL,
-    }
-    unknown_listener_names = sorted(
-        name
-        for name in env
-        if name.startswith(listener_prefixes) and name not in known_listener_names
-    )
-    if unknown_listener_names:
-        issues.append(
-            "Gateway listener must not configure unknown trust-profile settings: "
-            + ", ".join(unknown_listener_names)
-        )
-    issues.extend(
-        validate_gateway_ws_trust_profile(
-            env,
-            namespace,
-            expected_environment,
-            evaluation_time=evaluation_time,
-        )
-    )
-    if any(name.startswith(legacy_prefix) for name in env):
-        issues.append("dedicated Gateway listener must not configure legacy TCP Proxy header trust")
-    mounted_secrets, mount_issues = secret_volume_mount_issues(
-        document,
-        container,
-        mount_path="/gateway-ws-server-tls",
-        secret_name=secret_name,
-        item_paths=GATEWAY_WS_SERVER_SECRET_ITEM_PATHS,
-        label="Gateway WebSocket server identity",
-    )
-    issues.extend(mount_issues)
-    ports = container.get("ports") or []
-    if not any(
-        isinstance(port, dict)
-        and port.get("containerPort") == GATEWAY_WS_LISTENER_PORT
-        for port in ports
-    ):
-        issues.append("Gateway Deployment must declare containerPort 8443 for the dedicated listener")
-    return mounted_secrets, issues
-
-
-def path_is_under_mount(path: str, mount_path: str) -> bool:
-    """Return whether a path is the mount itself or one of its descendants."""
-    return bool(mount_path) and (
-        path == mount_path or path.startswith(mount_path.rstrip("/") + "/")
-    )
-
-
 def validate_gateway_ws_values(
-    documents: list[dict[str, Any]],
-    expected: dict[str, Any],
-    *,
-    evaluation_time: dt.datetime | None = None,
+    documents: list[dict[str, Any]], expected: dict[str, Any]
 ) -> tuple[list[str], list[str]]:
-    evaluated_at = normalize_evaluation_time(evaluation_time)
     canonical, issues = canonical_gateway_ws_endpoint(documents, expected)
-    server_secret_names, listener_issues = validate_gateway_ws_listener(
-        documents,
-        expected,
-        evaluation_time=evaluated_at,
-    )
-    issues.extend(listener_issues)
-    listener_ref = parse_binding_ref(
-        get(expected, "internalBindings.certificates.gatewayInternalWsListenerRef")
-    )
-    if listener_ref and listener_ref[1]:
-        issues.extend(
-            validate_gateway_ws_network_policy(documents, listener_ref[1])
-        )
     values: list[str] = []
     if canonical is None:
         return values, issues
@@ -4355,13 +3948,7 @@ def validate_gateway_ws_values(
                 documents,
                 document,
                 container,
-                relevant_names={
-                    "GATEWAY_WS_URL",
-                    "TCP_PROXY_TLS_ENABLED",
-                    *BRIDGE_WS_PATHS,
-                    *GRPC_TLS_PATH_NAMES,
-                    *TELNET_TLS_PATH_NAMES,
-                },
+                relevant_names={"GATEWAY_WS_URL", *BRIDGE_WS_PATHS, *GRPC_TLS_PATH_NAMES},
             )
             issues.extend(env_issues)
             for path_name, expected_path in BRIDGE_WS_PATHS.items():
@@ -4389,31 +3976,6 @@ def validate_gateway_ws_values(
             }
 
             grpc_mounts = [
-                grpc_mount
-                for grpc_mount in container.get("volumeMounts") or []
-                if isinstance(grpc_mount, dict)
-                and grpc_mount.get("readOnly") is True
-                and volumes.get(grpc_mount.get("name"))
-                and isinstance(grpc_mount.get("mountPath"), str)
-                and any(
-                    path_is_under_mount(grpc_path, grpc_mount["mountPath"])
-                    for grpc_path in grpc_paths
-                )
-            ]
-            if len(grpc_mounts) != 1:
-                issues.append(
-                    "exactly one dedicated read-only Secret-backed gRPC TLS mount is required"
-                )
-            grpc_secret_names = {
-                volumes.get(grpc_mount.get("name"))
-                for grpc_mount in grpc_mounts
-            }
-            telnet_paths = {
-                env.get(name)
-                for name in TELNET_TLS_PATH_NAMES
-                if isinstance(env.get(name), str) and env.get(name).startswith("/")
-            }
-            telnet_mounts = [
                 mount
                 for mount in container.get("volumeMounts") or []
                 if isinstance(mount, dict)
@@ -4421,12 +3983,15 @@ def validate_gateway_ws_values(
                 and volumes.get(mount.get("name"))
                 and isinstance(mount.get("mountPath"), str)
                 and any(
-                    path_is_under_mount(path, mount["mountPath"])
-                    for path in telnet_paths
+                    path_is_under_mount(path, mount["mountPath"]) for path in grpc_paths
                 )
             ]
-            telnet_secret_names = {
-                volumes.get(mount.get("name")) for mount in telnet_mounts
+            if len(grpc_mounts) != 1:
+                issues.append(
+                    "exactly one dedicated read-only Secret-backed gRPC TLS mount is required"
+                )
+            grpc_secret_names = {
+                volumes.get(mount.get("name")) for mount in grpc_mounts
             }
             bridge_ref = parse_binding_ref(
                 get(expected, "internalBindings.certificates.tcpProxyBridgeClientRef")
@@ -4441,37 +4006,85 @@ def validate_gateway_ws_values(
                 if bridge_ref and bridge_ref[0] == "cert-manager" and len(bridge_ref[2]) == 1
                 else None
             )
-            if expected_bridge_name is None or expected_bridge_namespace is None:
-                issues.append(
-                    "internalBindings.certificates.tcpProxyBridgeClientRef must be a cert-manager binding with one namespace-local name"
-                )
-            else:
-                if workload_namespace(document) != expected_bridge_namespace:
+            pod_spec = (((document.get("spec") or {}).get("template") or {}).get("spec") or {})
+            volume_definitions = {
+                volume.get("name"): volume
+                for volume in pod_spec.get("volumes") or []
+                if isinstance(volume, dict) and volume.get("name")
+            }
+
+            def bridge_volume_is_valid(
+                mount: dict[str, Any],
+                *,
+                bridge_name: str | None = expected_bridge_name,
+                bridge_namespace: str | None = expected_bridge_namespace,
+                current_document: dict[str, Any] = document,
+                current_volumes: dict[str, str | None] = volumes,
+                current_volume_definitions: dict[str, dict[str, Any]] = volume_definitions,
+            ) -> bool:
+                if bridge_name is None or bridge_namespace is None:
+                    return False
+                if workload_namespace(current_document) != bridge_namespace:
                     issues.append(
                         "Gateway WebSocket bridge workload namespace does not match "
-                        f"expected {expected_bridge_namespace}"
+                        f"expected {bridge_namespace}"
                     )
-                bridge_secret_names, mount_issues = secret_volume_mount_issues(
-                    document,
-                    container,
-                    mount_path="/gateway-ws-client-tls",
-                    secret_name=expected_bridge_name,
-                    item_paths=BRIDGE_WS_SECRET_ITEM_PATHS,
-                    label="Gateway WebSocket bridge client identity",
+                    return False
+                secret_name = current_volumes.get(mount.get("name"))
+                if secret_name != bridge_name:
+                    issues.append(
+                        "Gateway WebSocket bridge mount must reference Secret "
+                        f"{bridge_namespace}/{bridge_name}"
+                    )
+                    return False
+                if "subPath" in mount:
+                    issues.append("Gateway WebSocket bridge Secret mount must not use subPath")
+                    return False
+                volume = current_volume_definitions.get(mount.get("name")) or {}
+                secret = volume.get("secret") if isinstance(volume, dict) else None
+                if not isinstance(secret, dict):
+                    return False
+                items = secret.get("items")
+                expected_item_pairs = set(BRIDGE_WS_SECRET_ITEM_PATHS.items())
+                if (
+                    not isinstance(items, list)
+                    or len(items) != len(expected_item_pairs)
+                    or any(
+                        not isinstance(item, dict)
+                        or set(item) != {"key", "path"}
+                        or not isinstance(item.get("key"), str)
+                        or not isinstance(item.get("path"), str)
+                        for item in items
+                    )
+                ):
+                    issues.append(
+                        "Gateway WebSocket bridge Secret volume items must select exactly "
+                        "tls.crt->tls.crt, tls.key->tls.key, and ca.crt->ca.crt"
+                    )
+                    return False
+                item_pairs = {(item["key"], item["path"]) for item in items}
+                if item_pairs != expected_item_pairs:
+                    issues.append(
+                        "Gateway WebSocket bridge Secret volume items must select exactly "
+                        "tls.crt->tls.crt, tls.key->tls.key, and ca.crt->ca.crt"
+                    )
+                    return False
+                return True
+
+            bridge_mounts = [
+                mount
+                for mount in container.get("volumeMounts") or []
+                if isinstance(mount, dict)
+                and mount.get("mountPath") == "/gateway-ws-client-tls"
+                and mount.get("readOnly") is True
+                and volumes.get(mount.get("name"))
+                and volumes.get(mount.get("name")) not in grpc_secret_names
+                and bridge_volume_is_valid(mount)
+            ]
+            if len(bridge_mounts) != 1:
+                issues.append(
+                    "exactly one dedicated read-only Secret-backed /gateway-ws-client-tls mount is required for the Gateway WebSocket bridge"
                 )
-                issues.extend(mount_issues)
-                if bridge_secret_names & grpc_secret_names:
-                    issues.append(
-                        "Gateway WebSocket bridge client Secret must be distinct from the gRPC TLS Secret"
-                    )
-                if bridge_secret_names & telnet_secret_names:
-                    issues.append(
-                        "Gateway WebSocket bridge client Secret must be distinct from the Telnet TLS Secret"
-                    )
-                if bridge_secret_names & server_secret_names:
-                    issues.append(
-                        "Gateway WebSocket bridge client and Gateway server identities must use distinct Secrets"
-                    )
             value = env.get("GATEWAY_WS_URL")
             if not value:
                 issues.append("GATEWAY_WS_URL is not explicitly configured")
@@ -4511,174 +4124,117 @@ def validate_gateway_ws_values(
     return values, issues
 
 
-def kubernetes_selector_matches(
-    selector: Any, labels: dict[str, Any]
-) -> bool:
-    if not isinstance(selector, dict) or not isinstance(labels, dict):
-        return False
-    match_labels = selector.get("matchLabels", {})
-    match_expressions = selector.get("matchExpressions", [])
-    if not isinstance(match_labels, dict) or not isinstance(match_expressions, list):
-        return False
-    for key, value in match_labels.items():
-        if labels.get(key) != value:
-            return False
-    for expression in match_expressions:
-        if not isinstance(expression, dict):
-            return False
-        key = expression.get("key")
-        operator = expression.get("operator")
-        values = expression.get("values") or []
-        if operator == "In" and labels.get(key) not in values:
-            return False
-        if operator == "NotIn" and key in labels and labels.get(key) in values:
-            return False
-        if operator == "Exists" and key not in labels:
-            return False
-        if operator == "DoesNotExist" and key in labels:
-            return False
-        if operator not in {"In", "NotIn", "Exists", "DoesNotExist"}:
-            return False
-    return True
-
-
-def canonical_bridge_peer(rule: dict[str, Any], expected_app: str) -> bool:
-    peers = rule.get("from") if "from" in rule else rule.get("to")
-    return (
-        isinstance(peers, list)
-        and len(peers) == 1
-        and isinstance(peers[0], dict)
-        and set(peers[0]) == {"podSelector"}
-        and peers[0].get("podSelector")
-        == {"matchLabels": {"app": expected_app}}
-    )
-
-
-def validate_gateway_ws_network_policy(
-    documents: list[dict[str, Any]], namespace: str
+def validate_hosted_private_bridge_values(
+    documents: list[dict[str, Any]],
+    required_identity_mode: str | None = None,
+    *,
+    target_namespace: str = "firemud",
+    allow_public_telnet: bool = False,
 ) -> list[str]:
-    issues: list[str] = []
-    workload_labels: dict[str, dict[str, Any]] = {}
-    for name in ("spring-cloud-gateway", "tcp-proxy-service"):
-        deployments = [
-            document
-            for document in documents
-            if document.get("kind") == "Deployment"
-            and metadata_name(document) == name
-            and rendered_namespace_matches(
-                document, namespace, default_namespace=namespace
-            )
-        ]
-        if len(deployments) != 1:
-            issues.append(f"NetworkPolicy validation requires one {name} Deployment")
-            continue
-        labels = (((deployments[0].get("spec") or {}).get("template") or {}).get("metadata") or {}).get("labels")
-        if not isinstance(labels, dict):
-            issues.append(f"{name} Deployment must declare pod labels")
-            continue
-        workload_labels[name] = labels
-    if len(workload_labels) != 2:
-        return issues
+    """Validate the private hosted TCP Proxy bridge boundary.
 
-    policies = [
+    The hosted-controller parent owns an internal ClusterIP TCP Proxy and its
+    controller-projected bridge identity. Public direct-TLS Telnet exposure is
+    a separate child boundary and is validated only when a caller explicitly
+    requests the expected public NodePort assertion.
+    """
+    if required_identity_mode is not None and required_identity_mode not in {
+        "standalone",
+        "hosted-controller",
+    }:
+        raise ValueError("required certificate identity mode is invalid")
+    if not isinstance(target_namespace, str) or not target_namespace:
+        raise ValueError("target namespace is required")
+
+    issues: list[str] = []
+    tcp_services = [
         document
         for document in documents
-        if document.get("kind") == "NetworkPolicy"
-        and rendered_namespace_matches(document, namespace, default_namespace=namespace)
+        if document.get("kind") == "Service"
+        and metadata_name(document) == "tcp-proxy-service"
+        and rendered_namespace_matches(
+            document, target_namespace, default_namespace=target_namespace
+        )
     ]
-    reported_invalid_policy_types: set[tuple[str, str]] = set()
-
-    def rules_for(workload: str, direction: str) -> list[dict[str, Any]]:
-        rules: list[dict[str, Any]] = []
-        policy_type = "Ingress" if direction == "ingress" else "Egress"
-        for policy in policies:
-            spec = policy.get("spec") or {}
-            if not kubernetes_selector_matches(
-                spec.get("podSelector"), workload_labels[workload]
-            ):
-                continue
-            configured_policy_types = spec.get("policyTypes")
-            if configured_policy_types is None:
-                effective_policy_types = {"Ingress"}
-                if spec.get("egress"):
-                    effective_policy_types.add("Egress")
-            elif (
-                not isinstance(configured_policy_types, list)
-                or not configured_policy_types
-                or any(
-                    value not in {"Ingress", "Egress"}
-                    for value in configured_policy_types
-                )
-                or len(set(configured_policy_types)) != len(configured_policy_types)
-            ):
-                policy_identity = (
-                    metadata_namespace(policy) or namespace,
-                    metadata_name(policy) or f"<unnamed:{id(policy)}>",
-                )
-                if policy_identity not in reported_invalid_policy_types:
-                    issues.append(
-                        f"{metadata_name(policy) or 'NetworkPolicy'} has invalid policyTypes"
-                    )
-                    reported_invalid_policy_types.add(policy_identity)
-                continue
-            else:
-                effective_policy_types = set(configured_policy_types)
-            if policy_type not in effective_policy_types:
-                continue
-            for rule in spec.get(direction) or []:
-                if isinstance(rule, dict):
-                    rules.append(rule)
-        return rules
-
-    gateway_rules = rules_for("spring-cloud-gateway", "ingress")
-    proxy_rules = rules_for("tcp-proxy-service", "egress")
-    for label, rules, peer in (
-        ("Gateway ingress", gateway_rules, "tcp-proxy-service"),
-        ("TCP Proxy egress", proxy_rules, "spring-cloud-gateway"),
+    if len(tcp_services) != 1:
+        issues.append(
+            "private hosted bridge requires exactly one tcp-proxy-service Service"
+        )
+        return issues
+    tcp_service = tcp_services[0]
+    service_spec = tcp_service.get("spec") or {}
+    if not allow_public_telnet and service_spec.get("type", "ClusterIP") != "ClusterIP":
+        issues.append("private hosted bridge TCP Proxy Service must remain ClusterIP")
+    service_ports = service_spec.get("ports") or []
+    private_ports = [
+        port
+        for port in service_ports
+        if isinstance(port, dict)
+        and port.get("port") == TCP_PROXY_TELNET_SERVICE_PORT
+        and port.get("targetPort") == TCP_PROXY_TELNET_SERVICE_PORT
+        and port.get("protocol", "TCP") == "TCP"
+    ]
+    if len(private_ports) != 1 or len(service_ports) != 1:
+        issues.append(
+            "private hosted bridge TCP Proxy Service requires exactly one private listener with port 2323, targetPort 2323, and protocol TCP"
+        )
+    if not allow_public_telnet and any(
+        isinstance(port, dict) and "nodePort" in port for port in service_ports
     ):
-        matching: list[dict[str, Any]] = []
-        for rule in rules:
-            ports = rule.get("ports")
-            if not isinstance(ports, list) or not ports:
-                issues.append(f"{label} must not contain an all-port rule")
-                matching.append(rule)
-                continue
-            matches_listener = False
-            for port in ports:
-                if not isinstance(port, dict) or "port" not in port:
-                    issues.append(f"{label} must not contain an all-port rule")
-                    matches_listener = True
-                    break
-                value = port.get("port")
-                end_port = port.get("endPort")
-                if value == GATEWAY_WS_LISTENER_PORT or (
-                    isinstance(value, int)
-                    and isinstance(end_port, int)
-                    and value <= GATEWAY_WS_LISTENER_PORT <= end_port
-                ):
-                    matches_listener = True
-                elif isinstance(value, str):
-                    issues.append(
-                        f"{label} must not use a named port that could widen listener access"
-                    )
-            if matches_listener:
-                matching.append(rule)
-        if len(matching) != 1 or not canonical_bridge_peer(matching[0], peer):
-            issues.append(
-                f"{label} must allow TCP 8443 through exactly one app={peer} peer rule"
-            )
-            continue
-        matching_ports = matching[0].get("ports") or []
-        if (
-            len(matching_ports) != 1
-            or not isinstance(matching_ports[0], dict)
-            or set(matching_ports[0]) not in ({"port"}, {"port", "protocol"})
-            or type(matching_ports[0].get("port")) is not int
-            or matching_ports[0]["port"] != GATEWAY_WS_LISTENER_PORT
-            or matching_ports[0].get("protocol", "TCP") != "TCP"
-        ):
-            issues.append(f"{label} listener rule must be exactly TCP 8443")
+        issues.append(
+            "private hosted bridge TCP Proxy Service must not declare a public nodePort"
+        )
+
+    deployments = [
+        document
+        for document in documents
+        if document.get("kind") == "Deployment"
+        and metadata_name(document) == "tcp-proxy-service"
+        and rendered_namespace_matches(
+            document, target_namespace, default_namespace=target_namespace
+        )
+    ]
+    if len(deployments) != 1:
+        issues.append(
+            "private hosted bridge requires exactly one tcp-proxy-service Deployment"
+        )
+        return issues
+    deployment = deployments[0]
+
+    identity_mode_label = "firemud.dev/certificate-identity-mode"
+
+    def labeled_identity_mode(document: dict[str, Any]) -> Any:
+        metadata = document.get("metadata") or {}
+        labels = metadata.get("labels") or {}
+        return labels.get(identity_mode_label) if isinstance(labels, dict) else None
+
+    service_mode = labeled_identity_mode(tcp_service)
+    deployment_mode = labeled_identity_mode(deployment)
+    if service_mode is None or deployment_mode is None:
+        issues.append(
+            "private hosted bridge TCP Proxy Service and Deployment require explicit certificate identity mode labels"
+        )
+    elif service_mode != deployment_mode:
+        issues.append(
+            "private hosted bridge TCP Proxy Service and Deployment certificate identity mode labels must match"
+        )
+    identity_mode = service_mode if service_mode is not None else deployment_mode
+    if identity_mode not in {"standalone", "hosted-controller"}:
+        issues.append(
+            "private hosted bridge TCP Proxy certificate identity mode must be standalone or hosted-controller"
+        )
+    elif required_identity_mode is not None and identity_mode != required_identity_mode:
+        issues.append(
+            f"private hosted bridge TCP Proxy certificate identity mode must be {required_identity_mode}"
+        )
     return issues
+
+
+def path_is_under_mount(path: str, mount_path: str) -> bool:
+    """Return whether a path is the mount itself or one of its descendants."""
+    return bool(mount_path) and (
+        path == mount_path or path.startswith(mount_path.rstrip("/") + "/")
+    )
 
 
 def validate_hosted_telnet_tls_values(
@@ -4688,7 +4244,7 @@ def validate_hosted_telnet_tls_values(
     *,
     target_namespace: str = "firemud",
 ) -> list[str]:
-    """Validate the hosted NodePort or LoadBalancer Telnet direct-TLS binding.
+    """Validate the hosted NodePort Telnet direct-TLS binding.
 
     Hosted-controller renders carry an allocator annotation and matching
     explicit Telnet nodePort. A trusted caller may additionally supply the
@@ -4713,80 +4269,26 @@ def validate_hosted_telnet_tls_values(
             document, target_namespace, default_namespace=target_namespace
         )
     ]
-    if len(tcp_services) > 1:
-        service_types = {
-            (document.get("spec") or {}).get("type") for document in tcp_services
-        }
-        if service_types <= {"NodePort", "LoadBalancer"}:
-            issues.append(
-                "hosted TCP Proxy TLS requires exactly one tcp-proxy-service NodePort Service or LoadBalancer Service"
-            )
-        else:
-            issues.append(
-                "hosted TCP Proxy TLS requires exactly one tcp-proxy-service Service"
-            )
-        return issues
-    if (
-        len(tcp_services) == 1
-        and required_identity_mode is None
-        and expected_hosted_telnet_node_port is None
-        and (tcp_services[0].get("spec") or {}).get("type") == "LoadBalancer"
-    ):
-        labels = (tcp_services[0].get("metadata") or {}).get("labels")
-        explicitly_marked = isinstance(labels, dict) and (
-            "firemud.dev/certificate-identity-mode" in labels
-        )
-        explicitly_tls_configured = False
-        for document in documents:
-            if (
-                document.get("kind") != "Deployment"
-                or metadata_name(document) != "tcp-proxy-service"
-                or not rendered_namespace_matches(
-                    document, target_namespace, default_namespace=target_namespace
-                )
-            ):
-                continue
-            pod_spec = ((document.get("spec") or {}).get("template") or {}).get(
-                "spec"
-            ) or {}
-            for container in pod_spec.get("containers") or []:
-                for entry in container.get("env") or []:
-                    if not isinstance(entry, dict):
-                        continue
-                    if entry.get("name") in {
-                        "TCP_PROXY_TELNET_MODE",
-                        "TCP_PROXY_TLS_ENABLED",
-                        "TCP_PROXY_TLS_CERT",
-                        "TCP_PROXY_TLS_KEY",
-                    }:
-                        explicitly_tls_configured = True
-                        break
-                if explicitly_tls_configured:
-                    break
-            if explicitly_tls_configured:
-                break
-        if not explicitly_marked and not explicitly_tls_configured:
-            return issues
-    externally_exposed_services = [
+    nodeport_services = [
         document
         for document in tcp_services
-        if (document.get("spec") or {}).get("type") in {"NodePort", "LoadBalancer"}
+        if (document.get("spec") or {}).get("type") == "NodePort"
     ]
-    if not externally_exposed_services:
+    if not nodeport_services:
         if (
             required_identity_mode is not None
             or expected_hosted_telnet_node_port is not None
         ):
             issues.append(
-                "hosted TCP Proxy TLS requires exactly one tcp-proxy-service NodePort Service or LoadBalancer Service"
+                "hosted TCP Proxy TLS requires exactly one tcp-proxy-service NodePort Service"
             )
         return issues
-    if len(externally_exposed_services) != 1:
+    if len(nodeport_services) != 1:
         issues.append(
-            "hosted TCP Proxy TLS requires exactly one tcp-proxy-service NodePort Service or LoadBalancer Service"
+            "hosted TCP Proxy TLS requires exactly one tcp-proxy-service NodePort Service"
         )
         return issues
-    tcp_service = externally_exposed_services[0]
+    tcp_service = nodeport_services[0]
     tcp_namespace = target_namespace
 
     deployments = [
@@ -5042,9 +4544,8 @@ def validate_hosted_telnet_tls_values(
         issues.append("hosted TCP Proxy TLS requires exactly one /telnet-tls mount")
     else:
         mount = telnet_mounts[0]
-        for field in ("subPath", "subPathExpr"):
-            if field in mount:
-                issues.append(f"/telnet-tls must not use {field}")
+        if "subPath" in mount:
+            issues.append("/telnet-tls must not use subPath")
         if mount.get("readOnly") is not True:
             issues.append("hosted TCP Proxy TLS requires a read-only /telnet-tls mount")
         volume = volumes.get(mount.get("name")) or {}
@@ -5110,29 +4611,46 @@ def label_bridge_validation_issues(
     ]
 
 
+def label_hosted_bridge_validation_issues(
+    gateway_issues: list[str],
+    private_bridge_issues: list[str],
+    public_telnet_issues: list[str],
+) -> list[str]:
+    """Label private bridge and optional public Telnet failures separately."""
+    return [
+        *(f"Gateway bridge: {issue}" for issue in gateway_issues),
+        *(f"Private bridge: {issue}" for issue in private_bridge_issues),
+        *(f"Public Telnet: {issue}" for issue in public_telnet_issues),
+    ]
+
+
 def bridge_validation_failure_message(bridge_issues: list[str]) -> str:
-    """Describe either transport without making a Telnet-only failure look Gateway-only."""
-    return "Bridge and Telnet transport validation failed: " + "; ".join(bridge_issues)
+    """Describe the hosted bridge boundary and its separately requested children."""
+    return "Hosted bridge validation failed: " + "; ".join(bridge_issues)
 
 
-def bridge_validation_result(bridge_issues: list[str]) -> tuple[str, str]:
-    """Build the canonical shared bridge policy result."""
+def bridge_validation_result(
+    bridge_issues: list[str], includes_public_telnet: bool = False
+) -> tuple[str, str]:
+    """Build the canonical private bridge policy result."""
     if bridge_issues:
         return "fail", bridge_validation_failure_message(bridge_issues)
-    return "pass", "Gateway bridge and direct Telnet TLS alignment is valid"
+    if includes_public_telnet:
+        return "pass", "Private Gateway bridge and public direct Telnet TLS alignment is valid"
+    return "pass", "Private Gateway bridge TLS and certificate identity alignment is valid"
 
 
-def hosted_bridge_success_message(context: str) -> str:
-    """Distinguish static manifest proof from live controller-projection proof."""
+def hosted_bridge_success_message(
+    context: str, includes_public_telnet: bool = False
+) -> str:
+    """Distinguish private/static proof from optional public/live proof."""
+    if includes_public_telnet:
+        base_message = "Private Gateway bridge and public direct Telnet TLS alignment is valid"
+    else:
+        base_message = "Private Gateway bridge TLS and certificate identity alignment is valid"
     if context == "operator":
-        return (
-            "Gateway bridge and direct Telnet TLS alignment is valid; "
-            "controller-projected Secret readiness is confirmed"
-        )
-    return (
-        "Gateway bridge and direct Telnet TLS alignment is valid; "
-        "ci-static did not check controller-projected Secret readiness"
-    )
+        return f"{base_message}; controller-projected Secret readiness is confirmed"
+    return f"{base_message}; ci-static did not check controller-projected Secret readiness"
 
 
 def primary_containers(document: dict[str, Any]) -> list[tuple[str | None, dict[str, Any], dict[str, str | None]]]:
@@ -5812,18 +5330,10 @@ def expected_binding_checks(
             )
 
     mode = get(data, "serviceDiscovery.mode")
-    try:
-        target_namespace = primary_workload_namespace(documents)
-    except ValueError as exc:
-        results.append(
-            CheckResult(
-                "PREFLIGHT-SERVICES-001",
-                True,
-                "fail",
-                str(exc),
-            )
-        )
-        return results
+    target_namespace = next(
+        (workload_namespace(document) for document in documents if primary_containers(document)),
+        "firemud",
+    )
     override_lines, override_issues = extract_service_discovery_overrides(documents)
     if mode == "kubernetes-dns-default" and (override_lines or override_issues):
         results.append(
@@ -7324,15 +6834,25 @@ def hosted_bridge_preflight(
             )
 
     _, gateway_issues = validate_gateway_ws_values(documents, expected)
-    telnet_issues = validate_hosted_telnet_tls_values(
+    private_bridge_issues = validate_hosted_private_bridge_values(
         documents,
         required_identity_mode="hosted-controller",
-        expected_hosted_telnet_node_port=expected_hosted_telnet_node_port,
         target_namespace=namespace,
+        allow_public_telnet=expected_hosted_telnet_node_port is not None,
     )
+    public_telnet_issues: list[str] = []
+    if expected_hosted_telnet_node_port is not None:
+        public_telnet_issues = validate_hosted_telnet_tls_values(
+            documents,
+            required_identity_mode="hosted-controller",
+            expected_hosted_telnet_node_port=expected_hosted_telnet_node_port,
+            target_namespace=namespace,
+        )
     issues = [
         *release_identity_issues,
-        *label_bridge_validation_issues(gateway_issues, telnet_issues),
+        *label_hosted_bridge_validation_issues(
+            gateway_issues, private_bridge_issues, public_telnet_issues
+        ),
     ]
     if context == "operator" and not issues:
         try:
@@ -7362,9 +6882,13 @@ def hosted_bridge_preflight(
                 secret_ready_timeout_seconds,
             )
         )
-    status, message = bridge_validation_result(issues)
+    status, message = bridge_validation_result(
+        issues, includes_public_telnet=expected_hosted_telnet_node_port is not None
+    )
     if status == "pass":
-        message = hosted_bridge_success_message(context)
+        message = hosted_bridge_success_message(
+            context, includes_public_telnet=expected_hosted_telnet_node_port is not None
+        )
     print(
         json.dumps(
             {
@@ -7470,10 +6994,6 @@ def main() -> int:
         rendered = run(["kubectl", "kustomize", str(root_dir / "k8s" / "overlays" / overlay_name)])
 
     documents = parse_documents(rendered)
-    try:
-        target_namespace = primary_workload_namespace(documents)
-    except ValueError as exc:
-        fail(str(exc))
     default_output = default_preflight_output_path(
         root_dir,
         env_class,
@@ -7481,8 +7001,7 @@ def main() -> int:
         deployment_event_id,
     )
     output_path = Path(os.environ.get("FIREMUD_PREFLIGHT_OUTPUT", str(default_output)))
-    evaluated_at = normalize_evaluation_time().replace(microsecond=0)
-    started_at = evaluated_at.isoformat().replace("+00:00", "Z")
+    started_at = utc_now()
     traffic_open_event = os.environ.get("FIREMUD_TRAFFIC_OPEN_EVENT", "")
     if traffic_open_event not in {"", "first-live", "reopen"}:
         fail(f"Invalid FIREMUD_TRAFFIC_OPEN_EVENT: {traffic_open_event}")
@@ -7619,23 +7138,13 @@ def main() -> int:
                 check.policy_id, check.required, check.status, check.message,
             ) or has_required_failure
 
-    _, gateway_bridge_issues = validate_gateway_ws_values(
-        documents, expected_bindings, evaluation_time=evaluated_at
-    )
-    telnet_tls_issues = validate_hosted_telnet_tls_values(
-        documents, target_namespace=target_namespace
-    )
-    bridge_issues = label_bridge_validation_issues(
-        gateway_bridge_issues, telnet_tls_issues
-    )
-    bridge_status, bridge_message = bridge_validation_result(bridge_issues)
-    has_required_failure = append_result(
-        check_results,
-        "PREFLIGHT-BRIDGE-001",
-        True,
-        bridge_status,
-        bridge_message,
-    ) or has_required_failure
+    _, bridge_issues = validate_gateway_ws_values(documents, expected_bindings)
+    if bridge_issues:
+        has_required_failure = append_result(
+            check_results, "PREFLIGHT-BRIDGE-001", True, "fail", "Gateway bridge validation failed: " + "; ".join(bridge_issues)
+        ) or has_required_failure
+    else:
+        has_required_failure = append_result(check_results, "PREFLIGHT-BRIDGE-001", True, "pass", "Gateway bridge alignment is valid") or has_required_failure
 
     _, redis_issues = effective_redis_endpoints(documents, expected_bindings)
     if redis_issues:
@@ -7674,6 +7183,7 @@ def main() -> int:
             has_required_failure = append_result(check_results, "PREFLIGHT-PROMOTION-001", True, "fail", f"Attestation file not found: {promotion_attestation}") or has_required_failure
             has_required_failure = append_result(check_results, "PREFLIGHT-BACKUP-001", True, "fail", "Recovery compatibility cannot be evaluated because the promotion attestation is missing") or has_required_failure
         else:
+            now_dt = normalize_evaluation_time()
             (
                 promotion_status,
                 recovery_rollback_mode,
@@ -7685,7 +7195,7 @@ def main() -> int:
                 service_images,
                 root_dir,
                 expected_production_overlay_ref=deployment_ref,
-                evaluation_time=evaluated_at,
+                evaluation_time=now_dt,
             )
             has_required_failure = append_result(
                 check_results,
@@ -7701,7 +7211,7 @@ def main() -> int:
                 backup_readiness_evidence,
                 deployment_ref,
                 root_dir,
-                evaluation_time=evaluated_at,
+                evaluation_time=now_dt,
             )
             has_required_failure = append_result(check_results, "PREFLIGHT-BACKUP-001", True, recovery_status, recovery_message) or has_required_failure
 

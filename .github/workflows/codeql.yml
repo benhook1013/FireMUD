@@ -10,6 +10,8 @@ on:
     - cron: '0 0 * * 0'
   workflow_dispatch:
 
+run-name: CodeQL Analysis ${{ github.event_name == 'pull_request' && format('pr-{0} base-{1} head-{2}', github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha) || github.ref_name }}
+
 permissions:
   contents: read
   security-events: write
@@ -133,7 +135,7 @@ jobs:
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '25'
 
       - name: ⚙️ Set Up Gradle
         if: matrix.language == 'java'
@@ -180,6 +182,7 @@ jobs:
     permissions:
       checks: read # Preserve a prior successful required context on metadata-only edits.
       contents: read # Check out the shared required-gate composite action.
+      actions: read # Inspect the matching required-gate job's preservation step.
     needs: [changes, analyze]
     if: ${{ always() && github.event_name == 'pull_request' && (github.base_ref == 'develop' || github.base_ref == 'main') }}
     steps:
@@ -200,6 +203,9 @@ jobs:
         uses: ./.github/actions/preserve-required-gate
         with:
           gate-name: CodeQL Gate
+          workflow-name: CodeQL Analysis
+          workflow-file: codeql.yml
+          workflow-path: .github/workflows/codeql.yml
 
       - name: Enforce successful CodeQL analysis
         if: ${{ github.event.action != 'edited' || github.event.changes.base.ref != null }}

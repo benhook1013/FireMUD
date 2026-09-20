@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
         "Nested mutable beans are intentionally exposed for Spring configuration-property binding.")
 public final class GatewayTcpProxyListenerProperties {
   private boolean enabled;
-  private String bindAddress = "0.0.0.0";
+  private String bindAddress = "127.0.0.1";
   private int port = 8443;
   private String certificateChainPath;
   private String privateKeyPath;

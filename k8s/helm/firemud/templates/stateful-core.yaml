@@ -36,6 +36,35 @@ spec:
         fsGroup: 999
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        - name: postgres-data-layout-check
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsUser: 999
+            runAsGroup: 999
+            capabilities:
+              drop:
+                - ALL
+          image: {{ .Values.previewStack.postgres.image | quote }}
+          command:
+            - sh
+            - -ec
+          args:
+            - |
+              data_root="/var/lib/postgresql/data"
+              if [ ! -d "$data_root" ] || [ ! -r "$data_root" ] || [ ! -x "$data_root" ]; then
+                echo "refusing to start PostgreSQL: cannot inspect mounted data directory ${data_root}" >&2
+                exit 1
+              fi
+              if [ -e "${data_root}/PG_VERSION" ]; then
+                echo "refusing to start PostgreSQL: legacy root PG_VERSION found at ${data_root}/PG_VERSION; migrate the PVC before using nested PGDATA=/var/lib/postgresql/data/pgdata" >&2
+                exit 1
+              fi
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+              readOnly: true
       containers:
         - name: postgres
           securityContext:

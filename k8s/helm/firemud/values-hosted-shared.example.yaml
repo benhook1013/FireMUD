@@ -52,6 +52,7 @@ previewStack:
     enabled: true
     servicePort: 443
     targetPort: 8443
+    trustEnvironment: pr-preview
 
   postgres:
     image: postgres:16

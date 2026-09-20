@@ -59,16 +59,42 @@ public class TcpProxyEventClient implements AutoCloseable {
 
   @PostConstruct
   void init() throws SSLException, IOException {
-    reloadChannel();
-    if (tlsMaterial != null) {
-      List<Path> watchPaths = tlsMaterial.watchPaths();
+    try {
+      ResolvedGrpcTlsMaterial initialMaterial = tlsMaterialResolver.resolve(tlsProps);
+      List<Path> watchPaths =
+          initialMaterial == null ? List.of() : initialMaterial.watchPaths();
       if (!watchPaths.isEmpty()) {
-        watcher = TlsCertificateWatcher.createAndStart(watchPaths, this::safeReload);
-      } else {
-        logger.info("TLS certificates loaded from classpath resources; file watching is disabled");
+        // Register the directories before building the first channel so a rotation during startup
+        // is queued and replayed after the initial channel is published.
+        watcher = new TlsCertificateWatcher(watchPaths, this::safeReload);
       }
-    } else {
-      logger.info("TLS certificates not configured; TcpProxyEventClient will use plaintext");
+      reloadChannel(initialMaterial);
+      if (watcher != null) {
+        watcher.start();
+      } else if (tlsMaterial != null) {
+        logger.info("TLS certificates loaded from classpath resources; file watching is disabled");
+      } else {
+        logger.info("TLS certificates not configured; TcpProxyEventClient will use plaintext");
+      }
+    } catch (Throwable failure) {
+      try {
+        close();
+      } catch (IOException cleanupFailure) {
+        failure.addSuppressed(cleanupFailure);
+      }
+      if (failure instanceof SSLException sslException) {
+        throw sslException;
+      }
+      if (failure instanceof IOException ioException) {
+        throw ioException;
+      }
+      if (failure instanceof RuntimeException runtimeException) {
+        throw runtimeException;
+      }
+      if (failure instanceof Error error) {
+        throw error;
+      }
+      throw new IllegalStateException("TcpProxyEventClient initialization failed", failure);
     }
   }
 
@@ -143,6 +169,10 @@ public class TcpProxyEventClient implements AutoCloseable {
   }
 
   private void reloadChannel() throws SSLException, IOException {
+    reloadChannel(tlsMaterialResolver.resolve(tlsProps));
+  }
+
+  private void reloadChannel(ResolvedGrpcTlsMaterial resolved) throws SSLException, IOException {
     if (closing.get()) {
       return;
     }
@@ -152,7 +182,6 @@ public class TcpProxyEventClient implements AutoCloseable {
     } else if (!target.contains("://")) {
       target = "dns:///" + target;
     }
-    ResolvedGrpcTlsMaterial resolved = tlsMaterialResolver.resolve(tlsProps);
     ManagedChannel newChannel = channelFactory.buildChannel(target, 6565, tlsProps, true, resolved);
     TcpProxyServiceGrpc.TcpProxyServiceBlockingStub newStub;
     try {

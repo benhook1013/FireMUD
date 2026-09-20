@@ -10,6 +10,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.tcpproxy.telnet.GatewayWebSocketClient;
@@ -169,10 +170,15 @@ public final class GatewayGameplayReadinessProbe implements AutoCloseable {
       // Bound the probe independently of the client's transport timeout so a misbehaving future
       // cannot suppress every later readiness poll indefinitely.
       request
+          // Apply timeout to a dependent future; the timeout callback below cancels the original.
+          .whenComplete((ignoredResult, ignoredError) -> {})
           .orTimeout(requestTimeoutNanos, TimeUnit.NANOSECONDS)
           .whenComplete(
               (result, error) -> {
                 synchronized (this) {
+                  if (error instanceof TimeoutException) {
+                    request.cancel(true);
+                  }
                   if (inFlight.compareAndSet(request, null) && !closed.get()) {
                     ready.set(error == null && Boolean.TRUE.equals(result));
                   }

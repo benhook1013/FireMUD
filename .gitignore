@@ -37,6 +37,7 @@ __pycache__/
 design/erd/
 
 # Local PR helper files (not committed)
+/dev-tools/workflow-authority-*/
 
 # Repository-local scratch space
 /tmp/

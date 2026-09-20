@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import reactor.netty.http.client.PrematureCloseException;
 
 class TlsTestSupportTest {
   @Test
@@ -18,24 +19,13 @@ class TlsTestSupportTest {
   }
 
   @Test
-  void recognizesPrematureCloseExceptionDirectlyAndInCauseChain() {
-    Throwable prematureCloseException = prematureCloseExceptionTestInstance();
-    assertThat(TlsTestSupport.isTlsHandshakeRejection(prematureCloseException)).isTrue();
+  void rejectsPrematureCloseExceptionWithoutTlsEvidence() {
+    Throwable prematureCloseException = PrematureCloseException.TEST_EXCEPTION;
+    assertThat(TlsTestSupport.isTlsHandshakeRejection(prematureCloseException)).isFalse();
     assertThat(
             TlsTestSupport.isTlsHandshakeRejection(
                 new IllegalStateException("client request failed", prematureCloseException)))
-        .isTrue();
-  }
-
-  private static Throwable prematureCloseExceptionTestInstance() {
-    try {
-      return (Throwable)
-          Class.forName("reactor.netty.http.client.PrematureCloseException")
-              .getField("TEST_EXCEPTION")
-              .get(null);
-    } catch (ReflectiveOperationException exception) {
-      throw new AssertionError("Reactor Netty TEST_EXCEPTION is unavailable", exception);
-    }
+        .isFalse();
   }
 
   @ParameterizedTest

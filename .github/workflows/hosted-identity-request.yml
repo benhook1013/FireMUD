@@ -14,7 +14,7 @@ permissions:
 jobs:
   validate-target:
     name: Validate Trusted Preview Target
-    if: ${{ (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.name == 'PR Preview Environment') || (github.event_name == 'pull_request_target' && github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository) }}
+    if: ${{ (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.name == 'PR Preview Environment' && (github.event.workflow_run.event == 'pull_request_target' || github.event.workflow_run.event == 'repository_dispatch')) || (github.event_name == 'pull_request_target' && github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository) }}
     timeout-minutes: 10
     runs-on: ubuntu-latest
     permissions:
@@ -22,7 +22,7 @@ jobs:
       contents: read # Check out the trusted default-branch validation implementation.
       pull-requests: read # Read immutable pull-request target metadata.
     outputs:
-      action: ${{ steps.source.outputs.action || steps.target.outputs.action }}
+      action: ${{ steps.target.outputs.action }}
       pr_number: ${{ steps.target.outputs.pr_number }}
       base_sha: ${{ steps.target.outputs.base_sha }}
       head_sha: ${{ steps.target.outputs.head_sha }}
@@ -31,8 +31,11 @@ jobs:
       namespace: ${{ steps.target.outputs.namespace }}
       hostname: ${{ steps.target.outputs.hostname }}
       certificate_identity_mode: ${{ steps.certificate-identity.outputs.mode }}
-      render_run_id: ${{ steps.source.outputs.render_run_id }}
-      artifact_name: ${{ steps.source.outputs.artifact_name }}
+      exposure_mode: ${{ steps.target.outputs.exposure_mode }}
+      render_run_id: ${{ steps.target.outputs.render_run_id }}
+      artifact_name: ${{ steps.target.outputs.artifact_name }}
+      retire_identity: ${{ steps.target.outputs.retire_identity }}
+      cleanup_state: ${{ steps.target.outputs.cleanup_state }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
@@ -58,39 +61,137 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
-          EVENT_ACTION: ${{ github.event.action }}
           WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id || '' }}
           WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha || '' }}
-          EVENT_PR_NUMBER: ${{ github.event.pull_request.number || '' }}
-          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          ARTIFACT_DIRECTORY: ${{ runner.temp }}/trusted-preview-source-artifact
         run: |
           set -euo pipefail
           emit_no_action() {
-            echo "$1"
-            echo 'action=none' >> "$GITHUB_OUTPUT"
+            echo "::notice::$1"
+            {
+              echo 'action=none'
+              echo 'retire_identity=false'
+              echo 'cleanup_state=none'
+            } >> "$GITHUB_OUTPUT"
             exit 0
           }
+          require_source_field() {
+            local label="$1"
+            local expected="$2"
+            local actual="$3"
+            [[ "$actual" == "$expected" ]] || {
+              printf '::error title=Unexpected source run %s::Expected %q; actual %q.\n' \
+                "$label" "$expected" "$actual" >&2
+              exit 1
+            }
+          }
+          normalize_sha() {
+            local value="$1"
+            [[ "$value" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
+            printf '%s' "${value,,}"
+          }
+          download_source_artifact() {
+            local artifact_name="$1"
+            rm -rf -- "$ARTIFACT_DIRECTORY"
+            mkdir -p -- "$ARTIFACT_DIRECTORY"
+            gh run download "$SOURCE_RUN_ID" \
+              --repo "$GITHUB_REPOSITORY" \
+              --name "$artifact_name" \
+              --dir "$ARTIFACT_DIRECTORY" >/dev/null
+          }
+          require_exact_files() {
+            local expected="$1"
+            local actual
+            actual="$(find "$ARTIFACT_DIRECTORY" -type f -printf '%P\n' | sort | paste -sd, -)"
+            [[ "$actual" == "$expected" ]] || {
+              echo "::error title=Unexpected preview artifact contents::Expected ${expected}; actual ${actual:-empty}." >&2
+              exit 1
+            }
+          }
+          SOURCE_RUN_ID=""
+          SOURCE_EVENT=""
+          PR_NUMBER=""
+          ACTION=""
+          EXPECTED_HEAD_SHA=""
+          ARTIFACT_BASE_SHA=""
+          ARTIFACT_MERGE_SHA=""
+          ARTIFACT_NAME=""
+          ARTIFACT_KIND=""
+          RETIRE_IDENTITY=false
+          CLEANUP_STATE=none
           if [[ "$EVENT_NAME" == workflow_run ]]; then
             [[ -n "$WORKFLOW_RUN_ID" ]] || {
               echo "::error title=Missing workflow run id::Source render events require a workflow run id." >&2
               exit 1
             }
-            workflow_run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${WORKFLOW_RUN_ID}")"
-            source_path="$(jq -r '.path // empty' <<<"$workflow_run_json")"
-            [[ "$source_path" == '.github/workflows/preview.yml' ]] || {
-              echo "::error title=Unexpected source workflow::Expected the preview workflow path." >&2
-              exit 1
-            }
-            if ! PR_NUMBER="$(jq -r '.pull_requests[0].number // empty' <<<"$workflow_run_json")" ||
-              [[ -z "$PR_NUMBER" ]]; then
-              emit_no_action "Ignoring source render without an associated pull request."
+            SOURCE_RUN_ID="$WORKFLOW_RUN_ID"
+            workflow_run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}")"
+            require_source_field path '.github/workflows/preview.yml' "$(jq -r '.path // empty' <<<"$workflow_run_json")"
+            require_source_field conclusion success "$(jq -r '.conclusion // empty' <<<"$workflow_run_json")"
+            require_source_field repository "$GITHUB_REPOSITORY" \
+              "$(jq -r '.repository.full_name // empty' <<<"$workflow_run_json")"
+            require_source_field head "$WORKFLOW_RUN_HEAD_SHA" \
+              "$(jq -r '.head_sha // empty' <<<"$workflow_run_json")"
+            SOURCE_EVENT="$(jq -r '.event // empty' <<<"$workflow_run_json")"
+            [[ "$SOURCE_EVENT" == pull_request_target || "$SOURCE_EVENT" == repository_dispatch ]] ||
+              emit_no_action "Ignoring source run with unsupported event ${SOURCE_EVENT}."
+            if [[ "$SOURCE_EVENT" == repository_dispatch ]]; then
+              require_source_field head-branch "$DEFAULT_BRANCH" \
+                "$(jq -r '.head_branch // empty' <<<"$workflow_run_json")"
             fi
-            ACTION=deploy
-            EXPECTED_HEAD_SHA="$WORKFLOW_RUN_HEAD_SHA"
+            if ! artifacts_json="$(gh api --paginate --slurp \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/artifacts?per_page=100")"; then
+              emit_no_action "Ignoring source run because its artifacts could not be verified."
+            fi
+            canonical_artifacts="$(jq -c \
+              '[.[].artifacts[] | select(.expired == false) | select(.name | test("^preview-(render|intent)-pr-[1-9][0-9]{0,50}-[0-9a-fA-F]{40}$"))]' \
+              <<<"$artifacts_json")"
+            [[ "$(jq 'length' <<<"$canonical_artifacts")" == 1 ]] ||
+              emit_no_action "Ignoring source run without exactly one canonical preview artifact."
+            ARTIFACT_NAME="$(jq -er '.[0].name' <<<"$canonical_artifacts")"
+            if [[ "$ARTIFACT_NAME" == preview-render-pr-* ]]; then
+              ARTIFACT_KIND=render
+              ACTION=deploy
+            else
+              ARTIFACT_KIND=intent
+              ACTION=destroy
+            fi
+            if [[ "$SOURCE_EVENT" == pull_request_target && "$ARTIFACT_KIND" != render ]]; then
+              emit_no_action "Ignoring pull_request_target source without a render artifact."
+            fi
+            download_source_artifact "$ARTIFACT_NAME"
+            if [[ "$ARTIFACT_KIND" == render ]]; then
+              require_exact_files "preview-metadata.json,preview-rendered-sanitized.yaml"
+              metadata_event="$(jq -r '.event // empty' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
+              [[ "$metadata_event" == "$SOURCE_EVENT" ]] ||
+                emit_no_action "Ignoring render with metadata from a different source event."
+              if [[ "$SOURCE_EVENT" == repository_dispatch ]]; then
+                metadata_action="$(jq -r '.action // empty' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
+                [[ "$metadata_action" == deploy ]] ||
+                  emit_no_action "Ignoring repository dispatch render without action=deploy metadata."
+              fi
+              PR_NUMBER="$(jq -er '.prNumber | select(type == "number" and floor == .)' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
+              EXPECTED_HEAD_SHA="$(jq -er '.headSha | select(type == "string")' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
+              ARTIFACT_BASE_SHA="$(jq -er '.baseSha | select(type == "string")' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
+              ARTIFACT_MERGE_SHA="$(jq -er '.mergeSha | select(type == "string")' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
+            else
+              require_exact_files "preview-intent.json"
+              intent_output="$(python3 ./dev-tools/hosted/preview/validate-preview-intent.py \
+                "$ARTIFACT_DIRECTORY/preview-intent.json" "$GITHUB_REPOSITORY" "$SOURCE_RUN_ID")" ||
+                emit_no_action "Ignoring repository dispatch with an invalid destroy intent."
+              PR_NUMBER="$(sed -n 's/^pr_number=//p' <<<"$intent_output")"
+              EXPECTED_HEAD_SHA="$(sed -n 's/^head_sha=//p' <<<"$intent_output")"
+              [[ -n "$PR_NUMBER" && -n "$EXPECTED_HEAD_SHA" ]] ||
+                emit_no_action "Ignoring repository dispatch without a canonical destroy target."
+            fi
           elif [[ "$EVENT_NAME" == pull_request_target ]]; then
-            PR_NUMBER="$EVENT_PR_NUMBER"
             ACTION=destroy
-            EXPECTED_HEAD_SHA="$EVENT_HEAD_SHA"
+            SOURCE_EVENT=pull_request_target
+            PR_NUMBER="${{ github.event.pull_request.number }}"
+            EXPECTED_HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+            RETIRE_IDENTITY=true
+            CLEANUP_STATE=closed
           else
             echo "::error title=Unsupported lifecycle event::Cannot validate hosted identity request for event ${EVENT_NAME}." >&2
             exit 1
@@ -110,18 +211,39 @@ jobs:
           current_head_sha="$(jq -r '.head.sha // empty' <<<"$pull_request_json")"
           base_sha="$(jq -r '.base.sha // empty' <<<"$pull_request_json")"
           merge_sha="$(jq -r '.merge_commit_sha // empty' <<<"$pull_request_json")"
-          normalize_head_sha() {
-            local head_sha="$1"
-            [[ "$head_sha" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
-            printf '%s' "${head_sha,,}"
-          }
-          if ! EXPECTED_HEAD_SHA="$(normalize_head_sha "$EXPECTED_HEAD_SHA")"; then
+          if ! EXPECTED_HEAD_SHA="$(normalize_sha "$EXPECTED_HEAD_SHA")"; then
             emit_no_action "Ignoring lifecycle event with an invalid expected head SHA."
           fi
-          if ! current_head_sha="$(normalize_head_sha "$current_head_sha")"; then
+          if ! current_head_sha="$(normalize_sha "$current_head_sha")"; then
             emit_no_action "Ignoring pull request metadata with an invalid current head SHA."
           fi
-          if [[ "$EVENT_NAME" == workflow_run ]]; then
+          [[ "$base_sha" =~ ^[0-9a-fA-F]{40}$ ]] || emit_no_action \
+            "Ignoring lifecycle event with an invalid current base SHA."
+          base_sha="${base_sha,,}"
+          merge_sha="${merge_sha:-$current_head_sha}"
+          [[ "$merge_sha" =~ ^[0-9a-fA-F]{40}$ ]] || emit_no_action \
+            "Ignoring lifecycle event with an invalid current merge SHA."
+          merge_sha="${merge_sha,,}"
+          if [[ "$EVENT_NAME" == workflow_run && "$ARTIFACT_KIND" == render ]]; then
+            if ! ARTIFACT_BASE_SHA="$(normalize_sha "$ARTIFACT_BASE_SHA")"; then
+              emit_no_action "Ignoring render artifact with an invalid base SHA."
+            fi
+            if ! ARTIFACT_MERGE_SHA="$(normalize_sha "$ARTIFACT_MERGE_SHA")"; then
+              emit_no_action "Ignoring render artifact with an invalid merge SHA."
+            fi
+            [[ "$base_sha" == "$ARTIFACT_BASE_SHA" ]] || emit_no_action \
+              "Ignoring render artifact bound to a stale or different pull-request base."
+            [[ "$merge_sha" == "$ARTIFACT_MERGE_SHA" ]] || emit_no_action \
+              "Ignoring render artifact bound to a stale or different pull-request merge."
+          fi
+          effective_image_tag="$current_head_sha"
+          if [[ "$ACTION" == deploy ]]; then
+            effective_image_tag="$(bash ./dev-tools/hosted/preview/resolve-preview-image-tag.sh \
+              "$current_head_sha" "$PR_NUMBER" "$base_sha")"
+            [[ "$effective_image_tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || emit_no_action \
+              "Ignoring lifecycle event with an invalid trusted image tag."
+          fi
+          if [[ "$EVENT_NAME" == workflow_run && "$ACTION" == deploy ]]; then
             [[ "$state" == open ]] || emit_no_action \
               "Source render completed after PR closure; no preview activation is required."
             [[ "$repository" == "$GITHUB_REPOSITORY" ]] || emit_no_action \
@@ -134,6 +256,14 @@ jobs:
             labels_valid="$(sed -n 's/^labels_valid=//p' <<<"$label_metadata")"
             [[ "$labels_valid" == true ]] || emit_no_action \
               "Refusing hosted preview lifecycle action: PR label metadata is missing or malformed."
+          elif [[ "$EVENT_NAME" == workflow_run && "$ACTION" == destroy ]]; then
+            [[ "$state" == open ]] || emit_no_action \
+              "Ignoring manual destroy because the target pull request is not open."
+            [[ "$repository" == "$GITHUB_REPOSITORY" ]] || emit_no_action \
+              "Ignoring manual destroy because the current PR head repository is not trusted."
+            [[ "$base_ref" == main || "$base_ref" == develop ]] || emit_no_action \
+              "Ignoring manual destroy because the current PR base branch is unsupported."
+            CLEANUP_STATE=open
           else
             [[ "$repository" == "$GITHUB_REPOSITORY" ]] || emit_no_action \
               "Ignoring closed pull request because its head repository is not trusted."
@@ -144,138 +274,60 @@ jobs:
           fi
           [[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]] || emit_no_action \
             "Ignoring stale lifecycle event for an earlier PR head."
+          if [[ "$EVENT_NAME" == workflow_run ]]; then
+            expected_artifact_name="preview-${ARTIFACT_KIND}-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}"
+            [[ "$ARTIFACT_NAME" == "$expected_artifact_name" ]] || emit_no_action \
+              "Ignoring source artifact whose name is not bound to its canonical PR head."
+          fi
+          if [[ "$ACTION" == deploy ]]; then
+            metadata_pr_number="$(jq -er '.prNumber | select(type == "number" and floor == .)' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
+            metadata_head_sha="$(jq -er '.headSha | select(type == "string")' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
+            [[ "$metadata_pr_number" == "$PR_NUMBER" ]] || emit_no_action \
+              "Ignoring render artifact whose PR number is not the canonical target."
+            [[ "$(normalize_sha "$metadata_head_sha")" == "$EXPECTED_HEAD_SHA" ]] || emit_no_action \
+              "Ignoring render artifact whose head SHA is stale or mismatched."
+            python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
+              "$ARTIFACT_DIRECTORY/preview-metadata.json" \
+              "$ARTIFACT_DIRECTORY/preview-rendered-sanitized.yaml" \
+              "$GITHUB_REPOSITORY" "$SOURCE_RUN_ID" "$PR_NUMBER" "$base_sha" \
+              "$current_head_sha" "$merge_sha" "$effective_image_tag" \
+              "pr-${PR_NUMBER}.preview.firedevops.net" \
+              "${{ steps.certificate-identity.outputs.mode }}"
+            exposure_mode="$(python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
+              exposure-mode "$ARTIFACT_DIRECTORY/preview-rendered-sanitized.yaml" \
+              "${{ steps.certificate-identity.outputs.mode }}")"
+            case "$exposure_mode" in
+              private|public) ;;
+              *)
+                echo "::error title=Invalid preview exposure mode::Expected private or public; actual ${exposure_mode:-empty}." >&2
+                exit 1
+                ;;
+            esac
+            if [[ "$exposure_mode" == private && "${{ steps.certificate-identity.outputs.mode }}" != hosted-controller ]]; then
+              echo "::error title=Unsupported private preview identity::Private bridge proof requires hosted-controller identity." >&2
+              exit 1
+            fi
+          elif [[ "$ACTION" == destroy && "$EVENT_NAME" == workflow_run ]]; then
+            [[ "$ARTIFACT_KIND" == intent ]] || emit_no_action \
+              "Ignoring repository dispatch destroy without a canonical destroy intent artifact."
+          fi
           {
             echo "action=${ACTION}"
             echo "pr_number=${PR_NUMBER}"
             echo "base_sha=${base_sha}"
             echo "head_sha=${current_head_sha}"
-            echo "merge_sha=${merge_sha:-$current_head_sha}"
-            echo "image_tag=${current_head_sha}"
+            echo "merge_sha=${merge_sha,,}"
+            echo "image_tag=${effective_image_tag}"
             echo "namespace=pr-${PR_NUMBER}"
             echo "hostname=pr-${PR_NUMBER}.preview.firedevops.net"
+            if [[ "$ACTION" == deploy ]]; then
+              echo "exposure_mode=${exposure_mode}"
+            fi
+            echo "render_run_id=${SOURCE_RUN_ID}"
+            echo "artifact_name=${ARTIFACT_NAME}"
+            echo "retire_identity=${RETIRE_IDENTITY}"
+            echo "cleanup_state=${CLEANUP_STATE}"
           } >> "$GITHUB_OUTPUT"
-
-      - name: Locate and validate source render run
-        id: source
-        if: ${{ steps.target.outputs.action == 'deploy' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_RUN_ID: ${{ github.event.workflow_run.id || '' }}
-          HEAD_SHA: ${{ steps.target.outputs.head_sha }}
-          PR_NUMBER: ${{ steps.target.outputs.pr_number }}
-        run: |
-          set -euo pipefail
-          emit_no_action() {
-            echo "$1"
-            echo 'action=none' >> "$GITHUB_OUTPUT"
-            exit 0
-          }
-          render_run_id="$SOURCE_RUN_ID"
-          [[ -n "$render_run_id" ]] || {
-            echo "::error title=Missing source run id::Expected a non-empty workflow run id; actual value was empty." >&2
-            exit 1
-          }
-          source_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${render_run_id}")"
-          require_source_field() {
-            local label="$1"
-            local expected="$2"
-            local actual="$3"
-            [[ "$actual" == "$expected" ]] || {
-              printf '::error title=Unexpected source run %s::Expected %q; actual %q.\n' \
-                "$label" "$expected" "$actual" >&2
-              exit 1
-            }
-          }
-          require_source_field conclusion success "$(jq -r '.conclusion' <<<"$source_json")"
-          require_source_field head "$HEAD_SHA" "$(jq -r '.head_sha' <<<"$source_json")"
-          require_source_field path '.github/workflows/preview.yml' "$(jq -r '.path' <<<"$source_json")"
-          require_source_field event pull_request "$(jq -r '.event' <<<"$source_json")"
-          require_source_field repository "$GITHUB_REPOSITORY" \
-            "$(jq -r '.repository.full_name' <<<"$source_json")"
-          if ! artifacts_json="$(gh api --paginate --slurp \
-            "repos/${GITHUB_REPOSITORY}/actions/runs/${render_run_id}/artifacts?per_page=100")"; then
-            emit_no_action "Ignoring source render because its artifacts could not be verified."
-          fi
-          mode_artifact_name="preview-mode-pr-${PR_NUMBER}-${HEAD_SHA}"
-          mode_artifact_count="$(jq --arg name "$mode_artifact_name" \
-            '[.[].artifacts[] | select(.name == $name and .expired == false)] | length' \
-            <<<"$artifacts_json")"
-          [[ "$mode_artifact_count" == 1 ]] || emit_no_action \
-            "Ignoring source render without exactly one current ${mode_artifact_name} artifact."
-          render_artifact_name="preview-render-pr-${PR_NUMBER}-${HEAD_SHA}"
-          render_artifact_count="$(jq --arg name "$render_artifact_name" \
-            '[.[].artifacts[] | select(.name == $name and .expired == false)] | length' \
-            <<<"$artifacts_json")"
-          {
-            echo "render_run_id=${render_run_id}"
-            echo "artifact_name=${render_artifact_name}"
-            echo "render_artifact_count=${render_artifact_count}"
-            echo "mode_artifact_name=${mode_artifact_name}"
-            echo "action=deploy"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Download immutable source certificate mode evidence
-        if: ${{ steps.source.outputs.action == 'deploy' }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: ${{ steps.source.outputs.mode_artifact_name }}
-          path: ${{ runner.temp }}/preview-mode-evidence
-          github-token: ${{ github.token }}
-          run-id: ${{ steps.source.outputs.render_run_id }}
-
-      - name: Verify candidate and trusted certificate identity modes agree
-        if: ${{ steps.source.outputs.action == 'deploy' }}
-        env:
-          MODE_EVIDENCE_DIRECTORY: ${{ runner.temp }}/preview-mode-evidence
-          EXPECTED_MODE: ${{ steps.certificate-identity.outputs.mode }}
-          EXPECTED_REPOSITORY: ${{ github.repository }}
-          EXPECTED_SOURCE_RUN_ID: ${{ steps.source.outputs.render_run_id }}
-          EXPECTED_PR_NUMBER: ${{ steps.target.outputs.pr_number }}
-          EXPECTED_HEAD_SHA: ${{ steps.target.outputs.head_sha }}
-          RENDER_ARTIFACT_COUNT: ${{ steps.source.outputs.render_artifact_count }}
-        run: |
-          set -euo pipefail
-          mode_file="$MODE_EVIDENCE_DIRECTORY/preview-mode.json"
-          [[ -f "$mode_file" ]] || {
-            echo "::error title=Missing certificate identity mode evidence::The source render did not publish the required immutable mode evidence." >&2
-            exit 1
-          }
-          mapfile -t mode_files < <(find "$MODE_EVIDENCE_DIRECTORY" -type f -print)
-          [[ "${#mode_files[@]}" == 1 && "${mode_files[0]}" == "$mode_file" ]] || {
-            echo "::error title=Unexpected certificate identity mode evidence::The source mode artifact must contain exactly preview-mode.json." >&2
-            exit 1
-          }
-          mode_metadata="$(cat "$mode_file")"
-          mode="$(jq -er \
-            --arg repository "$EXPECTED_REPOSITORY" \
-            --arg sourceWorkflow '.github/workflows/preview.yml' \
-            --argjson sourceRunId "$EXPECTED_SOURCE_RUN_ID" \
-            --argjson prNumber "$EXPECTED_PR_NUMBER" \
-            --arg headSha "$EXPECTED_HEAD_SHA" \
-            ' . as $metadata |
-              select(type == "object") |
-              select(($metadata | keys | sort) == (["schemaVersion","event","repository","sourceWorkflow","sourceRunId","prNumber","headSha","certificateIdentityMode"] | sort)) |
-              select($metadata.schemaVersion == 1) |
-              select($metadata.event == "pull_request") |
-              select($metadata.repository == $repository) |
-              select($metadata.sourceWorkflow == $sourceWorkflow) |
-              select($metadata.sourceRunId == $sourceRunId) |
-              select($metadata.prNumber == $prNumber) |
-              select($metadata.headSha == $headSha) |
-              select($metadata.certificateIdentityMode == "standalone" or $metadata.certificateIdentityMode == "hosted-controller") |
-              $metadata.certificateIdentityMode' \
-            <<<"$mode_metadata")" || {
-              echo "::error title=Invalid certificate identity mode evidence::The source mode artifact is not bound to this trusted lifecycle target." >&2
-              exit 1
-            }
-          if [[ "$mode" != "$EXPECTED_MODE" ]]; then
-            echo "::error title=Certificate identity mode changed::Source render selected ${mode}, but the trusted default branch resolves ${EXPECTED_MODE}; refusing activation." >&2
-            exit 1
-          fi
-          if [[ "$mode" == hosted-controller && "$RENDER_ARTIFACT_COUNT" != 1 ]]; then
-            echo "::error title=Missing hosted preview render artifact::A hosted-controller source render must publish exactly one validated render artifact." >&2
-            exit 1
-          fi
 
   prepare-runtime:
     name: Prepare Validated Preview Inputs
@@ -286,8 +338,8 @@ jobs:
       - linux
       - x64
     needs: validate-target
-    if: ${{ needs.validate-target.outputs.action == 'deploy' && needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
-    environment: pr-preview
+    if: ${{ needs.validate-target.outputs.action == 'deploy' }}
+    environment: trusted-hosted-cluster
     permissions:
       actions: read # Download the validated source workflow artifact.
       contents: read # Check out the trusted default-branch preparation implementation.
@@ -316,6 +368,19 @@ jobs:
           merge-sha: ${{ needs.validate-target.outputs.merge_sha }}
           image-tag: ${{ needs.validate-target.outputs.image_tag }}
           preview-hostname: ${{ needs.validate-target.outputs.hostname }}
+          certificate-identity-mode: ${{ needs.validate-target.outputs.certificate_identity_mode }}
+
+      - name: Revalidate exact PR source binding before image wait
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          EXPECTED_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          EXPECTED_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
+        run: |
+          set -euo pipefail
+          bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA"
 
       - name: Revalidate open PR before waiting for runtime images
         env:
@@ -327,9 +392,29 @@ jobs:
             "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
 
       - name: Wait for fixed-head runtime images
+        if: ${{ needs.validate-target.outputs.image_tag != needs.validate-target.outputs.base_sha }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash ./dev-tools/hosted/shared/wait-for-runtime-images.sh "${{ needs.validate-target.outputs.image_tag }}"
+
+      - name: Wait for immutable base runtime images
+        if: ${{ needs.validate-target.outputs.image_tag == needs.validate-target.outputs.base_sha }}
+        env:
+          PREVIEW_GHCR_USERNAME: ${{ secrets.TRUSTED_HOSTED_PREVIEW_GHCR_USERNAME }}
+          PREVIEW_GHCR_TOKEN: ${{ secrets.TRUSTED_HOSTED_PREVIEW_GHCR_TOKEN }}
+        run: |
+          set -euo pipefail
+          docker_config="$(mktemp -d -- "$RUNNER_TEMP/preview-base-docker-config.XXXXXX")"
+          chmod 700 "$docker_config"
+          cleanup_docker_config() {
+            rm -rf -- "$docker_config"
+          }
+          trap cleanup_docker_config EXIT
+          export DOCKER_CONFIG="$docker_config"
+          printf '%s' "$PREVIEW_GHCR_TOKEN" | docker login ghcr.io \
+            --username "$PREVIEW_GHCR_USERNAME" --password-stdin
+          bash ./dev-tools/hosted/preview/wait-for-base-images.sh \
+            "${{ needs.validate-target.outputs.base_sha }}"
 
       - name: Publish trusted preview preparation failure
         if: ${{ !cancelled() && failure() }}
@@ -339,6 +424,7 @@ jobs:
           PREVIEW_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
           PREVIEW_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
           PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
+          PREVIEW_EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
         with:
           script: |
             const { publishPreviewComment } = require(
@@ -358,8 +444,9 @@ jobs:
 
   deploy-runtime:
     name: Prepare Validated Preview Runtime
-    # Keep the shared lifecycle lock around allocation, identity projection,
-    # and deployment; the pre-apply projection wait is bounded to 15 minutes.
+    # Keep the shared lifecycle lock around allocation, runtime reset, identity
+    # projection, and deployment; the pre-apply projection wait is bounded to
+    # 15 minutes.
     timeout-minutes: 45
     runs-on:
       - self-hosted
@@ -367,8 +454,10 @@ jobs:
       - linux
       - x64
     needs: [validate-target, prepare-runtime]
-    if: ${{ needs.validate-target.outputs.action == 'deploy' && needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' && needs.prepare-runtime.result == 'success' }}
-    environment: pr-preview
+    if: ${{ needs.validate-target.outputs.action == 'deploy' && needs.prepare-runtime.result == 'success' }}
+    outputs:
+      runtime_namespace_uid: ${{ steps.record-runtime-namespace-uid.outputs.uid }}
+    environment: trusted-hosted-cluster
     concurrency:
       group: preview-allocation-lifecycle
       cancel-in-progress: false
@@ -390,12 +479,6 @@ jobs:
       - name: Set up kubectl
         uses: ./.github/actions/setup-kubectl
 
-      - name: Write runtime kubeconfig
-        uses: ./.github/actions/write-kubeconfig
-        with:
-          content: ${{ secrets.PREVIEW_RUNTIME_KUBECONFIG }}
-          path: ${{ runner.temp }}/preview-runtime.kubeconfig
-
       - name: Download and validate source render artifact
         uses: ./.github/actions/download-validated-preview-artifact
         with:
@@ -410,6 +493,16 @@ jobs:
           merge-sha: ${{ needs.validate-target.outputs.merge_sha }}
           image-tag: ${{ needs.validate-target.outputs.image_tag }}
           preview-hostname: ${{ needs.validate-target.outputs.hostname }}
+          certificate-identity-mode: ${{ needs.validate-target.outputs.certificate_identity_mode }}
+
+      - name: Write runtime kubeconfig
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_RUNTIME_KUBECONFIG }}
+          path: ${{ runner.temp }}/preview-runtime.kubeconfig
+
+      - name: Validate kubectl client/server skew
+        run: bash ./dev-tools/hosted/shared/check-kubectl-version-skew.sh
 
       - name: Revalidate open PR before privileged deployment
         env:
@@ -420,10 +513,36 @@ jobs:
           bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
             "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
 
+      - name: Revalidate exact PR source binding before privileged mutations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          EXPECTED_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          EXPECTED_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
+        run: |
+          set -euo pipefail
+          bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA" \
+            "before privileged runtime mutation"
+
       - name: Prune stale runtime namespaces
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh --apply
+
+      - name: Revalidate exact PR source binding before capacity reclaim
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          EXPECTED_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          EXPECTED_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
+        run: |
+          set -euo pipefail
+          bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA" \
+            "before capacity reclaim"
 
       - name: Enforce priority-aware preview capacity
         id: allocate-capacity
@@ -439,6 +558,7 @@ jobs:
 
       - name: Allocate stable preview Telnet port
         id: allocate-telnet-port
+        if: ${{ needs.validate-target.outputs.exposure_mode == 'public' }}
         run: |
           set -euo pipefail
           port="$(bash ./dev-tools/hosted/preview/allocate-preview-telnet-port.sh \
@@ -450,13 +570,42 @@ jobs:
           }
           echo "port=$port" >> "$GITHUB_OUTPUT"
 
+      - name: Revalidate exact PR target before clean runtime redeploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          EXPECTED_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          EXPECTED_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
+        run: |
+          set -euo pipefail
+          bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
+          bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA" \
+            "before clean runtime redeploy"
+
+      - name: Delete exact preview runtime namespace before recreate
+        env:
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          [[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]] || {
+            echo "::error title=Invalid preview runtime namespace::Expected pr-${PR_NUMBER}." >&2
+            exit 1
+          }
+          bash ./dev-tools/hosted/shared/delete-hosted-namespace.sh \
+            "$RUNTIME_NAMESPACE" "$RUNTIME_NAMESPACE"
+
       - name: Create and annotate exact preview runtime namespace
         env:
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
           IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
-          TELNET_PORT: ${{ steps.allocate-telnet-port.outputs.port }}
+          EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
+          ALLOCATED_TELNET_PORT: ${{ steps.allocate-telnet-port.outputs.port }}
           ALLOCATION_TIMESTAMP: ${{ steps.allocate-capacity.outputs.allocation_timestamp }}
         run: |
           set -euo pipefail
@@ -464,10 +613,8 @@ jobs:
             echo "::error title=Invalid preview runtime namespace::Expected pr-${PR_NUMBER}." >&2
             exit 1
           }
-          [[ "$TELNET_PORT" =~ ^32(00[0-9]|01[0-5])$ ]] || {
-            echo "::error title=Invalid allocated Telnet port::Expected a port from 32000 through 32015; actual value was ${TELNET_PORT:-empty}." >&2
-            exit 1
-          }
+          TELNET_PORT="$(bash ./dev-tools/hosted/preview/resolve-preview-telnet-port.sh \
+            "$EXPOSURE_MODE" "$ALLOCATED_TELNET_PORT")"
           [[ "$ALLOCATION_TIMESTAMP" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[^[:space:]]+Z$ ]] || {
             echo "::error title=Invalid allocation timestamp::Expected a UTC timestamp ending in Z without whitespace." >&2
             exit 1
@@ -475,25 +622,34 @@ jobs:
           kubectl create namespace "$RUNTIME_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
           bash ./dev-tools/hosted/preview/annotate-preview-namespace.sh \
             "$RUNTIME_NAMESPACE" "$PR_NUMBER" "$HEAD_SHA" "$IMAGE_TAG" \
-            "$TELNET_PORT" "$ALLOCATION_TIMESTAMP"
+            "$EXPOSURE_MODE" "$TELNET_PORT" "$ALLOCATION_TIMESTAMP"
 
       - name: Write requester kubeconfig
+        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
         uses: ./.github/actions/write-kubeconfig
         with:
-          content: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
+          content: ${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
           path: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
           export-to-github-env: 'false'
 
       - name: Revalidate open PR before Active request
+        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          EXPECTED_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          EXPECTED_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
         run: |
+          set -euo pipefail
           bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
             "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
+          bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA" \
+            "before the identity request"
 
       - name: Apply canonical Active request
+        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
         env:
           IDENTITY_NAME: pr-${{ needs.validate-target.outputs.pr_number }}
           KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
@@ -504,6 +660,7 @@ jobs:
         run: rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"
 
       - name: Wait for all controller identity projections
+        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
         env:
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
           IDENTITY_NAME: pr-${{ needs.validate-target.outputs.pr_number }}
@@ -511,22 +668,36 @@ jobs:
           bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
             --projections "$IDENTITY_NAME" "$RUNTIME_NAMESPACE" 900
 
+      - name: Prepare standalone preview transport certificates
+        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' }}
+        env:
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+        run: |
+          set -euo pipefail
+          bash ./dev-tools/hosted/shared/ensure-grpc-tls-secret.sh "$RUNTIME_NAMESPACE"
+          bash ./dev-tools/hosted/preview/ensure-standalone-transport-certificates.sh "$RUNTIME_NAMESPACE"
+
       - name: Inject trusted allocated Telnet port
         env:
           ARTIFACT_DIR: ${{ runner.temp }}/preview-artifact
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
-          TELNET_PORT: ${{ steps.allocate-telnet-port.outputs.port }}
+          EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
+          ALLOCATED_TELNET_PORT: ${{ steps.allocate-telnet-port.outputs.port }}
         run: |
           set -euo pipefail
+          TELNET_PORT="$(bash ./dev-tools/hosted/preview/resolve-preview-telnet-port.sh \
+            "$EXPOSURE_MODE" "$ALLOCATED_TELNET_PORT")"
           python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
             inject "$ARTIFACT_DIR/preview-rendered-sanitized.yaml" \
             "$RUNNER_TEMP/preview-rendered-with-port.yaml" \
-            "$RUNTIME_NAMESPACE" "$TELNET_PORT"
+            "$RUNTIME_NAMESPACE" "$TELNET_PORT" \
+            "${{ needs.validate-target.outputs.certificate_identity_mode }}" \
+            "${{ needs.validate-target.outputs.exposure_mode }}"
 
       - name: Ensure trusted runtime pull secret
         env:
-          PREVIEW_GHCR_USERNAME: ${{ secrets.PREVIEW_GHCR_USERNAME }}
-          PREVIEW_GHCR_TOKEN: ${{ secrets.PREVIEW_GHCR_TOKEN }}
+          PREVIEW_GHCR_USERNAME: ${{ secrets.TRUSTED_HOSTED_PREVIEW_GHCR_USERNAME }}
+          PREVIEW_GHCR_TOKEN: ${{ secrets.TRUSTED_HOSTED_PREVIEW_GHCR_TOKEN }}
         run: bash ./dev-tools/hosted/shared/ensure-ghcr-pull-secret.sh "${{ needs.validate-target.outputs.namespace }}"
 
       - name: Create canonical non-identity runtime credentials
@@ -540,21 +711,27 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          EXPECTED_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          EXPECTED_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
           ARTIFACT_PATH: ${{ runner.temp }}/preview-rendered-with-port.yaml
-          RELEASE_NAME: pr-${{ needs.validate-target.outputs.pr_number }}
-          TELNET_PORT: ${{ steps.allocate-telnet-port.outputs.port }}
+          EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
+          ALLOCATED_TELNET_PORT: ${{ steps.allocate-telnet-port.outputs.port }}
         run: |
           set -euo pipefail
+          TELNET_PORT="$(bash ./dev-tools/hosted/preview/resolve-preview-telnet-port.sh \
+            "$EXPOSURE_MODE" "$ALLOCATED_TELNET_PORT")"
           python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
-            runtime-target "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$TELNET_PORT"
-          FIREMUD_PREFLIGHT_CONTEXT=ci-static \
-            python3 ./dev-tools/deploy/preflight.py hosted-bridge \
-            "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$RELEASE_NAME" \
-            --expected-hosted-telnet-node-port "$TELNET_PORT"
+            runtime-target "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$TELNET_PORT" \
+            "${{ needs.validate-target.outputs.certificate_identity_mode }}" \
+            "${{ needs.validate-target.outputs.exposure_mode }}"
+          bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA"
           bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
             "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
           kubectl apply --dry-run=server --server-side --field-manager=trusted-hosted-preview -n "$RUNTIME_NAMESPACE" -f "$ARTIFACT_PATH"
+          bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA"
           bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
             "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
           kubectl apply --server-side --field-manager=trusted-hosted-preview -n "$RUNTIME_NAMESPACE" -f "$ARTIFACT_PATH"
@@ -579,6 +756,53 @@ jobs:
             "firemud.dev/last-preview-head-sha=${HEAD_SHA}" \
             --overwrite >/dev/null
 
+      - name: Record exact deployed runtime Namespace UID
+        id: record-runtime-namespace-uid
+        if: ${{ steps.deploy-runtime-artifact.outcome == 'success' }}
+        env:
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]] || {
+            echo "::error title=Invalid preview runtime namespace::Expected pr-${PR_NUMBER}." >&2
+            exit 1
+          }
+          [[ "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error title=Invalid preview head SHA::Expected exactly 40 lowercase hexadecimal characters." >&2
+            exit 1
+          }
+          namespace_json="$(kubectl get namespace "$RUNTIME_NAMESPACE" --ignore-not-found -o json)"
+          [[ -n "$namespace_json" ]] || {
+            echo "::error title=Missing deployed preview runtime namespace::Expected ${RUNTIME_NAMESPACE}." >&2
+            exit 1
+          }
+          if ! runtime_uid="$(jq -er \
+            --arg expected_namespace "$RUNTIME_NAMESPACE" \
+            --arg expected_pr_number "$PR_NUMBER" \
+            --arg expected_head_sha "$EXPECTED_HEAD_SHA" \
+            '(
+              .metadata as $metadata
+              | ($metadata.labels // {}) as $labels
+              | ($metadata.annotations // {}) as $annotations
+              | select($metadata.name == $expected_namespace)
+              | select($metadata.uid | type == "string" and length > 0)
+              | select($labels["firemud.dev/preview"] == "true")
+              | select($labels["firemud.dev/pr-number"] == $expected_pr_number)
+              | select($annotations["firemud.dev/requested-preview-head-sha"] == $expected_head_sha)
+              | select($annotations["firemud.dev/last-preview-head-sha"] == $expected_head_sha)
+              | $metadata.uid
+            )' <<<"$namespace_json")"; then
+            echo "::error title=Invalid deployed preview runtime ownership::Expected canonical preview ownership and requested/deployed head annotations for ${RUNTIME_NAMESPACE}." >&2
+            exit 1
+          fi
+          [[ "$runtime_uid" =~ ^[^[:space:]]+$ ]] || {
+            echo "::error title=Invalid deployed preview runtime Namespace UID::Expected a non-empty Namespace UID." >&2
+            exit 1
+          }
+          echo "uid=$runtime_uid" >> "$GITHUB_OUTPUT"
+
       - name: Publish trusted preview deployment failure
         if: ${{ !cancelled() && failure() }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
@@ -587,6 +811,7 @@ jobs:
           PREVIEW_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
           PREVIEW_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
           PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
+          PREVIEW_EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
         with:
           script: |
             const { publishPreviewComment } = require(
@@ -617,8 +842,8 @@ jobs:
       - linux
       - x64
     needs: [validate-target, deploy-runtime]
-    if: ${{ needs.validate-target.outputs.action == 'deploy' && needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' && needs.deploy-runtime.result == 'success' }}
-    environment: pr-preview
+    if: ${{ needs.validate-target.outputs.action == 'deploy' && needs.deploy-runtime.result == 'success' }}
+    environment: trusted-hosted-cluster
     permissions:
       contents: read # Check out the trusted default-branch verification implementation.
       pull-requests: read # Revalidate the pull-request state and exact head before publication.
@@ -641,23 +866,8 @@ jobs:
       - name: Write runtime kubeconfig
         uses: ./.github/actions/write-kubeconfig
         with:
-          content: ${{ secrets.PREVIEW_RUNTIME_KUBECONFIG }}
+          content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_RUNTIME_KUBECONFIG }}
           path: ${{ runner.temp }}/preview-runtime.kubeconfig
-
-      - name: Download and validate immutable runtime artifact
-        uses: ./.github/actions/download-validated-preview-artifact
-        with:
-          artifact-directory: ${{ runner.temp }}/preview-artifact
-          artifact-name: ${{ needs.validate-target.outputs.artifact_name }}
-          source-run-id: ${{ needs.validate-target.outputs.render_run_id }}
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          pr-number: ${{ needs.validate-target.outputs.pr_number }}
-          base-sha: ${{ needs.validate-target.outputs.base_sha }}
-          head-sha: ${{ needs.validate-target.outputs.head_sha }}
-          merge-sha: ${{ needs.validate-target.outputs.merge_sha }}
-          image-tag: ${{ needs.validate-target.outputs.image_tag }}
-          preview-hostname: ${{ needs.validate-target.outputs.hostname }}
 
       - name: Revalidate open PR before runtime verification
         env:
@@ -668,12 +878,69 @@ jobs:
           bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
             "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
 
+      - name: Capture exact runtime Namespace UID before verification
+        id: capture-runtime-namespace
+        env:
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+          EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID: ${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}
+        run: |
+          set -euo pipefail
+          [[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]] || {
+            echo "::error title=Invalid preview runtime namespace::Expected pr-${PR_NUMBER}." >&2
+            exit 1
+          }
+          [[ "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error title=Invalid preview head SHA::Expected exactly 40 lowercase hexadecimal characters." >&2
+            exit 1
+          }
+          [[ -n "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID" ]] || {
+            echo "::error title=Missing deployed preview runtime Namespace UID::The deploy job did not publish its post-apply Namespace UID." >&2
+            exit 1
+          }
+          namespace_json="$(kubectl get namespace "$RUNTIME_NAMESPACE" --ignore-not-found -o json)"
+          [[ -n "$namespace_json" ]] || {
+            echo "::error title=Missing preview runtime namespace::Expected ${RUNTIME_NAMESPACE}." >&2
+            exit 1
+          }
+          if ! runtime_uid="$(jq -er \
+            --arg expected_namespace "$RUNTIME_NAMESPACE" \
+            --arg expected_pr_number "$PR_NUMBER" \
+            --arg expected_head_sha "$EXPECTED_HEAD_SHA" \
+            '(
+              .metadata as $metadata
+              | ($metadata.labels // {}) as $labels
+              | ($metadata.annotations // {}) as $annotations
+              | select($metadata.name == $expected_namespace)
+              | select($metadata.uid | type == "string" and length > 0)
+              | select($labels["firemud.dev/preview"] == "true")
+              | select($labels["firemud.dev/pr-number"] == $expected_pr_number)
+              | select($annotations["firemud.dev/requested-preview-head-sha"] == $expected_head_sha)
+              | select($annotations["firemud.dev/last-preview-head-sha"] == $expected_head_sha)
+              | $metadata.uid
+            )' <<<"$namespace_json")"; then
+            echo "::error title=Invalid preview runtime namespace ownership::Expected canonical preview ownership and head annotations for ${RUNTIME_NAMESPACE}." >&2
+            exit 1
+          fi
+          [[ "$runtime_uid" =~ ^[^[:space:]]+$ ]] || {
+            echo "::error title=Invalid preview runtime namespace UID::Expected a non-empty Namespace UID." >&2
+            exit 1
+          }
+          [[ "$runtime_uid" == "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID" ]] || {
+            echo "::error title=Preview runtime Namespace UID does not match deploy::Expected ${EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID}; observed ${runtime_uid}." >&2
+            exit 1
+          }
+          echo "uid=$runtime_uid" >> "$GITHUB_OUTPUT"
+
       - name: Wait for exact controller identity projection
+        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
         run: |
           bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
             "pr-${{ needs.validate-target.outputs.pr_number }}" \
             "${{ needs.validate-target.outputs.head_sha }}" \
-            "${{ needs.validate-target.outputs.namespace }}" 900
+            "${{ needs.validate-target.outputs.namespace }}" 900 \
+            "${{ needs.validate-target.outputs.exposure_mode }}"
 
       - name: Wait for runtime rollouts
         env:
@@ -685,6 +952,7 @@ jobs:
 
       - name: Read allocated TCP port
         id: runtime-port
+        if: ${{ needs.validate-target.outputs.exposure_mode == 'public' }}
         env:
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
         run: |
@@ -696,18 +964,6 @@ jobs:
           }
           echo "port=$port" >> "$GITHUB_OUTPUT"
 
-      - name: Inject observed allocated Telnet port
-        env:
-          ARTIFACT_DIR: ${{ runner.temp }}/preview-artifact
-          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
-          TELNET_PORT: ${{ steps.runtime-port.outputs.port }}
-        run: |
-          set -euo pipefail
-          python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
-            inject "$ARTIFACT_DIR/preview-rendered-sanitized.yaml" \
-            "$RUNNER_TEMP/preview-rendered-with-port.yaml" \
-            "$RUNTIME_NAMESPACE" "$TELNET_PORT"
-
       - name: Revalidate open PR after runtime waits
         env:
           GH_TOKEN: ${{ github.token }}
@@ -717,20 +973,17 @@ jobs:
           bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
             "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
 
-      - name: Validate deployed runtime bridge
+      - name: Revalidate exact PR source binding after runtime waits
         env:
-          ARTIFACT_PATH: ${{ runner.temp }}/preview-rendered-with-port.yaml
-          RELEASE_NAME: pr-${{ needs.validate-target.outputs.pr_number }}
-          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
-          TELNET_PORT: ${{ steps.runtime-port.outputs.port }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          EXPECTED_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          EXPECTED_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
         run: |
           set -euo pipefail
-          python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
-            runtime-target "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$TELNET_PORT"
-          FIREMUD_PREFLIGHT_CONTEXT=operator \
-            python3 ./dev-tools/deploy/preflight.py hosted-bridge \
-            "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$RELEASE_NAME" \
-            --expected-hosted-telnet-node-port "$TELNET_PORT"
+          bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA"
 
       - name: Publish trusted preview deployment state
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
@@ -739,6 +992,7 @@ jobs:
           PREVIEW_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
           PREVIEW_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
           PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
+          PREVIEW_EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
         with:
           script: |
             const { publishPreviewComment } = require(
@@ -751,11 +1005,12 @@ jobs:
               mode: "deploying",
               markerPolicy: "preserve-reclaimed",
               statePolicy: "expected-open",
-              telnetPort: "available",
+              telnetPort: process.env.PREVIEW_EXPOSURE_MODE === "public" ? "available" : "unavailable",
               staleDescription: "trusted preview deployment state",
             });
 
       - name: Smoke hosted preview over TCP
+        if: ${{ needs.validate-target.outputs.exposure_mode == 'public' }}
         env:
           PREVIEW_BASE_URL: https://${{ needs.validate-target.outputs.hostname }}
           SMOKE_TELNET_HOST: ${{ needs.validate-target.outputs.hostname }}
@@ -763,6 +1018,62 @@ jobs:
         run: |
           : "${TCP_PORT:?runtime-port step must provide the allocated NodePort}"
           bash ./dev-tools/hosted/shared/hosted-login-look-smoke.sh
+
+      - name: Revalidate exact source binding and runtime Namespace UID before success publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          EXPECTED_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          EXPECTED_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+          EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID: ${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}
+          CAPTURED_RUNTIME_NAMESPACE_UID: ${{ steps.capture-runtime-namespace.outputs.uid }}
+        run: |
+          set -euo pipefail
+          bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA" \
+            "before success publication"
+          [[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]] || {
+            echo "::error title=Invalid preview runtime namespace::Expected pr-${PR_NUMBER}." >&2
+            exit 1
+          }
+          [[ -n "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID" ]] || {
+            echo "::error title=Missing preview runtime Namespace UID::The verification UID fence was not captured." >&2
+            exit 1
+          }
+          [[ "$CAPTURED_RUNTIME_NAMESPACE_UID" == "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID" ]] || {
+            echo "::error title=Preview runtime Namespace UID handoff changed::Expected ${EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID}; captured ${CAPTURED_RUNTIME_NAMESPACE_UID:-empty}." >&2
+            exit 1
+          }
+          namespace_json="$(kubectl get namespace "$RUNTIME_NAMESPACE" --ignore-not-found -o json)"
+          [[ -n "$namespace_json" ]] || {
+            echo "::error title=Preview runtime namespace UID fence failed::Namespace ${RUNTIME_NAMESPACE} is absent." >&2
+            exit 1
+          }
+          if ! observed_uid="$(jq -er \
+            --arg expected_namespace "$RUNTIME_NAMESPACE" \
+            --arg expected_pr_number "$PR_NUMBER" \
+            --arg expected_head_sha "$EXPECTED_HEAD_SHA" \
+            '(
+              .metadata as $metadata
+              | ($metadata.labels // {}) as $labels
+              | ($metadata.annotations // {}) as $annotations
+              | select($metadata.name == $expected_namespace)
+              | select($metadata.uid | type == "string" and length > 0)
+              | select($labels["firemud.dev/preview"] == "true")
+              | select($labels["firemud.dev/pr-number"] == $expected_pr_number)
+              | select($annotations["firemud.dev/requested-preview-head-sha"] == $expected_head_sha)
+              | select($annotations["firemud.dev/last-preview-head-sha"] == $expected_head_sha)
+              | $metadata.uid
+            )' <<<"$namespace_json")"; then
+            echo "::error title=Preview runtime namespace UID fence failed::Namespace ${RUNTIME_NAMESPACE} is absent or no longer has canonical ownership and head annotations." >&2
+            exit 1
+          fi
+          [[ "$observed_uid" == "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID" ]] || {
+            echo "::error title=Preview runtime namespace UID changed::Expected ${EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID}; observed ${observed_uid}." >&2
+            exit 1
+          }
 
       - name: Publish trusted preview success
         if: ${{ success() }}
@@ -772,6 +1083,7 @@ jobs:
           PREVIEW_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
           PREVIEW_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
           PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
+          PREVIEW_EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
           PREVIEW_TELNET_PORT: ${{ steps.runtime-port.outputs.port }}
         with:
           script: |
@@ -796,11 +1108,61 @@ jobs:
           PREVIEW_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
           PREVIEW_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
           PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
+          PREVIEW_EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+          EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID: ${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}
         with:
           script: |
+            const { execFileSync } = require("node:child_process");
             const { publishPreviewComment } = require(
               `${process.env.GITHUB_WORKSPACE}/dev-tools/hosted/preview/publish-preview-comment.js`
             );
+            let namespaceJson = "";
+            let kubectlError = null;
+            try {
+              namespaceJson = execFileSync(
+                "kubectl",
+                [
+                  "get",
+                  "namespace",
+                  process.env.RUNTIME_NAMESPACE,
+                  "--ignore-not-found",
+                  "-o",
+                  "json",
+                ],
+                { encoding: "utf8" },
+              );
+            } catch (error) {
+              kubectlError = error;
+            }
+            if (kubectlError) {
+              core.warning(
+                `Unable to compare the current preview Namespace UID before failure publication; preserving failure reporting: ${kubectlError.message}`,
+              );
+            } else if (namespaceJson.trim()) {
+              let observedUid = "";
+              try {
+                const namespace = JSON.parse(namespaceJson);
+                observedUid =
+                  typeof namespace?.metadata?.uid === "string"
+                    ? namespace.metadata.uid
+                    : "";
+              } catch (error) {
+                core.warning(
+                  `Current preview Namespace JSON was malformed before failure publication; preserving failure reporting: ${error.message}`,
+                );
+              }
+              if (
+                observedUid &&
+                process.env.EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID &&
+                observedUid !== process.env.EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID
+              ) {
+                core.notice(
+                  `Skipping stale preview verification failure publication because current Namespace UID ${observedUid} differs from this deploy's UID ${process.env.EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID}.`,
+                );
+                return;
+              }
+            }
             await publishPreviewComment({
               github,
               context,
@@ -829,7 +1191,7 @@ jobs:
     # Close cleanup is mode-independent: a retained identity may have been created
     # before the default-branch certificate identity mode changed.
     if: ${{ needs.validate-target.outputs.action == 'destroy' }}
-    environment: pr-preview
+    environment: trusted-hosted-cluster
     concurrency:
       group: preview-allocation-lifecycle
       cancel-in-progress: false
@@ -854,16 +1216,25 @@ jobs:
       - name: Write runtime kubeconfig
         uses: ./.github/actions/write-kubeconfig
         with:
-          content: ${{ secrets.PREVIEW_RUNTIME_KUBECONFIG }}
+          content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_RUNTIME_KUBECONFIG }}
           path: ${{ runner.temp }}/preview-runtime.kubeconfig
+
+      - name: Validate kubectl client/server skew
+        run: bash ./dev-tools/hosted/shared/check-kubectl-version-skew.sh
+
       - name: Revalidate preview cleanup target before runtime deletion
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
         run: |
-          bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
-            --cleanup "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
+          if [[ "${{ needs.validate-target.outputs.cleanup_state }}" == open ]]; then
+            bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
+              --open-cleanup "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
+          else
+            bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
+              --cleanup "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
+          fi
       - name: Delete runtime and wait for NotFound
         run: |
           bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh \
@@ -877,6 +1248,7 @@ jobs:
           PREVIEW_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
           PREVIEW_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
           PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
+          PREVIEW_STATE_POLICY: ${{ needs.validate-target.outputs.cleanup_state == 'open' && 'expected-open' || 'expected-closed' }}
         with:
           script: |
             const { publishPreviewComment } = require(
@@ -888,7 +1260,7 @@ jobs:
               core,
               mode: "removed",
               markerPolicy: "replace",
-              statePolicy: "expected-closed",
+              statePolicy: process.env.PREVIEW_STATE_POLICY,
               telnetPort: "unavailable",
               staleDescription: "trusted preview removal",
             });
@@ -901,6 +1273,7 @@ jobs:
           PREVIEW_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
           PREVIEW_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
           PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
+          PREVIEW_STATE_POLICY: ${{ needs.validate-target.outputs.cleanup_state == 'open' && 'expected-open' || 'expected-closed' }}
         with:
           script: |
             const { publishPreviewComment } = require(
@@ -912,7 +1285,7 @@ jobs:
               core,
               mode: "failure",
               markerPolicy: "replace",
-              statePolicy: "expected-closed",
+              statePolicy: process.env.PREVIEW_STATE_POLICY,
               telnetPort: "unavailable",
               failureStage: "destroy-runtime",
               staleDescription: "trusted preview removal failure",
@@ -931,8 +1304,8 @@ jobs:
       - linux
       - x64
     needs: [validate-target, destroy-runtime]
-    if: ${{ needs.validate-target.outputs.action == 'destroy' && needs.destroy-runtime.result == 'success' }}
-    environment: pr-preview
+    if: ${{ needs.validate-target.outputs.action == 'destroy' && needs.validate-target.outputs.retire_identity == 'true' && needs.destroy-runtime.result == 'success' }}
+    environment: trusted-hosted-cluster
     concurrency:
       # destroy-runtime releases this lifecycle lock; retire-identity reacquires it and rechecks identity before retirement.
       group: preview-allocation-lifecycle
@@ -956,22 +1329,26 @@ jobs:
       - name: Check Hosted identity requester credentials
         id: requester-credentials
         env:
-          REQUESTER_KUBECONFIG: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
+          REQUESTER_KUBECONFIG: ${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
         run: |
           set -euo pipefail
           if [[ -z "$REQUESTER_KUBECONFIG" ]]; then
-            echo "Hosted identity requester credentials are unavailable; skipping identity retirement."
-            echo "available=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "::error title=Missing Hosted identity requester credentials::Cannot retire hosted identity without the trusted requester kubeconfig." >&2
+            exit 1
           fi
+          echo "available=true" >> "$GITHUB_OUTPUT"
       - name: Write requester kubeconfig
         if: ${{ steps.requester-credentials.outputs.available == 'true' }}
         uses: ./.github/actions/write-kubeconfig
         with:
-          content: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
+          content: ${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
           path: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
           export-to-github-env: 'false'
+      - name: Validate kubectl client/server skew
+        if: ${{ steps.requester-credentials.outputs.available == 'true' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
+        run: bash ./dev-tools/hosted/shared/check-kubectl-version-skew.sh
       - name: Discover HostedEnvironmentIdentity API
         id: identity-api
         if: ${{ steps.requester-credentials.outputs.available == 'true' }}

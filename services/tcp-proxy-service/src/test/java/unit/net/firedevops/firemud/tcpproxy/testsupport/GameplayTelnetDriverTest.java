@@ -2,6 +2,7 @@ package net.firedevops.firemud.tcpproxy.testsupport;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -13,6 +14,8 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 class GameplayTelnetDriverTest {
@@ -35,6 +38,77 @@ class GameplayTelnetDriverTest {
         assertEquals(
             List.of("Logged in as player@example.com", "", "OK PLAY Entered world: demo"),
             driver.responses());
+      } finally {
+        server.close();
+        serverThread.join(5_000);
+      }
+    }
+  }
+
+  @Test
+  void readBlockContainingFailsWhenStreamClosesAfterMatch() throws Exception {
+    try (ServerSocket server = new ServerSocket(0)) {
+      Thread serverThread =
+          new Thread(
+              () -> {
+                try (Socket socket = server.accept();
+                    PrintWriter writer =
+                        new PrintWriter(
+                            new OutputStreamWriter(
+                                socket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                            true)) {
+                  writer.println("LOOK READY");
+                } catch (IOException ignored) {
+                  // The client may close the socket while the test is cleaning up.
+                }
+              });
+      serverThread.start();
+
+      try (GameplayTelnetDriver driver =
+          GameplayTelnetDriver.connect("localhost", server.getLocalPort(), Duration.ofSeconds(1))) {
+        AssertionError failure =
+            assertThrows(AssertionError.class, () -> driver.readBlockContaining("LOOK READY"));
+
+        assertEquals(
+            "Expected block containing 'LOOK READY', got:\nLOOK READY\n", failure.getMessage());
+      } finally {
+        server.close();
+        serverThread.join(5_000);
+      }
+    }
+  }
+
+  @Test
+  void readBlockContainingFailsWhenTimeoutOccursAfterMatch() throws Exception {
+    try (ServerSocket server = new ServerSocket(0)) {
+      CountDownLatch responseFlushed = new CountDownLatch(1);
+      Thread serverThread =
+          new Thread(
+              () -> {
+                try (Socket socket = server.accept();
+                    PrintWriter writer =
+                        new PrintWriter(
+                            new OutputStreamWriter(
+                                socket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                            true)) {
+                  writer.println("LOOK READY");
+                  responseFlushed.countDown();
+                  socket.setSoTimeout(5_000);
+                  socket.getInputStream().read();
+                } catch (IOException ignored) {
+                  // The client may close the socket while the test is cleaning up.
+                }
+              });
+      serverThread.start();
+
+      try (GameplayTelnetDriver driver =
+          GameplayTelnetDriver.connect("localhost", server.getLocalPort(), Duration.ofSeconds(1))) {
+        assertTrue(responseFlushed.await(5, TimeUnit.SECONDS));
+        AssertionError failure =
+            assertThrows(AssertionError.class, () -> driver.readBlockContaining("LOOK READY"));
+
+        assertEquals(
+            "Expected block containing 'LOOK READY', got:\nLOOK READY\n", failure.getMessage());
       } finally {
         server.close();
         serverThread.join(5_000);

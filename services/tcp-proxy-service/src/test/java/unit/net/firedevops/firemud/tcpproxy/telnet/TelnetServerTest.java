@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.InputStream;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URI;
 import java.nio.file.Files;
@@ -65,6 +66,31 @@ class TelnetServerTest {
     server.start();
     server.stop();
     assertTrue(true); // no exception means success
+  }
+
+  @Test
+  void failedBindReleasesEventLoopGroupsForRetry() throws Exception {
+    try (ServerSocket blocker = new ServerSocket(0)) {
+      server =
+          new TelnetServer(
+              blocker.getLocalPort(),
+              false,
+              "",
+              "",
+              false,
+              0,
+              0,
+              4096,
+              new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
+              Mockito.mock(TcpProxyEventService.class),
+              readyProbe(),
+              gatewayClient());
+
+      assertThrows(IllegalStateException.class, () -> server.start());
+    }
+
+    server.start();
+    assertTrue(server.isRunning());
   }
 
   @ParameterizedTest
@@ -141,7 +167,7 @@ class TelnetServerTest {
                     Mockito.mock(TcpProxyEventService.class),
                     readyProbe(),
                     client));
-    assertTrue(ex.getMessage().contains("gatewayUri"));
+    assertEquals("gatewayUri", ex.getMessage());
   }
 
   @Test

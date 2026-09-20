@@ -8,6 +8,8 @@ on:
     types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
 
+run-name: CI — Validation ${{ github.event_name == 'pull_request' && format('pr-{0} base-{1} head-{2}', github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha) || github.ref_name }}
+
 permissions:
   contents: read
 
@@ -272,6 +274,7 @@ jobs:
           bash ./dev-tools/tests/coderabbit-cli-wrapper-contract.sh
           bash ./dev-tools/tests/coderabbit-review-contract.sh
           bash ./dev-tools/tests/coderabbit-trigger-retirement-contract.sh
+          bash ./dev-tools/tests/testcontainers-disabled-contract.sh
           bash ./dev-tools/tests/pr-retarget-workflow-contract.sh
           bash ./dev-tools/tests/static-analysis-summary-contract.sh
           bash ./dev-tools/tests/pr-required-gate-context-contract.sh
@@ -281,11 +284,20 @@ jobs:
           bash ./dev-tools/tests/reset-service-db-contract.sh
           bash ./dev-tools/tests/preview-eligibility-contract.sh
           bash ./dev-tools/tests/preview-priority-contract.sh
+          bash ./dev-tools/tests/hosted-gateway-bridge-contract.sh
+          bash ./dev-tools/tests/preview-runner-isolation-contract.sh
+          bash ./dev-tools/tests/preview-standalone-transport-certificates-contract.sh
           bash ./dev-tools/tests/hosted-identity-controller-manifest-contract.sh
           bash ./dev-tools/tests/hosted-identity-controller-workflow-contract.sh
           bash ./dev-tools/tests/worktree-topology-contract.sh
+          bash ./dev-tools/tests/dev-tools-readme-contract.sh
           bash ./dev-tools/tests/preflight-contract.sh
           bash ./dev-tools/tests/verify-backups-velero-contract.sh
+          bash ./dev-tools/tests/verify-backups-cronjob-contract.sh
+          bash ./dev-tools/tests/backup-verifier-image-contract.sh
+          bash ./dev-tools/tests/kubectl-version-skew-contract.sh
+          bash ./dev-tools/tests/helm-transaction-proof-contract.sh
+          bash ./dev-tools/tests/preview-image-tag-contract.sh
           bash ./dev-tools/tests/overlay-preflight-contract.sh
           bash ./dev-tools/tests/validate-external-credentials-contract.sh
           bash ./dev-tools/tests/observability-validator-contract.sh
@@ -303,6 +315,32 @@ jobs:
       - name: 🧪 Validate non-runtime Python contracts
         if: ${{ needs.changes.outputs.lightweight_only == 'true' && needs.changes.outputs.validation_python_changed == 'true' }}
         run: python3 -m unittest discover -s dev-tools/validation -p 'test_*.py'
+
+  dev-tools-readme-contract:
+    name: Dev Tools README Contract
+    needs: [changes]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only == 'true' }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: 🐍 Set Up Python
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: none
+
+      - name: 🧭 Validate documented dev-tool paths and links
+        run: bash ./dev-tools/tests/dev-tools-readme-contract.sh
 
   yaml-lint:
     name: YAML Lint
@@ -364,7 +402,7 @@ jobs:
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: 'temurin'
-          java-version: '21'
+          java-version: '25'
 
       - name: ⚙️ Set Up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -400,7 +438,7 @@ jobs:
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: 'temurin'
-          java-version: '21'
+          java-version: '25'
 
       - name: ⚙️ Set Up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -520,6 +558,86 @@ jobs:
 
       - name: 🧪 Validate hosted Gateway bridge contract
         run: bash ./dev-tools/tests/hosted-gateway-bridge-contract.sh
+
+  helm-transaction-proof:
+    name: Helm Transaction Proof
+    needs: [changes]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      K3S_IMAGE: rancher/k3s:v1.34.5-k3s1@sha256:998f4db28a13143ada759690b554c5d8c1814ac03f77c1bdd78bbd73875a1379
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up kubectl
+        uses: ./.github/actions/setup-kubectl
+
+      - name: Set up Helm
+        uses: ./.github/actions/setup-helm
+
+      - name: Set up canonical Python dependencies
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: yaml
+
+      - name: Pull pinned disposable k3s server image
+        run: |
+          set -euo pipefail
+          pull_succeeded=false
+          for attempt in 1 2 3; do
+            if timeout 120s docker pull "$K3S_IMAGE"; then
+              pull_succeeded=true
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              sleep $((attempt * 5))
+            fi
+          done
+          if [[ "$pull_succeeded" != true ]]; then
+            echo "Unable to pull $K3S_IMAGE after three attempts" >&2
+            exit 1
+          fi
+
+      - name: Start pinned disposable k3s server
+        run: |
+          docker run --pull=never --detach --privileged \
+            --name firemud-helm-proof \
+            --publish 6443:6443 \
+            "$K3S_IMAGE" \
+            server --disable=traefik --disable=servicelb --disable=metrics-server --write-kubeconfig-mode=644
+
+      - name: Wait for disposable k3s startup
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            if docker logs firemud-helm-proof 2>&1 | grep -F 'k3s is up and running' >/dev/null; then
+              break
+            fi
+            if [[ "$attempt" == 60 ]]; then
+              docker logs firemud-helm-proof
+              exit 1
+            fi
+            sleep 2
+          done
+          docker cp firemud-helm-proof:/etc/rancher/k3s/k3s.yaml "$RUNNER_TEMP/helm-proof.kubeconfig"
+          chmod 0600 "$RUNNER_TEMP/helm-proof.kubeconfig"
+          echo "KUBECONFIG=$RUNNER_TEMP/helm-proof.kubeconfig" >> "$GITHUB_ENV"
+
+      - name: Run Helm lifecycle proof
+        run: bash ./dev-tools/validation/helm-transaction-proof.sh
+
+      - name: Remove disposable k3s server
+        if: ${{ always() }}
+        run: docker rm --force firemud-helm-proof >/dev/null 2>&1 || true
 
   # Docs and frontend validation
   docs-check:
@@ -768,7 +886,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    needs: [buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, docs-check, frontend-checks, build-and-test, validation-gate]
+    needs: [buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, dev-tools-readme-contract, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, helm-transaction-proof, docs-check, frontend-checks, build-and-test, validation-gate]
     if: ${{ always() && github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     steps:
       - name: Harden runner
@@ -795,6 +913,7 @@ jobs:
               ["ShellCheck", "${{ needs.shellcheck.result }}"],
               ["Python script validation", "${{ needs.python-script-validation.result }}"],
               ["Dev tool contract checks", "${{ needs.dev-tool-contract-checks.result }}"],
+              ["Dev Tools README contract", "${{ needs.dev-tools-readme-contract.result }}"],
               ["YAML lint", "${{ needs.yaml-lint.result }}"],
               ["Metrics cardinality policy check", "${{ needs.metrics-cardinality-check.result }}"],
               ["Flyway migration sanity checks", "${{ needs.flyway-migration-sanity-checks.result }}"],
@@ -802,6 +921,7 @@ jobs:
               ["GitHub workflow lint", "${{ needs.workflow-lint.result }}"],
               ["Helm chart lint", "${{ needs.helm-lint.result }}"],
               ["Helm render validation", "${{ needs.helm-render-validation.result }}"],
+              ["Helm transaction proof", "${{ needs.helm-transaction-proof.result }}"],
               ["Validate Documentation", "${{ needs.docs-check.result }}"],
               ["Frontend checks", "${{ needs.frontend-checks.result }}"],
               ["Service build/test matrix", "${{ needs.build-and-test.result }}"],
@@ -874,7 +994,8 @@ jobs:
     permissions:
       checks: read # Preserve a prior successful required context on metadata-only edits.
       contents: read # Check out the shared required-gate composite action.
-    needs: [changes, buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, docs-check, frontend-checks, build-and-test]
+      actions: read # Inspect the matching required-gate job's preservation step.
+    needs: [changes, buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, dev-tools-readme-contract, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, helm-transaction-proof, docs-check, frontend-checks, build-and-test]
     if: ${{ always() }}
     steps:
       - name: Harden runner
@@ -894,6 +1015,9 @@ jobs:
         uses: ./.github/actions/preserve-required-gate
         with:
           gate-name: Validation Gate
+          workflow-name: CI — Validation
+          workflow-file: ci.yml
+          workflow-path: .github/workflows/ci.yml
 
       - name: Enforce validation success
         if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
@@ -911,6 +1035,7 @@ jobs:
           SHELLCHECK: ${{ needs.shellcheck.result }}
           PYTHON_SCRIPT_VALIDATION: ${{ needs.python-script-validation.result }}
           DEV_TOOL_CONTRACT_CHECKS: ${{ needs.dev-tool-contract-checks.result }}
+          DEV_TOOLS_README_CONTRACT: ${{ needs.dev-tools-readme-contract.result }}
           YAML_LINT: ${{ needs.yaml-lint.result }}
           METRICS_CARDINALITY_CHECK: ${{ needs.metrics-cardinality-check.result }}
           FLYWAY_MIGRATION_SANITY_CHECKS: ${{ needs.flyway-migration-sanity-checks.result }}
@@ -918,6 +1043,7 @@ jobs:
           WORKFLOW_LINT: ${{ needs.workflow-lint.result }}
           HELM_LINT: ${{ needs.helm-lint.result }}
           HELM_RENDER_VALIDATION: ${{ needs.helm-render-validation.result }}
+          HELM_TRANSACTION_PROOF: ${{ needs.helm-transaction-proof.result }}
           DOCS_CHECK: ${{ needs.docs-check.result }}
           FRONTEND_CHECKS: ${{ needs.frontend-checks.result }}
           BUILD_AND_TEST: ${{ needs.build-and-test.result }}
@@ -944,7 +1070,8 @@ jobs:
             "gRPC Transport Configuration Sanity Checks:$GRPC_TRANSPORT_CONFIG_SANITY_CHECKS" \
             "GitHub Workflow Lint:$WORKFLOW_LINT" \
             "Helm Chart Lint:$HELM_LINT" \
-            "Helm Render Validation:$HELM_RENDER_VALIDATION"
+            "Helm Render Validation:$HELM_RENDER_VALIDATION" \
+            "Helm Transaction Proof:$HELM_TRANSACTION_PROOF"
           do
             name="${check%%:*}"
             result="${check#*:}"
@@ -978,6 +1105,13 @@ jobs:
             fi
           else
             if ! is_acceptable_optional_result "$DEV_TOOL_CONTRACT_CHECKS"; then
+              failed=1
+            fi
+          fi
+
+          echo "Dev Tools README Contract => $DEV_TOOLS_README_CONTRACT"
+          if [ "$LIGHTWEIGHT_ONLY" = "true" ] || [ "$DEV_TOOLS_README_CONTRACT" != "skipped" ]; then
+            if [ "$DEV_TOOLS_README_CONTRACT" != "success" ]; then
               failed=1
             fi
           fi

@@ -127,6 +127,7 @@ public class HostedEnvironmentIdentityStatus {
     copy.setIdentityNamespace(source.getIdentityNamespace());
     copy.setRuntimeNamespace(source.getRuntimeNamespace());
     copy.setHostname(source.getHostname());
+    copy.setExposureMode(source.getExposureMode());
     copy.setTelnetPort(source.getTelnetPort());
     copy.setRuntimeNamespaceUid(source.getRuntimeNamespaceUid());
     copy.setRequestedHeadSha(source.getRequestedHeadSha());
@@ -211,6 +212,7 @@ public class HostedEnvironmentIdentityStatus {
     private String identityNamespace;
     private String runtimeNamespace;
     private String hostname;
+    private String exposureMode;
     private Integer telnetPort;
     private String runtimeNamespaceUid;
     private String requestedHeadSha;
@@ -254,6 +256,14 @@ public class HostedEnvironmentIdentityStatus {
 
     public void setHostname(String hostname) {
       this.hostname = hostname;
+    }
+
+    public String getExposureMode() {
+      return exposureMode;
+    }
+
+    public void setExposureMode(String exposureMode) {
+      this.exposureMode = exposureMode;
     }
 
     public Integer getTelnetPort() {

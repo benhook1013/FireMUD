@@ -1,65 +1,34 @@
 name: PR Preview Environment
 
+run-name: ${{ github.event_name == 'repository_dispatch' && format('Preview dispatch pr-{0}-{1}', github.event.client_payload.pr_number, github.event.client_payload.head_sha) || format('PR preview {0}', github.event.pull_request.number) }}
+
 on:
-  pull_request:
+  pull_request_target:
     paths-ignore:
       - '**/*.md'
       - 'mkdocs.yml'
       - 'design/**'
       - 'dev-tools/docs/**'
       - 'dev-tools/validation/**/*.py'
-      - 'mkdocs.yml'
     types:
       - opened
       - synchronize
       - reopened
       - labeled
-      - closed
-  workflow_dispatch:
-    inputs:
-      action:
-        description: Future hosted preview operation
-        required: true
-        default: deploy
-        type: choice
-        options:
-          - deploy
-          - destroy
-      pr_number:
-        description: Pull request number to target
-        required: true
-        type: string
-      image_tag:
-        description: PR image tag to deploy (for example pr-123-deadbeef)
-        required: false
-        default: ""
-        type: string
-      head_sha:
-        description: PR head SHA to align the preview namespace with
-        required: false
-        default: ""
-        type: string
-      preview_domain:
-        description: Preview DNS suffix (for example preview.firedevops.net)
-        required: false
-        default: preview.firedevops.net
-        type: string
+  repository_dispatch:
+    types: [preview-deploy, preview-destroy]
 
 permissions:
   contents: read
-  packages: read
-  issues: write
-  pull-requests: write
+  pull-requests: read
 
 jobs:
   preview-plan:
     name: Preview Plan
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && (github.event.action != 'labeled' || github.event.label.name == 'preview:priority')) }}
-    # Only supersede the non-mutating plan. Deploy, proof, and cleanup retain
-    # their place in the shared non-cancelling lifecycle queue below.
+    if: ${{ github.event_name != 'pull_request_target' || (github.event.pull_request.head.repo.full_name == github.repository && (github.event.action != 'labeled' || github.event.label.name == 'preview:priority')) }}
     concurrency:
-      group: preview-plan-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.pr_number || github.ref }}
+      group: preview-plan-${{ github.event_name == 'pull_request_target' && github.event.pull_request.number || github.event.client_payload.pr_number || github.ref }}
       cancel-in-progress: true
     outputs:
       action: ${{ steps.derive.outputs.action }}
@@ -71,24 +40,15 @@ jobs:
       head_sha: ${{ steps.derive.outputs.head_sha }}
       base_sha: ${{ steps.derive.outputs.base_sha }}
       merge_sha: ${{ steps.derive.outputs.merge_sha }}
-      certificate_identity_mode: ${{ steps.deploy-certificate-identity.outputs.mode }}
       eligible: ${{ steps.eligibility.outputs.eligible }}
       eligibility_reason: ${{ steps.eligibility.outputs.reason }}
-      close_certificate_identity_mode: ${{ steps.close-certificate-identity.outputs.mode }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
         with:
           egress-policy: audit
 
-      - name: Check out preview candidate
-        if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-
-      - name: Check out trusted default branch for close lifecycle
-        if: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' }}
+      - name: Check out trusted default branch for preview plan
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.repository.default_branch }}
@@ -102,45 +62,68 @@ jobs:
       - name: Set up canonical GitHub CLI
         uses: ./.github/actions/setup-gh
 
-      - name: Resolve close lifecycle certificate identity owner
-        id: close-certificate-identity
-        if: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' }}
-        uses: ./.github/actions/resolve-certificate-identity-mode
-        with:
-          values-file: k8s/helm/firemud/values-hosted-shared.example.yaml
-
       - name: Derive preview identifiers
         id: derive
         env:
           GH_TOKEN: ${{ github.token }}
-          INPUT_ACTION: ${{ inputs.action }}
-          INPUT_HEAD_SHA: ${{ inputs.head_sha }}
-          INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
-          INPUT_PREVIEW_DOMAIN: ${{ inputs.preview_domain }}
-          INPUT_PR_NUMBER: ${{ inputs.pr_number }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          CLIENT_ACTION: ${{ github.event.client_payload.action }}
+          CLIENT_PR_NUMBER: ${{ github.event.client_payload.pr_number }}
+          CLIENT_HEAD_SHA: ${{ github.event.client_payload.head_sha }}
+          CLIENT_PREVIEW_DOMAIN: ${{ github.event.client_payload.preview_domain }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            PR_NUMBER="${{ github.event.pull_request.number }}"
-            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-            BASE_SHA="${{ github.event.pull_request.base.sha }}"
-            MERGE_SHA="${{ github.event.pull_request.merge_commit_sha || github.event.pull_request.head.sha }}"
-            PREVIEW_DOMAIN="preview.firedevops.net"
+
+          if [[ "$EVENT_NAME" == repository_dispatch && "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
+            echo "::error title=Invalid preview dispatch ref::Manual preview source dispatches must run from the repository default branch." >&2
+            exit 1
+          fi
+
+          if [[ "$EVENT_NAME" == pull_request_target ]]; then
+            PR_NUMBER="$EVENT_PR_NUMBER"
+            HEAD_SHA="$EVENT_HEAD_SHA"
+            BASE_SHA="$EVENT_BASE_SHA"
+            MERGE_SHA=""
+            ACTION=deploy
+            PREVIEW_DOMAIN=preview.firedevops.net
             IMAGE_TAG=""
-            if [ "${{ github.event.action }}" = "closed" ]; then
-              ACTION="destroy"
-            else
-              ACTION="deploy"
-            fi
-          else
-            PR_NUMBER="$INPUT_PR_NUMBER"
-            HEAD_SHA="$INPUT_HEAD_SHA"
+          elif [[ "$EVENT_NAME" == repository_dispatch ]]; then
+            PR_NUMBER="$CLIENT_PR_NUMBER"
+            HEAD_SHA="$CLIENT_HEAD_SHA"
+            PREVIEW_DOMAIN="$CLIENT_PREVIEW_DOMAIN"
             BASE_SHA=""
             MERGE_SHA=""
-            PREVIEW_DOMAIN="$INPUT_PREVIEW_DOMAIN"
-            ACTION="$INPUT_ACTION"
-            IMAGE_TAG="$INPUT_IMAGE_TAG"
+            case "$EVENT_ACTION" in
+              preview-deploy) ACTION=deploy ;;
+              preview-destroy) ACTION=destroy ;;
+              *)
+                echo "::error title=Invalid preview dispatch type::Expected preview-deploy or preview-destroy." >&2
+                exit 1
+                ;;
+            esac
+            if [[ "$CLIENT_ACTION" != "$ACTION" ]]; then
+              echo "::error title=Invalid preview dispatch action::Payload action does not match the typed dispatch event." >&2
+              exit 1
+            fi
+            if [[ -z "$HEAD_SHA" ]]; then
+              echo "::error title=Missing preview head SHA::Manual preview dispatches must supply the current PR head SHA." >&2
+              exit 1
+            fi
+            if [[ "$HEAD_SHA" != "${HEAD_SHA,,}" ]]; then
+              echo "::error title=Noncanonical preview head SHA::Expected lowercase hexadecimal input." >&2
+              exit 1
+            fi
+            if [[ "$PREVIEW_DOMAIN" != preview.firedevops.net ]]; then
+              echo "::error title=Invalid preview domain override::Only preview.firedevops.net is canonical." >&2
+              exit 1
+            fi
           fi
+
           if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]{0,50}$ ]]; then
             echo "::error title=Invalid preview PR number::Expected a canonical positive decimal integer." >&2
             exit 1
@@ -149,58 +132,114 @@ jobs:
             echo "::error title=Invalid preview action::Expected deploy or destroy." >&2
             exit 1
           fi
-          if [ -n "$HEAD_SHA" ] && [[ ! "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
-            echo "::error title=Invalid preview head SHA::Expected exactly 40 hexadecimal characters." >&2
-            exit 1
-          fi
-          if [ -n "$IMAGE_TAG" ] && [[ ! "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
-            echo "::error title=Invalid preview image tag::Expected a non-empty tag of at most 128 safe characters." >&2
-            exit 1
-          fi
-          if ((${#PREVIEW_DOMAIN} > 253)) ||
-            [[ ! "$PREVIEW_DOMAIN" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$ ]]; then
+          if [[ ! "$PREVIEW_DOMAIN" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$ ]] ||
+            (( ${#PREVIEW_DOMAIN} > 253 )); then
             echo "::error title=Invalid preview domain::Expected a lowercase DNS domain of at most 253 characters." >&2
             exit 1
           fi
+
+          MERGE_RETRY_LIMIT=5
+          MERGE_RETRY_DELAY_SECONDS="${PREVIEW_MERGE_RETRY_DELAY_SECONDS:-2}"
+          if [[ ! "$MERGE_RETRY_DELAY_SECONDS" =~ ^[0-9]+$ ]]; then
+            echo "::error title=Invalid preview merge retry delay::Expected a non-negative integer number of seconds." >&2
+            exit 1
+          fi
+          MERGE_ATTEMPT=0
+          while :; do
+            MERGE_ATTEMPT=$((MERGE_ATTEMPT + 1))
+            PULL_REQUEST_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+            if [[ "$(jq -r '.head.repo.full_name // empty' <<<"$PULL_REQUEST_JSON")" != "$GITHUB_REPOSITORY" ]]; then
+              echo "::error title=Untrusted preview pull request::Preview operations require a pull request from this repository." >&2
+              exit 1
+            fi
+            if ! CURRENT_HEAD_SHA="$(jq -er '.head.sha | select(type == "string")' <<<"$PULL_REQUEST_JSON")" ||
+              ! CURRENT_BASE_SHA="$(jq -er '.base.sha | select(type == "string")' <<<"$PULL_REQUEST_JSON")"; then
+              echo "::error title=Invalid pull request metadata::Expected string current head and base SHAs." >&2
+              exit 1
+            fi
+            if [[ ! "$CURRENT_HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]] ||
+              [[ ! "$CURRENT_BASE_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+              echo "::error title=Invalid pull request metadata::Expected 40-character hexadecimal current head and base SHAs." >&2
+              exit 1
+            fi
+            CURRENT_HEAD_SHA="${CURRENT_HEAD_SHA,,}"
+            CURRENT_BASE_SHA="${CURRENT_BASE_SHA,,}"
+            if [[ "${HEAD_SHA,,}" != "$CURRENT_HEAD_SHA" ]]; then
+              echo "::error title=Stale preview head SHA::Supplied head SHA does not equal the current pull request head." >&2
+              exit 1
+            fi
+            if [[ "$EVENT_NAME" == pull_request_target && "${BASE_SHA,,}" != "$CURRENT_BASE_SHA" ]]; then
+              echo "::error title=Stale preview base SHA::Supplied base SHA does not equal the current pull request base." >&2
+              exit 1
+            fi
+            HEAD_SHA="$CURRENT_HEAD_SHA"
+            BASE_SHA="$CURRENT_BASE_SHA"
+
+            if [[ "$ACTION" != deploy ]]; then
+              break
+            fi
+
+            MERGEABLE="$(jq -r 'if (.mergeable | type) == "boolean" then (.mergeable | tostring) elif .mergeable == null then "null" else "invalid" end' <<<"$PULL_REQUEST_JSON")"
+            MERGEABLE_STATE="$(jq -r 'if .mergeable_state == null then "unknown" elif (.mergeable_state | type) == "string" then .mergeable_state else "invalid" end' <<<"$PULL_REQUEST_JSON")"
+            if [[ "$MERGEABLE" == invalid || "$MERGEABLE_STATE" == invalid ]]; then
+              echo "::error title=Invalid pull request merge metadata::Expected boolean mergeable and string mergeable_state fields." >&2
+              exit 1
+            fi
+            if [[ "$MERGEABLE" == false || "$MERGEABLE_STATE" == dirty || "$MERGEABLE_STATE" == conflicting ]]; then
+              echo "::error title=Preview merge conflict::The current pull request cannot be rendered because GitHub reports a conflicting test merge." >&2
+              exit 1
+            fi
+            if [[ "$MERGEABLE" == null || "$MERGEABLE_STATE" == unknown ]]; then
+              if (( MERGE_ATTEMPT >= MERGE_RETRY_LIMIT )); then
+                echo "::error title=Preview merge computation unavailable::GitHub did not report a ready test merge after ${MERGE_RETRY_LIMIT} attempts." >&2
+                exit 1
+              fi
+              sleep "$MERGE_RETRY_DELAY_SECONDS"
+              continue
+            fi
+            if [[ "$MERGEABLE" != true ]]; then
+              echo "::error title=Invalid pull request merge metadata::Expected mergeable to be true, false, or null." >&2
+              exit 1
+            fi
+            if ! MERGE_SHA="$(jq -er '.merge_commit_sha | select(type == "string")' <<<"$PULL_REQUEST_JSON")"; then
+              echo "::error title=Missing preview merge ref::GitHub reported a mergeable pull request without a computed test-merge commit." >&2
+              exit 1
+            fi
+            if [[ ! "$MERGE_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+              echo "::error title=Invalid preview merge ref::Expected a 40-character hexadecimal test-merge SHA." >&2
+              exit 1
+            fi
+            MERGE_SHA="${MERGE_SHA,,}"
+            break
+          done
+
+          if [[ ! "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]] ||
+            [[ ! "$BASE_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+            echo "::error title=Invalid preview SHA::Expected 40-character hexadecimal head and base SHAs." >&2
+            exit 1
+          fi
+          if [[ "$ACTION" == deploy && ! "$MERGE_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+            echo "::error title=Invalid preview SHA::Expected a 40-character hexadecimal merge SHA for deploy." >&2
+            exit 1
+          fi
+          HEAD_SHA="${HEAD_SHA,,}"
+          BASE_SHA="${BASE_SHA,,}"
+          MERGE_SHA="${MERGE_SHA,,}"
+
+          IMAGE_TAG="$HEAD_SHA"
+          if [[ "$ACTION" == deploy ]]; then
+            IMAGE_TAG="$(bash ./dev-tools/hosted/preview/resolve-preview-image-tag.sh \
+              "$HEAD_SHA" "$PR_NUMBER" "$BASE_SHA")"
+            if [[ "$IMAGE_TAG" != "$HEAD_SHA" && "$IMAGE_TAG" != "$BASE_SHA" ]]; then
+              echo "::error title=Invalid preview image resolution::Expected the PR head or immutable base SHA." >&2
+              exit 1
+            fi
+          fi
+
           PREVIEW_HOSTNAME="pr-${PR_NUMBER}.${PREVIEW_DOMAIN}"
-          if ((${#PREVIEW_HOSTNAME} > 253)); then
+          if (( ${#PREVIEW_HOSTNAME} > 253 )); then
             echo "::error title=Invalid preview domain::Derived preview hostname exceeds 253 characters." >&2
             exit 1
-          fi
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            PULL_REQUEST_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-            if ! PR_HEAD_SHA="$(jq -er '.head.sha | select(type == "string")' <<<"$PULL_REQUEST_JSON")" ||
-              ! BASE_SHA="$(jq -er '.base.sha | select(type == "string")' <<<"$PULL_REQUEST_JSON")" ||
-              ! MERGE_SHA="$(jq -er '(.merge_commit_sha // .head.sha) | select(type == "string")' <<<"$PULL_REQUEST_JSON")"; then
-              echo "::error title=Invalid pull request metadata::Expected string head and base SHAs." >&2
-              exit 1
-            fi
-            if [[ ! "$PR_HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
-              echo "::error title=Invalid preview head SHA::Expected exactly 40 hexadecimal characters." >&2
-              exit 1
-            fi
-            if [[ ! "$BASE_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
-              echo "::error title=Invalid preview base SHA::Expected exactly 40 hexadecimal characters." >&2
-              exit 1
-            fi
-            PR_HEAD_SHA="${PR_HEAD_SHA,,}"
-            BASE_SHA="${BASE_SHA,,}"
-            if [ -z "$HEAD_SHA" ]; then
-              HEAD_SHA="$PR_HEAD_SHA"
-            fi
-          fi
-          if [ -z "$HEAD_SHA" ]; then
-            HEAD_SHA="${GITHUB_SHA}"
-          fi
-          if [[ ! "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
-            echo "::error title=Invalid preview head SHA::Expected exactly 40 hexadecimal characters." >&2
-            exit 1
-          fi
-          # Keep an explicitly supplied image tag unchanged; only the requested
-          # head identity is normalized for every downstream lifecycle boundary.
-          HEAD_SHA="${HEAD_SHA,,}"
-          if [ -z "$IMAGE_TAG" ]; then
-            IMAGE_TAG="${HEAD_SHA}"
           fi
           {
             echo "action=${ACTION}"
@@ -211,7 +250,7 @@ jobs:
             echo "image_tag=${IMAGE_TAG}"
             echo "head_sha=${HEAD_SHA}"
             echo "base_sha=${BASE_SHA}"
-            echo "merge_sha=${MERGE_SHA:-$HEAD_SHA}"
+            echo "merge_sha=${MERGE_SHA}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Resolve preview target metadata
@@ -226,15 +265,11 @@ jobs:
           DERIVED_PR_NUMBER: ${{ steps.derive.outputs.pr_number }}
         run: |
           set -euo pipefail
-          if [ "$EVENT_NAME" = "pull_request" ]; then
+          if [[ "$EVENT_NAME" == pull_request_target ]]; then
             PR_AUTHOR="$PR_USER_LOGIN"
             BASE_REF="$PR_BASE_REF"
             LABELS_JSON="$(jq -c 'if type == "array" then [.[] | {name: .name}] else . end' <<<"$PR_LABELS_JSON")"
-            if [ "$EVENT_ACTION" = "closed" ]; then
-              PR_STATE="closed"
-            else
-              PR_STATE="open"
-            fi
+            PR_STATE=open
           else
             PULL_REQUEST_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${DERIVED_PR_NUMBER}")"
             PR_AUTHOR="$(jq -r '.user.login' <<<"$PULL_REQUEST_JSON")"
@@ -248,19 +283,6 @@ jobs:
             echo "state=${PR_STATE}"
             echo "labels_json=${LABELS_JSON}"
           } >> "$GITHUB_OUTPUT"
-
-      - name: Resolve deployment certificate identity mode
-        id: deploy-certificate-identity
-        if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
-        uses: ./.github/actions/resolve-certificate-identity-mode
-        with:
-          values-file: k8s/helm/firemud/values-hosted-shared.example.yaml
-
-      - name: Reject hosted manual deploy without trusted handoff
-        if: ${{ github.event_name == 'workflow_dispatch' && steps.derive.outputs.action == 'deploy' && steps.deploy-certificate-identity.outputs.mode == 'hosted-controller' }}
-        run: |
-          echo "::error title=Hosted manual deploy requires trusted handoff::Use the pull_request lifecycle for hosted-controller deployment; workflow_dispatch cannot activate a hosted identity." >&2
-          exit 1
 
       - name: Resolve preview eligibility
         id: eligibility
@@ -286,33 +308,24 @@ jobs:
               printf '%s\n' \
                 'Preview orchestration is skipped for dependency bot PRs.' \
                 '' \
-                'Dependabot and Renovate updates do not get preview namespace' \
-                'preparation, hosted preview reconciliation, or hosted preview' \
-                'validation work.'
+                'Dependabot and Renovate updates do not get preview render or' \
+                'trusted hosted preview lifecycle work.'
               ;;
             unsupported-base-branch)
               printf '%s\n' \
                 'Preview orchestration is skipped for stacked PRs whose base branch' \
-                'is not main or develop.' \
-                '' \
-                'The runtime image and smoke workflows only publish PR image tags' \
-                'for PRs targeting main or develop, so hosted preview deploys' \
-                'cannot succeed for other PR base branches.'
+                'is not main or develop.'
               ;;
             pr-not-open)
               printf '%s\n' \
-                'Preview orchestration is skipped because the PR is not open.' \
-                '' \
-                'Deploy and retain operations only run for open preview-eligible PRs.'
+                'Preview orchestration is skipped because the PR is not open.'
               ;;
             *)
-              echo "Preview orchestration is skipped for this target."
+              echo 'Preview orchestration is skipped for this target.'
               ;;
           esac
 
       - name: Show derived target
-        env:
-          PREVIEW_MAX_ACTIVE: ${{ vars.PREVIEW_MAX_ACTIVE }}
         run: |
           cat <<EOF
           event_name=${{ github.event_name }}
@@ -323,52 +336,14 @@ jobs:
           hostname=${{ steps.derive.outputs.hostname }}
           image_tag=${{ steps.derive.outputs.image_tag }}
           head_sha=${{ steps.derive.outputs.head_sha }}
-          preview_max_active=${PREVIEW_MAX_ACTIVE:-1}
+          base_sha=${{ steps.derive.outputs.base_sha }}
+          merge_sha=${{ steps.derive.outputs.merge_sha }}
           EOF
 
-  preview-mode-evidence:
-    name: Publish Immutable Preview Mode Evidence
+  preview-render:
+    name: Render Sanitized Preview Artifact
     needs: preview-plan
-    if: ${{ github.event_name == 'pull_request' && needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'deploy' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
-        with:
-          egress-policy: audit
-
-      - name: Write immutable certificate identity mode evidence
-        env:
-          PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
-          HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
-          CERTIFICATE_IDENTITY_MODE: ${{ needs.preview-plan.outputs.certificate_identity_mode }}
-        run: |
-          set -euo pipefail
-          umask 077
-          jq -n \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --arg sourceWorkflow '.github/workflows/preview.yml' \
-            --argjson sourceRunId "$GITHUB_RUN_ID" \
-            --argjson prNumber "$PR_NUMBER" \
-            --arg headSha "$HEAD_SHA" \
-            --arg certificateIdentityMode "$CERTIFICATE_IDENTITY_MODE" \
-            '{schemaVersion:1,event:"pull_request",repository:$repository,sourceWorkflow:$sourceWorkflow,sourceRunId:$sourceRunId,prNumber:$prNumber,headSha:$headSha,certificateIdentityMode:$certificateIdentityMode}' \
-            > "$RUNNER_TEMP/preview-mode.json"
-
-      - name: Upload immutable preview mode evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: preview-mode-pr-${{ needs.preview-plan.outputs.pr_number }}-${{ needs.preview-plan.outputs.head_sha }}
-          path: ${{ runner.temp }}/preview-mode.json
-          if-no-files-found: error
-          retention-days: 7
-
-  preview-render-hosted:
-    name: Render Sanitized Hosted Preview Artifact
-    needs: preview-plan
-    if: ${{ needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'deploy' && needs.preview-plan.outputs.certificate_identity_mode == 'hosted-controller' }}
+    if: ${{ needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'deploy' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -381,7 +356,7 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: Check out PR merge for untrusted render
+      - name: Check out exact PR merge ref for untrusted render
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: refs/pull/${{ needs.preview-plan.outputs.pr_number }}/merge
@@ -396,8 +371,9 @@ jobs:
         with:
           requirements: yaml
 
-      - name: Render and sanitize hosted preview without cluster credentials
+      - name: Render and sanitize preview without credentials
         env:
+          EVENT_NAME: ${{ github.event_name }}
           PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
           NAMESPACE: ${{ needs.preview-plan.outputs.namespace }}
           RELEASE_NAME: ${{ needs.preview-plan.outputs.release_name }}
@@ -405,6 +381,7 @@ jobs:
           IMAGE_TAG: ${{ needs.preview-plan.outputs.image_tag }}
           BASE_SHA: ${{ needs.preview-plan.outputs.base_sha }}
           HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
+          PLANNED_MERGE_SHA: ${{ needs.preview-plan.outputs.merge_sha }}
         run: |
           set -euo pipefail
           umask 077
@@ -416,15 +393,15 @@ jobs:
             echo "::error title=Invalid preview merge ref::Unable to read the checked-out merge commit parents." >&2
             exit 1
           fi
-          read -r checked_out_merge_sha checked_out_base_sha checked_out_head_sha extra_parent <<<"$merge_parents"
-          if [[ "$checked_out_merge_sha" != "$MERGE_SHA" || -z "$checked_out_base_sha" ||
-            -z "$checked_out_head_sha" || -n "$extra_parent" ||
-            "${checked_out_head_sha,,}" != "${HEAD_SHA,,}" ]]; then
-            echo "::error title=Stale preview merge ref::The checked-out merge ref is not a two-parent merge of the planned head SHA." >&2
+          expected_merge_parents="$MERGE_SHA $BASE_SHA $HEAD_SHA"
+          if [[ "$MERGE_SHA" != "$PLANNED_MERGE_SHA" || "$merge_parents" != "$expected_merge_parents" ]]; then
+            echo "::error title=Stale preview merge ref::The checked-out merge ref is not the planned two-parent merge of the planned base and head SHAs." >&2
             exit 1
           fi
+
           values="$RUNNER_TEMP/preview-values.yaml"
           rendered="$RUNNER_TEMP/preview-rendered.yaml"
+          filtered="$RUNNER_TEMP/preview-rendered-artifact-input.yaml"
           sanitized="$RUNNER_TEMP/preview-rendered-sanitized.yaml"
           metadata="$RUNNER_TEMP/preview-metadata.json"
           python3 ./dev-tools/hosted/preview/render-preview-values.py \
@@ -432,14 +409,9 @@ jobs:
             "$values" "$PR_NUMBER" "$NAMESPACE" "$RELEASE_NAME" "$HOSTNAME" "$IMAGE_TAG" 32000
           helm template "$RELEASE_NAME" k8s/helm/firemud \
             -f "$values" --namespace "$NAMESPACE" > "$rendered"
-          # These are the only chart-owned objects intentionally omitted from
-          # the credential-free artifact: the trusted workflow provisions the
-          # runtime Secrets and jwt-jwks, and the cluster owns the ServiceAccount.
-          # The trusted credential provisioner creates jwt-jwks from its trusted
-          # signing Secret, so accepting the PR-rendered diagnostic ConfigMap
-          # would overwrite that content. Reject
-          # every other forbidden object instead of silently dropping it.
-          filtered="$RUNNER_TEMP/preview-rendered-artifact-input.yaml"
+
+          # Only these chart-owned objects are intentionally absent from the
+          # credential-free artifact. Every other forbidden object is rejected.
           python3 - "$rendered" "$filtered" <<'PY'
           import sys
           from pathlib import Path
@@ -479,10 +451,12 @@ jobs:
               encoding="utf-8",
           )
           PY
+
           python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
             sanitize "$filtered" "$sanitized"
           manifest_sha256="$(sha256sum "$sanitized" | awk '{print $1}')"
           jq -n \
+            --arg event "$EVENT_NAME" \
             --arg repository "$GITHUB_REPOSITORY" \
             --arg sourceWorkflow '.github/workflows/preview.yml' \
             --argjson sourceRunId "$GITHUB_RUN_ID" \
@@ -490,15 +464,17 @@ jobs:
             --arg baseSha "$BASE_SHA" \
             --arg headSha "$HEAD_SHA" \
             --arg mergeSha "$MERGE_SHA" \
-            --arg hostname "$HOSTNAME" \
             --arg imageTag "$IMAGE_TAG" \
+            --arg hostname "$HOSTNAME" \
             --arg manifestSha256 "$manifest_sha256" \
-            '{schemaVersion:1,event:"pull_request",repository:$repository,sourceWorkflow:$sourceWorkflow,sourceRunId:$sourceRunId,prNumber:$prNumber,baseSha:$baseSha,headSha:$headSha,mergeSha:$mergeSha,hostname:$hostname,imageTag:$imageTag,manifestSha256:$manifestSha256}' \
+            --arg action deploy \
+            '{schemaVersion:1,event:$event,repository:$repository,sourceWorkflow:$sourceWorkflow,sourceRunId:$sourceRunId,prNumber:$prNumber,baseSha:$baseSha,headSha:$headSha,mergeSha:$mergeSha,imageTag:$imageTag,hostname:$hostname,manifestSha256:$manifestSha256} + (if $event == "repository_dispatch" then {action:$action} else {} end)' \
             > "$metadata"
           {
             echo '### Sanitized PR preview artifact'
             echo
             echo "- PR: #${PR_NUMBER}"
+            echo "- Source event: ${EVENT_NAME}"
             echo "- Head SHA: \`${HEAD_SHA}\`"
             echo '- Artifact contains no cluster, runtime, identity, or repository write credential.'
           } >> "$GITHUB_STEP_SUMMARY"
@@ -513,665 +489,41 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  preview-deploy:
-    name: Deploy Preview Release
-    timeout-minutes: 120
-    runs-on:
-      - self-hosted
-      - preview
-      - linux
-      - x64
+  preview-destroy-intent:
+    name: Publish Preview Destroy Intent
     needs: preview-plan
-    if: ${{ needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'deploy' && needs.preview-plan.outputs.certificate_identity_mode == 'standalone' }}
-    environment: pr-preview
-    concurrency:
-      group: preview-allocation-lifecycle
-      cancel-in-progress: false
-      queue: max
+    if: ${{ github.event_name == 'repository_dispatch' && needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'destroy' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
         with:
-          persist-credentials: false
+          egress-policy: audit
 
-      - name: Set up canonical Python
-        uses: ./.github/actions/setup-python
-        with:
-          requirements: yaml
-
-      - name: Resolve certificate identity mode
-        id: certificate-identity
-        uses: ./.github/actions/resolve-certificate-identity-mode
-        with:
-          values-file: k8s/helm/firemud/values-hosted-shared.example.yaml
-
-      - name: Publish preview lifecycle state
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+      - name: Write destroy intent
         env:
-          PREVIEW_PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
-          PREVIEW_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
-          PREVIEW_IMAGE_TAG: ${{ needs.preview-plan.outputs.image_tag }}
-          PREVIEW_HOSTNAME: ${{ needs.preview-plan.outputs.hostname }}
-        with:
-          script: |
-            const { publishPreviewComment } = require(
-              `${process.env.GITHUB_WORKSPACE}/dev-tools/hosted/preview/publish-preview-comment.js`
-            );
-
-            await publishPreviewComment({
-              github,
-              context,
-              core,
-              mode: "deploying",
-              markerPolicy: "preserve-reclaimed",
-              statePolicy: "expected-open",
-              telnetPort: "unavailable",
-              staleDescription: "preview lifecycle state",
-            });
-
-      - name: Set up kubectl
-        uses: ./.github/actions/setup-kubectl
-
-      - name: Set up Helm
-        uses: ./.github/actions/setup-helm
-
-      - name: Set up GitHub CLI
-        uses: ./.github/actions/setup-gh
-
-      - name: Write preview kubeconfig
-        env:
-          PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
-          PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
-        run: |
-          KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"
-          bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
-          echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
-
-      - name: Verify preview cluster access
-        id: preview-access
-        run: |
-          set +e
-          kubectl get namespace kube-system >/dev/null
-          namespace_status=$?
-          kubectl auth can-i get clusterissuers.cert-manager.io --all-namespaces >/dev/null
-          cluster_issuer_status=$?
-          kubectl auth can-i list namespaces --all-namespaces >/dev/null
-          namespace_list_status=$?
-          set -e
-
-          if [ "$namespace_status" -eq 0 ] && [ "$cluster_issuer_status" -eq 0 ] && [ "$namespace_list_status" -eq 0 ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "::warning::Preview cluster access unavailable; skipping hosted preview deploy for this run."
-          echo "available=false" >> "$GITHUB_OUTPUT"
-          echo "PREVIEW_STAGE=cluster-access" >> "$GITHUB_ENV"
-
-      - name: Prune stale preview namespaces
-        if: ${{ steps.preview-access.outputs.available == 'true' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh --apply
-
-      - name: Enforce preview capacity
-        if: ${{ steps.preview-access.outputs.available == 'true' }}
-        id: preview-capacity
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PREVIEW_MAX_ACTIVE: ${{ vars.PREVIEW_MAX_ACTIVE }}
-        run: |
-          echo "PREVIEW_STAGE=capacity" >> "$GITHUB_ENV"
-          bash ./dev-tools/hosted/preview/allocate-preview-capacity.sh \
-            "${{ needs.preview-plan.outputs.namespace }}" \
-            "${PREVIEW_MAX_ACTIVE:-1}" \
-            "${{ needs.preview-plan.outputs.pr_number }}" \
-            "${{ needs.preview-plan.outputs.head_sha }}"
-
-      - name: Reset preview namespace for clean deploy
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
-        run: |
-          bash ./dev-tools/hosted/shared/delete-hosted-namespace.sh \
-            "${{ needs.preview-plan.outputs.namespace }}" \
-            "${{ needs.preview-plan.outputs.release_name }}"
-
-      - name: Ensure preview namespace exists
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
-        run: |
-          bash ./dev-tools/hosted/preview/ensure-preview-namespace.sh \
-            "${{ needs.preview-plan.outputs.namespace }}" \
-            "${{ needs.preview-plan.outputs.pr_number }}"
-
-      - name: Allocate preview telnet port
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
-        id: telnet-port
-        run: |
-          TELNET_PORT="$(bash ./dev-tools/hosted/preview/allocate-preview-telnet-port.sh \
-            "${{ needs.preview-plan.outputs.namespace }}" \
-            "${{ needs.preview-plan.outputs.pr_number }}")"
-          echo "telnet_port=${TELNET_PORT}" >> "$GITHUB_OUTPUT"
-
-      - name: Ensure GHCR pull secret exists
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
-        env:
-          PREVIEW_GHCR_USERNAME: ${{ secrets.PREVIEW_GHCR_USERNAME }}
-          PREVIEW_GHCR_TOKEN: ${{ secrets.PREVIEW_GHCR_TOKEN }}
-        run: |
-          bash ./dev-tools/hosted/shared/ensure-ghcr-pull-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
-
-      - name: Resolve exact preview image tag
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
-        id: effective-image-tag
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          EFFECTIVE_IMAGE_TAG="$(bash ./dev-tools/hosted/preview/resolve-preview-image-tag.sh \
-            "${{ needs.preview-plan.outputs.image_tag }}" \
-            "${{ needs.preview-plan.outputs.pr_number }}" \
-            "${{ needs.preview-plan.outputs.base_sha }}")"
-          echo "image_tag=${EFFECTIVE_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
-
-      - name: Cancel if preview target was superseded before image wait
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if ! bash ./dev-tools/hosted/preview/check-preview-head-current.sh \
-            "${{ needs.preview-plan.outputs.pr_number }}" \
-            "${{ needs.preview-plan.outputs.head_sha }}"; then
-            status=$?
-            if [ "$status" -eq 10 ]; then
-              echo "Cancelling stale preview run before image wait."
-              gh run cancel "${GITHUB_RUN_ID}"
-              sleep 5
-              exit 0
-            fi
-            exit "$status"
-          fi
-
-      - name: Wait for preview runtime images
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          echo "PREVIEW_STAGE=wait-for-images" >> "$GITHUB_ENV"
-          bash ./dev-tools/hosted/shared/wait-for-runtime-images.sh "${{ steps.effective-image-tag.outputs.image_tag }}"
-
-      - name: Record reconciled preview target
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
-        env:
-          RUNTIME_NAMESPACE: ${{ needs.preview-plan.outputs.namespace }}
           PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
           HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
-          IMAGE_TAG: ${{ steps.effective-image-tag.outputs.image_tag }}
-          TELNET_PORT: ${{ steps.telnet-port.outputs.telnet_port }}
-          ALLOCATION_TIMESTAMP: ${{ steps.preview-capacity.outputs.allocation_timestamp }}
         run: |
           set -euo pipefail
-          [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,50}$ ]] || {
-            echo "::error title=Invalid preview PR number::Expected a canonical positive decimal integer." >&2
-            exit 1
-          }
-          [[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]] || {
-            echo "::error title=Invalid preview runtime namespace::Expected namespace pr-${PR_NUMBER}." >&2
-            exit 1
-          }
-          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || {
-            echo "::error title=Invalid preview head SHA::Expected exactly 40 lowercase hexadecimal characters." >&2
-            exit 1
-          }
-          [[ "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || {
-            echo "::error title=Invalid preview image tag::Expected a non-empty canonical image tag of at most 128 safe characters." >&2
-            exit 1
-          }
-          [[ "$TELNET_PORT" =~ ^32(00[0-9]|01[0-5])$ ]] || {
-            echo "::error title=Invalid preview Telnet port::Expected a port from 32000 through 32015." >&2
-            exit 1
-          }
-          if [[ ! "$ALLOCATION_TIMESTAMP" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] \
-            || [[ "$(date -u -d "$ALLOCATION_TIMESTAMP" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)" != "$ALLOCATION_TIMESTAMP" ]]; then
-            echo "::error title=Invalid preview allocation timestamp::Expected a valid UTC timestamp in YYYY-MM-DDTHH:MM:SSZ format." >&2
-            exit 1
-          fi
-          bash ./dev-tools/hosted/preview/annotate-preview-namespace.sh \
-            "$RUNTIME_NAMESPACE" "$PR_NUMBER" "$HEAD_SHA" "$IMAGE_TAG" \
-            "$TELNET_PORT" "$ALLOCATION_TIMESTAMP"
+          umask 077
+          jq -n \
+            --arg event repository_dispatch \
+            --arg action destroy \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg sourceWorkflow '.github/workflows/preview.yml' \
+            --argjson sourceRunId "$GITHUB_RUN_ID" \
+            --argjson prNumber "$PR_NUMBER" \
+            --arg headSha "$HEAD_SHA" \
+            '{schemaVersion:1,event:$event,action:$action,repository:$repository,sourceWorkflow:$sourceWorkflow,sourceRunId:$sourceRunId,prNumber:$prNumber,headSha:$headSha}' \
+            > "$RUNNER_TEMP/preview-intent.json"
 
-      - name: Write hosted identity requester kubeconfig
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
-        uses: ./.github/actions/write-kubeconfig
-        with:
-          content: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
-          path: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
-          export-to-github-env: 'false'
-
-      - name: Apply canonical Active request
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
-        env:
-          KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
-        run: bash ./dev-tools/hosted/shared/request-hosted-identity.sh "pr-${{ needs.preview-plan.outputs.pr_number }}" Active
-
-      - name: Remove hosted identity requester kubeconfig
-        if: ${{ always() }}
-        run: rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"
-
-      - name: Wait for all controller identity projections
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
-        run: |
-          echo "PREVIEW_STAGE=identity-projections" >> "$GITHUB_ENV"
-          bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
-            --projections "pr-${{ needs.preview-plan.outputs.pr_number }}" "${{ needs.preview-plan.outputs.namespace }}" 900
-
-      - name: Ensure preview gRPC TLS secret exists
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.certificate-identity.outputs.mode == 'standalone' }}
-        run: |
-          bash ./dev-tools/hosted/shared/ensure-grpc-tls-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
-
-      - name: Show namespace state
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
-        env:
-          CERTIFICATE_IDENTITY_MODE: ${{ steps.certificate-identity.outputs.mode }}
-        run: |
-          kubectl get namespace "${{ needs.preview-plan.outputs.namespace }}"
-          kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get secret ghcr-preview-pull
-          if [[ "$CERTIFICATE_IDENTITY_MODE" == "standalone" ]]; then
-            kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get secret firemud-grpc-tls
-          fi
-
-      - name: Render preview values
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
-        run: |
-          python3 ./dev-tools/hosted/preview/render-preview-values.py \
-            k8s/helm/firemud/values-hosted-shared.example.yaml \
-            /tmp/preview-values.yaml \
-            "${{ needs.preview-plan.outputs.pr_number }}" \
-            "${{ needs.preview-plan.outputs.namespace }}" \
-            "${{ needs.preview-plan.outputs.release_name }}" \
-            "${{ needs.preview-plan.outputs.hostname }}" \
-            "${{ steps.effective-image-tag.outputs.image_tag }}" \
-            "${{ steps.telnet-port.outputs.telnet_port }}"
-
-      - name: Validate preview chart render
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
-        run: |
-          helm template "${{ needs.preview-plan.outputs.release_name }}" k8s/helm/firemud \
-            -f /tmp/preview-values.yaml \
-            --namespace "${{ needs.preview-plan.outputs.namespace }}" \
-            >/tmp/preview-rendered.yaml
-          kubectl apply --dry-run=server -n "${{ needs.preview-plan.outputs.namespace }}" -f /tmp/preview-rendered.yaml
-          wc -l /tmp/preview-rendered.yaml
-
-      - name: Upload rendered preview artifacts
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
+      - name: Upload destroy intent
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: preview-render-${{ needs.preview-plan.outputs.release_name }}
-          path: |
-            /tmp/preview-values.yaml
-            /tmp/preview-rendered.yaml
-
-      - name: Summarize preview target
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
-        run: |
-          bash ./dev-tools/hosted/preview/write-preview-summary.sh \
-            target \
-            "${{ needs.preview-plan.outputs.pr_number }}" \
-            "${{ needs.preview-plan.outputs.head_sha }}" \
-            "${{ steps.effective-image-tag.outputs.image_tag }}" \
-            "${{ needs.preview-plan.outputs.hostname }}" \
-            "${{ steps.telnet-port.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Cancel if preview target was superseded before deploy
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if ! bash ./dev-tools/hosted/preview/check-preview-head-current.sh \
-            "${{ needs.preview-plan.outputs.pr_number }}" \
-            "${{ needs.preview-plan.outputs.head_sha }}"; then
-            status=$?
-            if [ "$status" -eq 10 ]; then
-              echo "Cancelling stale preview run before deploy."
-              gh run cancel "${GITHUB_RUN_ID}"
-              sleep 5
-              exit 0
-            fi
-            exit "$status"
-          fi
-
-      - name: Deploy preview release
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
-        id: deploy-release
-        continue-on-error: true
-        run: |
-          echo "PREVIEW_STAGE=deploy" >> "$GITHUB_ENV"
-          helm upgrade --install "${{ needs.preview-plan.outputs.release_name }}" k8s/helm/firemud \
-            -f /tmp/preview-values.yaml \
-            --namespace "${{ needs.preview-plan.outputs.namespace }}" \
-            --wait \
-            --timeout 15m
-
-      - name: Record exact deployed preview head
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.deploy-release.outcome == 'success' }}
-        env:
-          RUNTIME_NAMESPACE: ${{ needs.preview-plan.outputs.namespace }}
-          HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
-          PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
-        run: |
-          set -euo pipefail
-          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]{0,50}$ ]]; then
-            echo "::error title=Invalid preview PR number::Expected a canonical positive decimal integer." >&2
-            exit 1
-          fi
-          if [[ "$RUNTIME_NAMESPACE" != "pr-${PR_NUMBER}" ]]; then
-            echo "::error title=Invalid preview runtime namespace::Expected namespace pr-${PR_NUMBER}." >&2
-            exit 1
-          fi
-          if [[ ! "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
-            echo "::error title=Invalid preview head SHA::Expected exactly 40 hexadecimal characters." >&2
-            exit 1
-          fi
-          head_sha="${HEAD_SHA,,}"
-          kubectl annotate namespace "$RUNTIME_NAMESPACE" \
-            "firemud.dev/last-preview-head-sha=${head_sha}" \
-            --overwrite >/dev/null
-
-      - name: Show deployed preview services
-        if: ${{ always() && steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
-        run: |
-          kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get pods,svc,ingress
-
-      - name: Fail if preview rollout did not complete
-        if: ${{ always() && steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.deploy-release.outcome == 'failure' }}
-        run: |
-          echo "Preview rollout failed during helm upgrade/install."
-          exit 1
-
-      - name: Wait for seeded preview login prerequisites
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.deploy-release.outcome == 'success' }}
-        env:
-          PREVIEW_NAMESPACE: ${{ needs.preview-plan.outputs.namespace }}
-        run: |
-          echo "PREVIEW_STAGE=bootstrap" >> "$GITHUB_ENV"
-          for deployment in \
-            account-service \
-            entity-management-service \
-            game-design-service \
-            game-logic-service \
-            world-management-service \
-            game-session-service \
-            spring-cloud-gateway
-          do
-            echo "Waiting for deployment/${deployment} in ${PREVIEW_NAMESPACE}"
-            kubectl -n "${PREVIEW_NAMESPACE}" rollout status "deployment/${deployment}" --timeout=120s
-          done
-
-      - name: Export demo smoke defaults
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.deploy-release.outcome == 'success' }}
-        run: |
-          source ./dev-tools/smoke/demo-smoke-defaults.sh
-          {
-            echo "DEMO_SMOKE_EMAIL=${DEMO_SMOKE_EMAIL}"
-            echo "DEMO_SMOKE_PASSWORD=${DEMO_SMOKE_PASSWORD}"
-            echo "DEMO_SMOKE_USERNAME=${DEMO_SMOKE_USERNAME}"
-            echo "DEMO_SMOKE_WORLD=${DEMO_SMOKE_WORLD}"
-          } >> "$GITHUB_ENV"
-
-      - name: Smoke hosted preview over TCP
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.deploy-release.outcome == 'success' }}
-        env:
-          PREVIEW_BASE_URL: https://${{ needs.preview-plan.outputs.hostname }}
-          SMOKE_TELNET_HOST: ${{ needs.preview-plan.outputs.hostname }}
-          TCP_PORT: ${{ steps.telnet-port.outputs.telnet_port }}
-        run: |
-          echo "PREVIEW_STAGE=smoke" >> "$GITHUB_ENV"
-          set -o pipefail
-          SMOKE_TRANSCRIPT=/tmp/preview-hosted-tcp-smoke.log
-          if ! bash ./dev-tools/hosted/shared/hosted-login-look-smoke.sh 2>&1 | tee "${SMOKE_TRANSCRIPT}"; then
-            echo "=== Hosted preview TCP smoke transcript ==="
-            cat "${SMOKE_TRANSCRIPT}"
-            exit 1
-          fi
-
-      - name: Summarize preview access
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.deploy-release.outcome == 'success' }}
-        run: |
-          bash ./dev-tools/hosted/preview/write-preview-summary.sh \
-            success \
-            "${{ needs.preview-plan.outputs.pr_number }}" \
-            "${{ needs.preview-plan.outputs.head_sha }}" \
-            "${{ steps.effective-image-tag.outputs.image_tag }}" \
-            "${{ needs.preview-plan.outputs.hostname }}" \
-            "${{ steps.telnet-port.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"
-          {
-            echo ""
-            echo "- Demo login username: ${DEMO_SMOKE_USERNAME}"
-            echo "- Demo login email: ${DEMO_SMOKE_EMAIL}"
-            echo "- Demo login password: ${DEMO_SMOKE_PASSWORD}"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Summarize preview unavailability
-        if: ${{ steps.preview-access.outputs.available != 'true' || steps.preview-capacity.outcome == 'failure' }}
-        run: |
-          bash ./dev-tools/hosted/preview/write-preview-summary.sh \
-            unavailable \
-            "${{ needs.preview-plan.outputs.pr_number }}" \
-            "${{ needs.preview-plan.outputs.head_sha }}" \
-            "${{ steps.effective-image-tag.outputs.image_tag || needs.preview-plan.outputs.image_tag }}" \
-            "${{ needs.preview-plan.outputs.hostname }}" \
-            "unavailable" \
-            "${{ steps.preview-access.outputs.available != 'true' && 'cluster-access' || 'capacity' }}" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Publish preview summary comment
-        if: ${{ always() && !cancelled() }}
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
-        env:
-          PREVIEW_PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
-          PREVIEW_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
-          PREVIEW_IMAGE_TAG: ${{ steps.effective-image-tag.outputs.image_tag || needs.preview-plan.outputs.image_tag }}
-          PREVIEW_HOSTNAME: ${{ needs.preview-plan.outputs.hostname }}
-          PREVIEW_TELNET_PORT: ${{ steps.telnet-port.outputs.telnet_port || 'unavailable' }}
-          PREVIEW_JOB_STATUS: ${{ job.status }}
-          PREVIEW_FAILURE_STAGE: ${{ env.PREVIEW_STAGE }}
-          PREVIEW_CLUSTER_AVAILABLE: ${{ steps.preview-access.outputs.available }}
-          PREVIEW_CAPACITY_OUTCOME: ${{ steps.preview-capacity.outcome || 'skipped' }}
-          DEMO_SMOKE_USERNAME: ${{ env.DEMO_SMOKE_USERNAME }}
-          DEMO_SMOKE_EMAIL: ${{ env.DEMO_SMOKE_EMAIL }}
-          DEMO_SMOKE_PASSWORD: ${{ env.DEMO_SMOKE_PASSWORD }}
-        with:
-          script: |
-            const { publishPreviewComment } = require(
-              `${process.env.GITHUB_WORKSPACE}/dev-tools/hosted/preview/publish-preview-comment.js`
-            );
-
-            const clusterAvailable = process.env.PREVIEW_CLUSTER_AVAILABLE === "true";
-            const capacityAvailable = process.env.PREVIEW_CAPACITY_OUTCOME !== "failure";
-            const mode = !clusterAvailable || !capacityAvailable
-              ? "unavailable"
-              : process.env.PREVIEW_JOB_STATUS === "success"
-                ? "success"
-                : "failure";
-            const failureStage =
-              process.env.PREVIEW_FAILURE_STAGE && process.env.PREVIEW_FAILURE_STAGE.trim().length > 0
-                ? process.env.PREVIEW_FAILURE_STAGE.trim()
-                : "unknown";
-
-            await publishPreviewComment({
-              github,
-              context,
-              core,
-              mode,
-              markerPolicy: mode === "unavailable" && failureStage === "capacity"
-                ? "preserve-reclaimed"
-                : "replace",
-              statePolicy: "expected-open",
-              includeDemoCredentials: mode === "success",
-              failureStage,
-              staleDescription: "preview result",
-            });
-
-      - name: Show preview failure diagnostics
-        if: ${{ always() && !cancelled() && failure() && steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
-        env:
-          PREVIEW_NAMESPACE: ${{ needs.preview-plan.outputs.namespace }}
-        run: |
-          bash ./dev-tools/hosted/preview/show-preview-rollout-diagnostics.sh \
-            "$PREVIEW_NAMESPACE" \
-            "${PREVIEW_STAGE:-unknown}"
-
-      - name: Summarize preview failure
-        if: ${{ always() && !cancelled() && failure() && steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
-        run: |
-          bash ./dev-tools/hosted/preview/write-preview-summary.sh \
-            failure \
-            "${{ needs.preview-plan.outputs.pr_number }}" \
-            "${{ needs.preview-plan.outputs.head_sha }}" \
-            "${{ steps.effective-image-tag.outputs.image_tag }}" \
-            "${{ needs.preview-plan.outputs.hostname }}" \
-            "${{ steps.telnet-port.outputs.telnet_port }}" \
-            "${PREVIEW_STAGE:-unknown}" >> "$GITHUB_STEP_SUMMARY"
-
-  preview-destroy:
-    name: Destroy Preview Release
-    timeout-minutes: 60
-    runs-on:
-      - self-hosted
-      - preview
-      - linux
-      - x64
-    needs: preview-plan
-    # Preserve standalone cleanup here. The trusted pull_request_target lifecycle independently
-    # removes the runtime and retires any retained identity, regardless of the current mode.
-    if: ${{ needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'destroy' && (github.event_name != 'pull_request' || github.event.action != 'closed' || needs.preview-plan.outputs.close_certificate_identity_mode == 'standalone') }}
-    environment: pr-preview
-    concurrency:
-      group: preview-allocation-lifecycle
-      cancel-in-progress: false
-      queue: max
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-
-      - name: Set up canonical Python dependencies
-        uses: ./.github/actions/setup-python
-        with:
-          requirements: yaml
-
-      - name: Publish preview lifecycle state
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
-        env:
-          PREVIEW_PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
-          PREVIEW_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
-          PREVIEW_IMAGE_TAG: ${{ needs.preview-plan.outputs.image_tag }}
-          PREVIEW_HOSTNAME: ${{ needs.preview-plan.outputs.hostname }}
-        with:
-          script: |
-            const { publishPreviewComment } = require(
-              `${process.env.GITHUB_WORKSPACE}/dev-tools/hosted/preview/publish-preview-comment.js`
-            );
-
-            const statePolicy =
-              context.eventName === "pull_request" && context.payload.action === "closed"
-                ? "expected-closed"
-                : "manual-any";
-            await publishPreviewComment({
-              github,
-              context,
-              core,
-              mode: "cleanup",
-              markerPolicy: "replace",
-              statePolicy,
-              telnetPort: "unavailable",
-              staleDescription: "preview lifecycle state",
-            });
-
-      - name: Set up kubectl
-        uses: ./.github/actions/setup-kubectl
-
-      - name: Set up Helm
-        uses: ./.github/actions/setup-helm
-
-      - name: Write preview kubeconfig
-        env:
-          PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
-          PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
-        run: |
-          KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"
-          bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
-          echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
-
-      - name: Revalidate preview cleanup target before deletion
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
-        env:
-          PREVIEW_PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
-          EXPECTED_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
-        with:
-          script: |
-            const prNumber = Number(process.env.PREVIEW_PR_NUMBER);
-            const expectedHeadSha = process.env.EXPECTED_HEAD_SHA || "";
-            const { data: currentPullRequest } = await github.rest.pulls.get({
-              ...context.repo,
-              pull_number: prNumber,
-            });
-            const requiresClosedState =
-              context.eventName === "pull_request" && context.payload.action === "closed";
-
-            if (
-              (requiresClosedState && currentPullRequest.state !== "closed") ||
-              currentPullRequest.head?.sha !== expectedHeadSha
-            ) {
-              core.setFailed(
-                `Aborting stale preview cleanup for PR #${prNumber}: ` +
-                `expected ${requiresClosedState ? "closed" : "any"}/${expectedHeadSha}, current ` +
-                `${currentPullRequest.state}/${currentPullRequest.head?.sha}`
-              );
-              return;
-            }
-
-            core.info(
-              `Preview cleanup target is still ${requiresClosedState ? "closed" : "current"} ` +
-              `at ${expectedHeadSha} for PR #${prNumber}.`
-            );
-
-      - name: Delete preview namespace and release
-        id: delete-preview
-        run: |
-          bash ./dev-tools/hosted/shared/delete-hosted-namespace.sh \
-            "${{ needs.preview-plan.outputs.namespace }}" \
-            "${{ needs.preview-plan.outputs.release_name }}"
-
-      - name: Publish preview cleanup result
-        if: ${{ always() && !cancelled() }}
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
-        env:
-          PREVIEW_PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
-          PREVIEW_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
-          PREVIEW_IMAGE_TAG: ${{ needs.preview-plan.outputs.image_tag }}
-          PREVIEW_HOSTNAME: ${{ needs.preview-plan.outputs.hostname }}
-          PREVIEW_CLEANUP_OUTCOME: ${{ steps.delete-preview.outcome }}
-        with:
-          script: |
-            const { publishPreviewComment } = require(
-              `${process.env.GITHUB_WORKSPACE}/dev-tools/hosted/preview/publish-preview-comment.js`
-            );
-
-            const mode = process.env.PREVIEW_CLEANUP_OUTCOME === "success"
-              ? "removed"
-              : "failure";
-            const statePolicy =
-              context.eventName === "pull_request" && context.payload.action === "closed"
-                ? "expected-closed"
-                : "manual-any";
-            await publishPreviewComment({
-              github,
-              context,
-              core,
-              mode,
-              markerPolicy: "replace",
-              statePolicy,
-              telnetPort: "unavailable",
-              failureStage: "cleanup",
-              staleDescription: "preview cleanup result",
-            });
+          name: preview-intent-pr-${{ needs.preview-plan.outputs.pr_number }}-${{ needs.preview-plan.outputs.head_sha }}
+          path: ${{ runner.temp }}/preview-intent.json
+          if-no-files-found: error
+          retention-days: 7

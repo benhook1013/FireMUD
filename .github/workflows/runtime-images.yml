@@ -12,6 +12,7 @@ on:
       - 'gradle/**'
       - 'protos/**'
       - 'docker/**'
+      - '.dockerignore'
       - '.github/workflows/runtime-images.yml'
       - '.github/workflows/publish-pr-runtime-images.yml'
       - '.github/workflows/smoke.yml'
@@ -35,12 +36,18 @@ on:
       - 'services/tcp-proxy-service/**'
       - 'services/world-management-service/**'
       - 'services/hosted-environment-identity-controller/**'
+      - '.github/actions/load-workflow-tool-versions/**'
       - '.github/actions/setup-python/**'
       - '.python-version'
+      - 'config/workflow-tool-versions.env'
       - 'config/python/smoke-requirements.txt'
       - 'config/python/smoke-requirements.in'
       - 'dev-tools/build-compose-service-jars.sh'
       - 'dev-tools/build-local-smoke-images.sh'
+      - 'dev-tools/backups/verify-backups.sh'
+      - 'dev-tools/backups/pg-dump-s3-selection.shlib'
+      - 'dev-tools/backups/smoke-backup-verifier-image.sh'
+      - 'docker/backup-verifier.Dockerfile'
       - 'dev-tools/certs/generate-dev-certs.sh'
       - 'dev-tools/hosted/controller/smoke-paused-controller-image.sh'
       - 'dev-tools/smoke/**'
@@ -138,24 +145,160 @@ jobs:
                     "protos/",
                     ".github/actions/setup-python/",
                   ];
+                  const workflowToolAuthorityPath = "config/workflow-tool-versions.env";
+                  const knownWorkflowToolKeys = new Set([
+                    "KUBECTL_VERSION",
+                    "KUBECTL_LINUX_AMD64_CHECKSUM_VERSION",
+                    "KUBECTL_LINUX_AMD64_SHA256",
+                    "HELM_VERSION",
+                    "HELM_LINUX_AMD64_CHECKSUM_VERSION",
+                    "HELM_LINUX_AMD64_SHA256",
+                    "GH_VERSION",
+                    "GH_LINUX_AMD64_CHECKSUM_VERSION",
+                    "GH_LINUX_AMD64_SHA256",
+                    "BUF_VERSION",
+                    "BUF_LINUX_X86_64_CHECKSUM_VERSION",
+                    "BUF_LINUX_X86_64_SHA256",
+                    "KUBECONFORM_VERSION",
+                    "KUBECONFORM_LINUX_AMD64_CHECKSUM_VERSION",
+                    "KUBECONFORM_LINUX_AMD64_SHA256",
+                    "VELERO_VERSION",
+                    "VELERO_IMAGE_DIGEST",
+                    "VELERO_LINUX_AMD64_CHECKSUM_VERSION",
+                    "VELERO_LINUX_AMD64_SHA256",
+                    "VELERO_CHART_VERSION",
+                    "ACTIONLINT_VERSION",
+                    "TRIVY_VERSION",
+                    "TRIVY_LINUX_AMD64_CHECKSUM_VERSION",
+                    "TRIVY_LINUX_AMD64_SHA256",
+                    "LYCHEE_VERSION",
+                    "LYCHEE_LINUX_X86_64_MUSL_CHECKSUM_VERSION",
+                    "LYCHEE_LINUX_X86_64_MUSL_SHA256",
+                    "ORT_VERSION",
+                    "ORT_DIGEST",
+                    "ZAP_VERSION",
+                    "ZAP_DIGEST",
+                  ]);
+                  const readAuthorityContent = async (owner, repo, ref) => {
+                    const response = await github.rest.repos.getContent({
+                      owner,
+                      repo,
+                      path: workflowToolAuthorityPath,
+                      ref,
+                    });
+                    const data = response.data;
+                    if (
+                      !data ||
+                      data.type !== "file" ||
+                      data.path !== workflowToolAuthorityPath ||
+                      data.encoding !== "base64" ||
+                      typeof data.content !== "string"
+                    ) {
+                      throw new Error("workflow tool authority response was not a complete file");
+                    }
+                    const encoded = data.content.replace(/\s/g, "");
+                    if (
+                      encoded.length === 0 ||
+                      encoded.length % 4 !== 0 ||
+                      !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)
+                    ) {
+                      throw new Error("workflow tool authority response had invalid base64 content");
+                    }
+                    const decoded = Buffer.from(encoded, "base64");
+                    if (decoded.toString("base64") !== encoded) {
+                      throw new Error("workflow tool authority response had non-canonical base64 content");
+                    }
+                    const content = decoded.toString("utf8");
+                    if (!Buffer.from(content, "utf8").equals(decoded)) {
+                      throw new Error("workflow tool authority response was not valid UTF-8");
+                    }
+                    return content;
+                  };
+                  const parseAuthority = (content, source) => {
+                    if (typeof content !== "string" || content.length === 0) {
+                      throw new Error(`${source} workflow tool authority was empty`);
+                    }
+                    const values = new Map();
+                    for (const [index, line] of content.split(/\r\n|\n|\r/).entries()) {
+                      const trimmedLine = line.trim();
+                      if (trimmedLine === "" || trimmedLine.startsWith("#")) {
+                        continue;
+                      }
+                      const match = line.match(/^([A-Z][A-Z0-9_]*)=(\S+)$/);
+                      if (!match || !knownWorkflowToolKeys.has(match[1])) {
+                        throw new Error(`${source} workflow tool authority has an unknown or malformed key on line ${index + 1}`);
+                      }
+                      if (values.has(match[1])) {
+                        throw new Error(`${source} workflow tool authority has a duplicate key: ${match[1]}`);
+                      }
+                      values.set(match[1], match[2]);
+                    }
+                    if (values.size !== knownWorkflowToolKeys.size) {
+                      throw new Error(`${source} workflow tool authority did not contain the complete known key set`);
+                    }
+                    return values;
+                  };
+                  const veleroAuthorityChanged = async () => {
+                    try {
+                      const pullRequest = context.payload.pull_request;
+                      const baseSha = pullRequest?.base?.sha;
+                      const headSha = pullRequest?.head?.sha;
+                      const headFullName = pullRequest?.head?.repo?.full_name;
+                      const baseFullName = context.payload.repository?.full_name;
+                      const repositoryName = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+                      if (
+                        typeof baseSha !== "string" ||
+                        !/^[0-9a-f]{40}$/i.test(baseSha) ||
+                        typeof headSha !== "string" ||
+                        !/^[0-9a-f]{40}$/i.test(headSha) ||
+                        typeof baseFullName !== "string" ||
+                        !repositoryName.test(baseFullName) ||
+                        typeof headFullName !== "string" ||
+                        !repositoryName.test(headFullName)
+                      ) {
+                        throw new Error("pull request base or head repository identity was incomplete");
+                      }
+                      const [baseOwner, baseRepo] = baseFullName.split("/");
+                      const [headOwner, headRepo] = headFullName.split("/");
+                      const [baseContent, headContent] = await Promise.all([
+                        readAuthorityContent(baseOwner, baseRepo, baseSha),
+                        readAuthorityContent(headOwner, headRepo, headSha),
+                      ]);
+                      const baseValues = parseAuthority(baseContent, "base");
+                      const headValues = parseAuthority(headContent, "head");
+                      return [...knownWorkflowToolKeys].some(
+                        (key) => key.startsWith("VELERO_") && baseValues.get(key) !== headValues.get(key)
+                      );
+                    } catch (error) {
+                      core.warning(
+                        `Workflow tool authority comparison was incomplete; running full-stack smoke: ${error.message}`
+                      );
+                      return true;
+                    }
+                  };
                   const runtimeFiles = new Set([
                     ".dockerignore",
                     ".github/workflows/publish-pr-runtime-images.yml",
                     ".github/workflows/runtime-images.yml",
                     ".github/workflows/smoke-full.yml",
                     ".github/workflows/smoke.yml",
+                    ".github/actions/load-workflow-tool-versions/action.yml",
                     ".python-version",
                     "build.gradle.kts",
                     "config/python/smoke-requirements.txt",
                     "config/python/smoke-requirements.in",
                     "dev-tools/build-compose-service-jars.sh",
                     "dev-tools/build-local-smoke-images.sh",
+                    "dev-tools/backups/verify-backups.sh",
+                    "dev-tools/backups/pg-dump-s3-selection.shlib",
+                    "dev-tools/backups/smoke-backup-verifier-image.sh",
                     "dev-tools/certs/generate-dev-certs.sh",
                     "dev-tools/verify-compose-health.sh",
                     "dev-tools/verify-fresh-bootstrap.sh",
                     "dev-tools/verify-restart-state.sh",
                     "dev-tools/verify-smoke-images.sh",
                     "gradle.properties",
+                    "docker/backup-verifier.Dockerfile",
                     "gradlew",
                     "gradlew.bat",
                     "settings.gradle.kts",
@@ -176,7 +319,11 @@ jobs:
                     "gradlew.bat",
                     "settings.gradle.kts",
                   ]);
-                  runtimeSmokeRequired = paths.some(
+                  const authorityChanged = paths.includes(workflowToolAuthorityPath);
+                  const nonAuthorityPaths = paths.filter(
+                    (path) => path !== workflowToolAuthorityPath
+                  );
+                  runtimeSmokeRequired = nonAuthorityPaths.some(
                     (path) =>
                       runtimeFiles.has(path) ||
                       runtimePrefixes.some((prefix) => path.startsWith(prefix)) ||
@@ -185,6 +332,9 @@ jobs:
                           "services/hosted-environment-identity-controller/"
                         ))
                   );
+                  if (!runtimeSmokeRequired && authorityChanged) {
+                    runtimeSmokeRequired = await veleroAuthorityChanged();
+                  }
                   controllerSmokeRequired = paths.some(
                     (path) =>
                       controllerFiles.has(path) ||
@@ -218,7 +368,7 @@ jobs:
           egress-policy: audit
 
       - name: ⬇️ Checkout Code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ needs.image-meta.outputs.checkout_ref }}
           persist-credentials: false
@@ -227,7 +377,7 @@ jobs:
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5
 
       - name: Login to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -326,7 +476,7 @@ jobs:
           egress-policy: audit
 
       - name: ⬇️ Checkout Code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ needs.image-meta.outputs.checkout_ref }}
           persist-credentials: false
@@ -335,7 +485,7 @@ jobs:
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654
         with:
           distribution: 'temurin'
-          java-version: '21'
+          java-version: '25'
 
       - name: ⚙️ Set Up Gradle
         uses: gradle/actions/setup-gradle@50e97c2cd7a37755bbfafc9c5b7cafaece252f6e
@@ -352,7 +502,7 @@ jobs:
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5
 
       - name: Login to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -399,6 +549,145 @@ jobs:
             type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:buildcache,mode=max
             type=gha,mode=max
 
+  build-backup-verifier:
+    name: Build Backup Verifier Image
+    needs: [image-meta]
+    if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main') && needs.image-meta.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      image_id: ${{ steps.smoke.outputs.image_id }}
+    permissions:
+      contents: read
+    env:
+      BACKUP_VERIFIER_IMAGE: ghcr.io/benhook1013/backup-verifier:${{ needs.image-meta.outputs.image_tag }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
+      - name: Checkout trusted branch commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.image-meta.outputs.checkout_ref }}
+          persist-credentials: false
+
+      - name: Load workflow tool versions
+        id: workflow-tool-versions
+        uses: ./.github/actions/load-workflow-tool-versions
+
+      - name: Build backup verifier image
+        run: |
+          docker build \
+            --file docker/backup-verifier.Dockerfile \
+            --tag "$BACKUP_VERIFIER_IMAGE" \
+            .
+
+      - name: Smoke backup verifier image
+        id: smoke
+        env:
+          VELERO_VERSION: ${{ steps.workflow-tool-versions.outputs.velero-version }}
+        run: |
+          set -euo pipefail
+          bash ./dev-tools/backups/smoke-backup-verifier-image.sh "$BACKUP_VERIFIER_IMAGE" "$VELERO_VERSION"
+          image_id="$(docker image inspect --format '{{.Id}}' "$BACKUP_VERIFIER_IMAGE")"
+          [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "Backup verifier image did not return an exact image ID." >&2
+            exit 1
+          }
+          echo "image_id=$image_id" >> "$GITHUB_OUTPUT"
+
+      - name: Export exact verified backup verifier image artifact
+        env:
+          VERIFIED_IMAGE_ID: ${{ steps.smoke.outputs.image_id }}
+        run: |
+          set -euo pipefail
+          current_image_id="$(docker image inspect --format '{{.Id}}' "$BACKUP_VERIFIER_IMAGE")"
+          [[ "$current_image_id" == "$VERIFIED_IMAGE_ID" ]] || {
+            echo "Backup verifier image changed after its smoke proof; refusing artifact export." >&2
+            exit 1
+          }
+          docker save "$BACKUP_VERIFIER_IMAGE" | gzip -1 > "$RUNNER_TEMP/backup-verifier.tar.gz"
+
+      - name: Upload exact verified backup verifier image artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: backup-verifier-${{ needs.image-meta.outputs.image_tag }}
+          path: ${{ runner.temp }}/backup-verifier.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-backup-verifier:
+    name: Publish Trusted Backup Verifier Image
+    needs: [image-meta, build-backup-verifier]
+    if: ${{ always() && github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main') && needs.image-meta.result == 'success' && needs.build-backup-verifier.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      BACKUP_VERIFIER_IMAGE_NAME: ghcr.io/benhook1013/backup-verifier
+      BACKUP_VERIFIER_IMAGE: ghcr.io/benhook1013/backup-verifier:${{ needs.image-meta.outputs.image_tag }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
+      - name: Checkout trusted publication commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.image-meta.outputs.checkout_ref }}
+          persist-credentials: false
+
+      - name: Download exact verified backup verifier image artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: backup-verifier-${{ needs.image-meta.outputs.image_tag }}
+          path: ${{ runner.temp }}/backup-verifier-artifact
+
+      - name: Load and verify exact backup verifier image
+        env:
+          BACKUP_VERIFIER_ARCHIVE: ${{ runner.temp }}/backup-verifier-artifact/backup-verifier.tar.gz
+          VERIFIED_IMAGE_ID: ${{ needs.build-backup-verifier.outputs.image_id }}
+        run: |
+          set -euo pipefail
+          [[ -f "$BACKUP_VERIFIER_ARCHIVE" ]] || {
+            echo "Verified backup verifier image artifact is missing." >&2
+            exit 1
+          }
+          gzip -dc "$BACKUP_VERIFIER_ARCHIVE" | docker load
+          loaded_image_id="$(docker image inspect --format '{{.Id}}' "$BACKUP_VERIFIER_IMAGE")"
+          [[ "$loaded_image_id" == "$VERIFIED_IMAGE_ID" ]] || {
+            echo "Loaded backup verifier image does not match the exact verified build image." >&2
+            exit 1
+          }
+
+      - name: Login to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish exact verified backup verifier image
+        id: publish
+        run: |
+          set -euo pipefail
+          bash ./dev-tools/hosted/shared/push-verified-image.sh "$BACKUP_VERIFIER_IMAGE"
+
+      - name: Attest trusted backup verifier image provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.BACKUP_VERIFIER_IMAGE_NAME }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+
   build-hosted-identity-controller:
     name: Build Trusted Hosted Identity Controller
     needs: [image-meta, build-base-image]
@@ -420,7 +709,7 @@ jobs:
           egress-policy: audit
 
       - name: Checkout trusted branch commit
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ needs.image-meta.outputs.checkout_ref }}
           persist-credentials: false
@@ -429,7 +718,7 @@ jobs:
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654
         with:
           distribution: 'temurin'
-          java-version: '21'
+          java-version: '25'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@50e97c2cd7a37755bbfafc9c5b7cafaece252f6e
@@ -440,7 +729,7 @@ jobs:
           cache-read-only: false
 
       - name: Login to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -508,6 +797,12 @@ jobs:
         with:
           egress-policy: audit
 
+      - name: Checkout trusted publication commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.image-meta.outputs.checkout_ref }}
+          persist-credentials: false
+
       - name: Download exact verified controller image artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -532,7 +827,7 @@ jobs:
           }
 
       - name: Login to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -549,41 +844,7 @@ jobs:
             echo "Controller image changed after its verification proof; refusing publication." >&2
             exit 1
           }
-
-          max_push_attempts=3
-          push_attempt=1
-          while true; do
-            if push_output="$(docker push "$CONTROLLER_IMAGE" 2>&1)"; then
-              printf '%s\n' "$push_output"
-              break
-            fi
-            printf '%s\n' "$push_output"
-            if ((push_attempt >= max_push_attempts)); then
-              echo "Failed to publish $CONTROLLER_IMAGE after ${push_attempt} attempts." >&2
-              exit 1
-            fi
-            backoff_seconds=$((5 * 2 ** (push_attempt - 1)))
-            echo "Transient push failure for $CONTROLLER_IMAGE; retrying in ${backoff_seconds}s (attempt $((push_attempt + 1))/${max_push_attempts})."
-            sleep "$backoff_seconds"
-            push_attempt=$((push_attempt + 1))
-          done
-
-          pushed_digests=()
-          while IFS= read -r output_line; do
-            if [[ "$output_line" =~ ^[^[:space:]]+:[[:space:]]digest:[[:space:]](sha256:[0-9a-f]{64})[[:space:]]size:[[:space:]][0-9]+$ ]]; then
-              pushed_digests+=("${BASH_REMATCH[1]}")
-            fi
-          done <<< "$push_output"
-          if ((${#pushed_digests[@]} != 1)); then
-            echo "Successful push did not report exactly one exact sha256 digest for $CONTROLLER_IMAGE." >&2
-            exit 1
-          fi
-          pushed_digest="${pushed_digests[0]}"
-          [[ "$pushed_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
-            echo "Successful push did not return an exact sha256 digest for $CONTROLLER_IMAGE." >&2
-            exit 1
-          }
-          echo "digest=$pushed_digest" >> "$GITHUB_OUTPUT"
+          bash ./dev-tools/hosted/shared/push-verified-image.sh "$CONTROLLER_IMAGE"
 
       - name: Attest trusted controller image provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
@@ -607,6 +868,7 @@ jobs:
       SMOKE_TIMEOUT_SECONDS: 20
       SMOKE_IMAGE_TAG: ${{ needs.image-meta.outputs.image_tag }}
       SMOKE_IMAGE_LOCAL_ONLY: 'true'
+      BACKUP_VERIFIER_IMAGE: ghcr.io/benhook1013/backup-verifier:${{ needs.image-meta.outputs.image_tag }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
@@ -614,10 +876,14 @@ jobs:
           egress-policy: audit
 
       - name: Checkout PR merge
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ needs.image-meta.outputs.checkout_ref }}
           persist-credentials: false
+
+      - name: Load workflow tool versions
+        id: workflow-tool-versions
+        uses: ./.github/actions/load-workflow-tool-versions
 
       - name: Set up canonical Python
         if: ${{ needs.image-meta.outputs.runtime_smoke_required == 'true' }}
@@ -629,7 +895,7 @@ jobs:
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654
         with:
           distribution: 'temurin'
-          java-version: '21'
+          java-version: '25'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@50e97c2cd7a37755bbfafc9c5b7cafaece252f6e
@@ -641,6 +907,18 @@ jobs:
 
       - name: Build local PR runtime images
         run: bash ./dev-tools/build-local-smoke-images.sh "${SMOKE_IMAGE_TAG}"
+
+      - name: Build PR backup verifier image
+        run: |
+          docker build \
+            --file docker/backup-verifier.Dockerfile \
+            --tag "$BACKUP_VERIFIER_IMAGE" \
+            .
+
+      - name: Smoke PR backup verifier image
+        env:
+          VELERO_VERSION: ${{ steps.workflow-tool-versions.outputs.velero-version }}
+        run: bash ./dev-tools/backups/smoke-backup-verifier-image.sh "$BACKUP_VERIFIER_IMAGE" "$VELERO_VERSION"
 
       - name: Run credential-free full-stack smoke
         if: ${{ needs.image-meta.outputs.runtime_smoke_required == 'true' }}
@@ -666,6 +944,8 @@ jobs:
             printf '%s\n' "$service" >> "$service_manifest"
             images+=("ghcr.io/benhook1013/${service}:${SMOKE_IMAGE_TAG}")
           done
+          printf '%s\n' 'backup-verifier' >> "$service_manifest"
+          images+=("$BACKUP_VERIFIER_IMAGE")
           docker save "${images[@]}" | gzip -1 > /tmp/pr-runtime-images.tar.gz
 
       - name: Upload preview image artifact
@@ -738,7 +1018,7 @@ jobs:
           egress-policy: audit
 
       - name: Checkout PR merge
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ needs.image-meta.outputs.checkout_ref }}
           persist-credentials: false
@@ -747,7 +1027,7 @@ jobs:
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654
         with:
           distribution: 'temurin'
-          java-version: '21'
+          java-version: '25'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@50e97c2cd7a37755bbfafc9c5b7cafaece252f6e

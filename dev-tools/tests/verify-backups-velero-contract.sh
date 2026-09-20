@@ -12,6 +12,10 @@ mkdir -p "$BIN_DIR"
 cat > "$BIN_DIR/velero" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "$#" -ne 4 || "$1" != 'backup' || "$2" != 'get' || "$3" != '-n' || "$4" != "${EXPECTED_VELERO_NAMESPACE:?}" ]]; then
+  echo "simulated Velero CLI received unexpected argv (expected: backup get -n ${EXPECTED_VELERO_NAMESPACE:?}): $*" >&2
+  exit 65
+fi
 if [[ " $* " == *' --no-headers '* ]]; then
   echo 'simulated Velero CLI does not support --no-headers' >&2
   exit 64
@@ -126,6 +130,9 @@ run_case() {
     PATH="$BIN_DIR:$PATH" \
       PG_DUMP_BUCKET='firemud-test' \
       PG_DUMP_ENDPOINT="$expected_endpoint" \
+      FIREMUD_K8S_NAMESPACE='firemud' \
+      VELERO_NAMESPACE='velero-contract' \
+      EXPECTED_VELERO_NAMESPACE='velero-contract' \
       EXPECTED_ENDPOINT="$expected_endpoint" \
       FAKE_AWS_SCENARIO="$scenario" \
       FAKE_QUERY_LOG="$QUERY_LOG" \
@@ -153,7 +160,7 @@ run_case() {
 }
 
 script="$ROOT_DIR/dev-tools/backups/verify-backups.sh"
-run_case "$script" global-latest 0 'Latest pg_dump: 15min/firemud_20260825000400.sql.gz' '' 'Found 2 Velero backups in firemud'
+run_case "$script" global-latest 0 'Latest pg_dump: 15min/firemud_20260825000400.sql.gz' '' 'Found 2 Velero backups in velero-contract (target namespace: firemud)'
 run_case "$script" global-latest 0 'Latest pg_dump: 15min/firemud_20260825000400.sql.gz' '' '' 'https://s3.example.test'
 run_case "$script" earlier-match-later-empty 0 'Latest pg_dump: 15min/firemud_20260825000500.sql.gz'
 run_case "$script" large-listing 0 'Latest pg_dump: 15min/firemud_00000000200000.sql.gz'

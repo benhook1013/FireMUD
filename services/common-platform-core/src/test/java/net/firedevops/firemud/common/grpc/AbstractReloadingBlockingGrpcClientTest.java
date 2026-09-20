@@ -4,8 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
 import io.grpc.ManagedChannel;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
@@ -18,6 +21,31 @@ import org.springframework.boot.health.contributor.Health;
 
 class AbstractReloadingBlockingGrpcClientTest {
   @Test
+  void certificateChangeDuringInitialChannelBuildTriggersReload(@TempDir Path directory)
+      throws Exception {
+    Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
+    Path privateKey = Files.writeString(directory.resolve("tls.key"), "private-key-1");
+    Path caCertificate = Files.writeString(directory.resolve("ca.crt"), "ca-certificate-1");
+    CommonGrpcClientProperties grpc = new CommonGrpcClientProperties();
+    grpc.setCertChain(certificate.toString());
+    grpc.setPrivateKey(privateKey.toString());
+    grpc.setCaCert(caCertificate.toString());
+    CertificateChangingChannelFactory factory = new CertificateChangingChannelFactory(certificate);
+    TestClient client = new TestClient(new ServiceEndpointsProperties(), grpc, factory);
+    try {
+      client.init();
+
+      awaitCondition(() -> factory.buildAttempts.get() >= 2);
+
+      assertThat(factory.observedCertificates).hasSizeGreaterThanOrEqualTo(2);
+      assertThat(factory.observedCertificates.get(0)).isEqualTo("certificate-1");
+      assertThat(factory.observedCertificates.get(1)).isEqualTo("certificate-2");
+    } finally {
+      client.close();
+    }
+  }
+
+  @Test
   void failedCertificateReloadMakesWatcherReadinessUnavailable(@TempDir Path directory)
       throws Exception {
     Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
@@ -27,6 +55,8 @@ class AbstractReloadingBlockingGrpcClientTest {
     grpc.setCertChain(certificate.toString());
     grpc.setPrivateKey(privateKey.toString());
     grpc.setCaCert(caCertificate.toString());
+    int unhealthyWatchersBefore =
+        ((Number) TlsCertificateWatcher.health().getDetails().get("unhealthyWatchers")).intValue();
 
     TestClient client =
         new TestClient(new ServiceEndpointsProperties(), grpc, new FailingReloadChannelFactory());
@@ -35,13 +65,17 @@ class AbstractReloadingBlockingGrpcClientTest {
       Files.writeString(certificate, "certificate-2");
 
       awaitCondition(
-          () ->
-              "OUT_OF_SERVICE".equals(
-                  TlsCertificateWatcher.health().getStatus().getCode()));
+          () -> {
+            Health health = TlsCertificateWatcher.health();
+            return "OUT_OF_SERVICE".equals(health.getStatus().getCode())
+                && ((Number) health.getDetails().get("unhealthyWatchers")).intValue()
+                    >= unhealthyWatchersBefore + 1;
+          });
 
       Health health = TlsCertificateWatcher.health();
       assertThat(health.getStatus().getCode()).isEqualTo("OUT_OF_SERVICE");
-      assertThat(health.getDetails()).containsEntry("unhealthyWatchers", 1);
+      assertThat(((Number) health.getDetails().get("unhealthyWatchers")).intValue())
+          .isGreaterThanOrEqualTo(unhealthyWatchersBefore + 1);
     } finally {
       client.close();
     }
@@ -64,6 +98,32 @@ class AbstractReloadingBlockingGrpcClientTest {
         throws SSLException {
       if (buildAttempts.incrementAndGet() > 1) {
         throw new SSLException("simulated certificate reload failure");
+      }
+      return mock(ManagedChannel.class);
+    }
+  }
+
+  private static final class CertificateChangingChannelFactory extends GrpcChannelFactory {
+    private final Path certificate;
+    private final AtomicInteger buildAttempts = new AtomicInteger();
+    private final List<String> observedCertificates = new CopyOnWriteArrayList<>();
+
+    private CertificateChangingChannelFactory(Path certificate) {
+      this.certificate = certificate;
+    }
+
+    @Override
+    public ManagedChannel buildChannel(
+        String target, int defaultPort, CommonGrpcClientProperties properties, boolean keepAlive)
+        throws SSLException {
+      int attempt = buildAttempts.incrementAndGet();
+      try {
+        observedCertificates.add(Files.readString(certificate));
+        if (attempt == 1) {
+          Files.writeString(certificate, "certificate-2");
+        }
+      } catch (IOException e) {
+        throw new SSLException("simulated initial certificate change", e);
       }
       return mock(ManagedChannel.class);
     }

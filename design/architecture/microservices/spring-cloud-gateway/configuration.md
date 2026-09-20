@@ -4,7 +4,7 @@
 
 The current Gateway `RequestRateLimiter` derives keys from raw client IP rather than the target versioned opaque subject hash. Canonicalization, shared helper adoption, HMAC key delivery/rotation, privacy and cardinality proof, and legacy-key expiry remain implementation work.
 
-The dedicated TCP Proxy TLS listener and exclusive ADR 0169 trust-profile selection are implemented in Gateway runtime. Helm wiring now covers the listener Service, credential mounts and environment, TCP Proxy client credential consumption, exact-port NetworkPolicy, and pre-deploy render validation. Controller-owned identity issuance/projection, rotation/readiness, emergency withdrawal evidence, and exact-head hosted peer-handshake proof remain separate incomplete work. Listener TLS material is loaded at startup; live certificate renewal reload is not implemented, and emergency withdrawal still requires deployment-controller proof that every old pod and established bridge was forcibly terminated.
+The dedicated TCP Proxy TLS listener and exclusive ADR 0169 trust-profile selection are implemented in Gateway runtime. The #2713 Helm candidate wires the private Gateway ↔ TCP Proxy bridge with the listener Service, credential mounts and environment, TCP Proxy client credential consumption, and exact-port NetworkPolicy. Private bridge live hosted-preview proof remains pending. Controller-owned identity issuance/projection, rotation/readiness, emergency withdrawal evidence, and exact-head hosted peer-handshake proof remain separate incomplete work. Public Telnet TLS and transport-complete/playable hosted proof remain the #2795 delivery slice. Listener TLS material is loaded at startup; live certificate renewal reload is not implemented, and emergency withdrawal still requires deployment-controller proof that every old pod and established bridge was forcibly terminated.
 
 ## Configuration Sources
 
@@ -40,7 +40,7 @@ The hosted Gateway pod also has default-deny egress. Its only permitted destinat
 
 | Variable | Purpose |
 | --- | --- |
-| `FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS` | Internal listener bind address; defaults to `0.0.0.0` for Kubernetes Service selection. |
+| `FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS` | Internal listener bind address; defaults to `127.0.0.1` for a local-only disabled-by-default listener. Deployments that expose the listener through a Kubernetes Service must explicitly set this to `0.0.0.0`. |
 | `FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT` | Dedicated internal listener port; defaults to `8443` and must differ from the public server port. |
 | `FIREMUD_GATEWAY_TCP_PROXY_TLS_CERT_CHAIN_PATH` | Filesystem path to the Gateway listener certificate chain. |
 | `FIREMUD_GATEWAY_TCP_PROXY_TLS_PRIVATE_KEY_PATH` | Filesystem path to the matching Gateway listener private key. |

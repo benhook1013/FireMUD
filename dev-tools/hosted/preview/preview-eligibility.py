@@ -223,6 +223,22 @@ def revalidate_cleanup(
     return refusal_reason
 
 
+def revalidate_open_cleanup(
+    pull_request_json: str,
+    expected_repository: str,
+    expected_head_sha: str,
+) -> str | None:
+    """Return the fail-closed refusal reason for an explicit open-PR release."""
+
+    refusal_reason, _ = _revalidate_target(
+        pull_request_json,
+        expected_repository,
+        expected_head_sha,
+        "open",
+    )
+    return refusal_reason
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     mode = parser.add_mutually_exclusive_group()
@@ -230,6 +246,7 @@ def main() -> int:
     mode.add_argument("--batch-deploy-candidates", action="store_true")
     mode.add_argument("--revalidate-deploy", action="store_true")
     mode.add_argument("--revalidate-cleanup", action="store_true")
+    mode.add_argument("--revalidate-open-cleanup", action="store_true")
     parser.add_argument("--operation", choices=("deploy", "destroy", "retain"))
     parser.add_argument("--state")
     parser.add_argument("--base-ref")
@@ -291,8 +308,14 @@ def main() -> int:
             print(f"{pr_number}\t{head_sha}")
         return 0
 
-    if args.revalidate_deploy or args.revalidate_cleanup:
-        mode_name = "--revalidate-cleanup" if args.revalidate_cleanup else "--revalidate-deploy"
+    if args.revalidate_deploy or args.revalidate_cleanup or args.revalidate_open_cleanup:
+        mode_name = (
+            "--revalidate-cleanup"
+            if args.revalidate_cleanup
+            else "--revalidate-open-cleanup"
+            if args.revalidate_open_cleanup
+            else "--revalidate-deploy"
+        )
         unrelated = [
             name
             for name, value in (
@@ -318,7 +341,12 @@ def main() -> int:
         ]
         if missing:
             parser.error(f"the following arguments are required: {', '.join(missing)}")
-        evaluator = revalidate_cleanup if args.revalidate_cleanup else revalidate_deploy
+        if args.revalidate_cleanup:
+            evaluator = revalidate_cleanup
+        elif args.revalidate_open_cleanup:
+            evaluator = revalidate_open_cleanup
+        else:
+            evaluator = revalidate_deploy
         refusal_reason = evaluator(sys.stdin.read(), args.expected_repository, args.expected_head_sha)
         if refusal_reason is not None:
             # Keep this on stdout because revalidate-preview-deploy.sh captures the reason.

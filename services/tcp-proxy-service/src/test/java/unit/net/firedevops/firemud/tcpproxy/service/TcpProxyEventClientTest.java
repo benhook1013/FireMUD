@@ -12,6 +12,8 @@ import static org.mockito.Mockito.when;
 import io.grpc.Status;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -20,9 +22,11 @@ import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcTlsMaterialResolver;
+import net.firedevops.firemud.common.grpc.ResolvedGrpcTlsMaterial;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
 import net.firedevops.firemud.tcpproxy.v1.TcpProxyServiceGrpc;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
 
 class TcpProxyEventClientTest {
@@ -97,6 +101,120 @@ class TcpProxyEventClientTest {
         "proxy-1", requestCaptor.getValue().getProxyConnectionId());
     org.junit.jupiter.api.Assertions.assertEquals(
         9L, requestCaptor.getValue().getDisconnectSequence());
+  }
+
+  @Test
+  void initRegistersCertificateWatcherBeforeInitialChannelBuild(@TempDir Path tempDir)
+      throws Exception {
+    Path certificate = tempDir.resolve("tcp-proxy-event-client.crt");
+    Files.writeString(certificate, "initial");
+
+    ServiceEndpointsProperties endpoints = mock(ServiceEndpointsProperties.class);
+    when(endpoints.copy()).thenReturn(endpoints);
+    CommonGrpcClientProperties tlsProps = mock(CommonGrpcClientProperties.class);
+    when(tlsProps.copy()).thenReturn(tlsProps);
+    GrpcTlsMaterialResolver resolver = mock(GrpcTlsMaterialResolver.class);
+    ResolvedGrpcTlsMaterial.TlsResource certificateResource =
+        new ResolvedGrpcTlsMaterial.TlsResource(
+            () -> Files.newInputStream(certificate), certificate);
+    ResolvedGrpcTlsMaterial material =
+        new ResolvedGrpcTlsMaterial(certificateResource, certificateResource, certificateResource);
+    when(resolver.resolve(tlsProps)).thenReturn(material);
+
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    CountDownLatch initialBuildStarted = new CountDownLatch(1);
+    CountDownLatch releaseInitialBuild = new CountDownLatch(1);
+    CountDownLatch reloadBuildStarted = new CountDownLatch(1);
+    java.util.concurrent.atomic.AtomicInteger buildCount =
+        new java.util.concurrent.atomic.AtomicInteger();
+    when(channelFactory.buildChannel(any(), any(Integer.class), any(), any(Boolean.class), any()))
+        .thenAnswer(
+            ignored -> {
+              int currentBuild = buildCount.incrementAndGet();
+              if (currentBuild == 1) {
+                initialBuildStarted.countDown();
+                if (!releaseInitialBuild.await(5, TimeUnit.SECONDS)) {
+                  throw new AssertionError("timed out waiting to release initial channel build");
+                }
+              } else if (currentBuild == 2) {
+                reloadBuildStarted.countDown();
+              }
+              return mock(io.grpc.ManagedChannel.class);
+            });
+
+    TcpProxyEventClient client =
+        new TcpProxyEventClient(
+            endpoints, tlsProps, channelFactory, resolver, BlockingGrpcStubCustomizer.noop());
+    AtomicReference<Throwable> initFailure = new AtomicReference<>();
+    Thread initThread =
+        new Thread(
+            () -> {
+              try {
+                client.init();
+              } catch (Throwable failure) {
+                initFailure.set(failure);
+              }
+            });
+    initThread.start();
+    try {
+      org.junit.jupiter.api.Assertions.assertTrue(
+          initialBuildStarted.await(5, TimeUnit.SECONDS),
+          "initial channel build did not start");
+      Files.writeString(certificate, "rotated");
+      releaseInitialBuild.countDown();
+
+      org.junit.jupiter.api.Assertions.assertTrue(
+          reloadBuildStarted.await(5, TimeUnit.SECONDS),
+          "certificate rotation during initial build did not trigger a reload");
+      initThread.join(5_000);
+      org.junit.jupiter.api.Assertions.assertFalse(initThread.isAlive());
+      org.junit.jupiter.api.Assertions.assertNull(initFailure.get());
+    } finally {
+      releaseInitialBuild.countDown();
+      initThread.join(5_000);
+      client.close();
+    }
+  }
+
+  @Test
+  void initFailureCleansUpWatcherAndChannel(@TempDir Path tempDir) throws Exception {
+    Path certificate = tempDir.resolve("tcp-proxy-event-client.crt");
+    Files.writeString(certificate, "initial");
+
+    ServiceEndpointsProperties endpoints = mock(ServiceEndpointsProperties.class);
+    when(endpoints.copy()).thenReturn(endpoints);
+    CommonGrpcClientProperties tlsProps = mock(CommonGrpcClientProperties.class);
+    when(tlsProps.copy()).thenReturn(tlsProps);
+    GrpcTlsMaterialResolver resolver = mock(GrpcTlsMaterialResolver.class);
+    ResolvedGrpcTlsMaterial.TlsResource certificateResource =
+        new ResolvedGrpcTlsMaterial.TlsResource(
+            () -> Files.newInputStream(certificate), certificate);
+    when(resolver.resolve(tlsProps))
+        .thenReturn(
+            new ResolvedGrpcTlsMaterial(
+                certificateResource, certificateResource, certificateResource));
+
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    io.grpc.ManagedChannel failedChannel = mock(io.grpc.ManagedChannel.class);
+    when(channelFactory.buildChannel(any(), any(Integer.class), any(), any(Boolean.class), any()))
+        .thenReturn(failedChannel);
+    BlockingGrpcStubCustomizer stubCustomizer = mock(BlockingGrpcStubCustomizer.class);
+    when(stubCustomizer.customize(any(TcpProxyServiceGrpc.TcpProxyServiceBlockingStub.class)))
+        .thenThrow(new IllegalStateException("customizer failed"));
+
+    TcpProxyEventClient client =
+        new TcpProxyEventClient(
+            endpoints, tlsProps, channelFactory, resolver, stubCustomizer);
+    try {
+      assertThrows(IllegalStateException.class, client::init);
+      verify(failedChannel).shutdown();
+      org.junit.jupiter.api.Assertions.assertNull(getField(client, "watcher"));
+      org.junit.jupiter.api.Assertions.assertNull(getField(client, "channel"));
+      org.junit.jupiter.api.Assertions.assertNull(getField(client, "stub"));
+      org.junit.jupiter.api.Assertions.assertNull(getField(client, "tlsMaterial"));
+    } finally {
+      client.close();
+    }
   }
 
   @Test

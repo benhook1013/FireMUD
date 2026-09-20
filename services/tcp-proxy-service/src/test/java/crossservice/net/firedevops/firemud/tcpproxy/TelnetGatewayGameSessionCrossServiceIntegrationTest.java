@@ -127,8 +127,8 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
     assertThat(GAME_SESSION_STUB.stub().receivedHandshakeHeaders())
         .anySatisfy(
             headers -> {
-              assertThat(headers.getFirst("X-Client-IP")).isEqualTo("127.0.0.1");
-              assertThat(headers.getFirst("X-Proxy-Client-IP")).isEqualTo("127.0.0.1");
+              assertLoopbackAddress(headers.getFirst("X-Client-IP"));
+              assertLoopbackAddress(headers.getFirst("X-Proxy-Client-IP"));
               assertThat(headers.getFirst("X-Proxy-Connection-Id")).isNotBlank();
               assertThat(headers.getFirst("X-Game-Instance-Id")).isEqualTo("1");
               assertThat(headers.getFirst("X-Proxy-Game-Instance-Id")).isEqualTo("1");
@@ -138,6 +138,12 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
               assertThat(headers.getFirst("X-Realm-Slug")).isEqualTo("production");
               assertThat(headers.getFirst("X-Pointer-Version")).isEqualTo("1");
             });
+  }
+
+  private static void assertLoopbackAddress(String address) {
+    assertThat(address)
+        .as("forwarded client IP must be a literal loopback address")
+        .isIn("127.0.0.1", "::1", "0:0:0:0:0:0:0:1");
   }
 
   @Test

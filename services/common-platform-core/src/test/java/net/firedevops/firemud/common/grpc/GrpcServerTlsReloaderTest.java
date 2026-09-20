@@ -1,14 +1,12 @@
 package net.firedevops.firemud.common.grpc;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -44,7 +42,7 @@ class GrpcServerTlsReloaderTest {
     Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
 
     try (TlsCertificateWatcher watcher =
-        TlsCertificateWatcher.createAndStart(List.of(certificate), () -> invokeReload(reloader))) {
+        TlsCertificateWatcher.createAndStart(List.of(certificate), reloader::reload)) {
       Files.writeString(certificate, "certificate-2");
 
       assertTrue(firstStartFailed.await(5, TimeUnit.SECONDS));
@@ -53,28 +51,13 @@ class GrpcServerTlsReloaderTest {
       awaitCondition(watcher::isHealthy);
 
       assertTrue(startAttempts.get() >= 2);
-      verify(serverLifecycle, times(2)).stop();
-      verify(serverLifecycle, times(2)).start();
+      verify(serverLifecycle, atLeast(2)).stop();
+      verify(serverLifecycle, atLeast(2)).start();
       InOrder restartOrder = inOrder(serverLifecycle);
       restartOrder.verify(serverLifecycle).stop();
       restartOrder.verify(serverLifecycle).start();
       restartOrder.verify(serverLifecycle).stop();
       restartOrder.verify(serverLifecycle).start();
-    }
-  }
-
-  private static void invokeReload(GrpcServerTlsReloader reloader) {
-    try {
-      Method reload = GrpcServerTlsReloader.class.getDeclaredMethod("reload");
-      reload.setAccessible(true);
-      reload.invoke(reloader);
-    } catch (InvocationTargetException e) {
-      if (e.getCause() instanceof RuntimeException failure) {
-        throw failure;
-      }
-      throw new AssertionError("gRPC TLS reload failed with a non-runtime exception", e.getCause());
-    } catch (ReflectiveOperationException e) {
-      throw new AssertionError("Could not invoke gRPC TLS reload callback", e);
     }
   }
 

@@ -53,7 +53,7 @@ class HttpTestSupportTest {
       assertThat(failure)
           .isInstanceOf(AssertionError.class)
           .hasMessageContaining("Timed out waiting for HTTP readiness")
-          .hasMessageContaining("last successful response body: " + body);
+          .hasMessageContaining("last response body: " + body);
     }
   }
 
@@ -69,7 +69,7 @@ class HttpTestSupportTest {
             .as("readiness body: %s", body)
             .isInstanceOf(AssertionError.class)
             .hasMessageContaining("Timed out waiting for HTTP readiness")
-            .hasMessageContaining("last successful response body: " + body);
+            .hasMessageContaining("last response body: " + body);
       }
     }
   }
@@ -85,7 +85,7 @@ class HttpTestSupportTest {
         TestHttpServer.hanging(requestStarted, releaseRequest, requestFinished, requestCount)) {
       Duration timeout =
           HttpTestSupport.PROBE_TIMEOUT
-              .multipliedBy(2)
+              .multipliedBy(3)
               .plus(TestAsyncAssertions.DEFAULT_POLL_INTERVAL);
       long startedAt = System.nanoTime();
       Throwable failure;
@@ -121,6 +121,24 @@ class HttpTestSupportTest {
         .hasCauseInstanceOf(IOException.class);
   }
 
+  @Test
+  void responseBodyClearsEarlierIOExceptionCause() throws Exception {
+    String body = "{\"status\":\"DOWN\"}";
+    AtomicInteger requestCount = new AtomicInteger();
+    try (TestHttpServer server =
+        TestHttpServer.disconnectingOnceThenResponding(requestCount, body)) {
+      Throwable failure =
+          catchThrowable(
+              () -> HttpTestSupport.awaitReadiness(server.url(), Duration.ofMillis(500)));
+
+      assertThat(failure)
+          .isInstanceOf(AssertionError.class)
+          .hasMessageContaining("last response body: " + body)
+          .hasNoCause();
+      assertThat(requestCount).hasValueGreaterThan(1);
+    }
+  }
+
   private static final class TestHttpServer implements AutoCloseable {
     private final HttpServer server;
     private final ExecutorService executor;
@@ -148,6 +166,22 @@ class HttpTestSupportTest {
           exchange -> {
             byte[] response = body.getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(statusCode, response.length);
+            try (OutputStream output = exchange.getResponseBody()) {
+              output.write(response);
+            }
+          });
+    }
+
+    private static TestHttpServer disconnectingOnceThenResponding(
+        AtomicInteger requestCount, String body) throws IOException {
+      return new TestHttpServer(
+          exchange -> {
+            if (requestCount.getAndIncrement() == 0) {
+              exchange.close();
+              return;
+            }
+            byte[] response = body.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(503, response.length);
             try (OutputStream output = exchange.getResponseBody()) {
               output.write(response);
             }

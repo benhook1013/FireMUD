@@ -1,4 +1,31 @@
 {{- if and .Values.previewStack.enabled (.Values.previewStack.networkPolicies.enabled) }}
+{{- $certificateIdentity := .Values.previewStack.certificateIdentity | default (dict) }}
+{{- $certificateIdentityMode := $certificateIdentity.mode | default "standalone" }}
+{{- $gatewayWsTls := .Values.previewStack.gatewayWsTls | default (dict) }}
+{{- $gatewayWsTlsTargetPort := 8443 }}
+{{- $gatewayHttpTargetPort := "" }}
+{{- $gatewayServiceCount := 0 }}
+{{- $gatewayHttpServicePortCount := 0 }}
+{{- range $service := .Values.previewStack.services }}
+{{- if eq $service.name "spring-cloud-gateway" }}
+{{- $gatewayServiceCount = add1 $gatewayServiceCount }}
+{{- range $port := $service.ports }}
+{{- if eq (toString $port.port) "80" }}
+{{- $gatewayHttpServicePortCount = add1 $gatewayHttpServicePortCount }}
+{{- $gatewayHttpTargetPort = required "previewStack.services.spring-cloud-gateway port: 80 must declare a targetPort for Gateway HTTP ingress" $port.targetPort }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if ne $gatewayServiceCount 1 }}
+{{- fail "previewStack.services must include exactly one spring-cloud-gateway for the gameplay-bridge NetworkPolicies" }}
+{{- end }}
+{{- if ne $gatewayHttpServicePortCount 1 }}
+{{- fail "previewStack.services.spring-cloud-gateway must declare exactly one port: 80 for Gateway HTTP ingress" }}
+{{- end }}
+{{- if $gatewayWsTls.enabled }}
+{{- $gatewayWsTlsTargetPort = required "previewStack.gatewayWsTls.targetPort is required when Gateway WebSocket TLS is enabled" $gatewayWsTls.targetPort }}
+{{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -93,6 +120,7 @@ spec:
       ports:
         - protocol: TCP
           port: 9000
+{{- if eq $certificateIdentityMode "hosted-controller" }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -118,6 +146,7 @@ spec:
       ports:
         - protocol: TCP
           port: 6565
+{{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -201,31 +230,7 @@ spec:
       ports:
         - protocol: TCP
           port: 9000
-{{- $gatewayWsTls := .Values.previewStack.gatewayWsTls | default (dict) }}
-{{- $gatewayWsTlsTargetPort := "" }}
-{{- $gatewayHttpTargetPort := "" }}
-{{- $gatewayServiceCount := 0 }}
-{{- $gatewayHttpServicePortCount := 0 }}
-{{- range $service := .Values.previewStack.services }}
-{{- if eq $service.name "spring-cloud-gateway" }}
-{{- $gatewayServiceCount = add1 $gatewayServiceCount }}
-{{- range $port := $service.ports }}
-{{- if eq (toString $port.port) "80" }}
-{{- $gatewayHttpServicePortCount = add1 $gatewayHttpServicePortCount }}
-{{- $gatewayHttpTargetPort = required "previewStack.services.spring-cloud-gateway port: 80 must declare a targetPort for Gateway HTTP ingress" $port.targetPort }}
-{{- end }}
-{{- end }}
-{{- end }}
-{{- end }}
-{{- if ne $gatewayServiceCount 1 }}
-{{- fail "previewStack.services must include exactly one spring-cloud-gateway for the gameplay-bridge NetworkPolicies" }}
-{{- end }}
-{{- if ne $gatewayHttpServicePortCount 1 }}
-{{- fail "previewStack.services.spring-cloud-gateway must declare exactly one port: 80 for Gateway HTTP ingress" }}
-{{- end }}
 {{- if $gatewayWsTls.enabled }}
-{{- $gatewayWsTlsTargetPort = required "previewStack.gatewayWsTls.targetPort is required when Gateway WebSocket TLS is enabled" $gatewayWsTls.targetPort }}
-{{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -246,7 +251,7 @@ spec:
               app: tcp-proxy-service
       ports:
         - protocol: TCP
-          port: {{ if $gatewayWsTls.enabled }}{{ $gatewayWsTlsTargetPort }}{{ else }}{{ $gatewayHttpTargetPort }}{{ end }}
+          port: {{ $gatewayWsTlsTargetPort }}
     - from:
         - namespaceSelector:
             matchLabels:
@@ -257,6 +262,19 @@ spec:
       ports:
         - protocol: TCP
           port: {{ $gatewayHttpTargetPort }}
+{{- if eq $certificateIdentityMode "hosted-controller" }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: firemud-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: hosted-environment-identity-controller
+              app.kubernetes.io/component: controller
+      ports:
+        - protocol: TCP
+          port: {{ $gatewayWsTlsTargetPort }}
+{{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -289,10 +307,10 @@ spec:
               - key: app
                 operator: In
                 values:
-                  - account-service
-                  - game-design-service
                   - game-session-service
                   - logging-admin-service
+                  - game-design-service
+                  - account-service
                   - social-groups-service
       ports:
         - protocol: TCP
@@ -343,7 +361,7 @@ spec:
               app: spring-cloud-gateway
       ports:
         - protocol: TCP
-          port: {{ if $gatewayWsTls.enabled }}{{ $gatewayWsTlsTargetPort }}{{ else }}{{ $gatewayHttpTargetPort }}{{ end }}
+          port: {{ $gatewayWsTlsTargetPort }}
     - to:
         - podSelector:
             matchLabels:
@@ -358,4 +376,12 @@ spec:
       ports:
         - protocol: TCP
           port: 4317
+    - to:
+        - podSelector:
+            matchLabels:
+              app: elasticsearch
+      ports:
+        - protocol: TCP
+          port: 9200
+{{- end }}
 {{- end }}

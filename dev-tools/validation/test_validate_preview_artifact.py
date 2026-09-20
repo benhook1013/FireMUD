@@ -40,6 +40,184 @@ EXPECTED_HELM_CHART_LABEL = (
 )
 
 
+class PreviewArtifactServiceValidationTest(unittest.TestCase):
+    validator = VALIDATOR
+
+    def _tcp_proxy_service(
+        self, *, service_type="ClusterIP", port=2323, target_port=2323
+    ):
+        expected_spec = copy.deepcopy(
+            self.validator.EXPECTED_SERVICE_SPECS["tcp-proxy-service"]
+        )
+        expected_spec["type"] = service_type
+        expected_spec["ports"][0]["port"] = port
+        expected_spec["ports"][0]["targetPort"] = target_port
+        return {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {"name": "tcp-proxy-service"},
+            "spec": expected_spec,
+        }
+
+    def test_hosted_controller_accepts_private_tcp_proxy_service(self):
+        self.validator.validate_services(
+            [self._tcp_proxy_service()], "hosted-controller"
+        )
+
+    def test_hosted_controller_accepts_public_tcp_proxy_service(self):
+        self.validator.validate_services(
+            [self._tcp_proxy_service(service_type="NodePort")],
+            "hosted-controller",
+        )
+
+    def test_hosted_controller_rejects_wrong_tcp_proxy_port(self):
+        with self.assertRaisesRegex(
+            ValueError, "Service/tcp-proxy-service has an unexpected port set"
+        ):
+            self.validator.validate_services(
+                [self._tcp_proxy_service(port=2324)], "hosted-controller"
+            )
+
+    def _tcp_proxy_deployment(self, *, include_telnet_tls):
+        mounts = [
+            {"name": "grpc-tls", "mountPath": "/tls", "readOnly": True},
+            {
+                "name": "jwt-signing-keys",
+                "mountPath": "/var/run/secrets/firemud/jwt",
+                "readOnly": True,
+            },
+        ]
+        volumes = [
+            {"name": "grpc-tls", "secret": {"secretName": "firemud-grpc-tls"}},
+            {
+                "name": "jwt-signing-keys",
+                "secret": {"secretName": "jwt-signing-keys"},
+            },
+        ]
+        if include_telnet_tls:
+            mounts.append(
+                {
+                    "name": "telnet-tls",
+                    "mountPath": "/telnet-tls",
+                    "readOnly": True,
+                }
+            )
+            volumes.append(
+                {
+                    "name": "telnet-tls",
+                    "secret": {"secretName": "pr-42-telnet-tls"},
+                }
+            )
+        mounts.append(
+            {
+                "name": "gateway-ws-client-tls",
+                "mountPath": "/gateway-ws-client-tls",
+                "readOnly": True,
+            }
+        )
+        volumes.append(
+            {
+                "name": "gateway-ws-client-tls",
+                "secret": {
+                    "secretName": "pr-42-tcp-proxy-bridge",
+                    "items": [
+                        {"key": "tls.crt", "path": "tls.crt"},
+                        {"key": "tls.key", "path": "tls.key"},
+                        {"key": "ca.crt", "path": "ca.crt"},
+                    ],
+                },
+            }
+        )
+        return {
+            "kind": "Deployment",
+            "metadata": {"name": "tcp-proxy-service"},
+            "spec": {
+                "template": {
+                    "spec": {
+                        "serviceAccountName": "firemud-app",
+                        "containers": [
+                            {
+                                "name": "tcp-proxy-service",
+                                "volumeMounts": mounts,
+                            }
+                        ],
+                        "volumes": volumes,
+                    }
+                }
+            },
+        }
+
+    def test_hosted_controller_accepts_private_tcp_proxy_consumers(self):
+        with patch.object(self.validator, "SERVICE_IMAGES", {"tcp-proxy-service"}):
+            self.validator.validate_service_consumers(
+                [self._tcp_proxy_deployment(include_telnet_tls=False)],
+                "pr-42",
+                "hosted-controller",
+                "private",
+            )
+
+    def test_hosted_controller_public_requires_telnet_consumer(self):
+        with patch.object(self.validator, "SERVICE_IMAGES", {"tcp-proxy-service"}):
+            self.validator.validate_service_consumers(
+                [self._tcp_proxy_deployment(include_telnet_tls=True)],
+                "pr-42",
+                "hosted-controller",
+                "public",
+            )
+        with (
+            patch.object(self.validator, "SERVICE_IMAGES", {"tcp-proxy-service"}),
+            self.assertRaisesRegex(
+                ValueError,
+                "Deployment/tcp-proxy-service has duplicate or unexpected identity consumers",
+            ),
+        ):
+            self.validator.validate_service_consumers(
+                [self._tcp_proxy_deployment(include_telnet_tls=False)],
+                "pr-42",
+                "hosted-controller",
+                "public",
+            )
+
+    def test_private_rejects_public_telnet_consumer(self):
+        with (
+            patch.object(self.validator, "SERVICE_IMAGES", {"tcp-proxy-service"}),
+            self.assertRaisesRegex(
+                ValueError,
+                "Deployment/tcp-proxy-service has duplicate or unexpected identity consumers",
+            ),
+        ):
+            self.validator.validate_service_consumers(
+                [self._tcp_proxy_deployment(include_telnet_tls=True)],
+                "pr-42",
+                "hosted-controller",
+                "private",
+            )
+
+    def test_standalone_requires_public_telnet_consumer(self):
+        with patch.object(self.validator, "SERVICE_IMAGES", {"tcp-proxy-service"}):
+            self.validator.validate_service_consumers(
+                [self._tcp_proxy_deployment(include_telnet_tls=True)],
+                "pr-42",
+                "standalone",
+                "public",
+            )
+
+    def test_standalone_public_requires_telnet_consumer(self):
+        with (
+            patch.object(self.validator, "SERVICE_IMAGES", {"tcp-proxy-service"}),
+            self.assertRaisesRegex(
+                ValueError,
+                "Deployment/tcp-proxy-service has duplicate or unexpected identity consumers",
+            ),
+        ):
+            self.validator.validate_service_consumers(
+                [self._tcp_proxy_deployment(include_telnet_tls=False)],
+                "pr-42",
+                "standalone",
+                "public",
+            )
+
+
 class PreviewArtifactSecretReferenceTest(unittest.TestCase):
     validator = VALIDATOR
 
@@ -238,9 +416,11 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
         validation_order = []
         original_metadata_validator = validator._validate_object_metadata
 
-        def record_metadata(document, expected_namespace):
+        def record_metadata(document, expected_namespace, **kwargs):
             validation_order.append("metadata")
-            return original_metadata_validator(document, expected_namespace)
+            return original_metadata_validator(
+                document, expected_namespace, **kwargs
+            )
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "manifest.yaml"
@@ -454,7 +634,9 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
                     patch.object(self.validator, "SERVICE_IMAGES", {"account-service"}),
                     self.assertRaisesRegex(ValueError, f"{field} is not a list of objects"),
                 ):
-                    self.validator.validate_service_consumers([invalid], "pr-42")
+                    self.validator.validate_service_consumers(
+                        [invalid], "pr-42", "standalone", "public"
+                    )
 
 
 class PreviewArtifactPersistentVolumeClaimTest(unittest.TestCase):
@@ -529,6 +711,73 @@ class PreviewArtifactPersistentVolumeClaimTest(unittest.TestCase):
                 self._validate(self._document("postgres-data", spec))
 
 
+class PreviewArtifactInfrastructureDeploymentTest(unittest.TestCase):
+    validator = VALIDATOR
+
+    @staticmethod
+    def _document(name, spec):
+        return {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {"name": name},
+            "spec": copy.deepcopy(spec),
+        }
+
+    def _all_documents(self, specs=None):
+        if specs is None:
+            specs = self.validator.EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS
+        return [
+            self._document(name, spec) for name, spec in specs.items()
+        ]
+
+    def test_accepts_exact_postgres_layout_guard_and_infrastructure_specs(self):
+        self.validator.validate_infrastructure_deployments(self._all_documents())
+
+    def test_rejects_missing_postgres_layout_guard(self):
+        specs = copy.deepcopy(self.validator.EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS)
+        specs["postgres"]["template"]["spec"].pop("initContainers")
+        with self.assertRaisesRegex(
+            ValueError,
+            re.escape("Deployment/postgres has an unsafe infrastructure spec"),
+        ):
+            self.validator.validate_infrastructure_deployments(self._all_documents(specs))
+
+    def test_rejects_modified_postgres_layout_guard(self):
+        for case, mutate in (
+            (
+                "script",
+                lambda container: container["args"].__setitem__(
+                    0, container["args"][0] + "echo changed\n"
+                ),
+            ),
+            ("image", lambda container: container.__setitem__("image", "postgres:17")),
+            (
+                "mount",
+                lambda container: container["volumeMounts"][0].__setitem__(
+                    "readOnly", False
+                ),
+            ),
+            (
+                "security",
+                lambda container: container["securityContext"].__setitem__(
+                    "readOnlyRootFilesystem", False
+                ),
+            ),
+        ):
+            with self.subTest(case=case):
+                specs = copy.deepcopy(
+                    self.validator.EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS
+                )
+                mutate(specs["postgres"]["template"]["spec"]["initContainers"][0])
+                with self.assertRaisesRegex(
+                    ValueError,
+                    re.escape("Deployment/postgres has an unsafe infrastructure spec"),
+                ):
+                    self.validator.validate_infrastructure_deployments(
+                        self._all_documents(specs)
+                    )
+
+
 class PreviewArtifactMetadataTest(unittest.TestCase):
     validator = VALIDATOR
 
@@ -536,7 +785,7 @@ class PreviewArtifactMetadataTest(unittest.TestCase):
     def _metadata_fixture(manifest_path):
         return {
             "schemaVersion": 1,
-            "event": "pull_request",
+            "event": "pull_request_target",
             "repository": "example/FireMUD",
             "sourceWorkflow": ".github/workflows/preview.yml",
             "sourceRunId": 42,
@@ -568,6 +817,7 @@ class PreviewArtifactMetadataTest(unittest.TestCase):
                     "c" * 40,
                     "pr-42-head-42",
                     "pr-42.preview.example.test",
+                    "hosted-controller",
                 ]
 
                 with redirect_stderr(stderr):
@@ -606,6 +856,68 @@ class PreviewArtifactMetadataTest(unittest.TestCase):
                     )
                 validate_manifest.assert_not_called()
 
+    def test_metadata_event_specific_action_schema(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest_path = Path(directory) / "manifest.yaml"
+            metadata_path = Path(directory) / "metadata.json"
+            manifest_path.write_text("placeholder", encoding="utf-8")
+
+            dispatch_metadata = self._metadata_fixture(manifest_path)
+            dispatch_metadata.update({"event": "repository_dispatch", "action": "deploy"})
+            metadata_path.write_text(json.dumps(dispatch_metadata), encoding="utf-8")
+            with patch.object(self.validator, "validate_manifest"):
+                self.validator.validate_metadata(
+                    metadata_path,
+                    manifest_path,
+                    "example/FireMUD",
+                    "42",
+                    "42",
+                    "base-42",
+                    "head-42",
+                    "merge-42",
+                    "pr-42-head-42",
+                    "pr-42.preview.example.test",
+                )
+
+            dispatch_metadata["action"] = "destroy"
+            metadata_path.write_text(json.dumps(dispatch_metadata), encoding="utf-8")
+            with self.assertRaisesRegex(
+                ValueError, "repository_dispatch render metadata action must be deploy"
+            ):
+                self.validator.validate_metadata(
+                    metadata_path,
+                    manifest_path,
+                    "example/FireMUD",
+                    "42",
+                    "42",
+                    "base-42",
+                    "head-42",
+                    "merge-42",
+                    "pr-42-head-42",
+                    "pr-42.preview.example.test",
+                )
+
+            pull_request_metadata = self._metadata_fixture(manifest_path)
+            pull_request_metadata["action"] = "destroy"
+            metadata_path.write_text(
+                json.dumps(pull_request_metadata), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(
+                ValueError, r"metadata contains unsupported fields: \['action'\]"
+            ):
+                self.validator.validate_metadata(
+                    metadata_path,
+                    manifest_path,
+                    "example/FireMUD",
+                    "42",
+                    "42",
+                    "base-42",
+                    "head-42",
+                    "merge-42",
+                    "pr-42-head-42",
+                    "pr-42.preview.example.test",
+                )
+
     def test_metadata_uses_canonical_pr_number_for_manifest_namespace(self):
         with tempfile.TemporaryDirectory() as directory:
             manifest_path = Path(directory) / "manifest.yaml"
@@ -633,6 +945,7 @@ class PreviewArtifactMetadataTest(unittest.TestCase):
                 "pr-42",
                 "pr-42-head-42",
                 "pr-42.preview.example.test",
+                "hosted-controller",
             )
 
     def test_metadata_rejects_noncanonical_pr_number_forms(self):
@@ -662,13 +975,21 @@ class PreviewArtifactMetadataTest(unittest.TestCase):
 class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
     validator = VALIDATOR
 
-    def _tcp_proxy_service(self, spec, *, namespace=None):
+    def _tcp_proxy_service(self, spec, *, namespace=None, mode=None):
+        spec = copy.deepcopy(spec)
+        if mode is not None:
+            spec.setdefault(
+                "type",
+                "NodePort" if mode == "standalone" else "ClusterIP",
+            )
         metadata = {
             "name": "tcp-proxy-service",
             "labels": VALIDATOR._expected_object_labels(
                 "Service", "tcp-proxy-service", "pr-42"
             ),
         }
+        if mode is not None:
+            metadata["labels"][self.validator.CERTIFICATE_IDENTITY_LABEL] = mode
         if namespace is not None:
             metadata["namespace"] = namespace
         return {
@@ -676,6 +997,23 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
             "kind": "Service",
             "metadata": metadata,
             "spec": spec,
+        }
+
+    def _preview_ingress(self, *, namespace=None):
+        metadata = {
+            "name": "firemud-preview",
+            "labels": {
+                **self.validator._expected_top_level_labels(),
+                "app.kubernetes.io/instance": "pr-42",
+            },
+        }
+        if namespace is not None:
+            metadata["namespace"] = namespace
+        return {
+            "apiVersion": "networking.k8s.io/v1",
+            "kind": "Ingress",
+            "metadata": metadata,
+            "spec": {},
         }
 
     def test_injection_rejects_missing_namespace_before_reading_artifact(self):
@@ -700,7 +1038,10 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
 
     def test_injection_accepts_canonical_namespace(self):
         document = self._tcp_proxy_service(
-            {"ports": [{"name": "tcp-2323", "port": 2323}]}
+            {
+                "type": "NodePort",
+                "ports": [{"name": "tcp-2323", "port": 2323}],
+            }
         )
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "source.yaml"
@@ -716,6 +1057,186 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
                 prepared["metadata"]["annotations"],
                 {"firemud.dev/allocated-telnet-port": "32000"},
             )
+
+    def test_standalone_injects_only_trusted_ingress_issuer(self):
+        trusted_values = yaml.safe_load(
+            (ROOT / "k8s/helm/firemud/values-hosted-shared.example.yaml").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            trusted_values["previewStack"]["ingress"]["clusterIssuer"],
+            self.validator.CANONICAL_INGRESS_ISSUER,
+        )
+        documents = [
+            self._tcp_proxy_service(
+                {"ports": [{"port": 2323}]}, mode="standalone"
+            ),
+            self._preview_ingress(),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.yaml"
+            prepared = Path(directory) / "prepared.yaml"
+            source.write_text(yaml.safe_dump_all(documents), encoding="utf-8")
+            self.validator.inject_telnet_port(
+                source, prepared, 32000, "pr-42", "standalone"
+            )
+            result = list(yaml.safe_load_all(prepared.read_text(encoding="utf-8")))
+            self.assertEqual(
+                result[0]["metadata"]["annotations"],
+                {"firemud.dev/allocated-telnet-port": "32000"},
+            )
+            self.assertEqual(
+                result[1]["metadata"]["annotations"],
+                {"cert-manager.io/cluster-issuer": "letsencrypt-prod"},
+            )
+            self.validator.validate_runtime_target(prepared, "pr-42", 32000, "standalone")
+            with self.assertRaisesRegex(
+                ValueError, "certificate-identity-mode.*expected 'hosted-controller'"
+            ):
+                self.validator.validate_runtime_target(
+                    prepared, "pr-42", 32000, "hosted-controller"
+                )
+            for annotations in (
+                {"cert-manager.io/cluster-issuer": "attacker"},
+                {
+                    "cert-manager.io/cluster-issuer": "letsencrypt-prod",
+                    "unexpected": "value",
+                },
+            ):
+                with self.subTest(annotations=annotations):
+                    result[1]["metadata"]["annotations"] = annotations
+                    prepared.write_text(yaml.safe_dump_all(result), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "unsafe certificate issuer"):
+                        self.validator.validate_runtime_target(
+                            prepared, "pr-42", 32000, "standalone"
+                        )
+
+    def test_standalone_injection_rejects_missing_ingress_or_source_annotations(self):
+        service = self._tcp_proxy_service(
+            {"ports": [{"port": 2323}]}, mode="standalone"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.yaml"
+            prepared = Path(directory) / "prepared.yaml"
+            source.write_text(yaml.safe_dump(service), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "exactly one preview Ingress"):
+                self.validator.inject_telnet_port(
+                    source, prepared, 32000, "pr-42", "standalone"
+                )
+            self.assertFalse(prepared.exists())
+            ingress = self._preview_ingress()
+            ingress["metadata"]["annotations"] = {
+                "cert-manager.io/cluster-issuer": "attacker"
+            }
+            source.write_text(yaml.safe_dump_all([service, ingress]), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "unsupported fields"):
+                self.validator.inject_telnet_port(
+                    source, prepared, 32000, "pr-42", "standalone"
+                )
+            self.assertFalse(prepared.exists())
+
+    def test_private_injection_preserves_cluster_ip_and_rejects_telnet_port(self):
+        service = self._tcp_proxy_service(
+            {"ports": [{"name": "tcp-2323", "port": 2323}]},
+            mode="hosted-controller",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.yaml"
+            prepared = Path(directory) / "prepared.yaml"
+            source.write_text(yaml.safe_dump(service), encoding="utf-8")
+            self.validator.inject_telnet_port(
+                source, prepared, 0, "pr-42", "hosted-controller"
+            )
+            result = yaml.safe_load(prepared.read_text(encoding="utf-8"))
+            self.assertNotIn("nodePort", result["spec"]["ports"][0])
+            self.assertNotIn("annotations", result["metadata"])
+            with self.assertRaisesRegex(ValueError, "sentinel Telnet port 0"):
+                self.validator.inject_telnet_port(
+                    source, prepared, 32000, "pr-42", "hosted-controller"
+                )
+
+    def test_hosted_controller_accepts_explicit_public_exposure(self):
+        service = self._tcp_proxy_service(
+            copy.deepcopy(self.validator.EXPECTED_SERVICE_SPECS["tcp-proxy-service"]),
+            namespace="pr-42",
+            mode="hosted-controller",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.yaml"
+            prepared = Path(directory) / "prepared.yaml"
+            source.write_text(yaml.safe_dump(service), encoding="utf-8")
+            self.validator.inject_telnet_port(
+                source, prepared, 32000, "pr-42", "hosted-controller", "public"
+            )
+            self.validator.validate_runtime_target(
+                prepared, "pr-42", 32000, "hosted-controller", "public"
+            )
+
+    def test_explicit_exposure_mode_must_match_service_shape(self):
+        service = self._tcp_proxy_service(
+            copy.deepcopy(self.validator.EXPECTED_SERVICE_SPECS["tcp-proxy-service"]),
+            namespace="pr-42",
+            mode="hosted-controller",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.yaml"
+            prepared = Path(directory) / "prepared.yaml"
+            source.write_text(yaml.safe_dump(service), encoding="utf-8")
+            with self.assertRaisesRegex(
+                ValueError, "does not match TCP Proxy Service type"
+            ):
+                self.validator.inject_telnet_port(
+                    source, prepared, 0, "pr-42", "hosted-controller", "private"
+                )
+            with self.assertRaisesRegex(
+                ValueError, "does not match TCP Proxy Service type"
+            ):
+                self.validator.validate_runtime_target(
+                    source, "pr-42", 0, "hosted-controller", "private"
+                )
+
+    def test_invalid_explicit_exposure_mode_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "missing-source.yaml"
+            prepared = Path(directory) / "prepared.yaml"
+            with self.assertRaisesRegex(
+                ValueError, "preview exposure mode is not canonical"
+            ):
+                self.validator.inject_telnet_port(
+                    source, prepared, 0, "pr-42", "hosted-controller", "invalid"
+                )
+            with self.assertRaisesRegex(
+                ValueError, "preview exposure mode is not canonical"
+            ):
+                self.validator.validate_runtime_target(
+                    source, "pr-42", 0, "hosted-controller", "invalid"
+                )
+
+    def test_exposure_mode_is_derived_from_tcp_proxy_service_shape(self):
+        for service_type, expected_mode, identity_mode in (
+            ("ClusterIP", "private", "hosted-controller"),
+            ("NodePort", "public", "standalone"),
+        ):
+            with self.subTest(service_type=service_type), tempfile.TemporaryDirectory() as directory:
+                source = Path(directory) / "source.yaml"
+                spec = copy.deepcopy(
+                    self.validator.EXPECTED_SERVICE_SPECS["tcp-proxy-service"]
+                )
+                spec["type"] = service_type
+                source.write_text(
+                    yaml.safe_dump(
+                        self._tcp_proxy_service(
+                            spec,
+                            mode=identity_mode,
+                        )
+                    ),
+                    encoding="utf-8",
+                )
+                self.assertEqual(
+                    expected_mode,
+                    self.validator.determine_exposure_mode(source, identity_mode),
+                )
 
     def test_expected_top_level_label_mismatches_report_expected_and_actual(self):
         expected_labels = VALIDATOR._expected_object_labels(
@@ -740,6 +1261,7 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
     def test_runtime_target_finds_declared_telnet_port_without_relying_on_index(self):
         document = self._tcp_proxy_service(
             {
+                "type": "NodePort",
                 "ports": [
                     {"name": "metrics", "port": 8080},
                     {"name": "tcp-2323", "port": 2323, "nodePort": 32001},
@@ -755,6 +1277,50 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
             path.write_text(yaml.safe_dump(document), encoding="utf-8")
 
             self.validator.validate_runtime_target(path, "pr-42", 32001)
+
+    def test_runtime_target_rejects_unbound_or_extra_public_service_annotations(self):
+        document = self._tcp_proxy_service(
+            {
+                "type": "NodePort",
+                "ports": [
+                    {"name": "tcp-2323", "port": 2323, "nodePort": 32001},
+                ],
+            },
+            namespace="pr-42",
+        )
+        for annotations in (
+            {"firemud.dev/allocated-telnet-port": "32000"},
+            {
+                "firemud.dev/allocated-telnet-port": "32001",
+                "unexpected.example/annotation": "value",
+            },
+        ):
+            with self.subTest(annotations=annotations), tempfile.TemporaryDirectory() as directory:
+                document["metadata"]["annotations"] = annotations
+                path = Path(directory) / "prepared.yaml"
+                path.write_text(yaml.safe_dump(document), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "allocator annotation"):
+                    self.validator.validate_runtime_target(path, "pr-42", 32001)
+
+    def test_runtime_target_rejects_private_service_annotation(self):
+        document = self._tcp_proxy_service(
+            {
+                "type": "ClusterIP",
+                "ports": [{"name": "tcp-2323", "port": 2323}],
+            },
+            namespace="pr-42",
+            mode="hosted-controller",
+        )
+        document["metadata"]["annotations"] = {
+            "firemud.dev/allocated-telnet-port": "0"
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "prepared.yaml"
+            path.write_text(yaml.safe_dump(document), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "must not contain annotations"):
+                self.validator.validate_runtime_target(
+                    path, "pr-42", 0, "hosted-controller", "private"
+                )
 
     def test_runtime_target_rejects_non_object_service_spec_or_ports(self):
         for spec, message in (
@@ -803,6 +1369,411 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
                 self.assertFalse(destination.exists())
 
 
+class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
+    validator = VALIDATOR
+
+    def _labels(self, mode=None):
+        labels = {
+            **self.validator._expected_top_level_labels(),
+            "app.kubernetes.io/instance": "pr-42",
+        }
+        if mode is not None:
+            labels[self.validator.CERTIFICATE_IDENTITY_LABEL] = mode
+        return labels
+
+    def _metadata_document(self, kind, name, mode=None):
+        return {
+            "apiVersion": (
+                "apps/v1" if kind == "Deployment" else "v1"
+            ),
+            "kind": kind,
+            "metadata": {"name": name, "labels": self._labels(mode)},
+        }
+
+    def _policy_document(self, name, spec):
+        return {
+            "apiVersion": "networking.k8s.io/v1",
+            "kind": "NetworkPolicy",
+            "metadata": {"name": name, "labels": self._labels()},
+            "spec": copy.deepcopy(spec),
+        }
+
+    @staticmethod
+    def _controller_from():
+        return {
+            "namespaceSelector": {
+                "matchLabels": {"kubernetes.io/metadata.name": "firemud-system"}
+            },
+            "podSelector": {
+                "matchLabels": {
+                    "app.kubernetes.io/name": "hosted-environment-identity-controller",
+                    "app.kubernetes.io/component": "controller",
+                }
+            },
+        }
+
+    def _policy_documents(self, mode):
+        controller_from = self._controller_from()
+        gateway_ingress = [
+            {
+                "from": [
+                    {"podSelector": {"matchLabels": {"app": "tcp-proxy-service"}}}
+                ],
+                "ports": [{"protocol": "TCP", "port": 8443}],
+            },
+            {
+                "from": [
+                    {
+                        "namespaceSelector": {
+                            "matchLabels": {
+                                "kubernetes.io/metadata.name": "kube-system"
+                            }
+                        },
+                        "podSelector": {
+                            "matchLabels": {"app.kubernetes.io/name": "traefik"}
+                        },
+                    }
+                ],
+                "ports": [{"protocol": "TCP", "port": 8080}],
+            },
+        ]
+        if mode == "hosted-controller":
+            gateway_ingress.append(
+                {
+                    "from": [controller_from],
+                    "ports": [{"protocol": "TCP", "port": 8443}],
+                }
+            )
+        proxy_egress = [
+            {
+                "to": [
+                    {
+                        "namespaceSelector": {
+                            "matchLabels": {
+                                "kubernetes.io/metadata.name": "kube-system"
+                            }
+                        },
+                        "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+                    }
+                ],
+                "ports": [
+                    {"protocol": "UDP", "port": 53},
+                    {"protocol": "TCP", "port": 53},
+                ],
+            },
+            {
+                "to": [{"podSelector": {"matchLabels": {"app": "spring-cloud-gateway"}}}],
+                "ports": [{"protocol": "TCP", "port": 8443}],
+            },
+            {
+                "to": [{"podSelector": {"matchLabels": {"app": "game-session-service"}}}],
+                "ports": [{"protocol": "TCP", "port": 6565}],
+            },
+            {
+                "to": [{"podSelector": {"matchLabels": {"app": "otel-collector"}}}],
+                "ports": [{"protocol": "TCP", "port": 4317}],
+            },
+            {
+                "to": [{"podSelector": {"matchLabels": {"app": "elasticsearch"}}}],
+                "ports": [{"protocol": "TCP", "port": 9200}],
+            },
+        ]
+        gateway_egress = [
+            {
+                "to": [
+                    {
+                        "namespaceSelector": {
+                            "matchLabels": {
+                                "kubernetes.io/metadata.name": "kube-system"
+                            }
+                        },
+                        "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+                    }
+                ],
+                "ports": [
+                    {"protocol": "UDP", "port": 53},
+                    {"protocol": "TCP", "port": 53},
+                ],
+            },
+            {
+                "to": [
+                    {
+                        "podSelector": {
+                            "matchExpressions": [
+                                {
+                                    "key": "app",
+                                    "operator": "In",
+                                    "values": [
+                                        "game-session-service",
+                                        "logging-admin-service",
+                                        "game-design-service",
+                                        "account-service",
+                                        "social-groups-service",
+                                    ],
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "ports": [{"protocol": "TCP", "port": 8080}],
+            },
+            {
+                "to": [{"podSelector": {"matchLabels": {"app": "redis-cache"}}}],
+                "ports": [{"protocol": "TCP", "port": 6379}],
+            },
+            {
+                "to": [{"podSelector": {"matchLabels": {"app": "otel-collector"}}}],
+                "ports": [{"protocol": "TCP", "port": 4317}],
+            },
+        ]
+        documents = [
+            self._policy_document(
+                name, spec
+            )
+            for name, spec in self.validator.EXPECTED_INTERNAL_NETWORK_POLICY_SPECS.items()
+        ]
+        if mode == "hosted-controller":
+            documents.append(
+                self._policy_document(
+                    "account-service-controller-ingress",
+                    {
+                        "podSelector": {"matchLabels": {"app": "account-service"}},
+                        "policyTypes": ["Ingress"],
+                        "ingress": [
+                            {
+                                "from": [controller_from],
+                                "ports": [{"protocol": "TCP", "port": 6565}],
+                            }
+                        ],
+                    },
+                )
+            )
+        documents.extend(
+            [
+                self._policy_document(
+                    "spring-cloud-gateway-ingress",
+                    {
+                        "podSelector": {
+                            "matchLabels": {"app": "spring-cloud-gateway"}
+                        },
+                        "policyTypes": ["Ingress"],
+                        "ingress": gateway_ingress,
+                    },
+                ),
+                self._policy_document(
+                    "spring-cloud-gateway-egress",
+                    {
+                        "podSelector": {
+                            "matchLabels": {"app": "spring-cloud-gateway"}
+                        },
+                        "policyTypes": ["Egress"],
+                        "egress": gateway_egress,
+                    },
+                ),
+                self._policy_document(
+                    "tcp-proxy-service-egress",
+                    {
+                        "podSelector": {
+                            "matchLabels": {"app": "tcp-proxy-service"}
+                        },
+                        "policyTypes": ["Egress"],
+                        "egress": proxy_egress,
+                    },
+                ),
+            ]
+        )
+        return documents
+
+    def test_both_modes_require_the_exact_tcp_proxy_identity_labels(self):
+        for mode in ("standalone", "hosted-controller"):
+            with self.subTest(mode=mode):
+                for kind in ("Deployment", "Service"):
+                    self.validator._validate_object_metadata(
+                        self._metadata_document(kind, "tcp-proxy-service", mode),
+                        "pr-42",
+                        certificate_identity_mode=mode,
+                    )
+                self.validator.validate_network_policies(
+                    self._policy_documents(mode), mode
+                )
+
+    def test_identity_label_rejects_missing_spoofed_extra_and_elsewhere(self):
+        for mode in ("standalone", "hosted-controller"):
+            valid = self._metadata_document("Service", "tcp-proxy-service", mode)
+            spoofed_mode = (
+                "standalone"
+                if mode == "hosted-controller"
+                else "hosted-controller"
+            )
+            cases = {
+                "missing": lambda document: document["metadata"]["labels"].pop(
+                    self.validator.CERTIFICATE_IDENTITY_LABEL
+                ),
+                "spoofed": lambda document, spoofed_mode=spoofed_mode: document[
+                    "metadata"
+                ]["labels"].__setitem__(
+                    self.validator.CERTIFICATE_IDENTITY_LABEL,
+                    spoofed_mode,
+                ),
+                "extra": lambda document: document["metadata"]["labels"].__setitem__(
+                    "firemud.dev/untrusted", "capture"
+                ),
+                "elsewhere": lambda document, mode=mode: document[
+                    "metadata"
+                ]["labels"].__setitem__(
+                    self.validator.CERTIFICATE_IDENTITY_LABEL, mode
+                ),
+            }
+            for name, mutation in cases.items():
+                with self.subTest(mode=mode, case=name):
+                    document = copy.deepcopy(valid)
+                    if name == "elsewhere":
+                        document["metadata"]["name"] = "account-service"
+                    mutation(document)
+                    with self.assertRaises(ValueError):
+                        self.validator._validate_object_metadata(
+                            document,
+                            "pr-42",
+                            certificate_identity_mode=mode,
+                        )
+
+    def test_identity_labels_survive_sanitize_injection_and_runtime_target(self):
+        for mode in ("standalone", "hosted-controller"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                source = Path(directory) / "source.yaml"
+                sanitized = Path(directory) / "sanitized.yaml"
+                prepared = Path(directory) / "prepared.yaml"
+                service = {
+                    "apiVersion": "v1",
+                    "kind": "Service",
+                    "metadata": {
+                        "name": "tcp-proxy-service",
+                        "labels": self._labels(mode),
+                    },
+                    "spec": {
+                        "type": "NodePort" if mode == "standalone" else "ClusterIP",
+                        "ports": [{"port": 2323}],
+                    },
+                }
+                ingress = {
+                    "apiVersion": "networking.k8s.io/v1",
+                    "kind": "Ingress",
+                    "metadata": {
+                        "name": "firemud-preview",
+                        "labels": self._labels(),
+                        "annotations": {"untrusted.example/annotation": "drop"},
+                    },
+                    "spec": {},
+                }
+                source.write_text(
+                    yaml.safe_dump_all([service, ingress]), encoding="utf-8"
+                )
+                self.validator.sanitize(source, sanitized)
+                sanitized_documents = list(
+                    yaml.safe_load_all(sanitized.read_text(encoding="utf-8"))
+                )
+                self.assertEqual(
+                    sanitized_documents[0]["metadata"]["labels"], self._labels(mode)
+                )
+                self.validator.inject_telnet_port(
+                    sanitized,
+                    prepared,
+                    0 if mode == "hosted-controller" else 32000,
+                    "pr-42",
+                    mode,
+                )
+                prepared_documents = list(
+                    yaml.safe_load_all(prepared.read_text(encoding="utf-8"))
+                )
+                self.assertEqual(
+                    prepared_documents[0]["metadata"]["labels"], self._labels(mode)
+                )
+                self.validator.validate_runtime_target(
+                    prepared,
+                    "pr-42",
+                    0 if mode == "hosted-controller" else 32000,
+                    mode,
+                )
+
+    def test_mode_specific_policy_sets_and_rules_are_closed(self):
+        hosted = self._policy_documents("hosted-controller")
+        standalone = self._policy_documents("standalone")
+        with self.assertRaisesRegex(ValueError, "runtime NetworkPolicy set is not closed"):
+            self.validator.validate_network_policies(
+                standalone
+                + [
+                    self._policy_document(
+                        "account-service-controller-ingress", {}
+                    )
+                ],
+                "standalone",
+            )
+        missing_account = [
+            document
+            for document in hosted
+            if document["metadata"]["name"] != "account-service-controller-ingress"
+        ]
+        with self.assertRaisesRegex(ValueError, "runtime NetworkPolicy set is not closed"):
+            self.validator.validate_network_policies(missing_account, "hosted-controller")
+
+        for mode in ("standalone", "hosted-controller"):
+            with self.subTest(mode=mode, case="missing gateway egress"):
+                missing_gateway_egress = [
+                    document
+                    for document in self._policy_documents(mode)
+                    if document["metadata"]["name"] != "spring-cloud-gateway-egress"
+                ]
+                with self.assertRaisesRegex(
+                    ValueError, "runtime NetworkPolicy set is not closed"
+                ):
+                    self.validator.validate_network_policies(
+                        missing_gateway_egress, mode
+                    )
+
+            with self.subTest(mode=mode, case="broadened gateway egress"):
+                broadened = copy.deepcopy(self._policy_documents(mode))
+                gateway_egress = next(
+                    document
+                    for document in broadened
+                    if document["metadata"]["name"] == "spring-cloud-gateway-egress"
+                )
+                gateway_egress["spec"]["egress"][1]["ports"][0]["port"] = 6565
+                with self.assertRaisesRegex(ValueError, "unsafe exception"):
+                    self.validator.validate_network_policies(broadened, mode)
+
+        hosted_broad = copy.deepcopy(hosted)
+        gateway = next(
+            document
+            for document in hosted_broad
+            if document["metadata"]["name"] == "spring-cloud-gateway-ingress"
+        )
+        gateway["spec"]["ingress"].append(
+            {
+                "from": [{"podSelector": {}}],
+                "ports": [{"protocol": "TCP", "port": 6565}],
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "unsafe exception"):
+            self.validator.validate_network_policies(hosted_broad, "hosted-controller")
+
+        standalone_controller = copy.deepcopy(standalone)
+        standalone_gateway = next(
+            document
+            for document in standalone_controller
+            if document["metadata"]["name"] == "spring-cloud-gateway-ingress"
+        )
+        standalone_gateway["spec"]["ingress"].append(
+            {
+                "from": [self._controller_from()],
+                "ports": [{"protocol": "TCP", "port": 8443}],
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "unsafe exception"):
+            self.validator.validate_network_policies(
+                standalone_controller, "standalone"
+            )
+
+
 class PreviewArtifactCommandLineTest(unittest.TestCase):
     validator = VALIDATOR
 
@@ -844,6 +1815,8 @@ class PreviewArtifactCommandLineTest(unittest.TestCase):
                         str(prepared_manifest),
                         "pr-42",
                         "32000",
+                        "hosted-controller",
+                        "private",
                     ]
                     with (
                         patch.object(
@@ -873,6 +1846,84 @@ class PreviewArtifactCommandLineTest(unittest.TestCase):
                 )
             )
 
+    def test_runtime_mutation_commands_require_certificate_identity_mode(self):
+        for command, command_arguments in (
+            (
+                "inject",
+                ["source.yaml", "destination.yaml", "pr-42", "32000"],
+            ),
+            (
+                "runtime-target",
+                ["prepared.yaml", "pr-42", "32000"],
+            ),
+        ):
+            with self.subTest(command=command), redirect_stderr(io.StringIO()):
+                self.assertEqual(
+                    self.validator.main(
+                        [str(SCRIPT), command, *command_arguments]
+                    ),
+                    2,
+                )
+
+    def test_runtime_mutation_commands_require_exposure_mode(self):
+        for command, command_arguments in (
+            (
+                "inject",
+                ["source.yaml", "destination.yaml", "pr-42", "32000", "standalone"],
+            ),
+            (
+                "runtime-target",
+                ["prepared.yaml", "pr-42", "32000", "standalone"],
+            ),
+        ):
+            with self.subTest(command=command):
+                stderr = io.StringIO()
+                with redirect_stderr(stderr):
+                    self.assertEqual(
+                        self.validator.main(
+                            [str(SCRIPT), command, *command_arguments]
+                        ),
+                        2,
+                    )
+                self.assertTrue(
+                    stderr.getvalue().startswith(
+                        "usage: validate-preview-artifact.py"
+                    )
+                )
+
+    def test_artifact_validation_requires_certificate_identity_mode(self):
+        arguments = [
+            str(SCRIPT),
+            "metadata.json",
+            "manifest.yaml",
+            "example/FireMUD",
+            "123",
+            "42",
+            "a" * 40,
+            "b" * 40,
+            "c" * 40,
+            "head-tag",
+            "pr-42.preview.example.test",
+        ]
+        missing_mode_stderr = io.StringIO()
+        with redirect_stderr(missing_mode_stderr):
+            self.assertEqual(self.validator.main(arguments), 2)
+        self.assertTrue(
+            missing_mode_stderr.getvalue().startswith(
+                "usage: validate-preview-artifact.py"
+            )
+        )
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            self.assertEqual(
+                self.validator.main([*arguments, "untrusted-mode"]),
+                1,
+            )
+        self.assertEqual(
+            stderr.getvalue(),
+            "preview artifact rejected: preview certificate identity mode is not canonical\n",
+        )
+
     def test_subcommand_named_metadata_paths_use_default_validation(self):
         for metadata_path in ("sanitize", "inject", "runtime-target"):
             argv = [
@@ -887,6 +1938,7 @@ class PreviewArtifactCommandLineTest(unittest.TestCase):
                 "c" * 40,
                 "head-tag",
                 "pr-42.preview.example.test",
+                "hosted-controller",
             ]
             with (
                 self.subTest(metadata_path=metadata_path),

@@ -118,7 +118,7 @@ else:
     raise SystemExit("tcp-proxy-service fixture is missing")
 path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
 PY
-SERVICE_TYPE_ERROR="hosted-controller TCP Proxy nodePort requires serviceType NodePort or LoadBalancer"
+SERVICE_TYPE_ERROR="tcp-proxy-service nodePort requires serviceType NodePort or LoadBalancer"
 if helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values-controller-clusterip.yaml" \
   --namespace pr-42 >/dev/null 2>"$TMP_DIR/invalid-service-type.err"; then
@@ -130,6 +130,44 @@ if ! grep -Fq "$SERVICE_TYPE_ERROR" "$TMP_DIR/invalid-service-type.err"; then
   sed -n '1,20p' "$TMP_DIR/invalid-service-type.err" >&2
   exit 1
 fi
+cp "$TMP_DIR/values-controller-clusterip.yaml" "$TMP_DIR/values-private-clusterip.yaml"
+python3 - "$TMP_DIR/values-private-clusterip.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+values = yaml.safe_load(path.read_text(encoding="utf-8"))
+for service in values["previewStack"]["services"]:
+    if service["name"] == "tcp-proxy-service":
+        for port in service["ports"]:
+            port.pop("nodePort", None)
+        break
+else:
+    raise SystemExit("tcp-proxy-service fixture is missing")
+path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/values-private-clusterip.yaml" \
+  --namespace pr-42 >"$TMP_DIR/rendered-private-clusterip.yaml"
+python3 - "$TMP_DIR/rendered-private-clusterip.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+documents = list(yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8")))
+service = next(
+    document
+    for document in documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+assert service["spec"]["type"] == "ClusterIP"
+assert "firemud.dev/allocated-telnet-port" not in service["metadata"].get("annotations", {})
+assert all("nodePort" not in port for port in service["spec"]["ports"])
+PY
 cp "$TMP_DIR/values-controller.yaml" "$TMP_DIR/values.yaml"
 python3 - "$TMP_DIR/values.yaml" <<'PY'
 import sys
@@ -154,6 +192,14 @@ import yaml
 path = Path(sys.argv[1])
 values = yaml.safe_load(path.read_text(encoding="utf-8"))
 values["previewStack"].pop("telnetTls")
+for service in values["previewStack"]["services"]:
+    if service["name"] == "tcp-proxy-service":
+        service["serviceType"] = "ClusterIP"
+        for port in service["ports"]:
+            port.pop("nodePort", None)
+        break
+else:
+    raise SystemExit("tcp-proxy-service fixture is missing")
 path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
 PY
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
@@ -169,6 +215,9 @@ path = Path(sys.argv[1])
 values = yaml.safe_load(path.read_text(encoding="utf-8"))
 for service in values["previewStack"]["services"]:
     if service["name"] == "tcp-proxy-service":
+        service["serviceType"] = "ClusterIP"
+        for port in service["ports"]:
+            port.pop("nodePort", None)
         service.setdefault("extraEnv", {})["TCP_PROXY_TELNET_MODE"] = "PLAINTEXT"
         break
 else:

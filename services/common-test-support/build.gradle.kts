@@ -6,6 +6,7 @@ plugins {
 
 dependencies {
     testImplementation(project(":common-platform-core"))
+    testImplementation(libs.spring.boot.starter.webflux)
     testFixturesImplementation(project(":common-platform-core"))
     testFixturesImplementation(libs.spring.boot.starter.test)
     testFixturesImplementation(libs.spring.boot.starter.webflux)
