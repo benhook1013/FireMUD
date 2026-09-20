@@ -1,8 +1,10 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamedesign.client.EntityManagementClient;
@@ -94,6 +96,28 @@ public class PublishGateServiceImpl implements PublishGateService {
   @Override
   public void assertGatePassed(
       VersionDto version, List<PublishParticipantDigestDto> participantDigests) {
+    List<PublishParticipantKey> expectedParticipants =
+        version.scriptOnly() ? SCRIPT_PATCH_PARTICIPANTS : FULL_VERSION_PARTICIPANTS;
+    List<String> expectedParticipantKeyList =
+        expectedParticipants.stream().map(PublishParticipantKey::name).toList();
+    Set<String> expectedParticipantKeys = new HashSet<>(expectedParticipantKeyList);
+    List<String> actualParticipantKeys =
+        participantDigests == null
+            ? List.of()
+            : participantDigests.stream()
+                .map(digest -> digest == null ? null : digest.participantKey())
+                .toList();
+    Set<String> actualParticipantKeySet = new HashSet<>(actualParticipantKeys);
+    if (actualParticipantKeys.size() != expectedParticipantKeys.size()
+        || actualParticipantKeySet.size() != actualParticipantKeys.size()
+        || !actualParticipantKeySet.equals(expectedParticipantKeys)) {
+      throw new PublishGateFailureException(
+          PublishGateFailureCode.PARTICIPANT_SET_MISMATCH,
+          "publish gate failed: expected participant keys "
+              + expectedParticipantKeyList
+              + " but received "
+              + actualParticipantKeys);
+    }
     if (participantDigests.stream().anyMatch(digest -> !digest.succeeded())) {
       PublishParticipantDigestDto failed =
           participantDigests.stream()
