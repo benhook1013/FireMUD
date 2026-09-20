@@ -696,6 +696,17 @@ contains "$waiter" 'projection_attempted=true'
 contains "$waiter" 'if [[ "$projection_attempted" == true ]]; then'
 contains "$waiter" 'Skipped waiting for complete controller projection'
 contains "$waiter" 'tls.crt,tls.key,ca.crt,client.crt,client.key'
+contains "$waiter" 'publication_workloads=('
+# shellcheck disable=SC2016 # Match literal shell source in the waiter.
+contains "$waiter" 'firemud-grpc-${workload}|grpc-publication-${workload}|tls.crt,tls.key,ca.crt'
+for workload in \
+  game-design-service \
+  world-management-service \
+  entity-management-service \
+  game-logic-service \
+  automation-scripting-service; do
+  contains "$waiter" "    $workload"
+done
 # shellcheck disable=SC2016 # Match literal shell source in the waiter.
 contains "$waiter" 'get secret "$secret_name" --ignore-not-found -o json'
 # shellcheck disable=SC2016 # Match literal shell source in the waiter.
@@ -5007,6 +5018,21 @@ if [[ "$1" == -n && "$2" == pr-42 && "$3" == get && "$4" == secret ]]; then
     firemud-grpc-tls)
       printf '%s' '{"metadata":{"name":"firemud-grpc-tls","labels":{"firemud.dev/managed-by":"hosted-identity-controller","firemud.dev/identity-name":"pr-42","firemud.dev/role":"grpc","firemud.dev/retention":"retained"}},"data":{"tls.crt":"cert","tls.key":"key","ca.crt":"ca","client.crt":"client-cert","client.key":"client-key"}}'
       ;;
+    firemud-grpc-game-design-service)
+      printf '%s' '{"metadata":{"name":"firemud-grpc-game-design-service","labels":{"firemud.dev/managed-by":"hosted-identity-controller","firemud.dev/identity-name":"pr-42","firemud.dev/role":"grpc-publication-game-design-service","firemud.dev/retention":"retained"}},"data":{"tls.crt":"cert","tls.key":"key","ca.crt":"ca"}}'
+      ;;
+    firemud-grpc-world-management-service)
+      printf '%s' '{"metadata":{"name":"firemud-grpc-world-management-service","labels":{"firemud.dev/managed-by":"hosted-identity-controller","firemud.dev/identity-name":"pr-42","firemud.dev/role":"grpc-publication-world-management-service","firemud.dev/retention":"retained"}},"data":{"tls.crt":"cert","tls.key":"key","ca.crt":"ca"}}'
+      ;;
+    firemud-grpc-entity-management-service)
+      printf '%s' '{"metadata":{"name":"firemud-grpc-entity-management-service","labels":{"firemud.dev/managed-by":"hosted-identity-controller","firemud.dev/identity-name":"pr-42","firemud.dev/role":"grpc-publication-entity-management-service","firemud.dev/retention":"retained"}},"data":{"tls.crt":"cert","tls.key":"key","ca.crt":"ca"}}'
+      ;;
+    firemud-grpc-game-logic-service)
+      printf '%s' '{"metadata":{"name":"firemud-grpc-game-logic-service","labels":{"firemud.dev/managed-by":"hosted-identity-controller","firemud.dev/identity-name":"pr-42","firemud.dev/role":"grpc-publication-game-logic-service","firemud.dev/retention":"retained"}},"data":{"tls.crt":"cert","tls.key":"key","ca.crt":"ca"}}'
+      ;;
+    firemud-grpc-automation-scripting-service)
+      printf '%s' '{"metadata":{"name":"firemud-grpc-automation-scripting-service","labels":{"firemud.dev/managed-by":"hosted-identity-controller","firemud.dev/identity-name":"pr-42","firemud.dev/role":"grpc-publication-automation-scripting-service","firemud.dev/retention":"retained"}},"data":{"tls.crt":"cert","tls.key":"key","ca.crt":"ca"}}'
+      ;;
     *)
       printf 'unexpected projection Secret: %s\n' "$secret_name" >&2
       exit 2
@@ -5122,19 +5148,19 @@ run_projection_waiter_fixture() {
   fi
 }
 
-run_projection_waiter_fixture projection-absence 0 7 2
+run_projection_waiter_fixture projection-absence 0 12 2
 run_projection_waiter_fixture projection-command-failure 42 1 0 'Error from server (Forbidden)'
 run_projection_waiter_fixture projection-command-not-found 46 1 0 'Error from server (NotFound)'
 run_projection_waiter_fixture projection-command-unauthorized 47 1 0 'Error from server (Unauthorized)'
 run_projection_waiter_fixture projection-command-usage-error 2 1 0 'error: unknown flag'
-run_projection_waiter_fixture projection-transport-recovery 0 7 2
+run_projection_waiter_fixture projection-transport-recovery 0 12 2
 run_projection_waiter_fixture projection-transport-exhaustion 45 3 2 'Unable to connect to the server'
-run_projection_waiter_fixture projection-etcd-timeout-recovery 0 7 2
-run_projection_waiter_fixture projection-etcd-leader-recovery 0 7 2
-run_projection_waiter_fixture projection-overload-recovery 0 7 2
-run_projection_waiter_fixture projection-unavailable-recovery 0 7 2
-run_projection_waiter_fixture projection-currently-unavailable-recovery 0 7 2
-run_projection_waiter_fixture projection-apiserver-shutdown-recovery 0 7 2
+run_projection_waiter_fixture projection-etcd-timeout-recovery 0 12 2
+run_projection_waiter_fixture projection-etcd-leader-recovery 0 12 2
+run_projection_waiter_fixture projection-overload-recovery 0 12 2
+run_projection_waiter_fixture projection-unavailable-recovery 0 12 2
+run_projection_waiter_fixture projection-currently-unavailable-recovery 0 12 2
+run_projection_waiter_fixture projection-apiserver-shutdown-recovery 0 12 2
 
 run_active_waiter_fixture() {
   local scenario="$1"

@@ -96,11 +96,52 @@ validate_workload_certificate() {
   local key="$2"
   local workload="$3"
   local expected_uri="spiffe://firemud/ns/${namespace}/sa/${workload}"
+  local certificate_text
+  local basic_constraints
+  local key_usage
+  local extended_key_usage
   local san_values
   local expected_dns
 
   openssl x509 -in "$certificate" -noout >/dev/null
   assert_key_matches_certificate "$certificate" "$key"
+  certificate_text="$(openssl x509 -in "$certificate" -noout -text)"
+  basic_constraints="$(printf '%s\n' "$certificate_text" | awk '
+    /X509v3 Basic Constraints:/ {
+      getline
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "")
+      print
+      exit
+    }
+  ')"
+  [[ "$basic_constraints" == CA:FALSE ]] || {
+    echo "workload certificate must be a non-CA leaf: $certificate" >&2
+    return 1
+  }
+  key_usage="$(printf '%s\n' "$certificate_text" | awk '
+    /X509v3 Key Usage:/ {
+      getline
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "")
+      print
+      exit
+    }
+  ' | tr -d '[:space:]')"
+  [[ "$key_usage" == DigitalSignature,KeyEncipherment ]] || {
+    echo "workload certificate key usage must be exactly digitalSignature/keyEncipherment: $certificate" >&2
+    return 1
+  }
+  extended_key_usage="$(printf '%s\n' "$certificate_text" | awk '
+    /X509v3 Extended Key Usage:/ {
+      getline
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "")
+      print
+      exit
+    }
+  ' | tr -d '[:space:]')"
+  [[ "$extended_key_usage" == 'TLSWebServerAuthentication,TLSWebClientAuthentication' ]] || {
+    echo "workload certificate EKU must be exactly serverAuth/clientAuth: $certificate" >&2
+    return 1
+  }
   san_values="$(openssl x509 -in "$certificate" -noout -ext subjectAltName | awk 'NR > 1 { print }' | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
   [[ "$(printf '%s\n' "$san_values" | sed '/^$/d' | wc -l)" -eq 5 ]] || {
     echo "workload certificate must contain exactly one URI SAN and four DNS SANs: $certificate" >&2
