@@ -57,14 +57,11 @@ class PreviewArtifactServiceValidationTest(unittest.TestCase):
             [self._tcp_proxy_service()], "hosted-controller"
         )
 
-    def test_hosted_controller_rejects_public_tcp_proxy_service(self):
-        with self.assertRaisesRegex(
-            ValueError, "Service/tcp-proxy-service has an unsafe service type"
-        ):
-            self.validator.validate_services(
-                [self._tcp_proxy_service(service_type="NodePort")],
-                "hosted-controller",
-            )
+    def test_hosted_controller_accepts_public_tcp_proxy_service(self):
+        self.validator.validate_services(
+            [self._tcp_proxy_service(service_type="NodePort")],
+            "hosted-controller",
+        )
 
     def test_hosted_controller_rejects_wrong_tcp_proxy_port(self):
         with self.assertRaisesRegex(
@@ -936,7 +933,10 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
 
     def test_injection_accepts_canonical_namespace(self):
         document = self._tcp_proxy_service(
-            {"ports": [{"name": "tcp-2323", "port": 2323}]}
+            {
+                "type": "NodePort",
+                "ports": [{"name": "tcp-2323", "port": 2323}],
+            }
         )
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "source.yaml"
@@ -1043,36 +1043,62 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
                     source, prepared, 32000, "pr-42", "hosted-controller"
                 )
 
-    def test_explicit_exposure_mode_rejects_unsupported_identity_pairings(self):
-        for identity_mode, exposure_mode, port in (
-            ("standalone", "private", 0),
-            ("hosted-controller", "public", 32000),
-        ):
-            with self.subTest(identity_mode=identity_mode), tempfile.TemporaryDirectory() as directory:
-                source = Path(directory) / "missing-source.yaml"
-                destination = Path(directory) / "destination.yaml"
-                with self.assertRaisesRegex(
-                    ValueError, "incompatible with certificate identity mode"
-                ):
-                    self.validator.inject_telnet_port(
-                        source,
-                        destination,
-                        port,
-                        "pr-42",
-                        identity_mode,
-                        exposure_mode,
-                    )
-                self.assertFalse(destination.exists())
-                with self.assertRaisesRegex(
-                    ValueError, "incompatible with certificate identity mode"
-                ):
-                    self.validator.validate_runtime_target(
-                        source,
-                        "pr-42",
-                        port,
-                        identity_mode,
-                        exposure_mode,
-                    )
+    def test_hosted_controller_accepts_explicit_public_exposure(self):
+        service = self._tcp_proxy_service(
+            copy.deepcopy(self.validator.EXPECTED_SERVICE_SPECS["tcp-proxy-service"]),
+            namespace="pr-42",
+            mode="hosted-controller",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.yaml"
+            prepared = Path(directory) / "prepared.yaml"
+            source.write_text(yaml.safe_dump(service), encoding="utf-8")
+            self.validator.inject_telnet_port(
+                source, prepared, 32000, "pr-42", "hosted-controller", "public"
+            )
+            self.validator.validate_runtime_target(
+                prepared, "pr-42", 32000, "hosted-controller", "public"
+            )
+
+    def test_explicit_exposure_mode_must_match_service_shape(self):
+        service = self._tcp_proxy_service(
+            copy.deepcopy(self.validator.EXPECTED_SERVICE_SPECS["tcp-proxy-service"]),
+            namespace="pr-42",
+            mode="hosted-controller",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.yaml"
+            prepared = Path(directory) / "prepared.yaml"
+            source.write_text(yaml.safe_dump(service), encoding="utf-8")
+            with self.assertRaisesRegex(
+                ValueError, "does not match TCP Proxy Service type"
+            ):
+                self.validator.inject_telnet_port(
+                    source, prepared, 0, "pr-42", "hosted-controller", "private"
+                )
+            with self.assertRaisesRegex(
+                ValueError, "does not match TCP Proxy Service type"
+            ):
+                self.validator.validate_runtime_target(
+                    source, "pr-42", 0, "hosted-controller", "private"
+                )
+
+    def test_invalid_explicit_exposure_mode_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "missing-source.yaml"
+            prepared = Path(directory) / "prepared.yaml"
+            with self.assertRaisesRegex(
+                ValueError, "preview exposure mode is not canonical"
+            ):
+                self.validator.inject_telnet_port(
+                    source, prepared, 0, "pr-42", "hosted-controller", "invalid"
+                )
+            with self.assertRaisesRegex(
+                ValueError, "preview exposure mode is not canonical"
+            ):
+                self.validator.validate_runtime_target(
+                    source, "pr-42", 0, "hosted-controller", "invalid"
+                )
 
     def test_exposure_mode_is_derived_from_tcp_proxy_service_shape(self):
         for service_type, expected_mode, identity_mode in (
@@ -1123,6 +1149,7 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
     def test_runtime_target_finds_declared_telnet_port_without_relying_on_index(self):
         document = self._tcp_proxy_service(
             {
+                "type": "NodePort",
                 "ports": [
                     {"name": "metrics", "port": 8080},
                     {"name": "tcp-2323", "port": 2323, "nodePort": 32001},
