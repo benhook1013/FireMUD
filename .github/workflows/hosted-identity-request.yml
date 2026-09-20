@@ -303,6 +303,10 @@ jobs:
                 exit 1
                 ;;
             esac
+            if [[ "$exposure_mode" == private && "${{ steps.certificate-identity.outputs.mode }}" != hosted-controller ]]; then
+              echo "::error title=Unsupported private preview identity::Private bridge proof requires hosted-controller identity." >&2
+              exit 1
+            fi
           elif [[ "$ACTION" == destroy && "$EVENT_NAME" == workflow_run ]]; then
             [[ "$ARTIFACT_KIND" == intent ]] || emit_no_action \
               "Ignoring repository dispatch destroy without a canonical destroy intent artifact."
