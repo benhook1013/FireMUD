@@ -187,7 +187,7 @@ jobs:
       - name: Require Hosted identity requester credentials
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available != 'true' }}
         run: |
-          echo "::error title=Missing Hosted identity requester credentials::Dev-demo deploy requires HOSTED_IDENTITY_REQUESTER_KUBECONFIG when hosted-controller mode is enabled." >&2
+          echo "::error title=Missing Hosted identity requester credentials::Dev-demo deploy requires TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG when hosted-controller mode is enabled." >&2
           exit 1
 
       - name: Reset dev-demo namespace for clean deploy

@@ -1803,9 +1803,9 @@ for policy_marker in (
     assert policy_marker in source
 assert "127.0.0.1/32" in source
 assert "verify_live_network_policy_destinations" in source
-assert source.index("verify_live_network_policy_destinations") < source.index(
+assert source.rindex("verify_live_network_policy_destinations") < source.index(
     "kubectl apply"
-)
+), "live destination verification must precede the first cluster write"
 cleanup_trap = source.index("trap cleanup EXIT")
 first_temporary_file = source.index('temporary_manifest="$(mktemp)"')
 assert cleanup_trap < first_temporary_file

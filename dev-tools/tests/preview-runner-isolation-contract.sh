@@ -52,7 +52,7 @@ def triggers(workflow: dict[str, Any]) -> dict[str, Any]:
 
 
 def text(value: Any) -> str:
-    return yaml.safe_dump(value, sort_keys=False)
+    return yaml.safe_dump(value, sort_keys=False, width=10**6)
 
 
 def labels(runs_on: Any) -> set[str]:

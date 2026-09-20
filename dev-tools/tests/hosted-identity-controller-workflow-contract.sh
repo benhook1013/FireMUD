@@ -5437,6 +5437,53 @@ for argument in "$@"; do
   fi
   previous="$argument"
 done
+if [[ "$1" == run && "$2" == download ]]; then
+  artifact_directory=""
+  artifact_name=""
+  previous=""
+  for argument in "$@"; do
+    if [[ "$previous" == --name ]]; then
+      artifact_name="$argument"
+    elif [[ "$previous" == --dir ]]; then
+      artifact_directory="$argument"
+    fi
+    previous="$argument"
+  done
+  [[ -n "$artifact_name" && -n "$artifact_directory" ]]
+  mkdir -p "$artifact_directory"
+  case "${FAKE_ARTIFACT_FILES:-valid}" in
+    valid|extra)
+      cp "${VALID_RENDER_MANIFEST:?}" "$artifact_directory/preview-rendered-sanitized.yaml"
+      ;;
+    missing-metadata)
+      ;;
+    missing-manifest)
+      printf '%s\n' '{}' >"$artifact_directory/preview-metadata.json"
+      ;;
+    *)
+      exit 2
+      ;;
+  esac
+  if [[ "${FAKE_ARTIFACT_FILES:-valid}" != missing-manifest ]]; then
+    manifest_sha="$(sha256sum "${VALID_RENDER_MANIFEST:?}" | awk '{print $1}')"
+    jq -nc \
+      --arg event "${FAKE_METADATA_EVENT:-pull_request_target}" \
+      --arg action "${FAKE_METADATA_ACTION:-}" \
+      --argjson pr_number "${FAKE_METADATA_PR_NUMBER:-900}" \
+      --arg base_sha "${FAKE_METADATA_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
+      --arg head_sha "${FAKE_METADATA_HEAD_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
+      --arg merge_sha "${FAKE_METADATA_MERGE_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
+      --arg image_tag "${FAKE_METADATA_IMAGE_TAG:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
+      --arg hostname "${FAKE_METADATA_HOSTNAME:-pr-900.preview.firedevops.net}" \
+      --arg manifest_sha "$manifest_sha" \
+      '{schemaVersion:1,event:$event,repository:"example/FireMUD",sourceWorkflow:".github/workflows/preview.yml",sourceRunId:42,prNumber:$pr_number,baseSha:$base_sha,headSha:$head_sha,mergeSha:$merge_sha,hostname:$hostname,imageTag:$image_tag,manifestSha256:$manifest_sha} + (if $event == "repository_dispatch" then {action:$action} else {} end)' \
+      >"$artifact_directory/preview-metadata.json"
+  fi
+  if [[ "${FAKE_ARTIFACT_FILES:-valid}" == extra ]]; then
+    printf '%s\n' extra >"$artifact_directory/unexpected.txt"
+  fi
+  exit 0
+fi
 case "$resource" in
   repos/example/FireMUD/actions/runs/42)
     if [[ -z "$jq_expression" ]]; then
@@ -5462,7 +5509,14 @@ case "$resource" in
       '{state:$state,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",labels:$labels}'
     ;;
   repos/example/FireMUD/actions/runs/42/artifacts\?per_page=100)
-    printf '%s' '[{"artifacts":[]}]'
+    if [[ -n "${FAKE_ARTIFACTS_JSON:-}" ]]; then
+      printf '%s' "$FAKE_ARTIFACTS_JSON"
+    else
+      printf '%s' '[{"artifacts":[]}]'
+    fi
+    ;;
+  repos/example/FireMUD/pulls/900/files\?per_page=100)
+    printf '%s' '[]'
     ;;
   *)
     printf 'unexpected fake gh invocation: %s\n' "$*" >&2
@@ -5492,6 +5546,112 @@ target_gh_log="$TEMP_DIR/target-gh.log"
 )
 test "$(cat "$TEMP_DIR/output")" = $'action=none\nretire_identity=false\ncleanup_state=none'
 test "$(cat "$target_gh_log")" = 'api repos/example/FireMUD/actions/runs/42'
+
+target_rendered_manifest="$TEMP_DIR/target-preview-rendered.yaml"
+printf '%s\n' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: target-fixture' \
+  >"$target_rendered_manifest"
+# This fixture exercises the trusted workflow's source/artifact binding. The
+# manifest validator itself has separate executable schema and rejection tests.
+target_fixture_bin="$TEMP_DIR/target-fixture-bin"
+mkdir -p "$target_fixture_bin"
+cat >"$target_fixture_bin/python3" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == ./dev-tools/hosted/preview/validate-preview-artifact.py ]]; then
+  [[ -f "${2:-}" && -f "${3:-}" ]]
+  exit 0
+fi
+exec "${TARGET_REAL_PYTHON3:?}" "$@"
+SH
+chmod +x "$target_fixture_bin/python3"
+target_real_python3="$(command -v python3)"
+
+canonical_artifact_name='preview-render-pr-900-cccccccccccccccccccccccccccccccccccccccc'
+valid_workflow_run_json='{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request_target","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900}]}'
+valid_artifacts_json='[{"artifacts":[{"name":"'"$canonical_artifact_name"'","expired":false},{"name":"old-preview","expired":true},{"name":"unrelated-artifact","expired":false}]}]'
+
+run_deploy_target_fixture() {
+  local scenario="$1"
+  local expected_status="$2"
+  local expected_message="$3"
+  local output="$TEMP_DIR/deploy-target-${scenario}.output"
+  local stdout="$TEMP_DIR/deploy-target-${scenario}.stdout"
+  local stderr="$TEMP_DIR/deploy-target-${scenario}.stderr"
+  local status
+
+  : >"$output"
+  set +e
+  (
+    cd "$ROOT_DIR"
+    env \
+      PATH="$target_fixture_bin:$TEMP_DIR/bin:$PATH" \
+      TARGET_REAL_PYTHON3="$target_real_python3" \
+      GH_TOKEN=fake \
+      GITHUB_REPOSITORY=example/FireMUD \
+      EVENT_NAME=workflow_run \
+      EVENT_ACTION=completed \
+      WORKFLOW_RUN_ID=42 \
+      WORKFLOW_RUN_HEAD_SHA=cccccccccccccccccccccccccccccccccccccccc \
+      DEFAULT_BRANCH=develop \
+      ARTIFACT_DIRECTORY="$TEMP_DIR/deploy-target-${scenario}-artifact" \
+      SOURCE_GH_LOG="$TEMP_DIR/deploy-target-${scenario}.gh.log" \
+      GITHUB_OUTPUT="$output" \
+      FAKE_WORKFLOW_RUN_JSON="${FAKE_FIXTURE_WORKFLOW_RUN_JSON:-$valid_workflow_run_json}" \
+      FAKE_ARTIFACTS_JSON="${FAKE_FIXTURE_ARTIFACTS_JSON:-$valid_artifacts_json}" \
+      FAKE_ARTIFACT_FILES="${FAKE_FIXTURE_ARTIFACT_FILES:-valid}" \
+      FAKE_METADATA_BASE_SHA="${FAKE_FIXTURE_METADATA_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
+      FAKE_METADATA_MERGE_SHA="${FAKE_FIXTURE_METADATA_MERGE_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
+      TEST_PR_LABELS_JSON="${FAKE_FIXTURE_PR_LABELS_JSON:-[]}" \
+      VALID_RENDER_MANIFEST="$target_rendered_manifest" \
+      bash "$TEMP_DIR/target.sh"
+  ) >"$stdout" 2>"$stderr"
+  status=$?
+  set -e
+
+  if [[ "$status" -ne "$expected_status" ]]; then
+    echo "deploy target fixture ${scenario}: expected status ${expected_status}, actual ${status}" >&2
+    cat "$stdout" "$stderr" >&2
+    return 1
+  fi
+  grep -Fq "$expected_message" "$output" "$stdout" "$stderr" 2>/dev/null || {
+    echo "deploy target fixture ${scenario} did not emit expected diagnostic: ${expected_message}" >&2
+    return 1
+  }
+}
+
+run_deploy_target_fixture valid 0 'action=deploy'
+grep -Fxq "artifact_name=${canonical_artifact_name}" "$TEMP_DIR/deploy-target-valid.output"
+
+FAKE_FIXTURE_ARTIFACTS_JSON='[{"artifacts":[]}]' \
+  run_deploy_target_fixture missing-canonical 0 \
+    'Ignoring source run without exactly one canonical preview artifact.'
+FAKE_FIXTURE_ARTIFACTS_JSON='[{"artifacts":[{"name":"'"$canonical_artifact_name"'","expired":false},{"name":"preview-render-pr-900-dddddddddddddddddddddddddddddddddddddddd","expired":false}]}]' \
+  run_deploy_target_fixture multiple-canonical 0 \
+    'Ignoring source run without exactly one canonical preview artifact.'
+FAKE_FIXTURE_ARTIFACT_FILES=missing-metadata \
+  run_deploy_target_fixture missing-metadata 1 \
+    'Unexpected preview artifact contents'
+FAKE_FIXTURE_ARTIFACT_FILES=missing-manifest \
+  run_deploy_target_fixture missing-manifest 1 \
+    'Unexpected preview artifact contents'
+FAKE_FIXTURE_ARTIFACT_FILES=extra \
+  run_deploy_target_fixture extra-artifact-file 1 \
+    'Unexpected preview artifact contents'
+FAKE_FIXTURE_METADATA_BASE_SHA=dddddddddddddddddddddddddddddddddddddddd \
+  run_deploy_target_fixture base-mismatch 0 \
+    'Ignoring render artifact bound to a stale or different pull-request base.'
+FAKE_FIXTURE_METADATA_MERGE_SHA=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee \
+  run_deploy_target_fixture merge-mismatch 0 \
+    'Ignoring render artifact bound to a stale or different pull-request merge.'
+FAKE_FIXTURE_PR_LABELS_JSON='{}' \
+  run_deploy_target_fixture malformed-labels 0 \
+    'Refusing hosted preview lifecycle action: PR label metadata is missing or malformed.'
+FAKE_FIXTURE_WORKFLOW_RUN_JSON='{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"push","repository":{"full_name":"example/FireMUD"}}' \
+  run_deploy_target_fixture unsupported-event 0 \
+    'Ignoring source run with unsupported event push.'
+unset FAKE_FIXTURE_ARTIFACTS_JSON FAKE_FIXTURE_ARTIFACT_FILES \
+  FAKE_FIXTURE_METADATA_BASE_SHA FAKE_FIXTURE_METADATA_MERGE_SHA \
+  FAKE_FIXTURE_PR_LABELS_JSON FAKE_FIXTURE_WORKFLOW_RUN_JSON
 
 run_target_without_pull_request_metadata() {
   local scenario="$1"
