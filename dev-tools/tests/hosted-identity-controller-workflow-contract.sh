@@ -5463,10 +5463,8 @@ if [[ "$1" == run && "$2" == download ]]; then
   [[ -n "$artifact_name" && -n "$artifact_directory" ]]
   mkdir -p "$artifact_directory"
   case "${FAKE_ARTIFACT_FILES:-valid}" in
-    valid|extra)
+    valid|extra|missing-metadata)
       cp "${VALID_RENDER_MANIFEST:?}" "$artifact_directory/preview-rendered-sanitized.yaml"
-      ;;
-    missing-metadata)
       ;;
     missing-manifest)
       printf '%s\n' '{}' >"$artifact_directory/preview-metadata.json"
@@ -5475,7 +5473,7 @@ if [[ "$1" == run && "$2" == download ]]; then
       exit 2
       ;;
   esac
-  if [[ "${FAKE_ARTIFACT_FILES:-valid}" != missing-manifest ]]; then
+  if [[ "${FAKE_ARTIFACT_FILES:-valid}" == valid || "${FAKE_ARTIFACT_FILES:-valid}" == extra ]]; then
     manifest_sha="$(sha256sum "${VALID_RENDER_MANIFEST:?}" | awk '{print $1}')"
     jq -nc \
       --arg event "${FAKE_METADATA_EVENT:-pull_request_target}" \
@@ -5579,6 +5577,8 @@ target_real_python3="$(command -v python3)"
 
 canonical_artifact_name='preview-render-pr-900-cccccccccccccccccccccccccccccccccccccccc'
 valid_workflow_run_json='{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request_target","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900}]}'
+distinct_source_sha=dddddddddddddddddddddddddddddddddddddddd
+distinct_source_workflow_run_json='{"conclusion":"success","head_sha":"dddddddddddddddddddddddddddddddddddddddd","path":".github/workflows/preview.yml","event":"pull_request_target","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900}]}'
 valid_artifacts_json='[{"artifacts":[{"name":"'"$canonical_artifact_name"'","expired":false},{"name":"old-preview","expired":true},{"name":"unrelated-artifact","expired":false}]}]'
 
 run_deploy_target_fixture() {
@@ -5602,7 +5602,7 @@ run_deploy_target_fixture() {
       EVENT_NAME=workflow_run \
       EVENT_ACTION=completed \
       WORKFLOW_RUN_ID=42 \
-      WORKFLOW_RUN_HEAD_SHA=cccccccccccccccccccccccccccccccccccccccc \
+      WORKFLOW_RUN_HEAD_SHA="${FAKE_FIXTURE_WORKFLOW_RUN_HEAD_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
       DEFAULT_BRANCH=develop \
       ARTIFACT_DIRECTORY="$TEMP_DIR/deploy-target-${scenario}-artifact" \
       SOURCE_GH_LOG="$TEMP_DIR/deploy-target-${scenario}.gh.log" \
@@ -5632,6 +5632,13 @@ run_deploy_target_fixture() {
 
 run_deploy_target_fixture valid 0 'action=deploy'
 grep -Fxq "artifact_name=${canonical_artifact_name}" "$TEMP_DIR/deploy-target-valid.output"
+
+# workflow_run.head_sha identifies the source/default-branch workflow run here,
+# while the PR head remains bound by the current PR and artifact metadata.
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$distinct_source_workflow_run_json" \
+FAKE_FIXTURE_WORKFLOW_RUN_HEAD_SHA="$distinct_source_sha" \
+  run_deploy_target_fixture distinct-source-head 0 'action=deploy'
+grep -Fxq "artifact_name=${canonical_artifact_name}" "$TEMP_DIR/deploy-target-distinct-source-head.output"
 
 FAKE_FIXTURE_ARTIFACTS_JSON='[{"artifacts":[]}]' \
   run_deploy_target_fixture missing-canonical 0 \

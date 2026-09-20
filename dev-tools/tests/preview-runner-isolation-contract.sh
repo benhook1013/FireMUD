@@ -118,8 +118,9 @@ if "workflow_run" not in trusted_triggers or "pull_request_target" not in truste
 
 # Cluster-facing maintenance workflows are trusted consumers of repository
 # dispatches. They must not expose their privileged jobs through a manually
-# dispatched workflow, and every privileged job must execute the checked-in
-# default-branch implementation.
+# dispatched workflow. Their cleanup and maintenance jobs execute the checked-in
+# default-branch implementation; the dev-demo deploy job is the one deliberate
+# exception because its plan proves and binds the exact event head.
 expected_dispatch_types = {
     janitor_path: ["preview-janitor"],
     reconciler_path: ["preview-reconcile"],
@@ -183,9 +184,12 @@ for path in (trusted_path, janitor_path, reconciler_path, dev_demo_path, dev_dem
                 f"{path.name}:{job_name} must have exactly one trusted checkout"
             )
         checkout = job_checkouts[0]
-        if checkout.get("with", {}).get("ref") != "${{ github.event.repository.default_branch }}":
+        expected_ref = "${{ github.event.repository.default_branch }}"
+        if path == dev_demo_path and job_name == "dev-demo-deploy":
+            expected_ref = "${{ needs.dev-demo-plan.outputs.head_sha }}"
+        if checkout.get("with", {}).get("ref") != expected_ref:
             raise AssertionError(
-                f"{path.name}:{job_name} must checkout the repository default branch"
+                f"{path.name}:{job_name} must checkout {expected_ref}"
             )
         if checkout.get("with", {}).get("persist-credentials") is not False:
             raise AssertionError(f"{path.name}:{job_name} persists checkout credentials")
@@ -296,10 +300,11 @@ trusted_target = next(
 for required in (
     "[[ \"$SOURCE_EVENT\" == pull_request_target || \"$SOURCE_EVENT\" == repository_dispatch ]]",
     "require_source_field path '.github/workflows/preview.yml'",
+    'require_source_field head "$WORKFLOW_RUN_HEAD_SHA"',
     'require_source_field head-branch "$DEFAULT_BRANCH"',
     "Ignoring source run without exactly one canonical preview artifact.",
     '"$SOURCE_EVENT" == pull_request_target && "$ARTIFACT_KIND" != render',
-    '"$WORKFLOW_RUN_HEAD_SHA")" == "$EXPECTED_HEAD_SHA"',
+    '[[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]]',
 ):
     if required not in trusted_target:
         raise AssertionError(f"trusted source provenance lost {required!r}")

@@ -185,15 +185,26 @@ for required in (
     if required not in derive_run:
         raise SystemExit(f"dev-demo plan lacks pre-mutation validation: {required}")
 normalization = 'HEAD_SHA="${HEAD_SHA,,}"'
+deploy_event_sha = 'EVENT_SHA="${{ github.sha }}"'
+deploy_head_match = 'if [[ "$HEAD_SHA" != "$EVENT_SHA" ]]'
 image_tag_default = 'IMAGE_TAG="${HEAD_SHA}"'
 head_validation = '[[ ! "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]'
 head_output = 'echo "head_sha=${HEAD_SHA}"'
-for required in (normalization, image_tag_default, head_validation, head_output):
+for required in (
+    normalization,
+    deploy_event_sha,
+    deploy_head_match,
+    image_tag_default,
+    head_validation,
+    head_output,
+):
     if required not in derive_run:
         raise SystemExit(f"dev-demo plan lacks normalized head handling: {required}")
 if not (
     derive_run.index(head_validation)
     < derive_run.index(normalization)
+    < derive_run.index(deploy_event_sha)
+    < derive_run.index(deploy_head_match)
     < derive_run.index(image_tag_default)
     < derive_run.index(head_output)
 ):
@@ -207,7 +218,7 @@ with tempfile.NamedTemporaryFile() as output:
     fixture_env.update(
         {
             "INPUT_ACTION": "deploy",
-            "INPUT_HEAD_SHA": "ABCDEF1234567890ABCDEF1234567890ABCDEF12",
+            "INPUT_HEAD_SHA": "F" * 40,
             "INPUT_HOSTNAME": "dev.preview.firedevops.net",
             "INPUT_TELNET_PORT": "32016",
             "INPUT_IMAGE_TAG": "",
@@ -220,7 +231,7 @@ with tempfile.NamedTemporaryFile() as output:
     derived_outputs = dict(
         line.decode("utf-8").rstrip("\n").split("=", 1) for line in output
     )
-normalized_fixture_head = "abcdef1234567890abcdef1234567890abcdef12"
+normalized_fixture_head = "f" * 40
 if derived_outputs.get("head_sha") != normalized_fixture_head:
     raise SystemExit("dev-demo plan did not normalize an uppercase dispatch head")
 if derived_outputs.get("image_tag") != normalized_fixture_head:
@@ -228,9 +239,62 @@ if derived_outputs.get("image_tag") != normalized_fixture_head:
 if derived_outputs.get("release_name") != "dev":
     raise SystemExit("dev-demo plan did not derive the canonical dev release identity")
 
+with tempfile.NamedTemporaryFile() as mismatched_output:
+    mismatched_env = fixture_env.copy()
+    mismatched_env.update(
+        {
+            "INPUT_HEAD_SHA": "b" * 40,
+            "GITHUB_OUTPUT": mismatched_output.name,
+        }
+    )
+    mismatched = subprocess.run(
+        ["bash", "-c", derive_fixture],
+        check=False,
+        env=mismatched_env,
+        capture_output=True,
+        text=True,
+    )
+    if mismatched.returncode == 0:
+        raise SystemExit("dev-demo deploy accepted a dispatch head that mismatched github.sha")
+    if "Deploy head SHA must match the GitHub event SHA" not in mismatched.stderr:
+        raise SystemExit("dev-demo deploy mismatch lacked the fail-closed SHA diagnostic")
+
+with tempfile.NamedTemporaryFile() as destroy_output:
+    destroy_env = fixture_env.copy()
+    destroy_env.update(
+        {
+            "INPUT_ACTION": "destroy",
+            "INPUT_HEAD_SHA": "b" * 40,
+            "GITHUB_OUTPUT": destroy_output.name,
+        }
+    )
+    subprocess.run(["bash", "-c", derive_fixture], check=True, env=destroy_env)
+    destroy_output.seek(0)
+    destroy_outputs = dict(
+        line.decode("utf-8").rstrip("\n").split("=", 1) for line in destroy_output
+    )
+    if (
+        destroy_outputs.get("action") != "destroy"
+        or destroy_outputs.get("head_sha") != "b" * 40
+    ):
+        raise SystemExit("dev-demo destroy must accept its older recorded head")
+
 deploy_steps = workflow["jobs"]["dev-demo-deploy"]["steps"]
 deploy_by_name = {step.get("name"): step for step in deploy_steps if isinstance(step, dict)}
 deploy_names = [step.get("name") for step in deploy_steps if isinstance(step, dict)]
+deploy_checkouts = [
+    step
+    for step in deploy_steps
+    if str(step.get("uses", "")).startswith("actions/checkout@")
+]
+if len(deploy_checkouts) != 1:
+    raise SystemExit("dev-demo deploy must define exactly one checkout")
+if deploy_checkouts[0].get("with", {}).get("ref") != "${{ needs.dev-demo-plan.outputs.head_sha }}":
+    raise SystemExit("dev-demo deploy checkout must pin the planned head SHA")
+if deploy_checkouts[0].get("with", {}).get("persist-credentials") is not False:
+    raise SystemExit("dev-demo deploy checkout must not persist credentials")
+if workflow["jobs"]["dev-demo-deploy"].get("environment") != "trusted-hosted-cluster":
+    raise SystemExit("dev-demo deploy must retain the protected hosted-cluster environment")
 if deploy_by_name["Resolve certificate identity mode"] != expected_mode_step:
     raise SystemExit("dev-demo deploy must use the shared certificate identity action exactly")
 ordered = (
@@ -461,6 +525,19 @@ if success_condition != expected_success_condition:
 destroy_steps = workflow["jobs"]["dev-demo-destroy"]["steps"]
 destroy_by_name = {step.get("name"): step for step in destroy_steps if isinstance(step, dict)}
 destroy_names = [step.get("name") for step in destroy_steps if isinstance(step, dict)]
+destroy_checkouts = [
+    step
+    for step in destroy_steps
+    if str(step.get("uses", "")).startswith("actions/checkout@")
+]
+if len(destroy_checkouts) != 1:
+    raise SystemExit("dev-demo destroy must define exactly one checkout")
+if destroy_checkouts[0].get("with", {}).get("ref") != "${{ github.event.repository.default_branch }}":
+    raise SystemExit("dev-demo destroy checkout must remain pinned to trusted default-branch code")
+if destroy_checkouts[0].get("with", {}).get("persist-credentials") is not False:
+    raise SystemExit("dev-demo destroy checkout must not persist credentials")
+if workflow["jobs"]["dev-demo-destroy"].get("environment") != "trusted-hosted-cluster":
+    raise SystemExit("dev-demo destroy must retain the protected hosted-cluster environment")
 if destroy_by_name["Resolve certificate identity mode"] != expected_mode_step:
     raise SystemExit("dev-demo destroy must use the shared certificate identity action exactly")
 destroy_order = (

@@ -273,10 +273,6 @@ jobs:
           fi
           [[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]] || emit_no_action \
             "Ignoring stale lifecycle event for an earlier PR head."
-          if [[ "$EVENT_NAME" == workflow_run && "$SOURCE_EVENT" == pull_request_target ]]; then
-            [[ "$(normalize_sha "$WORKFLOW_RUN_HEAD_SHA")" == "$EXPECTED_HEAD_SHA" ]] || emit_no_action \
-              "Ignoring pull_request_target source whose run head does not match its canonical preview artifact."
-          fi
           if [[ "$EVENT_NAME" == workflow_run ]]; then
             expected_artifact_name="preview-${ARTIFACT_KIND}-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}"
             [[ "$ARTIFACT_NAME" == "$expected_artifact_name" ]] || emit_no_action \
