@@ -4080,11 +4080,18 @@ documents = [
 ]
 
 for document in documents:
-    metadata = validator["_validate_object_metadata"](document, "pr-42")
-    assert metadata["labels"] == {
+    metadata = validator["_validate_object_metadata"](
+        document, "pr-42", certificate_identity_mode="hosted-controller"
+    )
+    expected_labels = {
         **validator["_expected_top_level_labels"](),
         "app.kubernetes.io/instance": "pr-42",
     }
+    if document["kind"] in {"Deployment", "Service"} and (
+        document["metadata"]["name"] == "tcp-proxy-service"
+    ):
+        expected_labels["firemud.dev/certificate-identity-mode"] = "hosted-controller"
+    assert metadata["labels"] == expected_labels
     if document["kind"] == "Deployment":
         validator["_validate_workload_selector_metadata"](document)
 PY
