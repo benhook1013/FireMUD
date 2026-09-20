@@ -2223,9 +2223,15 @@ chmod +x "$bootstrap_test_dir/getent"
 no_getent_path="$bootstrap_test_dir/no-getent-path"
 mkdir -p "$no_getent_path"
 for command_name in \
-  bash env dirname grep awk sort wc mktemp sed mv rm cat base64 openssl sha256sum python3 sleep; do
+  bash env dirname grep awk sort wc mktemp sed mv rm cat base64 openssl sha256sum sleep; do
   ln -s "$(command -v "$command_name")" "$no_getent_path/$command_name"
 done
+fixture_python3="$(command -v python3)"
+cat >"$no_getent_path/python3" <<'SH'
+#!/usr/bin/env bash
+exec "${FIXTURE_CANONICAL_PYTHON3:?}" "$@"
+SH
+chmod +x "$no_getent_path/python3"
 ln -s "$bootstrap_test_dir/kubectl" "$no_getent_path/kubectl"
 ln -s "$bootstrap_test_dir/gh" "$no_getent_path/gh"
 attestation_log="$bootstrap_test_dir/attestation-events"
@@ -2507,7 +2513,12 @@ for target in tcp_proxy_rule["to"]:
     assert target["podSelector"]["matchLabels"] == {"app": "tcp-proxy-service"}
 PY
 no_resolver_events="$bootstrap_test_dir/no-resolver-events"
-if FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 FAKE_EVENT_LOG="$no_resolver_events" \
+if ! FIXTURE_CANONICAL_PYTHON3="$fixture_python3" PATH="$no_getent_path" \
+  python3 -c 'import yaml'; then
+  fail "restricted resolver fixture cannot import PyYAML with the canonical Python executable"
+fi
+if FIXTURE_CANONICAL_PYTHON3="$fixture_python3" \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 FAKE_EVENT_LOG="$no_resolver_events" \
   PATH="$no_getent_path" bash "$BOOTSTRAP" --image "$bootstrap_image" \
   --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode observe \
   --api-service-ipv4 10.43.0.1 \
