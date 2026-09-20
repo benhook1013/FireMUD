@@ -433,9 +433,9 @@ public class AutomationScriptingGrpcService
       GetDraftDesignDigestRequest request,
       StreamObserver<GetDraftDesignDigestResponse> responseObserver) {
     try {
+      requirePublicationRead();
       PublicationDigestRequestBinding binding = publicationBinding(request);
       binding.validateSupplied(request.getDerivedWorkflowIdentity(), request.getRequestDigest());
-      requirePublicationRead();
       var digest =
           binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.FULL_VERSION
               ? scriptDesignDigestService.getDraftDesignDigestForVersion(

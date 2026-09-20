@@ -50,6 +50,11 @@ import org.mockito.Mockito;
 
 class AutomationScriptingGrpcServiceTest {
   private static final String TEST_NAMESPACE = "test";
+  private static final GrpcPeerIdentity WRONG_PEER =
+      new GrpcPeerIdentity(
+          "spiffe://firemud/ns/test/sa/world-management-service",
+          TEST_NAMESPACE,
+          "world-management-service");
 
   private static PublicationReadGuard publicationReadGuard() {
     return new PublicationReadGuard(TEST_NAMESPACE);
@@ -242,6 +247,41 @@ class AutomationScriptingGrpcServiceTest {
   }
 
   @Test
+  void getDraftDesignDigestRejectsWrongPeerAndUserOrAdminJwt() {
+    ScriptDesignDigestService digestService = Mockito.mock(ScriptDesignDigestService.class);
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(ScriptDefinitionService.class),
+            digestService,
+            Mockito.mock(ScriptVersionService.class),
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            Mockito.mock(ScriptEventIngressService.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(NpcFormationService.class),
+            new SimpleMeterRegistry(),
+            publicationReadGuard());
+    GetDraftDesignDigestRequest request = fullDigestRequest("1", "7");
+
+    SessionContext.setContext(null, List.of(), Map.of(), true, "game-design-service", "instance-1");
+    withPeer(
+        WRONG_PEER,
+        () ->
+            assertEquals(
+                "PERMISSION_DENIED", invokeDigest(service, request).getError().getCode()));
+
+    runAsGameDesign(
+        () -> {
+          SessionContext.setContext("42", List.of(), Map.of(), false, "game-design-service", null);
+          assertEquals("PERMISSION_DENIED", invokeDigest(service, request).getError().getCode());
+          SessionContext.setContext(
+              "42", List.of("platformAdmin"), Map.of(), false, "game-design-service", null);
+          assertEquals("PERMISSION_DENIED", invokeDigest(service, request).getError().getCode());
+        });
+    Mockito.verifyNoInteractions(digestService);
+  }
+
+  @Test
   void getDraftDesignDigestRejectsWrongDigestBeforeOwnerRead() {
     ScriptDesignDigestService digestService = Mockito.mock(ScriptDesignDigestService.class);
     AutomationScriptingGrpcService service =
@@ -254,10 +294,30 @@ class AutomationScriptingGrpcServiceTest {
             Mockito.mock(ScriptEventIngressService.class),
             Mockito.mock(ScriptWorkItemRepository.class),
             Mockito.mock(NpcFormationService.class),
-            new SimpleMeterRegistry());
+            new SimpleMeterRegistry(),
+            publicationReadGuard());
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-design-service", "test-instance");
+    AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
+    runAsGameDesign(
+        () ->
+            ref.set(
+                invokeDigest(
+                    service,
+                    fullDigestRequest("1", "7")
+                        .toBuilder()
+                        .setRequestDigest("0".repeat(64))
+                        .build())));
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    Mockito.verifyNoInteractions(digestService);
+  }
+
+  private GetDraftDesignDigestResponse invokeDigest(
+      AutomationScriptingGrpcService service, GetDraftDesignDigestRequest request) {
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
     service.getDraftDesignDigest(
-        fullDigestRequest("1", "7").toBuilder().setRequestDigest("0".repeat(64)).build(),
+        request,
         new StreamObserver<>() {
           @Override
           public void onNext(GetDraftDesignDigestResponse value) {
@@ -270,9 +330,17 @@ class AutomationScriptingGrpcServiceTest {
           @Override
           public void onCompleted() {}
         });
+    return ref.get();
+  }
 
-    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    Mockito.verifyNoInteractions(digestService);
+  private static void withPeer(GrpcPeerIdentity peer, Runnable action) {
+    Context context = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
+    Context previous = context.attach();
+    try {
+      action.run();
+    } finally {
+      context.detach(previous);
+    }
   }
 
   @Test

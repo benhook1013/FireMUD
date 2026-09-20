@@ -308,6 +308,7 @@ public class WorldManagementGrpcService
       GetDraftDesignDigestRequest request,
       StreamObserver<GetDraftDesignDigestResponse> responseObserver) {
     try {
+      requirePublicationRead();
       if (request.getScopeCase() != GetDraftDesignDigestRequest.ScopeCase.VERSION_ID) {
         responseObserver.onNext(
             GetDraftDesignDigestResponse.newBuilder()
@@ -329,7 +330,6 @@ public class WorldManagementGrpcService
           PublicationDigestRequestBinding.full(
               request.getTenantId(), request.getVersionId(), request.getPublishRequestId());
       binding.validateSupplied(request.getDerivedWorkflowIdentity(), request.getRequestDigest());
-      requirePublicationRead();
       var digest =
           worldDraftDesignDigestService.getDraftDesignDigest(
               request.getTenantId(), request.getVersionId());
