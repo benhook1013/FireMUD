@@ -589,6 +589,8 @@ class GameplayHandshakeFilterTest {
     MockServerHttpRequest request =
         MockServerHttpRequest.get("/ws/game/test")
             .cookie(new HttpCookie(GameplayHandshakeFilter.CONNECT_TOKEN_COOKIE, token))
+            .header(GameplayHandshakeFilter.HANDSHAKE_ERROR_CLASS_HEADER, "POLICY_DENY")
+            .header(GameplayHandshakeFilter.HANDSHAKE_ERROR_REASON_HEADER, "stale-reason")
             .build();
 
     ServerWebExchange mutatedExchange =
@@ -596,6 +598,18 @@ class GameplayHandshakeFilterTest {
 
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connection-Mode"))
         .isEqualTo(GameplayHandshakeFilter.CONNECTION_MODE_FIRST_PARTY_WEB);
+    assertThat(
+            mutatedExchange
+                .getRequest()
+                .getHeaders()
+                .getFirst(GameplayHandshakeFilter.HANDSHAKE_ERROR_CLASS_HEADER))
+        .isNull();
+    assertThat(
+            mutatedExchange
+                .getRequest()
+                .getHeaders()
+                .getFirst(GameplayHandshakeFilter.HANDSHAKE_ERROR_REASON_HEADER))
+        .isNull();
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Tenant-Id")).isEqualTo("1");
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Game-Instance-Id"))
         .isEqualTo("42");
@@ -662,6 +676,7 @@ class GameplayHandshakeFilterTest {
             .header("X-Firemud-Connect-Context", "spoofed-context")
             .header("X-Firemud-Transport-Session-Id", "spoofed-session")
             .header("X-Firemud-Handshake-Error-Class", "POLICY_DENY")
+            .header("X-Firemud-Handshake-Error-Reason", "stale-reason")
             .build();
 
     ServerWebExchange mutatedExchange =
@@ -683,6 +698,12 @@ class GameplayHandshakeFilterTest {
                 .getRequest()
                 .getHeaders()
                 .getFirst(GameplayHandshakeFilter.HANDSHAKE_ERROR_CLASS_HEADER))
+        .isNull();
+    assertThat(
+            mutatedExchange
+                .getRequest()
+                .getHeaders()
+                .getFirst(GameplayHandshakeFilter.HANDSHAKE_ERROR_REASON_HEADER))
         .isNull();
     assertThat(mutatedExchange.getResponse().getStatusCode()).isNull();
   }

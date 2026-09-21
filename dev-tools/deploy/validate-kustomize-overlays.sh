@@ -80,7 +80,14 @@ check_images_exist() {
 
   echo "::group::Check $name images exist in registry"
   local images
-  images="$(printf '%s\n' "$rendered" | extract_images)"
+  if images="$(printf '%s\n' "$rendered" | extract_images)"; then
+    :
+  else
+    local status=$?
+    echo "Failed to extract images from rendered $name overlay (status $status)" >&2
+    echo "::endgroup::"
+    return "$status"
+  fi
   if [ -z "$images" ]; then
     echo "No images found in rendered $name overlay" >&2
     echo "::endgroup::"

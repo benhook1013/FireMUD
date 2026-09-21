@@ -178,10 +178,8 @@ spec:
 {{ include "firemud.grpcTlsEnv" $ | nindent 12 }}
             {{- end }}
             {{- range $key, $value := $service.extraEnv }}
-            {{- if and (or (not $mountTelnetTls) (not (has $key $managedTelnetEnv))) (or (not $mountGatewayWsServerTls) (not (has $key $managedGatewayWsServerEnv))) (or (not $mountGatewayWsClientTls) (not (has $key $managedGatewayWsClientEnv))) }}
             - name: {{ $key }}
               value: {{ $value | quote }}
-            {{- end }}
             {{- end }}
             {{- if $mountTelnetTls }}
 {{ include "firemud.telnetTlsEnv" $ | nindent 12 }}
