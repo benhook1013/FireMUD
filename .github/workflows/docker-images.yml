@@ -4,10 +4,6 @@ name: Build and Publish Docker Images (disabled)
 # workflow is intentionally inert so the historical workflow name cannot
 # overwrite SHA, branch, or latest service aliases.
 on:
-  workflow_run:
-    workflows: ["CI — Validation"]
-    types: [completed]
-    branches: [main, develop]
   workflow_dispatch:
 
 permissions:

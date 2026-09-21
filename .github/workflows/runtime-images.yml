@@ -1528,6 +1528,7 @@ jobs:
             }
             if [[ -z "$registry_token" ]]; then
               if ! registry_token="$(curl --silent --show-error --location --fail \
+                --connect-timeout 10 --max-time 30 \
                 --user "${GHCR_USERNAME}:${GHCR_TOKEN}" \
                 --get \
                 --data-urlencode 'service=ghcr.io' \
@@ -1541,7 +1542,8 @@ jobs:
             fi
             # `docker manifest inspect "$image"` conflates a 404 with auth,
             # registry, and network failures, so it is never an absence check.
-            if ! status="$(curl --silent --show-error --location --request HEAD \
+            if ! status="$(curl --silent --show-error --location --head \
+              --connect-timeout 10 --max-time 30 \
               --header "Authorization: Bearer ${registry_token}" \
               --header 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
               --output /dev/null --write-out '%{http_code}' "$manifest_url")"; then

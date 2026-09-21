@@ -177,6 +177,11 @@ if "needs.smoke-full.result == 'success'" not in str(publish.get("if", "")):
 docker_text = str(docker)
 if "docker/build-push-action@" in docker_text or "packages: write" in docker_text:
     raise SystemExit("legacy docker-images workflow must not publish runtime services")
+docker_on = docker.get(True, docker.get("on", {}))
+if not isinstance(docker_on, dict) or set(docker_on) != {"workflow_dispatch"}:
+    raise SystemExit(
+        "legacy docker-images workflow must expose only the manual workflow_dispatch trigger"
+    )
 PY
 }
 

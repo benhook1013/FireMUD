@@ -28,7 +28,12 @@ require_contains 'runtime service manifest is not the exact allowed service list
 require_contains 'runtime provenance JSON schema contains missing or extra keys'
 require_contains 'registry remains untouched'
 require_contains 'docker manifest inspect "$image"'
-require_contains '--request HEAD'
+require_contains '--head'
+require_contains '--connect-timeout 10 --max-time 30'
+if grep -Fq -- '--request HEAD' "$WORKFLOW"; then
+  echo "publisher manifest probe must use curl --head" >&2
+  exit 1
+fi
 require_contains 'refusing to infer absence'
 require_contains 'https://ghcr.io/token'
 require_contains 'Authorization: Bearer'
@@ -57,7 +62,12 @@ runtime_require_contains() {
 }
 
 runtime_require_contains 'registry_manifest_state()'
-runtime_require_contains '--request HEAD'
+runtime_require_contains '--head'
+runtime_require_contains '--connect-timeout 10 --max-time 30'
+if grep -Fq -- '--request HEAD' "$RUNTIME_WORKFLOW"; then
+  echo "runtime manifest probe must use curl --head" >&2
+  exit 1
+fi
 runtime_require_contains 'refusing to infer absence'
 runtime_require_contains 'GHCR_TOKEN'
 runtime_require_contains 'registry_tokens=()'
