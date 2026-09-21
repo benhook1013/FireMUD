@@ -4,6 +4,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORKFLOW="$ROOT_DIR/.github/workflows/publish-pr-runtime-images.yml"
+RUNTIME_WORKFLOW="$ROOT_DIR/.github/workflows/runtime-images.yml"
 
 require_contains() {
   local expected="$1"
@@ -47,19 +48,38 @@ if grep -Fq -- 'IMAGE_TAG: ${{ github.event.workflow_run.head_sha }}' "$WORKFLOW
   exit 1
 fi
 
+runtime_require_contains() {
+  local expected="$1"
+  grep -Fq -- "$expected" "$RUNTIME_WORKFLOW" || {
+    echo "runtime publisher workflow must contain: $expected" >&2
+    exit 1
+  }
+}
+
+runtime_require_contains 'registry_manifest_state()'
+runtime_require_contains '--request HEAD'
+runtime_require_contains 'refusing to infer absence'
+runtime_require_contains 'GHCR_TOKEN'
+runtime_require_contains 'registry_tokens=()'
+runtime_require_contains 'existing_digest="$(registry_digest "$target")"'
+runtime_require_contains 'Refusing to overwrite fixed runtime tag'
+
 fixture_dir="$(mktemp -d)"
 trap 'rm -rf -- "$fixture_dir"' EXIT
 validation_script="$fixture_dir/publisher-validation.py"
 publisher_script="$fixture_dir/publisher.sh"
+runtime_script="$fixture_dir/runtime.sh"
 
-python3 - "$WORKFLOW" "$validation_script" "$publisher_script" <<'PY'
+python3 - "$WORKFLOW" "$RUNTIME_WORKFLOW" "$validation_script" "$publisher_script" "$runtime_script" <<'PY'
 import re
 import sys
 from pathlib import Path
 
 workflow_path = Path(sys.argv[1])
-validation_path = Path(sys.argv[2])
-publisher_path = Path(sys.argv[3])
+runtime_workflow_path = Path(sys.argv[2])
+validation_path = Path(sys.argv[3])
+publisher_path = Path(sys.argv[4])
+runtime_path = Path(sys.argv[5])
 workflow = workflow_path.read_text(encoding="utf-8")
 download = workflow.index("- name: Download successful PR image artifacts")
 validate = workflow.index("- name: Validate exact PR source and artifact before registry login")
@@ -83,6 +103,14 @@ publish_end = len(workflow)
 publish_script = workflow[publish_run:publish_end]
 publisher_path.write_text(
     "\n".join(line[10:] if line.startswith("          ") else line for line in publish_script.splitlines()) + "\n",
+    encoding="utf-8",
+)
+runtime_workflow = runtime_workflow_path.read_text(encoding="utf-8")
+runtime_start = runtime_workflow.index("- name: Promote smoke-tested service digests")
+runtime_run = runtime_workflow.index("        run: |\n", runtime_start) + len("        run: |\n")
+runtime_script = runtime_workflow[runtime_run:]
+runtime_path.write_text(
+    "\n".join(line[10:] if line.startswith("          ") else line for line in runtime_script.splitlines()) + "\n",
     encoding="utf-8",
 )
 PY
@@ -384,6 +412,105 @@ if CURL_STATUS=503 PR_RUNTIME_ARTIFACT_DIR="$artifact_dir" IMAGE_TAG="pr-merge-$
 fi
 if [[ -e "$fixture_dir/registry-marker" ]]; then
   echo "publisher attempted a push after an unknown registry preflight failure" >&2
+  exit 1
+fi
+
+cat > "$fixture_dir/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${1:-}" == api ]] || exit 2
+printf '%s\n' "$HEAD_SHA"
+EOF
+chmod +x "$fixture_dir/gh"
+cat > "$fixture_dir/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == *"https://ghcr.io/token"* ]]; then
+  printf '{"token":"mock-registry-token"}\n'
+  exit 0
+fi
+if [[ -n "${RUNTIME_CURL_STATUS:-}" ]]; then
+  printf '%s\n' "$RUNTIME_CURL_STATUS"
+  exit 0
+fi
+case "${RUNTIME_TARGET_MODE:-}" in
+  missing) printf '404\n' ;;
+  matching|different) printf '200\n' ;;
+  non404) printf '503\n' ;;
+  *) echo "unexpected runtime target mode" >&2; exit 2 ;;
+esac
+EOF
+chmod +x "$fixture_dir/curl"
+cat > "$fixture_dir/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == buildx && "${2:-}" == imagetools && "${3:-}" == inspect ]]; then
+  image="${4:-}"
+  service="${image##*/}"
+  tag="${service##*:}"
+  service="${service%%:*}"
+  digest='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  if [[ "${RUNTIME_TARGET_MODE:-}" == different && "$tag" == "$HEAD_SHA" ]]; then
+    digest='sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  fi
+  printf 'Digest: %s\n' "$digest"
+  exit 0
+fi
+if [[ "${1:-}" == buildx && "${2:-}" == imagetools && "${3:-}" == create ]]; then
+  printf '%s\n' "$*" >> "$RUNTIME_REGISTRY_MARKER"
+  exit 0
+fi
+echo "unexpected runtime docker command: $*" >&2
+exit 2
+EOF
+chmod +x "$fixture_dir/docker"
+
+runtime_common_env=(
+  HEAD_SHA='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  HEAD_BRANCH='develop'
+  CANDIDATE_TAG='candidate'
+  GITHUB_REPOSITORY='benhook1013/FireMUD'
+  GH_TOKEN='test-token'
+  GHCR_USERNAME='test-user'
+  GHCR_TOKEN='test-token'
+  RUNTIME_REGISTRY_MARKER="$fixture_dir/runtime-registry-marker"
+  PATH="$fixture_dir:$PATH"
+)
+run_runtime() {
+  env "${runtime_common_env[@]}" RUNTIME_TARGET_MODE="$1" bash "$runtime_script"
+}
+
+rm -f "$fixture_dir/runtime-registry-marker"
+run_runtime missing
+if [[ "$(wc -l < "$fixture_dir/runtime-registry-marker")" -ne 33 ]]; then
+  echo "runtime publisher did not create every explicitly absent alias" >&2
+  exit 1
+fi
+
+rm -f "$fixture_dir/runtime-registry-marker"
+run_runtime matching
+if [[ -e "$fixture_dir/runtime-registry-marker" ]]; then
+  echo "runtime publisher overwrote matching existing aliases" >&2
+  exit 1
+fi
+
+rm -f "$fixture_dir/runtime-registry-marker"
+if run_runtime different; then
+  echo "runtime publisher accepted a differing immutable SHA tag" >&2
+  exit 1
+fi
+if [[ -e "$fixture_dir/runtime-registry-marker" ]]; then
+  echo "runtime publisher overwrote a differing immutable SHA tag" >&2
+  exit 1
+fi
+
+rm -f "$fixture_dir/runtime-registry-marker"
+if run_runtime non404; then
+  echo "runtime publisher treated a registry failure as an absent tag" >&2
+  exit 1
+fi
+if [[ -e "$fixture_dir/runtime-registry-marker" ]]; then
+  echo "runtime publisher published after an unknown registry preflight failure" >&2
   exit 1
 fi
 

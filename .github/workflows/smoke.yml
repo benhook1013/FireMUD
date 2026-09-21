@@ -111,7 +111,6 @@ jobs:
               "dev-tools/backups/pg-dump-s3-selection.shlib",
               "dev-tools/backups/smoke-backup-verifier-image.sh",
               "dev-tools/certs/generate-dev-certs.sh",
-              "dev-tools/hosted/controller/smoke-paused-controller-image.sh",
               "dev-tools/verify-compose-health.sh",
               "dev-tools/verify-fresh-bootstrap.sh",
               "dev-tools/verify-restart-state.sh",
@@ -130,7 +129,11 @@ jobs:
             const runSmokeFull = nonDocFiles.some(
               (file) =>
                 fullRelevantFiles.has(file) ||
-                fullRelevantPrefixes.some((prefix) => file.startsWith(prefix))
+                fullRelevantPrefixes.some(
+                  (prefix) =>
+                    file.startsWith(prefix) &&
+                    !file.startsWith("services/hosted-environment-identity-controller/")
+                )
             );
             core.setOutput("run_smoke_full", runSmokeFull ? "true" : "false");
 

@@ -1298,6 +1298,73 @@ if missing_prefixes or missing_files:
 print("smoke/runtime-images full-scope parity checks passed")
 PY
 
+python3 - "$smoke_path" <<'PY'
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import yaml
+
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+scope_script = next(
+    step["with"]["script"]
+    for step in workflow["jobs"]["changes"]["steps"]
+    if step.get("name") == "Compute smoke scope"
+)
+
+
+def run_scope(changed_paths):
+    node_source = """
+const scopeScript = %s;
+const changedFiles = %s;
+const outputs = {};
+const github = {
+  paginate: async () => changedFiles,
+  rest: { pulls: { listFiles: async () => undefined } },
+};
+const context = {
+  repo: { owner: "example", repo: "firemud" },
+  payload: { pull_request: { number: 1, changed_files: changedFiles.length } },
+};
+const core = {
+  warning: () => {},
+  setOutput: (name, value) => { outputs[name] = value; },
+};
+const execute = new Function(
+  "github",
+  "context",
+  "core",
+  "return (async () => {\\n" + scopeScript + "\\n})()"
+);
+await execute(github, context, core);
+process.stdout.write(JSON.stringify(outputs));
+""" % (
+        json.dumps(scope_script),
+        json.dumps([{"filename": path} for path in changed_paths]),
+    )
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", node_source],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise SystemExit(result.stderr)
+    return json.loads(result.stdout)
+
+
+controller_service = "services/hosted-environment-identity-controller/src/Main.java"
+controller_smoke_script = "dev-tools/hosted/controller/smoke-paused-controller-image.sh"
+runtime_service = "services/account-service/src/Main.java"
+
+assert run_scope([controller_service]) == {"run_smoke_full": "false"}
+assert run_scope([controller_smoke_script]) == {"run_smoke_full": "false"}
+assert run_scope([runtime_service]) == {"run_smoke_full": "true"}
+assert run_scope([controller_service, runtime_service]) == {"run_smoke_full": "true"}
+PY
+
 smoke_gate_script="$contract_fixture_dir/smoke-gate.js"
 python3 - "$smoke_path" "$smoke_gate_script" <<'PY'
 import sys

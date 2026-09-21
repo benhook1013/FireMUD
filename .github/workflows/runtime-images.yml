@@ -1493,6 +1493,8 @@ jobs:
       - name: Promote smoke-tested service digests
         env:
           GH_TOKEN: ${{ github.token }}
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -1510,10 +1512,65 @@ jobs:
             world-management-service
           )
 
+          declare -A registry_tokens=()
+          registry_manifest_state() {
+            local image="$1"
+            local image_path="${image#ghcr.io/}"
+            local repository_path="${image_path%:*}"
+            local tag="${image_path##*:}"
+            local manifest_url="https://ghcr.io/v2/${repository_path}/manifests/${tag}"
+            local registry_token="${registry_tokens[$repository_path]:-}"
+            local status
+
+            [[ -n "${GHCR_USERNAME:-}" && -n "${GHCR_TOKEN:-}" ]] || {
+              echo "GHCR credentials are unavailable for authenticated manifest preflight: $image" >&2
+              return 1
+            }
+            if [[ -z "$registry_token" ]]; then
+              if ! registry_token="$(curl --silent --show-error --location --fail \
+                --user "${GHCR_USERNAME}:${GHCR_TOKEN}" \
+                --get \
+                --data-urlencode 'service=ghcr.io' \
+                --data-urlencode "scope=repository:${repository_path}:pull" \
+                --header 'Accept: application/json' \
+                'https://ghcr.io/token' | jq -er '.token // .access_token // empty')"; then
+                echo "GHCR bearer-token exchange failed for $image; refusing to infer absence." >&2
+                return 1
+              fi
+              registry_tokens["$repository_path"]="$registry_token"
+            fi
+            # `docker manifest inspect "$image"` conflates a 404 with auth,
+            # registry, and network failures, so it is never an absence check.
+            if ! status="$(curl --silent --show-error --location --request HEAD \
+              --header "Authorization: Bearer ${registry_token}" \
+              --header 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+              --output /dev/null --write-out '%{http_code}' "$manifest_url")"; then
+              echo "Authenticated OCI manifest HEAD failed for $image; refusing to infer absence." >&2
+              return 1
+            fi
+            case "$status" in
+              200) printf 'existing\n' ;;
+              404) printf 'missing\n' ;;
+              *)
+                echo "Authenticated OCI manifest HEAD returned HTTP ${status} for $image; refusing to push." >&2
+                return 1
+                ;;
+            esac
+          }
+
           registry_digest() {
             local image="$1"
-            docker buildx imagetools inspect "$image" 2>/dev/null |
-              awk '$1 == "Digest:" { print $2; exit }'
+            local digest
+            if ! digest="$(docker buildx imagetools inspect "$image" |
+              awk '$1 == "Digest:" { print $2; exit }')"; then
+              echo "Unable to inspect exact registry digest for $image; refusing to publish." >&2
+              return 1
+            fi
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+              echo "Registry manifest for $image has no exact digest." >&2
+              return 1
+            }
+            printf '%s\n' "$digest"
           }
 
           assert_current_branch_head() {
@@ -1531,19 +1588,22 @@ jobs:
             local source="$1" target="$2" fixed="$3"
             local source_digest existing_digest target_digest
             source_digest="$(registry_digest "$source")"
-            [[ "$source_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
-              echo "Candidate image has no exact registry digest: $source" >&2
-              exit 1
-            }
-            existing_digest="$(registry_digest "$target" || true)"
-            if [[ "$fixed" == true && -n "$existing_digest" && "$existing_digest" != "$source_digest" ]]; then
-              echo "Refusing to overwrite fixed runtime tag $target: existing digest $existing_digest differs from candidate $source_digest." >&2
+            local target_state
+            if ! target_state="$(registry_manifest_state "$target")"; then
+              echo "Immutable target preflight failed for $target; refusing to publish." >&2
               exit 1
             fi
-            if [[ -z "$existing_digest" ]]; then
+            if [[ "$target_state" == missing ]]; then
               docker buildx imagetools create --tag "$target" "$source"
-            elif [[ "$existing_digest" != "$source_digest" ]]; then
-              docker buildx imagetools create --tag "$target" "$source"
+            else
+              existing_digest="$(registry_digest "$target")"
+              if [[ "$fixed" == true && "$existing_digest" != "$source_digest" ]]; then
+                echo "Refusing to overwrite fixed runtime tag $target: existing digest $existing_digest differs from candidate $source_digest." >&2
+                exit 1
+              fi
+              if [[ "$existing_digest" != "$source_digest" ]]; then
+                docker buildx imagetools create --tag "$target" "$source"
+              fi
             fi
             target_digest="$(registry_digest "$target")"
             [[ "$target_digest" == "$source_digest" ]] || {
