@@ -136,7 +136,7 @@ check_stage_has_no_backup_schedules_unless_enabled() {
     if [ ! -f "$enabled_marker" ]; then
       echo "Stage overlay appears to include backup-related resources (CronJobs and/or Velero schedules), but $enabled_marker is missing." >&2
       echo "If staging backups are intentionally enabled, add the marker file to acknowledge the operational change." >&2
-      exit 1
+      return 1
     fi
   fi
 }

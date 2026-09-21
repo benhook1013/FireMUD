@@ -1167,6 +1167,7 @@ proxy = next(
     if service["name"] == "tcp-proxy-service"
 )
 proxy["serviceType"] = "NodePort"
+# The chart overrides this fixture value with preview.telnetPort before rendering.
 proxy["ports"][0]["nodePort"] = 30001
 path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
 PY
