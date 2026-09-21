@@ -71,6 +71,7 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
     PluginRuntimeRequestHistory changed = failedReceipt("drain-1", "digest-b");
     changed.setPluginState("ENABLED");
     changed.setPluginActivationEpoch(9L);
+    changed.setLifecycleRevision(9L);
     assertThatThrownBy(() -> history.insertOrGet(changed))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("control_plane_request_id already records a different plugin request");
@@ -250,9 +251,9 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
                 dsl.execute(
                     "insert into plugin_runtime_states "
                         + "(tenant_id, game_instance_id, plugin_id, active_plugin_version_id, "
-                        + "plugin_state, plugin_activation_epoch, lifecycle_revision) "
+                        + "plugin_state, status_reason, plugin_activation_epoch, lifecycle_revision) "
                         + "values ('tenant-invalid', 'instance-active-zero', 'plugin-invalid', "
-                        + "'version-active', 'ENABLED', 0, 0)"))
+                        + "'version-active', 'ENABLED', 'invalid', 0, 0)"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("ck_plugin_runtime_states_plugin_fence");
     assertThatThrownBy(
@@ -260,9 +261,9 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
                 dsl.execute(
                     "insert into plugin_runtime_states "
                         + "(tenant_id, game_instance_id, plugin_id, plugin_state, "
-                        + "plugin_activation_epoch, lifecycle_revision) "
+                        + "status_reason, plugin_activation_epoch, lifecycle_revision) "
                         + "values ('tenant-invalid', 'instance-incoherent', 'plugin-invalid', "
-                        + "'DISABLED', 1, 0)"))
+                        + "'DISABLED', 'invalid', 1, 0)"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("ck_plugin_runtime_states_plugin_fence");
     assertThatThrownBy(
@@ -270,9 +271,9 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
                 dsl.execute(
                     "insert into plugin_runtime_states "
                         + "(tenant_id, game_instance_id, plugin_id, plugin_state, "
-                        + "plugin_activation_epoch, lifecycle_revision) "
+                        + "status_reason, plugin_activation_epoch, lifecycle_revision) "
                         + "values ('tenant-invalid', 'instance-negative', 'plugin-invalid', "
-                        + "'DISABLED', -1, -1)"))
+                        + "'DISABLED', 'invalid', -1, -1)"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("ck_plugin_runtime_states_plugin_fence");
 
