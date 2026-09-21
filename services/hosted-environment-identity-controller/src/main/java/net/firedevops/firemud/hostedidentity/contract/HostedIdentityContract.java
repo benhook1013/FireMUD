@@ -24,6 +24,9 @@ public final class HostedIdentityContract {
       "firemud.dev/last-dev-demo-head-sha";
   public static final String PREVIEW_TELNET_PORT_ANNOTATION =
       "firemud.dev/last-preview-telnet-port";
+  public static final String PREVIEW_EXPOSURE_MODE_LABEL = "firemud.dev/preview-exposure-mode";
+  public static final String PRIVATE_PREVIEW_EXPOSURE_MODE = "private";
+  public static final String PUBLIC_PREVIEW_EXPOSURE_MODE = "public";
   public static final String DEV_DEMO_TELNET_PORT_ANNOTATION =
       "firemud.dev/last-dev-demo-telnet-port";
 

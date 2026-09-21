@@ -31,6 +31,7 @@ jobs:
       namespace: ${{ steps.target.outputs.namespace }}
       hostname: ${{ steps.target.outputs.hostname }}
       certificate_identity_mode: ${{ steps.certificate-identity.outputs.mode }}
+      exposure_mode: ${{ steps.target.outputs.exposure_mode }}
       render_run_id: ${{ steps.target.outputs.render_run_id }}
       artifact_name: ${{ steps.target.outputs.artifact_name }}
       retire_identity: ${{ steps.target.outputs.retire_identity }}
@@ -292,6 +293,20 @@ jobs:
               "$current_head_sha" "$merge_sha" "$effective_image_tag" \
               "pr-${PR_NUMBER}.preview.firedevops.net" \
               "${{ steps.certificate-identity.outputs.mode }}"
+            exposure_mode="$(python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
+              exposure-mode "$ARTIFACT_DIRECTORY/preview-rendered-sanitized.yaml" \
+              "${{ steps.certificate-identity.outputs.mode }}")"
+            case "$exposure_mode" in
+              private|public) ;;
+              *)
+                echo "::error title=Invalid preview exposure mode::Expected private or public; actual ${exposure_mode:-empty}." >&2
+                exit 1
+                ;;
+            esac
+            if [[ "$exposure_mode" == private && "${{ steps.certificate-identity.outputs.mode }}" != hosted-controller ]]; then
+              echo "::error title=Unsupported private preview identity::Private bridge proof requires hosted-controller identity." >&2
+              exit 1
+            fi
           elif [[ "$ACTION" == destroy && "$EVENT_NAME" == workflow_run ]]; then
             [[ "$ARTIFACT_KIND" == intent ]] || emit_no_action \
               "Ignoring repository dispatch destroy without a canonical destroy intent artifact."
@@ -305,6 +320,9 @@ jobs:
             echo "image_tag=${effective_image_tag}"
             echo "namespace=pr-${PR_NUMBER}"
             echo "hostname=pr-${PR_NUMBER}.preview.firedevops.net"
+            if [[ "$ACTION" == deploy ]]; then
+              echo "exposure_mode=${exposure_mode}"
+            fi
             echo "render_run_id=${SOURCE_RUN_ID}"
             echo "artifact_name=${ARTIFACT_NAME}"
             echo "retire_identity=${RETIRE_IDENTITY}"
@@ -406,6 +424,7 @@ jobs:
           PREVIEW_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
           PREVIEW_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
           PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
+          PREVIEW_EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
         with:
           script: |
             const { publishPreviewComment } = require(
@@ -536,6 +555,7 @@ jobs:
 
       - name: Allocate stable preview Telnet port
         id: allocate-telnet-port
+        if: ${{ needs.validate-target.outputs.exposure_mode == 'public' }}
         run: |
           set -euo pipefail
           port="$(bash ./dev-tools/hosted/preview/allocate-preview-telnet-port.sh \
@@ -553,7 +573,8 @@ jobs:
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
           IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
-          TELNET_PORT: ${{ steps.allocate-telnet-port.outputs.port }}
+          EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
+          ALLOCATED_TELNET_PORT: ${{ steps.allocate-telnet-port.outputs.port }}
           ALLOCATION_TIMESTAMP: ${{ steps.allocate-capacity.outputs.allocation_timestamp }}
         run: |
           set -euo pipefail
@@ -561,10 +582,8 @@ jobs:
             echo "::error title=Invalid preview runtime namespace::Expected pr-${PR_NUMBER}." >&2
             exit 1
           }
-          [[ "$TELNET_PORT" =~ ^32(00[0-9]|01[0-5])$ ]] || {
-            echo "::error title=Invalid allocated Telnet port::Expected a port from 32000 through 32015; actual value was ${TELNET_PORT:-empty}." >&2
-            exit 1
-          }
+          TELNET_PORT="$(bash ./dev-tools/hosted/preview/resolve-preview-telnet-port.sh \
+            "$EXPOSURE_MODE" "$ALLOCATED_TELNET_PORT")"
           [[ "$ALLOCATION_TIMESTAMP" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[^[:space:]]+Z$ ]] || {
             echo "::error title=Invalid allocation timestamp::Expected a UTC timestamp ending in Z without whitespace." >&2
             exit 1
@@ -572,7 +591,7 @@ jobs:
           kubectl create namespace "$RUNTIME_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
           bash ./dev-tools/hosted/preview/annotate-preview-namespace.sh \
             "$RUNTIME_NAMESPACE" "$PR_NUMBER" "$HEAD_SHA" "$IMAGE_TAG" \
-            "$TELNET_PORT" "$ALLOCATION_TIMESTAMP"
+            "$EXPOSURE_MODE" "$TELNET_PORT" "$ALLOCATION_TIMESTAMP"
 
       - name: Write requester kubeconfig
         if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
@@ -631,14 +650,18 @@ jobs:
         env:
           ARTIFACT_DIR: ${{ runner.temp }}/preview-artifact
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
-          TELNET_PORT: ${{ steps.allocate-telnet-port.outputs.port }}
+          EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
+          ALLOCATED_TELNET_PORT: ${{ steps.allocate-telnet-port.outputs.port }}
         run: |
           set -euo pipefail
+          TELNET_PORT="$(bash ./dev-tools/hosted/preview/resolve-preview-telnet-port.sh \
+            "$EXPOSURE_MODE" "$ALLOCATED_TELNET_PORT")"
           python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
             inject "$ARTIFACT_DIR/preview-rendered-sanitized.yaml" \
             "$RUNNER_TEMP/preview-rendered-with-port.yaml" \
             "$RUNTIME_NAMESPACE" "$TELNET_PORT" \
-            "${{ needs.validate-target.outputs.certificate_identity_mode }}"
+            "${{ needs.validate-target.outputs.certificate_identity_mode }}" \
+            "${{ needs.validate-target.outputs.exposure_mode }}"
 
       - name: Ensure trusted runtime pull secret
         env:
@@ -661,12 +684,16 @@ jobs:
           EXPECTED_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
           ARTIFACT_PATH: ${{ runner.temp }}/preview-rendered-with-port.yaml
-          TELNET_PORT: ${{ steps.allocate-telnet-port.outputs.port }}
+          EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
+          ALLOCATED_TELNET_PORT: ${{ steps.allocate-telnet-port.outputs.port }}
         run: |
           set -euo pipefail
+          TELNET_PORT="$(bash ./dev-tools/hosted/preview/resolve-preview-telnet-port.sh \
+            "$EXPOSURE_MODE" "$ALLOCATED_TELNET_PORT")"
           python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
             runtime-target "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$TELNET_PORT" \
-            "${{ needs.validate-target.outputs.certificate_identity_mode }}"
+            "${{ needs.validate-target.outputs.certificate_identity_mode }}" \
+            "${{ needs.validate-target.outputs.exposure_mode }}"
           bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
             "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA"
           bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
@@ -706,6 +733,7 @@ jobs:
           PREVIEW_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
           PREVIEW_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
           PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
+          PREVIEW_EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
         with:
           script: |
             const { publishPreviewComment } = require(
@@ -778,7 +806,8 @@ jobs:
           bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
             "pr-${{ needs.validate-target.outputs.pr_number }}" \
             "${{ needs.validate-target.outputs.head_sha }}" \
-            "${{ needs.validate-target.outputs.namespace }}" 900
+            "${{ needs.validate-target.outputs.namespace }}" 900 \
+            "${{ needs.validate-target.outputs.exposure_mode }}"
 
       - name: Wait for runtime rollouts
         env:
@@ -790,6 +819,7 @@ jobs:
 
       - name: Read allocated TCP port
         id: runtime-port
+        if: ${{ needs.validate-target.outputs.exposure_mode == 'public' }}
         env:
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
         run: |
@@ -829,6 +859,7 @@ jobs:
           PREVIEW_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
           PREVIEW_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
           PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
+          PREVIEW_EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
         with:
           script: |
             const { publishPreviewComment } = require(
@@ -841,11 +872,12 @@ jobs:
               mode: "deploying",
               markerPolicy: "preserve-reclaimed",
               statePolicy: "expected-open",
-              telnetPort: "available",
+              telnetPort: process.env.PREVIEW_EXPOSURE_MODE === "public" ? "available" : "unavailable",
               staleDescription: "trusted preview deployment state",
             });
 
       - name: Smoke hosted preview over TCP
+        if: ${{ needs.validate-target.outputs.exposure_mode == 'public' }}
         env:
           PREVIEW_BASE_URL: https://${{ needs.validate-target.outputs.hostname }}
           SMOKE_TELNET_HOST: ${{ needs.validate-target.outputs.hostname }}
@@ -862,6 +894,7 @@ jobs:
           PREVIEW_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
           PREVIEW_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
           PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
+          PREVIEW_EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
           PREVIEW_TELNET_PORT: ${{ steps.runtime-port.outputs.port }}
         with:
           script: |
@@ -886,6 +919,7 @@ jobs:
           PREVIEW_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
           PREVIEW_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
           PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
+          PREVIEW_EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
         with:
           script: |
             const { publishPreviewComment } = require(

@@ -16,6 +16,7 @@ import io.fabric8.kubernetes.api.model.Namespace;
 import io.fabric8.kubernetes.api.model.NamespaceBuilder;
 import io.fabric8.kubernetes.api.model.NamespaceList;
 import io.fabric8.kubernetes.api.model.OwnerReferenceBuilder;
+import io.fabric8.kubernetes.api.model.rbac.PolicyRule;
 import io.fabric8.kubernetes.api.model.rbac.PolicyRuleBuilder;
 import io.fabric8.kubernetes.api.model.rbac.Role;
 import io.fabric8.kubernetes.api.model.rbac.RoleBinding;
@@ -229,6 +230,22 @@ class HostedIdentityScopeServiceTest {
     assertEquals(
         List.of("independent-grpc-consumer", "spring-cloud-gateway", "tcp-proxy-service"),
         HostedIdentityScopeService.requiredDeploymentNames(plan));
+  }
+
+  @Test
+  void runtimeRoleReadsOnlyTheNamedTcpProxyService() {
+    Role runtimeRole = HostedIdentityScopeService.runtimeRole(plan());
+
+    List<PolicyRule> serviceRules =
+        runtimeRole.getRules().stream()
+            .filter(rule -> List.of("services").equals(rule.getResources()))
+            .toList();
+
+    assertEquals(1, serviceRules.size());
+    assertEquals(List.of(""), serviceRules.get(0).getApiGroups());
+    assertEquals(List.of("tcp-proxy-service"), serviceRules.get(0).getResourceNames());
+    assertEquals(List.of("get"), serviceRules.get(0).getVerbs());
+    assertEquals(4, runtimeRole.getRules().size());
   }
 
   @Test

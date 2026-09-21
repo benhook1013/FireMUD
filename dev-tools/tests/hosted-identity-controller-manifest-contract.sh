@@ -157,6 +157,7 @@ for file in \
   "$MANIFEST_DIR/rbac.yaml" \
   "$MANIFEST_DIR/deployment.yaml" \
   "$MANIFEST_DIR/networkpolicy.yaml" \
+  "$MANIFEST_DIR/issuer.yaml" \
   "$MANIFEST_DIR/README.md" \
   "$CONTROLLER_DIR/bootstrap-hosted-identity-controller.sh"; do
   require_file "$file"
@@ -290,6 +291,13 @@ for resource in namespace serviceaccounts crd admission rbac deployment networkp
 done
 require_literal "$MANIFEST_DIR/namespace.yaml" "name: firemud-system"
 require_literal "$MANIFEST_DIR/namespace.yaml" "fixed control-plane labels must be restored"
+for issuer_label in \
+  "app.kubernetes.io/name: hosted-environment-identity-controller" \
+  "app.kubernetes.io/component: certificate-issuer" \
+  "app.kubernetes.io/part-of: firemud" \
+  "firemud.dev/managed-by: hosted-identity-controller"; do
+  require_literal "$MANIFEST_DIR/issuer.yaml" "$issuer_label"
+done
 for namespace_label in \
   "pod-security.kubernetes.io/enforce: restricted" \
   "pod-security.kubernetes.io/enforce-version: v1.34" \
@@ -396,6 +404,14 @@ assert hostname["pattern"] == (
     r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"
 )
 status_properties = schema["properties"]["status"]["properties"]["profile"]["properties"]
+profile_schema = schema["properties"]["status"]["properties"]["profile"]
+profile_rules = [validation["rule"] for validation in profile_schema["x-kubernetes-validations"]]
+assert profile_rules == [
+    "!has(self.exposureMode) || !has(self.telnetPort) || (self.exposureMode == 'private' && self.telnetPort == 0) || (self.exposureMode == 'public' && self.telnetPort >= 1024)"
+]
+assert profile_schema["x-kubernetes-validations"][0]["message"] == (
+    "private profiles must set telnetPort to 0 and public profiles must set telnetPort to at least 1024"
+)
 assert re.fullmatch(
     status_properties["identityNamespace"]["pattern"],
     maximum_preview_name + "-identity",
@@ -442,7 +458,7 @@ for text_value in \
   firemud-hosted-identity-scope-rolebindings \
   certificaterequests \
   'object.rules.size() == 7' \
-  'object.rules.size() == 3' \
+  'object.rules.size() == 4' \
   'object.rules.all' \
   'object.subjects.size() == 1' \
   "object.roleRef.apiGroup == 'rbac.authorization.k8s.io'" \
@@ -934,11 +950,16 @@ assert "object.metadata.labels.size() ==" not in role_expression
 assert "object.metadata.labels.all(k," in role_expression
 assert "!k.startsWith('firemud.dev/')" in role_expression
 assert "object.rules.size() == 7" in role_expression
-assert "object.rules.size() == 3" in role_expression
+assert "object.rules.size() == 4" in role_expression
 assert "'firemud-grpc-ca'" not in role_expression
 assert "r.resources == ['certificaterequests']" in role_expression
 assert "r.verbs == ['list']" in role_expression
 normalized_role_expression = " ".join(role_expression.split())
+assert (
+    "r.apiGroups == [''] && r.resources == ['services'] && "
+    "r.resourceNames == ['tcp-proxy-service'] && r.verbs == ['get']"
+) in normalized_role_expression
+assert normalized_role_expression.count("r.resources == ['services']") == 1
 namespace_controller_scope_delete = (
     f"(request.userInfo.username == '{namespace_controller}' && "
     "request.operation == 'DELETE' && "
@@ -981,6 +1002,9 @@ for unsafe_rule in (
     assert not policy_rule_has_no_wildcards_or_non_resource_urls(unsafe_rule)
 for unused_runtime_read in (
     "r.resources == ['services', 'pods']",
+    "r.resources == ['services'] && r.verbs == ['list', 'watch']",
+    "r.resources == ['services'] && r.resourceNames == ['tcp-proxy-service', 'other-service']",
+    "r.resources == ['services'] && r.resourceNames == ['tcp-proxy-service'] && r.verbs == ['get', 'list']",
     "r.resources == ['ingresses']",
     "r.resources == ['deployments'] && r.verbs == ['list', 'watch']",
 ):
@@ -3380,7 +3404,7 @@ def assert_rejected(call, expected):
 
 missing_application_deployments = sorted(validator.SERVICE_IMAGES)
 assert_rejected(
-    lambda: validator.validate_service_consumers([], "pr-42"),
+    lambda: validator.validate_service_consumers([], "pr-42", "standalone", "public"),
     "preview application Deployment set is incomplete; missing: "
     + ", ".join(
         f"Deployment/{name}" for name in missing_application_deployments
@@ -3478,7 +3502,7 @@ for source_kind, volume_name, service in (
     malformed_volume[source_kind] = ["not-a-mapping"]
     assert_rejected(
         lambda documents=malformed_documents: validator.validate_service_consumers(
-            documents, "pr-42"
+            documents, "pr-42", "standalone", "public"
         ),
         f"Deployment/{service}.spec.template.spec.volumes[{volume_name}].{source_kind} is not an object",
     )

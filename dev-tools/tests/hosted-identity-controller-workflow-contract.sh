@@ -31,6 +31,7 @@ mode_action="$ROOT_DIR/.github/actions/resolve-certificate-identity-mode/action.
 artifact_action="$ROOT_DIR/.github/actions/download-validated-preview-artifact/action.yml"
 requester="$ROOT_DIR/dev-tools/hosted/shared/request-hosted-identity.sh"
 artifact_validator="$ROOT_DIR/dev-tools/hosted/preview/validate-preview-artifact.py"
+telnet_port_resolver="$ROOT_DIR/dev-tools/hosted/preview/resolve-preview-telnet-port.sh"
 render_preview_values="$ROOT_DIR/dev-tools/hosted/preview/render-preview-values.py"
 preview_annotator="$ROOT_DIR/dev-tools/hosted/preview/annotate-preview-namespace.sh"
 runtime_rollout_waiter="$ROOT_DIR/dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh"
@@ -757,7 +758,7 @@ for required in \
   contains "$requester" "$required"
 done
 
-python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" "$janitor" "$mode_action" "$runtime" "$artifact_action" "$push_verified_image" <<'PY'
+python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" "$janitor" "$mode_action" "$runtime" "$artifact_action" "$push_verified_image" "$waiter" "$telnet_port_resolver" <<'PY'
 import os
 import re
 import subprocess
@@ -782,6 +783,8 @@ push_verified_image = Path(sys.argv[11])
 push_verified_image_text = push_verified_image.read_text(encoding="utf-8")
 assert push_verified_image.is_file()
 assert push_verified_image.stat().st_mode & 0o111
+waiter = Path(sys.argv[12])
+telnet_port_resolver = Path(sys.argv[13])
 
 for job_name in ("validate-target", "prepare-runtime", "deploy-runtime"):
     caller_python_steps = [
@@ -947,6 +950,9 @@ for job_name, required_gate in expected_gates.items():
 validate_job = jobs["validate-target"]
 assert validate_job["outputs"]["certificate_identity_mode"] == (
     "${{ steps.certificate-identity.outputs.mode }}"
+)
+assert validate_job["outputs"]["exposure_mode"] == (
+    "${{ steps.target.outputs.exposure_mode }}"
 )
 mode_step = next(
     step for step in validate_job["steps"] if step.get("id") == "certificate-identity"
@@ -1570,7 +1576,16 @@ assert janitor_runtime_cleanup_step.get("run") == (
 )
 target_step = next(step for step in validate_job["steps"] if step.get("id") == "target")
 target_script = target_step["run"]
-assert target_script.count("validate-preview-artifact.py") == 1
+assert target_script.count("validate-preview-artifact.py") == 2
+assert target_script.count(
+    'python3 ./dev-tools/hosted/preview/validate-preview-artifact.py'
+) == 2
+assert '"$ARTIFACT_DIRECTORY/preview-metadata.json"' in target_script
+assert '"$ARTIFACT_DIRECTORY/preview-rendered-sanitized.yaml"' in target_script
+assert 'exposure-mode "$ARTIFACT_DIRECTORY/preview-rendered-sanitized.yaml"' in target_script
+assert 'case "$exposure_mode" in' in target_script
+assert 'private|public) ;;' in target_script
+assert 'Private bridge proof requires hosted-controller identity.' in target_script
 assert '"${{ steps.certificate-identity.outputs.mode }}"' in target_script
 assert target_script.count('download_source_artifact "$ARTIFACT_NAME"') == 1
 assert target_script.count('metadata_event="$(jq -r') == 1
@@ -1771,7 +1786,6 @@ privileged_validation_guards = {
     ),
     "Create and annotate exact preview runtime namespace": (
         ('[[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]] || {', "Invalid preview runtime namespace"),
-        ('[[ "$TELNET_PORT" =~ ^32(00[0-9]|01[0-5])$ ]] || {', "Invalid allocated Telnet port"),
         (
             '[[ "$ALLOCATION_TIMESTAMP" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[^[:space:]]+Z$ ]] || {',
             "Invalid allocation timestamp",
@@ -1790,7 +1804,45 @@ for step_name, guards in privileged_validation_guards.items():
 inject_step = deploy_by_name["Inject trusted allocated Telnet port"]["run"]
 assert '"$RUNTIME_NAMESPACE" "$TELNET_PORT"' in inject_step
 assert '"${{ needs.validate-target.outputs.certificate_identity_mode }}"' in inject_step
-for step_name in ("Allocate stable preview Telnet port", "Create and annotate exact preview runtime namespace"):
+assert '"${{ needs.validate-target.outputs.exposure_mode }}"' in inject_step
+assert '"$EXPOSURE_MODE"' in inject_step
+telnet_port_resolver_call = (
+    'bash ./dev-tools/hosted/preview/resolve-preview-telnet-port.sh \\\n'
+    '  "$EXPOSURE_MODE" "$ALLOCATED_TELNET_PORT"'
+)
+for step_name in (
+    "Create and annotate exact preview runtime namespace",
+    "Inject trusted allocated Telnet port",
+    "Apply validated PR runtime artifact",
+):
+    assert deploy_by_name[step_name]["run"].count(telnet_port_resolver_call) == 1
+assert telnet_port_resolver.is_file()
+assert telnet_port_resolver.stat().st_mode & 0o111
+assert subprocess.run(
+    ["bash", str(telnet_port_resolver), "private", ""],
+    capture_output=True,
+    text=True,
+    check=True,
+).stdout == "0\n"
+assert subprocess.run(
+    ["bash", str(telnet_port_resolver), "public", "32015"],
+    capture_output=True,
+    text=True,
+    check=True,
+).stdout == "32015\n"
+for arguments, expected_error in (
+    (("untrusted", "32000"), "Invalid preview exposure mode"),
+    (("public", "31999"), "Invalid allocated Telnet port"),
+    (("public", "32016"), "Invalid allocated Telnet port"),
+):
+    result = subprocess.run(
+        ["bash", str(telnet_port_resolver), *arguments],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert expected_error in result.stderr
+for step_name in ("Allocate stable preview Telnet port",):
     assert "actual value was ${" in deploy_by_name[step_name]["run"]
 assert "Validate trusted preview runtime target" not in deploy_by_name
 assert "Final revalidate open PR before server dry-run and apply" not in deploy_by_name
@@ -1806,6 +1858,7 @@ assert apply_step["env"]["EXPECTED_BASE_SHA"] == "${{ needs.validate-target.outp
 assert apply_step["env"]["EXPECTED_MERGE_SHA"] == "${{ needs.validate-target.outputs.merge_sha }}"
 assert apply_run.count(target_validation) == 1
 assert '"${{ needs.validate-target.outputs.certificate_identity_mode }}"' in apply_run
+assert '"${{ needs.validate-target.outputs.exposure_mode }}"' in apply_run
 assert apply_run.count(revalidate_target) == 2
 source_binding_helper = (
     "bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh"
@@ -1871,6 +1924,7 @@ assert deploy_failure["env"] == {
     "PREVIEW_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
     "PREVIEW_IMAGE_TAG": "${{ needs.validate-target.outputs.image_tag }}",
     "PREVIEW_HOSTNAME": "${{ needs.validate-target.outputs.hostname }}",
+    "PREVIEW_EXPOSURE_MODE": "${{ needs.validate-target.outputs.exposure_mode }}",
 }
 deploy_failure_script = deploy_failure["with"]["script"]
 for fragment in (
@@ -1921,6 +1975,9 @@ verify_by_name = {
     step.get("name"): step for step in verify_steps if isinstance(step, dict)
 }
 runtime_port_run = verify_by_name["Read allocated TCP port"]["run"]
+assert verify_by_name["Read allocated TCP port"]["if"] == (
+    "${{ needs.validate-target.outputs.exposure_mode == 'public' }}"
+)
 assert "::error title=Invalid runtime Telnet port::" in runtime_port_run
 assert "actual value was ${port:-empty}." in runtime_port_run
 verify_success_index = next(
@@ -1936,6 +1993,14 @@ verify_failure_index = next(
 assert verify_success_index < verify_failure_index
 verify_success = verify_steps[verify_success_index]
 assert verify_success["if"] == "${{ success() }}"
+assert "needs.validate-target.outputs.exposure_mode == 'public'" in verify_by_name[
+    "Smoke hosted preview over TCP"
+]["if"]
+controller_wait = verify_by_name["Wait for exact controller identity projection"]
+assert controller_wait["if"] == (
+    "${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}"
+)
+assert '"${{ needs.validate-target.outputs.exposure_mode }}"' in controller_wait["run"]
 verify_failure = verify_steps[verify_failure_index]
 assert verify_failure["if"] == "${{ !cancelled() && failure() }}"
 failure_script = verify_failure["with"]["script"]
@@ -2222,6 +2287,10 @@ assert projection_lines == [
 ]
 assert "kubectl" not in projection_wait
 assert "deadline=" not in projection_wait
+assert "[private|public]" in Path(waiter).read_text(encoding="utf-8")
+assert 'exposure_mode="${5:-public}"' in Path(waiter).read_text(encoding="utf-8")
+assert 'namespace_telnet_port=0' in Path(waiter).read_text(encoding="utf-8")
+assert 'profile_telnet_port" != 0' in Path(waiter).read_text(encoding="utf-8")
 
 retirement_wait = next(
     step["run"]
@@ -2560,31 +2629,45 @@ run_preview_annotator() {
 : >"$preview_annotator_log"
 run_preview_annotator \
   pr-42 42 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-  32015 2026-09-13T01:02:03Z
+  public 32015 2026-09-13T01:02:03Z
 mapfile -t preview_annotator_calls <"$preview_annotator_log"
 [[ "${#preview_annotator_calls[@]}" -eq 2 ]]
 [[ "${preview_annotator_calls[0]}" == \
-  "annotate namespace pr-42 firemud.dev/requested-preview-head-sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa firemud.dev/last-preview-image-tag=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa firemud.dev/last-preview-telnet-port=32015 firemud.dev/preview-allocated-at=2026-09-13T01:02:03Z "*" --overwrite" ]]
+  "annotate namespace pr-42 firemud.dev/requested-preview-head-sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa firemud.dev/last-preview-image-tag=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa firemud.dev/preview-allocated-at=2026-09-13T01:02:03Z firemud.dev/last-preview-sync-at="*" firemud.dev/last-preview-telnet-port=32015 --overwrite" ]]
 [[ "${preview_annotator_calls[1]}" == \
-  "label namespace pr-42 firemud.dev/preview=true firemud.dev/pr-number=42 --overwrite" ]]
+  "label namespace pr-42 firemud.dev/preview=true firemud.dev/pr-number=42 firemud.dev/preview-exposure-mode=public --overwrite" ]]
+
+: >"$preview_annotator_log"
+run_preview_annotator \
+  pr-42 42 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  private 0 2026-09-13T01:02:03Z
+mapfile -t preview_annotator_calls <"$preview_annotator_log"
+[[ "${#preview_annotator_calls[@]}" -eq 2 ]]
+[[ "${preview_annotator_calls[0]}" == \
+  "annotate namespace pr-42 firemud.dev/requested-preview-head-sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa firemud.dev/last-preview-image-tag=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa firemud.dev/preview-allocated-at=2026-09-13T01:02:03Z firemud.dev/last-preview-sync-at="*" firemud.dev/last-preview-telnet-port- --overwrite" ]]
+[[ "${preview_annotator_calls[1]}" == \
+  "label namespace pr-42 firemud.dev/preview=true firemud.dev/pr-number=42 firemud.dev/preview-exposure-mode=private --overwrite" ]]
 
 invalid_preview_annotator_cases=(
-  "pr-042|042|32000|2026-09-13T01:02:03Z"
-  "pr-43|42|32000|2026-09-13T01:02:03Z"
-  "pr-42|42|31999|2026-09-13T01:02:03Z"
-  "pr-42|42|32016|2026-09-13T01:02:03Z"
-  "pr-42|42|032000|2026-09-13T01:02:03Z"
-  "pr-42|42|32000|2026-02-30T01:02:03Z"
-  "pr-42|42|32000|2026-09-13T01:02:03+00:00"
-  "pr-42|42|32000|2026-09-13T01:02:03Z injected"
+  "pr-042|042|public|32000|2026-09-13T01:02:03Z"
+  "pr-43|42|public|32000|2026-09-13T01:02:03Z"
+  "pr-42|42|public|31999|2026-09-13T01:02:03Z"
+  "pr-42|42|public|32016|2026-09-13T01:02:03Z"
+  "pr-42|42|public|032000|2026-09-13T01:02:03Z"
+  "pr-42|42|private|32000|2026-09-13T01:02:03Z"
+  "pr-42|42|public|0|2026-09-13T01:02:03Z"
+  "pr-42|42|untrusted|32000|2026-09-13T01:02:03Z"
+  "pr-42|42|public|32000|2026-02-30T01:02:03Z"
+  "pr-42|42|public|32000|2026-09-13T01:02:03+00:00"
+  "pr-42|42|public|32000|2026-09-13T01:02:03Z injected"
 )
 for invalid_preview_annotator_case in "${invalid_preview_annotator_cases[@]}"; do
-  IFS='|' read -r invalid_namespace invalid_pr invalid_port invalid_timestamp \
+  IFS='|' read -r invalid_namespace invalid_pr invalid_mode invalid_port invalid_timestamp \
     <<<"$invalid_preview_annotator_case"
   : >"$preview_annotator_log"
   if run_preview_annotator \
     "$invalid_namespace" "$invalid_pr" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$invalid_port" "$invalid_timestamp" \
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$invalid_mode" "$invalid_port" "$invalid_timestamp" \
     >"$TEMP_DIR/invalid-preview-annotator.output" \
     2>"$TEMP_DIR/invalid-preview-annotator.error"; then
     echo "preview namespace annotator accepted invalid target metadata: $invalid_preview_annotator_case" >&2
@@ -4081,10 +4164,11 @@ documents = [
 
 for document in documents:
     metadata = validator["_validate_object_metadata"](document, "pr-42")
-    assert metadata["labels"] == {
+    expected_labels = {
         **validator["_expected_top_level_labels"](),
         "app.kubernetes.io/instance": "pr-42",
     }
+    assert metadata["labels"] == expected_labels
     if document["kind"] == "Deployment":
         validator["_validate_workload_selector_metadata"](document)
 PY
@@ -4273,7 +4357,7 @@ for malformed_data in (["not", "a", "mapping"], "not-a-mapping"):
 PY
 
 # Trusted post-validation preparation makes the runtime namespace explicit on
-# every object and permits exactly the allocator-owned TCP Proxy NodePort.
+# every object and keeps the private TCP Proxy Service ClusterIP-only.
 python3 - "$artifact_validator" "$TEMP_DIR" <<'PY'
 import copy
 import runpy
@@ -4332,8 +4416,8 @@ documents = [
     },
 ]
 source.write_text(yaml.safe_dump_all(documents), encoding="utf-8")
-inject(source, prepared, 32000, "pr-42", "hosted-controller")
-validate_target(prepared, "pr-42", 32000, "hosted-controller")
+inject(source, prepared, 0, "pr-42", "hosted-controller", "private")
+validate_target(prepared, "pr-42", 0, "hosted-controller", "private")
 prepared_documents = list(yaml.safe_load_all(prepared.read_text(encoding="utf-8")))
 if any(document["metadata"].get("namespace") != "pr-42" for document in prepared_documents):
     raise SystemExit("trusted runtime preparation left a namespace implicit")
@@ -4354,7 +4438,7 @@ def expect_rejected(case_name, mutation, expected_message=None):
     path = tmp / f"runtime-target-{case_name}.yaml"
     path.write_text(yaml.safe_dump_all(mutated), encoding="utf-8")
     try:
-        validate_target(path, "pr-42", 32000, "hosted-controller")
+        validate_target(path, "pr-42", 0, "hosted-controller", "private")
     except ValueError as exc:
         if expected_message is not None and expected_message not in str(exc):
             raise AssertionError((case_name, str(exc))) from exc
@@ -4465,6 +4549,7 @@ for source, target in {
     "${{ needs.validate-target.outputs.base_sha }}": "$EXPECTED_BASE_SHA",
     "${{ needs.validate-target.outputs.merge_sha }}": "$EXPECTED_MERGE_SHA",
     "${{ needs.validate-target.outputs.certificate_identity_mode }}": "hosted-controller",
+    "${{ needs.validate-target.outputs.exposure_mode }}": "private",
 }.items():
     apply_run = apply_run.replace(source, target)
 Path(sys.argv[3]).write_text(apply_run, encoding="utf-8")
@@ -4586,6 +4671,8 @@ run_apply_fixture() {
       RUNTIME_NAMESPACE=pr-42 \
       ARTIFACT_PATH="$prepared_render" \
       TELNET_PORT=32000 \
+      EXPOSURE_MODE=private \
+      ALLOCATED_TELNET_PORT=32000 \
       TEST_APPLY_SCENARIO="$scenario" \
       TEST_EXPECTED_HEAD="$head_sha" \
       TEST_GH_COUNT="$gh_count" \
@@ -4890,6 +4977,7 @@ namespace_json() {
   jq -nc --arg expected_head "${WAITER_EXPECTED_HEAD:?}" '{
     metadata: {
       uid: "uid-pr-42",
+      labels: {"firemud.dev/preview-exposure-mode": "public"},
       annotations: {
         "firemud.dev/requested-preview-head-sha": $expected_head,
         "firemud.dev/last-preview-head-sha": $expected_head,
@@ -4919,6 +5007,7 @@ identity_json() {
         runtimeNamespaceUid: "uid-pr-42",
         requestedHeadSha: $expected_head,
         deployedHeadSha: $expected_head,
+        exposureMode: "public",
         telnetPort: $profile_telnet_port
       },
       ingress: {revision: "ingress-1"},
@@ -5171,6 +5260,7 @@ run_active_waiter_fixture() {
   [[ "$(wc -l <"$sleep_log")" -eq "$expected_sleep_calls" ]]
   if [[ "$expected_status" -eq 0 ]]; then
     grep -Fq 'identity=pr-42' "$output"
+    grep -Fq 'exposureMode=public' "$output"
     grep -Fq 'telnetPort=32000' "$output"
   else
     grep -Fq 'kubectl get failed' "$error"
@@ -5432,7 +5522,7 @@ target_run = target["run"]
 for source, replacement in {
     "${{ github.event.pull_request.number }}": "$EVENT_PR_NUMBER",
     "${{ github.event.pull_request.head.sha }}": "$EVENT_HEAD_SHA",
-    "${{ steps.certificate-identity.outputs.mode }}": "hosted-controller",
+    "${{ steps.certificate-identity.outputs.mode }}": "$TEST_CERTIFICATE_MODE",
 }.items():
     target_run = target_run.replace(source, replacement)
 Path(sys.argv[2]).write_text(target_run, encoding="utf-8")
@@ -5570,6 +5660,11 @@ cat >"$target_fixture_bin/python3" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-}" == ./dev-tools/hosted/preview/validate-preview-artifact.py ]]; then
+  if [[ "${2:-}" == exposure-mode ]]; then
+    [[ -f "${3:-}" ]]
+    printf '%s\n' "${FAKE_EXPOSURE_MODE:-private}"
+    exit 0
+  fi
   [[ -f "${2:-}" && -f "${3:-}" ]]
   exit 0
 fi
@@ -5616,6 +5711,8 @@ run_deploy_target_fixture() {
       FAKE_METADATA_BASE_SHA="${FAKE_FIXTURE_METADATA_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
       FAKE_METADATA_MERGE_SHA="${FAKE_FIXTURE_METADATA_MERGE_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
       TEST_PR_LABELS_JSON="${FAKE_FIXTURE_PR_LABELS_JSON:-[]}" \
+      TEST_CERTIFICATE_MODE="${FAKE_FIXTURE_CERTIFICATE_MODE:-hosted-controller}" \
+      FAKE_EXPOSURE_MODE="${FAKE_FIXTURE_EXPOSURE_MODE:-private}" \
       VALID_RENDER_MANIFEST="$target_rendered_manifest" \
       bash "$TEMP_DIR/target.sh"
   ) >"$stdout" 2>"$stderr"
@@ -5635,6 +5732,14 @@ run_deploy_target_fixture() {
 
 run_deploy_target_fixture valid 0 'action=deploy'
 grep -Fxq "artifact_name=${canonical_artifact_name}" "$TEMP_DIR/deploy-target-valid.output"
+FAKE_FIXTURE_CERTIFICATE_MODE=standalone \
+  run_deploy_target_fixture standalone-private 1 \
+    'Private bridge proof requires hosted-controller identity.'
+test ! -s "$TEMP_DIR/deploy-target-standalone-private.output"
+FAKE_FIXTURE_EXPOSURE_MODE=public \
+  run_deploy_target_fixture controller-public 0 'action=deploy'
+FAKE_FIXTURE_CERTIFICATE_MODE=standalone FAKE_FIXTURE_EXPOSURE_MODE=public \
+  run_deploy_target_fixture standalone-public 0 'action=deploy'
 
 # workflow_run.head_sha identifies the source/default-branch workflow run here,
 # while the PR head remains bound by the current PR and artifact metadata.
