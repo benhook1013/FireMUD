@@ -170,8 +170,7 @@ class ScriptPinEpochMigrationAndRolloutEventIntegrationTest {
     independentAudit.setSourceService("producer-b");
     var firstAuditResult = auditRepository.insertIfAbsentByHandlerIdentity(firstAudit);
     var retryAuditResult = auditRepository.insertIfAbsentByHandlerIdentity(retryAudit);
-    var independentAuditResult =
-        auditRepository.insertIfAbsentByHandlerIdentity(independentAudit);
+    var independentAuditResult = auditRepository.insertIfAbsentByHandlerIdentity(independentAudit);
 
     assertThat(firstAuditResult.inserted()).isTrue();
     assertThat(retryAuditResult.inserted()).isFalse();

@@ -38,7 +38,8 @@ class V2__script_patch_readiness_single_activeTest {
           .toArray(String[]::new);
 
   @Test
-  void replacesBothPinnedAndUnpinnedHandlerIndexesWithAuthenticatedSourceService() throws IOException {
+  void replacesBothPinnedAndUnpinnedHandlerIndexesWithAuthenticatedSourceService()
+      throws IOException {
     String migration;
     try (var stream =
         getClass()
@@ -74,8 +75,6 @@ class V2__script_patch_readiness_single_activeTest {
                     + " ON [^;]+?\\((.*?)\\)(?: NULLS| WHERE|;)")
             .matcher(migration);
     assertThat(matcher.find()).as("missing index %s", indexName).isTrue();
-    return Arrays.stream(matcher.group(1).split(","))
-        .map(String::trim)
-        .toArray(String[]::new);
+    return Arrays.stream(matcher.group(1).split(",")).map(String::trim).toArray(String[]::new);
   }
 }
