@@ -182,8 +182,7 @@ class HeaderTrustFilterTest {
     ServerWebExchange repeatedExchange =
         filterThroughChain(filter, MockServerWebExchange.from(repeatedRequest));
 
-    assertThat(repeatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Locale"))
-        .isNull();
+    assertThat(repeatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Locale")).isNull();
   }
 
   @Test
