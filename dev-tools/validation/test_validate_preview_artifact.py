@@ -704,6 +704,73 @@ class PreviewArtifactPersistentVolumeClaimTest(unittest.TestCase):
                 self._validate(self._document("postgres-data", spec))
 
 
+class PreviewArtifactInfrastructureDeploymentTest(unittest.TestCase):
+    validator = VALIDATOR
+
+    @staticmethod
+    def _document(name, spec):
+        return {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {"name": name},
+            "spec": copy.deepcopy(spec),
+        }
+
+    def _all_documents(self, specs=None):
+        if specs is None:
+            specs = self.validator.EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS
+        return [
+            self._document(name, spec) for name, spec in specs.items()
+        ]
+
+    def test_accepts_exact_postgres_layout_guard_and_infrastructure_specs(self):
+        self.validator.validate_infrastructure_deployments(self._all_documents())
+
+    def test_rejects_missing_postgres_layout_guard(self):
+        specs = copy.deepcopy(self.validator.EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS)
+        specs["postgres"]["template"]["spec"].pop("initContainers")
+        with self.assertRaisesRegex(
+            ValueError,
+            re.escape("Deployment/postgres has an unsafe infrastructure spec"),
+        ):
+            self.validator.validate_infrastructure_deployments(self._all_documents(specs))
+
+    def test_rejects_modified_postgres_layout_guard(self):
+        for case, mutate in (
+            (
+                "script",
+                lambda container: container["args"].__setitem__(
+                    0, container["args"][0] + "echo changed\n"
+                ),
+            ),
+            ("image", lambda container: container.__setitem__("image", "postgres:17")),
+            (
+                "mount",
+                lambda container: container["volumeMounts"][0].__setitem__(
+                    "readOnly", False
+                ),
+            ),
+            (
+                "security",
+                lambda container: container["securityContext"].__setitem__(
+                    "readOnlyRootFilesystem", False
+                ),
+            ),
+        ):
+            with self.subTest(case=case):
+                specs = copy.deepcopy(
+                    self.validator.EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS
+                )
+                mutate(specs["postgres"]["template"]["spec"]["initContainers"][0])
+                with self.assertRaisesRegex(
+                    ValueError,
+                    re.escape("Deployment/postgres has an unsafe infrastructure spec"),
+                ):
+                    self.validator.validate_infrastructure_deployments(
+                        self._all_documents(specs)
+                    )
+
+
 class PreviewArtifactMetadataTest(unittest.TestCase):
     validator = VALIDATOR
 
@@ -1351,6 +1418,54 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
                 "ports": [{"protocol": "TCP", "port": 9200}],
             },
         ]
+        gateway_egress = [
+            {
+                "to": [
+                    {
+                        "namespaceSelector": {
+                            "matchLabels": {
+                                "kubernetes.io/metadata.name": "kube-system"
+                            }
+                        },
+                        "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+                    }
+                ],
+                "ports": [
+                    {"protocol": "UDP", "port": 53},
+                    {"protocol": "TCP", "port": 53},
+                ],
+            },
+            {
+                "to": [
+                    {
+                        "podSelector": {
+                            "matchExpressions": [
+                                {
+                                    "key": "app",
+                                    "operator": "In",
+                                    "values": [
+                                        "game-session-service",
+                                        "logging-admin-service",
+                                        "game-design-service",
+                                        "account-service",
+                                        "social-groups-service",
+                                    ],
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "ports": [{"protocol": "TCP", "port": 8080}],
+            },
+            {
+                "to": [{"podSelector": {"matchLabels": {"app": "redis-cache"}}}],
+                "ports": [{"protocol": "TCP", "port": 6379}],
+            },
+            {
+                "to": [{"podSelector": {"matchLabels": {"app": "otel-collector"}}}],
+                "ports": [{"protocol": "TCP", "port": 4317}],
+            },
+        ]
         documents = [
             self._policy_document(
                 name, spec
@@ -1383,6 +1498,16 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
                         },
                         "policyTypes": ["Ingress"],
                         "ingress": gateway_ingress,
+                    },
+                ),
+                self._policy_document(
+                    "spring-cloud-gateway-egress",
+                    {
+                        "podSelector": {
+                            "matchLabels": {"app": "spring-cloud-gateway"}
+                        },
+                        "policyTypes": ["Egress"],
+                        "egress": gateway_egress,
                     },
                 ),
                 self._policy_document(
@@ -1530,6 +1655,31 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
         ]
         with self.assertRaisesRegex(ValueError, "runtime NetworkPolicy set is not closed"):
             self.validator.validate_network_policies(missing_account, "hosted-controller")
+
+        for mode in ("standalone", "hosted-controller"):
+            with self.subTest(mode=mode, case="missing gateway egress"):
+                missing_gateway_egress = [
+                    document
+                    for document in self._policy_documents(mode)
+                    if document["metadata"]["name"] != "spring-cloud-gateway-egress"
+                ]
+                with self.assertRaisesRegex(
+                    ValueError, "runtime NetworkPolicy set is not closed"
+                ):
+                    self.validator.validate_network_policies(
+                        missing_gateway_egress, mode
+                    )
+
+            with self.subTest(mode=mode, case="broadened gateway egress"):
+                broadened = copy.deepcopy(self._policy_documents(mode))
+                gateway_egress = next(
+                    document
+                    for document in broadened
+                    if document["metadata"]["name"] == "spring-cloud-gateway-egress"
+                )
+                gateway_egress["spec"]["egress"][1]["ports"][0]["port"] = 6565
+                with self.assertRaisesRegex(ValueError, "unsafe exception"):
+                    self.validator.validate_network_policies(broadened, mode)
 
         hosted_broad = copy.deepcopy(hosted)
         gateway = next(

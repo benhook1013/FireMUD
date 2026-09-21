@@ -2,3 +2,10 @@ previewStack:
   enabled: false
   networkPolicies:
     enabled: true
+  # Hosted previews opt into the dedicated Gateway WebSocket mTLS listener.
+  # Keep the default disabled for standalone/local chart installs.
+  gatewayWsTls:
+    enabled: false
+    servicePort: 443
+    targetPort: 8443
+    trustEnvironment: pr-preview

@@ -80,7 +80,10 @@ public class GatewayStubApplication {
           "X-Proxy-Connection-Id",
           "X-Proxy-Game-Instance-Id",
           "X-Proxy-Tenant-Id",
-          "X-Proxy-Client-IP");
+          "X-Proxy-Client-IP",
+          "X-World-Slug",
+          "X-Realm-Slug",
+          "X-Pointer-Version");
 
   private static final class ProxyingWebSocketHandler implements WebSocketHandler {
     private final WebSocketClient client;

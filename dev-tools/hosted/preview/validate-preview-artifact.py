@@ -72,6 +72,7 @@ EXPECTED_NAMES = {
         "internal-services-egress",
         "account-service-controller-ingress",
         "spring-cloud-gateway-ingress",
+        "spring-cloud-gateway-egress",
         "tcp-proxy-service-egress",
     },
 }
@@ -326,38 +327,77 @@ def _infrastructure_deployment_spec(
     }
 
 
+POSTGRES_DATA_LAYOUT_CHECK_INIT_CONTAINER = {
+    "name": "postgres-data-layout-check",
+    "securityContext": {
+        "allowPrivilegeEscalation": False,
+        "readOnlyRootFilesystem": True,
+        "runAsUser": 999,
+        "runAsGroup": 999,
+        "capabilities": {"drop": ["ALL"]},
+    },
+    "image": "postgres:16",
+    "command": ["sh", "-ec"],
+    "args": [
+        """data_root="/var/lib/postgresql/data"
+if [ ! -d "$data_root" ] || [ ! -r "$data_root" ] || [ ! -x "$data_root" ]; then
+  echo "refusing to start PostgreSQL: cannot inspect mounted data directory ${data_root}" >&2
+  exit 1
+fi
+if [ -e "${data_root}/PG_VERSION" ]; then
+  echo "refusing to start PostgreSQL: legacy root PG_VERSION found at ${data_root}/PG_VERSION; migrate the PVC before using nested PGDATA=/var/lib/postgresql/data/pgdata" >&2
+  exit 1
+fi
+"""
+    ],
+    "volumeMounts": [
+        {
+            "name": "postgres-data",
+            "mountPath": "/var/lib/postgresql/data",
+            "readOnly": True,
+        }
+    ],
+}
+
+
+POSTGRES_INFRASTRUCTURE_DEPLOYMENT_SPEC = _infrastructure_deployment_spec(
+    "postgres",
+    999,
+    "postgres:16",
+    ["postgres", "-c", "max_connections=200"],
+    5432,
+    "postgres-data",
+    "/var/lib/postgresql/data",
+    [
+        {"name": "PGDATA", "value": "/var/lib/postgresql/data/pgdata"},
+        {"name": "POSTGRES_DB", "value": "firemud"},
+        {
+            "name": "POSTGRES_USER",
+            "valueFrom": {
+                "secretKeyRef": {
+                    "name": "firemud-secret",
+                    "key": "FIREMUD_POSTGRES_USER",
+                }
+            },
+        },
+        {
+            "name": "POSTGRES_PASSWORD",
+            "valueFrom": {
+                "secretKeyRef": {
+                    "name": "firemud-secret",
+                    "key": "FIREMUD_POSTGRES_PASSWORD",
+                }
+            },
+        },
+    ],
+)
+POSTGRES_INFRASTRUCTURE_DEPLOYMENT_SPEC["template"]["spec"]["initContainers"] = [
+    copy.deepcopy(POSTGRES_DATA_LAYOUT_CHECK_INIT_CONTAINER)
+]
+
+
 EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS = {
-    "postgres": _infrastructure_deployment_spec(
-        "postgres",
-        999,
-        "postgres:16",
-        ["postgres", "-c", "max_connections=200"],
-        5432,
-        "postgres-data",
-        "/var/lib/postgresql/data",
-        [
-            {"name": "PGDATA", "value": "/var/lib/postgresql/data/pgdata"},
-            {"name": "POSTGRES_DB", "value": "firemud"},
-            {
-                "name": "POSTGRES_USER",
-                "valueFrom": {
-                    "secretKeyRef": {
-                        "name": "firemud-secret",
-                        "key": "FIREMUD_POSTGRES_USER",
-                    }
-                },
-            },
-            {
-                "name": "POSTGRES_PASSWORD",
-                "valueFrom": {
-                    "secretKeyRef": {
-                        "name": "firemud-secret",
-                        "key": "FIREMUD_POSTGRES_PASSWORD",
-                    }
-                },
-            },
-        ],
-    ),
+    "postgres": POSTGRES_INFRASTRUCTURE_DEPLOYMENT_SPEC,
     "redis-coord": _infrastructure_deployment_spec(
         "redis-coord",
         999,
@@ -1466,6 +1506,65 @@ def validate_network_policies(
     }
     if gateway_ingress != expected_gateway_ingress:
         fail("NetworkPolicy/spring-cloud-gateway-ingress has an unsafe exception")
+
+    gateway_egress = _require_mapping(
+        policies["spring-cloud-gateway-egress"].get("spec"),
+        "NetworkPolicy/spring-cloud-gateway-egress.spec",
+    )
+    expected_gateway_egress = {
+        "podSelector": {"matchLabels": {"app": "spring-cloud-gateway"}},
+        "policyTypes": ["Egress"],
+        "egress": [
+            {
+                "to": [
+                    {
+                        "namespaceSelector": {
+                            "matchLabels": {
+                                "kubernetes.io/metadata.name": "kube-system"
+                            }
+                        },
+                        "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+                    }
+                ],
+                "ports": [
+                    {"protocol": "UDP", "port": 53},
+                    {"protocol": "TCP", "port": 53},
+                ],
+            },
+            {
+                "to": [
+                    {
+                        "podSelector": {
+                            "matchExpressions": [
+                                {
+                                    "key": "app",
+                                    "operator": "In",
+                                    "values": [
+                                        "game-session-service",
+                                        "logging-admin-service",
+                                        "game-design-service",
+                                        "account-service",
+                                        "social-groups-service",
+                                    ],
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "ports": [{"protocol": "TCP", "port": 8080}],
+            },
+            {
+                "to": [{"podSelector": {"matchLabels": {"app": "redis-cache"}}}],
+                "ports": [{"protocol": "TCP", "port": 6379}],
+            },
+            {
+                "to": [{"podSelector": {"matchLabels": {"app": "otel-collector"}}}],
+                "ports": [{"protocol": "TCP", "port": 4317}],
+            },
+        ],
+    }
+    if gateway_egress != expected_gateway_egress:
+        fail("NetworkPolicy/spring-cloud-gateway-egress has an unsafe exception")
 
     proxy_egress = _require_mapping(
         policies["tcp-proxy-service-egress"].get("spec"),

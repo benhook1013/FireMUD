@@ -127,6 +127,7 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
               headers -> {
                 headers.remove(CONNECT_TOKEN_HEADER);
                 headers.remove(CONNECT_CONTEXT_HEADER);
+                headers.remove(TRANSPORT_SESSION_HEADER);
                 headers.set(CONNECTION_MODE_HEADER, CONNECTION_MODE_TRUSTED_TCP_PROXY);
               }));
     }
