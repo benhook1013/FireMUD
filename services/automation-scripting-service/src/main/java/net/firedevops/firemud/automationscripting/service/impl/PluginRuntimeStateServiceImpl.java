@@ -164,6 +164,23 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     requireText(command.pluginId(), "plugin_id");
     requireText(command.targetPluginVersionId(), "target_plugin_version_id");
     repository.lockLifecycleScope(command.tenantId(), command.gameInstanceId(), command.pluginId());
+    String statusReason = normalizeReason(command.reason(), "operator_activation");
+    String controlPlaneRequestId = requireControlPlaneRequestId(command.controlPlaneRequestId());
+    String requestFingerprint = activationFingerprint(command, statusReason);
+    Optional<PluginRuntimeRequestHistory> priorRequest =
+        findPriorRequest(
+            command.tenantId(),
+            command.gameInstanceId(),
+            command.pluginId(),
+            controlPlaneRequestId);
+    if (priorRequest.isPresent()) {
+      PluginRuntimeRequestHistory history = priorRequest.orElseThrow();
+      verifyRequestIdentity(history, OPERATION_ACTIVATE, requestFingerprint);
+      return new ActivationResult(
+          history.getPreviousPluginVersionId(),
+          history.getActivePluginVersionId(),
+          controlPlaneRequestId);
+    }
     PluginRuntimeState existingState =
         repository
             .findByTenantIdAndGameInstanceIdAndPluginId(
@@ -175,25 +192,7 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
             ? existingState
             : newState(command.tenantId(), command.gameInstanceId(), command.pluginId(), now);
     String previous = normalize(state.getActivePluginVersionId());
-    String statusReason = normalizeReason(command.reason(), "operator_activation");
-    String controlPlaneRequestId = requireControlPlaneRequestId(command.controlPlaneRequestId());
     String actorPrincipal = normalize(command.actorPrincipal());
-    String requestFingerprint = activationFingerprint(command, statusReason);
-    Optional<PluginRuntimeRequestHistory> priorRequest =
-        findPriorRequest(
-            command.tenantId(),
-            command.gameInstanceId(),
-            command.pluginId(),
-            OPERATION_ACTIVATE,
-            controlPlaneRequestId);
-    if (priorRequest.isPresent()) {
-      PluginRuntimeRequestHistory history = priorRequest.orElseThrow();
-      verifyRequestFingerprint(history.getRequestFingerprint(), requestFingerprint);
-      return new ActivationResult(
-          history.getPreviousPluginVersionId(),
-          history.getActivePluginVersionId(),
-          controlPlaneRequestId);
-    }
     if (controlPlaneRequestId.equals(normalize(state.getControlPlaneRequestId()))) {
       if (!requestFingerprint.equals(normalize(state.getControlPlaneRequestFingerprint()))) {
         throw new IllegalArgumentException(
@@ -211,7 +210,6 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
       state.setStatusReason(statusReason);
       state.setLastChangedAt(now);
       PluginRuntimeState saved = repository.save(state);
-      appendEvent(saved, previous, controlPlaneRequestId, actorPrincipal, now);
       recordRequest(
           saved,
           OPERATION_ACTIVATE,
@@ -220,6 +218,7 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
           previous,
           saved.getActivePluginVersionId(),
           now);
+      appendEvent(saved, previous, controlPlaneRequestId, actorPrincipal, now);
       return new ActivationResult(previous, previous, controlPlaneRequestId);
     }
     state.setActivePluginVersionId(command.targetPluginVersionId());
@@ -235,7 +234,6 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     state.setLastPolicyCheckedAt(now);
     observeRuntimeScope(state, runtime);
     PluginRuntimeState saved = repository.save(state);
-    appendEvent(saved, previous, controlPlaneRequestId, actorPrincipal, now);
     recordRequest(
         saved,
         OPERATION_ACTIVATE,
@@ -244,6 +242,7 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
         previous,
         saved.getActivePluginVersionId(),
         now);
+    appendEvent(saved, previous, controlPlaneRequestId, actorPrincipal, now);
     reconcileSchedules(saved);
     return new ActivationResult(previous, saved.getActivePluginVersionId(), controlPlaneRequestId);
   }
@@ -496,12 +495,6 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     state.setLastChangedAt(now);
     state.setLastPolicyCheckedAt(now);
     PluginRuntimeState saved = repository.save(state);
-    appendEvent(
-        saved,
-        previous,
-        normalize(saved.getControlPlaneRequestId()),
-        normalize(saved.getActorPrincipal()),
-        now);
     recordRequest(
         saved,
         "DISABLE",
@@ -509,6 +502,12 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
         normalize(saved.getControlPlaneRequestFingerprint()),
         previous,
         saved.getActivePluginVersionId(),
+        now);
+    appendEvent(
+        saved,
+        previous,
+        normalize(saved.getControlPlaneRequestId()),
+        normalize(saved.getActorPrincipal()),
         now);
     reconcileSchedules(saved);
   }
@@ -535,10 +534,10 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     repository.lockLifecycleScope(command.tenantId(), command.gameInstanceId(), command.pluginId());
     Optional<PluginRuntimeRequestHistory> priorRequest =
         findPriorRequest(
-            command.tenantId(), command.gameInstanceId(), command.pluginId(), operation, requestId);
+            command.tenantId(), command.gameInstanceId(), command.pluginId(), requestId);
     if (priorRequest.isPresent()) {
       PluginRuntimeRequestHistory history = priorRequest.orElseThrow();
-      verifyRequestFingerprint(history.getRequestFingerprint(), requestFingerprint);
+      verifyRequestIdentity(history, operation, requestFingerprint);
       return !"FAILED".equals(history.getRequestOutcome());
     }
     Instant now = Instant.now();
@@ -592,12 +591,6 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     state.setActorPrincipal(normalize(command.actorPrincipal()));
     state.setLastChangedAt(now);
     PluginRuntimeState saved = repository.save(state);
-    appendEvent(
-        saved,
-        previous,
-        normalize(saved.getControlPlaneRequestId()),
-        normalize(saved.getActorPrincipal()),
-        now);
     recordRequest(
         saved,
         operation,
@@ -605,6 +598,12 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
         requestFingerprint,
         previous,
         saved.getActivePluginVersionId(),
+        now);
+    appendEvent(
+        saved,
+        previous,
+        normalize(saved.getControlPlaneRequestId()),
+        normalize(saved.getActorPrincipal()),
         now);
     reconcileSchedules(saved);
     return true;
@@ -803,15 +802,16 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
   }
 
   private Optional<PluginRuntimeRequestHistory> findPriorRequest(
-      String tenantId, String gameInstanceId, String pluginId, String operation, String requestId) {
+      String tenantId, String gameInstanceId, String pluginId, String requestId) {
     return requestHistoryRepository == null
         ? Optional.empty()
-        : requestHistoryRepository.find(tenantId, gameInstanceId, pluginId, operation, requestId);
+        : requestHistoryRepository.find(tenantId, gameInstanceId, pluginId, requestId);
   }
 
-  private static void verifyRequestFingerprint(
-      String storedFingerprint, String requestFingerprint) {
-    if (!normalize(storedFingerprint).equals(requestFingerprint)) {
+  private static void verifyRequestIdentity(
+      PluginRuntimeRequestHistory history, String operation, String requestFingerprint) {
+    if (!operation.equals(normalize(history.getOperation()))
+        || !normalize(history.getRequestFingerprint()).equals(requestFingerprint)) {
       throw new IllegalArgumentException(
           "control_plane_request_id already records a different plugin request");
     }
@@ -843,7 +843,8 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     history.setRequestOutcome("SUCCEEDED");
     history.setFailureCode("");
     history.setCreatedAt(createdAt);
-    requestHistoryRepository.insertOrGet(history);
+    PluginRuntimeRequestHistory saved = requestHistoryRepository.insertOrGet(history);
+    verifyRequestIdentity(saved, operation, fingerprint);
   }
 
   private void recordFailedDrainRequest(
@@ -867,7 +868,7 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     history.setFailureCode("FAILED_PRECONDITION");
     history.setCreatedAt(createdAt);
     PluginRuntimeRequestHistory saved = requestHistoryRepository.insertOrGet(history);
-    verifyRequestFingerprint(saved.getRequestFingerprint(), fingerprint);
+    verifyRequestIdentity(saved, "DRAIN", fingerprint);
     if (!"FAILED".equals(saved.getRequestOutcome())) {
       throw new IllegalStateException("drain request identity already has a different outcome");
     }

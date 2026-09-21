@@ -1,6 +1,7 @@
 package net.firedevops.firemud.automationscripting.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.time.Instant;
@@ -68,12 +69,23 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
     PluginRuntimeRequestHistory changed = failedReceipt("drain-1", "digest-b");
     changed.setPluginState("ENABLED");
     changed.setPluginActivationEpoch(9L);
-    PluginRuntimeRequestHistory retried = history.insertOrGet(changed);
-    assertThat(retried.getRequestFingerprint()).isEqualTo("digest-a");
-    assertThat(retried.getRequestOutcome()).isEqualTo("FAILED");
-    assertThat(retried.getFailureCode()).isEqualTo("FAILED_PRECONDITION");
-    assertThat(retried.getPluginState()).isEqualTo(saved.getPluginState());
-    assertThat(retried.getPluginActivationEpoch()).isZero();
+    assertThatThrownBy(() -> history.insertOrGet(changed))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("control_plane_request_id already records a different plugin request");
+
+    PluginRuntimeRequestHistory crossOperation = failedReceipt("drain-1", "digest-a");
+    crossOperation.setOperation("ACTIVATE");
+    assertThatThrownBy(() -> history.insertOrGet(crossOperation))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("control_plane_request_id already records a different plugin request");
+
+    PluginRuntimeRequestHistory exactRetry = failedReceipt("drain-1", "digest-a");
+    PluginRuntimeRequestHistory winner = history.insertOrGet(exactRetry);
+    assertThat(winner.getRequestFingerprint()).isEqualTo("digest-a");
+    assertThat(winner.getRequestOutcome()).isEqualTo("FAILED");
+    assertThat(winner.getFailureCode()).isEqualTo("FAILED_PRECONDITION");
+    assertThat(winner.getPluginState()).isEqualTo(saved.getPluginState());
+    assertThat(winner.getPluginActivationEpoch()).isZero();
 
     CountDownLatch firstHasLock = new CountDownLatch(1);
     CountDownLatch releaseFirst = new CountDownLatch(1);

@@ -16,6 +16,7 @@ import net.firedevops.firemud.automationscripting.entity.PluginRuntimeState;
 import net.firedevops.firemud.automationscripting.repository.PluginRuntimeEventRepository;
 import net.firedevops.firemud.automationscripting.repository.PluginRuntimeRequestHistoryRepository;
 import net.firedevops.firemud.automationscripting.repository.PluginRuntimeStateRepository;
+import net.firedevops.firemud.automationscripting.service.PluginActivationPreflightService;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
@@ -409,7 +410,7 @@ class PluginRuntimeStateServiceImplTest {
     PluginRuntimeRequestHistory[] receipt = new PluginRuntimeRequestHistory[1];
     when(repository.findByTenantIdAndGameInstanceIdAndPluginId("1", "game-1", "plugin-1"))
         .thenReturn(Optional.empty(), Optional.of(enabledLater));
-    when(historyRepository.find("1", "game-1", "plugin-1", "DRAIN", "drain-1"))
+    when(historyRepository.find("1", "game-1", "plugin-1", "drain-1"))
         .thenAnswer(invocation -> Optional.ofNullable(receipt[0]));
     when(historyRepository.insertOrGet(Mockito.any(PluginRuntimeRequestHistory.class)))
         .thenAnswer(
@@ -456,8 +457,7 @@ class PluginRuntimeStateServiceImplTest {
         Mockito.mock(PluginRuntimeRequestHistoryRepository.class);
     when(repository.findByTenantIdAndGameInstanceIdAndPluginId("1", "game-1", "plugin-1"))
         .thenReturn(Optional.of(existing));
-    when(historyRepository.find("1", "game-1", "plugin-1", "DRAIN", "drain-2"))
-        .thenReturn(Optional.empty());
+    when(historyRepository.find("1", "game-1", "plugin-1", "drain-2")).thenReturn(Optional.empty());
     when(historyRepository.insertOrGet(Mockito.any(PluginRuntimeRequestHistory.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
     PluginRuntimeStateServiceImpl service = service(repository, eventRepository, historyRepository);
@@ -495,11 +495,7 @@ class PluginRuntimeStateServiceImplTest {
     when(repository.findByTenantIdAndGameInstanceIdAndPluginId("1", "game-1", "plugin-2"))
         .thenReturn(Optional.of(neverActive));
     when(historyRepository.find(
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.anyString()))
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(Optional.empty());
     PluginRuntimeStateServiceImpl service = service(repository, eventRepository, historyRepository);
 
@@ -550,7 +546,8 @@ class PluginRuntimeStateServiceImplTest {
     history.setActivePluginVersionId("plugin-v1");
     PluginRuntimeRequestHistoryRepository historyRepository =
         Mockito.mock(PluginRuntimeRequestHistoryRepository.class);
-    when(historyRepository.find("1", "game-1", "plugin-1", "ACTIVATE", "request-a"))
+    history.setOperation("ACTIVATE");
+    when(historyRepository.find("1", "game-1", "plugin-1", "request-a"))
         .thenReturn(Optional.of(history));
     PluginRuntimeStateServiceImpl service =
         new PluginRuntimeStateServiceImpl(
@@ -574,6 +571,130 @@ class PluginRuntimeStateServiceImplTest {
     assertThat(result.previousPluginVersionId()).isEqualTo("plugin-v1");
     assertThat(result.activePluginVersionId()).isEqualTo("plugin-v1");
     Mockito.verify(repository, Mockito.never()).save(Mockito.any());
+  }
+
+  @Test
+  void activationRejectsRequestIdRecordedForDrainBeforeAnyMutation() {
+    PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    PluginRuntimeEventRepository eventRepository = Mockito.mock(PluginRuntimeEventRepository.class);
+    GameDesignControlPlaneClient gameDesignClient =
+        Mockito.mock(GameDesignControlPlaneClient.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptScheduleInstanceService scheduleService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    PluginRuntimeRequestHistoryRepository historyRepository =
+        Mockito.mock(PluginRuntimeRequestHistoryRepository.class);
+    PluginActivationPreflightService preflightService =
+        Mockito.mock(PluginActivationPreflightService.class);
+    when(historyRepository.find("1", "game-1", "plugin-1", "shared-request"))
+        .thenReturn(Optional.of(requestHistory("DRAIN", "drain-digest")));
+    PluginRuntimeStateService service =
+        new PluginRuntimeStateServiceImpl(
+            repository,
+            eventRepository,
+            gameDesignClient,
+            gameSessionClient,
+            scheduleService,
+            preflightService,
+            historyRepository);
+
+    assertThatThrownBy(
+            () ->
+                service.setActiveVersion(
+                    new PluginRuntimeStateService.ActivationCommand(
+                        "1",
+                        "game-1",
+                        "plugin-1",
+                        "plugin-v1",
+                        "shared-request",
+                        "operator",
+                        "activate")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("control_plane_request_id already records a different plugin request");
+
+    Mockito.verify(repository).lockLifecycleScope("1", "game-1", "plugin-1");
+    Mockito.verify(repository, Mockito.never()).save(Mockito.any());
+    Mockito.verifyNoInteractions(
+        eventRepository, gameDesignClient, gameSessionClient, scheduleService, preflightService);
+  }
+
+  @Test
+  void drainRejectsRequestIdRecordedForActivationBeforeAnyMutation() {
+    PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    PluginRuntimeEventRepository eventRepository = Mockito.mock(PluginRuntimeEventRepository.class);
+    ScriptScheduleInstanceService scheduleService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    PluginRuntimeRequestHistoryRepository historyRepository =
+        Mockito.mock(PluginRuntimeRequestHistoryRepository.class);
+    when(historyRepository.find("1", "game-1", "plugin-1", "shared-request"))
+        .thenReturn(Optional.of(requestHistory("ACTIVATE", "activation-digest")));
+    PluginRuntimeStateService service =
+        new PluginRuntimeStateServiceImpl(
+            repository,
+            eventRepository,
+            Mockito.mock(GameDesignControlPlaneClient.class),
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            scheduleService,
+            (tenantId, gameInstanceId, scriptPatchVersion, pluginId, pluginVersionId) -> {},
+            historyRepository);
+
+    assertThatThrownBy(
+            () ->
+                service.drain(
+                    new PluginRuntimeStateService.PluginStateCommand(
+                        "1", "game-1", "plugin-1", "shared-request", "operator", "operator_drain")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("control_plane_request_id already records a different plugin request");
+
+    Mockito.verify(repository).lockLifecycleScope("1", "game-1", "plugin-1");
+    Mockito.verify(repository, Mockito.never()).save(Mockito.any());
+    Mockito.verifyNoInteractions(eventRepository, scheduleService);
+  }
+
+  @Test
+  void changedActivationInputWithSameRequestIdIsRejectedBeforePreflight() {
+    PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    PluginRuntimeEventRepository eventRepository = Mockito.mock(PluginRuntimeEventRepository.class);
+    GameDesignControlPlaneClient gameDesignClient =
+        Mockito.mock(GameDesignControlPlaneClient.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptScheduleInstanceService scheduleService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    PluginRuntimeRequestHistoryRepository historyRepository =
+        Mockito.mock(PluginRuntimeRequestHistoryRepository.class);
+    PluginActivationPreflightService preflightService =
+        Mockito.mock(PluginActivationPreflightService.class);
+    when(historyRepository.find("1", "game-1", "plugin-1", "activation-request"))
+        .thenReturn(Optional.of(requestHistory("ACTIVATE", "original-digest")));
+    PluginRuntimeStateService service =
+        new PluginRuntimeStateServiceImpl(
+            repository,
+            eventRepository,
+            gameDesignClient,
+            gameSessionClient,
+            scheduleService,
+            preflightService,
+            historyRepository);
+
+    assertThatThrownBy(
+            () ->
+                service.setActiveVersion(
+                    new PluginRuntimeStateService.ActivationCommand(
+                        "1",
+                        "game-1",
+                        "plugin-1",
+                        "plugin-v2",
+                        "activation-request",
+                        "operator",
+                        "activate")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("control_plane_request_id already records a different plugin request");
+
+    Mockito.verify(repository, Mockito.never()).save(Mockito.any());
+    Mockito.verifyNoInteractions(
+        eventRepository, gameDesignClient, gameSessionClient, scheduleService, preflightService);
   }
 
   @Test
@@ -1093,6 +1214,8 @@ class PluginRuntimeStateServiceImplTest {
         Mockito.mock(GameDesignControlPlaneClient.class);
     PluginRuntimeRequestHistoryRepository historyRepository =
         Mockito.mock(PluginRuntimeRequestHistoryRepository.class);
+    when(historyRepository.insertOrGet(Mockito.any(PluginRuntimeRequestHistory.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     when(repository.findByPluginStateAndActivePluginVersionIdNotOrderByLastChangedAtAsc(
             Mockito.eq(PluginState.PLUGIN_STATE_ENABLED.name()), Mockito.eq(""), Mockito.any()))
         .thenReturn(List.of(active));
@@ -1145,6 +1268,8 @@ class PluginRuntimeStateServiceImplTest {
         Mockito.mock(GameDesignControlPlaneClient.class);
     PluginRuntimeRequestHistoryRepository historyRepository =
         Mockito.mock(PluginRuntimeRequestHistoryRepository.class);
+    when(historyRepository.insertOrGet(Mockito.any(PluginRuntimeRequestHistory.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     when(repository.findByPluginStateAndActivePluginVersionIdNotOrderByLastChangedAtAsc(
             Mockito.eq(PluginState.PLUGIN_STATE_ENABLED.name()), Mockito.eq(""), Mockito.any()))
         .thenReturn(List.of(firstAttempt), List.of(retryAttempt), List.of(retryAttempt));
@@ -1570,6 +1695,21 @@ class PluginRuntimeStateServiceImplTest {
     active.setLastChangedAt(java.time.Instant.EPOCH);
     active.setLastPolicyCheckedAt(java.time.Instant.EPOCH);
     return active;
+  }
+
+  private static PluginRuntimeRequestHistory requestHistory(
+      String operation, String requestFingerprint) {
+    PluginRuntimeRequestHistory history = new PluginRuntimeRequestHistory();
+    history.setTenantId("1");
+    history.setGameInstanceId("game-1");
+    history.setPluginId("plugin-1");
+    history.setOperation(operation);
+    history.setControlPlaneRequestId("shared-request");
+    history.setRequestFingerprint(requestFingerprint);
+    history.setRequestOutcome("SUCCEEDED");
+    history.setFailureCode("");
+    history.setPluginState(PluginState.PLUGIN_STATE_ENABLED.name());
+    return history;
   }
 
   private static GetPublishedPluginVersionResponse publishedPluginVersion(

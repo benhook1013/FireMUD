@@ -24,7 +24,7 @@ public class PluginRuntimeRequestHistoryRepository {
   }
 
   public Optional<PluginRuntimeRequestHistory> find(
-      String tenantId, String gameInstanceId, String pluginId, String operation, String requestId) {
+      String tenantId, String gameInstanceId, String pluginId, String requestId) {
     return dsl.selectFrom(PLUGIN_RUNTIME_REQUEST_HISTORY)
         .where(
             PLUGIN_RUNTIME_REQUEST_HISTORY
@@ -32,7 +32,6 @@ public class PluginRuntimeRequestHistoryRepository {
                 .eq(tenantId)
                 .and(PLUGIN_RUNTIME_REQUEST_HISTORY.GAME_INSTANCE_ID.eq(gameInstanceId))
                 .and(PLUGIN_RUNTIME_REQUEST_HISTORY.PLUGIN_ID.eq(pluginId))
-                .and(PLUGIN_RUNTIME_REQUEST_HISTORY.OPERATION.eq(operation))
                 .and(PLUGIN_RUNTIME_REQUEST_HISTORY.CONTROL_PLANE_REQUEST_ID.eq(requestId)))
         .fetchOptional(this::toEntity);
   }
@@ -40,26 +39,36 @@ public class PluginRuntimeRequestHistoryRepository {
   public PluginRuntimeRequestHistory insertOrGet(PluginRuntimeRequestHistory entity) {
     PluginRuntimeRequestHistoryRecord record = dsl.newRecord(PLUGIN_RUNTIME_REQUEST_HISTORY);
     populate(record, entity);
-    return dsl.insertInto(PLUGIN_RUNTIME_REQUEST_HISTORY)
-        .set(record)
-        .onConflict(
-            PLUGIN_RUNTIME_REQUEST_HISTORY.TENANT_ID,
-            PLUGIN_RUNTIME_REQUEST_HISTORY.GAME_INSTANCE_ID,
-            PLUGIN_RUNTIME_REQUEST_HISTORY.PLUGIN_ID,
-            PLUGIN_RUNTIME_REQUEST_HISTORY.OPERATION,
-            PLUGIN_RUNTIME_REQUEST_HISTORY.CONTROL_PLANE_REQUEST_ID)
-        .doNothing()
-        .returningResult(PLUGIN_RUNTIME_REQUEST_HISTORY.fields())
-        .fetchOptional(this::toEntity)
-        .orElseGet(
-            () ->
-                find(
-                        entity.getTenantId(),
-                        entity.getGameInstanceId(),
-                        entity.getPluginId(),
-                        entity.getOperation(),
-                        entity.getControlPlaneRequestId())
-                    .orElseThrow());
+    PluginRuntimeRequestHistory winner =
+        dsl.insertInto(PLUGIN_RUNTIME_REQUEST_HISTORY)
+            .set(record)
+            .onConflict(
+                PLUGIN_RUNTIME_REQUEST_HISTORY.TENANT_ID,
+                PLUGIN_RUNTIME_REQUEST_HISTORY.GAME_INSTANCE_ID,
+                PLUGIN_RUNTIME_REQUEST_HISTORY.PLUGIN_ID,
+                PLUGIN_RUNTIME_REQUEST_HISTORY.CONTROL_PLANE_REQUEST_ID)
+            .doNothing()
+            .returningResult(PLUGIN_RUNTIME_REQUEST_HISTORY.fields())
+            .fetchOptional(this::toEntity)
+            .orElseGet(
+                () ->
+                    find(
+                            entity.getTenantId(),
+                            entity.getGameInstanceId(),
+                            entity.getPluginId(),
+                            entity.getControlPlaneRequestId())
+                        .orElseThrow());
+    if (!normalize(entity.getOperation()).equals(normalize(winner.getOperation()))
+        || !normalize(entity.getRequestFingerprint())
+            .equals(normalize(winner.getRequestFingerprint()))) {
+      throw new IllegalStateException(
+          "control_plane_request_id already records a different plugin request");
+    }
+    return winner;
+  }
+
+  private static String normalize(String value) {
+    return value == null ? "" : value;
   }
 
   private void populate(

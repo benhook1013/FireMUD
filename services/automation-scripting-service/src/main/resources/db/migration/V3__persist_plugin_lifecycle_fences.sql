@@ -69,6 +69,6 @@ CREATE TABLE plugin_runtime_request_history (
         OR (request_outcome = 'FAILED' AND failure_code = 'FAILED_PRECONDITION')
     ),
     CONSTRAINT uq_plugin_runtime_request_history_identity UNIQUE (
-        tenant_id, game_instance_id, plugin_id, operation, control_plane_request_id
+        tenant_id, game_instance_id, plugin_id, control_plane_request_id
     )
 );
