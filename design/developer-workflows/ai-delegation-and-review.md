@@ -24,7 +24,7 @@ Standing delegated stewardship may remove entries proven addressed, obsolete, or
 
 ### General delegation rules
 
-In this section, the `delegating orchestrator` is the task that issues a bounded assignment and owns its integration. Under an explicit Overseer arrangement, a lane orchestrator normally fills that role for operational work; the Overseer fills it only for evidence commissioned directly for an Overseer decision. This term does not transfer consequential product, architecture, priority, topology, or merge-readiness decisions away from the Overseer.
+In this section, the `delegating orchestrator` is the task that issues a bounded assignment and owns its integration. Under an explicit Overseer arrangement, a lane orchestrator normally fills that role for operational work; the Overseer also fills it when directly delegating authorized operational work or evidence for an Overseer decision. This term does not transfer consequential product, architecture, priority, topology, or merge-readiness decisions away from the Overseer.
 
 A bounded discovery reviewer may return a worthwhile, coherent batch early, or stop on a consequential finding that requires direction. The normal handoff retains findings, what was inspected, and remaining coverage or unresolved threads; it does not require a fixed finding quota, a new file, or a per-file ledger.
 
