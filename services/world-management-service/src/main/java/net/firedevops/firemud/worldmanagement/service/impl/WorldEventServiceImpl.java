@@ -51,7 +51,7 @@ public class WorldEventServiceImpl implements WorldEventService {
   @Override
   @Timed(value = "worldEvent.schedule")
   public WorldEventDto scheduleEvent(WorldEventDto dto) {
-    if ("WEATHER_CHANGE".equals(dto.eventType())) {
+    if (WorldEvent.WEATHER_CHANGE_EVENT_TYPE.equals(dto.eventType())) {
       throw new IllegalStateException(
           "WEATHER_CHANGE_UNAVAILABLE: weather aggregate and effect fence are not established");
     }
@@ -88,7 +88,7 @@ public class WorldEventServiceImpl implements WorldEventService {
         eventRepository.findDueEventsForShard(now, worldProperties.getLocalShardId());
     int processedCount = 0;
     for (WorldEvent event : events) {
-      if ("WEATHER_CHANGE".equals(event.getEventType())) {
+      if (WorldEvent.WEATHER_CHANGE_EVENT_TYPE.equals(event.getEventType())) {
         // Retained weather events cannot become an admitted mutation while the selector is open.
         weatherDeferredCounter.increment();
         continue;

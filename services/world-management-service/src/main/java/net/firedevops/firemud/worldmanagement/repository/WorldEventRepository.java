@@ -53,7 +53,7 @@ public class WorldEventRepository {
             WORLD_EVENT
                 .PROCESSED
                 .isFalse()
-                .and(WORLD_EVENT.EVENT_TYPE.ne("WEATHER_CHANGE"))
+                .and(WORLD_EVENT.EVENT_TYPE.ne(WorldEvent.WEATHER_CHANGE_EVENT_TYPE))
                 .and(WORLD_EVENT.EXECUTE_AT.le(time))
                 .and(
                     WORLD_EVENT
