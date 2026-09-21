@@ -10,8 +10,7 @@ final class GameplayRouteClassifier {
   private static final PathPattern EXACT_GAMEPLAY_ROUTE = PATH_PATTERN_PARSER.parse("/ws/game");
   private static final PathPattern WILDCARD_GAMEPLAY_ROUTE =
       PATH_PATTERN_PARSER.parse("/ws/game/**");
-  private static final PathPattern SESSION_API_ROUTE =
-      PATH_PATTERN_PARSER.parse("/api/session/**");
+  private static final PathPattern SESSION_API_ROUTE = PATH_PATTERN_PARSER.parse("/api/session/**");
 
   private GameplayRouteClassifier() {}
 
