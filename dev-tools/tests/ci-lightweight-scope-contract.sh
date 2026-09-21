@@ -140,17 +140,16 @@ process.stdout.write(JSON.stringify({
     return inventories
 
 
-def parse_fallback_array(script, key, label):
+def parse_shared_array(script, name, label):
     matches = list(
         re.finditer(
-            rf"(?m)^[ \t]*{re.escape(key)}:[ \t]*\[(.*?)\]",
+            rf"(?ms)^[ \t]*const {re.escape(name)} = \[(.*?)\];",
             script,
-            re.DOTALL,
         )
     )
     if len(matches) != 1:
         raise SystemExit(
-            f"{label}: expected one fallback {key} array, found {len(matches)}"
+            f"{label}: expected one shared {name} array, found {len(matches)}"
         )
     body = matches[0].group(1)
     string_pattern = re.compile(r'"(?:\\.|[^"\\])*"')
@@ -158,11 +157,11 @@ def parse_fallback_array(script, key, label):
     cursor = 0
     for match in string_pattern.finditer(body):
         if not re.fullmatch(r"[\s,]*", body[cursor : match.start()]):
-            raise SystemExit(f"{label}: fallback {key} array contains invalid syntax")
+            raise SystemExit(f"{label}: shared {name} array contains invalid syntax")
         values.append(json.loads(match.group(0)))
         cursor = match.end()
     if not re.fullmatch(r"[\s,]*", body[cursor:]):
-        raise SystemExit(f"{label}: fallback {key} array contains invalid syntax")
+        raise SystemExit(f"{label}: shared {name} array contains invalid syntax")
     return values
 
 
@@ -278,25 +277,31 @@ require_contains(
     "ci workflow",
 )
 classifier_inventories = load_classifier_module_inventories(sys.argv[5])
-for key, inventory_key in (
-    ("affected_modules", "allModules"),
-    ("bootable_modules", "bootableModules"),
+for output_key, constant_name, inventory_key in (
+    ("affected_modules", "completeModules", "allModules"),
+    ("bootable_modules", "completeBootableModules", "bootableModules"),
 ):
     expected = classifier_inventories.get(inventory_key)
     if not isinstance(expected, list):
         raise SystemExit(
             f"classifier inventory export {inventory_key!r} must be an array"
         )
-    actual = parse_fallback_array(
+    actual = parse_shared_array(
         value_at(ci_compute_step, ("with", "script"), "ci workflow"),
-        key,
+        constant_name,
         "ci workflow",
     )
     if actual != expected:
         raise SystemExit(
-            f"ci workflow: fallback {key} must exactly match classifier export "
+            f"ci workflow: shared {constant_name} must exactly match classifier export "
             f"{inventory_key}, got {actual!r}, expected {expected!r}"
         )
+    require_contains(
+        ci_compute_step,
+        ("with", "script"),
+        f"{output_key}: {constant_name}",
+        "ci workflow",
+    )
 
 require_equal(
     ci,

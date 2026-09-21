@@ -349,7 +349,7 @@ case "${1:-}" in
     image="${5:-}"
     service="${image##*/}"
     service="${service%%:*}"
-    if [[ "$service" == account-service && -f "$PULL_STATE" ]]; then
+    if [[ "${PUBLISH_TARGET_MODE:-}" != later-existing && "$service" == account-service && -f "$PULL_STATE" ]]; then
       printf 'sha256:target-account-service\n'
     else
       printf 'sha256:source-%s\n' "$service"
@@ -366,10 +366,18 @@ case "${1:-}" in
     image="${2:-}"
     service="${image##*/}"
     service="${service%%:*}"
-    [[ "$service" == account-service ]] || exit 2
-    : > "$PULL_STATE"
+    if [[ "${PUBLISH_TARGET_MODE:-}" == later-existing && "$service" == social-groups-service ]]; then
+      : > "$PULL_STATE"
+    elif [[ "$service" == account-service ]]; then
+      : > "$PULL_STATE"
+    else
+      exit 2
+    fi
     ;;
   push)
+    if [[ "${PUBLISH_TARGET_MODE:-}" == later-existing && "$*" == *"automation-scripting-service"* ]]; then
+      exit 1
+    fi
     printf '%s\n' "$*" >> "$REGISTRY_MARKER"
     exit 0
     ;;
@@ -392,13 +400,20 @@ if [[ -n "${CURL_STATUS:-}" ]]; then
   exit 0
 fi
 image_url="${*: -1}"
-if [[ "$image_url" == *"/account-service/manifests/"* ]]; then
+if [[ "${PUBLISH_TARGET_MODE:-}" == later-existing && "$image_url" == *"/social-groups-service/manifests/"* ]]; then
+  printf '200\n'
+elif [[ "${PUBLISH_TARGET_MODE:-}" != later-existing && "$image_url" == *"/account-service/manifests/"* ]]; then
   printf '200\n'
 else
   printf '404\n'
 fi
 EOF
 chmod +x "$fake_bin/curl"
+cat > "$fake_bin/sleep" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$fake_bin/sleep"
 rm -f "$fixture_dir/registry-marker" "$fixture_dir/pull-state"
 if PR_RUNTIME_ARTIFACT_DIR="$artifact_dir" IMAGE_TAG="pr-merge-$merge_sha" \
    GHCR_USERNAME='test-user' GHCR_TOKEN='test-token' GITHUB_STEP_SUMMARY="$fixture_dir/summary" \
@@ -424,6 +439,24 @@ if [[ -e "$fixture_dir/registry-marker" ]]; then
   echo "publisher attempted a push after an unknown registry preflight failure" >&2
   exit 1
 fi
+
+rm -f "$fixture_dir/registry-marker" "$fixture_dir/pull-state" "$fixture_dir/summary"
+if PUBLISH_TARGET_MODE=later-existing PR_RUNTIME_ARTIFACT_DIR="$artifact_dir" IMAGE_TAG="pr-merge-$merge_sha" \
+   GHCR_USERNAME='test-user' GHCR_TOKEN='test-token' GITHUB_STEP_SUMMARY="$fixture_dir/summary" \
+   PULL_STATE="$fixture_dir/pull-state" REGISTRY_MARKER="$fixture_dir/registry-marker" \
+   PATH="$fake_bin:$PATH" bash "$publisher_script"; then
+  echo "publisher accepted a failed push in the later-existing-service fixture" >&2
+  exit 1
+fi
+python3 - "$fixture_dir/summary" <<'PY'
+import sys
+from pathlib import Path
+
+summary = Path(sys.argv[1]).read_text(encoding="utf-8")
+unpublished = summary.split("Unpublished fixed tags (not rechecked after the failed push):", 1)[1]
+if "`social-groups-service`" in unpublished:
+    raise SystemExit("already-available later service was incorrectly reported unpublished")
+PY
 
 cat > "$fixture_dir/gh" <<'EOF'
 #!/usr/bin/env bash

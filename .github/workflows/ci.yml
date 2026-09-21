@@ -127,42 +127,8 @@ jobs:
                   "tcp-proxy-service",
                   "world-management-service",
                 ],
-                affected_modules: [
-                  "common-data-runtime",
-                  "common-platform-core",
-                  "common-saga",
-                  "common-temporal",
-                  "common-security",
-                  "common-test-support",
-                  "common-web-support",
-                  "account-service",
-                  "automation-scripting-service",
-                  "entity-management-service",
-                  "game-design-service",
-                  "game-logic-service",
-                  "game-session-service",
-                  "logging-admin-service",
-                  "social-groups-service",
-                  "spring-cloud-gateway",
-                  "tcp-proxy-service",
-                  "world-management-service",
-                  "hosted-environment-identity-controller",
-                  "load-testing",
-                ],
-                bootable_modules: [
-                  "account-service",
-                  "automation-scripting-service",
-                  "entity-management-service",
-                  "game-design-service",
-                  "game-logic-service",
-                  "game-session-service",
-                  "logging-admin-service",
-                  "social-groups-service",
-                  "spring-cloud-gateway",
-                  "tcp-proxy-service",
-                  "world-management-service",
-                  "hosted-environment-identity-controller",
-                ],
+                affected_modules: completeModules,
+                bootable_modules: completeBootableModules,
                 docs_changed: true,
                 frontend_changed: true,
                 python_changed: true,
@@ -1158,10 +1124,14 @@ jobs:
 
             for (const comment of summaryComments) {
               if (comment.id === existing?.id) continue;
-              await github.rest.issues.deleteComment({
-                ...context.repo,
-                comment_id: comment.id,
-              });
+              try {
+                await github.rest.issues.deleteComment({
+                  ...context.repo,
+                  comment_id: comment.id,
+                });
+              } catch (error) {
+                if (error?.status !== 404) throw error;
+              }
             }
 
   validation-gate:

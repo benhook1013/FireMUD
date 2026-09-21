@@ -45,6 +45,7 @@ const fs = require("node:fs");
 const script = fs.readFileSync(process.argv[2], "utf8");
 const calls = { paginate: [], deleted: [], updated: [], created: [] };
 let currentPullRequest;
+let deleteStatus = null;
 const commentsList = async () => undefined;
 const github = {
   rest: {
@@ -53,7 +54,10 @@ const github = {
     },
     issues: {
       listComments: commentsList,
-      deleteComment: async (input) => calls.deleted.push(input.comment_id),
+      deleteComment: async (input) => {
+        calls.deleted.push(input.comment_id);
+        if (deleteStatus !== null) throw { status: deleteStatus };
+      },
       updateComment: async (input) => calls.updated.push(input),
       createComment: async (input) => calls.created.push(input),
     },
@@ -131,6 +135,28 @@ run(github, context, core).then(async () => {
   if (calls.deleted.length !== 0 || calls.updated.length !== 0 || calls.created.length !== 0) {
     throw new Error("stale security summary must not mutate comments");
   }
+  currentPullRequest.head.sha = context.payload.pull_request.head.sha;
+  calls.paginate.length = 0;
+  calls.deleted.length = 0;
+  calls.updated.length = 0;
+  calls.created.length = 0;
+  deleteStatus = 404;
+  await run(github, context, core);
+  if (calls.deleted.length !== 1 || calls.deleted[0] !== 11) {
+    throw new Error("HTTP 404 duplicate deletion must be ignored after the delete attempt");
+  }
+  calls.paginate.length = 0;
+  calls.deleted.length = 0;
+  calls.updated.length = 0;
+  calls.created.length = 0;
+  deleteStatus = 500;
+  let rejected = false;
+  try {
+    await run(github, context, core);
+  } catch (error) {
+    rejected = error?.status === 500;
+  }
+  if (!rejected) throw new Error("non-404 duplicate deletion errors must propagate");
   console.log("security summary behavioral contract passed");
 }).catch((error) => {
   console.error(error.stack || error);

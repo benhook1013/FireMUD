@@ -2,6 +2,7 @@ package net.firedevops.firemud.common.grpc;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import io.grpc.ManagedChannel;
@@ -29,12 +30,15 @@ class AbstractReloadingBlockingGrpcClientTest {
     TestClient client = new TestClient(new ServiceEndpointsProperties(), grpc, factory);
 
     client.init();
+    GameDesignServiceGrpc.GameDesignServiceBlockingStub initializedStub = client.currentStub();
+    assertThat(initializedStub).isNotNull();
     client.close();
     client.close();
     client.reloadChannel();
 
     assertThat(factory.buildAttempts.get()).isEqualTo(1);
-    verify(factory.channel).shutdown();
+    assertThat(client.currentStub()).isSameAs(initializedStub);
+    verify(factory.channel, times(1)).shutdown();
   }
 
   @Test
@@ -170,6 +174,10 @@ class AbstractReloadingBlockingGrpcClientTest {
 
     private void init() throws Exception {
       initReloadingClient();
+    }
+
+    private GameDesignServiceGrpc.GameDesignServiceBlockingStub currentStub() {
+      return stub();
     }
 
     @Override

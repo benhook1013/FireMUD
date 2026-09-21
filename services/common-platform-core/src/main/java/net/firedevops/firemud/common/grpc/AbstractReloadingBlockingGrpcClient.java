@@ -133,7 +133,6 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
       synchronized (this) {
         channelToShutdown = channel;
         channel = null;
-        stub = null;
       }
       if (channelToShutdown != null) {
         channelToShutdown.shutdown();

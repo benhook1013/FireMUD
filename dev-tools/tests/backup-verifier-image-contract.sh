@@ -21,13 +21,18 @@ require_contains() {
 
 require_aws_cli_stage() {
   local path="$1"
-  local stage_pattern='^FROM public\.ecr\.aws/aws-cli/aws-cli:[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}$'
-  local stage_count
-  stage_count="$(grep -Ec "$stage_pattern" "$path" || true)"
-  [[ "$stage_count" == 1 ]] || {
-    echo "$path must contain exactly one versioned, sha256-pinned AWS CLI stage (found $stage_count)" >&2
+  local declaration_pattern='^FROM[[:space:]]+(--platform=[^[:space:]]+[[:space:]]+)?public\.ecr\.aws/aws-cli/aws-cli'
+  local stage_pattern='^FROM[[:space:]]+(--platform=[^[:space:]]+[[:space:]]+)?public\.ecr\.aws/aws-cli/aws-cli:[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}([[:space:]]+AS[[:alnum:]_.-]+)?$'
+  local aws_cli_stages=()
+  mapfile -t aws_cli_stages < <(grep -E "$declaration_pattern" "$path" || true)
+  if [[ "${#aws_cli_stages[@]}" != 1 ]]; then
+    echo "$path must contain exactly one AWS CLI FROM declaration (found ${#aws_cli_stages[@]})" >&2
     exit 1
-  }
+  fi
+  if [[ ! "${aws_cli_stages[0]}" =~ $stage_pattern ]]; then
+    echo "$path AWS CLI FROM declaration must be the sole versioned, sha256-pinned stage" >&2
+    exit 1
+  fi
 }
 
 require_count() {
@@ -50,6 +55,26 @@ if [[ -z "$velero_version" || -z "$velero_digest" ]]; then
 fi
 require_contains "$dockerfile" "FROM velero/velero:v${velero_version}@${velero_digest} AS velero-cli"
 require_aws_cli_stage "$dockerfile"
+
+fixture_dir="$(mktemp -d)"
+trap 'rm -rf -- "$fixture_dir"' EXIT
+pinned_aws_cli_stage='FROM public.ecr.aws/aws-cli/aws-cli:2.36.49@sha256:f42bf088cb1456ba9e179ce71fdeb22cc46ff64ea1e3aeae8251ff81391f5bb1'
+cat > "$fixture_dir/extra-latest.Dockerfile" <<EOF
+$pinned_aws_cli_stage
+FROM public.ecr.aws/aws-cli/aws-cli:latest
+EOF
+if (require_aws_cli_stage "$fixture_dir/extra-latest.Dockerfile"); then
+  echo "backup verifier contract accepted an extra unpinned AWS CLI stage" >&2
+  exit 1
+fi
+cat > "$fixture_dir/extra-platform-latest.Dockerfile" <<EOF
+$pinned_aws_cli_stage
+FROM --platform=linux/amd64 public.ecr.aws/aws-cli/aws-cli:latest
+EOF
+if (require_aws_cli_stage "$fixture_dir/extra-platform-latest.Dockerfile"); then
+  echo "backup verifier contract accepted an extra platform-qualified unpinned AWS CLI stage" >&2
+  exit 1
+fi
 require_contains "$dockerfile" 'COPY --from=velero-cli /velero /usr/local/bin/velero'
 require_contains "$dockerfile" 'COPY dev-tools/backups/verify-backups.sh /opt/firemud/backups/verify-backups.sh'
 require_contains "$dockerfile" 'COPY dev-tools/backups/pg-dump-s3-selection.shlib /opt/firemud/backups/pg-dump-s3-selection.shlib'

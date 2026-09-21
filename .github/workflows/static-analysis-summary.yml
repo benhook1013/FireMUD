@@ -318,8 +318,12 @@ jobs:
 
             for (const comment of summaryComments) {
               if (comment.id === existing?.id) continue;
-              await github.rest.issues.deleteComment({
-                ...context.repo,
-                comment_id: comment.id,
-              });
+              try {
+                await github.rest.issues.deleteComment({
+                  ...context.repo,
+                  comment_id: comment.id,
+                });
+              } catch (error) {
+                if (error?.status !== 404) throw error;
+              }
             }

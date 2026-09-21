@@ -32,6 +32,7 @@ required_fragments = [
     'comment.user?.login === "github-actions[bot]"',
     "comment.created_at",
     "const existing = summaryComments.reduce",
+    "github.rest.issues.deleteComment",
 ]
 for fragment in required_fragments:
     if fragment not in script:
@@ -76,7 +77,7 @@ const context = {
   },
 };
 
-function buildHarness(currentPullRequest, comments) {
+function buildHarness(currentPullRequest, comments, deleteStatus = null) {
   const calls = { paginate: 0, updates: [], deletes: [], creates: [] };
   const github = {
     rest: {
@@ -85,7 +86,10 @@ function buildHarness(currentPullRequest, comments) {
       },
       issues: {
         updateComment: async (request) => calls.updates.push(request),
-        deleteComment: async (request) => calls.deletes.push(request),
+        deleteComment: async (request) => {
+          calls.deletes.push(request);
+          if (deleteStatus !== null) throw { status: deleteStatus };
+        },
         createComment: async (request) => calls.creates.push(request),
       },
     },
@@ -105,8 +109,8 @@ function buildHarness(currentPullRequest, comments) {
   return { github, core, calls };
 }
 
-async function run(currentPullRequest, comments) {
-  const { github, core, calls } = buildHarness(currentPullRequest, comments);
+async function run(currentPullRequest, comments, deleteStatus = null) {
+  const { github, core, calls } = buildHarness(currentPullRequest, comments, deleteStatus);
   const execute = new Function("github", "context", "core", `return (async () => {\n${script}\n})()`);
   await execute(github, context, core);
   return calls;
@@ -169,6 +173,33 @@ async function run(currentPullRequest, comments) {
   );
   assert.deepEqual(currentCalls.creates, [], "an existing bot summary must be reused");
   assert.equal(currentCalls.paginate, 1, "comment listing must be paginated once");
+
+  const duplicateComments = [
+    ...firstPageNoise,
+    {
+      id: 2,
+      user: { login: "github-actions[bot]" },
+      body: "### Validation Summary\nold bot summary",
+      created_at: "2026-01-01T00:00:00Z",
+    },
+    {
+      id: 3,
+      user: { login: "github-actions[bot]" },
+      body: "### Validation Summary\nnew bot summary",
+      created_at: "2026-01-02T00:00:00Z",
+    },
+  ];
+  const notFoundCalls = await run(currentPullRequest, duplicateComments, 404);
+  assert.deepEqual(
+    notFoundCalls.deletes.map((request) => request.comment_id),
+    [3],
+    "HTTP 404 duplicate deletion must be ignored after the delete attempt",
+  );
+  await assert.rejects(
+    run(currentPullRequest, duplicateComments, 500),
+    (error) => error?.status === 500,
+    "non-404 duplicate deletion errors must propagate",
+  );
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;

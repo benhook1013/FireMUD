@@ -56,6 +56,7 @@ let currentHeadSha = headSha;
 let currentBaseSha = baseSha;
 let pullRequestReads = 0;
 let changeBaseDuringRun = false;
+let deleteStatus = null;
 const calls = { paginate: [], deleted: [], updated: [], created: [] };
 const codeqlListWorkflowRuns = async () => undefined;
 const checksListForRef = async () => undefined;
@@ -71,7 +72,10 @@ const github = {
     checks: { listForRef: checksListForRef },
     issues: {
       listComments: commentsList,
-      deleteComment: async (input) => calls.deleted.push(input.comment_id),
+      deleteComment: async (input) => {
+        calls.deleted.push(input.comment_id);
+        if (deleteStatus !== null) throw { status: deleteStatus };
+      },
       updateComment: async (input) => calls.updated.push(input),
       createComment: async (input) => calls.created.push(input),
     },
@@ -276,7 +280,33 @@ run(github, context, core).then(() => {
           if (calls.paginate.length !== 7 || calls.updated.length !== 1 || calls.deleted.length !== 1) {
             throw new Error("base changes during summarization must not query or alter comments");
           }
-          console.log("static analysis summary behavioral contract passed");
+          currentHeadSha = headSha;
+          currentBaseSha = baseSha;
+          pullRequestReads = 0;
+          changeBaseDuringRun = false;
+          context.payload.workflow_run.display_title = `CodeQL Analysis pr-42 base-${baseSha} head-${headSha}`;
+          calls.paginate.length = 0;
+          calls.deleted.length = 0;
+          calls.updated.length = 0;
+          calls.created.length = 0;
+          deleteStatus = 404;
+          return run(github, context, core).then(() => {
+            if (calls.deleted.length !== 1 || calls.deleted[0] !== 3) {
+              throw new Error("HTTP 404 duplicate deletion must be ignored after the delete attempt");
+            }
+            calls.paginate.length = 0;
+            calls.deleted.length = 0;
+            calls.updated.length = 0;
+            calls.created.length = 0;
+            deleteStatus = 500;
+            return run(github, context, core).then(
+              () => { throw new Error("non-404 duplicate deletion errors must propagate"); },
+              (error) => {
+                if (error?.status !== 500) throw error;
+                console.log("static analysis summary behavioral contract passed");
+              },
+            );
+          });
         });
       });
     });

@@ -485,31 +485,6 @@ if refresh_output is None or refresh_output["event"] != "repository_dispatch":
 if refresh_output["base_sha"] != current_base or refresh_output["head_sha"] != head or refresh_output["merge_sha"] != merge:
     raise SystemExit("typed refresh metadata did not preserve the exact current tuple")
 
-event_tuple = {"base_sha": stale_event_base, "head_sha": head, "merge_sha": merge}
-current_tuple = {"base_sha": current_base, "head_sha": head, "merge_sha": merge}
-
-
-def smoke_gate_accepts(run_event, run_title):
-    expected_event = "pull_request" if event_tuple == current_tuple else "repository_dispatch"
-    expected_title = (
-        f"Build Runtime Images secure-pr-artifact pr-2825 base-{current_tuple['base_sha']} "
-        f"head-{current_tuple['head_sha']} merge-{current_tuple['merge_sha']} mode-required"
-    )
-    return run_event == expected_event and run_title == expected_title
-
-
-stale_title = (
-    f"Build Runtime Images secure-pr-artifact pr-2825 base-{stale_event_base} "
-    f"head-{head} merge-{merge} mode-required"
-)
-refresh_title = (
-    f"Build Runtime Images secure-pr-artifact pr-2825 base-{current_base} "
-    f"head-{head} merge-{merge} mode-required"
-)
-if smoke_gate_accepts("pull_request", stale_title):
-    raise SystemExit("Smoke Gate must reject a stale ordinary pull_request run")
-if not smoke_gate_accepts("repository_dispatch", refresh_title):
-    raise SystemExit("Smoke Gate must select the exact typed refresh run for a stale tuple")
 PY
 }
 
@@ -1405,6 +1380,9 @@ const script = fs.readFileSync(process.argv[2], "utf8");
 const headSha = "a".repeat(40);
 const baseSha = "b".repeat(40);
 const mergeSha = "c".repeat(40);
+let currentBaseSha = baseSha;
+let currentMergeSha = mergeSha;
+let currentMergeParents = [{ sha: baseSha }, { sha: headSha }];
 const context = {
   repo: { owner: "owner", repo: "repo" },
   sha: mergeSha,
@@ -1419,6 +1397,8 @@ const context = {
 const listWorkflowRuns = async () => undefined;
 const listJobsForWorkflowRun = async () => undefined;
 let smokeStepConclusion = "skipped";
+const workflowRunQueries = [];
+const jobQueries = [];
 const github = {
   rest: {
     pulls: {
@@ -1426,38 +1406,65 @@ const github = {
         data: {
           state: "open",
           head: { sha: headSha },
-          base: { sha: baseSha, ref: "develop" },
-          merge_commit_sha: mergeSha,
+          base: { sha: currentBaseSha, ref: "develop" },
+          merge_commit_sha: currentMergeSha,
         },
       }),
     },
     git: {
-      getRef: async () => ({ data: { object: { sha: baseSha } } }),
+      getRef: async () => ({ data: { object: { sha: currentBaseSha } } }),
     },
     repos: {
       getCommit: async () => ({
         data: {
-          sha: mergeSha,
-          parents: [{ sha: baseSha }, { sha: headSha }],
+          sha: currentMergeSha,
+          parents: currentMergeParents,
         },
       }),
     },
     actions: { listWorkflowRuns, listJobsForWorkflowRun },
   },
-  paginate: async (method) => {
+  paginate: async (method, input) => {
     if (method === listWorkflowRuns) {
-      return [{
-        id: 101,
-        event: "pull_request",
-        head_sha: headSha,
-        display_title: `Build Runtime Images secure-pr-artifact pr-42 base-${baseSha} head-${headSha} merge-${mergeSha} mode-required`,
-        status: "completed",
-        conclusion: "success",
-        created_at: "2026-09-20T00:00:00Z",
-        pull_requests: [],
-      }];
+      workflowRunQueries.push(input);
+      const expectedTitle = `Build Runtime Images secure-pr-artifact pr-42 base-${currentBaseSha} head-${headSha} merge-${currentMergeSha} mode-required`;
+      if (currentBaseSha === baseSha) {
+        return [{
+          id: 101,
+          event: "pull_request",
+          head_sha: headSha,
+          display_title: expectedTitle,
+          status: "completed",
+          conclusion: "success",
+          created_at: "2026-09-20T00:00:00Z",
+          pull_requests: [],
+        }];
+      }
+      return [
+        {
+          id: 102,
+          event: "pull_request",
+          head_sha: headSha,
+          display_title: `Build Runtime Images secure-pr-artifact pr-42 base-${baseSha} head-${headSha} merge-${mergeSha} mode-required`,
+          status: "completed",
+          conclusion: "success",
+          created_at: "2026-09-20T00:00:00Z",
+          pull_requests: [],
+        },
+        {
+          id: 202,
+          event: "repository_dispatch",
+          head_sha: headSha,
+          display_title: expectedTitle,
+          status: "completed",
+          conclusion: "success",
+          created_at: "2026-09-21T00:00:00Z",
+          pull_requests: [],
+        },
+      ];
     }
     if (method === listJobsForWorkflowRun) {
+      jobQueries.push(input);
       return [{
         name: "PR Full-Stack Smoke",
         status: "completed",
@@ -1491,7 +1498,20 @@ async function check(conclusion, expectedFailure) {
   }
 }
 check("skipped", true).then(() => check("success", false)).then(() => {
-  console.log("Smoke Gate step-conclusion contract passed");
+  currentBaseSha = "d".repeat(40);
+  currentMergeSha = "e".repeat(40);
+  currentMergeParents = [{ sha: currentBaseSha }, { sha: headSha }];
+  workflowRunQueries.length = 0;
+  jobQueries.length = 0;
+  return check("success", false).then(() => {
+    if (workflowRunQueries.length !== 1 || workflowRunQueries[0].event !== "repository_dispatch") {
+      throw new Error("stale PR identity must select a repository_dispatch runtime run");
+    }
+    if (jobQueries.length !== 1 || jobQueries[0].run_id !== 202) {
+      throw new Error("Smoke Gate must select the exact repository_dispatch event/title tuple");
+    }
+    console.log("Smoke Gate identity/event/title and step-conclusion contract passed");
+  });
 }).catch((error) => {
   console.error(error.stack || error);
   process.exit(1);

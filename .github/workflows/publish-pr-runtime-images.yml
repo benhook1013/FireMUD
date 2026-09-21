@@ -472,7 +472,7 @@ jobs:
                 echo "Failed to publish $image after ${push_attempt} attempts." >&2
                 unpublished_services=()
                 reached_failure=false
-                for candidate_service in "${services[@]}"; do
+                for candidate_service in "${missing_services[@]}"; do
                   if [[ "$candidate_service" == "$service" ]]; then
                     reached_failure=true
                   fi
