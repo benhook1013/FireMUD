@@ -22,6 +22,7 @@ require 'usage: prove-issuance-boundary.sh --context CONTEXT --namespace pr-N'
 require 'readonly KUBECTL=(kubectl --context "$context")'
 require 'system:masters'
 require "legacy_identity='system:serviceaccount:kube-system:preview-deployer'"
+require "readonly probe_namespace='firemud-system'"
 require 'auth can-i'
 require '--dry-run=server'
 require 'local description=$1 identity=$2 manifest=$3 target_namespace=$4 expected_message=$5'
@@ -45,6 +46,10 @@ require 'trap cleanup EXIT'
 require 'delete clusterrolebinding "$probe_binding"'
 require 'delete clusterrole "$probe_clusterrole"'
 require 'delete serviceaccount "$probe_serviceaccount"'
+require 'get namespace "$probe_namespace"'
+require 'protected namespace $probe_namespace is not present'
+require 'namespace: $probe_namespace'
+require 'system:serviceaccount:$probe_namespace:$probe_serviceaccount'
 require 'resources_created=1'
 require 'firemud-grpc-ca'
 require 'standalone certificate writer cannot create Certificates'
@@ -110,6 +115,14 @@ def assert_forbidden_fixture(fixture: str, *, operation: str) -> None:
         assert secret_get.search(fixture), fixture
     else:
         assert apply_contains_ca(fixture), fixture
+
+
+assert 'readonly probe_namespace=\'firemud-system\'' in source
+assert 'get namespace "$probe_namespace"' in source
+assert 'delete serviceaccount "$probe_serviceaccount"' in source
+assert 'namespace: $probe_namespace' in source
+assert 'probe_identity="system:serviceaccount:$probe_namespace:$probe_serviceaccount"' in source
+assert 'probe_identity="system:serviceaccount:$namespace:$probe_serviceaccount"' not in source
 
 
 # Deterministic fixtures ensure the guard continues to cover direct kubectl,

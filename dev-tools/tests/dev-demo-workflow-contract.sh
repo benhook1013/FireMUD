@@ -535,6 +535,17 @@ if hosted_deploy_cleanup.get("run") != expected_hosted_deploy_cleanup:
     raise SystemExit(
         "hosted preview runtime kubeconfig cleanup must preserve literal shell newlines"
     )
+hosted_deploy_requester_cleanup = next(
+    step
+    for step in hosted_deploy_steps
+    if step.get("name") == "Remove requester kubeconfig"
+)
+if hosted_deploy_requester_cleanup.get("if") != "${{ always() }}":
+    raise SystemExit("hosted preview requester kubeconfig cleanup must always run")
+if hosted_deploy_requester_cleanup.get("run") != (
+    'rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"'
+):
+    raise SystemExit("hosted preview requester cleanup targets the wrong file")
 standalone_condition = deploy_by_name["Ensure dev-demo gRPC TLS secret exists"].get("if", "")
 if "steps.certificate-identity.outputs.mode == 'standalone'" not in standalone_condition:
     raise SystemExit("standalone gRPC setup is not isolated from controller identity")
@@ -652,6 +663,11 @@ expected_hosted_controller_condition = (
 runtime_not_found = destroy_by_name["Confirm exact dev-demo runtime NotFound"]
 if runtime_not_found.get("if") != expected_hosted_controller_condition:
     raise SystemExit("dev-demo runtime absence proof must remain independent of requester/API availability")
+if runtime_not_found.get("env") != {
+    "RUNTIME_NAMESPACE": "${{ needs.dev-demo-plan.outputs.namespace }}",
+    "KUBECONFIG": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+}:
+    raise SystemExit("dev-demo runtime absence proof must use the namespace-manager kubeconfig")
 identity_existence = destroy_by_name[
     "Check HostedEnvironmentIdentity existence before retirement"
 ]
@@ -772,6 +788,7 @@ if destroy_runtime_kubeconfig.get("uses") != "./.github/actions/write-kubeconfig
 if destroy_runtime_kubeconfig.get("with") != {
     "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}",
     "path": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+    "export-to-github-env": "false",
 }:
     raise SystemExit("dev-demo destroy must use the scoped namespace-manager secret")
 destroy_requester_writer = destroy_by_name["Write hosted identity requester kubeconfig"]

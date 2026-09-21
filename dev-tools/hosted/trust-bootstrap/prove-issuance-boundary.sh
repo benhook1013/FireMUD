@@ -47,6 +47,7 @@ readonly context namespace
 readonly legacy_identity='system:serviceaccount:kube-system:preview-deployer'
 readonly cert_manager_identity='system:serviceaccount:cert-manager:cert-manager'
 readonly standalone_writer_identity='system:serviceaccount:firemud-system:firemud-standalone-certificate-writer'
+readonly probe_namespace='firemud-system'
 probe_run_id="$(date -u +%s%N | tail -c 11)"
 readonly probe_run_id
 readonly probe_name="firemud-trust-proof-${probe_run_id}"
@@ -66,7 +67,7 @@ cleanup() {
     # Names were checked absent before creation. Cleanup is exact-name only.
     "${KUBECTL[@]}" delete clusterrolebinding "$probe_binding" --ignore-not-found --wait=false >/dev/null 2>&1 || cleanup_failed=1
     "${KUBECTL[@]}" delete clusterrole "$probe_clusterrole" --ignore-not-found --wait=false >/dev/null 2>&1 || cleanup_failed=1
-    "${KUBECTL[@]}" -n "$namespace" delete serviceaccount "$probe_serviceaccount" --ignore-not-found --wait=false >/dev/null 2>&1 || cleanup_failed=1
+    "${KUBECTL[@]}" -n "$probe_namespace" delete serviceaccount "$probe_serviceaccount" --ignore-not-found --wait=false >/dev/null 2>&1 || cleanup_failed=1
   fi
   rm -rf -- "$temporary_directory"
   if ((cleanup_failed)); then
@@ -133,6 +134,8 @@ expect_dry_run_allowed() {
 
 echo "issuance-boundary proof context=$context namespace=$namespace"
 run_quiet "${KUBECTL[@]}" get namespace "$namespace" || fail "namespace $namespace is not present"
+run_quiet "${KUBECTL[@]}" get namespace "$probe_namespace" ||
+  fail "protected namespace $probe_namespace is not present"
 whoami_json=$("${KUBECTL[@]}" auth whoami -o json 2>/dev/null) || fail 'could not read selected context identity'
 if ! python3 -c '
 import json, sys
@@ -156,7 +159,7 @@ expect_auth_denied 'legacy preview deployer ClusterIssuer mutation' create clust
 
 # This intentionally overprivileged principal is disposable. It proves that
 # VAP, rather than RBAC, supplies the deny boundary. No token is minted.
-if "${KUBECTL[@]}" -n "$namespace" get serviceaccount "$probe_serviceaccount" --ignore-not-found -o name 2>/dev/null | grep -q .; then
+if "${KUBECTL[@]}" -n "$probe_namespace" get serviceaccount "$probe_serviceaccount" --ignore-not-found -o name 2>/dev/null | grep -q .; then
   fail "temporary proof name already exists: $probe_serviceaccount"
 fi
 if "${KUBECTL[@]}" get clusterrole "$probe_clusterrole" --ignore-not-found -o name 2>/dev/null | grep -q . ||
@@ -170,7 +173,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: $probe_serviceaccount
-  namespace: $namespace
+  namespace: $probe_namespace
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -198,9 +201,9 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: $probe_serviceaccount
-    namespace: $namespace
+    namespace: $probe_namespace
 EOF
-probe_identity="system:serviceaccount:$namespace:$probe_serviceaccount"
+probe_identity="system:serviceaccount:$probe_namespace:$probe_serviceaccount"
 for permission in \
   'create certificaterequests.cert-manager.io' \
   'create certificates.cert-manager.io' \

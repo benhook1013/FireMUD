@@ -960,6 +960,7 @@ jobs:
         with:
           content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}
           path: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
+          export-to-github-env: 'false'
 
       - name: Validate kubectl client/server skew
         env:
@@ -978,6 +979,7 @@ jobs:
         if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' }}
         env:
           RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
         run: |
           set -euo pipefail
           namespace_json="$(kubectl get namespace "$RUNTIME_NAMESPACE" -o json --ignore-not-found)"
