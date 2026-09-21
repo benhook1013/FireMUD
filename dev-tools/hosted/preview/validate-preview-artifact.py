@@ -127,9 +127,25 @@ EXPECTED_SECRET_REFS = {
     "firemud-grpc-tls",
 }
 CANONICAL_INGRESS_ISSUER = "letsencrypt-prod"
+ALLOCATED_TELNET_PORT_ANNOTATION = "firemud.dev/allocated-telnet-port"
 CERTIFICATE_IDENTITY_MODES = {"standalone", "hosted-controller"}
 EXPOSURE_MODES = {"private", "public"}
 CERTIFICATE_IDENTITY_LABEL = "firemud.dev/certificate-identity-mode"
+TCP_PROXY_IDENTITY_MODE_LABEL = CERTIFICATE_IDENTITY_LABEL
+TRUSTED_HOSTED_VALUES = (
+    Path(__file__).resolve().parents[3]
+    / "k8s/helm/firemud/values-hosted-shared.example.yaml"
+)
+HOSTED_REDACTED_CONFIG_KEYS = frozenset(
+    {"ASSET_STORE_ACCESS_KEY", "ASSET_STORE_SECRET_KEY"}
+)
+GATEWAY_HTTP_ROUTE_APPS = (
+    "game-session-service",
+    "logging-admin-service",
+    "game-design-service",
+    "account-service",
+    "social-groups-service",
+)
 EXPECTED_TOP_LEVEL_LABELS = {
     "app.kubernetes.io/name": "firemud",
     "app.kubernetes.io/managed-by": "Helm",
@@ -140,6 +156,13 @@ def _expected_top_level_labels() -> dict[str, str]:
     return {
         **EXPECTED_TOP_LEVEL_LABELS,
         "helm.sh/chart": _expected_chart_label(TRUSTED_CHART_METADATA),
+    }
+
+
+def _expected_object_labels(expected_namespace: str) -> dict[str, str]:
+    return {
+        **_expected_top_level_labels(),
+        "app.kubernetes.io/instance": expected_namespace,
     }
 
 
@@ -529,6 +552,51 @@ EXPECTED_INTERNAL_NETWORK_POLICY_SPECS = {
         "egress": INTERNAL_SERVICES_EGRESS,
     },
 }
+GATEWAY_EGRESS = [
+    {
+        "to": [
+            {
+                "namespaceSelector": {
+                    "matchLabels": {"kubernetes.io/metadata.name": "kube-system"}
+                },
+                "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+            }
+        ],
+        "ports": [
+            {"protocol": "UDP", "port": 53},
+            {"protocol": "TCP", "port": 53},
+        ],
+    },
+    {
+        "to": [
+            {
+                "podSelector": {
+                    "matchExpressions": [
+                        {
+                            "key": "app",
+                            "operator": "In",
+                            "values": list(GATEWAY_HTTP_ROUTE_APPS),
+                        }
+                    ]
+                }
+            }
+        ],
+        "ports": [{"protocol": "TCP", "port": 8080}],
+    },
+    {
+        "to": [{"podSelector": {"matchLabels": {"app": "redis-cache"}}}],
+        "ports": [{"protocol": "TCP", "port": 6379}],
+    },
+    {
+        "to": [{"podSelector": {"matchLabels": {"app": "otel-collector"}}}],
+        "ports": [{"protocol": "TCP", "port": 4317}],
+    },
+]
+EXPECTED_GATEWAY_NETWORK_POLICY_SPEC = {
+    "podSelector": {"matchLabels": {"app": "spring-cloud-gateway"}},
+    "policyTypes": ["Egress"],
+    "egress": GATEWAY_EGRESS,
+}
 NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$")
 PROJECTED_SECRET_SOURCE_PATH = re.compile(r"\.projected\.sources\[\d+\]$")
 CSI_VOLUME_PATH = re.compile(r"\.csi$")
@@ -601,6 +669,7 @@ def _validate_object_metadata(
     document: dict,
     expected_namespace: str,
     allow_trusted_ingress_annotation: bool = False,
+    allow_trusted_allocated_telnet_port: bool = False,
     certificate_identity_mode: str | None = None,
 ) -> dict:
     """Require the exact Helm-authored metadata admitted into the trusted apply."""
@@ -609,7 +678,7 @@ def _validate_object_metadata(
     metadata = _require_mapping(document.get("metadata"), f"{kind}.metadata")
     name = metadata.get("name")
     allowed_fields = {"name", "namespace", "labels"}
-    if allow_trusted_ingress_annotation:
+    if allow_trusted_ingress_annotation or allow_trusted_allocated_telnet_port:
         allowed_fields.add("annotations")
     unexpected_fields = set(metadata) - allowed_fields
     if unexpected_fields:
@@ -617,10 +686,7 @@ def _validate_object_metadata(
             f"{kind}/{name} metadata contains unsupported fields: "
             f"{sorted(unexpected_fields)}"
         )
-    expected_labels = {
-        **_expected_top_level_labels(),
-        "app.kubernetes.io/instance": expected_namespace,
-    }
+    expected_labels = _expected_object_labels(expected_namespace)
     if certificate_identity_mode is not None:
         _validate_certificate_identity_mode(certificate_identity_mode)
         if _is_tcp_proxy_identity_object(document):
@@ -716,24 +782,136 @@ def _validate_image_reference(
         fail(f"{location} uses an unapproved image")
 
 
+def _expected_gateway_container_env(expected_namespace: str) -> list[dict[str, str]]:
+    if re.fullmatch(r"pr-[1-9][0-9]{0,50}", expected_namespace) is None:
+        fail(f"runtime namespace is not canonical: {expected_namespace!r}")
+    return [
+        {"name": "SPRING_PROFILES_ACTIVE", "value": "prod"},
+        {"name": "SPRING_FLYWAY_TABLE", "value": "flyway_schema_history_gateway"},
+        {"name": "SERVICE_SCHEMA", "value": "gateway"},
+        {"name": "FIREMUD_GRPC_CERT_CHAIN_PATH", "value": "/tls/client.crt"},
+        {"name": "FIREMUD_GRPC_PRIVATE_KEY_PATH", "value": "/tls/client.key"},
+        {"name": "FIREMUD_GRPC_CA_CERT_PATH", "value": "/tls/ca.crt"},
+        {"name": "FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED", "value": "true"},
+        {"name": "FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS", "value": "0.0.0.0"},
+        {"name": "FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT", "value": "8443"},
+        {
+            "name": "FIREMUD_GATEWAY_TCP_PROXY_TLS_CERT_CHAIN_PATH",
+            "value": "/gateway-ws-server-tls/tls.crt",
+        },
+        {
+            "name": "FIREMUD_GATEWAY_TCP_PROXY_TLS_PRIVATE_KEY_PATH",
+            "value": "/gateway-ws-server-tls/tls.key",
+        },
+        {
+            "name": "FIREMUD_GATEWAY_TCP_PROXY_TLS_CLIENT_CA_PATH",
+            "value": "/gateway-ws-server-tls/ca.crt",
+        },
+        {"name": "FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT", "value": "pr-preview"},
+        {"name": "FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE", "value": "production_uri"},
+        {
+            "name": "FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN",
+            "value": f"spiffe://firemud/ns/{expected_namespace}/sa/tcp-proxy-service",
+        },
+    ]
+
+
+EXPECTED_GATEWAY_ENV_FROM = [
+    {"configMapRef": {"name": "firemud-config"}},
+    {"secretRef": {"name": "firemud-secret"}},
+]
+
+
+def _validate_gateway_container_environment(
+    container: dict, expected_namespace: str
+) -> None:
+    if container.get("env") != _expected_gateway_container_env(expected_namespace):
+        fail("Deployment/spring-cloud-gateway has an unsafe container env")
+    if container.get("envFrom") != EXPECTED_GATEWAY_ENV_FROM:
+        fail("Deployment/spring-cloud-gateway has an unsafe envFrom contract")
+
+
+@functools.lru_cache(maxsize=1)
+def _trusted_hosted_shared_config() -> dict[str, str]:
+    try:
+        values = yaml.safe_load(TRUSTED_HOSTED_VALUES.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise ValueError(
+            f"could not load trusted hosted values: {TRUSTED_HOSTED_VALUES}"
+        ) from exc
+    if not isinstance(values, dict):
+        raise TypeError("trusted hosted values must be a mapping")
+    preview_stack = values.get("previewStack")
+    if not isinstance(preview_stack, dict):
+        raise TypeError("trusted hosted values previewStack must be a mapping")
+    shared_config = preview_stack.get("sharedConfig")
+    if not isinstance(shared_config, dict) or not shared_config:
+        raise ValueError("trusted hosted values sharedConfig must be a non-empty mapping")
+    if any(not isinstance(key, str) for key in shared_config):
+        raise ValueError("trusted hosted values sharedConfig keys must be strings")
+    if any(not isinstance(value, str) for value in shared_config.values()):
+        raise ValueError("trusted hosted values sharedConfig values must be strings")
+    if not HOSTED_REDACTED_CONFIG_KEYS <= set(shared_config):
+        raise ValueError(
+            "trusted hosted values sharedConfig is missing its canonical redacted keys"
+        )
+    return dict(shared_config)
+
+
+def _validate_firemud_config_data(
+    data: dict, *, allow_redacted: bool = False
+) -> None:
+    trusted = _trusted_hosted_shared_config()
+    trusted_keys = set(trusted)
+    actual_keys = set(data)
+    unexpected_keys = actual_keys - trusted_keys
+    required_keys = (
+        trusted_keys if allow_redacted else trusted_keys - HOSTED_REDACTED_CONFIG_KEYS
+    )
+    missing_keys = required_keys - actual_keys
+    if unexpected_keys or missing_keys:
+        fail(
+            "ConfigMap/firemud-config.data has unsafe keys "
+            f"(missing={sorted(missing_keys)}, "
+            f"extra={sorted(unexpected_keys, key=str)})"
+        )
+    if not allow_redacted:
+        unexpected_redacted_keys = actual_keys & HOSTED_REDACTED_CONFIG_KEYS
+        if unexpected_redacted_keys:
+            fail(
+                "ConfigMap/firemud-config.data contains source-only credential keys: "
+                f"{sorted(unexpected_redacted_keys)}"
+            )
+    for key in actual_keys:
+        value = data[key]
+        if not isinstance(key, str) or not isinstance(value, str):
+            fail(
+                "ConfigMap/firemud-config.data must contain only string key/value pairs"
+            )
+        if value != trusted[key]:
+            fail(
+                f"ConfigMap/firemud-config.data.{key} differs from the trusted hosted value"
+            )
+
+
 def _clean_config_map(document: dict) -> dict:
     metadata = document.get("metadata") or {}
     if metadata.get("name") != "firemud-config":
         return document
-    _validate_firemud_config_shape(document)
-    data = _require_mapping(
-        document.get("data"),
-        "ConfigMap/firemud-config.data",
-    )
+    _validate_firemud_config_shape(document, allow_redacted=True)
+    _require_mapping(document.get("data"), "ConfigMap/firemud-config.data")
+    trusted = _trusted_hosted_shared_config()
     document["data"] = {
-        key: value
-        for key, value in data.items()
-        if not SANITIZER_SENSITIVE_KEY.search(key)
+        key: trusted[key]
+        for key in trusted
+        if key not in HOSTED_REDACTED_CONFIG_KEYS
     }
     return document
 
 
-def _validate_firemud_config_shape(document: dict) -> None:
+def _validate_firemud_config_shape(
+    document: dict, *, allow_redacted: bool = False
+) -> None:
     if document.get("kind") != "ConfigMap":
         return
     metadata = document.get("metadata")
@@ -746,7 +924,8 @@ def _validate_firemud_config_shape(document: dict) -> None:
             f"(missing={sorted(FIREMUD_CONFIG_FIELDS - actual_fields)}, "
             f"extra={sorted(actual_fields - FIREMUD_CONFIG_FIELDS)})"
         )
-    _require_mapping(document.get("data"), "ConfigMap/firemud-config.data")
+    data = _require_mapping(document.get("data"), "ConfigMap/firemud-config.data")
+    _validate_firemud_config_data(data, allow_redacted=allow_redacted)
 
 
 def _validate_sanitized_secret_refs(value: object, path: str = "object") -> None:
@@ -1091,6 +1270,9 @@ def inject_telnet_port(
         if "nodePort" in matches[0]:
             fail("validated preview render already contains a NodePort")
         matches[0]["nodePort"] = port
+        service["metadata"]["annotations"] = {
+            ALLOCATED_TELNET_PORT_ANNOTATION: str(port)
+        }
     destination.write_text(
         "---\n".join(yaml.safe_dump(document, sort_keys=False) for document in documents),
         encoding="utf-8",
@@ -1129,6 +1311,11 @@ def validate_runtime_target(
                 and isinstance(document.get("metadata"), dict)
                 and document["metadata"].get("name") == "firemud-preview"
             ),
+            allow_trusted_allocated_telnet_port=(
+                document.get("kind") == "Service"
+                and isinstance(document.get("metadata"), dict)
+                and document["metadata"].get("name") == "tcp-proxy-service"
+            ),
             certificate_identity_mode=certificate_identity_mode,
         )
         name = metadata.get("name")
@@ -1147,6 +1334,13 @@ def validate_runtime_target(
             )
             if annotations != expected_annotations:
                 fail("prepared preview Ingress has an unsafe certificate issuer")
+        elif (
+            document.get("kind") == "Service"
+            and name == "tcp-proxy-service"
+        ):
+            # The allocator annotation is trusted only after the runtime
+            # injector adds it, and only for the public TCP Proxy Service.
+            pass
         elif annotations is not None:
             fail(f"prepared {document.get('kind')}/{name} has untrusted annotations")
         if document.get("kind") in {"Deployment", "Job"}:
@@ -1202,12 +1396,25 @@ def validate_runtime_target(
     if exposure_mode == "private":
         if service_type != "ClusterIP":
             fail("private preview TCP Proxy Service must remain ClusterIP")
+        if tcp_proxy_services[0].get("metadata", {}).get("annotations") is not None:
+            fail("private preview TCP Proxy Service must not contain annotations")
         if node_ports:
             fail(
                 "private preview render must not contain a NodePort; "
                 f"observed {node_ports!r}"
             )
     else:
+        expected_annotations = {
+            ALLOCATED_TELNET_PORT_ANNOTATION: str(expected_port)
+        }
+        actual_annotations = tcp_proxy_services[0].get("metadata", {}).get(
+            "annotations"
+        )
+        if actual_annotations != expected_annotations:
+            fail(
+                "public preview TCP Proxy Service must contain only the allocator "
+                f"annotation bound to port {expected_port}; observed {actual_annotations!r}"
+            )
         expected = (
             "Service/tcp-proxy-service",
             f"object.spec.ports[{port_index}].nodePort",
@@ -1247,8 +1454,8 @@ def determine_exposure_mode(
 def validate_service_consumers(
     documents: list[dict],
     expected_namespace: str,
-    certificate_identity_mode: str,
-    exposure_mode: str,
+    certificate_identity_mode: str = "hosted-controller",
+    exposure_mode: str = "public",
 ) -> None:
     """Keep identity-managed TLS references limited to the chart consumers."""
 
@@ -1297,6 +1504,8 @@ def validate_service_consumers(
                 f"{expected_namespace}-gateway-internal-ws",
             )
         container = containers[0]
+        if service == "spring-cloud-gateway":
+            _validate_gateway_container_environment(container, expected_namespace)
         raw_mounts = _require_mapping_list(
             container.get("volumeMounts", []),
             f"Deployment/{service}.spec.template.spec.containers[0].volumeMounts",
@@ -1411,6 +1620,11 @@ def _validate_internal_network_policies(policies: dict[str, dict]) -> None:
             fail(f"NetworkPolicy/{name} has an unsafe spec")
 
 
+def _validate_gateway_egress_policy(policy: dict) -> None:
+    if policy.get("spec") != EXPECTED_GATEWAY_NETWORK_POLICY_SPEC:
+        fail("NetworkPolicy/spring-cloud-gateway-egress has an unsafe spec")
+
+
 def validate_network_policies(
     documents: list[dict],
     certificate_identity_mode: str = "hosted-controller",
@@ -1433,7 +1647,7 @@ def validate_network_policies(
             "runtime NetworkPolicy set is not closed "
             f"(missing={sorted(expected_names - set(policies))}, "
             f"extra={sorted(set(policies) - expected_names)})"
-        )
+    )
     _validate_internal_network_policies(policies)
 
     expected_from = {
@@ -1511,60 +1725,7 @@ def validate_network_policies(
         policies["spring-cloud-gateway-egress"].get("spec"),
         "NetworkPolicy/spring-cloud-gateway-egress.spec",
     )
-    expected_gateway_egress = {
-        "podSelector": {"matchLabels": {"app": "spring-cloud-gateway"}},
-        "policyTypes": ["Egress"],
-        "egress": [
-            {
-                "to": [
-                    {
-                        "namespaceSelector": {
-                            "matchLabels": {
-                                "kubernetes.io/metadata.name": "kube-system"
-                            }
-                        },
-                        "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
-                    }
-                ],
-                "ports": [
-                    {"protocol": "UDP", "port": 53},
-                    {"protocol": "TCP", "port": 53},
-                ],
-            },
-            {
-                "to": [
-                    {
-                        "podSelector": {
-                            "matchExpressions": [
-                                {
-                                    "key": "app",
-                                    "operator": "In",
-                                    "values": [
-                                        "game-session-service",
-                                        "logging-admin-service",
-                                        "game-design-service",
-                                        "account-service",
-                                        "social-groups-service",
-                                    ],
-                                }
-                            ]
-                        }
-                    }
-                ],
-                "ports": [{"protocol": "TCP", "port": 8080}],
-            },
-            {
-                "to": [{"podSelector": {"matchLabels": {"app": "redis-cache"}}}],
-                "ports": [{"protocol": "TCP", "port": 6379}],
-            },
-            {
-                "to": [{"podSelector": {"matchLabels": {"app": "otel-collector"}}}],
-                "ports": [{"protocol": "TCP", "port": 4317}],
-            },
-        ],
-    }
-    if gateway_egress != expected_gateway_egress:
-        fail("NetworkPolicy/spring-cloud-gateway-egress has an unsafe exception")
+    _validate_gateway_egress_policy({"spec": gateway_egress})
 
     proxy_egress = _require_mapping(
         policies["tcp-proxy-service-egress"].get("spec"),

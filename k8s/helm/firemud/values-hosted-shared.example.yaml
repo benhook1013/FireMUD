@@ -7,7 +7,6 @@ preview:
   releaseName: __RELEASE_NAME__
   hostname: __HOSTNAME__
   telnetPort: __TELNET_PORT__
-  # Retained for the child direct-TLS renderer; this parent keeps Telnet private.
   seedOnFirstDeploy: true
   maxConcurrentEnforced: false
 
@@ -26,6 +25,14 @@ previewStack:
     clusterIssuer: letsencrypt-prod
     tlsSecretName: __TLS_SECRET_NAME__
 
+  telnetTls:
+    enabled: true
+    # Standalone-only Certificate input; hosted-controller mode ignores it.
+    clusterIssuer: letsencrypt-prod
+    # Standalone-only Secret override; hosted-controller mode mounts the
+    # controller-projected <release>-telnet-tls Secret instead.
+    secretName: __TELNET_TLS_SECRET_NAME__
+
   seed:
     enabled: true
     image: postgres:16
@@ -38,7 +45,8 @@ previewStack:
     caCrt: ""
 
   # These Secrets are projected by the environment certificate controller.
-  # The server certificate DNS SAN is spring-cloud-gateway-mtls.<namespace>.svc.cluster.local;
+  # The chart only consumes their exact release-scoped identities. The server
+  # certificate DNS SAN is spring-cloud-gateway-mtls.<namespace>.svc.cluster.local;
   # the client URI SAN is spiffe://firemud/ns/<namespace>/sa/tcp-proxy-service.
   gatewayWsTls:
     enabled: true
@@ -387,8 +395,8 @@ previewStack:
       springProfile: true
       envFromShared: true
       mountGrpcTls: true
-      healthPort: 8080
       mountGatewayWsServerTls: true
+      healthPort: 8080
       ports:
         - port: 80
           targetPort: 8080
@@ -398,12 +406,13 @@ previewStack:
       schema: tcp_proxy_service
       image:
         repository: ghcr.io/benhook1013/tcp-proxy-service
-      serviceType: ClusterIP
+      serviceType: NodePort
       springProfile: false
       envFromShared: true
       mountGrpcTls: true
-      healthPort: 8080
       mountGatewayWsClientTls: true
+      mountTelnetTls: true
+      healthPort: 8080
       extraEnv:
         # __TCP_PROXY_GATEWAY_BASE_URL_LINE__
         TCP_PROXY_DEFAULT_WORLD_SLUG: "demo"
@@ -414,6 +423,7 @@ previewStack:
       ports:
         # __TCP_PROXY_ADDITIONAL_SERVICE_PORTS__
         - port: 2323
+          nodePort: __TELNET_PORT__
           targetPort: 2323
     - name: world-management-service
       schema: world_management_service

@@ -32,7 +32,7 @@ class TlsCertificateReadinessHealthEndpointGroupsPostProcessorTest {
       new TlsCertificateReadinessHealthEndpointGroupsPostProcessor(true);
 
   @Test
-  void leavesTcpProxyReadinessGroupsUnchanged() {
+  void leavesReadinessGroupsUnchangedWhenDisabled() {
     HealthEndpointGroups original = mock(HealthEndpointGroups.class);
 
     assertSame(

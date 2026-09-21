@@ -3485,6 +3485,13 @@ def service_consumer_documents():
                     {"key": "ca.crt", "path": "ca.crt"},
                 ]
             volumes.append({"name": name, kind: projection})
+        container = {
+            "name": service,
+            "volumeMounts": mounts,
+        }
+        if service == "spring-cloud-gateway":
+            container["env"] = validator._expected_gateway_container_env("pr-42")
+            container["envFrom"] = copy.deepcopy(validator.EXPECTED_GATEWAY_ENV_FROM)
         documents.append(
             {
                 "kind": "Deployment",
@@ -3493,12 +3500,7 @@ def service_consumer_documents():
                     "template": {
                         "spec": {
                             "serviceAccountName": "firemud-app",
-                            "containers": [
-                                {
-                                    "name": service,
-                                    "volumeMounts": mounts,
-                                }
-                            ],
+                            "containers": [container],
                             "volumes": volumes,
                         }
                     }
@@ -3609,8 +3611,13 @@ with tempfile.TemporaryDirectory() as directory:
             "name": "tcp-proxy-service",
             "namespace": "pr-42",
             "labels": {
-                **validator._expected_top_level_labels(),
+                "app.kubernetes.io/name": "firemud",
+                "app.kubernetes.io/managed-by": "Helm",
+                "helm.sh/chart": validator._expected_chart_label(
+                    validator.TRUSTED_CHART_METADATA
+                ),
                 "app.kubernetes.io/instance": "pr-42",
+                "firemud.dev/certificate-identity-mode": "hosted-controller",
             },
         },
         "spec": copy.deepcopy(
@@ -3636,8 +3643,16 @@ with tempfile.TemporaryDirectory() as directory:
     tcp_source = temp_dir / "tcp-proxy-service.yaml"
     tcp_output = temp_dir / "tcp-proxy-service-with-port.yaml"
     tcp_source.write_text(yaml.safe_dump(tcp_proxy), encoding="utf-8")
-    validator.inject_telnet_port(tcp_source, tcp_output, 32000, "pr-42")
+    validator.inject_telnet_port(
+        tcp_source,
+        tcp_output,
+        32000,
+        "pr-42",
+        "hosted-controller",
+        "public",
+    )
     injected = yaml.safe_load(tcp_output.read_text(encoding="utf-8"))
+    assert injected["metadata"]["labels"] == tcp_proxy["metadata"]["labels"]
     assert injected["spec"]["ports"] == [
         {
             "name": "tcp-2323",

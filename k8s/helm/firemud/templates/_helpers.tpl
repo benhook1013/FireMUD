@@ -35,12 +35,77 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- default "firemud-grpc-tls" .Values.previewStack.grpcTls.secretName -}}
 {{- end -}}
 
+{{- define "firemud.certificateIdentityMode" -}}
+{{- $certificateIdentity := .Values.previewStack.certificateIdentity | default (dict) -}}
+{{- $mode := default "standalone" $certificateIdentity.mode -}}
+{{- if or (eq $mode "standalone") (eq $mode "hosted-controller") -}}
+{{- $mode -}}
+{{- else -}}
+{{- fail (printf "previewStack.certificateIdentity.mode must be standalone or hosted-controller (got %q)" $mode) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "firemud.hostedControllerMode" -}}
+{{- eq (include "firemud.certificateIdentityMode" . | trim) "hosted-controller" -}}
+{{- end -}}
+
+{{- define "firemud.ingressTlsSecretName" -}}
+{{- if eq (include "firemud.hostedControllerMode" . | trim) "true" -}}
+{{- printf "%s-tls" .Release.Name -}}
+{{- else -}}
+{{- default (printf "%s-tls" .Release.Name) .Values.previewStack.ingress.tlsSecretName -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "firemud.gatewayWsServerSecretName" -}}
 {{- printf "%s-gateway-internal-ws" .Release.Name -}}
 {{- end -}}
 
 {{- define "firemud.gatewayWsClientSecretName" -}}
 {{- printf "%s-tcp-proxy-bridge" .Release.Name -}}
+{{- end -}}
+
+{{- define "firemud.telnetTlsSecretName" -}}
+{{- $telnetTls := .Values.previewStack.telnetTls | default (dict) -}}
+{{- if $telnetTls.enabled -}}
+{{- if eq (include "firemud.hostedControllerMode" . | trim) "true" -}}
+{{- printf "%s-telnet-tls" .Release.Name -}}
+{{- else -}}
+{{- $secretName := required "previewStack.telnetTls.secretName is required when Telnet TLS is enabled" $telnetTls.secretName -}}
+{{- if eq $secretName "__TELNET_TLS_SECRET_NAME__" -}}
+{{- fail "previewStack.telnetTls.secretName must be resolved before rendering when Telnet TLS is enabled" -}}
+{{- end -}}
+{{- if not (hasSuffix "-telnet-tls" $secretName) -}}
+{{- fail "previewStack.telnetTls.secretName must end with -telnet-tls when Telnet TLS is enabled" -}}
+{{- end -}}
+{{- $secretName -}}
+{{- end -}}
+{{- else -}}
+{{- $telnetTls.secretName | default "" -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "firemud.grpcTlsEnv" -}}
+- name: FIREMUD_GRPC_CERT_CHAIN_PATH
+  value: /tls/client.crt
+- name: FIREMUD_GRPC_PRIVATE_KEY_PATH
+  value: /tls/client.key
+- name: FIREMUD_GRPC_CA_CERT_PATH
+  value: /tls/ca.crt
+{{- end -}}
+
+{{- define "firemud.telnetTlsEnv" -}}
+- name: TCP_PROXY_TLS_ENABLED
+  value: "true"
+- name: TCP_PROXY_TLS_CERT
+  value: /telnet-tls/tls.crt
+- name: TCP_PROXY_TLS_KEY
+  value: /telnet-tls/tls.key
+{{- end -}}
+
+{{- define "firemud.telnetTlsModeEnv" -}}
+- name: TCP_PROXY_TELNET_MODE
+  value: DIRECT_TLS
 {{- end -}}
 
 {{- define "firemud.gatewayWsServerEnv" -}}

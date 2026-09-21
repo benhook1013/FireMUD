@@ -345,7 +345,9 @@ jobs:
               python3 ./dev-tools/deploy/preflight.py hosted-bridge \
               /tmp/dev-demo-rendered.yaml \
               "${{ needs.dev-demo-plan.outputs.namespace }}" \
-              "${{ needs.dev-demo-plan.outputs.release_name }}"
+              "${{ needs.dev-demo-plan.outputs.release_name }}" \
+              --expected-hosted-telnet-node-port \
+              "${{ needs.dev-demo-plan.outputs.telnet_port }}"
           fi
           kubectl apply --dry-run=server -n "${{ needs.dev-demo-plan.outputs.namespace }}" -f /tmp/dev-demo-rendered.yaml
           wc -l /tmp/dev-demo-rendered.yaml
@@ -459,7 +461,9 @@ jobs:
           echo "DEV_DEMO_STAGE=operator-preflight" >> "$GITHUB_ENV"
           FIREMUD_PREFLIGHT_CONTEXT=operator \
             python3 ./dev-tools/deploy/preflight.py hosted-bridge \
-            "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$RELEASE_NAME"
+            "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$RELEASE_NAME" \
+            --expected-hosted-telnet-node-port \
+            "${{ needs.dev-demo-plan.outputs.telnet_port }}"
 
       - name: Export demo smoke defaults
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
@@ -996,11 +1000,17 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "$REQUESTER_KUBECONFIG" ]]; then
-            echo "Hosted identity requester credentials are unavailable; skipping identity retirement."
+            echo "Hosted identity requester credentials are unavailable; retirement cannot proceed."
             echo "available=false" >> "$GITHUB_OUTPUT"
           else
             echo "available=true" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Require Hosted identity requester credentials for retirement
+        if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available != 'true' }}
+        run: |
+          echo "::error title=Missing Hosted identity requester credentials::Runtime deletion completed, but HostedEnvironmentIdentity/dev-demo was retained because retirement credentials are unavailable." >&2
+          exit 1
 
       - name: Write hosted identity requester kubeconfig
         if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available == 'true' }}
@@ -1019,6 +1029,12 @@ jobs:
           set -euo pipefail
           bash ./dev-tools/hosted/shared/request-hosted-identity.sh --discover-api \
             >> "$GITHUB_OUTPUT"
+
+      - name: Require HostedEnvironmentIdentity API for retirement
+        if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available == 'true' && steps.identity-api.outputs.served != 'true' }}
+        run: |
+          echo "::error title=HostedEnvironmentIdentity API unavailable::Runtime deletion completed, but HostedEnvironmentIdentity/dev-demo was retained because the controller API is unavailable." >&2
+          exit 1
 
       - name: Check HostedEnvironmentIdentity existence before retirement
         id: identity-existence

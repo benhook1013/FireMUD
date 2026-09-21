@@ -47,7 +47,20 @@ render_overlay() {
 }
 
 extract_images() {
-  grep -E '^[[:space:]]*image:[[:space:]]*' | sed -E 's/^[[:space:]]*image:[[:space:]]*//' | awk '{print $1}' | sort -u
+  local matches
+  if matches="$(grep -E '^[[:space:]]*image:[[:space:]]*')"; then
+    :
+  else
+    local status=$?
+    if [ "$status" -eq 1 ]; then
+      # grep returns 1 for a valid render with no image fields. Report an
+      # empty successful extraction so the caller can emit its exact diagnostic.
+      return 0
+    fi
+    return "$status"
+  fi
+
+  printf '%s\n' "$matches" | sed -E 's/^[[:space:]]*image:[[:space:]]*//' | awk '{print $1}' | sort -u
 }
 
 check_images_exist() {
@@ -56,15 +69,29 @@ check_images_exist() {
 
   echo "::group::Render $name overlay"
   local rendered
-  rendered="$(render_overlay "$overlay")"
+  if rendered="$(render_overlay "$overlay")"; then
+    :
+  else
+    local status=$?
+    echo "::endgroup::"
+    return "$status"
+  fi
   echo "::endgroup::"
 
   echo "::group::Check $name images exist in registry"
   local images
-  images="$(printf '%s\n' "$rendered" | extract_images)"
+  if images="$(printf '%s\n' "$rendered" | extract_images)"; then
+    :
+  else
+    local status=$?
+    echo "Failed to extract images from rendered $name overlay (status $status)" >&2
+    echo "::endgroup::"
+    return "$status"
+  fi
   if [ -z "$images" ]; then
     echo "No images found in rendered $name overlay" >&2
-    exit 1
+    echo "::endgroup::"
+    return 1
   fi
 
   while IFS= read -r image; do
@@ -77,7 +104,13 @@ check_images_exist() {
       fi
     fi
 
-    docker buildx imagetools inspect "$image" >/dev/null
+    if docker buildx imagetools inspect "$image" >/dev/null; then
+      :
+    else
+      local status=$?
+      echo "::endgroup::"
+      return "$status"
+    fi
   done <<<"$images"
   echo "::endgroup::"
 }
@@ -87,7 +120,13 @@ check_stage_has_no_backup_schedules_unless_enabled() {
 
   echo "::group::Render stage overlay"
   local rendered
-  rendered="$(render_overlay "$STAGE_OVERLAY")"
+  if rendered="$(render_overlay "$STAGE_OVERLAY")"; then
+    :
+  else
+    local status=$?
+    echo "::endgroup::"
+    return "$status"
+  fi
   echo "::endgroup::"
 
   local has_backup_cronjobs="false"
@@ -104,7 +143,7 @@ check_stage_has_no_backup_schedules_unless_enabled() {
     if [ ! -f "$enabled_marker" ]; then
       echo "Stage overlay appears to include backup-related resources (CronJobs and/or Velero schedules), but $enabled_marker is missing." >&2
       echo "If staging backups are intentionally enabled, add the marker file to acknowledge the operational change." >&2
-      exit 1
+      return 1
     fi
   fi
 }
@@ -118,20 +157,27 @@ run_preflight_policy_checks() {
 
   if [[ "${GITHUB_EVENT_NAME:-}" = "pull_request" && -n "${GITHUB_BASE_REF:-}" ]]; then
     local changed_files
-    changed_files="$(changed_files_between_base_and_head "$GITHUB_BASE_REF")"
+    if changed_files="$(changed_files_between_base_and_head "$GITHUB_BASE_REF")"; then
+      :
+    else
+      local status=$?
+      echo "::endgroup::"
+      return "$status"
+    fi
 
     if production_policy_applies_to_changes "$changed_files"; then
       mapfile -t attestation_files < <(printf '%s\n' "$changed_files" | grep '^design/operations/deployments/production/attestations/.*\.json$' || true)
       if [[ "${#attestation_files[@]}" -ne 1 ]]; then
         echo "Production-applicable Kubernetes PRs must include exactly one attestation file under design/operations/deployments/production/attestations/." >&2
-        exit 1
+        echo "::endgroup::"
+        return 1
       else
         production_pr_validation="true"
         promotion_attestation="${attestation_files[0]}"
         deployment_ref="$(basename "$promotion_attestation" .json)"
 
         local rollback_mode
-        rollback_mode="$(python3 - <<'PY' "$ROOT_DIR/$promotion_attestation"
+        if rollback_mode="$(python3 - <<'PY' "$ROOT_DIR/$promotion_attestation"
 import json
 import pathlib
 import sys
@@ -140,13 +186,20 @@ path = pathlib.Path(sys.argv[1])
 data = json.loads(path.read_text(encoding="utf-8"))
 print(str(data.get("rollbackMode", "")))
 PY
-)"
+        )"; then
+          :
+        else
+          local status=$?
+          echo "::endgroup::"
+          return "$status"
+        fi
 
         if [[ "$rollback_mode" = "roll-forward-only" ]]; then
           mapfile -t backup_files < <(printf '%s\n' "$changed_files" | grep '^design/operations/deployments/production/backup-readiness/.*\.json$' || true)
           if [[ "${#backup_files[@]}" -ne 1 ]]; then
             echo "Roll-forward-only production overlay PRs must include exactly one backup-readiness file under design/operations/deployments/production/backup-readiness/." >&2
-            exit 1
+            echo "::endgroup::"
+            return 1
           fi
           backup_readiness="${backup_files[0]}"
         fi
@@ -155,12 +208,18 @@ PY
   fi
 
   if [[ "$production_pr_validation" = "true" ]]; then
-    FIREMUD_PREFLIGHT_CONTEXT=ci-static \
+    if FIREMUD_PREFLIGHT_CONTEXT=ci-static \
       FIREMUD_DEPLOYMENT_REF="$deployment_ref" \
       FIREMUD_PREFLIGHT_OUTPUT=/tmp/firemud-preflight-production.json \
       FIREMUD_PROMOTION_ATTESTATION="$promotion_attestation" \
       FIREMUD_BACKUP_READINESS_EVIDENCE="$backup_readiness" \
-      python3 "$ROOT_DIR/dev-tools/deploy/preflight.py" production
+      python3 "$ROOT_DIR/dev-tools/deploy/preflight.py" production; then
+      :
+    else
+      local status=$?
+      echo "::endgroup::"
+      return "$status"
+    fi
   else
     echo "Skipping static preflight policy enforcement because no production attestation context is present."
     echo "Overlay render and image validation still run below."

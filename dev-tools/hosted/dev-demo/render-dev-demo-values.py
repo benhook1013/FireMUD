@@ -85,7 +85,7 @@ def main() -> int:
     text = replace_or_die(
         text,
         "        # __TCP_PROXY_ADDITIONAL_SERVICE_PORTS__",
-        "        - port: 8080\n          targetPort: 8080",
+        "",
     )
     output_path.write_text(text, encoding="utf-8")
     return 0

@@ -30,6 +30,7 @@ for expected in \
 done
 
 python3 - "$CI_WORKFLOW" "$SECURITY_WORKFLOW" "$PREVIEW_WORKFLOW" "$ZAP_WORKFLOW" <<'PY'
+import copy
 from pathlib import Path
 import sys
 
@@ -94,6 +95,92 @@ def find_step(workflow, job_id, name_suffix, label):
             f"{label}: expected one {name_suffix!r} step in jobs/{job_id}, found {len(matches)}"
         )
     return matches[0]
+
+
+def require_no_step(workflow, job_id, name_suffix, label):
+    steps = value_at(workflow, ("jobs", job_id, "steps"), label)
+    matches = [
+        step
+        for step in steps
+        if isinstance(step, dict)
+        and isinstance(step.get("name"), str)
+        and step["name"].endswith(name_suffix)
+    ]
+    if matches:
+        raise SystemExit(
+            f"{label}: unexpected {name_suffix!r} step in jobs/{job_id}"
+        )
+
+
+CI_GATING_STEPS = (
+    (
+        "helm-render-validation",
+        "Validate hosted Telnet TLS contract",
+        "bash ./dev-tools/tests/hosted-telnet-tls-contract.sh",
+    ),
+)
+
+DEV_TOOL_CONTRACT_COMMANDS = (
+    "bash ./dev-tools/tests/hosted-gateway-bridge-contract.sh",
+)
+
+
+def require_gating_run_step(workflow, job_id, name_suffix, command):
+    label = f"ci {name_suffix} contract"
+    step = find_step(workflow, job_id, name_suffix, "ci workflow")
+    if "if" in step:
+        raise SystemExit(f"{label}: step must run whenever its job runs")
+    if str(step.get("continue-on-error", "false")).strip().lower() != "false":
+        raise SystemExit(f"{label}: step failure must fail its job")
+    run = value_at(step, ("run",), label)
+    if not isinstance(run, str) or run.strip() != command:
+        raise SystemExit(
+            f"{label}: run must be exactly the executable command {command!r}, got {run!r}"
+        )
+
+
+def validate_ci_script_execution(workflow):
+    for job_id, name_suffix, command in CI_GATING_STEPS:
+        require_gating_run_step(workflow, job_id, name_suffix, command)
+
+
+def mutate_gating_step(workflow, job_id, name_suffix, changes):
+    mutated = copy.deepcopy(workflow)
+    step = find_step(mutated, job_id, name_suffix, "mutated ci workflow")
+    step.update(changes)
+    return mutated
+
+
+def require_dev_tool_contract_command(workflow, command):
+    label = f"ci dev-tool contract command {command!r}"
+    step = find_step(
+        workflow,
+        "dev-tool-contract-checks",
+        "Validate dev tool contracts",
+        "ci workflow",
+    )
+    run = value_at(step, ("run",), label)
+    if not isinstance(run, str) or not any(
+        line.strip() == command for line in run.splitlines()
+    ):
+        raise SystemExit(
+            f"{label}: command must appear as an executable run-block line"
+        )
+
+
+def mutate_dev_tool_contract_command(workflow, command):
+    mutated = copy.deepcopy(workflow)
+    step = find_step(
+        mutated,
+        "dev-tool-contract-checks",
+        "Validate dev tool contracts",
+        "mutated ci workflow",
+    )
+    run = value_at(step, ("run",), "mutated ci workflow")
+    step["run"] = "\n".join(
+        line for line in run.splitlines() if line.strip() != command
+    )
+    return mutated
 
 
 ci = load_workflow(sys.argv[1])
@@ -311,10 +398,49 @@ require_equal(
     "${{ (needs.changes.outputs.lightweight_only == 'true' && needs.changes.outputs.design_docs_changed == 'true' && needs.changes.outputs.validation_python_changed != 'true') && 'yaml' || 'ci' }}",
     "ci workflow",
 )
+validate_ci_script_execution(ci)
+require_no_step(
+    ci,
+    "helm-render-validation",
+    "Validate hosted Gateway bridge contract",
+    "ci workflow",
+)
+for job_id, name_suffix, command in CI_GATING_STEPS:
+    for description, changes in (
+        ("missing command", {"run": "true"}),
+        ("disabled step", {"if": "${{ false }}"}),
+        ("ignored failure", {"continue-on-error": "true"}),
+        ("heredoc decoy", {"run": f"cat <<'EOF'\n{command}\nEOF"}),
+        ("comment decoy", {"run": f"# {command}"}),
+    ):
+        mutation = mutate_gating_step(ci, job_id, name_suffix, changes)
+        try:
+            validate_ci_script_execution(mutation)
+        except SystemExit:
+            continue
+        raise SystemExit(
+            f"ci script execution contract accepted {name_suffix} {description}"
+        )
+for command in DEV_TOOL_CONTRACT_COMMANDS:
+    require_dev_tool_contract_command(ci, command)
+    mutation = mutate_dev_tool_contract_command(ci, command)
+    try:
+        require_dev_tool_contract_command(mutation, command)
+    except SystemExit:
+        continue
+    raise SystemExit(
+        f"ci dev-tool contract execution accepted removal of {command}"
+    )
 require_contains(
     complete_contract_step,
     ("run",),
     "python3 -m unittest discover -s dev-tools/validation -p 'test_*.py'",
+    "ci workflow",
+)
+require_contains(
+    complete_contract_step,
+    ("run",),
+    "python3 -m unittest discover -s dev-tools/tests -p 'test_*.py'",
     "ci workflow",
 )
 require_contains(

@@ -2,6 +2,7 @@ package net.firedevops.firemud.springcloudgateway.filter;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.util.IllformedLocaleException;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -13,6 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.Ordered;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.server.PathContainer;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.WebFilter;
@@ -42,6 +44,7 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
   private static final String HDR_PROXY_CONNECTION_ID = "X-Proxy-Connection-Id";
   private static final String HDR_PROXY_GAME_INSTANCE_ID = "X-Proxy-Game-Instance-Id";
   private static final String HDR_PROXY_TENANT_ID = "X-Proxy-Tenant-Id";
+  private static final String HDR_FIREMUD_LOCALE = "X-Firemud-Locale";
 
   private final CidrSet trustedForwardedProxies;
   private final TcpProxyTrustPolicy tcpProxyTrustPolicy;
@@ -57,9 +60,9 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
 
   @Override
   public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
-    String path = exchange.getRequest().getPath().pathWithinApplication().value();
-    boolean isGameplayWebSocketRoute = path.startsWith("/ws/game");
-    boolean isSessionRoute = isGameplayWebSocketRoute || path.startsWith("/api/session/");
+    PathContainer path = exchange.getRequest().getPath().pathWithinApplication();
+    boolean isGameplayRoute = GameplayRouteClassifier.classify(path).gameplayRoute();
+    boolean isSessionRoute = isGameplayRoute || GameplayRouteClassifier.sessionApiRoute(path);
 
     InetAddress remoteAddress = remoteInetAddress(exchange);
     boolean trustedTcpProxy = tcpProxyTrustPolicy.isTrusted(exchange, remoteAddress);
@@ -110,6 +113,7 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
       }
     }
     final RoutingBundle canonicalRoutingBundle = incomingRoutingBundle;
+    final String canonicalLocale = canonicalLocale(exchange.getRequest().getHeaders());
 
     ServerWebExchange mutated =
         exchange
@@ -118,7 +122,11 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
                 request ->
                     request.headers(
                         headers -> {
-                          stripGatewayOwnedHeaders(headers, isGameplayWebSocketRoute);
+                          stripGatewayOwnedHeaders(headers, isGameplayRoute);
+
+                          if (canonicalLocale != null) {
+                            headers.set(HDR_FIREMUD_LOCALE, canonicalLocale);
+                          }
 
                           if (canonicalClientIp != null) {
                             headers.set(HDR_CLIENT_IP, canonicalClientIp);
@@ -192,6 +200,27 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
         || headers.getFirst(HDR_PROXY_TENANT_ID) != null;
   }
 
+  private static String canonicalLocale(HttpHeaders headers) {
+    List<String> values = headers.get(HDR_FIREMUD_LOCALE);
+    if (values == null || values.size() != 1) {
+      return null;
+    }
+    String raw = values.get(0);
+    if (raw == null
+        || raw.isBlank()
+        || raw.indexOf('_') >= 0
+        || raw.chars().anyMatch(Character::isISOControl)) {
+      return null;
+    }
+    try {
+      Locale locale = new Locale.Builder().setLanguageTag(raw).build();
+      String canonical = locale.toLanguageTag();
+      return locale.getLanguage().isEmpty() || "und".equals(canonical) ? null : canonical;
+    } catch (IllformedLocaleException ex) {
+      return null;
+    }
+  }
+
   private void stripGatewayOwnedHeaders(
       HttpHeaders headers, boolean preserveGameplayConnectTokenCarrier) {
     List.copyOf(headers.headerNames()).stream()
@@ -213,6 +242,10 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
     headers.remove(HDR_PROXY_CONNECTION_ID);
     headers.remove(HDR_PROXY_GAME_INSTANCE_ID);
     headers.remove(HDR_PROXY_TENANT_ID);
+
+    // All gateway-owned Firemud headers are removed above, except the migration connect-token
+    // carrier on gameplay routes. A validated canonical presentation locale is restored by the
+    // caller after this stripping step.
   }
 
   private String deriveClientIpFromForwardedHeaders(

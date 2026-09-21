@@ -2423,12 +2423,14 @@ preflight_command_start = dev_demo_preflight.index(
 assert preflight_start < preflight_command_start < preflight_end
 preflight_lines = [line.strip() for line in dev_demo_preflight.splitlines()]
 preflight_line_start = preflight_lines.index("FIREMUD_PREFLIGHT_CONTEXT=ci-static \\")
-assert preflight_lines[preflight_line_start : preflight_line_start + 5] == [
+assert preflight_lines[preflight_line_start : preflight_line_start + 7] == [
     "FIREMUD_PREFLIGHT_CONTEXT=ci-static \\",
     "python3 ./dev-tools/deploy/preflight.py hosted-bridge \\",
     "/tmp/dev-demo-rendered.yaml \\",
     '"${{ needs.dev-demo-plan.outputs.namespace }}" \\',
-    '"${{ needs.dev-demo-plan.outputs.release_name }}"',
+    '"${{ needs.dev-demo-plan.outputs.release_name }}" \\',
+    "--expected-hosted-telnet-node-port \\",
+    '"${{ needs.dev-demo-plan.outputs.telnet_port }}"',
 ]
 render_position = dev_demo_preflight.index(">/tmp/dev-demo-rendered.yaml")
 dry_run_position = dev_demo_preflight.index("kubectl apply --dry-run=server")
@@ -2446,7 +2448,8 @@ assert operator_step["if"] == (
 operator_run = operator_step["run"]
 assert "FIREMUD_PREFLIGHT_CONTEXT=operator" in operator_run
 assert "python3 ./dev-tools/deploy/preflight.py hosted-bridge" in operator_run
-assert '--expected-hosted-telnet-node-port' not in operator_run
+assert operator_run.count("--expected-hosted-telnet-node-port") == 1
+assert operator_run.count("needs.dev-demo-plan.outputs.telnet_port") == 1
 
 preview_plan_steps = preview_workflow["jobs"]["preview-plan"]["steps"]
 preview_plan_outputs = preview_workflow["jobs"]["preview-plan"]["outputs"]
@@ -4383,6 +4386,29 @@ python3 "$render_preview_values" \
   "$ROOT_DIR/k8s/helm/firemud/values-hosted-shared.example.yaml" \
   "$rendered_values" 42 pr-42 pr-42 pr-42.preview.example.test \
   pr-42-head-42 32000
+# This controller contract exercises the private parent boundary. The shared
+# example is also used by public Telnet proof, so make this fixture explicit:
+# private TCP Proxy is ClusterIP, has no configured NodePort, and receives no
+# allocator annotation. Public annotation/NodePort binding is covered by the
+# separate public preview contract.
+python3 - "$rendered_values" <<'PY'
+import sys
+
+import yaml
+
+path = sys.argv[1]
+values = yaml.safe_load(open(path, encoding="utf-8"))
+for service in values["previewStack"]["services"]:
+    if service["name"] != "tcp-proxy-service":
+        continue
+    service["serviceType"] = "ClusterIP"
+    for port in service["ports"]:
+        if port.get("port") == 2323:
+            port.pop("nodePort", None)
+values["preview"]["telnetPort"] = 0
+with open(path, "w", encoding="utf-8") as stream:
+    yaml.safe_dump(values, stream, sort_keys=False)
+PY
 helm template pr-42 "$ROOT_DIR/k8s/helm/firemud" \
   -f "$rendered_values" --namespace pr-42 \
   --show-only templates/apps.yaml >"$rendered_manifest"
@@ -4609,13 +4635,18 @@ for description, documents in mutations.items():
     else:
         raise AssertionError(f"validator accepted {description}")
 
+trusted_config = validator["_trusted_hosted_shared_config"]()
 cleaned_config = clean_config_map(
     {
         "metadata": {"name": "firemud-config"},
-        "data": {"SAFE_VALUE": "retained", "API_TOKEN": "removed"},
+        "data": trusted_config,
     }
 )
-assert cleaned_config["data"] == {"SAFE_VALUE": "retained"}
+assert cleaned_config["data"] == {
+    key: value
+    for key, value in trusted_config.items()
+    if key not in validator["HOSTED_REDACTED_CONFIG_KEYS"]
+}
 for malformed_data in (["not", "a", "mapping"], "not-a-mapping"):
     try:
         clean_config_map(
