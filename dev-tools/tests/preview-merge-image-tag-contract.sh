@@ -115,7 +115,7 @@ if GH_FIXTURE=incomplete bash "$RESOLVER" "$merge_sha" 7 "$base_sha" >/dev/null 
   echo "resolver accepted an incomplete changed-file list" >&2
   exit 1
 fi
-if GH_FIXTURE=runtime bash "$RESOLVER" "dddddddddddddddddddddddddddddddddddddd" 7 "$base_sha" >/dev/null 2>&1; then
+if GH_FIXTURE=runtime bash "$RESOLVER" "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" 7 "$base_sha" >/dev/null 2>&1; then
   echo "resolver accepted a stale tested merge SHA" >&2
   exit 1
 fi
