@@ -176,7 +176,7 @@ Release dependency-notice automation is a separate concern from repository scrip
 
 FireMUD's preview workflow is reserved for real reviewer-accessible PR environments, not CI-only stack boot validation. The [`.github/workflows/preview.yml`](../../.github/workflows/preview.yml) workflow targets a hosted single-node k3s cluster and follows this contract:
 
-- Build and smoke-test PR-tagged container images in a credential-free job, then publish the successful fixed-tag artifact to private GHCR from the trusted default-branch publisher.
+- Build and smoke-test PR merge images in the credential-free job, then publish the verified artifact to private GHCR under the immutable `pr-merge-<merge SHA>` tag from the trusted default-branch publisher.
 - Deploy or upgrade Helm release `pr-<PR_NUMBER>` into namespace `pr-<PR_NUMBER>`.
 - Expose the environment at `https://pr-<PR_NUMBER>.preview.<DOMAIN>` using cluster ingress/TLS.
 - Expose a reviewer-usable TCP/Telnet entry path for the preview stack so manual gameplay proof can happen through the normal MUD client surface.

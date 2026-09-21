@@ -83,6 +83,6 @@ jq -e \
    .parents[0].sha == $expected_base and
    .parents[1].sha == $expected_head' \
   <<<"$merge_commit_json" >/dev/null || {
-  echo "::error title=Preview source binding changed::The current PR head, base, merge, or repository no longer matches the validated artifact${STAGE:+ $STAGE}." >&2
+  echo "::error title=Preview source binding changed::The current PR merge commit does not have the expected base and head parents${STAGE:+ $STAGE}." >&2
   exit 1
 }

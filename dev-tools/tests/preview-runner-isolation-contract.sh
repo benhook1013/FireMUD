@@ -351,7 +351,8 @@ refresh_scripts = [
     step.get("with", {}).get("script", "")
     for step in refresh_job.get("steps", [])
     if isinstance(step, dict)
-    and step.get("uses") == "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3"
+    and isinstance(step.get("uses"), str)
+    and re.fullmatch(r"actions/github-script@[0-9a-f]{40}", step["uses"])
 ]
 if len(refresh_scripts) != 1:
     raise AssertionError("preview runtime base refresh must use exactly one pinned GitHub dispatcher")
