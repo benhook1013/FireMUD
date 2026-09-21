@@ -120,7 +120,8 @@ class TickBatchExecutionServiceTest {
     batch.setCommandCount(1);
     TickQueuedCommandEnvelope entry = new TickQueuedCommandEnvelope(false, "cmd-1", "look");
     GameplayCommand command = gameplayCommand("cmd-1");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1")))
         .thenReturn(List.of(command));
 
     service.markBatchDrained(batch, List.of(entry));
@@ -150,7 +151,8 @@ class TickBatchExecutionServiceTest {
     command.setOriginSourceState("SCHEDULE_DUE_CLAIMED");
     command.setOriginSourceOrdinal(5000L);
     command.setOriginSourceDueAtMs(9000L);
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1")))
         .thenReturn(List.of(command));
 
     service.markBatchDrained(batch, List.of(entry));
@@ -182,7 +184,8 @@ class TickBatchExecutionServiceTest {
     GameplayCommand command = gameplayCommand("cmd-atomic");
     TickQueuedCommandEnvelope entry = new TickQueuedCommandEnvelope(false, "cmd-atomic", "look");
     when(tickEffectRepository.findByTickBatchId("tb-atomic")).thenReturn(List.of(effect));
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-atomic")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-atomic")))
         .thenReturn(List.of(command));
     doAnswer(
             invocation -> {
@@ -284,7 +287,8 @@ class TickBatchExecutionServiceTest {
     GameplayCommand command = gameplayCommand("cmd-command-failure");
     TickQueuedCommandEnvelope entry =
         new TickQueuedCommandEnvelope(false, "cmd-command-failure", "look");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-command-failure")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-command-failure")))
         .thenReturn(List.of(command));
     org.mockito.Mockito.doThrow(new IllegalStateException("command write failed"))
         .when(gameplayCommandRepository)
@@ -345,7 +349,8 @@ class TickBatchExecutionServiceTest {
                 "SCHEDULE_TIMER", "SCHEDULE_DUE_CLAIMED", 5000L, 14L, 9000L));
     GameplayCommand command = gameplayCommand("cmd-1");
     command.setSourceType("AUTOMATION");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1")))
         .thenReturn(List.of(command));
 
     service.markBatchManifestMismatch(batch, List.of(entry), "actual");
@@ -376,8 +381,8 @@ class TickBatchExecutionServiceTest {
             new TickQueuedCommandEnvelope(false, "cmd-incompatible-two", "wave"));
     GameplayCommand first = gameplayCommand("cmd-incompatible-one");
     GameplayCommand second = gameplayCommand("cmd-incompatible-two");
-    when(gameplayCommandRepository.findByCommandIdIn(
-            List.of("cmd-incompatible-one", "cmd-incompatible-two")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-incompatible-one", "cmd-incompatible-two")))
         .thenReturn(List.of(first, second));
 
     service.markBatchIncompatibleReplay(
@@ -423,7 +428,8 @@ class TickBatchExecutionServiceTest {
         .thenReturn(List.of(batch));
     when(tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc("tb-stale", "DRAINED"))
         .thenReturn(List.of(effect));
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1")))
         .thenReturn(List.of(command));
 
     service.executeDurableEffects(1L, 2L, activeLease);
@@ -536,7 +542,8 @@ class TickBatchExecutionServiceTest {
     when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(
             1L, 2L, "cmd-subsequent"))
         .thenReturn(Optional.of(subsequentCommand));
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-retry")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-retry")))
         .thenReturn(List.of(retryCommand));
     when(durableGameplayCommandExecutionService.execute(any(), any()))
         .thenReturn(
@@ -646,8 +653,9 @@ class TickBatchExecutionServiceTest {
     when(tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc("tb-cross-scope", "DRAINED"))
         .thenAnswer(
             invocation -> "DRAINED".equals(effect.getStatus()) ? List.of(effect) : List.of());
-    when(gameplayCommandRepository.findByCommandId("cmd-foreign"))
-        .thenReturn(Optional.of(foreignCommand));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(
+            1L, 2L, "cmd-foreign"))
+        .thenReturn(Optional.empty());
 
     service.executeDurableEffects(1L, 2L, activeLease);
 
@@ -876,7 +884,8 @@ class TickBatchExecutionServiceTest {
     retryCommand.setCommandText("north");
     when(tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc("tb-partial", "DRAINED"))
         .thenReturn(List.of(remaining));
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-retry")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-retry")))
         .thenReturn(List.of(retryCommand));
 
     service.markBatchAbandoned(
@@ -902,7 +911,8 @@ class TickBatchExecutionServiceTest {
     TickQueuedCommandEnvelope redisOnly = new TickQueuedCommandEnvelope(false, "cmd-2", "wave");
     GameplayCommand command = gameplayCommand("cmd-2");
     command.setSourceType("AUTOMATION");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-2")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-2")))
         .thenReturn(List.of(command));
 
     service.preparePendingProjectionReconciliation(
@@ -941,7 +951,7 @@ class TickBatchExecutionServiceTest {
     TickQueuedCommandEnvelope redisOnly = new TickQueuedCommandEnvelope(false, "cmd-2", "wave");
     doThrow(new IllegalStateException("command read failed"))
         .when(gameplayCommandRepository)
-        .findByCommandIdIn(List.of("cmd-2"));
+        .findByTenantIdAndGameInstanceIdAndCommandIdIn(1L, 2L, List.of("cmd-2"));
 
     assertDoesNotThrow(
         () ->
@@ -964,7 +974,8 @@ class TickBatchExecutionServiceTest {
     TickQueuedCommandEnvelope sealed = new TickQueuedCommandEnvelope(false, "cmd-1", "look");
     TickQueuedCommandEnvelope redisOnly = new TickQueuedCommandEnvelope(false, "cmd-2", "wave");
     GameplayCommand command = gameplayCommand("cmd-2");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-2")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-2")))
         .thenReturn(List.of(command));
 
     service.preparePendingProjectionReconciliation(
@@ -981,7 +992,8 @@ class TickBatchExecutionServiceTest {
     TickQueuedCommandEnvelope sealed = new TickQueuedCommandEnvelope(false, "cmd-1", "look");
     TickQueuedCommandEnvelope redisOnly = new TickQueuedCommandEnvelope(false, "cmd-2", "wave");
     GameplayCommand command = gameplayCommand("cmd-2");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-2")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-2")))
         .thenReturn(List.of(command));
     doThrow(new IllegalStateException("database unavailable"))
         .when(gameplayCommandRepository)
@@ -1014,8 +1026,8 @@ class TickBatchExecutionServiceTest {
     remoteFollowup.setSourceType("REMOTE_FOLLOWUP");
     GameplayCommand unrecognized = gameplayCommand("cmd-unrecognized");
     unrecognized.setSourceType("caller-controlled-source");
-    when(gameplayCommandRepository.findByCommandIdIn(
-            List.of("cmd-player", "cmd-automation", "cmd-remote", "cmd-unrecognized")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-player", "cmd-automation", "cmd-remote", "cmd-unrecognized")))
         .thenReturn(List.of(player, automation, remoteFollowup, unrecognized));
 
     service.restorePendingProjection(activeLease, 1L, 2L, pendingEntries, List.of());

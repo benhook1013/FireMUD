@@ -972,8 +972,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       AdmissionAuthority authority) {
     String scriptId = requiredText(request.getScriptId(), "script_id");
     requireCurrentClaim(claim);
-    if (handlerAuditExistsForScript(request, schemaVersion, scriptId)
-        || workItemExistsForScript(request, schemaVersion, scriptId)) {
+    if (handlerAuditExistsForScript(request, schemaVersion, scriptId, sourceService)
+        || workItemExistsForScript(request, schemaVersion, scriptId, sourceService)) {
       return new TriggerAdmission(true, OUTCOME_ADMITTED, "admitted_handlers_resolved", 1);
     }
     persistWorkItemForScript(
@@ -1001,8 +1001,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       ScriptEventIngressAudit claim,
       AdmissionAuthority authority) {
     requireCurrentClaim(claim);
-    if (handlerAuditExists(request, schemaVersion, handler)
-        || workItemExists(request, schemaVersion, handler)) {
+    if (handlerAuditExists(request, schemaVersion, handler, sourceService)
+        || workItemExists(request, schemaVersion, handler, sourceService)) {
       return;
     }
     if (!request.getIsDryRun()
@@ -1351,20 +1351,27 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   }
 
   private boolean handlerAuditExists(
-      TriggerScriptEventRequest request, String schemaVersion, ResolvedHandler handler) {
+      TriggerScriptEventRequest request,
+      String schemaVersion,
+      ResolvedHandler handler,
+      String sourceService) {
     return handlerAuditExistsForScope(
         request,
         schemaVersion,
         handler.binding().getScriptId(),
         handler.pluginOwner(),
         resolveHandlerBindingId(handler.binding(), handler.pluginOwner()),
-        requestScopeValues(request));
+        requestScopeValues(request),
+        sourceService);
   }
 
   private boolean handlerAuditExistsForScript(
-      TriggerScriptEventRequest request, String schemaVersion, String scriptId) {
+      TriggerScriptEventRequest request,
+      String schemaVersion,
+      String scriptId,
+      String sourceService) {
     return handlerAuditExistsForScope(
-        request, schemaVersion, scriptId, null, "", requestScopeValues(request));
+        request, schemaVersion, scriptId, null, "", requestScopeValues(request), sourceService);
   }
 
   private boolean handlerAuditExistsForScope(
@@ -1373,7 +1380,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String scriptId,
       PluginOwner pluginOwner,
       String bindingId,
-      HandlerScopeValues scopeValues) {
+      HandlerScopeValues scopeValues,
+      String sourceService) {
     Long scriptPinEpoch = request.getScriptPinEpoch() > 0L ? request.getScriptPinEpoch() : null;
     String scriptPinControlPlaneRequestId =
         scriptPinEpoch == null ? null : normalize(request.getScriptPinControlPlaneRequestId());
@@ -1396,7 +1404,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
               scriptPinEpoch,
               scriptPinControlPlaneRequestId,
               request.getScriptEventId(),
-              request.getIsDryRun());
+              request.getIsDryRun(),
+              sourceService);
     }
     return eventAuditRepository
         .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndPluginIdAndPluginVersionIdAndBindingIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
@@ -1419,11 +1428,15 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
             scriptPinEpoch,
             scriptPinControlPlaneRequestId,
             request.getScriptEventId(),
-            request.getIsDryRun());
+            request.getIsDryRun(),
+            sourceService);
   }
 
   private boolean workItemExists(
-      TriggerScriptEventRequest request, String schemaVersion, ResolvedHandler handler) {
+      TriggerScriptEventRequest request,
+      String schemaVersion,
+      ResolvedHandler handler,
+      String sourceService) {
     ScriptEventBinding binding = handler.binding();
     return workItemExistsForScope(
         request,
@@ -1431,13 +1444,17 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         binding.getScriptId(),
         handler.pluginOwner(),
         resolveHandlerBindingId(binding, handler.pluginOwner()),
-        requestScopeValues(request));
+        requestScopeValues(request),
+        sourceService);
   }
 
   private boolean workItemExistsForScript(
-      TriggerScriptEventRequest request, String schemaVersion, String scriptId) {
+      TriggerScriptEventRequest request,
+      String schemaVersion,
+      String scriptId,
+      String sourceService) {
     return workItemExistsForScope(
-        request, schemaVersion, scriptId, null, "", requestScopeValues(request));
+        request, schemaVersion, scriptId, null, "", requestScopeValues(request), sourceService);
   }
 
   private boolean workItemExistsForScope(
@@ -1446,7 +1463,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String scriptId,
       PluginOwner pluginOwner,
       String bindingId,
-      HandlerScopeValues scopeValues) {
+      HandlerScopeValues scopeValues,
+      String sourceService) {
     String scriptPinControlPlaneRequestId =
         request.getScriptPinEpoch() > 0L
             ? normalize(request.getScriptPinControlPlaneRequestId())
@@ -1470,7 +1488,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
               request.getScriptPinEpoch(),
               scriptPinControlPlaneRequestId,
               request.getScriptEventId(),
-              request.getIsDryRun());
+              request.getIsDryRun(),
+              sourceService);
     }
     return workItemRepository
         .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndPluginIdAndPluginVersionIdAndBindingIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
@@ -1493,7 +1512,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
             request.getScriptPinEpoch(),
             scriptPinControlPlaneRequestId,
             request.getScriptEventId(),
-            request.getIsDryRun());
+            request.getIsDryRun(),
+            sourceService);
   }
 
   private boolean matchesScope(

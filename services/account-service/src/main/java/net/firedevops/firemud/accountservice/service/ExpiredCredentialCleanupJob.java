@@ -7,7 +7,6 @@ import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -81,7 +80,7 @@ public class ExpiredCredentialCleanupJob {
       fixedDelayString = "${firemud.account.credentials.cleanup.interval-ms:60000}",
       timeUnit = TimeUnit.MILLISECONDS)
   public void cleanupExpiredCredentials() {
-    LocalDateTime capturedNow = LocalDateTime.now(ZoneOffset.UTC);
+    LocalDateTime capturedNow = LocalDateTime.now();
     cleanupPasswordReset(capturedNow);
     cleanupEmailVerification(capturedNow);
     cleanupEmailLoginChallenge(capturedNow);

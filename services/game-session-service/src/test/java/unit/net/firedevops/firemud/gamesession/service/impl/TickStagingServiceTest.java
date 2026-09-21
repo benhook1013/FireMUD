@@ -197,8 +197,8 @@ class TickStagingServiceTest {
     accepted.setExecutionOutcome("ACCEPTED");
     GameplayCommand terminal = gameplayCommand("cmd-terminal");
     terminal.setExecutionOutcome("LOST_BEFORE_STAGING");
-    when(gameplayCommandRepository.findByCommandIdIn(
-            List.of("cmd-staged", "cmd-accepted", "cmd-terminal", "cmd-missing")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-staged", "cmd-accepted", "cmd-terminal", "cmd-missing")))
         .thenReturn(List.of(staged, accepted, terminal));
 
     TickStagingService.PendingEntriesReadResult result =
@@ -219,7 +219,8 @@ class TickStagingServiceTest {
     terminalized.setFailureCode("INCOMPLETE_SCRIPT_PIN_FENCE");
     GameplayCommand staged = gameplayCommand("cmd-staged");
     staged.setExecutionOutcome("STAGED");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-terminalized", "cmd-staged")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-terminalized", "cmd-staged")))
         .thenReturn(List.of(terminalized, staged));
 
     TickStagingService.PendingEntriesReadResult result =
@@ -240,7 +241,8 @@ class TickStagingServiceTest {
         .thenReturn(List.of("N|cmd-cross-tenant|look"));
     GameplayCommand command = gameplayCommand("cmd-cross-tenant");
     command.setTenantId(99L);
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-cross-tenant")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-cross-tenant")))
         .thenReturn(List.of(command));
 
     TickStagingService.PendingEntriesReadResult result =
@@ -256,7 +258,8 @@ class TickStagingServiceTest {
         .thenReturn(List.of("N|cmd-cross-game|look"));
     GameplayCommand command = gameplayCommand("cmd-cross-game");
     command.setGameInstanceId(99L);
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-cross-game")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-cross-game")))
         .thenReturn(List.of(command));
 
     TickStagingService.PendingEntriesReadResult result =
@@ -274,8 +277,8 @@ class TickStagingServiceTest {
     staleRegion.setRegionId("region-old");
     GameplayCommand staleEpoch = gameplayCommand("cmd-stale-epoch");
     staleEpoch.setRegionEpoch(2L);
-    when(gameplayCommandRepository.findByCommandIdIn(
-            List.of("cmd-stale-region", "cmd-stale-epoch")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-stale-region", "cmd-stale-epoch")))
         .thenReturn(List.of(staleRegion, staleEpoch));
 
     TickStagingService.PendingEntriesReadResult result =
@@ -308,7 +311,8 @@ class TickStagingServiceTest {
     staged.setExecutionOutcome("STAGED");
     GameplayCommand stale = gameplayCommand("cmd-stale");
     stale.setExecutionOutcome("DRAINED");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-staged", "cmd-stale")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-staged", "cmd-stale")))
         .thenReturn(List.of(staged, stale));
 
     TickStagingService.PendingEntriesReadResult result =
@@ -323,7 +327,8 @@ class TickStagingServiceTest {
   @Test
   void createBatchRejectsStaleExecutorFenceBeforeAnyDurableWrite() {
     GameplayCommand command = gameplayCommand("cmd-stale-fence");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-stale-fence")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-stale-fence")))
         .thenReturn(List.of(command));
 
     assertThrows(
@@ -350,7 +355,8 @@ class TickStagingServiceTest {
     command.setScriptPatchVersion("patch-1");
     command.setScriptPinEpoch(1L);
     command.setScriptPinControlPlaneRequestId("request-1");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-missing-instance")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-missing-instance")))
         .thenReturn(List.of(command));
     when(gameInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(1L, 2L))
         .thenReturn(Optional.empty());
@@ -384,7 +390,8 @@ class TickStagingServiceTest {
     command.setScriptPatchVersion("patch-1");
     command.setScriptPinEpoch(1L);
     command.setScriptPinControlPlaneRequestId("request-1");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-incomplete-owner")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-incomplete-owner")))
         .thenReturn(List.of(command));
     GameInstance incompleteInstance = new GameInstance();
     incompleteInstance.setId(2L);
@@ -421,7 +428,8 @@ class TickStagingServiceTest {
     GameplayCommand initial = gameplayCommand("cmd-scope-drift");
     GameplayCommand drifted = gameplayCommand("cmd-scope-drift");
     drifted.setRegionEpoch(2L);
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-scope-drift")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-scope-drift")))
         .thenReturn(List.of(initial), List.of(drifted));
 
     assertThrows(
@@ -443,7 +451,8 @@ class TickStagingServiceTest {
   @Test
   void createBatchRejectsDuplicatePendingCommandIdsBeforeAnyDurableWrite() {
     GameplayCommand command = gameplayCommand("cmd-duplicate");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-duplicate")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-duplicate")))
         .thenReturn(List.of(command));
     List<TickQueuedCommandEnvelope> duplicateEntries =
         List.of(
@@ -498,7 +507,8 @@ class TickStagingServiceTest {
     GameplayCommand normal = gameplayCommand("cmd-normal");
     GameplayCommand solo = gameplayCommand("cmd-solo");
     solo.setRequiresSoloTick(true);
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-normal", "cmd-solo")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-normal", "cmd-solo")))
         .thenReturn(List.of(normal, solo));
 
     IllegalStateException exception =
@@ -556,7 +566,8 @@ class TickStagingServiceTest {
     when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
             1L, 2L, "STAGED"))
         .thenReturn(Optional.empty());
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-solo-replay")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-solo-replay")))
         .thenReturn(List.of(command));
 
     TickBatch replayBatch =
@@ -579,7 +590,8 @@ class TickStagingServiceTest {
     when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
             1L, 2L, "STAGED"))
         .thenReturn(Optional.empty());
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-legacy-automation")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-legacy-automation")))
         .thenReturn(List.of(command));
 
     TickStagingService.ReplayResolution resolution =
@@ -606,7 +618,8 @@ class TickStagingServiceTest {
   void equalReplayDigestStillRequiresStoredBatchModeToMatch() {
     GameplayCommand command = gameplayCommand("cmd-mode-mismatch");
     command.setRequiresSoloTick(false);
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-mode-mismatch")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-mode-mismatch")))
         .thenReturn(List.of(command));
     TickBatch existingBatch = new TickBatch();
     existingBatch.setTickBatchId("tb-mode-mismatch");
@@ -654,10 +667,11 @@ class TickStagingServiceTest {
     player.setSourceType("PLAYER");
     player.setCommandText("wave");
     player.setSanitizedCommandText("wave");
-    when(gameplayCommandRepository.findByCommandIdIn(
-            List.of("cmd-incomplete-automation", "cmd-stale-automation", "cmd-player")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-incomplete-automation", "cmd-stale-automation", "cmd-player")))
         .thenReturn(List.of(incompleteAutomation, automation, player));
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-player")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-player")))
         .thenReturn(List.of(player));
     GameInstance currentOwner = new GameInstance();
     currentOwner.setId(2L);
@@ -718,10 +732,11 @@ class TickStagingServiceTest {
     player.setSourceType("PLAYER");
     player.setCommandText("wave");
     player.setSanitizedCommandText("wave");
-    when(gameplayCommandRepository.findByCommandIdIn(
-            List.of("cmd-incomplete-current-replay", "cmd-current-replay-player")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-incomplete-current-replay", "cmd-current-replay-player")))
         .thenReturn(List.of(automation, player));
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-current-replay-player")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-current-replay-player")))
         .thenReturn(List.of(player));
 
     List<Object> replayRawEntries =
@@ -776,15 +791,19 @@ class TickStagingServiceTest {
     sealedPlayer.setSourceType("PLAYER");
     sealedPlayer.setCommandText("wave");
     sealedPlayer.setSanitizedCommandText("wave");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-digest-pending-player")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-digest-pending-player")))
         .thenReturn(List.of(pendingPlayer));
-    when(gameplayCommandRepository.findByCommandIdIn(
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L,
+            2L,
             List.of(
                 "cmd-digest-incomplete-automation",
                 "cmd-digest-stale-automation",
                 "cmd-digest-sealed-player")))
         .thenReturn(List.of(incompleteAutomation, staleAutomation, sealedPlayer));
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-digest-sealed-player")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-digest-sealed-player")))
         .thenReturn(List.of(sealedPlayer));
 
     List<Object> sealedRawEntries =
@@ -844,7 +863,8 @@ class TickStagingServiceTest {
     command.setCommandText("generate");
     command.setSanitizedCommandText("generate");
     command.setScriptPatchVersion("");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-sealed-solo")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-sealed-solo")))
         .thenReturn(List.of(command));
     TickBatch existingBatch = new TickBatch();
     existingBatch.setTickBatchId("tb-sealed-solo");
@@ -886,7 +906,8 @@ class TickStagingServiceTest {
   @Test
   void sealedReplayRejectsSentinelCommandIdBeforeRestagingOrRedisWrites() {
     GameplayCommand pendingCommand = gameplayCommand("cmd-pending");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-pending")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-pending")))
         .thenReturn(List.of(pendingCommand));
     TickBatch existingBatch = new TickBatch();
     existingBatch.setTickBatchId("tb-sentinel");
@@ -930,7 +951,8 @@ class TickStagingServiceTest {
   @Test
   void sealedReplayRejectsUnsafeCommandIdBeforeRestagingOrRedisWrites() {
     GameplayCommand pendingCommand = gameplayCommand("cmd-pending");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-pending")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-pending")))
         .thenReturn(List.of(pendingCommand));
     TickBatch existingBatch = new TickBatch();
     existingBatch.setTickBatchId("tb-unsafe-command-id");
@@ -995,7 +1017,8 @@ class TickStagingServiceTest {
     command.setOriginSourceState("SCHEDULE_DUE_CLAIMED");
     command.setOriginSourceOrdinal(5000L);
     command.setOriginSourceDueAtMs(5000L);
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1")))
         .thenReturn(List.of(command));
 
     TickBatch batch =
@@ -1034,7 +1057,8 @@ class TickStagingServiceTest {
     GameplayCommand invalid = gameplayCommand("cmd-incomplete");
     invalid.setSourceType("AUTOMATION");
     GameplayCommand player = gameplayCommand("cmd-player-valid");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-incomplete", "cmd-player-valid")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-incomplete", "cmd-player-valid")))
         .thenReturn(List.of(invalid, player));
 
     TickStagingService.BatchCreationResult result =
@@ -1071,8 +1095,8 @@ class TickStagingServiceTest {
     first.setSourceType("AUTOMATION");
     GameplayCommand second = gameplayCommand("cmd-incomplete-two");
     second.setSourceType("AUTOMATION");
-    when(gameplayCommandRepository.findByCommandIdIn(
-            List.of("cmd-incomplete-one", "cmd-incomplete-two")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-incomplete-one", "cmd-incomplete-two")))
         .thenReturn(List.of(first, second));
 
     TickStagingService.BatchCreationResult result =
@@ -1109,7 +1133,8 @@ class TickStagingServiceTest {
     command.setScriptPatchVersion(" patch-1 ");
     command.setScriptPinEpoch(1L);
     command.setScriptPinControlPlaneRequestId(" request-1 ");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-padded-pin")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-padded-pin")))
         .thenReturn(List.of(command));
 
     TickBatch batch =
@@ -1134,7 +1159,8 @@ class TickStagingServiceTest {
     command.setScriptPatchVersion("patch-1");
     command.setScriptPinEpoch(2L);
     command.setScriptPinControlPlaneRequestId("request-2");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-different-epoch")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-different-epoch")))
         .thenReturn(List.of(command));
 
     assertThrows(
@@ -1160,7 +1186,8 @@ class TickStagingServiceTest {
     command.setScriptPatchVersion("patch-1");
     command.setScriptPinEpoch(1L);
     command.setScriptPinControlPlaneRequestId("request-old");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-owner-request")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-owner-request")))
         .thenReturn(List.of(command));
 
     assertThrows(
@@ -1182,7 +1209,8 @@ class TickStagingServiceTest {
   @Test
   void createBatchLeavesOrdinaryPlayerCommandOutsideScriptPinBoundary() {
     GameplayCommand command = gameplayCommand("cmd-player");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-player")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-player")))
         .thenReturn(List.of(command));
 
     service.createBatch(
@@ -1203,7 +1231,8 @@ class TickStagingServiceTest {
     command.setScriptPatchVersion("patch-1");
     command.setScriptPinEpoch(2L);
     command.setScriptPinControlPlaneRequestId("request-2");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-replay-different-epoch")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-replay-different-epoch")))
         .thenReturn(List.of(command));
 
     IllegalStateException failure =
@@ -1233,9 +1262,11 @@ class TickStagingServiceTest {
     sealedCommand.setScriptPatchVersion("patch-1");
     sealedCommand.setScriptPinEpoch(1L);
     sealedCommand.setScriptPinControlPlaneRequestId("request-old");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-pending-player")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-pending-player")))
         .thenReturn(List.of(pendingCommand));
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-sealed-owner")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-sealed-owner")))
         .thenReturn(List.of(sealedCommand));
 
     TickBatch existingBatch = new TickBatch();
@@ -1282,9 +1313,11 @@ class TickStagingServiceTest {
     sealedCommand.setScriptPatchVersion("patch-1");
     sealedCommand.setScriptPinEpoch(1L);
     sealedCommand.setScriptPinControlPlaneRequestId("request-1");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-pending-player")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-pending-player")))
         .thenReturn(List.of(pendingCommand));
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-sealed-tamper")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-sealed-tamper")))
         .thenReturn(List.of(sealedCommand));
 
     String sealedManifest = replayManifestJson(service, List.of("N|cmd-sealed-tamper|look"));
@@ -1328,7 +1361,8 @@ class TickStagingServiceTest {
   @Test
   void sealedReplayRejectsStoredManifestDigestTamperBeforeLoadingSealedCommands() {
     GameplayCommand pendingCommand = gameplayCommand("cmd-pending-digest");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-pending-digest")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-pending-digest")))
         .thenReturn(List.of(pendingCommand));
     TickBatch existingBatch = new TickBatch();
     existingBatch.setTickBatchId("tb-digest-tamper");
@@ -1361,7 +1395,8 @@ class TickStagingServiceTest {
                         "region-a", 1L, "fence-a", false, 0L)));
 
     assertTrue(failure.getMessage().contains("manifest digest does not match"));
-    verify(gameplayCommandRepository, never()).findByCommandIdIn(List.of("cmd-sealed-digest"));
+    verify(gameplayCommandRepository, never())
+        .findByTenantIdAndGameInstanceIdAndCommandIdIn(1L, 2L, List.of("cmd-sealed-digest"));
     verify(gameplayCommandRepository, never()).saveAll(any());
     verify(redisTemplate, never()).delete(anyString());
     verify(listOps, never()).leftPush(anyString(), any());
@@ -1371,7 +1406,8 @@ class TickStagingServiceTest {
   @Test
   void sealedReplayRejectsUnknownManifestVersionBeforeAnyMutation() {
     GameplayCommand pendingCommand = gameplayCommand("cmd-unknown-version");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-unknown-version")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-unknown-version")))
         .thenReturn(List.of(pendingCommand));
     String unknownVersionManifest =
         replayManifestJson(service, List.of("N|cmd-unknown-version|look"))
@@ -1417,7 +1453,8 @@ class TickStagingServiceTest {
     command.setScriptPatchVersion("patch-1");
     command.setScriptPinEpoch(1L);
     command.setScriptPinControlPlaneRequestId("request-1");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-legacy-automation")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-legacy-automation")))
         .thenReturn(List.of(command));
     String v1Manifest =
         replayManifestJson(service, List.of("N|cmd-legacy-automation|look"))
@@ -1463,10 +1500,11 @@ class TickStagingServiceTest {
     GameplayCommand sealedAutomation = gameplayCommand("cmd-sealed-incomplete-automation");
     sealedAutomation.setSourceType("AUTOMATION");
     sealedAutomation.setScriptPatchVersion("patch-1");
-    when(gameplayCommandRepository.findByCommandIdIn(
-            List.of("cmd-sealed-incomplete-pending-player")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-sealed-incomplete-pending-player")))
         .thenReturn(List.of(pendingPlayer));
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-sealed-incomplete-automation")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-sealed-incomplete-automation")))
         .thenReturn(List.of(sealedAutomation));
 
     String sealedManifest =
@@ -1510,7 +1548,8 @@ class TickStagingServiceTest {
   void sealedReplayAcceptsLegacyPlayerManifestWithoutPinEvidence() {
     GameplayCommand command = gameplayCommand("cmd-legacy-player");
     command.setSourceType("PLAYER");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-legacy-player")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-legacy-player")))
         .thenReturn(List.of(command));
     String v1Manifest =
         replayManifestJson(service, List.of("N|cmd-legacy-player|look"))
@@ -1551,7 +1590,8 @@ class TickStagingServiceTest {
     command.setOriginSourceKind(null);
     command.setOriginSourceOrdinal(null);
     command.setQueueSourceOrdinal(null);
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1")))
         .thenReturn(List.of(command));
 
     TickBatch initialBatch =
@@ -1591,7 +1631,8 @@ class TickStagingServiceTest {
     command.setWorldSlug("demo");
     command.setRealmSlug("production");
     command.setPointerVersion(null);
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1")))
         .thenReturn(List.of(command));
 
     TickBatch batch =
@@ -1617,7 +1658,8 @@ class TickStagingServiceTest {
     command.setWorldSlug(null);
     command.setRealmSlug(null);
     command.setPointerVersion(17L);
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1")))
         .thenReturn(List.of(command));
 
     TickBatch batch =
@@ -1652,7 +1694,8 @@ class TickStagingServiceTest {
               }
             });
     GameplayCommand command = gameplayCommand("cmd-atomic");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-atomic")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-atomic")))
         .thenReturn(List.of(command));
     doAnswer(
             invocation -> {
@@ -1694,7 +1737,8 @@ class TickStagingServiceTest {
     Instant originalLastAttemptAt = Instant.parse("2026-04-19T00:00:00Z");
     command.setAttemptCount(7);
     command.setLastAttemptAt(originalLastAttemptAt);
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-rollback")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-rollback")))
         .thenReturn(List.of(command));
     doThrow(new IllegalStateException("command attempt write failed"))
         .when(gameplayCommandRepository)
@@ -1717,7 +1761,8 @@ class TickStagingServiceTest {
   @Test
   void resolveReplayBatchRejectsPartialDurableEffectSet() {
     GameplayCommand command = gameplayCommand("cmd-partial");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-partial")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-partial")))
         .thenReturn(List.of(command));
     TickBatch existingBatch = new TickBatch();
     existingBatch.setTickBatchId("tb-partial");
@@ -1774,7 +1819,8 @@ class TickStagingServiceTest {
     command.setOriginSourceState(null);
     command.setOriginSourceOrdinal(null);
     command.setQueueSourceOrdinal(null);
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1")))
         .thenReturn(List.of(command));
     when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
             1L, 2L, "STAGED"))
@@ -1834,7 +1880,9 @@ class TickStagingServiceTest {
     second.setSanitizedCommandText("wave");
     second.setEnqueueSeq(6L);
     second.setSourceType("PLAYER");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1"))).thenReturn(List.of(first));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1")))
+        .thenReturn(List.of(first));
     String sealedManifest = replayManifestJson(service, List.of("N|cmd-1|look"));
     existingBatch.setSelectedWorkManifestJson(sealedManifest);
     existingBatch.setSelectedWorkManifestDigest(
@@ -1853,9 +1901,12 @@ class TickStagingServiceTest {
             })
         .when(gameplayCommandRepository)
         .saveAll(any());
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1", "cmd-2")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1", "cmd-2")))
         .thenReturn(List.of(first, second));
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-2"))).thenReturn(List.of(second));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-2")))
+        .thenReturn(List.of(second));
     when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
             1L, 2L, "STAGED"))
         .thenReturn(Optional.of(existingBatch));
@@ -1912,11 +1963,14 @@ class TickStagingServiceTest {
     redisOnlyCommand.setCommandText("wave");
     redisOnlyCommand.setSanitizedCommandText("wave");
     redisOnlyCommand.setSourceType("PLAYER");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1")))
         .thenReturn(List.of(sealedCommand));
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1", "cmd-2")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1", "cmd-2")))
         .thenReturn(List.of(sealedCommand, redisOnlyCommand));
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-2")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-2")))
         .thenReturn(List.of(redisOnlyCommand));
     String sealedManifest = replayManifestJson(service, List.of("N|cmd-1|look"));
     existingBatch.setSelectedWorkManifestJson(sealedManifest);
@@ -1955,7 +2009,8 @@ class TickStagingServiceTest {
   @Test
   void replayRestoreRemovesTerminalizedEntriesFilteredFromPendingRead() {
     GameplayCommand executable = gameplayCommand("cmd-executable");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-executable")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-executable")))
         .thenReturn(List.of(executable));
     TickQueuedCommandEnvelope terminalized =
         new TickQueuedCommandEnvelope(false, "cmd-terminalized", "look");
@@ -1997,11 +2052,14 @@ class TickStagingServiceTest {
     GameplayCommand redisOnlyCommand = gameplayCommand("cmd-2");
     redisOnlyCommand.setCommandText("wave");
     redisOnlyCommand.setSanitizedCommandText("wave");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1", "cmd-2")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1", "cmd-2")))
         .thenReturn(List.of(sealedCommand, redisOnlyCommand));
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-1")))
         .thenReturn(List.of(sealedCommand));
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-2")))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            1L, 2L, List.of("cmd-2")))
         .thenReturn(List.of(redisOnlyCommand));
     String sealedManifest = replayManifestJson(service, List.of("N|cmd-1|look"));
     replacement.setSelectedWorkManifestJson(sealedManifest);
@@ -2263,9 +2321,11 @@ class TickStagingServiceTest {
   private static String replayManifestJson(TickStagingService service, List<Object> rawEntries) {
     try {
       var selectionsMethod =
-          TickStagingService.class.getDeclaredMethod("commandSelections", List.class);
+          TickStagingService.class.getDeclaredMethod(
+              "commandSelections", Long.class, Long.class, List.class);
       selectionsMethod.setAccessible(true);
-      Object selections = selectionsMethod.invoke(service, parseEntries(service, rawEntries));
+      Object selections =
+          selectionsMethod.invoke(service, 1L, 2L, parseEntries(service, rawEntries));
       var manifestMethod =
           TickStagingService.class.getDeclaredMethod(
               "selectedWorkManifest", String.class, List.class);

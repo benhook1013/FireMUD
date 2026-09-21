@@ -198,7 +198,7 @@ final class TickBatchExecutionService {
     boolean durableRequeueRecorded = true;
     try {
       if (!redisOnlyEntries.isEmpty()) {
-        recordRequeuedActions(redisOnlyEntries);
+        recordRequeuedActions(tenantId, gameInstanceId, redisOnlyEntries);
       }
     } catch (RuntimeException ex) {
       durableRequeueRecorded = false;
@@ -400,7 +400,7 @@ final class TickBatchExecutionService {
         "MANIFEST_MISMATCH",
         failureMessage,
         false);
-    recordRequeuedActions(entries);
+    recordRequeuedActions(batch.getTenantId(), batch.getGameInstanceId(), entries);
     meterRegistry.counter("tick_manifest_mismatch_total").increment();
   }
 
@@ -427,7 +427,7 @@ final class TickBatchExecutionService {
         "INCOMPATIBLE_SEALED_REPLAY",
         message,
         false);
-    recordRequeuedActions(entries);
+    recordRequeuedActions(batch.getTenantId(), batch.getGameInstanceId(), entries);
     // One abandoned batch produces one metric even when its sealed entries are replayed together.
     meterRegistry.counter("tick_incompatible_sealed_replay_total").increment();
   }
@@ -564,7 +564,7 @@ final class TickBatchExecutionService {
           failureCode,
           failureMessage,
           false);
-      recordRequeuedActions(entries);
+      recordRequeuedActions(batch.getTenantId(), batch.getGameInstanceId(), entries);
     }
     remoteFollowupDrainService.releaseClaimedFollowups(
         batch.getTickBatchId(), failureCode, failureMessage);
@@ -804,11 +804,12 @@ final class TickBatchExecutionService {
     }
   }
 
-  private void recordRequeuedActions(List<TickQueuedCommandEnvelope> entries) {
+  private void recordRequeuedActions(
+      Long tenantId, Long gameInstanceId, List<TickQueuedCommandEnvelope> entries) {
     if (entries.isEmpty()) {
       return;
     }
-    recordRequeuedCommands(loadCommands(entries), entries.size());
+    recordRequeuedCommands(loadCommands(tenantId, gameInstanceId, entries), entries.size());
   }
 
   private void recordRequeuedCommands(List<GameplayCommand> commands) {
@@ -995,7 +996,7 @@ final class TickBatchExecutionService {
       String failureMessage,
       boolean completed) {
     List<GameplayCommand> commands =
-        loadCommands(entries).stream()
+        loadCommands(tenantId, gameInstanceId, entries).stream()
             .filter(
                 command ->
                     commandMatchesScope(command, tenantId, gameInstanceId, regionId, regionEpoch))
@@ -1028,7 +1029,8 @@ final class TickBatchExecutionService {
     gameplayCommandRepository.saveAll(commands);
   }
 
-  private List<GameplayCommand> loadCommands(List<TickQueuedCommandEnvelope> entries) {
+  private List<GameplayCommand> loadCommands(
+      Long tenantId, Long gameInstanceId, List<TickQueuedCommandEnvelope> entries) {
     List<String> commandIds =
         entries.stream()
             .map(TickQueuedCommandEnvelope::commandId)
@@ -1038,7 +1040,8 @@ final class TickBatchExecutionService {
     if (commandIds.isEmpty()) {
       return List.of();
     }
-    return gameplayCommandRepository.findByCommandIdIn(commandIds);
+    return gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+        tenantId, gameInstanceId, commandIds);
   }
 
   private List<GameplayCommand> loadCommandsForEffects(TickBatch batch, List<TickEffect> effects) {
@@ -1051,7 +1054,10 @@ final class TickBatchExecutionService {
     if (commandIds.isEmpty()) {
       return List.of();
     }
-    return gameplayCommandRepository.findByCommandIdIn(commandIds).stream()
+    return gameplayCommandRepository
+        .findByTenantIdAndGameInstanceIdAndCommandIdIn(
+            batch.getTenantId(), batch.getGameInstanceId(), commandIds)
+        .stream()
         .filter(
             command ->
                 commandMatchesScope(
