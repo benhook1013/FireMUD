@@ -4,6 +4,16 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 workflow="$repo_root/.github/workflows/static-analysis-summary.yml"
 
+if ! awk '
+  $0 == "  publish-summary:" { in_job = 1; next }
+  in_job && $0 ~ /^  [^ ]/ { exit 1 }
+  in_job && $0 == "    timeout-minutes: 15" { found = 1 }
+  END { exit(found ? 0 : 1) }
+' "$workflow"; then
+  echo "publish-summary must retain a 15-minute timeout" >&2
+  exit 1
+fi
+
 grep -Fq 'github.paginate(github.rest.actions.listWorkflowRuns' "$workflow"
 grep -Fq 'workflowRunFor("codeql.yml")' "$workflow"
 grep -Fq 'workflowRunFor("license-scan.yml")' "$workflow"
