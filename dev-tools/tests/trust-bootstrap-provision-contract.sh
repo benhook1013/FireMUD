@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 helper_path = Path(sys.argv[1])
 spec = importlib.util.spec_from_file_location("scoped_kubeconfigs", helper_path)
@@ -110,6 +111,59 @@ assert recovery_kubeconfig["current-context"] == "firemud-preview-ca-recovery"
 assert recovery_kubeconfig["contexts"][0]["name"] == "firemud-preview-ca-recovery"
 
 source = helper_path.read_text(encoding="utf-8")
+
+
+def expect_provisioning_error(callback, message):
+    try:
+        callback()
+    except module.ProvisioningError as exc:
+        assert message in str(exc)
+    else:
+        raise AssertionError("expected ProvisioningError")
+
+
+def run_auth_can_i_with(status, output):
+    completed = subprocess.CompletedProcess(
+        args=["kubectl", "auth", "can-i"],
+        returncode=status,
+        stdout=output,
+        stderr=b"hidden stderr",
+    )
+    with patch.object(module.subprocess, "run", return_value=completed) as mocked_run:
+        answer = module.run_auth_can_i(["kubectl", "auth", "can-i", "get", "secrets"])
+    mocked_run.assert_called_once_with(
+        ["kubectl", "auth", "can-i", "get", "secrets"],
+        capture_output=True,
+        check=False,
+    )
+    return answer
+
+
+assert run_auth_can_i_with(0, b"yes\n") == "yes"
+assert run_auth_can_i_with(1, b"no\n") == "no"
+expect_provisioning_error(
+    lambda: run_auth_can_i_with(2, b"unexpected command output"),
+    "unexpected status",
+)
+expect_provisioning_error(
+    lambda: run_auth_can_i_with(0, b"yes\nno\n"),
+    "malformed output",
+)
+expect_provisioning_error(
+    lambda: run_auth_can_i_with(0, b"\xff"),
+    "non-UTF-8",
+)
+try:
+    run_auth_can_i_with(0, b"unexpected command output")
+except module.ProvisioningError as exc:
+    assert "unexpected command output" not in str(exc)
+else:
+    raise AssertionError("expected malformed auth can-i output to be rejected")
+
+write_offset = source.index("file.write(kubeconfig)")
+chmod_offset = source.index("Path(file.name).chmod(0o600)")
+assert chmod_offset < write_offset
+
 for required in (
     "--apply --confirm",
     "system:masters",

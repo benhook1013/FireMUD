@@ -148,6 +148,26 @@ def run_command(
     return result.stdout
 
 
+def run_auth_can_i(command: list[str]) -> str:
+    """Run an auth can-i probe and return only its canonical answer."""
+
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        check=False,
+    )
+    expected_answer = {0: "yes", 1: "no"}.get(result.returncode)
+    if expected_answer is None:
+        raise ProvisioningError("kubectl auth can-i returned an unexpected status")
+    try:
+        output = result.stdout.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ProvisioningError("kubectl auth can-i returned non-UTF-8 output") from exc
+    if output not in (expected_answer, f"{expected_answer}\n"):
+        raise ProvisioningError("kubectl auth can-i returned malformed output")
+    return expected_answer
+
+
 def kubectl_command(context: str, *args: str) -> list[str]:
     return ["kubectl", "--context", context, *args]
 
@@ -513,9 +533,9 @@ def wait_for_token(
 
 def verify_generated_kubeconfig(kubeconfig: bytes, credential: Credential, proof_namespace: str) -> None:
     with tempfile.NamedTemporaryFile(prefix="firemud-scoped-", suffix=".kubeconfig") as file:
+        Path(file.name).chmod(0o600)
         file.write(kubeconfig)
         file.flush()
-        Path(file.name).chmod(0o600)
         command = ["kubectl", "--kubeconfig", file.name, "auth", "whoami", "-o", "json"]
         identity_raw = run_command(command)
         try:
@@ -536,7 +556,7 @@ def verify_generated_kubeconfig(kubeconfig: bytes, credential: Credential, proof
                 raise ProvisioningError("generated kubeconfig contains an unknown RBAC probe scope")
             if namespace:
                 args.extend(["-n", namespace])
-            answer = run_command(["kubectl", "--kubeconfig", file.name, *args]).decode("utf-8").strip()
+            answer = run_auth_can_i(["kubectl", "--kubeconfig", file.name, *args])
             if answer != expected:
                 raise ProvisioningError(
                     f"RBAC probe for {credential.service_account} returned an unexpected answer"
@@ -726,10 +746,7 @@ def verify_legacy_no_privileges(context: str, proof_namespace: str) -> None:
         )
         if namespace:
             command.extend(["-n", namespace])
-        try:
-            answer = run_command(command).decode("utf-8").strip()
-        except UnicodeDecodeError as exc:
-            raise ProvisioningError("legacy identity RBAC probe returned non-UTF-8 text") from exc
+        answer = run_auth_can_i(command)
         if answer != "no":
             raise ProvisioningError("legacy preview-deployer identity still has a forbidden privilege")
 
