@@ -22,7 +22,7 @@ require_contains() {
 require_aws_cli_stage() {
   local path="$1"
   local declaration_pattern='^FROM[[:space:]]+(--platform=[^[:space:]]+[[:space:]]+)?public\.ecr\.aws/aws-cli/aws-cli'
-  local stage_pattern='^FROM[[:space:]]+(--platform=[^[:space:]]+[[:space:]]+)?public\.ecr\.aws/aws-cli/aws-cli:[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}([[:space:]]+AS[[:alnum:]_.-]+)?$'
+  local stage_pattern='^FROM[[:space:]]+(--platform=[^[:space:]]+[[:space:]]+)?public\.ecr\.aws/aws-cli/aws-cli:[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}([[:space:]]+[Aa][Ss][[:space:]]+[[:alnum:]_.-]+)?$'
   local aws_cli_stages=()
   mapfile -t aws_cli_stages < <(grep -E "$declaration_pattern" "$path" || true)
   if [[ "${#aws_cli_stages[@]}" != 1 ]]; then
@@ -59,6 +59,9 @@ require_aws_cli_stage "$dockerfile"
 fixture_dir="$(mktemp -d)"
 trap 'rm -rf -- "$fixture_dir"' EXIT
 pinned_aws_cli_stage='FROM public.ecr.aws/aws-cli/aws-cli:2.36.49@sha256:f42bf088cb1456ba9e179ce71fdeb22cc46ff64ea1e3aeae8251ff81391f5bb1'
+aliased_aws_cli_stage='FROM --platform=linux/amd64 public.ecr.aws/aws-cli/aws-cli:2.36.49@sha256:f42bf088cb1456ba9e179ce71fdeb22cc46ff64ea1e3aeae8251ff81391f5bb1 as aws-cli'
+printf '%s\n' "$aliased_aws_cli_stage" > "$fixture_dir/aliased-stage.Dockerfile"
+require_aws_cli_stage "$fixture_dir/aliased-stage.Dockerfile"
 cat > "$fixture_dir/extra-latest.Dockerfile" <<EOF
 $pinned_aws_cli_stage
 FROM public.ecr.aws/aws-cli/aws-cli:latest

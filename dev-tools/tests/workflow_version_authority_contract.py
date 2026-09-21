@@ -254,6 +254,12 @@ def main() -> int:
             ap.read_text(),
             flags=re.MULTILINE,
         )
+        mismatch_text = re.sub(
+            r"^CHROMEDRIVER_LINUX_X86_64_CHECKSUM_VERSION=.*$",
+            f"CHROMEDRIVER_LINUX_X86_64_CHECKSUM_VERSION={mismatched_chromedriver_version}",
+            mismatch_text,
+            flags=re.MULTILINE,
+        )
         (authority_path / "workflow-tool-versions.env").write_text(mismatch_text)
         output_path.write_text("sentinel\n")
         mismatch = subprocess.run(

@@ -404,7 +404,6 @@ assert_job_contains smoke.yml smoke-gate 'const expectedRuntimeEvent = eventIden
 assert_job_contains smoke.yml smoke-gate 'event: expectedRuntimeEvent'
 assert_job_contains smoke.yml smoke-gate 'run.event !== expectedRuntimeEvent'
 assert_job_contains smoke.yml smoke-gate 'expectedRuntimeEvent === "repository_dispatch"'
-assert_job_contains smoke.yml smoke-gate 'run.event === "repository_dispatch"'
 assert_job_contains smoke.yml smoke-gate 'no trusted refresh dispatch exists or it did not complete'
 assert_job_contains smoke.yml smoke-gate 'The stale pull_request source is not accepted.'
 assert_job_contains smoke.yml smoke-gate 'job.name === "PR Full-Stack Smoke"'
@@ -1029,8 +1028,7 @@ require_contains "$smoke_path" 'github.rest.pulls.get({'
 require_contains "$smoke_path" 'pullRequest.state !== "open" ||'
 require_contains "$smoke_path" 'pullRequest.head.sha !== headSha ||'
 require_contains "$smoke_path" 'pullRequest.base.ref !== baseRef'
-require_contains "$smoke_path" 'const matchingRuns = runs.filter((run) => {'
-require_contains "$smoke_path" 'const matching = matchingRuns.reduce((newest, candidate) => {'
+require_contains "$smoke_path" 'let matching = null;'
 require_contains "$smoke_path" 'let fullSmokeJob = null;'
 require_contains "$smoke_path" 'async function failNonTerminalSnapshot(reason) {'
 # shellcheck disable=SC2016 # Assert literal JavaScript template syntax.
@@ -1059,10 +1057,15 @@ require_branch_return \
   'if (resolvedIdentity?.obsolete) {'
 require_contains "$smoke_path" 'mode-required'
 require_contains "$smoke_path" 'Build Runtime Images secure-pr-artifact pr-'
+require_contains "$smoke_path" 'workflowRunQuery.created = `${pullRequestCreatedAt}..*`;'
+require_contains "$smoke_path" 'github.paginate.iterator('
+require_contains "$smoke_path" 'for await (const response of github.paginate.iterator('
 require_contains "$smoke_path" 'run.display_title !== expectedDisplayTitle'
 require_contains "$smoke_path" 'const pullRequests = run.pull_requests ?? [];'
-require_contains "$smoke_path" 'pullRequests.length === 0 || pullRequests.some'
+require_contains "$smoke_path" 'pullRequests.length > 0 &&'
+require_contains "$smoke_path" '!pullRequests.some'
 require_contains "$smoke_path" 'pullRequest.head?.sha === currentIdentity.headSha'
+require_contains "$smoke_path" 'break workflowRunPages;'
 require_contains "$smoke_path" 'workflowRunQuery.head_sha = currentIdentity.headSha;'
 require_contains "$smoke_path" 'github.rest.actions.listJobsForWorkflowRun'
 require_contains "$smoke_path" 'job.name === "PR Full-Stack Smoke"'
@@ -1389,6 +1392,7 @@ const context = {
   payload: {
     pull_request: {
       number: 42,
+      created_at: "2026-09-01T00:00:00Z",
       head: { sha: headSha },
       base: { sha: baseSha, ref: "develop" },
     },
@@ -1398,6 +1402,8 @@ const listWorkflowRuns = async () => undefined;
 const listJobsForWorkflowRun = async () => undefined;
 let smokeStepConclusion = "skipped";
 const workflowRunQueries = [];
+const workflowRunPageReads = [];
+let olderMatchingRunVisited = false;
 const jobQueries = [];
 const github = {
   rest: {
@@ -1425,44 +1431,6 @@ const github = {
     actions: { listWorkflowRuns, listJobsForWorkflowRun },
   },
   paginate: async (method, input) => {
-    if (method === listWorkflowRuns) {
-      workflowRunQueries.push(input);
-      const expectedTitle = `Build Runtime Images secure-pr-artifact pr-42 base-${currentBaseSha} head-${headSha} merge-${currentMergeSha} mode-required`;
-      if (currentBaseSha === baseSha) {
-        return [{
-          id: 101,
-          event: "pull_request",
-          head_sha: headSha,
-          display_title: expectedTitle,
-          status: "completed",
-          conclusion: "success",
-          created_at: "2026-09-20T00:00:00Z",
-          pull_requests: [],
-        }];
-      }
-      return [
-        {
-          id: 102,
-          event: "pull_request",
-          head_sha: headSha,
-          display_title: `Build Runtime Images secure-pr-artifact pr-42 base-${baseSha} head-${headSha} merge-${mergeSha} mode-required`,
-          status: "completed",
-          conclusion: "success",
-          created_at: "2026-09-20T00:00:00Z",
-          pull_requests: [],
-        },
-        {
-          id: 202,
-          event: "repository_dispatch",
-          head_sha: headSha,
-          display_title: expectedTitle,
-          status: "completed",
-          conclusion: "success",
-          created_at: "2026-09-21T00:00:00Z",
-          pull_requests: [],
-        },
-      ];
-    }
     if (method === listJobsForWorkflowRun) {
       jobQueries.push(input);
       return [{
@@ -1478,6 +1446,77 @@ const github = {
     }
     throw new Error("unexpected paginated method");
   },
+};
+github.paginate.iterator = (method, input) => {
+  if (method !== listWorkflowRuns) {
+    throw new Error("unexpected workflow-run iterator method");
+  }
+  workflowRunQueries.push(input);
+  const expectedTitle = `Build Runtime Images secure-pr-artifact pr-42 base-${currentBaseSha} head-${headSha} merge-${currentMergeSha} mode-required`;
+  const pages = currentBaseSha === baseSha
+    ? [[{
+        id: 101,
+        event: "pull_request",
+        head_sha: headSha,
+        display_title: expectedTitle,
+        status: "completed",
+        conclusion: "success",
+        created_at: "2026-09-20T00:00:00Z",
+        pull_requests: [],
+      }]]
+    : [
+        [
+          {
+            id: 102,
+            event: "pull_request",
+            head_sha: headSha,
+            display_title: `Build Runtime Images secure-pr-artifact pr-42 base-${baseSha} head-${headSha} merge-${mergeSha} mode-required`,
+            status: "completed",
+            conclusion: "success",
+            created_at: "2026-09-20T00:00:00Z",
+            pull_requests: [],
+          },
+          {
+            id: 202,
+            event: "repository_dispatch",
+            head_sha: headSha,
+            display_title: expectedTitle,
+            status: "completed",
+            conclusion: "success",
+            created_at: "2026-09-21T00:00:00Z",
+            pull_requests: [],
+          },
+          {
+            id: 201,
+            get event() {
+              olderMatchingRunVisited = true;
+              return "repository_dispatch";
+            },
+            head_sha: headSha,
+            display_title: expectedTitle,
+            status: "completed",
+            conclusion: "success",
+            created_at: "2026-09-20T00:00:00Z",
+            pull_requests: [],
+          },
+        ],
+        [{
+          id: 203,
+          event: "repository_dispatch",
+          head_sha: headSha,
+          display_title: expectedTitle,
+          status: "completed",
+          conclusion: "success",
+          created_at: "2026-09-19T00:00:00Z",
+          pull_requests: [],
+        }],
+      ];
+  return (async function* workflowRunPages() {
+    for (const runs of pages) {
+      workflowRunPageReads.push(runs);
+      yield { data: runs };
+    }
+  })();
 };
 const run = new Function("github", "context", "core", `return (async () => {\n${script}\n})()`);
 async function check(conclusion, expectedFailure) {
@@ -1502,10 +1541,17 @@ check("skipped", true).then(() => check("success", false)).then(() => {
   currentMergeSha = "e".repeat(40);
   currentMergeParents = [{ sha: currentBaseSha }, { sha: headSha }];
   workflowRunQueries.length = 0;
+  workflowRunPageReads.length = 0;
   jobQueries.length = 0;
   return check("success", false).then(() => {
     if (workflowRunQueries.length !== 1 || workflowRunQueries[0].event !== "repository_dispatch") {
       throw new Error("stale PR identity must select a repository_dispatch runtime run");
+    }
+    if (workflowRunQueries[0].created !== "2026-09-01T00:00:00Z..*") {
+      throw new Error("repository_dispatch lookup must start at PR creation time");
+    }
+    if (workflowRunPageReads.length !== 1 || olderMatchingRunVisited) {
+      throw new Error("Smoke Gate must stop after the first exact newest-first event/title match");
     }
     if (jobQueries.length !== 1 || jobQueries[0].run_id !== 202) {
       throw new Error("Smoke Gate must select the exact repository_dispatch event/title tuple");
