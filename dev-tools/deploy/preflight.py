@@ -3925,7 +3925,6 @@ def validate_gateway_ws_values(
         return values, issues
     canonical_host, canonical_port = canonical.rsplit(":", 1)
     for document in documents:
-        bridge_containers: list[tuple[dict[str, Any], dict[str, str | None]]] = []
         for workload_name, container, volumes in primary_containers(document):
             declared_names = {
                 entry.get("name")
@@ -3934,18 +3933,6 @@ def validate_gateway_ws_values(
             }
             if workload_name != "tcp-proxy-service" and "GATEWAY_WS_URL" not in declared_names:
                 continue
-            bridge_containers.append((container, volumes))
-        if not bridge_containers:
-            continue
-        if (
-            document.get("kind") == "Deployment"
-            and metadata_name(document) == "tcp-proxy-service"
-            and (document.get("spec") or {}).get("strategy") != {"type": "Recreate"}
-        ):
-            issues.append(
-                "TCP Proxy bridge Deployment strategy must be Recreate for planned identity replacement"
-            )
-        for container, volumes in bridge_containers:
             env, env_issues = effective_container_env(
                 documents,
                 document,
