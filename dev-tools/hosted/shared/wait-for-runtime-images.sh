@@ -13,12 +13,14 @@ fi
 
 if [[ $# -eq 1 ]]; then
   wait_mode=branch
+  branch_name=develop
   image_tag="$1"
   merge_sha=""
   base_sha=""
   head_sha="$1"
 else
   wait_mode=pull-request
+  branch_name=""
   merge_sha="$1"
   base_sha="$2"
   head_sha="$3"
@@ -252,9 +254,14 @@ while (( SECONDS < deadline )); do
   if [[ "${state}" == "missing" ]]; then
     elapsed_seconds=$((SECONDS - start_epoch))
     if (( elapsed_seconds >= missing_workflow_timeout_seconds )); then
-      printf 'No runtime-images workflow appeared for %s after %ss.\n' \
-        "${image_tag}" "${elapsed_seconds}" >&2
-      printf 'The PR image source or trusted current-base refresh did not appear for the exact merge SHA.\n' >&2
+      if [[ "${wait_mode}" == "branch" ]]; then
+        printf 'No trusted branch runtime-image publication appeared for branch %s and exact head SHA %s after %ss.\n' \
+          "${branch_name}" "${head_sha}" "${elapsed_seconds}" >&2
+      else
+        printf 'No runtime-images workflow appeared for %s after %ss.\n' \
+          "${image_tag}" "${elapsed_seconds}" >&2
+        printf 'The PR image source or trusted current-base refresh did not appear for the exact merge SHA.\n' >&2
+      fi
       exit 1
     fi
 

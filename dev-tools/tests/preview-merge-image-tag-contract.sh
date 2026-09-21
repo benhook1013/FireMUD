@@ -151,12 +151,19 @@ GH_FIXTURE=branch_runs \
   HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
   bash "$WAITER" "$head_sha" >/dev/null
 
-if GH_FIXTURE=branch_wrong \
-  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 \
-  HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
-  HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
-  bash "$WAITER" "$head_sha" >/dev/null 2>&1; then
+if branch_timeout_output="$(
+  GH_FIXTURE=branch_wrong \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 \
+    HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
+    bash "$WAITER" "$head_sha" 2>&1
+)"; then
   echo "branch waiter accepted a non-develop runtime image run" >&2
+  exit 1
+fi
+grep -Fq "No trusted branch runtime-image publication appeared for branch develop and exact head SHA ${head_sha} after" <<<"$branch_timeout_output"
+if grep -Fq 'The PR image source or trusted current-base refresh did not appear for the exact merge SHA.' <<<"$branch_timeout_output"; then
+  echo "branch waiter emitted pull-request timeout wording" >&2
   exit 1
 fi
 
