@@ -1123,9 +1123,7 @@ class RemoteFollowupRuntimeServiceImplTest {
 
   @Test
   void scheduleFollowupUsesOriginInstanceWhenCommandIdIsReused() {
-    when(
-            coordinatorRepository
-                .findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 8L, "cmd-1"))
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 8L, "cmd-1"))
         .thenReturn(Optional.empty());
 
     RemoteFollowupRuntimeService.ScheduleOutcome outcome =
@@ -1136,7 +1134,8 @@ class RemoteFollowupRuntimeServiceImplTest {
     verify(coordinatorRepository)
         .findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 8L, "cmd-1");
     verify(coordinatorRepository)
-        .save(argThat(coordinator -> Long.valueOf(8L).equals(coordinator.getOriginGameInstanceId())));
+        .save(
+            argThat(coordinator -> Long.valueOf(8L).equals(coordinator.getOriginGameInstanceId())));
   }
 
   @Test
@@ -2960,7 +2959,8 @@ class RemoteFollowupRuntimeServiceImplTest {
 
   private static RemoteFollowupRuntimeService.ScheduleRequest scheduleRequest(
       long targetGameInstanceId, long originDeadlineRegionEpoch, long originDeadlineTickId) {
-    return scheduleRequest(7L, targetGameInstanceId, originDeadlineRegionEpoch, originDeadlineTickId);
+    return scheduleRequest(
+        7L, targetGameInstanceId, originDeadlineRegionEpoch, originDeadlineTickId);
   }
 
   private static RemoteFollowupRuntimeService.ScheduleRequest scheduleRequest(

@@ -2023,8 +2023,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     coordinator.setTargetRegionEpoch(8L);
     coordinator.setState("PENDING_REMOTE");
     Mockito.when(
-            remoteCommandCoordinatorRepository
-                .findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-123"))
+            remoteCommandCoordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(
+                1L, 7L, "cmd-123"))
         .thenReturn(Optional.of(coordinator));
     RemoteFollowupRepository remoteFollowupRepository =
         Mockito.mock(RemoteFollowupRepository.class);
@@ -2290,8 +2290,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     foreignCoordinator.setTargetRegionEpoch(12L);
     foreignCoordinator.setState("REMOTE_APPLIED");
     Mockito.when(
-            coordinatorRepository
-                .findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-binding"))
+            coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(
+                1L, 7L, "cmd-binding"))
         .thenReturn(Optional.of(foreignCoordinator));
 
     RemoteFollowupRepository followupRepository = Mockito.mock(RemoteFollowupRepository.class);
@@ -2908,8 +2908,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     coordinator.setTargetRegionEpoch(12L);
     coordinator.setState("REMOTE_APPLIED");
     Mockito.when(
-            remoteCommandCoordinatorRepository
-                .findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "auto-123"))
+            remoteCommandCoordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(
+                1L, 7L, "auto-123"))
         .thenReturn(Optional.of(coordinator));
     RemoteFollowupResult result = new RemoteFollowupResult();
     result.setTenantId(1L);

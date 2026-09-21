@@ -123,9 +123,8 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     GameplayCommand command = findScheduleSourceCommand(request);
 
     Optional<RemoteCommandCoordinator> existingCoordinator =
-        remoteCommandCoordinatorRepository
-            .findByTenantIdAndOriginGameInstanceIdAndCommandId(
-                request.tenantId(), request.originGameInstanceId(), request.commandId());
+        remoteCommandCoordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(
+            request.tenantId(), request.originGameInstanceId(), request.commandId());
     existingCoordinator.ifPresent(existing -> validateExistingCoordinator(existing, request));
     Optional<RemoteFollowup> existingFollowup =
         remoteFollowupRepository
