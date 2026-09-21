@@ -203,6 +203,17 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     GetGameInstanceRuntimeStateResponse runtime = validateActivation(command, existingState);
     if (matches(state, command.targetPluginVersionId(), PluginState.PLUGIN_STATE_ENABLED)) {
       // A fresh request that already matches the committed target is a mutation-free no-op.
+      // Persist its immutable success receipt without touching the runtime row, event history,
+      // notification path, schedule reconciliation, or lifecycle fences.  The receipt is what
+      // makes an exact retry return this result after a later state transition.
+      recordRequest(
+          state,
+          OPERATION_ACTIVATE,
+          controlPlaneRequestId,
+          requestFingerprint,
+          previous,
+          state.getActivePluginVersionId(),
+          now);
       return new ActivationResult(previous, previous, controlPlaneRequestId);
     }
     state.setActivePluginVersionId(command.targetPluginVersionId());
@@ -542,11 +553,27 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
       return true;
     }
     if (targetState.name().equals(state.getPluginState())) {
+      recordRequest(
+          state,
+          operation,
+          requestId,
+          requestFingerprint,
+          previous,
+          state.getActivePluginVersionId(),
+          now);
       return true;
     }
     if (targetState == PluginState.PLUGIN_STATE_DISABLED
         && state.getPluginActivationEpoch() == 0
         && previous.isBlank()) {
+      recordRequest(
+          state,
+          operation,
+          requestId,
+          requestFingerprint,
+          previous,
+          state.getActivePluginVersionId(),
+          now);
       return true;
     }
     if (targetState == PluginState.PLUGIN_STATE_DRAINING

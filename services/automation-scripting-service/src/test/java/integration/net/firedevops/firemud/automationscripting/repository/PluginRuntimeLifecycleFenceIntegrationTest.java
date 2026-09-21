@@ -13,6 +13,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.automationscripting.entity.PluginRuntimeRequestHistory;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.FlywayException;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -121,6 +122,83 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
     }
   }
 
+  @Test
+  void migrationFoundsRetainedRuntimeFenceAndOnlyMatchesCompleteScheduleProvenance() {
+    String retainedSchema = newSchemaName();
+    try {
+      DSLContext retainedDsl = migrateToVersionTwo(retainedSchema);
+      retainedDsl.execute(
+          "insert into plugin_runtime_states "
+              + "(tenant_id, game_instance_id, plugin_id, active_plugin_version_id, plugin_state, status_reason) "
+              + "values ('tenant-retained', 'instance-retained', 'plugin-retained', 'version-1', 'ENABLED', 'retained'), "
+              + "('tenant-empty', 'instance-empty', 'plugin-empty', '', 'DISABLED', 'retained')");
+      insertSchedule(
+          retainedDsl,
+          "tenant-retained",
+          "instance-retained",
+          "plugin-retained",
+          "version-1",
+          "schedule-matching");
+      insertSchedule(
+          retainedDsl,
+          "tenant-retained",
+          "instance-retained",
+          "plugin-retained",
+          "version-old",
+          "schedule-mismatched-version");
+      insertSchedule(
+          retainedDsl,
+          "tenant-empty",
+          "instance-empty",
+          "plugin-empty",
+          "version-never-active",
+          "schedule-orphaned");
+      retainedDsl.execute(
+          "insert into script_work_items "
+              + "(tenant_id, game_instance_id, region_id, region_epoch, entity_id, script_id, "
+              + "plugin_id, plugin_version_id, event_type, event_schema_version, script_patch_version, "
+              + "script_event_id, source_service, trigger_mode) "
+              + "values ('tenant-retained', 'instance-retained', 'region-1', 1, 'entity-1', 'script-1', "
+              + "'plugin-retained', 'version-1', 'onCommand', '1', 'patch-1', 'event-1', 'test', 'MANUAL')");
+
+      migrateExistingSchemaToLatest(retainedSchema);
+      DSLContext migratedDsl = schemaDsl(retainedSchema);
+
+      assertThat(fencePair(migratedDsl, "plugin_runtime_states", "tenant-retained"))
+          .containsExactly(1L, 1L);
+      assertThat(fencePair(migratedDsl, "plugin_runtime_states", "tenant-empty"))
+          .containsExactly(0L, 0L);
+      assertThat(fencePair(migratedDsl, "script_schedule_instances", "schedule-matching"))
+          .containsExactly(1L, 1L);
+      assertThat(fencePair(migratedDsl, "script_schedule_instances", "schedule-mismatched-version"))
+          .containsExactly(0L, 0L);
+      assertThat(fencePair(migratedDsl, "script_schedule_instances", "schedule-orphaned"))
+          .containsExactly(0L, 0L);
+      assertThat(fencePair(migratedDsl, "script_work_items", "event-1")).containsExactly(0L, 0L);
+    } finally {
+      dropSchema(retainedSchema);
+    }
+  }
+
+  @Test
+  void migrationFailsClosedOnRetainedEnabledRuntimeWithoutActiveVersion() {
+    String contradictorySchema = newSchemaName();
+    try {
+      DSLContext retainedDsl = migrateToVersionTwo(contradictorySchema);
+      retainedDsl.execute(
+          "insert into plugin_runtime_states "
+              + "(tenant_id, game_instance_id, plugin_id, active_plugin_version_id, plugin_state, status_reason) "
+              + "values ('tenant-contradictory', 'instance-contradictory', 'plugin-contradictory', '', 'ENABLED', 'retained')");
+
+      assertThatThrownBy(() -> migrateExistingSchemaToLatest(contradictorySchema))
+          .isInstanceOf(FlywayException.class)
+          .hasMessageContaining(
+              "V3 cannot establish plugin lifecycle fence for executable runtime state without active plugin version");
+    } finally {
+      dropSchema(contradictorySchema);
+    }
+  }
+
   private static PluginRuntimeRequestHistory failedReceipt(String requestId, String digest) {
     PluginRuntimeRequestHistory history = new PluginRuntimeRequestHistory();
     history.setTenantId("1");
@@ -151,6 +229,80 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
 
   private DSLContext adminDsl() {
     return DSL.using(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+  }
+
+  private DSLContext migrateToVersionTwo(String targetSchema) {
+    Flyway.configure()
+        .dataSource(dataSource(targetSchema))
+        .locations(MIGRATION_LOCATION)
+        .schemas(targetSchema)
+        .defaultSchema(targetSchema)
+        .target("2")
+        .load()
+        .migrate();
+    return schemaDsl(targetSchema);
+  }
+
+  private void migrateExistingSchemaToLatest(String targetSchema) {
+    Flyway.configure()
+        .dataSource(dataSource(targetSchema))
+        .locations(MIGRATION_LOCATION)
+        .schemas(targetSchema)
+        .defaultSchema(targetSchema)
+        .load()
+        .migrate();
+  }
+
+  private DSLContext schemaDsl(String targetSchema) {
+    return DSL.using(dataSource(targetSchema), SQLDialect.POSTGRES);
+  }
+
+  private void dropSchema(String targetSchema) {
+    adminDsl().execute("DROP SCHEMA " + targetSchema + " CASCADE");
+  }
+
+  private String newSchemaName() {
+    return "plugin_lifecycle_" + UUID.randomUUID().toString().replace("-", "");
+  }
+
+  private void insertSchedule(
+      DSLContext dsl,
+      String tenantId,
+      String gameInstanceId,
+      String pluginId,
+      String pluginVersionId,
+      String scheduleDefinitionId) {
+    dsl.execute(
+        "insert into script_schedule_instances "
+            + "(tenant_id, game_instance_id, script_patch_version, script_id, plugin_id, plugin_version_id, "
+            + "event_type, schedule_definition_id, schedule_kind, cadence_value, cadence_unit, "
+            + "materialization_status, schedule_metadata_json, schedule_semantics_hash) "
+            + "values (?, ?, 'patch-1', 'script-1', ?, ?, 'onInterval', ?, 'INTERVAL', 1, 'SECONDS', "
+            + "'MATERIALIZED', '{}', 'schedule-hash')",
+        tenantId,
+        gameInstanceId,
+        pluginId,
+        pluginVersionId,
+        scheduleDefinitionId);
+  }
+
+  private java.util.List<Long> fencePair(DSLContext dsl, String table, String identity) {
+    String identityColumn =
+        table.equals("plugin_runtime_states") ? "tenant_id" : "schedule_definition_id";
+    if (table.equals("script_work_items")) {
+      identityColumn = "script_event_id";
+    }
+    var row =
+        dsl.fetchOne(
+            "select plugin_activation_epoch, lifecycle_revision from "
+                + table
+                + " where "
+                + identityColumn
+                + " = ?",
+            identity);
+    assertThat(row).isNotNull();
+    return java.util.List.of(
+        row.get("plugin_activation_epoch", Long.class), row.get("lifecycle_revision", Long.class));
   }
 
   private static void await(CountDownLatch latch) {
