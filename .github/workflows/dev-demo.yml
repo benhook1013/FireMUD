@@ -918,7 +918,7 @@ jobs:
             "${{ needs.dev-demo-plan.outputs.telnet_port }}" \
             "${DEV_DEMO_STAGE:-unknown}" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Remove dev-demo runtime kubeconfig
+      - name: Remove dev-demo kubeconfigs
         if: ${{ always() }}
         run: |
           rm -f -- \
@@ -1076,6 +1076,6 @@ jobs:
             "${{ needs.dev-demo-plan.outputs.hostname }}" \
             "${{ needs.dev-demo-plan.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Remove dev-demo runtime kubeconfig
+      - name: Remove dev-demo namespace-manager kubeconfig
         if: ${{ always() }}
         run: rm -f -- "$RUNNER_TEMP/dev-demo-namespace-manager.kubeconfig"

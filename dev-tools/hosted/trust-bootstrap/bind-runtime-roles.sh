@@ -12,7 +12,7 @@ if [[ "$namespace" != dev && ! "$namespace" =~ ^pr-[1-9][0-9]{0,50}$ ]]; then
   exit 2
 fi
 if [[ -z "${KUBECONFIG:-}" || ! -r "$KUBECONFIG" ]]; then
-  echo "KUBECONFIG must name the trusted namespace-manager kubeconfig" >&2
+  echo "KUBECONFIG must name a readable kubeconfig: the first proof namespace may use an explicit system:masters kubeconfig; later runs use the trusted namespace-manager credential" >&2
   exit 2
 fi
 

@@ -322,7 +322,7 @@ ordered = (
     "Validate controller-projected dev-demo identity",
     "Smoke dev-demo over TCP",
     "Summarize dev-demo access",
-    "Remove dev-demo runtime kubeconfig",
+    "Remove dev-demo kubeconfigs",
 )
 positions = [deploy_names.index(name) for name in ordered]
 if positions != sorted(positions):
@@ -505,7 +505,7 @@ for step_name, expected_kubeconfig in expected_deploy_kubeconfigs.items():
             f"dev-demo {step_name} must use {expected_kubeconfig} explicitly"
         )
 
-dev_demo_cleanup = deploy_by_name["Remove dev-demo runtime kubeconfig"]
+dev_demo_cleanup = deploy_by_name["Remove dev-demo kubeconfigs"]
 expected_dev_demo_cleanup = (
     'rm -f -- \\\n'
     '  "$RUNNER_TEMP/dev-demo-namespace-manager.kubeconfig" \\\n'
