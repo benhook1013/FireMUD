@@ -19,6 +19,17 @@ require_contains() {
   }
 }
 
+require_aws_cli_stage() {
+  local path="$1"
+  local stage_pattern='^FROM public\.ecr\.aws/aws-cli/aws-cli:[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}$'
+  local stage_count
+  stage_count="$(grep -Ec "$stage_pattern" "$path" || true)"
+  [[ "$stage_count" == 1 ]] || {
+    echo "$path must contain exactly one versioned, sha256-pinned AWS CLI stage (found $stage_count)" >&2
+    exit 1
+  }
+}
+
 require_count() {
   local path="$1"
   local expected="$2"
@@ -38,7 +49,7 @@ if [[ -z "$velero_version" || -z "$velero_digest" ]]; then
   exit 1
 fi
 require_contains "$dockerfile" "FROM velero/velero:v${velero_version}@${velero_digest} AS velero-cli"
-require_contains "$dockerfile" 'FROM public.ecr.aws/aws-cli/aws-cli:2.31.23@sha256:668ffb01408e03e1002b36886797c1a97b09f7d0f02fba3123f9fcd68a081dc5'
+require_aws_cli_stage "$dockerfile"
 require_contains "$dockerfile" 'COPY --from=velero-cli /velero /usr/local/bin/velero'
 require_contains "$dockerfile" 'COPY dev-tools/backups/verify-backups.sh /opt/firemud/backups/verify-backups.sh'
 require_contains "$dockerfile" 'COPY dev-tools/backups/pg-dump-s3-selection.shlib /opt/firemud/backups/pg-dump-s3-selection.shlib'
@@ -100,6 +111,7 @@ for required in \
   require_contains "$push_verified_image" "$required"
 done
 python3 - "$runtime" <<'PY'
+import re
 import sys
 from pathlib import Path
 
@@ -134,13 +146,22 @@ publish_index = next(
 if not checkout_index < download_index < load_index < login_index < publish_index:
     raise SystemExit("Backup verifier publisher must checkout before artifact load and helper invocation")
 checkout = steps[checkout_index]
-if checkout.get("uses") != "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd":
-    raise SystemExit("Backup verifier publisher must use the pinned checkout action")
+if not re.fullmatch(r"actions/checkout@[0-9a-f]{40}", checkout.get("uses", "")):
+    raise SystemExit("Backup verifier publisher checkout must use an immutable commit pin")
 if checkout.get("with") != {
     "ref": "${{ needs.image-meta.outputs.checkout_ref }}",
     "persist-credentials": False,
 }:
     raise SystemExit("Backup verifier publisher checkout must use the trusted exact commit without persisted credentials")
+login = steps[login_index]
+if not re.fullmatch(r"docker/login-action@[0-9a-f]{40}", login.get("uses", "")):
+    raise SystemExit("Backup verifier publisher login must use an immutable commit pin")
+if login.get("with") != {
+    "registry": "ghcr.io",
+    "username": "${{ github.actor }}",
+    "password": "${{ secrets.GITHUB_TOKEN }}",
+}:
+    raise SystemExit("Backup verifier publisher login must use the scoped GHCR credentials")
 condition = job.get("if", "")
 for required in (
     "github.event_name != 'pull_request'",

@@ -102,6 +102,20 @@ import yaml
 
 workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
 publisher_workflow = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
+
+
+def assert_immutable_action_pin(step, action):
+    uses = step.get("uses", "")
+    assert re.fullmatch(rf"{re.escape(action)}@[0-9a-f]{{40}}", uses), uses
+
+
+for job in workflow["jobs"].values():
+    for step in job.get("steps") or []:
+        uses = step.get("uses", "")
+        for action in ("actions/checkout", "docker/login-action"):
+            if uses.startswith(f"{action}@"):
+                assert_immutable_action_pin(step, action)
+
 pull_request = workflow[True]["pull_request"]
 assert "dev-tools/smoke/**" in pull_request["paths"]
 for required_path in (
@@ -691,6 +705,20 @@ janitor_workflow = yaml.safe_load(Path(sys.argv[7]).read_text(encoding="utf-8"))
 mode_action = yaml.safe_load(Path(sys.argv[8]).read_text(encoding="utf-8"))
 runtime_workflow = yaml.safe_load(Path(sys.argv[9]).read_text(encoding="utf-8"))
 artifact_action = yaml.safe_load(Path(sys.argv[10]).read_text(encoding="utf-8"))
+
+
+def assert_immutable_action_pin(step, action):
+    uses = step.get("uses", "")
+    assert re.fullmatch(rf"{re.escape(action)}@[0-9a-f]{{40}}", uses), uses
+
+
+for job in runtime_workflow["jobs"].values():
+    for step in job.get("steps") or []:
+        uses = step.get("uses", "")
+        for action in ("actions/checkout", "docker/login-action"):
+            if uses.startswith(f"{action}@"):
+                assert_immutable_action_pin(step, action)
+
 push_verified_image = Path(sys.argv[11])
 push_verified_image_text = push_verified_image.read_text(encoding="utf-8")
 assert push_verified_image.is_file()
@@ -1324,6 +1352,7 @@ assert all(
 assert controller_build_job["outputs"]["image_id"] == "${{ steps.smoke.outputs.image_id }}"
 controller_build_steps = controller_build_job["steps"]
 checkout = next(step for step in controller_build_steps if step.get("uses", "").startswith("actions/checkout@"))
+assert_immutable_action_pin(checkout, "actions/checkout")
 assert checkout["with"]["persist-credentials"] is False
 assert checkout["with"]["ref"] == "${{ needs.image-meta.outputs.checkout_ref }}"
 assert controller_build_job["env"]["CONTROLLER_IMAGE"] == (
@@ -1335,9 +1364,7 @@ smoke_index = next(i for i, step in enumerate(controller_build_steps) if step.ge
 export_index = next(i for i, step in enumerate(controller_build_steps) if step.get("name") == "Export exact verified controller image artifact")
 upload_index = next(i for i, step in enumerate(controller_build_steps) if step.get("name") == "Upload exact verified controller image artifact")
 assert login_index < build_index < smoke_index < export_index < upload_index
-assert controller_build_steps[login_index]["uses"] == (
-    "docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee"
-)
+assert_immutable_action_pin(controller_build_steps[login_index], "docker/login-action")
 assert controller_build_steps[login_index]["with"] == {
     "registry": "ghcr.io",
     "username": "${{ github.actor }}",
@@ -1404,9 +1431,7 @@ load_index = next(i for i, step in enumerate(controller_publish_steps) if step.g
 login_index = next(i for i, step in enumerate(controller_publish_steps) if step.get("name") == "Login to GHCR")
 publish_index = next(i for i, step in enumerate(controller_publish_steps) if step.get("name") == "Publish exact verified controller image")
 assert checkout_index < download_index < load_index < login_index < publish_index
-assert controller_publish_steps[checkout_index]["uses"] == (
-    "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
-)
+assert_immutable_action_pin(controller_publish_steps[checkout_index], "actions/checkout")
 assert controller_publish_steps[checkout_index]["with"] == {
     "ref": "${{ needs.image-meta.outputs.checkout_ref }}",
     "persist-credentials": False,
@@ -1627,12 +1652,10 @@ for artifact_job_name in ("prepare-runtime", "deploy-runtime"):
         for step in artifact_job_steps
         if step.get("uses", "").startswith("actions/checkout@")
     )
-    assert trusted_checkout == {
-        "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-        "with": {
-            "ref": "${{ github.event.repository.default_branch }}",
-            "persist-credentials": False,
-        },
+    assert_immutable_action_pin(trusted_checkout, "actions/checkout")
+    assert trusted_checkout["with"] == {
+        "ref": "${{ github.event.repository.default_branch }}",
+        "persist-credentials": False,
     }
     assert artifact_job_steps.index(trusted_checkout) < artifact_job_steps.index(
         artifact_call

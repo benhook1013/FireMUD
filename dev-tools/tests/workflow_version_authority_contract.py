@@ -1342,6 +1342,21 @@ def main() -> int:
     renovate = json.loads((root / "renovate.json").read_text())
     if not {"nodenv", "pyenv", "pip_requirements", "custom.regex"} <= set(renovate["enabledManagers"]):
         fail("Renovate managers incomplete")
+    kubectl_rules = [
+        rule
+        for rule in renovate.get("packageRules", [])
+        if rule.get("matchManagers") == ["custom.regex"]
+        and rule.get("matchPackageNames") == ["kubernetes/kubernetes"]
+    ]
+    if len(kubectl_rules) != 1:
+        fail("Renovate must define exactly one kubectl compatibility rule")
+    kubectl_rule = kubectl_rules[0]
+    if kubectl_rule.get("allowedVersions") != "<1.36.0":
+        fail("Renovate kubectl proposals must remain below 1.36 for the Kubernetes 1.34 cluster")
+    kubectl_notes = "\n".join(kubectl_rule.get("prBodyNotes") or [])
+    for required in ("update-workflow-tool.py kubectl <version>", "cluster-version upgrade"):
+        if required not in kubectl_notes:
+            fail(f"Renovate kubectl guidance is missing: {required}")
     custom_managers = renovate.get("customManagers", [])
     if len(custom_managers) != 11:
         fail("Renovate must define three version-only, five checksum-backed, one Velero chart, one Velero image, and one ORT/ZAP image authority manager")
