@@ -29,9 +29,12 @@ for expected in \
   require_contains "$CLASSIFIER" "$expected"
 done
 
-python3 - "$CI_WORKFLOW" "$SECURITY_WORKFLOW" "$PREVIEW_WORKFLOW" "$ZAP_WORKFLOW" <<'PY'
+python3 - "$CI_WORKFLOW" "$SECURITY_WORKFLOW" "$PREVIEW_WORKFLOW" "$ZAP_WORKFLOW" "$CLASSIFIER" <<'PY'
 import copy
+import json
 from pathlib import Path
+import re
+import subprocess
 import sys
 
 import yaml
@@ -110,6 +113,57 @@ def require_no_step(workflow, job_id, name_suffix, label):
         raise SystemExit(
             f"{label}: unexpected {name_suffix!r} step in jobs/{job_id}"
         )
+
+
+def load_classifier_module_inventories(path_text):
+    node_script = """
+const { ALL_MODULES, BOOTABLE_MODULES } = require(process.argv[1]);
+process.stdout.write(JSON.stringify({
+  allModules: ALL_MODULES,
+  bootableModules: [...BOOTABLE_MODULES],
+}));
+"""
+    try:
+        result = subprocess.run(
+            ["node", "-e", node_script, path_text],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        inventories = json.loads(result.stdout)
+    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+        raise SystemExit(
+            f"classifier inventory export could not be loaded from {path_text}: {exc}"
+        ) from exc
+    if not isinstance(inventories, dict):
+        raise SystemExit("classifier inventory export must be an object")
+    return inventories
+
+
+def parse_fallback_array(script, key, label):
+    matches = list(
+        re.finditer(
+            rf"(?m)^[ \t]*{re.escape(key)}:[ \t]*\[(.*?)\]",
+            script,
+            re.DOTALL,
+        )
+    )
+    if len(matches) != 1:
+        raise SystemExit(
+            f"{label}: expected one fallback {key} array, found {len(matches)}"
+        )
+    body = matches[0].group(1)
+    string_pattern = re.compile(r'"(?:\\.|[^"\\])*"')
+    values = []
+    cursor = 0
+    for match in string_pattern.finditer(body):
+        if not re.fullmatch(r"[\s,]*", body[cursor : match.start()]):
+            raise SystemExit(f"{label}: fallback {key} array contains invalid syntax")
+        values.append(json.loads(match.group(0)))
+        cursor = match.end()
+    if not re.fullmatch(r"[\s,]*", body[cursor:]):
+        raise SystemExit(f"{label}: fallback {key} array contains invalid syntax")
+    return values
 
 
 CI_GATING_STEPS = (
@@ -223,6 +277,26 @@ require_contains(
     "Base revision predates the change classifier; using complete validation scope.",
     "ci workflow",
 )
+classifier_inventories = load_classifier_module_inventories(sys.argv[5])
+for key, inventory_key in (
+    ("affected_modules", "allModules"),
+    ("bootable_modules", "bootableModules"),
+):
+    expected = classifier_inventories.get(inventory_key)
+    if not isinstance(expected, list):
+        raise SystemExit(
+            f"classifier inventory export {inventory_key!r} must be an array"
+        )
+    actual = parse_fallback_array(
+        value_at(ci_compute_step, ("with", "script"), "ci workflow"),
+        key,
+        "ci workflow",
+    )
+    if actual != expected:
+        raise SystemExit(
+            f"ci workflow: fallback {key} must exactly match classifier export "
+            f"{inventory_key}, got {actual!r}, expected {expected!r}"
+        )
 
 require_equal(
     ci,
