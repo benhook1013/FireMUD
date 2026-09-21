@@ -6,6 +6,8 @@ readonly PREVIEW_DOMAIN='preview.firedevops.net'
 readonly PUBLIC_ISSUER='letsencrypt-prod'
 readonly INTERNAL_ISSUER='firemud-ca-issuer'
 
+# The default operation is restricted to Certificate writes and readiness.
+# --wait is the separate runtime-credential operation for Secret readback.
 certificate_wait_timeout_seconds="${CERTIFICATE_WAIT_TIMEOUT_SECONDS:-$DEFAULT_CERTIFICATE_WAIT_TIMEOUT_SECONDS}"
 if [[ ! "$certificate_wait_timeout_seconds" =~ ^[1-9][0-9]{0,3}$ ]] ||
   ((10#$certificate_wait_timeout_seconds > 3600)); then
@@ -13,12 +15,17 @@ if [[ ! "$certificate_wait_timeout_seconds" =~ ^[1-9][0-9]{0,3}$ ]] ||
   exit 2
 fi
 
-if [[ $# -ne 1 ]]; then
-  echo "usage: $0 <pr-N-namespace>" >&2
+transport_operation='write'
+if [[ $# -eq 1 && "$1" != --wait ]]; then
+  namespace="$1"
+elif [[ $# -eq 2 && "$1" == --wait ]]; then
+  transport_operation='wait'
+  namespace="$2"
+else
+  echo "usage: $0 [--wait] <pr-N-namespace>" >&2
   exit 2
 fi
 
-namespace="$1"
 if [[ ! "$namespace" =~ ^pr-[1-9][0-9]{0,50}$ ]]; then
   echo "runtime namespace must be canonical pr-N: ${namespace}" >&2
   exit 2
@@ -32,7 +39,8 @@ gateway_dns_name="spring-cloud-gateway-mtls.${namespace}.svc.cluster.local"
 bridge_uri_san="spiffe://firemud/ns/${namespace}/sa/tcp-proxy-service"
 deadline=$((SECONDS + certificate_wait_timeout_seconds))
 
-cat <<EOF | kubectl --namespace "$namespace" apply -f -
+write_certificates() {
+  cat <<EOF | kubectl --namespace "$namespace" apply -f -
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -111,6 +119,7 @@ spec:
     kind: ClusterIssuer
     group: cert-manager.io
 EOF
+}
 
 wait_for_certificates() {
   local certificate remaining
@@ -168,9 +177,13 @@ wait_for_secret_projection() {
   return 1
 }
 
-wait_for_certificates
-wait_for_secret_projection "$telnet_certificate" 'tls.crt,tls.key'
-wait_for_secret_projection "$gateway_certificate" 'tls.crt,tls.key,ca.crt'
-wait_for_secret_projection "$bridge_certificate" 'tls.crt,tls.key,ca.crt'
-
-printf 'namespace=%s\ncertificates=ready\nsecrets=key-complete\n' "$namespace"
+if [[ "$transport_operation" == write ]]; then
+  write_certificates
+  wait_for_certificates
+  printf 'namespace=%s\ncertificates=ready\n' "$namespace"
+else
+  wait_for_secret_projection "$telnet_certificate" 'tls.crt,tls.key'
+  wait_for_secret_projection "$gateway_certificate" 'tls.crt,tls.key,ca.crt'
+  wait_for_secret_projection "$bridge_certificate" 'tls.crt,tls.key,ca.crt'
+  printf 'namespace=%s\nsecrets=key-complete\n' "$namespace"
+fi

@@ -104,7 +104,7 @@ expect_invalid_target "Invalid dev-demo image tag" dev "$valid_head" "" 32016
 expect_invalid_target "Invalid dev-demo image tag" dev "$valid_head" 'invalid/tag' 32016
 expect_invalid_target "Invalid dev-demo Telnet port" dev "$valid_head" "$valid_head" 32017
 
-python3 - "$workflow" "$reconciler" "$requester" "$waiter" "$annotator" "$target_validator" "$reconcile_step" "$mode_action" "$ROOT_DIR/dev-tools/validation/check_dev_demo_summary.py" <<'PY'
+python3 - "$workflow" "$reconciler" "$requester" "$waiter" "$annotator" "$target_validator" "$reconcile_step" "$mode_action" "$ROOT_DIR/.github/workflows/hosted-identity-request.yml" "$ROOT_DIR/dev-tools/validation/check_dev_demo_summary.py" <<'PY'
 from __future__ import annotations
 
 import importlib.util
@@ -116,7 +116,7 @@ from pathlib import Path
 
 import yaml
 
-workflow_path, reconciler_path, requester_path, waiter_path, annotator_path, target_validator_path, reconcile_script_path, mode_action_path, validator_script_path = map(
+workflow_path, reconciler_path, requester_path, waiter_path, annotator_path, target_validator_path, reconcile_script_path, mode_action_path, hosted_identity_workflow_path, validator_script_path = map(
     Path, sys.argv[1:]
 )
 validator_spec = importlib.util.spec_from_file_location(
@@ -129,6 +129,9 @@ sys.modules[validator_spec.name] = validator
 validator_spec.loader.exec_module(validator)
 workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
 reconciler = yaml.safe_load(reconciler_path.read_text(encoding="utf-8"))
+hosted_identity_workflow = yaml.safe_load(
+    hosted_identity_workflow_path.read_text(encoding="utf-8")
+)
 requester = requester_path.read_text(encoding="utf-8")
 waiter = waiter_path.read_text(encoding="utf-8")
 annotator = annotator_path.read_text(encoding="utf-8")
@@ -298,14 +301,19 @@ if workflow["jobs"]["dev-demo-deploy"].get("environment") != "trusted-hosted-clu
 if deploy_by_name["Resolve certificate identity mode"] != expected_mode_step:
     raise SystemExit("dev-demo deploy must use the shared certificate identity action exactly")
 ordered = (
+    "Write trusted namespace-manager kubeconfig",
+    "Verify dev-demo namespace-manager kubeconfig",
     "Check Hosted identity requester credentials",
     "Require Hosted identity requester credentials",
+    "Reset dev-demo namespace for clean deploy",
+    "Ensure dev-demo namespace exists",
     "Record exact dev-demo runtime target",
+    "Bind scoped runtime and certificate roles",
+    "Write dev-demo runtime credentials",
     "Write hosted identity requester kubeconfig",
     "Discover HostedEnvironmentIdentity API",
     "Require HostedEnvironmentIdentity API",
     "Apply fixed dev-demo Active request",
-    "Remove hosted identity requester kubeconfig",
     "Wait for all controller identity projections",
     "Deploy dev-demo release",
     "Record exact deployed dev-demo head",
@@ -314,6 +322,7 @@ ordered = (
     "Validate controller-projected dev-demo identity",
     "Smoke dev-demo over TCP",
     "Summarize dev-demo access",
+    "Remove dev-demo kubeconfigs",
 )
 positions = [deploy_names.index(name) for name in ordered]
 if positions != sorted(positions):
@@ -431,12 +440,24 @@ if (
     '  "${{ needs.dev-demo-plan.outputs.namespace }}" 900'
 ) not in readiness_run:
     raise SystemExit("dev-demo readiness wait does not use the derived runtime namespace")
-runtime_kubeconfig = deploy_by_name["Write dev-demo runtime kubeconfig"]
-for required in (
-    'KUBECONFIG=$KUBECONFIG_PATH',
-):
-    if required not in runtime_kubeconfig["run"]:
-        raise SystemExit(f"dev-demo runtime kubeconfig initialization lacks {required}")
+manager_kubeconfig = deploy_by_name["Write trusted namespace-manager kubeconfig"]
+if manager_kubeconfig.get("uses") != "./.github/actions/write-kubeconfig":
+    raise SystemExit("dev-demo namespace manager must use the canonical kubeconfig action")
+if manager_kubeconfig.get("with") != {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+    "export-to-github-env": "false",
+}:
+    raise SystemExit("dev-demo namespace manager action does not use the scoped manager secret")
+runtime_kubeconfig = deploy_by_name["Write dev-demo runtime credentials"]
+if runtime_kubeconfig.get("uses") != "./.github/actions/write-kubeconfig":
+    raise SystemExit("dev-demo runtime deployer must use the canonical kubeconfig action")
+if runtime_kubeconfig.get("with") != {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_RUNTIME_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "export-to-github-env": "false",
+}:
+    raise SystemExit("dev-demo runtime deployer action does not use the scoped runtime secret")
 requester_writer = deploy_by_name["Write hosted identity requester kubeconfig"]
 if requester_writer.get("uses") != "./.github/actions/write-kubeconfig":
     raise SystemExit("dev-demo Active requester must use the canonical kubeconfig action")
@@ -453,21 +474,78 @@ if active_request.get("env") != {
     raise SystemExit("dev-demo Active request does not scope KUBECONFIG to its requester file")
 if "Restore dev-demo runtime kubeconfig after Active request" in deploy_by_name:
     raise SystemExit("dev-demo Active requester must not require runtime credential restore")
-deploy_requester_cleanup = deploy_by_name["Remove hosted identity requester kubeconfig"]
-if deploy_requester_cleanup.get("if") != (
-    "${{ always() && steps.certificate-identity.outputs.mode == 'hosted-controller' }}"
-):
+if "Remove hosted identity requester kubeconfig" in deploy_by_name:
+    raise SystemExit("dev-demo requester credential must not be removed before controller readiness")
+
+expected_deploy_kubeconfigs = {
+    "Verify cluster access": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+    "Reset dev-demo namespace for clean deploy": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+    "Ensure dev-demo namespace exists": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+    "Record exact dev-demo runtime target": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+    "Bind scoped runtime and certificate roles": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+    "Discover HostedEnvironmentIdentity API": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
+    "Apply fixed dev-demo Active request": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
+    "Wait for all controller identity projections": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Ensure GHCR pull secret exists": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Ensure dev-demo gRPC TLS secret exists": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Validate dev-demo chart render": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Deploy dev-demo release": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Record exact deployed dev-demo head": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+    "Show deployed dev-demo services": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Show dev-demo rollout diagnostics": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Wait for dev-demo runtime rollouts": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Wait for exact dev-demo controller readiness": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
+    "Validate controller-projected dev-demo identity": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Create dev-demo smoke account": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+}
+for step_name, expected_kubeconfig in expected_deploy_kubeconfigs.items():
+    actual_env = deploy_by_name[step_name].get("env", {})
+    if actual_env.get("KUBECONFIG") != expected_kubeconfig:
+        raise SystemExit(
+            f"dev-demo {step_name} must use {expected_kubeconfig} explicitly"
+        )
+
+dev_demo_cleanup = deploy_by_name["Remove dev-demo kubeconfigs"]
+expected_dev_demo_cleanup = (
+    'rm -f -- \\\n'
+    '  "$RUNNER_TEMP/dev-demo-namespace-manager.kubeconfig" \\\n'
+    '  "$RUNNER_TEMP/dev-demo-runtime.kubeconfig" \\\n'
+    '  "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"\n'
+)
+if dev_demo_cleanup.get("run") != expected_dev_demo_cleanup:
     raise SystemExit(
-        "dev-demo deploy requester credential cleanup must always run in hosted-controller mode"
+        "dev-demo runtime kubeconfig cleanup must preserve literal shell newlines"
     )
-if deploy_requester_cleanup.get("run") != (
+if dev_demo_cleanup.get("if") != "${{ always() }}":
+    raise SystemExit("dev-demo kubeconfig cleanup must always run")
+
+hosted_deploy_steps = hosted_identity_workflow["jobs"]["deploy-runtime"]["steps"]
+hosted_deploy_cleanup = next(
+    step
+    for step in hosted_deploy_steps
+    if step.get("name") == "Remove runtime kubeconfig"
+)
+expected_hosted_deploy_cleanup = (
+    'rm -f -- \\\n'
+    '  "$RUNNER_TEMP/preview-namespace-manager.kubeconfig" \\\n'
+    '  "$RUNNER_TEMP/preview-runtime.kubeconfig" \\\n'
+    '  "$RUNNER_TEMP/standalone-certificate-writer.kubeconfig"\n'
+)
+if hosted_deploy_cleanup.get("run") != expected_hosted_deploy_cleanup:
+    raise SystemExit(
+        "hosted preview runtime kubeconfig cleanup must preserve literal shell newlines"
+    )
+hosted_deploy_requester_cleanup = next(
+    step
+    for step in hosted_deploy_steps
+    if step.get("name") == "Remove requester kubeconfig"
+)
+if hosted_deploy_requester_cleanup.get("if") != "${{ always() }}":
+    raise SystemExit("hosted preview requester kubeconfig cleanup must always run")
+if hosted_deploy_requester_cleanup.get("run") != (
     'rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"'
 ):
-    raise SystemExit("dev-demo deploy requester credential cleanup targets the wrong file")
-if deploy_names.index("Remove hosted identity requester kubeconfig") != (
-    deploy_names.index("Apply fixed dev-demo Active request") + 1
-):
-    raise SystemExit("dev-demo Active requester credential is not removed after request")
+    raise SystemExit("hosted preview requester cleanup targets the wrong file")
 standalone_condition = deploy_by_name["Ensure dev-demo gRPC TLS secret exists"].get("if", "")
 if "steps.certificate-identity.outputs.mode == 'standalone'" not in standalone_condition:
     raise SystemExit("standalone gRPC setup is not isolated from controller identity")
@@ -559,7 +637,7 @@ if workflow["jobs"]["dev-demo-destroy"].get("environment") != "trusted-hosted-cl
 if destroy_by_name["Resolve certificate identity mode"] != expected_mode_step:
     raise SystemExit("dev-demo destroy must use the shared certificate identity action exactly")
 destroy_order = (
-    "Write dev-demo runtime kubeconfig",
+    "Write trusted namespace-manager kubeconfig",
     "Delete dev-demo namespace and release",
     "Confirm exact dev-demo runtime NotFound",
     "Check Hosted identity requester credentials",
@@ -585,6 +663,11 @@ expected_hosted_controller_condition = (
 runtime_not_found = destroy_by_name["Confirm exact dev-demo runtime NotFound"]
 if runtime_not_found.get("if") != expected_hosted_controller_condition:
     raise SystemExit("dev-demo runtime absence proof must remain independent of requester/API availability")
+if runtime_not_found.get("env") != {
+    "RUNTIME_NAMESPACE": "${{ needs.dev-demo-plan.outputs.namespace }}",
+    "KUBECONFIG": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+}:
+    raise SystemExit("dev-demo runtime absence proof must use the namespace-manager kubeconfig")
 identity_existence = destroy_by_name[
     "Check HostedEnvironmentIdentity existence before retirement"
 ]
@@ -699,9 +782,15 @@ for step_name, step in (
         )
     if step.get("env") != requester_kubeconfig_env:
         raise SystemExit(f"dev-demo {step_name} does not scope requester KUBECONFIG")
-destroy_runtime_kubeconfig = destroy_by_name["Write dev-demo runtime kubeconfig"]
-if "DEV_DEMO_RUNTIME_KUBECONFIG" in destroy_runtime_kubeconfig["run"]:
-    raise SystemExit("dev-demo destroy retained an unnecessary runtime kubeconfig restore variable")
+destroy_runtime_kubeconfig = destroy_by_name["Write trusted namespace-manager kubeconfig"]
+if destroy_runtime_kubeconfig.get("uses") != "./.github/actions/write-kubeconfig":
+    raise SystemExit("dev-demo destroy must use the canonical namespace-manager kubeconfig action")
+if destroy_runtime_kubeconfig.get("with") != {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+    "export-to-github-env": "false",
+}:
+    raise SystemExit("dev-demo destroy must use the scoped namespace-manager secret")
 destroy_requester_writer = destroy_by_name["Write hosted identity requester kubeconfig"]
 if destroy_requester_writer.get("with") != {
     "content": "${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}",
@@ -779,6 +868,19 @@ if len(reconcile_checkouts) != 1:
     raise SystemExit("dev-demo reconciler must define exactly one checkout")
 if reconcile_checkouts[0].get("with", {}).get("persist-credentials") is not False:
     raise SystemExit("dev-demo reconciler checkout must not persist credentials")
+reconcile_manager_write = next(
+    step
+    for step in reconcile_steps
+    if step.get("name") == "Write trusted namespace-manager kubeconfig"
+)
+if reconcile_manager_write.get("uses") != "./.github/actions/write-kubeconfig":
+    raise SystemExit("dev-demo reconciler must use the canonical namespace-manager kubeconfig action")
+if reconcile_manager_write.get("with") != {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+    "export-to-github-env": "false",
+}:
+    raise SystemExit("dev-demo reconciler must disable GitHub environment kubeconfig export")
 reconcile_step_run = next(
     step["run"]
     for step in reconcile_steps
