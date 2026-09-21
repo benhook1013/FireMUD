@@ -1098,7 +1098,7 @@ jobs:
             exit 1
           }
           [[ -n "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID" ]] || {
-            echo "::error title=Missing preview runtime Namespace UID::The verification UID fence was not captured." >&2
+            echo "::error title=Missing deployed preview runtime Namespace UID::The deploy job did not publish its post-apply Namespace UID." >&2
             exit 1
           }
           [[ "$CAPTURED_RUNTIME_NAMESPACE_UID" == "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID" ]] || {

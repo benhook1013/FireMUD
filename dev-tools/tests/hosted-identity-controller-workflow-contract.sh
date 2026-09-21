@@ -2234,6 +2234,7 @@ for required in (
     '"firemud.dev/requested-preview-head-sha"',
     '"firemud.dev/last-preview-head-sha"',
     '"$CAPTURED_RUNTIME_NAMESPACE_UID" == "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID"',
+    '::error title=Missing deployed preview runtime Namespace UID::The deploy job did not publish its post-apply Namespace UID.',
     '::error title=Preview runtime namespace UID fence failed::',
     '::error title=Preview runtime namespace UID changed::',
 ):
