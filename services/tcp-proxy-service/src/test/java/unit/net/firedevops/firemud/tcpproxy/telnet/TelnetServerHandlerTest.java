@@ -175,13 +175,13 @@ class TelnetServerHandlerTest {
       AtomicReference<WebSocket.Listener> listenerRef,
       CompletableFuture<WebSocket> pendingConnection) {
     return (clientIp,
-            proxyConnectionId,
-            sessionId,
-            tenantId,
-            worldSlug,
-            realmSlug,
-            pointerVersion,
-            listener) -> {
+        proxyConnectionId,
+        sessionId,
+        tenantId,
+        worldSlug,
+        realmSlug,
+        pointerVersion,
+        listener) -> {
       listenerRef.set(listener);
       return pendingConnection;
     };
@@ -228,10 +228,7 @@ class TelnetServerHandlerTest {
     AtomicReference<WebSocket.Listener> listenerRef = new AtomicReference<>();
     CompletableFuture<WebSocket> pendingConnection = new CompletableFuture<>();
     TelnetServerHandler handler =
-        newHandler(
-            registry,
-            false,
-            capturingConnector(listenerRef, pendingConnection));
+        newHandler(registry, false, capturingConnector(listenerRef, pendingConnection));
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     EventExecutor executor = mock(EventExecutor.class);
@@ -261,10 +258,7 @@ class TelnetServerHandlerTest {
     AtomicReference<WebSocket.Listener> listenerRef = new AtomicReference<>();
     CompletableFuture<WebSocket> pendingConnection = new CompletableFuture<>();
     TelnetServerHandler handler =
-        newHandler(
-            registry,
-            false,
-            capturingConnector(listenerRef, pendingConnection));
+        newHandler(registry, false, capturingConnector(listenerRef, pendingConnection));
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     ChannelFuture closeFuture = mock(ChannelFuture.class);
     Channel channel = mock(Channel.class);
@@ -577,10 +571,7 @@ class TelnetServerHandlerTest {
           }
         };
     TelnetServerHandler handler =
-        newHandler(
-            registry,
-            false,
-            capturingConnector(listenerRef, pendingConnection));
+        newHandler(registry, false, capturingConnector(listenerRef, pendingConnection));
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -744,10 +735,7 @@ class TelnetServerHandlerTest {
           }
         };
     TelnetServerHandler handler =
-        newHandler(
-            registry,
-            false,
-            capturingConnector(listenerRef, pendingConnection));
+        newHandler(registry, false, capturingConnector(listenerRef, pendingConnection));
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     ChannelFuture closeFuture = mock(ChannelFuture.class);
     Channel channel = mock(Channel.class);
@@ -780,10 +768,7 @@ class TelnetServerHandlerTest {
     AtomicReference<WebSocket.Listener> listenerRef = new AtomicReference<>();
     CompletableFuture<WebSocket> pendingConnection = new CompletableFuture<>();
     TelnetServerHandler handler =
-        newHandler(
-            registry,
-            false,
-            capturingConnector(listenerRef, pendingConnection));
+        newHandler(registry, false, capturingConnector(listenerRef, pendingConnection));
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     ChannelFuture closeFuture = mock(ChannelFuture.class);
     Channel channel = mock(Channel.class);
