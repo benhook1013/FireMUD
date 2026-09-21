@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
+import java.util.Objects;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import org.flywaydb.core.Flyway;
@@ -34,6 +35,8 @@ class AccountRepositoryIntegrationTest {
   private static final String MIGRATION_PROOF_SCHEMA = "account_migration_proof";
   private static final String COLLISION_MIGRATION_PROOF_SCHEMA =
       "account_migration_collision_proof";
+  private static final String PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA =
+      "account_profile_identity_migration_proof";
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -184,6 +187,103 @@ class AccountRepositoryIntegrationTest {
                     + COLLISION_MIGRATION_PROOF_SCHEMA
                     + ".accounts WHERE username = 'collision-second'"))
         .isEqualTo(" player@example.com ");
+  }
+
+  @Test
+  void profilesAllowOneGlobalAccountAcrossTenantsButRejectDuplicateTenantIdentity() {
+    Number accountIdValue =
+        Objects.requireNonNull(
+            (Number)
+                dsl.fetchValue(
+                    "INSERT INTO accounts (username, email, password_hash) "
+                        + "VALUES ('profile-owner', 'profile-owner@example.com', 'hash') "
+                        + "RETURNING id"));
+    long accountId = accountIdValue.longValue();
+
+    dsl.execute(
+        "INSERT INTO profiles (account_id, tenant_id, display_name) VALUES (?, ?, ?)",
+        accountId,
+        101L,
+        "Tenant One");
+    dsl.execute(
+        "INSERT INTO profiles (account_id, tenant_id, display_name) VALUES (?, ?, ?)",
+        accountId,
+        202L,
+        "Tenant Two");
+
+    assertThat(
+            dsl.fetchValue(
+                "SELECT COUNT(*) FROM profiles WHERE account_id = ?", Long.class, accountId))
+        .isEqualTo(2L);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "INSERT INTO profiles (account_id, tenant_id, display_name) "
+                        + "VALUES (?, ?, ?)",
+                    accountId,
+                    101L,
+                    "Tenant One Duplicate"))
+        .isInstanceOf(DataAccessException.class)
+        .hasStackTraceContaining("profiles_tenant_account_unique");
+  }
+
+  @Test
+  void flywayRejectsRetainedDuplicateProfileTenantIdentityBeforeAddingConstraint() {
+    Flyway.configure()
+        .dataSource(dataSource)
+        .locations(MIGRATION_LOCATION)
+        .schemas(PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA)
+        .defaultSchema(PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA)
+        .target("24")
+        .load()
+        .migrate();
+
+    Number accountIdValue =
+        Objects.requireNonNull(
+            (Number)
+                dsl.fetchValue(
+                    "INSERT INTO "
+                        + PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA
+                        + ".accounts (username, email, password_hash) "
+                        + "VALUES ('duplicate-profile-owner', 'duplicate-profile-owner@example.com', 'hash') "
+                        + "RETURNING id"));
+    long accountId = accountIdValue.longValue();
+    dsl.execute(
+        "INSERT INTO "
+            + PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA
+            + ".profiles (account_id, tenant_id, display_name) VALUES (?, ?, ?)",
+        accountId,
+        303L,
+        "Retained First");
+    dsl.execute(
+        "INSERT INTO "
+            + PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA
+            + ".profiles (account_id, tenant_id, display_name) VALUES (?, ?, ?)",
+        accountId,
+        303L,
+        "Retained Duplicate");
+
+    assertThatThrownBy(
+            () ->
+                Flyway.configure()
+                    .dataSource(dataSource)
+                    .locations(MIGRATION_LOCATION)
+                    .schemas(PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA)
+                    .defaultSchema(PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA)
+                    .load()
+                    .migrate())
+        .isInstanceOf(FlywayException.class)
+        .hasStackTraceContaining("profiles_tenant_account_identity_collision");
+
+    assertThat(
+            dsl.fetchValue(
+                "SELECT COUNT(*) FROM "
+                    + PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA
+                    + ".profiles WHERE account_id = ? AND tenant_id = ?",
+                Long.class,
+                accountId,
+                303L))
+        .isEqualTo(2L);
   }
 
   private Account account(String username, String email, AccountLifecycleState lifecycleState) {
