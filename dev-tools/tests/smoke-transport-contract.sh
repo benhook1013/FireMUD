@@ -580,6 +580,7 @@ assert max(blocked_websocket_drain.timeouts) <= 0.09
 for invalid_command in (
     "LOOK\nNORTH",
     "LOGIN demo@example.test secret-with-newline\nINJECT",
+    "LOOK \u2603",
 ):
     invalid_session = FakeSession(["OK SHOULD NOT ARRIVE\n"])
     try:
