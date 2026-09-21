@@ -1391,7 +1391,6 @@ jobs:
       - name: Set up kubectl
         uses: ./.github/actions/setup-kubectl
       - name: Check Hosted identity requester credentials
-        id: requester-credentials
         env:
           REQUESTER_KUBECONFIG: ${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
         run: |
@@ -1400,22 +1399,18 @@ jobs:
             echo "::error title=Missing Hosted identity requester credentials::Cannot retire hosted identity without the trusted requester kubeconfig." >&2
             exit 1
           fi
-          echo "available=true" >> "$GITHUB_OUTPUT"
       - name: Write requester kubeconfig
-        if: ${{ steps.requester-credentials.outputs.available == 'true' }}
         uses: ./.github/actions/write-kubeconfig
         with:
           content: ${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
           path: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
           export-to-github-env: 'false'
       - name: Validate kubectl client/server skew
-        if: ${{ steps.requester-credentials.outputs.available == 'true' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
         run: bash ./dev-tools/hosted/shared/check-kubectl-version-skew.sh
       - name: Discover HostedEnvironmentIdentity API
         id: identity-api
-        if: ${{ steps.requester-credentials.outputs.available == 'true' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
         run: |

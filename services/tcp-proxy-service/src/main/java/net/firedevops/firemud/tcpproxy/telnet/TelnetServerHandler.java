@@ -658,23 +658,27 @@ public final class TelnetServerHandler extends SimpleChannelInboundHandler<Strin
       if (socket != null) {
         closeAbortSocket = socket;
         ChannelHandlerContext currentContext = context;
-        try {
-          if (currentContext == null || currentContext.executor() == null) {
-            throw new IllegalStateException("no executor available for WebSocket close fallback");
-          }
-          closeAbortTask =
-              currentContext
-                  .executor()
-                  .schedule(
-                      () -> abortUnacknowledgedClose(socket),
-                      WEBSOCKET_CLOSE_GRACE.toMillis(),
-                      TimeUnit.MILLISECONDS);
-        } catch (RuntimeException error) {
+        if (currentContext == null || currentContext.executor() == null) {
           closeAbortSocket = null;
           closeAbortTask = null;
           abortImmediately = true;
-          logger.warn(
-              "Unable to schedule Gateway WebSocket close fallback; aborting immediately", error);
+          logger.warn("Unable to schedule Gateway WebSocket close fallback; aborting immediately");
+        } else {
+          try {
+            closeAbortTask =
+                currentContext
+                    .executor()
+                    .schedule(
+                        () -> abortUnacknowledgedClose(socket),
+                        WEBSOCKET_CLOSE_GRACE.toMillis(),
+                        TimeUnit.MILLISECONDS);
+          } catch (RuntimeException error) {
+            closeAbortSocket = null;
+            closeAbortTask = null;
+            abortImmediately = true;
+            logger.warn(
+                "Unable to schedule Gateway WebSocket close fallback; aborting immediately", error);
+          }
         }
       }
     }
@@ -839,7 +843,7 @@ public final class TelnetServerHandler extends SimpleChannelInboundHandler<Strin
       return new GatewayCloseClassification(
           closeReason,
           "Gameplay session ended; please reconnect",
-          shutdownClassForLogout(closeReason));
+          shutdownClassForLogout(parsed));
     }
     if (parsed != null && statusCode == 1001 && "idle_timeout".equals(parsed.topLevelReason())) {
       return new GatewayCloseClassification(
@@ -887,8 +891,8 @@ public final class TelnetServerHandler extends SimpleChannelInboundHandler<Strin
     return new ParsedCloseReason(topLevelReason, subreason);
   }
 
-  private String shutdownClassForLogout(String reasonToken) {
-    if ("logout;subreason=gateway_restart".equals(reasonToken)) {
+  private String shutdownClassForLogout(ParsedCloseReason parsed) {
+    if ("gateway_restart".equals(parsed.subreason())) {
       return "planned_drain";
     }
     return "upstream_logout";

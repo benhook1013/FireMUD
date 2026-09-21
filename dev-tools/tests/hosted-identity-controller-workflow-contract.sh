@@ -2563,25 +2563,27 @@ retirement_wait = next(
 )
 assert '--retired "$IDENTITY_NAME" 600' in retirement_wait
 requester_credentials = retire_by_name["Check Hosted identity requester credentials"]
-assert requester_credentials["id"] == "requester-credentials"
+assert "id" not in requester_credentials
 assert requester_credentials["env"] == {
     "REQUESTER_KUBECONFIG": "${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}"
 }
 for required in (
     '[[ -z "$REQUESTER_KUBECONFIG" ]]',
-    'available=true',
     '::error title=Missing Hosted identity requester credentials::Cannot retire hosted identity without the trusted requester kubeconfig.',
     'exit 1',
 ):
     assert required in requester_credentials["run"]
+assert 'available=true' not in requester_credentials["run"]
 assert 'available=false' not in requester_credentials["run"]
 assert "skipping identity retirement" not in requester_credentials["run"]
 requester_writer = retire_by_name["Write requester kubeconfig"]
-assert requester_writer["if"] == "${{ steps.requester-credentials.outputs.available == 'true' }}"
+assert "if" not in requester_writer
 assert requester_writer["with"]["export-to-github-env"] == "false"
+requester_kubectl_validation = retire_by_name["Validate kubectl client/server skew"]
+assert "if" not in requester_kubectl_validation
 identity_api = retire_by_name["Discover HostedEnvironmentIdentity API"]
 assert identity_api["id"] == "identity-api"
-assert identity_api["if"] == "${{ steps.requester-credentials.outputs.available == 'true' }}"
+assert "if" not in identity_api
 assert identity_api["env"] == {
     "KUBECONFIG": "${{ runner.temp }}/hosted-identity-requester.kubeconfig"
 }
