@@ -21,3 +21,9 @@ CREATE UNIQUE INDEX idx_remote_command_coordinator_tenant_origin_instance_comman
 
 CREATE INDEX idx_remote_command_coordinator_command_id
     ON remote_command_coordinator USING btree (tenant_id, command_id);
+
+-- Admission-pointer selectors are tenant-local identities, not global identities.
+DROP INDEX IF EXISTS uq_gameplay_admission_pointer_world_realm;
+
+CREATE UNIQUE INDEX uq_gameplay_admission_pointer_tenant_world_realm
+    ON gameplay_admission_pointer USING btree (tenant_id, world_slug, realm_slug);

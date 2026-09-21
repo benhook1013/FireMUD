@@ -135,6 +135,19 @@ class GameplayCommandRepositoryIntegrationTest {
   }
 
   @Test
+  void admissionPointerSelectorIdentityIsScopedToTenant() {
+    insertAdmissionPointer(1L, "shared-world", "production", 17L, "SHARED", 7L);
+    insertAdmissionPointer(2L, "shared-world", "production", 23L, "SHARED", 8L);
+
+    assertThat(dsl.fetchCount(GAMEPLAY_ADMISSION_POINTER)).isEqualTo(2);
+    assertThatThrownBy(
+            () -> insertAdmissionPointer(1L, "shared-world", "production", 29L, "SHARED", 9L))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .hasMessageContaining("uq_gameplay_admission_pointer_tenant_world_realm");
+    assertThat(dsl.fetchCount(GAMEPLAY_ADMISSION_POINTER)).isEqualTo(2);
+  }
+
+  @Test
   void saveRoundTripsCompleteScriptPinTuple() {
     GameplayCommand command = repositoryCommand("script-command", "AUTOMATION");
     command.setScriptPatchVersion("patch-1");
@@ -323,12 +336,22 @@ class GameplayCommandRepositoryIntegrationTest {
       long pointerVersion,
       String stateScope,
       long gameInstanceId) {
+    insertAdmissionPointer(1L, worldSlug, realmSlug, pointerVersion, stateScope, gameInstanceId);
+  }
+
+  private void insertAdmissionPointer(
+      long tenantId,
+      String worldSlug,
+      String realmSlug,
+      long pointerVersion,
+      String stateScope,
+      long gameInstanceId) {
     dsl.insertInto(GAMEPLAY_ADMISSION_POINTER)
         .set(GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG, worldSlug)
         .set(GAMEPLAY_ADMISSION_POINTER.WORLD_DISPLAY_NAME, "Demo")
         .set(GAMEPLAY_ADMISSION_POINTER.REALM_SLUG, realmSlug)
         .set(GAMEPLAY_ADMISSION_POINTER.REALM_DISPLAY_NAME, "Production")
-        .set(GAMEPLAY_ADMISSION_POINTER.TENANT_ID, 1L)
+        .set(GAMEPLAY_ADMISSION_POINTER.TENANT_ID, tenantId)
         .set(GAMEPLAY_ADMISSION_POINTER.GAME_INSTANCE_ID, gameInstanceId)
         .set(GAMEPLAY_ADMISSION_POINTER.POINTER_VERSION, pointerVersion)
         .set(GAMEPLAY_ADMISSION_POINTER.VISIBLE, true)
