@@ -656,25 +656,39 @@ public final class TelnetServerHandler extends SimpleChannelInboundHandler<Strin
     synchronized (webSocketLifecycleLock) {
       socket = webSocket.getAndSet(null);
       if (socket != null) {
+        WebSocket priorCloseAbortSocket = closeAbortSocket;
+        ScheduledFuture<?> priorCloseAbortTask = closeAbortTask;
+        closeAbortSocket = null;
+        closeAbortTask = null;
+        if (priorCloseAbortTask != null) {
+          priorCloseAbortTask.cancel(false);
+        }
+        if (priorCloseAbortSocket != null && priorCloseAbortSocket != socket) {
+          priorCloseAbortSocket.abort();
+        }
         closeAbortSocket = socket;
         ChannelHandlerContext currentContext = context;
-        try {
-          if (currentContext == null || currentContext.executor() == null) {
-            throw new IllegalStateException("no executor available for WebSocket close fallback");
-          }
-          closeAbortTask =
-              currentContext
-                  .executor()
-                  .schedule(
-                      () -> abortUnacknowledgedClose(socket),
-                      WEBSOCKET_CLOSE_GRACE.toMillis(),
-                      TimeUnit.MILLISECONDS);
-        } catch (RuntimeException error) {
+        if (currentContext == null || currentContext.executor() == null) {
           closeAbortSocket = null;
           closeAbortTask = null;
           abortImmediately = true;
-          logger.warn(
-              "Unable to schedule Gateway WebSocket close fallback; aborting immediately", error);
+          logger.warn("Unable to schedule Gateway WebSocket close fallback; aborting immediately");
+        } else {
+          try {
+            closeAbortTask =
+                currentContext
+                    .executor()
+                    .schedule(
+                        () -> abortUnacknowledgedClose(socket),
+                        WEBSOCKET_CLOSE_GRACE.toMillis(),
+                        TimeUnit.MILLISECONDS);
+          } catch (RuntimeException error) {
+            closeAbortSocket = null;
+            closeAbortTask = null;
+            abortImmediately = true;
+            logger.warn(
+                "Unable to schedule Gateway WebSocket close fallback; aborting immediately", error);
+          }
         }
       }
     }
@@ -837,9 +851,7 @@ public final class TelnetServerHandler extends SimpleChannelInboundHandler<Strin
     ParsedCloseReason parsed = parseCloseReason(closeReason);
     if (parsed != null && statusCode == 1000 && "logout".equals(parsed.topLevelReason())) {
       return new GatewayCloseClassification(
-          closeReason,
-          "Gameplay session ended; please reconnect",
-          shutdownClassForLogout(closeReason));
+          closeReason, "Gameplay session ended; please reconnect", shutdownClassForLogout(parsed));
     }
     if (parsed != null && statusCode == 1001 && "idle_timeout".equals(parsed.topLevelReason())) {
       return new GatewayCloseClassification(
@@ -887,8 +899,8 @@ public final class TelnetServerHandler extends SimpleChannelInboundHandler<Strin
     return new ParsedCloseReason(topLevelReason, subreason);
   }
 
-  private String shutdownClassForLogout(String reasonToken) {
-    if ("logout;subreason=gateway_restart".equals(reasonToken)) {
+  private String shutdownClassForLogout(ParsedCloseReason parsed) {
+    if ("gateway_restart".equals(parsed.subreason())) {
       return "planned_drain";
     }
     return "upstream_logout";

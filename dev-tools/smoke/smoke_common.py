@@ -333,6 +333,10 @@ def _normalize_command_line(command):
     normalized = command.rstrip("\r\n")
     if "\r" in normalized or "\n" in normalized:
         raise ValueError(INVALID_COMMAND_LINE_ERROR)
+    try:
+        normalized.encode("iso-8859-1")
+    except UnicodeEncodeError as exc:
+        raise ValueError(INVALID_COMMAND_LINE_ERROR) from exc
     return normalized
 
 

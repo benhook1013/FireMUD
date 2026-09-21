@@ -40,7 +40,7 @@ public_tcp_line() {
   case "$state" in
     pending) echo "- TCP: pending" ;;
     target) echo "- TCP: \`${hostname} ${telnet_port}\`" ;;
-    unavailable) echo "- TCP: \`telnet ${hostname} ${telnet_port}\`" ;;
+    unavailable) echo "- TCP: unavailable" ;;
     ready) echo "- TCP: \`telnet ${hostname} ${telnet_port}\`" ;;
     *) echo "- TCP: \`${state}\`" ;;
   esac

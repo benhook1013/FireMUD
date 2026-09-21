@@ -127,7 +127,7 @@ class HeaderTrustFilterTest {
             .header("X-Firemud-Handshake-Error-Class", "POLICY_DENY")
             .header("X-Firemud-Unknown-Admission-Header", "spoofed")
             .header("X-Firemud-Connect-Token", "token-carrier")
-            .header("X-Firemud-Locale", "en-NZ")
+            .header("X-Firemud-Locale", "EN-nz")
             .build();
 
     ServerWebExchange mutatedExchange =
@@ -152,6 +152,38 @@ class HeaderTrustFilterTest {
         .isEqualTo("token-carrier");
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Locale"))
         .isEqualTo("en-NZ");
+  }
+
+  @Test
+  void dropsInvalidRepeatedOrControlCharacterLocales() {
+    HeaderTrustFilter filter = legacyFilter(new GatewayHeaderTrustProperties());
+
+    for (String invalidLocale : List.of("", " ", "en_US", "en--NZ", "en\u0000NZ")) {
+      MockServerHttpRequest request =
+          MockServerHttpRequest.get("/")
+              .remoteAddress(new InetSocketAddress("1.2.3.4", 0))
+              .header("X-Firemud-Locale", invalidLocale)
+              .build();
+
+      ServerWebExchange mutatedExchange =
+          filterThroughChain(filter, MockServerWebExchange.from(request));
+
+      assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Locale"))
+          .as("locale=%s", invalidLocale)
+          .isNull();
+    }
+
+    MockServerHttpRequest repeatedRequest =
+        MockServerHttpRequest.get("/")
+            .remoteAddress(new InetSocketAddress("1.2.3.4", 0))
+            .header("X-Firemud-Locale", "en-NZ", "fr-FR")
+            .build();
+
+    ServerWebExchange repeatedExchange =
+        filterThroughChain(filter, MockServerWebExchange.from(repeatedRequest));
+
+    assertThat(repeatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Locale"))
+        .isNull();
   }
 
   @Test

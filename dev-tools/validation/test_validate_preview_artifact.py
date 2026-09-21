@@ -1284,15 +1284,15 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
             },
             namespace="pr-42",
         )
-        for annotations in (
+        for service_annotations in (
             {"firemud.dev/allocated-telnet-port": "32000"},
             {
                 "firemud.dev/allocated-telnet-port": "32001",
                 "unexpected.example/annotation": "value",
             },
         ):
-            with self.subTest(annotations=annotations), tempfile.TemporaryDirectory() as directory:
-                document["metadata"]["annotations"] = annotations
+            with self.subTest(annotations=service_annotations), tempfile.TemporaryDirectory() as directory:
+                document["metadata"]["annotations"] = service_annotations
                 path = Path(directory) / "prepared.yaml"
                 path.write_text(yaml.safe_dump(document), encoding="utf-8")
                 with self.assertRaisesRegex(ValueError, "allocator annotation"):

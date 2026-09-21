@@ -45,13 +45,12 @@ jobs:
       - name: Set up Helm
         uses: ./.github/actions/setup-helm
 
-      - name: Write preview kubeconfig
-        env:
-          PREVIEW_KUBECONFIG: ${{ secrets.TRUSTED_HOSTED_PREVIEW_KUBECONFIG }}
-          PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
-        run: |
-          KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"
-          echo "PREVIEW_RUNTIME_KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
+      - name: Write trusted namespace-manager kubeconfig
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}
+          path: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
+          export-to-github-env: 'false'
 
       - name: Check hosted identity requester credentials
         id: requester-credentials
@@ -77,7 +76,7 @@ jobs:
 
       - name: Verify preview cluster access
         env:
-          KUBECONFIG: ${{ env.PREVIEW_RUNTIME_KUBECONFIG }}
+          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
         run: |
           kubectl get namespace kube-system >/dev/null
           kubectl auth can-i list namespaces --all-namespaces
@@ -85,7 +84,7 @@ jobs:
 
       - name: Prune stale preview namespaces
         env:
-          KUBECONFIG: ${{ env.PREVIEW_RUNTIME_KUBECONFIG }}
+          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
           GH_TOKEN: ${{ github.token }}
           HOSTED_IDENTITY_MODE: ${{ steps.certificate-identity.outputs.mode }}
           HOSTED_IDENTITY_REQUESTER_KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
@@ -116,4 +115,4 @@ jobs:
 
       - name: Remove preview runtime kubeconfig
         if: ${{ always() }}
-        run: rm -f -- "${PREVIEW_RUNTIME_KUBECONFIG:-$RUNNER_TEMP/preview-kubeconfig.yaml}"
+        run: rm -f -- "$RUNNER_TEMP/preview-namespace-manager.kubeconfig"

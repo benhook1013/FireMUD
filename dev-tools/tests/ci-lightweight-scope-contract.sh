@@ -441,6 +441,12 @@ require_contains(
 require_contains(
     complete_contract_step,
     ("run",),
+    "python3 -m unittest discover -s dev-tools/tests -p 'test_*.py'",
+    "ci workflow",
+)
+require_contains(
+    complete_contract_step,
+    ("run",),
     "bash ./dev-tools/tests/dev-tools-readme-contract.sh",
     "ci workflow",
 )

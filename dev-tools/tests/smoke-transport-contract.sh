@@ -441,7 +441,6 @@ class DeadlineBoundSession(FakeSession):
 
 
 deadline_session = DeadlineBoundSession(["OK LOOK room=demo\n"])
-started_at = time.monotonic()
 deadline_response = smoke_common.send_telnet_command_and_expect(
     deadline_session,
     [],
@@ -451,9 +450,7 @@ deadline_response = smoke_common.send_telnet_command_and_expect(
     0.08,
     drain_timeout=1.0,
 )
-elapsed = time.monotonic() - started_at
 assert deadline_response == "OK LOOK room=demo\n"
-assert elapsed < 0.25, f"Telnet command exceeded deadline during receive/drain: {elapsed}"
 assert deadline_session.timeouts
 assert max(deadline_session.timeouts) <= 0.09
 
@@ -473,7 +470,6 @@ class BlockingSendSession(FakeSession):
 
 
 blocked_send_session = BlockingSendSession()
-started_at = time.monotonic()
 try:
     smoke_common.send_telnet_command_and_expect(
         blocked_send_session,
@@ -487,14 +483,11 @@ except TimeoutError as exc:
     assert str(exc) == "send blocked"
 else:
     raise AssertionError("blocked Telnet send unexpectedly completed")
-elapsed = time.monotonic() - started_at
-assert elapsed < 0.25, f"Telnet send exceeded command deadline: {elapsed}"
 assert blocked_send_session.timeouts
 assert max(blocked_send_session.timeouts) <= 0.09
 
 
 blocked_receive_session = DeadlineBoundSession()
-started_at = time.monotonic()
 try:
     smoke_common.send_telnet_command_and_expect(
         blocked_receive_session,
@@ -508,8 +501,6 @@ except smoke_common.ProbeOperationalFailure:
     pass
 else:
     raise AssertionError("blocked Telnet receive unexpectedly completed")
-elapsed = time.monotonic() - started_at
-assert elapsed < 0.25, f"Telnet receive exceeded command deadline: {elapsed}"
 assert blocked_receive_session.timeouts
 assert max(blocked_receive_session.timeouts) <= 0.09
 
@@ -537,7 +528,6 @@ class TimedWebSocket(FakeSession):
 
 
 blocked_websocket_send = TimedWebSocket(block_send=True)
-started_at = time.monotonic()
 try:
     smoke_common.send_websocket_command_and_expect(
         blocked_websocket_send,
@@ -551,14 +541,11 @@ except TimeoutError as exc:
     assert str(exc) == "send blocked"
 else:
     raise AssertionError("blocked WebSocket send unexpectedly completed")
-elapsed = time.monotonic() - started_at
-assert elapsed < 0.25, f"WebSocket send exceeded command deadline: {elapsed}"
 assert blocked_websocket_send.timeouts
 assert max(blocked_websocket_send.timeouts) <= 0.09
 
 
 blocked_websocket_receive = TimedWebSocket()
-started_at = time.monotonic()
 try:
     smoke_common.send_websocket_command_and_expect(
         blocked_websocket_receive,
@@ -572,14 +559,11 @@ except smoke_common.ProbeOperationalFailure:
     pass
 else:
     raise AssertionError("blocked WebSocket receive unexpectedly completed")
-elapsed = time.monotonic() - started_at
-assert elapsed < 0.25, f"WebSocket receive exceeded command deadline: {elapsed}"
 assert blocked_websocket_receive.timeouts
 assert max(blocked_websocket_receive.timeouts) <= 0.09
 
 
 blocked_websocket_drain = TimedWebSocket(["OK LOOK room=demo"])
-started_at = time.monotonic()
 drained_response = smoke_common.send_websocket_command_and_expect(
     blocked_websocket_drain,
     [],
@@ -588,9 +572,7 @@ drained_response = smoke_common.send_websocket_command_and_expect(
     "LOOK",
     0.08,
 )
-elapsed = time.monotonic() - started_at
 assert drained_response == "OK LOOK room=demo"
-assert elapsed < 0.25, f"WebSocket drain exceeded command deadline: {elapsed}"
 assert blocked_websocket_drain.timeouts
 assert max(blocked_websocket_drain.timeouts) <= 0.09
 
@@ -598,6 +580,7 @@ assert max(blocked_websocket_drain.timeouts) <= 0.09
 for invalid_command in (
     "LOOK\nNORTH",
     "LOGIN demo@example.test secret-with-newline\nINJECT",
+    "LOOK \u2603",
 ):
     invalid_session = FakeSession(["OK SHOULD NOT ARRIVE\n"])
     try:

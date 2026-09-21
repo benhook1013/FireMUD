@@ -755,7 +755,7 @@ if success_mode_error="$(bash "$SUMMARY_WRITER" success 101 head-101 image-101 p
 fi
 grep -Fqx 'PREVIEW_EXPOSURE_MODE must be private or public for success summaries' <<<"$success_mode_error"
 public_failure_summary="$(PREVIEW_EXPOSURE_MODE=public bash "$SUMMARY_WRITER" failure 101 head-101 image-101 pr-101.preview.firedevops.net 32001 cleanup)"
-grep -Fqx -- "- TCP: \`telnet pr-101.preview.firedevops.net 32001\`" <<<"$public_failure_summary"
+grep -Fqx -- '- TCP: unavailable' <<<"$public_failure_summary"
 private_failure_summary="$(PREVIEW_EXPOSURE_MODE=private bash "$SUMMARY_WRITER" failure 101 head-101 image-101 pr-101.preview.firedevops.net unavailable cleanup)"
 grep -Fqx -- '- TCP: private Gateway ↔ TCP Proxy bridge unavailable (no public Telnet)' <<<"$private_failure_summary"
 
@@ -2589,6 +2589,17 @@ assert set(preview["jobs"]) == {
 }
 assert trusted["jobs"]["destroy-runtime"]["timeout-minutes"] == 60
 assert reconciler["jobs"]["reconcile-previews"]["timeout-minutes"] == 60
+reconciler_manager_write = next(
+    step
+    for step in reconciler["jobs"]["reconcile-previews"]["steps"]
+    if step.get("name") == "Write trusted namespace-manager kubeconfig"
+)
+assert reconciler_manager_write["uses"] == "./.github/actions/write-kubeconfig"
+assert reconciler_manager_write["with"] == {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
+    "export-to-github-env": "false",
+}
 preview_run_scripts = [
     step["run"]
     for job in preview["jobs"].values()
@@ -2620,7 +2631,7 @@ if grep -Fq 'Restore preview runtime kubeconfig' "$janitor_workflow"; then
   exit 1
 fi
 # shellcheck disable=SC2016 # Assert explicit kubeconfig selection on janitor consumers.
-grep -Fq 'KUBECONFIG: ${{ env.PREVIEW_RUNTIME_KUBECONFIG }}' "$janitor_workflow"
+grep -Fq 'KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig' "$janitor_workflow"
 # shellcheck disable=SC2016 # Assert labels are encoded as one safe row field.
 grep -Fq '(.labels | map({name: .name}) | tojson | @base64)' "$reconciler_workflow"
 # shellcheck disable=SC2016 # Assert decoded labels reach the centralized parser.

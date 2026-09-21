@@ -158,8 +158,7 @@ class TcpProxyEventClientTest {
     initThread.start();
     try {
       org.junit.jupiter.api.Assertions.assertTrue(
-          initialBuildStarted.await(5, TimeUnit.SECONDS),
-          "initial channel build did not start");
+          initialBuildStarted.await(5, TimeUnit.SECONDS), "initial channel build did not start");
       Files.writeString(certificate, "rotated");
       releaseInitialBuild.countDown();
 
@@ -203,8 +202,7 @@ class TcpProxyEventClientTest {
         .thenThrow(new IllegalStateException("customizer failed"));
 
     TcpProxyEventClient client =
-        new TcpProxyEventClient(
-            endpoints, tlsProps, channelFactory, resolver, stubCustomizer);
+        new TcpProxyEventClient(endpoints, tlsProps, channelFactory, resolver, stubCustomizer);
     try {
       assertThrows(IllegalStateException.class, client::init);
       verify(failedChannel).shutdown();

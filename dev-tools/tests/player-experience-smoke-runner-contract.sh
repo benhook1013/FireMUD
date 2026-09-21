@@ -2780,8 +2780,8 @@ PY
 run_clean_python - "$RUNNER" <<'PY'
 import importlib.util
 import sys
-import time
 from pathlib import Path
+from unittest.mock import patch
 
 runner_path = Path(sys.argv[1])
 spec = importlib.util.spec_from_file_location("player_experience_smoke_timing", runner_path)
@@ -2791,9 +2791,22 @@ sys.modules[spec.name] = runner
 spec.loader.exec_module(runner)
 
 
-class TimedWebSocket:
-    def __init__(self, payloads=None, *, block_send=False):
+class FakeClock:
+    def __init__(self):
+        self.now = 100.0
+
+    def time(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
+class FakeWebSocket:
+    def __init__(self, clock, payloads=None, *, send_elapsed=0.0, block_send=False):
+        self.clock = clock
         self.payloads = list(payloads or [])
+        self.send_elapsed = send_elapsed
         self.block_send = block_send
         self.timeouts = []
         self.sent = []
@@ -2803,73 +2816,68 @@ class TimedWebSocket:
 
     def send(self, command):
         self.sent.append(command)
+        self.clock.advance(self.send_elapsed)
         if self.block_send:
-            time.sleep(self.timeouts[-1])
+            self.clock.advance(self.timeouts[-1])
             raise TimeoutError("send blocked")
 
     def recv(self):
         if self.payloads:
             return self.payloads.pop(0)
-        time.sleep(self.timeouts[-1])
+        self.clock.advance(self.timeouts[-1])
         raise TimeoutError("receive blocked")
 
 
-def run_step(ws):
+def run_step(ws, steps=None):
     runner.run_first_party_websocket_step(
         ws,
         "LOOK",
         "LOOK",
         0.08,
-        [],
+        steps if steps is not None else [],
     )
 
 
-blocked_send = TimedWebSocket(block_send=True)
-started_at = time.monotonic()
-try:
-    run_step(blocked_send)
-except TimeoutError as exc:
-    assert str(exc) == "send blocked"
-else:
-    raise AssertionError("blocked player-experience WebSocket send unexpectedly completed")
-elapsed = time.monotonic() - started_at
-assert elapsed < 0.25, f"player-experience send exceeded command deadline: {elapsed}"
-assert blocked_send.timeouts
-assert max(blocked_send.timeouts) <= 0.09
+clock = FakeClock()
+with patch.object(runner.time, "time", clock.time):
+    blocked_send = FakeWebSocket(clock, block_send=True)
+    try:
+        run_step(blocked_send)
+    except TimeoutError as exc:
+        assert str(exc) == "send blocked"
+    else:
+        raise AssertionError("blocked player-experience WebSocket send unexpectedly completed")
+    assert blocked_send.timeouts
+    assert max(blocked_send.timeouts) <= 0.08
+    assert abs(clock.now - 100.08) < 1e-9
 
+    clock.now = 100.0
+    blocked_receive = FakeWebSocket(clock, send_elapsed=0.03)
+    try:
+        run_step(blocked_receive)
+    except TimeoutError as exc:
+        assert str(exc) == "receive blocked"
+    else:
+        raise AssertionError("blocked player-experience WebSocket receive unexpectedly completed")
+    assert blocked_receive.timeouts
+    assert max(blocked_receive.timeouts) <= 0.08
+    assert abs(blocked_receive.timeouts[-1] - 0.05) < 1e-9
+    assert abs(clock.now - 100.08) < 1e-9
 
-blocked_receive = TimedWebSocket()
-started_at = time.monotonic()
-try:
-    run_step(blocked_receive)
-except TimeoutError as exc:
-    assert str(exc) == "receive blocked"
-else:
-    raise AssertionError("blocked player-experience WebSocket receive unexpectedly completed")
-elapsed = time.monotonic() - started_at
-assert elapsed < 0.25, f"player-experience receive exceeded command deadline: {elapsed}"
-assert blocked_receive.timeouts
-assert max(blocked_receive.timeouts) <= 0.09
-
-
-successful = TimedWebSocket(
-    [
-        '{"eventType":"command_result","commandType":"LOOK","accepted":true}'
-    ]
-)
-steps = []
-runner.run_first_party_websocket_step(
-    successful,
-    "LOOK",
-    "LOOK",
-    0.08,
-    steps,
-)
-assert steps[0]["label"] == "LOOK"
-assert steps[0]["response"].startswith('{"eventType":"command_result"')
-assert successful.sent == ["LOOK"]
-assert successful.timeouts
-assert max(successful.timeouts) <= 0.09
+    successful = FakeWebSocket(
+        clock,
+        [
+            '{"eventType":"command_result","commandType":"LOOK","accepted":true}'
+        ],
+        send_elapsed=0.03,
+    )
+    steps = []
+    run_step(successful, steps)
+    assert steps[0]["label"] == "LOOK"
+    assert steps[0]["response"].startswith('{"eventType":"command_result"')
+    assert successful.sent == ["LOOK"]
+    assert successful.timeouts
+    assert abs(successful.timeouts[-1] - 0.05) < 1e-9
 PY
 
 echo "player-experience smoke runner contract checks passed"

@@ -402,6 +402,11 @@ jobs:
           bash ./dev-tools/tests/gameplay-bridge-network-policy-contract.sh
           bash ./dev-tools/tests/preview-runner-isolation-contract.sh
           bash ./dev-tools/tests/preview-standalone-transport-certificates-contract.sh
+          bash ./dev-tools/tests/preview-ca-recovery-contract.sh
+          bash ./dev-tools/tests/trust-bootstrap-rbac-contract.sh
+          bash ./dev-tools/tests/trust-bootstrap-issuance-contract.sh
+          bash ./dev-tools/tests/trust-bootstrap-live-proof-contract.sh
+          bash ./dev-tools/tests/trust-bootstrap-provision-contract.sh
           bash ./dev-tools/tests/hosted-identity-controller-manifest-contract.sh
           bash ./dev-tools/tests/hosted-identity-controller-workflow-contract.sh
           bash ./dev-tools/tests/worktree-topology-contract.sh
@@ -423,6 +428,7 @@ jobs:
           bash ./dev-tools/tests/architecture-doc-contracts.sh
           bash ./dev-tools/tests/lint-yaml-contract.sh
           python3 -m unittest discover -s dev-tools/validation -p 'test_*.py'
+          python3 -m unittest discover -s dev-tools/tests -p 'test_*.py'
 
       - name: 🧪 Validate architecture document contracts
         if: ${{ needs.changes.outputs.lightweight_only == 'true' && needs.changes.outputs.design_docs_changed == 'true' }}

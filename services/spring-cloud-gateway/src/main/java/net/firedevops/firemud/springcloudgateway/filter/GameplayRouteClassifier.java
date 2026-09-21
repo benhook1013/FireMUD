@@ -23,7 +23,7 @@ final class GameplayRouteClassifier {
             && path.elements().stream()
                 .filter(PathContainer.PathSegment.class::isInstance)
                 .map(PathContainer.PathSegment.class::cast)
-                .anyMatch(segment -> segment.value().indexOf(';') >= 0);
+                .anyMatch(segment -> !segment.parameters().isEmpty());
     return new Classification(gameplayRoute, matrixParameter);
   }
 

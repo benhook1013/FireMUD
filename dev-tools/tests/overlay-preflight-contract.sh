@@ -163,6 +163,7 @@ else
   exit 1
 fi
 
+extraction_status=0
 if bash -s "$VALIDATOR" >"$OUTPUT_FILE" 2>&1 <<'BASH'
   set -e
   # shellcheck disable=SC1091
@@ -258,10 +259,29 @@ BASH
 then
   echo "Overlay image validation masked an image-extraction failure" >&2
   exit 1
+else
+  extraction_status=$?
+fi
+
+if [[ "$extraction_status" -ne 2 ]]; then
+  echo "Image-extraction failure returned status $extraction_status instead of the original status 2" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
 fi
 
 if grep -q "No images found in rendered contract overlay" "$OUTPUT_FILE"; then
   echo "Image-extraction failure incorrectly reached the empty-image diagnostic" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
+fi
+
+grep -Fxq "Failed to extract images from rendered contract overlay (status 2)" "$OUTPUT_FILE" || {
+  echo "Image-extraction failure did not emit its diagnostic" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
+}
+if [[ "$(grep -Fxc '::endgroup::' "$OUTPUT_FILE")" -ne 2 ]]; then
+  echo "Image-extraction failure did not close both render and image-check groups" >&2
   cat "$OUTPUT_FILE" >&2
   exit 1
 fi

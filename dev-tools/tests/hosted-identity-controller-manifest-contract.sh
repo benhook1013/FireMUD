@@ -428,6 +428,14 @@ assert hostname["pattern"] == (
     r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"
 )
 status_properties = schema["properties"]["status"]["properties"]["profile"]["properties"]
+profile_schema = schema["properties"]["status"]["properties"]["profile"]
+profile_rules = [validation["rule"] for validation in profile_schema["x-kubernetes-validations"]]
+assert profile_rules == [
+    "!has(self.exposureMode) || !has(self.telnetPort) || (self.exposureMode == 'private' && self.telnetPort == 0) || (self.exposureMode == 'public' && self.telnetPort >= 1024)"
+]
+assert profile_schema["x-kubernetes-validations"][0]["message"] == (
+    "private profiles must set telnetPort to 0 and public profiles must set telnetPort to at least 1024"
+)
 assert re.fullmatch(
     status_properties["identityNamespace"]["pattern"],
     maximum_preview_name + "-identity",
@@ -3635,8 +3643,16 @@ with tempfile.TemporaryDirectory() as directory:
     tcp_source = temp_dir / "tcp-proxy-service.yaml"
     tcp_output = temp_dir / "tcp-proxy-service-with-port.yaml"
     tcp_source.write_text(yaml.safe_dump(tcp_proxy), encoding="utf-8")
-    validator.inject_telnet_port(tcp_source, tcp_output, 32000, "pr-42")
+    validator.inject_telnet_port(
+        tcp_source,
+        tcp_output,
+        32000,
+        "pr-42",
+        "hosted-controller",
+        "public",
+    )
     injected = yaml.safe_load(tcp_output.read_text(encoding="utf-8"))
+    assert injected["metadata"]["labels"] == tcp_proxy["metadata"]["labels"]
     assert injected["spec"]["ports"] == [
         {
             "name": "tcp-2323",

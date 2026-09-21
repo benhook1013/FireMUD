@@ -80,7 +80,14 @@ check_images_exist() {
 
   echo "::group::Check $name images exist in registry"
   local images
-  images="$(printf '%s\n' "$rendered" | extract_images)"
+  if images="$(printf '%s\n' "$rendered" | extract_images)"; then
+    :
+  else
+    local status=$?
+    echo "Failed to extract images from rendered $name overlay (status $status)" >&2
+    echo "::endgroup::"
+    return "$status"
+  fi
   if [ -z "$images" ]; then
     echo "No images found in rendered $name overlay" >&2
     echo "::endgroup::"
@@ -136,7 +143,7 @@ check_stage_has_no_backup_schedules_unless_enabled() {
     if [ ! -f "$enabled_marker" ]; then
       echo "Stage overlay appears to include backup-related resources (CronJobs and/or Velero schedules), but $enabled_marker is missing." >&2
       echo "If staging backups are intentionally enabled, add the marker file to acknowledge the operational change." >&2
-      exit 1
+      return 1
     fi
   fi
 }
