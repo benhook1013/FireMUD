@@ -69,7 +69,7 @@ public class PasswordResetTokenRepository {
 
   /** Deletes at most {@code batchSize} expired rows in deterministic expiry/id order. */
   public int deleteExpired(LocalDateTime capturedNow, int batchSize) {
-    validateCleanupArguments(capturedNow, batchSize);
+    JooqAccountRepositorySupport.requireCleanupArguments(capturedNow, batchSize);
     return dsl.deleteFrom(PASSWORD_RESET_TOKEN)
         .where(
             PASSWORD_RESET_TOKEN.ID.in(
@@ -83,9 +83,7 @@ public class PasswordResetTokenRepository {
   }
 
   public Optional<LocalDateTime> findOldestExpiredAt(LocalDateTime capturedNow) {
-    if (capturedNow == null) {
-      throw new IllegalArgumentException("capturedNow must not be null");
-    }
+    JooqAccountRepositorySupport.requireCapturedNow(capturedNow);
     return Optional.ofNullable(
         dsl.select(PASSWORD_RESET_TOKEN.EXPIRES_AT)
             .from(PASSWORD_RESET_TOKEN)
@@ -93,15 +91,6 @@ public class PasswordResetTokenRepository {
             .orderBy(PASSWORD_RESET_TOKEN.EXPIRES_AT.asc(), PASSWORD_RESET_TOKEN.ID.asc())
             .limit(1)
             .fetchOne(PASSWORD_RESET_TOKEN.EXPIRES_AT));
-  }
-
-  private static void validateCleanupArguments(LocalDateTime capturedNow, int batchSize) {
-    if (capturedNow == null) {
-      throw new IllegalArgumentException("capturedNow must not be null");
-    }
-    if (batchSize <= 0) {
-      throw new IllegalArgumentException("batchSize must be positive");
-    }
   }
 
   private org.jooq.SelectOnConditionStep<? extends Record> baseSelect() {

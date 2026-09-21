@@ -78,7 +78,7 @@ public class AccountEmailLoginChallengeRepository {
 
   /** Deletes at most {@code batchSize} expired rows in deterministic expiry/id order. */
   public int deleteExpired(LocalDateTime capturedNow, int batchSize) {
-    validateCleanupArguments(capturedNow, batchSize);
+    JooqAccountRepositorySupport.requireCleanupArguments(capturedNow, batchSize);
     return dsl.deleteFrom(ACCOUNT_EMAIL_LOGIN_CHALLENGE)
         .where(
             ACCOUNT_EMAIL_LOGIN_CHALLENGE.ID.in(
@@ -94,9 +94,7 @@ public class AccountEmailLoginChallengeRepository {
   }
 
   public Optional<LocalDateTime> findOldestExpiredAt(LocalDateTime capturedNow) {
-    if (capturedNow == null) {
-      throw new IllegalArgumentException("capturedNow must not be null");
-    }
+    JooqAccountRepositorySupport.requireCapturedNow(capturedNow);
     return Optional.ofNullable(
         dsl.select(ACCOUNT_EMAIL_LOGIN_CHALLENGE.EXPIRES_AT)
             .from(ACCOUNT_EMAIL_LOGIN_CHALLENGE)
@@ -106,15 +104,6 @@ public class AccountEmailLoginChallengeRepository {
                 ACCOUNT_EMAIL_LOGIN_CHALLENGE.ID.asc())
             .limit(1)
             .fetchOne(ACCOUNT_EMAIL_LOGIN_CHALLENGE.EXPIRES_AT));
-  }
-
-  private static void validateCleanupArguments(LocalDateTime capturedNow, int batchSize) {
-    if (capturedNow == null) {
-      throw new IllegalArgumentException("capturedNow must not be null");
-    }
-    if (batchSize <= 0) {
-      throw new IllegalArgumentException("batchSize must be positive");
-    }
   }
 
   private AccountEmailLoginChallenge toEntity(

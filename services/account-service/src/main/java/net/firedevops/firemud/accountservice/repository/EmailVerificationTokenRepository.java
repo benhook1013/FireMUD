@@ -69,7 +69,7 @@ public class EmailVerificationTokenRepository {
 
   /** Deletes at most {@code batchSize} expired rows in deterministic expiry/id order. */
   public int deleteExpired(LocalDateTime capturedNow, int batchSize) {
-    validateCleanupArguments(capturedNow, batchSize);
+    JooqAccountRepositorySupport.requireCleanupArguments(capturedNow, batchSize);
     return dsl.deleteFrom(EMAIL_VERIFICATION_TOKEN)
         .where(
             EMAIL_VERIFICATION_TOKEN.ID.in(
@@ -85,9 +85,7 @@ public class EmailVerificationTokenRepository {
   }
 
   public Optional<LocalDateTime> findOldestExpiredAt(LocalDateTime capturedNow) {
-    if (capturedNow == null) {
-      throw new IllegalArgumentException("capturedNow must not be null");
-    }
+    JooqAccountRepositorySupport.requireCapturedNow(capturedNow);
     return Optional.ofNullable(
         dsl.select(EMAIL_VERIFICATION_TOKEN.EXPIRES_AT)
             .from(EMAIL_VERIFICATION_TOKEN)
@@ -95,15 +93,6 @@ public class EmailVerificationTokenRepository {
             .orderBy(EMAIL_VERIFICATION_TOKEN.EXPIRES_AT.asc(), EMAIL_VERIFICATION_TOKEN.ID.asc())
             .limit(1)
             .fetchOne(EMAIL_VERIFICATION_TOKEN.EXPIRES_AT));
-  }
-
-  private static void validateCleanupArguments(LocalDateTime capturedNow, int batchSize) {
-    if (capturedNow == null) {
-      throw new IllegalArgumentException("capturedNow must not be null");
-    }
-    if (batchSize <= 0) {
-      throw new IllegalArgumentException("batchSize must be positive");
-    }
   }
 
   private org.jooq.SelectOnConditionStep<? extends Record> baseSelect() {

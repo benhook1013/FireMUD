@@ -7,6 +7,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.worldmanagement.config.WorldProperties;
@@ -60,8 +61,8 @@ public class WorldEventServiceImpl implements WorldEventService {
                   () ->
                       new IllegalArgumentException(
                           "REGION_INSTANCE_NOT_FOUND: runtime region instance not found"));
-      if (!dto.tenantId().equals(regionInstance.getTenantId())
-          || !dto.gameInstanceId().equals(regionInstance.getGameInstanceId())) {
+      if (!Objects.equals(dto.tenantId(), regionInstance.getTenantId())
+          || !Objects.equals(dto.gameInstanceId(), regionInstance.getGameInstanceId())) {
         throw new IllegalArgumentException(
             "REGION_INSTANCE_SCOPE_MISMATCH: runtime region is outside the event scope");
       }

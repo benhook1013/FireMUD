@@ -25,6 +25,19 @@ final class JooqAccountRepositorySupport {
     return JooqPersistenceSupport.toInstant(offsetDateTime);
   }
 
+  static void requireCapturedNow(LocalDateTime capturedNow) {
+    if (capturedNow == null) {
+      throw new IllegalArgumentException("capturedNow must not be null");
+    }
+  }
+
+  static void requireCleanupArguments(LocalDateTime capturedNow, int batchSize) {
+    requireCapturedNow(capturedNow);
+    if (batchSize <= 0) {
+      throw new IllegalArgumentException("batchSize must be positive");
+    }
+  }
+
   static Account partialAccount(
       Long id,
       String username,

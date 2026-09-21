@@ -73,6 +73,36 @@ class WorldEventServiceImplTest {
   }
 
   @Test
+  void scheduleRegionEventRejectsNullEventScope() {
+    RegionInstance regionInstance = new RegionInstance();
+    regionInstance.setId(7L);
+    regionInstance.setTenantId(1L);
+    regionInstance.setGameInstanceId(41L);
+    when(regionInstanceRepository.findById(7L)).thenReturn(java.util.Optional.of(regionInstance));
+    WorldEventDto request =
+        new WorldEventDto(null, null, 41L, 7L, "REGION_NOTICE", "notice", null, false, null);
+
+    assertThrows(IllegalArgumentException.class, () -> service.scheduleEvent(request));
+
+    verify(eventRepository, never()).save(any());
+  }
+
+  @Test
+  void scheduleRegionEventRejectsNullRegionScope() {
+    RegionInstance regionInstance = new RegionInstance();
+    regionInstance.setId(7L);
+    regionInstance.setTenantId(null);
+    regionInstance.setGameInstanceId(41L);
+    when(regionInstanceRepository.findById(7L)).thenReturn(java.util.Optional.of(regionInstance));
+    WorldEventDto request =
+        new WorldEventDto(null, 1L, 41L, 7L, "REGION_NOTICE", "notice", null, false, null);
+
+    assertThrows(IllegalArgumentException.class, () -> service.scheduleEvent(request));
+
+    verify(eventRepository, never()).save(any());
+  }
+
+  @Test
   void processDueEventsLeavesRetainedWeatherUnprocessedAndNonMutating() {
     RegionInstance regionInstance = new RegionInstance();
     regionInstance.setId(1L);
