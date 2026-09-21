@@ -69,30 +69,22 @@ public class EmailVerificationTokenRepository {
 
   /** Deletes at most {@code batchSize} expired rows in deterministic expiry/id order. */
   public int deleteExpired(LocalDateTime capturedNow, int batchSize) {
-    JooqAccountRepositorySupport.requireCleanupArguments(capturedNow, batchSize);
-    return dsl.deleteFrom(EMAIL_VERIFICATION_TOKEN)
-        .where(
-            EMAIL_VERIFICATION_TOKEN.ID.in(
-                dsl.select(EMAIL_VERIFICATION_TOKEN.ID)
-                    .from(EMAIL_VERIFICATION_TOKEN)
-                    .where(EMAIL_VERIFICATION_TOKEN.EXPIRES_AT.lt(capturedNow))
-                    .orderBy(
-                        EMAIL_VERIFICATION_TOKEN.EXPIRES_AT.asc(),
-                        EMAIL_VERIFICATION_TOKEN.ID.asc())
-                    .limit(batchSize)))
-        .and(EMAIL_VERIFICATION_TOKEN.EXPIRES_AT.lt(capturedNow))
-        .execute();
+    return JooqAccountRepositorySupport.deleteExpired(
+        dsl,
+        EMAIL_VERIFICATION_TOKEN,
+        EMAIL_VERIFICATION_TOKEN.ID,
+        EMAIL_VERIFICATION_TOKEN.EXPIRES_AT,
+        capturedNow,
+        batchSize);
   }
 
   public Optional<LocalDateTime> findOldestExpiredAt(LocalDateTime capturedNow) {
-    JooqAccountRepositorySupport.requireCapturedNow(capturedNow);
-    return Optional.ofNullable(
-        dsl.select(EMAIL_VERIFICATION_TOKEN.EXPIRES_AT)
-            .from(EMAIL_VERIFICATION_TOKEN)
-            .where(EMAIL_VERIFICATION_TOKEN.EXPIRES_AT.lt(capturedNow))
-            .orderBy(EMAIL_VERIFICATION_TOKEN.EXPIRES_AT.asc(), EMAIL_VERIFICATION_TOKEN.ID.asc())
-            .limit(1)
-            .fetchOne(EMAIL_VERIFICATION_TOKEN.EXPIRES_AT));
+    return JooqAccountRepositorySupport.findOldestExpiredAt(
+        dsl,
+        EMAIL_VERIFICATION_TOKEN,
+        EMAIL_VERIFICATION_TOKEN.ID,
+        EMAIL_VERIFICATION_TOKEN.EXPIRES_AT,
+        capturedNow);
   }
 
   private org.jooq.SelectOnConditionStep<? extends Record> baseSelect() {

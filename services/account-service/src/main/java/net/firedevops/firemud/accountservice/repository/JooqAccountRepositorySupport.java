@@ -3,8 +3,13 @@ package net.firedevops.firemud.accountservice.repository;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.util.Optional;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport;
+import org.jooq.DSLContext;
+import org.jooq.Record;
+import org.jooq.Table;
+import org.jooq.TableField;
 
 final class JooqAccountRepositorySupport {
   private JooqAccountRepositorySupport() {}
@@ -36,6 +41,42 @@ final class JooqAccountRepositorySupport {
     if (batchSize <= 0) {
       throw new IllegalArgumentException("batchSize must be positive");
     }
+  }
+
+  static <R extends Record> int deleteExpired(
+      DSLContext dsl,
+      Table<R> table,
+      TableField<R, Long> idField,
+      TableField<R, LocalDateTime> expiresAtField,
+      LocalDateTime capturedNow,
+      int batchSize) {
+    requireCleanupArguments(capturedNow, batchSize);
+    return dsl.deleteFrom(table)
+        .where(
+            idField.in(
+                dsl.select(idField)
+                    .from(table)
+                    .where(expiresAtField.lt(capturedNow))
+                    .orderBy(expiresAtField.asc(), idField.asc())
+                    .limit(batchSize)))
+        .and(expiresAtField.lt(capturedNow))
+        .execute();
+  }
+
+  static <R extends Record> Optional<LocalDateTime> findOldestExpiredAt(
+      DSLContext dsl,
+      Table<R> table,
+      TableField<R, Long> idField,
+      TableField<R, LocalDateTime> expiresAtField,
+      LocalDateTime capturedNow) {
+    requireCapturedNow(capturedNow);
+    return Optional.ofNullable(
+        dsl.select(expiresAtField)
+            .from(table)
+            .where(expiresAtField.lt(capturedNow))
+            .orderBy(expiresAtField.asc(), idField.asc())
+            .limit(1)
+            .fetchOne(expiresAtField));
   }
 
   static Account partialAccount(

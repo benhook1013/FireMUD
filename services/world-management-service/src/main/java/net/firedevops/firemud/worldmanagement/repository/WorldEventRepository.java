@@ -53,7 +53,6 @@ public class WorldEventRepository {
             WORLD_EVENT
                 .PROCESSED
                 .isFalse()
-                .and(WORLD_EVENT.EVENT_TYPE.ne(WorldEvent.WEATHER_CHANGE_EVENT_TYPE))
                 .and(WORLD_EVENT.EXECUTE_AT.le(time))
                 .and(
                     WORLD_EVENT
@@ -117,7 +116,7 @@ public class WorldEventRepository {
     entity.setRegionInstance(
         JooqWorldManagementRepositorySupport.partialRegionInstance(
             record.get(WORLD_EVENT.REGION_INSTANCE_ID)));
-    if (entity.getRegionInstance() != null && record.field(REGION_INSTANCE.TENANT_ID) != null) {
+    if (entity.getRegionInstance() != null && record.indexOf(REGION_INSTANCE.SHARD_ID) >= 0) {
       entity.getRegionInstance().setTenantId(record.get(REGION_INSTANCE.TENANT_ID));
       entity.getRegionInstance().setGameInstanceId(record.get(REGION_INSTANCE.GAME_INSTANCE_ID));
     }

@@ -78,32 +78,22 @@ public class AccountEmailLoginChallengeRepository {
 
   /** Deletes at most {@code batchSize} expired rows in deterministic expiry/id order. */
   public int deleteExpired(LocalDateTime capturedNow, int batchSize) {
-    JooqAccountRepositorySupport.requireCleanupArguments(capturedNow, batchSize);
-    return dsl.deleteFrom(ACCOUNT_EMAIL_LOGIN_CHALLENGE)
-        .where(
-            ACCOUNT_EMAIL_LOGIN_CHALLENGE.ID.in(
-                dsl.select(ACCOUNT_EMAIL_LOGIN_CHALLENGE.ID)
-                    .from(ACCOUNT_EMAIL_LOGIN_CHALLENGE)
-                    .where(ACCOUNT_EMAIL_LOGIN_CHALLENGE.EXPIRES_AT.lt(capturedNow))
-                    .orderBy(
-                        ACCOUNT_EMAIL_LOGIN_CHALLENGE.EXPIRES_AT.asc(),
-                        ACCOUNT_EMAIL_LOGIN_CHALLENGE.ID.asc())
-                    .limit(batchSize)))
-        .and(ACCOUNT_EMAIL_LOGIN_CHALLENGE.EXPIRES_AT.lt(capturedNow))
-        .execute();
+    return JooqAccountRepositorySupport.deleteExpired(
+        dsl,
+        ACCOUNT_EMAIL_LOGIN_CHALLENGE,
+        ACCOUNT_EMAIL_LOGIN_CHALLENGE.ID,
+        ACCOUNT_EMAIL_LOGIN_CHALLENGE.EXPIRES_AT,
+        capturedNow,
+        batchSize);
   }
 
   public Optional<LocalDateTime> findOldestExpiredAt(LocalDateTime capturedNow) {
-    JooqAccountRepositorySupport.requireCapturedNow(capturedNow);
-    return Optional.ofNullable(
-        dsl.select(ACCOUNT_EMAIL_LOGIN_CHALLENGE.EXPIRES_AT)
-            .from(ACCOUNT_EMAIL_LOGIN_CHALLENGE)
-            .where(ACCOUNT_EMAIL_LOGIN_CHALLENGE.EXPIRES_AT.lt(capturedNow))
-            .orderBy(
-                ACCOUNT_EMAIL_LOGIN_CHALLENGE.EXPIRES_AT.asc(),
-                ACCOUNT_EMAIL_LOGIN_CHALLENGE.ID.asc())
-            .limit(1)
-            .fetchOne(ACCOUNT_EMAIL_LOGIN_CHALLENGE.EXPIRES_AT));
+    return JooqAccountRepositorySupport.findOldestExpiredAt(
+        dsl,
+        ACCOUNT_EMAIL_LOGIN_CHALLENGE,
+        ACCOUNT_EMAIL_LOGIN_CHALLENGE.ID,
+        ACCOUNT_EMAIL_LOGIN_CHALLENGE.EXPIRES_AT,
+        capturedNow);
   }
 
   private AccountEmailLoginChallenge toEntity(
