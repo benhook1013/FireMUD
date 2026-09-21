@@ -323,6 +323,12 @@ require_contains(
     "bash ./dev-tools/tests/dev-tools-readme-contract.sh",
     "ci workflow",
 )
+require_contains(
+    complete_contract_step,
+    ("run",),
+    "bash ./dev-tools/tests/gameplay-bridge-network-policy-contract.sh",
+    "ci workflow",
+)
 
 require_equal(
     security,

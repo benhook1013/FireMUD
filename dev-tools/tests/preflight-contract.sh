@@ -910,6 +910,8 @@ kind: Deployment
 metadata:
   name: tcp-proxy-service
 spec:
+  strategy:
+    type: Recreate
   template:
     spec:
       serviceAccountName: firemud-app
@@ -1844,8 +1846,8 @@ if not_applicable_status != "fail" or "non-passing required policy IDs" not in n
 
 PY
 
-# The checked-in production overlay lacks the dedicated bridge client wiring,
-# so static preflight must fail closed rather than authorize URL-only wiring.
+# The checked-in production base now carries the dedicated Gateway bridge client
+# wiring, so static preflight must authorize the checked-in bridge contract.
 set +e
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   FIREMUD_DEPLOYMENT_REF="$CHECKED_OUT_SHA" \
@@ -1853,8 +1855,8 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   python3 "$SCRIPT" production >"$LEGACY_PRODUCTION_PREFLIGHT_OUTPUT"
 production_preflight_status=$?
 set -e
-if [ "$production_preflight_status" -eq 0 ]; then
-  echo "production preflight unexpectedly authorized URL-only bridge wiring" >&2
+if [ "$production_preflight_status" -ne 0 ]; then
+  echo "production preflight rejected the checked-in Gateway bridge wiring" >&2
   exit 1
 fi
 python3 - "$PRODUCTION_REPORT" <<'PY'
@@ -1864,8 +1866,8 @@ import sys
 
 report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 bridge = next(check for check in report["checkResults"] if check["policyId"] == "PREFLIGHT-BRIDGE-001")
-if bridge["status"] != "fail" or bridge["required"] is not True:
-    raise SystemExit(f"production bridge gap was not an explicit required failure: {bridge}")
+if bridge["status"] != "pass" or bridge["required"] is not True:
+    raise SystemExit(f"production bridge wiring did not pass as a required check: {bridge}")
 PY
 
 cat >"$LEGACY_PRODUCTION_TRAFFIC_EVIDENCE" <<'JSON'
@@ -1962,8 +1964,8 @@ fi
 
 for env in staging production; do
   REPORT="$TMP_DIR/preflight-$env.json"
-  # These checked-in overlays lack the dedicated bridge client wiring; static
-  # CI must record that required gap rather than authorize URL-only wiring.
+  # Both checked-in deployable overlays carry the dedicated Gateway bridge
+  # client wiring; static CI must authorize that checked-in contract.
   set +e
   FIREMUD_PREFLIGHT_CONTEXT=ci-static \
     FIREMUD_DEPLOYMENT_REF="$CHECKED_OUT_SHA" \
@@ -1971,8 +1973,8 @@ for env in staging production; do
     python3 "$SCRIPT" "$env" >"$TMP_DIR/firemud-preflight-contract-$env.out"
   preflight_status=$?
   set -e
-  if [ "$preflight_status" -eq 0 ]; then
-    echo "$env: URL-only bridge wiring unexpectedly passed static CI" >&2
+  if [ "$preflight_status" -ne 0 ]; then
+    echo "$env: checked-in Gateway bridge wiring was rejected by static CI" >&2
     exit 1
   fi
 
@@ -1994,8 +1996,8 @@ failures = [
 if failures:
     raise SystemExit(f"{env}: unexpected preflight failures: {failures}")
 bridge = [check for check in report["checkResults"] if check["policyId"] == "PREFLIGHT-BRIDGE-001"]
-if len(bridge) != 1 or bridge[0]["status"] != "fail" or bridge[0]["required"] is not True:
-    raise SystemExit(f"{env}: missing explicit required bridge-client failure: {bridge}")
+if len(bridge) != 1 or bridge[0]["status"] != "pass" or bridge[0]["required"] is not True:
+    raise SystemExit(f"{env}: checked-in bridge-client wiring did not pass: {bridge}")
 for policy_id in ("PREFLIGHT-SERVICES-001", "PREFLIGHT-REDIS-001"):
     effective_check = [check for check in report["checkResults"] if check["policyId"] == policy_id]
     if len(effective_check) != 1 or effective_check[0]["status"] != "pass" or effective_check[0]["required"] is not True:
@@ -3481,6 +3483,60 @@ bridge_values, bridge_issues = module.validate_gateway_ws_values(
 )
 if bridge_issues or not bridge_values:
     raise SystemExit(f"canonical bridge fixture did not pass: {bridge_issues}")
+strategy_issue = "TCP Proxy bridge Deployment strategy must be Recreate for planned identity replacement"
+strategy_mutation = copy.deepcopy(rendered_documents)
+strategy_deployment = next(
+    document
+    for document in strategy_mutation
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+strategy_deployment["spec"].pop("strategy", None)
+_, strategy_issues = module.validate_gateway_ws_values(
+    strategy_mutation, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
+)
+if strategy_issue not in strategy_issues:
+    raise SystemExit(f"TCP Proxy render without Recreate was accepted: {strategy_issues}")
+
+gateway_strategy_counterexample = copy.deepcopy(rendered_documents)
+gateway_deployment = next(
+    document
+    for document in gateway_strategy_counterexample
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+gateway_deployment["metadata"]["name"] = "spring-cloud-gateway"
+gateway_deployment["spec"].pop("strategy", None)
+gateway_container = gateway_deployment["spec"]["template"]["spec"]["containers"][0]
+gateway_container["name"] = "spring-cloud-gateway"
+_, gateway_strategy_issues = module.validate_gateway_ws_values(
+    gateway_strategy_counterexample,
+    yaml.safe_load(current_expected_path.read_text(encoding="utf-8")),
+)
+if strategy_issue in gateway_strategy_issues:
+    raise SystemExit(
+        "Gateway bridge Deployment incorrectly required Recreate: "
+        f"{gateway_strategy_issues}"
+    )
+
+non_deployment_strategy_mutation = copy.deepcopy(rendered_documents)
+non_deployment_bridge = next(
+    document
+    for document in non_deployment_strategy_mutation
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+non_deployment_bridge["kind"] = "Pod"
+non_deployment_bridge["spec"].pop("strategy", None)
+_, non_deployment_strategy_issues = module.validate_gateway_ws_values(
+    non_deployment_strategy_mutation,
+    yaml.safe_load(current_expected_path.read_text(encoding="utf-8")),
+)
+if strategy_issue in non_deployment_strategy_issues:
+    raise SystemExit(
+        "non-Deployment bridge incorrectly required Recreate: "
+        f"{non_deployment_strategy_issues}"
+    )
 invalid_listener_expected = yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
 invalid_listener_expected["internalBindings"]["certificates"]["gatewayInternalWsListenerRef"] = "secret://firemud/not-a-cert-manager-binding"
 _, invalid_listener_issues = module.validate_gateway_ws_values(rendered_documents, invalid_listener_expected)
@@ -9200,6 +9256,8 @@ metadata:
     app.kubernetes.io/instance: __RELEASE__
     firemud.dev/certificate-identity-mode: hosted-controller
 spec:
+  strategy:
+    type: Recreate
   template:
     spec:
       containers:

@@ -226,7 +226,8 @@ assert_production_change_requires_attestation() {
 
 for changed_file in \
   'k8s/overlays/prod' \
-  'k8s/overlays/prod/kustomization.yaml'; do
+  'k8s/overlays/prod/kustomization.yaml' \
+  'k8s/base/account-service.yaml'; do
   assert_production_change_requires_attestation "$changed_file"
 done
 
@@ -249,7 +250,6 @@ assert_nonproduction_change_skips_attestation() {
 }
 
 for changed_file in \
-  'k8s/base/account-service.yaml' \
   'k8s/postgres/pg-dump-cronjob.yaml' \
   'k8s/velero/schedule.yaml'; do
   assert_nonproduction_change_skips_attestation "$changed_file"
@@ -273,6 +273,78 @@ grep -q "Skipping static preflight policy enforcement" "$OUTPUT_FILE" || {
   cat "$OUTPUT_FILE" >&2
   exit 1
 }
+
+for environment_and_overlay in 'staging stage' 'production prod'; do
+  read -r environment overlay <<<"$environment_and_overlay"
+  rendered_overlay="$REPO_ROOT/k8s/overlays/$overlay"
+  kubectl kustomize "$rendered_overlay" >"$OUTPUT_FILE"
+  python3 - "$REPO_ROOT" "$environment" "$OUTPUT_FILE" <<'PY'
+import copy
+import importlib.util
+import pathlib
+import sys
+
+import yaml
+
+root = pathlib.Path(sys.argv[1])
+environment = sys.argv[2]
+rendered_path = pathlib.Path(sys.argv[3])
+spec = importlib.util.spec_from_file_location(
+    "overlay_preflight_contract", root / "dev-tools/deploy/preflight.py"
+)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+documents = module.parse_documents(rendered_path.read_text(encoding="utf-8"))
+proxy = next(
+    document
+    for document in documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+if proxy.get("spec", {}).get("strategy") != {"type": "Recreate"}:
+    raise SystemExit(
+        f"{environment} TCP Proxy render must use Recreate for exclusive bridge identity"
+    )
+
+expected_path = (
+    root / f"design/operations/environments/{environment}/expected-bindings.yaml"
+)
+expected = yaml.safe_load(expected_path.read_text(encoding="utf-8"))
+# Isolate the rollout invariant from listener and network-policy prerequisites: this
+# contract's input is the real rendered overlay, while those prerequisites have
+# their own focused preflight coverage.
+module.canonical_gateway_ws_endpoint = lambda documents, expected: (
+    "spring-cloud-gateway-mtls.firemud.svc.cluster.local:443",
+    [],
+)
+module.validate_gateway_ws_listener = (
+    lambda documents, expected, *, evaluation_time: (set(), [])
+)
+module.validate_gateway_ws_network_policy = lambda documents, secret_name: []
+strategy_issue = (
+    "TCP Proxy bridge Deployment strategy must be Recreate for planned identity replacement"
+)
+_, current_issues = module.validate_gateway_ws_values(documents, expected)
+if strategy_issue in current_issues:
+    raise SystemExit(f"{environment} canonical render failed bridge rollout validation")
+
+mutation = copy.deepcopy(documents)
+mutated_proxy = next(
+    document
+    for document in mutation
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+mutated_proxy["spec"].pop("strategy", None)
+_, mutation_issues = module.validate_gateway_ws_values(mutation, expected)
+if strategy_issue not in mutation_issues:
+    raise SystemExit(
+        f"{environment} preflight accepted a TCP Proxy render without Recreate"
+    )
+PY
+done
 
 if (
   # shellcheck disable=SC1091
@@ -383,7 +455,7 @@ if ! (
   # shellcheck disable=SC1091
   source "$REPO_ROOT/dev-tools/deploy/validate-kustomize-overlays.sh"
   changed_files_between_base_and_head() {
-    printf '%s\n' 'k8s/base/account-service.yaml'
+    printf '%s\n' 'k8s/velero/schedule.yaml'
   }
   kubectl_render_trace="$(mktemp)"
   docker_image_inspect_trace="$(mktemp)"
