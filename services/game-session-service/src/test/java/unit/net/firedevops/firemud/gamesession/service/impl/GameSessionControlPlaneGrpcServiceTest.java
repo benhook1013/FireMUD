@@ -7271,7 +7271,8 @@ class GameSessionControlPlaneGrpcServiceTest {
         .thenReturn(Optional.of(followup));
     Mockito.when(followupRepository.findByTenantIdAndFollowupIdIn(1L, List.of("rf-1")))
         .thenReturn(List.of(followup));
-    Mockito.when(gameplayCommandRepository.findByCommandId("auto-1"))
+    Mockito.when(
+            gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 9L, "auto-1"))
         .thenReturn(Optional.of(targetCommand));
     targetCommand.setRemoteFollowupId("rf-1");
     Mockito.when(gameplayCommandRepository.findByTenantIdAndRemoteFollowupIdIn(1L, List.of("rf-1")))
@@ -7670,8 +7671,10 @@ class GameSessionControlPlaneGrpcServiceTest {
         responseRef.get().getResults(0).getResultMessage());
     assertEquals("NOT_APPLIED", responseRef.get().getResults(0).getResultCommandExecutionOutcome());
     assertEquals("FAILURE", responseRef.get().getResults(0).getResultCommandGameplayResult());
-    Mockito.verify(gameplayCommandRepository, Mockito.never()).findByCommandId("payload-cmd");
-    Mockito.verify(gameplayCommandRepository, Mockito.never()).findByCommandId("durable-cmd");
+    Mockito.verify(gameplayCommandRepository, Mockito.never())
+        .findByTenantIdAndGameInstanceIdAndCommandId(1L, 9L, "payload-cmd");
+    Mockito.verify(gameplayCommandRepository, Mockito.never())
+        .findByTenantIdAndGameInstanceIdAndCommandId(1L, 9L, "durable-cmd");
   }
 
   @Test
@@ -8357,7 +8360,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(resultRepository.findByTenantIdAndResultId(1L, "result-1"))
         .thenReturn(Optional.of(result));
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
-    Mockito.when(commandRepository.findByCommandId("target-command"))
+    Mockito.when(
+            commandRepository.findByTenantIdAndGameInstanceIdAndCommandId(
+                1L, targetCommand.getGameInstanceId(), "target-command"))
         .thenReturn(Optional.of(targetCommand));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =

@@ -238,7 +238,12 @@ public class CommandServiceImpl implements CommandService {
     Instant now = Instant.now();
     boolean markedFailed =
         gameplayCommandRepository.markAcceptedCommandFailed(
-            gameplayCommand.getCommandId(), code, message, now);
+            gameplayCommand.getTenantId(),
+            gameplayCommand.getGameInstanceId(),
+            gameplayCommand.getCommandId(),
+            code,
+            message,
+            now);
     logger.warn(
         "Failed gameplay command staging commandId={} tenantId={} gameInstanceId={} code={} durableFailureRecorded={} message={}",
         gameplayCommand.getCommandId(),

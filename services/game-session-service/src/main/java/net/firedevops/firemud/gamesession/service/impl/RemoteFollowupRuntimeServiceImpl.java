@@ -1578,7 +1578,10 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
   private void mirrorCoordinatorToCommand(RemoteCommandCoordinator coordinator, Instant now) {
     GameplayCommand command =
         gameplayCommandRepository
-            .findByCommandId(coordinator.getCommandId())
+            .findByTenantIdAndGameInstanceIdAndCommandId(
+                coordinator.getTenantId(),
+                coordinator.getOriginGameInstanceId(),
+                coordinator.getCommandId())
             .filter(
                 candidate ->
                     matchesScope(
@@ -1660,7 +1663,10 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
 
   private GameplayCommand findScheduleSourceCommand(ScheduleRequest request) {
     GameplayCommand command =
-        gameplayCommandRepository.findByCommandId(request.commandId()).orElse(null);
+        gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndCommandId(
+                request.tenantId(), request.originGameInstanceId(), request.commandId())
+            .orElse(null);
     if (command != null
         && !matchesScope(
             command,

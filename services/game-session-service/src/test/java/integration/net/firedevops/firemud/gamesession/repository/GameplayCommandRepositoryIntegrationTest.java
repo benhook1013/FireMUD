@@ -164,7 +164,7 @@ class GameplayCommandRepositoryIntegrationTest {
             GameplayCommand::getScriptPinEpoch,
             GameplayCommand::getScriptPinControlPlaneRequestId)
         .containsExactly("patch-2", 8L, "pin-request-8");
-    assertThat(repository.findByCommandId("script-command"))
+    assertThat(repository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "script-command"))
         .get()
         .extracting(
             GameplayCommand::getScriptPatchVersion,
@@ -185,7 +185,7 @@ class GameplayCommandRepositoryIntegrationTest {
             GameplayCommand::getScriptPinEpoch,
             GameplayCommand::getScriptPinControlPlaneRequestId)
         .containsExactly(null, null, null);
-    assertThat(repository.findByCommandId("player-command"))
+    assertThat(repository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "player-command"))
         .get()
         .extracting(
             GameplayCommand::getScriptPatchVersion,
@@ -209,7 +209,7 @@ class GameplayCommandRepositoryIntegrationTest {
             GameplayCommand::getScriptPinEpoch,
             GameplayCommand::getScriptPinControlPlaneRequestId)
         .containsExactly("remote-followup-1", "legacy-patch", null, null);
-    assertThat(repository.findByCommandId("remote-command"))
+    assertThat(repository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "remote-command"))
         .get()
         .extracting(
             GameplayCommand::getRemoteFollowupId,
@@ -229,7 +229,9 @@ class GameplayCommandRepositoryIntegrationTest {
 
     repository.save(command);
 
-    assertThat(repository.findByCommandId("completed-legacy-command"))
+    assertThat(
+            repository.findByTenantIdAndGameInstanceIdAndCommandId(
+                1L, 7L, "completed-legacy-command"))
         .get()
         .extracting(
             GameplayCommand::getExecutionOutcome,
@@ -365,7 +367,7 @@ class GameplayCommandRepositoryIntegrationTest {
     GameplayCommand saved = repository.save(command);
 
     assertThat(saved.getExecutionHook()).isEqualTo("runtime.workflow.wave");
-    assertThat(repository.findByCommandId("cmd-1"))
+    assertThat(repository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .get()
         .extracting(GameplayCommand::getExecutionHook)
         .isEqualTo("runtime.workflow.wave");
@@ -400,6 +402,33 @@ class GameplayCommandRepositoryIntegrationTest {
   }
 
   @Test
+  void commandIdMayBeReusedAcrossScopesButConflictsWithinOneScope() {
+    GameplayCommand first = repositoryCommand("cmd-reused", "PLAYER");
+    repository.save(first);
+
+    GameplayCommand otherTenant = repositoryCommand("cmd-reused", "PLAYER");
+    otherTenant.setTenantId(2L);
+    repository.save(otherTenant);
+
+    GameplayCommand otherGame = repositoryCommand("cmd-reused", "PLAYER");
+    otherGame.setGameInstanceId(8L);
+    repository.save(otherGame);
+
+    assertThat(repository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-reused"))
+        .get()
+        .extracting(GameplayCommand::getTenantId, GameplayCommand::getGameInstanceId)
+        .containsExactly(1L, 7L);
+    assertThat(repository.findByTenantIdAndGameInstanceIdAndCommandId(2L, 7L, "cmd-reused"))
+        .isPresent();
+    assertThat(repository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 8L, "cmd-reused"))
+        .isPresent();
+
+    GameplayCommand sameScope = repositoryCommand("cmd-reused", "PLAYER");
+    assertThatThrownBy(() -> repository.save(sameScope))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+  }
+
+  @Test
   void updatePreservesAdmittedAuthoredActionSnapshot() {
     GameplayCommand command = new GameplayCommand();
     command.setCommandId("cmd-authored-1");
@@ -428,7 +457,7 @@ class GameplayCommandRepositoryIntegrationTest {
     saved.setDeclaredEffectsJson("[]");
     repository.save(saved);
 
-    assertThat(repository.findByCommandId("cmd-authored-1"))
+    assertThat(repository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-authored-1"))
         .get()
         .extracting(
             GameplayCommand::getExecutionOutcome,
@@ -459,19 +488,24 @@ class GameplayCommandRepositoryIntegrationTest {
     repository.save(command);
 
     Instant stagedAt = Instant.parse("2026-07-05T06:01:00Z");
-    assertThat(repository.markAcceptedCommandStaged("cmd-stage-1", stagedAt)).isTrue();
-    assertThat(repository.markAcceptedCommandStaged("cmd-stage-1", stagedAt.plusSeconds(1)))
+    assertThat(repository.markAcceptedCommandStaged(1L, 7L, "cmd-stage-1", stagedAt)).isTrue();
+    assertThat(repository.markAcceptedCommandStaged(1L, 7L, "cmd-stage-1", stagedAt.plusSeconds(1)))
         .isFalse();
     assertThat(
             repository.markAcceptedCommandFailed(
-                "cmd-stage-1", "QUEUE_UNAVAILABLE", "must not overwrite", stagedAt.plusSeconds(2)))
+                1L,
+                7L,
+                "cmd-stage-1",
+                "QUEUE_UNAVAILABLE",
+                "must not overwrite",
+                stagedAt.plusSeconds(2)))
         .isFalse();
-    assertThat(repository.findByCommandId("cmd-stage-1"))
+    assertThat(repository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-stage-1"))
         .get()
         .extracting(GameplayCommand::getExecutionOutcome, GameplayCommand::getStagedAt)
         .containsExactly("STAGED", stagedAt);
 
-    assertThat(repository.hasDurableTickEffect("cmd-stage-1")).isFalse();
+    assertThat(repository.hasDurableTickEffect(1L, 7L, "cmd-stage-1")).isFalse();
     dsl.insertInto(TICK_EFFECT)
         .set(TICK_EFFECT.EFFECT_ID, "effect-stage-1")
         .set(TICK_EFFECT.TICK_BATCH_ID, "batch-stage-1")
@@ -482,7 +516,7 @@ class GameplayCommandRepositoryIntegrationTest {
         .set(TICK_EFFECT.STAGED_AT, LocalDateTime.parse("2026-07-05T06:01:00"))
         .set(TICK_EFFECT.EFFECT_KEY, "effect-key-stage-1")
         .execute();
-    assertThat(repository.hasDurableTickEffect("cmd-stage-1")).isTrue();
+    assertThat(repository.hasDurableTickEffect(1L, 7L, "cmd-stage-1")).isTrue();
   }
 
   @Test
