@@ -284,8 +284,14 @@ jobs:
           bash ./dev-tools/tests/reset-service-db-contract.sh
           bash ./dev-tools/tests/preview-eligibility-contract.sh
           bash ./dev-tools/tests/preview-priority-contract.sh
+          bash ./dev-tools/tests/hosted-gateway-bridge-contract.sh
           bash ./dev-tools/tests/preview-runner-isolation-contract.sh
           bash ./dev-tools/tests/preview-standalone-transport-certificates-contract.sh
+          bash ./dev-tools/tests/preview-ca-recovery-contract.sh
+          bash ./dev-tools/tests/trust-bootstrap-rbac-contract.sh
+          bash ./dev-tools/tests/trust-bootstrap-issuance-contract.sh
+          bash ./dev-tools/tests/trust-bootstrap-live-proof-contract.sh
+          bash ./dev-tools/tests/trust-bootstrap-provision-contract.sh
           bash ./dev-tools/tests/hosted-identity-controller-manifest-contract.sh
           bash ./dev-tools/tests/hosted-identity-controller-workflow-contract.sh
           bash ./dev-tools/tests/worktree-topology-contract.sh

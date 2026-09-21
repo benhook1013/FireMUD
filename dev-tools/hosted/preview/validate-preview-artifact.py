@@ -72,6 +72,7 @@ EXPECTED_NAMES = {
         "internal-services-egress",
         "account-service-controller-ingress",
         "spring-cloud-gateway-ingress",
+        "spring-cloud-gateway-egress",
         "tcp-proxy-service-egress",
     },
 }
@@ -127,6 +128,7 @@ EXPECTED_SECRET_REFS = {
 }
 CANONICAL_INGRESS_ISSUER = "letsencrypt-prod"
 CERTIFICATE_IDENTITY_MODES = {"standalone", "hosted-controller"}
+EXPOSURE_MODES = {"private", "public"}
 CERTIFICATE_IDENTITY_LABEL = "firemud.dev/certificate-identity-mode"
 EXPECTED_TOP_LEVEL_LABELS = {
     "app.kubernetes.io/name": "firemud",
@@ -144,6 +146,43 @@ def _expected_top_level_labels() -> dict[str, str]:
 def _validate_certificate_identity_mode(certificate_identity_mode: str) -> None:
     if certificate_identity_mode not in CERTIFICATE_IDENTITY_MODES:
         fail("preview certificate identity mode is not canonical")
+
+
+def _resolve_exposure_mode(
+    certificate_identity_mode: str | None,
+    exposure_mode: str | None,
+    service_type: str | None = None,
+) -> str:
+    """Resolve exposure from the validated TCP Proxy Service shape.
+
+    Certificate identity and transport exposure are independent contracts.  An
+    explicit exposure argument is therefore only checked against the Service
+    shape, never inferred from the certificate identity mode.
+    """
+
+    if certificate_identity_mode is not None:
+        _validate_certificate_identity_mode(certificate_identity_mode)
+    if exposure_mode is not None and exposure_mode not in EXPOSURE_MODES:
+        fail("preview exposure mode is not canonical")
+    if service_type is None:
+        if exposure_mode is None:
+            fail("preview exposure mode requires a validated TCP Proxy Service")
+        return exposure_mode
+    expected_mode = _exposure_mode_for_service_type(service_type)
+    if exposure_mode is not None and exposure_mode != expected_mode:
+        fail(
+            "preview exposure mode does not match TCP Proxy Service type: "
+            f"expected {expected_mode!r}, actual {exposure_mode!r}"
+        )
+    return expected_mode
+
+
+def _exposure_mode_for_service_type(service_type: object) -> str:
+    if service_type == "ClusterIP":
+        return "private"
+    if service_type == "NodePort":
+        return "public"
+    fail("validated TCP Proxy Service has no canonical exposure mode")
 
 
 def _expected_names_for_mode(certificate_identity_mode: str) -> dict[str, set[str]]:
@@ -288,38 +327,77 @@ def _infrastructure_deployment_spec(
     }
 
 
+POSTGRES_DATA_LAYOUT_CHECK_INIT_CONTAINER = {
+    "name": "postgres-data-layout-check",
+    "securityContext": {
+        "allowPrivilegeEscalation": False,
+        "readOnlyRootFilesystem": True,
+        "runAsUser": 999,
+        "runAsGroup": 999,
+        "capabilities": {"drop": ["ALL"]},
+    },
+    "image": "postgres:16",
+    "command": ["sh", "-ec"],
+    "args": [
+        """data_root="/var/lib/postgresql/data"
+if [ ! -d "$data_root" ] || [ ! -r "$data_root" ] || [ ! -x "$data_root" ]; then
+  echo "refusing to start PostgreSQL: cannot inspect mounted data directory ${data_root}" >&2
+  exit 1
+fi
+if [ -e "${data_root}/PG_VERSION" ]; then
+  echo "refusing to start PostgreSQL: legacy root PG_VERSION found at ${data_root}/PG_VERSION; migrate the PVC before using nested PGDATA=/var/lib/postgresql/data/pgdata" >&2
+  exit 1
+fi
+"""
+    ],
+    "volumeMounts": [
+        {
+            "name": "postgres-data",
+            "mountPath": "/var/lib/postgresql/data",
+            "readOnly": True,
+        }
+    ],
+}
+
+
+POSTGRES_INFRASTRUCTURE_DEPLOYMENT_SPEC = _infrastructure_deployment_spec(
+    "postgres",
+    999,
+    "postgres:16",
+    ["postgres", "-c", "max_connections=200"],
+    5432,
+    "postgres-data",
+    "/var/lib/postgresql/data",
+    [
+        {"name": "PGDATA", "value": "/var/lib/postgresql/data/pgdata"},
+        {"name": "POSTGRES_DB", "value": "firemud"},
+        {
+            "name": "POSTGRES_USER",
+            "valueFrom": {
+                "secretKeyRef": {
+                    "name": "firemud-secret",
+                    "key": "FIREMUD_POSTGRES_USER",
+                }
+            },
+        },
+        {
+            "name": "POSTGRES_PASSWORD",
+            "valueFrom": {
+                "secretKeyRef": {
+                    "name": "firemud-secret",
+                    "key": "FIREMUD_POSTGRES_PASSWORD",
+                }
+            },
+        },
+    ],
+)
+POSTGRES_INFRASTRUCTURE_DEPLOYMENT_SPEC["template"]["spec"]["initContainers"] = [
+    copy.deepcopy(POSTGRES_DATA_LAYOUT_CHECK_INIT_CONTAINER)
+]
+
+
 EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS = {
-    "postgres": _infrastructure_deployment_spec(
-        "postgres",
-        999,
-        "postgres:16",
-        ["postgres", "-c", "max_connections=200"],
-        5432,
-        "postgres-data",
-        "/var/lib/postgresql/data",
-        [
-            {"name": "PGDATA", "value": "/var/lib/postgresql/data/pgdata"},
-            {"name": "POSTGRES_DB", "value": "firemud"},
-            {
-                "name": "POSTGRES_USER",
-                "valueFrom": {
-                    "secretKeyRef": {
-                        "name": "firemud-secret",
-                        "key": "FIREMUD_POSTGRES_USER",
-                    }
-                },
-            },
-            {
-                "name": "POSTGRES_PASSWORD",
-                "valueFrom": {
-                    "secretKeyRef": {
-                        "name": "firemud-secret",
-                        "key": "FIREMUD_POSTGRES_PASSWORD",
-                    }
-                },
-            },
-        ],
-    ),
+    "postgres": POSTGRES_INFRASTRUCTURE_DEPLOYMENT_SPEC,
     "redis-coord": _infrastructure_deployment_spec(
         "redis-coord",
         999,
@@ -923,20 +1001,23 @@ def inject_telnet_port(
     port: int,
     expected_namespace: str | None = None,
     certificate_identity_mode: str | None = None,
+    exposure_mode: str | None = None,
 ) -> None:
-    """Add only trusted runtime target data after artifact validation."""
+    """Add only trusted runtime target data after artifact validation.
+
+    Public previews receive the allocator-owned NodePort.  Private previews
+    deliberately receive no port mutation; the zero argument is only the
+    controller's internal sentinel and is never written to the Service.
+    """
 
     if expected_namespace is None:
         fail("preview runtime namespace is required")
     if not re.fullmatch(r"pr-[1-9][0-9]{0,50}", expected_namespace):
         fail(f"runtime namespace is not canonical: {expected_namespace!r}")
-    if not MIN_PREVIEW_TELNET_PORT <= port <= MAX_PREVIEW_TELNET_PORT:
-        fail(
-            "preview telnet port must be between "
-            f"{MIN_PREVIEW_TELNET_PORT} and {MAX_PREVIEW_TELNET_PORT}"
-        )
     if certificate_identity_mode is not None:
         _validate_certificate_identity_mode(certificate_identity_mode)
+    if exposure_mode is not None and exposure_mode not in EXPOSURE_MODES:
+        fail("preview exposure mode is not canonical")
     documents = list(yaml.safe_load_all(source.read_text(encoding="utf-8")))
     matches = []
     ingress_matches = 0
@@ -976,9 +1057,40 @@ def inject_telnet_port(
         fail("validated preview render must contain exactly one TCP Proxy Telnet port")
     if certificate_identity_mode == "standalone" and ingress_matches != 1:
         fail("validated preview render must contain exactly one preview Ingress")
-    if "nodePort" in matches[0]:
-        fail("validated preview render already contains a NodePort")
-    matches[0]["nodePort"] = port
+    services = [
+        document
+        for document in documents
+        if document.get("kind") == "Service"
+        and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    ]
+    if len(services) != 1:
+        fail("validated preview render must contain exactly one TCP Proxy Service")
+    service = services[0]
+    service_spec = _require_mapping(
+        service.get("spec"), "Service/tcp-proxy-service.spec"
+    )
+    service_type = service_spec.get("type", "ClusterIP")
+    exposure_mode = _resolve_exposure_mode(
+        certificate_identity_mode,
+        exposure_mode,
+        service_type,
+    )
+    if exposure_mode == "private" and port != 0:
+        fail("private preview runtime target requires sentinel Telnet port 0")
+    if exposure_mode == "public" and not (
+        MIN_PREVIEW_TELNET_PORT <= port <= MAX_PREVIEW_TELNET_PORT
+    ):
+        fail(
+            "preview telnet port must be between "
+            f"{MIN_PREVIEW_TELNET_PORT} and {MAX_PREVIEW_TELNET_PORT}"
+        )
+    if exposure_mode == "private":
+        if "nodePort" in matches[0]:
+            fail("private preview render must not contain a NodePort")
+    else:
+        if "nodePort" in matches[0]:
+            fail("validated preview render already contains a NodePort")
+        matches[0]["nodePort"] = port
     destination.write_text(
         "---\n".join(yaml.safe_dump(document, sort_keys=False) for document in documents),
         encoding="utf-8",
@@ -990,18 +1102,16 @@ def validate_runtime_target(
     expected_namespace: str,
     expected_port: int,
     certificate_identity_mode: str | None = None,
+    exposure_mode: str | None = None,
 ) -> None:
     """Verify the only trusted mutations made after closed artifact validation."""
 
     if not re.fullmatch(r"pr-[1-9][0-9]{0,50}", expected_namespace):
         fail(f"runtime namespace is not canonical: {expected_namespace!r}")
-    if not MIN_PREVIEW_TELNET_PORT <= expected_port <= MAX_PREVIEW_TELNET_PORT:
-        fail(
-            "preview telnet port must be between "
-            f"{MIN_PREVIEW_TELNET_PORT} and {MAX_PREVIEW_TELNET_PORT}"
-        )
     if certificate_identity_mode is not None:
         _validate_certificate_identity_mode(certificate_identity_mode)
+    if exposure_mode is not None and exposure_mode not in EXPOSURE_MODES:
+        fail("preview exposure mode is not canonical")
     documents = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
     if not documents:
         fail("prepared preview render is empty")
@@ -1073,22 +1183,78 @@ def validate_runtime_target(
         fail(
             "Service/tcp-proxy-service must contain exactly one declared TCP port 2323"
         )
-    port_index, _declared_port = declared_ports[0]
-    expected = (
-        "Service/tcp-proxy-service",
-        f"object.spec.ports[{port_index}].nodePort",
-        expected_port,
+    service_type = service_spec.get("type", "ClusterIP")
+    exposure_mode = _resolve_exposure_mode(
+        certificate_identity_mode,
+        exposure_mode,
+        service_type,
     )
-    if node_ports != [expected]:
+    if exposure_mode == "private" and expected_port != 0:
+        fail("private preview runtime target requires sentinel Telnet port 0")
+    if exposure_mode == "public" and not (
+        MIN_PREVIEW_TELNET_PORT <= expected_port <= MAX_PREVIEW_TELNET_PORT
+    ):
         fail(
-            "prepared preview render must contain only the exact allocated TCP Proxy "
-            f"NodePort {expected_port}; observed {node_ports!r}"
+            "preview telnet port must be between "
+            f"{MIN_PREVIEW_TELNET_PORT} and {MAX_PREVIEW_TELNET_PORT}"
         )
+    port_index, _declared_port = declared_ports[0]
+    if exposure_mode == "private":
+        if service_type != "ClusterIP":
+            fail("private preview TCP Proxy Service must remain ClusterIP")
+        if node_ports:
+            fail(
+                "private preview render must not contain a NodePort; "
+                f"observed {node_ports!r}"
+            )
+    else:
+        expected = (
+            "Service/tcp-proxy-service",
+            f"object.spec.ports[{port_index}].nodePort",
+            expected_port,
+        )
+        if node_ports != [expected]:
+            fail(
+                "prepared preview render must contain only the exact allocated TCP Proxy "
+                f"NodePort {expected_port}; observed {node_ports!r}"
+            )
 
 
-def validate_service_consumers(documents: list[dict], expected_namespace: str) -> None:
+def determine_exposure_mode(
+    path: Path, certificate_identity_mode: str
+) -> str:
+    """Derive the trusted public/private proof mode from the validated Service shape."""
+
+    _validate_certificate_identity_mode(certificate_identity_mode)
+    documents = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
+    if not documents:
+        fail("validated preview render is empty")
+    validate_services(documents, certificate_identity_mode)
+    services = [
+        document
+        for document in documents
+        if document.get("kind") == "Service"
+        and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    ]
+    if len(services) != 1:
+        fail("validated preview render must contain exactly one TCP Proxy Service")
+    service_spec = _require_mapping(
+        services[0].get("spec"), "Service/tcp-proxy-service.spec"
+    )
+    return _exposure_mode_for_service_type(service_spec.get("type", "ClusterIP"))
+
+
+def validate_service_consumers(
+    documents: list[dict],
+    expected_namespace: str,
+    certificate_identity_mode: str,
+    exposure_mode: str,
+) -> None:
     """Keep identity-managed TLS references limited to the chart consumers."""
 
+    _validate_certificate_identity_mode(certificate_identity_mode)
+    if exposure_mode not in EXPOSURE_MODES:
+        fail("preview exposure mode is not canonical")
     deployments = {
         document.get("metadata", {}).get("name"): document
         for document in documents
@@ -1116,10 +1282,11 @@ def validate_service_consumers(documents: list[dict], expected_namespace: str) -
         if service == "account-service":
             expected_mounts["jwt-jwks"] = ("/var/run/secrets/firemud/jwks", "jwt-jwks")
         if service == "tcp-proxy-service":
-            expected_mounts["telnet-tls"] = (
-                "/telnet-tls",
-                f"{expected_namespace}-telnet-tls",
-            )
+            if exposure_mode == "public":
+                expected_mounts["telnet-tls"] = (
+                    "/telnet-tls",
+                    f"{expected_namespace}-telnet-tls",
+                )
             expected_mounts["gateway-ws-client-tls"] = (
                 "/gateway-ws-client-tls",
                 f"{expected_namespace}-tcp-proxy-bridge",
@@ -1188,9 +1355,12 @@ def validate_service_consumers(documents: list[dict], expected_namespace: str) -
                         fail(f"Deployment/{service} has an unsafe {volume_name} projection")
 
 
-def validate_services(documents: list[dict]) -> None:
+def validate_services(
+    documents: list[dict], certificate_identity_mode: str = "standalone"
+) -> None:
     """Require the exact trusted preview Service specs."""
 
+    _validate_certificate_identity_mode(certificate_identity_mode)
     for document in documents:
         if document.get("kind") != "Service":
             continue
@@ -1199,9 +1369,15 @@ def validate_services(documents: list[dict]) -> None:
         expected_spec = EXPECTED_SERVICE_SPECS.get(name)
         if expected_spec is None:
             fail(f"Service/{name} is not an approved preview Service")
-        expected_type = expected_spec.get("type", "ClusterIP")
-        if spec.get("type", "ClusterIP") != expected_type:
-            fail(f"Service/{name} has an unsafe service type")
+        if name == "tcp-proxy-service":
+            service_type = spec.get("type")
+            if service_type not in {"ClusterIP", "NodePort"}:
+                fail(f"Service/{name} has an unsafe service type")
+            expected_spec = {**expected_spec, "type": service_type}
+        else:
+            expected_type = expected_spec.get("type", "ClusterIP")
+            if spec.get("type", "ClusterIP") != expected_type:
+                fail(f"Service/{name} has an unsafe service type")
         if spec.get("selector") != expected_spec["selector"]:
             fail(f"Service/{name} has an unsafe selector")
         service_ports = _require_mapping_list(
@@ -1330,6 +1506,65 @@ def validate_network_policies(
     }
     if gateway_ingress != expected_gateway_ingress:
         fail("NetworkPolicy/spring-cloud-gateway-ingress has an unsafe exception")
+
+    gateway_egress = _require_mapping(
+        policies["spring-cloud-gateway-egress"].get("spec"),
+        "NetworkPolicy/spring-cloud-gateway-egress.spec",
+    )
+    expected_gateway_egress = {
+        "podSelector": {"matchLabels": {"app": "spring-cloud-gateway"}},
+        "policyTypes": ["Egress"],
+        "egress": [
+            {
+                "to": [
+                    {
+                        "namespaceSelector": {
+                            "matchLabels": {
+                                "kubernetes.io/metadata.name": "kube-system"
+                            }
+                        },
+                        "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+                    }
+                ],
+                "ports": [
+                    {"protocol": "UDP", "port": 53},
+                    {"protocol": "TCP", "port": 53},
+                ],
+            },
+            {
+                "to": [
+                    {
+                        "podSelector": {
+                            "matchExpressions": [
+                                {
+                                    "key": "app",
+                                    "operator": "In",
+                                    "values": [
+                                        "game-session-service",
+                                        "logging-admin-service",
+                                        "game-design-service",
+                                        "account-service",
+                                        "social-groups-service",
+                                    ],
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "ports": [{"protocol": "TCP", "port": 8080}],
+            },
+            {
+                "to": [{"podSelector": {"matchLabels": {"app": "redis-cache"}}}],
+                "ports": [{"protocol": "TCP", "port": 6379}],
+            },
+            {
+                "to": [{"podSelector": {"matchLabels": {"app": "otel-collector"}}}],
+                "ports": [{"protocol": "TCP", "port": 4317}],
+            },
+        ],
+    }
+    if gateway_egress != expected_gateway_egress:
+        fail("NetworkPolicy/spring-cloud-gateway-egress has an unsafe exception")
 
     proxy_egress = _require_mapping(
         policies["tcp-proxy-service-egress"].get("spec"),
@@ -1556,10 +1791,22 @@ def validate_manifest(
         missing = sorted(expected_objects - seen)
         extra = sorted(seen - expected_objects)
         fail(f"manifest object set is not closed (missing={missing}, extra={extra})")
-    validate_services(documents)
+    validate_services(documents, certificate_identity_mode)
     validate_network_policies(documents, certificate_identity_mode)
     validate_infrastructure_deployments(documents)
-    validate_service_consumers(documents, expected_namespace)
+    if ("Service", "tcp-proxy-service") in expected_objects:
+        tcp_proxy_service = next(
+            document
+            for document in documents
+            if document["kind"] == "Service"
+            and document["metadata"]["name"] == "tcp-proxy-service"
+        )
+        exposure_mode = _exposure_mode_for_service_type(
+            tcp_proxy_service["spec"].get("type", "ClusterIP")
+        )
+        validate_service_consumers(
+            documents, expected_namespace, certificate_identity_mode, exposure_mode
+        )
 
 
 def validate_metadata(
@@ -1634,7 +1881,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"preview artifact rejected: {exc}", file=sys.stderr)
             return 1
         return 0
-    if command == "inject" and len(args) == 7:
+    if command == "inject" and len(args) == 8:
         try:
             inject_telnet_port(
                 source=Path(args[2]),
@@ -1642,21 +1889,30 @@ def main(argv: list[str] | None = None) -> int:
                 port=int(args[5]),
                 expected_namespace=args[4],
                 certificate_identity_mode=args[6],
+                exposure_mode=args[7],
             )
         except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:
             print(f"preview Telnet port injection rejected: {exc}", file=sys.stderr)
             return 1
         return 0
-    if command == "runtime-target" and len(args) == 6:
+    if command == "runtime-target" and len(args) == 7:
         try:
             validate_runtime_target(
                 Path(args[2]),
                 args[3],
                 int(args[4]),
                 args[5],
+                args[6],
             )
         except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:
             print(f"preview runtime target rejected: {exc}", file=sys.stderr)
+            return 1
+        return 0
+    if command == "exposure-mode" and len(args) == 4:
+        try:
+            print(determine_exposure_mode(Path(args[2]), args[3]))
+        except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:
+            print(f"preview exposure mode rejected: {exc}", file=sys.stderr)
             return 1
         return 0
     if len(args) != 12:
@@ -1665,8 +1921,9 @@ def main(argv: list[str] | None = None) -> int:
             "<source-run-id> <pr-number> <base-sha> <head-sha> <merge-sha> "
             "<image-tag> <hostname> <standalone|hosted-controller>\n"
             "       validate-preview-artifact.py sanitize <render> <output>\n"
-            "       validate-preview-artifact.py inject <render> <output> <namespace> <port> <standalone|hosted-controller>\n"
-            "       validate-preview-artifact.py runtime-target <render> <namespace> <port> <standalone|hosted-controller>",
+            "       validate-preview-artifact.py inject <render> <output> <namespace> <port> <standalone|hosted-controller> <private|public>\n"
+            "       validate-preview-artifact.py runtime-target <render> <namespace> <port> <standalone|hosted-controller> <private|public>\n"
+            "       validate-preview-artifact.py exposure-mode <render> <standalone|hosted-controller>",
             file=sys.stderr,
         )
         return 2

@@ -30,6 +30,10 @@ Target normalization occurs before close-metric emission: validate the complete 
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 - gRPC endpoints use `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` for consistent observability.
 
+### Trust-profile expiry recovery
+
+When a `migration_dns` or `breakglass_fingerprint` trust profile expires, Gateway logs a warning, stops the dedicated TCP Proxy listener and its established bridges, and leaves dedicated-listener readiness out of service. Recovery requires replacing or updating the expired trust settings and material with valid values, then restarting or rolling Gateway; verify the listener has rebound, readiness is restored, and a trusted bridge succeeds before returning traffic.
+
 ## Dynamic Route Operational Guardrails
 
 - Dynamic route mutation is an explicitly enabled local/dev/test capability, not an initial production control plane. These are target-state acceptance criteria; the current implementation does not enforce all of them.

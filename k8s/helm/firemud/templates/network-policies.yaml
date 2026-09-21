@@ -1,4 +1,11 @@
 {{- if and .Values.previewStack.enabled (.Values.previewStack.networkPolicies.enabled) }}
+{{- $certificateIdentity := .Values.previewStack.certificateIdentity | default (dict) }}
+{{- $certificateIdentityMode := $certificateIdentity.mode | default "standalone" }}
+{{- $gatewayWsTls := .Values.previewStack.gatewayWsTls | default (dict) }}
+{{- $gatewayWsTlsTargetPort := 8443 }}
+{{- if $gatewayWsTls.enabled }}
+{{- $gatewayWsTlsTargetPort = required "previewStack.gatewayWsTls.targetPort is required when Gateway WebSocket TLS is enabled" $gatewayWsTls.targetPort }}
+{{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -93,6 +100,33 @@ spec:
       ports:
         - protocol: TCP
           port: 9000
+{{- if eq $certificateIdentityMode "hosted-controller" }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: account-service-controller-ingress
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: account-service
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: firemud-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: hosted-environment-identity-controller
+              app.kubernetes.io/component: controller
+      ports:
+        - protocol: TCP
+          port: 6565
+{{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -176,4 +210,158 @@ spec:
       ports:
         - protocol: TCP
           port: 9000
+{{- if $gatewayWsTls.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: spring-cloud-gateway-ingress
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: spring-cloud-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: tcp-proxy-service
+      ports:
+        - protocol: TCP
+          port: {{ $gatewayWsTlsTargetPort }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: 8080
+{{- if eq $certificateIdentityMode "hosted-controller" }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: firemud-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: hosted-environment-identity-controller
+              app.kubernetes.io/component: controller
+      ports:
+        - protocol: TCP
+          port: {{ $gatewayWsTlsTargetPort }}
+{{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: spring-cloud-gateway-egress
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: spring-cloud-gateway
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - game-session-service
+                  - logging-admin-service
+                  - game-design-service
+                  - account-service
+                  - social-groups-service
+      ports:
+        - protocol: TCP
+          port: 8080
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis-cache
+      ports:
+        - protocol: TCP
+          port: 6379
+    - to:
+        - podSelector:
+            matchLabels:
+              app: otel-collector
+      ports:
+        - protocol: TCP
+          port: 4317
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tcp-proxy-service-egress
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: tcp-proxy-service
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app: spring-cloud-gateway
+      ports:
+        - protocol: TCP
+          port: {{ $gatewayWsTlsTargetPort }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app: game-session-service
+      ports:
+        - protocol: TCP
+          port: 6565
+    - to:
+        - podSelector:
+            matchLabels:
+              app: otel-collector
+      ports:
+        - protocol: TCP
+          port: 4317
+    - to:
+        - podSelector:
+            matchLabels:
+              app: elasticsearch
+      ports:
+        - protocol: TCP
+          port: 9200
+{{- end }}
 {{- end }}

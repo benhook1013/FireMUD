@@ -144,6 +144,72 @@ class CheckpointReporterTest(unittest.TestCase):
             self.reporter.emit_text(report)
         self.assertIn("unlinked", output.getvalue())
 
+    def test_parses_canonical_unbolded_2830_checkpoints_and_hidden_linkage_markers(self) -> None:
+        comments = [
+            {
+                "id": 5755500680,
+                "body": (
+                    "CLI: 19 found / 18 accepted · `573fb38` · 37 files\n"
+                    "<!-- firemud-cli-run: run.JpGzfG -->"
+                ),
+                "created_at": "2026-09-21T04:41:30Z",
+            },
+            {
+                "id": 5755518575,
+                "body": (
+                    "Hosted: 8 found / 8 accepted · `573fb38` · 37 files\n"
+                    "<!-- firemud-hosted-review: 5263109682 -->"
+                ),
+                "created_at": "2026-09-21T04:44:20Z",
+            },
+        ]
+
+        checkpoints, unparsed = self.reporter.parse_checkpoint_comments(comments)
+
+        self.assertEqual(unparsed, 0)
+        self.assertEqual(
+            [
+                (
+                    checkpoint.type,
+                    checkpoint.raw_found,
+                    checkpoint.accepted,
+                    checkpoint.reviewed_sha,
+                    checkpoint.file_count,
+                )
+                for checkpoint in checkpoints
+            ],
+            [
+                ("CLI", 19, 18, "573fb38", 37),
+                ("Hosted", 8, 8, "573fb38", 37),
+            ],
+        )
+        self.assertEqual(checkpoints[0].run_id, "run.JpGzfG")
+        self.assertIsNone(checkpoints[0].hosted_review_id)
+        self.assertIsNone(checkpoints[1].run_id)
+        self.assertEqual(checkpoints[1].hosted_review_id, 5263109682)
+
+    def test_preserves_bold_checkpoint_syntax_and_rejects_unpaired_bold(self) -> None:
+        comments = [
+            {
+                "body": "**CLI: 2 found / 1 accepted** · `abc1234`",
+                "created_at": "2026-09-10T00:00:00Z",
+            },
+            {
+                "body": "**CLI: 2 found / 1 accepted · `abc1234`",
+                "created_at": "2026-09-10T00:01:00Z",
+            },
+            {
+                "body": "CLI: 2 found / 1 accepted** · `abc1234`",
+                "created_at": "2026-09-10T00:02:00Z",
+            },
+        ]
+
+        checkpoints, unparsed = self.reporter.parse_checkpoint_comments(comments)
+
+        self.assertEqual(unparsed, 2)
+        self.assertEqual(len(checkpoints), 1)
+        self.assertEqual(checkpoints[0].reviewed_sha, "abc1234")
+
     def test_completed_hosted_reviews_are_audited_against_exact_markers(self) -> None:
         comments = [
             {

@@ -75,7 +75,8 @@ public class HostedStatusService {
       } else {
         reason = "RuntimeIdentityChanged";
         message =
-            "runtime Namespace UID, requested head, or deployed head changed; fresh convergence is required";
+            "runtime Namespace UID, requested head, deployed head, exposure mode, or Telnet port "
+                + "changed; fresh convergence is required";
       }
       if (phase == Phase.Ready) {
         phase = Phase.Pending;
@@ -116,11 +117,13 @@ public class HostedStatusService {
       }
     }
     if (runtimeProfile != null && runtimeProfile.present()) {
+      profile.setExposureMode(runtimeProfile.exposureMode());
       profile.setTelnetPort(runtimeProfile.telnetPort());
       profile.setRuntimeNamespaceUid(runtimeProfile.runtimeNamespaceUid());
       profile.setRequestedHeadSha(runtimeProfile.requestedHeadSha());
       profile.setDeployedHeadSha(runtimeProfile.deployedHeadSha());
     } else if (previousProfile != null) {
+      profile.setExposureMode(previousProfile.getExposureMode());
       profile.setTelnetPort(previousProfile.getTelnetPort());
       profile.setRuntimeNamespaceUid(previousProfile.getRuntimeNamespaceUid());
       profile.setRequestedHeadSha(previousProfile.getRequestedHeadSha());
@@ -174,9 +177,14 @@ public class HostedStatusService {
     if (previous == null || !current.present()) {
       return previous == null && !currentPresent(current);
     }
+    String previousExposureMode =
+        previous.getExposureMode() == null
+            ? HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE
+            : previous.getExposureMode();
     return Objects.equals(current.runtimeNamespaceUid(), previous.getRuntimeNamespaceUid())
         && Objects.equals(current.requestedHeadSha(), previous.getRequestedHeadSha())
         && Objects.equals(current.deployedHeadSha(), previous.getDeployedHeadSha())
+        && Objects.equals(current.exposureMode(), previousExposureMode)
         && Objects.equals(current.telnetPort(), previous.getTelnetPort());
   }
 

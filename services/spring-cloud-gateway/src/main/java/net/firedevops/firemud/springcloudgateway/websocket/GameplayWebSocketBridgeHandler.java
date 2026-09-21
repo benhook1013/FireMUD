@@ -109,13 +109,16 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
             .receive()
             .map(WebSocketMessage::getPayloadAsText)
             .doOnNext(payload -> emitIfConnected(downstream, state, payload))
+            .then()
+            .onErrorResume(
+                GameplayBridgeTerminalCloseException.class,
+                terminal -> closeDownstream(state, terminal.closeClassification()))
             .doFinally(
                 signal -> {
                   state.downstreamClosed.set(true);
                   state.inboundToUpstream.tryEmitComplete();
                   state.outboundToClient.tryEmitComplete();
-                })
-            .then();
+                });
 
     Mono<Void> upstreamLoop = connectWithRetry(downstream, upstreamUri, upstreamHeaders, state, 0);
     return Mono.when(downstreamSend, downstreamReceive, upstreamLoop)
@@ -388,9 +391,17 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
     }
     Sinks.EmitResult result = state.inboundToUpstream.tryEmitNext(payload);
     if (result.isFailure()) {
-      try (RuntimeLoggingContext ignored = openLoggingContext(downstream)) {
-        LOG.debug("Failed to queue downstream gameplay message: {}", result);
+      if (state.downstreamClosed.get()) {
+        try (RuntimeLoggingContext ignored = openLoggingContext(downstream)) {
+          LOG.debug("Ignoring gameplay inbound emission during closure result={}", result);
+        }
+        return;
       }
+      try (RuntimeLoggingContext ignored = openLoggingContext(downstream)) {
+        LOG.warn("Failed to queue downstream gameplay message result={}", result);
+      }
+      throw new GameplayBridgeTerminalCloseException(
+          gameplayWebSocketObservability.classify(BACKEND_UNAVAILABLE));
     }
   }
 

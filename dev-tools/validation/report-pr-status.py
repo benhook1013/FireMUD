@@ -817,7 +817,7 @@ def _checkpoint_summaries(checkpoints: list[dict[str, Any]]) -> dict[str, Any]:
     cli_substantive = [checkpoint for checkpoint in cli if not checkpoint["correction"]]
     cli_zero_streak: list[dict[str, Any]] = []
     for checkpoint in reversed(cli_substantive):
-        if checkpoint["raw_found"] != 0 or checkpoint["accepted"] != 0:
+        if checkpoint["accepted"] != 0:
             break
         cli_zero_streak.append(checkpoint)
     last_cli_accepted = next(
@@ -1350,7 +1350,7 @@ def emit_text(report: dict[str, Any]) -> None:
     )
     cli_zero = counts["cli_zero_streak"]
     print(
-        "CLI 0/0 streak: "
+        "CLI zero-useful streak: "
         f"{cli_zero['count']} since "
         f"{format_human_timestamp(cli_zero['since']) if cli_zero['since'] else 'no recorded streak'}"
     )
