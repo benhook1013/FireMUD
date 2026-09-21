@@ -89,7 +89,7 @@ cert_rules = [rule for rule in rules(cert_role) if "cert-manager.io" in (rule.ge
 assert len(cert_rules) == 1
 assert cert_rules[0].get("resources") == ["certificates"]
 assert set(cert_rules[0].get("verbs") or []) == {
-    "get", "watch", "create", "update", "patch", "delete"
+    "get", "watch", "create", "update", "patch"
 }
 assert not any("secrets" in (rule.get("resources") or []) for rule in rules(cert_role))
 

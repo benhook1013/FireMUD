@@ -150,6 +150,7 @@ jobs:
         with:
           content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}
           path: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
+          export-to-github-env: 'false'
 
       - name: Verify dev-demo namespace-manager kubeconfig
         env:
@@ -162,6 +163,8 @@ jobs:
 
       - name: Verify cluster access
         id: cluster-access
+        env:
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
         run: |
           set +e
           kubectl get namespace kube-system >/dev/null
@@ -249,6 +252,7 @@ jobs:
         with:
           content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_RUNTIME_KUBECONFIG }}
           path: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
+          export-to-github-env: 'false'
 
       - name: Write hosted identity requester kubeconfig
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available == 'true' }}
@@ -280,12 +284,10 @@ jobs:
           KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
         run: bash ./dev-tools/hosted/shared/request-hosted-identity.sh dev-demo Active
 
-      - name: Remove hosted identity requester kubeconfig
-        if: ${{ always() && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
-        run: rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"
-
       - name: Wait for all controller identity projections
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available == 'true' && steps.identity-api.outputs.served == 'true' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
         run: |
           echo "DEV_DEMO_STAGE=identity-projections" >> "$GITHUB_ENV"
           bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
@@ -294,6 +296,7 @@ jobs:
       - name: Ensure GHCR pull secret exists
         if: ${{ steps.cluster-access.outputs.available == 'true' }}
         env:
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
           PREVIEW_GHCR_USERNAME: ${{ secrets.TRUSTED_HOSTED_PREVIEW_GHCR_USERNAME }}
           PREVIEW_GHCR_TOKEN: ${{ secrets.TRUSTED_HOSTED_PREVIEW_GHCR_TOKEN }}
         run: |
@@ -309,6 +312,8 @@ jobs:
 
       - name: Ensure dev-demo gRPC TLS secret exists
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'standalone' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
         run: |
           bash ./dev-tools/hosted/shared/ensure-grpc-tls-secret.sh "${{ needs.dev-demo-plan.outputs.namespace }}"
 
@@ -327,6 +332,7 @@ jobs:
       - name: Validate dev-demo chart render
         if: ${{ steps.cluster-access.outputs.available == 'true' }}
         env:
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
           CERTIFICATE_IDENTITY_MODE: ${{ steps.certificate-identity.outputs.mode }}
         run: |
           set -euo pipefail
@@ -367,6 +373,8 @@ jobs:
         if: ${{ steps.cluster-access.outputs.available == 'true' }}
         id: deploy-release
         continue-on-error: true
+        env:
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
         run: |
           echo "DEV_DEMO_STAGE=deploy" >> "$GITHUB_ENV"
           helm upgrade --install "${{ needs.dev-demo-plan.outputs.release_name }}" k8s/helm/firemud \
@@ -397,11 +405,15 @@ jobs:
 
       - name: Show deployed dev-demo services
         if: ${{ always() && steps.cluster-access.outputs.available == 'true' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
         run: |
           kubectl -n "${{ needs.dev-demo-plan.outputs.namespace }}" get pods,svc,ingress
 
       - name: Show dev-demo rollout diagnostics
         if: ${{ always() && steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'failure' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
         run: |
           bash ./dev-tools/hosted/shared/show-rollout-diagnostics.sh \
             "${{ needs.dev-demo-plan.outputs.namespace }}" \
@@ -417,6 +429,7 @@ jobs:
       - name: Wait for dev-demo runtime rollouts
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
         env:
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
         run: |
           set -euo pipefail
@@ -426,6 +439,8 @@ jobs:
 
       - name: Wait for exact dev-demo controller readiness
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' && steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available == 'true' && steps.identity-api.outputs.served == 'true' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
         run: |
           echo "DEV_DEMO_STAGE=identity-ready" >> "$GITHUB_ENV"
           bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
@@ -435,6 +450,7 @@ jobs:
       - name: Validate controller-projected dev-demo identity
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' && steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available == 'true' && steps.identity-api.outputs.served == 'true' }}
         env:
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
           RELEASE_NAME: ${{ needs.dev-demo-plan.outputs.release_name }}
           ARTIFACT_PATH: /tmp/dev-demo-rendered.yaml
@@ -459,6 +475,7 @@ jobs:
       - name: Create dev-demo smoke account
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
         env:
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
           PREVIEW_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
           PREVIEW_TENANT_ID: "1"
         run: |
@@ -903,9 +920,11 @@ jobs:
 
       - name: Remove dev-demo runtime kubeconfig
         if: ${{ always() }}
-        run: rm -f -- \
-          "$RUNNER_TEMP/dev-demo-namespace-manager.kubeconfig" \
-          "$RUNNER_TEMP/dev-demo-runtime.kubeconfig"
+        run: |
+          rm -f -- \
+            "$RUNNER_TEMP/dev-demo-namespace-manager.kubeconfig" \
+            "$RUNNER_TEMP/dev-demo-runtime.kubeconfig" \
+            "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"
 
   dev-demo-destroy:
     name: Destroy Dev Demo Release

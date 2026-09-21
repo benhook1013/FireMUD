@@ -94,6 +94,9 @@ assert kubeconfig["users"] == [{
     "user": {"token": token},
 }]
 recovery = module._CREDENTIALS_BY_NAME["firemud-preview-ca-recovery"]
+assert recovery.rbac_probes[0][1] == (
+    "validatingadmissionpolicies/firemud-trust-ca-secret-boundary"
+)
 recovery_kubeconfig = json.loads(
     module.build_kubeconfig(
         "cluster.example",

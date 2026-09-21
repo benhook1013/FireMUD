@@ -55,10 +55,19 @@ jobs:
           OPERATION: ${{ inputs.operation }}
         run: |
           set -euo pipefail
-          [[ "$OPERATION" == verify || "$OPERATION" == restore ]]
-          [[ "$EXPECTED_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
+          if [[ "$OPERATION" != verify && "$OPERATION" != restore ]]; then
+            echo "::error title=Invalid recovery operation::Expected verify or restore; received ${OPERATION:-empty}." >&2
+            exit 1
+          fi
+          if [[ ! "$EXPECTED_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error title=Invalid recovery fingerprint::Expected EXPECTED_FINGERPRINT to be 64 lowercase hexadecimal characters." >&2
+            exit 1
+          fi
           if [[ "$OPERATION" == restore ]]; then
-            [[ -n "$EXPECTED_CONTEXT" ]]
+            if [[ -z "$EXPECTED_CONTEXT" ]]; then
+              echo "::error title=Missing recovery context::Restore requires the protected FIREMUD_PREVIEW_CA_RECOVERY_CONTEXT value." >&2
+              exit 1
+            fi
             python3 dev-tools/hosted/trust-bootstrap/recover-firemud-ca.py restore \
               --expected-fingerprint "$EXPECTED_FINGERPRINT" \
               --context "$EXPECTED_CONTEXT" \

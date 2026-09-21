@@ -1783,8 +1783,9 @@ for job_name, job in jobs.items():
     if not writes:
         continue
     manager_kubeconfig_jobs.add(job_name)
-    cleanup_name = "Remove runtime kubeconfig" if job_name == "destroy-runtime" else "Remove runtime kubeconfig"
-    cleanup = next(step for step in steps if step.get("name") == cleanup_name)
+    cleanup = next(
+        step for step in steps if step.get("name") == "Remove runtime kubeconfig"
+    )
     assert cleanup["if"] == "${{ always() }}", job_name
     if job_name == "destroy-runtime":
         assert cleanup["run"] == manager_kubeconfig_cleanup, job_name
@@ -2199,12 +2200,14 @@ assert dev_demo_manager_write["uses"] == "./.github/actions/write-kubeconfig"
 assert dev_demo_manager_write["with"] == {
     "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}",
     "path": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+    "export-to-github-env": "false",
 }
 dev_demo_runtime_write = dev_demo_by_name["Write dev-demo runtime credentials"]
 assert dev_demo_runtime_write["uses"] == "./.github/actions/write-kubeconfig"
 assert dev_demo_runtime_write["with"] == {
     "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_RUNTIME_KUBECONFIG }}",
     "path": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "export-to-github-env": "false",
 }
 dev_demo_requester_write = dev_demo_by_name["Write hosted identity requester kubeconfig"]
 assert dev_demo_requester_write["uses"] == "./.github/actions/write-kubeconfig"

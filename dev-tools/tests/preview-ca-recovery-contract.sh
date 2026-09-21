@@ -89,6 +89,46 @@ module.run = fake_kubectl
 module.restore(certificate, private_key, "firemud-preview-ca-recovery", "cert-manager")
 assert applied == ["firemud-system", "cert-manager"]
 
+
+def assert_boundary_refusal(kind, response, expected):
+    before = list(applied)
+
+    def mutated_boundary(*args, input_bytes=None):
+        if args[1:3] == ("get", kind) and args[3] == "firemud-trust-ca-secret-boundary":
+            return response
+        return fake_kubectl(*args, input_bytes=input_bytes)
+
+    module.run = mutated_boundary
+    try:
+        module.restore(certificate, private_key, "firemud-preview-ca-recovery", "cert-manager")
+    except module.RecoveryError as error:
+        assert expected in str(error), str(error)
+    else:
+        raise AssertionError(f"recovery accepted mutated {kind} boundary")
+    assert applied == before, f"mutated {kind} boundary triggered Secret apply"
+
+
+assert_boundary_refusal(
+    "validatingadmissionpolicy",
+    b"{}",
+    "admission policy firemud-trust-ca-secret-boundary is not fail-closed",
+)
+assert_boundary_refusal(
+    "validatingadmissionpolicybinding",
+    b"{}",
+    "admission binding firemud-trust-ca-secret-boundary is not denying",
+)
+assert_boundary_refusal(
+    "validatingadmissionpolicy",
+    json.dumps({"spec": {"failurePolicy": "Ignore"}}).encode(),
+    "admission policy firemud-trust-ca-secret-boundary is not fail-closed",
+)
+assert_boundary_refusal(
+    "validatingadmissionpolicybinding",
+    json.dumps({"spec": {"validationActions": ["Warn"]}}).encode(),
+    "admission binding firemud-trust-ca-secret-boundary is not denying",
+)
+
 def surviving_legacy(*args, input_bytes=None):
     if args[1:3] == ("-n", "kube-system"):
         return b"serviceaccount/preview-deployer\n"

@@ -16,7 +16,7 @@ if [[ ! "$certificate_wait_timeout_seconds" =~ ^[1-9][0-9]{0,3}$ ]] ||
 fi
 
 transport_operation='write'
-if [[ $# -eq 1 ]]; then
+if [[ $# -eq 1 && "$1" != --wait ]]; then
   namespace="$1"
 elif [[ $# -eq 2 && "$1" == --wait ]]; then
   transport_operation='wait'

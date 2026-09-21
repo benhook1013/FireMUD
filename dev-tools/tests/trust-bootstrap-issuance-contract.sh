@@ -63,7 +63,7 @@ def require(text: str, needle: str, context: str) -> None:
         fail(f"{context} is missing required contract: {needle}")
 
 
-def validate_contract(items: list[dict]) -> None:
+def check_contract(items: list[dict]) -> None:
     expected_policy_names = {
         "firemud-trust-bootstrap-certificaterequest",
         "firemud-trust-bootstrap-certificaterequest-subresources",
@@ -182,6 +182,11 @@ def validate_contract(items: list[dict]) -> None:
         "^pr-[1-9][0-9]{0,50}-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$",
         "standalone Certificate validation",
     )
+    require(
+        certificate_validation,
+        "system:serviceaccount:firemud-system:firemud-standalone-certificate-writer",
+        "standalone Certificate validation",
+    )
 
     issuer = expressions(actual_policies["firemud-trust-bootstrap-ca-issuers"])
     issuer_match = actual_policies["firemud-trust-bootstrap-ca-issuers"]["spec"][
@@ -209,83 +214,61 @@ def validate_contract(items: list[dict]) -> None:
     if issuer_rules[0].get("scope") != "*":
         fail("CA issuer boundary must cover both namespaced and cluster issuers")
 
-    # These mutations model the dangerous regressions this contract is meant to
-    # catch.  The check must fail closed if an exact identity, issuer binding,
-    # owner check, or Deny action disappears.
-    mutation = copy.deepcopy(items)
-    mutation_policy = next(
-        item
-        for item in mutation
-        if item.get("metadata", {}).get("name") == "firemud-trust-bootstrap-certificaterequest"
-    )
-    mutation_policy["spec"]["validations"][1]["expression"] = mutation_policy["spec"][
-        "validations"
-    ][1]["expression"].replace("object.spec.issuerRef.kind == 'ClusterIssuer' &&", "")
-    try:
-        validate_contract_without_mutation(mutation)
-    except AssertionError:
-        pass
-    else:
-        fail("negative mutation removing the exact ClusterIssuer check was accepted")
+check_contract(documents)
 
-    mutation = copy.deepcopy(items)
-    mutation_policy = next(
-        item
-        for item in mutation
-        if item.get("metadata", {}).get("name") == "firemud-trust-bootstrap-certificate"
-    )
-    mutation_policy["spec"]["validations"][0]["expression"] = mutation_policy["spec"][
-        "validations"
-    ][0]["expression"].replace(
-        "system:serviceaccount:firemud-system:firemud-standalone-certificate-writer",
-        "system:serviceaccount:untrusted",
-    )
-    try:
-        validate_contract_without_mutation(mutation)
-    except AssertionError:
-        pass
-    else:
-        fail("negative mutation removing the standalone writer identity was accepted")
+# These mutations model the dangerous regressions this contract is meant to
+# catch. Every mutation goes through the same production checker as the
+# original manifest, so the negative fixtures cannot drift into a weaker copy
+# of the contract.
+mutation = copy.deepcopy(documents)
+mutation_policy = next(
+    item
+    for item in mutation
+    if item.get("metadata", {}).get("name") == "firemud-trust-bootstrap-certificaterequest"
+)
+mutation_policy["spec"]["validations"][1]["expression"] = mutation_policy["spec"][
+    "validations"
+][1]["expression"].replace("object.spec.issuerRef.kind == 'ClusterIssuer' &&", "")
+try:
+    check_contract(mutation)
+except AssertionError:
+    pass
+else:
+    fail("negative mutation removing the exact ClusterIssuer check was accepted")
 
-    mutation = copy.deepcopy(items)
-    mutation_binding = next(
-        item
-        for item in mutation
-        if item.get("kind") == "ValidatingAdmissionPolicyBinding"
-        and item.get("metadata", {}).get("name") == "firemud-trust-bootstrap-ca-issuers"
-    )
-    mutation_binding["spec"]["validationActions"] = ["Warn"]
-    try:
-        validate_contract_without_mutation(mutation)
-    except AssertionError:
-        pass
-    else:
-        fail("negative mutation changing the CA issuer binding from Deny was accepted")
+mutation = copy.deepcopy(documents)
+mutation_policy = next(
+    item
+    for item in mutation
+    if item.get("metadata", {}).get("name") == "firemud-trust-bootstrap-certificate"
+)
+mutation_policy["spec"]["validations"][0]["expression"] = mutation_policy["spec"][
+    "validations"
+][0]["expression"].replace(
+    "system:serviceaccount:firemud-system:firemud-standalone-certificate-writer",
+    "system:serviceaccount:untrusted",
+)
+try:
+    check_contract(mutation)
+except AssertionError:
+    pass
+else:
+    fail("negative mutation removing the standalone writer identity was accepted")
 
+mutation = copy.deepcopy(documents)
+mutation_binding = next(
+    item
+    for item in mutation
+    if item.get("kind") == "ValidatingAdmissionPolicyBinding"
+    and item.get("metadata", {}).get("name") == "firemud-trust-bootstrap-ca-issuers"
+)
+mutation_binding["spec"]["validationActions"] = ["Warn"]
+try:
+    check_contract(mutation)
+except AssertionError:
+    pass
+else:
+    fail("negative mutation changing the CA issuer binding from Deny was accepted")
 
-def validate_contract_without_mutation(items: list[dict]) -> None:
-    # A compact recursive assertion used only for the negative fixtures above.
-    actual_policies = policies(items)
-    actual_bindings = bindings(items)
-    require(
-        expressions(actual_policies["firemud-trust-bootstrap-certificaterequest"]),
-        "object.spec.issuerRef.kind == 'ClusterIssuer'",
-        "mutated CertificateRequest boundary",
-    )
-    require(
-        "\n".join(
-            validation["expression"]
-            for validation in actual_policies["firemud-trust-bootstrap-certificate"]["spec"][
-                "validations"
-            ]
-        ),
-        "system:serviceaccount:firemud-system:firemud-standalone-certificate-writer",
-        "mutated Certificate boundary",
-    )
-    if actual_bindings["firemud-trust-bootstrap-ca-issuers"]["spec"].get("validationActions") != ["Deny"]:
-        fail("mutated CA issuer binding is not Deny-only")
-
-
-validate_contract(documents)
 print(f"trust-bootstrap issuance contract: {len(documents)} documents, fail-closed bindings verified")
 PY

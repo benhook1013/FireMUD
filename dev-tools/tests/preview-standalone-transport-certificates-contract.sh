@@ -84,6 +84,7 @@ assert_rejected 'runtime namespace must be canonical pr-N' pr-42-identity
 assert_rejected 'runtime namespace must be canonical pr-N' dev
 assert_rejected 'usage:' pr-42 ignored-override
 assert_rejected 'usage:' --bogus pr-42
+assert_rejected 'usage:' --wait
 test ! -e "$STATE_DIR/applied.yaml"
 
 if PATH="$FAKE_BIN:$PATH" FAKE_KUBECTL_STATE="$STATE_DIR" \
@@ -106,11 +107,17 @@ grep -Fq 'CERTIFICATE_WAIT_TIMEOUT_SECONDS must be an integer between 1 and 3600
   "$TEMP_DIR/timeout.err"
 test ! -e "$STATE_DIR/applied.yaml"
 
+if [[ -f "$STATE_DIR/calls" ]]; then
+  runtime_calls_start="$(wc -l <"$STATE_DIR/calls")"
+else
+  runtime_calls_start=0
+fi
 PATH="$FAKE_BIN:$PATH" \
 FAKE_KUBECTL_STATE="$STATE_DIR" \
 "$SCRIPT" pr-42 >"$TEMP_DIR/success.out"
 
-if grep -Fq 'get secret' "$STATE_DIR/calls"; then
+runtime_calls="$(tail -n +$((runtime_calls_start + 1)) "$STATE_DIR/calls")"
+if grep -Fq 'get secret' <<<"$runtime_calls"; then
   echo "standalone certificate writer read a Secret" >&2
   exit 1
 fi

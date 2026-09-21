@@ -806,10 +806,11 @@ jobs:
 
       - name: Remove runtime kubeconfig
         if: ${{ always() }}
-        run: rm -f -- \
-          "$RUNNER_TEMP/preview-namespace-manager.kubeconfig" \
-          "$RUNNER_TEMP/preview-runtime.kubeconfig" \
-          "$RUNNER_TEMP/standalone-certificate-writer.kubeconfig"
+        run: |
+          rm -f -- \
+            "$RUNNER_TEMP/preview-namespace-manager.kubeconfig" \
+            "$RUNNER_TEMP/preview-runtime.kubeconfig" \
+            "$RUNNER_TEMP/standalone-certificate-writer.kubeconfig"
 
   verify-runtime:
     name: Verify Hosted Preview Runtime

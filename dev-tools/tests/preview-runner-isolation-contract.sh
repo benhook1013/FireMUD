@@ -252,7 +252,7 @@ for path, job_names in protected_jobs.items():
             )
         if "secrets.TRUSTED_HOSTED_PREVIEW_KUBECONFIG" in text(job):
             raise AssertionError(
-                f"{path.name}:{job_name} still consumes the legacy namespace-manager secret"
+                f"{path.name}:{job_name} still consumes the legacy shared preview kubeconfig secret"
             )
 
 # The source workflow definition must not be selectable from a PR branch.

@@ -22,7 +22,17 @@ kubectl apply -k k8s/preview
 This installs:
 
 - `ClusterIssuer` resources for Let's Encrypt staging and production
-- the [trust-bootstrap identities and admission boundary](../trust-bootstrap/README.md), installed separately before the internal preview CA
+
+The [trust-bootstrap identities and admission boundary](../trust-bootstrap/README.md) are intentionally not part of this kustomization.
+
+Install the trust-bootstrap boundary separately, in this order, before installing the internal preview CA:
+
+```bash
+kubectl apply -f k8s/hosted-identity-controller/namespace.yaml
+kubectl apply -k k8s/trust-bootstrap
+```
+
+The first command creates the fixed `firemud-system` prerequisite. The second installs the scoped identities and fail-closed admission boundary. Keep the hosted identity controller inactive until the trust-bootstrap proof sequence is complete.
 
 The former `preview-deployer` ServiceAccount and ClusterRoleBinding are not part of this kustomization. Operators must revoke them and rotate their old credential before installing the internal CA; merely omitting their manifests does not delete live objects.
 

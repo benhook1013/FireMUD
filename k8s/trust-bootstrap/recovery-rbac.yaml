@@ -11,6 +11,8 @@ metadata:
   name: firemud-preview-ca-recovery
   namespace: firemud-system
 rules:
+  # Kubernetes RBAC cannot narrow CREATE with resourceNames. The companion
+  # VAP constrains this identity's create to the fixed firemud-grpc-ca Secret.
   - apiGroups: [""]
     resources: [secrets]
     verbs: [create]
@@ -39,6 +41,8 @@ metadata:
   name: firemud-preview-ca-recovery
   namespace: cert-manager
 rules:
+  # Kubernetes RBAC cannot narrow CREATE with resourceNames. The companion
+  # VAP constrains this identity's create to the fixed firemud-grpc-ca Secret.
   - apiGroups: [""]
     resources: [secrets]
     verbs: [create]

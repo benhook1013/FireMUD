@@ -145,6 +145,8 @@ fi
 echo 'PASS selected context identity: caller is system:masters (identity details withheld)'
 
 # These checks are run only after the legacy binding and credential are revoked.
+auth_can create certificates.cert-manager.io "$standalone_writer_identity" "$namespace" ||
+  fail 'standalone certificate writer cannot create Certificates; run bind-runtime-roles.sh with the namespace-manager kubeconfig before retrying'
 expect_auth_denied 'legacy preview deployer Secret read' get secrets "$legacy_identity" "$namespace"
 expect_auth_denied 'legacy preview deployer firemud-system Secret read' get secrets "$legacy_identity" firemud-system
 expect_auth_denied 'legacy preview deployer cert-manager Secret read' get secrets "$legacy_identity" cert-manager

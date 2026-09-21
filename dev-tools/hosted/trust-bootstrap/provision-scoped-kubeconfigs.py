@@ -107,7 +107,12 @@ CREDENTIALS = (
         "trusted-preview-ca-recovery",
         "TRUSTED_PREVIEW_CA_RECOVERY_KUBECONFIG",
         (
-            ("get", "validatingadmissionpolicies", None, "yes"),
+            (
+                "get",
+                "validatingadmissionpolicies/firemud-trust-ca-secret-boundary",
+                None,
+                "yes",
+            ),
             ("get", "namespaces", None, "no"),
         ),
     ),
@@ -925,8 +930,14 @@ def apply(
         rotate_provisioner_tokens(context, retained_token_secrets)
 
     except ProvisioningError:
-        if created_secrets and not published:
-            cleanup_created_secrets(context, created_secrets)
+        if created_secrets and not published and not cleanup_created_secrets(
+            context, created_secrets
+        ):
+            print(
+                "scoped kubeconfig provisioning warning: cleanup of created token "
+                "Secrets failed; inspect firemud-system before retrying.",
+                file=sys.stderr,
+            )
         raise
 
     if announce:
