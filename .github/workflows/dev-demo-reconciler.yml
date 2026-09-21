@@ -43,6 +43,7 @@ jobs:
         with:
           content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}
           path: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
+          export-to-github-env: 'false'
 
       - name: Verify cluster access
         env:

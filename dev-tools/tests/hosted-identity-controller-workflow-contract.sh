@@ -1552,6 +1552,7 @@ assert janitor_runtime_writer["uses"] == "./.github/actions/write-kubeconfig"
 assert janitor_runtime_writer["with"] == {
     "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}",
     "path": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
+    "export-to-github-env": "false",
 }
 janitor_runtime_path_expression = "${{ runner.temp }}/preview-namespace-manager.kubeconfig"
 for consumer in (janitor_verify_step, janitor_prune_step):

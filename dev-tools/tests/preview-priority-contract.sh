@@ -2584,6 +2584,17 @@ reconciler = yaml.safe_load(Path(sys.argv[3]).read_text(encoding="utf-8"))
 assert set(preview["jobs"]) == {"preview-plan", "preview-render", "preview-destroy-intent"}
 assert trusted["jobs"]["destroy-runtime"]["timeout-minutes"] == 60
 assert reconciler["jobs"]["reconcile-previews"]["timeout-minutes"] == 60
+reconciler_manager_write = next(
+    step
+    for step in reconciler["jobs"]["reconcile-previews"]["steps"]
+    if step.get("name") == "Write trusted namespace-manager kubeconfig"
+)
+assert reconciler_manager_write["uses"] == "./.github/actions/write-kubeconfig"
+assert reconciler_manager_write["with"] == {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
+    "export-to-github-env": "false",
+}
 preview_run_scripts = [
     step["run"]
     for job in preview["jobs"].values()

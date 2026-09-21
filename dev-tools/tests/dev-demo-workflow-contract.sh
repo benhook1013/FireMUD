@@ -868,6 +868,19 @@ if len(reconcile_checkouts) != 1:
     raise SystemExit("dev-demo reconciler must define exactly one checkout")
 if reconcile_checkouts[0].get("with", {}).get("persist-credentials") is not False:
     raise SystemExit("dev-demo reconciler checkout must not persist credentials")
+reconcile_manager_write = next(
+    step
+    for step in reconcile_steps
+    if step.get("name") == "Write trusted namespace-manager kubeconfig"
+)
+if reconcile_manager_write.get("uses") != "./.github/actions/write-kubeconfig":
+    raise SystemExit("dev-demo reconciler must use the canonical namespace-manager kubeconfig action")
+if reconcile_manager_write.get("with") != {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+    "export-to-github-env": "false",
+}:
+    raise SystemExit("dev-demo reconciler must disable GitHub environment kubeconfig export")
 reconcile_step_run = next(
     step["run"]
     for step in reconcile_steps
