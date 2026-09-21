@@ -845,9 +845,12 @@ coverage_drift:
         mutation_contract: audited_cross_tenant_billing_owner_transfer_with_verified_provider_replacement_before_cutover
     note: Payment/subscription foundations exist, but the unreviewed MS-AA-PAYMENT-INSTRUMENT wallet and payment-instrument contract is not currently routable and has no accepted ADR.
 routes:
-  # These route contracts remain target-only. Any still-live service-local REST
-  # adapters and caller-supplied tenant selectors require the owner-bound
-  # replacements documented by their services; removed adapters stay closed.
+  # The target-only guidance below applies only to entries whose route_status is
+  # target_not_currently_routable; current entries such as
+  # current_openapi_operator_surface remain current contracts. Any still-live
+  # service-local REST adapters and caller-supplied tenant selectors require the
+  # owner-bound replacements documented by their services; removed adapters stay
+  # closed.
   - service: entity-management-service
     route: POST /crafting/recipes
     scope: tenant
