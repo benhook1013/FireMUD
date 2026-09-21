@@ -28,7 +28,9 @@ required_fragments = [
     "currentPullRequest.base.ref !== expectedBaseRef",
     "currentPullRequest.base.sha !== expectedBaseSha",
     "github.paginate(github.rest.issues.listComments",
+    "per_page: 100",
     'comment.user?.login === "github-actions[bot]"',
+    "comment.created_at",
     "const existing = summaryComments.reduce",
 ]
 for fragment in required_fragments:
@@ -125,35 +127,45 @@ async function run(currentPullRequest, comments) {
     head: { sha: "h" },
     base: { ref: "develop", sha: "b" },
   };
+  const firstPageNoise = Array.from({ length: 35 }, (_, index) => ({
+    id: 1000 + index,
+    user: { login: "github-actions[bot]" },
+    body: `### Unrelated Summary ${index + 1}`,
+    created_at: "2025-12-01T00:00:00Z",
+  }));
   const currentCalls = await run(currentPullRequest, [
+    ...firstPageNoise,
     {
       id: 1,
       user: { login: "contributor" },
       body: "### Validation Summary\nspoofed contributor comment",
+      created_at: "2026-01-03T00:00:00Z",
       updated_at: "2026-01-03T00:00:00Z",
     },
     {
       id: 2,
       user: { login: "github-actions[bot]" },
       body: "### Validation Summary\nold bot summary",
-      updated_at: "2026-01-01T00:00:00Z",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-03T00:00:00Z",
     },
     {
       id: 3,
       user: { login: "github-actions[bot]" },
       body: "### Validation Summary\n<!-- firemud-validation-summary -->\nnew bot summary",
-      updated_at: "2026-01-02T00:00:00Z",
+      created_at: "2026-01-02T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
     },
   ]);
   assert.deepEqual(
     currentCalls.updates.map((request) => request.comment_id),
-    [3],
-    "the newest bot-owned summary must be updated",
+    [2],
+    "the oldest bot-owned summary must be updated",
   );
   assert.deepEqual(
     currentCalls.deletes.map((request) => request.comment_id),
-    [2],
-    "only stale bot-owned duplicates may be deleted",
+    [3],
+    "only later bot-owned duplicates may be deleted",
   );
   assert.deepEqual(currentCalls.creates, [], "an existing bot summary must be reused");
   assert.equal(currentCalls.paginate, 1, "comment listing must be paginated once");

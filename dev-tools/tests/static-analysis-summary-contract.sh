@@ -13,6 +13,8 @@ grep -Fq 'run_attempt' "$workflow"
 grep -Fq 'checkRunWorkflowId' "$workflow"
 grep -Fq 'github.paginate(github.rest.checks.listForRef' "$workflow"
 grep -Fq 'github.paginate(github.rest.issues.listComments' "$workflow"
+grep -Fq 'per_page: 100' "$workflow"
+grep -Fq 'cancel-in-progress: false' "$workflow"
 grep -Fq 'currentPullRequest.head?.sha !== headSha' "$workflow"
 grep -Fq 'context.payload.workflow_run.display_title !== expectedSourceTitle' "$workflow"
 grep -Fq 'finalPullRequest.base?.sha !== baseSha' "$workflow"
@@ -185,23 +187,39 @@ const github = {
     }
     if (method === commentsList) {
       return [
+        ...Array.from({ length: 35 }, (_, index) => ({
+          id: 10000 + index,
+          user: { login: "github-actions[bot]" },
+          body: `### Unrelated Summary ${index + 1}`,
+          created_at: "2026-09-01T00:00:00Z",
+        })),
         {
           id: 1,
           user: { login: "contributor" },
           body: "### Static Analysis Summary\nspoof",
+          created_at: "2026-09-18T00:00:00Z",
           updated_at: "2026-09-21T00:00:00Z",
         },
         {
           id: 2,
           user: { login: "github-actions[bot]" },
           body: "### Static Analysis Summary\nold",
-          updated_at: "2026-09-19T00:00:00Z",
+          created_at: "2026-09-19T00:00:00Z",
+          updated_at: "2026-09-21T00:00:00Z",
         },
         {
           id: 3,
           user: { login: "github-actions[bot]" },
           body: "### Static Analysis Summary\nnew",
-          updated_at: "2026-09-20T00:00:00Z",
+          created_at: "2026-09-20T00:00:00Z",
+          updated_at: "2026-09-19T00:00:00Z",
+        },
+        {
+          id: 4,
+          user: { login: "github-actions[bot]" },
+          body: "### Unrelated Summary\nnot a static-analysis summary",
+          created_at: "2026-09-18T00:00:00Z",
+          updated_at: "2026-09-22T00:00:00Z",
         },
       ];
     }
@@ -227,8 +245,8 @@ const run = new Function("github", "context", "core", `return (async () => {\n${
 run(github, context, core).then(() => {
   if (calls.paginate.length !== 4) throw new Error(`expected four paginated calls, got ${calls.paginate.length}`);
   if (!calls.paginate.every(({ input }) => input.per_page === 100)) throw new Error("all API listings must request page size 100");
-  if (calls.updated.length !== 1 || calls.updated[0].comment_id !== 3) throw new Error("newest bot summary was not updated");
-  if (calls.deleted.length !== 1 || calls.deleted[0] !== 2) throw new Error("only the stale bot summary should be deleted");
+  if (calls.updated.length !== 1 || calls.updated[0].comment_id !== 2) throw new Error("oldest bot summary was not updated");
+  if (calls.deleted.length !== 1 || calls.deleted[0] !== 3) throw new Error("only the later duplicate should be deleted");
   if (calls.created.length !== 0) throw new Error("existing bot summary should be updated");
   if (!calls.updated[0].body.includes("❌ Static analysis checks failed")) throw new Error("new failure was masked by the older success");
   if (!calls.updated[0].body.includes("CodeQL gate: `failure`")) throw new Error("latest CodeQL gate result was not selected");

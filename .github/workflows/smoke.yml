@@ -208,25 +208,35 @@ jobs:
             );
 
             const isBotAuthored = (comment) => comment.user?.login === "github-actions[bot]";
-            const isWorkflowComment = (comment) =>
-              isBotAuthored(comment) && comment.body.includes("<!-- firemud-smoke-summary -->");
-            const isLegacyWorkflowComment = (comment) =>
-              isBotAuthored(comment) && comment.body.startsWith("### Smoke Summary");
-            const generatedComments = comments.filter(isWorkflowComment);
-            const legacyComments = comments.filter(isLegacyWorkflowComment);
-            const summaryComments = [...generatedComments, ...legacyComments];
-            const commentTimestamp = (comment) => {
-              const parsed = Date.parse(comment.updated_at || comment.created_at || "");
-              return Number.isNaN(parsed) ? 0 : parsed;
+            const isWorkflowComment = (comment) => {
+              const body = comment.body ?? "";
+              return isBotAuthored(comment) && body.includes("<!-- firemud-smoke-summary -->");
             };
-            const existing = summaryComments.reduce((latest, comment) => {
-              if (!latest) return comment;
-              const latestTimestamp = commentTimestamp(latest);
-              const candidateTimestamp = commentTimestamp(comment);
-              if (candidateTimestamp !== latestTimestamp) {
-                return candidateTimestamp > latestTimestamp ? comment : latest;
+            const isLegacyWorkflowComment = (comment) => {
+              const body = comment.body ?? "";
+              return isBotAuthored(comment) && body.startsWith("### Smoke Summary");
+            };
+            const summaryComments = [];
+            const seenCommentIds = new Set();
+            for (const comment of comments) {
+              if ((!isWorkflowComment(comment) && !isLegacyWorkflowComment(comment)) || seenCommentIds.has(comment.id)) {
+                continue;
               }
-              return Number(comment.id) > Number(latest.id) ? comment : latest;
+              seenCommentIds.add(comment.id);
+              summaryComments.push(comment);
+            }
+            const commentTimestamp = (comment) => {
+              const parsed = Date.parse(comment.created_at || "");
+              return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed;
+            };
+            const existing = summaryComments.reduce((oldest, comment) => {
+              if (!oldest) return comment;
+              const oldestTimestamp = commentTimestamp(oldest);
+              const candidateTimestamp = commentTimestamp(comment);
+              if (candidateTimestamp !== oldestTimestamp) {
+                return candidateTimestamp < oldestTimestamp ? comment : oldest;
+              }
+              return Number(comment.id) < Number(oldest.id) ? comment : oldest;
             }, null);
 
             const deleteCommentIfPresent = async (comment) => {
@@ -240,11 +250,6 @@ jobs:
               }
             };
 
-            for (const comment of summaryComments) {
-              if (comment.id === existing?.id) continue;
-              await deleteCommentIfPresent(comment);
-            }
-
             if (existing) {
               await github.rest.issues.updateComment({
                 ...context.repo,
@@ -257,6 +262,11 @@ jobs:
                 issue_number: context.issue.number,
                 body
               });
+            }
+
+            for (const comment of summaryComments) {
+              if (String(comment.id) === String(existing?.id)) continue;
+              await deleteCommentIfPresent(comment);
             }
 
   smoke-summary:
@@ -334,25 +344,35 @@ jobs:
             );
 
             const isBotAuthored = (comment) => comment.user?.login === "github-actions[bot]";
-            const isWorkflowComment = (comment) =>
-              isBotAuthored(comment) && comment.body.includes("<!-- firemud-smoke-summary -->");
-            const isLegacyWorkflowComment = (comment) =>
-              isBotAuthored(comment) && comment.body.startsWith("### Smoke Summary");
-            const generatedComments = comments.filter(isWorkflowComment);
-            const legacyComments = comments.filter(isLegacyWorkflowComment);
-            const summaryComments = [...generatedComments, ...legacyComments];
-            const commentTimestamp = (comment) => {
-              const parsed = Date.parse(comment.updated_at || comment.created_at || "");
-              return Number.isNaN(parsed) ? 0 : parsed;
+            const isWorkflowComment = (comment) => {
+              const body = comment.body ?? "";
+              return isBotAuthored(comment) && body.includes("<!-- firemud-smoke-summary -->");
             };
-            const existing = summaryComments.reduce((latest, comment) => {
-              if (!latest) return comment;
-              const latestTimestamp = commentTimestamp(latest);
-              const candidateTimestamp = commentTimestamp(comment);
-              if (candidateTimestamp !== latestTimestamp) {
-                return candidateTimestamp > latestTimestamp ? comment : latest;
+            const isLegacyWorkflowComment = (comment) => {
+              const body = comment.body ?? "";
+              return isBotAuthored(comment) && body.startsWith("### Smoke Summary");
+            };
+            const summaryComments = [];
+            const seenCommentIds = new Set();
+            for (const comment of comments) {
+              if ((!isWorkflowComment(comment) && !isLegacyWorkflowComment(comment)) || seenCommentIds.has(comment.id)) {
+                continue;
               }
-              return Number(comment.id) > Number(latest.id) ? comment : latest;
+              seenCommentIds.add(comment.id);
+              summaryComments.push(comment);
+            }
+            const commentTimestamp = (comment) => {
+              const parsed = Date.parse(comment.created_at || "");
+              return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed;
+            };
+            const existing = summaryComments.reduce((oldest, comment) => {
+              if (!oldest) return comment;
+              const oldestTimestamp = commentTimestamp(oldest);
+              const candidateTimestamp = commentTimestamp(comment);
+              if (candidateTimestamp !== oldestTimestamp) {
+                return candidateTimestamp < oldestTimestamp ? comment : oldest;
+              }
+              return Number(comment.id) < Number(oldest.id) ? comment : oldest;
             }, null);
 
             const deleteCommentIfPresent = async (comment) => {
@@ -366,11 +386,6 @@ jobs:
               }
             };
 
-            for (const comment of summaryComments) {
-              if (comment.id === existing?.id) continue;
-              await deleteCommentIfPresent(comment);
-            }
-
             if (existing) {
               await github.rest.issues.updateComment({
                 ...context.repo,
@@ -383,6 +398,11 @@ jobs:
                 issue_number: context.issue.number,
                 body
               });
+            }
+
+            for (const comment of summaryComments) {
+              if (String(comment.id) === String(existing?.id)) continue;
+              await deleteCommentIfPresent(comment);
             }
 
   smoke-gate:

@@ -374,9 +374,21 @@ assert_job_contains smoke.yml smoke-summary-pending 'const smokeGateStatus = ful
 assert_job_contains smoke.yml smoke-summary-pending 'Full-stack smoke runs in Build Runtime Images and is tracked by Smoke Gate'
 assert_job_contains smoke.yml smoke-summary-pending 'firemud-smoke-summary'
 assert_job_contains smoke.yml smoke-summary-pending 'comment.user?.login === "github-actions[bot]"'
+assert_job_contains smoke.yml smoke-summary-pending 'github.paginate('
+assert_job_contains smoke.yml smoke-summary-pending 'comment.created_at || ""'
+assert_job_contains smoke.yml smoke-summary-pending 'candidateTimestamp < oldestTimestamp'
+assert_job_contains smoke.yml smoke-summary-pending 'const seenCommentIds = new Set();'
+assert_job_contains smoke.yml smoke-summary-pending 'String(comment.id) === String(existing?.id)'
+assert_job_excludes smoke.yml smoke-summary-pending 'comment.updated_at'
 assert_job_contains smoke.yml smoke-summary 'const smokeGateStatus ='
 assert_job_contains smoke.yml smoke-summary 'firemud-smoke-summary'
 assert_job_contains smoke.yml smoke-summary 'comment.user?.login === "github-actions[bot]"'
+assert_job_contains smoke.yml smoke-summary 'github.paginate('
+assert_job_contains smoke.yml smoke-summary 'comment.created_at || ""'
+assert_job_contains smoke.yml smoke-summary 'candidateTimestamp < oldestTimestamp'
+assert_job_contains smoke.yml smoke-summary 'const seenCommentIds = new Set();'
+assert_job_contains smoke.yml smoke-summary 'String(comment.id) === String(existing?.id)'
+assert_job_excludes smoke.yml smoke-summary 'comment.updated_at'
 assert_job_contains smoke.yml smoke-gate 'pull-requests: read'
 assert_job_contains smoke.yml smoke-gate 'github.rest.pulls.get'
 assert_job_contains smoke.yml smoke-gate 'pullRequest.state !== "open"'
@@ -1481,6 +1493,111 @@ async function check(conclusion, expectedFailure) {
 check("skipped", true).then(() => check("success", false)).then(() => {
   console.log("Smoke Gate step-conclusion contract passed");
 }).catch((error) => {
+  console.error(error.stack || error);
+  process.exit(1);
+});
+NODE
+
+smoke_summary_scripts="$({
+  python3 - "$smoke_path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+import yaml
+
+
+workflow = yaml.load(Path(sys.argv[1]).read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+scripts = {}
+for job_name in ("smoke-summary-pending", "smoke-summary"):
+    scripts[job_name] = next(
+        step["with"]["script"]
+        for step in workflow["jobs"][job_name]["steps"]
+        if step.get("name", "").startswith("💬 Publish")
+    )
+print(json.dumps(scripts))
+PY
+})"
+
+SMOKE_SUMMARY_SCRIPTS="$smoke_summary_scripts" node <<'NODE'
+const assert = require("node:assert/strict");
+
+const scripts = JSON.parse(process.env.SMOKE_SUMMARY_SCRIPTS);
+const context = {
+  repo: { owner: "example", repo: "firemud" },
+  issue: { number: 42 },
+};
+
+async function checkSummary(jobName, script) {
+  const firstPageNoise = Array.from({ length: 35 }, (_, index) => ({
+    id: index + 1,
+    user: { login: "github-actions[bot]" },
+    body: `### Unrelated Summary ${index + 1}`,
+    created_at: `2026-08-${String((index % 28) + 1).padStart(2, "0")}T00:00:00Z`,
+  }));
+  const comments = [
+    ...firstPageNoise,
+    {
+      id: 100,
+      user: { login: "github-actions[bot]" },
+      body: "### Smoke Summary\nold canonical",
+      created_at: "2026-09-01T00:00:00Z",
+      updated_at: "2026-09-03T00:00:00Z",
+    },
+    {
+      id: 101,
+      user: { login: "github-actions[bot]" },
+      body: "<!-- firemud-smoke-summary -->\n### Smoke Summary\nlater duplicate",
+      created_at: "2026-09-02T00:00:00Z",
+      updated_at: "2026-09-01T00:00:00Z",
+    },
+    {
+      id: 102,
+      user: { login: "contributor" },
+      body: "<!-- firemud-smoke-summary -->\n### Smoke Summary\nspoof",
+      created_at: "2026-08-01T00:00:00Z",
+    },
+  ];
+  const calls = { paginate: [], operations: [], creates: [] };
+  const listComments = async () => undefined;
+  const github = {
+    rest: {
+      issues: {
+        listComments,
+        updateComment: async ({ comment_id }) => calls.operations.push(`update:${comment_id}`),
+        deleteComment: async ({ comment_id }) => calls.operations.push(`delete:${comment_id}`),
+        createComment: async (request) => calls.creates.push(request),
+      },
+    },
+    paginate: async (method, params) => {
+      calls.paginate.push({ method, params });
+      return comments;
+    },
+  };
+
+  process.env.CHANGES_RESULT = "success";
+  process.env.RUN_SMOKE_FULL = "true";
+  process.env.SMOKE_GATE_RESULT = "success";
+  const run = new Function("github", "context", `return (async () => {\n${script}\n})()`);
+  await run(github, context);
+
+  assert.equal(calls.paginate.length, 1, `${jobName} must paginate once`);
+  assert.equal(calls.paginate[0].method, listComments, `${jobName} must paginate issue comments`);
+  assert.equal(calls.paginate[0].params.per_page, 100, `${jobName} must request 100 comments per page`);
+  assert.deepEqual(
+    calls.operations,
+    ["update:100", "delete:101"],
+    `${jobName} must update the oldest bot summary before deleting later duplicates`,
+  );
+  assert.deepEqual(calls.creates, [], `${jobName} must not create another summary`);
+}
+
+(async () => {
+  for (const [jobName, script] of Object.entries(scripts)) {
+    await checkSummary(jobName, script);
+  }
+  console.log("Smoke summary pagination and deduplication contract passed");
+})().catch((error) => {
   console.error(error.stack || error);
   process.exit(1);
 });

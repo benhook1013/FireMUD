@@ -275,26 +275,18 @@ jobs:
               comment.body?.startsWith("### Security Summary")
             );
             const commentTimestamp = (comment) => {
-              const parsed = Date.parse(comment.updated_at || comment.created_at || "");
-              return Number.isNaN(parsed) ? -1 : parsed;
+              const parsed = Date.parse(comment.created_at || "");
+              return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed;
             };
-            const existing = summaryComments.reduce((latest, comment) => {
-              if (!latest) return comment;
-              const latestTimestamp = commentTimestamp(latest);
+            const existing = summaryComments.reduce((oldest, comment) => {
+              if (!oldest) return comment;
+              const oldestTimestamp = commentTimestamp(oldest);
               const candidateTimestamp = commentTimestamp(comment);
-              if (candidateTimestamp !== latestTimestamp) {
-                return candidateTimestamp > latestTimestamp ? comment : latest;
+              if (candidateTimestamp !== oldestTimestamp) {
+                return candidateTimestamp < oldestTimestamp ? comment : oldest;
               }
-              return Number(comment.id) > Number(latest.id) ? comment : latest;
+              return Number(comment.id) < Number(oldest.id) ? comment : oldest;
             }, null);
-
-            for (const comment of summaryComments) {
-              if (comment.id === existing?.id) continue;
-              await github.rest.issues.deleteComment({
-                ...context.repo,
-                comment_id: comment.id,
-              });
-            }
 
             if (existing) {
               await github.rest.issues.updateComment({
@@ -307,5 +299,13 @@ jobs:
                 ...context.repo,
                 issue_number: context.issue.number,
                 body
+              });
+            }
+
+            for (const comment of summaryComments) {
+              if (comment.id === existing?.id) continue;
+              await github.rest.issues.deleteComment({
+                ...context.repo,
+                comment_id: comment.id,
               });
             }

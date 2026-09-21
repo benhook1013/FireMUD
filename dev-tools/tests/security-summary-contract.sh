@@ -7,6 +7,7 @@ workflow="$repo_root/.github/workflows/security.yml"
 grep -Fq 'github.paginate(github.rest.issues.listComments' "$workflow"
 grep -Fq 'per_page: 100' "$workflow"
 grep -Fq 'comment.user?.login === "github-actions[bot]"' "$workflow"
+grep -Fq 'comment.created_at' "$workflow"
 grep -Fq 'if (comment.id === existing?.id) continue;' "$workflow"
 grep -Fq 'github.rest.pulls.get' "$workflow"
 grep -Fq 'currentPullRequest.state !== "open"' "$workflow"
@@ -61,22 +62,31 @@ const github = {
     calls.paginate.push({ method, input });
     if (method !== commentsList) throw new Error(`unexpected paginate method: ${String(method)}`);
     return [
+      ...Array.from({ length: 35 }, (_, index) => ({
+        id: 1000 + index,
+        user: { login: "github-actions[bot]" },
+        body: `### Unrelated Summary ${index + 1}`,
+        created_at: "2026-09-01T00:00:00Z",
+      })),
       {
         id: 11,
         user: { login: "github-actions[bot]" },
         body: "### Security Summary\nnewest",
-        updated_at: "2026-09-20T00:00:00Z",
+        created_at: "2026-09-20T00:00:00Z",
+        updated_at: "2026-09-18T00:00:00Z",
       },
       {
         id: 10,
         user: { login: "github-actions[bot]" },
         body: "### Security Summary\nstale",
-        updated_at: "2026-09-19T00:00:00Z",
+        created_at: "2026-09-19T00:00:00Z",
+        updated_at: "2026-09-21T00:00:00Z",
       },
       {
         id: 12,
         user: { login: "contributor" },
         body: "### Security Summary\nspoof",
+        created_at: "2026-09-18T00:00:00Z",
         updated_at: "2026-09-21T00:00:00Z",
       },
     ];
@@ -110,8 +120,8 @@ const resetCalls = () => {
 };
 run(github, context, core).then(async () => {
   if (calls.paginate.length !== 1 || calls.paginate[0].input.per_page !== 100) throw new Error("security comments must be paginated");
-  if (calls.updated.length !== 1 || calls.updated[0].comment_id !== 11) throw new Error("newest bot summary was not updated");
-  if (calls.deleted.length !== 1 || calls.deleted[0] !== 10) throw new Error("only stale bot summary should be deleted");
+  if (calls.updated.length !== 1 || calls.updated[0].comment_id !== 10) throw new Error("oldest bot summary was not updated");
+  if (calls.deleted.length !== 1 || calls.deleted[0] !== 11) throw new Error("only later bot summary should be deleted");
   if (calls.created.length !== 0) throw new Error("existing bot summary should be updated");
 
   resetCalls();
