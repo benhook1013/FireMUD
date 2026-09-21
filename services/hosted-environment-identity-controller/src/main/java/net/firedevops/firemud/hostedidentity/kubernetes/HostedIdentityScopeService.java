@@ -199,10 +199,7 @@ public class HostedIdentityScopeService {
                 // restricted to the named runtime Secrets.
                 rule(List.of(""), List.of("secrets"), List.of(), List.of("create")),
                 rule(
-                    List.of(""),
-                    List.of("services"),
-                    List.of("tcp-proxy-service"),
-                    List.of("get")),
+                    List.of(""), List.of("services"), List.of("tcp-proxy-service"), List.of("get")),
                 rule(
                     List.of("apps"),
                     List.of("deployments"),

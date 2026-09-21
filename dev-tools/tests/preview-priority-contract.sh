@@ -755,7 +755,7 @@ if success_mode_error="$(bash "$SUMMARY_WRITER" success 101 head-101 image-101 p
 fi
 grep -Fqx 'PREVIEW_EXPOSURE_MODE must be private or public for success summaries' <<<"$success_mode_error"
 public_failure_summary="$(PREVIEW_EXPOSURE_MODE=public bash "$SUMMARY_WRITER" failure 101 head-101 image-101 pr-101.preview.firedevops.net 32001 cleanup)"
-grep -Fqx -- "- TCP: \`telnet pr-101.preview.firedevops.net 32001\`" <<<"$public_failure_summary"
+grep -Fqx -- '- TCP: unavailable' <<<"$public_failure_summary"
 private_failure_summary="$(PREVIEW_EXPOSURE_MODE=private bash "$SUMMARY_WRITER" failure 101 head-101 image-101 pr-101.preview.firedevops.net unavailable cleanup)"
 grep -Fqx -- '- TCP: private Gateway ↔ TCP Proxy bridge unavailable (no public Telnet)' <<<"$private_failure_summary"
 

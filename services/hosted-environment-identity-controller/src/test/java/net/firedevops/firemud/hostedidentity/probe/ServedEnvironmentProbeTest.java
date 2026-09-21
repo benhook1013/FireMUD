@@ -461,8 +461,12 @@ class ServedEnvironmentProbeTest {
     assertEquals("1", requestHeader(fixture.request(), "X-Proxy-Game-Instance-Id"));
     assertEquals("1", requestHeader(fixture.request(), "X-Proxy-Tenant-Id"));
     String connectionId = requestHeader(fixture.request(), "X-Proxy-Connection-Id");
+    String nonce = requestHeader(fixture.request(), "Sec-WebSocket-Key");
     assertNotNull(connectionId);
     assertTrue(connectionId.matches("[A-Za-z0-9_-]{22}"));
+    assertFalse(
+        java.util.Arrays.equals(
+            Base64.getDecoder().decode(nonce), Base64.getUrlDecoder().decode(connectionId)));
   }
 
   @Test
