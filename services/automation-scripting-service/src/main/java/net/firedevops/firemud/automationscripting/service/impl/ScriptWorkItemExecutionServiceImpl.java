@@ -1,6 +1,5 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
@@ -10,8 +9,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.config.ScriptOutputProperties;
+import net.firedevops.firemud.automationscripting.entity.PluginRuntimeState;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
+import net.firedevops.firemud.automationscripting.repository.PluginRuntimeStateRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
@@ -26,6 +27,7 @@ import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptDryRunCapacityService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptReadinessCapacityService;
 import net.firedevops.firemud.automationscripting.service.quota.ScriptTenantBudgetService;
+import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,9 +40,6 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected collaborators are retained internally by Spring services.")
 public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecutionService {
   private static final Logger LOGGER =
       LoggerFactory.getLogger(ScriptWorkItemExecutionServiceImpl.class);
@@ -72,6 +71,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private final ObjectMapper objectMapper;
   private final MeterRegistry meterRegistry;
   private final AutomationQueueService automationQueueService;
+  private final PluginRuntimeStateRepository pluginRuntimeStateRepository;
 
   public ScriptWorkItemExecutionServiceImpl(
       ScriptWorkItemService workItemService,
@@ -98,6 +98,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         new SimpleMeterRegistry(),
         null,
         null,
+        null,
         null);
   }
 
@@ -116,7 +117,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       ScriptReadinessCapacityService readinessCapacityService,
       ScriptPatchReadinessProjectionService readinessProjectionService,
       ObjectMapper objectMapper,
-      MeterRegistry meterRegistry) {
+      MeterRegistry meterRegistry,
+      PluginRuntimeStateRepository pluginRuntimeStateRepository) {
     this(
         workItemService,
         scriptDefinitionRepository,
@@ -131,7 +133,39 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         meterRegistry,
         automationQueueService,
         readinessProjectionService,
-        readinessCapacityService);
+        readinessCapacityService,
+        pluginRuntimeStateRepository);
+  }
+
+  public ScriptWorkItemExecutionServiceImpl(
+      ScriptWorkItemService workItemService,
+      ScriptDefinitionRepository scriptDefinitionRepository,
+      ScriptGameplayCommandHandoffService handoffService,
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      ScriptOutputProperties outputProperties,
+      ScriptTenantBudgetService tenantBudgetService,
+      ScriptDryRunCapacityService dryRunCapacityService,
+      ObjectMapper objectMapper,
+      MeterRegistry meterRegistry,
+      PluginRuntimeStateRepository pluginRuntimeStateRepository) {
+    this(
+        workItemService,
+        scriptDefinitionRepository,
+        handoffService,
+        workItemRepository,
+        auditRepository,
+        rolloutProjectionService,
+        outputProperties,
+        tenantBudgetService,
+        dryRunCapacityService,
+        objectMapper,
+        meterRegistry,
+        null,
+        null,
+        null,
+        pluginRuntimeStateRepository);
   }
 
   public ScriptWorkItemExecutionServiceImpl(
@@ -158,6 +192,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         dryRunCapacityService,
         objectMapper,
         meterRegistry,
+        null,
         null,
         null,
         null);
@@ -190,6 +225,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         meterRegistry,
         automationQueueService,
         null,
+        null,
         null);
   }
 
@@ -208,6 +244,40 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       AutomationQueueService automationQueueService,
       ScriptPatchReadinessProjectionService readinessProjectionService,
       ScriptReadinessCapacityService readinessCapacityService) {
+    this(
+        workItemService,
+        scriptDefinitionRepository,
+        handoffService,
+        workItemRepository,
+        auditRepository,
+        rolloutProjectionService,
+        outputProperties,
+        tenantBudgetService,
+        dryRunCapacityService,
+        objectMapper,
+        meterRegistry,
+        automationQueueService,
+        readinessProjectionService,
+        readinessCapacityService,
+        null);
+  }
+
+  private ScriptWorkItemExecutionServiceImpl(
+      ScriptWorkItemService workItemService,
+      ScriptDefinitionRepository scriptDefinitionRepository,
+      ScriptGameplayCommandHandoffService handoffService,
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      ScriptOutputProperties outputProperties,
+      ScriptTenantBudgetService tenantBudgetService,
+      ScriptDryRunCapacityService dryRunCapacityService,
+      ObjectMapper objectMapper,
+      MeterRegistry meterRegistry,
+      AutomationQueueService automationQueueService,
+      ScriptPatchReadinessProjectionService readinessProjectionService,
+      ScriptReadinessCapacityService readinessCapacityService,
+      PluginRuntimeStateRepository pluginRuntimeStateRepository) {
     this.workItemService = workItemService;
     this.scriptDefinitionRepository = scriptDefinitionRepository;
     this.handoffService = handoffService;
@@ -222,6 +292,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     this.meterRegistry = meterRegistry;
     this.automationQueueService = automationQueueService;
     this.readinessProjectionService = readinessProjectionService;
+    this.pluginRuntimeStateRepository = pluginRuntimeStateRepository;
   }
 
   @Override
@@ -273,6 +344,11 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
 
   private boolean processClaimedWorkItem(ScriptWorkItem workItem) {
     Instant now = Instant.now();
+    String pluginFenceFailure = validateCurrentPluginFence(workItem);
+    if (pluginFenceFailure != null) {
+      cancel(workItem, STAGE_ADMISSION, "stale_execution_fenced", pluginFenceFailure, now);
+      return false;
+    }
     if (!workItem.isDryRun()
         && ScriptQuotaClasses.consumesLiveTenantBudget(workItem.getQuotaClass())
         && !tenantBudgetService.tryReserve(
@@ -374,6 +450,12 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     handoffService.beginAggregateFanout(workItem);
     try {
       for (ScriptGameplayCommandHandoffService.EmittedCommand command : commands) {
+        String handoffPluginFenceFailure = validateCurrentPluginFence(workItem);
+        if (handoffPluginFenceFailure != null) {
+          cancel(
+              workItem, STAGE_DSL_EVAL, "stale_execution_fenced", handoffPluginFenceFailure, now);
+          return false;
+        }
         ScriptGameplayCommandHandoffService.HandoffResult result =
             handoffService.handoff(workItem, command);
         if (!result.accepted()
@@ -869,6 +951,48 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
 
   private static long parseTenantId(ScriptWorkItem workItem) {
     return RequestIdValidation.requirePositiveLong(workItem.getTenantId(), "tenant_id");
+  }
+
+  private String validateCurrentPluginFence(ScriptWorkItem workItem) {
+    if (isOnLoad(workItem)) {
+      return null;
+    }
+    String capturedFailure =
+        ScriptWorkItemFenceEvaluationSupport.validateCapturedPluginFence(workItem);
+    if (capturedFailure != null
+        || ScriptWorkItemFenceEvaluationSupport.normalize(workItem.getPluginId()).isBlank()) {
+      return capturedFailure;
+    }
+    if (pluginRuntimeStateRepository == null) {
+      // Isolated compatibility constructors predate the local lifecycle authority. They remain
+      // usable for core work, while plugin-backed work still fails closed without the authority.
+      return "plugin_lifecycle_evidence_unavailable";
+    }
+    PluginRuntimeState state =
+        pluginRuntimeStateRepository
+            .findByTenantIdAndGameInstanceIdAndPluginId(
+                workItem.getTenantId(),
+                workItem.getGameInstanceId(),
+                ScriptWorkItemFenceEvaluationSupport.normalize(workItem.getPluginId()))
+            .orElse(null);
+    PluginState pluginState = null;
+    String activePluginVersionId = "";
+    long pluginActivationEpoch = 0L;
+    long lifecycleRevision = 0L;
+    if (state != null) {
+      activePluginVersionId = state.getActivePluginVersionId();
+      pluginActivationEpoch = state.getPluginActivationEpoch();
+      lifecycleRevision = state.getLifecycleRevision();
+      if (state.getPluginState() != null) {
+        try {
+          pluginState = PluginState.valueOf(state.getPluginState());
+        } catch (IllegalArgumentException ignored) {
+          // Unknown or malformed lifecycle state is treated as disabled by the helper.
+        }
+      }
+    }
+    return ScriptWorkItemFenceEvaluationSupport.validateCurrentPluginFence(
+        workItem, activePluginVersionId, pluginState, pluginActivationEpoch, lifecycleRevision);
   }
 
   private static boolean isOnLoad(ScriptWorkItem workItem) {

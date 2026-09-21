@@ -129,6 +129,8 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
     history.setOperation("DRAIN");
     history.setControlPlaneRequestId(requestId);
     history.setRequestFingerprint(digest);
+    history.setPreviousPluginVersionId("");
+    history.setActivePluginVersionId("");
     history.setPluginState("DISABLED");
     history.setRequestOutcome("FAILED");
     history.setFailureCode("FAILED_PRECONDITION");

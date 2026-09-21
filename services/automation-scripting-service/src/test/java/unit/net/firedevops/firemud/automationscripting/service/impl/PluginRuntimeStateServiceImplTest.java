@@ -1534,19 +1534,31 @@ class PluginRuntimeStateServiceImplTest {
   }
 
   @Test
-  void activationAlreadyAppliedRecordsNewRequestReceiptWithoutAdvancingFences() {
+  void activationAlreadyAppliedFromFreshRequestIsMutationFree() {
     PluginRuntimeState existing = activePluginState();
     existing.setStatusReason("operator_activation");
     existing.setControlPlaneRequestId("req-existing");
+    existing.setControlPlaneRequestFingerprint("existing-fingerprint");
+    existing.setActorPrincipal("original-operator");
+    existing.setLastChangedAt(Instant.ofEpochMilli(42L));
+    existing.setLastPolicyCheckedAt(Instant.ofEpochMilli(43L));
+    existing.setPluginActivationEpoch(4L);
+    existing.setLifecycleRevision(9L);
     long originalActivationEpoch = existing.getPluginActivationEpoch();
     long originalLifecycleRevision = existing.getLifecycleRevision();
+    Instant originalLastChangedAt = existing.getLastChangedAt();
     PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
     PluginRuntimeEventRepository eventRepository = Mockito.mock(PluginRuntimeEventRepository.class);
     GameDesignControlPlaneClient gameDesignClient =
         Mockito.mock(GameDesignControlPlaneClient.class);
-    when(repository.save(existing)).thenReturn(existing);
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptScheduleInstanceService scheduleInstanceService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    PluginActivationPreflightService preflightService =
+        Mockito.mock(PluginActivationPreflightService.class);
+    PluginRuntimeRequestHistoryRepository historyRepository =
+        Mockito.mock(PluginRuntimeRequestHistoryRepository.class);
     when(repository.findByTenantIdAndGameInstanceIdAndPluginId("1", "game-1", "plugin-1"))
         .thenReturn(Optional.of(existing));
     when(gameDesignClient.getPublishedPluginVersion("1", "plugin-1", "plugin-v1"))
@@ -1587,7 +1599,9 @@ class PluginRuntimeStateServiceImplTest {
             eventRepository,
             gameDesignClient,
             gameSessionClient,
-            Mockito.mock(ScriptScheduleInstanceService.class));
+            scheduleInstanceService,
+            preflightService,
+            historyRepository);
 
     PluginRuntimeStateService.ActivationResult result =
         service.setActiveVersion(
@@ -1597,12 +1611,17 @@ class PluginRuntimeStateServiceImplTest {
     assertThat(result.previousPluginVersionId()).isEqualTo("plugin-v1");
     assertThat(result.activePluginVersionId()).isEqualTo("plugin-v1");
     assertThat(result.controlPlaneRequestId()).isEqualTo("req-new");
-    assertThat(existing.getControlPlaneRequestId()).isEqualTo("req-new");
+    assertThat(existing.getControlPlaneRequestId()).isEqualTo("req-existing");
+    assertThat(existing.getControlPlaneRequestFingerprint()).isEqualTo("existing-fingerprint");
+    assertThat(existing.getActorPrincipal()).isEqualTo("original-operator");
     assertThat(existing.getPluginActivationEpoch()).isEqualTo(originalActivationEpoch);
     assertThat(existing.getLifecycleRevision()).isEqualTo(originalLifecycleRevision);
-    Mockito.verify(repository).save(existing);
-    Mockito.verify(eventRepository)
-        .save(Mockito.argThat(event -> "req-new".equals(event.getControlPlaneRequestId())));
+    assertThat(existing.getLastChangedAt()).isEqualTo(originalLastChangedAt);
+    Mockito.verify(preflightService).validateActivation("1", "game-1", "", "plugin-1", "plugin-v1");
+    Mockito.verify(repository, Mockito.never()).save(Mockito.any());
+    Mockito.verify(eventRepository, Mockito.never()).save(Mockito.any());
+    Mockito.verify(historyRepository, Mockito.never()).insertOrGet(Mockito.any());
+    Mockito.verifyNoInteractions(scheduleInstanceService);
   }
 
   @Test

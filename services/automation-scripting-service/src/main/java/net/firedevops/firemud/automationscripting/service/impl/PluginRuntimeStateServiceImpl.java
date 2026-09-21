@@ -202,23 +202,7 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     }
     GetGameInstanceRuntimeStateResponse runtime = validateActivation(command, existingState);
     if (matches(state, command.targetPluginVersionId(), PluginState.PLUGIN_STATE_ENABLED)) {
-      // A different request must receive its own durable acknowledgement, even when
-      // the requested state is already present.
-      state.setControlPlaneRequestId(controlPlaneRequestId);
-      state.setControlPlaneRequestFingerprint(requestFingerprint);
-      state.setActorPrincipal(actorPrincipal);
-      state.setStatusReason(statusReason);
-      state.setLastChangedAt(now);
-      PluginRuntimeState saved = repository.save(state);
-      recordRequest(
-          saved,
-          OPERATION_ACTIVATE,
-          controlPlaneRequestId,
-          requestFingerprint,
-          previous,
-          saved.getActivePluginVersionId(),
-          now);
-      appendEvent(saved, previous, controlPlaneRequestId, actorPrincipal, now);
+      // A fresh request that already matches the committed target is a mutation-free no-op.
       return new ActivationResult(previous, previous, controlPlaneRequestId);
     }
     state.setActivePluginVersionId(command.targetPluginVersionId());
