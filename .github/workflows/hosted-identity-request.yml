@@ -495,13 +495,16 @@ jobs:
           preview-hostname: ${{ needs.validate-target.outputs.hostname }}
           certificate-identity-mode: ${{ needs.validate-target.outputs.certificate_identity_mode }}
 
-      - name: Write runtime kubeconfig
+      - name: Write trusted namespace-manager kubeconfig
         uses: ./.github/actions/write-kubeconfig
         with:
-          content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_RUNTIME_KUBECONFIG }}
-          path: ${{ runner.temp }}/preview-runtime.kubeconfig
+          content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}
+          path: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
+          export-to-github-env: 'false'
 
       - name: Validate kubectl client/server skew
+        env:
+          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
         run: bash ./dev-tools/hosted/shared/check-kubectl-version-skew.sh
 
       - name: Revalidate open PR before privileged deployment
@@ -529,6 +532,7 @@ jobs:
       - name: Prune stale runtime namespaces
         env:
           GH_TOKEN: ${{ github.token }}
+          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
         run: bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh --apply
 
       - name: Revalidate exact PR source binding before capacity reclaim
@@ -549,6 +553,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PREVIEW_MAX_ACTIVE: ${{ vars.PREVIEW_MAX_ACTIVE }}
+          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
         run: |
           bash ./dev-tools/hosted/preview/allocate-preview-capacity.sh \
             "${{ needs.validate-target.outputs.namespace }}" \
@@ -559,6 +564,8 @@ jobs:
       - name: Allocate stable preview Telnet port
         id: allocate-telnet-port
         if: ${{ needs.validate-target.outputs.exposure_mode == 'public' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
         run: |
           set -euo pipefail
           port="$(bash ./dev-tools/hosted/preview/allocate-preview-telnet-port.sh \
@@ -600,6 +607,7 @@ jobs:
 
       - name: Create and annotate exact preview runtime namespace
         env:
+          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
@@ -623,6 +631,27 @@ jobs:
           bash ./dev-tools/hosted/preview/annotate-preview-namespace.sh \
             "$RUNTIME_NAMESPACE" "$PR_NUMBER" "$HEAD_SHA" "$IMAGE_TAG" \
             "$EXPOSURE_MODE" "$TELNET_PORT" "$ALLOCATION_TIMESTAMP"
+
+      - name: Bind scoped runtime and certificate roles
+        env:
+          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+        run: bash ./dev-tools/hosted/trust-bootstrap/bind-runtime-roles.sh "$RUNTIME_NAMESPACE"
+
+      - name: Write runtime kubeconfig
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_RUNTIME_KUBECONFIG }}
+          path: ${{ runner.temp }}/preview-runtime.kubeconfig
+          export-to-github-env: 'false'
+
+      - name: Write standalone certificate-writer kubeconfig
+        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' }}
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.TRUSTED_HOSTED_STANDALONE_CERTIFICATE_KUBECONFIG }}
+          path: ${{ runner.temp }}/standalone-certificate-writer.kubeconfig
+          export-to-github-env: 'false'
 
       - name: Write requester kubeconfig
         if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
@@ -662,20 +691,40 @@ jobs:
       - name: Wait for all controller identity projections
         if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
         env:
+          KUBECONFIG: ${{ runner.temp }}/preview-runtime.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
           IDENTITY_NAME: pr-${{ needs.validate-target.outputs.pr_number }}
         run: |
           bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
             --projections "$IDENTITY_NAME" "$RUNTIME_NAMESPACE" 900
 
-      - name: Prepare standalone preview transport certificates
+      - name: Prepare standalone gRPC TLS secret
         if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' }}
         env:
+          KUBECONFIG: ${{ runner.temp }}/preview-runtime.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
         run: |
           set -euo pipefail
           bash ./dev-tools/hosted/shared/ensure-grpc-tls-secret.sh "$RUNTIME_NAMESPACE"
+
+      - name: Prepare standalone transport certificates
+        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/standalone-certificate-writer.kubeconfig
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+        run: |
+          set -euo pipefail
           bash ./dev-tools/hosted/preview/ensure-standalone-transport-certificates.sh "$RUNTIME_NAMESPACE"
+
+      - name: Wait for standalone transport Secret projections
+        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/preview-runtime.kubeconfig
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+        run: |
+          set -euo pipefail
+          bash ./dev-tools/hosted/preview/ensure-standalone-transport-certificates.sh \
+            --wait "$RUNTIME_NAMESPACE"
 
       - name: Inject trusted allocated Telnet port
         env:
@@ -696,12 +745,14 @@ jobs:
 
       - name: Ensure trusted runtime pull secret
         env:
+          KUBECONFIG: ${{ runner.temp }}/preview-runtime.kubeconfig
           PREVIEW_GHCR_USERNAME: ${{ secrets.TRUSTED_HOSTED_PREVIEW_GHCR_USERNAME }}
           PREVIEW_GHCR_TOKEN: ${{ secrets.TRUSTED_HOSTED_PREVIEW_GHCR_TOKEN }}
         run: bash ./dev-tools/hosted/shared/ensure-ghcr-pull-secret.sh "${{ needs.validate-target.outputs.namespace }}"
 
       - name: Create canonical non-identity runtime credentials
         env:
+          KUBECONFIG: ${{ runner.temp }}/preview-runtime.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
         run: bash ./dev-tools/hosted/preview/provision-runtime-credentials.sh
 
@@ -717,6 +768,7 @@ jobs:
           ARTIFACT_PATH: ${{ runner.temp }}/preview-rendered-with-port.yaml
           EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
           ALLOCATED_TELNET_PORT: ${{ steps.allocate-telnet-port.outputs.port }}
+          KUBECONFIG: ${{ runner.temp }}/preview-runtime.kubeconfig
         run: |
           set -euo pipefail
           TELNET_PORT="$(bash ./dev-tools/hosted/preview/resolve-preview-telnet-port.sh \
@@ -739,6 +791,7 @@ jobs:
       - name: Record exact deployed preview head
         if: ${{ steps.deploy-runtime-artifact.outcome == 'success' }}
         env:
+          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
@@ -831,7 +884,11 @@ jobs:
 
       - name: Remove runtime kubeconfig
         if: ${{ always() }}
-        run: rm -f -- "$RUNNER_TEMP/preview-runtime.kubeconfig"
+        run: |
+          rm -f -- \
+            "$RUNNER_TEMP/preview-namespace-manager.kubeconfig" \
+            "$RUNNER_TEMP/preview-runtime.kubeconfig" \
+            "$RUNNER_TEMP/standalone-certificate-writer.kubeconfig"
 
   verify-runtime:
     name: Verify Hosted Preview Runtime
@@ -1213,13 +1270,16 @@ jobs:
           requirements: yaml
       - name: Set up kubectl
         uses: ./.github/actions/setup-kubectl
-      - name: Write runtime kubeconfig
+      - name: Write trusted namespace-manager kubeconfig
         uses: ./.github/actions/write-kubeconfig
         with:
-          content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_RUNTIME_KUBECONFIG }}
-          path: ${{ runner.temp }}/preview-runtime.kubeconfig
+          content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}
+          path: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
+          export-to-github-env: 'false'
 
       - name: Validate kubectl client/server skew
+        env:
+          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
         run: bash ./dev-tools/hosted/shared/check-kubectl-version-skew.sh
 
       - name: Revalidate preview cleanup target before runtime deletion
@@ -1236,6 +1296,8 @@ jobs:
               --cleanup "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
           fi
       - name: Delete runtime and wait for NotFound
+        env:
+          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
         run: |
           bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh \
             --delete-runtime "${{ needs.validate-target.outputs.namespace }}"
@@ -1293,7 +1355,7 @@ jobs:
 
       - name: Remove runtime kubeconfig
         if: ${{ always() }}
-        run: rm -f -- "$RUNNER_TEMP/preview-runtime.kubeconfig"
+        run: rm -f -- "$RUNNER_TEMP/preview-namespace-manager.kubeconfig"
 
   retire-identity:
     name: Retire Hosted Identity After Runtime Deletion

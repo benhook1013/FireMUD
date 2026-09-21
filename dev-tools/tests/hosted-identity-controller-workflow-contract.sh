@@ -1521,7 +1521,9 @@ janitor_prune_step = next(
     step for step in janitor_steps if step.get("name") == "Prune stale preview namespaces"
 )
 janitor_runtime_writer = next(
-    step for step in janitor_steps if step.get("name") == "Write preview kubeconfig"
+    step
+    for step in janitor_steps
+    if step.get("name") == "Write trusted namespace-manager kubeconfig"
 )
 janitor_requester_step = next(
     step
@@ -1549,14 +1551,13 @@ assert janitor_requester_step["with"] == {
 assert janitor_prune_step["env"]["HOSTED_IDENTITY_REQUESTER_KUBECONFIG"] == (
     "${{ runner.temp }}/hosted-identity-requester.kubeconfig"
 )
-janitor_runtime_writer_run = janitor_runtime_writer["run"]
-for required in (
-    'KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"',
-    'echo "PREVIEW_RUNTIME_KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"',
-):
-    assert required in janitor_runtime_writer_run, required
-assert 'echo "KUBECONFIG=$KUBECONFIG_PATH"' not in janitor_runtime_writer_run
-janitor_runtime_path_expression = "${{ env.PREVIEW_RUNTIME_KUBECONFIG }}"
+assert janitor_runtime_writer["uses"] == "./.github/actions/write-kubeconfig"
+assert janitor_runtime_writer["with"] == {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
+    "export-to-github-env": "false",
+}
+janitor_runtime_path_expression = "${{ runner.temp }}/preview-namespace-manager.kubeconfig"
 for consumer in (janitor_verify_step, janitor_prune_step):
     assert consumer["env"]["KUBECONFIG"] == janitor_runtime_path_expression
     assert "${{ runner.temp }}/preview-kubeconfig.yaml" not in str(consumer)
@@ -1575,7 +1576,7 @@ assert janitor_cleanup_step.get("run") == (
 )
 assert janitor_runtime_cleanup_step.get("if") == "${{ always() }}"
 assert janitor_runtime_cleanup_step.get("run") == (
-    'rm -f -- "${PREVIEW_RUNTIME_KUBECONFIG:-$RUNNER_TEMP/preview-kubeconfig.yaml}"'
+    'rm -f -- "$RUNNER_TEMP/preview-namespace-manager.kubeconfig"'
 )
 target_step = next(step for step in validate_job["steps"] if step.get("id") == "target")
 target_script = target_step["run"]
@@ -1694,11 +1695,28 @@ active_request = deploy_by_name["Apply canonical Active request"]
 assert active_request["run"] == (
     'bash ./dev-tools/hosted/shared/request-hosted-identity.sh "$IDENTITY_NAME" Active'
 )
+deploy_manager_write = deploy_by_name["Write trusted namespace-manager kubeconfig"]
+assert deploy_manager_write["uses"] == "./.github/actions/write-kubeconfig"
+assert deploy_manager_write["with"] == {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
+    "export-to-github-env": "false",
+}
 deploy_runtime_write = deploy_by_name["Write runtime kubeconfig"]
 deploy_requester_write = deploy_by_name["Write requester kubeconfig"]
 assert deploy_runtime_write["with"]["path"] == (
     "${{ runner.temp }}/preview-runtime.kubeconfig"
 )
+assert deploy_runtime_write["with"]["content"] == (
+    "${{ secrets.TRUSTED_HOSTED_PREVIEW_RUNTIME_KUBECONFIG }}"
+)
+assert deploy_runtime_write["with"]["export-to-github-env"] == "false"
+deploy_writer_write = deploy_by_name["Write standalone certificate-writer kubeconfig"]
+assert deploy_writer_write["with"] == {
+    "content": "${{ secrets.TRUSTED_HOSTED_STANDALONE_CERTIFICATE_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/standalone-certificate-writer.kubeconfig",
+    "export-to-github-env": "false",
+}
 assert deploy_requester_write["with"] == {
     "content": "${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}",
     "path": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
@@ -1709,9 +1727,15 @@ assert deploy_by_name["Apply canonical Active request"]["env"] == {
     "KUBECONFIG": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
 }
 assert (
-    deploy_steps.index(deploy_runtime_write)
+    deploy_steps.index(deploy_manager_write)
+    < deploy_steps.index(deploy_runtime_write)
     < deploy_steps.index(deploy_requester_write)
     < deploy_steps.index(active_request)
+)
+assert (
+    deploy_steps.index(deploy_manager_write)
+    < deploy_steps.index(deploy_by_name["Bind scoped runtime and certificate roles"])
+    < deploy_steps.index(deploy_runtime_write)
 )
 deploy_requester_cleanup = deploy_by_name["Remove requester kubeconfig"]
 assert deploy_requester_cleanup["if"] == "${{ always() }}"
@@ -1723,6 +1747,10 @@ assert "Remember preview runtime kubeconfig" not in deploy_by_name
 assert "Restore preview runtime kubeconfig" not in deploy_by_name
 runtime_kubeconfig_path = "${{ runner.temp }}/preview-runtime.kubeconfig"
 runtime_kubeconfig_cleanup = 'rm -f -- "$RUNNER_TEMP/preview-runtime.kubeconfig"'
+runtime_kubeconfig_marker = '"$RUNNER_TEMP/preview-runtime.kubeconfig"'
+manager_kubeconfig_path = "${{ runner.temp }}/preview-namespace-manager.kubeconfig"
+manager_kubeconfig_cleanup = 'rm -f -- "$RUNNER_TEMP/preview-namespace-manager.kubeconfig"'
+manager_kubeconfig_marker = '"$RUNNER_TEMP/preview-namespace-manager.kubeconfig"'
 runtime_kubeconfig_jobs = set()
 for job_name, job in jobs.items():
     steps = job.get("steps", [])
@@ -1737,13 +1765,37 @@ for job_name, job in jobs.items():
         continue
     runtime_kubeconfig_jobs.add(job_name)
     assert len(writes) == 1, job_name
+    cleanup = next(step for step in steps if step.get("name") == "Remove runtime kubeconfig")
+    assert cleanup["if"] == "${{ always() }}", job_name
+    if job_name == "deploy-runtime":
+        assert runtime_kubeconfig_marker in cleanup["run"], job_name
+        assert manager_kubeconfig_marker in cleanup["run"], job_name
+    else:
+        assert cleanup["run"] == runtime_kubeconfig_cleanup, job_name
+    assert steps[-1] == cleanup, job_name
+assert runtime_kubeconfig_jobs == {"deploy-runtime", "verify-runtime"}
+manager_kubeconfig_jobs = set()
+for job_name, job in jobs.items():
+    steps = job.get("steps", [])
+    writes = [
+        step
+        for step in steps
+        if isinstance(step, dict)
+        and isinstance(step.get("with"), dict)
+        and step["with"].get("path") == manager_kubeconfig_path
+    ]
+    if not writes:
+        continue
+    manager_kubeconfig_jobs.add(job_name)
     cleanup = next(
         step for step in steps if step.get("name") == "Remove runtime kubeconfig"
     )
     assert cleanup["if"] == "${{ always() }}", job_name
-    assert cleanup["run"] == runtime_kubeconfig_cleanup, job_name
-    assert steps[-1] == cleanup, job_name
-assert runtime_kubeconfig_jobs == {"deploy-runtime", "verify-runtime", "destroy-runtime"}
+    if job_name == "destroy-runtime":
+        assert cleanup["run"] == manager_kubeconfig_cleanup, job_name
+    else:
+        assert manager_kubeconfig_marker in cleanup["run"], job_name
+assert manager_kubeconfig_jobs == {"deploy-runtime", "destroy-runtime"}
 assert "Set up Helm" not in deploy_by_name
 requested_step_index = next(
     index
@@ -1818,21 +1870,45 @@ assert create_step["env"]["ALLOCATED_TELNET_PORT"] == (
 assert create_step["env"]["ALLOCATION_TIMESTAMP"] == (
     "${{ steps.allocate-capacity.outputs.allocation_timestamp }}"
 )
-standalone_certificates = deploy_by_name["Prepare standalone preview transport certificates"]
-assert standalone_certificates["if"] == (
+standalone_grpc = deploy_by_name["Prepare standalone gRPC TLS secret"]
+standalone_certificates = deploy_by_name["Prepare standalone transport certificates"]
+standalone_secret_wait = deploy_by_name["Wait for standalone transport Secret projections"]
+assert standalone_grpc["if"] == (
     "${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' }}"
 )
-assert standalone_certificates["env"] == {
+assert standalone_grpc["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/preview-runtime.kubeconfig",
     "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}"
 }
-assert standalone_certificates["run"].splitlines() == [
+assert standalone_certificates["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/standalone-certificate-writer.kubeconfig",
+    "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}"
+}
+assert standalone_grpc["run"].splitlines() == [
     "set -euo pipefail",
     'bash ./dev-tools/hosted/shared/ensure-grpc-tls-secret.sh "$RUNTIME_NAMESPACE"',
+]
+assert standalone_certificates["run"].splitlines() == [
+    "set -euo pipefail",
     'bash ./dev-tools/hosted/preview/ensure-standalone-transport-certificates.sh "$RUNTIME_NAMESPACE"',
+]
+assert standalone_secret_wait["if"] == (
+    "${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' }}"
+)
+assert standalone_secret_wait["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/preview-runtime.kubeconfig",
+    "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}"
+}
+assert standalone_secret_wait["run"].splitlines() == [
+    "set -euo pipefail",
+    "bash ./dev-tools/hosted/preview/ensure-standalone-transport-certificates.sh \\",
+    "  --wait \"$RUNTIME_NAMESPACE\"",
 ]
 assert (
     requested_step_index
+    < deploy_steps.index(standalone_grpc)
     < deploy_steps.index(standalone_certificates)
+    < deploy_steps.index(standalone_secret_wait)
     < apply_step_index
 )
 apply_step = deploy_steps[apply_step_index]
@@ -2299,14 +2375,20 @@ assert "for deployment in" not in dev_demo_rollout_step["run"]
 assert "rollout status" not in dev_demo_rollout_step["run"]
 dev_demo_render_step = dev_demo_by_name["Validate dev-demo chart render"]
 dev_demo_render_run = dev_demo_render_step["run"]
-dev_demo_kubeconfig_step = dev_demo_by_name["Write dev-demo runtime kubeconfig"]
-assert '"$RUNNER_TEMP/dev-demo-runtime.kubeconfig"' in dev_demo_kubeconfig_step[
-    "run"
-]
-assert "DEV_DEMO_RUNTIME_KUBECONFIG" not in dev_demo_kubeconfig_step["run"]
-assert 'echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"' in (
-    dev_demo_kubeconfig_step["run"]
-)
+dev_demo_manager_write = dev_demo_by_name["Write trusted namespace-manager kubeconfig"]
+assert dev_demo_manager_write["uses"] == "./.github/actions/write-kubeconfig"
+assert dev_demo_manager_write["with"] == {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+    "export-to-github-env": "false",
+}
+dev_demo_runtime_write = dev_demo_by_name["Write dev-demo runtime credentials"]
+assert dev_demo_runtime_write["uses"] == "./.github/actions/write-kubeconfig"
+assert dev_demo_runtime_write["with"] == {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_RUNTIME_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "export-to-github-env": "false",
+}
 dev_demo_requester_write = dev_demo_by_name["Write hosted identity requester kubeconfig"]
 assert dev_demo_requester_write["uses"] == "./.github/actions/write-kubeconfig"
 assert dev_demo_requester_write["with"] == {
