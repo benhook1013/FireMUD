@@ -44,10 +44,10 @@ The preview GitHub Actions workflow should not expose the cluster API publicly t
 - the self-hosted `preview` runner on the Hetzner host handles namespace prep, secret creation, manifest validation, and eventual Helm apply/destroy
 - trusted default-branch jobs use separate protected kubeconfigs for namespace lifecycle, namespace-local runtime deployment, and fixed standalone Certificate creation rather than the raw k3s admin kubeconfig
 
-Recommended GitHub secrets:
+Recommended secrets in the protected `trusted-hosted-cluster` GitHub Environment:
 
-- `PREVIEW_GHCR_USERNAME`
-- `PREVIEW_GHCR_TOKEN`
+- `TRUSTED_HOSTED_PREVIEW_GHCR_USERNAME`
+- `TRUSTED_HOSTED_PREVIEW_GHCR_TOKEN`
 
 Recommended GitHub Actions variables:
 
