@@ -656,6 +656,16 @@ public final class TelnetServerHandler extends SimpleChannelInboundHandler<Strin
     synchronized (webSocketLifecycleLock) {
       socket = webSocket.getAndSet(null);
       if (socket != null) {
+        WebSocket priorCloseAbortSocket = closeAbortSocket;
+        ScheduledFuture<?> priorCloseAbortTask = closeAbortTask;
+        closeAbortSocket = null;
+        closeAbortTask = null;
+        if (priorCloseAbortTask != null) {
+          priorCloseAbortTask.cancel(false);
+        }
+        if (priorCloseAbortSocket != null && priorCloseAbortSocket != socket) {
+          priorCloseAbortSocket.abort();
+        }
         closeAbortSocket = socket;
         ChannelHandlerContext currentContext = context;
         if (currentContext == null || currentContext.executor() == null) {

@@ -860,6 +860,38 @@ class TelnetServerHandlerTest {
 
   @Test
   @SuppressWarnings("unchecked")
+  void replacingGatewayCloseAbortsPreviousPendingFallback() throws Exception {
+    TelnetServerHandler handler = newHandler(new SimpleMeterRegistry(), false);
+    ChannelHandlerContext context = mock(ChannelHandlerContext.class);
+    EventExecutor executor = mock(EventExecutor.class);
+    ScheduledFuture<?> task = mock(ScheduledFuture.class);
+    ScheduledFuture<?> replacementTask = mock(ScheduledFuture.class);
+    WebSocket socket = mock(WebSocket.class);
+    WebSocket replacement = mock(WebSocket.class);
+    AtomicInteger scheduleCount = new AtomicInteger();
+    when(context.executor()).thenReturn(executor);
+    when(executor.schedule(any(Runnable.class), anyLong(), any(TimeUnit.class)))
+        .thenAnswer(
+            invocation ->
+                scheduleCount.getAndIncrement() == 0
+                    ? task
+                    : replacementTask);
+    setField(handler, "context", context);
+
+    ((AtomicReference<WebSocket>) fieldValue(handler, "webSocket")).set(socket);
+    invokePrivate(handler, "closeGatewayWebSocket");
+
+    ((AtomicReference<WebSocket>) fieldValue(handler, "webSocket")).set(replacement);
+    invokePrivate(handler, "closeGatewayWebSocket");
+
+    verify(task).cancel(false);
+    verify(socket).abort();
+    verify(replacement).sendClose(WebSocket.NORMAL_CLOSURE, "bye");
+    verify(replacement, never()).abort();
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
   void gatewayCloseAbortsImmediatelyWhenExecutorIsAbsent() throws Exception {
     TelnetServerHandler handler = newHandler(new SimpleMeterRegistry(), false);
     WebSocket socket = mock(WebSocket.class);
