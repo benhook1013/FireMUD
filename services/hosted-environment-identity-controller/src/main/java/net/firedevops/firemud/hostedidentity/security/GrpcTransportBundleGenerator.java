@@ -299,8 +299,9 @@ public class GrpcTransportBundleGenerator {
           GRPC_REQUIRES_CLIENT_AUTH,
           expectedTrustAnchorSha256);
       return !renewalRequired(secret, renewBefore, now);
-    } catch (SecretMaterialValidator.MaterialValidationException
-        | InvalidLeafCertificateException exception) {
+    } catch (
+        SecretMaterialValidator.MaterialValidationException
+            | InvalidLeafCertificateException exception) {
       return false;
     }
   }

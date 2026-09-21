@@ -440,7 +440,8 @@ class SecretMaterialValidatorTest {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
     Secret validCa = generatedCa(now, Duration.ofDays(60));
-    Secret generated = generator().generate(plan, validCa, 2, Duration.ofDays(7), now);
+    Secret generated =
+        generator().generate(plan, validCa, 2, Duration.ofDays(7), now);
     Secret invalidCa = generatedCaWithoutKeyCertSign(now, Duration.ofDays(60));
     Map<String, String> data = new LinkedHashMap<>(generated.getData());
     data.put("ca.crt", invalidCa.getData().get("ca.crt"));
@@ -493,7 +494,8 @@ class SecretMaterialValidatorTest {
     String trustAnchor = SecretMaterialValidator.trustAnchorFingerprint(caSource);
     GrpcTransportBundleGenerator.validateCa(caSource, trustAnchor);
 
-    Secret generated = generator().generate(plan, caSource, 17, Duration.ofDays(7), now);
+    Secret generated =
+        generator().generate(plan, caSource, 17, Duration.ofDays(7), now);
     X509Certificate ca = certificate(caSource.getData().get("ca.crt"));
     X509Certificate leaf = certificate(generated.getData().get("tls.crt"));
 
@@ -575,7 +577,8 @@ class SecretMaterialValidatorTest {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
     GrpcTransportBundleGenerator generator = generator();
-    Secret ca = generatedCaWithDistinctKeyPair(now, Duration.ofDays(60), DISTINCT_CA_KEY_PAIR_ONE);
+    Secret ca =
+        generatedCaWithDistinctKeyPair(now, Duration.ofDays(60), DISTINCT_CA_KEY_PAIR_ONE);
     Secret existing = generator.generate(plan, ca, 4, renewBefore, now);
     existing = withAdditionalUriSan(existing, ca, plan, now);
     existing.getMetadata().setResourceVersion("7");
@@ -587,7 +590,8 @@ class SecretMaterialValidatorTest {
     IdentityClient identityClient = identityClient(plan, existing, ca);
     Replacement replacement = stubReplacement(identityClient, "7");
 
-    Secret repaired = generator.ensure(identityClient.client(), plan, 4L, renewBefore, trustAnchor);
+    Secret repaired =
+        generator.ensure(identityClient.client(), plan, 4L, renewBefore, trustAnchor);
 
     assertSame(replacement.holder().get(), repaired);
     assertEquals(5, GrpcTransportBundleGenerator.issuanceGeneration(repaired));
@@ -611,7 +615,8 @@ class SecretMaterialValidatorTest {
     IdentityClient identityClient = identityClient(plan, existing, ca);
     Replacement replacement = stubReplacement(identityClient, "7");
 
-    Secret repaired = generator.ensure(identityClient.client(), plan, 4L, renewBefore, trustAnchor);
+    Secret repaired =
+        generator.ensure(identityClient.client(), plan, 4L, renewBefore, trustAnchor);
 
     assertSame(replacement.holder().get(), repaired);
     assertEquals(5, GrpcTransportBundleGenerator.issuanceGeneration(repaired));
@@ -829,7 +834,9 @@ class SecretMaterialValidatorTest {
     IllegalStateException failure =
         assertThrows(
             IllegalStateException.class,
-            () -> generator().ensure(client, plan, 1L, Duration.ofDays(7), "0".repeat(64)));
+            () ->
+                generator()
+                    .ensure(client, plan, 1L, Duration.ofDays(7), "0".repeat(64)));
 
     assertEquals("identity source Secret is not controller-owned", failure.getMessage());
     verify(secrets, org.mockito.Mockito.never()).inNamespace(plan.controlNamespace());
@@ -844,7 +851,8 @@ class SecretMaterialValidatorTest {
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
     Secret caSource = generatedCa(now, Duration.ofDays(10));
 
-    Secret generated = generator().generate(plan, caSource, 2, Duration.ofDays(7), now);
+    Secret generated =
+        generator().generate(plan, caSource, 2, Duration.ofDays(7), now);
 
     assertEquals(
         certificate(caSource.getData().get("ca.crt")).getNotAfter(),
@@ -861,7 +869,9 @@ class SecretMaterialValidatorTest {
     IllegalStateException failure =
         assertThrows(
             IllegalStateException.class,
-            () -> generator().generate(plan, caSource, 2, Duration.ofDays(7), now));
+            () ->
+                generator()
+                    .generate(plan, caSource, 2, Duration.ofDays(7), now));
 
     assertTrue(failure.getMessage().contains("expires within the gRPC renewal window"));
   }
@@ -877,7 +887,8 @@ class SecretMaterialValidatorTest {
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
     Secret caSource = generatedCa(now, caLifetime);
 
-    Secret generated = generator().generate(plan, caSource, 2, renewBefore, now);
+    Secret generated =
+        generator().generate(plan, caSource, 2, renewBefore, now);
 
     assertEquals(
         certificate(caSource.getData().get("ca.crt")).getNotAfter(),
@@ -915,9 +926,12 @@ class SecretMaterialValidatorTest {
         assertThrows(
             IllegalStateException.class,
             () ->
-                generator().generate(plan, caSource, 2, Duration.ofMinutes(5).minusNanos(1), now));
+                generator()
+                    .generate(plan, caSource, 2, Duration.ofMinutes(5).minusNanos(1), now));
 
-    assertEquals(expectedRenewalWindowMessage(), failure.getMessage());
+    assertEquals(
+        expectedRenewalWindowMessage(),
+        failure.getMessage());
   }
 
   @Test
@@ -930,9 +944,13 @@ class SecretMaterialValidatorTest {
     IllegalStateException failure =
         assertThrows(
             IllegalStateException.class,
-            () -> generator().generate(plan, caSource, 2, Duration.ofDays(30), now));
+            () ->
+                generator()
+                    .generate(plan, caSource, 2, Duration.ofDays(30), now));
 
-    assertEquals(expectedRenewalWindowMessage(), failure.getMessage());
+    assertEquals(
+        expectedRenewalWindowMessage(),
+        failure.getMessage());
   }
 
   @Test
@@ -1365,7 +1383,8 @@ class SecretMaterialValidatorTest {
                 : KeyUsage.digitalSignature | KeyUsage.keyEncipherment));
     if (!ca) {
       String requiredDnsName =
-          java.util.Objects.requireNonNull(dnsName, "dnsName is required for non-CA certificates");
+          java.util.Objects.requireNonNull(
+              dnsName, "dnsName is required for non-CA certificates");
       builder.addExtension(
           Extension.extendedKeyUsage,
           false,
@@ -1435,12 +1454,12 @@ class SecretMaterialValidatorTest {
       Secret caSource = generatedCa(now, Duration.ofDays(60));
       String trustAnchor = SecretMaterialValidator.trustAnchorFingerprint(caSource);
       GrpcTransportBundleGenerator.validateCa(caSource, trustAnchor);
-      return generator().generate(plan, caSource, 1, Duration.ofDays(7), now);
+      return generator()
+          .generate(plan, caSource, 1, Duration.ofDays(7), now);
     } catch (Exception exception) {
       throw new AssertionError("unable to create configured-CA gRPC test fixture", exception);
     }
   }
-
   private static X509Certificate certificate(String encoded) throws Exception {
     return (X509Certificate)
         CertificateFactory.getInstance("X.509")
