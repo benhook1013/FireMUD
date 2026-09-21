@@ -3643,8 +3643,16 @@ with tempfile.TemporaryDirectory() as directory:
     tcp_source = temp_dir / "tcp-proxy-service.yaml"
     tcp_output = temp_dir / "tcp-proxy-service-with-port.yaml"
     tcp_source.write_text(yaml.safe_dump(tcp_proxy), encoding="utf-8")
-    validator.inject_telnet_port(tcp_source, tcp_output, 32000, "pr-42")
+    validator.inject_telnet_port(
+        tcp_source,
+        tcp_output,
+        32000,
+        "pr-42",
+        "hosted-controller",
+        "public",
+    )
     injected = yaml.safe_load(tcp_output.read_text(encoding="utf-8"))
+    assert injected["metadata"]["labels"] == tcp_proxy["metadata"]["labels"]
     assert injected["spec"]["ports"] == [
         {
             "name": "tcp-2323",
