@@ -425,10 +425,11 @@ jobs:
         if: ${{ needs.validate-target.outputs.image_tag != needs.validate-target.outputs.base_sha }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash ./dev-tools/hosted/shared/wait-for-runtime-images.sh \
-          "${{ needs.validate-target.outputs.merge_sha }}" \
-          "${{ needs.validate-target.outputs.base_sha }}" \
-          "${{ needs.validate-target.outputs.head_sha }}"
+        run: |
+          bash ./dev-tools/hosted/shared/wait-for-runtime-images.sh \
+            "${{ needs.validate-target.outputs.merge_sha }}" \
+            "${{ needs.validate-target.outputs.base_sha }}" \
+            "${{ needs.validate-target.outputs.head_sha }}"
 
       - name: Wait for immutable base runtime images
         if: ${{ needs.validate-target.outputs.image_tag == needs.validate-target.outputs.base_sha }}

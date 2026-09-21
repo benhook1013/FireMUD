@@ -37,7 +37,24 @@ from pathlib import Path
 
 workflow_path, script_path = map(Path, sys.argv[1:])
 lines = workflow_path.read_text(encoding="utf-8").splitlines()
-start = next(index for index, line in enumerate(lines) if line.strip() == "script: |")
+step_name = "- name: 💬 Publish Static Analysis Summary Comment"
+step_start = next(
+    (index for index, line in enumerate(lines) if line.strip() == step_name),
+    None,
+)
+if step_start is None:
+    raise SystemExit(f"missing workflow step: {step_name}")
+step_indent = len(lines[step_start]) - len(lines[step_start].lstrip())
+start = None
+for index in range(step_start + 1, len(lines)):
+    line = lines[index]
+    if line.strip() and len(line) - len(line.lstrip()) <= step_indent:
+        break
+    if line.strip() == "script: |":
+        start = index
+        break
+if start is None:
+    raise SystemExit(f"missing script block after workflow step: {step_name}")
 base_indent = len(lines[start]) - len(lines[start].lstrip())
 body = []
 for line in lines[start + 1 :]:
