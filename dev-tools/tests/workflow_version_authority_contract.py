@@ -244,9 +244,13 @@ def main() -> int:
         )
         if canonical.returncode != 0:
             fail(f"workflow authority loader rejects canonical authority: {canonical.stderr.strip()}")
+        chromedriver_parts = a["CHROMEDRIVER_VERSION"].split(".")
+        if len(chromedriver_parts) < 2 or not chromedriver_parts[-1].isdigit():
+            fail("canonical CHROMEDRIVER_VERSION must be dot-separated with a numeric final segment")
+        mismatched_chromedriver_version = ".".join(chromedriver_parts[:-1] + [str(int(chromedriver_parts[-1]) + 1)])
         mismatch_text = re.sub(
             r"^CHROMEDRIVER_VERSION=.*$",
-            f"CHROMEDRIVER_VERSION={a['CHROMEDRIVER_VERSION'].rsplit('.', 1)[0]}.51",
+            f"CHROMEDRIVER_VERSION={mismatched_chromedriver_version}",
             ap.read_text(),
             flags=re.MULTILINE,
         )
