@@ -871,11 +871,7 @@ class TelnetServerHandlerTest {
     AtomicInteger scheduleCount = new AtomicInteger();
     when(context.executor()).thenReturn(executor);
     when(executor.schedule(any(Runnable.class), anyLong(), any(TimeUnit.class)))
-        .thenAnswer(
-            invocation ->
-                scheduleCount.getAndIncrement() == 0
-                    ? task
-                    : replacementTask);
+        .thenAnswer(invocation -> scheduleCount.getAndIncrement() == 0 ? task : replacementTask);
     setField(handler, "context", context);
 
     ((AtomicReference<WebSocket>) fieldValue(handler, "webSocket")).set(socket);

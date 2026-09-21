@@ -851,9 +851,7 @@ public final class TelnetServerHandler extends SimpleChannelInboundHandler<Strin
     ParsedCloseReason parsed = parseCloseReason(closeReason);
     if (parsed != null && statusCode == 1000 && "logout".equals(parsed.topLevelReason())) {
       return new GatewayCloseClassification(
-          closeReason,
-          "Gameplay session ended; please reconnect",
-          shutdownClassForLogout(parsed));
+          closeReason, "Gameplay session ended; please reconnect", shutdownClassForLogout(parsed));
     }
     if (parsed != null && statusCode == 1001 && "idle_timeout".equals(parsed.topLevelReason())) {
       return new GatewayCloseClassification(
