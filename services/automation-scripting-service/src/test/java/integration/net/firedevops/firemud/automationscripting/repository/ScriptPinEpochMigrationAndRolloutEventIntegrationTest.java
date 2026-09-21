@@ -4,6 +4,7 @@ import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEvent
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventIngressAudit.SCRIPT_EVENT_INGRESS_AUDIT;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptPatchInstanceRolloutEvents.SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptPatchInstanceRolloutProjections.SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS;
+import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptWorkItems.SCRIPT_WORK_ITEMS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -14,6 +15,7 @@ import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchInstanceRolloutEvent;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchInstanceRolloutProjection;
+import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -140,6 +142,41 @@ class ScriptPinEpochMigrationAndRolloutEventIntegrationTest {
     assertThat(second.inserted()).isFalse();
     assertThat(first.audit().getId()).isEqualTo(second.audit().getId());
     assertThat(dsl.fetchCount(SCRIPT_EVENT_AUDIT)).isEqualTo(1);
+  }
+
+  @Test
+  void sourceServiceScopesHandlerWorkAndAuditIdentityWhileSameSourceRetriesDeduplicate() {
+    DSLContext dsl = migrateToLatest();
+    ScriptWorkItemRepository workItemRepository = new ScriptWorkItemRepository(dsl);
+    ScriptEventAuditRepository auditRepository = new ScriptEventAuditRepository(dsl);
+
+    ScriptWorkItem firstWorkItem = sourceScopedWorkItem("producer-a");
+    var firstWorkResult = workItemRepository.insertIfAbsentByTriggerIdentity(firstWorkItem);
+    var retryWorkResult =
+        workItemRepository.insertIfAbsentByTriggerIdentity(sourceScopedWorkItem("producer-a"));
+    var independentWorkResult =
+        workItemRepository.insertIfAbsentByTriggerIdentity(sourceScopedWorkItem("producer-b"));
+
+    assertThat(firstWorkResult.inserted()).isTrue();
+    assertThat(retryWorkResult.inserted()).isFalse();
+    assertThat(independentWorkResult.inserted()).isTrue();
+    assertThat(dsl.fetchCount(SCRIPT_WORK_ITEMS)).isEqualTo(2);
+
+    ScriptEventAudit firstAudit = nullablePinnedEventAudit();
+    firstAudit.setSourceService("producer-a");
+    ScriptEventAudit retryAudit = nullablePinnedEventAudit();
+    retryAudit.setSourceService("producer-a");
+    ScriptEventAudit independentAudit = nullablePinnedEventAudit();
+    independentAudit.setSourceService("producer-b");
+    var firstAuditResult = auditRepository.insertIfAbsentByHandlerIdentity(firstAudit);
+    var retryAuditResult = auditRepository.insertIfAbsentByHandlerIdentity(retryAudit);
+    var independentAuditResult =
+        auditRepository.insertIfAbsentByHandlerIdentity(independentAudit);
+
+    assertThat(firstAuditResult.inserted()).isTrue();
+    assertThat(retryAuditResult.inserted()).isFalse();
+    assertThat(independentAuditResult.inserted()).isTrue();
+    assertThat(dsl.fetchCount(SCRIPT_EVENT_AUDIT)).isEqualTo(2);
   }
 
   @Test
@@ -305,6 +342,29 @@ class ScriptPinEpochMigrationAndRolloutEventIntegrationTest {
     audit.setScriptPinControlPlaneRequestId(null);
     audit.setScriptEventId("event-unpinned-null");
     return audit;
+  }
+
+  private ScriptWorkItem sourceScopedWorkItem(String sourceService) {
+    ScriptWorkItem item = new ScriptWorkItem();
+    item.setTenantId("tenant-work-source");
+    item.setGameInstanceId("instance-work-source");
+    item.setRegionId("region-work-source");
+    item.setRegionEpoch(1L);
+    item.setEntityId("entity-work-source");
+    item.setPlayableStateScope("SHARED");
+    item.setScriptId("script-work-source");
+    item.setPluginId("");
+    item.setPluginVersionId("");
+    item.setBindingId("");
+    item.setEventType("onEnterRegion");
+    item.setEventSchemaVersion("v1");
+    item.setScriptPatchVersion("patch-work-source");
+    item.setScriptPinEpoch(2L);
+    item.setScriptPinControlPlaneRequestId("pin-work-source");
+    item.setScriptEventId("event-work-source");
+    item.setSourceService(sourceService);
+    item.setTriggerMode("EVENT");
+    return item;
   }
 
   private String rawRequestId(DSLContext dsl, Long id) {

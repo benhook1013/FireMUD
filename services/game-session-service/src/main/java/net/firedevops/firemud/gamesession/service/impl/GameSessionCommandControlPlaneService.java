@@ -1807,8 +1807,11 @@ public final class GameSessionCommandControlPlaneService {
               command.getTenantId(), command.getRemoteCoordinatorId());
     } else {
       coordinator =
-          remoteCommandCoordinatorRepository.findByTenantIdAndCommandId(
-              command.getTenantId(), command.getCommandId());
+          remoteCommandCoordinatorRepository
+              .findByTenantIdAndOriginGameInstanceIdAndCommandId(
+                  command.getTenantId(),
+                  command.getGameInstanceId(),
+                  command.getCommandId());
     }
     return coordinator.filter(candidate -> matchesCommandOrigin(candidate, command)).orElse(null);
   }

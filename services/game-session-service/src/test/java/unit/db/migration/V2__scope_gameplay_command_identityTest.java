@@ -25,7 +25,10 @@ class V2__scope_gameplay_command_identityTest {
             "DROP INDEX IF EXISTS idx_gameplay_command_command_id",
             "DROP CONSTRAINT IF EXISTS gameplay_command_command_id_key",
             "CREATE UNIQUE INDEX idx_gameplay_command_tenant_instance_command_id ON gameplay_command USING btree (tenant_id, game_instance_id, command_id)",
-            "CREATE INDEX idx_gameplay_command_command_id ON gameplay_command USING btree (command_id)")
+            "CREATE INDEX idx_gameplay_command_command_id ON gameplay_command USING btree (command_id)",
+            "DROP INDEX IF EXISTS idx_remote_command_coordinator_command_id",
+            "CREATE UNIQUE INDEX idx_remote_command_coordinator_tenant_origin_instance_command_id ON remote_command_coordinator USING btree (tenant_id, origin_game_instance_id, command_id)",
+            "CREATE INDEX idx_remote_command_coordinator_command_id ON remote_command_coordinator USING btree (tenant_id, command_id)")
         .doesNotContain("DROP TABLE", "DROP COLUMN");
   }
 }

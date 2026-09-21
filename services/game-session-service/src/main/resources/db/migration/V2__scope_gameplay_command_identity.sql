@@ -10,3 +10,14 @@ CREATE UNIQUE INDEX idx_gameplay_command_tenant_instance_command_id
 
 CREATE INDEX idx_gameplay_command_command_id
     ON gameplay_command USING btree (command_id);
+
+-- Remote coordinator identity follows the origin command's complete runtime scope.
+-- Keep a tenant/command correlation index for control-plane diagnostics, but do not
+-- use it as an idempotency key because command IDs may be reused by game instance.
+DROP INDEX IF EXISTS idx_remote_command_coordinator_command_id;
+
+CREATE UNIQUE INDEX idx_remote_command_coordinator_tenant_origin_instance_command_id
+    ON remote_command_coordinator USING btree (tenant_id, origin_game_instance_id, command_id);
+
+CREATE INDEX idx_remote_command_coordinator_command_id
+    ON remote_command_coordinator USING btree (tenant_id, command_id);

@@ -568,7 +568,8 @@ class ScriptEventIngressServiceImplTest {
                 1L,
                 "pin-request-1",
                 "event-activation-owned",
-                false))
+                false,
+                "game-session-service"))
         .thenReturn(false, true);
     when(eventAuditRepository
             .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
@@ -588,7 +589,8 @@ class ScriptEventIngressServiceImplTest {
                 1L,
                 "pin-request-1",
                 "event-activation-owned",
-                false))
+                false,
+                "game-session-service"))
         .thenReturn(false, true);
     when(workItemRepository
             .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndPluginIdAndPluginVersionIdAndBindingIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
@@ -611,7 +613,8 @@ class ScriptEventIngressServiceImplTest {
                 1L,
                 "pin-request-1",
                 "event-activation-owned",
-                false))
+                false,
+                "game-session-service"))
         .thenReturn(true);
     when(repository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
@@ -2066,7 +2069,8 @@ class ScriptEventIngressServiceImplTest {
                 0L,
                 null,
                 "onload:1:patch-1:script-1",
-                false))
+                false,
+                "automation-scripting-service"))
         .thenReturn(true);
     when(eventAuditRepository
             .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
@@ -2086,7 +2090,8 @@ class ScriptEventIngressServiceImplTest {
                 0L,
                 null,
                 "onload:1:patch-1:script-1",
-                false))
+                false,
+                "automation-scripting-service"))
         .thenReturn(false);
     ScriptEventIngressService service =
         new ScriptEventIngressServiceImpl(
@@ -2154,7 +2159,8 @@ class ScriptEventIngressServiceImplTest {
                 0L,
                 null,
                 "onload:1:patch-1:script-1",
-                false))
+                false,
+                "automation-scripting-service"))
         .thenReturn(false);
     when(eventAuditRepository
             .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
@@ -2174,7 +2180,8 @@ class ScriptEventIngressServiceImplTest {
                 0L,
                 null,
                 "onload:1:patch-1:script-1",
-                false))
+                false,
+                "automation-scripting-service"))
         .thenReturn(false);
     ScriptEventIngressService service =
         new ScriptEventIngressServiceImpl(
