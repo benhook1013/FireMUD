@@ -1,0 +1,70 @@
+name: Preview CA Recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Verify the protected copy, or restore the two fixed CA Secrets
+        required: true
+        type: choice
+        options:
+          - verify
+          - restore
+
+permissions:
+  contents: read
+
+jobs:
+  recover-preview-ca:
+    name: Verify or Restore Preview CA
+    if: ${{ github.ref == 'refs/heads/develop' && github.event.repository.default_branch == 'develop' }}
+    runs-on:
+      - self-hosted
+      - preview
+      - linux
+      - x64
+    environment: trusted-preview-ca-recovery
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: develop
+          persist-credentials: false
+
+      - name: Set up kubectl for restore only
+        if: ${{ inputs.operation == 'restore' }}
+        uses: ./.github/actions/setup-kubectl
+
+      - name: Write scoped recovery kubeconfig
+        if: ${{ inputs.operation == 'restore' }}
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.TRUSTED_PREVIEW_CA_RECOVERY_KUBECONFIG }}
+          path: ${{ runner.temp }}/preview-ca-recovery.kubeconfig
+          export-to-github-env: 'false'
+
+      - name: Verify protected copy or restore exact Secrets
+        env:
+          FIREMUD_CA_RECOVERY_BUNDLE: ${{ secrets.FIREMUD_PREVIEW_CA_RECOVERY_BUNDLE }}
+          EXPECTED_FINGERPRINT: ${{ vars.FIREMUD_PREVIEW_CA_TRUST_ANCHOR_SHA256 }}
+          EXPECTED_CONTEXT: ${{ vars.FIREMUD_PREVIEW_CA_RECOVERY_CONTEXT }}
+          KUBECONFIG: ${{ runner.temp }}/preview-ca-recovery.kubeconfig
+          OPERATION: ${{ inputs.operation }}
+        run: |
+          set -euo pipefail
+          [[ "$OPERATION" == verify || "$OPERATION" == restore ]]
+          [[ "$EXPECTED_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
+          if [[ "$OPERATION" == restore ]]; then
+            [[ -n "$EXPECTED_CONTEXT" ]]
+            python3 dev-tools/hosted/trust-bootstrap/recover-firemud-ca.py restore \
+              --expected-fingerprint "$EXPECTED_FINGERPRINT" \
+              --context "$EXPECTED_CONTEXT" \
+              --issuer-namespace cert-manager
+          else
+            python3 dev-tools/hosted/trust-bootstrap/recover-firemud-ca.py verify \
+              --expected-fingerprint "$EXPECTED_FINGERPRINT"
+          fi
+
+      - name: Remove recovery kubeconfig
+        if: ${{ always() }}
+        run: rm -f -- "$RUNNER_TEMP/preview-ca-recovery.kubeconfig"

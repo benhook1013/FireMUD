@@ -38,15 +38,15 @@ jobs:
       - name: Set up kubectl
         uses: ./.github/actions/setup-kubectl
 
-      - name: Write preview kubeconfig
-        env:
-          PREVIEW_KUBECONFIG: ${{ secrets.TRUSTED_HOSTED_PREVIEW_KUBECONFIG }}
-          PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
-        run: |
-          KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"
-          echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
+      - name: Write trusted namespace-manager kubeconfig
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}
+          path: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
 
       - name: Verify cluster access
+        env:
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
         run: |
           kubectl get namespace kube-system >/dev/null
           kubectl auth can-i list namespaces --all-namespaces
@@ -58,9 +58,10 @@ jobs:
       - name: Dispatch dev-demo deploy when stale or missing
         env:
           GH_TOKEN: ${{ github.token }}
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
         run: |
           bash ./dev-tools/hosted/dev-demo/reconcile-dev-demo.sh
 
       - name: Remove preview kubeconfig
         if: ${{ always() }}
-        run: rm -f -- "$RUNNER_TEMP/preview-kubeconfig.yaml"
+        run: rm -f -- "$RUNNER_TEMP/dev-demo-namespace-manager.kubeconfig"

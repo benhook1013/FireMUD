@@ -8,7 +8,7 @@ The target platform is a single-node k3s cluster on Hetzner with:
 - Traefik ingress
 - cert-manager with Let's Encrypt issuers
 - one namespace per pull request
-- a dedicated preview deployer identity separate from the default k3s admin kubeconfig
+- distinct scoped namespace-manager, namespace-local runtime, and standalone Certificate-writer identities separate from the default k3s admin kubeconfig
 - a self-hosted GitHub Actions runner on the preview host for cluster-touching preview jobs
 
 These manifests are intentionally cluster-scoped. They are installed once per preview cluster, not once per preview namespace.
@@ -22,8 +22,9 @@ kubectl apply -k k8s/preview
 This installs:
 
 - `ClusterIssuer` resources for Let's Encrypt staging and production
-- a `preview-deployer` ServiceAccount in `kube-system`
-- broad cluster-scoped RBAC for the preview deployer so CI can create and destroy `pr-*` namespaces and manage namespaced resources inside them
+- the [trust-bootstrap identities and admission boundary](../trust-bootstrap/README.md), installed separately before the internal preview CA
+
+The former `preview-deployer` ServiceAccount and ClusterRoleBinding are not part of this kustomization. Operators must revoke them and rotate their old credential before installing the internal CA; merely omitting their manifests does not delete live objects.
 
 ## CI credential model
 
@@ -31,7 +32,7 @@ The preview GitHub Actions workflow should not expose the cluster API publicly t
 
 - GitHub-hosted jobs handle orchestration and any future image build/push work
 - the self-hosted `preview` runner on the Hetzner host handles namespace prep, secret creation, manifest validation, and eventual Helm apply/destroy
-- that self-hosted runner uses a dedicated kubeconfig derived from the `preview-deployer` ServiceAccount rather than the raw k3s admin kubeconfig
+- trusted default-branch jobs use separate protected kubeconfigs for namespace lifecycle, namespace-local runtime deployment, and fixed standalone Certificate creation rather than the raw k3s admin kubeconfig
 
 Recommended GitHub secrets:
 

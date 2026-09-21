@@ -298,9 +298,15 @@ if workflow["jobs"]["dev-demo-deploy"].get("environment") != "trusted-hosted-clu
 if deploy_by_name["Resolve certificate identity mode"] != expected_mode_step:
     raise SystemExit("dev-demo deploy must use the shared certificate identity action exactly")
 ordered = (
+    "Write trusted namespace-manager kubeconfig",
+    "Verify dev-demo namespace-manager kubeconfig",
     "Check Hosted identity requester credentials",
     "Require Hosted identity requester credentials",
+    "Reset dev-demo namespace for clean deploy",
+    "Ensure dev-demo namespace exists",
     "Record exact dev-demo runtime target",
+    "Bind scoped runtime and certificate roles",
+    "Write dev-demo runtime credentials",
     "Write hosted identity requester kubeconfig",
     "Discover HostedEnvironmentIdentity API",
     "Require HostedEnvironmentIdentity API",
@@ -431,12 +437,22 @@ if (
     '  "${{ needs.dev-demo-plan.outputs.namespace }}" 900'
 ) not in readiness_run:
     raise SystemExit("dev-demo readiness wait does not use the derived runtime namespace")
-runtime_kubeconfig = deploy_by_name["Write dev-demo runtime kubeconfig"]
-for required in (
-    'KUBECONFIG=$KUBECONFIG_PATH',
-):
-    if required not in runtime_kubeconfig["run"]:
-        raise SystemExit(f"dev-demo runtime kubeconfig initialization lacks {required}")
+manager_kubeconfig = deploy_by_name["Write trusted namespace-manager kubeconfig"]
+if manager_kubeconfig.get("uses") != "./.github/actions/write-kubeconfig":
+    raise SystemExit("dev-demo namespace manager must use the canonical kubeconfig action")
+if manager_kubeconfig.get("with") != {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+}:
+    raise SystemExit("dev-demo namespace manager action does not use the scoped manager secret")
+runtime_kubeconfig = deploy_by_name["Write dev-demo runtime credentials"]
+if runtime_kubeconfig.get("uses") != "./.github/actions/write-kubeconfig":
+    raise SystemExit("dev-demo runtime deployer must use the canonical kubeconfig action")
+if runtime_kubeconfig.get("with") != {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_RUNTIME_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+}:
+    raise SystemExit("dev-demo runtime deployer action does not use the scoped runtime secret")
 requester_writer = deploy_by_name["Write hosted identity requester kubeconfig"]
 if requester_writer.get("uses") != "./.github/actions/write-kubeconfig":
     raise SystemExit("dev-demo Active requester must use the canonical kubeconfig action")
@@ -559,7 +575,7 @@ if workflow["jobs"]["dev-demo-destroy"].get("environment") != "trusted-hosted-cl
 if destroy_by_name["Resolve certificate identity mode"] != expected_mode_step:
     raise SystemExit("dev-demo destroy must use the shared certificate identity action exactly")
 destroy_order = (
-    "Write dev-demo runtime kubeconfig",
+    "Write trusted namespace-manager kubeconfig",
     "Delete dev-demo namespace and release",
     "Confirm exact dev-demo runtime NotFound",
     "Check Hosted identity requester credentials",
@@ -699,9 +715,14 @@ for step_name, step in (
         )
     if step.get("env") != requester_kubeconfig_env:
         raise SystemExit(f"dev-demo {step_name} does not scope requester KUBECONFIG")
-destroy_runtime_kubeconfig = destroy_by_name["Write dev-demo runtime kubeconfig"]
-if "DEV_DEMO_RUNTIME_KUBECONFIG" in destroy_runtime_kubeconfig["run"]:
-    raise SystemExit("dev-demo destroy retained an unnecessary runtime kubeconfig restore variable")
+destroy_runtime_kubeconfig = destroy_by_name["Write trusted namespace-manager kubeconfig"]
+if destroy_runtime_kubeconfig.get("uses") != "./.github/actions/write-kubeconfig":
+    raise SystemExit("dev-demo destroy must use the canonical namespace-manager kubeconfig action")
+if destroy_runtime_kubeconfig.get("with") != {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+}:
+    raise SystemExit("dev-demo destroy must use the scoped namespace-manager secret")
 destroy_requester_writer = destroy_by_name["Write hosted identity requester kubeconfig"]
 if destroy_requester_writer.get("with") != {
     "content": "${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}",

@@ -83,6 +83,7 @@ assert_rejected 'runtime namespace must be canonical pr-N' pr-0
 assert_rejected 'runtime namespace must be canonical pr-N' pr-42-identity
 assert_rejected 'runtime namespace must be canonical pr-N' dev
 assert_rejected 'usage:' pr-42 ignored-override
+assert_rejected 'usage:' --bogus pr-42
 test ! -e "$STATE_DIR/applied.yaml"
 
 if PATH="$FAKE_BIN:$PATH" FAKE_KUBECTL_STATE="$STATE_DIR" \
@@ -108,6 +109,11 @@ test ! -e "$STATE_DIR/applied.yaml"
 PATH="$FAKE_BIN:$PATH" \
 FAKE_KUBECTL_STATE="$STATE_DIR" \
 "$SCRIPT" pr-42 >"$TEMP_DIR/success.out"
+
+if grep -Fq 'get secret' "$STATE_DIR/calls"; then
+  echo "standalone certificate writer read a Secret" >&2
+  exit 1
+fi
 
 python3 - "$STATE_DIR/applied.yaml" <<'PY'
 import sys
@@ -181,8 +187,18 @@ grep -Fq 'did not become Ready' "$TEMP_DIR/failed.err" || {
   exit 1
 }
 
+runtime_calls_start="$(wc -l <"$STATE_DIR/calls")"
+PATH="$FAKE_BIN:$PATH" FAKE_KUBECTL_STATE="$STATE_DIR" \
+  "$SCRIPT" --wait pr-42 >"$TEMP_DIR/secret-success.out"
+
+runtime_calls="$(tail -n +$((runtime_calls_start + 1)) "$STATE_DIR/calls")"
+if grep -Fq 'apply -f -' <<<"$runtime_calls"; then
+  echo "runtime Secret waiter applied a Certificate" >&2
+  exit 1
+fi
+
 if PATH="$FAKE_BIN:$PATH" FAKE_KUBECTL_STATE="$STATE_DIR" \
-  FAKE_KUBECTL_INCOMPLETE=true CERTIFICATE_WAIT_TIMEOUT_SECONDS=10 "$SCRIPT" pr-42 \
+  FAKE_KUBECTL_INCOMPLETE=true CERTIFICATE_WAIT_TIMEOUT_SECONDS=10 "$SCRIPT" --wait pr-42 \
   >"$TEMP_DIR/incomplete.out" 2>"$TEMP_DIR/incomplete.err"; then
   echo "incomplete projected Secret was accepted" >&2
   exit 1

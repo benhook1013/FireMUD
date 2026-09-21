@@ -145,14 +145,20 @@ jobs:
       - name: Set up Helm
         uses: ./.github/actions/setup-helm
 
-      - name: Write dev-demo runtime kubeconfig
+      - name: Write trusted namespace-manager kubeconfig
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}
+          path: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
+
+      - name: Verify dev-demo namespace-manager kubeconfig
         env:
-          PREVIEW_KUBECONFIG: ${{ secrets.TRUSTED_HOSTED_PREVIEW_KUBECONFIG }}
-          PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
+          KUBECONFIG_PATH: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
         run: |
-          KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh \
-            "$RUNNER_TEMP/dev-demo-runtime.kubeconfig")"
-          echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
+          [[ -s "$KUBECONFIG_PATH" ]] || {
+            echo "trusted namespace-manager kubeconfig was not written" >&2
+            exit 1
+          }
 
       - name: Verify cluster access
         id: cluster-access
@@ -200,6 +206,8 @@ jobs:
 
       - name: Reset dev-demo namespace for clean deploy
         if: ${{ steps.cluster-access.outputs.available == 'true' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
         run: |
           bash ./dev-tools/hosted/shared/delete-hosted-namespace.sh \
             "${{ needs.dev-demo-plan.outputs.namespace }}" \
@@ -207,6 +215,8 @@ jobs:
 
       - name: Ensure dev-demo namespace exists
         if: ${{ steps.cluster-access.outputs.available == 'true' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
         run: |
           bash ./dev-tools/hosted/dev-demo/ensure-dev-demo-namespace.sh \
             "${{ needs.dev-demo-plan.outputs.namespace }}"
@@ -214,6 +224,7 @@ jobs:
       - name: Record exact dev-demo runtime target
         if: ${{ steps.cluster-access.outputs.available == 'true' }}
         env:
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
           HEAD_SHA: ${{ needs.dev-demo-plan.outputs.head_sha }}
           IMAGE_TAG: ${{ needs.dev-demo-plan.outputs.image_tag }}
@@ -224,6 +235,20 @@ jobs:
             "$RUNTIME_NAMESPACE" "$HEAD_SHA" "$IMAGE_TAG" "$TELNET_PORT"
           bash ./dev-tools/hosted/dev-demo/annotate-dev-demo-namespace.sh \
             "$RUNTIME_NAMESPACE" "$HEAD_SHA" "$IMAGE_TAG" "$TELNET_PORT"
+
+      - name: Bind scoped runtime and certificate roles
+        if: ${{ steps.cluster-access.outputs.available == 'true' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
+          RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
+        run: bash ./dev-tools/hosted/trust-bootstrap/bind-runtime-roles.sh "$RUNTIME_NAMESPACE"
+
+      - name: Write dev-demo runtime credentials
+        if: ${{ steps.cluster-access.outputs.available == 'true' }}
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_RUNTIME_KUBECONFIG }}
+          path: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
 
       - name: Write hosted identity requester kubeconfig
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.requester-credentials.outputs.available == 'true' }}
@@ -353,6 +378,7 @@ jobs:
       - name: Record exact deployed dev-demo head
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
         env:
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
           HEAD_SHA: ${{ needs.dev-demo-plan.outputs.head_sha }}
         run: |
@@ -877,7 +903,9 @@ jobs:
 
       - name: Remove dev-demo runtime kubeconfig
         if: ${{ always() }}
-        run: rm -f -- "$RUNNER_TEMP/dev-demo-runtime.kubeconfig"
+        run: rm -f -- \
+          "$RUNNER_TEMP/dev-demo-namespace-manager.kubeconfig" \
+          "$RUNNER_TEMP/dev-demo-runtime.kubeconfig"
 
   dev-demo-destroy:
     name: Destroy Dev Demo Release
@@ -908,19 +936,20 @@ jobs:
       - name: Set up Helm
         uses: ./.github/actions/setup-helm
 
-      - name: Write dev-demo runtime kubeconfig
-        env:
-          PREVIEW_KUBECONFIG: ${{ secrets.TRUSTED_HOSTED_PREVIEW_KUBECONFIG }}
-          PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
-        run: |
-          KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh \
-            "$RUNNER_TEMP/dev-demo-runtime.kubeconfig")"
-          echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
+      - name: Write trusted namespace-manager kubeconfig
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}
+          path: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
 
       - name: Validate kubectl client/server skew
+        env:
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
         run: bash ./dev-tools/hosted/shared/check-kubectl-version-skew.sh
 
       - name: Delete dev-demo namespace and release
+        env:
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
         run: |
           bash ./dev-tools/hosted/shared/delete-hosted-namespace.sh \
             "${{ needs.dev-demo-plan.outputs.namespace }}" \
@@ -1028,4 +1057,4 @@ jobs:
 
       - name: Remove dev-demo runtime kubeconfig
         if: ${{ always() }}
-        run: rm -f -- "$RUNNER_TEMP/dev-demo-runtime.kubeconfig"
+        run: rm -f -- "$RUNNER_TEMP/dev-demo-namespace-manager.kubeconfig"

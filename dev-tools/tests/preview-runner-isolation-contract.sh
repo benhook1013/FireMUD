@@ -34,6 +34,7 @@ reconciler_path = workflow_dir / "preview-reconciler.yml"
 janitor_path = workflow_dir / "preview-janitor.yml"
 dev_demo_path = workflow_dir / "dev-demo.yml"
 dev_demo_reconciler_path = workflow_dir / "dev-demo-reconciler.yml"
+recovery_path = workflow_dir / "preview-ca-recovery.yml"
 
 
 def load(path: Path) -> dict[str, Any]:
@@ -97,8 +98,10 @@ else:
 
 preview = load(preview_path)
 trusted = load(trusted_path)
+recovery = load(recovery_path)
 preview_triggers = triggers(preview)
 trusted_triggers = triggers(trusted)
+recovery_triggers = triggers(recovery)
 preview_jobs = preview.get("jobs")
 trusted_jobs = trusted.get("jobs")
 if not isinstance(preview_jobs, dict) or not preview_jobs:
@@ -115,6 +118,35 @@ if "workflow_run" not in trusted_triggers or "pull_request_target" not in truste
     raise AssertionError(
         "trusted hosted lifecycle must retain workflow_run deploy and pull_request_target cleanup triggers"
     )
+
+# CA recovery is intentionally a separate, recovery-only trust boundary. It
+# must not be folded into the ordinary trusted-hosted-cluster jobs: its
+# environment and credential are independently protected and its operation is
+# limited to an explicit default-branch operator dispatch.
+if set(recovery_triggers) != {"workflow_dispatch"}:
+    raise AssertionError("preview CA recovery must use only workflow_dispatch")
+recovery_input = recovery_triggers["workflow_dispatch"].get("inputs", {}).get("operation", {})
+if recovery_input.get("options") != ["verify", "restore"]:
+    raise AssertionError("preview CA recovery must expose only verify and restore operations")
+recovery_job = recovery.get("jobs", {}).get("recover-preview-ca")
+if not isinstance(recovery_job, dict):
+    raise AssertionError("preview CA recovery lost its recovery job")
+if recovery_job.get("environment") != "trusted-preview-ca-recovery":
+    raise AssertionError("preview CA recovery must use its separate protected environment")
+if "github.ref == 'refs/heads/develop'" not in str(recovery_job.get("if", "")):
+    raise AssertionError("preview CA recovery must be restricted to develop")
+recovery_checkouts = checkouts(recovery_job)
+if len(recovery_checkouts) != 1:
+    raise AssertionError("preview CA recovery must have exactly one checkout")
+if recovery_checkouts[0].get("with", {}).get("ref") != "develop":
+    raise AssertionError("preview CA recovery must check out develop")
+if recovery_checkouts[0].get("with", {}).get("persist-credentials") is not False:
+    raise AssertionError("preview CA recovery persists checkout credentials")
+recovery_text = text(recovery_job)
+if "trusted-hosted-cluster" in recovery_text:
+    raise AssertionError("preview CA recovery must not reuse the deploy environment")
+if "TRUSTED_PREVIEW_CA_RECOVERY_KUBECONFIG" not in recovery_text:
+    raise AssertionError("preview CA recovery lost its recovery-only kubeconfig")
 
 # Cluster-facing maintenance workflows are trusted consumers of repository
 # dispatches. They must not expose their privileged jobs through a manually
@@ -217,6 +249,10 @@ for path, job_names in protected_jobs.items():
         if old_secret:
             raise AssertionError(
                 f"{path.name}:{job_name} still consumes repository-scoped {old_secret.group(0)}"
+            )
+        if "secrets.TRUSTED_HOSTED_PREVIEW_KUBECONFIG" in text(job):
+            raise AssertionError(
+                f"{path.name}:{job_name} still consumes the legacy namespace-manager secret"
             )
 
 # The source workflow definition must not be selectable from a PR branch.

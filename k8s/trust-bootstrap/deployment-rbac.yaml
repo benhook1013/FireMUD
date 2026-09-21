@@ -1,0 +1,157 @@
+# Trusted deployment identities for the hosted preview transition.
+#
+# The ClusterRoles below are deliberately data-plane roles only.  They are
+# bound with RoleBindings in each validated pr-N/dev namespace by the trusted
+# namespace manager; this file contains no data-plane ClusterRoleBindings.
+# The admission policy installed by the bootstrap prerequisite is the second,
+# fail-closed boundary: it limits the manager's RoleBinding writes to these
+# exact role/subject/namespace shapes and limits certificate names and issuer
+# references to the canonical standalone set.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: firemud-preview-runtime
+  namespace: firemud-system
+  labels:
+    app.kubernetes.io/name: firemud-trust-bootstrap
+    app.kubernetes.io/component: trusted-runtime-deployer
+    app.kubernetes.io/part-of: firemud
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: firemud-standalone-certificate-writer
+  namespace: firemud-system
+  labels:
+    app.kubernetes.io/name: firemud-trust-bootstrap
+    app.kubernetes.io/component: standalone-certificate-writer
+    app.kubernetes.io/part-of: firemud
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: firemud-preview-namespace-manager
+  namespace: firemud-system
+  labels:
+    app.kubernetes.io/name: firemud-trust-bootstrap
+    app.kubernetes.io/component: trusted-namespace-manager
+    app.kubernetes.io/part-of: firemud
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: firemud-preview-runtime
+  labels:
+    app.kubernetes.io/name: firemud-trust-bootstrap
+    app.kubernetes.io/component: trusted-runtime-deployer
+    app.kubernetes.io/part-of: firemud
+rules:
+  # These are all namespaced resources.  A RoleBinding in a validated runtime
+  # namespace is required; no cluster-scoped data access is granted here.
+  - apiGroups: [""]
+    resources:
+      - configmaps
+      - events
+      - persistentvolumeclaims
+      - pods
+      - pods/log
+      - pods/portforward
+      - secrets
+      - serviceaccounts
+      - services
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources:
+      - daemonsets
+      - deployments
+      - replicasets
+      - statefulsets
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["batch"]
+    resources:
+      - cronjobs
+      - jobs
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - ingresses
+      - networkpolicies
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["autoscaling"]
+    resources:
+      - horizontalpodautoscalers
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["policy"]
+    resources:
+      - poddisruptionbudgets
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: firemud-standalone-certificate-writer
+  labels:
+    app.kubernetes.io/name: firemud-trust-bootstrap
+    app.kubernetes.io/component: standalone-certificate-writer
+    app.kubernetes.io/part-of: firemud
+rules:
+  # Certificate names and issuer references are constrained by the fail-closed
+  # admission policy.  Kubernetes cannot use resourceNames on CREATE, so the
+  # admission boundary is required in addition to this namespaced binding.
+  - apiGroups: ["cert-manager.io"]
+    resources:
+      - certificates
+    verbs: ["get", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: firemud-preview-namespace-manager
+  labels:
+    app.kubernetes.io/name: firemud-trust-bootstrap
+    app.kubernetes.io/component: trusted-namespace-manager
+    app.kubernetes.io/part-of: firemud
+rules:
+  # Namespace lifecycle is limited by the companion admission policy to
+  # canonical pr-N/dev runtime namespaces.
+  - apiGroups: [""]
+    resources:
+      - namespaces
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # CREATE cannot be narrowed by resourceNames.  The companion policy permits
+  # only the fixed runtime and standalone-writer bindings, in a validated
+  # runtime namespace, with the fixed subjects and role references below.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources:
+      - rolebindings
+    verbs: ["get", "create", "update", "patch", "delete"]
+  # A RoleBinding to a ClusterRole requires bind.  Constrain that RBAC check to
+  # the two data-plane roles; the admission policy additionally checks the
+  # complete object shape and namespace.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources:
+      - clusterroles
+    resourceNames:
+      - firemud-preview-runtime
+      - firemud-standalone-certificate-writer
+    verbs: ["get", "bind"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: firemud-preview-namespace-manager
+  labels:
+    app.kubernetes.io/name: firemud-trust-bootstrap
+    app.kubernetes.io/component: trusted-namespace-manager
+    app.kubernetes.io/part-of: firemud
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: firemud-preview-namespace-manager
+subjects:
+  - kind: ServiceAccount
+    name: firemud-preview-namespace-manager
+    namespace: firemud-system
