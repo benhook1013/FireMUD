@@ -1853,6 +1853,7 @@ assert clean_revalidate_run.index(
 )
 clean_delete = deploy_by_name["Delete exact preview runtime namespace before recreate"]
 assert clean_delete["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
     "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}",
     "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
 }
@@ -1921,6 +1922,7 @@ runtime_uid_step_index = deploy_steps.index(runtime_uid_step)
 assert runtime_uid_step["id"] == "record-runtime-namespace-uid"
 assert runtime_uid_step["if"] == "${{ steps.deploy-runtime-artifact.outcome == 'success' }}"
 assert runtime_uid_step["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
     "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}",
     "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
     "EXPECTED_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",

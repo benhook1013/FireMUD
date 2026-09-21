@@ -594,6 +594,7 @@ jobs:
 
       - name: Delete exact preview runtime namespace before recreate
         env:
+          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
         run: |
@@ -813,6 +814,7 @@ jobs:
         id: record-runtime-namespace-uid
         if: ${{ steps.deploy-runtime-artifact.outcome == 'success' }}
         env:
+          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}

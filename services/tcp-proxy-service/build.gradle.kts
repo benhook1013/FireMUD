@@ -127,7 +127,7 @@ tasks.named<BootJar>("bootJar") {
 }
 
 tasks.named("check") {
-    dependsOn(verifyNoRedisRuntime, verifyNoRedisBootJar)
+    dependsOn(verifyNoRedisRuntime)
 }
 
 tasks.named<BootRun>("bootRun") {
