@@ -61,8 +61,7 @@ public class TcpProxyEventClient implements AutoCloseable {
   void init() throws SSLException, IOException {
     try {
       ResolvedGrpcTlsMaterial initialMaterial = tlsMaterialResolver.resolve(tlsProps);
-      List<Path> watchPaths =
-          initialMaterial == null ? List.of() : initialMaterial.watchPaths();
+      List<Path> watchPaths = initialMaterial == null ? List.of() : initialMaterial.watchPaths();
       if (!watchPaths.isEmpty()) {
         // Register the directories before building the first channel so a rotation during startup
         // is queued and replayed after the initial channel is published.

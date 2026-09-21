@@ -630,7 +630,9 @@ public class ServedEnvironmentProbe {
     byte[] nonceBytes = new byte[16];
     WEBSOCKET_NONCE_SOURCE.nextBytes(nonceBytes);
     String nonce = Base64.getEncoder().encodeToString(nonceBytes);
-    String connectionId = Base64.getUrlEncoder().withoutPadding().encodeToString(nonceBytes);
+    byte[] connectionIdBytes = new byte[16];
+    WEBSOCKET_NONCE_SOURCE.nextBytes(connectionIdBytes);
+    String connectionId = Base64.getUrlEncoder().withoutPadding().encodeToString(connectionIdBytes);
     String expectedAccept = websocketAccept(nonce);
     OutputStream output = socket.getOutputStream();
     output.write(
@@ -837,19 +839,7 @@ public class ServedEnvironmentProbe {
     }
 
     String statusLine = new String(statusLineBytes, 0, length, StandardCharsets.ISO_8859_1);
-    if (statusLine.length() < 12
-        || !(statusLine.startsWith("HTTP/1.0 ") || statusLine.startsWith("HTTP/1.1 "))
-        || !isAsciiDigit(statusLine.charAt(9))
-        || !isAsciiDigit(statusLine.charAt(10))
-        || !isAsciiDigit(statusLine.charAt(11))
-        || (statusLine.length() > 12 && statusLine.charAt(12) != ' ')) {
-      return -1;
-    }
-    int statusCode =
-        (statusLine.charAt(9) - '0') * 100
-            + (statusLine.charAt(10) - '0') * 10
-            + (statusLine.charAt(11) - '0');
-    return statusCode >= 100 && statusCode <= 599 ? statusCode : -1;
+    return parseHttpStatusCode(statusLine);
   }
 
   private static boolean isAsciiDigit(char value) {

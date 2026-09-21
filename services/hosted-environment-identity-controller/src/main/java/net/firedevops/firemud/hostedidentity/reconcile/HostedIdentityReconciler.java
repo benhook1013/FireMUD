@@ -695,9 +695,9 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
         || !RuntimeProfileService.isValidExposureMode(exposureMode)
         || profile.getTelnetPort() == null
         || (!HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(exposureMode)
-                && !runtimeProfileService.isValidTelnetPort(plan, profile.getTelnetPort()))
+            && !runtimeProfileService.isValidTelnetPort(plan, profile.getTelnetPort()))
         || (HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(exposureMode)
-                && profile.getTelnetPort() != 0)) {
+            && profile.getTelnetPort() != 0)) {
       return null;
     }
     return new RuntimeProfileService.RuntimeProfile(

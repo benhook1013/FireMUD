@@ -175,13 +175,13 @@ class TelnetServerHandlerTest {
       AtomicReference<WebSocket.Listener> listenerRef,
       CompletableFuture<WebSocket> pendingConnection) {
     return (clientIp,
-            proxyConnectionId,
-            sessionId,
-            tenantId,
-            worldSlug,
-            realmSlug,
-            pointerVersion,
-            listener) -> {
+        proxyConnectionId,
+        sessionId,
+        tenantId,
+        worldSlug,
+        realmSlug,
+        pointerVersion,
+        listener) -> {
       listenerRef.set(listener);
       return pendingConnection;
     };
@@ -228,10 +228,7 @@ class TelnetServerHandlerTest {
     AtomicReference<WebSocket.Listener> listenerRef = new AtomicReference<>();
     CompletableFuture<WebSocket> pendingConnection = new CompletableFuture<>();
     TelnetServerHandler handler =
-        newHandler(
-            registry,
-            false,
-            capturingConnector(listenerRef, pendingConnection));
+        newHandler(registry, false, capturingConnector(listenerRef, pendingConnection));
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     EventExecutor executor = mock(EventExecutor.class);
@@ -261,10 +258,7 @@ class TelnetServerHandlerTest {
     AtomicReference<WebSocket.Listener> listenerRef = new AtomicReference<>();
     CompletableFuture<WebSocket> pendingConnection = new CompletableFuture<>();
     TelnetServerHandler handler =
-        newHandler(
-            registry,
-            false,
-            capturingConnector(listenerRef, pendingConnection));
+        newHandler(registry, false, capturingConnector(listenerRef, pendingConnection));
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     ChannelFuture closeFuture = mock(ChannelFuture.class);
     Channel channel = mock(Channel.class);
@@ -577,10 +571,7 @@ class TelnetServerHandlerTest {
           }
         };
     TelnetServerHandler handler =
-        newHandler(
-            registry,
-            false,
-            capturingConnector(listenerRef, pendingConnection));
+        newHandler(registry, false, capturingConnector(listenerRef, pendingConnection));
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -744,10 +735,7 @@ class TelnetServerHandlerTest {
           }
         };
     TelnetServerHandler handler =
-        newHandler(
-            registry,
-            false,
-            capturingConnector(listenerRef, pendingConnection));
+        newHandler(registry, false, capturingConnector(listenerRef, pendingConnection));
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     ChannelFuture closeFuture = mock(ChannelFuture.class);
     Channel channel = mock(Channel.class);
@@ -780,10 +768,7 @@ class TelnetServerHandlerTest {
     AtomicReference<WebSocket.Listener> listenerRef = new AtomicReference<>();
     CompletableFuture<WebSocket> pendingConnection = new CompletableFuture<>();
     TelnetServerHandler handler =
-        newHandler(
-            registry,
-            false,
-            capturingConnector(listenerRef, pendingConnection));
+        newHandler(registry, false, capturingConnector(listenerRef, pendingConnection));
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     ChannelFuture closeFuture = mock(ChannelFuture.class);
     Channel channel = mock(Channel.class);
@@ -870,6 +855,34 @@ class TelnetServerHandlerTest {
     ((AtomicReference<WebSocket>) fieldValue(handler, "webSocket")).set(replacement);
     fallback.get().run();
     verify(socket, never()).abort();
+    verify(replacement, never()).abort();
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void replacingGatewayCloseAbortsPreviousPendingFallback() throws Exception {
+    TelnetServerHandler handler = newHandler(new SimpleMeterRegistry(), false);
+    ChannelHandlerContext context = mock(ChannelHandlerContext.class);
+    EventExecutor executor = mock(EventExecutor.class);
+    ScheduledFuture<?> task = mock(ScheduledFuture.class);
+    ScheduledFuture<?> replacementTask = mock(ScheduledFuture.class);
+    WebSocket socket = mock(WebSocket.class);
+    WebSocket replacement = mock(WebSocket.class);
+    AtomicInteger scheduleCount = new AtomicInteger();
+    when(context.executor()).thenReturn(executor);
+    when(executor.schedule(any(Runnable.class), anyLong(), any(TimeUnit.class)))
+        .thenAnswer(invocation -> scheduleCount.getAndIncrement() == 0 ? task : replacementTask);
+    setField(handler, "context", context);
+
+    ((AtomicReference<WebSocket>) fieldValue(handler, "webSocket")).set(socket);
+    invokePrivate(handler, "closeGatewayWebSocket");
+
+    ((AtomicReference<WebSocket>) fieldValue(handler, "webSocket")).set(replacement);
+    invokePrivate(handler, "closeGatewayWebSocket");
+
+    verify(task).cancel(false);
+    verify(socket).abort();
+    verify(replacement).sendClose(WebSocket.NORMAL_CLOSURE, "bye");
     verify(replacement, never()).abort();
   }
 

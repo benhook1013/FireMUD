@@ -103,13 +103,24 @@ helm template pr-42 "$CHART_DIR" \
   -f "$TMP_DIR/private-values.yaml" \
   >"$TMP_DIR/rendered.yaml"
 
-python3 - <<'PY' "$TMP_DIR/rendered.yaml"
+python3 - "$TMP_DIR/rendered.yaml" \
+  "$ROOT_DIR/dev-tools/hosted/preview/validate-preview-artifact.py" <<'PY'
+import importlib.util
 import pathlib
 import subprocess
 import sys
 import tempfile
 
 import yaml
+
+validator_path = pathlib.Path(sys.argv[2])
+validator_spec = importlib.util.spec_from_file_location(
+    "preview_artifact_validator_contract", validator_path
+)
+if validator_spec is None or validator_spec.loader is None:
+    raise SystemExit(f"could not load preview artifact validator: {validator_path}")
+validator = importlib.util.module_from_spec(validator_spec)
+validator_spec.loader.exec_module(validator)
 
 documents = [
     document
@@ -204,6 +215,11 @@ if len(postgres_init_containers) != 1:
         "PostgreSQL must render exactly one data-layout guard init container"
     )
 postgres_layout_guard = postgres_init_containers[0]
+if postgres_layout_guard != validator.POSTGRES_DATA_LAYOUT_CHECK_INIT_CONTAINER:
+    raise SystemExit(
+        "PostgreSQL data-layout guard drifted from "
+        "POSTGRES_DATA_LAYOUT_CHECK_INIT_CONTAINER in validate-preview-artifact.py"
+    )
 if postgres_layout_guard.get("name") != "postgres-data-layout-check":
     raise SystemExit("PostgreSQL data-layout guard has an unexpected name")
 if postgres_layout_guard.get("image") != postgres["image"]:

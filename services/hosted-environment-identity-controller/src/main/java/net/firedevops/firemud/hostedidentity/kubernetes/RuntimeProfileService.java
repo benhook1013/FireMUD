@@ -160,11 +160,7 @@ public class RuntimeProfileService {
           exposure + " runtime " + TCP_PROXY_SERVICE_NAME + " Service cannot carry external IPs");
     }
     List<ServicePort> ports = service.getSpec().getPorts();
-    if (ports == null || ports.isEmpty()) {
-      throw new IllegalStateException(
-          "runtime " + TCP_PROXY_SERVICE_NAME + " Service has no ports");
-    }
-    if (ports.size() != 1) {
+    if (ports == null || ports.size() != 1) {
       throw new IllegalStateException(
           "runtime "
               + TCP_PROXY_SERVICE_NAME

@@ -685,6 +685,37 @@ class RuntimeProfileServiceTest {
   }
 
   @Test
+  void runtimeProfileRejectsMissingTcpProxyServicePortsWithCanonicalPortDiagnostic() {
+    var plan = planner.plan("pr-42");
+    Namespace namespace = previewRuntimeNamespace("a".repeat(40), "a".repeat(40), "32002");
+    String expected =
+        "runtime tcp-proxy-service Service must expose exactly one canonical Telnet port";
+
+    Service serviceWithoutPorts =
+        new ServiceBuilder()
+            .withNewSpec()
+            .withType("NodePort")
+            .withSelector(Map.of("app", "tcp-proxy-service"))
+            .endSpec()
+            .build();
+    assertEquals(
+        expected,
+        validateTcpProxyServiceFailure(plan, namespace, serviceWithoutPorts).getMessage());
+
+    Service serviceWithEmptyPorts =
+        new ServiceBuilder()
+            .withNewSpec()
+            .withType("NodePort")
+            .withSelector(Map.of("app", "tcp-proxy-service"))
+            .withPorts(List.of())
+            .endSpec()
+            .build();
+    assertEquals(
+        expected,
+        validateTcpProxyServiceFailure(plan, namespace, serviceWithEmptyPorts).getMessage());
+  }
+
+  @Test
   void publicRuntimeRejectsExternalIps() {
     var plan = planner.plan("pr-42");
     Service serviceWithExternalIp =

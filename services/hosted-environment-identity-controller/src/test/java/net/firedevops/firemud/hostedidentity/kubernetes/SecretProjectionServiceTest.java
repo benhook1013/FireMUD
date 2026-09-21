@@ -1,5 +1,8 @@
 package net.firedevops.firemud.hostedidentity.kubernetes;
 
+import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SERIALIZED_DEFERRED;
+import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SERIALIZED_DEFERRED_DRIFT;
+import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SOURCE_READY;
 import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.acceptedAnnotations;
 import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.certManagerSource;
 import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.certificateRequest;
@@ -7,17 +10,12 @@ import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTes
 import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.ownedSecret;
 import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.plan;
 import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.secretClient;
-import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.secretName;
 import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.stableBatchFixture;
 import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.stubCertificate;
 import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.stubCertificateRequests;
 import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.stubProjectionAndSource;
-import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SERIALIZED_DEFERRED;
-import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SERIALIZED_DEFERRED_DRIFT;
-import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SOURCE_READY;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -1272,18 +1270,17 @@ class SecretProjectionServiceTest {
     IllegalStateException ingressFailure =
         assertThrows(
             IllegalStateException.class,
-            ()
-                ->
-                    projectionService.project(
-                        fixture.secretClient().client(),
-                        fixture.plan(),
-                        ingress.role(),
-                        ingress.source(),
-                        ingress.sourceGeneration(),
-                        ingress.sourceObjectGeneration(),
-                        ingress.summary().spkiSha256(),
-                        ingress.provenance(),
-                        ALWAYS_CURRENT));
+            () ->
+                projectionService.project(
+                    fixture.secretClient().client(),
+                    fixture.plan(),
+                    ingress.role(),
+                    ingress.source(),
+                    ingress.sourceGeneration(),
+                    ingress.sourceObjectGeneration(),
+                    ingress.summary().spkiSha256(),
+                    ingress.provenance(),
+                    ALWAYS_CURRENT));
     assertEquals(
         "runtime projection revision does not match its material", ingressFailure.getMessage());
     assertEquals(
@@ -1582,5 +1579,4 @@ class SecretProjectionServiceTest {
       }
     };
   }
-
 }
