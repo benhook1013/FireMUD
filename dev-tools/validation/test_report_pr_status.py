@@ -728,13 +728,13 @@ class PrStatusReporterTest(unittest.TestCase):
             {
                 **checkpoint["checkpoints"][0],
                 "created_at": "2026-09-14T01:00:00Z",
-                "raw_found": 0,
+                "raw_found": 3,
                 "accepted": 0,
             },
             {
                 **checkpoint["checkpoints"][0],
                 "created_at": "2026-09-15T01:00:00Z",
-                "raw_found": 0,
+                "raw_found": 2,
                 "accepted": 0,
             },
         ]
@@ -752,6 +752,10 @@ class PrStatusReporterTest(unittest.TestCase):
         self.assertEqual(report["checkpoint_counts"]["taper_evidence"]["hosted_zero_zero_streak"], 0)
         self.assertEqual(report["loc_metadata"]["status"], "fresh")
         self.assertEqual(report["verdict"], "READY")
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.reporter.emit_text(report)
+        self.assertIn("CLI zero-useful streak: 2", output.getvalue())
 
     def test_cli_correction_does_not_extend_zero_streak(self) -> None:
         checkpoint = self.checkpoint_payload()

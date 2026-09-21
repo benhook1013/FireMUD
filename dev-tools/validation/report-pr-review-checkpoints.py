@@ -17,15 +17,16 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 CHECKPOINT_HEADING = re.compile(
-    r"^\*\*(?P<correction>Correction — )?(?P<type>Hosted|CLI): "
-    r"(?P<raw_found>\d+) found / (?P<accepted>\d+) accepted\*\*"
+    r"^(?P<bold>\*\*)?(?P<correction>Correction — )?(?P<type>Hosted|CLI): "
+    r"(?P<raw_found>\d+) found / (?P<accepted>\d+) accepted"
+    r"(?(bold)\*\*|)"
     r"(?P<suffix>.*)$"
 )
 CHECKPOINT_SUFFIX = re.compile(
     r"^(?: · (?P<sha>`?[0-9a-fA-F]{7,40}`?))?"
     r"(?: · (?P<files>\d+) files)?$"
 )
-CHECKPOINT_CANDIDATE = re.compile(r"^\*\*(?:Correction — )?(?:Hosted|CLI):")
+CHECKPOINT_CANDIDATE = re.compile(r"^(?:\*\*)?(?:Correction — )?(?:Hosted|CLI):")
 SCOPE_CHANGE = re.compile(r"^\*\*Review scope changed:\*\* (?P<description>.+)$")
 SCOPE_MARKER = "<!-- firemud-review-scope-change -->"
 GH_API_TIMEOUT_SECONDS = 120
