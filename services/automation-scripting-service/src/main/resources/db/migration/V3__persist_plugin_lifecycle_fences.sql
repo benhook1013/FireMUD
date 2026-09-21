@@ -77,10 +77,20 @@ SET plugin_activation_epoch = 1,
     lifecycle_revision = 1
 WHERE NULLIF(BTRIM(active_plugin_version_id), '') IS NOT NULL;
 
+ALTER TABLE plugin_runtime_states
+    ADD CONSTRAINT ck_plugin_runtime_states_plugin_fence CHECK (
+        (
+            plugin_activation_epoch = 0
+            AND lifecycle_revision = 0
+            AND NULLIF(BTRIM(active_plugin_version_id), '') IS NULL
+        )
+        OR (plugin_activation_epoch > 0 AND lifecycle_revision > 0)
+    );
+
 -- Only a schedule with complete retained tenant/instance/plugin/version
--- provenance matching the current runtime projection can inherit that
--- founding pair. Mismatched or orphaned schedules remain 0/0 and are fenced
--- for owner-led reconciliation.
+-- provenance and exact runtime region scope matching the current runtime
+-- projection can inherit that founding pair. Mismatched, regionless, or
+-- orphaned schedules remain 0/0 and are fenced for owner-led reconciliation.
 /* [jooq ignore start] */
 UPDATE script_schedule_instances schedule_instance
 SET plugin_activation_epoch = runtime_state.plugin_activation_epoch,
@@ -92,6 +102,12 @@ WHERE schedule_instance.tenant_id = runtime_state.tenant_id
   AND NULLIF(BTRIM(schedule_instance.plugin_version_id), '') IS NOT NULL
   AND schedule_instance.plugin_id = runtime_state.plugin_id
   AND schedule_instance.plugin_version_id = runtime_state.active_plugin_version_id
+  AND NULLIF(BTRIM(schedule_instance.runtime_region_id), '') IS NOT NULL
+  AND NULLIF(BTRIM(runtime_state.runtime_region_id), '') IS NOT NULL
+  AND schedule_instance.runtime_region_id = runtime_state.runtime_region_id
+  AND schedule_instance.runtime_region_epoch > 0
+  AND runtime_state.runtime_region_epoch > 0
+  AND schedule_instance.runtime_region_epoch = runtime_state.runtime_region_epoch
   AND runtime_state.plugin_activation_epoch = 1
   AND runtime_state.lifecycle_revision = 1;
 /* [jooq ignore stop] */
@@ -117,6 +133,10 @@ CREATE TABLE plugin_runtime_request_history (
     CONSTRAINT ck_plugin_runtime_request_history_outcome CHECK (
         (request_outcome = 'SUCCEEDED' AND failure_code = '')
         OR (request_outcome = 'FAILED' AND failure_code = 'FAILED_PRECONDITION')
+    ),
+    CONSTRAINT ck_plugin_runtime_request_history_plugin_fence CHECK (
+        (plugin_activation_epoch = 0 AND lifecycle_revision = 0)
+        OR (plugin_activation_epoch > 0 AND lifecycle_revision > 0)
     ),
     CONSTRAINT uq_plugin_runtime_request_history_identity UNIQUE (
         tenant_id, game_instance_id, plugin_id, control_plane_request_id

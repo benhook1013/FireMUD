@@ -720,8 +720,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     return resolvePluginStatus(authority, request, handler.pluginOwner().pluginId())
         .filter(
             status ->
-                normalize(handler.pluginOwner().pluginVersionId())
-                    .equals(normalize(status.activePluginVersionId())))
+                status.pluginState() == PluginState.PLUGIN_STATE_ENABLED
+                    && normalize(handler.pluginOwner().pluginVersionId())
+                        .equals(normalize(status.activePluginVersionId())))
         .filter(status -> status.pluginActivationEpoch() > 0 && status.lifecycleRevision() > 0)
         .isPresent();
   }

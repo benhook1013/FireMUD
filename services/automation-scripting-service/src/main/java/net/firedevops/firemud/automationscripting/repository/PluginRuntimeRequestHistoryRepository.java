@@ -37,6 +37,7 @@ public class PluginRuntimeRequestHistoryRepository {
   }
 
   public PluginRuntimeRequestHistory insertOrGet(PluginRuntimeRequestHistory entity) {
+    requireCoherentPluginFence(entity);
     PluginRuntimeRequestHistoryRecord record = dsl.newRecord(PLUGIN_RUNTIME_REQUEST_HISTORY);
     populate(record, entity);
     PluginRuntimeRequestHistory winner =
@@ -65,6 +66,18 @@ public class PluginRuntimeRequestHistoryRepository {
           "control_plane_request_id already records a different plugin request");
     }
     return winner;
+  }
+
+  private static void requireCoherentPluginFence(PluginRuntimeRequestHistory entity) {
+    long activationEpoch = entity.getPluginActivationEpoch();
+    long lifecycleRevision = entity.getLifecycleRevision();
+    if (activationEpoch < 0L || lifecycleRevision < 0L) {
+      throw new IllegalArgumentException("plugin fence values must be non-negative");
+    }
+    if ((activationEpoch == 0L) != (lifecycleRevision == 0L)) {
+      throw new IllegalArgumentException(
+          "plugin_activation_epoch and lifecycle_revision must both be zero or both be positive");
+    }
   }
 
   private static String normalize(String value) {

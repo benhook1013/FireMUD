@@ -40,9 +40,18 @@ class V3__persist_plugin_lifecycle_fencesTest {
             "SET plugin_activation_epoch = 1, lifecycle_revision = 1 WHERE NULLIF(BTRIM(active_plugin_version_id), '') IS NOT NULL")
         .contains("UPDATE script_schedule_instances schedule_instance")
         .contains("schedule_instance.plugin_version_id = runtime_state.active_plugin_version_id")
+        .contains("NULLIF(BTRIM(schedule_instance.runtime_region_id), '') IS NOT NULL")
+        .contains("NULLIF(BTRIM(runtime_state.runtime_region_id), '') IS NOT NULL")
+        .contains("schedule_instance.runtime_region_id = runtime_state.runtime_region_id")
+        .contains("schedule_instance.runtime_region_epoch > 0")
+        .contains("runtime_state.runtime_region_epoch > 0")
+        .contains("schedule_instance.runtime_region_epoch = runtime_state.runtime_region_epoch")
         .contains("SET plugin_activation_epoch = runtime_state.plugin_activation_epoch")
         .contains("lifecycle_revision = runtime_state.lifecycle_revision")
-        .contains("their winning admission fence cannot be reconstructed from retention");
+        .contains("their winning admission fence cannot be reconstructed from retention")
+        .contains("NULLIF(BTRIM(active_plugin_version_id), '') IS NULL")
+        .contains("CONSTRAINT ck_plugin_runtime_states_plugin_fence CHECK")
+        .contains("CONSTRAINT ck_plugin_runtime_request_history_plugin_fence CHECK");
 
     assertThat(normalized.indexOf("UPDATE plugin_runtime_states"))
         .isLessThan(normalized.indexOf("UPDATE script_schedule_instances"));

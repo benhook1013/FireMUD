@@ -81,6 +81,7 @@ public class PluginRuntimeStateRepository {
   }
 
   public PluginRuntimeState save(PluginRuntimeState entity) {
+    requireCoherentPluginFence(entity);
     if (entity.getId() == null) {
       PluginRuntimeStatesRecord record = dsl.newRecord(PLUGIN_RUNTIME_STATES);
       populate(record, entity);
@@ -124,6 +125,24 @@ public class PluginRuntimeStateRepository {
     }
     entity.setRowVersion(nextRowVersion);
     return findById(entity.getId()).orElseThrow();
+  }
+
+  private static void requireCoherentPluginFence(PluginRuntimeState entity) {
+    long activationEpoch = entity.getPluginActivationEpoch();
+    long lifecycleRevision = entity.getLifecycleRevision();
+    if (activationEpoch < 0L || lifecycleRevision < 0L) {
+      throw new IllegalArgumentException("plugin fence values must be non-negative");
+    }
+    if ((activationEpoch == 0L) != (lifecycleRevision == 0L)) {
+      throw new IllegalArgumentException(
+          "plugin_activation_epoch and lifecycle_revision must both be zero or both be positive");
+    }
+    if (activationEpoch == 0L
+        && entity.getActivePluginVersionId() != null
+        && !entity.getActivePluginVersionId().isBlank()) {
+      throw new IllegalArgumentException(
+          "active_plugin_version_id requires a positive plugin fence pair");
+    }
   }
 
   private List<PluginRuntimeState> findByScopeAndPluginStateNot(

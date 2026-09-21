@@ -16,6 +16,7 @@ import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.FlywayException;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
+import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -129,15 +130,19 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
       DSLContext retainedDsl = migrateToVersionTwo(retainedSchema);
       retainedDsl.execute(
           "insert into plugin_runtime_states "
-              + "(tenant_id, game_instance_id, plugin_id, active_plugin_version_id, plugin_state, status_reason) "
-              + "values ('tenant-retained', 'instance-retained', 'plugin-retained', 'version-1', 'ENABLED', 'retained'), "
-              + "('tenant-empty', 'instance-empty', 'plugin-empty', '', 'DISABLED', 'retained')");
+              + "(tenant_id, game_instance_id, runtime_region_id, runtime_region_epoch, plugin_id, "
+              + "active_plugin_version_id, plugin_state, status_reason) "
+              + "values ('tenant-retained', 'instance-retained', 'region-1', 7, 'plugin-retained', "
+              + "'version-1', 'ENABLED', 'retained'), "
+              + "('tenant-empty', 'instance-empty', null, null, 'plugin-empty', '', 'DISABLED', 'retained')");
       insertSchedule(
           retainedDsl,
           "tenant-retained",
           "instance-retained",
           "plugin-retained",
           "version-1",
+          "region-1",
+          7L,
           "schedule-matching");
       insertSchedule(
           retainedDsl,
@@ -145,13 +150,44 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
           "instance-retained",
           "plugin-retained",
           "version-old",
+          "region-1",
+          7L,
           "schedule-mismatched-version");
+      insertSchedule(
+          retainedDsl,
+          "tenant-retained",
+          "instance-retained",
+          "plugin-retained",
+          "version-1",
+          "region-2",
+          7L,
+          "schedule-mismatched-region");
+      insertSchedule(
+          retainedDsl,
+          "tenant-retained",
+          "instance-retained",
+          "plugin-retained",
+          "version-1",
+          "region-1",
+          8L,
+          "schedule-mismatched-region-epoch");
+      insertSchedule(
+          retainedDsl,
+          "tenant-retained",
+          "instance-retained",
+          "plugin-retained",
+          "version-1",
+          "",
+          null,
+          "schedule-missing-region");
       insertSchedule(
           retainedDsl,
           "tenant-empty",
           "instance-empty",
           "plugin-empty",
           "version-never-active",
+          "region-1",
+          7L,
           "schedule-orphaned");
       retainedDsl.execute(
           "insert into script_work_items "
@@ -171,6 +207,14 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
       assertThat(fencePair(migratedDsl, "script_schedule_instances", "schedule-matching"))
           .containsExactly(1L, 1L);
       assertThat(fencePair(migratedDsl, "script_schedule_instances", "schedule-mismatched-version"))
+          .containsExactly(0L, 0L);
+      assertThat(fencePair(migratedDsl, "script_schedule_instances", "schedule-mismatched-region"))
+          .containsExactly(0L, 0L);
+      assertThat(
+              fencePair(
+                  migratedDsl, "script_schedule_instances", "schedule-mismatched-region-epoch"))
+          .containsExactly(0L, 0L);
+      assertThat(fencePair(migratedDsl, "script_schedule_instances", "schedule-missing-region"))
           .containsExactly(0L, 0L);
       assertThat(fencePair(migratedDsl, "script_schedule_instances", "schedule-orphaned"))
           .containsExactly(0L, 0L);
@@ -197,6 +241,63 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
     } finally {
       dropSchema(contradictorySchema);
     }
+  }
+
+  @Test
+  void databaseRejectsIncoherentAndNegativePluginFencePairs() {
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "insert into plugin_runtime_states "
+                        + "(tenant_id, game_instance_id, plugin_id, active_plugin_version_id, "
+                        + "plugin_state, plugin_activation_epoch, lifecycle_revision) "
+                        + "values ('tenant-invalid', 'instance-active-zero', 'plugin-invalid', "
+                        + "'version-active', 'ENABLED', 0, 0)"))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_plugin_runtime_states_plugin_fence");
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "insert into plugin_runtime_states "
+                        + "(tenant_id, game_instance_id, plugin_id, plugin_state, "
+                        + "plugin_activation_epoch, lifecycle_revision) "
+                        + "values ('tenant-invalid', 'instance-incoherent', 'plugin-invalid', "
+                        + "'DISABLED', 1, 0)"))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_plugin_runtime_states_plugin_fence");
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "insert into plugin_runtime_states "
+                        + "(tenant_id, game_instance_id, plugin_id, plugin_state, "
+                        + "plugin_activation_epoch, lifecycle_revision) "
+                        + "values ('tenant-invalid', 'instance-negative', 'plugin-invalid', "
+                        + "'DISABLED', -1, -1)"))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_plugin_runtime_states_plugin_fence");
+
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "insert into plugin_runtime_request_history "
+                        + "(tenant_id, game_instance_id, plugin_id, operation, "
+                        + "control_plane_request_id, request_fingerprint, plugin_state, "
+                        + "plugin_activation_epoch, lifecycle_revision) "
+                        + "values ('tenant-invalid', 'instance-incoherent', 'plugin-invalid', "
+                        + "'DISABLE', 'request-incoherent', 'fingerprint', 'DISABLED', 1, 0)"))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_plugin_runtime_request_history_plugin_fence");
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "insert into plugin_runtime_request_history "
+                        + "(tenant_id, game_instance_id, plugin_id, operation, "
+                        + "control_plane_request_id, request_fingerprint, plugin_state, "
+                        + "plugin_activation_epoch, lifecycle_revision) "
+                        + "values ('tenant-invalid', 'instance-negative', 'plugin-invalid', "
+                        + "'DISABLE', 'request-negative', 'fingerprint', 'DISABLED', -1, -1)"))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_plugin_runtime_request_history_plugin_fence");
   }
 
   private static PluginRuntimeRequestHistory failedReceipt(String requestId, String digest) {
@@ -271,19 +372,24 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
       String gameInstanceId,
       String pluginId,
       String pluginVersionId,
+      String runtimeRegionId,
+      Long runtimeRegionEpoch,
       String scheduleDefinitionId) {
     dsl.execute(
         "insert into script_schedule_instances "
             + "(tenant_id, game_instance_id, script_patch_version, script_id, plugin_id, plugin_version_id, "
             + "event_type, schedule_definition_id, schedule_kind, cadence_value, cadence_unit, "
-            + "materialization_status, schedule_metadata_json, schedule_semantics_hash) "
+            + "materialization_status, runtime_region_id, runtime_region_epoch, "
+            + "schedule_metadata_json, schedule_semantics_hash) "
             + "values (?, ?, 'patch-1', 'script-1', ?, ?, 'onInterval', ?, 'INTERVAL', 1, 'SECONDS', "
-            + "'MATERIALIZED', '{}', 'schedule-hash')",
+            + "'MATERIALIZED', ?, ?, '{}', 'schedule-hash')",
         tenantId,
         gameInstanceId,
         pluginId,
         pluginVersionId,
-        scheduleDefinitionId);
+        scheduleDefinitionId,
+        runtimeRegionId,
+        runtimeRegionEpoch);
   }
 
   private java.util.List<Long> fencePair(DSLContext dsl, String table, String identity) {
