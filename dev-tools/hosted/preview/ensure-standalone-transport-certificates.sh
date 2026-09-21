@@ -15,11 +15,11 @@ if [[ ! "$certificate_wait_timeout_seconds" =~ ^[1-9][0-9]{0,3}$ ]] ||
   exit 2
 fi
 
-transport_operation=write
+transport_operation='write'
 if [[ $# -eq 1 ]]; then
   namespace="$1"
 elif [[ $# -eq 2 && "$1" == --wait ]]; then
-  transport_operation=wait
+  transport_operation='wait'
   namespace="$2"
 else
   echo "usage: $0 [--wait] <pr-N-namespace>" >&2

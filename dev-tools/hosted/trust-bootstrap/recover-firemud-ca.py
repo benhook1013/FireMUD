@@ -20,7 +20,6 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-
 CA_NAME = "firemud-grpc-ca"
 RECOVERY_USER = "system:serviceaccount:firemud-system:firemud-preview-ca-recovery"
 BOUNDARY_POLICIES = (

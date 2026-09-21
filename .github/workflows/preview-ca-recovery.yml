@@ -31,6 +31,9 @@ jobs:
           ref: develop
           persist-credentials: false
 
+      - name: Set up canonical Python
+        uses: ./.github/actions/setup-python
+
       - name: Set up kubectl for restore only
         if: ${{ inputs.operation == 'restore' }}
         uses: ./.github/actions/setup-kubectl
