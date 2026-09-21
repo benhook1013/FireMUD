@@ -56,6 +56,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private static final String PRIORITY_UNKNOWN = "unknown";
   private static final String EVENT_ON_LOAD = "onLoad";
   private static final String SERVICE_NAME = "automation-scripting-service";
+  private static final String REASON_AUTHORITY_UNAVAILABLE = "authority_unavailable";
 
   private final ScriptWorkItemService workItemService;
   private final ScriptDefinitionRepository scriptDefinitionRepository;
@@ -344,9 +345,12 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
 
   private boolean processClaimedWorkItem(ScriptWorkItem workItem) {
     Instant now = Instant.now();
-    String pluginFenceFailure = validateCurrentPluginFence(workItem);
-    if (pluginFenceFailure != null) {
-      cancel(workItem, STAGE_ADMISSION, "stale_execution_fenced", pluginFenceFailure, now);
+    PluginFenceValidation pluginFence = validateCurrentPluginFence(workItem);
+    if (pluginFence != null) {
+      if (pluginFence.retryable()) {
+        throw new IllegalStateException(pluginFence.reason());
+      }
+      cancel(workItem, STAGE_ADMISSION, "canceled", pluginFence.reason(), now);
       return false;
     }
     if (!workItem.isDryRun()
@@ -389,6 +393,17 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   }
 
   private boolean evaluateClaimedWorkItem(ScriptWorkItem workItem, Instant now) {
+    // Capacity admission may have taken time. Re-read plugin authority immediately before
+    // definition lookup/DSL parsing so a stale or unavailable lifecycle cannot reach even a
+    // zero-command success path.
+    PluginFenceValidation pluginFence = validateCurrentPluginFence(workItem);
+    if (pluginFence != null) {
+      if (pluginFence.retryable()) {
+        throw new IllegalStateException(pluginFence.reason());
+      }
+      cancel(workItem, STAGE_DSL_EVAL, "canceled", pluginFence.reason(), now);
+      return false;
+    }
     final long tenantId;
     try {
       tenantId = parseTenantId(workItem);
@@ -450,10 +465,12 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     handoffService.beginAggregateFanout(workItem);
     try {
       for (ScriptGameplayCommandHandoffService.EmittedCommand command : commands) {
-        String handoffPluginFenceFailure = validateCurrentPluginFence(workItem);
-        if (handoffPluginFenceFailure != null) {
-          cancel(
-              workItem, STAGE_DSL_EVAL, "stale_execution_fenced", handoffPluginFenceFailure, now);
+        PluginFenceValidation handoffPluginFence = validateCurrentPluginFence(workItem);
+        if (handoffPluginFence != null) {
+          if (handoffPluginFence.retryable()) {
+            throw new IllegalStateException(handoffPluginFence.reason());
+          }
+          cancel(workItem, STAGE_DSL_EVAL, "canceled", handoffPluginFence.reason(), now);
           return false;
         }
         ScriptGameplayCommandHandoffService.HandoffResult result =
@@ -953,7 +970,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     return RequestIdValidation.requirePositiveLong(workItem.getTenantId(), "tenant_id");
   }
 
-  private String validateCurrentPluginFence(ScriptWorkItem workItem) {
+  private PluginFenceValidation validateCurrentPluginFence(ScriptWorkItem workItem) {
     if (isOnLoad(workItem)) {
       return null;
     }
@@ -961,12 +978,10 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         ScriptWorkItemFenceEvaluationSupport.validateCapturedPluginFence(workItem);
     if (capturedFailure != null
         || ScriptWorkItemFenceEvaluationSupport.normalize(workItem.getPluginId()).isBlank()) {
-      return capturedFailure;
+      return capturedFailure == null ? null : new PluginFenceValidation(capturedFailure, false);
     }
     if (pluginRuntimeStateRepository == null) {
-      // Isolated compatibility constructors predate the local lifecycle authority. They remain
-      // usable for core work, while plugin-backed work still fails closed without the authority.
-      return "plugin_lifecycle_evidence_unavailable";
+      return new PluginFenceValidation(REASON_AUTHORITY_UNAVAILABLE, true);
     }
     PluginRuntimeState state =
         pluginRuntimeStateRepository
@@ -975,25 +990,40 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
                 workItem.getGameInstanceId(),
                 ScriptWorkItemFenceEvaluationSupport.normalize(workItem.getPluginId()))
             .orElse(null);
-    PluginState pluginState = null;
-    String activePluginVersionId = "";
-    long pluginActivationEpoch = 0L;
-    long lifecycleRevision = 0L;
-    if (state != null) {
-      activePluginVersionId = state.getActivePluginVersionId();
-      pluginActivationEpoch = state.getPluginActivationEpoch();
-      lifecycleRevision = state.getLifecycleRevision();
-      if (state.getPluginState() != null) {
-        try {
-          pluginState = PluginState.valueOf(state.getPluginState());
-        } catch (IllegalArgumentException ignored) {
-          // Unknown or malformed lifecycle state is treated as disabled by the helper.
-        }
-      }
+    if (state == null) {
+      return new PluginFenceValidation(REASON_AUTHORITY_UNAVAILABLE, true);
     }
-    return ScriptWorkItemFenceEvaluationSupport.validateCurrentPluginFence(
-        workItem, activePluginVersionId, pluginState, pluginActivationEpoch, lifecycleRevision);
+    if (state.getPluginState() == null) {
+      return new PluginFenceValidation(REASON_AUTHORITY_UNAVAILABLE, true);
+    }
+    PluginState pluginState;
+    try {
+      pluginState = PluginState.valueOf(state.getPluginState());
+    } catch (IllegalArgumentException ex) {
+      return new PluginFenceValidation(REASON_AUTHORITY_UNAVAILABLE, true);
+    }
+    if (pluginState == PluginState.PLUGIN_STATE_UNSPECIFIED) {
+      return new PluginFenceValidation(REASON_AUTHORITY_UNAVAILABLE, true);
+    }
+    if (pluginState != PluginState.PLUGIN_STATE_ENABLED) {
+      return new PluginFenceValidation("plugin_disabled", false);
+    }
+    if (ScriptWorkItemFenceEvaluationSupport.normalize(state.getActivePluginVersionId()).isBlank()
+        || state.getPluginActivationEpoch() <= 0
+        || state.getLifecycleRevision() <= 0) {
+      return new PluginFenceValidation(REASON_AUTHORITY_UNAVAILABLE, true);
+    }
+    String failure =
+        ScriptWorkItemFenceEvaluationSupport.validateCurrentPluginFence(
+            workItem,
+            state.getActivePluginVersionId(),
+            pluginState,
+            state.getPluginActivationEpoch(),
+            state.getLifecycleRevision());
+    return failure == null ? null : new PluginFenceValidation(failure, false);
   }
+
+  private record PluginFenceValidation(String reason, boolean retryable) {}
 
   private static boolean isOnLoad(ScriptWorkItem workItem) {
     return EVENT_ON_LOAD.equals(workItem.getEventType());
