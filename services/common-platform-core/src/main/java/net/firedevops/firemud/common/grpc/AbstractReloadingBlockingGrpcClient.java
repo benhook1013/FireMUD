@@ -162,6 +162,7 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
 
     ManagedChannel initialChannel;
     synchronized (this) {
+      closed = true;
       initialChannel = channel;
       channel = null;
       stub = null;

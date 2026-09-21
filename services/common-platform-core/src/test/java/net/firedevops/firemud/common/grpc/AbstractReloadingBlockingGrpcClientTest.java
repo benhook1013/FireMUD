@@ -1,6 +1,7 @@
 package net.firedevops.firemud.common.grpc;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -39,6 +40,26 @@ class AbstractReloadingBlockingGrpcClientTest {
     assertThat(factory.buildAttempts.get()).isEqualTo(1);
     assertThat(client.currentStub()).isSameAs(initializedStub);
     verify(factory.channel, times(1)).shutdown();
+  }
+
+  @Test
+  void initialisationFailurePreventsLateReloadFromCreatingAnotherChannel(@TempDir Path directory)
+      throws Exception {
+    Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
+    Path privateKey = Files.writeString(directory.resolve("tls.key"), "private-key-1");
+    Path caCertificate = Files.writeString(directory.resolve("ca.crt"), "ca-certificate-1");
+    CommonGrpcClientProperties grpc = new CommonGrpcClientProperties();
+    grpc.setCertChain(certificate.toString());
+    grpc.setPrivateKey(privateKey.toString());
+    grpc.setCaCert(caCertificate.toString());
+    FailingInitialChannelFactory factory = new FailingInitialChannelFactory();
+    TestClient client = new TestClient(new ServiceEndpointsProperties(), grpc, factory);
+
+    assertThatThrownBy(client::init).isInstanceOf(SSLException.class);
+
+    client.reloadChannel();
+
+    assertThat(factory.buildAttempts.get()).isEqualTo(1);
   }
 
   @Test
@@ -121,6 +142,18 @@ class AbstractReloadingBlockingGrpcClientTest {
         throw new SSLException("simulated certificate reload failure");
       }
       return mock(ManagedChannel.class);
+    }
+  }
+
+  private static final class FailingInitialChannelFactory extends GrpcChannelFactory {
+    private final AtomicInteger buildAttempts = new AtomicInteger();
+
+    @Override
+    public ManagedChannel buildChannel(
+        String target, int defaultPort, CommonGrpcClientProperties properties, boolean keepAlive)
+        throws SSLException {
+      buildAttempts.incrementAndGet();
+      throw new SSLException("simulated initial channel build failure");
     }
   }
 
