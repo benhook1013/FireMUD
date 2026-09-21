@@ -124,6 +124,16 @@ class WorldEventServiceImplTest {
     verifyNoInteractions(regionInstanceRepository);
     verify(eventRepository, never()).save(any());
     assertEquals(0, meterRegistry.counter("world_events_processed_total").count());
+    assertEquals(
+        1,
+        meterRegistry
+            .counter("world_events_skipped_total", "reason", "weather_deferred")
+            .count());
+    assertEquals(
+        0,
+        meterRegistry
+            .counter("world_events_skipped_total", "reason", "region_scope_mismatch")
+            .count());
   }
 
   @Test
@@ -159,6 +169,16 @@ class WorldEventServiceImplTest {
     assertFalse(event.isProcessed());
     verify(eventRepository, never()).save(any());
     assertEquals(0, meterRegistry.counter("world_events_processed_total").count());
+    assertEquals(
+        0,
+        meterRegistry
+            .counter("world_events_skipped_total", "reason", "weather_deferred")
+            .count());
+    assertEquals(
+        1,
+        meterRegistry
+            .counter("world_events_skipped_total", "reason", "region_scope_mismatch")
+            .count());
   }
 
   @Test
@@ -177,6 +197,16 @@ class WorldEventServiceImplTest {
     assertFalse(event.isProcessed());
     verify(eventRepository, never()).save(any());
     assertEquals(0, meterRegistry.counter("world_events_processed_total").count());
+    assertEquals(
+        0,
+        meterRegistry
+            .counter("world_events_skipped_total", "reason", "weather_deferred")
+            .count());
+    assertEquals(
+        1,
+        meterRegistry
+            .counter("world_events_skipped_total", "reason", "region_scope_mismatch")
+            .count());
   }
 
   @Test

@@ -35,11 +35,17 @@ public class WorldEventServiceImpl implements WorldEventService {
   private final MeterRegistry meterRegistry;
   private final WorldProperties worldProperties;
   private Counter eventsProcessedCounter;
+  private Counter weatherDeferredCounter;
+  private Counter regionScopeMismatchCounter;
   private static final Logger logger = LoggingUtil.getLogger(WorldEventServiceImpl.class);
 
   @PostConstruct
   void initMetrics() {
     this.eventsProcessedCounter = meterRegistry.counter("world_events_processed_total");
+    this.weatherDeferredCounter =
+        meterRegistry.counter("world_events_skipped_total", "reason", "weather_deferred");
+    this.regionScopeMismatchCounter =
+        meterRegistry.counter("world_events_skipped_total", "reason", "region_scope_mismatch");
   }
 
   @Override
@@ -84,10 +90,12 @@ public class WorldEventServiceImpl implements WorldEventService {
     for (WorldEvent event : events) {
       if ("WEATHER_CHANGE".equals(event.getEventType())) {
         // Retained weather events cannot become an admitted mutation while the selector is open.
+        weatherDeferredCounter.increment();
         continue;
       }
       if (!hasMatchingRegionScope(event)) {
         // A retained or bypass-inserted row must not mutate or be acknowledged outside its scope.
+        regionScopeMismatchCounter.increment();
         continue;
       }
       event.setProcessed(true);
