@@ -107,17 +107,78 @@ async function publishPreviewComment({
       pull_number: prNumber,
     });
   const isStaleTarget = (pullRequest) =>
-    pullRequest.head?.sha !== headSha ||
+    pullRequest?.head?.sha !== headSha ||
     (hasTupleInput &&
-      (pullRequest.base?.sha !== baseSha || pullRequest.merge_commit_sha !== mergeSha)) ||
-    (statePolicy === "expected-open" && pullRequest.state !== "open") ||
-    (statePolicy === "expected-closed" && pullRequest.state !== "closed");
+      (pullRequest?.base?.sha !== baseSha || pullRequest?.merge_commit_sha !== mergeSha)) ||
+    (statePolicy === "expected-open" && pullRequest?.state !== "open") ||
+    (statePolicy === "expected-closed" && pullRequest?.state !== "closed");
+
+  const verifyLiveMergeParents = async (pullRequest) => {
+    if (!hasTupleInput) return true;
+
+    const baseRef = pullRequest?.base?.ref;
+    if (typeof baseRef !== "string" || baseRef.length === 0 || /[\r\n]/.test(baseRef)) {
+      core.info(
+        `Skipping ${staleDescription} for PR #${prNumber}: ` +
+          "live base ref is missing or malformed",
+      );
+      return false;
+    }
+
+    try {
+      const { data: liveBaseRef } = await github.rest.git.getRef({
+        ...context.repo,
+        ref: `heads/${baseRef}`,
+      });
+      const liveBaseSha = liveBaseRef?.object?.sha;
+      if (!SHA_PATTERN.test(liveBaseSha || "") || liveBaseSha !== baseSha) {
+        core.info(
+          `Skipping ${staleDescription} for PR #${prNumber}: ` +
+            "live base ref no longer matches the preview tuple",
+        );
+        return false;
+      }
+
+      const { data: mergeCommit } = await github.rest.repos.getCommit({
+        ...context.repo,
+        ref: mergeSha,
+      });
+      const parents = mergeCommit?.parents;
+      if (
+        mergeCommit?.sha !== mergeSha ||
+        !Array.isArray(parents) ||
+        parents.length !== 2 ||
+        parents[0]?.sha !== baseSha ||
+        parents[1]?.sha !== headSha
+      ) {
+        core.info(
+          `Skipping ${staleDescription} for PR #${prNumber}: ` +
+            "live merge commit parents do not match the preview tuple",
+        );
+        return false;
+      }
+      return true;
+    } catch (error) {
+      core.info(
+        `Skipping ${staleDescription} for PR #${prNumber}: ` +
+          `unable to verify the live base ref and merge parents (${error.message || "API error"})`,
+      );
+      return false;
+    }
+  };
+
+  const validatePublicationFence = async (pullRequest) => {
+    if (isStaleTarget(pullRequest)) {
+      return false;
+    }
+    return verifyLiveMergeParents(pullRequest);
+  };
 
   const { data: currentPullRequest } = await getCurrentPullRequest();
-  if (isStaleTarget(currentPullRequest)) {
+  if (!(await validatePublicationFence(currentPullRequest))) {
     core.info(
       `Skipping stale ${staleDescription} for PR #${prNumber}: ` +
-        `expected ${headSha}, current ${currentPullRequest.state}/${currentPullRequest.head?.sha}`
+        `expected ${headSha}, current ${currentPullRequest?.state}/${currentPullRequest?.head?.sha}`
     );
     return;
   }
@@ -156,10 +217,10 @@ async function publishPreviewComment({
   const { existing, previewComments } = oldestPreviewComment(comments);
 
   const { data: latestPullRequest } = await getCurrentPullRequest();
-  if (isStaleTarget(latestPullRequest)) {
+  if (!(await validatePublicationFence(latestPullRequest))) {
     core.info(
       `Skipping superseded ${staleDescription} for PR #${prNumber}: ` +
-        `expected ${headSha}, current ${latestPullRequest.state}/${latestPullRequest.head?.sha}`
+        `expected ${headSha}, current ${latestPullRequest?.state}/${latestPullRequest?.head?.sha}`
     );
     return;
   }

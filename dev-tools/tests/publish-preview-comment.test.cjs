@@ -21,22 +21,64 @@ function previewComment(id, body, updatedAt) {
   };
 }
 
-function makeGithub({ pullRequests, comments, deletedCommentStatuses = {} }) {
+function makeGithub({
+  pullRequests,
+  comments,
+  deletedCommentStatuses = {},
+  liveBaseShas = [],
+  mergeCommitParents = [],
+}) {
   const calls = {
     get: [],
+    refs: [],
+    commits: [],
     paginate: [],
     deleted: [],
     updates: [],
     creates: [],
   };
+  const effectivePullRequests = pullRequests.map((pullRequest) => ({
+    ...pullRequest,
+    ...(pullRequest.base
+      ? { base: { ref: "develop", ...pullRequest.base } }
+      : {}),
+  }));
   let pullRequestIndex = 0;
+  let refIndex = 0;
+  let commitIndex = 0;
   const github = {
     rest: {
       pulls: {
         get: async (params) => {
           calls.get.push(params);
-          const index = Math.min(pullRequestIndex++, pullRequests.length - 1);
-          return { data: pullRequests[index] };
+          const index = Math.min(pullRequestIndex++, effectivePullRequests.length - 1);
+          return { data: effectivePullRequests[index] };
+        },
+      },
+      git: {
+        getRef: async (params) => {
+          calls.refs.push(params);
+          const index = Math.min(refIndex++, effectivePullRequests.length - 1);
+          const sha = liveBaseShas[index] ?? effectivePullRequests[index]?.base?.sha;
+          return { data: { object: { sha } } };
+        },
+      },
+      repos: {
+        getCommit: async (params) => {
+          calls.commits.push(params);
+          const index = Math.min(commitIndex++, effectivePullRequests.length - 1);
+          const pullRequest = effectivePullRequests[index];
+          const parents =
+            mergeCommitParents[index] ?? [
+              { sha: pullRequest?.base?.sha },
+              { sha: pullRequest?.head?.sha },
+            ];
+          return {
+            data: {
+              sha: pullRequest?.merge_commit_sha,
+              parents,
+            },
+          };
         },
       },
       issues: {
@@ -98,6 +140,9 @@ async function publish(options = {}) {
     previewBaseSha,
     previewMergeSha,
     previewImageTag = "image-123",
+    previewHeadSha = "head-123",
+    liveBaseShas,
+    mergeCommitParents,
     environment = {},
     ...publisherOptions
   } = options;
@@ -105,6 +150,8 @@ async function publish(options = {}) {
     pullRequests,
     comments,
     deletedCommentStatuses,
+    liveBaseShas,
+    mergeCommitParents,
   });
   const infos = [];
   const core = { info: (message) => infos.push(message) };
@@ -117,7 +164,7 @@ async function publish(options = {}) {
   await withEnvironment(
     {
       PREVIEW_PR_NUMBER: "123",
-      PREVIEW_HEAD_SHA: "head-123",
+      PREVIEW_HEAD_SHA: previewHeadSha,
       PREVIEW_BASE_SHA: previewBaseSha,
       PREVIEW_MERGE_SHA: previewMergeSha,
       PREVIEW_IMAGE_TAG: previewImageTag,
@@ -398,6 +445,77 @@ test("accepts base-commit and merge-scoped image tags for a complete tuple", asy
     assert.equal(result.summaryCalls.length, 1);
     assert.equal(result.calls.creates.length, 1);
   }
+});
+
+test("rejects a lagging PR API when the live base ref has advanced", async () => {
+  const advancedBaseSha = "c".repeat(40);
+  const result = await publish({
+    pullRequests: [
+      {
+        state: "open",
+        head: { sha: "head-123" },
+        base: { sha: BASE_SHA, ref: "develop" },
+        merge_commit_sha: MERGE_SHA,
+      },
+      {
+        state: "open",
+        head: { sha: "head-123" },
+        base: { sha: BASE_SHA, ref: "develop" },
+        merge_commit_sha: MERGE_SHA,
+      },
+    ],
+    previewBaseSha: BASE_SHA,
+    previewMergeSha: MERGE_SHA,
+    previewImageTag: BASE_SHA,
+    liveBaseShas: [advancedBaseSha, advancedBaseSha],
+  });
+
+  assert.equal(result.calls.get.length, 1);
+  assert.equal(result.calls.refs.length, 1);
+  assert.equal(result.calls.commits.length, 0);
+  assert.equal(result.summaryCalls.length, 0);
+  assert.equal(result.calls.paginate.length, 0);
+  assert.deepEqual(result.calls.deleted, []);
+  assert.deepEqual(result.calls.updates, []);
+  assert.deepEqual(result.calls.creates, []);
+});
+
+test("rejects an exact-head publication when live merge parents are not ordered base then head", async () => {
+  const result = await publish({
+    pullRequests: [
+      {
+        state: "open",
+        head: { sha: "head-123" },
+        base: { sha: BASE_SHA, ref: "develop" },
+        merge_commit_sha: MERGE_SHA,
+      },
+      {
+        state: "open",
+        head: { sha: "head-123" },
+        base: { sha: BASE_SHA, ref: "develop" },
+        merge_commit_sha: MERGE_SHA,
+      },
+    ],
+    previewBaseSha: BASE_SHA,
+    previewMergeSha: MERGE_SHA,
+    previewImageTag: BASE_SHA,
+    mergeCommitParents: [
+      [{ sha: BASE_SHA }, { sha: "head-123" }],
+      [{ sha: "head-123" }, { sha: BASE_SHA }],
+    ],
+    comments: [
+      previewComment("203", "<!-- firemud-preview-summary -->\nold", "2026-09-01T00:00:00Z"),
+    ],
+  });
+
+  assert.equal(result.calls.get.length, 2);
+  assert.equal(result.calls.refs.length, 2);
+  assert.equal(result.calls.commits.length, 2);
+  assert.equal(result.summaryCalls.length, 1);
+  assert.equal(result.calls.paginate.length, 1);
+  assert.deepEqual(result.calls.deleted, []);
+  assert.deepEqual(result.calls.updates, []);
+  assert.deepEqual(result.calls.creates, []);
 });
 
 test("preserves head/state-only compatibility when no tuple inputs are supplied", async () => {

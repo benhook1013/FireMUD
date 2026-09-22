@@ -231,6 +231,32 @@ find_unsatisfied_priority_pr() {
       echo "Unable to revalidate priority candidate PR #${pr_number}; refusing priority evaluation" >&2
       return 1
     fi
+    if ! candidate_live_metadata="$(get_pr_state "$pr_number")"; then
+      echo "Unable to revalidate priority candidate state for PR #${pr_number}; refusing priority evaluation" >&2
+      return 1
+    fi
+    IFS=$'\t' read -r candidate_live_state candidate_live_head candidate_live_priority candidate_live_labels_valid <<<"$candidate_live_metadata"
+    if [[ "$candidate_live_labels_valid" != valid ]]; then
+      echo "Unable to revalidate priority candidate labels for PR #${pr_number}; refusing priority evaluation" >&2
+      return 1
+    fi
+    case "$candidate_live_state" in
+      closed)
+        # A candidate that closed after the open-PR snapshot no longer blocks
+        # ordinary allocation, even if its old snapshot carried the priority label.
+        continue
+        ;;
+      open)
+        if [[ "$candidate_live_priority" != true ]]; then
+          # Likewise, a live removal of preview:priority releases the slot.
+          continue
+        fi
+        ;;
+      *)
+        echo "Unable to revalidate priority candidate state for PR #${pr_number}; refusing priority evaluation" >&2
+        return 1
+        ;;
+    esac
     candidate_base_ref="$(jq -r '.base.ref // empty' <<<"$candidate_metadata_json")"
     candidate_base_repository="$(jq -r '.base.repo.full_name // empty' <<<"$candidate_metadata_json")"
     candidate_head_repository="$(jq -r '.head.repo.full_name // empty' <<<"$candidate_metadata_json")"
@@ -238,8 +264,11 @@ find_unsatisfied_priority_pr() {
     candidate_merge_sha="$(jq -r '.merge_commit_sha // empty' <<<"$candidate_metadata_json")"
     candidate_mergeable="$(jq -r '.mergeable // empty' <<<"$candidate_metadata_json")"
     candidate_mergeable_state="$(jq -r '.mergeable_state // empty' <<<"$candidate_metadata_json")"
+    candidate_metadata_state="$(jq -r '.state // empty' <<<"$candidate_metadata_json")"
     if [[ "$candidate_base_repository" != "$GITHUB_REPOSITORY" ||
       "$candidate_head_repository" != "$GITHUB_REPOSITORY" ||
+      "$candidate_metadata_state" != "$candidate_live_state" ||
+      "$candidate_live_head" != "$head_sha" ||
       "$candidate_head_sha" != "$head_sha" ||
       "$candidate_mergeable" != true ||
       "$candidate_mergeable_state" == unknown ||

@@ -511,7 +511,16 @@ case "$resource" in
     case "$live_head" in
       head-901|stale-head) live_head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;;
     esac
+    live_state="${FAKE_PR_901_STATE:-open}"
+    if [[ "$has_jq" == true ]]; then
+      printf '%s\t%s\t%s\n' \
+        "$live_state" \
+        "$live_head" \
+        "$(fake_labels_json "${FAKE_PR_901_PRIORITY:-true}" valid | base64 | tr -d '\n')"
+      exit 0
+    fi
     jq -cn \
+      --arg state "$live_state" \
       --arg head "$live_head" \
       --arg base_ref "${FAKE_PR_901_BASE_REF:-develop}" \
       --arg head_repository "${FAKE_PR_901_HEAD_REPOSITORY:-example/FireMUD}" \
@@ -519,7 +528,7 @@ case "$resource" in
       --arg mergeable "${FAKE_PR_901_MERGEABLE:-true}" \
       --arg mergeable_state "${FAKE_PR_901_MERGEABLE_STATE:-clean}" \
       --arg priority "${FAKE_PR_901_PRIORITY:-true}" \
-      '{state:"open",head:{sha:$head,repo:{full_name:$head_repository}},base:{ref:$base_ref,repo:{full_name:$base_repository}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",changed_files:1,mergeable:($mergeable == "true"),mergeable_state:$mergeable_state,user:{login:"human"},labels:(if $priority == "true" then [{name:"preview:priority"}] else [] end)}'
+      '{state:$state,head:{sha:$head,repo:{full_name:$head_repository}},base:{ref:$base_ref,repo:{full_name:$base_repository}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",changed_files:1,mergeable:($mergeable == "true"),mergeable_state:$mergeable_state,user:{login:"human"},labels:(if $priority == "true" then [{name:"preview:priority"}] else [] end)}'
     ;;
   */pulls/101)
     if [[ -n "${FAKE_PRUNE_QUERY_LOG:-}" ]]; then
@@ -834,6 +843,7 @@ reset_case() {
   export FAKE_PR_901_HEAD="$priority_candidate_head"
   export FAKE_PR_901_BASE_REF=develop
   export FAKE_PR_901_PRIORITY=true
+  export FAKE_PR_901_STATE=open
   export FAKE_PR_901_REQUESTED_HEAD=''
   export FAKE_PR_901_NAMESPACE_ABSENT=false
   export FAKE_PR_901_NAMESPACE_ABSENT_ON_RECHECK=false
@@ -1309,6 +1319,31 @@ export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD
 export FAKE_PRIORITY_CANDIDATE_NAMESPACE_ABSENT=true
 if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   echo "ordinary allocation did not yield to an unsatisfied priority PR" >&2
+  exit 1
+fi
+test ! -e "$FAKE_DELETE_LOG"
+
+# A priority candidate can close after the bounded open-PR snapshot.  Its old
+# priority label must not continue blocking an ordinary allocation.
+reset_case
+export FAKE_TARGET_PRIORITY=false
+export FAKE_PR_901_STATE=closed
+export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
+export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n'
+if ! run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+  echo "ordinary allocation was blocked by a priority PR that had closed" >&2
+  exit 1
+fi
+test ! -e "$FAKE_DELETE_LOG"
+
+# Likewise, a live removal of preview:priority releases the ordinary slot.
+reset_case
+export FAKE_TARGET_PRIORITY=false
+export FAKE_PR_901_PRIORITY=false
+export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
+export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n'
+if ! run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+  echo "ordinary allocation was blocked after live priority-label removal" >&2
   exit 1
 fi
 test ! -e "$FAKE_DELETE_LOG"
