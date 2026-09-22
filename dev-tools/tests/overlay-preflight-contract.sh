@@ -386,8 +386,7 @@ assert_shared_change_runs_ordinary_overlay_checks() {
 
 for changed_file in \
   'k8s/overlays/prod' \
-  'k8s/overlays/prod/kustomization.yaml' \
-  'k8s/base/account-service.yaml'; do
+  'k8s/overlays/prod/kustomization.yaml'; do
   assert_production_change_requires_attestation "$changed_file"
 done
 
@@ -410,6 +409,7 @@ assert_nonproduction_change_skips_attestation() {
 }
 
 for changed_file in \
+  'k8s/base/account-service.yaml' \
   'k8s/postgres/pg-dump-cronjob.yaml' \
   'k8s/velero/schedule.yaml'; do
   assert_nonproduction_change_skips_attestation "$changed_file"
@@ -878,7 +878,7 @@ if ! (
   # shellcheck disable=SC1091
   source "$REPO_ROOT/dev-tools/deploy/validate-kustomize-overlays.sh"
   changed_files_between_base_and_head() {
-    printf '%s\n' 'k8s/velero/schedule.yaml'
+    printf '%s\n' 'k8s/base/account-service.yaml'
   }
   kubectl_render_trace="$(mktemp)"
   docker_image_inspect_trace="$(mktemp)"
