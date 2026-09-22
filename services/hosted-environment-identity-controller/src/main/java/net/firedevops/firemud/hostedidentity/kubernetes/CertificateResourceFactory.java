@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
@@ -75,6 +76,22 @@ public class CertificateResourceFactory {
         renewBefore);
   }
 
+  /** Builds one retained client/server identity for a protected publication workload. */
+  public GenericKubernetesResource grpcPublication(
+      EnvironmentIdentityPlan plan, String workload, Duration renewBefore) {
+    return certificate(
+        plan,
+        HostedIdentityContract.grpcPublicationRole(workload),
+        plan.grpcPublicationCertificateName(workload),
+        plan.grpcPublicationSourceSecretName(workload),
+        plan.grpcIssuer(),
+        plan.grpcPublicationDnsNames(workload),
+        List.of(plan.grpcPublicationUriSan(workload)),
+        List.of("digital signature", "key encipherment", "server auth", "client auth"),
+        HostedIdentityProperties.INTERNAL_CERTIFICATE_DURATION,
+        renewBefore);
+  }
+
   private GenericKubernetesResource certificate(
       EnvironmentIdentityPlan plan,
       String role,
@@ -134,10 +151,11 @@ public class CertificateResourceFactory {
     if (duration != null) {
       spec.put("duration", certManagerDuration(duration));
     }
-    if (renewBefore != null
-        || HostedIdentityProperties.INTERNAL_CERTIFICATE_DURATION.equals(duration)) {
+    if (renewBefore != null) {
       HostedIdentityProperties.requireValidGrpcRenewBefore(renewBefore);
-      spec.put("renewBefore", certManagerDuration(renewBefore));
+      spec.put("renewBefore", certManagerDuration(Objects.requireNonNull(renewBefore)));
+    } else if (HostedIdentityProperties.INTERNAL_CERTIFICATE_DURATION.equals(duration)) {
+      HostedIdentityProperties.requireValidGrpcRenewBefore(null);
     }
     resource.setAdditionalProperties(Map.of("spec", spec));
     return resource;

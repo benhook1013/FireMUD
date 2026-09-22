@@ -38,7 +38,6 @@ mapfile -t yaml_files < <(
     ':!:k8s/network-policies/**' \
     ':!:k8s/postgres/**' \
     ':!:k8s/preview/cluster-issuers.yaml' \
-    ':!:k8s/preview/preview-deployer-rbac.yaml' \
     ':!:k8s/velero/minio.yaml' \
     ':!:k8s/velero/schedule.yaml' \
     ':!:k8s/velero/verify-backups-cronjob.yaml' \

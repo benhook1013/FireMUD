@@ -34,17 +34,20 @@ class EnvironmentIdentityPlannerTest {
     assertEquals(
         List.of(
             "account-service",
-            "automation-scripting-service",
-            "entity-management-service",
-            "game-design-service",
-            "game-logic-service",
             "game-session-service",
             "logging-admin-service",
             "social-groups-service",
             "spring-cloud-gateway",
-            "tcp-proxy-service",
-            "world-management-service"),
+            "tcp-proxy-service"),
         plan.grpcConsumers());
+    assertEquals(
+        "pr-42-grpc-game-design-service",
+        plan.grpcPublicationSourceSecretName("game-design-service"));
+    assertEquals(
+        "firemud-grpc-game-design-service", plan.grpcPublicationSecretName("game-design-service"));
+    assertEquals(
+        "spiffe://firemud/ns/pr-42/sa/game-design-service",
+        plan.grpcPublicationUriSan("game-design-service"));
   }
 
   @Test

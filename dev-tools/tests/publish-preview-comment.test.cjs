@@ -133,7 +133,14 @@ async function publish(options = {}) {
   return { calls, infos, summaryCalls };
 }
 
-test("selects the canonical preview comment by updated time, then id", async () => {
+test("selects the oldest bot preview comment by creation time, then id", async () => {
+  const firstPageNoise = Array.from({ length: 35 }, (_, index) => ({
+    ...previewComment(
+      String(1000 + index),
+      `### Unrelated Summary ${index + 1}`,
+      "2026-08-01T00:00:00Z",
+    ),
+  }));
   const oldGenerated = previewComment(
     "100",
     "<!-- firemud-preview-summary -->\nold generated",
@@ -161,13 +168,23 @@ test("selects the canonical preview comment by updated time, then id", async () 
   };
 
   const result = await publish({
-    comments: [oldGenerated, duplicateOldGenerated, newerLegacy, newestLowerId, newestHigherId, userComment],
+    comments: [
+      ...firstPageNoise,
+      oldGenerated,
+      duplicateOldGenerated,
+      newerLegacy,
+      newestLowerId,
+      newestHigherId,
+      userComment,
+    ],
     includeDemoCredentials: true,
   });
 
-  assert.deepEqual(result.calls.deleted, ["100", "101", "102"]);
+  assert.equal(result.calls.paginate.length, 1);
+  assert.equal(result.calls.paginate[0].params.per_page, 100);
+  assert.deepEqual(result.calls.deleted, ["101", "102", "103"]);
   assert.equal(result.calls.updates.length, 1);
-  assert.equal(result.calls.updates[0].comment_id, "103");
+  assert.equal(result.calls.updates[0].comment_id, "100");
   assert.match(result.calls.updates[0].body, /Demo login username: demo-user/);
   assert.match(result.calls.updates[0].body, /Demo login email: demo@example\.test/);
   assert.match(result.calls.updates[0].body, /Demo login password: demo-password/);
@@ -194,6 +211,18 @@ test("ignores null or missing bot comment bodies while publishing the canonical 
   assert.equal(result.calls.updates.length, 1);
   assert.equal(result.calls.updates[0].comment_id, "92");
   assert.equal(result.calls.creates.length, 0);
+});
+
+test("uses the lower comment id when bot summaries share a creation timestamp", async () => {
+  const result = await publish({
+    comments: [
+      previewComment("18", "### Preview Summary\nlater id", "2026-09-03T00:00:00Z"),
+      previewComment("17", "<!-- firemud-preview-summary -->\nlower id", "2026-09-03T00:00:00Z"),
+    ],
+  });
+
+  assert.deepEqual(result.calls.deleted, ["18"]);
+  assert.equal(result.calls.updates[0].comment_id, "17");
 });
 
 test("rejects an initially stale expected-open or expected-closed target", async () => {
@@ -278,9 +307,19 @@ test("preserves a reclaimed marker after both freshness checks pass", async () =
   const result = await publish({
     comments: [
       previewComment(
+        "300",
+        "<!-- firemud-preview-summary -->\nold canonical",
+        "2026-08-31T00:00:00Z",
+      ),
+      previewComment(
         "301",
         "<!-- firemud-preview-summary -->\n<!-- firemud-preview-reclaimed -->\nreclaimed",
         "2026-09-01T00:00:00Z",
+      ),
+      previewComment(
+        "302",
+        "### Preview Summary\nlater duplicate",
+        "2026-09-02T00:00:00Z",
       ),
     ],
     markerPolicy: "preserve-reclaimed",
@@ -289,13 +328,15 @@ test("preserves a reclaimed marker after both freshness checks pass", async () =
 
   assert.equal(result.calls.get.length, 2);
   assert.equal(result.calls.paginate.length, 1);
-  assert.deepEqual(result.calls.deleted, []);
-  assert.deepEqual(result.calls.updates, []);
+  assert.deepEqual(result.calls.deleted, ["301", "302"]);
+  assert.equal(result.calls.updates.length, 1);
+  assert.equal(result.calls.updates[0].comment_id, "300");
+  assert.match(result.calls.updates[0].body, /firemud-preview-reclaimed/);
   assert.deepEqual(result.calls.creates, []);
   assert.match(result.infos.join("\n"), /Preserving the reclaimed preview status/);
 });
 
-test("deletes duplicate summaries, tolerates a concurrent 404, and updates the canonical one", async () => {
+test("deletes later duplicate summaries, tolerates a concurrent 404, and updates the oldest one", async () => {
   const duplicate = previewComment(
     "401",
     "<!-- firemud-preview-summary -->\nold duplicate",
@@ -311,9 +352,9 @@ test("deletes duplicate summaries, tolerates a concurrent 404, and updates the c
     deletedCommentStatuses: { "402": 404 },
   });
 
-  assert.deepEqual(result.calls.deleted, ["401", "402"]);
+  assert.deepEqual(result.calls.deleted, ["402", "403"]);
   assert.equal(result.calls.updates.length, 1);
-  assert.equal(result.calls.updates[0].comment_id, "403");
+  assert.equal(result.calls.updates[0].comment_id, "401");
 });
 
 test("publishes the canonical update before propagating a duplicate deletion error", async () => {
@@ -323,7 +364,7 @@ test("publishes the canonical update before propagating a duplicate deletion err
       previewComment("501", "<!-- firemud-preview-summary -->\nduplicate", "2026-09-01T00:00:00Z"),
       previewComment("502", "### Preview Summary\ncanonical", "2026-09-02T00:00:00Z"),
     ],
-    deletedCommentStatuses: { "501": 500 },
+    deletedCommentStatuses: { "502": 500 },
   });
   const core = { info: () => {} };
 
@@ -343,9 +384,9 @@ test("publishes the canonical update before propagating a duplicate deletion err
     },
   );
 
-  assert.deepEqual(calls.deleted, ["501"]);
+  assert.deepEqual(calls.deleted, ["502"]);
   assert.equal(calls.updates.length, 1);
-  assert.equal(calls.updates[0].comment_id, "502");
+  assert.equal(calls.updates[0].comment_id, "501");
   assert.equal(calls.creates.length, 0);
 });
 

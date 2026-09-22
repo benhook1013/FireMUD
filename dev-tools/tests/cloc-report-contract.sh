@@ -466,6 +466,9 @@ assert set(summary_nodes) == {
     "project_management",
     "observability",
     "operations",
+    "grpc_api_documentation",
+    "product",
+    "developer_workflows",
     "other_design",
 }
 assert summary_nodes["source"]["files"] == source_total["files"]
@@ -502,7 +505,10 @@ assert "`-- design (= sections below)" in summary_table
 assert "    |-- architecture" in summary_table
 assert "    |-- project management" in summary_table
 assert "    |-- observability" in summary_table
-assert "    |-- operations" in summary_table
+assert "    |-- operator runbooks" in summary_table
+assert "    |-- gRPC API documentation" in summary_table
+assert "    |-- product requirements and user journeys" in summary_table
+assert "    |-- developer workflows" in summary_table
 assert "    `-- other design" in summary_table
 assert "service-docs" not in summary_table
 assert "[################] 100.0%" in summary_table
@@ -640,13 +646,21 @@ head_summary_node = cloc_report.ReportNode(
 original_pr_functions = (
     cloc_report.resolve_pull_request,
     cloc_report.pull_request_merge_base,
+    cloc_report.pull_request_diff_stats,
     cloc_report.classifier_digest,
     cloc_report.snapshot_worktree,
     cloc_report.summary_for_root,
 )
 snapshot_revisions = []
+diff_stats_calls = []
 cloc_report.resolve_pull_request = lambda _root, _number, _repository: mock_metadata
 cloc_report.pull_request_merge_base = lambda _root, _metadata: "c" * 40
+def fake_diff_stats(_root, base_oid, head_oid):
+    diff_stats_calls.append((base_oid, head_oid))
+    assert base_oid == "c" * 40
+    assert head_oid == "b" * 40
+    return cloc_report.DiffStats(files=3, additions=2, deletions=2, binary_files=1)
+cloc_report.pull_request_diff_stats = fake_diff_stats
 cloc_report.classifier_digest = lambda: "d" * 64
 
 @contextmanager
@@ -662,8 +676,15 @@ try:
     impact = cloc_report.build_pr_report(repo, 2736, "example/example")
     impact_rows_by_name = {row["name"]: row for row in impact["sections"]}
     assert snapshot_revisions == ["c" * 40, "b" * 40]
+    assert diff_stats_calls == [("c" * 40, "b" * 40)]
     assert impact["base"]["oid"] == "a" * 40
     assert impact["base"]["merge_base"] == "c" * 40
+    assert impact["diff"] == {
+        "files": 3,
+        "additions": 2,
+        "deletions": 2,
+        "binary_files": 1,
+    }
     assert impact_rows_by_name["repo"]["delta"]["lines"] == 2
     assert impact_rows_by_name["tests"]["delta"]["lines"] == -1
     assert impact_rows_by_name["prod"]["change_percent"] == 0.0
@@ -682,17 +703,25 @@ try:
         + "c" * 40
         + '"} -->'
     ) in rendered_impact
+    assert "PR scope: 3 changed files · 2 added textual lines / 2 deleted textual lines · 1 binary file (not counted in text lines)." in rendered_impact
     assert "| **Overall** | 10 | 12 | +2 | +20.0% |" in rendered_impact
     assert "| &emsp;**Source** | 8 | 7 | -1 | -12.5% |" in rendered_impact
-    assert "| &emsp;&emsp;↳ Production | 5 | 5 | 0 | 0.0% |" in rendered_impact
+    assert "| &emsp;&emsp;↳ Code | 5 | 5 | 0 | 0.0% |" in rendered_impact
     assert "| &emsp;&emsp;↳ Tests | 3 | 2 | -1 | -33.3% |" in rendered_impact
     assert "| &emsp;**Markdown** | 2 | 2 | 0 | 0.0% |" in rendered_impact
     assert "| &emsp;**Design** | 0 | 1 | +1 | new |" in rendered_impact
     assert "| &emsp;&emsp;↳ Architecture | 0 | 1 | +1 | new |" in rendered_impact
+    assert "| &emsp;&emsp;↳ Operator runbooks |" in rendered_impact
+    assert "| &emsp;&emsp;↳ gRPC API documentation |" in rendered_impact
+    assert "| &emsp;&emsp;↳ Product requirements and user journeys |" in rendered_impact
+    assert "| &emsp;&emsp;↳ Developer workflows |" in rendered_impact
+    assert "Production" not in rendered_impact
+    assert "Grpc api documentation" not in rendered_impact
 finally:
     (
         cloc_report.resolve_pull_request,
         cloc_report.pull_request_merge_base,
+        cloc_report.pull_request_diff_stats,
         cloc_report.classifier_digest,
         cloc_report.snapshot_worktree,
         cloc_report.summary_for_root,
@@ -1193,6 +1222,12 @@ try:
     assert real_impact["base"]["merge_base"] == real_merge_base
     assert real_impact["base"]["oid"] == real_base_oid
     assert real_impact["head"]["oid"] == real_head_oid
+    assert real_impact["diff"] == {
+        "files": 2,
+        "additions": 2,
+        "deletions": 1,
+        "binary_files": 0,
+    }
     assert real_rows["repo"]["base"]["lines"] == 2
     assert real_rows["repo"]["head"]["lines"] == 3
     assert real_rows["repo"]["delta"]["lines"] == 1

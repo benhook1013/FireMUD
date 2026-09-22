@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=ghcr.io/benhook1013/firemud-base:latest@sha256:16d64ee3e02506a4b11a03856f89d9223c18b695520169faa5a83caab4d0ac4d
+ARG BASE_IMAGE=ghcr.io/benhook1013/firemud-base:latest@sha256:cb8962799e29b9414caf4a2a2d06b94f1efbe4073d9eb69bdf85edc5b3f9929d
 FROM ${BASE_IMAGE}
 USER root
 WORKDIR /app

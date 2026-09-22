@@ -992,8 +992,9 @@ require_contains(
 require_contains(
     "design/architecture/system-architecture-cicd.md",
     [
-        "built and smoke-tested locally without registry credentials",
+        "builds pull-request images locally and runs applicable full-stack smoke without a registry-write token",
         "publish-pr-runtime-images.yml",
+        "pr-merge-<merge SHA>",
         "never checks out or executes PR source",
         "never writes shared cache or branch tags",
     ],
@@ -1001,8 +1002,8 @@ require_contains(
 require_contains(
     "design/architecture/infrastructure/deployment-environments.md",
     [
-        "builds and smoke-tests PR-tagged images without registry credentials",
-        "trusted default-branch workflow publishes only the successful fixed head-SHA tags",
+        "builds and smoke-tests PR merge images without registry credentials",
+        "verifies their exact base/head/merge provenance and publishes immutable",
     ],
 )
 canonical_reset_anchor = "[Canonical Coordination Reset Sequence](./system-architecture-redis-operations.md#canonical-coordination-reset-sequence)"

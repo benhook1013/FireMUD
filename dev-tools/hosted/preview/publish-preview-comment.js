@@ -12,11 +12,11 @@ const PREVIEW_STATE_POLICIES = new Set([
 ]);
 
 function commentTimestamp(comment) {
-  const parsed = Date.parse(comment.updated_at || comment.created_at || "");
-  return Number.isNaN(parsed) ? 0 : parsed;
+  const parsed = Date.parse(comment.created_at || "");
+  return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed;
 }
 
-function latestPreviewComment(comments) {
+function oldestPreviewComment(comments) {
   const isBotAuthored = (comment) => comment.user?.login === "github-actions[bot]";
   const isWorkflowComment = (comment) =>
     isBotAuthored(comment) && (comment.body ?? "").includes(PREVIEW_SUMMARY_MARKER);
@@ -35,14 +35,14 @@ function latestPreviewComment(comments) {
     previewComments.push(comment);
   }
 
-  const existing = previewComments.reduce((latest, comment) => {
-    if (!latest) return comment;
-    const latestTimestamp = commentTimestamp(latest);
+  const existing = previewComments.reduce((oldest, comment) => {
+    if (!oldest) return comment;
+    const oldestTimestamp = commentTimestamp(oldest);
     const candidateTimestamp = commentTimestamp(comment);
-    if (candidateTimestamp !== latestTimestamp) {
-      return candidateTimestamp > latestTimestamp ? comment : latest;
+    if (candidateTimestamp !== oldestTimestamp) {
+      return candidateTimestamp < oldestTimestamp ? comment : oldest;
     }
-    return Number(comment.id) > Number(latest.id) ? comment : latest;
+    return Number(comment.id) < Number(oldest.id) ? comment : oldest;
   }, null);
 
   return { existing, previewComments };
@@ -133,7 +133,7 @@ async function publishPreviewComment({
     issue_number: prNumber,
     per_page: 100,
   });
-  const { existing, previewComments } = latestPreviewComment(comments);
+  const { existing, previewComments } = oldestPreviewComment(comments);
 
   const { data: latestPullRequest } = await getCurrentPullRequest();
   if (isStaleTarget(latestPullRequest)) {
@@ -144,7 +144,21 @@ async function publishPreviewComment({
     return;
   }
 
-  if (markerPolicy === "preserve-reclaimed" && existing?.body.includes(RECLAIMED_MARKER)) {
+  const reclaimedComment = previewComments.find((comment) =>
+    (comment.body ?? "").includes(RECLAIMED_MARKER),
+  );
+  if (markerPolicy === "preserve-reclaimed" && reclaimedComment) {
+    if (String(existing?.id) !== String(reclaimedComment.id)) {
+      await github.rest.issues.updateComment({
+        ...context.repo,
+        comment_id: existing.id,
+        body: reclaimedComment.body,
+      });
+    }
+    for (const comment of previewComments) {
+      if (String(comment.id) === String(existing?.id)) continue;
+      await deleteCommentIfPresent(github, context, comment);
+    }
     core.info(`Preserving the reclaimed preview status for PR #${prNumber} until capacity is allocated.`);
     return;
   }
@@ -164,7 +178,7 @@ async function publishPreviewComment({
   }
 
   for (const comment of previewComments) {
-    if (comment.id === existing?.id) continue;
+    if (String(comment.id) === String(existing?.id)) continue;
     await deleteCommentIfPresent(github, context, comment);
   }
 }

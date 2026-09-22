@@ -69,39 +69,22 @@ public class PasswordResetTokenRepository {
 
   /** Deletes at most {@code batchSize} expired rows in deterministic expiry/id order. */
   public int deleteExpired(LocalDateTime capturedNow, int batchSize) {
-    validateCleanupArguments(capturedNow, batchSize);
-    return dsl.deleteFrom(PASSWORD_RESET_TOKEN)
-        .where(
-            PASSWORD_RESET_TOKEN.ID.in(
-                dsl.select(PASSWORD_RESET_TOKEN.ID)
-                    .from(PASSWORD_RESET_TOKEN)
-                    .where(PASSWORD_RESET_TOKEN.EXPIRES_AT.lt(capturedNow))
-                    .orderBy(PASSWORD_RESET_TOKEN.EXPIRES_AT.asc(), PASSWORD_RESET_TOKEN.ID.asc())
-                    .limit(batchSize)))
-        .and(PASSWORD_RESET_TOKEN.EXPIRES_AT.lt(capturedNow))
-        .execute();
+    return JooqAccountRepositorySupport.deleteExpired(
+        dsl,
+        PASSWORD_RESET_TOKEN,
+        PASSWORD_RESET_TOKEN.ID,
+        PASSWORD_RESET_TOKEN.EXPIRES_AT,
+        capturedNow,
+        batchSize);
   }
 
   public Optional<LocalDateTime> findOldestExpiredAt(LocalDateTime capturedNow) {
-    if (capturedNow == null) {
-      throw new IllegalArgumentException("capturedNow must not be null");
-    }
-    return Optional.ofNullable(
-        dsl.select(PASSWORD_RESET_TOKEN.EXPIRES_AT)
-            .from(PASSWORD_RESET_TOKEN)
-            .where(PASSWORD_RESET_TOKEN.EXPIRES_AT.lt(capturedNow))
-            .orderBy(PASSWORD_RESET_TOKEN.EXPIRES_AT.asc(), PASSWORD_RESET_TOKEN.ID.asc())
-            .limit(1)
-            .fetchOne(PASSWORD_RESET_TOKEN.EXPIRES_AT));
-  }
-
-  private static void validateCleanupArguments(LocalDateTime capturedNow, int batchSize) {
-    if (capturedNow == null) {
-      throw new IllegalArgumentException("capturedNow must not be null");
-    }
-    if (batchSize <= 0) {
-      throw new IllegalArgumentException("batchSize must be positive");
-    }
+    return JooqAccountRepositorySupport.findOldestExpiredAt(
+        dsl,
+        PASSWORD_RESET_TOKEN,
+        PASSWORD_RESET_TOKEN.ID,
+        PASSWORD_RESET_TOKEN.EXPIRES_AT,
+        capturedNow);
   }
 
   private org.jooq.SelectOnConditionStep<? extends Record> baseSelect() {

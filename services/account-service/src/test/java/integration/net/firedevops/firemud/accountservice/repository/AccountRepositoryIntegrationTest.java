@@ -212,8 +212,8 @@ class AccountRepositoryIntegrationTest {
         "Tenant Two");
 
     assertThat(
-            dsl.fetchValue(
-                "SELECT COUNT(*) FROM profiles WHERE account_id = ?", Long.class, accountId))
+            dsl.resultQuery("SELECT COUNT(*) FROM profiles WHERE account_id = ?", accountId)
+                .fetchOne(0, Long.class))
         .isEqualTo(2L);
     assertThatThrownBy(
             () ->
@@ -276,13 +276,13 @@ class AccountRepositoryIntegrationTest {
         .hasStackTraceContaining("profiles_tenant_account_identity_collision");
 
     assertThat(
-            dsl.fetchValue(
-                "SELECT COUNT(*) FROM "
-                    + PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA
-                    + ".profiles WHERE account_id = ? AND tenant_id = ?",
-                Long.class,
-                accountId,
-                303L))
+            dsl.resultQuery(
+                    "SELECT COUNT(*) FROM "
+                        + PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA
+                        + ".profiles WHERE account_id = ? AND tenant_id = ?",
+                    accountId,
+                    303L)
+                .fetchOne(0, Long.class))
         .isEqualTo(2L);
   }
 

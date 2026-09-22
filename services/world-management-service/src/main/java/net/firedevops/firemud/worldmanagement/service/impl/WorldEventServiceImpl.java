@@ -7,6 +7,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.worldmanagement.config.WorldProperties;
@@ -34,17 +35,23 @@ public class WorldEventServiceImpl implements WorldEventService {
   private final MeterRegistry meterRegistry;
   private final WorldProperties worldProperties;
   private Counter eventsProcessedCounter;
+  private Counter weatherDeferredCounter;
+  private Counter regionScopeMismatchCounter;
   private static final Logger logger = LoggingUtil.getLogger(WorldEventServiceImpl.class);
 
   @PostConstruct
   void initMetrics() {
     this.eventsProcessedCounter = meterRegistry.counter("world_events_processed_total");
+    this.weatherDeferredCounter =
+        meterRegistry.counter("world_events_skipped_total", "reason", "weather_deferred");
+    this.regionScopeMismatchCounter =
+        meterRegistry.counter("world_events_skipped_total", "reason", "region_scope_mismatch");
   }
 
   @Override
   @Timed(value = "worldEvent.schedule")
   public WorldEventDto scheduleEvent(WorldEventDto dto) {
-    if ("WEATHER_CHANGE".equals(dto.eventType())) {
+    if (WorldEvent.WEATHER_CHANGE_EVENT_TYPE.equals(dto.eventType())) {
       throw new IllegalStateException(
           "WEATHER_CHANGE_UNAVAILABLE: weather aggregate and effect fence are not established");
     }
@@ -60,8 +67,8 @@ public class WorldEventServiceImpl implements WorldEventService {
                   () ->
                       new IllegalArgumentException(
                           "REGION_INSTANCE_NOT_FOUND: runtime region instance not found"));
-      if (!dto.tenantId().equals(regionInstance.getTenantId())
-          || !dto.gameInstanceId().equals(regionInstance.getGameInstanceId())) {
+      if (!Objects.equals(dto.tenantId(), regionInstance.getTenantId())
+          || !Objects.equals(dto.gameInstanceId(), regionInstance.getGameInstanceId())) {
         throw new IllegalArgumentException(
             "REGION_INSTANCE_SCOPE_MISMATCH: runtime region is outside the event scope");
       }
@@ -81,12 +88,14 @@ public class WorldEventServiceImpl implements WorldEventService {
         eventRepository.findDueEventsForShard(now, worldProperties.getLocalShardId());
     int processedCount = 0;
     for (WorldEvent event : events) {
-      if ("WEATHER_CHANGE".equals(event.getEventType())) {
+      if (WorldEvent.WEATHER_CHANGE_EVENT_TYPE.equals(event.getEventType())) {
         // Retained weather events cannot become an admitted mutation while the selector is open.
+        weatherDeferredCounter.increment();
         continue;
       }
       if (!hasMatchingRegionScope(event)) {
         // A retained or bypass-inserted row must not mutate or be acknowledged outside its scope.
+        regionScopeMismatchCounter.increment();
         continue;
       }
       event.setProcessed(true);

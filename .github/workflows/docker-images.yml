@@ -1,98 +1,18 @@
-name: Build and Publish Docker Images
+name: Build and Publish Docker Images (disabled)
 
+# Canonical service publication lives in runtime-images.yml. This compatibility
+# workflow is intentionally inert so the historical workflow name cannot
+# overwrite SHA, branch, or latest service aliases.
 on:
-  workflow_run:
-    workflows: ["CI — Validation"]
-    types: [completed]
-    branches: [main, develop]
   workflow_dispatch:
 
 permissions:
   contents: read
-  packages: write
-
-concurrency:
-  group: docker-images-${{ github.workflow }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref }}
-  cancel-in-progress: true
 
 jobs:
   docker-build:
+    name: Legacy publisher disabled
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref_name == '__disabled__' }}
     runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
-    strategy:
-      matrix:
-        service:
-          - account-service
-          - automation-scripting-service
-          - entity-management-service
-          - game-design-service
-          - game-logic-service
-          - game-session-service
-          - logging-admin-service
-          - social-groups-service
-          - spring-cloud-gateway
-          - tcp-proxy-service
-          - world-management-service
     steps:
-      - name: Harden runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
-        with:
-          egress-policy: audit
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
-      - name: Set up Java
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
-        with:
-          distribution: temurin
-          java-version: '25'
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
-        with:
-          build-scan-publish: true
-          build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
-          build-scan-terms-of-use-agree: 'yes'
-      - name: Derive image tags
-        id: meta
-        env:
-          HEAD_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
-          HEAD_BRANCH: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name }}
-        run: |
-          {
-            echo "tags<<EOF"
-            echo "ghcr.io/benhook1013/${{ matrix.service }}:${HEAD_SHA}"
-            echo "ghcr.io/benhook1013/${{ matrix.service }}:${HEAD_BRANCH}"
-            if [ "${HEAD_BRANCH}" = "develop" ]; then
-              echo "ghcr.io/benhook1013/${{ matrix.service }}:latest"
-            fi
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-      - name: Build service JAR
-        run: ./gradlew :${{ matrix.service }}:bootJar
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
-      - name: Login to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and Push
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
-        with:
-          context: ./services/${{ matrix.service }}/build/libs
-          file: ./services/${{ matrix.service }}/Dockerfile
-          push: true
-          build-contexts: |
-            repo_root=.
-          tags: ${{ steps.meta.outputs.tags }}
-          cache-from: |
-            type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:buildcache
-            type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:latest
-            type=gha
-          cache-to: |
-            type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:buildcache,mode=max
-            type=gha,mode=max
+      - run: echo "Canonical runtime service publication is owned by Build Runtime Images."

@@ -1,0 +1,373 @@
+# Fail-closed issuance boundary for the operator-managed internal CA.
+#
+# This prerequisite is installed before firemud-grpc-ca exists.  It does not
+# create an issuer, a Certificate, a Secret, or activate the hosted controller.
+# The exact standalone Certificate specs mirror
+# dev-tools/hosted/preview/ensure-standalone-transport-certificates.sh.
+
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: firemud-trust-bootstrap-certificaterequest
+  labels:
+    app.kubernetes.io/name: firemud-trust-bootstrap
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: trust-bootstrap
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+      - apiGroups:
+          - cert-manager.io
+        apiVersions:
+          - v1
+        operations:
+          - CREATE
+          - UPDATE
+        resources:
+          - certificaterequests
+        scope: Namespaced
+  matchConditions:
+    - name: internal-ca-request
+      expression: >-
+        (request.operation == 'CREATE' &&
+         has(object.spec.issuerRef) &&
+         object.spec.issuerRef.name == 'firemud-ca-issuer') ||
+        (request.operation == 'UPDATE' &&
+         ((has(object.spec.issuerRef) && object.spec.issuerRef.name == 'firemud-ca-issuer') ||
+          (has(oldObject.spec.issuerRef) && oldObject.spec.issuerRef.name == 'firemud-ca-issuer')))
+  validations:
+    - expression: >-
+        request.userInfo.groups.exists(group, group == 'system:masters') ||
+        request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager'
+      message: only cert-manager or a trusted system:masters bootstrap may handle internal CertificateRequests
+      reason: Forbidden
+    - expression: >-
+        request.userInfo.groups.exists(group, group == 'system:masters') ||
+        (request.subResource == '' &&
+         has(object.spec.issuerRef) &&
+         object.spec.issuerRef.name == 'firemud-ca-issuer' &&
+         object.spec.issuerRef.kind == 'ClusterIssuer' &&
+         object.spec.issuerRef.group == 'cert-manager.io' &&
+         has(object.metadata.ownerReferences) &&
+         object.metadata.ownerReferences.size() == 1 &&
+         object.metadata.ownerReferences.all(owner,
+           owner.apiVersion == 'cert-manager.io/v1' &&
+           owner.kind == 'Certificate' &&
+           owner.controller == true &&
+           owner.blockOwnerDeletion == true &&
+           owner.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$')))
+      message: internal CertificateRequests must use the canonical ClusterIssuer and be owned by a canonical Certificate
+      reason: Forbidden
+    - expression: >-
+        request.userInfo.groups.exists(group, group == 'system:masters') ||
+        request.operation == 'CREATE' ||
+        object.spec == oldObject.spec
+      message: internal CertificateRequest specs are immutable after creation
+      reason: Forbidden
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: firemud-trust-bootstrap-certificaterequest-subresources
+  labels:
+    app.kubernetes.io/name: firemud-trust-bootstrap
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: trust-bootstrap
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+      - apiGroups:
+          - cert-manager.io
+        apiVersions:
+          - v1
+        operations:
+          - UPDATE
+        resources:
+          - certificaterequests/status
+          - certificaterequests/approval
+        scope: Namespaced
+  matchConditions:
+    - name: internal-ca-request-subresource
+      expression: >-
+        has(object.spec.issuerRef) &&
+        object.spec.issuerRef.name == 'firemud-ca-issuer'
+  validations:
+    - expression: >-
+        request.userInfo.groups.exists(group, group == 'system:masters') ||
+        request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager'
+      message: only cert-manager or a trusted system:masters bootstrap may update internal CertificateRequest status or approval
+      reason: Forbidden
+    - expression: >-
+        request.userInfo.groups.exists(group, group == 'system:masters') ||
+        (object.spec == oldObject.spec &&
+         has(object.metadata.ownerReferences) &&
+         object.metadata.ownerReferences.size() == 1 &&
+         object.metadata.ownerReferences.all(owner,
+           owner.apiVersion == 'cert-manager.io/v1' &&
+           owner.kind == 'Certificate' &&
+           owner.controller == true &&
+           owner.blockOwnerDeletion == true &&
+           owner.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$')))
+      message: internal CertificateRequest approval and status may not alter its canonical spec or ownership
+      reason: Forbidden
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: firemud-trust-bootstrap-certificate
+  labels:
+    app.kubernetes.io/name: firemud-trust-bootstrap
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: trust-bootstrap
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+      - apiGroups:
+          - cert-manager.io
+        apiVersions:
+          - v1
+        operations:
+          - CREATE
+          - UPDATE
+          - DELETE
+        resources:
+          - certificates
+        scope: Namespaced
+  matchConditions:
+    - name: certificate-issuance-boundary
+      expression: >-
+        request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-standalone-certificate-writer' ||
+        (request.operation == 'DELETE' &&
+         (has(oldObject.spec.issuerRef) && oldObject.spec.issuerRef.name == 'firemud-ca-issuer' ||
+          (oldObject.metadata.name.matches('^pr-[1-9][0-9]{0,50}-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') &&
+           request.namespace.matches('^pr-[1-9][0-9]{0,50}$')))) ||
+        (request.operation == 'CREATE' &&
+         (has(object.spec.issuerRef) && object.spec.issuerRef.name == 'firemud-ca-issuer' ||
+          (object.metadata.name.matches('^pr-[1-9][0-9]{0,50}-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') &&
+           request.namespace.matches('^pr-[1-9][0-9]{0,50}$')))) ||
+        (request.operation == 'UPDATE' &&
+         (has(object.spec.issuerRef) && object.spec.issuerRef.name == 'firemud-ca-issuer' ||
+          (object.metadata.name.matches('^pr-[1-9][0-9]{0,50}-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') &&
+           request.namespace.matches('^pr-[1-9][0-9]{0,50}$')) ||
+          (has(oldObject.spec.issuerRef) && oldObject.spec.issuerRef.name == 'firemud-ca-issuer' ||
+           (oldObject.metadata.name.matches('^pr-[1-9][0-9]{0,50}-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') &&
+            request.namespace.matches('^pr-[1-9][0-9]{0,50}$')))))
+  validations:
+    - expression: >-
+        request.userInfo.groups.exists(group, group == 'system:masters') ||
+        (request.operation == 'DELETE' &&
+         request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
+         (request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')) &&
+         request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$')) ||
+        (request.operation == 'DELETE' &&
+         request.userInfo.username == 'system:serviceaccount:kube-system:namespace-controller' &&
+         (request.namespace == 'dev' || request.namespace.matches('^pr-[1-9][0-9]{0,50}$') ||
+          request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')) &&
+         request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$')) ||
+        (request.operation != 'DELETE' &&
+         ((request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-standalone-certificate-writer' &&
+           request.namespace.matches('^pr-[1-9][0-9]{0,50}$') &&
+           object.metadata.name.matches('^pr-[1-9][0-9]{0,50}-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') &&
+           object.metadata.name.startsWith(request.namespace + '-') &&
+           has(object.spec.secretName) &&
+           object.spec.secretName == object.metadata.name &&
+           has(object.spec.isCA) &&
+           object.spec.isCA == false &&
+           has(object.spec.revisionHistoryLimit) &&
+           object.spec.revisionHistoryLimit == 1 &&
+           (!has(object.spec.commonName) || object.spec.commonName == '') &&
+           (!has(object.spec.ipAddresses) || object.spec.ipAddresses.size() == 0) &&
+           (!has(object.spec.emailAddresses) || object.spec.emailAddresses.size() == 0) &&
+           has(object.spec.privateKey) &&
+           object.spec.privateKey.algorithm == 'RSA' &&
+           object.spec.privateKey.size == 2048 &&
+           object.spec.privateKey.encoding == 'PKCS8' &&
+           object.spec.privateKey.rotationPolicy == 'Always' &&
+           has(object.spec.encodeUsagesInRequest) &&
+           object.spec.encodeUsagesInRequest == true &&
+           has(object.spec.issuerRef) &&
+           object.spec.issuerRef.kind == 'ClusterIssuer' &&
+           object.spec.issuerRef.group == 'cert-manager.io' &&
+           ((object.metadata.name.endsWith('-telnet-tls') &&
+             object.spec.dnsNames == [request.namespace + '.preview.firedevops.net'] &&
+             (!has(object.spec.uris) || object.spec.uris.size() == 0) &&
+             object.spec.usages == ['digital signature', 'key encipherment', 'server auth'] &&
+             object.spec.issuerRef.name == 'letsencrypt-prod') ||
+            (object.metadata.name.endsWith('-gateway-internal-ws') &&
+             object.spec.issuerRef.name == 'firemud-ca-issuer' &&
+             object.spec.dnsNames == ['spring-cloud-gateway-mtls.' + request.namespace + '.svc.cluster.local'] &&
+             (!has(object.spec.uris) || object.spec.uris.size() == 0) &&
+             object.spec.usages == ['digital signature', 'key encipherment', 'server auth']) ||
+            (object.metadata.name.endsWith('-tcp-proxy-bridge') &&
+             object.spec.issuerRef.name == 'firemud-ca-issuer' &&
+             (!has(object.spec.dnsNames) || object.spec.dnsNames.size() == 0) &&
+             object.spec.uris == ['spiffe://firemud/ns/' + request.namespace + '/sa/tcp-proxy-service'] &&
+             object.spec.usages == ['digital signature', 'key encipherment', 'client auth']))) ||
+          (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
+           (request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')) &&
+           object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') &&
+           has(object.spec.issuerRef) &&
+           object.spec.issuerRef.name == 'firemud-ca-issuer' &&
+           object.spec.issuerRef.kind == 'ClusterIssuer' &&
+           object.spec.issuerRef.group == 'cert-manager.io')))
+      message: FireMUD Certificates are limited to the exact standalone transport specs or canonical retained identity controller
+      reason: Forbidden
+    - expression: >-
+        request.userInfo.groups.exists(group, group == 'system:masters') ||
+        request.operation == 'CREATE' ||
+        request.operation == 'DELETE' ||
+        request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' ||
+        object.spec == oldObject.spec
+      message: FireMUD Certificate specs may not be changed by an untrusted caller
+      reason: Forbidden
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: firemud-trust-bootstrap-certificate-status
+  labels:
+    app.kubernetes.io/name: firemud-trust-bootstrap
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: trust-bootstrap
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+      - apiGroups:
+          - cert-manager.io
+        apiVersions:
+          - v1
+        operations:
+          - UPDATE
+        resources:
+          - certificates/status
+        scope: Namespaced
+  matchConditions:
+    - name: internal-ca-certificate-status
+      expression: >-
+        has(object.spec.issuerRef) &&
+        object.spec.issuerRef.name == 'firemud-ca-issuer'
+  validations:
+    - expression: >-
+        request.userInfo.groups.exists(group, group == 'system:masters') ||
+        (request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' &&
+         object.spec == oldObject.spec)
+      message: only cert-manager may update status for an unchanged internal Certificate
+      reason: Forbidden
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: firemud-trust-bootstrap-ca-issuers
+  labels:
+    app.kubernetes.io/name: firemud-trust-bootstrap
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: trust-bootstrap
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+      - apiGroups:
+          - cert-manager.io
+        apiVersions:
+          - v1
+        operations:
+          - CREATE
+          - UPDATE
+          - DELETE
+        resources:
+          - issuers
+          - clusterissuers
+        scope: '*'
+  matchConditions:
+    - name: ca-issuer-or-alias
+      expression: >-
+        (request.operation == 'DELETE' &&
+         (oldObject.metadata.name == 'firemud-ca-issuer' || has(oldObject.spec.ca))) ||
+        (request.operation == 'CREATE' &&
+         (object.metadata.name == 'firemud-ca-issuer' || has(object.spec.ca))) ||
+        (request.operation == 'UPDATE' &&
+         (object.metadata.name == 'firemud-ca-issuer' || has(object.spec.ca) ||
+          oldObject.metadata.name == 'firemud-ca-issuer' || has(oldObject.spec.ca)))
+  validations:
+    - expression: request.userInfo.groups.exists(group, group == 'system:masters')
+      message: only trusted system:masters may create, mutate, or delete the internal CA issuer or a CA-backed alias
+      reason: Forbidden
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: firemud-trust-bootstrap-certificaterequest
+  labels:
+    app.kubernetes.io/name: firemud-trust-bootstrap
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: trust-bootstrap
+spec:
+  policyName: firemud-trust-bootstrap-certificaterequest
+  validationActions:
+    - Deny
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: firemud-trust-bootstrap-certificaterequest-subresources
+  labels:
+    app.kubernetes.io/name: firemud-trust-bootstrap
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: trust-bootstrap
+spec:
+  policyName: firemud-trust-bootstrap-certificaterequest-subresources
+  validationActions:
+    - Deny
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: firemud-trust-bootstrap-certificate
+  labels:
+    app.kubernetes.io/name: firemud-trust-bootstrap
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: trust-bootstrap
+spec:
+  policyName: firemud-trust-bootstrap-certificate
+  validationActions:
+    - Deny
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: firemud-trust-bootstrap-certificate-status
+  labels:
+    app.kubernetes.io/name: firemud-trust-bootstrap
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: trust-bootstrap
+spec:
+  policyName: firemud-trust-bootstrap-certificate-status
+  validationActions:
+    - Deny
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: firemud-trust-bootstrap-ca-issuers
+  labels:
+    app.kubernetes.io/name: firemud-trust-bootstrap
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: trust-bootstrap
+spec:
+  policyName: firemud-trust-bootstrap-ca-issuers
+  validationActions:
+    - Deny

@@ -70,7 +70,7 @@ public final class GameplayTelnetDriver implements AutoCloseable {
     login(email, password);
     play(world);
     sendLine("LOOK");
-    readBlockContainingOrTimeout(text);
+    readBlockContaining(text);
   }
 
   public void enterGameplayAndWaitReady(
@@ -79,7 +79,7 @@ public final class GameplayTelnetDriver implements AutoCloseable {
     login(email, password);
     play(world, characterName);
     sendLine("LOOK");
-    readBlockContainingOrTimeout(text);
+    readBlockContaining(text);
   }
 
   public void sendLine(String command) {
@@ -229,7 +229,7 @@ public final class GameplayTelnetDriver implements AutoCloseable {
         return block.toString();
       }
     }
-    if (matched || returnOnTimeout) {
+    if (returnOnTimeout) {
       return block.toString();
     }
     throw new AssertionError(
