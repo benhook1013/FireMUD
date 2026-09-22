@@ -152,8 +152,7 @@ class WorldManagementServiceApplicationIntegrationTest {
 
     assertThat(dueEvents)
         .extracting(WorldEvent::getEventType)
-        .containsExactlyInAnyOrder(
-            "REGION_NOTICE", "REGIONLESS_NOTICE", "WEATHER_CHANGE");
+        .containsExactlyInAnyOrder("REGION_NOTICE", "REGIONLESS_NOTICE", "WEATHER_CHANGE");
     WorldEvent exactRegionEvent =
         dueEvents.stream()
             .filter(event -> "REGION_NOTICE".equals(event.getEventType()))

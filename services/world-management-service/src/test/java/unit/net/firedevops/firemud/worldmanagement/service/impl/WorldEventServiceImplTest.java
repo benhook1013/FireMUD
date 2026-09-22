@@ -126,9 +126,7 @@ class WorldEventServiceImplTest {
     assertEquals(0, meterRegistry.counter("world_events_processed_total").count());
     assertEquals(
         1,
-        meterRegistry
-            .counter("world_events_skipped_total", "reason", "weather_deferred")
-            .count());
+        meterRegistry.counter("world_events_skipped_total", "reason", "weather_deferred").count());
     assertEquals(
         0,
         meterRegistry
@@ -171,9 +169,7 @@ class WorldEventServiceImplTest {
     assertEquals(0, meterRegistry.counter("world_events_processed_total").count());
     assertEquals(
         0,
-        meterRegistry
-            .counter("world_events_skipped_total", "reason", "weather_deferred")
-            .count());
+        meterRegistry.counter("world_events_skipped_total", "reason", "weather_deferred").count());
     assertEquals(
         1,
         meterRegistry
@@ -199,9 +195,7 @@ class WorldEventServiceImplTest {
     assertEquals(0, meterRegistry.counter("world_events_processed_total").count());
     assertEquals(
         0,
-        meterRegistry
-            .counter("world_events_skipped_total", "reason", "weather_deferred")
-            .count());
+        meterRegistry.counter("world_events_skipped_total", "reason", "weather_deferred").count());
     assertEquals(
         1,
         meterRegistry
