@@ -166,9 +166,12 @@ evaluate_retention_eligibility() {
     # is eligible only while its live base remains addressable and GitHub
     # reports a known clean merge candidate. Unknown mergeability is retained
     # conservatively because it can represent a transient GitHub state.
-    mergeable="$(jq -r '.mergeable // empty' <<<"$live_pr_json")"
-    mergeable_state="$(jq -r '.mergeable_state // empty' <<<"$live_pr_json")"
-    if [[ "$mergeable" == false || "$mergeable_state" == dirty || "$mergeable_state" == conflicting ]]; then
+    mergeable="$(jq -r 'if (.mergeable | type) == "boolean" then (.mergeable | tostring) else "invalid" end' <<<"$live_pr_json")"
+    mergeable_state="$(jq -r 'if (.mergeable_state | type) == "string" then .mergeable_state else "invalid" end' <<<"$live_pr_json")"
+    if [[ "$mergeable" == invalid || "$mergeable_state" == invalid || "$mergeable_state" == unknown ]]; then
+      echo "Keeping ${subject}: PR #${pr_number} mergeability is unknown"
+      return 1
+    elif [[ "$mergeable" == false || "$mergeable_state" == dirty || "$mergeable_state" == conflicting ]]; then
       eligible=false
       reason="merge-conflict"
     elif [[ "$mergeable" != true ]]; then

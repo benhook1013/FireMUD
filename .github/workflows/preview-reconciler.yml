@@ -404,25 +404,6 @@ jobs:
               fi
             fi
 
-            local_active_preview_runs_json='[]'
-            for active_status in requested queued in_progress waiting pending; do
-              active_preview_run_pages_json=""
-              if ! active_preview_run_pages_json="$(
-                gh api --paginate --slurp \
-                  "repos/${GITHUB_REPOSITORY}/actions/runs?branch=${DEFAULT_BRANCH}&status=${active_status}&per_page=100"
-              )"; then
-                echo "Unable to inspect active preview workflow runs; refusing preview reconcile." >&2
-                exit 1
-              fi
-              if ! local_active_preview_runs_json="$(
-                jq -c -s '.[0] + .[1]' \
-                  <(printf '%s\n' "$local_active_preview_runs_json") \
-                  <(printf '%s\n' "$active_preview_run_pages_json")
-              )"; then
-                echo "Unable to aggregate active preview workflow runs; refusing preview reconcile." >&2
-                exit 1
-              fi
-            done
             if ! active_preview_run_id="$(
               jq -r \
                 --arg workflow_name "${preview_workflow_name}" \
@@ -465,7 +446,7 @@ jobs:
                           | .id
                         end
                       end
-                  ' <<<"${local_active_preview_runs_json}"
+                  ' <<<"${active_preview_runs_json}"
             )"; then
               echo "Unable to parse active preview workflow runs; refusing preview reconcile." >&2
               exit 1
@@ -499,6 +480,25 @@ jobs:
               | sort -t $'\t' -k1,1n -k2,2n
           )"
           if [[ -n "$candidate_rows" ]]; then
+            active_preview_runs_json='[]'
+            for active_status in requested queued in_progress waiting pending; do
+              active_preview_run_pages_json=""
+              if ! active_preview_run_pages_json="$(
+                gh api --paginate --slurp \
+                  "repos/${GITHUB_REPOSITORY}/actions/runs?branch=${DEFAULT_BRANCH}&status=${active_status}&per_page=100"
+              )"; then
+                echo "Unable to inspect active preview workflow runs; refusing preview reconcile." >&2
+                exit 1
+              fi
+              if ! active_preview_runs_json="$(
+                jq -c -s '.[0] + .[1]' \
+                  <(printf '%s\n' "$active_preview_runs_json") \
+                  <(printf '%s\n' "$active_preview_run_pages_json")
+              )"; then
+                echo "Unable to aggregate active preview workflow runs; refusing preview reconcile." >&2
+                exit 1
+              fi
+            done
             dispatch_candidates <<<"$candidate_rows"
           fi
 

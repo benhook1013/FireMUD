@@ -626,16 +626,32 @@ case "$resource" in
       prune_author='human'
       prune_labels_json='[]'
     fi
+    prune_mergeable_json="$(jq -cn --arg value "${FAKE_PRUNE_MERGEABLE:-true}" '$value == "true"')"
+    case "${FAKE_PRUNE_MERGEABLE_SHAPE:-boolean}" in
+      boolean) ;;
+      null) prune_mergeable_json=null ;;
+      string) prune_mergeable_json='"false"' ;;
+      object) prune_mergeable_json='{}' ;;
+      *) exit 1 ;;
+    esac
+    prune_mergeable_state_json="$(jq -cn --arg value "${FAKE_PRUNE_MERGEABLE_STATE:-clean}" '$value')"
+    case "${FAKE_PRUNE_MERGEABLE_STATE_SHAPE:-string}" in
+      string) ;;
+      null) prune_mergeable_state_json=null ;;
+      boolean) prune_mergeable_state_json=true ;;
+      object) prune_mergeable_state_json='{}' ;;
+      *) exit 1 ;;
+    esac
     jq -cn \
       --arg state "$prune_state" \
       --arg base_ref "$prune_base_ref" \
       --arg author "$prune_author" \
       --arg head_repository "${FAKE_PRUNE_HEAD_REPOSITORY:-example/FireMUD}" \
       --arg base_repository "${FAKE_PRUNE_BASE_REPOSITORY:-example/FireMUD}" \
-      --arg mergeable "${FAKE_PRUNE_MERGEABLE:-true}" \
-      --arg mergeable_state "${FAKE_PRUNE_MERGEABLE_STATE:-clean}" \
+      --argjson mergeable "$prune_mergeable_json" \
+      --argjson mergeable_state "$prune_mergeable_state_json" \
       --argjson labels "$prune_labels_json" \
-      '{state:$state,head:{sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",repo:{full_name:$head_repository}},base:{ref:$base_ref,repo:{full_name:$base_repository}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",changed_files:1,mergeable:($mergeable == "true"),mergeable_state:$mergeable_state,user:{login:$author},labels:$labels}'
+      '{state:$state,head:{sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",repo:{full_name:$head_repository}},base:{ref:$base_ref,repo:{full_name:$base_repository}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",changed_files:1,mergeable:$mergeable,mergeable_state:$mergeable_state,user:{login:$author},labels:$labels}'
     exit 0
   ;;
   */pulls/102)
@@ -941,6 +957,7 @@ reset_case() {
   export FAKE_PRUNE_BASE_REPOSITORY=example/FireMUD
   export FAKE_PRUNE_MERGEABLE=true
   export FAKE_PRUNE_MERGEABLE_STATE=clean
+  unset FAKE_PRUNE_MERGEABLE_SHAPE FAKE_PRUNE_MERGEABLE_STATE_SHAPE
   unset FAKE_PRUNE_BASE_REF_STATUS FAKE_PRUNE_BASE_REF_SHA
   export FAKE_PRUNE_QUERY_FAIL=false
   export FAKE_PRUNE_JQ_FAIL=false
@@ -1660,6 +1677,28 @@ bash "$PRUNER" --apply >"$TEMP_DIR/prune-ordinary-unknown-merge.out"
 test ! -e "$FAKE_DELETE_LOG"
 grep -Fq 'Keeping pr-101: PR #101 mergeability is unknown' \
   "$TEMP_DIR/prune-ordinary-unknown-merge.out"
+
+reset_case
+export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+export FAKE_PRUNE_METADATA="open\tdevelop\thuman\t${adversarial_labels_base64}\n"
+export FAKE_PRUNE_MERGEABLE=false
+export FAKE_PRUNE_MERGEABLE_SHAPE=string
+export FAKE_PRUNE_MERGEABLE_STATE=dirty
+bash "$PRUNER" --apply >"$TEMP_DIR/prune-ordinary-malformed-merge.out"
+test ! -e "$FAKE_DELETE_LOG"
+grep -Fq 'Keeping pr-101: PR #101 mergeability is unknown' \
+  "$TEMP_DIR/prune-ordinary-malformed-merge.out"
+
+reset_case
+export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+export FAKE_PRUNE_METADATA="open\tdevelop\thuman\t${adversarial_labels_base64}\n"
+export FAKE_PRUNE_MERGEABLE=true
+export FAKE_PRUNE_MERGEABLE_STATE=clean
+export FAKE_PRUNE_MERGEABLE_STATE_SHAPE=null
+bash "$PRUNER" --apply >"$TEMP_DIR/prune-ordinary-null-merge-state.out"
+test ! -e "$FAKE_DELETE_LOG"
+grep -Fq 'Keeping pr-101: PR #101 mergeability is unknown' \
+  "$TEMP_DIR/prune-ordinary-null-merge-state.out"
 
 reset_case
 export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
@@ -3285,6 +3324,17 @@ assert (
     "read -r _ pr_number head_sha pr_author pr_base_ref pr_state "
     "labels_json_base64"
 ) in run
+function_start = run.index("dispatch_candidates()")
+function_end = run.index("\n}\n\ncandidate_rows=", function_start)
+function_body = run[function_start:function_end]
+assert "gh api --paginate --slurp" not in function_body
+assert run.count(
+    "actions/runs?branch=${DEFAULT_BRANCH}&status=${active_status}&per_page=100"
+) == 1
+candidate_rows_start = run.index("candidate_rows=")
+active_runs_start = run.index("active_preview_runs_json='[]'", candidate_rows_start)
+dispatch_call = run.index("dispatch_candidates <<<", active_runs_start)
+assert candidate_rows_start < active_runs_start < dispatch_call
 PY
 # shellcheck disable=SC2016 # Assert malformed label metadata fails closed before eligibility.
 grep -Fq -- 'if ! labels_json="$(printf '\''%s'\'' "$labels_json_base64" | base64 --decode 2>/dev/null)" ||' \
