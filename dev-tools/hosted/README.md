@@ -12,7 +12,7 @@ This directory contains tooling for FireMUD's hosted Kubernetes environments.
 - `preview/`
   - PR-preview-only helpers
   - capacity allocation and bounded priority reclaim, PR-head freshness checks, preview namespace pruning, preview NodePort allocation, and preview-specific value rendering/summary output
-  - [Preview eligibility](preview/preview-eligibility.py) requires valid GitHub label metadata for deploy and retain operations; destroy remains eligible for cleanup when metadata is malformed. `preview:priority` changes allocation ordering only when it is present on an otherwise eligible preview
+  - [Preview eligibility](preview/preview-eligibility.py) requires valid GitHub label metadata for deploy and retain operations; destroy remains eligible for cleanup when metadata is malformed. Same-repository pull requests targeting `main` or `develop` remain ordinarily eligible, while another same-repository base requires the maintainer-controlled `preview:priority` label in addition to current mergeability and exact source-tuple validation
   - priority reclaim applies only when the preview pool is full, selects the oldest ordinary allocation after rechecking both target and victim labels at the deletion boundary, and never reclaims another currently priority-labelled allocation
 
 - `dev-demo/`

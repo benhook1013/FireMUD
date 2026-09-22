@@ -93,6 +93,9 @@ jobs:
       - name: Set up canonical GitHub CLI
         uses: ./.github/actions/setup-gh
 
+      - name: Set up canonical Python
+        uses: ./.github/actions/setup-python
+
       - name: Derive image tags
         id: meta
         env:
@@ -158,8 +161,8 @@ jobs:
               echo "Runtime PR refresh payload has an invalid pull request number." >&2
               exit 1
             }
-            [[ "$BASE_REF" == main || "$BASE_REF" == develop ]] || {
-              echo "Runtime PR refresh supports only main or develop pull request bases." >&2
+            [[ "$BASE_REF" =~ ^[A-Za-z0-9._/-]+$ ]] || {
+              echo "Runtime PR refresh payload has an invalid base ref." >&2
               exit 1
             }
             for sha_name in BASE_SHA HEAD_SHA MERGE_SHA; do
@@ -179,6 +182,13 @@ jobs:
                 exit 1
               }
             pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+            if ! printf '%s' "$pull_request_json" | python3 dev-tools/hosted/preview/preview-eligibility.py \
+              --revalidate-deploy \
+              --expected-repository "$GITHUB_REPOSITORY" \
+              --expected-head-sha "$HEAD_SHA" >/dev/null; then
+              echo "Runtime PR refresh target is not currently preview-eligible; refusing artifact construction." >&2
+              exit 1
+            fi
             jq -e \
               --arg repository "$GITHUB_REPOSITORY" \
               --arg base_ref "$BASE_REF" \
@@ -501,6 +511,13 @@ jobs:
               );
             };
 
+            const dependencyBotAuthors = new Set([
+              "app/dependabot",
+              "dependabot[bot]",
+              "app/renovate",
+              "renovate[bot]",
+            ]);
+
             const resolveExactMerge = async (number) => {
               for (let attempt = 1; attempt <= 5; attempt += 1) {
                 const response = await github.rest.pulls.get({
@@ -512,11 +529,17 @@ jobs:
                 const currentBaseRef = pullRequest.base?.ref;
                 const headRepository = pullRequest.head?.repo?.full_name;
                 const baseRepository = pullRequest.base?.repo?.full_name;
+                const author = pullRequest.user?.login;
+                const priority = (pullRequest.labels || []).some(
+                  (label) => label?.name === "preview:priority"
+                );
                 if (pullRequest.state !== "open" ||
                   headRepository !== context.payload.repository.full_name ||
                   baseRepository !== context.payload.repository.full_name ||
                   currentBaseRef !== baseBranch ||
-                  !shaPattern.test(currentHeadSha || "")) {
+                  !shaPattern.test(currentHeadSha || "") ||
+                  dependencyBotAuthors.has(author) ||
+                  (!['main', 'develop'].includes(currentBaseRef) && !priority)) {
                   return null;
                 }
 
@@ -643,14 +666,17 @@ jobs:
               } else {
                 core.info(`Skipping PR runtime image refresh for #${tuple.prNumber}: no runtime-changing files.`);
               }
-              core.info(`Dispatching preview deploy reconciliation for #${tuple.prNumber} (${tuple.headSha}).`);
+              core.info(`Dispatching preview deploy reconciliation for #${tuple.prNumber} (${tuple.baseSha} / ${tuple.headSha} / ${tuple.mergeSha}).`);
               await github.rest.repos.createDispatchEvent({
                 ...context.repo,
                 event_type: "preview-deploy",
                 client_payload: {
                   action: "deploy",
                   pr_number: tuple.prNumber,
+                  base_ref: tuple.baseRef,
+                  base_sha: tuple.baseSha,
                   head_sha: tuple.headSha,
+                  merge_sha: tuple.mergeSha,
                   preview_domain: "preview.firedevops.net",
                 },
               });

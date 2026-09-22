@@ -162,7 +162,7 @@ cat > "$fixture_dir/source-run.json" <<EOF
 {"id":${source_run_id},"workflow_id":${workflow_id},"name":"${source_title}","path":".github/workflows/runtime-images.yml","event":"pull_request","status":"completed","conclusion":"success","display_title":"${source_title}","head_sha":"${head_sha}","head_branch":"feature/ci","repository":{"full_name":"${repository}"},"head_repository":{"full_name":"${repository}"}}
 EOF
 cat > "$fixture_dir/pull-request.json" <<EOF
-{"number":${pr_number},"state":"open","head":{"sha":"${head_sha}","ref":"feature/ci","repo":{"full_name":"${repository}"}},"base":{"sha":"${base_sha}","ref":"develop","repo":{"full_name":"${repository}"}},"merge_commit_sha":"${merge_sha}"}
+{"number":${pr_number},"state":"open","user":{"login":"human"},"labels":[],"mergeable":true,"mergeable_state":"clean","head":{"sha":"${head_sha}","ref":"feature/ci","repo":{"full_name":"${repository}"}},"base":{"sha":"${base_sha}","ref":"develop","repo":{"full_name":"${repository}"}},"merge_commit_sha":"${merge_sha}"}
 EOF
 cat > "$fixture_dir/merge-commit.json" <<EOF
 {"sha":"${merge_sha}","parents":[{"sha":"${base_sha}"},{"sha":"${head_sha}"}]}
@@ -179,6 +179,7 @@ case "${2:-}" in
   repos/benhook1013/FireMUD/actions/runs/4242) cat "$FIXTURE_DIR/source-run.json" ;;
   repos/benhook1013/FireMUD/pulls/42) cat "$FIXTURE_DIR/pull-request.json" ;;
   repos/benhook1013/FireMUD/git/ref/heads/develop) cat "$FIXTURE_DIR/base-ref.json" ;;
+  repos/benhook1013/FireMUD/git/ref/heads/*) cat "$FIXTURE_DIR/base-ref.json" ;;
   repos/benhook1013/FireMUD/commits/cccccccccccccccccccccccccccccccccccccccc) cat "$FIXTURE_DIR/merge-commit.json" ;;
   *) echo "unexpected endpoint: ${2:-}" >&2; exit 2 ;;
 esac
@@ -226,6 +227,44 @@ if [[ -e "$fixture_dir/registry-marker" ]]; then
   exit 1
 fi
 
+python3 - "$fixture_dir/pull-request.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload["base"]["ref"] = "feature/stack"
+payload["labels"] = [{"name": "preview:priority"}]
+path.write_text(json.dumps(payload), encoding="utf-8")
+PY
+run_validation
+python3 - "$fixture_dir/pull-request.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload["labels"] = []
+path.write_text(json.dumps(payload), encoding="utf-8")
+PY
+if run_validation; then
+  echo "publisher accepted an unlabelled stacked pull request" >&2
+  exit 1
+fi
+
+python3 - "$fixture_dir/pull-request.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload["labels"] = [{"name": "preview:priority"}]
+path.write_text(json.dumps(payload), encoding="utf-8")
+PY
+
 default_branch_sha='eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
 python3 - "$fixture_dir/pull-request.json" <<'PY'
 import json
@@ -234,6 +273,8 @@ from pathlib import Path
 
 path = Path(sys.argv[1])
 payload = json.loads(path.read_text(encoding="utf-8"))
+payload["base"]["ref"] = "develop"
+payload["labels"] = [{"name": "preview:priority"}]
 payload["base"]["sha"] = "d" * 40
 path.write_text(json.dumps(payload), encoding="utf-8")
 PY
