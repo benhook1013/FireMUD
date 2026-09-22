@@ -12,6 +12,11 @@ import java.net.http.HttpResponse;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.test.HttpTestSupport;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
@@ -31,7 +36,9 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -64,6 +71,7 @@ class WorldManagementServiceApplicationIntegrationTest {
   @Autowired private JwtUtil jwtUtil;
   @Autowired private DSLContext dsl;
   @Autowired private WorldEventRepository worldEventRepository;
+  @Autowired private PlatformTransactionManager transactionManager;
 
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
   @MockitoBean private GameDesignClient gameDesignClient;
@@ -170,6 +178,62 @@ class WorldManagementServiceApplicationIntegrationTest {
     assertThat(regionlessEvent.getRegionInstance()).isNull();
   }
 
+  @Test
+  void worldEventDueQuerySkipsRowsClaimedByAnotherSweepUntilItsTransactionReleases()
+      throws Exception {
+    LocalDateTime executeAt = LocalDateTime.now().plusDays(1);
+    LocalDateTime repositoryCutoff = executeAt.plusSeconds(1);
+    Long eventId = insertEvent(303L, 3003L, null, "CLAIMABLE_NOTICE", executeAt);
+    assertThat(eventId).isNotNull();
+
+    TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
+    CountDownLatch firstClaimed = new CountDownLatch(1);
+    CountDownLatch releaseFirst = new CountDownLatch(1);
+    try (ExecutorService executor = Executors.newSingleThreadExecutor()) {
+      Future<List<WorldEvent>> firstSweep =
+          executor.submit(
+              () ->
+                  transactionTemplate.execute(
+                      status -> {
+                        List<WorldEvent> claimed =
+                            worldEventRepository.findDueEventsForShard(repositoryCutoff, 0);
+                        assertThat(claimed).extracting(WorldEvent::getId).contains(eventId);
+                        firstClaimed.countDown();
+                        awaitLatch(releaseFirst);
+                        return claimed;
+                      }));
+
+      assertThat(firstClaimed.await(5, TimeUnit.SECONDS)).isTrue();
+
+      List<WorldEvent> skipped =
+          transactionTemplate.execute(
+              status -> worldEventRepository.findDueEventsForShard(repositoryCutoff, 0));
+      assertThat(skipped).extracting(WorldEvent::getId).doesNotContain(eventId);
+
+      releaseFirst.countDown();
+      assertThat(firstSweep.get(10, TimeUnit.SECONDS))
+          .extracting(WorldEvent::getId)
+          .contains(eventId);
+
+      List<WorldEvent> selectableAgain =
+          transactionTemplate.execute(
+              status -> worldEventRepository.findDueEventsForShard(repositoryCutoff, 0));
+      assertThat(selectableAgain).extracting(WorldEvent::getId).contains(eventId);
+    } finally {
+      releaseFirst.countDown();
+      dsl.deleteFrom(WORLD_EVENT).where(WORLD_EVENT.ID.eq(eventId)).execute();
+    }
+  }
+
+  private static void awaitLatch(CountDownLatch latch) {
+    try {
+      assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+    } catch (InterruptedException exception) {
+      Thread.currentThread().interrupt();
+      throw new AssertionError("Interrupted while waiting for transaction coordination", exception);
+    }
+  }
+
   private long insertRegion(long tenantId, long gameInstanceId, long fixtureLabel) {
     Long worldInstanceId =
         dsl.insertInto(WORLD_INSTANCE)
@@ -204,19 +268,20 @@ class WorldManagementServiceApplicationIntegrationTest {
     return regionId;
   }
 
-  private void insertEvent(
+  private Long insertEvent(
       long tenantId,
       long gameInstanceId,
       Long regionInstanceId,
       String eventType,
       LocalDateTime executeAt) {
-    dsl.insertInto(WORLD_EVENT)
+    return dsl.insertInto(WORLD_EVENT)
         .set(WORLD_EVENT.TENANT_ID, tenantId)
         .set(WORLD_EVENT.GAME_INSTANCE_ID, gameInstanceId)
         .set(WORLD_EVENT.REGION_INSTANCE_ID, regionInstanceId)
         .set(WORLD_EVENT.EVENT_TYPE, eventType)
         .set(WORLD_EVENT.EVENT_DATA, eventType)
         .set(WORLD_EVENT.EXECUTE_AT, executeAt)
-        .execute();
+        .returning(WORLD_EVENT.ID)
+        .fetchOne(WORLD_EVENT.ID);
   }
 }
