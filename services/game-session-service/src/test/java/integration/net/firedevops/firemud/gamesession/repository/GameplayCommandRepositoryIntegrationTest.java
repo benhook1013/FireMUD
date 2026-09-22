@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.repository;
 
 import static net.firedevops.firemud.gamesession.jooq.tables.GameplayAdmissionPointer.GAMEPLAY_ADMISSION_POINTER;
 import static net.firedevops.firemud.gamesession.jooq.tables.GameplayCommand.GAMEPLAY_COMMAND;
+import static net.firedevops.firemud.gamesession.jooq.tables.TickBatch.TICK_BATCH;
 import static net.firedevops.firemud.gamesession.jooq.tables.TickEffect.TICK_EFFECT;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -529,6 +530,20 @@ class GameplayCommandRepositoryIntegrationTest {
         .containsExactly("STAGED", stagedAt);
 
     assertThat(repository.hasDurableTickEffect(1L, 7L, "cmd-stage-1")).isFalse();
+    dsl.insertInto(TICK_BATCH)
+        .set(TICK_BATCH.TICK_BATCH_ID, "batch-stage-1")
+        .set(TICK_BATCH.TENANT_ID, 1L)
+        .set(TICK_BATCH.GAME_INSTANCE_ID, 7L)
+        .set(TICK_BATCH.REGION_ID, "region-1")
+        .set(TICK_BATCH.REGION_EPOCH, 12L)
+        .set(TICK_BATCH.EXECUTOR_FENCE, "fence-stage-1")
+        .set(TICK_BATCH.BATCH_SOURCE, "FRESH_STAGE")
+        .set(TICK_BATCH.STATUS, "STAGED")
+        .set(TICK_BATCH.REQUIRES_SOLO_TICK, false)
+        .set(TICK_BATCH.COMMAND_COUNT, 1)
+        .set(TICK_BATCH.EXPECTED_EFFECT_COUNT, 1)
+        .set(TICK_BATCH.STAGED_AT, LocalDateTime.parse("2026-07-05T06:01:00"))
+        .execute();
     dsl.insertInto(TICK_EFFECT)
         .set(TICK_EFFECT.EFFECT_ID, "effect-stage-1")
         .set(TICK_EFFECT.TICK_BATCH_ID, "batch-stage-1")

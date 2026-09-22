@@ -145,18 +145,26 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
               ? null
               : resource.getStatus().getGrpc().getSourceGeneration();
       List<RoleMaterialRequest> materialRequests =
-          List.of(
-              new RoleMaterialRequest(
-                  HostedIdentityContract.INGRESS_ROLE, materialization::ingress),
-              new RoleMaterialRequest(HostedIdentityContract.TELNET_ROLE, materialization::telnet),
-              new RoleMaterialRequest(
-                  HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE,
-                  materialization::gatewayInternalWs),
-              new RoleMaterialRequest(
-                  HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE, materialization::tcpProxyBridge),
-              new RoleMaterialRequest(
-                  HostedIdentityContract.GRPC_ROLE,
-                  () -> materialization.grpc(acceptedGrpcGeneration)));
+          new ArrayList<>(
+              List.of(
+                  new RoleMaterialRequest(
+                      HostedIdentityContract.INGRESS_ROLE, materialization::ingress),
+                  new RoleMaterialRequest(
+                      HostedIdentityContract.TELNET_ROLE, materialization::telnet),
+                  new RoleMaterialRequest(
+                      HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE,
+                      materialization::gatewayInternalWs),
+                  new RoleMaterialRequest(
+                      HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE,
+                      materialization::tcpProxyBridge),
+                  new RoleMaterialRequest(
+                      HostedIdentityContract.GRPC_ROLE,
+                      () -> materialization.grpc(acceptedGrpcGeneration))));
+      for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+        String role = HostedIdentityContract.grpcPublicationRole(workload);
+        materialRequests.add(
+            new RoleMaterialRequest(role, () -> materialization.grpcPublication(workload)));
+      }
       List<RoleMaterialBinding> rolePipeline = new ArrayList<>();
       for (RoleMaterialRequest request : materialRequests) {
         CertificateMaterialService.RoleMaterial material = request.material().get();
@@ -184,7 +192,10 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
           roleMaterials.material(HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE);
       CertificateMaterialService.RoleMaterial grpc =
           roleMaterials.material(HostedIdentityContract.GRPC_ROLE);
-      validateDistinctIdentities(ingress, telnet, gatewayInternalWs, tcpProxyBridge, grpc);
+      validateDistinctIdentities(
+          rolePipeline.stream()
+              .map(RoleMaterialBinding::material)
+              .toArray(CertificateMaterialService.RoleMaterial[]::new));
       Map<String, SecretProjectionService.ProjectionResult> projections = new LinkedHashMap<>();
       for (RoleMaterialBinding binding : rolePipeline) {
         SecretProjectionService.ProjectionResult projection =
@@ -200,7 +211,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
             deploymentHead.message(),
             false,
             runtimeProfile,
-            RoleMaterials.of(ingress, telnet, gatewayInternalWs, tcpProxyBridge, grpc));
+            roleMaterials);
       }
       RuntimeProfileValidation beforeRollout =
           revalidateRuntimeProfile(plan, runtimeProfile, "the rollout boundary");
@@ -212,7 +223,12 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
             beforeRollout.message(),
             false,
             beforeRollout.profile(),
-            RoleMaterials.of(ingress, telnet, gatewayInternalWs, tcpProxyBridge, grpc));
+            roleMaterials);
+      }
+      Map<String, String> publicationRevisions = new LinkedHashMap<>();
+      for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+        String role = HostedIdentityContract.grpcPublicationRole(workload);
+        publicationRevisions.put(role, projections.get(role).revision());
       }
       DeploymentRolloutService.RolloutResult rollout =
           deploymentRolloutService.sync(
@@ -221,20 +237,24 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
               projections.get(HostedIdentityContract.TELNET_ROLE).revision(),
               projections.get(HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE).revision(),
               projections.get(HostedIdentityContract.GRPC_ROLE).revision(),
+              publicationRevisions,
               () -> assertRuntimeProfileCurrent(plan, runtimeProfile, "rollout mutation"));
       ServedEnvironmentProbe.ProbeResult probes;
       if (rollout.ready()) {
+        Secret bridgeMaterial =
+            bridgeProbeMaterial(
+                tcpProxyBridge,
+                () ->
+                    runtimeProjection(
+                        plan, runtimeProfile, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE));
         probes =
             servedEnvironmentProbe.probe(
                 plan,
+                runtimeProfile.exposureMode(),
                 runtimeProfile.telnetPort(),
                 ingress.summary().certificateFingerprint(),
                 telnet.summary().certificateFingerprint(),
-                bridgeProbeMaterial(
-                    tcpProxyBridge,
-                    () ->
-                        runtimeProjection(
-                            plan, runtimeProfile, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE)),
+                bridgeMaterial,
                 gatewayInternalWs.summary().certificateFingerprint(),
                 grpc.source(),
                 grpc.summary().certificateFingerprint());
@@ -251,7 +271,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
             beforeAcknowledgement.message(),
             false,
             beforeAcknowledgement.profile(),
-            RoleMaterials.of(ingress, telnet, gatewayInternalWs, tcpProxyBridge, grpc));
+            roleMaterials);
       }
       if (rollout.ready() && probes.ready()) {
         for (RoleMaterialBinding binding : rolePipeline) {
@@ -282,7 +302,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
           readiness.message(),
           readiness.ready(),
           runtimeProfile,
-          RoleMaterials.of(ingress, telnet, gatewayInternalWs, tcpProxyBridge, grpc));
+          roleMaterials);
     } catch (RuntimeProfileFenceException exception) {
       LOGGER.warn(
           "Hosted identity reconciliation fenced for environment '{}' and runtime Namespace '{}'",
@@ -416,6 +436,21 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
               + "); fresh convergence is required",
           false);
     }
+    if (current.deployedHeadMatchesRequest()) {
+      try {
+        runtimeProfileService.validateTcpProxyService(client, plan, current);
+      } catch (IllegalStateException exception) {
+        return new RuntimeProfileValidation(
+            null,
+            HostedEnvironmentIdentityStatus.Phase.Blocked,
+            "RuntimeProfileInvalid",
+            "runtime TCP Proxy Service became malformed at "
+                + boundary
+                + ": "
+                + boundedMessage(exception),
+            false);
+      }
+    }
     return new RuntimeProfileValidation(current, null, null, null, true);
   }
 
@@ -444,7 +479,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       Map<String, CertificateMaterialService.RoleMaterial> materialsByRole = new LinkedHashMap<>();
       for (CertificateMaterialService.RoleMaterial material : materials) {
         if (material == null) {
-          continue;
+          throw new IllegalArgumentException("identity material is required");
         }
         String role = material.role();
         switch (role) {
@@ -457,7 +492,15 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
               throw new IllegalArgumentException("duplicate identity material role: " + role);
             }
           }
-          default -> throw new IllegalArgumentException("unsupported identity role: " + role);
+          default -> {
+            if (HostedIdentityContract.isGrpcPublicationRole(role)) {
+              if (materialsByRole.putIfAbsent(role, material) != null) {
+                throw new IllegalArgumentException("duplicate identity material role: " + role);
+              }
+            } else {
+              throw new IllegalArgumentException("unsupported identity role: " + role);
+            }
+          }
         }
       }
       return new RoleMaterials(materialsByRole);
@@ -472,6 +515,16 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
 
     private CertificateMaterialService.RoleMaterial material(String role) {
       return materialsByRole.get(role);
+    }
+
+    private boolean publicationEvidenceComplete() {
+      return HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
+          .map(HostedIdentityContract::grpcPublicationRole)
+          .allMatch(
+              role -> {
+                CertificateMaterialService.RoleMaterial material = materialsByRole.get(role);
+                return material != null && material.ready();
+              });
     }
   }
 
@@ -570,7 +623,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
     }
     if (runtimeProfile.present()) {
       RuntimeProfileService.RuntimeProfile observedProfile =
-          previouslyObservedRuntimeProfile(resource);
+          previouslyObservedRuntimeProfile(resource, plan);
       if (observedProfile == null) {
         return status(
             resource,
@@ -661,24 +714,32 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
   }
 
   private RuntimeProfileService.RuntimeProfile previouslyObservedRuntimeProfile(
-      HostedEnvironmentIdentity resource) {
+      HostedEnvironmentIdentity resource, EnvironmentIdentityPlan plan) {
     if (resource.getStatus() == null || resource.getStatus().getProfile() == null) {
       return null;
     }
     HostedEnvironmentIdentityStatus.RuntimeProfile profile = resource.getStatus().getProfile();
+    String exposureMode = profile.getExposureMode();
+    if (exposureMode == null) {
+      exposureMode = HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE;
+    }
     if (profile.getRuntimeNamespaceUid() == null
         || profile.getRuntimeNamespaceUid().isBlank()
         || !canonicalHead(profile.getRequestedHeadSha())
         || !optionalCanonicalHead(profile.getDeployedHeadSha())
+        || !RuntimeProfileService.isValidExposureMode(exposureMode)
         || profile.getTelnetPort() == null
-        || profile.getTelnetPort() < 1
-        || profile.getTelnetPort() > 65535) {
+        || (!HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(exposureMode)
+            && !runtimeProfileService.isValidTelnetPort(plan, profile.getTelnetPort()))
+        || (HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(exposureMode)
+            && profile.getTelnetPort() != 0)) {
       return null;
     }
     return new RuntimeProfileService.RuntimeProfile(
         profile.getRuntimeNamespaceUid(),
         profile.getRequestedHeadSha(),
         profile.getDeployedHeadSha(),
+        exposureMode,
         profile.getTelnetPort(),
         true);
   }
@@ -821,6 +882,17 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
             plan.gatewayInternalWsSecretName() + "-previous",
             plan.tcpProxyBridgeSecretName() + "-previous",
             plan.grpcSecretName() + "-previous");
+    List<String> publicationSecretNames =
+        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
+            .flatMap(
+                workload ->
+                    java.util.stream.Stream.of(
+                        plan.grpcPublicationSourceSecretName(workload),
+                        plan.grpcPublicationSourceSecretName(workload) + "-previous"))
+            .toList();
+    secretNames =
+        java.util.stream.Stream.concat(secretNames.stream(), publicationSecretNames.stream())
+            .toList();
     List<String> ownedSecretNames = new ArrayList<>();
     for (String name : secretNames) {
       Secret secret = client.secrets().inNamespace(plan.identityNamespace()).withName(name).get();
@@ -838,6 +910,12 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
             plan.telnetCertificateName(),
             plan.gatewayInternalWsCertificateName(),
             plan.tcpProxyBridgeCertificateName());
+    certificateNames =
+        java.util.stream.Stream.concat(
+                certificateNames.stream(),
+                HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
+                    .map(plan::grpcPublicationCertificateName))
+            .toList();
     List<String> ownedCertificateNames = new ArrayList<>();
     for (String name : certificateNames) {
       var operation =
@@ -978,6 +1056,12 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       boolean ready,
       RuntimeProfileService.RuntimeProfile profile,
       RoleMaterials materials) {
+    if (ready && !materials.publicationEvidenceComplete()) {
+      ready = false;
+      phase = HostedEnvironmentIdentityStatus.Phase.Verifying;
+      reason = "PublicationIdentityEvidenceIncomplete";
+      message = "all five protected publication identity proofs are required for readiness";
+    }
     resource.setStatus(
         statusService.status(
             resource,
@@ -1025,6 +1109,9 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
 
   private static HostedEnvironmentIdentityStatus.RoleStatus previousRole(
       HostedEnvironmentIdentity resource, String role) {
+    if (HostedIdentityContract.isGrpcPublicationRole(role)) {
+      return null;
+    }
     if (resource.getStatus() == null) return null;
     return switch (role) {
       case HostedIdentityContract.INGRESS_ROLE -> resource.getStatus().getIngress();

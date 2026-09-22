@@ -44,7 +44,12 @@ final class HostedIdentityTestFixtures {
           case HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE,
               HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE ->
               plan.grpcIssuer();
-          default -> throw new IllegalArgumentException("unsupported cert-manager role: " + role);
+          default -> {
+            if (HostedIdentityContract.isGrpcPublicationRole(role)) {
+              yield plan.grpcIssuer();
+            }
+            throw new IllegalArgumentException("unsupported cert-manager role: " + role);
+          }
         };
     Secret source = ownedSecret(plan, role, name, data, new LinkedHashMap<>());
     source.getMetadata().setNamespace(plan.identityNamespace());
@@ -338,6 +343,17 @@ final class HostedIdentityTestFixtures {
                   ? HostedIdentityContract.TRANSPORT_PROVENANCE
                   : "cert-manager");
     }
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      String role = HostedIdentityContract.grpcPublicationRole(workload);
+      stubProjectionAndSource(secretClient, plan, role, acceptedData, acceptedData, acceptedData);
+      secretClient
+          .runtimeSecrets()
+          .withName(secretName(plan, role))
+          .get()
+          .getMetadata()
+          .getAnnotations()
+          .put(HostedIdentityContract.PROVENANCE_ANNOTATION, "cert-manager");
+    }
     SecretMaterialValidator validator = mock(SecretMaterialValidator.class);
     SecretMaterialValidator.MaterialSummary summary =
         new SecretMaterialValidator.MaterialSummary(
@@ -378,6 +394,7 @@ final class HostedIdentityTestFixtures {
       Map<String, String> recordedData,
       Map<String, String> sourceData) {
     String name = secretName(plan, role);
+    String sourceName = sourceSecretName(plan, role);
     String revision = SecretProjectionService.revisionForRole(role, recordedData);
     Secret projection =
         ownedSecret(
@@ -391,13 +408,13 @@ final class HostedIdentityTestFixtures {
     when(projectionResource.get()).thenReturn(projection);
     Secret source =
         HostedIdentityContract.GRPC_ROLE.equals(role)
-            ? ownedSecret(plan, role, name, sourceData, Map.of())
-            : certManagerSource(plan, role, name, sourceData);
+            ? ownedSecret(plan, role, sourceName, sourceData, Map.of())
+            : certManagerSource(plan, role, sourceName, sourceData);
     Resource<Secret> sourceResource = mock(Resource.class);
-    when(secretClient.identitySecrets().withName(name)).thenReturn(sourceResource);
+    when(secretClient.identitySecrets().withName(sourceName)).thenReturn(sourceResource);
     when(sourceResource.get()).thenReturn(source);
     Resource<Secret> predecessorResource = mock(Resource.class);
-    when(secretClient.identitySecrets().withName(name + "-previous"))
+    when(secretClient.identitySecrets().withName(sourceName + "-previous"))
         .thenReturn(predecessorResource);
     when(predecessorResource.get()).thenReturn(null);
     return source;
@@ -446,8 +463,22 @@ final class HostedIdentityTestFixtures {
       case HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE -> plan.gatewayInternalWsSecretName();
       case HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE -> plan.tcpProxyBridgeSecretName();
       case HostedIdentityContract.GRPC_ROLE -> plan.grpcSecretName();
-      default -> throw new IllegalArgumentException("unsupported role");
+      default -> {
+        if (HostedIdentityContract.isGrpcPublicationRole(role)) {
+          yield plan.grpcPublicationSecretName(
+              role.substring(HostedIdentityContract.GRPC_PUBLICATION_ROLE_PREFIX.length()));
+        }
+        throw new IllegalArgumentException("unsupported role");
+      }
     };
+  }
+
+  static String sourceSecretName(EnvironmentIdentityPlan plan, String role) {
+    if (HostedIdentityContract.isGrpcPublicationRole(role)) {
+      return plan.grpcPublicationSourceSecretName(
+          role.substring(HostedIdentityContract.GRPC_PUBLICATION_ROLE_PREFIX.length()));
+    }
+    return secretName(plan, role);
   }
 
   record SecretClient(

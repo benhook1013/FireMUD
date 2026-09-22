@@ -4,7 +4,7 @@ The target operational contract covers safe admission and readiness for new Teln
 
 ## Implementation Status
 
-The current `TelnetServerHandler` preserves close reasons only for status `1000` reasons beginning with `logout`, exact `1001`/`idle_timeout`, status `1008` reasons beginning with `policy_violation`, and exact `1011`/`internal_error`; all other outcomes fall back to `backend_unavailable`. The two prefix checks are current implementation drift from the canonical delimiter-bound grammar: they incorrectly accept and forward arbitrary undelimited suffixes such as `logoutgarbage` and `policy_violationgarbage`, instead of requiring the exact top-level token optionally followed by one `;subreason=<bounded-value>` suffix and validating the complete code/reason pair. Bridge shutdown classification is `planned_drain` only for exact `logout;subreason=gateway_restart`, `upstream_logout` for every other currently prefix-accepted logout reason, and `unattributed_failure` otherwise. Broader canonical tokens such as standalone `session_replaced` and `service_restart`, complete token/subreason validation, and invalid-prefix fallback remain target behavior where they are not yet recognized.
+The current `TelnetServerHandler` accepts only delimiter-bound close pairs: status `1000` with exact `logout`, status `1001` with exact `idle_timeout`, status `1008` with exact `policy_violation`, and status `1011` with exact `internal_error`, each optionally followed by one allowlisted `;subreason=<bounded-value>` suffix. Malformed, unknown, mismatched, or otherwise unrecognized status/reason pairs fall back to `backend_unavailable`. Bridge shutdown classification is `planned_drain` only for exact `logout;subreason=gateway_restart`, `upstream_logout` for other valid logout forms, and `unattributed_failure` otherwise. Broader canonical tokens such as standalone `session_replaced` and `service_restart` remain target-only until that boundary converges.
 
 ## Operational Notes
 
@@ -32,7 +32,7 @@ TCP Proxy metrics follow the global Micrometer/OpenTelemetry conventions describ
 - `tcpproxy.connection.events{type="connect"|"disconnect"}` and `tcpproxy.connection.duration`
 - `tcpproxy.command`, `tcpproxy.heartbeat`, `tcpproxy.idleClose`, `tcpproxy.websocket.reconnect.delay`, and `tcpproxy.websocket.reconnects`
 - `tcpproxy.websocket.reconnects` covers initial bridge-establishment retries and breaker probe or recovery attempts only. It must not be interpreted as hidden recovery for already-established Telnet sessions, which fail-close when their gameplay bridge is lost.
-- `tcpproxy.tls.misconfig` and `tcpproxy.gateway.handshake.failures{reason="..."}`
+- `tcpproxy.tls.misconfig`, `tcpproxy.bridge.metadata.misconfig`, and `tcpproxy.gateway.handshake.failures{reason="..."}`
 - `tcpproxy.telnet.discarded`
 - `tcpproxy.disconnect.notify.transport_failure{status="<grpc_status>"}`
 - `tcpproxy.disconnect.notify.app_error{code="<code>"}` – supplementary caller-side/local application-error breakdown
@@ -45,6 +45,7 @@ Bounded labels and naming rules remain canonical. Detailed identifiers such as c
 
 For `tcpproxy.gateway.handshake.failures{reason="..."}`, the canonical bounded `reason` enum is:
 
+- `bad_header`
 - `bad_url`
 - `dns`
 - `connect_refused`
@@ -58,6 +59,7 @@ For `tcpproxy.gateway.handshake.failures{reason="..."}`, the canonical bounded `
 
 Per-value meanings:
 
+- `bad_header` – invalid per-connection bridge metadata is rejected before the Gateway handshake and increments only `tcpproxy.gateway.handshake.failures{reason="bad_header"}`; invalid startup default metadata increments `tcpproxy.bridge.metadata.misconfig`, while actual TLS configuration or certificate-load failures increment `tcpproxy.tls.misconfig`
 - `bad_url` – invalid `GATEWAY_WS_URL` configuration
 - `dns` – host resolution failure
 - `connect_refused` – target actively refused the TCP connection

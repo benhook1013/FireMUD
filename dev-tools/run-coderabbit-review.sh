@@ -33,7 +33,7 @@ count_nul_paths() {
   printf '%s\n' "$count"
 }
 
-# shellcheck disable=SC2317 # ShellCheck does not follow EXIT trap callbacks.
+# shellcheck disable=SC2317,SC2329 # ShellCheck does not follow EXIT trap callbacks.
 cleanup() {
   local exit_status=$?
 

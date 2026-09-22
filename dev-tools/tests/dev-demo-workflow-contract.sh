@@ -28,6 +28,41 @@ waiter="$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh"
 annotator="$ROOT_DIR/dev-tools/hosted/dev-demo/annotate-dev-demo-namespace.sh"
 target_validator="$ROOT_DIR/dev-tools/hosted/dev-demo/validate-dev-demo-target.sh"
 runtime_rollout_waiter="$ROOT_DIR/dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh"
+standalone_grpc_tls="$ROOT_DIR/dev-tools/hosted/shared/ensure-grpc-tls-secret.sh"
+
+contains_literal() {
+  grep -Fq -- "$2" "$1" || {
+    echo "$1 must contain: $2" >&2
+    exit 1
+  }
+}
+
+bash -n "$standalone_grpc_tls" "$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh"
+# These are literal source snippets; expansion would change what the contract checks.
+# shellcheck disable=SC2016
+for required in \
+  'ca_secret="firemud-grpc-ca"' \
+  'if ! secret_exists "$shared_secret"; then' \
+  'if secret_exists "$ca_secret"; then' \
+  'if secret_exists "$secret_name"; then' \
+  'URI:${expected_uri}' \
+  '"${workload}.${namespace}.svc.cluster.local"' \
+  'basic_constraints' \
+  'workload certificate must be a non-CA leaf' \
+  'key_usage' \
+  'DigitalSignature,KeyEncipherment' \
+  'extended_key_usage' \
+  'TLSWebServerAuthentication,TLSWebClientAuthentication' \
+  'source_name="${namespace}-grpc-${workload}"' \
+  '--from-file=tls.crt="$workload_cert"' \
+  '--from-file=tls.key="$workload_key"' \
+  '  game-design-service' \
+  '  world-management-service' \
+  '  entity-management-service' \
+  '  game-logic-service' \
+  '  automation-scripting-service'; do
+  contains_literal "$standalone_grpc_tls" "$required"
+done
 python3 "$runner_label_validator" --self-test
 python3 "$runner_label_validator" "$workflow" "$reconciler"
 [[ -x "$runtime_rollout_waiter" ]] || {
@@ -36,6 +71,136 @@ python3 "$runner_label_validator" "$workflow" "$reconciler"
 }
 fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$fixture_dir"' EXIT
+
+# Exercise the standalone reuse validator with one canonical leaf and three
+# malformed profiles. This sources only the target helper functions so the
+# contract remains independent of Kubernetes and tests the exact checks used
+# before an existing Secret is projected again.
+echo "dev-demo certificate fixture: begin" >&2
+certificate_fixture_dir="$fixture_dir/certificates"
+mkdir -p "$certificate_fixture_dir"
+echo "dev-demo certificate fixture: generating CA" >&2
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout "$certificate_fixture_dir/ca.key" \
+  -out "$certificate_fixture_dir/ca.crt" \
+  -days 365 -subj '/CN=FireMUD standalone contract CA' >/dev/null 2>&1
+echo "dev-demo certificate fixture: generating canonical workload certificate" >&2
+"$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh" --workload \
+  "$certificate_fixture_dir/ca.crt" "$certificate_fixture_dir/ca.key" \
+  "$certificate_fixture_dir/valid.crt" "$certificate_fixture_dir/valid.key" \
+  pr-42 game-design-service
+echo "dev-demo certificate fixture: canonical workload certificate generated" >&2
+
+make_profile_certificate() {
+  local name="$1"
+  local basic_constraints="$2"
+  local key_usage="$3"
+  local extended_key_usage="$4"
+  local config="$certificate_fixture_dir/${name}.cnf"
+  local key="$certificate_fixture_dir/${name}.key"
+  local csr="$certificate_fixture_dir/${name}.csr"
+  local serial="$certificate_fixture_dir/${name}.srl"
+  echo "dev-demo certificate fixture: generating profile ${name}" >&2
+  cat >"$config" <<EOF
+[req]
+distinguished_name = req_distinguished_name
+req_extensions = v3_req
+prompt = no
+
+[req_distinguished_name]
+CN = firemud-grpc-game-design-service
+
+[v3_req]
+basicConstraints = ${basic_constraints}
+keyUsage = ${key_usage}
+extendedKeyUsage = ${extended_key_usage}
+subjectAltName = @alt_names
+
+[alt_names]
+URI.1 = spiffe://firemud/ns/pr-42/sa/game-design-service
+DNS.1 = game-design-service
+DNS.2 = game-design-service.pr-42
+DNS.3 = game-design-service.pr-42.svc
+DNS.4 = game-design-service.pr-42.svc.cluster.local
+EOF
+  openssl genrsa -out "$key" 2048 >/dev/null 2>&1
+  openssl req -new -key "$key" -config "$config" -out "$csr" >/dev/null 2>&1
+  openssl x509 -req -in "$csr" \
+    -CA "$certificate_fixture_dir/ca.crt" \
+    -CAkey "$certificate_fixture_dir/ca.key" \
+    -CAserial "$serial" -CAcreateserial -out "$certificate_fixture_dir/${name}.crt" \
+    -days 365 -sha256 -extensions v3_req -extfile "$config" >/dev/null 2>&1
+  echo "dev-demo certificate fixture: profile ${name} generated" >&2
+}
+
+make_profile_certificate \
+  ca-leaf critical,CA:true critical,keyCertSign,cRLSign serverAuth,clientAuth
+make_profile_certificate \
+  missing-key-usage critical,CA:false critical,digitalSignature serverAuth,clientAuth
+make_profile_certificate \
+  missing-eku critical,CA:false critical,digitalSignature,keyEncipherment serverAuth
+echo "dev-demo certificate fixture: malformed profiles generated" >&2
+
+validator_source="$certificate_fixture_dir/validate-workload-certificate.sh"
+{
+  awk '
+    /^assert_key_matches_certificate\(\)/ { capture = 1 }
+    /^ca_bundle_contains\(\)/ { capture = 0 }
+    capture { print }
+  ' "$standalone_grpc_tls"
+  awk '
+    /^validate_workload_certificate\(\)/ { capture = 1 }
+    /^shared_ca=/ { capture = 0 }
+    capture { print }
+  ' "$standalone_grpc_tls"
+} >"$validator_source"
+echo "dev-demo certificate fixture: validator extracted" >&2
+
+if ! (
+  # shellcheck disable=SC2030 # The extracted validator reads this subshell-local namespace.
+  export namespace=pr-42
+  # shellcheck disable=SC1090 # The test extracts the exact target function body.
+  source "$validator_source"
+  validate_workload_certificate \
+    "$certificate_fixture_dir/valid.crt" \
+    "$certificate_fixture_dir/valid.key" \
+    game-design-service
+); then
+  echo "canonical standalone workload certificate was rejected" >&2
+  exit 1
+fi
+echo "dev-demo certificate fixture: canonical workload certificate accepted" >&2
+
+expect_invalid_workload_profile() {
+  local name="$1"
+  local expected_message="$2"
+  local output
+  if output="$(
+    {
+      # shellcheck disable=SC2031 # The extracted validator reads this command-substitution namespace.
+      export namespace=pr-42
+      # shellcheck disable=SC1090 # The test extracts the exact target function body.
+      source "$validator_source"
+      validate_workload_certificate \
+        "$certificate_fixture_dir/${name}.crt" \
+        "$certificate_fixture_dir/${name}.key" \
+        game-design-service
+    } 2>&1
+  )"; then
+    echo "accepted invalid standalone certificate profile: ${name}" >&2
+    exit 1
+  fi
+  [[ "$output" == *"$expected_message"* ]] || {
+    echo "invalid ${name} profile lacked diagnostic: ${expected_message}" >&2
+    printf '%s\n' "$output" >&2
+    exit 1
+  }
+}
+
+expect_invalid_workload_profile ca-leaf 'workload certificate must be a non-CA leaf'
+expect_invalid_workload_profile missing-key-usage 'key usage must be exactly digitalSignature/keyEncipherment'
+expect_invalid_workload_profile missing-eku 'EKU must be exactly serverAuth/clientAuth'
+echo "dev-demo certificate fixture: malformed profiles rejected" >&2
 
 expect_mode() {
   local expected="$1"
@@ -104,7 +269,7 @@ expect_invalid_target "Invalid dev-demo image tag" dev "$valid_head" "" 32016
 expect_invalid_target "Invalid dev-demo image tag" dev "$valid_head" 'invalid/tag' 32016
 expect_invalid_target "Invalid dev-demo Telnet port" dev "$valid_head" "$valid_head" 32017
 
-python3 - "$workflow" "$reconciler" "$requester" "$waiter" "$annotator" "$target_validator" "$reconcile_step" "$mode_action" "$ROOT_DIR/dev-tools/validation/check_dev_demo_summary.py" <<'PY'
+python3 - "$workflow" "$reconciler" "$requester" "$waiter" "$annotator" "$target_validator" "$reconcile_step" "$mode_action" "$ROOT_DIR/.github/workflows/hosted-identity-request.yml" "$ROOT_DIR/dev-tools/validation/check_dev_demo_summary.py" <<'PY'
 from __future__ import annotations
 
 import importlib.util
@@ -116,7 +281,7 @@ from pathlib import Path
 
 import yaml
 
-workflow_path, reconciler_path, requester_path, waiter_path, annotator_path, target_validator_path, reconcile_script_path, mode_action_path, validator_script_path = map(
+workflow_path, reconciler_path, requester_path, waiter_path, annotator_path, target_validator_path, reconcile_script_path, mode_action_path, hosted_identity_workflow_path, validator_script_path = map(
     Path, sys.argv[1:]
 )
 validator_spec = importlib.util.spec_from_file_location(
@@ -129,6 +294,9 @@ sys.modules[validator_spec.name] = validator
 validator_spec.loader.exec_module(validator)
 workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
 reconciler = yaml.safe_load(reconciler_path.read_text(encoding="utf-8"))
+hosted_identity_workflow = yaml.safe_load(
+    hosted_identity_workflow_path.read_text(encoding="utf-8")
+)
 requester = requester_path.read_text(encoding="utf-8")
 waiter = waiter_path.read_text(encoding="utf-8")
 annotator = annotator_path.read_text(encoding="utf-8")
@@ -298,14 +466,19 @@ if workflow["jobs"]["dev-demo-deploy"].get("environment") != "trusted-hosted-clu
 if deploy_by_name["Resolve certificate identity mode"] != expected_mode_step:
     raise SystemExit("dev-demo deploy must use the shared certificate identity action exactly")
 ordered = (
+    "Write trusted namespace-manager kubeconfig",
+    "Verify dev-demo namespace-manager kubeconfig",
     "Check Hosted identity requester credentials",
     "Require Hosted identity requester credentials",
+    "Reset dev-demo namespace for clean deploy",
+    "Ensure dev-demo namespace exists",
     "Record exact dev-demo runtime target",
+    "Bind scoped runtime and certificate roles",
+    "Write dev-demo runtime credentials",
     "Write hosted identity requester kubeconfig",
     "Discover HostedEnvironmentIdentity API",
     "Require HostedEnvironmentIdentity API",
     "Apply fixed dev-demo Active request",
-    "Remove hosted identity requester kubeconfig",
     "Wait for all controller identity projections",
     "Deploy dev-demo release",
     "Record exact deployed dev-demo head",
@@ -314,6 +487,7 @@ ordered = (
     "Validate controller-projected dev-demo identity",
     "Smoke dev-demo over TCP",
     "Summarize dev-demo access",
+    "Remove dev-demo kubeconfigs",
 )
 positions = [deploy_names.index(name) for name in ordered]
 if positions != sorted(positions):
@@ -343,14 +517,23 @@ for bridge_run, label in (
 ):
     if bridge_run.count("python3 ./dev-tools/deploy/preflight.py hosted-bridge") != 1:
         raise SystemExit(f"dev-demo {label} hosted-bridge proof must invoke preflight exactly once")
-    if "--expected-hosted-telnet-node-port" in bridge_run:
+    if bridge_run.count("--expected-hosted-telnet-node-port") != 1:
         raise SystemExit(
-            f"dev-demo {label} hosted-bridge proof must not require the public Telnet NodePort"
+            f"dev-demo {label} hosted-bridge proof must require the public Telnet NodePort"
         )
-    if "needs.dev-demo-plan.outputs.telnet_port" in bridge_run or "TELNET_PORT" in bridge_run:
+    if bridge_run.count("needs.dev-demo-plan.outputs.telnet_port") != 1:
         raise SystemExit(
-            f"dev-demo {label} private hosted-bridge proof must not consume the public Telnet port"
+            f"dev-demo {label} hosted-bridge proof must consume the derived public Telnet port"
         )
+    if bridge_run.index("--expected-hosted-telnet-node-port") > bridge_run.index(
+        "needs.dev-demo-plan.outputs.telnet_port"
+    ):
+        raise SystemExit(
+            f"dev-demo {label} hosted-bridge proof must pass the expected port flag before its value"
+        )
+
+if 'if [[ "$CERTIFICATE_IDENTITY_MODE" == "hosted-controller" ]]; then' not in static_bridge_run:
+    raise SystemExit("dev-demo static hosted-bridge proof must remain gated on hosted-controller mode")
 
 runtime_rollout_condition = deploy_by_name["Wait for dev-demo runtime rollouts"].get("if", "")
 if "steps.certificate-identity.outputs.mode == 'hosted-controller'" not in runtime_rollout_condition:
@@ -431,12 +614,24 @@ if (
     '  "${{ needs.dev-demo-plan.outputs.namespace }}" 900'
 ) not in readiness_run:
     raise SystemExit("dev-demo readiness wait does not use the derived runtime namespace")
-runtime_kubeconfig = deploy_by_name["Write dev-demo runtime kubeconfig"]
-for required in (
-    'KUBECONFIG=$KUBECONFIG_PATH',
-):
-    if required not in runtime_kubeconfig["run"]:
-        raise SystemExit(f"dev-demo runtime kubeconfig initialization lacks {required}")
+manager_kubeconfig = deploy_by_name["Write trusted namespace-manager kubeconfig"]
+if manager_kubeconfig.get("uses") != "./.github/actions/write-kubeconfig":
+    raise SystemExit("dev-demo namespace manager must use the canonical kubeconfig action")
+if manager_kubeconfig.get("with") != {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+    "export-to-github-env": "false",
+}:
+    raise SystemExit("dev-demo namespace manager action does not use the scoped manager secret")
+runtime_kubeconfig = deploy_by_name["Write dev-demo runtime credentials"]
+if runtime_kubeconfig.get("uses") != "./.github/actions/write-kubeconfig":
+    raise SystemExit("dev-demo runtime deployer must use the canonical kubeconfig action")
+if runtime_kubeconfig.get("with") != {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_RUNTIME_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "export-to-github-env": "false",
+}:
+    raise SystemExit("dev-demo runtime deployer action does not use the scoped runtime secret")
 requester_writer = deploy_by_name["Write hosted identity requester kubeconfig"]
 if requester_writer.get("uses") != "./.github/actions/write-kubeconfig":
     raise SystemExit("dev-demo Active requester must use the canonical kubeconfig action")
@@ -453,21 +648,78 @@ if active_request.get("env") != {
     raise SystemExit("dev-demo Active request does not scope KUBECONFIG to its requester file")
 if "Restore dev-demo runtime kubeconfig after Active request" in deploy_by_name:
     raise SystemExit("dev-demo Active requester must not require runtime credential restore")
-deploy_requester_cleanup = deploy_by_name["Remove hosted identity requester kubeconfig"]
-if deploy_requester_cleanup.get("if") != (
-    "${{ always() && steps.certificate-identity.outputs.mode == 'hosted-controller' }}"
-):
+if "Remove hosted identity requester kubeconfig" in deploy_by_name:
+    raise SystemExit("dev-demo requester credential must not be removed before controller readiness")
+
+expected_deploy_kubeconfigs = {
+    "Verify cluster access": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+    "Reset dev-demo namespace for clean deploy": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+    "Ensure dev-demo namespace exists": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+    "Record exact dev-demo runtime target": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+    "Bind scoped runtime and certificate roles": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+    "Discover HostedEnvironmentIdentity API": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
+    "Apply fixed dev-demo Active request": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
+    "Wait for all controller identity projections": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Ensure GHCR pull secret exists": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Ensure dev-demo gRPC TLS secret exists": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Validate dev-demo chart render": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Deploy dev-demo release": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Record exact deployed dev-demo head": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+    "Show deployed dev-demo services": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Show dev-demo rollout diagnostics": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Wait for dev-demo runtime rollouts": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Wait for exact dev-demo controller readiness": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
+    "Validate controller-projected dev-demo identity": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Create dev-demo smoke account": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+}
+for step_name, expected_kubeconfig in expected_deploy_kubeconfigs.items():
+    actual_env = deploy_by_name[step_name].get("env", {})
+    if actual_env.get("KUBECONFIG") != expected_kubeconfig:
+        raise SystemExit(
+            f"dev-demo {step_name} must use {expected_kubeconfig} explicitly"
+        )
+
+dev_demo_cleanup = deploy_by_name["Remove dev-demo kubeconfigs"]
+expected_dev_demo_cleanup = (
+    'rm -f -- \\\n'
+    '  "$RUNNER_TEMP/dev-demo-namespace-manager.kubeconfig" \\\n'
+    '  "$RUNNER_TEMP/dev-demo-runtime.kubeconfig" \\\n'
+    '  "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"\n'
+)
+if dev_demo_cleanup.get("run") != expected_dev_demo_cleanup:
     raise SystemExit(
-        "dev-demo deploy requester credential cleanup must always run in hosted-controller mode"
+        "dev-demo runtime kubeconfig cleanup must preserve literal shell newlines"
     )
-if deploy_requester_cleanup.get("run") != (
+if dev_demo_cleanup.get("if") != "${{ always() }}":
+    raise SystemExit("dev-demo kubeconfig cleanup must always run")
+
+hosted_deploy_steps = hosted_identity_workflow["jobs"]["deploy-runtime"]["steps"]
+hosted_deploy_cleanup = next(
+    step
+    for step in hosted_deploy_steps
+    if step.get("name") == "Remove runtime kubeconfig"
+)
+expected_hosted_deploy_cleanup = (
+    'rm -f -- \\\n'
+    '  "$RUNNER_TEMP/preview-namespace-manager.kubeconfig" \\\n'
+    '  "$RUNNER_TEMP/preview-runtime.kubeconfig" \\\n'
+    '  "$RUNNER_TEMP/standalone-certificate-writer.kubeconfig"\n'
+)
+if hosted_deploy_cleanup.get("run") != expected_hosted_deploy_cleanup:
+    raise SystemExit(
+        "hosted preview runtime kubeconfig cleanup must preserve literal shell newlines"
+    )
+hosted_deploy_requester_cleanup = next(
+    step
+    for step in hosted_deploy_steps
+    if step.get("name") == "Remove requester kubeconfig"
+)
+if hosted_deploy_requester_cleanup.get("if") != "${{ always() }}":
+    raise SystemExit("hosted preview requester kubeconfig cleanup must always run")
+if hosted_deploy_requester_cleanup.get("run") != (
     'rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"'
 ):
-    raise SystemExit("dev-demo deploy requester credential cleanup targets the wrong file")
-if deploy_names.index("Remove hosted identity requester kubeconfig") != (
-    deploy_names.index("Apply fixed dev-demo Active request") + 1
-):
-    raise SystemExit("dev-demo Active requester credential is not removed after request")
+    raise SystemExit("hosted preview requester cleanup targets the wrong file")
 standalone_condition = deploy_by_name["Ensure dev-demo gRPC TLS secret exists"].get("if", "")
 if "steps.certificate-identity.outputs.mode == 'standalone'" not in standalone_condition:
     raise SystemExit("standalone gRPC setup is not isolated from controller identity")
@@ -559,12 +811,14 @@ if workflow["jobs"]["dev-demo-destroy"].get("environment") != "trusted-hosted-cl
 if destroy_by_name["Resolve certificate identity mode"] != expected_mode_step:
     raise SystemExit("dev-demo destroy must use the shared certificate identity action exactly")
 destroy_order = (
-    "Write dev-demo runtime kubeconfig",
+    "Write trusted namespace-manager kubeconfig",
     "Delete dev-demo namespace and release",
     "Confirm exact dev-demo runtime NotFound",
     "Check Hosted identity requester credentials",
+    "Require Hosted identity requester credentials for retirement",
     "Write hosted identity requester kubeconfig",
     "Discover HostedEnvironmentIdentity API",
+    "Require HostedEnvironmentIdentity API for retirement",
     "Check HostedEnvironmentIdentity existence before retirement",
     "Apply fixed dev-demo Retired request",
     "Observe terminal dev-demo retirement and delete request",
@@ -585,6 +839,11 @@ expected_hosted_controller_condition = (
 runtime_not_found = destroy_by_name["Confirm exact dev-demo runtime NotFound"]
 if runtime_not_found.get("if") != expected_hosted_controller_condition:
     raise SystemExit("dev-demo runtime absence proof must remain independent of requester/API availability")
+if runtime_not_found.get("env") != {
+    "RUNTIME_NAMESPACE": "${{ needs.dev-demo-plan.outputs.namespace }}",
+    "KUBECONFIG": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+}:
+    raise SystemExit("dev-demo runtime absence proof must use the namespace-manager kubeconfig")
 identity_existence = destroy_by_name[
     "Check HostedEnvironmentIdentity existence before retirement"
 ]
@@ -639,10 +898,26 @@ for required in (
     'if [[ -z "$REQUESTER_KUBECONFIG" ]]',
     "available=false",
     "available=true",
-    "skipping identity retirement",
+    "retirement cannot proceed",
 ):
     if required not in destroy_requester_check["run"]:
         raise SystemExit(f"dev-demo destroy requester credential guard lacks {required}")
+retirement_credentials_requirement = destroy_by_name[
+    "Require Hosted identity requester credentials for retirement"
+]
+if retirement_credentials_requirement.get("if") != (
+    "${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && "
+    "steps.requester-credentials.outputs.available != 'true' }}"
+):
+    raise SystemExit(
+        "dev-demo destroy must fail closed when retirement requester credentials are unavailable"
+    )
+if "HostedEnvironmentIdentity/dev-demo was retained" not in retirement_credentials_requirement.get(
+    "run", ""
+):
+    raise SystemExit(
+        "dev-demo destroy requester credential failure must state that retained identity is safe"
+    )
 destroy_identity_api = destroy_by_name["Discover HostedEnvironmentIdentity API"]
 if destroy_identity_api.get("id") != "identity-api":
     raise SystemExit("dev-demo destroy API discovery must publish a stable step output")
@@ -676,6 +951,23 @@ if destroy_identity_api["run"] != (
     '  >> "$GITHUB_OUTPUT"\n'
 ):
     raise SystemExit("dev-demo destroy must use the shared API discovery helper")
+retirement_api_requirement = destroy_by_name[
+    "Require HostedEnvironmentIdentity API for retirement"
+]
+if retirement_api_requirement.get("if") != (
+    "${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && "
+    "steps.requester-credentials.outputs.available == 'true' && "
+    "steps.identity-api.outputs.served != 'true' }}"
+):
+    raise SystemExit(
+        "dev-demo destroy must fail closed when the HostedEnvironmentIdentity API is unavailable"
+    )
+if "HostedEnvironmentIdentity/dev-demo was retained" not in retirement_api_requirement.get(
+    "run", ""
+):
+    raise SystemExit(
+        "dev-demo destroy API failure must state that retained identity is safe"
+    )
 destroy_requester_writer = destroy_by_name["Write hosted identity requester kubeconfig"]
 expected_destroy_requester_guard = (
     "${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && "
@@ -699,9 +991,15 @@ for step_name, step in (
         )
     if step.get("env") != requester_kubeconfig_env:
         raise SystemExit(f"dev-demo {step_name} does not scope requester KUBECONFIG")
-destroy_runtime_kubeconfig = destroy_by_name["Write dev-demo runtime kubeconfig"]
-if "DEV_DEMO_RUNTIME_KUBECONFIG" in destroy_runtime_kubeconfig["run"]:
-    raise SystemExit("dev-demo destroy retained an unnecessary runtime kubeconfig restore variable")
+destroy_runtime_kubeconfig = destroy_by_name["Write trusted namespace-manager kubeconfig"]
+if destroy_runtime_kubeconfig.get("uses") != "./.github/actions/write-kubeconfig":
+    raise SystemExit("dev-demo destroy must use the canonical namespace-manager kubeconfig action")
+if destroy_runtime_kubeconfig.get("with") != {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+    "export-to-github-env": "false",
+}:
+    raise SystemExit("dev-demo destroy must use the scoped namespace-manager secret")
 destroy_requester_writer = destroy_by_name["Write hosted identity requester kubeconfig"]
 if destroy_requester_writer.get("with") != {
     "content": "${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}",
@@ -741,6 +1039,13 @@ for required in (
     '"${projection_prefix}-gateway-internal-ws|gateway-internal-ws|tls.crt,tls.key,ca.crt"',
     '"${projection_prefix}-tcp-proxy-bridge|tcp-proxy-bridge|tls.crt,tls.key,ca.crt"',
     '"firemud-grpc-tls|grpc|tls.crt,tls.key,ca.crt,client.crt,client.key"',
+    'publication_workloads=(',
+    'firemud-grpc-${workload}|grpc-publication-${workload}|tls.crt,tls.key,ca.crt',
+    '    game-design-service',
+    '    world-management-service',
+    '    entity-management-service',
+    '    game-logic-service',
+    '    automation-scripting-service',
     '.metadata.labels["firemud.dev/managed-by"] == "hosted-identity-controller"',
     '.metadata.labels["firemud.dev/identity-name"] == $identity',
     '.metadata.labels["firemud.dev/role"] == $role',
@@ -779,6 +1084,19 @@ if len(reconcile_checkouts) != 1:
     raise SystemExit("dev-demo reconciler must define exactly one checkout")
 if reconcile_checkouts[0].get("with", {}).get("persist-credentials") is not False:
     raise SystemExit("dev-demo reconciler checkout must not persist credentials")
+reconcile_manager_write = next(
+    step
+    for step in reconcile_steps
+    if step.get("name") == "Write trusted namespace-manager kubeconfig"
+)
+if reconcile_manager_write.get("uses") != "./.github/actions/write-kubeconfig":
+    raise SystemExit("dev-demo reconciler must use the canonical namespace-manager kubeconfig action")
+if reconcile_manager_write.get("with") != {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+    "export-to-github-env": "false",
+}:
+    raise SystemExit("dev-demo reconciler must disable GitHub environment kubeconfig export")
 reconcile_step_run = next(
     step["run"]
     for step in reconcile_steps
@@ -1374,7 +1692,7 @@ if [[ $# -eq 6 && "$1" == get && "$2" == namespace && ( "$3" == dev || "$3" == p
     --arg requested_annotation "$requested_annotation" \
     --arg deployed_annotation "$deployed_annotation" \
     --arg telnet_annotation "$telnet_annotation" '
-      {metadata:{uid:"runtime-uid",annotations:{}}}
+      {metadata:{uid:"runtime-uid",labels:{"firemud.dev/preview-exposure-mode":"public"},annotations:{}}}
       | if $requested == "__missing__" then .
         else .metadata.annotations[$requested_annotation] = $requested end
       | if $deployed == "__missing__" then .
@@ -1410,7 +1728,7 @@ if [[ $# -eq 8 && "$1" == -n && "$2" == firemud-system && "$3" == get && "$4" ==
                else .observedGeneration = $parsed_ready_generation
                end)
           ],
-          profile:{runtimeNamespaceUid:$profile_uid,telnetPort:$telnet_port},
+          profile:{runtimeNamespaceUid:$profile_uid,exposureMode:"public",telnetPort:$telnet_port},
           ingress:{revision:$revision},
           telnet:{revision:$revision},
           gatewayInternalWs:{revision:$revision},

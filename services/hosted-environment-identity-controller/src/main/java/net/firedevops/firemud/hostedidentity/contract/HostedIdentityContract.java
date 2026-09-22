@@ -1,5 +1,6 @@
 package net.firedevops.firemud.hostedidentity.contract;
 
+import java.util.List;
 import java.util.Map;
 
 /** Stable names and labels shared by the controller, manifests, and hosted workflows. */
@@ -24,6 +25,9 @@ public final class HostedIdentityContract {
       "firemud.dev/last-dev-demo-head-sha";
   public static final String PREVIEW_TELNET_PORT_ANNOTATION =
       "firemud.dev/last-preview-telnet-port";
+  public static final String PREVIEW_EXPOSURE_MODE_LABEL = "firemud.dev/preview-exposure-mode";
+  public static final String PRIVATE_PREVIEW_EXPOSURE_MODE = "private";
+  public static final String PUBLIC_PREVIEW_EXPOSURE_MODE = "public";
   public static final String DEV_DEMO_TELNET_PORT_ANNOTATION =
       "firemud.dev/last-dev-demo-telnet-port";
 
@@ -58,6 +62,14 @@ public final class HostedIdentityContract {
   public static final String GATEWAY_INTERNAL_WS_ROLE = "gateway-internal-ws";
   public static final String TCP_PROXY_BRIDGE_ROLE = "tcp-proxy-bridge";
   public static final String GRPC_ROLE = "grpc";
+  public static final String GRPC_PUBLICATION_ROLE_PREFIX = "grpc-publication-";
+  public static final List<String> GRPC_PUBLICATION_WORKLOADS =
+      List.of(
+          "game-design-service",
+          "world-management-service",
+          "entity-management-service",
+          "game-logic-service",
+          "automation-scripting-service");
   public static final String TRANSPORT_PROVENANCE = "hosted-identity-controller-transport-only";
 
   private HostedIdentityContract() {}
@@ -76,5 +88,19 @@ public final class HostedIdentityContract {
         ENVIRONMENT_LABEL, environment,
         ROLE_LABEL, role,
         RETENTION_LABEL, RETAINED);
+  }
+
+  public static String grpcPublicationRole(String workload) {
+    if (!GRPC_PUBLICATION_WORKLOADS.contains(workload)) {
+      throw new IllegalArgumentException("unsupported gRPC publication workload: " + workload);
+    }
+    return GRPC_PUBLICATION_ROLE_PREFIX + workload;
+  }
+
+  public static boolean isGrpcPublicationRole(String role) {
+    return role != null
+        && GRPC_PUBLICATION_WORKLOADS.stream()
+            .map(HostedIdentityContract::grpcPublicationRole)
+            .anyMatch(role::equals);
   }
 }

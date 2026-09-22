@@ -1,23 +1,68 @@
 package net.firedevops.firemud.tcpproxy.service;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.grpc.Status;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcTlsMaterialResolver;
+import net.firedevops.firemud.common.grpc.ResolvedGrpcTlsMaterial;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
 import net.firedevops.firemud.tcpproxy.v1.TcpProxyServiceGrpc;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
 
 class TcpProxyEventClientTest {
+
+  @Test
+  void notifyDisconnectFailsClearlyWhenClosedOrUninitialized() throws Exception {
+    ServiceEndpointsProperties endpoints = mock(ServiceEndpointsProperties.class);
+    when(endpoints.copy()).thenReturn(endpoints);
+    CommonGrpcClientProperties tlsProps = mock(CommonGrpcClientProperties.class);
+    when(tlsProps.copy()).thenReturn(tlsProps);
+    TcpProxyEventClient client =
+        new TcpProxyEventClient(
+            endpoints,
+            tlsProps,
+            mock(GrpcChannelFactory.class),
+            mock(GrpcTlsMaterialResolver.class),
+            BlockingGrpcStubCustomizer.noop());
+
+    RuntimeException uninitialized =
+        assertThrows(
+            RuntimeException.class, () -> client.notifyDisconnect("42", "7", "proxy-1", 9L));
+    assertEquals(Status.Code.UNAVAILABLE, Status.fromThrowable(uninitialized).getCode());
+    assertEquals(
+        "TcpProxyEventClient is closed or not initialized",
+        Status.fromThrowable(uninitialized).getDescription());
+
+    client.close();
+    RuntimeException closed =
+        assertThrows(
+            RuntimeException.class, () -> client.notifyDisconnect("42", "7", "proxy-1", 9L));
+    assertInstanceOf(io.grpc.StatusRuntimeException.class, closed);
+    assertEquals(Status.Code.UNAVAILABLE, Status.fromThrowable(closed).getCode());
+    assertEquals(
+        "TcpProxyEventClient is closed or not initialized",
+        Status.fromThrowable(closed).getDescription());
+  }
 
   @Test
   void notifyDisconnectUsesBoundedDeadlineAndCanonicalRequestFields() {
@@ -56,6 +101,118 @@ class TcpProxyEventClientTest {
         "proxy-1", requestCaptor.getValue().getProxyConnectionId());
     org.junit.jupiter.api.Assertions.assertEquals(
         9L, requestCaptor.getValue().getDisconnectSequence());
+  }
+
+  @Test
+  void initRegistersCertificateWatcherBeforeInitialChannelBuild(@TempDir Path tempDir)
+      throws Exception {
+    Path certificate = tempDir.resolve("tcp-proxy-event-client.crt");
+    Files.writeString(certificate, "initial");
+
+    ServiceEndpointsProperties endpoints = mock(ServiceEndpointsProperties.class);
+    when(endpoints.copy()).thenReturn(endpoints);
+    CommonGrpcClientProperties tlsProps = mock(CommonGrpcClientProperties.class);
+    when(tlsProps.copy()).thenReturn(tlsProps);
+    GrpcTlsMaterialResolver resolver = mock(GrpcTlsMaterialResolver.class);
+    ResolvedGrpcTlsMaterial.TlsResource certificateResource =
+        new ResolvedGrpcTlsMaterial.TlsResource(
+            () -> Files.newInputStream(certificate), certificate);
+    ResolvedGrpcTlsMaterial material =
+        new ResolvedGrpcTlsMaterial(certificateResource, certificateResource, certificateResource);
+    when(resolver.resolve(tlsProps)).thenReturn(material);
+
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    CountDownLatch initialBuildStarted = new CountDownLatch(1);
+    CountDownLatch releaseInitialBuild = new CountDownLatch(1);
+    CountDownLatch reloadBuildStarted = new CountDownLatch(1);
+    java.util.concurrent.atomic.AtomicInteger buildCount =
+        new java.util.concurrent.atomic.AtomicInteger();
+    when(channelFactory.buildChannel(any(), any(Integer.class), any(), any(Boolean.class), any()))
+        .thenAnswer(
+            ignored -> {
+              int currentBuild = buildCount.incrementAndGet();
+              if (currentBuild == 1) {
+                initialBuildStarted.countDown();
+                if (!releaseInitialBuild.await(5, TimeUnit.SECONDS)) {
+                  throw new AssertionError("timed out waiting to release initial channel build");
+                }
+              } else if (currentBuild == 2) {
+                reloadBuildStarted.countDown();
+              }
+              return mock(io.grpc.ManagedChannel.class);
+            });
+
+    TcpProxyEventClient client =
+        new TcpProxyEventClient(
+            endpoints, tlsProps, channelFactory, resolver, BlockingGrpcStubCustomizer.noop());
+    AtomicReference<Throwable> initFailure = new AtomicReference<>();
+    Thread initThread =
+        new Thread(
+            () -> {
+              try {
+                client.init();
+              } catch (Throwable failure) {
+                initFailure.set(failure);
+              }
+            });
+    initThread.start();
+    try {
+      org.junit.jupiter.api.Assertions.assertTrue(
+          initialBuildStarted.await(5, TimeUnit.SECONDS), "initial channel build did not start");
+      Files.writeString(certificate, "rotated");
+      releaseInitialBuild.countDown();
+
+      org.junit.jupiter.api.Assertions.assertTrue(
+          reloadBuildStarted.await(5, TimeUnit.SECONDS),
+          "certificate rotation during initial build did not trigger a reload");
+      initThread.join(5_000);
+      org.junit.jupiter.api.Assertions.assertFalse(initThread.isAlive());
+      org.junit.jupiter.api.Assertions.assertNull(initFailure.get());
+    } finally {
+      releaseInitialBuild.countDown();
+      initThread.join(5_000);
+      client.close();
+    }
+  }
+
+  @Test
+  void initFailureCleansUpWatcherAndChannel(@TempDir Path tempDir) throws Exception {
+    Path certificate = tempDir.resolve("tcp-proxy-event-client.crt");
+    Files.writeString(certificate, "initial");
+
+    ServiceEndpointsProperties endpoints = mock(ServiceEndpointsProperties.class);
+    when(endpoints.copy()).thenReturn(endpoints);
+    CommonGrpcClientProperties tlsProps = mock(CommonGrpcClientProperties.class);
+    when(tlsProps.copy()).thenReturn(tlsProps);
+    GrpcTlsMaterialResolver resolver = mock(GrpcTlsMaterialResolver.class);
+    ResolvedGrpcTlsMaterial.TlsResource certificateResource =
+        new ResolvedGrpcTlsMaterial.TlsResource(
+            () -> Files.newInputStream(certificate), certificate);
+    when(resolver.resolve(tlsProps))
+        .thenReturn(
+            new ResolvedGrpcTlsMaterial(
+                certificateResource, certificateResource, certificateResource));
+
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    io.grpc.ManagedChannel failedChannel = mock(io.grpc.ManagedChannel.class);
+    when(channelFactory.buildChannel(any(), any(Integer.class), any(), any(Boolean.class), any()))
+        .thenReturn(failedChannel);
+    BlockingGrpcStubCustomizer stubCustomizer = mock(BlockingGrpcStubCustomizer.class);
+    when(stubCustomizer.customize(any(TcpProxyServiceGrpc.TcpProxyServiceBlockingStub.class)))
+        .thenThrow(new IllegalStateException("customizer failed"));
+
+    TcpProxyEventClient client =
+        new TcpProxyEventClient(endpoints, tlsProps, channelFactory, resolver, stubCustomizer);
+    try {
+      assertThrows(IllegalStateException.class, client::init);
+      verify(failedChannel).shutdown();
+      org.junit.jupiter.api.Assertions.assertNull(getField(client, "watcher"));
+      org.junit.jupiter.api.Assertions.assertNull(getField(client, "channel"));
+      org.junit.jupiter.api.Assertions.assertNull(getField(client, "stub"));
+      org.junit.jupiter.api.Assertions.assertNull(getField(client, "tlsMaterial"));
+    } finally {
+      client.close();
+    }
   }
 
   @Test
@@ -115,13 +272,127 @@ class TcpProxyEventClientTest {
     setField(client, "channel", previousChannel);
     setField(client, "stub", previousStub);
 
-    org.junit.jupiter.api.Assertions.assertThrows(
-        IllegalStateException.class, () -> invokeReloadChannel(client));
+    assertThrows(IllegalStateException.class, () -> invokeReloadChannel(client));
 
     org.junit.jupiter.api.Assertions.assertSame(previousChannel, getField(client, "channel"));
     org.junit.jupiter.api.Assertions.assertSame(previousStub, getField(client, "stub"));
     verify(newChannel).shutdown();
     verify(previousChannel, org.mockito.Mockito.never()).shutdown();
+  }
+
+  @Test
+  void closeDuringReloadDiscardsUnpublishedReplacementChannel() throws Exception {
+    ServiceEndpointsProperties endpoints = mock(ServiceEndpointsProperties.class);
+    when(endpoints.copy()).thenReturn(endpoints);
+    CommonGrpcClientProperties tlsProps = mock(CommonGrpcClientProperties.class);
+    when(tlsProps.copy()).thenReturn(tlsProps);
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    io.grpc.ManagedChannel previousChannel = mock(io.grpc.ManagedChannel.class);
+    io.grpc.ManagedChannel replacementChannel = mock(io.grpc.ManagedChannel.class);
+    CountDownLatch buildStarted = new CountDownLatch(1);
+    CountDownLatch releaseBuild = new CountDownLatch(1);
+    when(channelFactory.buildChannel(any(), any(Integer.class), any(), any(Boolean.class), any()))
+        .thenAnswer(
+            ignored -> {
+              buildStarted.countDown();
+              if (!releaseBuild.await(5, TimeUnit.SECONDS)) {
+                throw new AssertionError("timed out waiting to release replacement build");
+              }
+              return replacementChannel;
+            });
+    GrpcTlsMaterialResolver resolver = mock(GrpcTlsMaterialResolver.class);
+    when(resolver.resolve(tlsProps)).thenReturn(null);
+    TcpProxyEventClient client =
+        new TcpProxyEventClient(
+            endpoints, tlsProps, channelFactory, resolver, BlockingGrpcStubCustomizer.noop());
+    setField(client, "channel", previousChannel);
+    setField(client, "stub", mock(TcpProxyServiceGrpc.TcpProxyServiceBlockingStub.class));
+    AtomicReference<Throwable> reloadFailure = new AtomicReference<>();
+
+    Thread reloadThread =
+        new Thread(
+            () -> {
+              try {
+                invokeReloadChannel(client);
+              } catch (Throwable e) {
+                reloadFailure.set(e);
+              }
+            });
+    reloadThread.start();
+    try {
+      org.junit.jupiter.api.Assertions.assertTrue(buildStarted.await(5, TimeUnit.SECONDS));
+      client.close();
+    } finally {
+      releaseBuild.countDown();
+      reloadThread.join(5_000);
+    }
+
+    org.junit.jupiter.api.Assertions.assertFalse(reloadThread.isAlive());
+    org.junit.jupiter.api.Assertions.assertNull(reloadFailure.get());
+    org.junit.jupiter.api.Assertions.assertNull(getField(client, "channel"));
+    org.junit.jupiter.api.Assertions.assertNull(getField(client, "stub"));
+    verify(previousChannel).shutdown();
+    verify(replacementChannel).shutdown();
+  }
+
+  @Test
+  void closeAfterReloadPublicationShutsDownBothChannels() throws Exception {
+    ServiceEndpointsProperties endpoints = mock(ServiceEndpointsProperties.class);
+    when(endpoints.copy()).thenReturn(endpoints);
+    CommonGrpcClientProperties tlsProps = mock(CommonGrpcClientProperties.class);
+    when(tlsProps.copy()).thenReturn(tlsProps);
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    io.grpc.ManagedChannel previousChannel = mock(io.grpc.ManagedChannel.class);
+    io.grpc.ManagedChannel replacementChannel = mock(io.grpc.ManagedChannel.class);
+    when(channelFactory.buildChannel(any(), any(Integer.class), any(), any(Boolean.class), any()))
+        .thenReturn(replacementChannel);
+    TcpProxyEventClient client =
+        new TcpProxyEventClient(
+            endpoints,
+            tlsProps,
+            channelFactory,
+            mock(GrpcTlsMaterialResolver.class),
+            BlockingGrpcStubCustomizer.noop());
+    setField(client, "channel", previousChannel);
+    doAnswer(
+            ignored -> {
+              client.close();
+              return null;
+            })
+        .when(previousChannel)
+        .shutdown();
+
+    invokeReloadChannel(client);
+
+    verify(previousChannel).shutdown();
+    verify(replacementChannel).shutdown();
+    org.junit.jupiter.api.Assertions.assertNull(getField(client, "channel"));
+  }
+
+  @Test
+  void watcherReloadPropagatesFailureToCertificateWatcher() throws Exception {
+    ServiceEndpointsProperties endpoints = mock(ServiceEndpointsProperties.class);
+    when(endpoints.copy()).thenReturn(endpoints);
+    CommonGrpcClientProperties tlsProps = mock(CommonGrpcClientProperties.class);
+    when(tlsProps.copy()).thenReturn(tlsProps);
+    GrpcTlsMaterialResolver resolver = mock(GrpcTlsMaterialResolver.class);
+    when(resolver.resolve(tlsProps)).thenThrow(new java.io.IOException("material unavailable"));
+
+    TcpProxyEventClient client =
+        new TcpProxyEventClient(
+            endpoints,
+            tlsProps,
+            mock(GrpcChannelFactory.class),
+            resolver,
+            BlockingGrpcStubCustomizer.noop());
+
+    Throwable failure = invokeSafeReload(client);
+
+    org.junit.jupiter.api.Assertions.assertInstanceOf(IllegalStateException.class, failure);
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "Failed to reload gRPC channel", failure.getMessage());
+    org.junit.jupiter.api.Assertions.assertInstanceOf(
+        java.io.IOException.class, failure.getCause());
   }
 
   private static void setField(Object target, String fieldName, Object value) {
@@ -149,8 +420,30 @@ class TcpProxyEventClientTest {
       var method = TcpProxyEventClient.class.getDeclaredMethod("reloadChannel");
       method.setAccessible(true);
       method.invoke(client);
+    } catch (InvocationTargetException e) {
+      Throwable cause = e.getCause();
+      if (cause instanceof RuntimeException runtimeException) {
+        throw runtimeException;
+      }
+      if (cause instanceof Error error) {
+        throw error;
+      }
+      throw new IllegalStateException("reloadChannel failed", cause);
     } catch (ReflectiveOperationException e) {
       throw new IllegalStateException("Failed to invoke reloadChannel", e);
+    }
+  }
+
+  private static Throwable invokeSafeReload(TcpProxyEventClient client) {
+    try {
+      var method = TcpProxyEventClient.class.getDeclaredMethod("safeReload");
+      method.setAccessible(true);
+      method.invoke(client);
+      throw new AssertionError("safeReload unexpectedly succeeded");
+    } catch (InvocationTargetException e) {
+      return e.getCause();
+    } catch (ReflectiveOperationException e) {
+      throw new IllegalStateException("Failed to invoke safeReload", e);
     }
   }
 }

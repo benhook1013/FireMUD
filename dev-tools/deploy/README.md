@@ -16,7 +16,8 @@ They are not generic CI utilities. They enforce the deployment contract for play
   - Use this before trusting a rendered deployment, before apply/promotion, or before reopening traffic after a major environment change.
   - It renders the target manifests, validates FireMUD deployment policy, writes a JSON report, and fails when required policy checks do not pass.
   - Supports `staging`, `production`, and `hobby-self-hosted` environment classes.
-  - Used by operator deployment workflows and by CI static-policy validation.
+  - Its `hosted-bridge <render-path> <namespace> <release-name>` form applies the same `PREFLIGHT-BRIDGE-001` validator to preview/dev-demo Helm output; optional `--expected-hosted-telnet-node-port <port>` requires the exact expected rendered Telnet NodePort and rejects any other explicit `nodePort`; operator context additionally checks that the controller-projected `<release>-gateway-internal-ws` and `<release>-tcp-proxy-bridge` Secrets exist with `tls.crt`, `tls.key`, and `ca.crt`, and that `<release>-telnet-tls` exists with `tls.crt` and `tls.key`.
+  - The ordinary environment form is used by operator deployment workflows and CI static-policy validation; hosted workflow integration for the `hosted-bridge` form is tracked separately from the validator capability.
 
 - `write-traffic-open-evidence.py`
   - Canonical writer for hobby traffic-open projection records.
@@ -26,7 +27,7 @@ They are not generic CI utilities. They enforce the deployment contract for play
 - `validate-kustomize-overlays.sh`
   - CI-focused validator for the checked-in Kubernetes overlay definitions in the repo.
   - Use this when validating overlay changes in a PR, not as the main gate for a real environment deploy.
-  - It renders the `stage` and `prod` overlays, checks that referenced images exist, enforces staging backup-marker rules, and runs production preflight validation in `ci-static` context when the PR includes the required production attestation inputs.
+  - It renders the `stage` and `prod` overlays, checks that referenced images exist, and enforces staging backup-marker rules. A PR changing `k8s/overlays/prod` also requires one production promotion attestation and runs production preflight in `ci-static` context; shared `k8s/base`, Postgres, and Velero changes alone still receive render and image validation without requiring promotion evidence.
 
 ## Choosing The Right Script
 

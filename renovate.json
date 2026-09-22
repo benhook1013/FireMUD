@@ -228,6 +228,31 @@
       ]
     },
     {
+      "description": "Kubectl Renovate PRs require a checksum-authority refresh",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchPackageNames": [
+        "kubernetes/kubernetes"
+      ],
+      "allowedVersions": "<1.36.0",
+      "prBodyNotes": [
+        "FireMUD's Kubernetes 1.34 cluster currently supports kubectl releases below 1.36. Run `python3 dev-tools/maintenance/update-workflow-tool.py kubectl <version>` before merging so KUBECTL_VERSION, KUBECTL_LINUX_AMD64_CHECKSUM_VERSION, and KUBECTL_LINUX_AMD64_SHA256 are refreshed as one authority tuple. CI remains fail-closed until the version and checksum authority match. Advance the `<1.36.0` Renovate cap only with the corresponding cluster-version upgrade."
+      ]
+    },
+    {
+      "description": "Helm Renovate PRs require a checksum-authority refresh",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchPackageNames": [
+        "helm/helm"
+      ],
+      "prBodyNotes": [
+        "Run `python3 dev-tools/maintenance/update-workflow-tool.py helm <version>` before merging so HELM_VERSION, HELM_LINUX_AMD64_CHECKSUM_VERSION, and HELM_LINUX_AMD64_SHA256 are refreshed as one authority tuple. CI remains fail-closed until the version and checksum authority match."
+      ]
+    },
+    {
       "description": "Velero verifier image changes require promotion evidence",
       "matchManagers": [
         "dockerfile"

@@ -15,6 +15,7 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.core.read.ListAppender;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
@@ -32,7 +33,7 @@ class TlsCertificateReadinessHealthEndpointGroupsPostProcessorTest {
       new TlsCertificateReadinessHealthEndpointGroupsPostProcessor(true);
 
   @Test
-  void leavesTcpProxyReadinessGroupsUnchanged() {
+  void leavesReadinessGroupsUnchangedWhenDisabled() {
     HealthEndpointGroups original = mock(HealthEndpointGroups.class);
 
     assertSame(
@@ -53,8 +54,7 @@ class TlsCertificateReadinessHealthEndpointGroupsPostProcessorTest {
             .postProcessHealthEndpointGroups(original);
 
     assertTrue(
-        processed
-            .get("readiness")
+        Objects.requireNonNull(processed.get("readiness"))
             .isMember(
                 TlsCertificateReadinessHealthEndpointGroupsPostProcessor
                     .TLS_CERTIFICATE_RELOAD_CONTRIBUTOR));

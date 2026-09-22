@@ -12,5 +12,6 @@ resources:
   - crd.yaml
   - admission.yaml
   - rbac.yaml
+  - issuer.yaml
   - deployment.yaml
   - networkpolicy.yaml

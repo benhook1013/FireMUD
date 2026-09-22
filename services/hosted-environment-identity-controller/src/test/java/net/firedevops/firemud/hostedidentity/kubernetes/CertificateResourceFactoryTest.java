@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
 import java.util.Map;
@@ -93,7 +92,6 @@ class CertificateResourceFactoryTest {
     assertEquals("firemud-ca-issuer", issuerName(certificateSpec));
     assertEquals("720h", certificateSpec.get("duration"));
     assertEquals("5h", certificateSpec.get("renewBefore"));
-    assertFalse(certificateSpec.containsKey("dnsNames"));
     assertEquals(
         java.util.List.of("spiffe://firemud/ns/pr-42/sa/tcp-proxy-service"),
         certificateSpec.get("uris"));
@@ -102,6 +100,35 @@ class CertificateResourceFactoryTest {
         certificateSpec.get("usages"));
     assertCertificateDefaults(certificateSpec);
     assertSecretTemplate(certificateSpec, plan, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE);
+  }
+
+  @Test
+  void publicationCertificateUsesStableSourceNameAndBidirectionalWorkloadIdentity() {
+    var properties = propertiesWithRenewBefore();
+    var plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
+    var certificate =
+        new CertificateResourceFactory()
+            .grpcPublication(plan, "game-design-service", properties.getGrpcRenewBefore());
+    var certificateSpec = spec(certificate);
+
+    assertEquals("pr-42-grpc-game-design-service", certificate.getMetadata().getName());
+    assertEquals("pr-42-grpc-game-design-service", certificateSpec.get("secretName"));
+    assertEquals("firemud-ca-issuer", issuerName(certificateSpec));
+    assertEquals(
+        java.util.List.of("spiffe://firemud/ns/pr-42/sa/game-design-service"),
+        certificateSpec.get("uris"));
+    assertEquals(
+        java.util.List.of(
+            "game-design-service",
+            "game-design-service.pr-42",
+            "game-design-service.pr-42.svc",
+            "game-design-service.pr-42.svc.cluster.local"),
+        certificateSpec.get("dnsNames"));
+    assertEquals(
+        java.util.List.of("digital signature", "key encipherment", "server auth", "client auth"),
+        certificateSpec.get("usages"));
+    assertSecretTemplate(
+        certificateSpec, plan, HostedIdentityContract.grpcPublicationRole("game-design-service"));
   }
 
   @Test
@@ -115,9 +142,10 @@ class CertificateResourceFactoryTest {
             .filter(method -> java.lang.reflect.Modifier.isPublic(method.getModifiers()))
             .toList();
 
-    assertEquals(4, publicMethods.size());
+    assertEquals(5, publicMethods.size());
     assertEquals(
-        java.util.Set.of("ingress", "telnet", "gatewayInternalWs", "tcpProxyBridge"),
+        java.util.Set.of(
+            "ingress", "telnet", "gatewayInternalWs", "tcpProxyBridge", "grpcPublication"),
         publicMethods.stream()
             .map(java.lang.reflect.Method::getName)
             .collect(java.util.stream.Collectors.toUnmodifiableSet()));

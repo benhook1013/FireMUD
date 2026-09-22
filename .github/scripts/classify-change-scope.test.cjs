@@ -5,6 +5,7 @@ const test = require("node:test");
 
 const {
   ALL_SERVICES,
+  ALL_MODULES,
   classifyChangeScope,
   classifyGithubChangeScope,
 } = require("./classify-change-scope.cjs");
@@ -15,7 +16,8 @@ async function classifyGithubFiles(files, changedFiles) {
     pullRequest.changed_files = changedFiles;
   }
   const github = {
-    paginate: async () => files,
+    paginate: async () =>
+      files.map((file) => (typeof file === "string" ? { filename: file } : file)),
     rest: { pulls: { listFiles() {} } },
   };
   const context = {
@@ -127,18 +129,21 @@ test("documentation requirements are docs but not Python dependencies", () => {
   assert.equal(result.lightweightOnly, true);
 });
 
-test("workflow changes force all service validation", () => {
+test("workflow and Gradle wrapper changes force all module validation", () => {
   for (const path of [
     ".github/workflows/ci.yml",
     ".github/workflows/security.yml",
     ".github/workflows/preview.yml",
     ".github/workflows/zap-baseline.yml",
     ".github/scripts/classify-change-scope.cjs",
+    "gradlew",
+    "gradlew.bat",
   ]) {
     const result = classifyChangeScope([path]);
     assert.equal(result.runAll, true, path);
     assert.equal(result.lightweightOnly, false, path);
     assert.deepEqual(result.affectedServices, ALL_SERVICES, path);
+    assert.deepEqual(result.affectedModules, ALL_MODULES, path);
   }
 });
 
@@ -174,7 +179,7 @@ test("GitHub non-PR events always execute the complete path", async () => {
 
 test("GitHub file-count mismatches fail closed to the complete path", async () => {
   const github = {
-    paginate: async () => ["design/README.md"],
+    paginate: async () => [{ filename: "design/README.md" }],
     rest: { pulls: { listFiles() {} } },
   };
   const context = {
@@ -192,7 +197,7 @@ test("GitHub file-count mismatches fail closed to the complete path", async () =
 
 test("GitHub complete documentation file lists retain the lightweight path", async () => {
   const github = {
-    paginate: async () => ["design/README.md"],
+    paginate: async () => [{ filename: "design/README.md" }],
     rest: { pulls: { listFiles() {} } },
   };
   const context = {
@@ -242,7 +247,36 @@ test("GitHub unknown service paths force the complete path", async () => {
     assert.equal(result.runAll, true, path);
     assert.equal(result.lightweightOnly, false, path);
     assert.deepEqual(result.affectedServices, ALL_SERVICES, path);
+    assert.deepEqual(result.affectedModules, ALL_MODULES, path);
   }
+});
+
+test("shared modules force every Gradle module, including common-temporal", () => {
+  const result = classifyChangeScope([
+    "services/common-temporal/src/main/kotlin/example/Temporal.kt",
+  ]);
+
+  assert.equal(result.runAll, true);
+  assert.deepEqual(result.affectedModules, ALL_MODULES);
+  assert.deepEqual(result.bootableModules, ALL_SERVICES.concat("hosted-environment-identity-controller"));
+});
+
+test("controller and load-testing changes receive their own module checks", () => {
+  const controllerResult = classifyChangeScope([
+    "services/hosted-environment-identity-controller/src/main/java/example/Controller.java",
+  ]);
+  assert.equal(controllerResult.runAll, false);
+  assert.deepEqual(controllerResult.affectedServices, []);
+  assert.deepEqual(controllerResult.affectedModules, ["hosted-environment-identity-controller"]);
+  assert.deepEqual(controllerResult.bootableModules, ["hosted-environment-identity-controller"]);
+
+  const loadTestingResult = classifyChangeScope([
+    "dev-tools/load-testing/src/gatling/example/Simulation.java",
+  ]);
+  assert.equal(loadTestingResult.runAll, false);
+  assert.deepEqual(loadTestingResult.affectedServices, []);
+  assert.deepEqual(loadTestingResult.affectedModules, ["load-testing"]);
+  assert.deepEqual(loadTestingResult.bootableModules, []);
 });
 
 test("GitHub complete docs and known Account service lists target Account only", async () => {
@@ -254,4 +288,39 @@ test("GitHub complete docs and known Account service lists target Account only",
   assert.equal(result.runAll, false);
   assert.equal(result.lightweightOnly, false);
   assert.deepEqual(result.affectedServices, ["account-service"]);
+  assert.deepEqual(result.affectedModules, ["account-service"]);
+});
+
+test("GitHub rename classification includes both old and new paths", async () => {
+  const github = {
+    paginate: async (_method, _parameters, mapResponse) =>
+      mapResponse({
+        data: [
+          {
+            filename: "design/new-name.md",
+            previous_filename: "services/account-service/src/main.java",
+          },
+        ],
+      }),
+    rest: { pulls: { listFiles() {} } },
+  };
+  const context = {
+    eventName: "pull_request",
+    repo: { owner: "example", repo: "firemud" },
+    payload: { pull_request: { number: 1, changed_files: 1 } },
+  };
+
+  const result = await classifyGithubChangeScope(github, context);
+
+  assert.equal(result.runAll, false);
+  assert.deepEqual(result.affectedModules, ["account-service"]);
+});
+
+test("GitHub malformed file entries fail closed to the complete path", async () => {
+  for (const file of [{}, { filename: "" }, { filename: "design/new.md", previous_filename: "" }]) {
+    const result = await classifyGithubFiles([file], 1);
+
+    assert.equal(result.runAll, true, JSON.stringify(file));
+    assert.deepEqual(result.affectedModules, ALL_MODULES, JSON.stringify(file));
+  }
 });

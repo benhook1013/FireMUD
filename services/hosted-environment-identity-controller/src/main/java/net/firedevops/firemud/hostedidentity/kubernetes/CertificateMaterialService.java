@@ -184,6 +184,30 @@ public class CertificateMaterialService {
         batch);
   }
 
+  private RoleMaterial grpcPublication(
+      KubernetesClient client,
+      EnvironmentIdentityPlan plan,
+      String workload,
+      MaterializationBatch batch) {
+    String role = HostedIdentityContract.grpcPublicationRole(workload);
+    RoleExpectation expectation =
+        new RoleExpectation(
+            plan.grpcPublicationDnsNames(workload),
+            List.of(plan.grpcPublicationUriSan(workload)),
+            true,
+            true,
+            "kubernetes.io/tls",
+            properties.getGrpcTrustAnchorSha256());
+    return materializeSerialized(
+        client,
+        plan,
+        role,
+        certificateFactory.grpcPublication(plan, workload, properties.getGrpcRenewBefore()),
+        plan.grpcPublicationSourceSecretName(workload),
+        expectation,
+        batch);
+  }
+
   /**
    * Returns either the current source or the last accepted snapshot. Only one changed role is
    * allowed to advance through projection, rollout, and acknowledgement at a time. A pending
@@ -309,6 +333,10 @@ public class CertificateMaterialService {
             HostedIdentityContract.GRPC_ROLE)) {
       observations.put(role, rotationObservation(client, plan, role));
     }
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      String role = HostedIdentityContract.grpcPublicationRole(workload);
+      observations.put(role, rotationObservation(client, plan, role));
+    }
     String selectedRole =
         selectSerializedRole(
             observations.values().stream().map(RotationObservation::state).toList());
@@ -348,8 +376,9 @@ public class CertificateMaterialService {
 
   private RotationObservation rotationObservation(
       KubernetesClient client, EnvironmentIdentityPlan plan, String role) {
-    Secret projection =
-        client.secrets().inNamespace(plan.runtimeNamespace()).withName(plan.secretName(role)).get();
+    var operation =
+        client.secrets().inNamespace(plan.runtimeNamespace()).withName(plan.secretName(role));
+    Secret projection = operation.get();
     if (projection == null) {
       return new RotationObservation(
           new RotationState(role, false, false, true, false), null, null, false);
@@ -392,7 +421,7 @@ public class CertificateMaterialService {
         client
             .secrets()
             .inNamespace(plan.identityNamespace())
-            .withName(plan.secretName(role))
+            .withName(sourceSecretName(plan, role))
             .get();
     if (source != null) {
       requireIdentitySourceBinding(source, plan, role);
@@ -416,6 +445,7 @@ public class CertificateMaterialService {
       String role,
       RoleExpectation expectation) {
     String name = plan.secretName(role);
+    String sourceName = sourceSecretName(plan, role);
     Secret current = client.secrets().inNamespace(plan.runtimeNamespace()).withName(name).get();
     requireOwned(current, plan, role, "runtime projection Secret");
     Map<String, String> annotations = current.getMetadata().getAnnotations();
@@ -441,14 +471,18 @@ public class CertificateMaterialService {
     Secret accepted = current;
     if (!acceptedRevision.equals(runtimeRevision)) {
       accepted =
-          client.secrets().inNamespace(plan.identityNamespace()).withName(name + "-previous").get();
+          client
+              .secrets()
+              .inNamespace(plan.identityNamespace())
+              .withName(sourceName + "-previous")
+              .get();
       if (accepted != null) {
         requireOwned(accepted, plan, role, "accepted predecessor Secret");
       }
     }
     if (accepted == null || !acceptedRevision.equals(runtimeProjectionRevision(role, accepted))) {
       Secret retainedSource =
-          client.secrets().inNamespace(plan.identityNamespace()).withName(name).get();
+          client.secrets().inNamespace(plan.identityNamespace()).withName(sourceName).get();
       requireIdentitySourceBinding(retainedSource, plan, role);
       if (!acceptedRevision.equals(runtimeProjectionRevision(role, retainedSource))) {
         throw new IllegalStateException("accepted predecessor material is unavailable");
@@ -488,7 +522,8 @@ public class CertificateMaterialService {
     boolean sharedGrpcTrust =
         HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE.equals(role)
             || HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE.equals(role)
-            || HostedIdentityContract.GRPC_ROLE.equals(role);
+            || HostedIdentityContract.GRPC_ROLE.equals(role)
+            || HostedIdentityContract.isGrpcPublicationRole(role);
     Secret validationSecret = accepted;
     String expectedType = current.expectedType();
     String expectedTrustAnchor = current.trustAnchor();
@@ -574,9 +609,20 @@ public class CertificateMaterialService {
       case HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE ->
           plan.gatewayInternalWsCertificateName();
       case HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE -> plan.tcpProxyBridgeCertificateName();
-      default ->
-          throw new IllegalArgumentException("unsupported cert-manager identity role: " + role);
+      default -> {
+        if (HostedIdentityContract.isGrpcPublicationRole(role)) {
+          yield plan.grpcPublicationCertificateNames().get(role);
+        }
+        throw new IllegalArgumentException("unsupported cert-manager identity role: " + role);
+      }
     };
+  }
+
+  private static String sourceSecretName(EnvironmentIdentityPlan plan, String role) {
+    if (HostedIdentityContract.isGrpcPublicationRole(role)) {
+      return plan.grpcPublicationSourceSecretNames().get(role);
+    }
+    return plan.secretName(role);
   }
 
   private static String issuerName(EnvironmentIdentityPlan plan, String role) {
@@ -586,8 +632,12 @@ public class CertificateMaterialService {
       case HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE,
           HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE ->
           plan.grpcIssuer();
-      default ->
-          throw new IllegalArgumentException("unsupported cert-manager identity role: " + role);
+      default -> {
+        if (HostedIdentityContract.isGrpcPublicationRole(role)) {
+          yield plan.grpcIssuer();
+        }
+        throw new IllegalArgumentException("unsupported cert-manager identity role: " + role);
+      }
     };
   }
 
@@ -1069,6 +1119,10 @@ public class CertificateMaterialService {
 
     public RoleMaterial grpc(Long acceptedGeneration) {
       return CertificateMaterialService.this.grpc(client, plan, acceptedGeneration, this);
+    }
+
+    public RoleMaterial grpcPublication(String workload) {
+      return CertificateMaterialService.this.grpcPublication(client, plan, workload, this);
     }
 
     private List<GenericKubernetesResource> certificateRequests() {
