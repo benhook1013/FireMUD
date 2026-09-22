@@ -90,6 +90,10 @@ ALTER TABLE publish_recorded_participant_digest
     CHECK (publish_type <> 'SCRIPT_PATCH' OR base_version_id IS NOT NULL);
 
 ALTER TABLE publish_recorded_participant_digest
+    ADD CONSTRAINT chk_recorded_participant_digest_full_scope
+    CHECK (publish_type <> 'FULL_VERSION' OR base_version_id IS NULL);
+
+ALTER TABLE publish_recorded_participant_digest
     DROP CONSTRAINT uq_recorded_participant_digest;
 
 -- Full-version records retain their existing tenant/type/participant/scope/commit identity.

@@ -50,6 +50,9 @@ class V26__bind_participant_digest_patch_scopeTest {
         .contains("THEN 'V26 unresolved SCRIPT_PATCH attempt participant evidence'")
         .contains("THEN 'V26 unresolved SCRIPT_PATCH recorded participant evidence'")
         .contains("chk_recorded_participant_digest_patch_scope")
+        .contains("CHECK (publish_type <> 'SCRIPT_PATCH' OR base_version_id IS NOT NULL)")
+        .contains("chk_recorded_participant_digest_full_scope")
+        .contains("CHECK (publish_type <> 'FULL_VERSION' OR base_version_id IS NULL)")
         .contains("Full-version rows")
         .doesNotContain("WHERE recorded.base_version_id IS NULL THEN DELETE");
   }
