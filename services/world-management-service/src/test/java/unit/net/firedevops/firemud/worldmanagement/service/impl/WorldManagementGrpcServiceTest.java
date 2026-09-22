@@ -328,8 +328,7 @@ class WorldManagementGrpcServiceTest {
             ref.set(
                 invokeDigest(
                     service,
-                    fullDigestRequest("1", "7")
-                        .toBuilder()
+                    fullDigestRequest("1", "7").toBuilder()
                         .setRequestDigest("0".repeat(64))
                         .build())));
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
