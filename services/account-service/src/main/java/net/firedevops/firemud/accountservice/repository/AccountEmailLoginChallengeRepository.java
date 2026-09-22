@@ -3,7 +3,6 @@ package net.firedevops.firemud.accountservice.repository;
 import static net.firedevops.firemud.accountservice.jooq.Tables.ACCOUNT_EMAIL_LOGIN_CHALLENGE;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import java.time.LocalDateTime;
 import java.util.Optional;
 import net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge;
 import org.jooq.DSLContext;
@@ -74,26 +73,6 @@ public class AccountEmailLoginChallengeRepository {
           .where(ACCOUNT_EMAIL_LOGIN_CHALLENGE.ID.eq(entity.getId()))
           .execute();
     }
-  }
-
-  /** Deletes at most {@code batchSize} expired rows in deterministic expiry/id order. */
-  public int deleteExpired(LocalDateTime capturedNow, int batchSize) {
-    return JooqAccountRepositorySupport.deleteExpired(
-        dsl,
-        ACCOUNT_EMAIL_LOGIN_CHALLENGE,
-        ACCOUNT_EMAIL_LOGIN_CHALLENGE.ID,
-        ACCOUNT_EMAIL_LOGIN_CHALLENGE.EXPIRES_AT,
-        capturedNow,
-        batchSize);
-  }
-
-  public Optional<LocalDateTime> findOldestExpiredAt(LocalDateTime capturedNow) {
-    return JooqAccountRepositorySupport.findOldestExpiredAt(
-        dsl,
-        ACCOUNT_EMAIL_LOGIN_CHALLENGE,
-        ACCOUNT_EMAIL_LOGIN_CHALLENGE.ID,
-        ACCOUNT_EMAIL_LOGIN_CHALLENGE.EXPIRES_AT,
-        capturedNow);
   }
 
   private AccountEmailLoginChallenge toEntity(

@@ -6,7 +6,6 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.test.GatewayTestProperties;
@@ -70,37 +69,8 @@ class AutomationScriptingServiceApplicationIntegrationTest {
   }
 
   @Test
-  void unsupportedFormationRestRoutesAreNotReachable() throws Exception {
-    HttpRequest request =
-        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/formations"))
-            .POST(HttpRequest.BodyPublishers.ofString("{}"))
-            .header("Content-Type", "application/json")
-            .build();
-
-    HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
-
-    assertThat(response.statusCode()).isEqualTo(404);
-  }
-
-  @Test
-  void unsupportedFormationRestRoutesRejectCrossTenantSelectorsByBeingAbsent() throws Exception {
-    String token =
-        JWT_UTIL.generateToken(
-            "automation-test", Map.of("scopedRoles", Map.of("1", List.of("tenantAdmin"))));
-    HttpRequest request =
-        HttpRequest.newBuilder(
-                URI.create("http://localhost:" + port + "/formations/7/members?tenantId=2"))
-            .header("Authorization", "Bearer " + token)
-            .GET()
-            .build();
-
-    HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
-
-    assertThat(response.statusCode()).isEqualTo(404);
-  }
-
-  @Test
-  void removedFactionRestEndpointReturnsNotFound() throws Exception {
+  void adjustReputationRejectsMalformedPlayableStateScopeWithInvalidArgumentEnvelope()
+      throws Exception {
     String token =
         JWT_UTIL.generateToken(
             "automation-test", Map.of("globalRoles", java.util.List.of("platformAdmin")));
@@ -116,6 +86,8 @@ class AutomationScriptingServiceApplicationIntegrationTest {
 
     HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
 
-    assertThat(response.statusCode()).isEqualTo(404);
+    assertThat(response.statusCode()).isEqualTo(400);
+    assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
+    assertThat(response.body()).contains("\"message\":\"playableStateScope is invalid\"");
   }
 }

@@ -109,7 +109,7 @@ The matrix below is the target participation and ownership contract. `Authoritat
 | Command parsing and alias resolution | | | | | | ✔ | | | | | |
 | Action execution (movement, attack, etc.) | | | | | | ✔ | | | | | |
 | Progression logic (XP, levels, effects) | | | | | | ✔ | | | | | |
-| Durable player faction reputation/standing (Social-owned under exact `{tenantId, playableStateNamespaceId, characterId, factionId}` identity; Automation and Game Logic are read-only consumers through the owner contract; the removed boundary is the unauthenticated legacy Automation `PATCH /factions/{id}/reputation` route/controller; the current internal Automation `FactionServiceImpl` writer and `faction_standing` storage/service remain, while Social owner migration, consumer cutover, and focused proof remain incomplete) | | | | | | ✔ | ✔ | ✔ | | | |
+| Durable player faction reputation/standing (Social-owned under exact `{tenantId, playableStateNamespaceId, characterId, factionId}` identity; Automation and Game Logic are read-only consumers through the owner contract; the live Automation `PATCH /factions/{id}/reputation`/`faction_standing` writer must fail closed or delegate during cutover; migration, consumer cutover, and proof remain incomplete) | | | | | | ✔ | ✔ | ✔ | | | |
 | Weather and ambient state persistence (weather, time-of-day, ambient modifiers) | | ✔ | | | | | | | | | |
 | Environmental effects computation (weather, hazards, modifiers) | | | | | | ✔ | | | | | |
 | Economy logic (trading, shops, pricing) | | | | | | ✔ | | | | | |
