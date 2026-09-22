@@ -2,7 +2,7 @@
 
 FROM velero/velero:v1.18.3@sha256:b839e52bc2c69eb3b5a84b010b8b3c7f714f3c5ef50b77ec7770a382a8f2e0ab AS velero-cli
 
-FROM public.ecr.aws/aws-cli/aws-cli:2.36.49@sha256:f42bf088cb1456ba9e179ce71fdeb22cc46ff64ea1e3aeae8251ff81391f5bb1
+FROM public.ecr.aws/aws-cli/aws-cli:2.36.50@sha256:c240dd63cdbab17197486d55460675ef2b94c9cc372dedae34dee53ccd30657c
 
 USER root
 
