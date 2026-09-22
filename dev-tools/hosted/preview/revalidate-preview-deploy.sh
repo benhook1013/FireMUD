@@ -46,7 +46,7 @@ refuse_preview() {
 if ! pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}")"; then
   refuse_preview "current pull request metadata is unavailable"
 fi
-if jq -e '(.mergeable == null) or (.mergeable_state == "unknown")' \
+if [[ "$mode" == deploy ]] && jq -e '(.mergeable == null) or (.mergeable_state == "unknown")' \
   <<<"$pull_request_json" >/dev/null 2>&1; then
   retry_attempts="${PREVIEW_METADATA_RETRY_ATTEMPTS:-3}"
   retry_delay_seconds="${PREVIEW_METADATA_RETRY_DELAY_SECONDS:-1}"

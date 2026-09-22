@@ -637,18 +637,6 @@ case "$resource" in
       --argjson labels "$prune_labels_json" \
       '{state:$state,head:{sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",repo:{full_name:$head_repository}},base:{ref:$base_ref,repo:{full_name:$base_repository}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",changed_files:1,mergeable:($mergeable == "true"),mergeable_state:$mergeable_state,user:{login:$author},labels:$labels}'
     exit 0
-    count=0
-    if [[ -f "$FAKE_PR_101_CALLS" ]]; then
-      count="$(<"$FAKE_PR_101_CALLS")"
-    fi
-    count=$((count + 1))
-    printf '%s' "$count" > "$FAKE_PR_101_CALLS"
-    priority="${FAKE_PR_101_PRIORITY:-false}"
-    labels_valid="${FAKE_PR_101_LABELS_VALID:-valid}"
-    if [[ "${FAKE_PR_101_GAINS_PRIORITY:-false}" == "true" && "$count" -gt 1 ]]; then
-      priority=true
-    fi
-    printf 'open\thead-101\t%s\n' "$(fake_labels_json "$priority" "$labels_valid" | base64 | tr -d '\n')"
   ;;
   */pulls/102)
     if [[ -n "${FAKE_PRUNE_QUERY_LOG:-}" ]]; then
