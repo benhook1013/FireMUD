@@ -379,14 +379,14 @@ class LoginCommandHandlerTest {
   }
 
   @Test
-  void bareLoginConsumesVerifiedFirstPartyContext() {
+  void bareLoginAcceptsVerifiedFirstPartyAccountDifferentFromGameOwner() {
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(firstPartyConnectContextRegistry.find(1L))
         .thenReturn(
             Optional.of(
                 new FirstPartyConnectContext(
-                    77L,
+                    99L,
                     22L,
                     "demo",
                     "production",
@@ -401,9 +401,13 @@ class LoginCommandHandlerTest {
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertTrue(result.commandResult().accepted());
-    assertEquals("Logged in as first-party account 77", joinedOutputText(result.outputs()));
+    assertEquals("Logged in as first-party account 99", joinedOutputText(result.outputs()));
     verify(accountClient, never()).authenticate(anyString(), anyString(), anyString());
     verify(commandService).enqueue("1", "LOGIN", false);
+    ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService).save(captor.capture());
+    assertEquals(99L, captor.getValue().accountId());
+    assertEquals(77L, instance.getOwnerAccountId());
   }
 
   @Test
@@ -893,7 +897,7 @@ class LoginCommandHandlerTest {
   }
 
   @Test
-  void accountMismatchReturnsFailure() {
+  void authenticatedNonOwnerAccountIsAcceptedAndStored() {
     TextCommand command =
         new TextCommand(
             TextCommandType.LOGIN,
@@ -901,23 +905,20 @@ class LoginCommandHandlerTest {
             "LOGIN demo@example.com swordfish");
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
-    stubSessionContext(staleGameplayContext(4L));
     when(accountClient.authenticate(anyString(), anyString(), anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("99").build());
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
-    assertFalse(result.commandResult().accepted());
-    assertEquals("ACCOUNT_MISMATCH", result.commandResult().errorCode());
-    assertEquals(
-        "ERROR ACCOUNT_MISMATCH " + LoginCommandConstants.ACCOUNT_MISMATCH_MESSAGE,
-        joinedOutputText(result.outputs()));
+    assertTrue(result.commandResult().accepted());
+    assertEquals("Logged in as demo@example.com", joinedOutputText(result.outputs()));
+    verify(commandService).enqueue("1", command.rawLine(), false);
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
-    verify(sessionContextService, times(2)).save(captor.capture());
-    verify(gameplayPresenceLifecycleService)
-        .clearGameplayBinding(staleGameplayContext(4L), "STALE_ADMISSION_POINTER");
-    assertClearedSessionContext(lastCaptured(captor), 0L);
+    verify(sessionContextService).save(captor.capture());
+    assertEquals(99L, captor.getValue().accountId());
+    assertEquals("demo@example.com", captor.getValue().loginName());
+    assertEquals(77L, instance.getOwnerAccountId());
   }
 
   @Test

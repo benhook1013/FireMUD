@@ -148,12 +148,6 @@ public final class LoginCommandHandler {
           numericSessionId, instance.getTenantId(), bootstrapGameInstanceId, null, null, 0L);
       return invalidAccountFailure();
     }
-    if (!Objects.equals(authenticatedAccountId, instance.getOwnerAccountId())) {
-      clearFailedLoginSessionState(
-          numericSessionId, instance.getTenantId(), bootstrapGameInstanceId, null, null, 0L);
-      return accountMismatchFailure();
-    }
-
     CommandEnqueueResult enqueueResult =
         commandService.enqueue(sessionId, command.rawLine(), requiresSoloTick);
     if (!enqueueResult.accepted()) {
@@ -261,16 +255,6 @@ public final class LoginCommandHandler {
           verifiedContext.realmSlug(),
           verifiedContext.pointerVersion());
       return failure("CONNECT_SCOPE_INVALID", "Connect scope invalid");
-    }
-    if (!Objects.equals(instance.getOwnerAccountId(), verifiedContext.accountId())) {
-      clearFailedLoginSessionState(
-          numericSessionId,
-          verifiedContext.tenantId(),
-          verifiedContext.gameInstanceId(),
-          verifiedContext.worldSlug(),
-          verifiedContext.realmSlug(),
-          verifiedContext.pointerVersion());
-      return accountMismatchFailure();
     }
     if (!currentAdmissionPointerMatches(verifiedContext)) {
       clearFailedLoginSessionState(
@@ -511,12 +495,6 @@ public final class LoginCommandHandler {
   private LoginCommandHandlingResult invalidAccountFailure() {
     return failure(
         LoginCommandConstants.INVALID_ACCOUNT_CODE, LoginCommandConstants.INVALID_ACCOUNT_MESSAGE);
-  }
-
-  private LoginCommandHandlingResult accountMismatchFailure() {
-    return failure(
-        LoginCommandConstants.ACCOUNT_MISMATCH_CODE,
-        LoginCommandConstants.ACCOUNT_MISMATCH_MESSAGE);
   }
 
   private LoginCommandHandlingResult failure(String code, String message) {
