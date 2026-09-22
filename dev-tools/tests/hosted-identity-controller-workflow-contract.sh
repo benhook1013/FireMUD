@@ -904,6 +904,7 @@ assert "RETIRE_IDENTITY=true" in target_step["run"]
 assert "RETIRE_IDENTITY=false" in target_step["run"]
 for job_name in ("prepare-runtime", "deploy-runtime", "verify-runtime"):
     assert "needs.validate-target.outputs.action == 'deploy'" in jobs[job_name]["if"], job_name
+assert "needs.deploy-runtime.outputs.allocation_status == 'allocated'" in jobs["verify-runtime"]["if"]
 assert jobs["destroy-runtime"]["if"] == (
     "${{ needs.validate-target.outputs.action == 'destroy' }}"
 )
@@ -963,7 +964,8 @@ for job_name in ("verify-runtime", "destroy-runtime", "retire-identity"):
 assert jobs["prepare-runtime"]["timeout-minutes"] == 45
 assert jobs["deploy-runtime"]["timeout-minutes"] == 45
 assert jobs["deploy-runtime"]["outputs"] == {
-    "runtime_namespace_uid": "${{ steps.record-runtime-namespace-uid.outputs.uid }}"
+    "runtime_namespace_uid": "${{ steps.record-runtime-namespace-uid.outputs.uid }}",
+    "allocation_status": "${{ steps.allocate-capacity.outputs.allocation_status }}",
 }
 for job_name, step_name in (
     ("destroy-runtime", "Revalidate preview cleanup target before runtime deletion"),
@@ -1848,7 +1850,8 @@ standalone_grpc = deploy_by_name["Prepare standalone gRPC TLS secret"]
 standalone_certificates = deploy_by_name["Prepare standalone transport certificates"]
 standalone_secret_wait = deploy_by_name["Wait for standalone transport Secret projections"]
 assert standalone_grpc["if"] == (
-    "${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' }}"
+    "${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' && "
+    "steps.allocate-capacity.outputs.allocation_status == 'allocated' }}"
 )
 assert standalone_grpc["env"] == {
     "KUBECONFIG": "${{ runner.temp }}/preview-runtime.kubeconfig",
@@ -1867,7 +1870,8 @@ assert standalone_certificates["run"].splitlines() == [
     'bash ./dev-tools/hosted/preview/ensure-standalone-transport-certificates.sh "$RUNTIME_NAMESPACE"',
 ]
 assert standalone_secret_wait["if"] == (
-    "${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' }}"
+    "${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' && "
+    "steps.allocate-capacity.outputs.allocation_status == 'allocated' }}"
 )
 assert standalone_secret_wait["env"] == {
     "KUBECONFIG": "${{ runner.temp }}/preview-runtime.kubeconfig",
@@ -1888,12 +1892,18 @@ assert (
 apply_step = deploy_steps[apply_step_index]
 deployed_step = deploy_steps[deployed_step_index]
 assert apply_step["id"] == "deploy-runtime-artifact"
-assert deployed_step["if"] == "${{ steps.deploy-runtime-artifact.outcome == 'success' }}"
+assert deployed_step["if"] == (
+    "${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' && "
+    "steps.deploy-runtime-artifact.outcome == 'success' }}"
+)
 assert "firemud.dev/last-preview-head-sha=${HEAD_SHA}" in deployed_step["run"]
 runtime_uid_step = deploy_by_name["Record exact deployed runtime Namespace UID"]
 runtime_uid_step_index = deploy_steps.index(runtime_uid_step)
 assert runtime_uid_step["id"] == "record-runtime-namespace-uid"
-assert runtime_uid_step["if"] == "${{ steps.deploy-runtime-artifact.outcome == 'success' }}"
+assert runtime_uid_step["if"] == (
+    "${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' && "
+    "steps.deploy-runtime-artifact.outcome == 'success' }}"
+)
 assert runtime_uid_step["env"] == {
     "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
     "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}",
@@ -2058,12 +2068,26 @@ assert actual_apply_line == dry_run_line + 3
 assert apply_run.count(source_binding_helper) == 2
 assert apply_run.count('current_pull_request_json') == 0
 
+capacity_unavailable = next(
+    step
+    for step in deploy_steps
+    if step.get("name") == "Publish trusted preview unavailable capacity"
+)
+assert capacity_unavailable["id"] == "publish-capacity-unavailable"
+assert capacity_unavailable["if"] == (
+    "${{ steps.allocate-capacity.outputs.allocation_status == 'unavailable' }}"
+)
+
 deploy_failure = next(
     step
     for step in deploy_steps
     if step.get("name") == "Publish trusted preview deployment failure"
 )
-assert deploy_failure["if"] == "${{ !cancelled() && failure() }}"
+assert deploy_failure["if"] == (
+    "${{ !cancelled() && failure() && "
+    "(steps.allocate-capacity.outputs.allocation_status != 'unavailable' || "
+    "steps.publish-capacity-unavailable.outcome == 'failure') }}"
+)
 assert deploy_failure["uses"] == "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3"
 assert deploy_failure["env"] == {
     "PREVIEW_PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
@@ -2095,8 +2119,7 @@ assert "for deployment in" not in rollout_step["run"]
 assert "rollout status" not in rollout_step["run"]
 
 assert "concurrency" not in jobs["prepare-runtime"]
-assert "concurrency" not in jobs["verify-runtime"]
-for job_name in ("deploy-runtime", "destroy-runtime", "retire-identity"):
+for job_name in ("deploy-runtime", "verify-runtime", "destroy-runtime", "retire-identity"):
     assert jobs[job_name]["concurrency"] == {
         "group": "preview-allocation-lifecycle",
         "cancel-in-progress": False,

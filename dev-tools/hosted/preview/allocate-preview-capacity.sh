@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 4 ]]; then
-  echo "usage: $0 <target_namespace> <max_active> <target_pr_number> <target_head_sha>" >&2
+if [[ $# -ne 6 ]]; then
+  echo "usage: $0 <target_namespace> <max_active> <target_pr_number> <target_head_sha> <target_base_sha> <target_merge_sha>" >&2
   exit 1
 fi
 
@@ -10,19 +10,30 @@ target_namespace="$1"
 max_active="$2"
 target_pr_number="$3"
 target_head_sha="$4"
+target_base_sha="$5"
+target_merge_sha="$6"
 priority_label="preview:priority"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 eligibility_script="${PREVIEW_ELIGIBILITY_SCRIPT:-${script_dir}/preview-eligibility.py}"
 revalidate_deploy_script="${PREVIEW_REVALIDATE_DEPLOY_SCRIPT:-${script_dir}/revalidate-preview-deploy.sh}"
+revalidate_source_binding_script="${PREVIEW_REVALIDATE_SOURCE_BINDING_SCRIPT:-${script_dir}/revalidate-preview-source-binding.sh}"
 delete_script="${PREVIEW_DELETE_SCRIPT:-${script_dir}/../shared/delete-hosted-namespace.sh}"
 publish_reclaimed_script="${PREVIEW_RECLAIMED_PUBLISH_SCRIPT:-${script_dir}/publish-preview-reclaimed.sh}"
 publish_attempts="${PREVIEW_RECLAIM_PUBLISH_ATTEMPTS:-3}"
 publish_retry_delay_seconds="${PREVIEW_RECLAIM_PUBLISH_RETRY_DELAY_SECONDS:-2}"
+readonly capacity_unavailable_exit_status=75
 
-if ! [[ "$max_active" =~ ^[0-9]+$ ]]; then
-  echo "max_active must be an integer, got: $max_active" >&2
+if ! [[ "$max_active" =~ ^[12]$ ]]; then
+  echo "max_active must be exactly 1 or 2, got: $max_active" >&2
   exit 1
 fi
+for sha_name in target_head_sha target_base_sha target_merge_sha; do
+  sha_value="${!sha_name}"
+  if ! [[ "$sha_value" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "${sha_name} must be exactly 40 lowercase hexadecimal characters" >&2
+    exit 1
+  fi
+done
 if ! [[ "$publish_attempts" =~ ^[1-9][0-9]*$ ]]; then
   echo "PREVIEW_RECLAIM_PUBLISH_ATTEMPTS must be a positive integer" >&2
   exit 1
@@ -46,6 +57,20 @@ emit_output() {
   if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
     printf '%s=%s\n' "$name" "$value" >> "$GITHUB_OUTPUT"
   fi
+}
+
+capacity_unavailable() {
+  emit_output allocation_status unavailable
+  echo "$1" >&2
+  exit "$capacity_unavailable_exit_status"
+}
+
+revalidate_target() {
+  local stage="$1"
+
+  bash "$revalidate_deploy_script" "$target_pr_number" "$target_head_sha" || return 1
+  bash "$revalidate_source_binding_script" \
+    "$target_pr_number" "$target_head_sha" "$target_base_sha" "$target_merge_sha" "$stage"
 }
 
 inspect_labels() {
@@ -252,7 +277,7 @@ find_unsatisfied_priority_pr() {
 # Fail closed on the complete live PR contract before evaluating or mutating
 # shared preview capacity. The workflow repeats this check immediately before
 # Helm so both race-sensitive deploy boundaries stay protected.
-if ! bash "$revalidate_deploy_script" "$target_pr_number" "$target_head_sha"; then
+if ! revalidate_target "before shared preview capacity evaluation"; then
   echo "Refusing capacity action because target deploy eligibility could not be revalidated" >&2
   exit 1
 fi
@@ -334,8 +359,7 @@ if [[ "$target_is_priority" != "true" ]]; then
     exit 1
   fi
   if [[ -n "$unsatisfied_priority_pr" ]]; then
-    echo "Yielding ordinary PR #${target_pr_number}: priority PR #${unsatisfied_priority_pr} has no current preview" >&2
-    exit 1
+    capacity_unavailable "Yielding ordinary PR #${target_pr_number}: priority PR #${unsatisfied_priority_pr} has no current preview"
   fi
 fi
 if (( active_count < max_active )); then
@@ -347,8 +371,7 @@ if (( active_count > max_active )); then
 fi
 
 if [[ "$target_is_priority" != "true" ]]; then
-  echo "Preview capacity exhausted; PR #${target_pr_number} does not have ${priority_label}" >&2
-  exit 1
+  capacity_unavailable "Preview capacity exhausted; PR #${target_pr_number} does not have ${priority_label}"
 fi
 
 sorted_candidates=()
@@ -371,8 +394,7 @@ for row in "${sorted_candidates[@]}"; do
 done
 
 if [[ -z "$selected" ]]; then
-  echo "Preview capacity exhausted; every reclaimable slot is priority-protected" >&2
-  exit 1
+  capacity_unavailable "Preview capacity exhausted; every reclaimable slot is priority-protected"
 fi
 
 IFS='|' read -r selected_allocated_at selected_namespace selected_pr selected_base selected_head selected_merge selected_image <<<"$selected"
@@ -443,6 +465,10 @@ publish_reclaim_state() {
   return 1
 }
 
+if ! revalidate_target "immediately before reclaim status publication"; then
+  echo "Refusing reclaim because target deploy eligibility or source binding changed before reclaim status publication" >&2
+  exit 1
+fi
 if ! publish_reclaim_state reclaiming; then
   echo "Refusing reclaim because the conservative victim status could not be published" >&2
   exit 1
@@ -452,7 +478,7 @@ fi
 # deletion. The job-level lifecycle lock prevents another managed preview
 # deploy, proof, or cleanup from racing this destructive boundary.
 revalidation_failure=""
-if ! bash "$revalidate_deploy_script" "$target_pr_number" "$target_head_sha"; then
+if ! revalidate_target "immediately before victim deletion"; then
   revalidation_failure="target PR #${target_pr_number} complete deploy contract could not be revalidated"
 elif target_metadata="$(get_pr_state "$target_pr_number")"; then
   IFS=$'\t' read -r target_state current_target_head target_is_priority target_labels_valid <<<"$target_metadata"

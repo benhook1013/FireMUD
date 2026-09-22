@@ -383,10 +383,19 @@ if [[ "$*" == *"repos/example/FireMUD/dispatches"* ]]; then
 fi
 case "$resource" in
   */git/ref/heads/*)
+    if [[ "${FAKE_PRUNE_BASE_REF_STATUS:-}" == 404 ]]; then
+      echo 'gh: Not Found (HTTP 404)' >&2
+      exit 1
+    elif [[ -n "${FAKE_PRUNE_BASE_REF_STATUS:-}" ]]; then
+      echo "gh: request failed (HTTP ${FAKE_PRUNE_BASE_REF_STATUS})" >&2
+      exit 1
+    fi
     if [[ "$has_jq" == true ]]; then
-      printf '%s' bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+      printf '%s' "${FAKE_PRUNE_BASE_REF_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
     else
-      printf '%s' '{"object":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
+      jq -cn \
+        --arg sha "${FAKE_PRUNE_BASE_REF_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
+        '{object:{sha:$sha}}'
     fi
     ;;
   */pulls/901/files\?per_page=100)
@@ -513,7 +522,9 @@ case "$resource" in
         --arg base_ref "$prune_base_ref" \
         --arg head_repository "${FAKE_PRUNE_HEAD_REPOSITORY:-example/FireMUD}" \
         --arg base_repository "${FAKE_PRUNE_BASE_REPOSITORY:-example/FireMUD}" \
-        '{state:$state,head:{sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",repo:{full_name:$head_repository}},base:{ref:$base_ref,repo:{full_name:$base_repository}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",changed_files:1,mergeable:true,mergeable_state:"clean",user:{login:"human"},labels:[]}'
+        --arg mergeable "${FAKE_PRUNE_MERGEABLE:-true}" \
+        --arg mergeable_state "${FAKE_PRUNE_MERGEABLE_STATE:-clean}" \
+        '{state:$state,head:{sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",repo:{full_name:$head_repository}},base:{ref:$base_ref,repo:{full_name:$base_repository}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",changed_files:1,mergeable:($mergeable == "true"),mergeable_state:$mergeable_state,user:{login:"human"},labels:[]}'
       exit 0
     fi
     if [[ -n "${FAKE_PRUNE_METADATA:-}" ]]; then
@@ -548,7 +559,9 @@ case "$resource" in
         --arg base_ref "$prune_base_ref" \
         --arg head_repository "${FAKE_PRUNE_HEAD_REPOSITORY:-example/FireMUD}" \
         --arg base_repository "${FAKE_PRUNE_BASE_REPOSITORY:-example/FireMUD}" \
-        '{state:$state,head:{sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",repo:{full_name:$head_repository}},base:{ref:$base_ref,repo:{full_name:$base_repository}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",changed_files:1,mergeable:true,mergeable_state:"clean",user:{login:"human"},labels:[]}'
+        --arg mergeable "${FAKE_PRUNE_MERGEABLE:-true}" \
+        --arg mergeable_state "${FAKE_PRUNE_MERGEABLE_STATE:-clean}" \
+        '{state:$state,head:{sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",repo:{full_name:$head_repository}},base:{ref:$base_ref,repo:{full_name:$base_repository}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",changed_files:1,mergeable:($mergeable == "true"),mergeable_state:$mergeable_state,user:{login:"human"},labels:[]}'
       exit 0
     fi
     if [[ "${FAKE_PRUNE_MULTI_TEST:-false}" == true ]]; then
@@ -684,6 +697,22 @@ import sys
 
 sys.stdout.write(os.environ["FAKE_ELIGIBILITY_OUTPUT"])
 EOF
+cat > "$TEMP_DIR/revalidate-source-parent-advance" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$#" -eq 5 ]] || exit 1
+[[ "$1" == 900 && "$2" == "$FAKE_TARGET_HEAD" && "$3" == "$FAKE_TARGET_BASE_SHA" && "$4" == "$FAKE_TARGET_MERGE_SHA" ]] || exit 1
+count=0
+if [[ -f "$FAKE_SOURCE_BINDING_CALLS" ]]; then
+  count="$(<"$FAKE_SOURCE_BINDING_CALLS")"
+fi
+count=$((count + 1))
+printf '%s' "$count" > "$FAKE_SOURCE_BINDING_CALLS"
+if (( count >= 3 )); then
+  echo "parent base advanced while the child head remained unchanged" >&2
+  exit 1
+fi
+EOF
 chmod +x \
   "$TEMP_DIR/bin/kubectl" \
   "$TEMP_DIR/bin/gh" \
@@ -691,7 +720,8 @@ chmod +x \
   "$TEMP_DIR/delete" \
   "$TEMP_DIR/identity-request" \
   "$TEMP_DIR/identity-wait" \
-  "$TEMP_DIR/publish"
+  "$TEMP_DIR/publish" \
+  "$TEMP_DIR/revalidate-source-parent-advance"
 
 export PATH="$TEMP_DIR/bin:$PATH"
 export GITHUB_REPOSITORY="example/FireMUD"
@@ -704,6 +734,7 @@ export FAKE_DELETE_TIMEOUT_LOG="$TEMP_DIR/delete-timeout.log"
 export FAKE_PUBLISH_LOG="$TEMP_DIR/publish.log"
 export FAKE_PUBLISHED_STATE="$TEMP_DIR/published-state"
 export FAKE_PUBLISH_CALLS="$TEMP_DIR/publish-calls"
+export FAKE_SOURCE_BINDING_CALLS="$TEMP_DIR/source-binding-calls"
 export FAKE_COMMENT_METHOD_LOG="$TEMP_DIR/comment-method.log"
 export FAKE_ANNOTATE_LOG="$TEMP_DIR/annotate.log"
 export FAKE_ANNOTATE_FAILURE_MARKER="$TEMP_DIR/annotate-failure.marker"
@@ -732,6 +763,8 @@ export HOSTED_IDENTITY_WAIT_SCRIPT="$TEMP_DIR/identity-wait"
 export HOSTED_IDENTITY_REQUESTER_KUBECONFIG="$TEMP_DIR/requester.kubeconfig"
 touch "$HOSTED_IDENTITY_REQUESTER_KUBECONFIG"
 export FAKE_TARGET_HEAD="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+export FAKE_TARGET_BASE_SHA="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+export FAKE_TARGET_MERGE_SHA="cccccccccccccccccccccccccccccccccccccccc"
 priority_candidate_head="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
 priority_labels_base64="$(printf '%s' '[{"name":"preview:priority"}]' | base64 | tr -d '\n')"
@@ -740,7 +773,7 @@ adversarial_labels_base64="$(printf '%s' '[{"name":"custom:label"},{"name":"quot
 invalid_json_labels_base64="$(printf '%s' '{invalid-json' | base64 | tr -d '\n')"
 
 reset_case() {
-  rm -f "$FAKE_DELETE_LOG" "$FAKE_DELETE_TIMEOUT_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_ANNOTATE_FAILURE_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_PRUNE_QUERY_LOG" "$FAKE_PRIORITY_QUERY_LOG" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_NAMESPACE_SNAPSHOT_LOG" "$FAKE_NAMESPACE_SNAPSHOT_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_DELETE_UID_LOG" "$FAKE_RUNTIME_NAMESPACE_DELETED_MARKER" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$FAKE_IDENTITY_LOG" "$FAKE_IDENTITY_LIST_KUBECONFIG_LOG" "$FAKE_IDENTITY_REQUEST_LOG" "$FAKE_IDENTITY_WAIT_LOG" "$FAKE_OPERATION_SEQUENCE" "$TEMP_DIR/output"
+  rm -f "$FAKE_DELETE_LOG" "$FAKE_DELETE_TIMEOUT_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_SOURCE_BINDING_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_ANNOTATE_FAILURE_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_PRUNE_QUERY_LOG" "$FAKE_PRIORITY_QUERY_LOG" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_NAMESPACE_SNAPSHOT_LOG" "$FAKE_NAMESPACE_SNAPSHOT_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_DELETE_UID_LOG" "$FAKE_RUNTIME_NAMESPACE_DELETED_MARKER" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$FAKE_IDENTITY_LOG" "$FAKE_IDENTITY_LIST_KUBECONFIG_LOG" "$FAKE_IDENTITY_REQUEST_LOG" "$FAKE_IDENTITY_WAIT_LOG" "$FAKE_OPERATION_SEQUENCE" "$TEMP_DIR/output"
   export GITHUB_OUTPUT="$TEMP_DIR/output"
   export FAKE_TARGET_PRIORITY=true
   export FAKE_TARGET_LABELS_VALID=valid
@@ -797,6 +830,9 @@ reset_case() {
   export FAKE_PRUNE_METADATA=''
   export FAKE_PRUNE_HEAD_REPOSITORY=example/FireMUD
   export FAKE_PRUNE_BASE_REPOSITORY=example/FireMUD
+  export FAKE_PRUNE_MERGEABLE=true
+  export FAKE_PRUNE_MERGEABLE_STATE=clean
+  unset FAKE_PRUNE_BASE_REF_STATUS FAKE_PRUNE_BASE_REF_SHA
   export FAKE_PRUNE_QUERY_FAIL=false
   export FAKE_PRUNE_JQ_FAIL=false
   export FAKE_IDENTITY_REQUEST_FAIL=false
@@ -830,7 +866,36 @@ reset_case() {
   export FAKE_ELIGIBILITY_OUTPUT=''
   export PREVIEW_ELIGIBILITY_SCRIPT="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
   export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
+  unset PREVIEW_REVALIDATE_SOURCE_BINDING_SCRIPT
 }
+
+run_allocator() {
+  bash "$ALLOCATOR" "$1" "$2" "$3" "$4" \
+    "$FAKE_TARGET_BASE_SHA" "$FAKE_TARGET_MERGE_SHA"
+}
+
+expect_capacity_unavailable() {
+  local status
+  if run_allocator "$@"; then
+    echo "allocator unexpectedly allocated capacity" >&2
+    return 1
+  else
+    status=$?
+  fi
+  [[ "$status" -eq 75 ]] || {
+    echo "allocator returned ${status}, expected reserved unavailable status 75" >&2
+    return 1
+  }
+  grep -Fqx 'allocation_status=unavailable' "$GITHUB_OUTPUT"
+}
+
+reset_case
+for invalid_capacity in 0 3; do
+  if run_allocator pr-900 "$invalid_capacity" 900 "$FAKE_TARGET_HEAD"; then
+    echo "allocator accepted invalid configured capacity ${invalid_capacity}" >&2
+    exit 1
+  fi
+done
 
 SUMMARY_WRITER="$ROOT_DIR/dev-tools/hosted/preview/write-preview-summary.sh"
 unset PREVIEW_EXPOSURE_MODE
@@ -881,7 +946,7 @@ assert_marker_count() {
 }
 
 reset_case
-bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"
+run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"
 grep -qx 'pr-101 pr-101' "$FAKE_DELETE_LOG"
 grep -qx '101 900 reclaiming' "$FAKE_PUBLISH_LOG"
 grep -qx '101 900 reclaimed' "$FAKE_PUBLISH_LOG"
@@ -1000,28 +1065,34 @@ export FAKE_COMMENT_JSON='[
   {"id":400,"created_at":"2026-01-03T00:00:00Z","user":{"login":"github-actions[bot]"},"body":"### Preview Summary\nLegacy duplicate"}
 ]'
 export FAKE_PREVIOUS_COMMENT_BODY=$'### Preview Summary\nLegacy canonical'
-bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"
+run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"
 grep -qx '200' "$FAKE_PREVIOUS_COMMENT_ID_LOG"
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
-if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
-  echo "ordinary PR unexpectedly reclaimed a full preview pool" >&2
-  exit 1
-fi
+expect_capacity_unavailable pr-900 2 900 "$FAKE_TARGET_HEAD"
 test ! -e "$FAKE_DELETE_LOG"
 
 reset_case
 export FAKE_PR_101_PRIORITY=true
-if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
-  echo "priority PR unexpectedly reclaimed another priority preview" >&2
-  exit 1
-fi
+expect_capacity_unavailable pr-900 2 900 "$FAKE_TARGET_HEAD"
 test ! -e "$FAKE_DELETE_LOG"
 
 reset_case
+export PREVIEW_REVALIDATE_SOURCE_BINDING_SCRIPT="$TEMP_DIR/revalidate-source-parent-advance"
+if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+  echo "reclaim proceeded after the parent advanced with an unchanged child head" >&2
+  exit 1
+fi
+test ! -e "$FAKE_DELETE_LOG"
+grep -qx '101 900 reclaiming' "$FAKE_PUBLISH_LOG"
+grep -qx '101 900 retained' "$FAKE_PUBLISH_LOG"
+test "$(<"$FAKE_SOURCE_BINDING_CALLS")" -eq 3
+unset PREVIEW_REVALIDATE_SOURCE_BINDING_SCRIPT
+
+reset_case
 export FAKE_TARGET_LOSES_PRIORITY=true
-if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   echo "reclaim proceeded after the target lost priority" >&2
   exit 1
 fi
@@ -1032,7 +1103,7 @@ grep -qx 'retained' "$FAKE_PUBLISHED_STATE"
 
 reset_case
 export FAKE_PR_101_GAINS_PRIORITY=true
-if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   echo "reclaim proceeded after the victim gained priority" >&2
   exit 1
 fi
@@ -1043,7 +1114,7 @@ grep -qx 'retained' "$FAKE_PUBLISHED_STATE"
 
 reset_case
 export FAKE_PR_101_OWNER=999
-if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   echo "reclaim proceeded after victim namespace ownership changed" >&2
   exit 1
 fi
@@ -1053,7 +1124,7 @@ grep -qx 'failure' "$FAKE_PUBLISHED_STATE"
 
 reset_case
 export FAKE_NAMESPACE_JSON_QUERY_FAIL=true
-if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   echo "reclaim proceeded after victim namespace snapshot failed" >&2
   exit 1
 fi
@@ -1064,7 +1135,7 @@ test "$(<"$FAKE_NAMESPACE_JSON_CALLS")" -eq 1
 
 reset_case
 export FAKE_NAMESPACE_JSON_PARSE_FAIL=true
-if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   echo "reclaim proceeded after victim namespace snapshot was malformed" >&2
   exit 1
 fi
@@ -1075,7 +1146,7 @@ test "$(<"$FAKE_NAMESPACE_JSON_CALLS")" -eq 1
 
 reset_case
 export FAKE_PR_101_IMAGE=$'image-101\n'
-if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   echo "reclaim proceeded after victim image tag contained a trailing newline" >&2
   exit 1
 fi
@@ -1093,7 +1164,7 @@ for unsafe_image in \
 do
   reset_case
   export FAKE_PR_101_IMAGE="$unsafe_image"
-  if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+  if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
     echo "reclaim proceeded after victim image tag contained an unsafe character" >&2
     exit 1
   fi
@@ -1107,7 +1178,7 @@ reset_case
 export FAKE_TARGET_PRIORITY=false
 export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-900|900|2026-01-01T00:00:00Z|head-900|image-900\n2026-01-02T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n'
-if ! bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+if ! run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   echo "existing ordinary preview was blocked by an unsatisfied priority PR" >&2
   exit 1
 fi
@@ -1115,7 +1186,7 @@ test ! -e "$FAKE_DELETE_LOG"
 
 reset_case
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|preview-101|101|2026-01-02T00:00:00Z|head-101|image-101\n'
-if bash "$ALLOCATOR" pr-900 1 900 "$FAKE_TARGET_HEAD"; then
+if run_allocator pr-900 1 900 "$FAKE_TARGET_HEAD"; then
   echo "reclaim selected a noncanonical preview namespace" >&2
   exit 1
 fi
@@ -1123,7 +1194,7 @@ test ! -e "$FAKE_DELETE_LOG"
 
 reset_case
 export FAKE_PUBLISH_FAIL_PHASE=reclaiming
-if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   echo "reclaim proceeded after conservative status publication failed" >&2
   exit 1
 fi
@@ -1133,7 +1204,7 @@ test ! -e "$FAKE_PUBLISHED_STATE"
 
 reset_case
 export FAKE_DELETE_FAIL=true
-if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   echo "reclaim proceeded after namespace deletion failed" >&2
   exit 1
 fi
@@ -1149,7 +1220,7 @@ grep -qx 'failure' "$FAKE_PUBLISHED_STATE"
 reset_case
 export FAKE_DELETE_FAIL=true
 export FAKE_PUBLISH_FAIL_PHASES='failure'
-if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   echo "reclaim reported success after deletion and failure-state compensation failed" >&2
   exit 1
 fi
@@ -1164,7 +1235,7 @@ grep -qx 'reclaiming' "$FAKE_PUBLISHED_STATE"
 
 reset_case
 export FAKE_PUBLISH_FAIL_PHASE=reclaimed
-if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   echo "reclaim reported success after final status publication failed" >&2
   exit 1
 fi
@@ -1181,7 +1252,7 @@ grep -qx 'failure' "$FAKE_PUBLISHED_STATE"
 reset_case
 export FAKE_PUBLISH_FAIL_PHASE=reclaimed
 export FAKE_PUBLISH_FAIL_PHASES='failure'
-if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   echo "reclaim reported success after final status and failure-state repair failed" >&2
   exit 1
 fi
@@ -1197,7 +1268,7 @@ grep -qx 'reclaiming' "$FAKE_PUBLISHED_STATE"
 
 reset_case
 export FAKE_PUBLISH_FAIL_COUNT=2
-bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"
+run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"
 test "$(grep -c '101 900 reclaiming' "$FAKE_PUBLISH_LOG")" -eq 3
 grep -qx '101 900 reclaimed' "$FAKE_PUBLISH_LOG"
 grep -qx 'reclaimed' "$FAKE_PUBLISHED_STATE"
@@ -1206,7 +1277,7 @@ reset_case
 export FAKE_TARGET_PRIORITY=false
 export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
 export FAKE_PRIORITY_CANDIDATE_NAMESPACE_ABSENT=true
-if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
+if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   echo "ordinary allocation did not yield to an unsatisfied priority PR" >&2
   exit 1
 fi
@@ -1216,7 +1287,7 @@ reset_case
 export FAKE_TARGET_PRIORITY=false
 export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
 export FAKE_PRIORITY_CANDIDATE_NAMESPACE_LOOKUP_ERROR=true
-if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD" \
+if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD" \
   >"$TEMP_DIR/priority-candidate-namespace-error.output" 2>&1; then
   echo "ordinary allocation proceeded after a priority candidate namespace lookup failed" >&2
   exit 1
@@ -1233,7 +1304,7 @@ do
   reset_case
   export FAKE_TARGET_PRIORITY=false
   export FAKE_OPEN_PRIORITY_ROWS="$ineligible_priority_row"
-  bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"
+  expect_capacity_unavailable pr-900 2 900 "$FAKE_TARGET_HEAD"
   test ! -e "$FAKE_DELETE_LOG"
 done
 
@@ -1243,7 +1314,7 @@ reset_case
 export FAKE_TARGET_PRIORITY=false
 export FAKE_PR_901_BASE_REF=feature/stack
 export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tfeature/stack\topen\t${priority_labels_base64}\n"
-if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
+if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   echo "ordinary allocation did not yield to a labeled same-repository stacked PR" >&2
   exit 1
 fi
@@ -1257,7 +1328,7 @@ for missing_identity_field in 1 2 4 5 6 7; do
     awk -F '\t' -v OFS='\t' -v missing="$missing_identity_field" \
       '{$missing = ""; print}' <<<"$valid_open_pr_row"
   )"$'\n' \
-    bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD" \
+    run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD" \
     >"$TEMP_DIR/missing-open-pr-field-${missing_identity_field}.output" 2>&1 && {
       echo "ordinary allocation accepted open PR metadata with missing identity field ${missing_identity_field}" >&2
       exit 1
@@ -1270,7 +1341,7 @@ done
 reset_case
 export FAKE_TARGET_PRIORITY=false
 export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\t\thuman\tdevelop\topen\t${priority_labels_base64}\n"
-bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"
+expect_capacity_unavailable pr-900 2 900 "$FAKE_TARGET_HEAD"
 test ! -e "$FAKE_DELETE_LOG"
 
 for ignored_untrusted_row in \
@@ -1280,14 +1351,14 @@ do
   reset_case
   export FAKE_TARGET_PRIORITY=false
   export FAKE_OPEN_PRIORITY_ROWS="$ignored_untrusted_row"
-  bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"
+  expect_capacity_unavailable pr-900 2 900 "$FAKE_TARGET_HEAD"
   test ! -e "$FAKE_DELETE_LOG"
 done
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
 export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\textra\n"
-if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD" \
+if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD" \
   >"$TEMP_DIR/malformed-open-pr-framing.output" 2>&1; then
   echo "ordinary allocation accepted malformed open PR row framing" >&2
   exit 1
@@ -1299,13 +1370,13 @@ test ! -e "$FAKE_DELETE_LOG"
 reset_case
 export FAKE_TARGET_PRIORITY=false
 export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tdevelop\topen\t${adversarial_labels_base64}\n"
-bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"
+expect_capacity_unavailable pr-900 2 900 "$FAKE_TARGET_HEAD"
 test ! -e "$FAKE_DELETE_LOG"
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
 export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tdevelop\topen\t${invalid_json_labels_base64}\n"
-if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
+if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   echo "ordinary allocation did not fail closed on malformed priority labels" >&2
   exit 1
 fi
@@ -1314,14 +1385,14 @@ test ! -e "$FAKE_DELETE_LOG"
 reset_case
 export FAKE_TARGET_PRIORITY=false
 export FAKE_PRIORITY_QUERY_FAIL=true
-if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
+if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   echo "ordinary allocation did not fail closed when priority query failed" >&2
   exit 1
 fi
 
 reset_case
 export FAKE_TARGET_LABELS_VALID=invalid
-if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
+if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   echo "malformed target labels were treated as eligible" >&2
   exit 1
 fi
@@ -1340,7 +1411,7 @@ for target_contract_case in repository head base author metadata; do
     metadata) export FAKE_TARGET_JQ_QUERY_FAIL=true ;;
   esac
   target_contract_output="$TEMP_DIR/target-${target_contract_case}.output"
-  if bash "$ALLOCATOR" pr-900 3 900 "${expected_target_head:-$FAKE_TARGET_HEAD}" \
+  if run_allocator pr-900 2 900 "${expected_target_head:-$FAKE_TARGET_HEAD}" \
     >"$target_contract_output" 2>&1; then
     echo "allocator accepted invalid live target ${target_contract_case} metadata" >&2
     exit 1
@@ -1358,7 +1429,7 @@ reset_case
 export FAKE_TARGET_PRIORITY=false
 export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
 export PREVIEW_ELIGIBILITY_SCRIPT="$TEMP_DIR/eligibility-fail.py"
-if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
+if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   echo "ordinary allocation did not fail closed when eligibility evaluation failed" >&2
   exit 1
 fi
@@ -1366,7 +1437,7 @@ fi
 reset_case
 export FAKE_TARGET_PRIORITY=false
 export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tdevelop\topen\t${adversarial_priority_labels_base64}\n"
-if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
+if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   echo "ordinary allocation ignored a priority label alongside quoted and backslashed label data" >&2
   exit 1
 fi
@@ -1379,6 +1450,56 @@ export PREVIEW_DELETE_TIMEOUT=37
 bash "$PRUNER" --apply
 grep -qx 'pr-101 pr-101' "$FAKE_DELETE_LOG"
 grep -qx '37' "$FAKE_DELETE_TIMEOUT_LOG"
+
+# Ordinary develop/main previews are retained only while their live merge and
+# base branch remain valid. Known terminal state is authoritative; ambiguous
+# API or metadata state remains fail-closed against destructive cleanup.
+reset_case
+export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+export FAKE_PRUNE_METADATA="open\tdevelop\thuman\t${adversarial_labels_base64}\n"
+export FAKE_PRUNE_MERGEABLE=false
+export FAKE_PRUNE_MERGEABLE_STATE=dirty
+bash "$PRUNER" --apply >"$TEMP_DIR/prune-ordinary-conflict.out"
+grep -qx 'pr-101 pr-101' "$FAKE_DELETE_LOG"
+grep -Fq 'PR #101 is not preview-eligible (merge-conflict)' \
+  "$TEMP_DIR/prune-ordinary-conflict.out"
+
+reset_case
+export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+export FAKE_PRUNE_METADATA="open\tmain\thuman\t${adversarial_labels_base64}\n"
+export FAKE_PRUNE_BASE_REF_STATUS=404
+bash "$PRUNER" --apply >"$TEMP_DIR/prune-ordinary-missing-base.out"
+grep -qx 'pr-101 pr-101' "$FAKE_DELETE_LOG"
+grep -Fq 'PR #101 is not preview-eligible (missing-base-branch)' \
+  "$TEMP_DIR/prune-ordinary-missing-base.out"
+
+reset_case
+export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+export FAKE_PRUNE_METADATA="open\tdevelop\thuman\t${adversarial_labels_base64}\n"
+export FAKE_PRUNE_BASE_REF_STATUS=500
+bash "$PRUNER" --apply >"$TEMP_DIR/prune-ordinary-base-error.out"
+test ! -e "$FAKE_DELETE_LOG"
+grep -Fq 'Keeping pr-101: PR #101 base branch lookup failed' \
+  "$TEMP_DIR/prune-ordinary-base-error.out"
+
+reset_case
+export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+export FAKE_PRUNE_METADATA="open\tdevelop\thuman\t${adversarial_labels_base64}\n"
+export FAKE_PRUNE_MERGEABLE=false
+export FAKE_PRUNE_MERGEABLE_STATE=unknown
+bash "$PRUNER" --apply >"$TEMP_DIR/prune-ordinary-unknown-merge.out"
+test ! -e "$FAKE_DELETE_LOG"
+grep -Fq 'Keeping pr-101: PR #101 mergeability is unknown' \
+  "$TEMP_DIR/prune-ordinary-unknown-merge.out"
+
+reset_case
+export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+export FAKE_PRUNE_METADATA="open\tdevelop\thuman\t${adversarial_labels_base64}\n"
+export FAKE_PRUNE_BASE_REF_SHA=malformed
+bash "$PRUNER" --apply >"$TEMP_DIR/prune-ordinary-malformed-base.out"
+test ! -e "$FAKE_DELETE_LOG"
+grep -Fq 'Keeping pr-101: PR #101 base branch metadata is malformed' \
+  "$TEMP_DIR/prune-ordinary-malformed-base.out"
 
 # Scheduled terminal cleanup may retire an existing identity only through the
 # explicit hosted-controller mode. Runtime deletion, retirement request, the
@@ -1977,7 +2098,7 @@ reason=${authoritative_prune_reason}"
 done
 
 reset_case
-if bash "$ALLOCATOR" pr-900 1 900 "$FAKE_TARGET_HEAD"; then
+if run_allocator pr-900 1 900 "$FAKE_TARGET_HEAD"; then
   echo "priority allocation reclaimed only one slot from an over-capacity pool" >&2
   exit 1
 fi
@@ -1985,7 +2106,7 @@ test ! -e "$FAKE_DELETE_LOG"
 
 reset_case
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-900|900|2026-01-01T00:00:00Z|head-900|image-900\n2026-01-02T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
-bash "$ALLOCATOR" pr-900 1 900 "$FAKE_TARGET_HEAD"
+run_allocator pr-900 1 900 "$FAKE_TARGET_HEAD"
 test ! -e "$FAKE_DELETE_LOG"
 
 trusted_workflow="$ROOT_DIR/.github/workflows/hosted-identity-request.yml"
@@ -2036,7 +2157,7 @@ reconciler_valid_output="$TEMP_DIR/reconciler-valid.out"
   FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD=head-901 \
-    PREVIEW_MAX_ACTIVE=3 \
+PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_valid_output"
 if ! grep -Fqx "Preview pr-901 already aligned to ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}" "$reconciler_valid_output"; then
@@ -2054,7 +2175,7 @@ reconciler_stacked_output="$TEMP_DIR/reconciler-stacked.out"
     FAKE_PR_901_BASE_REF=feature/stack \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD=head-901 \
-    PREVIEW_MAX_ACTIVE=3 \
+PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_stacked_output"
 grep -Fqx "Dispatching preview render for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${stacked_preview_image_tag}) from trusted ref develop" \
@@ -2067,7 +2188,7 @@ reconciler_empty_deployed_output="$TEMP_DIR/reconciler-empty-deployed.out"
   FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD='' \
     FAKE_PR_901_REQUESTED_HEAD=head-901 \
-    PREVIEW_MAX_ACTIVE=3 \
+PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_empty_deployed_output"
 grep -Fqx "Dispatching preview render for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}) from trusted ref develop" \
@@ -2082,7 +2203,7 @@ reconciler_namespace_absent_output="$TEMP_DIR/reconciler-namespace-absent.out"
   FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_NAMESPACE_ABSENT=true \
-    PREVIEW_MAX_ACTIVE=3 \
+PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_namespace_absent_output"
 grep -Fqx "Dispatching preview render for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}) from trusted ref develop" \
@@ -2127,7 +2248,7 @@ reconciler_stale_active_run_output="$TEMP_DIR/reconciler-stale-active-run.out"
   FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_NAMESPACE_ABSENT=true \
     FAKE_ACTIVE_PREVIEW_RUNS_JSON='[{"databaseId":41,"status":"in_progress","displayTitle":"Preview dispatch pr-901-base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-head-deadbeef-merge-cccccccccccccccccccccccccccccccccccccccc"}]' \
-    PREVIEW_MAX_ACTIVE=3 \
+PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_stale_active_run_output"
 grep -Fqx "Dispatching preview render for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}) from trusted ref develop" \
@@ -2143,7 +2264,7 @@ reconciler_current_active_run_output="$TEMP_DIR/reconciler-current-active-run.ou
   FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_NAMESPACE_ABSENT=true \
     FAKE_ACTIVE_PREVIEW_RUNS_JSON='[{"databaseId":42,"status":"queued","displayTitle":"Preview dispatch pr-901-base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-merge-cccccccccccccccccccccccccccccccccccccccc"}]' \
-    PREVIEW_MAX_ACTIVE=3 \
+PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_current_active_run_output"
 grep -qx \
@@ -2159,7 +2280,7 @@ reconciler_namespace_absent_on_recheck_output="$TEMP_DIR/reconciler-namespace-ab
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
     FAKE_PR_901_NAMESPACE_ABSENT_ON_RECHECK=true \
-    PREVIEW_MAX_ACTIVE=3 \
+PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_namespace_absent_on_recheck_output"
 grep -Fqx "Dispatching preview render for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}) from trusted ref develop" \
@@ -2175,7 +2296,7 @@ if (
   FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_NAMESPACE_SNAPSHOT_ERROR=true \
-    PREVIEW_MAX_ACTIVE=3 \
+PREVIEW_MAX_ACTIVE=2 \
     bash -e "$RECONCILER_RUN"
 ) > "$reconciler_namespace_error_output" 2>&1; then
   echo "reconciler suppressed an initial namespace snapshot API error" >&2
@@ -2192,7 +2313,7 @@ reconciler_namespace_parse_output="$TEMP_DIR/reconciler-namespace-parse.out"
   cd "$ROOT_DIR"
   FAKE_OPEN_PRIORITY_ROWS="0\t901\thead-901\thuman\tdevelop\topen\t${priority_labels_base64}\n1\t101\tnew-head-101\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_NAMESPACE_SNAPSHOT_PARSE_FAIL=true \
-    PREVIEW_MAX_ACTIVE=3 \
+PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_namespace_parse_output" 2>&1
 grep -qx 'Skipping PR #901: unable to parse namespace pr-901 snapshot.' \
@@ -2211,7 +2332,7 @@ reconciler_namespace_recheck_parse_output="$TEMP_DIR/reconciler-namespace-rechec
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
     FAKE_NAMESPACE_SNAPSHOT_RECHECK_PARSE_FAIL=true \
-    PREVIEW_MAX_ACTIVE=3 \
+PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_namespace_recheck_parse_output" 2>&1
 grep -qx 'Skipping PR #901: unable to parse namespace pr-901 recheck.' \
@@ -2229,7 +2350,7 @@ reconciler_missing_requested_output="$TEMP_DIR/reconciler-missing-requested.out"
   FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
-    PREVIEW_MAX_ACTIVE=3 \
+PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_missing_requested_output"
 grep -qx 'Repaired missing requested preview tuple for pr-901' \
@@ -2248,7 +2369,7 @@ reconciler_stale_requested_output="$TEMP_DIR/reconciler-stale-requested.out"
   FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD=stale-head \
-    PREVIEW_MAX_ACTIVE=3 \
+PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_stale_requested_output"
 grep -qx 'Repaired stale requested preview tuple for pr-901' \
@@ -2269,7 +2390,7 @@ reconciler_annotation_deleted_output="$TEMP_DIR/reconciler-annotation-deleted.ou
     FAKE_PR_901_REQUESTED_HEAD='' \
     FAKE_ANNOTATE_ERROR=true \
     FAKE_ANNOTATE_NAMESPACE_ABSENT_AFTER_FAILURE=true \
-    PREVIEW_MAX_ACTIVE=3 \
+PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_annotation_deleted_output"
 grep -qx 'Namespace pr-901 was deleted during requested-head repair; dispatching replacement.' \
@@ -2290,7 +2411,7 @@ reconciler_annotation_existing_output="$TEMP_DIR/reconciler-annotation-existing.
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
     FAKE_ANNOTATE_ERROR=true \
-    PREVIEW_MAX_ACTIVE=3 \
+PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_annotation_existing_output" 2>&1
 grep -qx \
@@ -2312,7 +2433,7 @@ if (
     FAKE_PR_901_REQUESTED_HEAD='' \
     FAKE_ANNOTATE_ERROR=true \
     FAKE_ANNOTATE_CONFIRMATION_ERROR=true \
-    PREVIEW_MAX_ACTIVE=3 \
+PREVIEW_MAX_ACTIVE=2 \
     bash -e "$RECONCILER_RUN"
 ) > "$reconciler_annotation_confirmation_error_output" 2>&1; then
   echo "reconciler suppressed an annotation-failure confirmation error" >&2
@@ -2332,7 +2453,7 @@ if (
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
     FAKE_NAMESPACE_SNAPSHOT_RECHECK_ERROR=true \
-    PREVIEW_MAX_ACTIVE=3 \
+PREVIEW_MAX_ACTIVE=2 \
     bash -e "$RECONCILER_RUN"
 ) > "$reconciler_namespace_recheck_error_output" 2>&1; then
   echo "reconciler suppressed a namespace recheck API error" >&2
@@ -2352,7 +2473,7 @@ reconciler_changed_requested_output="$TEMP_DIR/reconciler-changed-requested.out"
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
     FAKE_PR_901_RECHECK_REQUESTED_HEAD=raced-head \
-    PREVIEW_MAX_ACTIVE=3 \
+PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_changed_requested_output"
 grep -qx \
@@ -2370,7 +2491,7 @@ reconciler_changed_stale_requested_output="$TEMP_DIR/reconciler-changed-stale-re
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD=stale-head \
     FAKE_PR_901_RECHECK_REQUESTED_HEAD=other-stale-head \
-    PREVIEW_MAX_ACTIVE=3 \
+PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_changed_stale_requested_output"
 grep -qx \
@@ -2388,7 +2509,7 @@ reconciler_changed_deployed_output="$TEMP_DIR/reconciler-changed-deployed.out"
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
     FAKE_PR_901_RECHECK_HEAD=changed-head \
-    PREVIEW_MAX_ACTIVE=3 \
+PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_changed_deployed_output"
 grep -qx \
@@ -2404,7 +2525,7 @@ reconciler_malformed_output="$TEMP_DIR/reconciler-malformed.out"
 (
   cd "$ROOT_DIR"
   FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${malformed_labels_base64}\n" \
-    PREVIEW_MAX_ACTIVE=3 \
+PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_malformed_output" 2>&1
 grep -qx 'Skipping PR #901: label metadata could not be decoded as a JSON array.' \
@@ -2629,7 +2750,7 @@ done
 reset_case
 export FAKE_TARGET_PRIORITY=false
 export FAKE_OPEN_PRIORITY_ROWS="$priority_limit_rows"
-if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD" \
+if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD" \
   >"$TEMP_DIR/priority-limit.output" 2>&1; then
   echo "ordinary allocation unexpectedly succeeded with an unsatisfied priority PR" >&2
   exit 1
@@ -2648,7 +2769,7 @@ reset_case
 export FAKE_TARGET_PRIORITY=false
 export FAKE_OPEN_PRIORITY_ROWS="$priority_limit_rows"
 export FAKE_PRIORITY_OVERFLOW=true
-if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD" \
+if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD" \
   >"$TEMP_DIR/priority-overflow.output" 2>&1; then
   echo "allocation unexpectedly succeeded with priority candidate 1001" >&2
   exit 1
@@ -2697,9 +2818,9 @@ if grep -Eq 'def labels_valid:|all\(\.labels\[\]\?; \(type == "object"\)' \
   exit 1
 fi
 grep -q 'group: preview-allocation-lifecycle' "$trusted_workflow"
-test "$(grep -Fc 'group: preview-allocation-lifecycle' "$trusted_workflow")" -eq 3
-test "$(grep -Fc 'cancel-in-progress: false' "$trusted_workflow")" -eq 3
-test "$(grep -Fc 'queue: max' "$trusted_workflow")" -eq 3
+test "$(grep -Fc 'group: preview-allocation-lifecycle' "$trusted_workflow")" -eq 4
+test "$(grep -Fc 'cancel-in-progress: false' "$trusted_workflow")" -eq 4
+test "$(grep -Fc 'queue: max' "$trusted_workflow")" -eq 4
 grep -q 'group: preview-allocation-lifecycle' "$janitor_workflow"
 grep -q 'uses: ./.github/actions/resolve-certificate-identity-mode' "$janitor_workflow"
 grep -q "steps.certificate-identity.outputs.mode == 'hosted-controller'" "$janitor_workflow"

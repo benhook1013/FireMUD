@@ -499,6 +499,7 @@ jobs:
     if: ${{ needs.validate-target.outputs.action == 'deploy' && needs.prepare-runtime.result == 'success' }}
     outputs:
       runtime_namespace_uid: ${{ steps.record-runtime-namespace-uid.outputs.uid }}
+      allocation_status: ${{ steps.allocate-capacity.outputs.allocation_status }}
     environment: trusted-hosted-cluster
     concurrency:
       group: preview-allocation-lifecycle
@@ -598,15 +599,55 @@ jobs:
           PREVIEW_MAX_ACTIVE: ${{ vars.PREVIEW_MAX_ACTIVE }}
           KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
         run: |
+          set +e
           bash ./dev-tools/hosted/preview/allocate-preview-capacity.sh \
             "${{ needs.validate-target.outputs.namespace }}" \
-            "${PREVIEW_MAX_ACTIVE:-1}" \
+            "${PREVIEW_MAX_ACTIVE:-2}" \
             "${{ needs.validate-target.outputs.pr_number }}" \
-            "${{ needs.validate-target.outputs.head_sha }}"
+            "${{ needs.validate-target.outputs.head_sha }}" \
+            "${{ needs.validate-target.outputs.base_sha }}" \
+            "${{ needs.validate-target.outputs.merge_sha }}"
+          allocation_status=$?
+          set -e
+          if [[ "$allocation_status" -eq 75 ]] &&
+            grep -Fqx 'allocation_status=unavailable' "$GITHUB_OUTPUT"; then
+            exit 0
+          fi
+          if [[ "$allocation_status" -ne 0 ]]; then
+            exit "$allocation_status"
+          fi
+          echo "allocation_status=allocated" >> "$GITHUB_OUTPUT"
+
+      - name: Publish trusted preview unavailable capacity
+        id: publish-capacity-unavailable
+        if: ${{ steps.allocate-capacity.outputs.allocation_status == 'unavailable' }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          PREVIEW_PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          PREVIEW_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          PREVIEW_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
+          PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
+          PREVIEW_EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
+        with:
+          script: |
+            const { publishPreviewComment } = require(
+              `${process.env.GITHUB_WORKSPACE}/dev-tools/hosted/preview/publish-preview-comment.js`
+            );
+            await publishPreviewComment({
+              github,
+              context,
+              core,
+              mode: "unavailable",
+              markerPolicy: "replace",
+              statePolicy: "expected-open",
+              telnetPort: "unavailable",
+              failureStage: "capacity",
+              staleDescription: "trusted preview capacity unavailable",
+            });
 
       - name: Allocate stable preview Telnet port
         id: allocate-telnet-port
-        if: ${{ needs.validate-target.outputs.exposure_mode == 'public' }}
+        if: ${{ needs.validate-target.outputs.exposure_mode == 'public' && steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
         run: |
@@ -621,6 +662,7 @@ jobs:
           echo "port=$port" >> "$GITHUB_OUTPUT"
 
       - name: Revalidate exact PR target before clean runtime redeploy
+        if: ${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
@@ -636,6 +678,7 @@ jobs:
             "before clean runtime redeploy"
 
       - name: Delete exact preview runtime namespace before recreate
+        if: ${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
@@ -650,6 +693,7 @@ jobs:
             "$RUNTIME_NAMESPACE" "$RUNTIME_NAMESPACE"
 
       - name: Create and annotate exact preview runtime namespace
+        if: ${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
@@ -679,12 +723,14 @@ jobs:
             "$EXPOSURE_MODE" "$TELNET_PORT" "$ALLOCATION_TIMESTAMP"
 
       - name: Bind scoped runtime and certificate roles
+        if: ${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
         run: bash ./dev-tools/hosted/trust-bootstrap/bind-runtime-roles.sh "$RUNTIME_NAMESPACE"
 
       - name: Write runtime kubeconfig
+        if: ${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
         uses: ./.github/actions/write-kubeconfig
         with:
           content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_RUNTIME_KUBECONFIG }}
@@ -692,7 +738,7 @@ jobs:
           export-to-github-env: 'false'
 
       - name: Write standalone certificate-writer kubeconfig
-        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' }}
+        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' && steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
         uses: ./.github/actions/write-kubeconfig
         with:
           content: ${{ secrets.TRUSTED_HOSTED_STANDALONE_CERTIFICATE_KUBECONFIG }}
@@ -700,7 +746,7 @@ jobs:
           export-to-github-env: 'false'
 
       - name: Write requester kubeconfig
-        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
+        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' && steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
         uses: ./.github/actions/write-kubeconfig
         with:
           content: ${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
@@ -708,7 +754,7 @@ jobs:
           export-to-github-env: 'false'
 
       - name: Revalidate open PR before Active request
-        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
+        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' && steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
@@ -724,7 +770,7 @@ jobs:
             "before the identity request"
 
       - name: Apply canonical Active request
-        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
+        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' && steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
         env:
           IDENTITY_NAME: pr-${{ needs.validate-target.outputs.pr_number }}
           KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
@@ -735,7 +781,7 @@ jobs:
         run: rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"
 
       - name: Wait for all controller identity projections
-        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
+        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' && steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/preview-runtime.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
@@ -745,7 +791,7 @@ jobs:
             --projections "$IDENTITY_NAME" "$RUNTIME_NAMESPACE" 900
 
       - name: Prepare standalone gRPC TLS secret
-        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' }}
+        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' && steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/preview-runtime.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
@@ -754,7 +800,7 @@ jobs:
           bash ./dev-tools/hosted/shared/ensure-grpc-tls-secret.sh "$RUNTIME_NAMESPACE"
 
       - name: Prepare standalone transport certificates
-        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' }}
+        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' && steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/standalone-certificate-writer.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
@@ -763,7 +809,7 @@ jobs:
           bash ./dev-tools/hosted/preview/ensure-standalone-transport-certificates.sh "$RUNTIME_NAMESPACE"
 
       - name: Wait for standalone transport Secret projections
-        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' }}
+        if: ${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' && steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/preview-runtime.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
@@ -773,6 +819,7 @@ jobs:
             --wait "$RUNTIME_NAMESPACE"
 
       - name: Inject trusted allocated Telnet port
+        if: ${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
         env:
           ARTIFACT_DIR: ${{ runner.temp }}/preview-artifact
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
@@ -790,6 +837,7 @@ jobs:
             "${{ needs.validate-target.outputs.exposure_mode }}"
 
       - name: Ensure trusted runtime pull secret
+        if: ${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/preview-runtime.kubeconfig
           PREVIEW_GHCR_USERNAME: ${{ secrets.TRUSTED_HOSTED_PREVIEW_GHCR_USERNAME }}
@@ -797,6 +845,7 @@ jobs:
         run: bash ./dev-tools/hosted/shared/ensure-ghcr-pull-secret.sh "${{ needs.validate-target.outputs.namespace }}"
 
       - name: Create canonical non-identity runtime credentials
+        if: ${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/preview-runtime.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
@@ -804,6 +853,7 @@ jobs:
 
       - name: Apply validated PR runtime artifact
         id: deploy-runtime-artifact
+        if: ${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
@@ -835,7 +885,7 @@ jobs:
           kubectl apply --server-side --field-manager=trusted-hosted-preview -n "$RUNTIME_NAMESPACE" -f "$ARTIFACT_PATH"
 
       - name: Record exact deployed preview tuple
-        if: ${{ steps.deploy-runtime-artifact.outcome == 'success' }}
+        if: ${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' && steps.deploy-runtime-artifact.outcome == 'success' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
@@ -872,7 +922,7 @@ jobs:
 
       - name: Record exact deployed runtime Namespace UID
         id: record-runtime-namespace-uid
-        if: ${{ steps.deploy-runtime-artifact.outcome == 'success' }}
+        if: ${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' && steps.deploy-runtime-artifact.outcome == 'success' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
@@ -938,7 +988,7 @@ jobs:
           echo "uid=$runtime_uid" >> "$GITHUB_OUTPUT"
 
       - name: Publish trusted preview deployment failure
-        if: ${{ !cancelled() && failure() }}
+        if: ${{ !cancelled() && failure() && (steps.allocate-capacity.outputs.allocation_status != 'unavailable' || steps.publish-capacity-unavailable.outcome == 'failure') }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
           PREVIEW_PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
@@ -980,8 +1030,12 @@ jobs:
       - linux
       - x64
     needs: [validate-target, deploy-runtime]
-    if: ${{ needs.validate-target.outputs.action == 'deploy' && needs.deploy-runtime.result == 'success' }}
+    if: ${{ needs.validate-target.outputs.action == 'deploy' && needs.deploy-runtime.result == 'success' && needs.deploy-runtime.outputs.allocation_status == 'allocated' }}
     environment: trusted-hosted-cluster
+    concurrency:
+      group: preview-allocation-lifecycle
+      cancel-in-progress: false
+      queue: max
     permissions:
       contents: read # Check out the trusted default-branch verification implementation.
       pull-requests: read # Revalidate the pull-request state and exact head before publication.

@@ -698,6 +698,45 @@ require_contains "$preview_reconciler_path" 'client_payload[base_sha]=${base_sha
 require_contains "$preview_reconciler_path" 'client_payload[merge_sha]=${merge_sha}'
 require_contains "$preview_reconciler_path" 'client_payload[image_tag]=${image_tag}'
 require_contains "$preview_reconciler_path" 'client_payload[action]=deploy'
+require_contains "$preview_reconciler_path" 'dispatch_candidates() {'
+require_contains "$preview_reconciler_path" 'candidate_rows="$('
+require_contains "$preview_reconciler_path" 'dispatch_candidates <<<"$candidate_rows"'
+if python3 - "$preview_reconciler_path" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+workflow = Path(sys.argv[1]).read_text(encoding="utf-8")
+if re.search(r"^\s*\|\s*$", workflow, re.MULTILINE):
+    raise SystemExit("preview reconciler must not pipe candidate rows directly into while")
+PY
+then
+  :
+else
+  echo "Preview reconciler candidate processing must keep dispatch state in the current shell" >&2
+  exit 1
+fi
+
+# Execute the dispatch-state mechanism with two eligible drifted candidates.
+# This mirrors the workflow's current-shell function plus here-string handoff;
+# a pipeline-fed while loop would lose the flag in a subshell and dispatch twice.
+reconciler_dispatch_count=0
+reconciler_dispatch_sent=false
+reconcile_dispatch_candidates() {
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    if [[ "$reconciler_dispatch_sent" == true ]]; then
+      continue
+    fi
+    reconciler_dispatch_count=$((reconciler_dispatch_count + 1))
+    reconciler_dispatch_sent=true
+  done
+}
+reconcile_dispatch_candidates <<< $'priority-drift\nordinary-drift'
+if [[ "$reconciler_dispatch_count" -ne 1 ]]; then
+  echo "Reconciler must dispatch at most one preview for multiple eligible candidates" >&2
+  exit 1
+fi
 if grep -Fq 'desired_image_tag=' "$preview_reconciler_path"; then
   echo "Preview reconciler must not retain an unused desired image tag" >&2
   exit 1
