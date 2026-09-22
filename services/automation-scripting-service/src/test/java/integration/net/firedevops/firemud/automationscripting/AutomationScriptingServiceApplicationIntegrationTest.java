@@ -8,12 +8,15 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.List;
 import java.util.Map;
+import net.firedevops.firemud.automationscripting.entity.Faction;
+import net.firedevops.firemud.automationscripting.repository.FactionRepository;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.HttpTestSupport;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -62,6 +65,8 @@ class AutomationScriptingServiceApplicationIntegrationTest {
   }
 
   @LocalServerPort private int port;
+
+  @Autowired private FactionRepository factionRepository;
 
   @Test
   void pingEndpointReturnsPong() {
@@ -117,5 +122,20 @@ class AutomationScriptingServiceApplicationIntegrationTest {
     HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
 
     assertThat(response.statusCode()).isEqualTo(404);
+  }
+
+  @Test
+  void factionLookupRequiresTheOwningTenant() {
+    Faction faction = new Faction();
+    faction.setTenantId(4101L);
+    faction.setName("tenant-scoped-integration-faction");
+    faction.setDescription("repository scope proof");
+    faction = factionRepository.save(faction);
+
+    assertThat(factionRepository.findByTenantIdAndId(4101L, faction.getId()))
+        .get()
+        .extracting(Faction::getTenantId)
+        .isEqualTo(4101L);
+    assertThat(factionRepository.findByTenantIdAndId(4102L, faction.getId())).isEmpty();
   }
 }
