@@ -498,6 +498,32 @@ class VersionServiceImplTest {
   }
 
   @Test
+  void differentStableScriptPatchIdRejectsExistingEffectiveArtifactBeforeAllocatingVersion() {
+    Game game = new Game();
+    game.setId(1L);
+    game.setTenantId("tenant-1");
+    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
+
+    Version retained =
+        scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.PUBLISHED, "original notes");
+    when(versionRepository.findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndScriptOnly(
+            "tenant-1", 3L, "patch-2"))
+        .thenReturn(List.of(retained));
+
+    IllegalArgumentException thrown =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.publishScriptPatchVersion(
+                    "tenant-1", 3L, "patch-2", "different notes", "publish-request-2"));
+
+    assertTrue(thrown.getMessage().contains("PUBLISH_SCRIPT_PATCH_IDENTITY_CONFLICT"));
+    verify(versionRepository, org.mockito.Mockito.never()).save(any(Version.class));
+    verify(publishAttemptService, org.mockito.Mockito.never())
+        .createScriptPatchAttempt(any(), any(), any(), any());
+  }
+
+  @Test
   void sameStableScriptPatchIdReplaysFailedOutcomeWithoutAllocatingVersion() {
     Game game = new Game();
     game.setId(1L);

@@ -293,6 +293,14 @@ public class VersionServiceImpl implements VersionService {
           null);
     }
 
+    if (!versionRepository
+        .findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndScriptOnly(
+            tenantId, baseVersionId, scriptPatchVersion)
+        .isEmpty()) {
+      throw new IllegalArgumentException(
+          "PUBLISH_SCRIPT_PATCH_IDENTITY_CONFLICT: effective script-patch artifact belongs to another publish request");
+    }
+
     Version version = new Version();
     version.setTenantId(game.get().getTenantId());
     version.setNotes(notes);
