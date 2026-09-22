@@ -1,19 +1,31 @@
 package net.firedevops.firemud.worldmanagement;
 
+import static net.firedevops.firemud.worldmanagement.jooq.tables.RegionInstance.REGION_INSTANCE;
+import static net.firedevops.firemud.worldmanagement.jooq.tables.WorldEvent.WORLD_EVENT;
+import static net.firedevops.firemud.worldmanagement.jooq.tables.WorldInstance.WORLD_INSTANCE;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.test.HttpTestSupport;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.client.GameSessionClient;
+import net.firedevops.firemud.worldmanagement.entity.WorldEvent;
+import net.firedevops.firemud.worldmanagement.repository.WorldEventRepository;
+import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -24,6 +36,9 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -54,6 +69,9 @@ class WorldManagementServiceApplicationIntegrationTest {
 
   @LocalServerPort private int port;
   @Autowired private JwtUtil jwtUtil;
+  @Autowired private DSLContext dsl;
+  @Autowired private WorldEventRepository worldEventRepository;
+  @Autowired private PlatformTransactionManager transactionManager;
 
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
   @MockitoBean private GameDesignClient gameDesignClient;
@@ -122,5 +140,163 @@ class WorldManagementServiceApplicationIntegrationTest {
     assertThat(response.statusCode()).isEqualTo(400);
     assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
     assertThat(response.body()).contains("\"message\":\"Request body is malformed\"");
+  }
+
+  @Test
+  @Transactional
+  void worldEventDueQueryExcludesWeatherAndEnforcesScope() {
+    long exactRegionId = insertRegion(101L, 1001L, 11L);
+    long crossTenantRegionId = insertRegion(202L, 1001L, 22L);
+    long crossInstanceRegionId = insertRegion(101L, 1002L, 33L);
+    LocalDateTime dueAt = LocalDateTime.now().minusMinutes(1);
+
+    insertEvent(101L, 1001L, exactRegionId, "REGION_NOTICE", dueAt);
+    insertEvent(101L, 1001L, crossTenantRegionId, "CROSS_TENANT_NOTICE", dueAt);
+    insertEvent(101L, 1001L, crossInstanceRegionId, "CROSS_INSTANCE_NOTICE", dueAt);
+    insertEvent(101L, 1001L, exactRegionId, "WEATHER_CHANGE", dueAt);
+    insertEvent(101L, 1001L, null, "REGIONLESS_NOTICE", dueAt);
+
+    List<WorldEvent> dueEvents = worldEventRepository.findDueEventsForShard(dueAt, 0);
+
+    assertThat(dueEvents)
+        .extracting(WorldEvent::getEventType)
+        .containsExactlyInAnyOrder("REGION_NOTICE", "REGIONLESS_NOTICE");
+    WorldEvent exactRegionEvent =
+        dueEvents.stream()
+            .filter(event -> "REGION_NOTICE".equals(event.getEventType()))
+            .findFirst()
+            .orElseThrow();
+    assertThat(exactRegionEvent.getRegionInstance()).isNotNull();
+    assertThat(exactRegionEvent.getRegionInstance().getId()).isEqualTo(exactRegionId);
+    assertThat(exactRegionEvent.getRegionInstance().getTenantId()).isEqualTo(101L);
+    assertThat(exactRegionEvent.getRegionInstance().getGameInstanceId()).isEqualTo(1001L);
+    WorldEvent regionlessEvent =
+        dueEvents.stream()
+            .filter(event -> "REGIONLESS_NOTICE".equals(event.getEventType()))
+            .findFirst()
+            .orElseThrow();
+    assertThat(regionlessEvent.getRegionInstance()).isNull();
+  }
+
+  @Test
+  void worldEventDueQuerySkipsRowsClaimedByAnotherSweepUntilItsTransactionReleases()
+      throws Exception {
+    LocalDateTime executeAt = LocalDateTime.now().plusDays(1);
+    LocalDateTime repositoryCutoff = executeAt.plusSeconds(1);
+    Long eventId = insertEvent(303L, 3003L, null, "CLAIMABLE_NOTICE", executeAt);
+    assertThat(eventId).isNotNull();
+
+    TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
+    CountDownLatch firstClaimed = new CountDownLatch(1);
+    CountDownLatch releaseFirst = new CountDownLatch(1);
+    try (ExecutorService executor = Executors.newSingleThreadExecutor()) {
+      Future<List<WorldEvent>> firstSweep =
+          executor.submit(
+              () ->
+                  transactionTemplate.execute(
+                      status -> {
+                        List<WorldEvent> claimed =
+                            worldEventRepository.findDueEventsForShard(repositoryCutoff, 0);
+                        assertThat(claimed).extracting(WorldEvent::getId).contains(eventId);
+                        firstClaimed.countDown();
+                        awaitLatch(releaseFirst);
+                        return claimed;
+                      }));
+
+      assertThat(firstClaimed.await(5, TimeUnit.SECONDS)).isTrue();
+
+      List<WorldEvent> skipped =
+          transactionTemplate.execute(
+              status -> worldEventRepository.findDueEventsForShard(repositoryCutoff, 0));
+      assertThat(skipped).extracting(WorldEvent::getId).doesNotContain(eventId);
+
+      releaseFirst.countDown();
+      assertThat(firstSweep.get(10, TimeUnit.SECONDS))
+          .extracting(WorldEvent::getId)
+          .contains(eventId);
+
+      List<WorldEvent> selectableAgain =
+          transactionTemplate.execute(
+              status -> worldEventRepository.findDueEventsForShard(repositoryCutoff, 0));
+      assertThat(selectableAgain).extracting(WorldEvent::getId).contains(eventId);
+    } finally {
+      releaseFirst.countDown();
+      dsl.deleteFrom(WORLD_EVENT).where(WORLD_EVENT.ID.eq(eventId)).execute();
+    }
+  }
+
+  @Test
+  @Transactional
+  void worldEventFindByIdPreservesARegionReferenceWithoutJoinedScopeColumns() {
+    long regionId = insertRegion(404L, 4004L, 44L);
+    Long eventId =
+        insertEvent(404L, 4004L, regionId, "FIND_BY_ID_NOTICE", LocalDateTime.now().plusMinutes(1));
+
+    WorldEvent event = worldEventRepository.findById(eventId).orElseThrow();
+
+    assertThat(event.getRegionInstance()).isNotNull();
+    assertThat(event.getRegionInstance().getId()).isEqualTo(regionId);
+    assertThat(event.getRegionInstance().getTenantId()).isNull();
+    assertThat(event.getRegionInstance().getGameInstanceId()).isNull();
+  }
+
+  private static void awaitLatch(CountDownLatch latch) {
+    try {
+      assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+    } catch (InterruptedException exception) {
+      Thread.currentThread().interrupt();
+      throw new AssertionError("Interrupted while waiting for transaction coordination", exception);
+    }
+  }
+
+  private long insertRegion(long tenantId, long gameInstanceId, long fixtureLabel) {
+    Long worldInstanceId =
+        dsl.insertInto(WORLD_INSTANCE)
+            .set(WORLD_INSTANCE.TENANT_ID, tenantId)
+            .set(WORLD_INSTANCE.GAME_INSTANCE_ID, gameInstanceId)
+            .set(WORLD_INSTANCE.GAME_TEMPLATE_ID, 1L)
+            .set(WORLD_INSTANCE.CONTROL_PLANE_REQUEST_ID, "event-test-" + fixtureLabel)
+            .set(WORLD_INSTANCE.LAUNCH_DESCRIPTOR_ID, "event-test-launch-" + fixtureLabel)
+            .set(WORLD_INSTANCE.VERSION_ID, 1L)
+            .set(WORLD_INSTANCE.GENERATION_CONFIG_REVISION, "event-test-generation")
+            .set(WORLD_INSTANCE.RELEASE_BUNDLE_ID, 1L)
+            .set(WORLD_INSTANCE.PUBLISHED_RELEASE_BUNDLE_REF, "event-test-release")
+            .set(WORLD_INSTANCE.VERSION_STATE_EPOCH, 1L)
+            .set(WORLD_INSTANCE.STATUS, "ACTIVE")
+            .returning(WORLD_INSTANCE.ID)
+            .fetchOne(WORLD_INSTANCE.ID);
+    if (worldInstanceId == null) {
+      throw new IllegalStateException("world instance insert did not return an id");
+    }
+    Long regionId =
+        dsl.insertInto(REGION_INSTANCE)
+            .set(REGION_INSTANCE.TENANT_ID, tenantId)
+            .set(REGION_INSTANCE.GAME_INSTANCE_ID, gameInstanceId)
+            .set(REGION_INSTANCE.WORLD_INSTANCE_ID, worldInstanceId)
+            .set(REGION_INSTANCE.SHARD_ID, 0)
+            .set(REGION_INSTANCE.NAME, "event-test-region-" + fixtureLabel)
+            .returning(REGION_INSTANCE.ID)
+            .fetchOne(REGION_INSTANCE.ID);
+    if (regionId == null) {
+      throw new IllegalStateException("region insert did not return an id");
+    }
+    return regionId;
+  }
+
+  private Long insertEvent(
+      long tenantId,
+      long gameInstanceId,
+      Long regionInstanceId,
+      String eventType,
+      LocalDateTime executeAt) {
+    return dsl.insertInto(WORLD_EVENT)
+        .set(WORLD_EVENT.TENANT_ID, tenantId)
+        .set(WORLD_EVENT.GAME_INSTANCE_ID, gameInstanceId)
+        .set(WORLD_EVENT.REGION_INSTANCE_ID, regionInstanceId)
+        .set(WORLD_EVENT.EVENT_TYPE, eventType)
+        .set(WORLD_EVENT.EVENT_DATA, eventType)
+        .set(WORLD_EVENT.EXECUTE_AT, executeAt)
+        .returning(WORLD_EVENT.ID)
+        .fetchOne(WORLD_EVENT.ID);
   }
 }

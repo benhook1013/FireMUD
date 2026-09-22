@@ -41,6 +41,10 @@ firemud:
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
     ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
   account:
+    credentials:
+      cleanup:
+        batch-size: ${FIREMUD_ACCOUNT_CREDENTIAL_CLEANUP_BATCH_SIZE:100}
+        interval-ms: ${FIREMUD_ACCOUNT_CREDENTIAL_CLEANUP_INTERVAL_MS:60000}
     tokens:
       session-expiration-ms: 3600000
       player-bootstrap-expiration-ms: 300000

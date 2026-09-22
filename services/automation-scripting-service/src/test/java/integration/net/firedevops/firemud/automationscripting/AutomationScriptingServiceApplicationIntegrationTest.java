@@ -6,13 +6,17 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.List;
 import java.util.Map;
+import net.firedevops.firemud.automationscripting.entity.Faction;
+import net.firedevops.firemud.automationscripting.repository.FactionRepository;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.HttpTestSupport;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -62,6 +66,8 @@ class AutomationScriptingServiceApplicationIntegrationTest {
 
   @LocalServerPort private int port;
 
+  @Autowired private FactionRepository factionRepository;
+
   @Test
   void pingEndpointReturnsPong() {
     String body = HttpTestSupport.getBodyUnchecked("http://localhost:" + port + "/ping");
@@ -69,8 +75,37 @@ class AutomationScriptingServiceApplicationIntegrationTest {
   }
 
   @Test
-  void adjustReputationRejectsMalformedPlayableStateScopeWithInvalidArgumentEnvelope()
-      throws Exception {
+  void unsupportedFormationRestRoutesAreNotReachable() throws Exception {
+    HttpRequest request =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/formations"))
+            .POST(HttpRequest.BodyPublishers.ofString("{}"))
+            .header("Content-Type", "application/json")
+            .build();
+
+    HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(response.statusCode()).isEqualTo(404);
+  }
+
+  @Test
+  void unsupportedFormationRestRoutesRejectCrossTenantSelectorsByBeingAbsent() throws Exception {
+    String token =
+        JWT_UTIL.generateToken(
+            "automation-test", Map.of("scopedRoles", Map.of("1", List.of("tenantAdmin"))));
+    HttpRequest request =
+        HttpRequest.newBuilder(
+                URI.create("http://localhost:" + port + "/formations/7/members?tenantId=2"))
+            .header("Authorization", "Bearer " + token)
+            .GET()
+            .build();
+
+    HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(response.statusCode()).isEqualTo(404);
+  }
+
+  @Test
+  void removedFactionRestEndpointReturnsNotFound() throws Exception {
     String token =
         JWT_UTIL.generateToken(
             "automation-test", Map.of("globalRoles", java.util.List.of("platformAdmin")));
@@ -86,8 +121,21 @@ class AutomationScriptingServiceApplicationIntegrationTest {
 
     HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
 
-    assertThat(response.statusCode()).isEqualTo(400);
-    assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
-    assertThat(response.body()).contains("\"message\":\"playableStateScope is invalid\"");
+    assertThat(response.statusCode()).isEqualTo(404);
+  }
+
+  @Test
+  void factionLookupRequiresTheOwningTenant() {
+    Faction faction = new Faction();
+    faction.setTenantId(4101L);
+    faction.setName("tenant-scoped-integration-faction");
+    faction.setDescription("repository scope proof");
+    faction = factionRepository.save(faction);
+
+    assertThat(factionRepository.findByTenantIdAndId(4101L, faction.getId()))
+        .get()
+        .extracting(Faction::getTenantId)
+        .isEqualTo(4101L);
+    assertThat(factionRepository.findByTenantIdAndId(4102L, faction.getId())).isEmpty();
   }
 }
