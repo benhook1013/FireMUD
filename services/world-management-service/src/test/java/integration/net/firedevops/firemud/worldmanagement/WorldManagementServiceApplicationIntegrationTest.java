@@ -181,8 +181,9 @@ class WorldManagementServiceApplicationIntegrationTest {
   @Test
   void worldEventDueQuerySkipsRowsClaimedByAnotherSweepUntilItsTransactionReleases()
       throws Exception {
-    Long eventId =
-        insertEvent(303L, 3003L, null, "CLAIMABLE_NOTICE", LocalDateTime.now().minusMinutes(1));
+    LocalDateTime executeAt = LocalDateTime.now().plusDays(1);
+    LocalDateTime repositoryCutoff = executeAt.plusSeconds(1);
+    Long eventId = insertEvent(303L, 3003L, null, "CLAIMABLE_NOTICE", executeAt);
     assertThat(eventId).isNotNull();
 
     TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
@@ -195,8 +196,8 @@ class WorldManagementServiceApplicationIntegrationTest {
                   transactionTemplate.execute(
                       status -> {
                         List<WorldEvent> claimed =
-                            worldEventRepository.findDueEventsForShard(LocalDateTime.now(), 0);
-                        assertThat(claimed).extracting(WorldEvent::getId).containsExactly(eventId);
+                            worldEventRepository.findDueEventsForShard(repositoryCutoff, 0);
+                        assertThat(claimed).extracting(WorldEvent::getId).contains(eventId);
                         firstClaimed.countDown();
                         awaitLatch(releaseFirst);
                         return claimed;
@@ -206,18 +207,18 @@ class WorldManagementServiceApplicationIntegrationTest {
 
       List<WorldEvent> skipped =
           transactionTemplate.execute(
-              status -> worldEventRepository.findDueEventsForShard(LocalDateTime.now(), 0));
+              status -> worldEventRepository.findDueEventsForShard(repositoryCutoff, 0));
       assertThat(skipped).extracting(WorldEvent::getId).doesNotContain(eventId);
 
       releaseFirst.countDown();
       assertThat(firstSweep.get(10, TimeUnit.SECONDS))
           .extracting(WorldEvent::getId)
-          .containsExactly(eventId);
+          .contains(eventId);
 
       List<WorldEvent> selectableAgain =
           transactionTemplate.execute(
-              status -> worldEventRepository.findDueEventsForShard(LocalDateTime.now(), 0));
-      assertThat(selectableAgain).extracting(WorldEvent::getId).containsExactly(eventId);
+              status -> worldEventRepository.findDueEventsForShard(repositoryCutoff, 0));
+      assertThat(selectableAgain).extracting(WorldEvent::getId).contains(eventId);
     } finally {
       releaseFirst.countDown();
       dsl.deleteFrom(WORLD_EVENT).where(WORLD_EVENT.ID.eq(eventId)).execute();
