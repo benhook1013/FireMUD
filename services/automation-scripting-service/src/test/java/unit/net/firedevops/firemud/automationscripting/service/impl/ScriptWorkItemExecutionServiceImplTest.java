@@ -1,7 +1,6 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -221,7 +220,7 @@ class ScriptWorkItemExecutionServiceImplTest {
         .thenThrow(
             new DataAccessException(
                 "plugin lookup unavailable", new SQLTransientConnectionException("offline")));
-    ScriptWorkItem item = pluginWorkItem();
+    ScriptWorkItem item = replayPluginWorkItem();
     when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
     when(workItemRepository.save(item)).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -255,7 +254,7 @@ class ScriptWorkItemExecutionServiceImplTest {
             "1", "7", "plugin-1"))
         .thenThrow(
             new DataAccessException("invalid plugin query", new SQLException("syntax", "42601")));
-    ScriptWorkItem item = pluginWorkItem();
+    ScriptWorkItem item = replayPluginWorkItem();
     when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
     when(workItemRepository.save(item)).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -903,10 +902,9 @@ class ScriptWorkItemExecutionServiceImplTest {
             allowingTenantBudgetService(),
             pluginRepository);
 
-    assertThatThrownBy(() -> service.processPendingWorkItems(1))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessage("authority_unavailable");
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(1);
 
+    assertThat(result.failedCount()).isEqualTo(1);
     assertThat(item.getStatus()).isEqualTo(originalStatus);
     verify(workItemRepository, Mockito.never()).save(Mockito.any());
     verify(auditRepository, Mockito.never()).findByWorkItemId(Mockito.anyLong());
@@ -943,10 +941,9 @@ class ScriptWorkItemExecutionServiceImplTest {
             allowingTenantBudgetService(),
             pluginRepository);
 
-    assertThatThrownBy(() -> service.processPendingWorkItems(1))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessage("authority_unavailable");
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(1);
 
+    assertThat(result.failedCount()).isEqualTo(1);
     assertThat(item.getStatus()).isEqualTo("EVALUATING");
     verify(workItemRepository, Mockito.never()).save(Mockito.any());
     verify(auditRepository, Mockito.never()).findByWorkItemId(Mockito.anyLong());
@@ -981,10 +978,9 @@ class ScriptWorkItemExecutionServiceImplTest {
             allowingTenantBudgetService(),
             pluginRepository);
 
-    assertThatThrownBy(() -> service.processPendingWorkItems(1))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessage("authority_unavailable");
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(1);
 
+    assertThat(result.failedCount()).isEqualTo(1);
     assertThat(item.getStatus()).isEqualTo("EVALUATING");
     verify(workItemRepository, Mockito.never()).save(Mockito.any());
     verify(auditRepository, Mockito.never()).findByWorkItemId(Mockito.anyLong());
@@ -1016,10 +1012,9 @@ class ScriptWorkItemExecutionServiceImplTest {
             allowingDryRunCapacityService(),
             new ObjectMapper());
 
-    assertThatThrownBy(() -> service.processPendingWorkItems(1))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessage("authority_unavailable");
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(1);
 
+    assertThat(result.failedCount()).isEqualTo(1);
     assertThat(item.getStatus()).isEqualTo("EVALUATING");
     verify(workItemRepository, Mockito.never()).save(Mockito.any());
     verify(auditRepository, Mockito.never()).findByWorkItemId(Mockito.anyLong());
@@ -3477,7 +3472,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     return item;
   }
 
-  private static ScriptWorkItem pluginWorkItem() {
+  private static ScriptWorkItem replayPluginWorkItem() {
     ScriptWorkItem item = workItem();
     item.setScriptPinEpoch(3L);
     item.setPluginId("plugin-1");
