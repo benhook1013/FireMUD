@@ -4,20 +4,22 @@ Updated 2026-09-22 NZST. This is the sole live orchestration authority for the a
 
 ## Current merge train
 
-`develop → #2824 → #2818 → #2826 → #2827 → #2828 → #2829`
+General's direct-to-`develop` Gate 1 #2835 lands before the authored train. The authored train is:
 
-- **#2824 — containment foundation.** Gameplay owns the front Hosted/merge decision; Document preserves it and does not review it. Docker-dependent cases still require attributable hosted proof when local Docker is unavailable.
-- **#2818 — publication workload identity and production activation.** Draft successor after #2824; its certificate/Helm identity must reconcile with the Gameplay tree before review and merge.
-- **#2826 — 5B Schema.** Published on #2824; four productive whole-unit Luna cycles followed by two dry cycles. Local proof is green, but PostgreSQL/Testcontainers cases were compiled and skipped without Docker. Hold for later retarget/CodeRabbit proof.
+`develop → #2837 → #2818 → #2826 → #2827 → #2828 → #2829`
+
+- **#2837 — containment foundation replacement.** This is the reviewed 48-file #2824 patch recreated after #2824 was merged before its Hosted evidence had reached an Overseer judgment checkpoint. #2836 reverted that premature merge. Gameplay owns #2837's Hosted/CLI review and reports the complete finding sequence and severity for human merge judgment; a numerical review allowance is never merge approval.
+- **#2818 — publication workload identity and production activation.** Draft successor after #2837; its certificate/Helm identity must reconcile with the Gameplay tree before review and merge.
+- **#2826 — 5B Schema.** Published in the authored train; four productive whole-unit Luna cycles followed by two dry cycles. Local proof is green, but PostgreSQL/Testcontainers cases were compiled and skipped without Docker. Hold for later retarget/CodeRabbit proof.
 - **#2827 — V3 plugin lifecycle/fences.** Published on #2826; five productive whole-boundary cycles and a dry Cycle 6. No further Luna discovery is required before later retarget/CodeRabbit proof. Its composed validation inherits deterministic Account/Game Session ancestor failures; fix those at the earliest owning ancestor, not by claiming them for this PR.
-- **#2828 — 5B Publication.** Published on the train and currently owned by Document for fresh whole-Publication review. Cycle 1 found useful obligations; adjudicate, fix, validate, and publish accepted findings, then run the required Cycle 2. If Cycle 2 is productive, continue only under its existing bounded taper/report-back rule; hand off when that applicable condition is met.
-- **#2829 — 5B Retention/replay V4.** Published after #2828, with substantive review still pending. When active, explicitly adjudicate the blank-`effectId` replay bypass in this receipt boundary; broader typed-effect capability belongs to the later 2C/shared-foundation unit.
+- **#2828 — 5B Publication.** Tapered after fresh whole-Publication review and propagated into #2829. Hold for later train reconciliation and CodeRabbit proof.
+- **#2829 — 5B Retention/replay V4.** Document is running fresh whole-Retention review. After its own taper, Document performs the final cohesive 5B closure audit against the cumulative #2829 state before leaving 5B.
 
 The train preserves Automation migration order V2 readiness → V3 lifecycle fences → V4 replay/retention. Workers report readiness; Overseer owns merge and verified-superseded closure decisions.
 
 ## General programme
 
-General Gate 1 is a separate direct-to-`develop` PR: allow only an explicitly `preview:priority`-labelled, same-repository, human-authored stacked PR to use hosted preview. Keep ordinary unlabelled eligibility limited to `main`/`develop`; exclude forks and dependency bots; keep PR-controlled code credential-free; publish/deploy from trusted default-branch code with exact base/head/merge identity and immutable `pr-merge-<merge SHA>` artifacts. Preserve the existing two-slot priority/reclamation rules. After a coherent handoff, Gate 1 temporarily takes Hosted, CodeRabbit, and merge priority; once it merges, #2824 and the authored train resume. Gate 1 must merge before stacked preview can be used.
+General Gate 1 is a separate direct-to-`develop` PR: allow only an explicitly `preview:priority`-labelled, same-repository, human-authored stacked PR to use hosted preview. Keep ordinary unlabelled eligibility limited to `main`/`develop`; exclude forks and dependency bots; keep PR-controlled code credential-free; publish/deploy from trusted default-branch code with exact base/head/merge identity and immutable `pr-merge-<merge SHA>` artifacts. Preserve the existing two-slot priority/reclamation rules. Fix the reproduced metadata-only edit path so it cannot dispatch or cancel an unchanged exact-tuple runtime build or leave a duplicate failing required Smoke context. After a coherent handoff, Gate 1 temporarily takes Hosted, CodeRabbit, and merge priority; once it merges, #2837 and the authored train resume. Gate 1 must merge before stacked preview can be used.
 
 After the train reaches its final published #2829 head, General Gate 2 is one coherent preview-priority child for protected bootstrap, controller/CA/issuer readiness, certificate projection/rotation convergence, CNI allow/deny, exact deployed identity, and Telnet/WebSocket `LOGIN → PLAY → LOOK` proof. Credentials, CA private material, and live cluster state never enter Git. A short post-merge develop/dev-demo confirmation is operational evidence, not a separate implementation PR. Split only for a concrete independent boundary or file ceiling.
 
@@ -25,16 +27,24 @@ After Gate 2, General proceeds to Phase 1 repository-wide shared-foundation/refa
 
 ## Document programme and true backlog
 
-Document completes #2828, then #2829, then consumes the parked #2661 source into the later 5C/5D units. After the train, it continues the mapped whole-corpus authority programme and final owner/secondary/tracker consistency pass. The 25-unit source map is the corpus authority; 5C/5D and other later units are queued programme work, not forgotten obligations.
+Document completes #2829, then runs up to three serial paired closure cycles against the final cumulative #2829 state. Each cycle uses two fresh complete whole-state Luna reviews; a cycle is dry only when neither produces a new useful obligation, and two consecutive dry cycles establish taper. After one deterministic ancestry/no-loss check, Document pauses for Overseer rather than entering 5C/5D. The later combined 5C/5D lane consumes parked #2661 when resumed. The 25-unit source map remains the corpus authority.
 
 The true backlog outside the train is only Document’s post-5B corpus programme and General’s Phase 1 → Phase 2 programme. Shared tooling/refactoring, CI/hosted operations, default preview TLS, and failed-empty-preview capacity are candidate inputs or acceptance checks within those programmes, not standalone jobs. No later gameplay feature slice is selected.
 
 ## Operating invariants
 
 - Broad Luna review means serial corrected-state whole-boundary cycles; integrate and validate each cycle before the next. Parallel complementary readers count as one cycle.
-- A numerical Luna cap is a report-back boundary, not a taper target or permission to leave useful accepted findings unresolved.
+- Any numerical Hosted, CLI, or Luna allowance is a report-back boundary, not merge readiness, a stopping condition, or permission to leave useful accepted findings unresolved. Useful findings reset the applicable taper. Overseer must present the raw sequence and significance for human judgment before merging.
 - A wake-capable sentinel owns a wait; the parent awaits its mailbox and does not poll or narrate unchanged timers.
+- Orchestrators delegate bounded, disjoint mechanical reading, inventory, implementation, and focused validation early instead of performing the bulk work in the main lane. They retain design decisions, finding adjudication, diff inspection, integration, and final evidence judgment. Do not compensate for late delegation by launching overlapping agents without distinct scopes.
 - Report Hosted raw found/accepted counts separately from current/outdated unresolved threads; zero unresolved threads is not raw 0/0.
 - When local Docker is unavailable, use attributable hosted CI for the named cases when available and state exactly what executed; green checks without case-level evidence do not close the proof gap.
 
 Review capacity follows the active front and is transferred only at a coherent handoff. Gameplay normally owns Hosted/CodeRabbit for the front merge candidate; General owns its separate Gate 1 work; Document owns its assigned corpus PR review. Workers do not merge. PR bodies and private ledgers are the source for detailed PR findings and are not duplicated here.
+
+## Overseer corrections recorded 2026-09-22
+
+- Overseer incorrectly treated #2824's three-round Hosted report boundary as merge readiness instead of returning its still-productive `2/1 → 2/2 → 1/1` evidence for human judgment. The merge was reverted by #2836 and is being recreated as #2837.
+- Overseer repeated the same cap error by describing #2837 CLI as complete after two productive rounds (`3/1`, `4/2`). CLI was resumed; future caps trigger reporting and do not stop productive review.
+- Overseer allowed a new user question to interrupt creation of an already-required CI sentinel. Existing authorized work remains active across steering unless the user explicitly stops or replaces it.
+- Overseer and worker orchestrators repeatedly performed delegable inventories and mechanical review preparation in their main lanes until the user intervened. Future tasks identify disjoint delegation lanes at the start rather than treating subagents as a late recovery step.

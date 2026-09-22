@@ -4,7 +4,7 @@ Updated 2026-09-22 NZST. This is supporting detail only. [project-direction-note
 
 ## Gate 1 — stacked preview enablement
 
-General is preparing one direct-to-`develop` PR. An explicitly `preview:priority`-labelled, same-repository, human-authored stacked PR may use hosted preview; ordinary unlabelled previews remain limited to `main`/`develop`, with forks and dependency bots excluded. PR-controlled construction stays credential-free. Trusted default-branch publication/deployment validates the exact base/head/merge tuple and immutable `pr-merge-<merge SHA>` artifact, and reconciliation detects parent movement through merge/image identity. Preserve the two-slot priority/reclamation rules and failed-empty-preview acceptance check. After a coherent handoff, Gate 1 temporarily takes Hosted, CodeRabbit, and merge priority; once it merges, #2824 and the authored train resume.
+General is preparing one direct-to-`develop` PR. An explicitly `preview:priority`-labelled, same-repository, human-authored stacked PR may use hosted preview; ordinary unlabelled previews remain limited to `main`/`develop`, with forks and dependency bots excluded. PR-controlled construction stays credential-free. Trusted default-branch publication/deployment validates the exact base/head/merge tuple and immutable `pr-merge-<merge SHA>` artifact, and reconciliation detects parent movement through merge/image identity. Preserve the two-slot priority/reclamation rules and failed-empty-preview acceptance check. Fix the reproduced metadata-only edit path so it cannot dispatch or cancel an unchanged exact-tuple runtime build or leave a duplicate failing required Smoke context. After a coherent handoff, Gate 1 temporarily takes Hosted, CodeRabbit, and merge priority; once it merges, #2837 and the authored train resume.
 
 ## Gate 2 — playable delivery
 
@@ -23,3 +23,7 @@ Phase 1 is one repository-wide shared-foundation and pre-v1 simplification progr
 Phase 1 completes only after fresh corrected-state repository-wide discovery and assessments taper on meaningful shared opportunities; CodeRabbit taper alone does not establish programme completion. Phase 2 follows Phase 1 for service-local maintainability. Reconsider `HostedIdentityReconciler` role-descriptor consolidation only with proof that ordered fail-closed fences, partial-transition reporting, and per-role state remain explicit. These are programme candidates, not separate active PRs.
 
 General and Gameplay preserve the current train and do not create substitute work while a stated gate or front review is active. Detailed PR review evidence belongs in PR bodies and private ledgers.
+
+## Review judgment correction
+
+Numerical Hosted and CLI allowances are report-back boundaries. They do not establish merge readiness or require stopping a productive review. Gameplay reports raw found/accepted sequences and severity; Overseer presents that evidence for human judgment before merging. An `N/0` round is dry even when raw rejected findings are nonzero.
