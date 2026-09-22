@@ -66,7 +66,7 @@ public class WorldEventRepository {
         .forUpdate()
         .of(WORLD_EVENT)
         .skipLocked()
-        .fetch(this::toEntity);
+        .fetch(this::toDueEventEntity);
   }
 
   public Optional<WorldEvent> findById(Long id) {
@@ -123,13 +123,6 @@ public class WorldEventRepository {
     entity.setRegionInstance(
         JooqWorldManagementRepositorySupport.partialRegionInstance(
             record.get(WORLD_EVENT.REGION_INSTANCE_ID)));
-    if (entity.getRegionInstance() != null
-        && record.indexOf(REGION_INSTANCE.SHARD_ID) >= 0
-        && record.indexOf(REGION_INSTANCE.TENANT_ID) >= 0
-        && record.indexOf(REGION_INSTANCE.GAME_INSTANCE_ID) >= 0) {
-      entity.getRegionInstance().setTenantId(record.get(REGION_INSTANCE.TENANT_ID));
-      entity.getRegionInstance().setGameInstanceId(record.get(REGION_INSTANCE.GAME_INSTANCE_ID));
-    }
     entity.setEventType(record.get(WORLD_EVENT.EVENT_TYPE));
     entity.setEventData(record.get(WORLD_EVENT.EVENT_DATA));
     entity.setExecuteAt(record.get(WORLD_EVENT.EXECUTE_AT));
@@ -137,6 +130,15 @@ public class WorldEventRepository {
     entity.setProcessedAt(record.get(WORLD_EVENT.PROCESSED_AT));
     Integer version = record.get(WORLD_EVENT.VERSION);
     entity.setVersion(version == null ? 0 : version);
+    return entity;
+  }
+
+  private WorldEvent toDueEventEntity(Record record) {
+    WorldEvent entity = toEntity(record);
+    if (entity.getRegionInstance() != null) {
+      entity.getRegionInstance().setTenantId(record.get(REGION_INSTANCE.TENANT_ID));
+      entity.getRegionInstance().setGameInstanceId(record.get(REGION_INSTANCE.GAME_INSTANCE_ID));
+    }
     return entity;
   }
 }
