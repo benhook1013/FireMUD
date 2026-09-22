@@ -136,7 +136,7 @@ class WorldManagementServiceApplicationIntegrationTest {
 
   @Test
   @Transactional
-  void worldEventDueQueryIncludesInScopeWeatherAndEnforcesScope() {
+  void worldEventDueQueryExcludesWeatherAndEnforcesScope() {
     long exactRegionId = insertRegion(101L, 1001L, 11L);
     long crossTenantRegionId = insertRegion(202L, 1001L, 22L);
     long crossInstanceRegionId = insertRegion(101L, 1002L, 33L);
@@ -152,7 +152,7 @@ class WorldManagementServiceApplicationIntegrationTest {
 
     assertThat(dueEvents)
         .extracting(WorldEvent::getEventType)
-        .containsExactlyInAnyOrder("REGION_NOTICE", "REGIONLESS_NOTICE", "WEATHER_CHANGE");
+        .containsExactlyInAnyOrder("REGION_NOTICE", "REGIONLESS_NOTICE");
     WorldEvent exactRegionEvent =
         dueEvents.stream()
             .filter(event -> "REGION_NOTICE".equals(event.getEventType()))
