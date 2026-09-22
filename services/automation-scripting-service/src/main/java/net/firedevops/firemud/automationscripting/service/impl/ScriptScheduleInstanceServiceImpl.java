@@ -1810,7 +1810,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         summary.finalReason(),
         summary.createdAtMs(),
         summary.updatedAtMs(),
-        publicationLink(tenantId, summary.scriptPatchVersion()),
+        publicationLink(tenantId, 0L, summary.scriptPatchVersion()),
         pluginPublication);
   }
 
@@ -1853,16 +1853,26 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         summary.runtimeRegionEpoch(),
         summary.lastObservedTickId(),
         summary.lastRuntimeProgressObservedAtMs(),
-        publicationLink(tenantId, summary.scriptPatchVersion()),
+        publicationLink(
+            tenantId,
+            parsePositiveRuntimeVersionId(summary.observedRuntimeVersionId()),
+            summary.scriptPatchVersion()),
         pluginPublication);
   }
 
   private ScriptWorkItemService.ScriptPatchPublicationLink publicationLink(
-      String tenantId, String scriptPatchVersion) {
+      String tenantId, long baseVersionId, String scriptPatchVersion) {
+    if (baseVersionId <= 0L) {
+      return unavailableScriptPatchPublication(
+          scriptPatchVersion,
+          "INVALID_ARGUMENT",
+          "base_version_id is required for exact script-patch publication lookup");
+    }
     GetPublishedScriptPatchVersionResponse response;
     try {
       response =
-          gameDesignControlPlaneClient.getPublishedScriptPatchVersion(tenantId, scriptPatchVersion);
+          gameDesignControlPlaneClient.getPublishedScriptPatchVersion(
+              tenantId, baseVersionId, scriptPatchVersion);
     } catch (RuntimeException ex) {
       LOGGER.warn(
           "Game Design script-patch publication lookup failed for tenantId={} scriptPatchVersion={}",
@@ -1896,6 +1906,18 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         response.getScriptPatch().getLastChangedAtMs(),
         "",
         "");
+  }
+
+  private static long parsePositiveRuntimeVersionId(String runtimeVersionId) {
+    if (runtimeVersionId == null || runtimeVersionId.isBlank()) {
+      return 0L;
+    }
+    try {
+      long parsed = Long.parseLong(runtimeVersionId);
+      return parsed > 0L ? parsed : 0L;
+    } catch (NumberFormatException ex) {
+      return 0L;
+    }
   }
 
   private PluginRuntimeStateService.PluginPublicationLink pluginPublicationLink(
@@ -1947,14 +1969,20 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
 
   private static ScriptWorkItemService.ScriptPatchPublicationLink unavailableScriptPatchPublication(
       String scriptPatchVersion) {
+    return unavailableScriptPatchPublication(
+        scriptPatchVersion, "GAME_DESIGN_UNAVAILABLE", "Game Design service unavailable");
+  }
+
+  private static ScriptWorkItemService.ScriptPatchPublicationLink unavailableScriptPatchPublication(
+      String scriptPatchVersion, String errorCode, String errorMessage) {
     return new ScriptWorkItemService.ScriptPatchPublicationLink(
         blankToEmpty(scriptPatchVersion),
         0L,
         0L,
         VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED,
         0L,
-        "GAME_DESIGN_UNAVAILABLE",
-        "Game Design service unavailable");
+        errorCode,
+        errorMessage);
   }
 
   private static PluginRuntimeStateService.PluginPublicationLink unavailablePluginPublication(

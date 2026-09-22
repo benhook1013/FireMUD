@@ -495,6 +495,84 @@ class VersionPublishCommandServiceImplTest {
     verify(recordedParticipantDigestService)
         .recordVerifiedDigests(
             "tenant-1", PublishType.FULL_VERSION, workflowId, participantDigests);
+    verify(publishGateService)
+        .assertGatePassed(
+            any(VersionDto.class), org.mockito.ArgumentMatchers.eq(participantDigests));
+    verify(recordedParticipantDigestService)
+        .assertMatchesRecordedDigests("tenant-1", PublishType.FULL_VERSION, participantDigests);
+  }
+
+  @Test
+  void replayWithInvalidCommittedParticipantEvidenceRemainsReconciliationRequired() {
+    String workflowId = "publish:tenant-1:publish-request:workflow-1";
+    PublishAttempt attempt = fullAttempt(PublishAttemptStatus.SUCCEEDED, 10L, 1, workflowId);
+    Version version = fullVersion(10L, 1, VersionLifecycleState.PUBLISHED);
+    Game game = new Game();
+    game.setTenantId("tenant-1");
+    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
+    List<PublishParticipantDigestDto> malformedParticipantDigests =
+        List.of(
+            new PublishParticipantDigestDto(
+                "GAME_DESIGN_CONTROL_PLANE",
+                "wrong-version",
+                "version:10",
+                "digest",
+                1,
+                null,
+                null));
+    PublishedReleaseBundleDto bundle =
+        new PublishedReleaseBundleDto(
+            1L,
+            "tenant-1",
+            10L,
+            1,
+            "v1",
+            workflowId,
+            "manifest-hash",
+            List.of("manifest.json"),
+            malformedParticipantDigests,
+            "generation-revision",
+            false,
+            null,
+            LocalDateTime.now());
+    VersionAssetArtifactStateDto artifact =
+        new VersionAssetArtifactStateDto(
+            "tenant-1",
+            10L,
+            1,
+            "PUBLISHED",
+            2L,
+            "manifest-hash",
+            workflowId,
+            null,
+            null,
+            LocalDateTime.now(),
+            List.of("manifest.json"));
+    when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
+        .thenReturn(Optional.of(attempt));
+    when(versionRepository.findByTenantIdAndId("tenant-1", 10L)).thenReturn(Optional.of(version));
+    when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 10L))
+        .thenReturn(bundle);
+    when(versionAssetArtifactService.getState("tenant-1", 10L)).thenReturn(artifact);
+    org.mockito.Mockito.doThrow(
+            new PublishGateFailureException(
+                PublishGateFailureCode.PARTICIPANT_SCOPE_MISMATCH,
+                "publish gate failed: wrong scope from GAME_DESIGN_CONTROL_PLANE"))
+        .when(publishGateService)
+        .assertGatePassed(
+            any(VersionDto.class), org.mockito.ArgumentMatchers.eq(malformedParticipantDigests));
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.reconcileFullVersionPublish(
+                new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId)));
+
+    verify(recordedParticipantDigestService, never())
+        .recordVerifiedDigests(
+            any(String.class), any(PublishType.class), any(String.class), any(List.class));
+    verify(recordedParticipantDigestService, never())
+        .assertMatchesRecordedDigests(any(String.class), any(PublishType.class), any(List.class));
   }
 
   @Test

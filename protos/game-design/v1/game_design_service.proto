@@ -138,6 +138,8 @@ message PublishScriptPatchVersionResponse {
 message GetPublishedScriptPatchVersionRequest {
   string tenant_id = 1;
   string script_patch_version = 2;
+  // The immutable publication identity is the complete tenant/base/patch tuple.
+  int64 base_version_id = 3;
 }
 
 message GetPublishedScriptPatchVersionResponse {

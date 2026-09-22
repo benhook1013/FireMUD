@@ -663,8 +663,20 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private PublicationMetadata publicationMetadata(String tenantId, String scriptPatchVersion) {
+    return publicationMetadata(tenantId, 0L, scriptPatchVersion);
+  }
+
+  private PublicationMetadata publicationMetadata(
+      String tenantId, long requestedBaseVersionId, String scriptPatchVersion) {
+    if (requestedBaseVersionId <= 0L) {
+      return PublicationMetadata.lookupFailure(
+          scriptPatchVersion,
+          "INVALID_ARGUMENT",
+          "base_version_id is required for exact script-patch publication lookup");
+    }
     GetPublishedScriptPatchVersionResponse scriptPatchResponse =
-        gameDesignControlPlaneClient.getPublishedScriptPatchVersion(tenantId, scriptPatchVersion);
+        gameDesignControlPlaneClient.getPublishedScriptPatchVersion(
+            tenantId, requestedBaseVersionId, scriptPatchVersion);
     if (scriptPatchResponse.hasError() && !scriptPatchResponse.getError().getCode().isBlank()) {
       return PublicationMetadata.lookupFailure(
           scriptPatchVersion,

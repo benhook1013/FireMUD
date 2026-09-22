@@ -293,9 +293,15 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
         GetPublishedScriptPatchVersionResponse.newBuilder();
     try {
       AdminRoleGuard.requireAdminRole();
+      if (request.getBaseVersionId() <= 0L) {
+        throw new IllegalArgumentException("INVALID_ARGUMENT: baseVersionId must be positive");
+      }
+      if (request.getScriptPatchVersion().isBlank()) {
+        throw new IllegalArgumentException("INVALID_ARGUMENT: scriptPatchVersion is required");
+      }
       VersionDto version =
           versionService.getPublishedScriptPatchVersion(
-              request.getTenantId(), request.getScriptPatchVersion());
+              request.getTenantId(), request.getBaseVersionId(), request.getScriptPatchVersion());
       DesignControlPlaneDigestDto digest =
           versionService.getDesignControlPlaneDigestForScriptPatch(
               request.getTenantId(), request.getScriptPatchVersion(), version.baseVersionId());

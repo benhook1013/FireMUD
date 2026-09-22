@@ -12,6 +12,19 @@ public class TemporalVersionPublishActivitiesImpl implements TemporalVersionPubl
 
   @Override
   public PublishWorkflowSnapshot reconcile(PublishWorkflowRequest request) {
-    return commandService.reconcileFullVersionPublish(request);
+    try {
+      return commandService.reconcileFullVersionPublish(request);
+    } catch (VersionPublishCommandServiceImpl.PendingReconciliationException ex) {
+      // Unresolved publication evidence is durable pending state, not an activity failure. The
+      // workflow's existing nonterminal loop will retry the exact request identity without
+      // terminalizing or guessing about the committed outcome.
+      return new PublishWorkflowSnapshot(
+          0L,
+          0,
+          request.publishWorkflowId(),
+          "PENDING",
+          "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED",
+          ex.getMessage());
+    }
   }
 }

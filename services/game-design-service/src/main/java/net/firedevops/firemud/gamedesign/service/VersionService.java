@@ -22,7 +22,8 @@ public interface VersionService {
       String publishRequestId)
       throws Exception;
 
-  VersionDto getPublishedScriptPatchVersion(String tenantId, String scriptPatchVersion);
+  VersionDto getPublishedScriptPatchVersion(
+      String tenantId, Long baseVersionId, String scriptPatchVersion);
 
   PublishedPluginVersionDto uploadPluginBundle(String tenantId, byte[] bundleBytes, String notes);
 
