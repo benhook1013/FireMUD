@@ -60,6 +60,12 @@ public class WorldEventRepository {
                         .isNull()
                         .or(REGION_INSTANCE.SHARD_ID.eq(shardId)))
                 .and(WORLD_EVENT.EVENT_TYPE.ne(WorldEvent.WEATHER_CHANGE_EVENT_TYPE)))
+        // Each scheduler claims only the world_event rows it can lock in this transaction. The
+        // service keeps the transaction open through processing, so another replica skips these
+        // rows instead of applying the same event concurrently.
+        .forUpdate()
+        .of(WORLD_EVENT)
+        .skipLocked()
         .fetch(this::toEntity);
   }
 
