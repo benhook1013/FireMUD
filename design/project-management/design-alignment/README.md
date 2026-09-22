@@ -24,7 +24,7 @@ This is the sole live corpus section-status index for a fresh whole-corpus revie
 
 The preserved 5B implementation work has been rebuilt into #2826 Schema, the dependent #2827 Automation lifecycle/fence successor, #2828 Publication, and #2829 Retention. The superseded #2808, #2678, #2804, and #2679 PRs were closed only after hunk-level no-loss verification; their branches and private ledgers remain historical evidence rather than live section ownership. The replacement stack is based on the independently reviewed non-5B prerequisites #2824 and #2818. Overall 5B is complete only after all three semantic subunits taper and a cross-subunit synthesis is recorded; there is no separate overall 5B status row.
 
-5B synthesis: Active; paired whole-5B closure review begins from the final tapered #2829 tree.
+5B synthesis: Active; paired whole-5B closure Cycle 1 independently covered the complete cumulative tree and, after deduplication, returned 13 raw observations with zero new accepted obligations, 12 already-owned/routed obligations, and one rejected race hypothesis. This is the first dry closure cycle.
 
 | Section | Original scope | Status | Main PR | Evidence / routed work |
 | --- | --- | --- | --- | --- |
