@@ -278,11 +278,33 @@ if reconciler_permissions.get("contents") != "write" or reconciler_permissions.g
 
 # Every job in preview.yml is source-side orchestration. It may inspect PR
 # metadata and render an artifact, but it must never be a privileged consumer.
+# The one deliberate exception is the default-branch trusted dispatcher that
+# asks the credential-free runtime-image workflow to refresh a stale base.
+# Keep this exception exact: it must not turn the PR render into a writable
+# job, or grow unrelated repository permissions.
 source_permissions = permissions(preview.get("permissions"))
 if any(permission.endswith(": write") for permission in source_permissions):
     raise AssertionError(
         f"preview source workflow grants write permissions: {source_permissions}"
     )
+
+
+def check_preview_source_permissions(job_name: str, job: dict[str, Any]) -> None:
+    job_permissions = job.get("permissions")
+    if job_name == "preview-runtime-base-refresh":
+        expected = {"contents": "write", "pull-requests": "read"}
+        if job_permissions != expected:
+            raise AssertionError(
+                "preview-runtime-base-refresh must have exactly contents:write and pull-requests:read"
+            )
+        return
+    job_permissions_list = permissions(job_permissions)
+    if any(permission.endswith(": write") for permission in job_permissions_list):
+        raise AssertionError(
+            f"preview source job {job_name} grants write permissions: {job_permissions_list}"
+        )
+
+
 for job_name, job in preview_jobs.items():
     if not isinstance(job, dict):
         raise AssertionError(f"preview job {job_name} is not a mapping")
@@ -293,11 +315,7 @@ for job_name, job in preview_jobs.items():
         raise AssertionError(
             f"preview source job {job_name} selects a deployment environment"
         )
-    job_permissions = permissions(job.get("permissions"))
-    if any(permission.endswith(": write") for permission in job_permissions):
-        raise AssertionError(
-            f"preview source job {job_name} grants write permissions: {job_permissions}"
-        )
+    check_preview_source_permissions(job_name, job)
     job_text = text(job)
     forbidden = (
         r"secrets\.",
@@ -316,6 +334,59 @@ for job_name, job in preview_jobs.items():
             raise AssertionError(
                 f"preview source job {job_name} contains credential-bearing operation /{pattern}/"
             )
+
+refresh_job = preview_jobs.get("preview-runtime-base-refresh")
+if not isinstance(refresh_job, dict):
+    raise AssertionError("preview workflow lost its trusted runtime base refresh dispatcher")
+refresh_needs = refresh_job.get("needs")
+if refresh_needs != "preview-plan" and refresh_needs != ["preview-plan"]:
+    raise AssertionError("preview runtime base refresh must consume the trusted preview plan")
+if checkouts(refresh_job):
+    raise AssertionError("preview runtime base refresh must not check out PR-controlled source")
+refresh_if = str(refresh_job.get("if", ""))
+for required in ("base_refresh_required == 'true'", "action == 'deploy'"):
+    if required not in refresh_if:
+        raise AssertionError(f"preview runtime base refresh lost its {required} gate")
+refresh_scripts = [
+    step.get("with", {}).get("script", "")
+    for step in refresh_job.get("steps", [])
+    if isinstance(step, dict)
+    and isinstance(step.get("uses"), str)
+    and re.fullmatch(r"actions/github-script@[0-9a-f]{40}", step["uses"])
+]
+if len(refresh_scripts) != 1:
+    raise AssertionError("preview runtime base refresh must use exactly one pinned GitHub dispatcher")
+if 'event_type: "pr-runtime-base-refresh"' not in refresh_scripts[0]:
+    raise AssertionError("preview runtime base refresh lost its typed dispatch")
+if "base_sha" not in refresh_scripts[0] or "head_sha" not in refresh_scripts[0] or "merge_sha" not in refresh_scripts[0]:
+    raise AssertionError("preview runtime base refresh dispatch lost its exact merge tuple")
+
+# Keep the permission boundary regression-tested independently of the live
+# workflow. A render write grant is always forbidden; the trusted dispatcher
+# accepts only its two explicitly required permissions.
+render_with_write = dict(preview_jobs["preview-render"])
+render_with_write["permissions"] = {"contents": "write"}
+try:
+    check_preview_source_permissions("preview-render", render_with_write)
+except AssertionError:
+    pass
+else:
+    raise AssertionError("preview render write permission mutation escaped source checking")
+
+refresh_with_extra_permission = dict(refresh_job)
+refresh_with_extra_permission["permissions"] = {
+    "contents": "write",
+    "pull-requests": "read",
+    "actions": "read",
+}
+try:
+    check_preview_source_permissions(
+        "preview-runtime-base-refresh", refresh_with_extra_permission
+    )
+except AssertionError:
+    pass
+else:
+    raise AssertionError("preview runtime refresh extra permission mutation escaped source checking")
 
 # The plan's local actions and scripts must come from the default branch; the
 # render's PR checkout is exact, unprivileged, and bound to the planned merge.

@@ -37,7 +37,10 @@ DESIGN_SECTIONS = (
     ("architecture", "architecture", "design/architecture/"),
     ("project_management", "project management", "design/project-management/"),
     ("observability", "observability", "design/observability/"),
-    ("operations", "operations", "design/operations/"),
+    ("operations", "operator runbooks", "design/operations/"),
+    ("grpc_api_documentation", "gRPC API documentation", "design/grpc-docs/"),
+    ("product", "product requirements and user journeys", "design/product/"),
+    ("developer_workflows", "developer workflows", "design/developer-workflows/"),
     ("other_design", "other design", None),
 )
 DEFAULT_BAR_WIDTH = 16
@@ -50,6 +53,21 @@ PR_REPORT_END = "<!-- firemud:cloc-report:end -->"
 PR_REPORT_METADATA_PREFIX = "<!-- firemud:cloc-report:metadata "
 PR_REPORT_METADATA_SUFFIX = " -->"
 GITHUB_PR_BODY_MAX_CHARACTERS = 65_536
+PR_SECTION_LABELS = {
+    "source": "Source",
+    "prod": "Code",
+    "tests": "Tests",
+    "markdown": "Markdown",
+    "design": "Design",
+    "architecture": "Architecture",
+    "project_management": "Project management",
+    "observability": "Observability",
+    "operations": "Operator runbooks",
+    "grpc_api_documentation": "gRPC API documentation",
+    "product": "Product requirements and user journeys",
+    "developer_workflows": "Developer workflows",
+    "other_design": "Other design",
+}
 
 
 class ReportError(RuntimeError):
@@ -98,6 +116,14 @@ class PullRequestMetadata:
     base_oid: str
     head_ref: str
     head_oid: str
+
+
+@dataclass(frozen=True)
+class DiffStats:
+    files: int
+    additions: int
+    deletions: int
+    binary_files: int
 
 
 @dataclass(frozen=True)
@@ -177,6 +203,41 @@ def diff_inventory(root: Path, git_range: str) -> tuple[list[str], int]:
         else:
             omitted += 1
     return present, omitted
+
+
+def pull_request_diff_stats(root: Path, base_oid: str, head_oid: str) -> DiffStats:
+    changed_paths = decode_nul_paths(
+        run_command(
+            ("git", "diff", "--name-only", "-z", base_oid, head_oid, "--"),
+            root,
+        ).stdout
+    )
+    numstat = run_command(
+        ("git", "diff", "--numstat", base_oid, head_oid, "--"),
+        root,
+    ).stdout.decode(errors="replace")
+    additions = 0
+    deletions = 0
+    binary_files = 0
+    for line in numstat.splitlines():
+        fields = line.split("\t", 2)
+        if len(fields) < 3:
+            raise ReportError("git diff --numstat returned a malformed row")
+        added, deleted, _path = fields
+        if added == "-" or deleted == "-":
+            binary_files += 1
+            continue
+        try:
+            additions += int(added)
+            deletions += int(deleted)
+        except ValueError as error:
+            raise ReportError("git diff --numstat returned invalid line counts") from error
+    return DiffStats(
+        files=len(changed_paths),
+        additions=additions,
+        deletions=deletions,
+        binary_files=binary_files,
+    )
 
 
 def normalize_repository(value: str) -> str:
@@ -784,6 +845,7 @@ def impact_row_json(row: ImpactRow) -> dict[str, object]:
 def build_pr_report(root: Path, number: int, requested_repository: str | None) -> dict[str, object]:
     metadata = resolve_pull_request(root, number, requested_repository)
     merge_base = pull_request_merge_base(root, metadata)
+    diff_stats = pull_request_diff_stats(root, merge_base, metadata.head_oid)
     classifier_sha256 = classifier_digest()
     print(f"Scanning merge-base {merge_base} with cloc...", file=sys.stderr)
     with snapshot_worktree(root, merge_base) as base_root:
@@ -797,6 +859,12 @@ def build_pr_report(root: Path, number: int, requested_repository: str | None) -
         "classifier_sha256": classifier_sha256,
         "repository": metadata.repository,
         "pull_request": metadata.number,
+        "diff": {
+            "files": diff_stats.files,
+            "additions": diff_stats.additions,
+            "deletions": diff_stats.deletions,
+            "binary_files": diff_stats.binary_files,
+        },
         "base": {
             "ref": metadata.base_ref,
             "oid": metadata.base_oid,
@@ -831,6 +899,35 @@ def format_change(percent: object, delta_lines: int, head_lines: int) -> str:
     if abs(numeric) < 0.05:
         return "+<0.1%" if numeric > 0 else "-<0.1%"
     return f"{numeric:+.1f}%"
+
+
+def render_pr_scope(diff: object) -> str:
+    if not isinstance(diff, dict):
+        raise ReportError("PR report diff statistics were malformed")
+    try:
+        files = int(diff["files"])
+        additions = int(diff["additions"])
+        deletions = int(diff["deletions"])
+        binary_files = int(diff["binary_files"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ReportError("PR report diff statistics were malformed") from error
+    if min(files, additions, deletions, binary_files) < 0:
+        raise ReportError("PR report diff statistics were negative")
+
+    def pluralize(value: int, singular: str) -> str:
+        return singular if value == 1 else f"{singular}s"
+
+    summary = (
+        f"PR scope: {format_count(files)} changed {pluralize(files, 'file')} · "
+        f"{format_count(additions)} {pluralize(additions, 'added textual line')} / "
+        f"{format_count(deletions)} {pluralize(deletions, 'deleted textual line')}"
+    )
+    if binary_files:
+        summary += (
+            f" · {format_count(binary_files)} {pluralize(binary_files, 'binary file')} "
+            "(not counted in text lines)"
+        )
+    return summary + "."
 
 
 def render_pr_report(report: dict[str, object]) -> str:
@@ -870,10 +967,15 @@ def render_pr_report(report: dict[str, object]) -> str:
         "### FireMUD LOC impact",
         "",
         f"Compared `{merge_base[:12]}` → `{head_oid[:12]}` (PR merge-base → head).",
-        "",
-        "| Section | Base LOC | Head LOC | Δ LOC | Change |",
-        "|---|---:|---:|---:|---:|",
     ]
+    if "diff" in report:
+        output.extend((render_pr_scope(report["diff"]), ""))
+    output.extend(
+        (
+            "| Section | Base LOC | Head LOC | Δ LOC | Change |",
+            "|---|---:|---:|---:|---:|",
+        )
+    )
     for raw_row in rows:
         if not isinstance(raw_row, dict):
             raise ReportError("PR report contained a malformed section")
@@ -884,7 +986,7 @@ def render_pr_report(report: dict[str, object]) -> str:
             raise ReportError("PR report contained malformed section counts")
         name = str(raw_row.get("name", ""))
         depth = int(raw_row.get("depth", 0))
-        section_name = "Production" if name == "prod" else name.replace("_", " ").capitalize()
+        section_name = PR_SECTION_LABELS.get(name, name.replace("_", " ").capitalize())
         if name == "repo":
             label = "**Overall**"
         elif depth == 1:

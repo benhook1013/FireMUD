@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.util.Objects;
 import net.firedevops.firemud.common.health.TlsCertificateReadinessHealthEndpointGroupsPostProcessor;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -120,8 +121,7 @@ class CommonCoreAutoConfigurationTest {
 
               assertThat(processed).isNotSameAs(groups);
               assertThat(
-                      processed
-                          .get("readiness")
+                      Objects.requireNonNull(processed.get("readiness"))
                           .isMember(
                               TlsCertificateReadinessHealthEndpointGroupsPostProcessor
                                   .TLS_CERTIFICATE_RELOAD_CONTRIBUTOR))

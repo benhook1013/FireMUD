@@ -14,7 +14,6 @@ run-name: CodeQL Analysis ${{ github.event_name == 'pull_request' && format('pr-
 
 permissions:
   contents: read
-  security-events: write
 
 env:
   CODEQL_ACTION_FILE_COVERAGE_ON_PRS: "true"
@@ -27,6 +26,9 @@ jobs:
   changes:
     name: Detect CodeQL-Relevant Changes
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
     outputs:
       matrix: ${{ steps.compute.outputs.matrix }}
@@ -59,14 +61,41 @@ jobs:
               return;
             }
 
-            const files = await github.paginate(
+            const fileEntries = await github.paginate(
               github.rest.pulls.listFiles,
               {
                 ...context.repo,
                 pull_number: context.payload.pull_request.number,
                 per_page: 100,
               },
-              (response) => response.data.map((file) => file.filename)
+              (response) => response.data
+            );
+
+            const expectedFileCount = context.payload.pull_request.changed_files;
+            const fileListComplete =
+              Number.isInteger(expectedFileCount) && expectedFileCount === fileEntries.length;
+            const fileEntriesValid = fileEntries.every((file) =>
+              file &&
+              typeof file === "object" &&
+              typeof file.filename === "string" &&
+              file.filename.length > 0 &&
+              (file.previous_filename === undefined ||
+                (typeof file.previous_filename === "string" && file.previous_filename.length > 0))
+            );
+            if (!fileListComplete || !fileEntriesValid) {
+              core.warning("PR file-list detection was incomplete; running both CodeQL languages.");
+              core.setOutput("should_run", "true");
+              core.setOutput(
+                "matrix",
+                JSON.stringify([
+                  { language: "java" },
+                  { language: "javascript-typescript" },
+                ])
+              );
+              return;
+            }
+            const files = fileEntries.flatMap((file) =>
+              [file.filename, file.previous_filename].filter(Boolean)
             );
 
             const javaRelevantPrefixes = [
@@ -117,6 +146,9 @@ jobs:
     needs: [changes]
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.should_run == 'true' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     strategy:
       matrix:
         include: ${{ fromJSON(needs.changes.outputs.matrix) }}
@@ -147,7 +179,7 @@ jobs:
 
       - name: 🔍 Initialize CodeQL (Java PR Fast Path)
         if: matrix.language == 'java' && github.event_name == 'pull_request'
-        uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
         with:
           languages: ${{ matrix.language }}
           dependency-caching: true
@@ -155,7 +187,7 @@ jobs:
 
       - name: 🔍 Initialize CodeQL (Java Full Scan)
         if: matrix.language == 'java' && github.event_name != 'pull_request'
-        uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
         with:
           languages: ${{ matrix.language }}
           dependency-caching: true
@@ -163,7 +195,7 @@ jobs:
 
       - name: 🔍 Initialize CodeQL
         if: matrix.language != 'java'
-        uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
         with:
           languages: ${{ matrix.language }}
           dependency-caching: true
@@ -173,7 +205,7 @@ jobs:
         run: ./gradlew codeqlClasses
 
       - name: 📊 Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
 
   codeql-gate:
     name: CodeQL Gate
