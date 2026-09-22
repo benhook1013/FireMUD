@@ -123,7 +123,10 @@ public class WorldEventRepository {
     entity.setRegionInstance(
         JooqWorldManagementRepositorySupport.partialRegionInstance(
             record.get(WORLD_EVENT.REGION_INSTANCE_ID)));
-    if (entity.getRegionInstance() != null && record.indexOf(REGION_INSTANCE.SHARD_ID) >= 0) {
+    if (entity.getRegionInstance() != null
+        && record.indexOf(REGION_INSTANCE.SHARD_ID) >= 0
+        && record.indexOf(REGION_INSTANCE.TENANT_ID) >= 0
+        && record.indexOf(REGION_INSTANCE.GAME_INSTANCE_ID) >= 0) {
       entity.getRegionInstance().setTenantId(record.get(REGION_INSTANCE.TENANT_ID));
       entity.getRegionInstance().setGameInstanceId(record.get(REGION_INSTANCE.GAME_INSTANCE_ID));
     }
