@@ -2,10 +2,10 @@ openapi: 3.0.3
 info:
   title: Account Service API
   description: >-
-    API for user accounts and authentication. The caller-asserted
-    POST /accounts/{accountId}/external handler remains legacy implementation
-    drift and is intentionally omitted from the authoritative contract until
-    the server-verified provider-linking flow and its proof converge.
+    API for user accounts and authentication. The obsolete caller-asserted
+    POST /accounts/{accountId}/external route is removed and denied at the
+    public edge; no provider-linking route is available until the
+    server-verified global-account flow and its proof converge.
   version: 1.0.0
   license:
     name: PolyForm Noncommercial License 1.0.0

@@ -6,7 +6,6 @@ import net.firedevops.firemud.accountservice.dto.AccountDataExportDto;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
 import net.firedevops.firemud.accountservice.dto.AccountLoginAuthModesDto;
 import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
-import net.firedevops.firemud.accountservice.dto.LinkExternalAccountRequest;
 import net.firedevops.firemud.accountservice.dto.TenantDataExportDto;
 import net.firedevops.firemud.accountservice.dto.UpdateAccountLoginAuthModesRequest;
 import net.firedevops.firemud.accountservice.service.AccountService;
@@ -85,18 +84,6 @@ public class AccountController {
     long parsedAccountId = AccountRequestReaders.requireAccountId(accountId);
     requireCurrentAccountOrGlobalPrivilegedRole(parsedAccountId);
     accountService.deleteAccount(parsedAccountId);
-    return ResponseEntity.ok(ApiResponse.success(null));
-  }
-
-  @PostMapping("/{accountId}/external")
-  public ResponseEntity<ApiResponse<Void>> linkExternalAccount(
-      @PathVariable String accountId, @Valid @RequestBody LinkExternalAccountRequest request) {
-    long parsedAccountId = AccountRequestReaders.requireAccountId(accountId);
-    long parsedTenantId = AccountRequestReaders.requireTenantId(request.tenantId());
-    SessionContext.requireAccountAccess(parsedTenantId, parsedAccountId);
-    accountService.linkExternalAccount(
-        new LinkExternalAccountRequest(
-            parsedTenantId, parsedAccountId, request.provider(), request.externalId()));
     return ResponseEntity.ok(ApiResponse.success(null));
   }
 

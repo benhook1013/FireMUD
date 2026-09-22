@@ -28,7 +28,7 @@ The preserved 5B implementation work has been rebuilt into #2826 Schema, the dep
 
 | Section | Original scope | Status | Main PR | Evidence / routed work |
 | --- | --- | --- | --- | --- |
-| 1A | Identity, entitlement, and hosted terms | Active whole-unit review | [#2840](https://github.com/benhook1013/FireMUD/pull/2840) | The refreshed manifest adds the Account service owner README and current AA-1 ADRs to the recovered 17-source prompt, with named 5A, 1B, 5B/5D, 3A, 6A/6B/6C, platform, and billing handoffs. Cycle 1 found and corrected non-public discovery that accepted a realm grant without current admitting membership; known authority, lifecycle, replay, provider, and hosted-terms gaps remain routed. |
+| 1A | Identity, entitlement, and hosted terms | Four-cycle report boundary reached; taper not established | [#2840](https://github.com/benhook1013/FireMUD/pull/2840) | The refreshed manifest adds the Account service owner README and current AA-1 ADRs to the recovered 17-source prompt, with named 5A, 1B, 5B/5D, 3A, 6A/6B/6C, platform, and billing handoffs. Cycles 1–4 were all productive (`16/1`, `24/1`, `18/1`, `33/1` raw/useful): they corrected realm-grant discovery without current admitting membership, the documented inactive-membership join target, Game Session's player-versus-instance-owner login check, and the externally reachable caller-asserted identity-link route. Known authority, lifecycle, replay, provider, and hosted-terms gaps remain routed. |
 | 1B | Admission, session continuity, and reconnect | Queued | — | — |
 | 1C | Commands, output, and frontend presentation | Queued | — | — |
 | 1D | Social, communication, and moderation-facing UX | Queued | — | — |

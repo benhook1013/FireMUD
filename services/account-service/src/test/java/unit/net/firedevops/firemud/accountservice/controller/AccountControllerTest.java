@@ -15,7 +15,6 @@ import net.firedevops.firemud.accountservice.dto.AccountDataExportDto;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
 import net.firedevops.firemud.accountservice.dto.AccountLoginAuthModesDto;
 import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
-import net.firedevops.firemud.accountservice.dto.LinkExternalAccountRequest;
 import net.firedevops.firemud.accountservice.dto.TenantDataExportDto;
 import net.firedevops.firemud.accountservice.dto.UpdateAccountLoginAuthModesRequest;
 import net.firedevops.firemud.accountservice.entity.AccountLoginAuthMode;
@@ -238,19 +237,17 @@ class AccountControllerTest {
   }
 
   @Test
-  void linkExternalRejectsZeroTenantIdBeforeDispatch() throws Exception {
-    LinkExternalAccountRequest request = new LinkExternalAccountRequest(0L, 2L, "steam", "demo");
+  void linkExternalRouteIsUnavailableForAuthenticatedRequest() throws Exception {
     String token = jwtUtil.generateToken("2", Map.of("accountId", "2"));
 
     mockMvc
         .perform(
             post("/accounts/2/external")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(request))
+                .content(
+                    "{\"tenantId\":1,\"accountId\":2,\"provider\":\"steam\",\"externalId\":\"demo\"}")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
-        .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(jsonPath("$.error.message").value("tenantId must be positive"));
+        .andExpect(status().isNotFound());
 
     verifyNoInteractions(accountService);
   }
