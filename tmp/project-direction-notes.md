@@ -31,6 +31,8 @@ After Gate 2, General proceeds to Phase 1 repository-wide shared-foundation/refa
 
 Document completed #2829's own Retention taper and three paired cumulative closure cycles. The Overseer accepted that evidence as final and closed the 5B corpus-review phase without commissioning an extra Cycle 4. Document's next corpus task, when resumed, is the combined 5C/5D lane consuming parked #2661 with hunk-level no-loss proof. The 25-unit source map remains the corpus authority.
 
+For the combined 5C/5D successor, #2661's proposed TICK-20 deterministic-effect allocator ADR collides with accepted certificate ADR 0182. Preserve the proposal by mechanically renumbering it to the next free number, ADR 0183 on the exact #2829 base, and retain `Proposed - Pending Human Review` status with updated registry/references. Renumbering preserves the proposal but does not accept it or authorize proposal-dependent implementation. Carry independently authoritative effect/replay consequences normally so #2661 can eventually close after no-loss proof.
+
 The true backlog outside the train is only Document’s post-5B corpus programme and General’s Phase 1 → Phase 2 programme. Shared tooling/refactoring, CI/hosted operations, default preview TLS, and failed-empty-preview capacity are candidate inputs or acceptance checks within those programmes, not standalone jobs. No later gameplay feature slice is selected.
 
 ## Operating invariants
