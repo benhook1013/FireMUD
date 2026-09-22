@@ -14,6 +14,7 @@ import java.security.KeyFactory;
 import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.security.PrivateKey;
+import java.security.SecureRandom;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
@@ -26,6 +27,8 @@ import java.util.Base64;
 import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
@@ -41,12 +44,13 @@ import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManagerFactory;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
+import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-/** Probes the derived public HTTPS and TLS-Telnet endpoints without accepting arbitrary hosts. */
+/** Probes the derived endpoints without accepting arbitrary hosts or exposure-mode fallbacks. */
 @Component
 public class ServedEnvironmentProbe {
   static final class HandshakePolicyRejectedException extends IllegalStateException {
@@ -66,6 +70,14 @@ public class ServedEnvironmentProbe {
       Duration.ofMillis(CONNECT_TIMEOUT_MILLIS + IO_TIMEOUT_MILLIS).plus(TOTAL_PROBE_TIMEOUT_SLACK);
   private static final int GRPC_PORT = 6565;
   private static final int MAX_HTTP_STATUS_LINE_BYTES = 256;
+  private static final int MAX_HTTP_RESPONSE_HEADER_LINES = 128;
+  private static final int MAX_HTTP_RESPONSE_HEADER_BYTES = 8192;
+  private static final String WEBSOCKET_ACCEPT_MAGIC = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+  private static final String BRIDGE_PROBE_PATH = "/ws/game";
+  private static final String BRIDGE_PROBE_TENANT_ID = "1";
+  private static final String BRIDGE_PROBE_GAME_INSTANCE_ID = "1";
+  private static final String BRIDGE_PROBE_CLIENT_IP = "127.0.0.1";
+  private static final SecureRandom WEBSOCKET_NONCE_SOURCE = new SecureRandom();
   private static final String GRPC_PROBE_SERVICE = "account-service";
   private static final Logger LOGGER = LoggerFactory.getLogger(ServedEnvironmentProbe.class);
   private static final ThreadLocal<ProbeAttempt> CURRENT_ATTEMPT = new ThreadLocal<>();
@@ -89,12 +101,36 @@ public class ServedEnvironmentProbe {
       String expectedGrpcLeafSha256) {
     return probe(
         plan,
+        HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+        telnetPort,
+        expectedIngressLeafSha256,
+        expectedTelnetLeafSha256,
+        tcpProxyBridgeMaterial,
+        expectedGatewayInternalWsLeafSha256,
+        grpcMaterial,
+        expectedGrpcLeafSha256);
+  }
+
+  public ProbeResult probe(
+      EnvironmentIdentityPlan plan,
+      String exposureMode,
+      int telnetPort,
+      String expectedIngressLeafSha256,
+      String expectedTelnetLeafSha256,
+      Secret tcpProxyBridgeMaterial,
+      String expectedGatewayInternalWsLeafSha256,
+      Secret grpcMaterial,
+      String expectedGrpcLeafSha256) {
+    return probe(
+        plan,
+        exposureMode,
         telnetPort,
         (hostname, port) -> https(hostname, port, expectedIngressLeafSha256),
         (hostname, port) -> telnet(hostname, port, expectedTelnetLeafSha256),
         (hostname, port) ->
             bridge(hostname, port, tcpProxyBridgeMaterial, expectedGatewayInternalWsLeafSha256),
-        (hostname, port) -> grpc(hostname, port, grpcMaterial, expectedGrpcLeafSha256));
+        (hostname, port) -> grpc(hostname, port, grpcMaterial, expectedGrpcLeafSha256),
+        TOTAL_PROBE_TIMEOUT);
   }
 
   ProbeResult probe(
@@ -105,7 +141,14 @@ public class ServedEnvironmentProbe {
       EndpointProbe bridgeProbe,
       EndpointProbe grpcProbe) {
     return probe(
-        plan, telnetPort, httpsProbe, telnetProbe, bridgeProbe, grpcProbe, TOTAL_PROBE_TIMEOUT);
+        plan,
+        HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+        telnetPort,
+        httpsProbe,
+        telnetProbe,
+        bridgeProbe,
+        grpcProbe,
+        TOTAL_PROBE_TIMEOUT);
   }
 
   ProbeResult probe(
@@ -116,25 +159,77 @@ public class ServedEnvironmentProbe {
       EndpointProbe bridgeProbe,
       EndpointProbe grpcProbe,
       Duration timeout) {
-    List<RunningProbe> probes =
-        List.of(
-            startProbe(ProbeName.HTTPS, () -> httpsProbe.check(plan.hostname(), 443)),
-            startProbe(ProbeName.TELNET, () -> telnetProbe.check(plan.hostname(), telnetPort)),
-            startProbe(
-                ProbeName.BRIDGE, () -> bridgeProbe.check(plan.gatewayInternalWsDnsName(), 443)),
-            startProbe(
-                ProbeName.GRPC,
-                () -> {
-                  try {
-                    return grpcProbe.check(grpcHostname(plan), GRPC_PORT);
-                  } catch (IllegalArgumentException exception) {
-                    LOGGER.debug(
-                        "gRPC probe rejected material or configuration for runtime Namespace {}",
-                        plan.runtimeNamespace(),
-                        exception);
-                    return new ProbeResult(false, "grpc-material-or-configuration-invalid");
-                  }
-                }));
+    return probe(
+        plan,
+        HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+        telnetPort,
+        httpsProbe,
+        telnetProbe,
+        bridgeProbe,
+        grpcProbe,
+        timeout);
+  }
+
+  ProbeResult probe(
+      EnvironmentIdentityPlan plan,
+      String exposureMode,
+      int telnetPort,
+      EndpointProbe httpsProbe,
+      EndpointProbe telnetProbe,
+      EndpointProbe bridgeProbe,
+      EndpointProbe grpcProbe) {
+    return probe(
+        plan,
+        exposureMode,
+        telnetPort,
+        httpsProbe,
+        telnetProbe,
+        bridgeProbe,
+        grpcProbe,
+        TOTAL_PROBE_TIMEOUT);
+  }
+
+  ProbeResult probe(
+      EnvironmentIdentityPlan plan,
+      String exposureMode,
+      int telnetPort,
+      EndpointProbe httpsProbe,
+      EndpointProbe telnetProbe,
+      EndpointProbe bridgeProbe,
+      EndpointProbe grpcProbe,
+      Duration timeout) {
+    if (!HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(exposureMode)
+        && !HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE.equals(exposureMode)) {
+      return new ProbeResult(false, "exposure-mode-invalid");
+    }
+    if (HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE.equals(exposureMode)
+        ? telnetPort != 0
+        : telnetPort < 1 || telnetPort > 65535) {
+      return new ProbeResult(false, "exposure-mode-port-contradiction");
+    }
+    List<RunningProbe> probes = new ArrayList<>();
+    probes.add(startProbe(ProbeName.HTTPS, () -> httpsProbe.check(plan.hostname(), 443)));
+    if (HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE.equals(exposureMode)) {
+      probes.add(
+          startProbe(ProbeName.TELNET, () -> telnetProbe.check(plan.hostname(), telnetPort)));
+    }
+    probes.add(
+        startProbe(
+            ProbeName.BRIDGE, () -> bridgeProbe.check(plan.gatewayInternalWsDnsName(), 443)));
+    probes.add(
+        startProbe(
+            ProbeName.GRPC,
+            () -> {
+              try {
+                return grpcProbe.check(grpcHostname(plan), GRPC_PORT);
+              } catch (IllegalArgumentException exception) {
+                LOGGER.debug(
+                    "gRPC probe rejected material or configuration for runtime Namespace {}",
+                    plan.runtimeNamespace(),
+                    exception);
+                return new ProbeResult(false, "grpc-material-or-configuration-invalid");
+              }
+            }));
     long deadline = System.nanoTime() + timeout.toNanos();
     try {
       List<CompletedProbe> results = new ArrayList<>(probes.size());
@@ -211,20 +306,52 @@ public class ServedEnvironmentProbe {
 
   private ProbeResult bridge(
       String hostname, int port, Secret material, String expectedFingerprint) {
+    return bridge(hostname, hostname, port, material, expectedFingerprint);
+  }
+
+  ProbeResult bridge(
+      String connectHost,
+      String identityHostname,
+      int port,
+      Secret material,
+      String expectedFingerprint) {
     if (material == null || expectedFingerprint == null || expectedFingerprint.isBlank()) {
       return new ProbeResult(false, "material-or-leaf-fingerprint-missing");
     }
-    return internalTlsProbe(
-        () ->
-            openBridgeTlsSocket(
-                hostname,
-                hostname,
-                port,
-                expectedFingerprint,
-                material,
-                properties.getGrpcTrustAnchorSha256()),
-        "mtls-handshake",
-        "bridge endpoint " + hostname + ":" + port);
+    try (SSLSocket socket =
+        openBridgeTlsSocket(
+            connectHost,
+            identityHostname,
+            port,
+            expectedFingerprint,
+            material,
+            properties.getGrpcTrustAnchorSha256())) {
+      if (socket == null) {
+        return new ProbeResult(false, "leaf-fingerprint-mismatch");
+      }
+      return websocketUpgrade(socket, identityHostname, port)
+          ? new ProbeResult(true, "websocket-upgrade")
+          : new ProbeResult(false, "websocket-upgrade-rejected");
+    } catch (IllegalArgumentException exception) {
+      LOGGER.debug(
+          "bridge endpoint {}:{} rejected material or configuration",
+          identityHostname,
+          port,
+          exception);
+      return new ProbeResult(false, "material-or-configuration-invalid");
+    } catch (HandshakePolicyRejectedException exception) {
+      LOGGER.debug(
+          "bridge endpoint {}:{} rejected the required handshake policy",
+          identityHostname,
+          port,
+          exception);
+      return new ProbeResult(false, "handshake-policy-rejected");
+    } catch (Exception exception) {
+      LOGGER.debug("bridge endpoint {}:{} connection failed", identityHostname, port, exception);
+      return new ProbeResult(false, "connection-failed");
+    } finally {
+      releaseTrackedSocket();
+    }
   }
 
   ProbeResult grpc(String hostname, int port, Secret material, String expectedFingerprint) {
@@ -498,6 +625,191 @@ public class ServedEnvironmentProbe {
     }
   }
 
+  private static boolean websocketUpgrade(SSLSocket socket, String hostname, int port)
+      throws Exception {
+    byte[] nonceBytes = new byte[16];
+    WEBSOCKET_NONCE_SOURCE.nextBytes(nonceBytes);
+    String nonce = Base64.getEncoder().encodeToString(nonceBytes);
+    byte[] connectionIdBytes = new byte[16];
+    WEBSOCKET_NONCE_SOURCE.nextBytes(connectionIdBytes);
+    String connectionId = Base64.getUrlEncoder().withoutPadding().encodeToString(connectionIdBytes);
+    String expectedAccept = websocketAccept(nonce);
+    OutputStream output = socket.getOutputStream();
+    output.write(
+        ("GET "
+                + BRIDGE_PROBE_PATH
+                + " HTTP/1.1\r\n"
+                + "Host: "
+                + websocketHostHeader(hostname, port)
+                + "\r\n"
+                + "Upgrade: websocket\r\n"
+                + "Connection: Upgrade\r\n"
+                + "Sec-WebSocket-Key: "
+                + nonce
+                + "\r\n"
+                + "Sec-WebSocket-Version: 13\r\n"
+                + "X-Proxy-Client-IP: "
+                + BRIDGE_PROBE_CLIENT_IP
+                + "\r\n"
+                + "X-Proxy-Game-Instance-Id: "
+                + BRIDGE_PROBE_GAME_INSTANCE_ID
+                + "\r\n"
+                + "X-Proxy-Tenant-Id: "
+                + BRIDGE_PROBE_TENANT_ID
+                + "\r\n"
+                + "X-Proxy-Connection-Id: "
+                + connectionId
+                + "\r\n\r\n")
+            .getBytes(StandardCharsets.ISO_8859_1));
+    output.flush();
+
+    HttpResponse response = readHttpResponse(socket.getInputStream());
+    if (response == null
+        || response.statusCode() != 101
+        || !"HTTP/1.1".equals(response.httpVersion())
+        || !containsHeaderToken(response.headers(), "Upgrade", "websocket")
+        || !containsHeaderToken(response.headers(), "Connection", "upgrade")) {
+      return false;
+    }
+    List<String> acceptValues = response.headers().get("sec-websocket-accept");
+    return acceptValues != null
+        && acceptValues.size() == 1
+        && expectedAccept.equals(acceptValues.getFirst().trim());
+  }
+
+  private static String websocketHostHeader(String hostname, int port) {
+    return port == 443 ? hostname : hostname + ":" + port;
+  }
+
+  private static String websocketAccept(String nonce) {
+    try {
+      byte[] digest =
+          MessageDigest.getInstance("SHA-1")
+              .digest((nonce + WEBSOCKET_ACCEPT_MAGIC).getBytes(StandardCharsets.ISO_8859_1));
+      return Base64.getEncoder().encodeToString(digest);
+    } catch (GeneralSecurityException exception) {
+      throw new IllegalStateException("SHA-1 is unavailable for WebSocket upgrade", exception);
+    }
+  }
+
+  private static boolean containsHeaderToken(
+      Map<String, List<String>> headers, String name, String expectedToken) {
+    List<String> values = headers.get(name.toLowerCase(Locale.ROOT));
+    if (values == null) {
+      return false;
+    }
+    return values.stream()
+        .flatMap(value -> List.of(value.split(",", -1)).stream())
+        .map(String::trim)
+        .anyMatch(expectedToken::equalsIgnoreCase);
+  }
+
+  private static HttpResponse readHttpResponse(InputStream input) throws IOException {
+    String statusLine = readHttpLine(input, MAX_HTTP_STATUS_LINE_BYTES);
+    if (statusLine == null) {
+      return null;
+    }
+    List<String> headerLines = new ArrayList<>();
+    int headerBytes = 0;
+    while (true) {
+      String line = readHttpLine(input, MAX_HTTP_RESPONSE_HEADER_BYTES - headerBytes);
+      if (line == null) {
+        return null;
+      }
+      headerBytes += line.length() + 2;
+      if (headerBytes > MAX_HTTP_RESPONSE_HEADER_BYTES
+          || headerLines.size() >= MAX_HTTP_RESPONSE_HEADER_LINES) {
+        return null;
+      }
+      if (line.isEmpty()) {
+        break;
+      }
+      headerLines.add(line);
+    }
+
+    if (!statusLine.startsWith("HTTP/1.1 ")) {
+      return null;
+    }
+    int statusCode = parseHttpStatusCode(statusLine);
+    if (statusCode < 0) {
+      return null;
+    }
+    Map<String, List<String>> headers = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+    for (String line : headerLines) {
+      if (line.startsWith(" ") || line.startsWith("\t")) {
+        return null;
+      }
+      int separator = line.indexOf(':');
+      if (separator <= 0 || !isHttpToken(line.substring(0, separator))) {
+        return null;
+      }
+      String name = line.substring(0, separator).toLowerCase(Locale.ROOT);
+      String value = line.substring(separator + 1).trim();
+      headers.computeIfAbsent(name, ignored -> new ArrayList<>()).add(value);
+    }
+    return new HttpResponse(statusLine.substring(0, 8), statusCode, headers);
+  }
+
+  private static String readHttpLine(InputStream input, int maximumBytes) throws IOException {
+    byte[] line = new byte[maximumBytes];
+    int length = 0;
+    boolean carriageReturn = false;
+    while (true) {
+      int next = input.read();
+      if (next < 0) {
+        return null;
+      }
+      if (next == '\n') {
+        return carriageReturn ? new String(line, 0, length, StandardCharsets.ISO_8859_1) : null;
+      }
+      if (carriageReturn || length == line.length) {
+        return null;
+      }
+      if (next == '\r') {
+        carriageReturn = true;
+      } else {
+        line[length++] = (byte) next;
+      }
+    }
+  }
+
+  private static int parseHttpStatusCode(String statusLine) {
+    if (statusLine.length() < 12
+        || !(statusLine.startsWith("HTTP/1.0 ") || statusLine.startsWith("HTTP/1.1 "))
+        || !isAsciiDigit(statusLine.charAt(9))
+        || !isAsciiDigit(statusLine.charAt(10))
+        || !isAsciiDigit(statusLine.charAt(11))
+        || (statusLine.length() > 12 && statusLine.charAt(12) != ' ')) {
+      return -1;
+    }
+    int statusCode =
+        (statusLine.charAt(9) - '0') * 100
+            + (statusLine.charAt(10) - '0') * 10
+            + (statusLine.charAt(11) - '0');
+    return statusCode >= 100 && statusCode <= 599 ? statusCode : -1;
+  }
+
+  private static boolean isHttpToken(String value) {
+    if (value.isEmpty()) {
+      return false;
+    }
+    for (int index = 0; index < value.length(); index++) {
+      char character = value.charAt(index);
+      boolean valid =
+          (character >= '0' && character <= '9')
+              || (character >= 'A' && character <= 'Z')
+              || (character >= 'a' && character <= 'z')
+              || "!#$%&'*+-.^_`|~".indexOf(character) >= 0;
+      if (!valid) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private record HttpResponse(
+      String httpVersion, int statusCode, Map<String, List<String>> headers) {}
+
   static int readHttpStatusCode(InputStream input) throws IOException {
     byte[] statusLineBytes = new byte[MAX_HTTP_STATUS_LINE_BYTES];
     int length = 0;
@@ -527,19 +839,7 @@ public class ServedEnvironmentProbe {
     }
 
     String statusLine = new String(statusLineBytes, 0, length, StandardCharsets.ISO_8859_1);
-    if (statusLine.length() < 12
-        || !(statusLine.startsWith("HTTP/1.0 ") || statusLine.startsWith("HTTP/1.1 "))
-        || !isAsciiDigit(statusLine.charAt(9))
-        || !isAsciiDigit(statusLine.charAt(10))
-        || !isAsciiDigit(statusLine.charAt(11))
-        || (statusLine.length() > 12 && statusLine.charAt(12) != ' ')) {
-      return -1;
-    }
-    int statusCode =
-        (statusLine.charAt(9) - '0') * 100
-            + (statusLine.charAt(10) - '0') * 10
-            + (statusLine.charAt(11) - '0');
-    return statusCode >= 100 && statusCode <= 599 ? statusCode : -1;
+    return parseHttpStatusCode(statusLine);
   }
 
   private static boolean isAsciiDigit(char value) {

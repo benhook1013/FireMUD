@@ -1,0 +1,92 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: firemud-trust-runtime-namespace-boundary
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [namespaces]
+        scope: Cluster
+  matchConditions:
+    - name: scoped-manager
+      expression: request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-preview-namespace-manager'
+  validations:
+    - expression: >-
+        (request.operation == 'DELETE' ? request.name : object.metadata.name) == 'dev' ||
+        (request.operation == 'DELETE' ? request.name : object.metadata.name).matches('^pr-[1-9][0-9]{0,50}$')
+      message: the trusted namespace manager may change only dev or canonical pr-N runtime namespaces
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: firemud-trust-runtime-namespace-boundary
+spec:
+  policyName: firemud-trust-runtime-namespace-boundary
+  validationActions: [Deny]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: firemud-trust-runtime-binding-boundary
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+      - apiGroups: [rbac.authorization.k8s.io]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [rolebindings]
+        scope: Namespaced
+  matchConditions:
+    - name: trusted-data-plane-bindings
+      expression: >-
+        request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-preview-namespace-manager' ||
+        (request.operation == 'DELETE' ?
+          request.name in ['firemud-preview-runtime', 'firemud-standalone-certificate-writer'] :
+          (object.roleRef.kind == 'ClusterRole' &&
+           object.roleRef.name in ['firemud-preview-runtime', 'firemud-standalone-certificate-writer']) ||
+          (has(object.subjects) && object.subjects.exists(subject,
+            subject.kind == 'ServiceAccount' && subject.namespace == 'firemud-system' &&
+            subject.name in ['firemud-preview-runtime', 'firemud-standalone-certificate-writer'])) ||
+          (request.operation == 'UPDATE' &&
+           ((oldObject.roleRef.kind == 'ClusterRole' &&
+             oldObject.roleRef.name in ['firemud-preview-runtime', 'firemud-standalone-certificate-writer']) ||
+            (has(oldObject.subjects) && oldObject.subjects.exists(subject,
+              subject.kind == 'ServiceAccount' && subject.namespace == 'firemud-system' &&
+              subject.name in ['firemud-preview-runtime', 'firemud-standalone-certificate-writer'])))))
+  validations:
+    - expression: >-
+        request.userInfo.groups.exists(group, group == 'system:masters') ||
+        (request.userInfo.username == 'system:serviceaccount:kube-system:namespace-controller' &&
+         request.operation == 'DELETE' &&
+         (request.namespace == 'dev' || request.namespace.matches('^pr-[1-9][0-9]{0,50}$')) &&
+         request.name in ['firemud-preview-runtime', 'firemud-standalone-certificate-writer']) ||
+        (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-preview-namespace-manager' &&
+         (request.namespace == 'dev' || request.namespace.matches('^pr-[1-9][0-9]{0,50}$')) &&
+         (request.operation == 'DELETE' ?
+           request.name in ['firemud-preview-runtime', 'firemud-standalone-certificate-writer'] :
+           (object.metadata.name in ['firemud-preview-runtime', 'firemud-standalone-certificate-writer'] &&
+            object.roleRef.apiGroup == 'rbac.authorization.k8s.io' &&
+            object.roleRef.kind == 'ClusterRole' &&
+            object.roleRef.name == object.metadata.name &&
+            has(object.subjects) && object.subjects.size() == 1 &&
+            object.subjects[0].kind == 'ServiceAccount' &&
+            object.subjects[0].namespace == 'firemud-system' &&
+            object.subjects[0].name == object.metadata.name)))
+      message: only the trusted manager may bind exact data-plane roles to their fixed service accounts in runtime namespaces
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: firemud-trust-runtime-binding-boundary
+spec:
+  policyName: firemud-trust-runtime-binding-boundary
+  validationActions: [Deny]

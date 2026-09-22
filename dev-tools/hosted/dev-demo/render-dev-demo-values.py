@@ -74,13 +74,18 @@ def main() -> int:
         text = replace_or_die(text, target, replacement)
     text = replace_or_die(
         text,
+        "    trustEnvironment: pr-preview",
+        "    trustEnvironment: dev-demo-cluster",
+    )
+    text = replace_or_die(
+        text,
         "        # __TCP_PROXY_GATEWAY_BASE_URL_LINE__",
         "        TCP_PROXY_GATEWAY_BASE_URL: http://spring-cloud-gateway",
     )
     text = replace_or_die(
         text,
         "        # __TCP_PROXY_ADDITIONAL_SERVICE_PORTS__",
-        "        - port: 8080\n          targetPort: 8080",
+        "",
     )
     output_path.write_text(text, encoding="utf-8")
     return 0

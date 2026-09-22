@@ -120,7 +120,6 @@ class AutomationPatchControlPlaneServiceTest {
     assertThat(response.getAcknowledgedAtMs()).isZero();
   }
 
-
   private static AdmissionPointerControlPlaneEntry currentPointer(
       String worldSlug, String realmSlug, long pointerVersion) {
     return AdmissionPointerControlPlaneEntry.newBuilder()

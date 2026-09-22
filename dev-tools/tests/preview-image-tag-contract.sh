@@ -115,17 +115,113 @@ grep -Fq 'resolve-preview-image-tag.sh' "$trusted_workflow" || {
   exit 1
 }
 assert_base_image_reuse_contract "$trusted_workflow"
-grep -Fq '.github/workflows/docker-images.yml' "$base_image_waiter" || {
-  echo "base-image waiter must derive services from docker-images.yml" >&2
+
+assert_branch_publication_contract() {
+  local runtime_workflow="$1" docker_workflow="$2"
+  python3 - "$runtime_workflow" "$docker_workflow" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+runtime_path, docker_path = map(Path, sys.argv[1:])
+runtime = yaml.safe_load(runtime_path.read_text(encoding="utf-8")) or {}
+docker = yaml.safe_load(docker_path.read_text(encoding="utf-8")) or {}
+on = runtime.get(True, runtime.get("on", {}))
+if "push" in on:
+    raise SystemExit("runtime image publication must not start directly from push")
+workflow_run = on.get("workflow_run")
+if not isinstance(workflow_run, dict) or workflow_run.get("workflows") != ["CI — Validation"]:
+    raise SystemExit("runtime image publication must be driven by CI workflow_run")
+if workflow_run.get("types") != ["completed"] or workflow_run.get("branches") != ["main", "develop"]:
+    raise SystemExit("runtime workflow_run must be completed-only and branch-scoped")
+
+image_meta_if = runtime["jobs"]["image-meta"].get("if", "")
+for required in (
+    "github.event.workflow_run.event == 'push'",
+    "github.event.workflow_run.conclusion == 'success'",
+    "github.event.workflow_run.head_branch == 'main'",
+    "github.event.workflow_run.head_branch == 'develop'",
+):
+    if required not in image_meta_if:
+        raise SystemExit(f"image-meta is missing exact CI/branch guard: {required}")
+
+build_text = str(runtime["jobs"]["build-runtime-images"])
+if "needs.image-meta.outputs.candidate_tag" not in build_text:
+    raise SystemExit("runtime service build must publish only candidate tags")
+if "needs.build-base-image.outputs.digest" not in build_text:
+    raise SystemExit("runtime service build must bind to the exact base digest")
+
+smoke = runtime["jobs"]["smoke-full"]
+if smoke.get("with", {}).get("image_tag") != "${{ needs.image-meta.outputs.candidate_tag }}":
+    raise SystemExit("full-stack smoke must consume the staged candidate tag")
+
+publish = runtime["jobs"]["publish-runtime-images"]
+if publish.get("needs") != ["image-meta", "build-runtime-images", "smoke-full"]:
+    raise SystemExit("canonical runtime publication must depend on the exact smoke job")
+publish_text = "\n".join(
+    step.get("run", "")
+    for step in publish.get("steps", [])
+    if isinstance(step, dict)
+)
+for required in (
+    "assert_current_branch_head",
+    "docker buildx imagetools create --tag",
+    "Refusing to overwrite fixed runtime tag",
+):
+    if required not in publish_text:
+        raise SystemExit(f"canonical promotion is missing: {required}")
+if "needs.smoke-full.result == 'success'" not in str(publish.get("if", "")):
+    raise SystemExit("canonical promotion must require successful full-stack smoke")
+
+docker_text = str(docker)
+if "docker/build-push-action@" in docker_text or "packages: write" in docker_text:
+    raise SystemExit("legacy docker-images workflow must not publish runtime services")
+docker_on = docker.get(True, docker.get("on", {}))
+if not isinstance(docker_on, dict) or set(docker_on) != {"workflow_dispatch"}:
+    raise SystemExit(
+        "legacy docker-images workflow must expose only the manual workflow_dispatch trigger"
+    )
+PY
+}
+
+assert_branch_publication_contract \
+  "$ROOT_DIR/.github/workflows/runtime-images.yml" \
+  "$ROOT_DIR/.github/workflows/docker-images.yml"
+grep -Fq 'const validFileEntries = changedFiles.every((file) =>' "$ROOT_DIR/.github/workflows/runtime-images.yml" || {
+  echo "PR runtime smoke detection must validate every changed-file entry" >&2
   exit 1
 }
-if grep -Eq 'runtime-images\.yml|publish-pr-runtime-images\.yml' "$base_image_waiter"; then
-  echo "base-image waiter must not use PR runtime-image workflow sources" >&2
+grep -Fq '|| !validFileEntries' "$ROOT_DIR/.github/workflows/runtime-images.yml" || {
+  echo "malformed changed-file entries must require both PR smoke scopes" >&2
+  exit 1
+}
+
+grep -Fq '.github/workflows/runtime-images.yml' "$base_image_waiter" || {
+  echo "base-image waiter must derive services from runtime-images.yml" >&2
+  exit 1
+}
+if grep -Fq 'publish-pr-runtime-images.yml' "$base_image_waiter"; then
+  echo "base-image waiter must not use the PR publisher workflow as its service source" >&2
   exit 1
 fi
 
 fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$fixture_dir"' EXIT
+
+negative_runtime_workflow="$fixture_dir/negative-runtime-images.yml"
+sed "s/github.event.workflow_run.conclusion == 'success'/github.event.workflow_run.conclusion != 'failure'/" \
+  "$ROOT_DIR/.github/workflows/runtime-images.yml" >"$negative_runtime_workflow"
+if assert_branch_publication_contract \
+  "$negative_runtime_workflow" "$ROOT_DIR/.github/workflows/docker-images.yml" \
+  >"$fixture_dir/negative-runtime-output" 2>&1; then
+  echo "runtime publication contract accepted an unsuccessful CI workflow_run guard" >&2
+  exit 1
+fi
+grep -Fq 'image-meta is missing exact CI/branch guard' "$fixture_dir/negative-runtime-output" || {
+  echo "runtime publication contract did not reject an unsuccessful CI workflow_run guard" >&2
+  exit 1
+}
 
 negative_base_reuse_workflow="$fixture_dir/negative-base-reuse.yml"
 cp "$trusted_workflow" "$negative_base_reuse_workflow"
@@ -180,17 +276,32 @@ set -euo pipefail
 if [[ "${FAKE_GH_FAIL:-}" == "1" ]]; then
   exit 42
 fi
-jq_expression=""
-while [[ $# -gt 0 ]]; do
-  if [[ "$1" == "--jq" ]]; then
-    jq_expression="${2:-}"
-    break
+if [[ "$*" == *"/files?"* ]]; then
+  python3 - <<'PY'
+import json
+import os
+
+entries = [
+    {"filename": filename}
+    for filename in os.environ.get("FAKE_CHANGED_FILES", "").splitlines()
+    if filename
+]
+previous = os.environ.get("FAKE_PREVIOUS_FILENAME")
+if previous:
+    entries[0]["previous_filename"] = previous
+print(json.dumps([entries]))
+PY
+elif [[ "$*" == *"/git/ref/heads/develop"* ]]; then
+  printf '%s\n' '{"ref":"refs/heads/develop","object":{"sha":"cccccccccccccccccccccccccccccccccccccccc"}}'
+elif [[ "$*" == *"/commits/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"* ]]; then
+  parent_base=cccccccccccccccccccccccccccccccccccccccc
+  parent_head=dddddddddddddddddddddddddddddddddddddddd
+  if [[ "${FAKE_GH_STALE_PARENTS:-}" == "1" ]]; then
+    parent_base=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
   fi
-  shift
-done
-printf '%s\n' "${FAKE_CHANGED_FILES:-}"
-if [[ "${jq_expression}" == *previous_filename* && -n "${FAKE_PREVIOUS_FILENAME:-}" ]]; then
-  printf '%s\n' "${FAKE_PREVIOUS_FILENAME}"
+  printf '%s\n' '{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","parents":[{"sha":"'"$parent_base"'"},{"sha":"'"$parent_head"'"}]}'
+else
+  printf '%s\n' '{"changed_files":1,"base":{"ref":"develop","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"benhook1013/FireMUD"}},"head":{"sha":"'"${FAKE_GH_HEAD_SHA:-dddddddddddddddddddddddddddddddddddddddd}"'","repo":{"full_name":"benhook1013/FireMUD"}},"merge_commit_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}'
 fi
 EOF
 chmod 700 "$fixture_dir/gh"
@@ -226,9 +337,9 @@ EOF
 chmod 700 "$fixture_dir/docker"
 
 mkdir -p "$fixture_dir/noncanonical-workflow/.github/workflows"
-cat > "$fixture_dir/noncanonical-workflow/.github/workflows/docker-images.yml" <<'EOF'
+cat > "$fixture_dir/noncanonical-workflow/.github/workflows/runtime-images.yml" <<'EOF'
 jobs:
-  docker-build:
+  build-runtime-images:
     strategy:
       matrix:
         service: account-service
@@ -249,9 +360,9 @@ grep -Fq 'must be a non-empty list of strings' "$fixture_dir/noncanonical-workfl
 }
 
 mkdir -p "$fixture_dir/malformed-workflow/.github/workflows"
-cat > "$fixture_dir/malformed-workflow/.github/workflows/docker-images.yml" <<'EOF'
+cat > "$fixture_dir/malformed-workflow/.github/workflows/runtime-images.yml" <<'EOF'
 jobs:
-  docker-build:
+  build-runtime-images:
     strategy:
       matrix:
         service: [account-service
@@ -263,11 +374,11 @@ if (
     HOSTED_BASE_IMAGE_WAIT_SLEEP_SECONDS=0 \
     bash "$base_image_waiter" "$base_sha"
 ) >"$fixture_dir/malformed-workflow-output" 2>"$fixture_dir/malformed-workflow-error"; then
-  echo "base-image waiter must reject malformed docker-images.yml" >&2
+  echo "base-image waiter must reject malformed runtime-images.yml" >&2
   exit 1
 fi
-grep -Fq 'unable to parse base-image workflow' "$fixture_dir/malformed-workflow-error" || {
-  echo "base-image waiter did not report malformed docker-images.yml" >&2
+grep -Fq 'unable to parse runtime-image workflow' "$fixture_dir/malformed-workflow-error" || {
+  echo "base-image waiter did not report malformed runtime-images.yml" >&2
   exit 1
 }
 
@@ -312,7 +423,7 @@ PATH="$fixture_dir:$PATH" \
   HOSTED_BASE_IMAGE_WAIT_SLEEP_SECONDS=1 \
   bash "$base_image_waiter" "$base_sha" >"$fixture_dir/base-image-success-output"
 [[ "$(wc -l < "$success_calls")" -eq "${#expected_base_services[@]}" ]] || {
-  echo "base-image waiter did not check every docker-images.yml service" >&2
+  echo "base-image waiter did not check every runtime-images.yml service" >&2
   exit 1
 }
 for service in "${expected_base_services[@]}"; do
@@ -339,7 +450,7 @@ grep -Fq 'Timed out waiting for base runtime images' "$fixture_dir/base-image-ti
   exit 1
 }
 [[ "$(wc -l < "$timeout_calls")" -eq "${#expected_base_services[@]}" ]] || {
-  echo "base-image timeout path did not check every docker-images.yml service" >&2
+  echo "base-image timeout path did not check every runtime-images.yml service" >&2
   exit 1
 }
 
@@ -410,6 +521,9 @@ grep -Fq 'Timed out waiting for base runtime images' "$fixture_dir/base-image-ha
   exit 1
 }
 
+merge_sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+base_image_tag=cccccccccccccccccccccccccccccccccccccccc
+runtime_image_tag="pr-merge-${merge_sha}"
 run_resolver() {
   local files="$1" expected="$2" previous_filename="${3:-}" actual
   actual="$(
@@ -418,7 +532,7 @@ run_resolver() {
     FAKE_PREVIOUS_FILENAME="$previous_filename" \
     GH_TOKEN=contract-token \
     GITHUB_REPOSITORY=benhook1013/FireMUD \
-    bash "$resolver" requested-head-tag 2786 base-commit-tag
+    bash "$resolver" "$merge_sha" 2786 "$base_image_tag"
   )"
   [[ "$actual" == "$expected" ]] || {
     echo "resolver selected $actual for changed files $files; expected $expected" >&2
@@ -426,29 +540,32 @@ run_resolver() {
   }
 }
 
-run_resolver '.github/workflows/preview.yml' base-commit-tag
-run_resolver '.github/workflows/docker-images.yml' requested-head-tag
-run_resolver 'design/architecture/foo.md' base-commit-tag
-run_resolver '.github/actions/setup-python/action.yml' requested-head-tag
-run_resolver '.github/actions/load-workflow-tool-versions/action.yml' requested-head-tag
-run_resolver '.dockerignore' requested-head-tag
-run_resolver 'config/python/smoke-requirements.txt' requested-head-tag
-run_resolver 'config/workflow-tool-versions.env' requested-head-tag
-run_resolver 'dev-tools/backups/verify-backups.sh' requested-head-tag
-run_resolver 'dev-tools/backups/pg-dump-s3-selection.shlib' requested-head-tag
-run_resolver 'dev-tools/backups/smoke-backup-verifier-image.sh' requested-head-tag
-run_resolver 'dev-tools/hosted/shared/check-kubectl-version-skew.sh' base-commit-tag
-run_resolver 'services/game-logic-service/src/main/Foo.kt' requested-head-tag
+run_resolver '.github/workflows/preview.yml' "$base_image_tag"
+run_resolver '.github/workflows/docker-images.yml' "$base_image_tag"
+run_resolver 'dev-tools/build-old-name.sh' "$base_image_tag"
+run_resolver 'design/architecture/foo.md' "$base_image_tag"
+run_resolver '.github/actions/setup-python/action.yml' "$runtime_image_tag"
+run_resolver '.github/actions/load-workflow-tool-versions/action.yml' "$runtime_image_tag"
+run_resolver '.dockerignore' "$runtime_image_tag"
+run_resolver 'config/python/smoke-requirements.txt' "$runtime_image_tag"
+run_resolver 'config/workflow-tool-versions.env' "$runtime_image_tag"
+run_resolver 'dev-tools/backups/verify-backups.sh' "$runtime_image_tag"
+run_resolver 'dev-tools/backups/pg-dump-s3-selection.shlib' "$runtime_image_tag"
+run_resolver 'dev-tools/backups/smoke-backup-verifier-image.sh' "$runtime_image_tag"
+run_resolver 'dev-tools/hosted/shared/check-kubectl-version-skew.sh' "$base_image_tag"
+run_resolver 'services/game-logic-service/src/main/Foo.kt' "$runtime_image_tag"
+run_resolver 'gradlew' "$runtime_image_tag"
+run_resolver 'gradlew.bat' "$runtime_image_tag"
 # A rename from a runtime-relevant path must keep the PR image selected even
 # when the current filename is no longer runtime-relevant.
-run_resolver 'design/architecture/new-name.md' requested-head-tag 'dev-tools/build-old-name.sh'
+run_resolver 'design/architecture/new-name.md' "$runtime_image_tag" 'dev-tools/build-local-smoke-images.sh'
 
 if ! (
   PATH="$fixture_dir:$PATH" \
   FAKE_GH_FAIL=1 \
   GH_TOKEN=contract-token \
   GITHUB_REPOSITORY=benhook1013/FireMUD \
-  bash "$resolver" requested-head-tag 2786 base-commit-tag
+  bash "$resolver" "$merge_sha" 2786 "$base_image_tag"
 ) >"$fixture_dir/api-failure-output" 2>"$fixture_dir/api-failure-error"; then
   :
 else
@@ -461,6 +578,36 @@ grep -Fq 'refusing to select base images' "$fixture_dir/api-failure-error" || {
 }
 [[ ! -s "$fixture_dir/api-failure-output" ]] || {
   echo "resolver emitted an image tag after the PR-files API failed" >&2
+  exit 1
+}
+
+if (
+  PATH="$fixture_dir:$PATH" \
+  FAKE_GH_STALE_PARENTS=1 \
+  GH_TOKEN=contract-token \
+  GITHUB_REPOSITORY=benhook1013/FireMUD \
+  bash "$resolver" "$merge_sha" 2786 "$base_image_tag"
+) >"$fixture_dir/stale-parent-output" 2>"$fixture_dir/stale-parent-error"; then
+  echo "resolver accepted a merge commit with stale parents" >&2
+  exit 1
+fi
+grep -Fq 'exact current base/head parents' "$fixture_dir/stale-parent-error" || {
+  echo "resolver did not reject stale merge parents" >&2
+  exit 1
+}
+
+if (
+  PATH="$fixture_dir:$PATH" \
+  FAKE_GH_HEAD_SHA=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee \
+  GH_TOKEN=contract-token \
+  GITHUB_REPOSITORY=benhook1013/FireMUD \
+  bash "$resolver" "$merge_sha" 2786 "$base_image_tag"
+) >"$fixture_dir/stale-head-output" 2>"$fixture_dir/stale-head-error"; then
+  echo "resolver accepted a merge commit for a stale head" >&2
+  exit 1
+fi
+grep -Fq 'exact current base/head parents' "$fixture_dir/stale-head-error" || {
+  echo "resolver did not reject a stale merge head" >&2
   exit 1
 }
 

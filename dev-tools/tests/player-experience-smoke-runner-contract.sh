@@ -22,6 +22,9 @@ SMOKE_CONFIG_ENV_UNSETS=(
   -u SMOKE_GATEWAY_API_BASE
   -u SMOKE_TELNET_HOST
   -u TCP_PROXY_PORT
+  -u PLAYER_EXPERIENCE_TELNET_TRANSPORT
+  -u PLAYER_EXPERIENCE_TELNET_SERVER_HOSTNAME
+  -u PLAYER_EXPERIENCE_TELNET_CA_FILE
   -u SMOKE_ACCOUNT_API_BASE
   -u SMOKE_GAME_LOGIC_API_BASE
   -u SMOKE_GAME_SESSION_API_BASE
@@ -48,6 +51,7 @@ env "${SMOKE_CONFIG_ENV_UNSETS[@]}" \
 import importlib.util
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 root = Path(sys.argv[1]) / "dev-tools" / "observability"
 sys.path.insert(0, str(root))
@@ -74,6 +78,125 @@ assert evidence_validator_module.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABL
 env_config = runner_module.SmokeConfig.from_env("contract-test", "websocket", None)
 assert env_config.queryability_profile == "staging"
 assert env_config.queryability_freshness_budget_seconds == 7200
+assert env_config.telnet_transport is None
+assert env_config.telnet_server_hostname is None
+assert env_config.telnet_ca_file is None
+
+runner_module.validate_telnet_transport_config(
+    env_config, {"websocket"}, simulate=False
+)
+invalid_tls_config = runner_module.SmokeConfig.from_env(
+    "contract-test", "telnet", None, telnet_transport="tls"
+)
+try:
+    runner_module.validate_telnet_transport_config(
+        invalid_tls_config, {"telnet"}, simulate=False
+    )
+except ValueError as exc:
+    assert "server-hostname" in str(exc)
+else:
+    raise AssertionError("TLS Telnet config without hostname was accepted")
+
+readable_ca_file = root / "run-player-experience-smoke.py"
+tls_config = runner_module.SmokeConfig.from_env(
+    "contract-test",
+    "telnet",
+    None,
+    telnet_transport="tls",
+    telnet_server_hostname="preview.example.test",
+    telnet_ca_file=readable_ca_file,
+)
+runner_module.validate_telnet_transport_config(tls_config, {"telnet"}, simulate=False)
+assert runner_module.telnet_socket_options(tls_config) == {
+    "tls_enabled": True,
+    "tls_server_hostname": "preview.example.test",
+    "tls_ca_file": readable_ca_file,
+}
+for invalid_ca_file in (root / "missing-ca.pem", root):
+    invalid_ca_config = runner_module.SmokeConfig.from_env(
+        "contract-test",
+        "telnet",
+        None,
+        telnet_transport="tls",
+        telnet_server_hostname="preview.example.test",
+        telnet_ca_file=invalid_ca_file,
+    )
+    try:
+        runner_module.validate_telnet_transport_config(
+            invalid_ca_config, {"telnet"}, simulate=False
+        )
+    except ValueError as exc:
+        assert "readable regular file" in str(exc)
+    else:
+        raise AssertionError(f"TLS Telnet accepted invalid CA path: {invalid_ca_file}")
+
+with patch.object(Path, "open", side_effect=PermissionError("contract denied")):
+    try:
+        runner_module.validate_telnet_transport_config(
+            tls_config, {"telnet"}, simulate=False
+        )
+    except ValueError as exc:
+        assert "readable regular file" in str(exc)
+    else:
+        raise AssertionError("TLS Telnet accepted an unreadable CA file")
+plaintext_config = runner_module.SmokeConfig.from_env(
+    "contract-test", "telnet", None, telnet_transport="plaintext"
+)
+assert runner_module.telnet_socket_options(plaintext_config) == {
+    "tls_enabled": False,
+    "tls_server_hostname": None,
+    "tls_ca_file": None,
+}
+unset_telnet_config = runner_module.SmokeConfig.from_env(
+    "contract-test", "telnet", None
+)
+try:
+    runner_module.validate_telnet_transport_config(
+        unset_telnet_config, {"telnet"}, simulate=False
+    )
+except ValueError as exc:
+    assert "--telnet-transport tls" in str(exc)
+else:
+    raise AssertionError("live exposed Telnet accepted an unset transport")
+try:
+    runner_module.telnet_socket_options(unset_telnet_config)
+except ValueError as exc:
+    assert "explicitly set to tls or plaintext" in str(exc)
+else:
+    raise AssertionError("unset Telnet transport selected socket options")
+try:
+    runner_module.validate_telnet_transport_config(
+        plaintext_config, {"telnet"}, simulate=False
+    )
+except ValueError as exc:
+    assert "rejects plaintext" in str(exc)
+else:
+    raise AssertionError("live exposed Telnet accepted plaintext transport")
+runner_module.validate_telnet_transport_config(
+    plaintext_config, {"telnet"}, simulate=True
+)
+for option in ("telnet_server_hostname", "telnet_ca_file"):
+    invalid_plaintext = runner_module.SmokeConfig.from_env(
+        "contract-test",
+        "telnet",
+        None,
+        telnet_transport="plaintext",
+        **{
+            option: (
+                "preview.example.test"
+                if option.endswith("hostname")
+                else runner_module.Path("ca.pem")
+            )
+        },
+    )
+    try:
+        runner_module.validate_telnet_transport_config(
+            invalid_plaintext, {"telnet"}, simulate=False
+        )
+    except ValueError as exc:
+        assert "only valid for TLS Telnet connections" in str(exc)
+    else:
+        raise AssertionError(f"plaintext Telnet accepted {option}")
 
 for invalid_budget in ("1e308", "1e-100"):
     try:
@@ -2252,6 +2375,7 @@ run_clean_python - "$RUNNER" <<'PY'
 import importlib.util
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 runner_path = Path(sys.argv[1])
 spec = importlib.util.spec_from_file_location("player_experience_smoke_failure_capture", runner_path)
@@ -2351,6 +2475,107 @@ assert_producers_empty("advertised", False)
 assert_producers_empty("omitted", False)
 assert_producers_empty("omitted", True)
 assert_producers_emit("advertised", True)
+
+
+def authorized_telnet_config(transport):
+    config = runner.SmokeConfig.from_env(
+        "contract-test",
+        "telnet",
+        None,
+        telnet_transport=transport,
+        telnet_server_hostname=(
+            "preview.example.test" if transport == "tls" else None
+        ),
+    )
+    config.username = "non-default@example.com"
+    config.password = "non-default-password"
+    config.player_flow_canary = "advertised"
+    config.player_flow_canary_identity = {
+        "authority": "account-service",
+        "classification": "synthetic",
+        "analyticsSloExclusion": True,
+        "credentials": {"nonDefault": True, "productionSafe": True},
+        "transportCharacters": {
+            "telnet": {"restricted": True, "isolated": True}
+        },
+        "evidenceRef": "account://contract-test/synthetic-canary",
+    }
+    config._validated_player_flow_canary_paths = frozenset({"telnet"})
+    return config
+
+
+for invalid_transport, expected_error in (
+    (None, "--telnet-transport tls"),
+    ("plaintext", "rejects plaintext"),
+):
+    invalid_config = authorized_telnet_config(invalid_transport)
+    with patch.object(runner, "open_telnet_socket") as open_telnet_socket:
+        assert runner.blackbox_telnet_record(invalid_config, {"telnet"}) == {
+            "path": "telnet",
+            "target": "tcp_proxy",
+            "value": 0,
+        }
+        open_telnet_socket.assert_not_called()
+        for producer in (
+            lambda: runner.blackbox_telnet_record(invalid_config, set()),
+            lambda: runner.run_telnet_canary(invalid_config, set()),
+        ):
+            try:
+                producer()
+            except ValueError as exc:
+                assert expected_error in str(exc)
+            else:
+                raise AssertionError(
+                    f"direct live Telnet producer accepted {invalid_transport!r} transport"
+                )
+            open_telnet_socket.assert_not_called()
+
+tls_direct_config = authorized_telnet_config("tls")
+with (
+    patch.object(runner, "open_telnet_socket") as open_telnet_socket,
+    patch.object(runner, "recv_until_socket", return_value="Welcome\n"),
+    patch.object(runner, "run_telnet_command_plan") as run_telnet_command_plan,
+):
+    opened_socket = object()
+    open_telnet_socket.return_value.__enter__.return_value = opened_socket
+
+    blackbox_record = runner.blackbox_telnet_record(tls_direct_config, set())
+    assert blackbox_record == {
+        "path": "telnet",
+        "target": "tcp_proxy",
+        "value": 1,
+    }
+    open_telnet_socket.assert_called_once_with(
+        tls_direct_config.telnet_host,
+        tls_direct_config.telnet_port,
+        tls_direct_config.timeout_seconds,
+        tls_enabled=True,
+        tls_server_hostname="preview.example.test",
+        tls_ca_file=None,
+    )
+
+    open_telnet_socket.reset_mock()
+
+    def record_successful_steps(_socket, _steps, _timeout, *, step_results):
+        step_results.extend(
+            [
+                {"label": "LOGIN", "latencyMs": 10},
+                {"label": "LOOK", "latencyMs": 20},
+            ]
+        )
+
+    run_telnet_command_plan.side_effect = record_successful_steps
+    success, latency = runner.run_telnet_canary(tls_direct_config, set())
+    assert [record["value"] for record in success] == [1, 1]
+    assert latency[0]["value"] == 20
+    open_telnet_socket.assert_called_once_with(
+        tls_direct_config.telnet_host,
+        tls_direct_config.telnet_port,
+        tls_direct_config.timeout_seconds,
+        tls_enabled=True,
+        tls_server_hostname="preview.example.test",
+        tls_ca_file=None,
+    )
 
 runner.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE = True
 for identity in (
@@ -2505,33 +2730,40 @@ else:
     raise AssertionError("programmer/configuration fault was incorrectly converted to zero evidence")
 
 
-original_create_connection = runner.socket.create_connection
+telnet_probe_config = runner.SmokeConfig.from_env(
+    "contract-test",
+    "telnet",
+    None,
+    telnet_transport="tls",
+    telnet_server_hostname="preview.example.test",
+)
 
 
 def arbitrary_runtime_fault(*args, **kwargs):
     raise RuntimeError("unexpected programmer failure")
 
 
-runner.socket.create_connection = arbitrary_runtime_fault
+original_open_telnet_socket = runner.open_telnet_socket
+runner.open_telnet_socket = arbitrary_runtime_fault
 try:
     try:
-        runner.blackbox_telnet_record(config, set())
+        runner.blackbox_telnet_record(telnet_probe_config, set())
     except RuntimeError as exc:
         assert str(exc) == "unexpected programmer failure"
     else:
         raise AssertionError("arbitrary RuntimeError was incorrectly converted")
 finally:
-    runner.socket.create_connection = original_create_connection
+    runner.open_telnet_socket = original_open_telnet_socket
 
 
 def classified_operational_failure(*args, **kwargs):
     raise runner.ProbeOperationalFailure("expected telnet transport failure")
 
 
-runner.socket.create_connection = classified_operational_failure
+runner.open_telnet_socket = classified_operational_failure
 try:
     signals = runner.entrypath_signals(
-        config,
+        telnet_probe_config,
         set(),
         {"telnet"},
         lambda current_config, injected, _path: runner.blackbox_telnet_record(
@@ -2539,10 +2771,113 @@ try:
         ),
     )
 finally:
-    runner.socket.create_connection = original_create_connection
+    runner.open_telnet_socket = original_open_telnet_socket
 assert signals["entrypath_blackbox_probe_success"] == [
     {"path": "telnet", "target": "tcp_proxy", "value": 0}
 ]
+PY
+
+run_clean_python - "$RUNNER" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+from unittest.mock import patch
+
+runner_path = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("player_experience_smoke_timing", runner_path)
+assert spec is not None and spec.loader is not None
+runner = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = runner
+spec.loader.exec_module(runner)
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 100.0
+
+    def time(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
+class FakeWebSocket:
+    def __init__(self, clock, payloads=None, *, send_elapsed=0.0, block_send=False):
+        self.clock = clock
+        self.payloads = list(payloads or [])
+        self.send_elapsed = send_elapsed
+        self.block_send = block_send
+        self.timeouts = []
+        self.sent = []
+
+    def settimeout(self, timeout):
+        self.timeouts.append(timeout)
+
+    def send(self, command):
+        self.sent.append(command)
+        self.clock.advance(self.send_elapsed)
+        if self.block_send:
+            self.clock.advance(self.timeouts[-1])
+            raise TimeoutError("send blocked")
+
+    def recv(self):
+        if self.payloads:
+            return self.payloads.pop(0)
+        self.clock.advance(self.timeouts[-1])
+        raise TimeoutError("receive blocked")
+
+
+def run_step(ws, steps=None):
+    runner.run_first_party_websocket_step(
+        ws,
+        "LOOK",
+        "LOOK",
+        0.08,
+        steps if steps is not None else [],
+    )
+
+
+clock = FakeClock()
+with patch.object(runner.time, "time", clock.time):
+    blocked_send = FakeWebSocket(clock, block_send=True)
+    try:
+        run_step(blocked_send)
+    except TimeoutError as exc:
+        assert str(exc) == "send blocked"
+    else:
+        raise AssertionError("blocked player-experience WebSocket send unexpectedly completed")
+    assert blocked_send.timeouts
+    assert max(blocked_send.timeouts) <= 0.08
+    assert abs(clock.now - 100.08) < 1e-9
+
+    clock.now = 100.0
+    blocked_receive = FakeWebSocket(clock, send_elapsed=0.03)
+    try:
+        run_step(blocked_receive)
+    except TimeoutError as exc:
+        assert str(exc) == "receive blocked"
+    else:
+        raise AssertionError("blocked player-experience WebSocket receive unexpectedly completed")
+    assert blocked_receive.timeouts
+    assert max(blocked_receive.timeouts) <= 0.08
+    assert abs(blocked_receive.timeouts[-1] - 0.05) < 1e-9
+    assert abs(clock.now - 100.08) < 1e-9
+
+    successful = FakeWebSocket(
+        clock,
+        [
+            '{"eventType":"command_result","commandType":"LOOK","accepted":true}'
+        ],
+        send_elapsed=0.03,
+    )
+    steps = []
+    run_step(successful, steps)
+    assert steps[0]["label"] == "LOOK"
+    assert steps[0]["response"].startswith('{"eventType":"command_result"')
+    assert successful.sent == ["LOOK"]
+    assert successful.timeouts
+    assert abs(successful.timeouts[-1] - 0.05) < 1e-9
 PY
 
 echo "player-experience smoke runner contract checks passed"

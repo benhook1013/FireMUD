@@ -39,8 +39,133 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- default "firemud-grpc-tls" .Values.previewStack.grpcTls.secretName -}}
 {{- end -}}
 
+{{- define "firemud.certificateIdentityMode" -}}
+{{- $certificateIdentity := .Values.previewStack.certificateIdentity | default (dict) -}}
+{{- $mode := default "standalone" $certificateIdentity.mode -}}
+{{- if or (eq $mode "standalone") (eq $mode "hosted-controller") -}}
+{{- $mode -}}
+{{- else -}}
+{{- fail (printf "previewStack.certificateIdentity.mode must be standalone or hosted-controller (got %q)" $mode) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "firemud.hostedControllerMode" -}}
+{{- eq (include "firemud.certificateIdentityMode" . | trim) "hosted-controller" -}}
+{{- end -}}
+
+{{- define "firemud.ingressTlsSecretName" -}}
+{{- if eq (include "firemud.hostedControllerMode" . | trim) "true" -}}
+{{- printf "%s-tls" .Release.Name -}}
+{{- else -}}
+{{- default (printf "%s-tls" .Release.Name) .Values.previewStack.ingress.tlsSecretName -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "firemud.gatewayWsServerSecretName" -}}
+{{- printf "%s-gateway-internal-ws" .Release.Name -}}
+{{- end -}}
+
+{{- define "firemud.gatewayWsClientSecretName" -}}
+{{- printf "%s-tcp-proxy-bridge" .Release.Name -}}
+{{- end -}}
+
+{{- define "firemud.telnetTlsSecretName" -}}
+{{- $telnetTls := .Values.previewStack.telnetTls | default (dict) -}}
+{{- if $telnetTls.enabled -}}
+{{- if eq (include "firemud.hostedControllerMode" . | trim) "true" -}}
+{{- printf "%s-telnet-tls" .Release.Name -}}
+{{- else -}}
+{{- $secretName := required "previewStack.telnetTls.secretName is required when Telnet TLS is enabled" $telnetTls.secretName -}}
+{{- if eq $secretName "__TELNET_TLS_SECRET_NAME__" -}}
+{{- fail "previewStack.telnetTls.secretName must be resolved before rendering when Telnet TLS is enabled" -}}
+{{- end -}}
+{{- if not (hasSuffix "-telnet-tls" $secretName) -}}
+{{- fail "previewStack.telnetTls.secretName must end with -telnet-tls when Telnet TLS is enabled" -}}
+{{- end -}}
+{{- $secretName -}}
+{{- end -}}
+{{- else -}}
+{{- $telnetTls.secretName | default "" -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "firemud.grpcTlsEnv" -}}
+- name: FIREMUD_GRPC_CERT_CHAIN_PATH
+  value: /tls/client.crt
+- name: FIREMUD_GRPC_PRIVATE_KEY_PATH
+  value: /tls/client.key
+- name: FIREMUD_GRPC_CA_CERT_PATH
+  value: /tls/ca.crt
+{{- end -}}
+
+{{- define "firemud.telnetTlsEnv" -}}
+- name: TCP_PROXY_TLS_ENABLED
+  value: "true"
+- name: TCP_PROXY_TLS_CERT
+  value: /telnet-tls/tls.crt
+- name: TCP_PROXY_TLS_KEY
+  value: /telnet-tls/tls.key
+{{- end -}}
+
+{{- define "firemud.telnetTlsModeEnv" -}}
+- name: TCP_PROXY_TELNET_MODE
+  value: DIRECT_TLS
+{{- end -}}
+
+{{- define "firemud.gatewayWsServerEnv" -}}
+{{- $root := .root -}}
+{{- $preview := $root.Values.preview | default (dict) -}}
+{{- $prNumber := get $preview "prNumber" -}}
+{{- if or (not (hasKey $preview "prNumber")) (and (empty $prNumber) (ne (toString $prNumber) "0")) -}}
+{{- fail "preview.prNumber is required when Gateway WebSocket TLS is enabled" -}}
+{{- end -}}
+{{- $prNumberText := toString $prNumber -}}
+{{- if and (ne $prNumberText "0") (not (regexMatch "^[1-9][0-9]*$" $prNumberText)) -}}
+{{- fail "preview.prNumber must be 0 or a positive integer when Gateway WebSocket TLS is enabled" -}}
+{{- end -}}
+{{- $gatewayWsTls := $root.Values.previewStack.gatewayWsTls | default (dict) -}}
+{{- $trustEnvironment := get $gatewayWsTls "trustEnvironment" -}}
+{{- if or (empty $trustEnvironment) (not (has $trustEnvironment (list "pr-preview" "dev-demo-cluster"))) -}}
+{{- fail "previewStack.gatewayWsTls.trustEnvironment must be pr-preview or dev-demo-cluster when Gateway WebSocket TLS is enabled" -}}
+{{- end -}}
+{{- $expectedTrustEnvironment := ternary "dev-demo-cluster" "pr-preview" (eq $prNumberText "0") -}}
+{{- if ne $trustEnvironment $expectedTrustEnvironment -}}
+{{- fail (printf "previewStack.gatewayWsTls.trustEnvironment must be %s for preview.prNumber %s" $expectedTrustEnvironment $prNumberText) -}}
+{{- end -}}
+- name: FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED
+  value: "true"
+- name: FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS
+  value: "0.0.0.0"
+- name: FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT
+  value: {{ .targetPort | quote }}
+- name: FIREMUD_GATEWAY_TCP_PROXY_TLS_CERT_CHAIN_PATH
+  value: /gateway-ws-server-tls/tls.crt
+- name: FIREMUD_GATEWAY_TCP_PROXY_TLS_PRIVATE_KEY_PATH
+  value: /gateway-ws-server-tls/tls.key
+- name: FIREMUD_GATEWAY_TCP_PROXY_TLS_CLIENT_CA_PATH
+  value: /gateway-ws-server-tls/ca.crt
+- name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT
+  value: {{ $trustEnvironment | quote }}
+- name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE
+  value: production_uri
+- name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN
+  value: {{ printf "spiffe://firemud/ns/%s/sa/tcp-proxy-service" $root.Release.Namespace | quote }}
+{{- end -}}
+
+{{- define "firemud.gatewayWsClientEnv" -}}
+{{- $root := .root -}}
+- name: GATEWAY_WS_URL
+  value: {{ printf "wss://spring-cloud-gateway-mtls.%s.svc.cluster.local:%v/ws/game" $root.Release.Namespace .servicePort | quote }}
+- name: FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH
+  value: /gateway-ws-client-tls/tls.crt
+- name: FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH
+  value: /gateway-ws-client-tls/tls.key
+- name: FIREMUD_GATEWAY_WS_CA_CERT_PATH
+  value: /gateway-ws-client-tls/ca.crt
+{{- end -}}
+
 {{- define "firemud.grpcSecretNameForService" -}}
-{{- if has .serviceName (include "firemud.grpcWorkloadNames" . | fromJsonArray) -}}
+{{- if has .serviceName (include "firemud.grpcWorkloadNames" .root | fromJsonArray) -}}
 {{- printf "firemud-grpc-%s" .serviceName -}}
 {{- else -}}
 {{- include "firemud.grpcSecretName" .root -}}

@@ -151,10 +151,11 @@ public class CertificateResourceFactory {
     if (duration != null) {
       spec.put("duration", certManagerDuration(duration));
     }
-    if (renewBefore != null
-        || HostedIdentityProperties.INTERNAL_CERTIFICATE_DURATION.equals(duration)) {
+    if (renewBefore != null) {
       HostedIdentityProperties.requireValidGrpcRenewBefore(renewBefore);
       spec.put("renewBefore", certManagerDuration(Objects.requireNonNull(renewBefore)));
+    } else if (HostedIdentityProperties.INTERNAL_CERTIFICATE_DURATION.equals(duration)) {
+      HostedIdentityProperties.requireValidGrpcRenewBefore(null);
     }
     resource.setAdditionalProperties(Map.of("spec", spec));
     return resource;

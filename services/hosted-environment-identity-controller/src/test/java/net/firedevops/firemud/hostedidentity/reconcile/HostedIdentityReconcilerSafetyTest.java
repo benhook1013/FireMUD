@@ -19,6 +19,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -131,7 +132,12 @@ class HostedIdentityReconcilerSafetyTest {
         reconciler.project(
             plan,
             new RuntimeProfileService.RuntimeProfile(
-                "uid", "a".repeat(40), "a".repeat(40), 32016, true),
+                "uid",
+                "a".repeat(40),
+                "a".repeat(40),
+                HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+                32016,
+                true),
             material,
             HostedIdentityContract.TELNET_ROLE);
 
@@ -256,13 +262,29 @@ class HostedIdentityReconcilerSafetyTest {
   @Test
   void rolloutAndServedProofStayBlockedUntilSuccessfulDeploymentMatchesTheRequest() {
     var beforeHelm =
-        new RuntimeProfileService.RuntimeProfile("uid", "a".repeat(40), null, 32016, true);
+        new RuntimeProfileService.RuntimeProfile(
+            "uid",
+            "a".repeat(40),
+            null,
+            HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+            32016,
+            true);
     var staleDeployment =
         new RuntimeProfileService.RuntimeProfile(
-            "uid", "a".repeat(40), "b".repeat(40), 32016, true);
+            "uid",
+            "a".repeat(40),
+            "b".repeat(40),
+            HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+            32016,
+            true);
     var deployed =
         new RuntimeProfileService.RuntimeProfile(
-            "uid", "a".repeat(40), "a".repeat(40), 32016, true);
+            "uid",
+            "a".repeat(40),
+            "a".repeat(40),
+            HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+            32016,
+            true);
 
     assertReadinessStatus(
         HostedIdentityReconciler.deploymentHeadStatus(beforeHelm),
@@ -288,9 +310,20 @@ class HostedIdentityReconcilerSafetyTest {
   void reconcileBlocksRolloutAndServedProofUntilTheExactDeploymentHeadIsRecorded() {
     for (var profile :
         java.util.List.of(
-            new RuntimeProfileService.RuntimeProfile("uid", "a".repeat(40), null, 32016, true),
             new RuntimeProfileService.RuntimeProfile(
-                "uid", "a".repeat(40), "b".repeat(40), 32016, true))) {
+                "uid",
+                "a".repeat(40),
+                null,
+                HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+                32016,
+                true),
+            new RuntimeProfileService.RuntimeProfile(
+                "uid",
+                "a".repeat(40),
+                "b".repeat(40),
+                HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+                32016,
+                true))) {
       DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(profile);
 
       UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
@@ -307,7 +340,12 @@ class HostedIdentityReconcilerSafetyTest {
     DeploymentHeadGateFixture aligned =
         new DeploymentHeadGateFixture(
             new RuntimeProfileService.RuntimeProfile(
-                "uid", "a".repeat(40), "a".repeat(40), 32016, true));
+                "uid",
+                "a".repeat(40),
+                "a".repeat(40),
+                HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+                32016,
+                true));
     when(aligned.rollout.sync(
             org.mockito.ArgumentMatchers.eq(aligned.client),
             org.mockito.ArgumentMatchers.eq(aligned.plan),
@@ -343,7 +381,12 @@ class HostedIdentityReconcilerSafetyTest {
     DeploymentHeadGateFixture fixture =
         new DeploymentHeadGateFixture(
             new RuntimeProfileService.RuntimeProfile(
-                "uid", "a".repeat(40), "a".repeat(40), 32016, true));
+                "uid",
+                "a".repeat(40),
+                "a".repeat(40),
+                HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+                32016,
+                true));
     when(fixture.batch.telnet())
         .thenReturn(
             new CertificateMaterialService.RoleMaterial(
@@ -369,10 +412,20 @@ class HostedIdentityReconcilerSafetyTest {
   void readinessBoundaryRejectsAChangedRuntimeTupleBeforeAcknowledgement() {
     var initial =
         new RuntimeProfileService.RuntimeProfile(
-            "uid", "a".repeat(40), "a".repeat(40), 32016, true);
+            "uid",
+            "a".repeat(40),
+            "a".repeat(40),
+            HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+            32016,
+            true);
     var changed =
         new RuntimeProfileService.RuntimeProfile(
-            "uid", "a".repeat(40), "a".repeat(40), 32015, true);
+            "uid",
+            "a".repeat(40),
+            "a".repeat(40),
+            HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+            32015,
+            true);
     DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(initial);
     when(fixture.runtime.read(fixture.client, fixture.plan)).thenReturn(initial, initial, changed);
     when(fixture.rollout.sync(
@@ -386,6 +439,7 @@ class HostedIdentityReconcilerSafetyTest {
         .thenReturn(new DeploymentRolloutService.RolloutResult(true, true, true));
     when(fixture.probes.probe(
             any(),
+            anyString(),
             anyInt(),
             anyString(),
             anyString(),
@@ -421,7 +475,12 @@ class HostedIdentityReconcilerSafetyTest {
   void malformedRuntimeProfileAtReadinessBoundaryFailsClosedWithoutAcknowledgement() {
     var initial =
         new RuntimeProfileService.RuntimeProfile(
-            "uid", "a".repeat(40), "a".repeat(40), 32016, true);
+            "uid",
+            "a".repeat(40),
+            "a".repeat(40),
+            HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+            32016,
+            true);
     DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(initial);
     when(fixture.runtime.read(fixture.client, fixture.plan))
         .thenReturn(initial, initial)
@@ -437,6 +496,7 @@ class HostedIdentityReconcilerSafetyTest {
         .thenReturn(new DeploymentRolloutService.RolloutResult(true, true, true));
     when(fixture.probes.probe(
             any(),
+            anyString(),
             anyInt(),
             anyString(),
             anyString(),
@@ -460,10 +520,50 @@ class HostedIdentityReconcilerSafetyTest {
   }
 
   @Test
+  void malformedTcpProxyServiceAtRolloutBoundaryFailsClosedBeforeRollout() {
+    var expected =
+        new RuntimeProfileService.RuntimeProfile(
+            "uid",
+            "a".repeat(40),
+            "a".repeat(40),
+            HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+            32016,
+            true);
+    DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(expected);
+    doThrow(new IllegalStateException("invalid TCP Proxy Service"))
+        .when(fixture.runtime)
+        .validateTcpProxyService(fixture.client, fixture.plan, expected);
+
+    UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
+
+    assertEquals(
+        HostedEnvironmentIdentityStatus.Phase.Blocked,
+        result.getResource().orElseThrow().getStatus().getPhase());
+    assertEquals(
+        "RuntimeProfileInvalid",
+        result.getResource().orElseThrow().getStatus().getConditions().get(0).getReason());
+    assertTrue(
+        result
+            .getResource()
+            .orElseThrow()
+            .getStatus()
+            .getConditions()
+            .get(0)
+            .getMessage()
+            .contains("invalid TCP Proxy Service"));
+    verifyNoInteractions(fixture.rollout, fixture.probes);
+  }
+
+  @Test
   void identityProjectionFenceNamesTheProtectedAction(CapturedOutput output) {
     var expected =
         new RuntimeProfileService.RuntimeProfile(
-            "uid", "a".repeat(40), "a".repeat(40), 32016, true);
+            "uid",
+            "a".repeat(40),
+            "a".repeat(40),
+            HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+            32016,
+            true);
     DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(expected);
     when(fixture.runtime.read(fixture.client, fixture.plan))
         .thenReturn(expected)
@@ -517,7 +617,12 @@ class HostedIdentityReconcilerSafetyTest {
     when(runtime.read(client, plan))
         .thenReturn(
             new RuntimeProfileService.RuntimeProfile(
-                "runtime-uid", "a".repeat(40), "a".repeat(40), 32042, true));
+                "runtime-uid",
+                "a".repeat(40),
+                "a".repeat(40),
+                HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+                32042,
+                true));
     HostedIdentityScopeService scope = mock(HostedIdentityScopeService.class);
     doThrow(new IllegalStateException("unexpected scope failure")).when(scope).ensure(client, plan);
     HostedIdentityReconciler reconciler =
@@ -597,7 +702,12 @@ class HostedIdentityReconcilerSafetyTest {
   void projectionAcknowledgementFenceNamesTheProtectedAction() {
     var expected =
         new RuntimeProfileService.RuntimeProfile(
-            "uid", "a".repeat(40), "a".repeat(40), 32016, true);
+            "uid",
+            "a".repeat(40),
+            "a".repeat(40),
+            HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+            32016,
+            true);
     DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(expected);
     when(fixture.runtime.read(fixture.client, fixture.plan))
         .thenReturn(expected, expected, expected)
@@ -606,6 +716,7 @@ class HostedIdentityReconcilerSafetyTest {
         .thenReturn(new DeploymentRolloutService.RolloutResult(true, true, true));
     when(fixture.probes.probe(
             any(),
+            anyString(),
             anyInt(),
             anyString(),
             anyString(),
@@ -713,7 +824,7 @@ class HostedIdentityReconcilerSafetyTest {
   }
 
   @Test
-  void retiredIntentTerminatesLiveBridgeEndpointsBeforeMaterialRemoval() {
+  void retiredIntentTerminatesLiveBridgeEndpointsWithLegacyPublicProfile() {
     HostedIdentityProperties properties =
         initializedProperties(HostedIdentityProperties.ActivationMode.ACTIVE);
     KubernetesClient client = mock(KubernetesClient.class);
@@ -730,8 +841,14 @@ class HostedIdentityReconcilerSafetyTest {
     RuntimeProfileService runtime = mock(RuntimeProfileService.class);
     var runtimeProfile =
         new RuntimeProfileService.RuntimeProfile(
-            "runtime-uid", "a".repeat(40), "a".repeat(40), 32000, true);
+            "runtime-uid",
+            "a".repeat(40),
+            "a".repeat(40),
+            HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+            32000,
+            true);
     when(runtime.read(any(), any())).thenReturn(runtimeProfile);
+    when(runtime.isValidTelnetPort(any(), anyInt())).thenReturn(true);
     DeploymentRolloutService rollout = mock(DeploymentRolloutService.class);
     when(rollout.stopBridges(
             org.mockito.ArgumentMatchers.eq(client),
@@ -793,7 +910,12 @@ class HostedIdentityReconcilerSafetyTest {
     when(runtime.read(any(), any()))
         .thenReturn(
             new RuntimeProfileService.RuntimeProfile(
-                "runtime-uid", "a".repeat(40), "a".repeat(40), 32000, true));
+                "runtime-uid",
+                "a".repeat(40),
+                "a".repeat(40),
+                HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+                32000,
+                true));
     DeploymentRolloutService rollout = mock(DeploymentRolloutService.class);
     HostedIdentityReconciler reconciler =
         new HostedIdentityReconciler(
@@ -860,7 +982,12 @@ class HostedIdentityReconcilerSafetyTest {
     when(fixture.runtime.read(any(), any()))
         .thenReturn(
             new RuntimeProfileService.RuntimeProfile(
-                "replacement-uid", "a".repeat(40), "a".repeat(40), 32000, true),
+                "replacement-uid",
+                "a".repeat(40),
+                "a".repeat(40),
+                HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+                32000,
+                true),
             RuntimeProfileService.RuntimeProfile.absent());
     when(fixture.identityNamespace.get())
         .thenReturn(fixture.buildIdentityNamespace(false), null, null);
@@ -872,6 +999,7 @@ class HostedIdentityReconcilerSafetyTest {
     priorProfile.setRuntimeNamespaceUid("original-uid");
     priorProfile.setRequestedHeadSha("a".repeat(40));
     priorProfile.setDeployedHeadSha("a".repeat(40));
+    priorProfile.setExposureMode(HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE);
     priorProfile.setTelnetPort(32000);
     priorStatus.setProfile(priorProfile);
     resource.setStatus(priorStatus);
@@ -1337,7 +1465,12 @@ class HostedIdentityReconcilerSafetyTest {
   void runtimeProjectionGuardRejectsBothBridgeReadsBeforeSecretAccess() {
     var expected =
         new RuntimeProfileService.RuntimeProfile(
-            "uid", "a".repeat(40), "a".repeat(40), 32016, true);
+            "uid",
+            "a".repeat(40),
+            "a".repeat(40),
+            HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+            32016,
+            true);
     DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(expected);
     when(fixture.runtime.read(fixture.client, fixture.plan))
         .thenReturn(RuntimeProfileService.RuntimeProfile.absent());
@@ -1361,7 +1494,12 @@ class HostedIdentityReconcilerSafetyTest {
   void absentRuntimeProjectionRemainsProbeLevelMissingMaterial() {
     var expected =
         new RuntimeProfileService.RuntimeProfile(
-            "uid", "a".repeat(40), "a".repeat(40), 32016, true);
+            "uid",
+            "a".repeat(40),
+            "a".repeat(40),
+            HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+            32016,
+            true);
     DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(expected);
     MixedOperation<Secret, SecretList, Resource<Secret>> secrets = mock(MixedOperation.class);
     NonNamespaceOperation<Secret, SecretList, Resource<Secret>> runtimeSecrets =
@@ -1384,7 +1522,12 @@ class HostedIdentityReconcilerSafetyTest {
   void missingBridgeProjectionMapsReconciliationToVerifyingProbeStatus() {
     var expected =
         new RuntimeProfileService.RuntimeProfile(
-            "uid", "a".repeat(40), "a".repeat(40), 32016, true);
+            "uid",
+            "a".repeat(40),
+            "a".repeat(40),
+            HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+            32016,
+            true);
     DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(expected);
     when(fixture.batch.tcpProxyBridge())
         .thenReturn(
@@ -1402,6 +1545,7 @@ class HostedIdentityReconcilerSafetyTest {
     when(absent.get()).thenReturn(null);
     when(fixture.probes.probe(
             any(),
+            anyString(),
             anyInt(),
             anyString(),
             anyString(),
@@ -1427,7 +1571,12 @@ class HostedIdentityReconcilerSafetyTest {
   void statusMaterialIsMappedByRoleRatherThanCallPosition() {
     var expected =
         new RuntimeProfileService.RuntimeProfile(
-            "uid", "a".repeat(40), "a".repeat(40), 32016, true);
+            "uid",
+            "a".repeat(40),
+            "a".repeat(40),
+            HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+            32016,
+            true);
     DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(expected);
     when(fixture.rollout.sync(any(), any(), anyString(), anyString(), anyString(), anyMap(), any()))
         .thenReturn(new DeploymentRolloutService.RolloutResult(false, false, false));
@@ -1445,13 +1594,20 @@ class HostedIdentityReconcilerSafetyTest {
         .sync(any(), any(), anyString(), gatewayRevision.capture(), anyString(), anyMap(), any());
     assertEquals(
         "revision-" + HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE, gatewayRevision.getValue());
+    verify(fixture.runtime, times(2))
+        .validateTcpProxyService(fixture.client, fixture.plan, expected);
   }
 
   @Test
   void runtimeProfileFencePreservesMalformedProfileCause() {
     var expected =
         new RuntimeProfileService.RuntimeProfile(
-            "uid", "a".repeat(40), "a".repeat(40), 32016, true);
+            "uid",
+            "a".repeat(40),
+            "a".repeat(40),
+            HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+            32016,
+            true);
     DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(expected);
     IllegalStateException cause = new IllegalStateException("invalid runtime profile");
     when(fixture.runtime.read(fixture.client, fixture.plan)).thenThrow(cause);
@@ -1700,6 +1856,7 @@ class HostedIdentityReconcilerSafetyTest {
       when(namespaces.withName("pr-42-identity")).thenReturn(identityNamespace);
       when(identityNamespace.get()).thenReturn(buildIdentityNamespace(false));
       when(runtime.read(any(), any())).thenReturn(RuntimeProfileService.RuntimeProfile.absent());
+      when(runtime.isValidTelnetPort(any(), anyInt())).thenReturn(true);
 
       stubOwnedScope();
       stubMaterialLookups();

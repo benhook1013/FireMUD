@@ -176,7 +176,7 @@ final class TickStagingService {
           PendingEntriesReadStatus.AUTHORITY_UNAVAILABLE, List.of(), List.of());
     }
     Map<String, GameplayCommand> commandsById =
-        loadCommands(entries).stream()
+        loadCommands(tenantId, queueTargetId, entries).stream()
             .collect(
                 java.util.stream.Collectors.toMap(
                     GameplayCommand::getCommandId, command -> command));
@@ -434,7 +434,8 @@ final class TickStagingService {
       Long gameInstanceId,
       List<TickQueuedCommandEnvelope> replayEntries,
       TickQueueControlService.OwnershipSnapshot ownership) {
-    List<CommandSelection> replaySelections = commandSelections(replayEntries);
+    List<CommandSelection> replaySelections =
+        commandSelections(tenantId, gameInstanceId, replayEntries);
     requireExactCommandSetAndScope(
         replayEntries, replaySelections, tenantId, gameInstanceId, ownership);
     Optional<TickBatch> existing =
@@ -537,7 +538,8 @@ final class TickStagingService {
           "Sealed replay mode does not match durable tick batch mode for tickBatchId="
               + batch.getTickBatchId());
     }
-    List<CommandSelection> sealedSelections = commandSelections(sealedEntries);
+    List<CommandSelection> sealedSelections =
+        commandSelections(tenantId, gameInstanceId, sealedEntries);
     requireExactCommandSetAndScope(
         sealedEntries, sealedSelections, tenantId, gameInstanceId, ownership);
     requireDurableModeAgreement(sealedSelections);
@@ -688,7 +690,7 @@ final class TickStagingService {
     if (uniformMode(entries, "tick batch") != requiresSoloTick) {
       throw new IllegalStateException("Tick batch mode does not match all staged entries");
     }
-    List<CommandSelection> selections = commandSelections(entries);
+    List<CommandSelection> selections = commandSelections(tenantId, gameInstanceId, entries);
     requireExactCommandSetAndScope(entries, selections, tenantId, gameInstanceId, ownership);
     requireDurableModeAgreement(selections);
     TickBatch batch = new TickBatch();
@@ -705,7 +707,8 @@ final class TickStagingService {
     BatchCreationResult result =
         transactionOperations.execute(
             status -> {
-              List<CommandSelection> transactionSelections = commandSelections(entries);
+              List<CommandSelection> transactionSelections =
+                  commandSelections(tenantId, gameInstanceId, entries);
               requireExactCommandSetAndScope(
                   entries, transactionSelections, tenantId, gameInstanceId, ownership);
               requireDurableModeAgreement(transactionSelections);
@@ -857,7 +860,9 @@ final class TickStagingService {
       }
       Map<String, GameplayCommand> commandsById =
           gameplayCommandRepository
-              .findByCommandIdIn(
+              .findByTenantIdAndGameInstanceIdAndCommandIdIn(
+                  batch.getTenantId(),
+                  batch.getGameInstanceId(),
                   sealedCommands.stream().map(SealedReplayCommand::commandId).toList())
               .stream()
               .collect(
@@ -1044,13 +1049,14 @@ final class TickStagingService {
     }
   }
 
-  private List<CommandSelection> commandSelections(List<TickQueuedCommandEnvelope> entries) {
+  private List<CommandSelection> commandSelections(
+      Long tenantId, Long gameInstanceId, List<TickQueuedCommandEnvelope> entries) {
     if (entries.isEmpty()) {
       return List.of();
     }
     requireDurableCommandIdentifiers(entries);
     Map<String, GameplayCommand> commandsById =
-        loadCommands(entries).stream()
+        loadCommands(tenantId, gameInstanceId, entries).stream()
             .collect(java.util.stream.Collectors.toMap(GameplayCommand::getCommandId, cmd -> cmd));
     List<CommandSelection> selections = new ArrayList<>(entries.size());
     for (int index = 0; index < entries.size(); index++) {
@@ -1463,7 +1469,8 @@ final class TickStagingService {
     return fallbackIndex + 1;
   }
 
-  private List<GameplayCommand> loadCommands(List<TickQueuedCommandEnvelope> entries) {
+  private List<GameplayCommand> loadCommands(
+      Long tenantId, Long gameInstanceId, List<TickQueuedCommandEnvelope> entries) {
     List<String> commandIds =
         entries.stream()
             .map(TickQueuedCommandEnvelope::commandId)
@@ -1473,7 +1480,8 @@ final class TickStagingService {
     if (commandIds.isEmpty()) {
       return List.of();
     }
-    return gameplayCommandRepository.findByCommandIdIn(commandIds);
+    return gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandIdIn(
+        tenantId, gameInstanceId, commandIds);
   }
 
   private void requireDurableCommandIdentifiers(List<TickQueuedCommandEnvelope> entries) {

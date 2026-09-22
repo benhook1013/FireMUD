@@ -8,6 +8,8 @@ on:
       - 'build.gradle.kts'
       - 'settings.gradle.kts'
       - 'gradle.properties'
+      - 'gradlew'
+      - 'gradlew.bat'
       - 'buildSrc/**'
       - 'gradle/**'
       - 'protos/**'
@@ -17,25 +19,7 @@ on:
       - '.github/workflows/publish-pr-runtime-images.yml'
       - '.github/workflows/smoke.yml'
       - '.github/workflows/smoke-full.yml'
-      - 'services/common-library/**'
-      - 'services/common-data-runtime/**'
-      - 'services/common-platform-core/**'
-      - 'services/common-saga/**'
-      - 'services/common-security/**'
-      - 'services/common-test-support/**'
-      - 'services/common-web-support/**'
-      - 'services/account-service/**'
-      - 'services/automation-scripting-service/**'
-      - 'services/entity-management-service/**'
-      - 'services/game-design-service/**'
-      - 'services/game-logic-service/**'
-      - 'services/game-session-service/**'
-      - 'services/logging-admin-service/**'
-      - 'services/social-groups-service/**'
-      - 'services/spring-cloud-gateway/**'
-      - 'services/tcp-proxy-service/**'
-      - 'services/world-management-service/**'
-      - 'services/hosted-environment-identity-controller/**'
+      - 'services/**'
       - '.github/actions/load-workflow-tool-versions/**'
       - '.github/actions/setup-python/**'
       - '.python-version'
@@ -55,32 +39,43 @@ on:
       - 'dev-tools/verify-fresh-bootstrap.sh'
       - 'dev-tools/verify-restart-state.sh'
       - 'dev-tools/verify-smoke-images.sh'
-  push:
+  workflow_run:
+    workflows: ["CI — Validation"]
+    types: [completed]
     branches: [main, develop]
+  repository_dispatch:
+    types: [pr-runtime-base-refresh]
   workflow_dispatch:
 
-run-name: Build Runtime Images ${{ github.event_name == 'pull_request' && format('secure-pr-artifact pr-{0} base-{1} head-{2} merge-{3} mode-{4}', github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha, github.sha, github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required') || github.ref_name }}
+run-name: Build Runtime Images ${{ (github.event_name == 'pull_request' || github.event_name == 'repository_dispatch') && format('secure-pr-artifact pr-{0} base-{1} head-{2} merge-{3} mode-{4}', github.event_name == 'pull_request' && github.event.pull_request.number || github.event.client_payload.pr_number, github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.client_payload.base_sha, github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event.client_payload.head_sha, github.event_name == 'pull_request' && github.sha || github.event.client_payload.merge_sha, github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required') || github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && format('trusted-branch branch-{0} sha-{1}', github.event.workflow_run.head_branch, github.event.workflow_run.head_sha) || github.event_name == 'workflow_run' && format('base-refresh-only branch-{0} sha-{1} ci-{2}', github.event.workflow_run.head_branch, github.event.workflow_run.head_sha, github.event.workflow_run.conclusion) || github.ref_name }}
 
 permissions:
   contents: read
 
 concurrency:
-  group: runtime-images-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required' }}
+  group: runtime-images-${{ github.workflow }}-${{ (github.event_name == 'pull_request' || github.event_name == 'repository_dispatch') && format('pr-{0}', github.event_name == 'pull_request' && github.event.pull_request.number || github.event.client_payload.pr_number) || github.event_name == 'workflow_run' && format('branch-{0}', github.event.workflow_run.head_branch) || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required' }}
   cancel-in-progress: true
 
 jobs:
   image-meta:
     name: Derive Runtime Image Metadata
-    if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
+    if: ${{ (github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null)) || (github.event_name == 'repository_dispatch' && github.event.action == 'pr-runtime-base-refresh') || github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'develop')) }}
     runs-on: ubuntu-latest
     outputs:
+      pr_number: ${{ steps.meta.outputs.pr_number }}
+      base_ref: ${{ steps.meta.outputs.base_ref }}
+      base_sha: ${{ steps.meta.outputs.base_sha }}
       head_sha: ${{ steps.meta.outputs.head_sha }}
+      merge_sha: ${{ steps.meta.outputs.merge_sha }}
+      head_branch: ${{ steps.meta.outputs.head_branch }}
       checkout_ref: ${{ steps.meta.outputs.checkout_ref }}
       image_tag: ${{ steps.meta.outputs.image_tag }}
+      candidate_tag: ${{ steps.meta.outputs.candidate_tag }}
       base_image: ${{ steps.meta.outputs.base_image }}
       runtime_smoke_required: ${{ steps.smoke_scope.outputs.runtime_smoke_required }}
       controller_smoke_required: ${{ steps.smoke_scope.outputs.controller_smoke_required }}
     permissions:
+      actions: read
       contents: read
       pull-requests: read
     steps:
@@ -89,28 +84,205 @@ jobs:
         with:
           egress-policy: audit
 
+      - name: Check out trusted workflow helpers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Set up canonical GitHub CLI
+        uses: ./.github/actions/setup-gh
+
       - name: Derive image tags
         id: meta
         env:
-          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+          GH_TOKEN: ${{ github.token }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.client_payload.head_sha || '' }}
+          EVENT_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch || '' }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number || github.event.client_payload.pr_number || '' }}
+          EVENT_BASE_REF: ${{ github.event.pull_request.base.ref || github.event.client_payload.base_ref || '' }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.client_payload.base_sha || '' }}
+          EVENT_MERGE_SHA: ${{ github.event.client_payload.merge_sha || '' }}
+          EVENT_ACTION: ${{ github.event.action || '' }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          set -euo pipefail
+          EVENT_NAME="${{ github.event_name }}"
+          PR_NUMBER=""
+          BASE_REF=""
+          BASE_SHA=""
+          MERGE_SHA=""
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            PR_NUMBER="$EVENT_PR_NUMBER"
+            BASE_REF="${{ github.event.pull_request.base.ref }}"
+            BASE_SHA="$EVENT_BASE_SHA"
             HEAD_SHA="$EVENT_HEAD_SHA"
-            CHECKOUT_REF="${GITHUB_SHA}"
+            HEAD_BRANCH=""
+            MERGE_SHA="${GITHUB_SHA}"
+            CHECKOUT_REF="$MERGE_SHA"
+            [[ "$MERGE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+              echo "PR merge SHA is not a lowercase 40-character commit SHA." >&2
+              exit 1
+            }
+            [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ && "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+              echo "PR event base/head SHAs are not lowercase 40-character commit SHAs." >&2
+              exit 1
+            }
+            merge_commit_json="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${MERGE_SHA}")"
+            jq -e \
+              --arg base_sha "$BASE_SHA" \
+              --arg head_sha "$HEAD_SHA" \
+              --arg merge_sha "$MERGE_SHA" \
+              '.sha == $merge_sha and (.parents | type) == "array" and (.parents | length) == 2 and .parents[0].sha == $base_sha and .parents[1].sha == $head_sha' \
+              <<<"$merge_commit_json" >/dev/null || {
+                echo "PR event merge commit does not have the event's exact base/head parents; refusing a stale PR artifact." >&2
+                exit 1
+              }
+          elif [ "$EVENT_NAME" = "repository_dispatch" ]; then
+            [[ "$EVENT_ACTION" == "pr-runtime-base-refresh" ]] || {
+              echo "Runtime PR refresh requires the typed pr-runtime-base-refresh dispatch." >&2
+              exit 1
+            }
+            [[ "$GITHUB_REF" == "refs/heads/${DEFAULT_BRANCH}" ]] || {
+              echo "Runtime PR refresh must run from the repository default branch." >&2
+              exit 1
+            }
+            PR_NUMBER="$EVENT_PR_NUMBER"
+            BASE_REF="$EVENT_BASE_REF"
+            BASE_SHA="$EVENT_BASE_SHA"
+            MERGE_SHA="$EVENT_MERGE_SHA"
+            HEAD_SHA="$EVENT_HEAD_SHA"
+            HEAD_BRANCH=""
+            CHECKOUT_REF="$MERGE_SHA"
+            [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,50}$ ]] || {
+              echo "Runtime PR refresh payload has an invalid pull request number." >&2
+              exit 1
+            }
+            [[ "$BASE_REF" == main || "$BASE_REF" == develop ]] || {
+              echo "Runtime PR refresh supports only main or develop pull request bases." >&2
+              exit 1
+            }
+            for sha_name in BASE_SHA HEAD_SHA MERGE_SHA; do
+              sha_value="${!sha_name}"
+              [[ "$sha_value" =~ ^[0-9a-f]{40}$ ]] || {
+                echo "Runtime PR refresh payload has an invalid ${sha_name}." >&2
+                exit 1
+              }
+            done
+
+            current_base_ref_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${BASE_REF}")"
+            jq -e \
+              --arg base_sha "$BASE_SHA" \
+              '.object.sha == $base_sha' \
+              <<<"$current_base_ref_json" >/dev/null || {
+                echo "Runtime PR refresh base SHA is not the current ${BASE_REF} branch ref." >&2
+                exit 1
+              }
+            pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+            jq -e \
+              --arg repository "$GITHUB_REPOSITORY" \
+              --arg base_ref "$BASE_REF" \
+              --arg head_sha "$HEAD_SHA" \
+              --arg merge_sha "$MERGE_SHA" \
+              '(
+                .state == "open" and
+                .base.ref == $base_ref and
+                .base.repo.full_name == $repository and
+                .head.sha == $head_sha and
+                .head.repo.full_name == $repository and
+                (.mergeable | type) == "boolean" and
+                .mergeable == true and
+                (.mergeable_state | type) == "string" and
+                .mergeable_state != "dirty" and
+                .mergeable_state != "conflicting" and
+                .mergeable_state != "unknown" and
+                .merge_commit_sha == $merge_sha
+              )' <<<"$pull_request_json" >/dev/null || {
+                echo "Runtime PR refresh payload is stale, conflicted, fork-owned, closed, or has an invalid merge tuple." >&2
+                exit 1
+              }
+            merge_commit_json="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${MERGE_SHA}")"
+            jq -e \
+              --arg base_sha "$BASE_SHA" \
+              --arg head_sha "$HEAD_SHA" \
+              --arg merge_sha "$MERGE_SHA" \
+              '.sha == $merge_sha and (.parents | type) == "array" and (.parents | length) == 2 and .parents[0].sha == $base_sha and .parents[1].sha == $head_sha' \
+              <<<"$merge_commit_json" >/dev/null || {
+                echo "Runtime PR refresh merge commit does not have the exact current base/head parents." >&2
+                exit 1
+              }
+          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+            [[ "${{ github.event.workflow_run.event }}" == "push" ]] || {
+              echo "Runtime branch publication requires a CI push workflow run." >&2
+              exit 1
+            }
+            [[ "${{ github.event.workflow_run.conclusion }}" == "success" ]] || {
+              echo "Runtime branch publication requires a successful CI workflow run." >&2
+              exit 1
+            }
+            HEAD_SHA="${EVENT_HEAD_SHA:-${{ github.event.workflow_run.head_sha }}}"
+            HEAD_BRANCH="$EVENT_HEAD_BRANCH"
+            CHECKOUT_REF="$HEAD_SHA"
           else
             HEAD_SHA="${GITHUB_SHA}"
             CHECKOUT_REF="${GITHUB_SHA}"
+            HEAD_BRANCH="${GITHUB_REF_NAME}"
           fi
 
-          IMAGE_TAG="${HEAD_SHA}"
-          BASE_IMAGE="ghcr.io/benhook1013/firemud-base:${IMAGE_TAG}"
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "Runtime publication head SHA is not a lowercase 40-character commit SHA." >&2
+            exit 1
+          }
+          if [ "$EVENT_NAME" != "pull_request" ] && [ "$EVENT_NAME" != "repository_dispatch" ]; then
+            [[ "$HEAD_BRANCH" == main || "$HEAD_BRANCH" == develop ]] || {
+              echo "Runtime branch publication is restricted to main or develop." >&2
+              exit 1
+            }
+          fi
+
+          if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "repository_dispatch" ]; then
+            IMAGE_TAG="pr-merge-${MERGE_SHA}"
+          else
+            IMAGE_TAG="${HEAD_SHA}"
+          fi
+          CANDIDATE_TAG="candidate-${HEAD_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "repository_dispatch" ]; then
+            BASE_IMAGE="ghcr.io/benhook1013/firemud-base:${MERGE_SHA}"
+          else
+            BASE_IMAGE="ghcr.io/benhook1013/firemud-base:${CANDIDATE_TAG}"
+          fi
 
           {
+            echo "pr_number=${PR_NUMBER}"
+            echo "base_ref=${BASE_REF}"
+            echo "base_sha=${BASE_SHA}"
             echo "head_sha=${HEAD_SHA}"
+            echo "merge_sha=${MERGE_SHA}"
+            echo "head_branch=${HEAD_BRANCH}"
             echo "checkout_ref=${CHECKOUT_REF}"
             echo "image_tag=${IMAGE_TAG}"
+            echo "candidate_tag=${CANDIDATE_TAG}"
             echo "base_image=${BASE_IMAGE}"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Verify successful CI push for manual publication
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ steps.meta.outputs.head_sha }}
+          EXPECTED_BRANCH: ${{ steps.meta.outputs.head_branch }}
+        run: |
+          set -euo pipefail
+          ci_runs="$(gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?event=push&head_sha=${EXPECTED_SHA}&per_page=100")"
+          jq -e \
+            --arg expected_sha "$EXPECTED_SHA" \
+            --arg expected_branch "$EXPECTED_BRANCH" \
+            '[.[].workflow_runs[]?] | any(.[]; .head_sha == $expected_sha and .head_branch == $expected_branch and .event == "push" and .status == "completed" and .conclusion == "success")' \
+            <<<"$ci_runs" >/dev/null || {
+              echo "No successful CI push run exists for manual runtime publication ${EXPECTED_BRANCH}@${EXPECTED_SHA}." >&2
+              exit 1
+            }
 
       - name: Detect PR smoke scopes
         id: smoke_scope
@@ -119,19 +291,34 @@ jobs:
           script: |
             let runtimeSmokeRequired = true;
             let controllerSmokeRequired = true;
-            if (context.eventName === "pull_request") {
+            if (context.eventName === "pull_request" || context.eventName === "repository_dispatch") {
               try {
+                const pullNumber = context.eventName === "pull_request"
+                  ? context.payload.pull_request.number
+                  : context.payload.client_payload.pr_number;
                 const changedFiles = await github.paginate(
                   github.rest.pulls.listFiles,
                   {
                     ...context.repo,
-                    pull_number: context.payload.pull_request.number,
+                    pull_number: pullNumber,
                     per_page: 100,
                   },
                   (response) => response.data
                 );
-                const expectedFileCount = context.payload.pull_request.changed_files;
-                if (!Number.isInteger(expectedFileCount) || changedFiles.length !== expectedFileCount) {
+                const expectedFileCount = context.eventName === "pull_request"
+                  ? context.payload.pull_request.changed_files
+                  : (await github.rest.pulls.get({
+                    ...context.repo,
+                    pull_number: pullNumber,
+                  })).data.changed_files;
+                const validFileEntries = changedFiles.every((file) =>
+                  file &&
+                  typeof file.filename === "string" &&
+                  file.filename.length > 0 &&
+                  (file.previous_filename === undefined ||
+                    (typeof file.previous_filename === "string" && file.previous_filename.length > 0))
+                );
+                if (!Number.isInteger(expectedFileCount) || changedFiles.length !== expectedFileCount || !validFileEntries) {
                   core.warning("PR smoke scope detection was incomplete; running both local smokes.");
                 } else {
                   const paths = changedFiles.flatMap((file) =>
@@ -143,139 +330,10 @@ jobs:
                     "dev-tools/smoke/",
                     "gradle/",
                     "protos/",
+                    ".github/actions/load-workflow-tool-versions/",
                     ".github/actions/setup-python/",
                   ];
                   const workflowToolAuthorityPath = "config/workflow-tool-versions.env";
-                  const knownWorkflowToolKeys = new Set([
-                    "KUBECTL_VERSION",
-                    "KUBECTL_LINUX_AMD64_CHECKSUM_VERSION",
-                    "KUBECTL_LINUX_AMD64_SHA256",
-                    "HELM_VERSION",
-                    "HELM_LINUX_AMD64_CHECKSUM_VERSION",
-                    "HELM_LINUX_AMD64_SHA256",
-                    "GH_VERSION",
-                    "GH_LINUX_AMD64_CHECKSUM_VERSION",
-                    "GH_LINUX_AMD64_SHA256",
-                    "BUF_VERSION",
-                    "BUF_LINUX_X86_64_CHECKSUM_VERSION",
-                    "BUF_LINUX_X86_64_SHA256",
-                    "KUBECONFORM_VERSION",
-                    "KUBECONFORM_LINUX_AMD64_CHECKSUM_VERSION",
-                    "KUBECONFORM_LINUX_AMD64_SHA256",
-                    "VELERO_VERSION",
-                    "VELERO_IMAGE_DIGEST",
-                    "VELERO_LINUX_AMD64_CHECKSUM_VERSION",
-                    "VELERO_LINUX_AMD64_SHA256",
-                    "VELERO_CHART_VERSION",
-                    "ACTIONLINT_VERSION",
-                    "TRIVY_VERSION",
-                    "TRIVY_LINUX_AMD64_CHECKSUM_VERSION",
-                    "TRIVY_LINUX_AMD64_SHA256",
-                    "LYCHEE_VERSION",
-                    "LYCHEE_LINUX_X86_64_MUSL_CHECKSUM_VERSION",
-                    "LYCHEE_LINUX_X86_64_MUSL_SHA256",
-                    "ORT_VERSION",
-                    "ORT_DIGEST",
-                    "ZAP_VERSION",
-                    "ZAP_DIGEST",
-                  ]);
-                  const readAuthorityContent = async (owner, repo, ref) => {
-                    const response = await github.rest.repos.getContent({
-                      owner,
-                      repo,
-                      path: workflowToolAuthorityPath,
-                      ref,
-                    });
-                    const data = response.data;
-                    if (
-                      !data ||
-                      data.type !== "file" ||
-                      data.path !== workflowToolAuthorityPath ||
-                      data.encoding !== "base64" ||
-                      typeof data.content !== "string"
-                    ) {
-                      throw new Error("workflow tool authority response was not a complete file");
-                    }
-                    const encoded = data.content.replace(/\s/g, "");
-                    if (
-                      encoded.length === 0 ||
-                      encoded.length % 4 !== 0 ||
-                      !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)
-                    ) {
-                      throw new Error("workflow tool authority response had invalid base64 content");
-                    }
-                    const decoded = Buffer.from(encoded, "base64");
-                    if (decoded.toString("base64") !== encoded) {
-                      throw new Error("workflow tool authority response had non-canonical base64 content");
-                    }
-                    const content = decoded.toString("utf8");
-                    if (!Buffer.from(content, "utf8").equals(decoded)) {
-                      throw new Error("workflow tool authority response was not valid UTF-8");
-                    }
-                    return content;
-                  };
-                  const parseAuthority = (content, source) => {
-                    if (typeof content !== "string" || content.length === 0) {
-                      throw new Error(`${source} workflow tool authority was empty`);
-                    }
-                    const values = new Map();
-                    for (const [index, line] of content.split(/\r\n|\n|\r/).entries()) {
-                      const trimmedLine = line.trim();
-                      if (trimmedLine === "" || trimmedLine.startsWith("#")) {
-                        continue;
-                      }
-                      const match = line.match(/^([A-Z][A-Z0-9_]*)=(\S+)$/);
-                      if (!match || !knownWorkflowToolKeys.has(match[1])) {
-                        throw new Error(`${source} workflow tool authority has an unknown or malformed key on line ${index + 1}`);
-                      }
-                      if (values.has(match[1])) {
-                        throw new Error(`${source} workflow tool authority has a duplicate key: ${match[1]}`);
-                      }
-                      values.set(match[1], match[2]);
-                    }
-                    if (values.size !== knownWorkflowToolKeys.size) {
-                      throw new Error(`${source} workflow tool authority did not contain the complete known key set`);
-                    }
-                    return values;
-                  };
-                  const veleroAuthorityChanged = async () => {
-                    try {
-                      const pullRequest = context.payload.pull_request;
-                      const baseSha = pullRequest?.base?.sha;
-                      const headSha = pullRequest?.head?.sha;
-                      const headFullName = pullRequest?.head?.repo?.full_name;
-                      const baseFullName = context.payload.repository?.full_name;
-                      const repositoryName = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-                      if (
-                        typeof baseSha !== "string" ||
-                        !/^[0-9a-f]{40}$/i.test(baseSha) ||
-                        typeof headSha !== "string" ||
-                        !/^[0-9a-f]{40}$/i.test(headSha) ||
-                        typeof baseFullName !== "string" ||
-                        !repositoryName.test(baseFullName) ||
-                        typeof headFullName !== "string" ||
-                        !repositoryName.test(headFullName)
-                      ) {
-                        throw new Error("pull request base or head repository identity was incomplete");
-                      }
-                      const [baseOwner, baseRepo] = baseFullName.split("/");
-                      const [headOwner, headRepo] = headFullName.split("/");
-                      const [baseContent, headContent] = await Promise.all([
-                        readAuthorityContent(baseOwner, baseRepo, baseSha),
-                        readAuthorityContent(headOwner, headRepo, headSha),
-                      ]);
-                      const baseValues = parseAuthority(baseContent, "base");
-                      const headValues = parseAuthority(headContent, "head");
-                      return [...knownWorkflowToolKeys].some(
-                        (key) => key.startsWith("VELERO_") && baseValues.get(key) !== headValues.get(key)
-                      );
-                    } catch (error) {
-                      core.warning(
-                        `Workflow tool authority comparison was incomplete; running full-stack smoke: ${error.message}`
-                      );
-                      return true;
-                    }
-                  };
                   const runtimeFiles = new Set([
                     ".dockerignore",
                     ".github/workflows/publish-pr-runtime-images.yml",
@@ -332,9 +390,7 @@ jobs:
                           "services/hosted-environment-identity-controller/"
                         ))
                   );
-                  if (!runtimeSmokeRequired && authorityChanged) {
-                    runtimeSmokeRequired = await veleroAuthorityChanged();
-                  }
+                  runtimeSmokeRequired = runtimeSmokeRequired || authorityChanged;
                   controllerSmokeRequired = paths.some(
                     (path) =>
                       controllerFiles.has(path) ||
@@ -350,10 +406,260 @@ jobs:
             core.setOutput("runtime_smoke_required", String(runtimeSmokeRequired));
             core.setOutput("controller_smoke_required", String(controllerSmokeRequired));
 
+  dispatch-pr-base-refreshes:
+    name: Dispatch PR Base Refreshes
+    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.status == 'completed' && github.event.workflow_run.event == 'push' && (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'develop') && github.event.workflow_run.head_repository.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
+      - name: Dispatch exact PR runtime refreshes and preview reconciles
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const workflowRun = context.payload.workflow_run;
+            const baseBranch = workflowRun.head_branch;
+            const baseSha = workflowRun.head_sha;
+            const shaPattern = /^[0-9a-f]{40}$/;
+            const runtimePrefixes = [
+              "buildSrc/",
+              "docker/",
+              "dev-tools/smoke/",
+              "gradle/",
+              "protos/",
+              ".github/actions/load-workflow-tool-versions/",
+              ".github/actions/setup-python/",
+            ];
+            const runtimeFiles = new Set([
+              ".dockerignore",
+              ".github/workflows/publish-pr-runtime-images.yml",
+              ".github/workflows/runtime-images.yml",
+              ".github/workflows/smoke-full.yml",
+              ".github/workflows/smoke.yml",
+              ".github/actions/load-workflow-tool-versions/action.yml",
+              ".python-version",
+              "build.gradle.kts",
+              "config/workflow-tool-versions.env",
+              "config/python/smoke-requirements.txt",
+              "config/python/smoke-requirements.in",
+              "dev-tools/build-compose-service-jars.sh",
+              "dev-tools/build-local-smoke-images.sh",
+              "dev-tools/backups/verify-backups.sh",
+              "dev-tools/backups/pg-dump-s3-selection.shlib",
+              "dev-tools/backups/smoke-backup-verifier-image.sh",
+              "dev-tools/certs/generate-dev-certs.sh",
+              "dev-tools/hosted/controller/smoke-paused-controller-image.sh",
+              "dev-tools/verify-compose-health.sh",
+              "dev-tools/verify-fresh-bootstrap.sh",
+              "dev-tools/verify-restart-state.sh",
+              "dev-tools/verify-smoke-images.sh",
+              "gradle.properties",
+              "gradlew",
+              "gradlew.bat",
+              "settings.gradle.kts",
+            ]);
+
+            const waitForMergeRefresh = async () => {
+              await new Promise((resolve) => setTimeout(resolve, 2000));
+            };
+
+            const hasRuntimeChange = async (pullRequest) => {
+              const files = await github.paginate(
+                github.rest.pulls.listFiles,
+                {
+                  ...context.repo,
+                  pull_number: pullRequest.number,
+                  per_page: 100,
+                },
+                (response) => response.data
+              );
+              const expectedFileCount = pullRequest.changed_files;
+              const validFileEntries = Number.isInteger(expectedFileCount) &&
+                files.length === expectedFileCount &&
+                files.every((file) =>
+                  file &&
+                  typeof file.filename === "string" &&
+                  file.filename.length > 0 &&
+                  (file.previous_filename === undefined ||
+                    (typeof file.previous_filename === "string" && file.previous_filename.length > 0))
+                );
+              if (!validFileEntries) {
+                core.warning(`PR #${pullRequest.number} changed-file metadata was incomplete; refreshing its runtime images.`);
+                return true;
+              }
+              return files.flatMap((file) => [file.filename, file.previous_filename].filter(Boolean)).some((path) =>
+                runtimeFiles.has(path) ||
+                runtimePrefixes.some((prefix) => path.startsWith(prefix)) ||
+                path.startsWith("services/")
+              );
+            };
+
+            const resolveExactMerge = async (number) => {
+              for (let attempt = 1; attempt <= 5; attempt += 1) {
+                const response = await github.rest.pulls.get({
+                  ...context.repo,
+                  pull_number: number,
+                });
+                const pullRequest = response.data;
+                const currentHeadSha = pullRequest.head?.sha;
+                const currentBaseRef = pullRequest.base?.ref;
+                const headRepository = pullRequest.head?.repo?.full_name;
+                const baseRepository = pullRequest.base?.repo?.full_name;
+                if (pullRequest.state !== "open" ||
+                  headRepository !== context.payload.repository.full_name ||
+                  baseRepository !== context.payload.repository.full_name ||
+                  currentBaseRef !== baseBranch ||
+                  !shaPattern.test(currentHeadSha || "")) {
+                  return null;
+                }
+
+                const mergeableState = typeof pullRequest.mergeable_state === "string"
+                  ? pullRequest.mergeable_state
+                  : pullRequest.mergeable_state === null ? "unknown" : "invalid";
+                if (pullRequest.mergeable === false ||
+                  mergeableState === "dirty" ||
+                  mergeableState === "conflicting") {
+                  core.warning(`Skipping PR #${number}: GitHub reports a merge conflict.`);
+                  return null;
+                }
+                if (pullRequest.mergeable === null || mergeableState === "unknown") {
+                  if (attempt < 5) {
+                    await waitForMergeRefresh();
+                    continue;
+                  }
+                  core.warning(`Skipping PR #${number}: GitHub did not produce a ready merge tuple.`);
+                  return null;
+                }
+                if (pullRequest.mergeable !== true || mergeableState === "invalid") {
+                  core.warning(`Skipping PR #${number}: GitHub returned invalid merge metadata.`);
+                  return null;
+                }
+
+                const mergeSha = pullRequest.merge_commit_sha;
+                if (!shaPattern.test(mergeSha || "")) {
+                  if (attempt < 5) {
+                    await waitForMergeRefresh();
+                    continue;
+                  }
+                  core.warning(`Skipping PR #${number}: merge SHA is null or invalid.`);
+                  return null;
+                }
+
+                try {
+                  const commit = await github.rest.repos.getCommit({
+                    ...context.repo,
+                    ref: mergeSha,
+                  });
+                  const parents = commit.data.parents?.map((parent) => parent.sha) || [];
+                  if (commit.data.sha !== mergeSha ||
+                    parents.length !== 2 ||
+                    parents[0] !== baseSha ||
+                    parents[1] !== currentHeadSha) {
+                    if (attempt < 5) {
+                      await waitForMergeRefresh();
+                      continue;
+                    }
+                    core.warning(`Skipping PR #${number}: merge commit parents do not match the current base/head.`);
+                    return null;
+                  }
+                } catch (error) {
+                  if (attempt < 5) {
+                    await waitForMergeRefresh();
+                    continue;
+                  }
+                  core.warning(`Skipping PR #${number}: exact merge commit could not be read (${error.message}).`);
+                  return null;
+                }
+
+                return {
+                  tuple: {
+                    prNumber: String(number),
+                    baseRef: baseBranch,
+                    baseSha,
+                    headSha: currentHeadSha,
+                    mergeSha,
+                  },
+                  pullRequest,
+                };
+              }
+              return null;
+            };
+
+            if (!shaPattern.test(baseSha) || !["main", "develop"].includes(baseBranch)) {
+              core.setFailed("Successful CI push did not identify a supported lowercase base branch SHA.");
+              return;
+            }
+            const currentBranch = await github.rest.git.getRef({
+              ...context.repo,
+              ref: `heads/${baseBranch}`,
+            });
+            if (currentBranch.data.object?.sha !== baseSha) {
+              core.warning(`Skipping PR base refresh: ${baseBranch} advanced beyond the completed CI push ${baseSha}.`);
+              return;
+            }
+
+            const pullRequests = await github.paginate(
+              github.rest.pulls.list,
+              {
+                ...context.repo,
+                state: "open",
+                base: baseBranch,
+                per_page: 100,
+              },
+              (response) => response.data
+            );
+            for (const listedPullRequest of pullRequests) {
+              if (listedPullRequest.state !== "open" ||
+                listedPullRequest.base?.ref !== baseBranch ||
+                listedPullRequest.head?.repo?.full_name !== context.payload.repository.full_name ||
+                listedPullRequest.base?.repo?.full_name !== context.payload.repository.full_name) {
+                continue;
+              }
+              const resolved = await resolveExactMerge(listedPullRequest.number);
+              if (!resolved) {
+                continue;
+              }
+              const {tuple, pullRequest} = resolved;
+              if (await hasRuntimeChange(pullRequest)) {
+                core.info(`Dispatching PR runtime base refresh for #${tuple.prNumber} (${tuple.baseSha} / ${tuple.headSha} / ${tuple.mergeSha}).`);
+                await github.rest.repos.createDispatchEvent({
+                  ...context.repo,
+                  event_type: "pr-runtime-base-refresh",
+                  client_payload: {
+                    pr_number: tuple.prNumber,
+                    base_ref: tuple.baseRef,
+                    base_sha: tuple.baseSha,
+                    head_sha: tuple.headSha,
+                    merge_sha: tuple.mergeSha,
+                  },
+                });
+              } else {
+                core.info(`Skipping PR runtime image refresh for #${tuple.prNumber}: no runtime-changing files.`);
+              }
+              core.info(`Dispatching preview deploy reconciliation for #${tuple.prNumber} (${tuple.headSha}).`);
+              await github.rest.repos.createDispatchEvent({
+                ...context.repo,
+                event_type: "preview-deploy",
+                client_payload: {
+                  action: "deploy",
+                  pr_number: tuple.prNumber,
+                  head_sha: tuple.headSha,
+                  preview_domain: "preview.firedevops.net",
+                },
+              });
+            }
+
   build-base-image:
     name: Build Runtime Base Image
     needs: [image-meta]
-    if: ${{ github.event_name != 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
+    if: ${{ github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && (needs.image-meta.outputs.head_branch == 'main' || needs.image-meta.outputs.head_branch == 'develop') }}
     runs-on: ubuntu-latest
     outputs:
       digest: ${{ steps.select_base_image_digest.outputs.digest }}
@@ -368,7 +674,7 @@ jobs:
           egress-policy: audit
 
       - name: ⬇️ Checkout Code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.image-meta.outputs.checkout_ref }}
           persist-credentials: false
@@ -377,7 +683,7 @@ jobs:
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5
 
       - name: Login to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -448,10 +754,11 @@ jobs:
   build-runtime-images:
     name: Build Runtime Images (${{ matrix.service }})
     needs: [image-meta, build-base-image]
-    if: ${{ github.event_name != 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
+    if: ${{ github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && (needs.image-meta.outputs.head_branch == 'main' || needs.image-meta.outputs.head_branch == 'develop') }}
     runs-on: ubuntu-latest
     permissions:
-      # This job publishes service runtime images to GHCR.
+      # This job publishes only unique staging service tags. Canonical aliases
+      # are written by publish-runtime-images after the exact candidate passes smoke.
       contents: read
       packages: write
     strategy:
@@ -476,7 +783,7 @@ jobs:
           egress-policy: audit
 
       - name: ⬇️ Checkout Code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.image-meta.outputs.checkout_ref }}
           persist-credentials: false
@@ -502,7 +809,7 @@ jobs:
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5
 
       - name: Login to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -519,8 +826,8 @@ jobs:
           build-contexts: |
             repo_root=.
           build-args: |
-            BASE_IMAGE=${{ needs.image-meta.outputs.base_image }}
-          tags: ghcr.io/benhook1013/${{ matrix.service }}:${{ needs.image-meta.outputs.image_tag }}
+            BASE_IMAGE=ghcr.io/benhook1013/firemud-base@${{ needs.build-base-image.outputs.digest }}
+          tags: ghcr.io/benhook1013/${{ matrix.service }}:${{ needs.image-meta.outputs.candidate_tag }}
           cache-from: |
             type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:buildcache
             type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:latest
@@ -539,8 +846,8 @@ jobs:
           build-contexts: |
             repo_root=.
           build-args: |
-            BASE_IMAGE=${{ needs.image-meta.outputs.base_image }}
-          tags: ghcr.io/benhook1013/${{ matrix.service }}:${{ needs.image-meta.outputs.image_tag }}
+            BASE_IMAGE=ghcr.io/benhook1013/firemud-base@${{ needs.build-base-image.outputs.digest }}
+          tags: ghcr.io/benhook1013/${{ matrix.service }}:${{ needs.image-meta.outputs.candidate_tag }}
           cache-from: |
             type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:buildcache
             type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:latest
@@ -552,7 +859,7 @@ jobs:
   build-backup-verifier:
     name: Build Backup Verifier Image
     needs: [image-meta]
-    if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main') && needs.image-meta.result == 'success' }}
+    if: ${{ github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && (needs.image-meta.outputs.head_branch == 'develop' || needs.image-meta.outputs.head_branch == 'main') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
@@ -568,7 +875,7 @@ jobs:
           egress-policy: audit
 
       - name: Checkout trusted branch commit
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.image-meta.outputs.checkout_ref }}
           persist-credentials: false
@@ -621,7 +928,7 @@ jobs:
   publish-backup-verifier:
     name: Publish Trusted Backup Verifier Image
     needs: [image-meta, build-backup-verifier]
-    if: ${{ always() && github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main') && needs.image-meta.result == 'success' && needs.build-backup-verifier.result == 'success' }}
+    if: ${{ always() && github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && (needs.image-meta.outputs.head_branch == 'develop' || needs.image-meta.outputs.head_branch == 'main') && needs.image-meta.result == 'success' && needs.build-backup-verifier.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -639,7 +946,7 @@ jobs:
           egress-policy: audit
 
       - name: Checkout trusted publication commit
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.image-meta.outputs.checkout_ref }}
           persist-credentials: false
@@ -668,7 +975,7 @@ jobs:
           }
 
       - name: Login to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -691,7 +998,7 @@ jobs:
   build-hosted-identity-controller:
     name: Build Trusted Hosted Identity Controller
     needs: [image-meta, build-base-image]
-    if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main') && needs.image-meta.result == 'success' && needs.build-base-image.result == 'success' }}
+    if: ${{ github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && (needs.image-meta.outputs.head_branch == 'develop' || needs.image-meta.outputs.head_branch == 'main') && needs.image-meta.result == 'success' && needs.build-base-image.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     outputs:
@@ -709,7 +1016,7 @@ jobs:
           egress-policy: audit
 
       - name: Checkout trusted branch commit
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.image-meta.outputs.checkout_ref }}
           persist-credentials: false
@@ -729,7 +1036,7 @@ jobs:
           cache-read-only: false
 
       - name: Login to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -780,7 +1087,7 @@ jobs:
   publish-hosted-identity-controller:
     name: Publish Trusted Hosted Identity Controller
     needs: [image-meta, build-base-image, build-hosted-identity-controller]
-    if: ${{ always() && github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main') && needs.image-meta.result == 'success' && needs.build-base-image.result == 'success' && needs.build-hosted-identity-controller.result == 'success' }}
+    if: ${{ always() && github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && (needs.image-meta.outputs.head_branch == 'develop' || needs.image-meta.outputs.head_branch == 'main') && needs.image-meta.result == 'success' && needs.build-base-image.result == 'success' && needs.build-hosted-identity-controller.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -798,7 +1105,7 @@ jobs:
           egress-policy: audit
 
       - name: Checkout trusted publication commit
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.image-meta.outputs.checkout_ref }}
           persist-credentials: false
@@ -827,7 +1134,7 @@ jobs:
           }
 
       - name: Login to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -857,7 +1164,7 @@ jobs:
   pr-local-smoke:
     name: PR Full-Stack Smoke
     needs: [image-meta]
-    if: ${{ github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
+    if: ${{ (github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null)) || github.event_name == 'repository_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -876,7 +1183,7 @@ jobs:
           egress-policy: audit
 
       - name: Checkout PR merge
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.image-meta.outputs.checkout_ref }}
           persist-credentials: false
@@ -906,7 +1213,27 @@ jobs:
           cache-read-only: true
 
       - name: Build local PR runtime images
-        run: bash ./dev-tools/build-local-smoke-images.sh "${SMOKE_IMAGE_TAG}"
+        env:
+          MERGE_SHA: ${{ needs.image-meta.outputs.merge_sha }}
+        run: |
+          set -euo pipefail
+          bash ./dev-tools/build-local-smoke-images.sh "$MERGE_SHA"
+          for service in \
+            account-service \
+            automation-scripting-service \
+            entity-management-service \
+            game-design-service \
+            game-logic-service \
+            game-session-service \
+            logging-admin-service \
+            social-groups-service \
+            spring-cloud-gateway \
+            tcp-proxy-service \
+            world-management-service; do
+            docker tag \
+              "ghcr.io/benhook1013/${service}:${MERGE_SHA}" \
+              "ghcr.io/benhook1013/${service}:${SMOKE_IMAGE_TAG}"
+          done
 
       - name: Build PR backup verifier image
         run: |
@@ -927,6 +1254,7 @@ jobs:
       - name: Export fixed-tag preview image artifact
         run: |
           service_manifest=/tmp/pr-runtime-services.txt
+          provenance=/tmp/pr-runtime-provenance.json
           : > "$service_manifest"
           images=()
           for service in \
@@ -946,6 +1274,46 @@ jobs:
           done
           printf '%s\n' 'backup-verifier' >> "$service_manifest"
           images+=("$BACKUP_VERIFIER_IMAGE")
+          PR_NUMBER="${{ needs.image-meta.outputs.pr_number }}" \
+          BASE_SHA="${{ needs.image-meta.outputs.base_sha }}" \
+          HEAD_SHA="${{ needs.image-meta.outputs.head_sha }}" \
+          MERGE_SHA="${{ needs.image-meta.outputs.merge_sha }}" \
+          IMAGE_TAG="${SMOKE_IMAGE_TAG}" \
+          SOURCE_RUN_ID="${{ github.run_id }}" \
+          REPOSITORY="${GITHUB_REPOSITORY}" \
+          PROVENANCE_PATH="$provenance" \
+          python3 - <<'PY'
+          import json
+          import os
+
+          services = [
+              "account-service",
+              "automation-scripting-service",
+              "entity-management-service",
+              "game-design-service",
+              "game-logic-service",
+              "game-session-service",
+              "logging-admin-service",
+              "social-groups-service",
+              "spring-cloud-gateway",
+              "tcp-proxy-service",
+              "world-management-service",
+              "backup-verifier",
+          ]
+          provenance = {
+              "repository": os.environ["REPOSITORY"],
+              "prNumber": int(os.environ["PR_NUMBER"]),
+              "baseSha": os.environ["BASE_SHA"],
+              "headSha": os.environ["HEAD_SHA"],
+              "mergeSha": os.environ["MERGE_SHA"],
+              "imageTag": os.environ["IMAGE_TAG"],
+              "sourceRunId": int(os.environ["SOURCE_RUN_ID"]),
+              "services": services,
+          }
+          with open(os.environ["PROVENANCE_PATH"], "w", encoding="utf-8") as output:
+              json.dump(provenance, output, separators=(",", ":"), sort_keys=True)
+              output.write("\n")
+          PY
           docker save "${images[@]}" | gzip -1 > /tmp/pr-runtime-images.tar.gz
 
       - name: Upload preview image artifact
@@ -955,15 +1323,16 @@ jobs:
           path: |
             /tmp/pr-runtime-images.tar.gz
             /tmp/pr-runtime-services.txt
+            /tmp/pr-runtime-provenance.json
           if-no-files-found: error
           retention-days: 1
 
       - name: Summarize secure PR runtime artifact
         env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_NUMBER: ${{ needs.image-meta.outputs.pr_number }}
+          BASE_SHA: ${{ needs.image-meta.outputs.base_sha }}
           HEAD_SHA: ${{ needs.image-meta.outputs.head_sha }}
-          MERGE_SHA: ${{ github.sha }}
+          MERGE_SHA: ${{ needs.image-meta.outputs.merge_sha }}
           ARTIFACT_NAME: pr-runtime-images-${{ needs.image-meta.outputs.image_tag }}
         run: |
           {
@@ -971,11 +1340,12 @@ jobs:
             echo
             echo "- Pull request: #${PR_NUMBER}"
             echo "- Base SHA: \`${BASE_SHA}\`"
-            echo "- PR head SHA and fixed publication tag: \`${HEAD_SHA}\`"
+            echo "- PR head SHA: \`${HEAD_SHA}\`"
             echo "- Built PR merge SHA (full-stack smoke runs when required): \`${MERGE_SHA}\`"
+            echo "- Merge-scoped publication tag: \`pr-merge-${MERGE_SHA}\`"
             echo "- Artifact: \`${ARTIFACT_NAME}\`"
             echo
-            echo "This read-only PR workflow built the PR merge commit and runs full-stack smoke when required by change scope. The trusted default-branch publisher uploads the preview service images in that successful artifact under the fixed PR head-SHA tag used by preview deployment."
+            echo "This read-only PR workflow built the PR merge commit and runs full-stack smoke when required by change scope. The trusted default-branch publisher uploads only the exact merge-scoped artifact from this successful run."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Dump Docker Compose logs on failure
@@ -1002,7 +1372,7 @@ jobs:
   pr-controller-smoke:
     name: PR Hosted Identity Controller Smoke
     needs: [image-meta]
-    if: ${{ github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.image-meta.outputs.controller_smoke_required == 'true' }}
+    if: ${{ ((github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null)) || github.event_name == 'repository_dispatch') && needs.image-meta.outputs.controller_smoke_required == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -1018,7 +1388,7 @@ jobs:
           egress-policy: audit
 
       - name: Checkout PR merge
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.image-meta.outputs.checkout_ref }}
           persist-credentials: false
@@ -1069,9 +1439,9 @@ jobs:
   smoke-full:
     name: Published Runtime Full-Stack Smoke
     needs: [image-meta, build-runtime-images]
-    if: ${{ always() && github.event_name != 'pull_request' && needs.build-runtime-images.result == 'success' }}
+    if: ${{ always() && github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && needs.build-runtime-images.result == 'success' }}
     permissions:
-      # The trusted branch smoke workflow only pulls fixed GHCR images.
+      # The trusted branch smoke workflow only pulls the staged candidate images.
       contents: read
       packages: read
     uses: ./.github/workflows/smoke-full.yml
@@ -1079,5 +1449,182 @@ jobs:
       action: full
       head_sha: ${{ needs.image-meta.outputs.head_sha }}
       checkout_ref: ${{ needs.image-meta.outputs.checkout_ref }}
-      image_tag: ${{ needs.image-meta.outputs.image_tag }}
+      image_tag: ${{ needs.image-meta.outputs.candidate_tag }}
     secrets: inherit
+
+  publish-runtime-images:
+    name: Promote Smoke-Tested Runtime Images
+    needs: [image-meta, build-runtime-images, smoke-full]
+    if: ${{ github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && needs.build-runtime-images.result == 'success' && needs.smoke-full.result == 'success' && (needs.image-meta.outputs.head_branch == 'main' || needs.image-meta.outputs.head_branch == 'develop') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    env:
+      HEAD_SHA: ${{ needs.image-meta.outputs.head_sha }}
+      HEAD_BRANCH: ${{ needs.image-meta.outputs.head_branch }}
+      CANDIDATE_TAG: ${{ needs.image-meta.outputs.candidate_tag }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
+      - name: Checkout trusted publication source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.image-meta.outputs.checkout_ref }}
+          persist-credentials: false
+
+      - name: Set up canonical GitHub CLI
+        uses: ./.github/actions/setup-gh
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5
+
+      - name: Login to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote smoke-tested service digests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          services=(
+            account-service
+            automation-scripting-service
+            entity-management-service
+            game-design-service
+            game-logic-service
+            game-session-service
+            logging-admin-service
+            social-groups-service
+            spring-cloud-gateway
+            tcp-proxy-service
+            world-management-service
+          )
+
+          declare -A registry_tokens=()
+          registry_manifest_state() {
+            local image="$1"
+            local image_path="${image#ghcr.io/}"
+            local repository_path="${image_path%:*}"
+            local tag="${image_path##*:}"
+            local manifest_url="https://ghcr.io/v2/${repository_path}/manifests/${tag}"
+            local registry_token="${registry_tokens[$repository_path]:-}"
+            local status
+
+            [[ -n "${GHCR_USERNAME:-}" && -n "${GHCR_TOKEN:-}" ]] || {
+              echo "GHCR credentials are unavailable for authenticated manifest preflight: $image" >&2
+              return 1
+            }
+            if [[ -z "$registry_token" ]]; then
+              if ! registry_token="$(curl --silent --show-error --location --fail \
+                --connect-timeout 10 --max-time 30 \
+                --user "${GHCR_USERNAME}:${GHCR_TOKEN}" \
+                --get \
+                --data-urlencode 'service=ghcr.io' \
+                --data-urlencode "scope=repository:${repository_path}:pull" \
+                --header 'Accept: application/json' \
+                'https://ghcr.io/token' | jq -er '.token // .access_token // empty')"; then
+                echo "GHCR bearer-token exchange failed for $image; refusing to infer absence." >&2
+                return 1
+              fi
+              registry_tokens["$repository_path"]="$registry_token"
+            fi
+            # `docker manifest inspect "$image"` conflates a 404 with auth,
+            # registry, and network failures, so it is never an absence check.
+            if ! status="$(curl --silent --show-error --location --head \
+              --connect-timeout 10 --max-time 30 \
+              --header "Authorization: Bearer ${registry_token}" \
+              --header 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+              --output /dev/null --write-out '%{http_code}' "$manifest_url")"; then
+              echo "Authenticated OCI manifest HEAD failed for $image; refusing to infer absence." >&2
+              return 1
+            fi
+            case "$status" in
+              200) printf 'existing\n' ;;
+              404) printf 'missing\n' ;;
+              *)
+                echo "Authenticated OCI manifest HEAD returned HTTP ${status} for $image; refusing to push." >&2
+                return 1
+                ;;
+            esac
+          }
+
+          registry_digest() {
+            local image="$1"
+            local digest
+            if ! digest="$(docker buildx imagetools inspect "$image" |
+              awk '$1 == "Digest:" { print $2; exit }')"; then
+              echo "Unable to inspect exact registry digest for $image; refusing to publish." >&2
+              return 1
+            fi
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+              echo "Registry manifest for $image has no exact digest." >&2
+              return 1
+            }
+            printf '%s\n' "$digest"
+          }
+
+          assert_current_branch_head() {
+            local current_sha
+            current_sha="$(gh api \
+              "repos/${GITHUB_REPOSITORY}/git/ref/heads/${HEAD_BRANCH}" \
+              --jq '.object.sha')"
+            [[ "$current_sha" == "$HEAD_SHA" ]] || {
+              echo "Refusing canonical runtime publication: ${HEAD_BRANCH} moved from ${HEAD_SHA} to ${current_sha}." >&2
+              exit 1
+            }
+          }
+
+          promote_alias() {
+            local source="$1" target="$2" fixed="$3"
+            local source_digest existing_digest target_digest
+            source_digest="$(registry_digest "$source")"
+            local target_state
+            if ! target_state="$(registry_manifest_state "$target")"; then
+              echo "Immutable target preflight failed for $target; refusing to publish." >&2
+              exit 1
+            fi
+            if [[ "$target_state" == missing ]]; then
+              docker buildx imagetools create --tag "$target" "$source"
+            else
+              existing_digest="$(registry_digest "$target")"
+              if [[ "$fixed" == true && "$existing_digest" != "$source_digest" ]]; then
+                echo "Refusing to overwrite fixed runtime tag $target: existing digest $existing_digest differs from candidate $source_digest." >&2
+                exit 1
+              fi
+              if [[ "$existing_digest" != "$source_digest" ]]; then
+                docker buildx imagetools create --tag "$target" "$source"
+              fi
+            fi
+            target_digest="$(registry_digest "$target")"
+            [[ "$target_digest" == "$source_digest" ]] || {
+              echo "Promoted runtime tag $target does not match candidate digest $source_digest (got $target_digest)." >&2
+              exit 1
+            }
+          }
+
+          for service in "${services[@]}"; do
+            candidate="ghcr.io/benhook1013/${service}:${CANDIDATE_TAG}"
+            sha_tag="ghcr.io/benhook1013/${service}:${HEAD_SHA}"
+            branch_tag="ghcr.io/benhook1013/${service}:${HEAD_BRANCH}"
+
+            assert_current_branch_head
+            promote_alias "$candidate" "$sha_tag" true
+            assert_current_branch_head
+            promote_alias "$candidate" "$branch_tag" false
+            if [[ "$HEAD_BRANCH" == develop ]]; then
+              assert_current_branch_head
+              promote_alias "$candidate" "ghcr.io/benhook1013/${service}:latest" false
+            fi
+          done

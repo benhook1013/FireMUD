@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.time.Instant;
@@ -60,6 +61,41 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
     dsl.execute(
         "TRUNCATE TABLE gameplay_command, runtime_region_status, remote_followup_result,"
             + " remote_followup, remote_command_coordinator RESTART IDENTITY CASCADE");
+  }
+
+  @Test
+  void commandIdentityIsIndependentAcrossOriginInstancesButConflictsWithinOneScope() {
+    Instant observedAt = Instant.parse("2026-06-25T12:00:00Z");
+
+    RemoteCommandCoordinator first = remoteCoordinator(observedAt);
+    first.setCommandId("shared-command");
+    coordinatorRepository.save(first);
+
+    RemoteCommandCoordinator second = remoteCoordinator(observedAt.plusSeconds(1));
+    second.setCoordinatorId("coord-2");
+    second.setCommandId("shared-command");
+    second.setOriginGameInstanceId(8L);
+    coordinatorRepository.save(second);
+
+    assertThat(
+            coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(
+                1L, 7L, "shared-command"))
+        .get()
+        .extracting(RemoteCommandCoordinator::getCoordinatorId)
+        .isEqualTo("coord-1");
+    assertThat(
+            coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(
+                1L, 8L, "shared-command"))
+        .get()
+        .extracting(RemoteCommandCoordinator::getCoordinatorId)
+        .isEqualTo("coord-2");
+
+    RemoteCommandCoordinator duplicate = remoteCoordinator(observedAt.plusSeconds(2));
+    duplicate.setCoordinatorId("coord-3");
+    duplicate.setCommandId("shared-command");
+    assertThatThrownBy(() -> coordinatorRepository.save(duplicate))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .hasMessageContaining("idx_remote_command_coordinator_tenant_origin_instance_command_id");
   }
 
   @Test

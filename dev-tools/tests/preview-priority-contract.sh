@@ -734,6 +734,31 @@ reset_case() {
   export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
 }
 
+SUMMARY_WRITER="$ROOT_DIR/dev-tools/hosted/preview/write-preview-summary.sh"
+unset PREVIEW_EXPOSURE_MODE
+neutral_failure_summary="$(bash "$SUMMARY_WRITER" failure 101 head-101 image-101 pr-101.preview.firedevops.net unavailable cleanup)"
+grep -Fqx -- '- TCP: unavailable' <<<"$neutral_failure_summary"
+if grep -Fq 'telnet ' <<<"$neutral_failure_summary"; then
+  echo "mode-unknown failure summary invented a public Telnet endpoint" >&2
+  exit 1
+fi
+neutral_cleanup_summary="$(bash "$SUMMARY_WRITER" cleanup 101 head-101 image-101 pr-101.preview.firedevops.net unavailable)"
+grep -Fqx -- '- TCP: unavailable' <<<"$neutral_cleanup_summary"
+if invalid_mode_error="$(PREVIEW_EXPOSURE_MODE=unavailable bash "$SUMMARY_WRITER" failure 101 head-101 image-101 pr-101.preview.firedevops.net unavailable cleanup 2>&1)"; then
+  echo "explicit unavailable exposure mode was accepted" >&2
+  exit 1
+fi
+grep -Fqx 'PREVIEW_EXPOSURE_MODE must be private or public' <<<"$invalid_mode_error"
+if success_mode_error="$(bash "$SUMMARY_WRITER" success 101 head-101 image-101 pr-101.preview.firedevops.net unavailable 2>&1)"; then
+  echo "success summary accepted an absent exposure mode" >&2
+  exit 1
+fi
+grep -Fqx 'PREVIEW_EXPOSURE_MODE must be private or public for success summaries' <<<"$success_mode_error"
+public_failure_summary="$(PREVIEW_EXPOSURE_MODE=public bash "$SUMMARY_WRITER" failure 101 head-101 image-101 pr-101.preview.firedevops.net 32001 cleanup)"
+grep -Fqx -- '- TCP: unavailable' <<<"$public_failure_summary"
+private_failure_summary="$(PREVIEW_EXPOSURE_MODE=private bash "$SUMMARY_WRITER" failure 101 head-101 image-101 pr-101.preview.firedevops.net unavailable cleanup)"
+grep -Fqx -- '- TCP: private Gateway ↔ TCP Proxy bridge unavailable (no public Telnet)' <<<"$private_failure_summary"
+
 assert_marker_count() {
   local marker="$1"
   local expected="$2"
@@ -816,6 +841,11 @@ if grep -q '<!-- firemud-preview-reclaiming -->' "$FAKE_COMMENT_BODY"; then
   exit 1
 fi
 grep -q '## ❌ Preview Failed' "$FAKE_COMMENT_BODY"
+grep -q -- '- TCP: unavailable' "$FAKE_COMMENT_BODY"
+if grep -q 'telnet pr-101.preview.firedevops.net' "$FAKE_COMMENT_BODY"; then
+  echo "reclaim failure summary invented a public Telnet endpoint" >&2
+  exit 1
+fi
 assert_marker_count '<!-- firemud-preview-summary -->' 1
 assert_marker_count '<!-- firemud-preview-reclaim-failed -->' 1
 
@@ -2551,9 +2581,25 @@ import yaml
 preview = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
 trusted = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
 reconciler = yaml.safe_load(Path(sys.argv[3]).read_text(encoding="utf-8"))
-assert set(preview["jobs"]) == {"preview-plan", "preview-render", "preview-destroy-intent"}
+assert set(preview["jobs"]) == {
+    "preview-plan",
+    "preview-runtime-base-refresh",
+    "preview-render",
+    "preview-destroy-intent",
+}
 assert trusted["jobs"]["destroy-runtime"]["timeout-minutes"] == 60
 assert reconciler["jobs"]["reconcile-previews"]["timeout-minutes"] == 60
+reconciler_manager_write = next(
+    step
+    for step in reconciler["jobs"]["reconcile-previews"]["steps"]
+    if step.get("name") == "Write trusted namespace-manager kubeconfig"
+)
+assert reconciler_manager_write["uses"] == "./.github/actions/write-kubeconfig"
+assert reconciler_manager_write["with"] == {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
+    "export-to-github-env": "false",
+}
 preview_run_scripts = [
     step["run"]
     for job in preview["jobs"].values()
@@ -2585,7 +2631,7 @@ if grep -Fq 'Restore preview runtime kubeconfig' "$janitor_workflow"; then
   exit 1
 fi
 # shellcheck disable=SC2016 # Assert explicit kubeconfig selection on janitor consumers.
-grep -Fq 'KUBECONFIG: ${{ env.PREVIEW_RUNTIME_KUBECONFIG }}' "$janitor_workflow"
+grep -Fq 'KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig' "$janitor_workflow"
 # shellcheck disable=SC2016 # Assert labels are encoded as one safe row field.
 grep -Fq '(.labels | map({name: .name}) | tojson | @base64)' "$reconciler_workflow"
 # shellcheck disable=SC2016 # Assert decoded labels reach the centralized parser.

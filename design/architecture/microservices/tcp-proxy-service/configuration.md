@@ -4,6 +4,8 @@
 
 The target contract requires explicit `TCP_PROXY_TELNET_MODE` selection and startup rejection of incompatible listener and TLS settings in shared and player-facing environments. `EDGE_PROXY` additionally requires an authenticated, cryptographically protected edge-to-PROXY-listener channel and retained deployment evidence for the exact edge and listener identities. Runtime configuration does not contain the deployment topology needed to determine whether both public ingress modes are externally exposed; public-listener exposure exclusivity is therefore a deployment-preflight responsibility under [PREFLIGHT-TELNET-001](../../system-architecture-deploy-preflight-policy.md#preflight-telnet-001). Current code still exposes independent port and `TCP_PROXY_TLS_ENABLED` settings without that cross-setting validator or protected-edge-channel readiness proof, so operators can currently construct an invalid or unauthenticated mixed mode. Those gaps are not supported target configurations and require implementation and focused startup proof before player-facing readiness.
 
+The #2713 runtime slice and Helm candidate implement the internal Gateway ↔ TCP Proxy mTLS bridge and private Proxy chart wiring, but private bridge live hosted-preview proof remains pending. Public Telnet TLS and transport-complete/playable hosted proof remain the #2795 delivery slice.
+
 ## Minimal Production Configuration Checklist
 
 The security policy for these settings is owned by [Security](../../system-architecture-security.md#telnet-command-handling-and-controls); this section retains the TCP Proxy startup and listener consequences.
@@ -11,10 +13,10 @@ The security policy for these settings is owned by [Security](../../system-archi
 For any shared or player-facing environment, operators should ensure at least:
 
 - `GATEWAY_WS_URL` points at the Spring Cloud Gateway WebSocket mTLS listener (`wss://.../ws/game`), with `FIREMUD_GATEWAY_WS_*` variables configured so TCP Proxy authenticates the Gateway server and presents its own dedicated WebSocket client certificate.
-- The `certs/client.*` values shown below for Proxy -> Gateway and internal gRPC are local/dev convenience defaults only. Shared and player-facing startup/admission must load the effective private-key identities and fail closed when their public-key fingerprints are equal, including when the paths differ through symlinks or aliases.
+- The `certs/client.*` values shown below for Proxy -> Gateway and internal gRPC are local/dev convenience defaults only. Shared and player-facing startup/admission must load the effective private-key identities and fail closed when their public-key fingerprints are equal, including when the paths differ through symlinks or aliases. Transport-specific certificate leaves may intentionally carry the same canonical workload URI SAN, `spiffe://firemud/ns/<namespace>/sa/tcp-proxy-service`; distinctness applies to the leaf/private-key material, not to inventing different principals for one workload.
 - `TCP_PROXY_MAX_CONNECTIONS` and `TCP_PROXY_MAX_CONNECTIONS_PER_IP` are set to non-zero values sized for expected load and NAT patterns; the `0` defaults are reserved for local/dev and CI.
 - Public player-facing Telnet must select exactly one TLS mode per endpoint: edge termination with internal PROXY forwarding, or direct TLS termination at TCP Proxy. These modes must not be combined.
-- Shared and player-facing deployments set `TCP_PROXY_TELNET_MODE` explicitly to `EDGE_PROXY` or `DIRECT_TLS`; an unset mode is allowed only for local development and automated tests.
+- Shared and player-facing deployments set `TCP_PROXY_TELNET_MODE` explicitly to `EDGE_PROXY` or `DIRECT_TLS`; an unset mode is allowed only for the `local`, `dev`, and `test` Spring profiles.
 - In `EDGE_PROXY` mode, the edge forwards Telnet with PROXY protocol into `TCP_PROXY_PROXY_PROTOCOL_PORT` only through the authenticated, cryptographically protected channel required by [Security](../../system-architecture-security.md#telnet-command-handling-and-controls). The listener remains internal-only, `TCP_PROXY_TLS_ENABLED` must be `false`, and recovered client addresses become trusted only after channel identity validation succeeds.
 - In `DIRECT_TLS` mode, the public listener uses `TCP_PROXY_TLS_ENABLED=true` and does not accept a PROXY header; raw and PROXY-protocol listeners remain local, test-only, or explicitly private.
 - Startup rejects an unknown mode, missing required listener or certificate settings, `EDGE_PROXY` with TCP Proxy TLS enabled, or `DIRECT_TLS` without TCP Proxy TLS enabled. It cannot determine simultaneous public exposure from runtime configuration; deployment preflight must prove that only the selected public mode is externally exposed. The canonical preflight evidence entrypoint is [`dev-tools/deploy/preflight.py`](../../../../dev-tools/deploy/preflight.py), which does not yet emit this target-state-only result.
@@ -33,7 +35,7 @@ The TCP Proxy Service participates in three distinct TLS and trust boundaries:
 | WebSocket mTLS bridge | TCP Proxy Service -> Spring Cloud Gateway | **Gateway WebSocket client mTLS identity:** TCP Proxy presents its dedicated client certificate to Gateway and validates Gateway with the configured CA. This is not the identity used by TCP Proxy's gRPC server. | `GATEWAY_WS_URL`, `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH`, `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH`, `FIREMUD_GATEWAY_WS_CA_CERT_PATH` |
 | Internal gRPC mTLS | Internal clients -> TCP Proxy Service | **Internal gRPC server mTLS identity:** TCP Proxy presents its gRPC server certificate to internal callers and validates their client identity. This is not the Gateway WebSocket client identity or the Telnet server-TLS identity. | `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH` |
 
-Plaintext local and throwaway test profiles may omit these identities and may reuse generated `certs/client.*` material. Those defaults are local/dev-only convenience values; shared and player-facing deployments use separate private identities, and reused certificate files are not promotion evidence.
+Plaintext `local`, `dev`, and throwaway `test` Spring profiles may omit these identities and may reuse generated `certs/client.*` material. Those defaults are local/dev-only convenience values; shared and player-facing deployments use separate private identities, and reused certificate files are not promotion evidence.
 
 ## Redis Role Guidance
 
@@ -54,7 +56,7 @@ The full variable list is the canonical source of defaults and behavior for `TCP
 | `TCP_PROXY_TELNET_MODE` | Select exactly one player-facing Telnet ingress mode: `EDGE_PROXY` or `DIRECT_TLS`; required in shared and player-facing environments, unset only in local/dev and tests | *(none)* |
 | `TCP_PROXY_PORT` | TCP port the proxy listens on; this is the public TLS listener in `DIRECT_TLS` mode and must remain unbound or private in `EDGE_PROXY` mode | `2323` |
 | `TCP_PROXY_PROXY_PROTOCOL_PORT` | TCP port for the edge-termination mode's PROXY-protocol Telnet listener; internal-only and reachable only from the Telnet edge proxy | `2325` |
-| `GATEWAY_WS_URL` | WebSocket URL for forwarding to the gateway; local Docker and test environments may use a plaintext `ws://` endpoint, but player-facing environments must set an explicit `wss://.../ws/game` target | *(none)* |
+| `GATEWAY_WS_URL` | WebSocket URL for forwarding to the gateway; the `local`, `dev`, and `test` Spring profiles may use a plaintext `ws://` endpoint, but player-facing environments must set an explicit `wss://.../ws/game` target | *(none)* |
 | `TCP_PROXY_DEFAULT_WORLD_SLUG` | Explicit local/bootstrap world slug forwarded as server-owned default advisory bridge metadata when configured instead of waiting for first-party connect-token admission; it cannot alter authentication, canonical routing, or gameplay-admission authority | *(empty)* |
 | `TCP_PROXY_DEFAULT_REALM_SLUG` | Explicit local/bootstrap realm slug paired with the server-owned default advisory world metadata; it cannot alter authentication, canonical routing, or gameplay-admission authority | *(empty)* |
 | `TCP_PROXY_DEFAULT_GAME_INSTANCE_ID` | Explicit local/bootstrap game-instance id forwarded as server-owned default advisory bridge metadata; TCP Proxy does not resolve or authorize it | *(empty)* |
@@ -73,7 +75,7 @@ The full variable list is the canonical source of defaults and behavior for `TCP
 | `TCP_PROXY_GATEWAY_CIRCUIT_HALF_OPEN_MAX_PROBES` | Maximum concurrent bridge probes while half-open | `3` |
 | `TCP_PROXY_GATEWAY_CIRCUIT_RECOVERY_SUCCESS_COUNT` | Consecutive successful probes required to recover admission | `3` |
 | `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES` | Maximum buffered Telnet lines waiting to be forwarded | `64` |
-| `TCP_PROXY_MCP_ENABLED` | Deprecated implementation-drift marker/greeting flag; target startup accepts `true` only in explicit local/development/test profiles and rejects it in shared, player-facing, and prod-like profiles; the default remains `false`, disabled, and unadvertised; not a supported semantic-extension toggle | `false` |
+| `TCP_PROXY_MCP_ENABLED` | Deprecated implementation-drift marker/greeting flag; target startup accepts `true` only in the explicit `local`, `dev`, and `test` profiles and rejects it in shared, player-facing, and prod-like profiles; the default remains `false`, disabled, and unadvertised; not a supported semantic-extension toggle | `false` |
 | `TCP_PROXY_MCP_NEGOTIATION_FAILURE_MAX` | Dormant target-only MCP budget; not consumed by the current runtime | `5` |
 | `TCP_PROXY_MCP_NEGOTIATION_FAILURE_WINDOW_MS` | Dormant target-only MCP budget window; not consumed by the current runtime | `60000` |
 | `TCP_PROXY_MCP_MAX_ACTIVE_CORDS` | Dormant target-only MCP cord budget; not consumed by the current runtime | `16` |
@@ -89,6 +91,8 @@ The full variable list is the canonical source of defaults and behavior for `TCP
 
 When any `TCP_PROXY_DEFAULT_*` bootstrap variables are used together, local/bootstrap profiles must supply one coherent server-owned advisory bridge-metadata bundle: `worldSlug`, `realmSlug`, explicit `tenantId`, explicit `gameInstanceId`, and `pointerVersion`. These direct environment values are local/bootstrap inputs only: TCP Proxy neither resolves nor authorizes tenant or game-instance identity. Shared and player-facing deployments must obtain matching canonical gameplay-admission evidence and fail closed when that evidence is absent, malformed, stale, or inconsistent; forwarded metadata remains advisory and cannot replace or alter canonical authentication, routing, or gameplay-admission authority. Do not configure only the runtime ids while omitting the visible world/realm identity or pointer freshness, because that would recreate a partial routing shortcut prohibited by the canonical [realm-catalog and admission-pointer contract](../../system-architecture-multi-tenancy.md#realm-catalog-and-admission-pointer-contract).
 
+The target hosted preview and dev-demo Helm deployments select direct Telnet TLS with a dedicated Secret named `<release>-telnet-tls`; it is distinct from the HTTP Ingress and gRPC TLS Secrets and is mounted read-only at `/telnet-tls`. In standalone certificate-identity mode, the chart owns exactly one dedicated cert-manager `Certificate` that writes that Secret. In hosted-controller mode, the chart renders no Telnet `Certificate`; the retained hosted identity controller owns and projects the release-scoped Secret, and the TCP Proxy Service and Deployment carry matching explicit ownership labels. The public NodePort remains the selected TCP Proxy listener, now carrying TLS. This public Telnet TLS and transport-complete/playable hosted proof path is the #2795 delivery slice; #2713 does not claim it.
+
 When all three routing defaults are configured coherently, TCP Proxy forwards them as `X-World-Slug`, `X-Realm-Slug`, and positive `X-Pointer-Version` only on the authenticated Proxy -> Gateway WebSocket hop. Gateway rejects a partial or malformed bundle, removes connect-token carriers for that trusted transport, and forwards the validated advisory bundle to Game Session; the headers never bypass direct credential `LOGIN` / `PLAY` or become gameplay-admission authority. The complete trusted-hop header contract is [TCP Proxy API Contracts](./api-contracts.md#correlation-and-header-contract).
 
 ## WebSocket mTLS to Spring Cloud Gateway
@@ -99,9 +103,15 @@ In production, the TCP Proxy Service connects to Spring Cloud Gateway over `wss:
 
 - Client certificate and key are loaded from `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH` and `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH`.
 - The Gateway’s certificate is validated against `FIREMUD_GATEWAY_WS_CA_CERT_PATH`, with hostname verification enabled using the host from `GATEWAY_WS_URL`.
-- Certificate changes are picked up via the shared `TlsCertificateWatcher` so WebSocket clients can reload credentials without restarts.
+- Certificate changes are picked up via the shared `TlsCertificateWatcher` so WebSocket clients can reload credentials without restarts. The watcher recognizes both ordinary watched-file changes and Kubernetes projected-Secret `..data` generation swaps, coalesces each short event burst into one reload, and treats a watch-service overflow as a reload signal so the client re-reads all configured material and fails closed if the resulting set is invalid.
 
-The WebSocket client certificate must include the `clientAuth` extended key usage. This is intentionally decoupled from the proxy’s internal gRPC server certificate profile, which must include `serverAuth`.
+Ordinary renewal atomically replaces the client used for new bridges and readiness probes while already-negotiated WebSocket sessions finish naturally. This watcher behavior does not implement explicit certificate revocation, identity removal, or emergency trust withdrawal. For emergency withdrawal, the hosted identity controller must first remove the withdrawn identity from Gateway's active trust profile, then disruptively terminate the old Gateway pods and their established bridges, even when replacement credentials or replacement pods are unavailable; requesting a rollout without proving the old bridges stopped is not sufficient.
+
+The aggregate `tlsCertificateReload` remains a default-health and alerting surface, not a wholesale readiness dependency. TCP Proxy’s route-specific `trafficAdmissionReadiness` includes Gateway bridge readiness and fails closed for new Telnet sessions when that path’s watcher or active client material is unusable; unrelated watcher loss does not close this route. Established sessions remain usable while their negotiated path is safe, and controller-owned identity withdrawal remains a disruptive termination boundary. The canonical policy is in [Kubernetes Health Monitoring](../../infrastructure/deployment-environments.md#kubernetes-health-monitoring).
+
+The shared readiness post-processor enables TLS reload gating through `firemud.tls.readiness-gate.enabled`. TCP Proxy’s `application.yml` defaults this property to `false` when `FIREMUD_TLS_READINESS_GATE_ENABLED` is unset because its aggregate watcher health must not gate actuator readiness; its route-specific `trafficAdmissionReadiness` owns the Gateway bridge readiness decision described above. The default can be overridden when an environment explicitly requires aggregate TLS watcher health to gate readiness.
+
+The WebSocket client certificate must include the `clientAuth` extended key usage; a certificate with no extended-key-usage extension is rejected rather than treated as unrestricted. This is intentionally decoupled from the proxy’s internal gRPC server certificate profile, which must include `serverAuth`.
 
 TLS handshake failures are fail-closed. The proxy does not fall back to plaintext.
 
@@ -111,10 +121,11 @@ When overriding `GATEWAY_WS_URL` in a `wss://` configuration, the host portion o
 
 The local environment consequence is:
 
+- Plaintext `ws://` requires a non-empty active-profile set where every profile is `local`, `dev`, or `test`; an empty set or any profile outside that allowlist fails closed rather than implicitly selecting local trust.
 - Proxy -> Gateway gameplay traffic uses mTLS in all shared and player-facing environments.
 - Shared and player-facing environments must use `wss://` to the internal-only Gateway mTLS listener; they must not serve player-facing traffic over `ws://`.
 - Player-facing environments must fail startup or admission if Proxy -> Gateway mTLS identity verification is unavailable.
-- Gateway trust uses exactly one profile from [ADR 0169](../../decisions/adr-0169-exclusive-environment-bound-tcp-proxy-trust.md). Steady-state player-facing deployments require an exact environment-specific URI SAN identity; DNS migration and fingerprint break-glass profiles are explicit and expiring, while insecure CIDR trust is development/test-only.
+- Gateway trust uses exactly one profile from [ADR 0169](../../decisions/adr-0169-exclusive-environment-bound-tcp-proxy-trust.md). Steady-state player-facing deployments require an exact environment-specific URI SAN identity; DNS migration and fingerprint break-glass profiles are explicit and expiring. The `development_cidr` profile is reserved for the canonical `local-dev` and `isolated-test` environment classes, and permits insecure source-CIDR trust only there; these environment classes are distinct from Spring active profile names such as `local`, `dev`, and `test`. Hosted, hobby/self-hosted player-facing, staging, and production environments must not use `development_cidr`.
 
 ## Connection Limits and Abuse Protection
 
@@ -134,7 +145,7 @@ The proxy’s connection caps, idle timeouts, and buffer depth limits are hard c
 
 The connection limits exposed via `TCP_PROXY_MAX_CONNECTIONS` and `TCP_PROXY_MAX_CONNECTIONS_PER_IP` are intended to be tuned per environment.
 
-The listed `TCP_PROXY_MCP_*` budgets are dormant target-only settings and are not consumed by the current runtime. Marker-looking lines are treated as opaque generic input and forwarded subject only to the proxy's live generic line-size, connection, idle, buffer, and per-IP connection limits; no MCP-specific budget/rate-limit enforcement or `reason="mcp_budget"` discard is live. The deprecated `TCP_PROXY_MCP_ENABLED` flag can trigger the implementation-drift greeting when enabled, but the **target** configuration/startup contract accepts `true` only in explicit local/development/test profiles and rejects it in shared, player-facing, and prod-like profiles; it remains `false`, disabled, and unadvertised by default. Focused profile-startup proof is required for this boundary; the current runtime does not yet prove the profile rejection.
+The listed `TCP_PROXY_MCP_*` budgets are dormant target-only settings and are not consumed by the current runtime. Marker-looking lines are treated as opaque generic input and forwarded subject only to the proxy's live generic line-size, connection, idle, buffer, and per-IP connection limits; no MCP-specific budget/rate-limit enforcement or `reason="mcp_budget"` discard is live. The deprecated `TCP_PROXY_MCP_ENABLED` flag can trigger the implementation-drift greeting when enabled, but the **target** configuration/startup contract accepts `true` only in the explicit `local`, `dev`, and `test` profiles and rejects it in shared, player-facing, and prod-like profiles; it remains `false`, disabled, and unadvertised by default. Focused profile-startup proof is required for this boundary; the current runtime does not yet prove the profile rejection.
 
 The initial Proxy -> Gateway WebSocket bridge retry budget and input buffer depth (`TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` and `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES`) should be sized to match expected gateway availability characteristics and typical player command rates.
 
@@ -157,7 +168,7 @@ Startup must fail fast when `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS <= 0`, `TCP_P
 
 - `TCP_PROXY_MAX_CONNECTIONS=50`
 - `TCP_PROXY_MAX_CONNECTIONS_PER_IP=10`
-- `ws://` targets for `GATEWAY_WS_URL` are acceptable in local or Docker Compose setups
+- `ws://` targets for `GATEWAY_WS_URL` are acceptable only when an explicit `local`, `dev`, or `test` Spring profile is active, including Docker Compose setups using one of those profiles
 
 ### Minimum Viable Prod Hardening
 
