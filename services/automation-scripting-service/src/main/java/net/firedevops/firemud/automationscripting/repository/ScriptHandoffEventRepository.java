@@ -231,6 +231,7 @@ public class ScriptHandoffEventRepository {
 
   public ScriptHandoffEvent save(ScriptHandoffEvent entity) {
     requireCoherentPinTuple(entity);
+    requireCoherentPluginFence(entity);
     if (entity.getId() == null) {
       ScriptHandoffEventsRecord record = dsl.newRecord(SCRIPT_HANDOFF_EVENTS);
       populate(record, entity);
@@ -466,6 +467,18 @@ public class ScriptHandoffEventRepository {
     if ((entity.getScriptPinEpoch() > 0L) != hasRequestId) {
       throw new IllegalArgumentException(
           "script_pin_control_plane_request_id is required exactly when script_pin_epoch is positive");
+    }
+  }
+
+  private static void requireCoherentPluginFence(ScriptHandoffEvent entity) {
+    long activationEpoch = entity.getPluginActivationEpoch();
+    long lifecycleRevision = entity.getLifecycleRevision();
+    if (activationEpoch < 0L || lifecycleRevision < 0L) {
+      throw new IllegalArgumentException("plugin fence values must be non-negative");
+    }
+    if ((activationEpoch == 0L) != (lifecycleRevision == 0L)) {
+      throw new IllegalArgumentException(
+          "plugin_activation_epoch and lifecycle_revision must both be zero or both be positive");
     }
   }
 

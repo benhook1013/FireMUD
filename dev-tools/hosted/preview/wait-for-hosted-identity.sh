@@ -96,7 +96,7 @@ read_kubectl_json() {
   exit "$kubectl_status"
 }
 
-# shellcheck disable=SC2317 # ShellCheck does not follow EXIT trap callbacks.
+# shellcheck disable=SC2317,SC2329 # ShellCheck does not follow EXIT trap callbacks.
 cleanup_kubectl_error_file() {
   rm -f -- "$kubectl_error_file"
 }
@@ -250,8 +250,8 @@ if [[ "${1:-}" == "--retired" ]]; then
   exit 1
 fi
 
-if [[ $# -lt 2 || $# -gt 4 ]]; then
-  echo "usage: $0 <identity_name> <expected_head_sha> [runtime_namespace] [timeout_seconds]" >&2
+if [[ $# -lt 2 || $# -gt 5 ]]; then
+  echo "usage: $0 <identity_name> <expected_head_sha> [runtime_namespace] [timeout_seconds] [private|public]" >&2
   exit 2
 fi
 
@@ -263,6 +263,16 @@ else
   runtime_namespace="$(resolve_runtime_namespace "$identity_name")"
 fi
 timeout_seconds="${4:-900}"
+exposure_mode="${5:-public}"
+
+if [[ "$exposure_mode" != private && "$exposure_mode" != public ]]; then
+  echo "exposure mode must be private or public: ${exposure_mode}" >&2
+  exit 2
+fi
+if [[ "$identity_name" == dev-demo && "$exposure_mode" != public ]]; then
+  echo "dev-demo identity requires public exposure mode" >&2
+  exit 2
+fi
 
 normalize_head_sha() {
   local head_sha="$1"
@@ -313,6 +323,13 @@ while (( SECONDS < deadline )); do
   fi
 
   namespace_uid="$(jq -r '.metadata.uid // empty' <<<"$namespace_json")"
+  namespace_exposure_mode="$(jq -r '.metadata.labels["firemud.dev/preview-exposure-mode"] // empty' <<<"$namespace_json")"
+  namespace_has_telnet_port_annotation="$(jq -r '((.metadata.annotations // {}) | has("firemud.dev/last-preview-telnet-port"))' <<<"$namespace_json")"
+  if [[ "$identity_name" != dev-demo && "$namespace_exposure_mode" != "$exposure_mode" ]]; then
+    echo "Runtime namespace ${runtime_namespace} has exposure mode ${namespace_exposure_mode:-missing}; expected ${exposure_mode}."
+    sleep 5
+    continue
+  fi
   if [[ "$identity_name" == dev-demo ]]; then
     namespace_requested_head="$(jq -r '.metadata.annotations["firemud.dev/requested-dev-demo-head-sha"] // empty' <<<"$namespace_json")"
     namespace_deployed_head="$(jq -r '.metadata.annotations["firemud.dev/last-dev-demo-head-sha"] // empty' <<<"$namespace_json")"
@@ -347,7 +364,14 @@ while (( SECONDS < deadline )); do
     sleep 5
     continue
   fi
-  if [[ ! "$namespace_telnet_port" =~ ^[1-9][0-9]*$ ]] ||
+  if [[ "$exposure_mode" == private ]]; then
+    if [[ "$namespace_has_telnet_port_annotation" != false ]]; then
+      echo "Private runtime namespace ${runtime_namespace} retains a Telnet port annotation; observed ${namespace_telnet_port:-empty}."
+      sleep 5
+      continue
+    fi
+    namespace_telnet_port=0
+  elif [[ ! "$namespace_telnet_port" =~ ^[1-9][0-9]*$ ]] ||
     ((${#namespace_telnet_port} > 5)) ||
     { [[ "$identity_name" == dev-demo ]] && [[ "$namespace_telnet_port" != 32016 ]]; } ||
     { [[ "$identity_name" != dev-demo ]] &&
@@ -381,6 +405,7 @@ while (( SECONDS < deadline )); do
   profile_uid="$(jq -r '.status.profile.runtimeNamespaceUid // empty' <<<"$identity_json")"
   profile_requested_head="$(jq -r '.status.profile.requestedHeadSha // empty' <<<"$identity_json")"
   profile_deployed_head="$(jq -r '.status.profile.deployedHeadSha // empty' <<<"$identity_json")"
+  profile_exposure_mode="$(jq -r '.status.profile.exposureMode // empty' <<<"$identity_json")"
   profile_telnet_port="$(jq -r '
     .status.profile.telnetPort as $port |
     if ($port | type) == "number" then
@@ -429,7 +454,18 @@ while (( SECONDS < deadline )); do
     sleep 5
     continue
   fi
-  if [[ "$profile_telnet_port" != "$namespace_telnet_port" ]]; then
+  if [[ "$profile_exposure_mode" != "$exposure_mode" ]]; then
+    echo "Ready identity profile exposure mode is stale; expected ${exposure_mode}, observed ${profile_exposure_mode:-missing}."
+    sleep 5
+    continue
+  fi
+  if [[ "$exposure_mode" == private && "$profile_telnet_port" != 0 ]]; then
+    report_stale_identity_profile \
+      "$profile_uid" "$profile_requested_head" "$profile_deployed_head" "$profile_telnet_port" 0
+    sleep 5
+    continue
+  fi
+  if [[ "$exposure_mode" == public && "$profile_telnet_port" != "$namespace_telnet_port" ]]; then
     report_stale_identity_profile \
       "$profile_uid" "$profile_requested_head" "$profile_deployed_head" "$profile_telnet_port" \
       "$namespace_telnet_port"
@@ -442,8 +478,8 @@ while (( SECONDS < deadline )); do
     continue
   fi
 
-  printf 'identity=%s\nphase=%s\nobservedGeneration=%s\ntelnetPort=%s\ningressRevision=%s\ntelnetRevision=%s\ngatewayInternalWsRevision=%s\ntcpProxyBridgeRevision=%s\ngrpcRevision=%s\n' \
-    "$identity_name" "$phase" "$observed_generation" "$profile_telnet_port" "$ingress_revision" "$telnet_revision" "$gateway_internal_ws_revision" "$tcp_proxy_bridge_revision" "$grpc_revision"
+  printf 'identity=%s\nphase=%s\nobservedGeneration=%s\nexposureMode=%s\ntelnetPort=%s\ningressRevision=%s\ntelnetRevision=%s\ngatewayInternalWsRevision=%s\ntcpProxyBridgeRevision=%s\ngrpcRevision=%s\n' \
+    "$identity_name" "$phase" "$observed_generation" "$exposure_mode" "$profile_telnet_port" "$ingress_revision" "$telnet_revision" "$gateway_internal_ws_revision" "$tcp_proxy_bridge_revision" "$grpc_revision"
   exit 0
 done
 

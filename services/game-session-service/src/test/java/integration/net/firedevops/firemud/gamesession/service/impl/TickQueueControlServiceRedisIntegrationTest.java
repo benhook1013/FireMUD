@@ -82,7 +82,11 @@ class TickQueueControlServiceRedisIntegrationTest {
     when(gameplayCommandRepository.lockAcceptedCommandForStaging(
             any(Long.class), any(Long.class), any(String.class), any(String.class), anyBoolean()))
         .thenReturn(true);
-    when(gameplayCommandRepository.markAcceptedCommandStaged(any(String.class), any(Instant.class)))
+    when(gameplayCommandRepository.markAcceptedCommandStaged(
+            org.mockito.ArgumentMatchers.eq(TENANT_ID),
+            org.mockito.ArgumentMatchers.eq(GAME_INSTANCE_ID),
+            any(String.class),
+            any(Instant.class)))
         .thenReturn(true);
 
     queueLockRenewalExecutor = Executors.newSingleThreadScheduledExecutor();
@@ -120,7 +124,10 @@ class TickQueueControlServiceRedisIntegrationTest {
     assertThat(indexedPayload("cmd-fresh")).contains("cmd-fresh|look");
     verify(gameplayCommandRepository)
         .markAcceptedCommandStaged(
-            org.mockito.ArgumentMatchers.eq("cmd-fresh"), any(Instant.class));
+            org.mockito.ArgumentMatchers.eq(TENANT_ID),
+            org.mockito.ArgumentMatchers.eq(GAME_INSTANCE_ID),
+            org.mockito.ArgumentMatchers.eq("cmd-fresh"),
+            any(Instant.class));
   }
 
   @Test
@@ -135,7 +142,10 @@ class TickQueueControlServiceRedisIntegrationTest {
     assertThat(indexedPayload("cmd-replay")).contains("cmd-replay|look");
     verify(gameplayCommandRepository)
         .markAcceptedCommandStaged(
-            org.mockito.ArgumentMatchers.eq("cmd-replay"), any(Instant.class));
+            org.mockito.ArgumentMatchers.eq(TENANT_ID),
+            org.mockito.ArgumentMatchers.eq(GAME_INSTANCE_ID),
+            org.mockito.ArgumentMatchers.eq("cmd-replay"),
+            any(Instant.class));
   }
 
   @Test
@@ -150,7 +160,10 @@ class TickQueueControlServiceRedisIntegrationTest {
     assertThat(indexedPayload("cmd-replay-pending")).contains("cmd-replay-pending|look");
     verify(gameplayCommandRepository)
         .markAcceptedCommandStaged(
-            org.mockito.ArgumentMatchers.eq("cmd-replay-pending"), any(Instant.class));
+            org.mockito.ArgumentMatchers.eq(TENANT_ID),
+            org.mockito.ArgumentMatchers.eq(GAME_INSTANCE_ID),
+            org.mockito.ArgumentMatchers.eq("cmd-replay-pending"),
+            any(Instant.class));
   }
 
   @Test
@@ -169,7 +182,11 @@ class TickQueueControlServiceRedisIntegrationTest {
     assertThat(values(PENDING_KEY)).containsExactly(conflictingPayload);
     assertThat(indexedPayload("cmd-conflict")).isNull();
     verify(gameplayCommandRepository, never())
-        .markAcceptedCommandStaged(any(String.class), any(Instant.class));
+        .markAcceptedCommandStaged(
+            org.mockito.ArgumentMatchers.eq(TENANT_ID),
+            org.mockito.ArgumentMatchers.eq(GAME_INSTANCE_ID),
+            any(String.class),
+            any(Instant.class));
   }
 
   @Test

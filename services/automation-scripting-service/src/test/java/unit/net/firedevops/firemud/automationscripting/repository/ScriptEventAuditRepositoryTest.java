@@ -61,7 +61,8 @@ class ScriptEventAuditRepositoryTest {
                     null,
                     null,
                     "event-1",
-                    false))
+                    false,
+                    "game-session-service"))
         .isFalse();
 
     assertThat(whereClause(sql.get()))
@@ -105,7 +106,8 @@ class ScriptEventAuditRepositoryTest {
                     2L,
                     "pin-request-1",
                     "event-1",
-                    false))
+                    false,
+                    "game-session-service"))
         .isFalse();
 
     int whereStart = sql.get().indexOf(" where ");
@@ -117,7 +119,8 @@ class ScriptEventAuditRepositoryTest {
             "binding_id",
             "script_pin_epoch",
             "script_pin_control_plane_request_id",
-            "script_event_id");
+            "script_event_id",
+            "source_service");
   }
 
   @Test
@@ -375,7 +378,8 @@ class ScriptEventAuditRepositoryTest {
             "event_schema_version",
             "script_patch_version",
             "script_event_id",
-            "dry_run");
+            "dry_run",
+            "source_service");
     assertThat(conflictClause).doesNotContain("script_pin_control_plane_request_id");
     assertThat(conflictClause).contains("where", "script_pin_epoch\" is null");
   }
@@ -414,7 +418,8 @@ class ScriptEventAuditRepositoryTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("script_pin_control_plane_request_id conflicts with existing identity");
     String conflictClause = conflictClause(sqlRef.get());
-    assertThat(conflictClause).contains("script_pin_epoch", "script_event_id", "dry_run");
+    assertThat(conflictClause)
+        .contains("script_pin_epoch", "script_event_id", "dry_run", "source_service");
     assertThat(conflictClause).doesNotContain("script_pin_control_plane_request_id");
     assertThat(conflictClause).contains("where", "script_pin_epoch\" > 0");
     assertThat(conflictClause).doesNotContain("is not null");
@@ -481,7 +486,8 @@ class ScriptEventAuditRepositoryTest {
             "script_patch_version",
             "script_pin_epoch",
             "script_event_id",
-            "dry_run");
+            "dry_run",
+            "source_service");
     assertThat(whereClause(selectSqlRef.get()))
         .doesNotContain("script_pin_control_plane_request_id");
   }

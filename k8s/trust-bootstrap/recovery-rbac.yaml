@@ -1,0 +1,126 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: firemud-preview-ca-recovery
+  namespace: firemud-system
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: firemud-preview-ca-recovery
+  namespace: firemud-system
+rules:
+  # Kubernetes RBAC cannot narrow CREATE with resourceNames. The companion
+  # VAP constrains this identity's create to the fixed firemud-grpc-ca Secret.
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [firemud-grpc-ca]
+    verbs: [get, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: firemud-preview-ca-recovery
+  namespace: firemud-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: firemud-preview-ca-recovery
+subjects:
+  - kind: ServiceAccount
+    name: firemud-preview-ca-recovery
+    namespace: firemud-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: firemud-preview-ca-recovery
+  namespace: cert-manager
+rules:
+  # Kubernetes RBAC cannot narrow CREATE with resourceNames. The companion
+  # VAP constrains this identity's create to the fixed firemud-grpc-ca Secret.
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [firemud-grpc-ca]
+    verbs: [get, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: firemud-preview-ca-recovery
+  namespace: cert-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: firemud-preview-ca-recovery
+subjects:
+  - kind: ServiceAccount
+    name: firemud-preview-ca-recovery
+    namespace: firemud-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: firemud-preview-ca-recovery-readback
+  namespace: kube-system
+rules:
+  - apiGroups: [""]
+    resources: [serviceaccounts]
+    resourceNames: [preview-deployer]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: firemud-preview-ca-recovery-readback
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: firemud-preview-ca-recovery-readback
+subjects:
+  - kind: ServiceAccount
+    name: firemud-preview-ca-recovery
+    namespace: firemud-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: firemud-preview-ca-recovery-readback
+rules:
+  - apiGroups: [admissionregistration.k8s.io]
+    resources: [validatingadmissionpolicies, validatingadmissionpolicybindings]
+    resourceNames:
+      - firemud-trust-bootstrap-certificaterequest
+      - firemud-trust-bootstrap-certificaterequest-subresources
+      - firemud-trust-bootstrap-certificate
+      - firemud-trust-bootstrap-certificate-status
+      - firemud-trust-bootstrap-ca-issuers
+      - firemud-trust-ca-secret-boundary
+      - firemud-trust-runtime-namespace-boundary
+      - firemud-trust-runtime-binding-boundary
+    verbs: [get]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterrolebindings]
+    resourceNames: [preview-deployer]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: firemud-preview-ca-recovery-readback
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: firemud-preview-ca-recovery-readback
+subjects:
+  - kind: ServiceAccount
+    name: firemud-preview-ca-recovery
+    namespace: firemud-system

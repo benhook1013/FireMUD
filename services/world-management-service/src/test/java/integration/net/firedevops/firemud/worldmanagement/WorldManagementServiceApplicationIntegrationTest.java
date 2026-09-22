@@ -136,7 +136,7 @@ class WorldManagementServiceApplicationIntegrationTest {
 
   @Test
   @Transactional
-  void worldEventDueQueryEnforcesScopeAndDefersWeather() {
+  void worldEventDueQueryIncludesInScopeWeatherAndEnforcesScope() {
     long exactRegionId = insertRegion(101L, 1001L, 11L);
     long crossTenantRegionId = insertRegion(202L, 1001L, 22L);
     long crossInstanceRegionId = insertRegion(101L, 1002L, 33L);
@@ -152,7 +152,7 @@ class WorldManagementServiceApplicationIntegrationTest {
 
     assertThat(dueEvents)
         .extracting(WorldEvent::getEventType)
-        .containsExactlyInAnyOrder("REGION_NOTICE", "REGIONLESS_NOTICE");
+        .containsExactlyInAnyOrder("REGION_NOTICE", "REGIONLESS_NOTICE", "WEATHER_CHANGE");
     WorldEvent exactRegionEvent =
         dueEvents.stream()
             .filter(event -> "REGION_NOTICE".equals(event.getEventType()))
@@ -170,28 +170,32 @@ class WorldManagementServiceApplicationIntegrationTest {
     assertThat(regionlessEvent.getRegionInstance()).isNull();
   }
 
-  private long insertRegion(long tenantId, long gameInstanceId, long worldInstanceId) {
-    dsl.insertInto(WORLD_INSTANCE)
-        .set(WORLD_INSTANCE.ID, worldInstanceId)
-        .set(WORLD_INSTANCE.TENANT_ID, tenantId)
-        .set(WORLD_INSTANCE.GAME_INSTANCE_ID, gameInstanceId)
-        .set(WORLD_INSTANCE.GAME_TEMPLATE_ID, 1L)
-        .set(WORLD_INSTANCE.CONTROL_PLANE_REQUEST_ID, "event-test-" + worldInstanceId)
-        .set(WORLD_INSTANCE.LAUNCH_DESCRIPTOR_ID, "event-test-launch-" + worldInstanceId)
-        .set(WORLD_INSTANCE.VERSION_ID, 1L)
-        .set(WORLD_INSTANCE.GENERATION_CONFIG_REVISION, "event-test-generation")
-        .set(WORLD_INSTANCE.RELEASE_BUNDLE_ID, 1L)
-        .set(WORLD_INSTANCE.PUBLISHED_RELEASE_BUNDLE_REF, "event-test-release")
-        .set(WORLD_INSTANCE.VERSION_STATE_EPOCH, 1L)
-        .set(WORLD_INSTANCE.STATUS, "ACTIVE")
-        .execute();
+  private long insertRegion(long tenantId, long gameInstanceId, long fixtureLabel) {
+    Long worldInstanceId =
+        dsl.insertInto(WORLD_INSTANCE)
+            .set(WORLD_INSTANCE.TENANT_ID, tenantId)
+            .set(WORLD_INSTANCE.GAME_INSTANCE_ID, gameInstanceId)
+            .set(WORLD_INSTANCE.GAME_TEMPLATE_ID, 1L)
+            .set(WORLD_INSTANCE.CONTROL_PLANE_REQUEST_ID, "event-test-" + fixtureLabel)
+            .set(WORLD_INSTANCE.LAUNCH_DESCRIPTOR_ID, "event-test-launch-" + fixtureLabel)
+            .set(WORLD_INSTANCE.VERSION_ID, 1L)
+            .set(WORLD_INSTANCE.GENERATION_CONFIG_REVISION, "event-test-generation")
+            .set(WORLD_INSTANCE.RELEASE_BUNDLE_ID, 1L)
+            .set(WORLD_INSTANCE.PUBLISHED_RELEASE_BUNDLE_REF, "event-test-release")
+            .set(WORLD_INSTANCE.VERSION_STATE_EPOCH, 1L)
+            .set(WORLD_INSTANCE.STATUS, "ACTIVE")
+            .returning(WORLD_INSTANCE.ID)
+            .fetchOne(WORLD_INSTANCE.ID);
+    if (worldInstanceId == null) {
+      throw new IllegalStateException("world instance insert did not return an id");
+    }
     Long regionId =
         dsl.insertInto(REGION_INSTANCE)
             .set(REGION_INSTANCE.TENANT_ID, tenantId)
             .set(REGION_INSTANCE.GAME_INSTANCE_ID, gameInstanceId)
             .set(REGION_INSTANCE.WORLD_INSTANCE_ID, worldInstanceId)
             .set(REGION_INSTANCE.SHARD_ID, 0)
-            .set(REGION_INSTANCE.NAME, "event-test-region-" + worldInstanceId)
+            .set(REGION_INSTANCE.NAME, "event-test-region-" + fixtureLabel)
             .returning(REGION_INSTANCE.ID)
             .fetchOne(REGION_INSTANCE.ID);
     if (regionId == null) {

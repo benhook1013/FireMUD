@@ -40,6 +40,30 @@ outputs:
   actionlint-version:
     description: Pinned actionlint release version
     value: '${{ steps.versions.outputs.actionlint-version }}'
+  shellcheck-version:
+    description: Pinned ShellCheck release version
+    value: '${{ steps.versions.outputs.shellcheck-version }}'
+  shellcheck-linux-x86-64-sha256:
+    description: SHA-256 checksum for the pinned Linux x86-64 ShellCheck archive
+    value: '${{ steps.versions.outputs.shellcheck-linux-x86-64-sha256 }}'
+  cloc-version:
+    description: Pinned cloc release version
+    value: '${{ steps.versions.outputs.cloc-version }}'
+  cloc-source-sha256:
+    description: SHA-256 checksum for the pinned cloc source artifact
+    value: '${{ steps.versions.outputs.cloc-source-sha256 }}'
+  chrome-for-testing-version:
+    description: Pinned Chrome for Testing release version
+    value: '${{ steps.versions.outputs.chrome-for-testing-version }}'
+  chrome-for-testing-linux-x86-64-sha256:
+    description: SHA-256 checksum for the pinned Linux x86-64 Chrome for Testing archive
+    value: '${{ steps.versions.outputs.chrome-for-testing-linux-x86-64-sha256 }}'
+  chromedriver-version:
+    description: Pinned ChromeDriver release version
+    value: '${{ steps.versions.outputs.chromedriver-version }}'
+  chromedriver-linux-x86-64-sha256:
+    description: SHA-256 checksum for the pinned Linux x86-64 ChromeDriver archive
+    value: '${{ steps.versions.outputs.chromedriver-linux-x86-64-sha256 }}'
   trivy-version:
     description: Pinned Trivy release version
     value: '${{ steps.versions.outputs.trivy-version }}'
@@ -79,6 +103,10 @@ runs:
           KUBECONFORM_VERSION KUBECONFORM_LINUX_AMD64_CHECKSUM_VERSION KUBECONFORM_LINUX_AMD64_SHA256
           VELERO_VERSION VELERO_CHART_VERSION VELERO_LINUX_AMD64_CHECKSUM_VERSION VELERO_LINUX_AMD64_SHA256 VELERO_IMAGE_DIGEST
           ACTIONLINT_VERSION
+          SHELLCHECK_VERSION SHELLCHECK_LINUX_X86_64_CHECKSUM_VERSION SHELLCHECK_LINUX_X86_64_SHA256
+          CLOC_VERSION CLOC_SOURCE_CHECKSUM_VERSION CLOC_SOURCE_SHA256
+          CHROME_FOR_TESTING_VERSION CHROME_FOR_TESTING_LINUX_X86_64_CHECKSUM_VERSION CHROME_FOR_TESTING_LINUX_X86_64_SHA256
+          CHROMEDRIVER_VERSION CHROMEDRIVER_LINUX_X86_64_CHECKSUM_VERSION CHROMEDRIVER_LINUX_X86_64_SHA256
           TRIVY_VERSION TRIVY_LINUX_AMD64_CHECKSUM_VERSION TRIVY_LINUX_AMD64_SHA256
           LYCHEE_VERSION LYCHEE_LINUX_X86_64_MUSL_CHECKSUM_VERSION LYCHEE_LINUX_X86_64_MUSL_SHA256
           ORT_VERSION ORT_DIGEST
@@ -105,17 +133,29 @@ runs:
         # shellcheck disable=SC1090
         source "$authority"
         version_pattern='^[0-9]+\.[0-9]+\.[0-9]+$'
+        two_part_version_pattern='^[0-9]+\.[0-9]+$'
+        four_part_version_pattern='^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
         version_keys=(KUBECTL_VERSION HELM_VERSION GH_VERSION BUF_VERSION KUBECONFORM_VERSION VELERO_VERSION VELERO_CHART_VERSION ACTIONLINT_VERSION TRIVY_VERSION LYCHEE_VERSION ORT_VERSION ZAP_VERSION)
         for key in "${version_keys[@]}"; do
           value="${!key:-}"
           [[ "$value" =~ $version_pattern ]] || { echo "::error title=Invalid workflow tool version::${key} must be an exact three-part version." >&2; exit 1; }
         done
-        pairs=(KUBECTL_VERSION:KUBECTL_LINUX_AMD64_CHECKSUM_VERSION HELM_VERSION:HELM_LINUX_AMD64_CHECKSUM_VERSION GH_VERSION:GH_LINUX_AMD64_CHECKSUM_VERSION BUF_VERSION:BUF_LINUX_X86_64_CHECKSUM_VERSION KUBECONFORM_VERSION:KUBECONFORM_LINUX_AMD64_CHECKSUM_VERSION VELERO_VERSION:VELERO_LINUX_AMD64_CHECKSUM_VERSION TRIVY_VERSION:TRIVY_LINUX_AMD64_CHECKSUM_VERSION LYCHEE_VERSION:LYCHEE_LINUX_X86_64_MUSL_CHECKSUM_VERSION)
+        for key in SHELLCHECK_VERSION; do
+          value="${!key:-}"
+          [[ "$value" =~ $version_pattern ]] || { echo "::error title=Invalid workflow tool version::${key} must be an exact three-part version." >&2; exit 1; }
+        done
+        [[ "${CLOC_VERSION:-}" =~ $two_part_version_pattern ]] || { echo "::error title=Invalid workflow tool version::CLOC_VERSION must be an exact two-part version." >&2; exit 1; }
+        for key in CHROME_FOR_TESTING_VERSION CHROMEDRIVER_VERSION; do
+          value="${!key:-}"
+          [[ "$value" =~ $four_part_version_pattern ]] || { echo "::error title=Invalid workflow tool version::${key} must be an exact four-part version." >&2; exit 1; }
+        done
+        [[ "$CHROME_FOR_TESTING_VERSION" == "$CHROMEDRIVER_VERSION" ]] || { echo "::error title=Chrome version mismatch::Chrome for Testing and ChromeDriver must use the exact same release version." >&2; exit 1; }
+        pairs=(KUBECTL_VERSION:KUBECTL_LINUX_AMD64_CHECKSUM_VERSION HELM_VERSION:HELM_LINUX_AMD64_CHECKSUM_VERSION GH_VERSION:GH_LINUX_AMD64_CHECKSUM_VERSION BUF_VERSION:BUF_LINUX_X86_64_CHECKSUM_VERSION KUBECONFORM_VERSION:KUBECONFORM_LINUX_AMD64_CHECKSUM_VERSION VELERO_VERSION:VELERO_LINUX_AMD64_CHECKSUM_VERSION SHELLCHECK_VERSION:SHELLCHECK_LINUX_X86_64_CHECKSUM_VERSION CLOC_VERSION:CLOC_SOURCE_CHECKSUM_VERSION CHROME_FOR_TESTING_VERSION:CHROME_FOR_TESTING_LINUX_X86_64_CHECKSUM_VERSION CHROMEDRIVER_VERSION:CHROMEDRIVER_LINUX_X86_64_CHECKSUM_VERSION TRIVY_VERSION:TRIVY_LINUX_AMD64_CHECKSUM_VERSION LYCHEE_VERSION:LYCHEE_LINUX_X86_64_MUSL_CHECKSUM_VERSION)
         for pair in "${pairs[@]}"; do
           version_key="${pair%%:*}"; checksum_version_key="${pair##*:}"
           [[ "${!version_key}" == "${!checksum_version_key:-}" ]] || { echo "::error title=Stale workflow tool checksum::${checksum_version_key} must match ${version_key}." >&2; exit 1; }
         done
-        checksum_keys=(KUBECTL_LINUX_AMD64_SHA256 HELM_LINUX_AMD64_SHA256 GH_LINUX_AMD64_SHA256 BUF_LINUX_X86_64_SHA256 KUBECONFORM_LINUX_AMD64_SHA256 VELERO_LINUX_AMD64_SHA256 TRIVY_LINUX_AMD64_SHA256 LYCHEE_LINUX_X86_64_MUSL_SHA256)
+        checksum_keys=(KUBECTL_LINUX_AMD64_SHA256 HELM_LINUX_AMD64_SHA256 GH_LINUX_AMD64_SHA256 BUF_LINUX_X86_64_SHA256 KUBECONFORM_LINUX_AMD64_SHA256 VELERO_LINUX_AMD64_SHA256 SHELLCHECK_LINUX_X86_64_SHA256 CLOC_SOURCE_SHA256 CHROME_FOR_TESTING_LINUX_X86_64_SHA256 CHROMEDRIVER_LINUX_X86_64_SHA256 TRIVY_LINUX_AMD64_SHA256 LYCHEE_LINUX_X86_64_MUSL_SHA256)
         for key in "${checksum_keys[@]}"; do
           [[ "${!key:-}" =~ ^[0-9a-f]{64}$ ]] || { echo "::error title=Invalid workflow tool checksum::${key} must be a lowercase SHA-256." >&2; exit 1; }
         done
@@ -136,6 +176,14 @@ runs:
           echo "velero-version=${VELERO_VERSION}"
           echo "velero-linux-amd64-sha256=${VELERO_LINUX_AMD64_SHA256}"
           echo "actionlint-version=${ACTIONLINT_VERSION}"
+          echo "shellcheck-version=${SHELLCHECK_VERSION}"
+          echo "shellcheck-linux-x86-64-sha256=${SHELLCHECK_LINUX_X86_64_SHA256}"
+          echo "cloc-version=${CLOC_VERSION}"
+          echo "cloc-source-sha256=${CLOC_SOURCE_SHA256}"
+          echo "chrome-for-testing-version=${CHROME_FOR_TESTING_VERSION}"
+          echo "chrome-for-testing-linux-x86-64-sha256=${CHROME_FOR_TESTING_LINUX_X86_64_SHA256}"
+          echo "chromedriver-version=${CHROMEDRIVER_VERSION}"
+          echo "chromedriver-linux-x86-64-sha256=${CHROMEDRIVER_LINUX_X86_64_SHA256}"
           echo "trivy-version=${TRIVY_VERSION}"
           echo "trivy-linux-amd64-sha256=${TRIVY_LINUX_AMD64_SHA256}"
           echo "lychee-version=${LYCHEE_VERSION}"

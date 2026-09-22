@@ -31,6 +31,205 @@ def load_validator():
 
 
 VALIDATOR = load_validator()
+TRUSTED_CHART_METADATA = ROOT / "k8s/helm/firemud/Chart.yaml"
+TRUSTED_CHART = yaml.safe_load(
+    TRUSTED_CHART_METADATA.read_text(encoding="utf-8")
+)
+EXPECTED_HELM_CHART_LABEL = (
+    f"{TRUSTED_CHART['name']}-{TRUSTED_CHART['version']}".replace("+", "_")
+)
+
+
+class PreviewArtifactServiceValidationTest(unittest.TestCase):
+    validator = VALIDATOR
+
+    def _tcp_proxy_service(
+        self, *, service_type="ClusterIP", port=2323, target_port=2323
+    ):
+        expected_spec = copy.deepcopy(
+            self.validator.EXPECTED_SERVICE_SPECS["tcp-proxy-service"]
+        )
+        expected_spec["type"] = service_type
+        expected_spec["ports"][0]["port"] = port
+        expected_spec["ports"][0]["targetPort"] = target_port
+        return {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {"name": "tcp-proxy-service"},
+            "spec": expected_spec,
+        }
+
+    def test_hosted_controller_accepts_private_tcp_proxy_service(self):
+        self.validator.validate_services(
+            [self._tcp_proxy_service()], "hosted-controller"
+        )
+
+    def test_hosted_controller_accepts_public_tcp_proxy_service(self):
+        self.validator.validate_services(
+            [self._tcp_proxy_service(service_type="NodePort")],
+            "hosted-controller",
+        )
+
+    def test_hosted_controller_rejects_wrong_tcp_proxy_port(self):
+        with self.assertRaisesRegex(
+            ValueError, "Service/tcp-proxy-service has an unexpected port set"
+        ):
+            self.validator.validate_services(
+                [self._tcp_proxy_service(port=2324)], "hosted-controller"
+            )
+
+    def _tcp_proxy_deployment(self, *, include_telnet_tls):
+        mounts = [
+            {"name": "grpc-tls", "mountPath": "/tls", "readOnly": True},
+            {
+                "name": "jwt-signing-keys",
+                "mountPath": "/var/run/secrets/firemud/jwt",
+                "readOnly": True,
+            },
+        ]
+        volumes = [
+            {"name": "grpc-tls", "secret": {"secretName": "firemud-grpc-tls"}},
+            {
+                "name": "jwt-signing-keys",
+                "secret": {"secretName": "jwt-signing-keys"},
+            },
+        ]
+        if include_telnet_tls:
+            mounts.append(
+                {
+                    "name": "telnet-tls",
+                    "mountPath": "/telnet-tls",
+                    "readOnly": True,
+                }
+            )
+            volumes.append(
+                {
+                    "name": "telnet-tls",
+                    "secret": {"secretName": "pr-42-telnet-tls"},
+                }
+            )
+        mounts.append(
+            {
+                "name": "gateway-ws-client-tls",
+                "mountPath": "/gateway-ws-client-tls",
+                "readOnly": True,
+            }
+        )
+        volumes.append(
+            {
+                "name": "gateway-ws-client-tls",
+                "secret": {
+                    "secretName": "pr-42-tcp-proxy-bridge",
+                    "items": [
+                        {"key": "tls.crt", "path": "tls.crt"},
+                        {"key": "tls.key", "path": "tls.key"},
+                        {"key": "ca.crt", "path": "ca.crt"},
+                    ],
+                },
+            }
+        )
+        return {
+            "kind": "Deployment",
+            "metadata": {"name": "tcp-proxy-service"},
+            "spec": {
+                "template": {
+                    "spec": {
+                        "serviceAccountName": "firemud-app",
+                        "containers": [
+                            {
+                                "name": "tcp-proxy-service",
+                                "env": [
+                                    {
+                                        "name": "FIREMUD_GRPC_CERT_CHAIN_PATH",
+                                        "value": "/tls/client.crt",
+                                    },
+                                    {
+                                        "name": "FIREMUD_GRPC_PRIVATE_KEY_PATH",
+                                        "value": "/tls/client.key",
+                                    },
+                                    {
+                                        "name": "FIREMUD_GRPC_CA_CERT_PATH",
+                                        "value": "/tls/ca.crt",
+                                    },
+                                ],
+                                "volumeMounts": mounts,
+                            }
+                        ],
+                        "volumes": volumes,
+                    }
+                }
+            },
+        }
+
+    def test_hosted_controller_accepts_private_tcp_proxy_consumers(self):
+        with patch.object(self.validator, "SERVICE_IMAGES", {"tcp-proxy-service"}):
+            self.validator.validate_service_consumers(
+                [self._tcp_proxy_deployment(include_telnet_tls=False)],
+                "pr-42",
+                "hosted-controller",
+                "private",
+            )
+
+    def test_hosted_controller_public_requires_telnet_consumer(self):
+        with patch.object(self.validator, "SERVICE_IMAGES", {"tcp-proxy-service"}):
+            self.validator.validate_service_consumers(
+                [self._tcp_proxy_deployment(include_telnet_tls=True)],
+                "pr-42",
+                "hosted-controller",
+                "public",
+            )
+        with (
+            patch.object(self.validator, "SERVICE_IMAGES", {"tcp-proxy-service"}),
+            self.assertRaisesRegex(
+                ValueError,
+                "Deployment/tcp-proxy-service has duplicate or unexpected identity consumers",
+            ),
+        ):
+            self.validator.validate_service_consumers(
+                [self._tcp_proxy_deployment(include_telnet_tls=False)],
+                "pr-42",
+                "hosted-controller",
+                "public",
+            )
+
+    def test_private_rejects_public_telnet_consumer(self):
+        with (
+            patch.object(self.validator, "SERVICE_IMAGES", {"tcp-proxy-service"}),
+            self.assertRaisesRegex(
+                ValueError,
+                "Deployment/tcp-proxy-service has duplicate or unexpected identity consumers",
+            ),
+        ):
+            self.validator.validate_service_consumers(
+                [self._tcp_proxy_deployment(include_telnet_tls=True)],
+                "pr-42",
+                "hosted-controller",
+                "private",
+            )
+
+    def test_standalone_requires_public_telnet_consumer(self):
+        with patch.object(self.validator, "SERVICE_IMAGES", {"tcp-proxy-service"}):
+            self.validator.validate_service_consumers(
+                [self._tcp_proxy_deployment(include_telnet_tls=True)],
+                "pr-42",
+                "standalone",
+                "public",
+            )
+
+    def test_standalone_public_requires_telnet_consumer(self):
+        with (
+            patch.object(self.validator, "SERVICE_IMAGES", {"tcp-proxy-service"}),
+            self.assertRaisesRegex(
+                ValueError,
+                "Deployment/tcp-proxy-service has duplicate or unexpected identity consumers",
+            ),
+        ):
+            self.validator.validate_service_consumers(
+                [self._tcp_proxy_deployment(include_telnet_tls=False)],
+                "pr-42",
+                "standalone",
+                "public",
+            )
 
 
 class PreviewArtifactSecretReferenceTest(unittest.TestCase):
@@ -463,7 +662,9 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
                     patch.object(self.validator, "SERVICE_IMAGES", {"account-service"}),
                     self.assertRaisesRegex(ValueError, f"{field} is not a list of objects"),
                 ):
-                    self.validator.validate_service_consumers([invalid], "pr-42")
+                    self.validator.validate_service_consumers(
+                        [invalid], "pr-42", "standalone", "public"
+                    )
 
 
 class PreviewArtifactPersistentVolumeClaimTest(unittest.TestCase):
@@ -536,6 +737,73 @@ class PreviewArtifactPersistentVolumeClaimTest(unittest.TestCase):
                 re.escape("PersistentVolumeClaim/postgres-data has an unsafe spec"),
             ):
                 self._validate(self._document("postgres-data", spec))
+
+
+class PreviewArtifactInfrastructureDeploymentTest(unittest.TestCase):
+    validator = VALIDATOR
+
+    @staticmethod
+    def _document(name, spec):
+        return {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {"name": name},
+            "spec": copy.deepcopy(spec),
+        }
+
+    def _all_documents(self, specs=None):
+        if specs is None:
+            specs = self.validator.EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS
+        return [
+            self._document(name, spec) for name, spec in specs.items()
+        ]
+
+    def test_accepts_exact_postgres_layout_guard_and_infrastructure_specs(self):
+        self.validator.validate_infrastructure_deployments(self._all_documents())
+
+    def test_rejects_missing_postgres_layout_guard(self):
+        specs = copy.deepcopy(self.validator.EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS)
+        specs["postgres"]["template"]["spec"].pop("initContainers")
+        with self.assertRaisesRegex(
+            ValueError,
+            re.escape("Deployment/postgres has an unsafe infrastructure spec"),
+        ):
+            self.validator.validate_infrastructure_deployments(self._all_documents(specs))
+
+    def test_rejects_modified_postgres_layout_guard(self):
+        for case, mutate in (
+            (
+                "script",
+                lambda container: container["args"].__setitem__(
+                    0, container["args"][0] + "echo changed\n"
+                ),
+            ),
+            ("image", lambda container: container.__setitem__("image", "postgres:17")),
+            (
+                "mount",
+                lambda container: container["volumeMounts"][0].__setitem__(
+                    "readOnly", False
+                ),
+            ),
+            (
+                "security",
+                lambda container: container["securityContext"].__setitem__(
+                    "readOnlyRootFilesystem", False
+                ),
+            ),
+        ):
+            with self.subTest(case=case):
+                specs = copy.deepcopy(
+                    self.validator.EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS
+                )
+                mutate(specs["postgres"]["template"]["spec"]["initContainers"][0])
+                with self.assertRaisesRegex(
+                    ValueError,
+                    re.escape("Deployment/postgres has an unsafe infrastructure spec"),
+                ):
+                    self.validator.validate_infrastructure_deployments(
+                        self._all_documents(specs)
+                    )
 
 
 class PreviewArtifactMetadataTest(unittest.TestCase):
@@ -736,12 +1004,15 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
     validator = VALIDATOR
 
     def _tcp_proxy_service(self, spec, *, namespace=None, mode=None):
+        spec = copy.deepcopy(spec)
+        if mode is not None:
+            spec.setdefault(
+                "type",
+                "NodePort" if mode == "standalone" else "ClusterIP",
+            )
         metadata = {
             "name": "tcp-proxy-service",
-            "labels": {
-                **self.validator._expected_top_level_labels(),
-                "app.kubernetes.io/instance": "pr-42",
-            },
+            "labels": VALIDATOR._expected_object_labels("pr-42"),
         }
         if mode is not None:
             metadata["labels"][self.validator.CERTIFICATE_IDENTITY_LABEL] = mode
@@ -793,7 +1064,10 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
 
     def test_injection_accepts_canonical_namespace(self):
         document = self._tcp_proxy_service(
-            {"ports": [{"name": "tcp-2323", "port": 2323}]}
+            {
+                "type": "NodePort",
+                "ports": [{"name": "tcp-2323", "port": 2323}],
+            }
         )
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "source.yaml"
@@ -805,6 +1079,10 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
             prepared = yaml.safe_load(destination.read_text(encoding="utf-8"))
             self.assertEqual(prepared["metadata"]["namespace"], "pr-42")
             self.assertEqual(prepared["spec"]["ports"][0]["nodePort"], 32000)
+            self.assertEqual(
+                prepared["metadata"]["annotations"],
+                {"firemud.dev/allocated-telnet-port": "32000"},
+            )
 
     def test_standalone_injects_only_trusted_ingress_issuer(self):
         trusted_values = yaml.safe_load(
@@ -830,7 +1108,10 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
                 source, prepared, 32000, "pr-42", "standalone"
             )
             result = list(yaml.safe_load_all(prepared.read_text(encoding="utf-8")))
-            self.assertNotIn("annotations", result[0]["metadata"])
+            self.assertEqual(
+                result[0]["metadata"]["annotations"],
+                {"firemud.dev/allocated-telnet-port": "32000"},
+            )
             self.assertEqual(
                 result[1]["metadata"]["annotations"],
                 {"cert-manager.io/cluster-issuer": "letsencrypt-prod"},
@@ -881,11 +1162,110 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
                 )
             self.assertFalse(prepared.exists())
 
+    def test_private_injection_preserves_cluster_ip_and_rejects_telnet_port(self):
+        service = self._tcp_proxy_service(
+            {"ports": [{"name": "tcp-2323", "port": 2323}]},
+            mode="hosted-controller",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.yaml"
+            prepared = Path(directory) / "prepared.yaml"
+            source.write_text(yaml.safe_dump(service), encoding="utf-8")
+            self.validator.inject_telnet_port(
+                source, prepared, 0, "pr-42", "hosted-controller"
+            )
+            result = yaml.safe_load(prepared.read_text(encoding="utf-8"))
+            self.assertNotIn("nodePort", result["spec"]["ports"][0])
+            self.assertNotIn("annotations", result["metadata"])
+            with self.assertRaisesRegex(ValueError, "sentinel Telnet port 0"):
+                self.validator.inject_telnet_port(
+                    source, prepared, 32000, "pr-42", "hosted-controller"
+                )
+
+    def test_hosted_controller_accepts_explicit_public_exposure(self):
+        service = self._tcp_proxy_service(
+            copy.deepcopy(self.validator.EXPECTED_SERVICE_SPECS["tcp-proxy-service"]),
+            namespace="pr-42",
+            mode="hosted-controller",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.yaml"
+            prepared = Path(directory) / "prepared.yaml"
+            source.write_text(yaml.safe_dump(service), encoding="utf-8")
+            self.validator.inject_telnet_port(
+                source, prepared, 32000, "pr-42", "hosted-controller", "public"
+            )
+            self.validator.validate_runtime_target(
+                prepared, "pr-42", 32000, "hosted-controller", "public"
+            )
+
+    def test_explicit_exposure_mode_must_match_service_shape(self):
+        service = self._tcp_proxy_service(
+            copy.deepcopy(self.validator.EXPECTED_SERVICE_SPECS["tcp-proxy-service"]),
+            namespace="pr-42",
+            mode="hosted-controller",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.yaml"
+            prepared = Path(directory) / "prepared.yaml"
+            source.write_text(yaml.safe_dump(service), encoding="utf-8")
+            with self.assertRaisesRegex(
+                ValueError, "does not match TCP Proxy Service type"
+            ):
+                self.validator.inject_telnet_port(
+                    source, prepared, 0, "pr-42", "hosted-controller", "private"
+                )
+            with self.assertRaisesRegex(
+                ValueError, "does not match TCP Proxy Service type"
+            ):
+                self.validator.validate_runtime_target(
+                    source, "pr-42", 0, "hosted-controller", "private"
+                )
+
+    def test_invalid_explicit_exposure_mode_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "missing-source.yaml"
+            prepared = Path(directory) / "prepared.yaml"
+            with self.assertRaisesRegex(
+                ValueError, "preview exposure mode is not canonical"
+            ):
+                self.validator.inject_telnet_port(
+                    source, prepared, 0, "pr-42", "hosted-controller", "invalid"
+                )
+            with self.assertRaisesRegex(
+                ValueError, "preview exposure mode is not canonical"
+            ):
+                self.validator.validate_runtime_target(
+                    source, "pr-42", 0, "hosted-controller", "invalid"
+                )
+
+    def test_exposure_mode_is_derived_from_tcp_proxy_service_shape(self):
+        for service_type, expected_mode, identity_mode in (
+            ("ClusterIP", "private", "hosted-controller"),
+            ("NodePort", "public", "standalone"),
+        ):
+            with self.subTest(service_type=service_type), tempfile.TemporaryDirectory() as directory:
+                source = Path(directory) / "source.yaml"
+                spec = copy.deepcopy(
+                    self.validator.EXPECTED_SERVICE_SPECS["tcp-proxy-service"]
+                )
+                spec["type"] = service_type
+                source.write_text(
+                    yaml.safe_dump(
+                        self._tcp_proxy_service(
+                            spec,
+                            mode=identity_mode,
+                        )
+                    ),
+                    encoding="utf-8",
+                )
+                self.assertEqual(
+                    expected_mode,
+                    self.validator.determine_exposure_mode(source, identity_mode),
+                )
+
     def test_expected_top_level_label_mismatches_report_expected_and_actual(self):
-        expected_labels = {
-            **self.validator._expected_top_level_labels(),
-            "app.kubernetes.io/instance": "pr-42",
-        }
+        expected_labels = VALIDATOR._expected_object_labels("pr-42")
         for label, expected_value in expected_labels.items():
             document = self._tcp_proxy_service({})
             document["metadata"]["labels"] = {
@@ -905,6 +1285,7 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
     def test_runtime_target_finds_declared_telnet_port_without_relying_on_index(self):
         document = self._tcp_proxy_service(
             {
+                "type": "NodePort",
                 "ports": [
                     {"name": "metrics", "port": 8080},
                     {"name": "tcp-2323", "port": 2323, "nodePort": 32001},
@@ -912,11 +1293,58 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
             },
             namespace="pr-42",
         )
+        document["metadata"]["annotations"] = {
+            "firemud.dev/allocated-telnet-port": "32001"
+        }
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "prepared.yaml"
             path.write_text(yaml.safe_dump(document), encoding="utf-8")
 
             self.validator.validate_runtime_target(path, "pr-42", 32001)
+
+    def test_runtime_target_rejects_unbound_or_extra_public_service_annotations(self):
+        document = self._tcp_proxy_service(
+            {
+                "type": "NodePort",
+                "ports": [
+                    {"name": "tcp-2323", "port": 2323, "nodePort": 32001},
+                ],
+            },
+            namespace="pr-42",
+        )
+        for service_annotations in (
+            {"firemud.dev/allocated-telnet-port": "32000"},
+            {
+                "firemud.dev/allocated-telnet-port": "32001",
+                "unexpected.example/annotation": "value",
+            },
+        ):
+            with self.subTest(annotations=service_annotations), tempfile.TemporaryDirectory() as directory:
+                document["metadata"]["annotations"] = service_annotations
+                path = Path(directory) / "prepared.yaml"
+                path.write_text(yaml.safe_dump(document), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "allocator annotation"):
+                    self.validator.validate_runtime_target(path, "pr-42", 32001)
+
+    def test_runtime_target_rejects_private_service_annotation(self):
+        document = self._tcp_proxy_service(
+            {
+                "type": "ClusterIP",
+                "ports": [{"name": "tcp-2323", "port": 2323}],
+            },
+            namespace="pr-42",
+            mode="hosted-controller",
+        )
+        document["metadata"]["annotations"] = {
+            "firemud.dev/allocated-telnet-port": "0"
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "prepared.yaml"
+            path.write_text(yaml.safe_dump(document), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "must not contain annotations"):
+                self.validator.validate_runtime_target(
+                    path, "pr-42", 0, "hosted-controller", "private"
+                )
 
     def test_runtime_target_rejects_non_object_service_spec_or_ports(self):
         for spec, message in (
@@ -1074,6 +1502,54 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
                 "ports": [{"protocol": "TCP", "port": 9200}],
             },
         ]
+        gateway_egress = [
+            {
+                "to": [
+                    {
+                        "namespaceSelector": {
+                            "matchLabels": {
+                                "kubernetes.io/metadata.name": "kube-system"
+                            }
+                        },
+                        "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+                    }
+                ],
+                "ports": [
+                    {"protocol": "UDP", "port": 53},
+                    {"protocol": "TCP", "port": 53},
+                ],
+            },
+            {
+                "to": [
+                    {
+                        "podSelector": {
+                            "matchExpressions": [
+                                {
+                                    "key": "app",
+                                    "operator": "In",
+                                    "values": [
+                                        "game-session-service",
+                                        "logging-admin-service",
+                                        "game-design-service",
+                                        "account-service",
+                                        "social-groups-service",
+                                    ],
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "ports": [{"protocol": "TCP", "port": 8080}],
+            },
+            {
+                "to": [{"podSelector": {"matchLabels": {"app": "redis-cache"}}}],
+                "ports": [{"protocol": "TCP", "port": 6379}],
+            },
+            {
+                "to": [{"podSelector": {"matchLabels": {"app": "otel-collector"}}}],
+                "ports": [{"protocol": "TCP", "port": 4317}],
+            },
+        ]
         documents = [
             self._policy_document(
                 name, spec
@@ -1106,6 +1582,16 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
                         },
                         "policyTypes": ["Ingress"],
                         "ingress": gateway_ingress,
+                    },
+                ),
+                self._policy_document(
+                    "spring-cloud-gateway-egress",
+                    {
+                        "podSelector": {
+                            "matchLabels": {"app": "spring-cloud-gateway"}
+                        },
+                        "policyTypes": ["Egress"],
+                        "egress": gateway_egress,
                     },
                 ),
                 self._policy_document(
@@ -1188,7 +1674,10 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
                         "name": "tcp-proxy-service",
                         "labels": self._labels(mode),
                     },
-                    "spec": {"ports": [{"port": 2323}]},
+                    "spec": {
+                        "type": "NodePort" if mode == "standalone" else "ClusterIP",
+                        "ports": [{"port": 2323}],
+                    },
                 }
                 ingress = {
                     "apiVersion": "networking.k8s.io/v1",
@@ -1213,7 +1702,7 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
                 self.validator.inject_telnet_port(
                     sanitized,
                     prepared,
-                    32000,
+                    0 if mode == "hosted-controller" else 32000,
                     "pr-42",
                     mode,
                 )
@@ -1224,7 +1713,10 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
                     prepared_documents[0]["metadata"]["labels"], self._labels(mode)
                 )
                 self.validator.validate_runtime_target(
-                    prepared, "pr-42", 32000, mode
+                    prepared,
+                    "pr-42",
+                    0 if mode == "hosted-controller" else 32000,
+                    mode,
                 )
 
     def test_mode_specific_policy_sets_and_rules_are_closed(self):
@@ -1247,6 +1739,31 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
         ]
         with self.assertRaisesRegex(ValueError, "runtime NetworkPolicy set is not closed"):
             self.validator.validate_network_policies(missing_account, "hosted-controller")
+
+        for mode in ("standalone", "hosted-controller"):
+            with self.subTest(mode=mode, case="missing gateway egress"):
+                missing_gateway_egress = [
+                    document
+                    for document in self._policy_documents(mode)
+                    if document["metadata"]["name"] != "spring-cloud-gateway-egress"
+                ]
+                with self.assertRaisesRegex(
+                    ValueError, "runtime NetworkPolicy set is not closed"
+                ):
+                    self.validator.validate_network_policies(
+                        missing_gateway_egress, mode
+                    )
+
+            with self.subTest(mode=mode, case="broadened gateway egress"):
+                broadened = copy.deepcopy(self._policy_documents(mode))
+                gateway_egress = next(
+                    document
+                    for document in broadened
+                    if document["metadata"]["name"] == "spring-cloud-gateway-egress"
+                )
+                gateway_egress["spec"]["egress"][1]["ports"][0]["port"] = 6565
+                with self.assertRaisesRegex(ValueError, "unsafe spec"):
+                    self.validator.validate_network_policies(broadened, mode)
 
         hosted_broad = copy.deepcopy(hosted)
         gateway = next(
@@ -1323,6 +1840,7 @@ class PreviewArtifactCommandLineTest(unittest.TestCase):
                         "pr-42",
                         "32000",
                         "hosted-controller",
+                        "private",
                     ]
                     with (
                         patch.object(
@@ -1369,6 +1887,32 @@ class PreviewArtifactCommandLineTest(unittest.TestCase):
                         [str(SCRIPT), command, *command_arguments]
                     ),
                     2,
+                )
+
+    def test_runtime_mutation_commands_require_exposure_mode(self):
+        for command, command_arguments in (
+            (
+                "inject",
+                ["source.yaml", "destination.yaml", "pr-42", "32000", "standalone"],
+            ),
+            (
+                "runtime-target",
+                ["prepared.yaml", "pr-42", "32000", "standalone"],
+            ),
+        ):
+            with self.subTest(command=command):
+                stderr = io.StringIO()
+                with redirect_stderr(stderr):
+                    self.assertEqual(
+                        self.validator.main(
+                            [str(SCRIPT), command, *command_arguments]
+                        ),
+                        2,
+                    )
+                self.assertTrue(
+                    stderr.getvalue().startswith(
+                        "usage: validate-preview-artifact.py"
+                    )
                 )
 
     def test_artifact_validation_requires_certificate_identity_mode(self):
@@ -1432,6 +1976,9 @@ class PreviewArtifactCommandLineTest(unittest.TestCase):
 
 class PreviewArtifactConfigMapSanitizerTest(unittest.TestCase):
     validator = VALIDATOR
+
+    def _trusted_config_data(self):
+        return copy.deepcopy(self.validator._trusted_hosted_shared_config())
 
     def _sanitize_config_map_data(self, data):
         document = {
@@ -1523,31 +2070,36 @@ class PreviewArtifactConfigMapSanitizerTest(unittest.TestCase):
 
             self.assertFalse(destination.exists())
 
-    def test_sanitize_strips_sensitive_tokens_anywhere_case_insensitively(self):
-        sanitized = self._sanitize_config_map_data(
-            {
-                "FIREMUD_POSTGRES_PASSWORD_FILE": "password-value",
-                "firemud_minio_secret_key": "secret-key-value",
-                "AuthTokenValue": "token-value",
-                "TLS_PRIVATE_KEY_PEM": "private-key-value",
-                "aws_access_key_id": "access-key-value",
-                "database_credential_file": "credential-value",
-            }
-        )
+    def test_sanitize_rejects_unknown_redirect_and_jvm_keys(self):
+        for key in (
+            "FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_UPSTREAM_URL",
+            "FIREMUD_GATEWAY_ROUTE_ACCOUNT_URI",
+            "SPRING_APPLICATION_JSON",
+            "JAVA_TOOL_OPTIONS",
+        ):
+            with self.subTest(key=key):
+                data = self._trusted_config_data()
+                data[key] = "attacker-controlled"
+                with self.assertRaisesRegex(ValueError, "unsafe keys"):
+                    self._sanitize_config_map_data(data)
 
-        self.assertEqual(sanitized, {})
+    def test_sanitize_rejects_changed_trusted_values(self):
+        data = self._trusted_config_data()
+        data["FIREMUD_REDIS_CACHE_HOST"] = "attacker.example"
+        with self.assertRaisesRegex(ValueError, "differs from the trusted hosted value"):
+            self._sanitize_config_map_data(data)
 
-    def test_sanitize_preserves_keys_without_sensitive_tokens(self):
+    def test_sanitize_preserves_only_trusted_noncredential_values(self):
+        source = self._trusted_config_data()
         expected = {
-            "FIREMUD_PUBLIC_KEY_URL": "https://example.test/jwks.json",
-            "FIREMUD_AUTH_MODE": "preview",
-            "FIREMUD_KEYSTORE_PATH": "/var/run/firemud/keystore",
-            "IDENTITY_PROVIDER": "workload-identity",
+            key: value
+            for key, value in source.items()
+            if key not in self.validator.HOSTED_REDACTED_CONFIG_KEYS
         }
 
-        self.assertEqual(self._sanitize_config_map_data(expected), expected)
+        self.assertEqual(self._sanitize_config_map_data(source), expected)
 
-    def test_final_validation_accepts_ordinary_data(self):
+    def test_final_validation_accepts_trusted_data(self):
         document = {
             "apiVersion": "v1",
             "kind": "ConfigMap",
@@ -1558,7 +2110,11 @@ class PreviewArtifactConfigMapSanitizerTest(unittest.TestCase):
                     "app.kubernetes.io/instance": "pr-42",
                 },
             },
-            "data": {"FIREMUD_AUTH_MODE": "preview"},
+            "data": {
+                key: value
+                for key, value in self._trusted_config_data().items()
+                if key not in self.validator.HOSTED_REDACTED_CONFIG_KEYS
+            },
         }
 
         self._validate_config_map_manifest(document)
@@ -1568,7 +2124,7 @@ class PreviewArtifactConfigMapSanitizerTest(unittest.TestCase):
             "apiVersion": "v1",
             "kind": "ConfigMap",
             "metadata": {"name": "firemud-config"},
-            "data": {"FIREMUD_AUTH_MODE": "preview"},
+            "data": self._trusted_config_data(),
             "binaryData": {"database_credential_file": "c2VjcmV0"},
         }
         with tempfile.TemporaryDirectory() as directory:
@@ -1592,12 +2148,154 @@ class PreviewArtifactConfigMapSanitizerTest(unittest.TestCase):
                     "app.kubernetes.io/instance": "pr-42",
                 },
             },
-            "data": {"FIREMUD_AUTH_MODE": "preview"},
+            "data": {
+                key: value
+                for key, value in self._trusted_config_data().items()
+                if key not in self.validator.HOSTED_REDACTED_CONFIG_KEYS
+            },
             "binaryData": {"database_credential_file": "c2VjcmV0"},
         }
 
         with self.assertRaisesRegex(ValueError, "extra=\\['binaryData'\\]"):
             self._validate_config_map_manifest(document)
+
+
+class PreviewArtifactGatewayContractTest(unittest.TestCase):
+    validator = VALIDATOR
+
+    def _gateway_document(self):
+        expected_namespace = "pr-42"
+        return {
+            "kind": "Deployment",
+            "metadata": {"name": "spring-cloud-gateway"},
+            "spec": {
+                "template": {
+                    "spec": {
+                        "serviceAccountName": "firemud-app",
+                        "containers": [
+                            {
+                                "name": "spring-cloud-gateway",
+                                "env": self.validator._expected_gateway_container_env(
+                                    expected_namespace
+                                ),
+                                "envFrom": copy.deepcopy(
+                                    self.validator.EXPECTED_GATEWAY_ENV_FROM
+                                ),
+                                "volumeMounts": [
+                                    {
+                                        "name": "grpc-tls",
+                                        "mountPath": "/tls",
+                                        "readOnly": True,
+                                    },
+                                    {
+                                        "name": "jwt-signing-keys",
+                                        "mountPath": "/var/run/secrets/firemud/jwt",
+                                        "readOnly": True,
+                                    },
+                                    {
+                                        "name": "gateway-ws-server-tls",
+                                        "mountPath": "/gateway-ws-server-tls",
+                                        "readOnly": True,
+                                    },
+                                ],
+                            }
+                        ],
+                        "volumes": [
+                            {
+                                "name": "grpc-tls",
+                                "secret": {"secretName": "firemud-grpc-tls"},
+                            },
+                            {
+                                "name": "jwt-signing-keys",
+                                "secret": {"secretName": "jwt-signing-keys"},
+                            },
+                            {
+                                "name": "gateway-ws-server-tls",
+                                "secret": {
+                                    "secretName": "pr-42-gateway-internal-ws",
+                                    "items": [
+                                        {"key": "tls.crt", "path": "tls.crt"},
+                                        {"key": "tls.key", "path": "tls.key"},
+                                        {"key": "ca.crt", "path": "ca.crt"},
+                                    ],
+                                },
+                            },
+                        ],
+                    }
+                }
+            },
+        }
+
+    def test_gateway_exact_environment_contract_is_accepted(self):
+        with patch.object(self.validator, "SERVICE_IMAGES", {"spring-cloud-gateway"}):
+            self.validator.validate_service_consumers(
+                [self._gateway_document()], "pr-42"
+            )
+
+    def test_gateway_rejects_redirect_and_jvm_environment_injection(self):
+        for injected in (
+            {
+                "name": "FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_UPSTREAM_URL",
+                "value": "wss://attacker.example",
+            },
+            {
+                "name": "FIREMUD_GATEWAY_ROUTE_ACCOUNT_URI",
+                "value": "https://attacker.example",
+            },
+            {
+                "name": "SPRING_APPLICATION_JSON",
+                "value": '{"spring.cloud.gateway.routes":[]}',
+            },
+            {"name": "JAVA_TOOL_OPTIONS", "value": "-Dspring.config.location=attacker"},
+        ):
+            with self.subTest(injected=injected):
+                document = self._gateway_document()
+                document["spec"]["template"]["spec"]["containers"][0]["env"].append(
+                    injected
+                )
+                with (
+                    patch.object(
+                        self.validator, "SERVICE_IMAGES", {"spring-cloud-gateway"}
+                    ),
+                    self.assertRaisesRegex(ValueError, "unsafe container env"),
+                ):
+                    self.validator.validate_service_consumers([document], "pr-42")
+
+    def test_gateway_rejects_extra_env_from_reference(self):
+        document = self._gateway_document()
+        document["spec"]["template"]["spec"]["containers"][0]["envFrom"].append(
+            {"configMapRef": {"name": "attacker-config"}}
+        )
+        with (
+            patch.object(self.validator, "SERVICE_IMAGES", {"spring-cloud-gateway"}),
+            self.assertRaisesRegex(ValueError, "unsafe envFrom contract"),
+        ):
+            self.validator.validate_service_consumers([document], "pr-42")
+
+
+class PreviewArtifactNetworkPolicyTest(unittest.TestCase):
+    validator = VALIDATOR
+
+    def test_gateway_egress_allows_only_declared_dependencies(self):
+        policy = {"spec": copy.deepcopy(self.validator.EXPECTED_GATEWAY_NETWORK_POLICY_SPEC)}
+        self.validator._validate_gateway_egress_policy(policy)
+
+    def test_gateway_egress_rejects_widened_destination(self):
+        policy = {"spec": copy.deepcopy(self.validator.EXPECTED_GATEWAY_NETWORK_POLICY_SPEC)}
+        policy["spec"]["egress"].append(
+            {"to": [{"ipBlock": {"cidr": "0.0.0.0/0"}}], "ports": [{"protocol": "TCP", "port": 443}]}
+        )
+        with self.assertRaisesRegex(ValueError, "spring-cloud-gateway-egress has an unsafe spec"):
+            self.validator._validate_gateway_egress_policy(policy)
+
+    def test_network_policy_set_rejects_missing_gateway_egress(self):
+        documents = [
+            {"kind": "NetworkPolicy", "metadata": {"name": name}}
+            for name in self.validator.EXPECTED_NAMES["NetworkPolicy"]
+            if name != "spring-cloud-gateway-egress"
+        ]
+        with self.assertRaisesRegex(ValueError, "runtime NetworkPolicy set is not closed"):
+            self.validator.validate_network_policies(documents)
 
 
 if __name__ == "__main__":

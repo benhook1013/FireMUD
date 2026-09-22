@@ -15,6 +15,7 @@ import org.springframework.test.web.reactive.server.WebTestClient;
       "spring.autoconfigure.exclude=org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration,org.springframework.cloud.gateway.config.GatewayClassPathWarningAutoConfiguration",
       "spring.main.web-application-type=reactive",
       "management.endpoint.health.group.readiness.include=readinessState",
+      "firemud.gateway.header-trust.tcp-proxy.allow-insecure-headers-from-trusted-cidrs=false",
       FiremudAuthTestProperties.JWT_SECRET
     })
 @ImportAutoConfiguration

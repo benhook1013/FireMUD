@@ -598,7 +598,8 @@ public final class GameSessionCommandControlPlaneService {
     if (targetCommand == null && resultCommandId != null) {
       targetCommand =
           gameplayCommandRepository
-              .findByCommandId(resultCommandId)
+              .findByTenantIdAndGameInstanceIdAndCommandId(
+                  result.getTenantId(), result.getTargetGameInstanceId(), resultCommandId)
               .filter(
                   candidate ->
                       Objects.equals(candidate.getTenantId(), result.getTenantId())
@@ -1806,8 +1807,8 @@ public final class GameSessionCommandControlPlaneService {
               command.getTenantId(), command.getRemoteCoordinatorId());
     } else {
       coordinator =
-          remoteCommandCoordinatorRepository.findByTenantIdAndCommandId(
-              command.getTenantId(), command.getCommandId());
+          remoteCommandCoordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(
+              command.getTenantId(), command.getGameInstanceId(), command.getCommandId());
     }
     return coordinator.filter(candidate -> matchesCommandOrigin(candidate, command)).orElse(null);
   }

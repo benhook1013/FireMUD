@@ -10,11 +10,15 @@ import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Optional;
+import java.util.TimeZone;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.EmailVerificationTokenRepository;
 import net.firedevops.firemud.accountservice.repository.PasswordResetTokenRepository;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.ResourceLock;
+import org.junit.jupiter.api.parallel.Resources;
 import org.mockito.ArgumentCaptor;
 
 class ExpiredCredentialCleanupJobTest {
@@ -58,6 +62,49 @@ class ExpiredCredentialCleanupJobTest {
                 .counter()
                 .count())
         .isEqualTo(1);
+  }
+
+  @Test
+  @ResourceLock(Resources.SYSTEM_PROPERTIES)
+  void cleanupUsesProcessLocalClockForEveryCredentialFamily() {
+    TimeZone originalTimeZone = TimeZone.getDefault();
+    TimeZone.setDefault(TimeZone.getTimeZone("GMT+12"));
+    try {
+      PasswordResetTokenRepository passwordReset = mock(PasswordResetTokenRepository.class);
+      EmailVerificationTokenRepository emailVerification =
+          mock(EmailVerificationTokenRepository.class);
+      AccountEmailLoginChallengeRepository emailLoginChallenge =
+          mock(AccountEmailLoginChallengeRepository.class);
+      when(passwordReset.deleteExpired(any(), eq(2))).thenReturn(0);
+      when(emailVerification.deleteExpired(any(), eq(2))).thenReturn(0);
+      when(emailLoginChallenge.deleteExpired(any(), eq(2))).thenReturn(0);
+      when(passwordReset.findOldestExpiredAt(any())).thenReturn(Optional.empty());
+      when(emailVerification.findOldestExpiredAt(any())).thenReturn(Optional.empty());
+      when(emailLoginChallenge.findOldestExpiredAt(any())).thenReturn(Optional.empty());
+      SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+      ExpiredCredentialCleanupJob job =
+          new ExpiredCredentialCleanupJob(
+              passwordReset, emailVerification, emailLoginChallenge, meterRegistry, 2, 60_000);
+
+      LocalDateTime localBefore = LocalDateTime.now();
+      LocalDateTime utcBefore = LocalDateTime.now(ZoneOffset.UTC);
+      job.cleanupExpiredCredentials();
+      LocalDateTime localAfter = LocalDateTime.now();
+      LocalDateTime utcAfter = LocalDateTime.now(ZoneOffset.UTC);
+
+      ArgumentCaptor<LocalDateTime> capturedNow = ArgumentCaptor.forClass(LocalDateTime.class);
+      verify(passwordReset).deleteExpired(capturedNow.capture(), eq(2));
+      verify(emailVerification).deleteExpired(capturedNow.capture(), eq(2));
+      verify(emailLoginChallenge).deleteExpired(capturedNow.capture(), eq(2));
+      assertThat(capturedNow.getAllValues()).containsOnly(capturedNow.getValue());
+      assertThat(capturedNow.getValue()).isBetween(localBefore, localAfter);
+      assertThat(
+              capturedNow.getValue().isBefore(utcBefore)
+                  || capturedNow.getValue().isAfter(utcAfter))
+          .isTrue();
+    } finally {
+      TimeZone.setDefault(originalTimeZone);
+    }
   }
 
   @Test

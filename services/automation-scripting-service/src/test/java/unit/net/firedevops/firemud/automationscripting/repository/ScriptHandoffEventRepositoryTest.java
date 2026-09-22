@@ -20,6 +20,8 @@ import org.jooq.tools.jdbc.MockConnection;
 import org.jooq.tools.jdbc.MockDataProvider;
 import org.jooq.tools.jdbc.MockResult;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 class ScriptHandoffEventRepositoryTest {
   @Test
@@ -48,13 +50,44 @@ class ScriptHandoffEventRepositoryTest {
             "script_pin_control_plane_request_id is required exactly when script_pin_epoch is positive");
   }
 
+  @ParameterizedTest
+  @CsvSource({"-1, 0", "0, -1"})
+  void rejectsNegativePluginFenceValues(long activationEpoch, long lifecycleRevision) {
+    ScriptHandoffEventRepository repository =
+        new ScriptHandoffEventRepository(DSL.using(SQLDialect.POSTGRES));
+    ScriptHandoffEvent event = new ScriptHandoffEvent();
+    event.setPluginActivationEpoch(activationEpoch);
+    event.setLifecycleRevision(lifecycleRevision);
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> repository.save(event))
+        .withMessage("plugin fence values must be non-negative");
+  }
+
+  @ParameterizedTest
+  @CsvSource({"1, 0", "0, 1"})
+  void rejectsIncoherentPluginFenceValues(long activationEpoch, long lifecycleRevision) {
+    ScriptHandoffEventRepository repository =
+        new ScriptHandoffEventRepository(DSL.using(SQLDialect.POSTGRES));
+    ScriptHandoffEvent event = new ScriptHandoffEvent();
+    event.setPluginActivationEpoch(activationEpoch);
+    event.setLifecycleRevision(lifecycleRevision);
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> repository.save(event))
+        .withMessage(
+            "plugin_activation_epoch and lifecycle_revision must both be zero or both be positive");
+  }
+
   @Test
   void newLogicalCommandUsesEventIdConflictUpsert() {
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     AtomicReference<String> insertSql = new AtomicReference<>();
+    AtomicReference<Object[]> bindings = new AtomicReference<>();
     MockDataProvider provider =
         context -> {
           insertSql.set(context.sql().toLowerCase(Locale.ROOT));
+          bindings.set(context.bindings());
           ScriptHandoffEventsRecord row = new ScriptHandoffEventsRecord();
           row.setId(9L);
           row.setEventId("she-work-item-99-command-0");
@@ -65,8 +98,10 @@ class ScriptHandoffEventRepositoryTest {
           row.setScriptPinControlPlaneRequestId("pin-request-1");
           row.setScriptId("script-1");
           row.setBindingId("binding-1");
-          row.setPluginId(" ");
-          row.setPluginVersionId("\t");
+          row.setPluginId("plugin-1");
+          row.setPluginVersionId("plugin-version-1");
+          row.setPluginActivationEpoch(7L);
+          row.setLifecycleRevision(9L);
           row.setWorkItemId(99L);
           row.setCommandOrdinal(0);
           row.setAutomationDispatchId("workItem:99#0");
@@ -94,8 +129,10 @@ class ScriptHandoffEventRepositoryTest {
     event.setScriptPinControlPlaneRequestId("pin-request-1");
     event.setScriptId("script-1");
     event.setBindingId("binding-1");
-    event.setPluginId("");
-    event.setPluginVersionId("");
+    event.setPluginId("plugin-1");
+    event.setPluginVersionId("plugin-version-1");
+    event.setPluginActivationEpoch(7L);
+    event.setLifecycleRevision(9L);
     event.setWorkItemId(99L);
     event.setCommandOrdinal(0);
     event.setAutomationDispatchId("workItem:99#0");
@@ -112,8 +149,11 @@ class ScriptHandoffEventRepositoryTest {
     assertThat(saved.getScriptPinEpoch()).isEqualTo(2L);
     assertThat(saved.getScriptPinControlPlaneRequestId()).isEqualTo("pin-request-1");
     assertThat(saved.getBindingId()).isEqualTo("binding-1");
-    assertThat(saved.getPluginId()).isEmpty();
-    assertThat(saved.getPluginVersionId()).isEmpty();
+    assertThat(saved.getPluginId()).isEqualTo("plugin-1");
+    assertThat(saved.getPluginVersionId()).isEqualTo("plugin-version-1");
+    assertThat(saved.getPluginActivationEpoch()).isEqualTo(7L);
+    assertThat(saved.getLifecycleRevision()).isEqualTo(9L);
+    assertThat(bindings).hasValueSatisfying(values -> assertThat(values).contains(7L, 9L));
     assertThat(insertSql)
         .hasValueSatisfying(
             sql ->
@@ -123,6 +163,8 @@ class ScriptHandoffEventRepositoryTest {
                         "event_id",
                         "script_pin_epoch",
                         "script_pin_control_plane_request_id",
+                        "plugin_activation_epoch",
+                        "lifecycle_revision",
                         "do update",
                         "handoff_outcome")
                     .doesNotContain("uuid"));
@@ -146,6 +188,8 @@ class ScriptHandoffEventRepositoryTest {
                       "binding_id",
                       "plugin_id",
                       "plugin_version_id",
+                      "plugin_activation_epoch",
+                      "lifecycle_revision",
                       "work_item_id",
                       "command_ordinal",
                       "automation_dispatch_id",
@@ -175,6 +219,8 @@ class ScriptHandoffEventRepositoryTest {
                       "binding_id",
                       "plugin_id",
                       "plugin_version_id",
+                      "plugin_activation_epoch",
+                      "lifecycle_revision",
                       "work_item_id",
                       "command_ordinal",
                       "automation_dispatch_id",
@@ -209,6 +255,8 @@ class ScriptHandoffEventRepositoryTest {
           row.setGameInstanceId("game-1");
           row.setScriptPatchVersion("patch-1");
           row.setScriptPinEpoch(0L);
+          row.setPluginActivationEpoch(0L);
+          row.setLifecycleRevision(0L);
           row.setScriptId("script-1");
           row.setHandoffOutcome("enqueued");
           row.setObservedAt(LocalDateTime.parse("2026-08-01T00:00:01"));
@@ -228,12 +276,61 @@ class ScriptHandoffEventRepositoryTest {
     event.setGameInstanceId("game-1");
     event.setScriptPatchVersion("patch-1");
     event.setScriptPinControlPlaneRequestId(" ");
+    event.setPluginActivationEpoch(0L);
+    event.setLifecycleRevision(0L);
     event.setHandoffOutcome("enqueued");
 
     ScriptHandoffEvent saved = repository.save(event);
 
     assertThat(saved.getScriptPinControlPlaneRequestId()).isNull();
+    assertThat(saved.getPluginActivationEpoch()).isZero();
+    assertThat(saved.getLifecycleRevision()).isZero();
     assertThat(bindingsRef.get()).doesNotContain(" ");
+  }
+
+  @ParameterizedTest
+  @CsvSource({"3, 2", "2, 3"})
+  void rejectsRetryWhenPluginFenceChanges(long activationEpoch, long lifecycleRevision) {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          String sql = context.sql().toLowerCase(Locale.ROOT);
+          if (sql.startsWith("insert")) {
+            return new MockResult[] {
+              new MockResult(0, resultDsl.newResult(SCRIPT_HANDOFF_EVENTS.fields()))
+            };
+          }
+          ScriptHandoffEventsRecord row = new ScriptHandoffEventsRecord();
+          row.setId(9L);
+          row.setEventId("event-1");
+          row.setTenantId("tenant-1");
+          row.setGameInstanceId("game-1");
+          row.setScriptPatchVersion("patch-1");
+          row.setPluginActivationEpoch(2L);
+          row.setLifecycleRevision(2L);
+          row.setHandoffOutcome("enqueued");
+          Result<Record> result = resultDsl.newResult(SCRIPT_HANDOFF_EVENTS.fields());
+          Record returned = resultDsl.newRecord(SCRIPT_HANDOFF_EVENTS.fields());
+          returned.from(row);
+          result.add(returned);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptHandoffEventRepository repository =
+        new ScriptHandoffEventRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    ScriptHandoffEvent retry = new ScriptHandoffEvent();
+    retry.setEventId("event-1");
+    retry.setTenantId("tenant-1");
+    retry.setGameInstanceId("game-1");
+    retry.setScriptPatchVersion("patch-1");
+    retry.setPluginActivationEpoch(activationEpoch);
+    retry.setLifecycleRevision(lifecycleRevision);
+    retry.setHandoffOutcome("enqueued");
+
+    assertThatThrownBy(() -> repository.save(retry))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Handoff event immutable identity conflict");
   }
 
   @Test
@@ -345,6 +442,8 @@ class ScriptHandoffEventRepositoryTest {
                       "binding_id",
                       "plugin_id",
                       "plugin_version_id",
+                      "plugin_activation_epoch",
+                      "lifecycle_revision",
                       "work_item_id",
                       "command_ordinal",
                       "automation_dispatch_id",
@@ -375,6 +474,8 @@ class ScriptHandoffEventRepositoryTest {
                       "binding_id",
                       "plugin_id",
                       "plugin_version_id",
+                      "plugin_activation_epoch",
+                      "lifecycle_revision",
                       "work_item_id",
                       "command_ordinal",
                       "automation_dispatch_id",

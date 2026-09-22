@@ -168,7 +168,13 @@ class AutomationGameplayCommandAdmissionSupportTest {
     assertEquals("RETRY_QUEUED", retry.admissionOutcome());
     verify(gameInstanceRepository, times(2)).findByTenantIdAndGameInstanceIdForUpdate(1L, 2L);
     verify(gameplayCommandRepository, never())
-        .markAcceptedCommandFailed(any(), any(), any(), any());
+        .markAcceptedCommandFailed(
+            any(Long.class),
+            any(Long.class),
+            any(String.class),
+            any(String.class),
+            any(String.class),
+            any());
   }
 
   @Test

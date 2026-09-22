@@ -136,8 +136,19 @@ def main() -> int:
     ap = root / "config/workflow-tool-versions.env"
     a = authority(ap)
     versions = ["KUBECTL", "HELM", "GH", "BUF", "KUBECONFORM", "VELERO", "ACTIONLINT", "TRIVY", "LYCHEE", "ORT", "ZAP"]
+    artifact_versions = {
+        "SHELLCHECK": r"\d+\.\d+\.\d+",
+        "CLOC": r"\d+\.\d+",
+        "CHROME_FOR_TESTING": r"\d+\.\d+\.\d+\.\d+",
+        "CHROMEDRIVER": r"\d+\.\d+\.\d+\.\d+",
+    }
     if any(not re.fullmatch(r"\d+\.\d+\.\d+", a.get(f"{x}_VERSION", "")) for x in versions):
         fail("all workflow tools must have exact versions")
+    for tool, pattern in artifact_versions.items():
+        if not re.fullmatch(pattern, a.get(f"{tool}_VERSION", "")):
+            fail(f"{tool} must have an exact pinned release version")
+    if a["CHROME_FOR_TESTING_VERSION"] != a["CHROMEDRIVER_VERSION"]:
+        fail("Chrome for Testing and ChromeDriver must use the exact same release version")
     if not re.fullmatch(r"\d+\.\d+\.\d+", a.get("VELERO_CHART_VERSION", "")):
         fail("Velero chart authority must have an exact three-part version")
     pairs = {
@@ -147,6 +158,10 @@ def main() -> int:
         "BUF": "BUF_LINUX_X86_64",
         "KUBECONFORM": "KUBECONFORM_LINUX_AMD64",
         "VELERO": "VELERO_LINUX_AMD64",
+        "SHELLCHECK": "SHELLCHECK_LINUX_X86_64",
+        "CLOC": "CLOC_SOURCE",
+        "CHROME_FOR_TESTING": "CHROME_FOR_TESTING_LINUX_X86_64",
+        "CHROMEDRIVER": "CHROMEDRIVER_LINUX_X86_64",
         "TRIVY": "TRIVY_LINUX_AMD64",
         "LYCHEE": "LYCHEE_LINUX_X86_64_MUSL",
     }
@@ -159,7 +174,7 @@ def main() -> int:
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", a.get(f"{tool}_DIGEST", "")):
             fail(f"{tool} digest is invalid")
     expected = (
-        {f"{x}_VERSION" for x in versions}
+        {f"{x}_VERSION" for x in versions + list(artifact_versions)}
         | {f"{s}_{suffix}" for s in pairs.values() for suffix in ("CHECKSUM_VERSION", "SHA256")}
         | {"VELERO_CHART_VERSION", "VELERO_IMAGE_DIGEST", "ORT_DIGEST", "ZAP_DIGEST"}
     )
@@ -189,6 +204,14 @@ def main() -> int:
         "velero-version",
         "velero-linux-amd64-sha256",
         "actionlint-version",
+        "shellcheck-version",
+        "shellcheck-linux-x86-64-sha256",
+        "cloc-version",
+        "cloc-source-sha256",
+        "chrome-for-testing-version",
+        "chrome-for-testing-linux-x86-64-sha256",
+        "chromedriver-version",
+        "chromedriver-linux-x86-64-sha256",
         "trivy-version",
         "trivy-linux-amd64-sha256",
         "lychee-version",
@@ -221,6 +244,29 @@ def main() -> int:
         )
         if canonical.returncode != 0:
             fail(f"workflow authority loader rejects canonical authority: {canonical.stderr.strip()}")
+        chromedriver_parts = a["CHROMEDRIVER_VERSION"].split(".")
+        if len(chromedriver_parts) < 2 or not chromedriver_parts[-1].isdigit():
+            fail("canonical CHROMEDRIVER_VERSION must be dot-separated with a numeric final segment")
+        mismatched_chromedriver_version = ".".join(chromedriver_parts[:-1] + [str(int(chromedriver_parts[-1]) + 1)])
+        mismatch_text = re.sub(
+            r"^CHROMEDRIVER_VERSION=.*$",
+            f"CHROMEDRIVER_VERSION={mismatched_chromedriver_version}",
+            ap.read_text(),
+            flags=re.MULTILINE,
+        )
+        mismatch_text = re.sub(
+            r"^CHROMEDRIVER_LINUX_X86_64_CHECKSUM_VERSION=.*$",
+            f"CHROMEDRIVER_LINUX_X86_64_CHECKSUM_VERSION={mismatched_chromedriver_version}",
+            mismatch_text,
+            flags=re.MULTILINE,
+        )
+        (authority_path / "workflow-tool-versions.env").write_text(mismatch_text)
+        output_path.write_text("sentinel\n")
+        mismatch = subprocess.run(
+            ["bash", "-c", loader_run], cwd=temporary, env=env, capture_output=True, text=True, check=False
+        )
+        if mismatch.returncode == 0 or output_path.read_text() != "sentinel\n":
+            fail("workflow authority loader accepts mismatched Chrome and ChromeDriver versions")
         (authority_path / "workflow-tool-versions.env").write_bytes(
             ap.read_bytes().rstrip(b"\r\n") + b"\nACTIONLINT_VERSION=0.0.0"
         )
@@ -966,6 +1012,12 @@ def main() -> int:
         )
 
     ci_text = (workflows / "ci.yml").read_text()
+    if (
+        'echo "CHROME_PATH=$chrome_path"' not in ci_text
+        or '} >> "$GITHUB_ENV"' not in ci_text
+        or '--chrome-path "$CHROME_PATH"' not in ci_text
+    ):
+        fail("ci.yml axe audit must select the exact pinned Chrome for Testing binary")
     buf_curl_pattern = (
         r"(?m)^\s*curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \\\n"
         r"\s*--connect-timeout 10 --max-time 60 \\\n"
@@ -1300,6 +1352,21 @@ def main() -> int:
     renovate = json.loads((root / "renovate.json").read_text())
     if not {"nodenv", "pyenv", "pip_requirements", "custom.regex"} <= set(renovate["enabledManagers"]):
         fail("Renovate managers incomplete")
+    kubectl_rules = [
+        rule
+        for rule in renovate.get("packageRules", [])
+        if rule.get("matchManagers") == ["custom.regex"]
+        and rule.get("matchPackageNames") == ["kubernetes/kubernetes"]
+    ]
+    if len(kubectl_rules) != 1:
+        fail("Renovate must define exactly one kubectl compatibility rule")
+    kubectl_rule = kubectl_rules[0]
+    if kubectl_rule.get("allowedVersions") != "<1.36.0":
+        fail("Renovate kubectl proposals must remain below 1.36 for the Kubernetes 1.34 cluster")
+    kubectl_notes = "\n".join(kubectl_rule.get("prBodyNotes") or [])
+    for required in ("update-workflow-tool.py kubectl <version>", "cluster-version upgrade"):
+        if required not in kubectl_notes:
+            fail(f"Renovate kubectl guidance is missing: {required}")
     custom_managers = renovate.get("customManagers", [])
     if len(custom_managers) != 11:
         fail("Renovate must define three version-only, five checksum-backed, one Velero chart, one Velero image, and one ORT/ZAP image authority manager")

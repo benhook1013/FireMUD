@@ -1,11 +1,14 @@
+import contextlib
+import ipaddress
 import json
 import os
+import re
 import socket
+import ssl
 import subprocess
 import time
 import urllib.error
 import urllib.request
-from contextlib import closing
 from urllib.parse import quote
 
 
@@ -18,6 +21,28 @@ class TransientUpstreamSmokeFailure(ProbeOperationalFailure):
 
 
 RETRYABLE_STARTUP_COMMAND_LABELS = frozenset({"WORLDS", "LOGIN"})
+INVALID_COMMAND_LINE_ERROR = "commands must not contain embedded CR or LF"
+PLAINTEXT_TELNET_HOST_ERROR = (
+    "tls_enabled=False requires a localhost-equivalent Telnet host"
+)
+
+
+def is_localhost_equivalent(host):
+    if not isinstance(host, str):
+        return False
+    normalized = host.strip().casefold()
+    if normalized in {"localhost", "localhost."}:
+        return True
+    if normalized.startswith("[") and normalized.endswith("]"):
+        normalized = normalized[1:-1]
+    try:
+        address = ipaddress.ip_address(normalized)
+    except ValueError:
+        return False
+    if address.is_loopback:
+        return True
+    mapped = getattr(address, "ipv4_mapped", None)
+    return mapped is not None and mapped.is_loopback
 
 
 def compose_postgres_container_name():
@@ -184,17 +209,7 @@ def run_transport_session(
     deadline = time.time() + retry_window_seconds if retry_window_seconds > 0 else None
     while True:
         try:
-            with closing(open_session()) as session:
-                return execute_session(session)
-        except TransientUpstreamSmokeFailure:
-            if deadline is None:
-                raise
-            remaining = deadline - time.time()
-            if remaining <= 0:
-                raise
-            time.sleep(min(retry_interval_seconds, remaining))
-            if time.time() >= deadline:
-                raise
+            session = open_session()
         except retriable_exceptions as exc:
             if deadline is None:
                 raise ProbeOperationalFailure(
@@ -210,6 +225,50 @@ def run_transport_session(
                 raise ProbeOperationalFailure(
                     f"Failed to open {session_label}: {exc}"
                 ) from exc
+            continue
+
+        try:
+            result = execute_session(session)
+        except TransientUpstreamSmokeFailure:
+            try:
+                session.close()
+            except Exception as exc:
+                raise ProbeOperationalFailure(
+                    f"Failed to close {session_label}: {exc}"
+                ) from exc
+            if deadline is None:
+                raise
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise
+            time.sleep(min(retry_interval_seconds, remaining))
+            if time.time() >= deadline:
+                raise
+            continue
+        except retriable_exceptions as exc:
+            try:
+                session.close()
+            except Exception as close_exc:  # noqa: BLE001 - transport close failures vary by client
+                raise ProbeOperationalFailure(
+                    f"Failed during {session_label}: {exc}; "
+                    f"close failed: {close_exc}"
+                ) from exc
+            raise ProbeOperationalFailure(
+                f"Failed during {session_label}: {exc}"
+            ) from exc
+        except Exception:
+            # A secondary close failure must not hide the primary command failure.
+            with contextlib.suppress(Exception):
+                session.close()
+            raise
+        else:
+            try:
+                session.close()
+            except Exception as exc:
+                raise ProbeOperationalFailure(
+                    f"Failed to close {session_label}: {exc}"
+                ) from exc
+            return result
 
 
 def login_play_look_steps(
@@ -243,6 +302,118 @@ def login_play_look_steps(
     ]
 
 
+def redact_login_credential(response, command):
+    if not isinstance(response, str) or not isinstance(command, str):
+        return response
+    command_parts = command.strip().split(maxsplit=2)
+    if len(command_parts) != 3 or command_parts[0].casefold() not in {"login", "logon"}:
+        return response
+
+    credential = command_parts[2]
+    normalized_credential = " ".join(credential.split())
+    credential_variants = sorted(
+        {value for value in (credential, normalized_credential) if value},
+        key=len,
+        reverse=True,
+    )
+    redacted = response
+    for value in credential_variants:
+        redacted = re.sub(
+            re.escape(value),
+            "[REDACTED]",
+            redacted,
+            flags=re.ASCII | re.IGNORECASE,
+        )
+    return redacted
+
+
+def _normalize_command_line(command):
+    if not isinstance(command, str):
+        raise TypeError("command must be a string")
+    normalized = command.rstrip("\r\n")
+    if "\r" in normalized or "\n" in normalized:
+        raise ValueError(INVALID_COMMAND_LINE_ERROR)
+    try:
+        normalized.encode("iso-8859-1")
+    except UnicodeEncodeError as exc:
+        raise ValueError(INVALID_COMMAND_LINE_ERROR) from exc
+    return normalized
+
+
+def redact_login_command(command):
+    if not isinstance(command, str):
+        return command
+    command_parts = command.strip().split(maxsplit=2)
+    if len(command_parts) != 3 or command_parts[0].casefold() not in {"login", "logon"}:
+        return command
+    return f"{command_parts[0]} {command_parts[1]} [REDACTED]"
+
+
+def unexpected_explicit_failure_line(
+    response, explicit_failure_prefixes, expected_substrings
+):
+    expected_failures = [
+        substring
+        for substring in expected_substrings
+        if any(
+            substring.startswith(prefix) for prefix in explicit_failure_prefixes
+        )
+    ]
+    accepted_expected_failures = set()
+    response_ends_with_line_break = response.endswith(("\n", "\r"))
+    response_lines = response.splitlines()
+    for index, line in enumerate(response_lines):
+        stripped = line.strip()
+        if not any(
+            stripped.startswith(prefix) for prefix in explicit_failure_prefixes
+        ):
+            continue
+        matching_expected_failure = next(
+            (
+                expected_index
+                for expected_index, expected in enumerate(expected_failures)
+                if expected_index not in accepted_expected_failures
+                and stripped.startswith(expected)
+            ),
+            None,
+        )
+        if matching_expected_failure is not None:
+            accepted_expected_failures.add(matching_expected_failure)
+            continue
+        if (
+            index == len(response_lines) - 1
+            and not response_ends_with_line_break
+            and any(expected.startswith(stripped) for expected in expected_failures)
+        ):
+            continue
+        return stripped
+    return None
+
+
+def raise_for_explicit_failure(
+    response,
+    explicit_failure_prefixes,
+    expected_substrings,
+    retry_upstream_failure,
+    sanitize_response,
+):
+    failure_line = unexpected_explicit_failure_line(
+        response, explicit_failure_prefixes, expected_substrings
+    )
+    if failure_line is None:
+        return
+    diagnostic_response = (
+        sanitize_response(response) if sanitize_response else response
+    ).strip()
+    if retry_upstream_failure and failure_line.startswith(
+        ("ERROR UPSTREAM_FAILURE", "ERROR UNAVAILABLE")
+    ):
+        raise TransientUpstreamSmokeFailure(
+            f"Command failed explicitly: {diagnostic_response}"
+        )
+    raise ProbeOperationalFailure(f"Command failed explicitly: {diagnostic_response}")
+
+
 def wait_for_incremental_response(
     next_chunk,
     responses,
@@ -254,40 +425,45 @@ def wait_for_incremental_response(
     explicit_failure_prefixes=("ERROR ", "DISCONNECT "),
     idle_sleep_seconds=0.05,
     retry_upstream_failure=False,
+    sanitize_response=None,
+    deadline=None,
 ):
-    deadline = time.time() + timeout
-    expects_explicit_failure = any(
-        any(substring.startswith(prefix) for prefix in explicit_failure_prefixes)
-        for substring in expected_substrings
-    )
+    if deadline is None:
+        deadline = time.time() + timeout
     response = combine_responses(responses[start_index:])
     while time.time() < deadline:
         chunk = next_chunk()
         if chunk:
             responses.append(chunk)
             response = combine_responses(responses[start_index:])
-            stripped = response.strip()
-            if not expects_explicit_failure and any(
-                stripped.startswith(prefix) for prefix in explicit_failure_prefixes
-            ):
-                if retry_upstream_failure and stripped.startswith(
-                    ("ERROR UPSTREAM_FAILURE", "ERROR UNAVAILABLE")
-                ):
-                    raise TransientUpstreamSmokeFailure(
-                        f"Command failed explicitly: {stripped}"
-                    )
-                raise ProbeOperationalFailure(f"Command failed explicitly: {stripped}")
+            raise_for_explicit_failure(
+                response,
+                explicit_failure_prefixes,
+                expected_substrings,
+                retry_upstream_failure,
+                sanitize_response,
+            )
             if all(substring in response for substring in expected_substrings):
                 if drain_remaining is not None:
                     trailing = drain_remaining()
                     if trailing:
                         responses.append(trailing)
-                        response = combine_responses(responses[start_index:])
+                    drained_response = combine_responses(responses[start_index:])
+                    raise_for_explicit_failure(
+                        drained_response,
+                        explicit_failure_prefixes,
+                        expected_substrings,
+                        retry_upstream_failure,
+                        sanitize_response,
+                    )
+                    if trailing:
+                        response = drained_response
                 return response
         else:
-            time.sleep(idle_sleep_seconds)
+            time.sleep(min(idle_sleep_seconds, max(0, deadline - time.time())))
+    diagnostic_response = sanitize_response(response) if sanitize_response else response
     raise ProbeOperationalFailure(
-        f"Expected response containing {expected_substrings}, got '{response}'"
+        f"Expected response containing {expected_substrings}, got '{diagnostic_response}'"
     )
 
 
@@ -351,12 +527,18 @@ def gameplay_item_container_equipment_steps(
     ]
 
 
-def recv_until_socket(sock, expected_substring, timeout):
-    deadline = time.time() + timeout
+def recv_until_socket(sock, expected_substring, timeout=None, *, deadline=None):
+    if deadline is None:
+        if timeout is None:
+            raise TypeError("recv_until_socket requires timeout or deadline")
+        deadline = time.time() + timeout
     chunks = []
     while time.time() < deadline:
         try:
-            sock.settimeout(deadline - time.time())
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                break
+            sock.settimeout(remaining)
             data = sock.recv(4096)
         except (TimeoutError, BlockingIOError):
             break
@@ -369,12 +551,17 @@ def recv_until_socket(sock, expected_substring, timeout):
     return "".join(chunks)
 
 
-def drain_available_socket(sock, quiet_timeout=0.25):
-    deadline = time.time() + quiet_timeout
+def drain_available_socket(sock, quiet_timeout=0.25, deadline=None):
+    quiet_deadline = time.time() + quiet_timeout
+    if deadline is not None:
+        quiet_deadline = min(quiet_deadline, deadline)
     chunks = []
-    while time.time() < deadline:
+    while time.time() < quiet_deadline:
         try:
-            sock.settimeout(max(0.05, deadline - time.time()))
+            remaining = quiet_deadline - time.time()
+            if remaining <= 0:
+                break
+            sock.settimeout(remaining)
             data = sock.recv(4096)
         except (TimeoutError, BlockingIOError):
             break
@@ -394,28 +581,45 @@ def send_telnet_command_and_expect(
     drain_timeout=0.25,
     step_results=None,
 ):
+    line = _normalize_command_line(line)
     start_index = len(responses)
     started_at = time.time()
-    sock.sendall(f"{line}\r\n".encode("iso-8859-1"))
+    command_deadline = started_at + timeout_seconds
+    command_bytes = line.encode("iso-8859-1").replace(b"\xff", b"\xff\xff")
+    remaining_timeout = command_deadline - time.time()
+    if remaining_timeout <= 0:
+        raise ProbeOperationalFailure(f"Timed out before sending {label}")
+    sock.settimeout(remaining_timeout)
+    sock.sendall(command_bytes + b"\r\n")
+    remaining_timeout = max(0, command_deadline - time.time())
     response = wait_for_incremental_response(
-        lambda: recv_until_socket(sock, "", 0.5),
+        lambda: recv_until_socket(
+            sock, "", deadline=command_deadline
+        ),
         responses,
         start_index,
         expected_substrings,
-        timeout_seconds,
+        remaining_timeout,
         "".join,
-        lambda: drain_available_socket(sock, drain_timeout),
+        lambda: drain_available_socket(
+            sock,
+            min(drain_timeout, max(0, command_deadline - time.time())),
+            deadline=command_deadline,
+        ),
         retry_upstream_failure=label in RETRYABLE_STARTUP_COMMAND_LABELS,
+        sanitize_response=lambda value: redact_login_credential(value, line),
+        deadline=command_deadline,
     )
+    diagnostic_response = redact_login_credential(response, line)
     print(f"=== {label} response ===")
-    print(response.strip() or "<no data>")
+    print(diagnostic_response.strip() or "<no data>")
     if step_results is not None:
         step_results.append(
             {
                 "label": label,
-                "command": line,
+                "command": redact_login_command(line),
                 "latencyMs": round((time.time() - started_at) * 1000, 3),
-                "response": response.strip(),
+                "response": diagnostic_response.strip(),
             }
         )
     return response
@@ -446,6 +650,47 @@ def run_telnet_command_plan(
     return responses
 
 
+def open_telnet_socket(
+    host,
+    port,
+    timeout_seconds,
+    *,
+    tls_enabled,
+    tls_server_hostname=None,
+    tls_ca_file=None,
+):
+    if not isinstance(tls_enabled, bool):
+        raise TypeError("tls_enabled must be explicitly set to true or false")
+    if tls_enabled:
+        if not isinstance(tls_server_hostname, str) or not tls_server_hostname.strip():
+            raise ValueError("TLS Telnet connections require an explicit server hostname")
+    elif tls_server_hostname is not None or tls_ca_file is not None:
+        raise ValueError(
+            "TLS server hostname and CA file are only valid for TLS Telnet connections"
+        )
+    if not tls_enabled and not is_localhost_equivalent(host):
+        raise ValueError(PLAINTEXT_TELNET_HOST_ERROR)
+
+    raw_socket = socket.create_connection((host, port), timeout=timeout_seconds)
+    if not tls_enabled:
+        return raw_socket
+    try:
+        context = (
+            ssl.create_default_context(cafile=str(tls_ca_file))
+            if tls_ca_file is not None
+            else ssl.create_default_context()
+        )
+        context.check_hostname = True
+        context.verify_mode = ssl.CERT_REQUIRED
+        return context.wrap_socket(
+            raw_socket,
+            server_hostname=tls_server_hostname,
+        )
+    except Exception:
+        raw_socket.close()
+        raise
+
+
 def run_telnet_smoke_session(
     host,
     port,
@@ -457,10 +702,23 @@ def run_telnet_smoke_session(
     play_drain_timeout=1.0,
     default_drain_timeout=0.25,
     step_results=None,
+    *,
+    tls_enabled,
+    tls_server_hostname=None,
+    tls_ca_file=None,
 ):
     return run_transport_session(
         open_session
-        or (lambda: socket.create_connection((host, port), timeout=timeout_seconds)),
+        or (
+            lambda: open_telnet_socket(
+                host,
+                port,
+                timeout_seconds,
+                tls_enabled=tls_enabled,
+                tls_server_hostname=tls_server_hostname,
+                tls_ca_file=tls_ca_file,
+            )
+        ),
         lambda sock: run_telnet_command_plan(
             sock,
             steps,
@@ -475,12 +733,17 @@ def run_telnet_smoke_session(
     )
 
 
-def recv_text_websocket(ws, label, timeout):
-    deadline = time.time() + timeout
+def recv_text_websocket(ws, label, timeout=None, *, deadline=None):
+    if deadline is None:
+        if timeout is None:
+            raise TypeError("recv_text_websocket requires timeout or deadline")
+        deadline = time.time() + timeout
     last_error = None
     while time.time() < deadline:
         remaining = deadline - time.time()
-        ws.settimeout(min(1.0, max(0.1, remaining)))
+        if remaining <= 0:
+            break
+        ws.settimeout(remaining)
         try:
             return ws.recv()
         except Exception as exc:
@@ -489,23 +752,29 @@ def recv_text_websocket(ws, label, timeout):
             ):
                 raise
             last_error = exc
+    timeout_description = (
+        f"{timeout}s" if timeout is not None else "the command deadline"
+    )
     raise ProbeOperationalFailure(
-        f"Timed out waiting for {label} after {timeout}s"
+        f"Timed out waiting for {label} after {timeout_description}"
     ) from last_error
 
 
-def recv_optional_websocket_chunk(ws, label, timeout):
+def recv_optional_websocket_chunk(ws, label, timeout=None, *, deadline=None):
     try:
-        return recv_text_websocket(ws, label, timeout).strip()
+        return recv_text_websocket(ws, label, timeout, deadline=deadline).strip()
     except ProbeOperationalFailure:
         return ""
 
 
-def drain_available_websocket(ws, responses, quiet_timeout=0.25):
-    deadline = time.time() + quiet_timeout
-    while time.time() < deadline:
-        remaining = max(0.05, deadline - time.time())
-        chunk = recv_optional_websocket_chunk(ws, "drain chunk", remaining)
+def drain_available_websocket(ws, responses, quiet_timeout=0.25, *, deadline=None):
+    quiet_deadline = time.time() + quiet_timeout
+    if deadline is not None:
+        quiet_deadline = min(quiet_deadline, deadline)
+    while time.time() < quiet_deadline:
+        chunk = recv_optional_websocket_chunk(
+            ws, "drain chunk", deadline=quiet_deadline
+        )
         if not chunk:
             return
         responses.append(chunk)
@@ -520,30 +789,42 @@ def send_websocket_command_and_expect(
     timeout_seconds,
     step_results=None,
 ):
+    line = _normalize_command_line(line)
     start_index = len(responses)
     started_at = time.time()
+    command_deadline = started_at + timeout_seconds
+    remaining_timeout = command_deadline - time.time()
+    if remaining_timeout <= 0:
+        raise ProbeOperationalFailure(f"Timed out before sending {label}")
+    ws.settimeout(remaining_timeout)
     ws.send(line)
+    remaining_timeout = max(0, command_deadline - time.time())
     response = wait_for_incremental_response(
         lambda: recv_optional_websocket_chunk(
-            ws, f"{label} response chunk", min(0.5, timeout_seconds)
+            ws, f"{label} response chunk", deadline=command_deadline
         ),
         responses,
         start_index,
         expected_substrings,
-        timeout_seconds,
+        remaining_timeout,
         lambda parts: "\n".join(chunk for chunk in parts if chunk),
-        lambda: drain_available_websocket(ws, responses),
+        lambda: drain_available_websocket(
+            ws, responses, deadline=command_deadline
+        ),
         retry_upstream_failure=label in RETRYABLE_STARTUP_COMMAND_LABELS,
+        sanitize_response=lambda value: redact_login_credential(value, line),
+        deadline=command_deadline,
     )
+    diagnostic_response = redact_login_credential(response, line)
     print(f"=== {label} response ===")
-    print(response.strip() or "<empty>")
+    print(diagnostic_response.strip() or "<empty>")
     if step_results is not None:
         step_results.append(
             {
                 "label": label,
-                "command": line,
+                "command": redact_login_command(line),
                 "latencyMs": round((time.time() - started_at) * 1000, 3),
-                "response": response.strip(),
+                "response": diagnostic_response.strip(),
             }
         )
     return response

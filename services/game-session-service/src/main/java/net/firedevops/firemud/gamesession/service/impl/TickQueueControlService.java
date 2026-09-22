@@ -128,7 +128,8 @@ public class TickQueueControlService {
       leases.requireOwned();
       pushed.set(materializeQueuePayload(tenantId, queueTargetId, payload, leases.tickLease()));
       leases.requireOwned();
-      if (!gameplayCommandRepository.markAcceptedCommandStaged(commandId, Instant.now())) {
+      if (!gameplayCommandRepository.markAcceptedCommandStaged(
+          tenantId, queueTargetId, commandId, Instant.now())) {
         throw new QueueUnavailableException(
             "Command is no longer eligible for queue staging: " + commandId);
       }
@@ -708,7 +709,9 @@ public class TickQueueControlService {
   }
 
   private Optional<PurgeCandidate> purgeCandidate(GameplayCommand command) {
-    boolean batchBound = gameplayCommandRepository.hasDurableTickEffect(command.getCommandId());
+    boolean batchBound =
+        gameplayCommandRepository.hasDurableTickEffect(
+            command.getTenantId(), command.getGameInstanceId(), command.getCommandId());
     if (batchBound && !"RETRY_QUEUED".equals(command.getExecutionOutcome())) {
       return Optional.empty();
     }

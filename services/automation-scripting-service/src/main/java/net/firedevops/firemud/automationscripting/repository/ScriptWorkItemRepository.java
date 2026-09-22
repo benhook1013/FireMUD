@@ -88,7 +88,8 @@ public class ScriptWorkItemRepository {
           long scriptPinEpoch,
           String scriptPinControlPlaneRequestId,
           String scriptEventId,
-          boolean dryRun) {
+          boolean dryRun,
+          String sourceService) {
     return existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndPluginIdAndPluginVersionIdAndBindingIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
         tenantId,
         gameInstanceId,
@@ -109,7 +110,8 @@ public class ScriptWorkItemRepository {
         scriptPinEpoch,
         scriptPinControlPlaneRequestId,
         scriptEventId,
-        dryRun);
+        dryRun,
+        sourceService);
   }
 
   public boolean
@@ -133,7 +135,8 @@ public class ScriptWorkItemRepository {
           long scriptPinEpoch,
           String scriptPinControlPlaneRequestId,
           String scriptEventId,
-          boolean dryRun) {
+          boolean dryRun,
+          String sourceService) {
     return dsl.fetchExists(
         SCRIPT_WORK_ITEMS,
         triggerIdentityCondition(
@@ -155,7 +158,8 @@ public class ScriptWorkItemRepository {
                 scriptPatchVersion,
                 scriptPinEpoch,
                 scriptEventId,
-                dryRun)
+                dryRun,
+                sourceService)
             .and(
                 SCRIPT_WORK_ITEMS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(
                     blankToNull(scriptPinControlPlaneRequestId))));
@@ -666,7 +670,8 @@ public class ScriptWorkItemRepository {
               entity.getScriptPatchVersion(),
               entity.getScriptPinEpoch(),
               entity.getScriptEventId(),
-              entity.isDryRun());
+              entity.isDryRun(),
+              entity.getSourceService());
       if (existing.isPresent()) {
         requireMatchingPinOwnerEvidence(
             normalizedRequestId, existing.orElseThrow().getScriptPinControlPlaneRequestId());
@@ -731,6 +736,7 @@ public class ScriptWorkItemRepository {
     }
     fields.add(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID);
     fields.add(SCRIPT_WORK_ITEMS.DRY_RUN);
+    fields.add(SCRIPT_WORK_ITEMS.SOURCE_SERVICE);
     return fields.toArray(Field<?>[]::new);
   }
 
@@ -753,7 +759,8 @@ public class ScriptWorkItemRepository {
       String scriptPatchVersion,
       long scriptPinEpoch,
       String scriptEventId,
-      boolean dryRun) {
+      boolean dryRun,
+      String sourceService) {
     return dsl.selectFrom(SCRIPT_WORK_ITEMS)
         .where(
             triggerIdentityCondition(
@@ -775,7 +782,8 @@ public class ScriptWorkItemRepository {
                 scriptPatchVersion,
                 scriptPinEpoch,
                 scriptEventId,
-                dryRun))
+                dryRun,
+                sourceService))
         .fetchOptional(this::toEntity);
   }
 
@@ -798,7 +806,8 @@ public class ScriptWorkItemRepository {
       String scriptPatchVersion,
       long scriptPinEpoch,
       String scriptEventId,
-      boolean dryRun) {
+      boolean dryRun,
+      String sourceService) {
     return SCRIPT_WORK_ITEMS
         .TENANT_ID
         .eq(tenantId)
@@ -819,7 +828,8 @@ public class ScriptWorkItemRepository {
         .and(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
         .and(SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH.eq(scriptPinEpoch))
         .and(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID.eq(scriptEventId))
-        .and(SCRIPT_WORK_ITEMS.DRY_RUN.eq(dryRun));
+        .and(SCRIPT_WORK_ITEMS.DRY_RUN.eq(dryRun))
+        .and(SCRIPT_WORK_ITEMS.SOURCE_SERVICE.eq(sourceService));
   }
 
   public List<ScriptWorkItem> saveAll(Collection<ScriptWorkItem> entities) {

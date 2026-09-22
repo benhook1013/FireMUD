@@ -89,7 +89,9 @@ class TickQueueControlServiceTest {
               }
               return command;
             });
-    when(gameplayCommandRepository.markAcceptedCommandStaged(any(), any())).thenReturn(true);
+    when(gameplayCommandRepository.markAcceptedCommandStaged(
+            any(Long.class), any(Long.class), any(String.class), any(Instant.class)))
+        .thenReturn(true);
     when(gameplayCommandRepository.lockAcceptedCommandForStaging(
             any(Long.class),
             any(Long.class),
@@ -146,7 +148,9 @@ class TickQueueControlServiceTest {
     service.enqueueCommand(1L, 2L, "cmd-123", "look|east", false);
 
     verify(listOps).rightPush("gamesession:tick:queue:1:2", "N|cmd-123|look|east");
-    verify(gameplayCommandRepository).markAcceptedCommandStaged(any(), any());
+    verify(gameplayCommandRepository)
+        .markAcceptedCommandStaged(
+            any(Long.class), any(Long.class), any(String.class), any(Instant.class));
   }
 
   @Test
@@ -159,7 +163,8 @@ class TickQueueControlServiceTest {
     service.enqueueCommand(1L, 2L, "cmd-existing", "look", false);
 
     verify(listOps, never()).rightPush(any(), any());
-    verify(gameplayCommandRepository).markAcceptedCommandStaged(eq("cmd-existing"), any());
+    verify(gameplayCommandRepository)
+        .markAcceptedCommandStaged(eq(1L), eq(2L), eq("cmd-existing"), any(Instant.class));
   }
 
   @Test
@@ -175,7 +180,9 @@ class TickQueueControlServiceTest {
 
     verify(listOps, never()).rightPush(any(), any());
     verify(listOps, never()).remove(any(), anyLong(), any());
-    verify(gameplayCommandRepository, never()).markAcceptedCommandStaged(any(), any());
+    verify(gameplayCommandRepository, never())
+        .markAcceptedCommandStaged(
+            any(Long.class), any(Long.class), any(String.class), any(Instant.class));
   }
 
   @Test
@@ -191,7 +198,9 @@ class TickQueueControlServiceTest {
     verify(listOps, never()).range(any(), anyLong(), anyLong());
     verify(listOps, never()).rightPush(any(), any());
     verify(listOps, never()).remove(any(), anyLong(), any());
-    verify(gameplayCommandRepository, never()).markAcceptedCommandStaged(any(), any());
+    verify(gameplayCommandRepository, never())
+        .markAcceptedCommandStaged(
+            any(Long.class), any(Long.class), any(String.class), any(Instant.class));
   }
 
   @Test
@@ -246,7 +255,8 @@ class TickQueueControlServiceTest {
     when(gameplayCommandRepository.lockAcceptedCommandForStaging(
             eq(1L), eq(2L), eq("cmd-terminal"), eq("look"), eq(false)))
         .thenReturn(true);
-    when(gameplayCommandRepository.markAcceptedCommandStaged(eq("cmd-terminal"), any()))
+    when(gameplayCommandRepository.markAcceptedCommandStaged(
+            eq(1L), eq(2L), eq("cmd-terminal"), any(Instant.class)))
         .thenReturn(false);
 
     assertThrows(
@@ -409,7 +419,7 @@ class TickQueueControlServiceTest {
     when(gameplayCommandRepository.findQueuedAutomationCommandsForScriptPatch(
             1L, 2L, "region-1", "patch-1"))
         .thenReturn(List.of(command));
-    when(gameplayCommandRepository.hasDurableTickEffect("cmd-retry")).thenReturn(true);
+    when(gameplayCommandRepository.hasDurableTickEffect(1L, 2L, "cmd-retry")).thenReturn(true);
     when(listOps.remove("gamesession:tick:queue:1:2", 0, "N|cmd-retry|say retry")).thenReturn(1L);
 
     long purged =
@@ -432,7 +442,8 @@ class TickQueueControlServiceTest {
     when(gameplayCommandRepository.findQueuedAutomationCommandsForScriptPatch(
             1L, 2L, "region-1", "patch-1"))
         .thenReturn(List.of(command));
-    when(gameplayCommandRepository.hasDurableTickEffect("cmd-batch-active")).thenReturn(true);
+    when(gameplayCommandRepository.hasDurableTickEffect(1L, 2L, "cmd-batch-active"))
+        .thenReturn(true);
 
     long purged =
         service.purgeQueuedAutomationCommandsForScriptPatch(

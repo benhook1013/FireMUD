@@ -78,14 +78,15 @@ class RemoteFollowupRuntimeServiceImplTest {
 
   @Test
   void scheduleFollowupCreatesCoordinatorAndFollowup() {
-    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenReturn(Optional.empty());
     when(followupRepository
             .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
                 1L, 8L, "region-b", 8L, "effect-1"))
         .thenReturn(Optional.empty());
     GameplayCommand command = gameplayCommand();
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.of(command));
 
     RemoteFollowupRuntimeService.ScheduleOutcome outcome =
         service.scheduleFollowup(scheduleRequest());
@@ -146,13 +147,13 @@ class RemoteFollowupRuntimeServiceImplTest {
 
   @Test
   void scheduleFollowupKeepsEffectIdentitySeparateAcrossTargetGameInstances() {
-    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenReturn(Optional.empty());
     when(followupRepository
             .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
                 1L, 9L, "region-b", 8L, "effect-1"))
         .thenReturn(Optional.empty());
-    when(gameplayCommandRepository.findByCommandId("cmd-1"))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenReturn(Optional.of(gameplayCommand()));
 
     RemoteFollowupRuntimeService.ScheduleOutcome outcome =
@@ -172,13 +173,14 @@ class RemoteFollowupRuntimeServiceImplTest {
 
   @Test
   void scheduleFollowupUsesRequestMetadataWhenCommandRowIsMissing() {
-    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenReturn(Optional.empty());
     when(followupRepository
             .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
                 1L, 8L, "region-b", 8L, "effect-1"))
         .thenReturn(Optional.empty());
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.empty());
 
     RemoteFollowupRuntimeService.ScheduleOutcome outcome =
         service.scheduleFollowup(scheduleRequest());
@@ -229,7 +231,7 @@ class RemoteFollowupRuntimeServiceImplTest {
   void scheduleFollowupRejectsSourceCommandFromDifferentTenantBeforePersistence() {
     GameplayCommand foreignCommand = gameplayCommand();
     foreignCommand.setTenantId(2L);
-    when(gameplayCommandRepository.findByCommandId("cmd-1"))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenReturn(Optional.of(foreignCommand));
 
     IllegalArgumentException ex =
@@ -248,7 +250,7 @@ class RemoteFollowupRuntimeServiceImplTest {
   void scheduleFollowupRejectsSourceCommandFromDifferentGameInstanceBeforePersistence() {
     GameplayCommand foreignCommand = gameplayCommand();
     foreignCommand.setGameInstanceId(99L);
-    when(gameplayCommandRepository.findByCommandId("cmd-1"))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenReturn(Optional.of(foreignCommand));
 
     IllegalArgumentException ex =
@@ -267,7 +269,7 @@ class RemoteFollowupRuntimeServiceImplTest {
   void scheduleFollowupRejectsSourceCommandFromDifferentOriginRegionBeforePersistence() {
     GameplayCommand foreignCommand = gameplayCommand();
     foreignCommand.setRegionId("region-other");
-    when(gameplayCommandRepository.findByCommandId("cmd-1"))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenReturn(Optional.of(foreignCommand));
 
     IllegalArgumentException ex =
@@ -286,7 +288,7 @@ class RemoteFollowupRuntimeServiceImplTest {
   void scheduleFollowupRejectsSourceCommandFromDifferentOriginRegionEpochBeforePersistence() {
     GameplayCommand foreignCommand = gameplayCommand();
     foreignCommand.setRegionEpoch(99L);
-    when(gameplayCommandRepository.findByCommandId("cmd-1"))
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenReturn(Optional.of(foreignCommand));
 
     IllegalArgumentException ex =
@@ -332,13 +334,14 @@ class RemoteFollowupRuntimeServiceImplTest {
 
   @Test
   void scheduleFollowupDropsPartialRoutingBundle() {
-    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenReturn(Optional.empty());
     when(followupRepository
             .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
                 1L, 8L, "region-b", 8L, "effect-1"))
         .thenReturn(Optional.empty());
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.empty());
 
     RemoteFollowupRuntimeService.ScheduleOutcome outcome =
         service.scheduleFollowup(
@@ -401,13 +404,14 @@ class RemoteFollowupRuntimeServiceImplTest {
 
   @Test
   void scheduleFollowupDropsPartialRoutingBundleWhenOnlyPointerVersionIsProvided() {
-    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenReturn(Optional.empty());
     when(followupRepository
             .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
                 1L, 8L, "region-b", 8L, "effect-1"))
         .thenReturn(Optional.empty());
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.empty());
 
     RemoteFollowupRuntimeService.ScheduleOutcome outcome =
         service.scheduleFollowup(
@@ -472,7 +476,7 @@ class RemoteFollowupRuntimeServiceImplTest {
   void scheduleFollowupAllowsRetryWhenPartialRequestCollapsedToStoredAbsentRoutingBundle() {
     AtomicReference<RemoteCommandCoordinator> storedCoordinator = new AtomicReference<>();
     AtomicReference<RemoteFollowup> storedFollowup = new AtomicReference<>();
-    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenAnswer(invocation -> Optional.ofNullable(storedCoordinator.get()));
     when(followupRepository
             .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
@@ -492,7 +496,8 @@ class RemoteFollowupRuntimeServiceImplTest {
               storedFollowup.set(followup);
               return followup;
             });
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.empty());
 
     RemoteFollowupRuntimeService.ScheduleRequest request =
         new RemoteFollowupRuntimeService.ScheduleRequest(
@@ -567,13 +572,14 @@ class RemoteFollowupRuntimeServiceImplTest {
     existingFollowup.setRequestedCommand("LOOK");
     existingFollowup.setRequiresSoloTick(true);
     existingFollowup.setPointerVersion(null);
-    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenReturn(Optional.of(existingCoordinator));
     when(followupRepository
             .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
                 1L, 8L, "region-b", 8L, "effect-1"))
         .thenReturn(Optional.of(existingFollowup));
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.empty());
 
     RemoteFollowupRuntimeService.ScheduleOutcome outcome =
         service.scheduleFollowup(
@@ -647,13 +653,14 @@ class RemoteFollowupRuntimeServiceImplTest {
     followup.setFailureMessage("retry evidence");
     followup.setCreatedAt(NOW.minusSeconds(2));
     followup.setUpdatedAt(NOW.minusSeconds(1));
-    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenReturn(Optional.of(coordinator));
     when(followupRepository
             .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
                 1L, 8L, "region-b", 8L, "effect-1"))
         .thenReturn(Optional.of(followup));
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.empty());
     double scheduledBefore =
         meterRegistry.get("gamesession_remote_followup_scheduled_total").counter().count();
 
@@ -731,13 +738,14 @@ class RemoteFollowupRuntimeServiceImplTest {
       followup.setQueueSourceDueTickId(22L);
       followup.setQueueSourceDueAtMs(1700L);
     }
-    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenReturn(Optional.of(coordinator));
     when(followupRepository
             .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
                 1L, 8L, "region-b", 8L, "effect-1"))
         .thenReturn(Optional.of(followup));
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.empty());
     double scheduledBefore =
         meterRegistry.get("gamesession_remote_followup_scheduled_total").counter().count();
 
@@ -783,13 +791,14 @@ class RemoteFollowupRuntimeServiceImplTest {
     followup.setRequestedCommand("LOOK");
     followup.setRequiresSoloTick(true);
     followup.setUpdatedAt(NOW.minusSeconds(1));
-    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenReturn(Optional.of(coordinator));
     when(followupRepository
             .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
                 1L, 8L, "region-b", 8L, "effect-1"))
         .thenReturn(Optional.of(followup));
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.empty());
 
     IllegalArgumentException ex =
         assertThrows(
@@ -841,7 +850,8 @@ class RemoteFollowupRuntimeServiceImplTest {
                 RemoteFollowupRuntimeServiceImpl.COORDINATOR_LATE_RESULT_RECONCILED,
                 RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED));
 
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.empty());
     for (List<String> terminalPair : terminalPairs) {
       RemoteCommandCoordinator coordinator = coordinator();
       coordinator.setState(terminalPair.get(0));
@@ -862,7 +872,7 @@ class RemoteFollowupRuntimeServiceImplTest {
       followup.setFailureCode("terminal-failure");
       followup.setFailureMessage("terminal failure evidence");
       followup.setUpdatedAt(NOW.minusSeconds(1));
-      when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+      when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
           .thenReturn(Optional.of(coordinator));
       when(followupRepository
               .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
@@ -906,13 +916,14 @@ class RemoteFollowupRuntimeServiceImplTest {
     coordinator.setExecutionOutcome(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_APPLIED);
     coordinator.setGameplayResult("APPLIED");
     coordinator.setUpdatedAt(NOW.minusSeconds(1));
-    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenReturn(Optional.of(coordinator));
     when(followupRepository
             .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
                 1L, 8L, "region-b", 8L, "effect-1"))
         .thenReturn(Optional.empty());
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.empty());
 
     assertThrows(IllegalArgumentException.class, () -> service.scheduleFollowup(scheduleRequest()));
 
@@ -947,13 +958,14 @@ class RemoteFollowupRuntimeServiceImplTest {
     followup.setClaimOrdinal(13L);
     followup.setQueueSourceState("pending-queue-state");
     followup.setUpdatedAt(NOW.minusSeconds(1));
-    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenReturn(Optional.of(coordinator));
     when(followupRepository
             .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
                 1L, 8L, "region-b", 8L, "effect-1"))
         .thenReturn(Optional.of(followup));
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.empty());
 
     IllegalArgumentException ex =
         assertThrows(
@@ -996,13 +1008,14 @@ class RemoteFollowupRuntimeServiceImplTest {
     followup.setClaimOrdinal(91L);
     followup.setQueueSourceState("terminal-queue-state");
     followup.setUpdatedAt(NOW.minusSeconds(1));
-    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenReturn(Optional.of(coordinator));
     when(followupRepository
             .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
                 1L, 8L, "region-b", 8L, "effect-1"))
         .thenReturn(Optional.of(followup));
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.empty());
 
     assertThrows(IllegalArgumentException.class, () -> service.scheduleFollowup(scheduleRequest()));
 
@@ -1032,13 +1045,14 @@ class RemoteFollowupRuntimeServiceImplTest {
     existing.setStatus(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_APPLIED);
     existing.setCommandId("cmd-2");
     existing.setUpdatedAt(NOW.minusSeconds(1));
-    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenReturn(Optional.of(coordinator));
     when(followupRepository
             .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
                 1L, 8L, "region-b", 8L, "effect-1"))
         .thenReturn(Optional.of(existing));
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.empty());
 
     IllegalArgumentException ex =
         assertThrows(
@@ -1056,7 +1070,7 @@ class RemoteFollowupRuntimeServiceImplTest {
   @Test
   void scheduleFollowupRejectsConflictingCoordinatorIdentityReuse() {
     RemoteCommandCoordinator existing = coordinator();
-    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenReturn(Optional.of(existing));
 
     IllegalArgumentException ex =
@@ -1108,8 +1122,25 @@ class RemoteFollowupRuntimeServiceImplTest {
   }
 
   @Test
+  void scheduleFollowupUsesOriginInstanceWhenCommandIdIsReused() {
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 8L, "cmd-1"))
+        .thenReturn(Optional.empty());
+
+    RemoteFollowupRuntimeService.ScheduleOutcome outcome =
+        service.scheduleFollowup(scheduleRequestForOrigin(8L));
+
+    assertTrue(outcome.coordinatorCreated());
+    assertTrue(outcome.followupCreated());
+    verify(coordinatorRepository)
+        .findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 8L, "cmd-1");
+    verify(coordinatorRepository)
+        .save(
+            argThat(coordinator -> Long.valueOf(8L).equals(coordinator.getOriginGameInstanceId())));
+  }
+
+  @Test
   void scheduleFollowupRejectsConflictingFollowupScopeReuse() {
-    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenReturn(Optional.empty());
     RemoteFollowup existing = followup();
     when(followupRepository
@@ -1118,7 +1149,8 @@ class RemoteFollowupRuntimeServiceImplTest {
         .thenReturn(Optional.of(existing));
     GameplayCommand command = gameplayCommand();
     command.setGameInstanceId(99L);
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.of(command));
 
     IllegalArgumentException ex =
         assertThrows(
@@ -1168,7 +1200,7 @@ class RemoteFollowupRuntimeServiceImplTest {
   @Test
   void scheduleFollowupRejectsCoordinatorMetadataRewriteOnRetry() {
     RemoteCommandCoordinator existing = coordinator();
-    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenReturn(Optional.of(existing));
 
     IllegalArgumentException ex =
@@ -1221,7 +1253,7 @@ class RemoteFollowupRuntimeServiceImplTest {
 
   @Test
   void scheduleFollowupRejectsFollowupPayloadRewriteOnRetry() {
-    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenReturn(Optional.empty());
     RemoteFollowup existing = followup();
     when(followupRepository
@@ -1229,7 +1261,8 @@ class RemoteFollowupRuntimeServiceImplTest {
                 1L, 8L, "region-b", 8L, "effect-1"))
         .thenReturn(Optional.of(existing));
     GameplayCommand command = gameplayCommand();
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.of(command));
 
     IllegalArgumentException ex =
         assertThrows(
@@ -1278,13 +1311,14 @@ class RemoteFollowupRuntimeServiceImplTest {
 
   @Test
   void scheduleFollowupAcceptsExplicitPayloadAuthorityWithoutPayloadJson() {
-    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenReturn(Optional.empty());
     when(followupRepository
             .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
                 1L, 8L, "region-b", 8L, "effect-1"))
         .thenReturn(Optional.empty());
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.empty());
 
     RemoteFollowupRuntimeService.ScheduleOutcome outcome =
         service.scheduleFollowup(
@@ -1339,13 +1373,14 @@ class RemoteFollowupRuntimeServiceImplTest {
 
   @Test
   void scheduleFollowupAcceptsTriggerScriptEventPayload() {
-    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+    when(coordinatorRepository.findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenReturn(Optional.empty());
     when(followupRepository
             .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
                 1L, 8L, "region-b", 8L, "effect-1"))
         .thenReturn(Optional.empty());
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.empty());
 
     RemoteFollowupRuntimeService.ScheduleOutcome outcome =
         service.scheduleFollowup(triggerScriptEventScheduleRequest());
@@ -1413,7 +1448,8 @@ class RemoteFollowupRuntimeServiceImplTest {
                         null)));
 
     assertEquals("payload_json kind does not match payload_kind", ex.getMessage());
-    verify(coordinatorRepository, never()).findByTenantIdAndCommandId(anyLong(), anyString());
+    verify(coordinatorRepository, never())
+        .findByTenantIdAndOriginGameInstanceIdAndCommandId(anyLong(), anyLong(), anyString());
   }
 
   @Test
@@ -1461,7 +1497,8 @@ class RemoteFollowupRuntimeServiceImplTest {
                         null)));
 
     assertEquals("payload_json must be valid JSON", ex.getMessage());
-    verify(coordinatorRepository, never()).findByTenantIdAndCommandId(anyLong(), anyString());
+    verify(coordinatorRepository, never())
+        .findByTenantIdAndOriginGameInstanceIdAndCommandId(anyLong(), anyLong(), anyString());
     verify(followupRepository, never())
         .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
             anyLong(), anyLong(), anyString(), anyLong(), anyString());
@@ -1512,7 +1549,8 @@ class RemoteFollowupRuntimeServiceImplTest {
                         1700L)));
 
     assertEquals("target_region_epoch must be positive", ex.getMessage());
-    verify(coordinatorRepository, never()).findByTenantIdAndCommandId(anyLong(), anyString());
+    verify(coordinatorRepository, never())
+        .findByTenantIdAndOriginGameInstanceIdAndCommandId(anyLong(), anyLong(), anyString());
     verify(followupRepository, never())
         .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
             anyLong(), anyLong(), anyString(), anyLong(), anyString());
@@ -1563,7 +1601,8 @@ class RemoteFollowupRuntimeServiceImplTest {
                         1700L)));
 
     assertEquals("origin_region_epoch must be positive", ex.getMessage());
-    verify(coordinatorRepository, never()).findByTenantIdAndCommandId(anyLong(), anyString());
+    verify(coordinatorRepository, never())
+        .findByTenantIdAndOriginGameInstanceIdAndCommandId(anyLong(), anyLong(), anyString());
     verify(followupRepository, never())
         .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
             anyLong(), anyLong(), anyString(), anyLong(), anyString());
@@ -1614,7 +1653,8 @@ class RemoteFollowupRuntimeServiceImplTest {
                         null)));
 
     assertEquals("trigger_script_event read_snapshot_token is required", ex.getMessage());
-    verify(coordinatorRepository, never()).findByTenantIdAndCommandId(anyLong(), anyString());
+    verify(coordinatorRepository, never())
+        .findByTenantIdAndOriginGameInstanceIdAndCommandId(anyLong(), anyLong(), anyString());
   }
 
   @Test
@@ -1662,7 +1702,8 @@ class RemoteFollowupRuntimeServiceImplTest {
                         null)));
 
     assertEquals("payload kind 'teleport' is not yet supported", ex.getMessage());
-    verify(coordinatorRepository, never()).findByTenantIdAndCommandId(anyLong(), anyString());
+    verify(coordinatorRepository, never())
+        .findByTenantIdAndOriginGameInstanceIdAndCommandId(anyLong(), anyLong(), anyString());
     verify(followupRepository, never())
         .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
             anyLong(), anyLong(), anyString(), anyLong(), anyString());
@@ -1714,7 +1755,8 @@ class RemoteFollowupRuntimeServiceImplTest {
 
     assertEquals(
         "payload command is required for kind 'enqueue_automation_command'", ex.getMessage());
-    verify(coordinatorRepository, never()).findByTenantIdAndCommandId(anyLong(), anyString());
+    verify(coordinatorRepository, never())
+        .findByTenantIdAndOriginGameInstanceIdAndCommandId(anyLong(), anyLong(), anyString());
     verify(followupRepository, never())
         .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
             anyLong(), anyLong(), anyString(), anyLong(), anyString());
@@ -2232,7 +2274,8 @@ class RemoteFollowupRuntimeServiceImplTest {
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
         .thenReturn(List.of());
     when(resultRepository.findLatestForCoordinator(coordinator)).thenReturn(Optional.of(result));
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.of(command));
     when(gameplayCommandRepository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
                 1L, 8L, "region-b", 8L, "followup-1"))
@@ -2324,7 +2367,8 @@ class RemoteFollowupRuntimeServiceImplTest {
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
         .thenReturn(List.of());
     when(resultRepository.findLatestForCoordinator(coordinator)).thenReturn(Optional.of(result));
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(originCommand));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.of(originCommand));
     when(gameplayCommandRepository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
                 1L, 8L, "region-b", 8L, "followup-1"))
@@ -2354,7 +2398,8 @@ class RemoteFollowupRuntimeServiceImplTest {
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
         .thenReturn(List.of());
     when(resultRepository.findLatestForCoordinator(coordinator)).thenReturn(Optional.of(result));
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(originCommand));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.of(originCommand));
     when(gameplayCommandRepository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
                 1L, 8L, "region-b", 8L, "followup-1"))
@@ -2393,7 +2438,8 @@ class RemoteFollowupRuntimeServiceImplTest {
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
         .thenReturn(List.of());
     when(resultRepository.findLatestForCoordinator(coordinator)).thenReturn(Optional.of(result));
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(originCommand));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.of(originCommand));
     when(gameplayCommandRepository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
                 1L, 8L, "region-b", 8L, "followup-1"))
@@ -2429,7 +2475,8 @@ class RemoteFollowupRuntimeServiceImplTest {
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
         .thenReturn(List.of());
     when(resultRepository.findLatestForCoordinator(coordinator)).thenReturn(Optional.of(result));
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(originCommand));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.of(originCommand));
     when(gameplayCommandRepository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
                 1L, 8L, "region-b", 8L, "followup-1"))
@@ -2473,7 +2520,8 @@ class RemoteFollowupRuntimeServiceImplTest {
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
         .thenReturn(List.of(coordinator));
     when(resultRepository.findLatestForCoordinator(coordinator)).thenReturn(Optional.of(result));
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.of(command));
     when(gameplayCommandRepository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
                 1L, 8L, "region-b", 8L, "followup-1"))
@@ -2516,7 +2564,8 @@ class RemoteFollowupRuntimeServiceImplTest {
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
         .thenReturn(List.of(coordinator));
     when(resultRepository.findLatestForCoordinator(coordinator)).thenReturn(Optional.of(result));
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.of(command));
     when(gameplayCommandRepository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
                 1L, 8L, "region-b", 8L, "followup-1"))
@@ -2590,7 +2639,8 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE))
         .thenReturn(List.of(coordinator));
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.of(command));
 
     int updated = service.reconcileTimeouts(1L, "region-a", 4L, 12L);
 
@@ -2622,7 +2672,8 @@ class RemoteFollowupRuntimeServiceImplTest {
     assertEquals(
         RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE, coordinator.getState());
     verify(coordinatorRepository, never()).save(any());
-    verify(gameplayCommandRepository, never()).findByCommandId(anyString());
+    verify(gameplayCommandRepository, never())
+        .findByTenantIdAndGameInstanceIdAndCommandId(anyLong(), anyLong(), anyString());
   }
 
   @Test
@@ -2642,7 +2693,8 @@ class RemoteFollowupRuntimeServiceImplTest {
     assertEquals(
         RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE, coordinator.getState());
     verify(coordinatorRepository, never()).save(any());
-    verify(gameplayCommandRepository, never()).findByCommandId(anyString());
+    verify(gameplayCommandRepository, never())
+        .findByTenantIdAndGameInstanceIdAndCommandId(anyLong(), anyLong(), anyString());
   }
 
   @Test
@@ -2831,7 +2883,8 @@ class RemoteFollowupRuntimeServiceImplTest {
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
         .thenReturn(List.of());
     when(resultRepository.findLatestForCoordinator(coordinator)).thenReturn(Optional.of(result));
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(originCommand));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.of(originCommand));
 
     int reconciled = service.reconcileResults(1L, "region-a", 4L);
 
@@ -2864,7 +2917,8 @@ class RemoteFollowupRuntimeServiceImplTest {
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
         .thenReturn(List.of());
     when(resultRepository.findLatestForCoordinator(coordinator)).thenReturn(Optional.of(result));
-    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(originCommand));
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
+        .thenReturn(Optional.of(originCommand));
     when(gameplayCommandRepository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
                 1L, 9L, "region-b", 8L, "followup-1"))
@@ -2885,12 +2939,17 @@ class RemoteFollowupRuntimeServiceImplTest {
   }
 
   private static RemoteFollowupRuntimeService.ScheduleRequest scheduleRequest() {
-    return scheduleRequest(8L, 4L, 25L);
+    return scheduleRequest(7L, 8L, 4L, 25L);
   }
 
   private static RemoteFollowupRuntimeService.ScheduleRequest scheduleRequest(
       long targetGameInstanceId) {
-    return scheduleRequest(targetGameInstanceId, 4L, 25L);
+    return scheduleRequest(7L, targetGameInstanceId, 4L, 25L);
+  }
+
+  private static RemoteFollowupRuntimeService.ScheduleRequest scheduleRequestForOrigin(
+      long originGameInstanceId) {
+    return scheduleRequest(originGameInstanceId, 8L, 4L, 25L);
   }
 
   private static RemoteFollowupRuntimeService.ScheduleRequest scheduleRequestWithOriginDeadline(
@@ -2900,11 +2959,20 @@ class RemoteFollowupRuntimeServiceImplTest {
 
   private static RemoteFollowupRuntimeService.ScheduleRequest scheduleRequest(
       long targetGameInstanceId, long originDeadlineRegionEpoch, long originDeadlineTickId) {
+    return scheduleRequest(
+        7L, targetGameInstanceId, originDeadlineRegionEpoch, originDeadlineTickId);
+  }
+
+  private static RemoteFollowupRuntimeService.ScheduleRequest scheduleRequest(
+      long originGameInstanceId,
+      long targetGameInstanceId,
+      long originDeadlineRegionEpoch,
+      long originDeadlineTickId) {
     return new RemoteFollowupRuntimeService.ScheduleRequest(
         1L,
         "cmd-1",
         "coord-1",
-        7L,
+        originGameInstanceId,
         "region-a",
         4L,
         targetGameInstanceId,

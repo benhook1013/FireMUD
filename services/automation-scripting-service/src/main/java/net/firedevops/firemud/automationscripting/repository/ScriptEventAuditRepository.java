@@ -67,7 +67,8 @@ public class ScriptEventAuditRepository {
       Long scriptPinEpoch,
       String scriptPinControlPlaneRequestId,
       String scriptEventId,
-      boolean dryRun) {
+      boolean dryRun,
+      String sourceService) {
     Long normalizedScriptPinEpoch = normalizeScriptPinEpoch(scriptPinEpoch);
     String normalizedScriptPinControlPlaneRequestId = blankToNull(scriptPinControlPlaneRequestId);
     requireCoherentPinTuple(normalizedScriptPinEpoch, normalizedScriptPinControlPlaneRequestId);
@@ -91,7 +92,8 @@ public class ScriptEventAuditRepository {
         .and(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
         .and(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH.isNotDistinctFrom(normalizedScriptPinEpoch))
         .and(SCRIPT_EVENT_AUDIT.SCRIPT_EVENT_ID.eq(scriptEventId))
-        .and(SCRIPT_EVENT_AUDIT.DRY_RUN.eq(dryRun));
+        .and(SCRIPT_EVENT_AUDIT.DRY_RUN.eq(dryRun))
+        .and(SCRIPT_EVENT_AUDIT.SOURCE_SERVICE.eq(sourceService));
   }
 
   private static Condition handlerIdentityCondition(ScriptEventAudit entity) {
@@ -115,7 +117,8 @@ public class ScriptEventAuditRepository {
         entity.getScriptPinEpoch(),
         entity.getScriptPinControlPlaneRequestId(),
         entity.getScriptEventId(),
-        entity.isDryRun());
+        entity.isDryRun(),
+        entity.getSourceService());
   }
 
   public boolean
@@ -136,7 +139,8 @@ public class ScriptEventAuditRepository {
           Long scriptPinEpoch,
           String scriptPinControlPlaneRequestId,
           String scriptEventId,
-          boolean dryRun) {
+          boolean dryRun,
+          String sourceService) {
     return existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndPluginIdAndPluginVersionIdAndBindingIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
         tenantId,
         gameInstanceId,
@@ -157,7 +161,8 @@ public class ScriptEventAuditRepository {
         scriptPinEpoch,
         scriptPinControlPlaneRequestId,
         scriptEventId,
-        dryRun);
+        dryRun,
+        sourceService);
   }
 
   public boolean
@@ -181,7 +186,8 @@ public class ScriptEventAuditRepository {
           Long scriptPinEpoch,
           String scriptPinControlPlaneRequestId,
           String scriptEventId,
-          boolean dryRun) {
+          boolean dryRun,
+          String sourceService) {
     return dsl.fetchExists(
         SCRIPT_EVENT_AUDIT,
         handlerIdentityCondition(
@@ -204,7 +210,8 @@ public class ScriptEventAuditRepository {
                 scriptPinEpoch,
                 scriptPinControlPlaneRequestId,
                 scriptEventId,
-                dryRun)
+                dryRun,
+                sourceService)
             .and(
                 SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(
                     blankToNull(scriptPinControlPlaneRequestId))));
@@ -301,6 +308,7 @@ public class ScriptEventAuditRepository {
     }
     fields.add(SCRIPT_EVENT_AUDIT.SCRIPT_EVENT_ID);
     fields.add(SCRIPT_EVENT_AUDIT.DRY_RUN);
+    fields.add(SCRIPT_EVENT_AUDIT.SOURCE_SERVICE);
     return fields.toArray(Field<?>[]::new);
   }
 
