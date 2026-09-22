@@ -358,8 +358,7 @@ class GameLogicGrpcServiceTest {
     withPeer(
         WRONG_PEER,
         () ->
-            assertEquals(
-                "PERMISSION_DENIED", invokeDigest(service, request).getError().getCode()));
+            assertEquals("PERMISSION_DENIED", invokeDigest(service, request).getError().getCode()));
 
     withPeer(
         new GrpcPeerIdentity(
