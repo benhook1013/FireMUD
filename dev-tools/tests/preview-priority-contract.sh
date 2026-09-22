@@ -111,20 +111,44 @@ if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
       exit 0
     fi
   fi
-  snapshot_head="${FAKE_PR_901_HEAD:-}"
-  snapshot_requested_head="${FAKE_PR_901_REQUESTED_HEAD:-}"
+  canonical_head() {
+    case "${1:-}" in
+      head-901) printf '%s' aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;;
+      *) printf '%s' "${1:-}" ;;
+    esac
+  }
+  snapshot_head="$(canonical_head "${FAKE_PR_901_HEAD:-}")"
+  snapshot_requested_head="$(canonical_head "${FAKE_PR_901_REQUESTED_HEAD:-}")"
   if [[ "$count" -gt 1 ]]; then
     if [[ -v FAKE_PR_901_RECHECK_HEAD ]]; then
-      snapshot_head="$FAKE_PR_901_RECHECK_HEAD"
+      snapshot_head="$(canonical_head "$FAKE_PR_901_RECHECK_HEAD")"
     fi
     if [[ -v FAKE_PR_901_RECHECK_REQUESTED_HEAD ]]; then
-      snapshot_requested_head="$FAKE_PR_901_RECHECK_REQUESTED_HEAD"
+      snapshot_requested_head="$(canonical_head "$FAKE_PR_901_RECHECK_REQUESTED_HEAD")"
     fi
   fi
+  snapshot_base="${FAKE_PR_901_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
+  snapshot_merge="${FAKE_PR_901_MERGE_SHA:-cccccccccccccccccccccccccccccccccccccccc}"
+  snapshot_image="${FAKE_PR_901_IMAGE_TAG:-$snapshot_base}"
+  if [[ -n "$snapshot_requested_head" ]]; then
+    snapshot_requested_base="${FAKE_PR_901_REQUESTED_BASE_SHA:-$snapshot_base}"
+    snapshot_requested_merge="${FAKE_PR_901_REQUESTED_MERGE_SHA:-$snapshot_merge}"
+    snapshot_requested_image="${FAKE_PR_901_REQUESTED_IMAGE_TAG:-$snapshot_image}"
+  else
+    snapshot_requested_base=""
+    snapshot_requested_merge=""
+    snapshot_requested_image=""
+  fi
   jq -cn \
+    --arg base "$snapshot_base" \
     --arg head "$snapshot_head" \
+    --arg merge "$snapshot_merge" \
+    --arg image "$snapshot_image" \
+    --arg requested_base "$snapshot_requested_base" \
     --arg requested_head "$snapshot_requested_head" \
-    '{metadata:{name:"pr-901",resourceVersion:"rv-901",annotations:{"firemud.dev/last-preview-head-sha":$head,"firemud.dev/requested-preview-head-sha":$requested_head}}}'
+    --arg requested_merge "$snapshot_requested_merge" \
+    --arg requested_image "$snapshot_requested_image" \
+    '{metadata:{name:"pr-901",resourceVersion:"rv-901",annotations:{"firemud.dev/last-preview-base-sha":$base,"firemud.dev/last-preview-head-sha":$head,"firemud.dev/last-preview-merge-sha":$merge,"firemud.dev/last-preview-image-tag":$image,"firemud.dev/requested-preview-base-sha":$requested_base,"firemud.dev/requested-preview-head-sha":$requested_head,"firemud.dev/requested-preview-merge-sha":$requested_merge,"firemud.dev/requested-preview-image-tag":$requested_image}}}'
   exit 0
 fi
 if [[ "$1" == get && "$2" == namespace &&
@@ -358,6 +382,28 @@ if [[ "$*" == *"repos/example/FireMUD/dispatches"* ]]; then
   exit 0
 fi
 case "$resource" in
+  */git/ref/heads/*)
+    if [[ "$has_jq" == true ]]; then
+      printf '%s' bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    else
+      printf '%s' '{"object":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
+    fi
+    ;;
+  */pulls/901/files\?per_page=100)
+    printf '%s' '[[{"filename":"README.md"}]]'
+    ;;
+  */pulls/101/files\?per_page=100|*/pulls/102/files\?per_page=100)
+    printf '%s' '[[{"filename":"README.md"}]]'
+    ;;
+  */commits/*)
+    commit_head="${FAKE_PR_901_HEAD:-head-901}"
+    case "$commit_head" in
+      head-901|stale-head) commit_head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;;
+    esac
+    jq -cn \
+      --arg head "$commit_head" \
+      '{sha:"cccccccccccccccccccccccccccccccccccccccc",parents:[{sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},{sha:$head}]}'
+    ;;
   */actions/runs/42)
     if [[ "$has_jq" != true ]]; then
       printf '%s' '{"conclusion":"success","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","path":".github/workflows/preview.yml","event":"pull_request_target","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900}]}'
@@ -402,7 +448,9 @@ case "$resource" in
         --arg base "${FAKE_TARGET_BASE_REF:-develop}" \
         --arg author "${FAKE_TARGET_AUTHOR:-human}" \
         --argjson labels "$labels_json" \
-        '{state: $state, head: {sha: $head, repo: {full_name: $repository}}, base: {ref: $base}, user: {login: $author}, labels: $labels}'
+        --arg base_sha bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+        --arg merge_sha cccccccccccccccccccccccccccccccccccccccc \
+        '{state: $state, head: {sha: $head, repo: {full_name: $repository}}, base: {ref: $base, sha: $base_sha, repo: {full_name: "example/FireMUD"}}, merge_commit_sha: $merge_sha, mergeable: true, mergeable_state: "clean", user: {login: $author}, labels: $labels}'
       exit 0
     fi
     if [[ "${FAKE_TARGET_JQ_QUERY_FAIL:-false}" == true ]]; then
@@ -418,6 +466,21 @@ case "$resource" in
       priority=false
     fi
     printf '%s\t%s\t%s\n' "${FAKE_TARGET_STATE:-open}" "$FAKE_TARGET_HEAD" "$(fake_labels_json "$priority" "$labels_valid" | base64 | tr -d '\n')"
+    ;;
+  */pulls/901)
+    live_head="${FAKE_PR_901_HEAD:-head-901}"
+    case "$live_head" in
+      head-901|stale-head) live_head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;;
+    esac
+    jq -cn \
+      --arg head "$live_head" \
+      --arg base_ref "${FAKE_PR_901_BASE_REF:-develop}" \
+      --arg head_repository "${FAKE_PR_901_HEAD_REPOSITORY:-example/FireMUD}" \
+      --arg base_repository "${FAKE_PR_901_BASE_REPOSITORY:-example/FireMUD}" \
+      --arg mergeable "${FAKE_PR_901_MERGEABLE:-true}" \
+      --arg mergeable_state "${FAKE_PR_901_MERGEABLE_STATE:-clean}" \
+      --arg priority "${FAKE_PR_901_PRIORITY:-true}" \
+      '{state:"open",head:{sha:$head,repo:{full_name:$head_repository}},base:{ref:$base_ref,repo:{full_name:$base_repository}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",changed_files:1,mergeable:($mergeable == "true"),mergeable_state:$mergeable_state,user:{login:"human"},labels:(if $priority == "true" then [{name:"preview:priority"}] else [] end)}'
     ;;
   */pulls/101)
     if [[ -n "${FAKE_PRUNE_QUERY_LOG:-}" ]]; then
@@ -437,6 +500,20 @@ case "$resource" in
         previous="$arg"
       done
       jq -r "$jq_query" <<<'{invalid-json'
+      exit 0
+    fi
+    if [[ "$has_jq" != true ]]; then
+      prune_state="open"
+      prune_base_ref="develop"
+      if [[ -n "${FAKE_PRUNE_METADATA:-}" ]]; then
+        IFS=$'\t' read -r prune_state prune_base_ref _ <<<"${FAKE_PRUNE_METADATA%%$'\n'*}"
+      fi
+      jq -cn \
+        --arg state "$prune_state" \
+        --arg base_ref "$prune_base_ref" \
+        --arg head_repository "${FAKE_PRUNE_HEAD_REPOSITORY:-example/FireMUD}" \
+        --arg base_repository "${FAKE_PRUNE_BASE_REPOSITORY:-example/FireMUD}" \
+        '{state:$state,head:{sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",repo:{full_name:$head_repository}},base:{ref:$base_ref,repo:{full_name:$base_repository}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",changed_files:1,mergeable:true,mergeable_state:"clean",user:{login:"human"},labels:[]}'
       exit 0
     fi
     if [[ -n "${FAKE_PRUNE_METADATA:-}" ]]; then
@@ -459,6 +536,20 @@ case "$resource" in
   */pulls/102)
     if [[ -n "${FAKE_PRUNE_QUERY_LOG:-}" ]]; then
       printf '%s\n' "$resource" >> "$FAKE_PRUNE_QUERY_LOG"
+    fi
+    if [[ "$has_jq" != true ]]; then
+      prune_state="open"
+      prune_base_ref="develop"
+      if [[ -n "${FAKE_PRUNE_METADATA:-}" ]]; then
+        IFS=$'\t' read -r prune_state prune_base_ref _ <<<"${FAKE_PRUNE_METADATA%%$'\n'*}"
+      fi
+      jq -cn \
+        --arg state "$prune_state" \
+        --arg base_ref "$prune_base_ref" \
+        --arg head_repository "${FAKE_PRUNE_HEAD_REPOSITORY:-example/FireMUD}" \
+        --arg base_repository "${FAKE_PRUNE_BASE_REPOSITORY:-example/FireMUD}" \
+        '{state:$state,head:{sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",repo:{full_name:$head_repository}},base:{ref:$base_ref,repo:{full_name:$base_repository}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",changed_files:1,mergeable:true,mergeable_state:"clean",user:{login:"human"},labels:[]}'
+      exit 0
     fi
     if [[ "${FAKE_PRUNE_MULTI_TEST:-false}" == true ]]; then
       printf 'open\tfeature/stack\thuman\t%s\n' "$(fake_labels_json "${FAKE_PR_102_PRIORITY:-true}" valid | base64 | tr -d '\n')"
@@ -641,7 +732,7 @@ export HOSTED_IDENTITY_WAIT_SCRIPT="$TEMP_DIR/identity-wait"
 export HOSTED_IDENTITY_REQUESTER_KUBECONFIG="$TEMP_DIR/requester.kubeconfig"
 touch "$HOSTED_IDENTITY_REQUESTER_KUBECONFIG"
 export FAKE_TARGET_HEAD="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-priority_candidate_head="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+priority_candidate_head="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
 priority_labels_base64="$(printf '%s' '[{"name":"preview:priority"}]' | base64 | tr -d '\n')"
 adversarial_priority_labels_base64="$(printf '%s' '[{"name":"preview:priority"},{"name":"quote\"slash\\label"}]' | base64 | tr -d '\n')"
@@ -677,11 +768,16 @@ reset_case() {
   export FAKE_PRIORITY_CANDIDATE_NAMESPACE_ABSENT=false
   export FAKE_ACTIVE_PREVIEW_RUNS_JSON='[]'
   export FAKE_PR_901_OWNER=''
-  export FAKE_PR_901_HEAD=''
+  export FAKE_PR_901_HEAD="$priority_candidate_head"
+  export FAKE_PR_901_BASE_REF=develop
+  export FAKE_PR_901_PRIORITY=true
   export FAKE_PR_901_REQUESTED_HEAD=''
   export FAKE_PR_901_NAMESPACE_ABSENT=false
   export FAKE_PR_901_NAMESPACE_ABSENT_ON_RECHECK=false
-  unset FAKE_PR_901_RECHECK_HEAD FAKE_PR_901_RECHECK_REQUESTED_HEAD
+  unset FAKE_PR_901_RECHECK_HEAD FAKE_PR_901_RECHECK_REQUESTED_HEAD \
+    FAKE_PR_901_BASE_SHA FAKE_PR_901_MERGE_SHA FAKE_PR_901_IMAGE_TAG \
+    FAKE_PR_901_REQUESTED_BASE_SHA FAKE_PR_901_REQUESTED_MERGE_SHA \
+    FAKE_PR_901_REQUESTED_IMAGE_TAG
   export FAKE_NAMESPACE_SNAPSHOT_ERROR=false
   export FAKE_NAMESPACE_SNAPSHOT_RECHECK_ERROR=false
   export FAKE_NAMESPACE_SNAPSHOT_PARSE_FAIL=false
@@ -699,6 +795,8 @@ reset_case() {
   export FAKE_COMMENT_JSON=''
   export FAKE_PREVIOUS_COMMENT_BODY=''
   export FAKE_PRUNE_METADATA=''
+  export FAKE_PRUNE_HEAD_REPOSITORY=example/FireMUD
+  export FAKE_PRUNE_BASE_REPOSITORY=example/FireMUD
   export FAKE_PRUNE_QUERY_FAIL=false
   export FAKE_PRUNE_JQ_FAIL=false
   export FAKE_IDENTITY_REQUEST_FAIL=false
@@ -1130,8 +1228,7 @@ test ! -e "$FAKE_DELETE_LOG"
 for ineligible_priority_row in \
   "901\thead-901\tother/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n" \
   "901\thead-901\tother/FireMUD\thuman\tdevelop\topen\t${invalid_json_labels_base64}\n" \
-  "901\t${priority_candidate_head}\texample/FireMUD\tdependabot[bot]\tdevelop\topen\t${priority_labels_base64}\n" \
-  "901\t${priority_candidate_head}\texample/FireMUD\thuman\tfeature/stack\topen\t${priority_labels_base64}\n"
+  "901\t${priority_candidate_head}\texample/FireMUD\tdependabot[bot]\tdevelop\topen\t${priority_labels_base64}\n"
 do
   reset_case
   export FAKE_TARGET_PRIORITY=false
@@ -1139,6 +1236,18 @@ do
   bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"
   test ! -e "$FAKE_DELETE_LOG"
 done
+
+# A maintainer-labeled, same-repository stacked PR is a valid priority
+# candidate.  Its live base is revalidated before ordinary capacity is yielded.
+reset_case
+export FAKE_TARGET_PRIORITY=false
+export FAKE_PR_901_BASE_REF=feature/stack
+export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tfeature/stack\topen\t${priority_labels_base64}\n"
+if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
+  echo "ordinary allocation did not yield to a labeled same-repository stacked PR" >&2
+  exit 1
+fi
+test ! -e "$FAKE_DELETE_LOG"
 
 valid_open_pr_row="901"$'\t'"${priority_candidate_head}"$'\t'"example/FireMUD"$'\t'"human"$'\t'"develop"$'\t'"open"$'\t'"${priority_labels_base64}"
 for missing_identity_field in 1 2 4 5 6 7; do
@@ -1223,7 +1332,10 @@ for target_contract_case in repository head base author metadata; do
   case "$target_contract_case" in
     repository) export FAKE_TARGET_REPOSITORY=other/FireMUD ;;
     head) expected_target_head=other-head ;;
-    base) export FAKE_TARGET_BASE_REF=feature/stack ;;
+    base)
+      export FAKE_TARGET_BASE_REF=feature/stack
+      export FAKE_TARGET_PRIORITY=false
+      ;;
     author) export FAKE_TARGET_AUTHOR='renovate[bot]' ;;
     metadata) export FAKE_TARGET_JQ_QUERY_FAIL=true ;;
   esac
@@ -1304,8 +1416,10 @@ bash "$PRUNER" --apply --retire-terminal-identities \
   >"$TEMP_DIR/recover-observed-and-absent.out"
 # PR #101 is evaluated once by the namespace loop; stranded recovery must skip
 # that observed runtime without a second eligibility query.
-test "$(grep -Fxc 'repos/example/FireMUD/pulls/101' "$FAKE_PRUNE_QUERY_LOG")" -eq 1
-test "$(grep -Fxc 'repos/example/FireMUD/pulls/102' "$FAKE_PRUNE_QUERY_LOG")" -eq 1
+# Retention reads the compact eligibility record and then independently
+# revalidates both repository owners from the live PR object.
+test "$(grep -Fxc 'repos/example/FireMUD/pulls/101' "$FAKE_PRUNE_QUERY_LOG")" -eq 2
+test "$(grep -Fxc 'repos/example/FireMUD/pulls/102' "$FAKE_PRUNE_QUERY_LOG")" -eq 2
 test "$(<"$FAKE_OPERATION_SEQUENCE")" = $'runtime-check\nidentity-request\nidentity-wait\nidentity-delete'
 grep -Fqx 'pr-102 Retired' "$FAKE_IDENTITY_REQUEST_LOG"
 if grep -Fq 'pr-101' "$FAKE_IDENTITY_REQUEST_LOG"; then
@@ -1878,13 +1992,21 @@ trusted_workflow="$ROOT_DIR/.github/workflows/hosted-identity-request.yml"
 reconciler_workflow="$ROOT_DIR/.github/workflows/preview-reconciler.yml"
 eligibility_script="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
 RECONCILER_RUN="$TEMP_DIR/preview-reconciler.sh"
+preview_base_sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+preview_head_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+preview_merge_sha=cccccccccccccccccccccccccccccccccccccccc
+# The ordinary fake PR changes only README.md, so the resolver preserves the
+# proven develop base image. A separate stacked case below proves that an
+# unpublished feature-branch SHA is never selected as an image identity.
+preview_image_tag="${preview_base_sha}"
+stacked_preview_image_tag="pr-merge-${preview_merge_sha}"
 export DEFAULT_BRANCH=develop
 extract_workflow_step_run \
   "$reconciler_workflow" \
   "Dispatch preview deploys for drifted PRs" \
   "$RECONCILER_RUN"
 grep -Fq 'set -euo pipefail' "$RECONCILER_RUN"
-grep -Fq 'repair_requested_head() {' "$RECONCILER_RUN"
+grep -Fq 'repair_requested_tuple() {' "$RECONCILER_RUN"
 for repair_status_assignment in \
   'readonly repair_success=0' \
   'readonly repair_skip=10' \
@@ -1896,7 +2018,7 @@ done
 grep -Fq 'case "$repair_status" in' "$RECONCILER_RUN"
 grep -Fq -- '--json databaseId,status,displayTitle' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert the active-run lookup is fenced to the candidate dispatch title.
-grep -Fq -- '--arg run_name "Preview dispatch pr-${pr_number}-${head_sha}"' "$RECONCILER_RUN"
+grep -Fq -- '--arg run_name "Preview dispatch pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}"' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert the literal jq display-title comparison in workflow source.
 grep -Fq -- '.displayTitle == $run_name' "$RECONCILER_RUN"
 for active_status in requested queued in_progress waiting pending; do
@@ -1917,12 +2039,26 @@ reconciler_valid_output="$TEMP_DIR/reconciler-valid.out"
     PREVIEW_MAX_ACTIVE=3 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_valid_output"
-if ! grep -qx 'Preview pr-901 already aligned to head-901' "$reconciler_valid_output"; then
+if ! grep -Fqx "Preview pr-901 already aligned to ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}" "$reconciler_valid_output"; then
   echo "reconciler did not preserve an aligned preview with transported labels" >&2
   sed 's/^/reconciler output: /' "$reconciler_valid_output" >&2
   exit 1
 fi
 test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 1
+
+reset_case
+reconciler_stacked_output="$TEMP_DIR/reconciler-stacked.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tfeature/stack\topen\t${priority_labels_base64}\n" \
+    FAKE_PR_901_BASE_REF=feature/stack \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=head-901 \
+    PREVIEW_MAX_ACTIVE=3 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_stacked_output"
+grep -Fqx "Dispatching preview render for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${stacked_preview_image_tag}) from trusted ref develop" \
+  "$reconciler_stacked_output"
 
 reset_case
 reconciler_empty_deployed_output="$TEMP_DIR/reconciler-empty-deployed.out"
@@ -1934,7 +2070,7 @@ reconciler_empty_deployed_output="$TEMP_DIR/reconciler-empty-deployed.out"
     PREVIEW_MAX_ACTIVE=3 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_empty_deployed_output"
-grep -qx 'Dispatching preview render for PR #901 (head-901) from trusted ref develop' \
+grep -Fqx "Dispatching preview render for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}) from trusted ref develop" \
   "$reconciler_empty_deployed_output"
 test ! -e "$FAKE_ANNOTATE_LOG"
 test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 1
@@ -1949,7 +2085,7 @@ reconciler_namespace_absent_output="$TEMP_DIR/reconciler-namespace-absent.out"
     PREVIEW_MAX_ACTIVE=3 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_namespace_absent_output"
-grep -qx 'Dispatching preview render for PR #901 (head-901) from trusted ref develop' \
+grep -Fqx "Dispatching preview render for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}) from trusted ref develop" \
   "$reconciler_namespace_absent_output"
 test ! -e "$FAKE_ANNOTATE_LOG"
 test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 1
@@ -1960,6 +2096,7 @@ reconciler_unvalidated_priority_output="$TEMP_DIR/reconciler-unvalidated-priorit
 (
   cd "$ROOT_DIR"
   FAKE_OPEN_PRIORITY_ROWS="0\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_PRIORITY=false \
     FAKE_PR_901_NAMESPACE_ABSENT=true \
     PREVIEW_MAX_ACTIVE=1 \
     bash "$RECONCILER_RUN"
@@ -1977,7 +2114,7 @@ reconciler_validated_priority_output="$TEMP_DIR/reconciler-validated-priority.ou
     PREVIEW_MAX_ACTIVE=1 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_validated_priority_output"
-grep -qx 'Dispatching preview render for PR #901 (head-901) from trusted ref develop' \
+grep -Fqx "Dispatching preview render for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}) from trusted ref develop" \
   "$reconciler_validated_priority_output"
 grep -Fq \
   'repos/example/FireMUD/dispatches -f event_type=preview-deploy' \
@@ -1989,11 +2126,11 @@ reconciler_stale_active_run_output="$TEMP_DIR/reconciler-stale-active-run.out"
   cd "$ROOT_DIR"
   FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_NAMESPACE_ABSENT=true \
-    FAKE_ACTIVE_PREVIEW_RUNS_JSON='[{"databaseId":41,"status":"in_progress","displayTitle":"Preview dispatch pr-901-stale-head"}]' \
+    FAKE_ACTIVE_PREVIEW_RUNS_JSON='[{"databaseId":41,"status":"in_progress","displayTitle":"Preview dispatch pr-901-base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-head-deadbeef-merge-cccccccccccccccccccccccccccccccccccccccc"}]' \
     PREVIEW_MAX_ACTIVE=3 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_stale_active_run_output"
-grep -qx 'Dispatching preview render for PR #901 (head-901) from trusted ref develop' \
+grep -Fqx "Dispatching preview render for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}) from trusted ref develop" \
   "$reconciler_stale_active_run_output"
 grep -Fq \
   'repos/example/FireMUD/dispatches -f event_type=preview-deploy' \
@@ -2005,12 +2142,12 @@ reconciler_current_active_run_output="$TEMP_DIR/reconciler-current-active-run.ou
   cd "$ROOT_DIR"
   FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_NAMESPACE_ABSENT=true \
-    FAKE_ACTIVE_PREVIEW_RUNS_JSON='[{"databaseId":42,"status":"queued","displayTitle":"Preview dispatch pr-901-head-901"}]' \
+    FAKE_ACTIVE_PREVIEW_RUNS_JSON='[{"databaseId":42,"status":"queued","displayTitle":"Preview dispatch pr-901-base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-merge-cccccccccccccccccccccccccccccccccccccccc"}]' \
     PREVIEW_MAX_ACTIVE=3 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_current_active_run_output"
 grep -qx \
-  'Skipping dispatch for PR #901: preview run 42 for head head-901 is already queued or in progress.' \
+  "Skipping dispatch for PR #901: preview run 42 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
   "$reconciler_current_active_run_output"
 test ! -e "$FAKE_DISPATCH_LOG"
 
@@ -2025,7 +2162,7 @@ reconciler_namespace_absent_on_recheck_output="$TEMP_DIR/reconciler-namespace-ab
     PREVIEW_MAX_ACTIVE=3 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_namespace_absent_on_recheck_output"
-grep -qx 'Dispatching preview render for PR #901 (head-901) from trusted ref develop' \
+grep -Fqx "Dispatching preview render for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}) from trusted ref develop" \
   "$reconciler_namespace_absent_on_recheck_output"
 test ! -e "$FAKE_ANNOTATE_LOG"
 test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
@@ -2060,7 +2197,7 @@ reconciler_namespace_parse_output="$TEMP_DIR/reconciler-namespace-parse.out"
 ) > "$reconciler_namespace_parse_output" 2>&1
 grep -qx 'Skipping PR #901: unable to parse namespace pr-901 snapshot.' \
   "$reconciler_namespace_parse_output"
-grep -qx 'Dispatching preview render for PR #101 (new-head-101) from trusted ref develop' \
+grep -Fqx "Dispatching preview render for PR #101 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}) from trusted ref develop" \
   "$reconciler_namespace_parse_output"
 grep -Fq \
   'repos/example/FireMUD/dispatches -f event_type=preview-deploy' \
@@ -2079,7 +2216,7 @@ reconciler_namespace_recheck_parse_output="$TEMP_DIR/reconciler-namespace-rechec
 ) > "$reconciler_namespace_recheck_parse_output" 2>&1
 grep -qx 'Skipping PR #901: unable to parse namespace pr-901 recheck.' \
   "$reconciler_namespace_recheck_parse_output"
-grep -qx 'Dispatching preview render for PR #101 (new-head-101) from trusted ref develop' \
+grep -Fqx "Dispatching preview render for PR #101 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}) from trusted ref develop" \
   "$reconciler_namespace_recheck_parse_output"
 grep -Fq \
   'repos/example/FireMUD/dispatches -f event_type=preview-deploy' \
@@ -2095,10 +2232,10 @@ reconciler_missing_requested_output="$TEMP_DIR/reconciler-missing-requested.out"
     PREVIEW_MAX_ACTIVE=3 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_missing_requested_output"
-grep -qx 'Repaired missing requested head for aligned preview pr-901' \
+grep -qx 'Repaired missing requested preview tuple for pr-901' \
   "$reconciler_missing_requested_output"
 grep -Fqx \
-  'annotate namespace pr-901 firemud.dev/requested-preview-head-sha=head-901 --overwrite --resource-version rv-901' \
+  "annotate namespace pr-901 firemud.dev/requested-preview-base-sha=${preview_base_sha} firemud.dev/requested-preview-head-sha=${preview_head_sha} firemud.dev/requested-preview-merge-sha=${preview_merge_sha} firemud.dev/requested-preview-image-tag=${preview_image_tag} --overwrite --resource-version rv-901" \
   "$FAKE_ANNOTATE_LOG"
 test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
 test "$(grep -Fc 'get namespace pr-901 --ignore-not-found -o json' "$FAKE_NAMESPACE_SNAPSHOT_LOG")" -eq 2
@@ -2114,10 +2251,10 @@ reconciler_stale_requested_output="$TEMP_DIR/reconciler-stale-requested.out"
     PREVIEW_MAX_ACTIVE=3 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_stale_requested_output"
-grep -qx 'Repaired stale requested head for aligned preview pr-901' \
+grep -qx 'Repaired stale requested preview tuple for pr-901' \
   "$reconciler_stale_requested_output"
 grep -Fqx \
-  'annotate namespace pr-901 firemud.dev/requested-preview-head-sha=head-901 --overwrite --resource-version rv-901' \
+  "annotate namespace pr-901 firemud.dev/requested-preview-base-sha=${preview_base_sha} firemud.dev/requested-preview-head-sha=${preview_head_sha} firemud.dev/requested-preview-merge-sha=${preview_merge_sha} firemud.dev/requested-preview-image-tag=${preview_image_tag} --overwrite --resource-version rv-901" \
   "$FAKE_ANNOTATE_LOG"
 test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
 test "$(grep -Fc 'get namespace pr-901 --ignore-not-found -o json' "$FAKE_NAMESPACE_SNAPSHOT_LOG")" -eq 2
@@ -2138,7 +2275,7 @@ reconciler_annotation_deleted_output="$TEMP_DIR/reconciler-annotation-deleted.ou
 grep -qx 'Namespace pr-901 was deleted during requested-head repair; dispatching replacement.' \
   "$reconciler_annotation_deleted_output"
 grep -Fqx \
-  'annotate namespace pr-901 firemud.dev/requested-preview-head-sha=head-901 --overwrite --resource-version rv-901' \
+  "annotate namespace pr-901 firemud.dev/requested-preview-base-sha=${preview_base_sha} firemud.dev/requested-preview-head-sha=${preview_head_sha} firemud.dev/requested-preview-merge-sha=${preview_merge_sha} firemud.dev/requested-preview-image-tag=${preview_image_tag} --overwrite --resource-version rv-901" \
   "$FAKE_ANNOTATE_LOG"
 test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 3
 grep -Fq \
@@ -2159,7 +2296,7 @@ reconciler_annotation_existing_output="$TEMP_DIR/reconciler-annotation-existing.
 grep -qx \
   'Skipping PR #901: unable to annotate namespace pr-901; namespace still exists.' \
   "$reconciler_annotation_existing_output"
-grep -qx 'Dispatching preview render for PR #101 (new-head-101) from trusted ref develop' \
+grep -Fqx "Dispatching preview render for PR #101 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}) from trusted ref develop" \
   "$reconciler_annotation_existing_output"
 grep -Fq \
   'repos/example/FireMUD/dispatches -f event_type=preview-deploy' \
@@ -2219,7 +2356,7 @@ reconciler_changed_requested_output="$TEMP_DIR/reconciler-changed-requested.out"
     bash "$RECONCILER_RUN"
 ) > "$reconciler_changed_requested_output"
 grep -qx \
-  'Skipping preview repair for PR #901: requested head changed during annotation repair check.' \
+  'Skipping preview repair for PR #901: requested preview tuple changed during annotation repair check.' \
   "$reconciler_changed_requested_output"
 test ! -e "$FAKE_ANNOTATE_LOG"
 test ! -e "$FAKE_DISPATCH_LOG"
@@ -2237,7 +2374,7 @@ reconciler_changed_stale_requested_output="$TEMP_DIR/reconciler-changed-stale-re
     bash "$RECONCILER_RUN"
 ) > "$reconciler_changed_stale_requested_output"
 grep -qx \
-  'Skipping preview repair for PR #901: requested head changed during annotation repair check.' \
+  'Skipping preview repair for PR #901: requested preview tuple changed during annotation repair check.' \
   "$reconciler_changed_stale_requested_output"
 test ! -e "$FAKE_ANNOTATE_LOG"
 test ! -e "$FAKE_DISPATCH_LOG"
@@ -2255,7 +2392,7 @@ reconciler_changed_deployed_output="$TEMP_DIR/reconciler-changed-deployed.out"
     bash "$RECONCILER_RUN"
 ) > "$reconciler_changed_deployed_output"
 grep -qx \
-  'Skipping preview repair for PR #901: deployed head changed during annotation repair check.' \
+  'Skipping preview repair for PR #901: deployed preview tuple changed during annotation repair check.' \
   "$reconciler_changed_deployed_output"
 test ! -e "$FAKE_ANNOTATE_LOG"
 test ! -e "$FAKE_DISPATCH_LOG"
@@ -2623,7 +2760,7 @@ grep -Fq 'kubectl get namespace "${namespace}" --ignore-not-found -o json' \
 # shellcheck disable=SC2016 # Assert the initial and fresh namespace snapshots.
 test "$(grep -Fc 'kubectl get namespace "${namespace}" --ignore-not-found -o json' "$reconciler_workflow")" -eq 3
 # shellcheck disable=SC2016 # Assert the fresh namespace snapshot fences repair.
-grep -Fq 'requested head changed during annotation repair check' "$reconciler_workflow"
+grep -Fq 'requested preview tuple changed during annotation repair check' "$reconciler_workflow"
 # The janitor keeps explicit kubeconfig selection on the consuming kubectl steps;
 # no preceding restore step may imply a different runner-wide kubeconfig.
 if grep -Fq 'Restore preview runtime kubeconfig' "$janitor_workflow"; then

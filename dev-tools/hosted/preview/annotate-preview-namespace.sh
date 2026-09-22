@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 7 ]]; then
-  echo "usage: $0 <namespace> <pr_number> <head_sha> <image_tag> <private|public> <telnet_port> <allocation_timestamp>" >&2
+if [[ $# -ne 9 ]]; then
+  echo "usage: $0 <namespace> <pr_number> <base_sha> <head_sha> <merge_sha> <image_tag> <private|public> <telnet_port> <allocation_timestamp>" >&2
   exit 1
 fi
 
 namespace="$1"
 pr_number="$2"
-head_sha="$3"
-image_tag="$4"
-exposure_mode="$5"
-telnet_port="$6"
-allocation_timestamp="$7"
+base_sha="$3"
+head_sha="$4"
+merge_sha="$5"
+image_tag="$6"
+exposure_mode="$7"
+telnet_port="$8"
+allocation_timestamp="$9"
 
 if ! [[ "$pr_number" =~ ^[1-9][0-9]{0,50}$ ]]; then
   echo "pr_number must match [1-9][0-9]{0,50}" >&2
@@ -22,10 +24,13 @@ if [[ "$namespace" != "pr-${pr_number}" ]]; then
   echo "namespace must equal pr-${pr_number}" >&2
   exit 1
 fi
-if ! [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
-  echo "head_sha must be exactly 40 lowercase hexadecimal characters" >&2
-  exit 1
-fi
+for sha_name in base_sha head_sha merge_sha; do
+  sha_value="${!sha_name}"
+  if ! [[ "$sha_value" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "${sha_name} must be exactly 40 lowercase hexadecimal characters" >&2
+    exit 1
+  fi
+done
 if ! [[ "$image_tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
   echo "image_tag must be a non-empty canonical image tag of at most 128 safe characters" >&2
   exit 1
@@ -51,8 +56,10 @@ fi
 sync_timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 annotations=(
+  "firemud.dev/requested-preview-base-sha=${base_sha}" \
   "firemud.dev/requested-preview-head-sha=${head_sha}" \
-  "firemud.dev/last-preview-image-tag=${image_tag}" \
+  "firemud.dev/requested-preview-merge-sha=${merge_sha}" \
+  "firemud.dev/requested-preview-image-tag=${image_tag}" \
   "firemud.dev/preview-allocated-at=${allocation_timestamp}" \
   "firemud.dev/last-preview-sync-at=${sync_timestamp}"
 )

@@ -46,6 +46,39 @@ refuse_preview() {
 if ! pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}")"; then
   refuse_preview "current pull request metadata is unavailable"
 fi
+if [[ "$mode" == deploy ]]; then
+  if ! jq -e 'type == "object"' <<<"$pull_request_json" >/dev/null 2>&1; then
+    refuse_preview "current pull request metadata is malformed"
+  fi
+  base_ref="$(jq -er '.base.ref // empty' <<<"$pull_request_json" 2>/dev/null || true)"
+  base_repository="$(jq -er '.base.repo.full_name // empty' <<<"$pull_request_json" 2>/dev/null || true)"
+  base_sha="$(jq -er '.base.sha // empty' <<<"$pull_request_json" 2>/dev/null || true)"
+  if [[ -z "$base_ref" || -z "$base_repository" || -z "$base_sha" ]]; then
+    refuse_preview "current pull request base metadata is missing"
+  fi
+  if [[ "$base_repository" != "$GITHUB_REPOSITORY" ]]; then
+    refuse_preview "base repository is not trusted (expected=$GITHUB_REPOSITORY, current=$base_repository)"
+  fi
+  if ! [[ "$base_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    refuse_preview "current pull request base SHA is not canonical"
+  fi
+  if ! base_ref_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${base_ref}")"; then
+    refuse_preview "base branch ${base_ref} is unavailable"
+  fi
+  current_base_sha="$(jq -er '.object.sha // empty' <<<"$base_ref_json" 2>/dev/null || true)"
+  if [[ "$current_base_sha" != "$base_sha" ]]; then
+    refuse_preview "base branch ${base_ref} is stale (expected=${base_sha}, current=${current_base_sha:-missing})"
+  fi
+  if ! jq -e '
+      .mergeable == true and
+      (.mergeable_state | type) == "string" and
+      .mergeable_state != "dirty" and
+      .mergeable_state != "conflicting" and
+      .mergeable_state != "unknown"
+    ' <<<"$pull_request_json" >/dev/null; then
+    refuse_preview "current pull request is not mergeable"
+  fi
+fi
 revalidation_mode="--revalidate-${mode}"
 if ! refusal_reason="$(python3 "$eligibility_script" \
   "$revalidation_mode" \

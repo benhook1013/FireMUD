@@ -62,6 +62,12 @@ jq -e \
   --arg current_head "$current_head_sha" \
   --arg current_merge "$current_merge_sha" \
   '.state == "open" and
+   (.mergeable | type) == "boolean" and
+   .mergeable == true and
+   (.mergeable_state | type) == "string" and
+   .mergeable_state != "unknown" and
+   .mergeable_state != "dirty" and
+   .mergeable_state != "conflicting" and
    .head.repo.full_name == $repository and
    .base.repo.full_name == $repository and
    .head.sha == $expected_head and
@@ -70,7 +76,7 @@ jq -e \
    $current_merge == $expected_merge and
    .merge_commit_sha == $expected_merge' \
   <<<"$pull_request_json" >/dev/null || {
-  echo "::error title=Preview source binding changed::The current PR head, base, merge, or repository no longer matches the validated artifact${STAGE:+ $STAGE}." >&2
+  echo "::error title=Preview source binding changed::The current PR head, base, merge, repository, or mergeability no longer matches the validated artifact${STAGE:+ $STAGE}." >&2
   exit 1
 }
 jq -e \

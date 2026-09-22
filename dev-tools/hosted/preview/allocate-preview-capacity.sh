@@ -103,7 +103,15 @@ find_unsatisfied_priority_pr() {
   local extra
   local namespace
   local namespace_owner
+  local namespace_tuple
+  local candidate_base_sha
+  local candidate_head_sha
+  local candidate_merge_sha
+  local candidate_image_tag
+  local namespace_base
   local namespace_head
+  local namespace_merge
+  local namespace_image
   local page
   local page_rows
   local open_pr_page_size=100
@@ -188,12 +196,53 @@ find_unsatisfied_priority_pr() {
       return 1
     fi
     namespace="pr-${pr_number}"
-    if ! namespace_owner="$(kubectl get namespace "$namespace" --ignore-not-found -o jsonpath='{.metadata.labels.firemud\.dev/pr-number}')" ||
-      ! namespace_head="$(kubectl get namespace "$namespace" --ignore-not-found -o jsonpath='{.metadata.annotations.firemud\.dev/last-preview-head-sha}')"; then
+    if ! namespace_tuple="$(kubectl get namespace "$namespace" --ignore-not-found \
+      -o jsonpath='{.metadata.labels.firemud\.dev/pr-number}{"\t"}{.metadata.annotations.firemud\.dev/last-preview-base-sha}{"\t"}{.metadata.annotations.firemud\.dev/last-preview-head-sha}{"\t"}{.metadata.annotations.firemud\.dev/last-preview-merge-sha}{"\t"}{.metadata.annotations.firemud\.dev/last-preview-image-tag}')"; then
       echo "Unable to revalidate priority candidate namespace ${namespace}; refusing priority evaluation" >&2
       return 1
     fi
-    if [[ "$namespace_owner" != "$pr_number" || "$namespace_head" != "$head_sha" ]]; then
+    IFS=$'\t' read -r namespace_owner namespace_base namespace_head namespace_merge namespace_image <<<"$namespace_tuple"
+    if ! candidate_metadata_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}")"; then
+      echo "Unable to revalidate priority candidate PR #${pr_number}; refusing priority evaluation" >&2
+      return 1
+    fi
+    candidate_base_ref="$(jq -r '.base.ref // empty' <<<"$candidate_metadata_json")"
+    candidate_base_repository="$(jq -r '.base.repo.full_name // empty' <<<"$candidate_metadata_json")"
+    candidate_head_repository="$(jq -r '.head.repo.full_name // empty' <<<"$candidate_metadata_json")"
+    candidate_head_sha="$(jq -r '.head.sha // empty' <<<"$candidate_metadata_json")"
+    candidate_merge_sha="$(jq -r '.merge_commit_sha // empty' <<<"$candidate_metadata_json")"
+    candidate_mergeable="$(jq -r '.mergeable // empty' <<<"$candidate_metadata_json")"
+    candidate_mergeable_state="$(jq -r '.mergeable_state // empty' <<<"$candidate_metadata_json")"
+    if [[ "$candidate_base_repository" != "$GITHUB_REPOSITORY" ||
+      "$candidate_head_repository" != "$GITHUB_REPOSITORY" ||
+      "$candidate_head_sha" != "$head_sha" ||
+      "$candidate_mergeable" != true ||
+      "$candidate_mergeable_state" == unknown ||
+      "$candidate_mergeable_state" == dirty ||
+      "$candidate_mergeable_state" == conflicting ||
+      -z "$candidate_mergeable_state" ||
+      ! "$candidate_base_ref" =~ ^[A-Za-z0-9._/-]+$ ||
+      ! "$candidate_merge_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+      printf '%s\n' "$pr_number"
+      return
+    fi
+    if ! candidate_base_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${candidate_base_ref}" --jq '.object.sha')" ||
+      ! [[ "$candidate_base_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+      printf '%s\n' "$pr_number"
+      return
+    fi
+    candidate_merge_sha="${candidate_merge_sha,,}"
+    candidate_base_sha="${candidate_base_sha,,}"
+    if ! candidate_image_tag="$(bash "${script_dir}/resolve-preview-image-tag.sh" \
+      "$candidate_merge_sha" "$pr_number" "$candidate_base_sha")"; then
+      printf '%s\n' "$pr_number"
+      return
+    fi
+    if [[ "$namespace_owner" != "$pr_number" ||
+      "$namespace_base" != "$candidate_base_sha" ||
+      "$namespace_head" != "$candidate_head_sha" ||
+      "$namespace_merge" != "$candidate_merge_sha" ||
+      "$namespace_image" != "$candidate_image_tag" ]]; then
       printf '%s\n' "$pr_number"
       return
     fi
@@ -210,7 +259,7 @@ fi
 
 if ! namespace_rows_output="$(
   kubectl get namespaces -l firemud.dev/preview=true \
-    -o jsonpath='{range .items[*]}{.metadata.creationTimestamp}{"|"}{.metadata.name}{"|"}{.metadata.labels.firemud\.dev/pr-number}{"|"}{.metadata.annotations.firemud\.dev/preview-allocated-at}{"|"}{.metadata.annotations.firemud\.dev/last-preview-head-sha}{"|"}{.metadata.annotations.firemud\.dev/last-preview-image-tag}{"\n"}{end}'
+    -o jsonpath='{range .items[*]}{.metadata.creationTimestamp}{"|"}{.metadata.name}{"|"}{.metadata.labels.firemud\.dev/pr-number}{"|"}{.metadata.annotations.firemud\.dev/preview-allocated-at}{"|"}{.metadata.annotations.firemud\.dev/last-preview-base-sha}{"|"}{.metadata.annotations.firemud\.dev/last-preview-head-sha}{"|"}{.metadata.annotations.firemud\.dev/last-preview-merge-sha}{"|"}{.metadata.annotations.firemud\.dev/last-preview-image-tag}{"\n"}{end}'
 )"; then
   echo "Unable to list current preview namespaces; refusing capacity action" >&2
   exit 1
@@ -222,7 +271,21 @@ target_exists=false
 target_allocation_timestamp=""
 candidate_rows=()
 for row in "${namespace_rows[@]}"; do
-  IFS='|' read -r created_at namespace pr_number allocated_at previous_head_sha previous_image_tag <<<"$row"
+  IFS='|' read -r created_at namespace pr_number allocated_at field5 field6 field7 field8 <<<"$row"
+  if [[ -z "${field7:-}" && -z "${field8:-}" ]]; then
+    # Retain compatibility with namespaces created before tuple annotations;
+    # their missing base/merge evidence is deliberately treated as stale when
+    # a live candidate is revalidated.
+    previous_base_sha=""
+    previous_head_sha="${field5:-}"
+    previous_merge_sha=""
+    previous_image_tag="${field6:-}"
+  else
+    previous_base_sha="${field5:-}"
+    previous_head_sha="${field6:-}"
+    previous_merge_sha="${field7:-}"
+    previous_image_tag="${field8:-}"
+  fi
   allocation_timestamp="${allocated_at:-$created_at}"
   if [[ "$namespace" == "$target_namespace" ]]; then
     if [[ "$pr_number" != "$target_pr_number" ]]; then
@@ -238,7 +301,7 @@ for row in "${namespace_rows[@]}"; do
     echo "Skipping ${namespace}: namespace and PR ownership label are not canonical" >&2
     continue
   fi
-  candidate_rows+=("${allocation_timestamp}|${namespace}|${pr_number}|${previous_head_sha}|${previous_image_tag}")
+  candidate_rows+=("${allocation_timestamp}|${namespace}|${pr_number}|${previous_base_sha}|${previous_head_sha}|${previous_merge_sha}|${previous_image_tag}")
 done
 
 if [[ -z "$target_allocation_timestamp" ]]; then
@@ -294,7 +357,7 @@ if (( ${#candidate_rows[@]} > 0 )); then
 fi
 selected=""
 for row in "${sorted_candidates[@]}"; do
-  IFS='|' read -r allocated_at namespace pr_number previous_head_sha previous_image_tag <<<"$row"
+  IFS='|' read -r allocated_at namespace pr_number previous_base_sha previous_head_sha previous_merge_sha previous_image_tag <<<"$row"
   if ! candidate_metadata="$(get_pr_state "$pr_number" 2>/dev/null)"; then
     echo "Skipping ${namespace}: PR #${pr_number} metadata is unavailable"
     continue
@@ -312,7 +375,7 @@ if [[ -z "$selected" ]]; then
   exit 1
 fi
 
-IFS='|' read -r selected_allocated_at selected_namespace selected_pr selected_head selected_image <<<"$selected"
+IFS='|' read -r selected_allocated_at selected_namespace selected_pr selected_base selected_head selected_merge selected_image <<<"$selected"
 
 preview_comment_rows="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${selected_pr}/comments" \
   --jq '
@@ -413,7 +476,9 @@ namespace_state_available=true
 current_owner=""
 current_created_at=""
 current_allocated_at=""
+current_base=""
 current_head=""
+current_merge=""
 current_image=""
 namespace_fields_sentinel='|firemud-preview-namespace-fields-v1'
 if ! current_namespace_json="$(kubectl get namespace "$selected_namespace" -o json)"; then
@@ -434,7 +499,9 @@ elif ! current_namespace_fields_encoded="$(jq -e -r '
       field(.metadata.labels["firemud.dev/pr-number"]),
       field(.metadata.creationTimestamp),
       field(.metadata.annotations["firemud.dev/preview-allocated-at"]),
+      field(.metadata.annotations["firemud.dev/last-preview-base-sha"]),
       field(.metadata.annotations["firemud.dev/last-preview-head-sha"]),
+      field(.metadata.annotations["firemud.dev/last-preview-merge-sha"]),
       field(.metadata.annotations["firemud.dev/last-preview-image-tag"])
     ] as $fields
     | if any($fields[]; test("[|\u0000-\u001f\u007f]")) then
@@ -450,19 +517,23 @@ else
   if [[ "$current_namespace_fields_encoded" != *"$namespace_fields_sentinel" ]]; then
     namespace_state_available=false
   else
-    IFS='|' read -r owner_encoded created_encoded allocated_encoded head_encoded image_encoded extra \
+    IFS='|' read -r owner_encoded created_encoded allocated_encoded base_encoded head_encoded merge_encoded image_encoded extra \
       <<<"$namespace_fields_payload"
     if [[ -n "${extra:-}" ]] ||
       ! [[ "$owner_encoded" =~ ^[A-Za-z0-9+/]*={0,2}$ ]] ||
       ! [[ "$created_encoded" =~ ^[A-Za-z0-9+/]*={0,2}$ ]] ||
       ! [[ "$allocated_encoded" =~ ^[A-Za-z0-9+/]*={0,2}$ ]] ||
+      ! [[ "$base_encoded" =~ ^[A-Za-z0-9+/]*={0,2}$ ]] ||
       ! [[ "$head_encoded" =~ ^[A-Za-z0-9+/]*={0,2}$ ]] ||
+      ! [[ "$merge_encoded" =~ ^[A-Za-z0-9+/]*={0,2}$ ]] ||
       ! [[ "$image_encoded" =~ ^[A-Za-z0-9+/]*={0,2}$ ]]; then
       namespace_state_available=false
     elif ! current_owner="$(printf '%s' "$owner_encoded" | base64 --decode 2>/dev/null)" ||
       ! current_created_at="$(printf '%s' "$created_encoded" | base64 --decode 2>/dev/null)" ||
       ! current_allocated_at="$(printf '%s' "$allocated_encoded" | base64 --decode 2>/dev/null)" ||
+      ! current_base="$(printf '%s' "$base_encoded" | base64 --decode 2>/dev/null)" ||
       ! current_head="$(printf '%s' "$head_encoded" | base64 --decode 2>/dev/null)" ||
+      ! current_merge="$(printf '%s' "$merge_encoded" | base64 --decode 2>/dev/null)" ||
       ! current_image="$(printf '%s' "$image_encoded" | base64 --decode 2>/dev/null)"; then
       namespace_state_available=false
     fi
@@ -473,7 +544,9 @@ namespace_intact=false
 if [[ "$namespace_state_available" == "true" &&
   "$current_owner" == "$selected_pr" &&
   "$current_effective_allocated_at" == "$selected_allocated_at" &&
+  "$current_base" == "$selected_base" &&
   "$current_head" == "$selected_head" &&
+  "$current_merge" == "$selected_merge" &&
   "$current_image" == "$selected_image" ]]; then
   namespace_intact=true
 fi

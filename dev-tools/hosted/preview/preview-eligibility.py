@@ -54,7 +54,12 @@ def evaluate(
         return False, "malformed-label-metadata", is_priority
     if author in DEPENDENCY_BOT_AUTHORS:
         return False, "dependency-bot", is_priority
-    if base_ref not in SUPPORTED_BASE_REFS:
+    # Ordinary previews remain limited to the long-lived integration branches.
+    # A feature/stacked base is an explicit opt-in: only a maintainer-owned
+    # priority label may authorize it.  The trusted workflow performs the
+    # repository, base-ref, mergeability, and exact merge-parent checks before
+    # it invokes this policy for a live target.
+    if base_ref not in SUPPORTED_BASE_REFS and not is_priority:
         return False, "unsupported-base-branch", is_priority
     if operation in {"deploy", "retain"} and state != "open":
         return False, "pr-not-open", is_priority
@@ -166,6 +171,15 @@ def _revalidate_target(
             f"(expected={expected_repository}, current={_display_value(head_repository)})"
         )
         return reason, None
+    base_repository = _nested_value(pull_request, "base", "repo", "full_name")
+    # Older cleanup fixtures and callers may omit base.repo, but deploy
+    # revalidation must never treat an absent or foreign base as trusted.
+    if expected_state == "open" and base_repository != expected_repository:
+        reason = (
+            "base repository is not trusted "
+            f"(expected={expected_repository}, current={_display_value(base_repository)})"
+        )
+        return reason, None
     return None, pull_request
 
 
@@ -192,6 +206,8 @@ def revalidate_deploy(
         return "label metadata is malformed"
 
     base_ref = _nested_value(pull_request, "base", "ref")
+    if not isinstance(base_ref, str) or not base_ref:
+        return "current pull request metadata is malformed (base.ref must be a non-empty string)"
     author = _nested_value(pull_request, "user", "login")
     if not isinstance(author, str) or not author:
         return "current pull request metadata is malformed (user.login must be a non-empty string)"

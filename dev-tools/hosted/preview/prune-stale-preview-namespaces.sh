@@ -140,6 +140,37 @@ evaluate_retention_eligibility() {
   fi
   eligible="${eligibility_first_line#eligible=}"
   reason="${eligibility_second_line#reason=}"
+
+  # Every retained preview must be same-repository on both sides.  Unknown
+  # API state is retained conservatively; it must never turn a transient
+  # outage into destructive cleanup.
+  local live_pr_json base_repository head_repository mergeable mergeable_state base_ref_sha
+  if ! live_pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" 2>/dev/null)"; then
+    echo "Keeping ${subject}: PR #${pr_number} live ownership metadata is unavailable"
+    return 1
+  fi
+  base_repository="$(jq -r '.base.repo.full_name // empty' <<<"$live_pr_json")"
+  head_repository="$(jq -r '.head.repo.full_name // empty' <<<"$live_pr_json")"
+  if [[ "$base_repository" != "$GITHUB_REPOSITORY" || "$head_repository" != "$GITHUB_REPOSITORY" ]]; then
+    eligible=false
+    reason="untrusted-repository"
+  elif [[ "$eligible" == true && "$pr_base_ref" != main && "$pr_base_ref" != develop ]]; then
+    # A priority stacked preview is eligible only while its live base remains
+    # addressable and GitHub reports a clean merge candidate.
+    mergeable="$(jq -r '.mergeable // empty' <<<"$live_pr_json")"
+    mergeable_state="$(jq -r '.mergeable_state // empty' <<<"$live_pr_json")"
+    if [[ "$mergeable" == false || "$mergeable_state" == dirty || "$mergeable_state" == conflicting ]]; then
+      eligible=false
+      reason="merge-conflict"
+    elif [[ "$mergeable" != true ]]; then
+      echo "Keeping ${subject}: stacked PR #${pr_number} mergeability is unknown"
+      return 1
+    elif ! base_ref_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${pr_base_ref}" --jq '.object.sha' 2>/dev/null)" ||
+      ! [[ "$base_ref_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+      eligible=false
+      reason="missing-base-branch"
+    fi
+  fi
 }
 
 retire_hosted_identity() {
@@ -268,7 +299,7 @@ recover_stranded_hosted_identities() {
       continue
     fi
     case "$reason" in
-      dependency-bot | unsupported-base-branch | pr-not-open)
+      dependency-bot|unsupported-base-branch|priority-label-required|pr-not-open|missing-base-branch|merge-conflict|untrusted-repository)
         ;;
       *)
         echo "Keeping HostedEnvironmentIdentity/${identity_name}: PR #${pr_number} eligibility reason is not authoritative for retirement (reason=${reason})"
@@ -325,7 +356,7 @@ for row in "${namespace_rows[@]}"; do
   fi
 
   case "$reason" in
-    dependency-bot | unsupported-base-branch | pr-not-open)
+    dependency-bot|unsupported-base-branch|priority-label-required|pr-not-open|missing-base-branch|merge-conflict|untrusted-repository)
       ;;
     *)
       echo "Keeping ${namespace}: PR #${pr_number} eligibility reason is not authoritative for pruning (reason=${reason})"

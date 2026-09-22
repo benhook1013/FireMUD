@@ -582,7 +582,7 @@ for forbidden in \
   fi
 done
 require_contains "$preview_path" 'run-name: ${{ github.event_name == '
-require_contains "$preview_path" "format('Preview dispatch pr-{0}-{1}', github.event.client_payload.pr_number, github.event.client_payload.head_sha)"
+require_contains "$preview_path" "format('Preview dispatch pr-{0}-base-{1}-head-{2}-merge-{3}', github.event.client_payload.pr_number, github.event.client_payload.base_sha || 'unknown', github.event.client_payload.head_sha, github.event.client_payload.merge_sha || 'unknown')"
 require_contains "$preview_path" 'contents: read'
 require_contains "$preview_path" 'pull-requests: read'
 require_contains "$preview_path" 'pull_request_target:'
@@ -591,11 +591,13 @@ require_contains "$preview_path" '      - opened'
 require_contains "$preview_path" '      - synchronize'
 require_contains "$preview_path" '      - reopened'
 require_contains "$preview_path" '      - labeled'
+require_contains "$preview_path" '      - unlabeled'
+require_contains "$preview_path" '      - edited'
 require_contains "$preview_path" 'CLIENT_HEAD_SHA: ${{ github.event.client_payload.head_sha }}'
-if grep -Fq 'CLIENT_IMAGE_TAG: ${{ github.event.client_payload.image_tag }}' "$preview_path"; then
-  echo "Preview source must resolve the effective image tag independently of dispatch payload image_tag" >&2
-  exit 1
-fi
+require_contains "$preview_path" 'CLIENT_BASE_REF: ${{ github.event.client_payload.base_ref }}'
+require_contains "$preview_path" 'CLIENT_BASE_SHA: ${{ github.event.client_payload.base_sha }}'
+require_contains "$preview_path" 'CLIENT_MERGE_SHA: ${{ github.event.client_payload.merge_sha }}'
+require_contains "$preview_path" 'CLIENT_IMAGE_TAG: ${{ github.event.client_payload.image_tag }}'
 require_contains "$preview_path" 'CLIENT_PREVIEW_DOMAIN: ${{ github.event.client_payload.preview_domain }}'
 if grep -Fq 'workflow_dispatch:' "$preview_path"; then
   echo "Preview source workflow must not expose a branch-selectable workflow_dispatch trigger" >&2
@@ -610,6 +612,7 @@ require_contains "$preview_path" 'ref: ${{ github.event.repository.default_branc
 require_contains "$preview_path" "github.event_name == 'pull_request_target'"
 require_contains "$preview_path" "github.event_name == 'repository_dispatch'"
 require_contains "$preview_path" 'github.event.pull_request.head.repo.full_name == github.repository'
+require_contains "$preview_path" 'github.event.pull_request.base.repo.full_name == github.repository'
 if grep -Fq 'github.event.pull_request.merge_commit_sha' "$preview_path"; then
   echo "Preview source must resolve a fresh REST test merge, not trust the event payload" >&2
   exit 1
@@ -617,6 +620,11 @@ fi
 require_contains "$preview_path" 'MERGE_RETRY_LIMIT=5'
 require_contains "$preview_path" 'Preview merge computation unavailable'
 require_contains "$preview_path" 'Stale preview head SHA'
+require_contains "$preview_path" '"$CURRENT_BASE_REF" != main && "$CURRENT_BASE_REF" != develop'
+require_contains "$preview_path" 'Stale preview dispatch tuple'
+require_contains "$preview_path" 'Stale preview image identity'
+require_contains "$preview_path" 'Incomplete preview dispatch tuple'
+require_contains "$preview_path" '-n "$PLANNED_IMAGE_TAG" )'
 assert_job_contains preview.yml preview-plan 'resolve-preview-image-tag.sh'
 assert_job_contains preview.yml preview-plan 'Expected the tested PR merge tag or immutable base SHA.'
 assert_job_contains preview.yml preview-plan '"$MERGE_SHA" "$PR_NUMBER" "$BASE_SHA"'
@@ -660,7 +668,7 @@ require_contains "$trusted_preview_path" 'metadata_action="$(jq -r'
 require_contains "$trusted_preview_path" 'validate-preview-intent.py'
 require_contains "$trusted_preview_path" 'repository="$(jq -r'
 require_contains "$trusted_preview_path" '[[ "$repository" == "$GITHUB_REPOSITORY" ]]'
-require_contains "$trusted_preview_path" '[[ "$base_ref" == main || "$base_ref" == develop ]]'
+require_contains "$trusted_preview_path" 'base_ref="$(jq -r'
 require_contains "$trusted_preview_path" 'Ignoring lifecycle event without the current pull-request test-merge SHA.'
 require_contains "$trusted_preview_path" 'expected_merge_image_tag="pr-merge-${merge_sha}"'
 require_contains "$trusted_preview_path" 'labels_json="$(jq -c'
@@ -681,19 +689,33 @@ for job in prepare-runtime deploy-runtime destroy-runtime retire-identity; do
 done
 require_contains "$preview_reconciler_path" '--branch "${DEFAULT_BRANCH}"'
 require_contains "$preview_reconciler_path" '--json databaseId,status,displayTitle'
-require_contains "$preview_reconciler_path" '"Preview dispatch pr-${pr_number}-${head_sha}"'
+require_contains "$preview_reconciler_path" '"Preview dispatch pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}"'
 require_contains "$preview_reconciler_path" '"repos/${GITHUB_REPOSITORY}/dispatches"'
 require_contains "$preview_reconciler_path" '-f event_type=preview-deploy'
 require_contains "$preview_reconciler_path" 'client_payload[head_sha]=${head_sha}'
+require_contains "$preview_reconciler_path" 'client_payload[base_ref]=${pr_base_ref}'
+require_contains "$preview_reconciler_path" 'client_payload[base_sha]=${base_sha}'
+require_contains "$preview_reconciler_path" 'client_payload[merge_sha]=${merge_sha}'
+require_contains "$preview_reconciler_path" 'client_payload[image_tag]=${image_tag}'
 require_contains "$preview_reconciler_path" 'client_payload[action]=deploy'
 if grep -Fq 'desired_image_tag=' "$preview_reconciler_path"; then
   echo "Preview reconciler must not retain an unused desired image tag" >&2
   exit 1
 fi
-if grep -Fq 'client_payload[image_tag]' "$preview_reconciler_path"; then
-  echo "Preview reconciler must let the trusted consumer resolve the effective image tag" >&2
-  exit 1
-fi
+require_contains "$preview_reconciler_path" 'resolve-preview-image-tag.sh'
+for annotation in \
+  'firemud.dev/last-preview-base-sha' \
+  'firemud.dev/last-preview-head-sha' \
+  'firemud.dev/last-preview-merge-sha' \
+  'firemud.dev/last-preview-image-tag' \
+  'firemud.dev/requested-preview-base-sha' \
+  'firemud.dev/requested-preview-head-sha' \
+  'firemud.dev/requested-preview-merge-sha' \
+  'firemud.dev/requested-preview-image-tag'; do
+  require_contains "$preview_reconciler_path" "$annotation"
+done
+require_contains "$preview_reconciler_path" 'mergeable_state'
+require_contains "$ROOT_DIR/dev-tools/hosted/preview/revalidate-preview-source-binding.sh" '.mergeable == true'
 if grep -Fq 'actions/workflows/preview.yml/dispatches' "$preview_reconciler_path" ||
   grep -Fq 'inputs[ref]=' "$preview_reconciler_path"; then
   echo "Preview reconciler must use typed repository_dispatch from the default branch" >&2
