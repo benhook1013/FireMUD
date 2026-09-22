@@ -32,7 +32,7 @@ production_policy_applies_to_changes() {
   # production overlay resources remain attestation-gated below.
   while IFS= read -r changed_file; do
     case "$changed_file" in
-      k8s/overlays/prod|k8s/overlays/prod/*|k8s/base|k8s/base/*)
+      k8s/overlays/prod|k8s/overlays/prod/*)
         return 0
         ;;
     esac
