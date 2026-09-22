@@ -793,6 +793,12 @@ public class AccountServiceImpl implements AccountService {
   private boolean isRealmAdmissible(BootstrapContext bootstrapContext, RuntimeRealmTarget realm) {
     long tenantId = realm.tenantId();
     if (!isPublicProductionRealm(realm)) {
+      if (accountTenantMembershipRepository
+          .findByAccountIdAndTenantId(bootstrapContext.accountId(), tenantId)
+          .filter(AccountTenantMembership::isGameplayAdmissionAllowed)
+          .isEmpty()) {
+        return false;
+      }
       if (!hasRealmAccessGrant(
           bootstrapContext.accountId(), tenantId, realm.worldSlug(), realm.realmSlug())) {
         return false;

@@ -2256,7 +2256,7 @@ class AccountServiceImplTest {
 
   @ParameterizedTest
   @CsvSource({"true, false", "false, true"})
-  void issueConnectTokenRequiresMembershipForNonPublicRealmWithGrant(
+  void listBootstrapRealmsExcludesNonPublicRealmWithoutMembershipEvenWithGrant(
       boolean visible, boolean publicProductionRealm) {
     Account account = new Account();
     account.setId(11L);
@@ -2266,6 +2266,110 @@ class AccountServiceImplTest {
     when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
         .thenReturn(Optional.empty());
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("preview")
+                    .setDisplayName("Preview Realm")
+                    .setTenantId("7")
+                    .setGameInstanceId("55")
+                    .setPointerVersion(19L)
+                    .setVisible(visible)
+                    .setPublicProductionRealm(publicProductionRealm)
+                    .setRequiresCharacterSelection(false)
+                    .setStateScope("SHARED")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build()));
+    when(gameSessionClient.getAdmissionPointer(7L, "demo", "preview"))
+        .thenReturn(
+            net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
+                .setWorldSlug("demo")
+                .setWorldDisplayName("Demo World")
+                .setRealmSlug("preview")
+                .setRealmDisplayName("Preview Realm")
+                .setTenantId("7")
+                .setGameInstanceId("55")
+                .setPointerVersion(19L)
+                .setVisible(visible)
+                .setPublicProductionRealm(publicProductionRealm)
+                .setRequiresCharacterSelection(false)
+                .setStateScope("SHARED")
+                .setCharacterCreationPolicy("ALLOW_NEW")
+                .build());
+    when(accountRealmAccessGrantRepository.existsByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+            11L, 7L, "demo", "preview"))
+        .thenReturn(true);
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    assertTrue(service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").isEmpty());
+  }
+
+  @ParameterizedTest
+  @CsvSource({"true, false", "false, true"})
+  void listBootstrapRealmsIncludesNonPublicRealmWhenMembershipAndGrantPresent(
+      boolean visible, boolean publicProductionRealm) {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("preview")
+                    .setDisplayName("Preview Realm")
+                    .setTenantId("7")
+                    .setGameInstanceId("55")
+                    .setPointerVersion(19L)
+                    .setVisible(visible)
+                    .setPublicProductionRealm(publicProductionRealm)
+                    .setRequiresCharacterSelection(false)
+                    .setStateScope("SHARED")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build()));
+    when(accountRealmAccessGrantRepository.existsByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+            11L, 7L, "demo", "preview"))
+        .thenReturn(true);
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+
+    var realms = service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo");
+
+    assertEquals(1, realms.size());
+    assertEquals("preview", realms.getFirst().realmSlug());
+    assertFalse(realms.getFirst().connectScopeId().isBlank());
+  }
+
+  @ParameterizedTest
+  @CsvSource({"true, false", "false, true"})
+  void issueConnectTokenRevalidatesMembershipAfterNonPublicDiscovery(
+      boolean visible, boolean publicProductionRealm) {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)), Optional.empty());
     Subscription active = new Subscription();
     active.setId(22L);
     active.setTenantId(7L);
