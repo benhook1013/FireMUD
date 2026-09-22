@@ -491,8 +491,23 @@ public class ScriptWorkItemRepository {
                             .TENANT_ID
                             .eq(SCRIPT_WORK_ITEMS.TENANT_ID)
                             .and(SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID.eq(SCRIPT_WORK_ITEMS.ID))
-                            .and(HANDOFF_RETENTION_HOLD_UNTIL.isNotNull())
-                            .and(HANDOFF_RETENTION_HOLD_UNTIL.gt(CURRENT_OFFSET_TIMESTAMP)))));
+                            .and(handoffBlocksParent()))));
+  }
+
+  private static Condition handoffBlocksParent() {
+    Condition incompleteOutcome =
+        SCRIPT_HANDOFF_EVENTS
+            .HANDOFF_OUTCOME
+            .isNull()
+            .or(
+                field(
+                        "regexp_replace({0}, '[[:space:]]', '', 'g')",
+                        String.class, SCRIPT_HANDOFF_EVENTS.HANDOFF_OUTCOME)
+                    .eq(""));
+    return HANDOFF_RETENTION_HOLD_UNTIL
+        .isNotNull()
+        .and(HANDOFF_RETENTION_HOLD_UNTIL.gt(CURRENT_OFFSET_TIMESTAMP))
+        .or(incompleteOutcome);
   }
 
   /**

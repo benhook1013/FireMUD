@@ -654,7 +654,12 @@ class ScriptWorkItemRepositoryTest {
                         "script_dead_letter_replay_results",
                         "script_handoff_events",
                         "retention_hold_until",
+                        "handoff_outcome",
+                        "regexp_replace",
                         "current_timestamp"));
+    assertThat(sql.get())
+        .contains("script_handoff_events\".\"tenant_id\" = \"script_work_items\".\"tenant_id\"")
+        .contains("script_handoff_events\".\"work_item_id\" = \"script_work_items\".\"id\"");
   }
 
   @Test

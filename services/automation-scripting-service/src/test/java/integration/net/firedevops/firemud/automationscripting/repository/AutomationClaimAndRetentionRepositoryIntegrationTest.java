@@ -938,6 +938,96 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     assertThat(dsl.fetchCount(SCRIPT_HANDOFF_EVENTS)).isEqualTo(1);
   }
 
+  @Test
+  void handedOffAgeRetentionLeavesParentWhenChildOutcomeIsIncomplete() {
+    ScriptWorkItem parent = workItemRepository.save(retainedWorkItem());
+    ScriptHandoffEvent handoff = retainedHandoff(parent.getId());
+    handoff.setEventId("incomplete-handed-off-age-handoff");
+    handoff.setHandoffOutcome("");
+    handoffRepository.save(handoff);
+
+    assertThat(workItemRepository.deleteByStatusAndUpdatedAtBefore("HANDED_OFF", Instant.now()))
+        .isZero();
+    assertThat(dsl.fetchCount(SCRIPT_WORK_ITEMS)).isEqualTo(1);
+    assertThat(dsl.fetchCount(SCRIPT_HANDOFF_EVENTS)).isEqualTo(1);
+  }
+
+  @Test
+  void incompleteChildBlocksOnlyItsCorrelatedParentDuringAgeRetention() {
+    ScriptWorkItem incompleteParent = workItemRepository.save(retainedWorkItem());
+    ScriptHandoffEvent incompleteHandoff = retainedHandoff(incompleteParent.getId());
+    incompleteHandoff.setEventId("incomplete-correlated-parent");
+    incompleteHandoff.setHandoffOutcome("");
+    handoffRepository.save(incompleteHandoff);
+
+    ScriptWorkItem completeParent = retainedWorkItem();
+    completeParent.setScriptEventId("complete-correlated-parent");
+    completeParent = workItemRepository.save(completeParent);
+    ScriptHandoffEvent completeHandoff = retainedHandoff(completeParent.getId());
+    completeHandoff.setEventId("complete-correlated-child");
+    handoffRepository.save(completeHandoff);
+
+    assertThat(workItemRepository.deleteByStatusAndUpdatedAtBefore("HANDED_OFF", Instant.now()))
+        .isEqualTo(1L);
+    assertThat(dsl.fetchCount(SCRIPT_WORK_ITEMS)).isEqualTo(1);
+    assertThat(
+            dsl.fetchExists(SCRIPT_WORK_ITEMS, SCRIPT_WORK_ITEMS.ID.eq(incompleteParent.getId())))
+        .isTrue();
+    assertThat(
+            dsl.fetchExists(
+                SCRIPT_HANDOFF_EVENTS, SCRIPT_HANDOFF_EVENTS.ID.eq(incompleteHandoff.getId())))
+        .isTrue();
+  }
+
+  @Test
+  void canceledRowCapRetentionLeavesParentWhenChildOutcomeIsWhitespace() {
+    ScriptWorkItem parent = retainedWorkItem();
+    parent.setScriptEventId("canceled-incomplete-cap");
+    parent.setStatus("CANCELED");
+    parent = workItemRepository.save(parent);
+    ScriptHandoffEvent handoff = retainedHandoff(parent.getId());
+    handoff.setEventId("incomplete-canceled-cap-handoff");
+    handoff.setHandoffOutcome(" \t ");
+    handoffRepository.save(handoff);
+
+    assertThat(workItemRepository.deleteOldestByStatus("CANCELED", 1)).isZero();
+    assertThat(dsl.fetchCount(SCRIPT_WORK_ITEMS)).isEqualTo(1);
+    assertThat(dsl.fetchCount(SCRIPT_HANDOFF_EVENTS)).isEqualTo(1);
+  }
+
+  @Test
+  void handoffAgeRetentionLeavesBlankOutcomeChildForTerminalParent() {
+    ScriptWorkItem parent = workItemRepository.save(retainedWorkItem());
+    ScriptHandoffEvent handoff = retainedHandoff(parent.getId());
+    handoff.setEventId("incomplete-direct-age-handoff");
+    handoff.setHandoffOutcome(" \t ");
+    handoffRepository.save(handoff);
+
+    assertThat(handoffRepository.deleteExpiredRetentionEvidence(Instant.now(), Instant.now()))
+        .isZero();
+    assertThat(dsl.fetchCount(SCRIPT_WORK_ITEMS)).isEqualTo(1);
+    assertThat(dsl.fetchCount(SCRIPT_HANDOFF_EVENTS)).isEqualTo(1);
+  }
+
+  @Test
+  void handoffAgeRetentionLeavesCompleteChildWhenSiblingOutcomeIsIncomplete() {
+    ScriptWorkItem parent = workItemRepository.save(retainedWorkItem());
+    ScriptHandoffEvent complete = retainedHandoff(parent.getId());
+    complete.setEventId("complete-sibling-age-handoff");
+    handoffRepository.save(complete);
+    ScriptHandoffEvent incomplete = retainedHandoff(parent.getId());
+    incomplete.setEventId("incomplete-sibling-age-handoff");
+    incomplete.setCommandOrdinal(1);
+    incomplete.setAutomationDispatchId("dispatch-2");
+    incomplete.setHandoffOutcome("");
+    handoffRepository.save(incomplete);
+
+    assertThat(handoffRepository.deleteExpiredRetentionEvidence(Instant.now(), Instant.now()))
+        .isZero();
+    assertThat(dsl.fetchCount(SCRIPT_WORK_ITEMS)).isEqualTo(1);
+    assertThat(dsl.fetchCount(SCRIPT_HANDOFF_EVENTS)).isEqualTo(2);
+  }
+
   private void markIngressInProgress(Long id, Instant claimStartedAt, int rowVersion) {
     dsl.update(SCRIPT_EVENT_INGRESS_AUDIT)
         .set(SCRIPT_EVENT_INGRESS_AUDIT.SOURCE_STATE, "IN_PROGRESS")

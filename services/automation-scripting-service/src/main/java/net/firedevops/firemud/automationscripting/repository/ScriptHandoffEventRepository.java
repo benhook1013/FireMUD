@@ -51,47 +51,69 @@ public class ScriptHandoffEventRepository {
     LocalDateTime cutoff = toLocalDateTime(safeWatermark);
     OffsetDateTime current = toOffsetDateTime(now);
     var candidates = SCRIPT_HANDOFF_EVENTS.as("retention_candidates");
+    var siblings = SCRIPT_HANDOFF_EVENTS.as("retention_siblings");
+    Condition noIncompleteSibling =
+        notExists(
+            org.jooq
+                .impl
+                .DSL
+                .selectOne()
+                .from(siblings)
+                .where(
+                    siblings
+                        .TENANT_ID
+                        .eq(candidates.TENANT_ID)
+                        .and(siblings.WORK_ITEM_ID.eq(candidates.WORK_ITEM_ID))
+                        .and(incompleteHandoffOutcome(siblings.HANDOFF_OUTCOME))));
+    Condition noIneligibleParent =
+        notExists(
+            org.jooq
+                .impl
+                .DSL
+                .selectOne()
+                .from(SCRIPT_WORK_ITEMS)
+                .where(
+                    SCRIPT_WORK_ITEMS
+                        .TENANT_ID
+                        .eq(candidates.TENANT_ID)
+                        .and(SCRIPT_WORK_ITEMS.ID.eq(candidates.WORK_ITEM_ID))
+                        .and(
+                            SCRIPT_WORK_ITEMS
+                                .STATUS
+                                .notIn(
+                                    AutomationScriptingJooqRepositorySupport
+                                        .TERMINAL_WORK_ITEM_STATUSES)
+                                .or(SCRIPT_WORK_ITEMS.STATUS.eq("DEAD_LETTERED")))));
+    Condition candidateEligibility =
+        candidates
+            .TENANT_ID
+            .isNotNull()
+            .and(candidates.OBSERVED_AT.lt(cutoff))
+            .and(RETENTION_HOLD_UNTIL.isNull().or(RETENTION_HOLD_UNTIL.le(current)))
+            .and(nonBlankHandoffOutcome(candidates.HANDOFF_OUTCOME))
+            .and(noIncompleteSibling)
+            .and(noIneligibleParent);
     return dsl.deleteFrom(SCRIPT_HANDOFF_EVENTS)
         .where(
             row(SCRIPT_HANDOFF_EVENTS.ID, SCRIPT_HANDOFF_EVENTS.TENANT_ID)
                 .in(
                     dsl.select(candidates.ID, candidates.TENANT_ID)
                         .from(candidates)
-                        .where(
-                            candidates
-                                .TENANT_ID
-                                .isNotNull()
-                                .and(candidates.OBSERVED_AT.lt(cutoff))
-                                .and(
-                                    RETENTION_HOLD_UNTIL
-                                        .isNull()
-                                        .or(RETENTION_HOLD_UNTIL.le(current)))
-                                .and(
-                                    notExists(
-                                        org.jooq
-                                            .impl
-                                            .DSL
-                                            .selectOne()
-                                            .from(SCRIPT_WORK_ITEMS)
-                                            .where(
-                                                SCRIPT_WORK_ITEMS
-                                                    .TENANT_ID
-                                                    .eq(candidates.TENANT_ID)
-                                                    .and(
-                                                        SCRIPT_WORK_ITEMS.ID.eq(
-                                                            candidates.WORK_ITEM_ID))
-                                                    .and(
-                                                        SCRIPT_WORK_ITEMS
-                                                            .STATUS
-                                                            .notIn(
-                                                                AutomationScriptingJooqRepositorySupport
-                                                                    .TERMINAL_WORK_ITEM_STATUSES)
-                                                            .or(
-                                                                SCRIPT_WORK_ITEMS.STATUS.eq(
-                                                                    "DEAD_LETTERED")))))))
+                        .where(candidateEligibility)
                         .orderBy(candidates.EVENT_ID.asc())
                         .limit(RETENTION_DELETE_BATCH_SIZE)))
         .execute();
+  }
+
+  /** Retention only disposes a handoff after its durable outcome has meaningful content. */
+  private static Condition nonBlankHandoffOutcome(Field<String> outcome) {
+    return outcome.isNotNull().and(incompleteHandoffOutcome(outcome).not());
+  }
+
+  private static Condition incompleteHandoffOutcome(Field<String> outcome) {
+    return outcome
+        .isNull()
+        .or(field("regexp_replace({0}, '[[:space:]]', '', 'g')", String.class, outcome).eq(""));
   }
 
   /** Applies or clears the durable owner hold for one tenant-qualified handoff row. */
