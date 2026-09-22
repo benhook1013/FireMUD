@@ -213,8 +213,8 @@ jobs:
             BASE_SHA="$CURRENT_BASE_SHA"
 
             if [[ "$EVENT_NAME" == pull_request_target && "$CURRENT_BASE_REF" != main && "$CURRENT_BASE_REF" != develop ]] ||
-              [[ "$EVENT_NAME" == repository_dispatch && -n "$PLANNED_BASE_SHA" &&
-                ( "$CURRENT_BASE_REF" != main && "$CURRENT_BASE_REF" != develop || -n "$PLANNED_IMAGE_TAG" ) ]]; then
+              [[ "$EVENT_NAME" == repository_dispatch && "$CURRENT_BASE_REF" != main && "$CURRENT_BASE_REF" != develop ]] ||
+              [[ "$EVENT_NAME" == repository_dispatch && -n "$PLANNED_BASE_SHA" && -n "$PLANNED_IMAGE_TAG" ]]; then
               BASE_REFRESH_REQUIRED=true
             fi
             if [[ "$ACTION" != deploy ]]; then

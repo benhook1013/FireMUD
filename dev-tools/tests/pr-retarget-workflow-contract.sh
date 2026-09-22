@@ -336,6 +336,11 @@ done
 
 require_contains "$ci_path" 'PR Metadata Edit (Validation Summary)'
 require_contains "$smoke_path" 'PR Metadata Edit (Smoke Summary)'
+# A metadata-only edit starts a non-required controller job so its preservation
+# failure cannot create a second failed branch-protection context named Smoke
+# Gate. A base retarget still uses the canonical required name.
+# shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
+assert_job_contains smoke.yml smoke-gate "name: \${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Gate)' || 'Smoke Gate' }}"
 assert_job_contains smoke.yml smoke-summary-pending 'name: Smoke Summary (Pending)'
 assert_job_contains smoke.yml smoke-summary-pending 'tracked-by-smoke-gate'
 assert_job_contains smoke.yml smoke-summary 'needs: [changes, smoke-gate, smoke-summary-pending]'
@@ -411,6 +416,43 @@ assert_job_contains smoke.yml smoke-gate 'step.name === "Run credential-free ful
 assert_job_contains smoke.yml smoke-gate 'Stopping stale smoke gate before accepting full-stack proof'
 assert_job_contains smoke.yml smoke-gate 'continue smokeGatePolling'
 assert_job_excludes smoke.yml smoke-gate 'github.rest.repos.createDispatchEvent'
+
+# Reproduce the metadata-edit sequence structurally: the edit has its own
+# concurrency namespace, all runtime construction jobs remain skipped, and no
+# dispatch-capable step exists in Smoke Gate. A live tuple change is handled by
+# the already-proved exact repository_dispatch refresh path instead.
+python3 - "$smoke_path" "$runtime_images_path" <<'PY'
+from pathlib import Path
+import sys
+
+import yaml
+
+smoke_path, runtime_path = map(Path, sys.argv[1:])
+smoke = yaml.load(smoke_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+runtime = yaml.load(runtime_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+
+metadata_name = (
+    "${{ github.event.action == 'edited' && github.event.changes.base.ref == null "
+    "&& 'PR Metadata Edit (Smoke Gate)' || 'Smoke Gate' }}"
+)
+if smoke["jobs"]["smoke-gate"].get("name") != metadata_name:
+    raise SystemExit("metadata-only smoke must use a non-required job context")
+
+runtime_jobs = runtime["jobs"]
+metadata_guard = "github.event.action != 'edited' || github.event.changes.base.ref != null"
+for job_name in ("image-meta", "pr-local-smoke", "pr-controller-smoke"):
+    condition = runtime_jobs[job_name].get("if", "")
+    if metadata_guard not in condition:
+        raise SystemExit(f"{job_name} can run for a metadata-only edited event")
+
+concurrency_group = runtime["concurrency"]["group"]
+if "&& 'metadata' || 'required'" not in concurrency_group:
+    raise SystemExit("metadata-only runtime events can cancel substantive runtime builds")
+
+dispatch_condition = runtime_jobs["dispatch-pr-base-refreshes"].get("if", "")
+if "github.event_name == 'workflow_run'" not in dispatch_condition:
+    raise SystemExit("runtime refresh dispatch is not isolated from pull-request metadata events")
+PY
 
 run_image_meta_exact_parent_fixture() {
   python3 - "$runtime_images_path" <<'PY'
@@ -624,7 +666,68 @@ require_contains "$preview_path" '"$CURRENT_BASE_REF" != main && "$CURRENT_BASE_
 require_contains "$preview_path" 'Stale preview dispatch tuple'
 require_contains "$preview_path" 'Stale preview image identity'
 require_contains "$preview_path" 'Incomplete preview dispatch tuple'
-require_contains "$preview_path" '-n "$PLANNED_IMAGE_TAG" )'
+require_contains "$preview_path" '-n "$PLANNED_IMAGE_TAG" ]]; then'
+
+# Execute the preview plan's refresh predicate with the documented minimal
+# repository_dispatch payload. A live stacked base must refresh its exact
+# merge image even when the dispatch carries no planned tuple.
+python3 - "$preview_path" <<'PY'
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+
+
+workflow_path = Path(sys.argv[1])
+workflow = workflow_path.read_text(encoding="utf-8")
+predicate_start = workflow.index(
+    '            if [[ "$EVENT_NAME" == pull_request_target && "$CURRENT_BASE_REF" != main && "$CURRENT_BASE_REF" != develop ]] ||'
+)
+predicate_end = workflow.index(
+    '\n            if [[ "$ACTION" != deploy ]]; then',
+    predicate_start,
+)
+predicate = workflow[predicate_start:predicate_end]
+
+
+def refresh_required(event_name, current_base_ref, planned_base_sha="", planned_image_tag=""):
+    script = "\n".join(
+        [
+            "set -euo pipefail",
+            f"EVENT_NAME={shlex.quote(event_name)}",
+            f"CURRENT_BASE_REF={shlex.quote(current_base_ref)}",
+            f"PLANNED_BASE_SHA={shlex.quote(planned_base_sha)}",
+            f"PLANNED_IMAGE_TAG={shlex.quote(planned_image_tag)}",
+            "BASE_REFRESH_REQUIRED=false",
+            predicate,
+            'printf \'%s\\n\' "$BASE_REFRESH_REQUIRED"',
+        ]
+    )
+    completed = subprocess.run(
+        ["bash", "-c", script],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise SystemExit(
+            f"preview refresh predicate failed: {completed.stderr.strip()}"
+        )
+    return completed.stdout.strip()
+
+
+if refresh_required("repository_dispatch", "feature/parent") != "true":
+    raise SystemExit(
+        "minimal repository_dispatch payload must refresh a live stacked base image"
+    )
+if refresh_required("repository_dispatch", "develop") != "false":
+    raise SystemExit("ordinary develop previews must continue reusing base images")
+if refresh_required(
+    "repository_dispatch", "develop", "a" * 40, "base-image"
+) != "true":
+    raise SystemExit("planned image refresh must remain enabled for ordinary bases")
+PY
+
 assert_job_contains preview.yml preview-plan 'resolve-preview-image-tag.sh'
 assert_job_contains preview.yml preview-plan 'Expected the tested PR merge tag or immutable base SHA.'
 assert_job_contains preview.yml preview-plan '"$MERGE_SHA" "$PR_NUMBER" "$BASE_SHA"'
@@ -687,8 +790,9 @@ for job in prepare-runtime deploy-runtime destroy-runtime retire-identity; do
   assert_job_contains hosted-identity-request.yml "$job" 'self-hosted'
   assert_job_contains hosted-identity-request.yml "$job" 'environment: trusted-hosted-cluster'
 done
-require_contains "$preview_reconciler_path" '--branch "${DEFAULT_BRANCH}"'
-require_contains "$preview_reconciler_path" '--json databaseId,status,displayTitle'
+require_contains "$preview_reconciler_path" 'actions/runs?branch=${DEFAULT_BRANCH}&per_page=100'
+require_contains "$preview_reconciler_path" 'gh api --paginate --slurp'
+require_contains "$preview_reconciler_path" '.display_title == $run_name'
 require_contains "$preview_reconciler_path" '"Preview dispatch pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}"'
 require_contains "$preview_reconciler_path" '"repos/${GITHUB_REPOSITORY}/dispatches"'
 require_contains "$preview_reconciler_path" '-f event_type=preview-deploy'

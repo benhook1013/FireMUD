@@ -139,6 +139,20 @@ if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
     snapshot_requested_merge=""
     snapshot_requested_image=""
   fi
+  snapshot_uid="${FAKE_PR_901_NAMESPACE_UID:-uid-pr-901}"
+  if [[ "${FAKE_PR_901_PROOF_COMPLETE:-true}" == true ]]; then
+    snapshot_proof_base="$snapshot_base"
+    snapshot_proof_head="$snapshot_head"
+    snapshot_proof_merge="$snapshot_merge"
+    snapshot_proof_image="$snapshot_image"
+    snapshot_proof_uid="$snapshot_uid"
+  else
+    snapshot_proof_base="${FAKE_PR_901_PROOF_BASE_SHA:-}"
+    snapshot_proof_head="${FAKE_PR_901_PROOF_HEAD_SHA:-}"
+    snapshot_proof_merge="${FAKE_PR_901_PROOF_MERGE_SHA:-}"
+    snapshot_proof_image="${FAKE_PR_901_PROOF_IMAGE_TAG:-}"
+    snapshot_proof_uid="${FAKE_PR_901_PROOF_NAMESPACE_UID:-}"
+  fi
   jq -cn \
     --arg base "$snapshot_base" \
     --arg head "$snapshot_head" \
@@ -148,7 +162,13 @@ if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
     --arg requested_head "$snapshot_requested_head" \
     --arg requested_merge "$snapshot_requested_merge" \
     --arg requested_image "$snapshot_requested_image" \
-    '{metadata:{name:"pr-901",resourceVersion:"rv-901",annotations:{"firemud.dev/last-preview-base-sha":$base,"firemud.dev/last-preview-head-sha":$head,"firemud.dev/last-preview-merge-sha":$merge,"firemud.dev/last-preview-image-tag":$image,"firemud.dev/requested-preview-base-sha":$requested_base,"firemud.dev/requested-preview-head-sha":$requested_head,"firemud.dev/requested-preview-merge-sha":$requested_merge,"firemud.dev/requested-preview-image-tag":$requested_image}}}'
+    --arg proof_base "$snapshot_proof_base" \
+    --arg proof_head "$snapshot_proof_head" \
+    --arg proof_merge "$snapshot_proof_merge" \
+    --arg proof_image "$snapshot_proof_image" \
+    --arg proof_uid "$snapshot_proof_uid" \
+    --arg uid "$snapshot_uid" \
+    '{metadata:{name:"pr-901",uid:$uid,resourceVersion:"rv-901",annotations:{"firemud.dev/last-preview-base-sha":$base,"firemud.dev/last-preview-head-sha":$head,"firemud.dev/last-preview-merge-sha":$merge,"firemud.dev/last-preview-image-tag":$image,"firemud.dev/requested-preview-base-sha":$requested_base,"firemud.dev/requested-preview-head-sha":$requested_head,"firemud.dev/requested-preview-merge-sha":$requested_merge,"firemud.dev/requested-preview-image-tag":$requested_image,"firemud.dev/proof-preview-base-sha":$proof_base,"firemud.dev/proof-preview-head-sha":$proof_head,"firemud.dev/proof-preview-merge-sha":$proof_merge,"firemud.dev/proof-preview-image-tag":$proof_image,"firemud.dev/proof-preview-namespace-uid":$proof_uid}}}'
   exit 0
 fi
 if [[ "$1" == get && "$2" == namespace &&
@@ -373,8 +393,18 @@ fake_labels_json() {
   fi
   printf '%s' "$labels_json"
 }
-if [[ "$1" == run && "$2" == list ]]; then
-  printf '%s' "${FAKE_ACTIVE_PREVIEW_RUNS_JSON:-[]}"
+if [[ "$1" == api && "$resource" == */actions/runs\?branch=* ]]; then
+  if [[ "${FAKE_ACTIVE_PREVIEW_RUNS_API_ERROR:-false}" == true ]]; then
+    exit 1
+  fi
+  if [[ "${FAKE_ACTIVE_PREVIEW_RUNS_API_MALFORMED:-false}" == true ]]; then
+    printf '%s' '[{"workflow_runs":[{"id":"not-a-number"}]}]'
+  elif [[ -v FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON ]]; then
+    printf '%s' "$FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON"
+  else
+    jq -cn --argjson runs "${FAKE_ACTIVE_PREVIEW_RUNS_JSON:-[]}" \
+      '[{workflow_runs:[$runs[] | {id:.databaseId,name:"PR Preview Environment",head_branch:"develop",display_title:.displayTitle,status:.status}]}]'
+  fi
   exit 0
 fi
 if [[ "$*" == *"repos/example/FireMUD/dispatches"* ]]; then
@@ -1461,7 +1491,7 @@ export FAKE_PRUNE_MERGEABLE=false
 export FAKE_PRUNE_MERGEABLE_STATE=dirty
 bash "$PRUNER" --apply >"$TEMP_DIR/prune-ordinary-conflict.out"
 grep -qx 'pr-101 pr-101' "$FAKE_DELETE_LOG"
-grep -Fq 'PR #101 is not preview-eligible (merge-conflict)' \
+grep -Fq 'PR #101 is not preview-eligible (reason=merge-conflict)' \
   "$TEMP_DIR/prune-ordinary-conflict.out"
 
 reset_case
@@ -1470,7 +1500,7 @@ export FAKE_PRUNE_METADATA="open\tmain\thuman\t${adversarial_labels_base64}\n"
 export FAKE_PRUNE_BASE_REF_STATUS=404
 bash "$PRUNER" --apply >"$TEMP_DIR/prune-ordinary-missing-base.out"
 grep -qx 'pr-101 pr-101' "$FAKE_DELETE_LOG"
-grep -Fq 'PR #101 is not preview-eligible (missing-base-branch)' \
+grep -Fq 'PR #101 is not preview-eligible (reason=missing-base-branch)' \
   "$TEMP_DIR/prune-ordinary-missing-base.out"
 
 reset_case
@@ -2128,6 +2158,8 @@ extract_workflow_step_run \
   "$RECONCILER_RUN"
 grep -Fq 'set -euo pipefail' "$RECONCILER_RUN"
 grep -Fq 'repair_requested_tuple() {' "$RECONCILER_RUN"
+# shellcheck disable=SC2016 # Assert literal shell and jq expressions in workflow source.
+grep -Fq 'max_active="${PREVIEW_MAX_ACTIVE:-2}"' "$RECONCILER_RUN"
 for repair_status_assignment in \
   'readonly repair_success=0' \
   'readonly repair_skip=10' \
@@ -2137,11 +2169,25 @@ for repair_status_assignment in \
 done
 # shellcheck disable=SC2016 # Assert the literal repair status dispatch in workflow source.
 grep -Fq 'case "$repair_status" in' "$RECONCILER_RUN"
-grep -Fq -- '--json databaseId,status,displayTitle' "$RECONCILER_RUN"
+grep -Fq -- 'gh api --paginate --slurp' "$RECONCILER_RUN"
+# shellcheck disable=SC2016 # Assert literal workflow source expressions.
+grep -Fq -- 'actions/runs?branch=${DEFAULT_BRANCH}&per_page=100' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert the active-run lookup is fenced to the candidate dispatch title.
 grep -Fq -- '--arg run_name "Preview dispatch pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}"' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert the literal jq display-title comparison in workflow source.
-grep -Fq -- '.displayTitle == $run_name' "$RECONCILER_RUN"
+grep -Fq -- '.display_title == $run_name' "$RECONCILER_RUN"
+# shellcheck disable=SC2016 # Assert literal jq expressions in workflow source.
+grep -Fq -- '.name == $workflow_name' "$RECONCILER_RUN"
+# shellcheck disable=SC2016 # Assert literal jq expressions in workflow source.
+grep -Fq -- '.head_branch == $default_branch' "$RECONCILER_RUN"
+for proof_annotation in \
+  'firemud.dev/proof-preview-base-sha' \
+  'firemud.dev/proof-preview-head-sha' \
+  'firemud.dev/proof-preview-merge-sha' \
+  'firemud.dev/proof-preview-image-tag' \
+  'firemud.dev/proof-preview-namespace-uid'; do
+  grep -Fq "$proof_annotation" "$RECONCILER_RUN"
+done
 for active_status in requested queued in_progress waiting pending; do
   grep -Fq -- ".status == \"${active_status}\"" "$RECONCILER_RUN"
 done
@@ -2166,6 +2212,81 @@ if ! grep -Fqx "Preview pr-901 already aligned to ${preview_base_sha}/${preview_
   exit 1
 fi
 test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 1
+
+reset_case
+reconciler_missing_proof_output="$TEMP_DIR/reconciler-missing-proof.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=head-901 \
+    FAKE_PR_901_PROOF_COMPLETE=false \
+PREVIEW_MAX_ACTIVE=2 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_missing_proof_output"
+grep -Fqx \
+  "Preview pr-901 deployed tuple is missing proof for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}; dispatching retry." \
+  "$reconciler_missing_proof_output"
+grep -Fqx \
+  "Dispatching preview render for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}) from trusted ref develop" \
+  "$reconciler_missing_proof_output"
+grep -Fq 'repos/example/FireMUD/dispatches -f event_type=preview-deploy' "$FAKE_DISPATCH_LOG"
+
+reset_case
+reconciler_paginated_active_output="$TEMP_DIR/reconciler-paginated-active.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_NAMESPACE_ABSENT=true \
+    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON="$(jq -cn \
+      --arg title "Preview dispatch pr-901-base-${preview_base_sha}-head-${preview_head_sha}-merge-${preview_merge_sha}" \
+      '[
+        {workflow_runs: []},
+        {workflow_runs: [{id: 4242, name: "PR Preview Environment", head_branch: "develop", display_title: $title, status: "queued"}]}
+      ]')" \
+PREVIEW_MAX_ACTIVE=2 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_paginated_active_output"
+grep -Fqx \
+  "Skipping dispatch for PR #901: preview run 4242 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
+  "$reconciler_paginated_active_output"
+test ! -e "$FAKE_DISPATCH_LOG"
+
+reset_case
+reconciler_active_api_error_output="$TEMP_DIR/reconciler-active-api-error.out"
+if (
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_NAMESPACE_ABSENT=true \
+    FAKE_ACTIVE_PREVIEW_RUNS_API_ERROR=true \
+PREVIEW_MAX_ACTIVE=2 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_active_api_error_output" 2>&1; then
+  echo "reconciler dispatched after an active-run API error" >&2
+  exit 1
+fi
+grep -Fqx \
+  'Unable to inspect active preview workflow runs; refusing preview reconcile.' \
+  "$reconciler_active_api_error_output"
+test ! -e "$FAKE_DISPATCH_LOG"
+
+reset_case
+reconciler_active_api_malformed_output="$TEMP_DIR/reconciler-active-api-malformed.out"
+if (
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_NAMESPACE_ABSENT=true \
+    FAKE_ACTIVE_PREVIEW_RUNS_API_MALFORMED=true \
+PREVIEW_MAX_ACTIVE=2 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_active_api_malformed_output" 2>&1; then
+  echo "reconciler dispatched after malformed active-run API data" >&2
+  exit 1
+fi
+grep -Fqx \
+  'Unable to parse active preview workflow runs; refusing preview reconcile.' \
+  "$reconciler_active_api_malformed_output"
+test ! -e "$FAKE_DISPATCH_LOG"
 
 reset_case
 reconciler_stacked_output="$TEMP_DIR/reconciler-stacked.out"

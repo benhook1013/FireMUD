@@ -123,7 +123,17 @@ while IFS='|' read -r workflow gate_job_id gate workflow_name workflow_file work
     echo "$workflow must contain required gate job ID $gate_job_id" >&2
     exit 1
   }
-  if ! grep -Fxq "    name: $gate" <<<"$gate_block"; then
+  if [[ "$workflow" == "smoke.yml" ]]; then
+    # A metadata-only edit must not create a second check run with the required
+    # Smoke Gate name. The non-required metadata job may still poll the prior
+    # substantive gate, but its own failure cannot replace that required proof.
+    # shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
+    expected_gate_name="    name: \${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Gate)' || 'Smoke Gate' }}"
+    if ! grep -Fxq "$expected_gate_name" <<<"$gate_block"; then
+      echo "$workflow must separate its metadata-only job name from the required $gate context" >&2
+      exit 1
+    fi
+  elif ! grep -Fxq "    name: $gate" <<<"$gate_block"; then
     echo "$workflow must always emit the required $gate context" >&2
     exit 1
   fi

@@ -1742,7 +1742,7 @@ for job_name, job in jobs.items():
     assert len(writes) == 1, job_name
     cleanup = next(step for step in steps if step.get("name") == "Remove runtime kubeconfig")
     assert cleanup["if"] == "${{ always() }}", job_name
-    if job_name == "deploy-runtime":
+    if job_name in ("deploy-runtime", "verify-runtime"):
         assert runtime_kubeconfig_marker in cleanup["run"], job_name
         assert manager_kubeconfig_marker in cleanup["run"], job_name
     else:
@@ -1770,7 +1770,7 @@ for job_name, job in jobs.items():
         assert cleanup["run"] == manager_kubeconfig_cleanup, job_name
     else:
         assert manager_kubeconfig_marker in cleanup["run"], job_name
-assert manager_kubeconfig_jobs == {"deploy-runtime", "destroy-runtime"}
+assert manager_kubeconfig_jobs == {"deploy-runtime", "verify-runtime", "destroy-runtime"}
 assert "Set up Helm" not in deploy_by_name
 requested_step_index = next(
     index
@@ -2092,6 +2092,8 @@ assert deploy_failure["uses"] == "actions/github-script@3a2844b7e9c422d3c10d287c
 assert deploy_failure["env"] == {
     "PREVIEW_PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
     "PREVIEW_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
+    "PREVIEW_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
+    "PREVIEW_MERGE_SHA": "${{ needs.validate-target.outputs.merge_sha }}",
     "PREVIEW_IMAGE_TAG": "${{ needs.validate-target.outputs.image_tag }}",
     "PREVIEW_HOSTNAME": "${{ needs.validate-target.outputs.hostname }}",
     "PREVIEW_EXPOSURE_MODE": "${{ needs.validate-target.outputs.exposure_mode }}",
@@ -2143,6 +2145,20 @@ verify_steps = jobs["verify-runtime"]["steps"]
 verify_by_name = {
     step.get("name"): step for step in verify_steps if isinstance(step, dict)
 }
+for publisher in (
+    prepare_by_name["Publish trusted preview preparation failure"],
+    deploy_by_name["Publish trusted preview unavailable capacity"],
+    deploy_by_name["Publish trusted preview deployment failure"],
+    verify_by_name["Publish trusted preview deployment state"],
+    verify_by_name["Publish trusted preview success"],
+    verify_by_name["Publish trusted preview verification failure"],
+):
+    assert publisher["env"]["PREVIEW_BASE_SHA"] == (
+        "${{ needs.validate-target.outputs.base_sha }}"
+    )
+    assert publisher["env"]["PREVIEW_MERGE_SHA"] == (
+        "${{ needs.validate-target.outputs.merge_sha }}"
+    )
 verify_head_step_index = next(
     index
     for index, step in enumerate(verify_steps)
@@ -2222,7 +2238,13 @@ final_uid_step_index = next(
 final_uid_step = verify_by_name[
     "Revalidate exact source binding and runtime Namespace UID before success publication"
 ]
-assert final_uid_step_index + 1 == verify_success_index
+proof_tuple_step_index = next(
+    index
+    for index, step in enumerate(verify_steps)
+    if step.get("name") == "Record proof-complete preview tuple"
+)
+assert final_uid_step_index + 1 == proof_tuple_step_index
+assert proof_tuple_step_index + 1 == verify_success_index
 assert final_uid_step["env"] == {
     "GH_TOKEN": "${{ github.token }}",
     "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
@@ -2258,11 +2280,39 @@ for required in (
     '::error title=Preview runtime namespace UID changed::',
 ):
     assert required in final_uid_run, required
+proof_tuple_step = verify_by_name["Record proof-complete preview tuple"]
+assert proof_tuple_step["if"] == "${{ success() }}"
+assert proof_tuple_step["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
+    "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
+    "EXPECTED_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
+    "EXPECTED_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
+    "EXPECTED_MERGE_SHA": "${{ needs.validate-target.outputs.merge_sha }}",
+    "EXPECTED_IMAGE_TAG": "${{ needs.validate-target.outputs.image_tag }}",
+    "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}",
+    "EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID": (
+        "${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}"
+    ),
+}
+proof_tuple_run = proof_tuple_step["run"]
+for required in (
+    'kubectl get namespace "$RUNTIME_NAMESPACE" --ignore-not-found -o json',
+    'select($metadata.uid == $expected_namespace_uid)',
+    '"firemud.dev/proof-preview-base-sha=${EXPECTED_BASE_SHA}"',
+    '"firemud.dev/proof-preview-head-sha=${EXPECTED_HEAD_SHA}"',
+    '"firemud.dev/proof-preview-merge-sha=${EXPECTED_MERGE_SHA}"',
+    '"firemud.dev/proof-preview-image-tag=${EXPECTED_IMAGE_TAG}"',
+    '"firemud.dev/proof-preview-namespace-uid=${namespace_uid}"',
+    '--resource-version "$namespace_resource_version"',
+):
+    assert required in proof_tuple_run, required
 verify_failure = verify_steps[verify_failure_index]
 assert verify_failure["if"] == "${{ !cancelled() && failure() }}"
 assert verify_failure["env"] == {
     "PREVIEW_PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
     "PREVIEW_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
+    "PREVIEW_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
+    "PREVIEW_MERGE_SHA": "${{ needs.validate-target.outputs.merge_sha }}",
     "PREVIEW_IMAGE_TAG": "${{ needs.validate-target.outputs.image_tag }}",
     "PREVIEW_HOSTNAME": "${{ needs.validate-target.outputs.hostname }}",
     "PREVIEW_EXPOSURE_MODE": "${{ needs.validate-target.outputs.exposure_mode }}",

@@ -10,6 +10,7 @@ const PREVIEW_STATE_POLICIES = new Set([
   "expected-closed",
   "manual-any",
 ]);
+const SHA_PATTERN = /^[0-9a-f]{40}$/;
 
 function commentTimestamp(comment) {
   const parsed = Date.parse(comment.created_at || "");
@@ -83,6 +84,23 @@ async function publishPreviewComment({
   }
 
   const headSha = process.env.PREVIEW_HEAD_SHA || "";
+  const baseSha = process.env.PREVIEW_BASE_SHA || "";
+  const mergeSha = process.env.PREVIEW_MERGE_SHA || "";
+  const imageTag = process.env.PREVIEW_IMAGE_TAG || "";
+  const hasTupleInput = baseSha !== "" || mergeSha !== "";
+  const hasValidTuple =
+    SHA_PATTERN.test(baseSha) &&
+    SHA_PATTERN.test(mergeSha) &&
+    (imageTag === baseSha || imageTag === `pr-merge-${mergeSha}`);
+
+  if (hasTupleInput && !hasValidTuple) {
+    core.info(
+      `Skipping ${staleDescription} for PR #${prNumber}: ` +
+        "invalid or incomplete preview base/merge/image tuple"
+    );
+    return;
+  }
+
   const getCurrentPullRequest = () =>
     github.rest.pulls.get({
       ...context.repo,
@@ -90,6 +108,8 @@ async function publishPreviewComment({
     });
   const isStaleTarget = (pullRequest) =>
     pullRequest.head?.sha !== headSha ||
+    (hasTupleInput &&
+      (pullRequest.base?.sha !== baseSha || pullRequest.merge_commit_sha !== mergeSha)) ||
     (statePolicy === "expected-open" && pullRequest.state !== "open") ||
     (statePolicy === "expected-closed" && pullRequest.state !== "closed");
 

@@ -464,6 +464,8 @@ jobs:
         env:
           PREVIEW_PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           PREVIEW_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          PREVIEW_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          PREVIEW_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
           PREVIEW_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
           PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
           PREVIEW_EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
@@ -625,6 +627,8 @@ jobs:
         env:
           PREVIEW_PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           PREVIEW_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          PREVIEW_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          PREVIEW_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
           PREVIEW_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
           PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
           PREVIEW_EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
@@ -993,6 +997,8 @@ jobs:
         env:
           PREVIEW_PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           PREVIEW_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          PREVIEW_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          PREVIEW_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
           PREVIEW_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
           PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
           PREVIEW_EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
@@ -1060,6 +1066,13 @@ jobs:
         with:
           content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_RUNTIME_KUBECONFIG }}
           path: ${{ runner.temp }}/preview-runtime.kubeconfig
+
+      - name: Write trusted namespace-manager kubeconfig
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}
+          path: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
+          export-to-github-env: 'false'
 
       - name: Revalidate open PR before runtime verification
         env:
@@ -1204,6 +1217,8 @@ jobs:
         env:
           PREVIEW_PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           PREVIEW_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          PREVIEW_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          PREVIEW_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
           PREVIEW_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
           PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
           PREVIEW_EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
@@ -1284,6 +1299,7 @@ jobs:
               | select($annotations["firemud.dev/requested-preview-base-sha"] == $expected_base_sha)
               | select($annotations["firemud.dev/requested-preview-head-sha"] == $expected_head_sha)
               | select($annotations["firemud.dev/requested-preview-merge-sha"] == $expected_merge_sha)
+              | select($annotations["firemud.dev/requested-preview-image-tag"] == $expected_image_tag)
               | select($annotations["firemud.dev/last-preview-base-sha"] == $expected_base_sha)
               | select($annotations["firemud.dev/last-preview-head-sha"] == $expected_head_sha)
               | select($annotations["firemud.dev/last-preview-merge-sha"] == $expected_merge_sha)
@@ -1298,12 +1314,92 @@ jobs:
             exit 1
           }
 
+      - name: Record proof-complete preview tuple
+        if: ${{ success() }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          EXPECTED_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          EXPECTED_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
+          EXPECTED_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+          EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID: ${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}
+        run: |
+          set -euo pipefail
+          [[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]] || {
+            echo "::error title=Invalid preview runtime namespace::Expected pr-${PR_NUMBER}." >&2
+            exit 1
+          }
+          for sha_name in EXPECTED_BASE_SHA EXPECTED_HEAD_SHA EXPECTED_MERGE_SHA; do
+            sha_value="${!sha_name}"
+            [[ "$sha_value" =~ ^[0-9a-f]{40}$ ]] || {
+              echo "::error title=Invalid preview ${sha_name,,} SHA::Expected exactly 40 lowercase hexadecimal characters." >&2
+              exit 1
+            }
+          done
+          [[ "$EXPECTED_IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || {
+            echo "::error title=Invalid preview image tag::Expected a canonical immutable image tag." >&2
+            exit 1
+          }
+          [[ -n "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID" ]] || {
+            echo "::error title=Missing deployed preview runtime Namespace UID::The deploy job did not publish its post-apply Namespace UID." >&2
+            exit 1
+          }
+          namespace_json="$(kubectl get namespace "$RUNTIME_NAMESPACE" --ignore-not-found -o json)"
+          [[ -n "$namespace_json" ]] || {
+            echo "::error title=Missing preview runtime namespace proof target::Expected ${RUNTIME_NAMESPACE}." >&2
+            exit 1
+          }
+          if ! namespace_identity="$(jq -er \
+            --arg expected_namespace "$RUNTIME_NAMESPACE" \
+            --arg expected_pr_number "$PR_NUMBER" \
+            --arg expected_base_sha "$EXPECTED_BASE_SHA" \
+            --arg expected_head_sha "$EXPECTED_HEAD_SHA" \
+            --arg expected_merge_sha "$EXPECTED_MERGE_SHA" \
+            --arg expected_image_tag "$EXPECTED_IMAGE_TAG" \
+            --arg expected_namespace_uid "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID" \
+            '(
+              .metadata as $metadata
+              | ($metadata.labels // {}) as $labels
+              | ($metadata.annotations // {}) as $annotations
+              | select($metadata.name == $expected_namespace)
+              | select($metadata.uid == $expected_namespace_uid)
+              | select($metadata.resourceVersion | type == "string" and length > 0)
+              | select($labels["firemud.dev/preview"] == "true")
+              | select($labels["firemud.dev/pr-number"] == $expected_pr_number)
+              | select($annotations["firemud.dev/requested-preview-base-sha"] == $expected_base_sha)
+              | select($annotations["firemud.dev/requested-preview-head-sha"] == $expected_head_sha)
+              | select($annotations["firemud.dev/requested-preview-merge-sha"] == $expected_merge_sha)
+              | select($annotations["firemud.dev/requested-preview-image-tag"] == $expected_image_tag)
+              | select($annotations["firemud.dev/last-preview-base-sha"] == $expected_base_sha)
+              | select($annotations["firemud.dev/last-preview-head-sha"] == $expected_head_sha)
+              | select($annotations["firemud.dev/last-preview-merge-sha"] == $expected_merge_sha)
+              | select($annotations["firemud.dev/last-preview-image-tag"] == $expected_image_tag)
+              | [ $metadata.uid, $metadata.resourceVersion ]
+              | join("|")
+            )' <<<"$namespace_json")"; then
+            echo "::error title=Preview runtime proof fence failed::Namespace ${RUNTIME_NAMESPACE} no longer has the exact deployed tuple and Namespace UID." >&2
+            exit 1
+          fi
+          IFS='|' read -r namespace_uid namespace_resource_version <<<"$namespace_identity"
+          kubectl annotate namespace "$RUNTIME_NAMESPACE" \
+            "firemud.dev/proof-preview-base-sha=${EXPECTED_BASE_SHA}" \
+            "firemud.dev/proof-preview-head-sha=${EXPECTED_HEAD_SHA}" \
+            "firemud.dev/proof-preview-merge-sha=${EXPECTED_MERGE_SHA}" \
+            "firemud.dev/proof-preview-image-tag=${EXPECTED_IMAGE_TAG}" \
+            "firemud.dev/proof-preview-namespace-uid=${namespace_uid}" \
+            --overwrite \
+            --resource-version "$namespace_resource_version" >/dev/null
+
       - name: Publish trusted preview success
         if: ${{ success() }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
           PREVIEW_PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           PREVIEW_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          PREVIEW_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          PREVIEW_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
           PREVIEW_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
           PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
           PREVIEW_EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
@@ -1329,6 +1425,8 @@ jobs:
         env:
           PREVIEW_PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           PREVIEW_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          PREVIEW_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          PREVIEW_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
           PREVIEW_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
           PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
           PREVIEW_EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
@@ -1400,7 +1498,10 @@ jobs:
 
       - name: Remove runtime kubeconfig
         if: ${{ always() }}
-        run: rm -f -- "$RUNNER_TEMP/preview-runtime.kubeconfig"
+        run: |
+          rm -f -- \
+            "$RUNNER_TEMP/preview-runtime.kubeconfig" \
+            "$RUNNER_TEMP/preview-namespace-manager.kubeconfig"
 
   destroy-runtime:
     name: Delete Preview Runtime
