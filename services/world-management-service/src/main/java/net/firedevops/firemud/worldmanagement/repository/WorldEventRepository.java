@@ -24,12 +24,6 @@ public class WorldEventRepository {
     this.dsl = dsl;
   }
 
-  public List<WorldEvent> findByProcessedFalseAndExecuteAtBefore(LocalDateTime time) {
-    return dsl.selectFrom(WORLD_EVENT)
-        .where(WORLD_EVENT.PROCESSED.isFalse().and(WORLD_EVENT.EXECUTE_AT.le(time)))
-        .fetch(this::toEntity);
-  }
-
   public long countByTenantIdAndGameInstanceId(Long tenantId, Long gameInstanceId) {
     return dsl.fetchCount(
         WORLD_EVENT,
@@ -46,9 +40,15 @@ public class WorldEventRepository {
   public List<WorldEvent> findDueEventsForShard(LocalDateTime time, Integer shardId) {
     return dsl.select(WORLD_EVENT.fields())
         .select(REGION_INSTANCE.SHARD_ID)
+        .select(REGION_INSTANCE.TENANT_ID, REGION_INSTANCE.GAME_INSTANCE_ID)
         .from(WORLD_EVENT)
         .leftJoin(REGION_INSTANCE)
-        .on(WORLD_EVENT.REGION_INSTANCE_ID.eq(REGION_INSTANCE.ID))
+        .on(
+            WORLD_EVENT
+                .REGION_INSTANCE_ID
+                .eq(REGION_INSTANCE.ID)
+                .and(WORLD_EVENT.TENANT_ID.eq(REGION_INSTANCE.TENANT_ID))
+                .and(WORLD_EVENT.GAME_INSTANCE_ID.eq(REGION_INSTANCE.GAME_INSTANCE_ID)))
         .where(
             WORLD_EVENT
                 .PROCESSED
@@ -58,8 +58,15 @@ public class WorldEventRepository {
                     WORLD_EVENT
                         .REGION_INSTANCE_ID
                         .isNull()
-                        .or(REGION_INSTANCE.SHARD_ID.eq(shardId))))
-        .fetch(this::toEntity);
+                        .or(REGION_INSTANCE.SHARD_ID.eq(shardId)))
+                .and(WORLD_EVENT.EVENT_TYPE.ne(WorldEvent.WEATHER_CHANGE_EVENT_TYPE)))
+        // Each scheduler claims only the world_event rows it can lock in this transaction. The
+        // service keeps the transaction open through processing, so another replica skips these
+        // rows instead of applying the same event concurrently.
+        .forUpdate()
+        .of(WORLD_EVENT)
+        .skipLocked()
+        .fetch(this::toDueEventEntity);
   }
 
   public Optional<WorldEvent> findById(Long id) {
@@ -123,6 +130,15 @@ public class WorldEventRepository {
     entity.setProcessedAt(record.get(WORLD_EVENT.PROCESSED_AT));
     Integer version = record.get(WORLD_EVENT.VERSION);
     entity.setVersion(version == null ? 0 : version);
+    return entity;
+  }
+
+  private WorldEvent toDueEventEntity(Record record) {
+    WorldEvent entity = toEntity(record);
+    if (entity.getRegionInstance() != null) {
+      entity.getRegionInstance().setTenantId(record.get(REGION_INSTANCE.TENANT_ID));
+      entity.getRegionInstance().setGameInstanceId(record.get(REGION_INSTANCE.GAME_INSTANCE_ID));
+    }
     return entity;
   }
 }

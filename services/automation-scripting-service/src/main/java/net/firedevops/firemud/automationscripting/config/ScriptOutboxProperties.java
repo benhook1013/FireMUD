@@ -23,12 +23,6 @@ public class ScriptOutboxProperties {
   private long terminalCleanupIntervalSeconds = 300;
 
   @Min(1)
-  private long queueRebuildIntervalSeconds = 60;
-
-  @Min(1)
-  private int queueRebuildBatchSize = 200;
-
-  @Min(1)
   private long executionIntervalSeconds = 5;
 
   @Min(1)
@@ -72,22 +66,6 @@ public class ScriptOutboxProperties {
 
   public void setTerminalCleanupIntervalSeconds(long terminalCleanupIntervalSeconds) {
     this.terminalCleanupIntervalSeconds = terminalCleanupIntervalSeconds;
-  }
-
-  public long getQueueRebuildIntervalSeconds() {
-    return queueRebuildIntervalSeconds;
-  }
-
-  public void setQueueRebuildIntervalSeconds(long queueRebuildIntervalSeconds) {
-    this.queueRebuildIntervalSeconds = queueRebuildIntervalSeconds;
-  }
-
-  public int getQueueRebuildBatchSize() {
-    return queueRebuildBatchSize;
-  }
-
-  public void setQueueRebuildBatchSize(int queueRebuildBatchSize) {
-    this.queueRebuildBatchSize = queueRebuildBatchSize;
   }
 
   public long getExecutionIntervalSeconds() {
