@@ -9200,6 +9200,8 @@ metadata:
     app.kubernetes.io/instance: __RELEASE__
     firemud.dev/certificate-identity-mode: hosted-controller
 spec:
+  strategy:
+    type: Recreate
   template:
     spec:
       containers:
@@ -9960,6 +9962,164 @@ if not any(
     raise SystemExit(
         "omitted Ingress metadata.namespace did not resolve against the target namespace: "
         f"{ingress_omitted_issues}"
+    )
+
+telnet_documents = [
+    {
+        "kind": "Service",
+        "metadata": {
+            "name": "tcp-proxy-service",
+            "namespace": namespace,
+            "labels": {"firemud.dev/certificate-identity-mode": "standalone"},
+        },
+        "spec": {
+            "type": "NodePort",
+            "ports": [{
+                "port": 2323,
+                "targetPort": 2323,
+                "protocol": "TCP",
+                "nodePort": 32023,
+            }],
+        },
+    },
+    {
+        "kind": "Certificate",
+        "metadata": {"name": "hobby-telnet-tls", "namespace": namespace},
+        "spec": {"secretName": "hobby-telnet-tls"},
+    },
+    {
+        "kind": "Ingress",
+        "metadata": {"name": "hobby-ingress", "namespace": namespace},
+        "spec": {"tls": [{"secretName": "hobby-http-tls"}]},
+    },
+    {
+        "kind": "Deployment",
+        "metadata": {
+            "name": "tcp-proxy-service",
+            "namespace": namespace,
+            "labels": {"firemud.dev/certificate-identity-mode": "standalone"},
+        },
+        "spec": {"template": {"spec": {"containers": [{
+            "name": "tcp-proxy-service",
+            "env": [
+                {"name": "TCP_PROXY_TLS_ENABLED", "value": "true"},
+                {"name": "TCP_PROXY_TLS_CERT", "value": "/telnet-tls/tls.crt"},
+                {"name": "TCP_PROXY_TLS_KEY", "value": "/telnet-tls/tls.key"},
+                {"name": "TCP_PROXY_TELNET_MODE", "value": "DIRECT_TLS"},
+            ],
+            "volumeMounts": [{
+                "name": "telnet-tls", "mountPath": "/telnet-tls", "readOnly": True
+            }],
+        }], "volumes": [{
+            "name": "telnet-tls", "secret": {"secretName": "hobby-telnet-tls"}
+        }]}}},
+    },
+]
+telnet_issues = module.validate_hosted_telnet_tls_values(
+    telnet_documents,
+    required_identity_mode="standalone",
+    target_namespace=namespace,
+)
+if telnet_issues:
+    raise SystemExit(f"canonical standalone Telnet TLS fixture did not pass: {telnet_issues}")
+
+non_default_telnet_documents = copy.deepcopy(telnet_documents)
+for document in non_default_telnet_documents:
+    document.setdefault("metadata", {})["namespace"] = "pr-42"
+    if document.get("kind") in {"Service", "Deployment"}:
+        document.setdefault("metadata", {}).setdefault("labels", {})[
+            "firemud.dev/certificate-identity-mode"
+        ] = "standalone"
+non_default_telnet_service = next(
+    document for document in non_default_telnet_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+non_default_telnet_service["spec"]["ports"][0]["targetPort"] = 2324
+non_default_telnet_issues = module.validate_hosted_telnet_tls_values(
+    non_default_telnet_documents,
+    required_identity_mode="standalone",
+    target_namespace="pr-42",
+)
+if not any("targetPort 2323" in issue for issue in non_default_telnet_issues):
+    raise SystemExit(
+        "standalone Telnet preflight skipped invalid non-default namespace resources: "
+        f"{non_default_telnet_issues}"
+    )
+
+missing_telnet_listener = copy.deepcopy(telnet_documents)
+next(
+    document for document in missing_telnet_listener
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)["spec"]["ports"] = []
+missing_telnet_issues = module.validate_hosted_telnet_tls_values(
+    missing_telnet_listener,
+    required_identity_mode="standalone",
+    target_namespace=namespace,
+)
+if not any(
+    "requires exactly one direct TLS listener with port 2323, targetPort 2323, and protocol TCP"
+    in issue for issue in missing_telnet_issues
+):
+    raise SystemExit(
+        "standalone Telnet TLS accepted a missing direct TLS listener: "
+        f"{missing_telnet_issues}"
+    )
+
+mismatched_telnet_listener = copy.deepcopy(telnet_documents)
+next(
+    port for document in mismatched_telnet_listener
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    for port in document.get("spec", {}).get("ports", [])
+)["targetPort"] = 2324
+mismatched_telnet_issues = module.validate_hosted_telnet_tls_values(
+    mismatched_telnet_listener,
+    required_identity_mode="standalone",
+    target_namespace=namespace,
+)
+if not any(
+    "requires exactly one direct TLS listener with port 2323, targetPort 2323, and protocol TCP"
+    in issue for issue in mismatched_telnet_issues
+):
+    raise SystemExit(
+        "standalone Telnet TLS accepted a mismatched direct TLS listener: "
+        f"{mismatched_telnet_issues}"
+    )
+
+telnet_cross_namespace_decoys = copy.deepcopy(telnet_documents)
+telnet_cross_namespace_decoys.extend([
+    {
+        "kind": "Certificate",
+        "metadata": {"name": "hobby-telnet-tls", "namespace": "other"},
+        "spec": {"secretName": "wrong-cross-namespace-secret"},
+    },
+    {
+        "kind": "Ingress",
+        "metadata": {"name": "other-ingress", "namespace": "other"},
+        "spec": {"tls": [{"secretName": "hobby-telnet-tls"}]},
+    },
+    {
+        "kind": "Deployment",
+        "metadata": {"name": "tcp-proxy-service", "namespace": "other"},
+        "spec": {"template": {"spec": {"containers": []}}},
+    },
+    {
+        "kind": "Service",
+        "metadata": {"name": "tcp-proxy-service", "namespace": "other"},
+        "spec": {"type": "NodePort"},
+    },
+])
+telnet_cross_namespace_issues = module.validate_hosted_telnet_tls_values(
+    telnet_cross_namespace_decoys,
+    required_identity_mode="standalone",
+    target_namespace=namespace,
+)
+if telnet_cross_namespace_issues:
+    raise SystemExit(
+        "same-name Telnet TLS resources in another namespace affected validation: "
+        f"{telnet_cross_namespace_issues}"
     )
 
 invalid_port = run_hosted(

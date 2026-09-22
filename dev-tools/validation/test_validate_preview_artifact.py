@@ -31,6 +31,13 @@ def load_validator():
 
 
 VALIDATOR = load_validator()
+TRUSTED_CHART_METADATA = ROOT / "k8s/helm/firemud/Chart.yaml"
+TRUSTED_CHART = yaml.safe_load(
+    TRUSTED_CHART_METADATA.read_text(encoding="utf-8")
+)
+EXPECTED_HELM_CHART_LABEL = (
+    f"{TRUSTED_CHART['name']}-{TRUSTED_CHART['version']}".replace("+", "_")
+)
 
 
 class PreviewArtifactServiceValidationTest(unittest.TestCase):
@@ -977,10 +984,7 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
             )
         metadata = {
             "name": "tcp-proxy-service",
-            "labels": {
-                **self.validator._expected_top_level_labels(),
-                "app.kubernetes.io/instance": "pr-42",
-            },
+            "labels": VALIDATOR._expected_object_labels("pr-42"),
         }
         if mode is not None:
             metadata["labels"][self.validator.CERTIFICATE_IDENTITY_LABEL] = mode
@@ -1047,6 +1051,10 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
             prepared = yaml.safe_load(destination.read_text(encoding="utf-8"))
             self.assertEqual(prepared["metadata"]["namespace"], "pr-42")
             self.assertEqual(prepared["spec"]["ports"][0]["nodePort"], 32000)
+            self.assertEqual(
+                prepared["metadata"]["annotations"],
+                {"firemud.dev/allocated-telnet-port": "32000"},
+            )
 
     def test_standalone_injects_only_trusted_ingress_issuer(self):
         trusted_values = yaml.safe_load(
@@ -1072,7 +1080,10 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
                 source, prepared, 32000, "pr-42", "standalone"
             )
             result = list(yaml.safe_load_all(prepared.read_text(encoding="utf-8")))
-            self.assertNotIn("annotations", result[0]["metadata"])
+            self.assertEqual(
+                result[0]["metadata"]["annotations"],
+                {"firemud.dev/allocated-telnet-port": "32000"},
+            )
             self.assertEqual(
                 result[1]["metadata"]["annotations"],
                 {"cert-manager.io/cluster-issuer": "letsencrypt-prod"},
@@ -1137,6 +1148,7 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
             )
             result = yaml.safe_load(prepared.read_text(encoding="utf-8"))
             self.assertNotIn("nodePort", result["spec"]["ports"][0])
+            self.assertNotIn("annotations", result["metadata"])
             with self.assertRaisesRegex(ValueError, "sentinel Telnet port 0"):
                 self.validator.inject_telnet_port(
                     source, prepared, 32000, "pr-42", "hosted-controller"
@@ -1225,10 +1237,7 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
                 )
 
     def test_expected_top_level_label_mismatches_report_expected_and_actual(self):
-        expected_labels = {
-            **self.validator._expected_top_level_labels(),
-            "app.kubernetes.io/instance": "pr-42",
-        }
+        expected_labels = VALIDATOR._expected_object_labels("pr-42")
         for label, expected_value in expected_labels.items():
             document = self._tcp_proxy_service({})
             document["metadata"]["labels"] = {
@@ -1256,11 +1265,58 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
             },
             namespace="pr-42",
         )
+        document["metadata"]["annotations"] = {
+            "firemud.dev/allocated-telnet-port": "32001"
+        }
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "prepared.yaml"
             path.write_text(yaml.safe_dump(document), encoding="utf-8")
 
             self.validator.validate_runtime_target(path, "pr-42", 32001)
+
+    def test_runtime_target_rejects_unbound_or_extra_public_service_annotations(self):
+        document = self._tcp_proxy_service(
+            {
+                "type": "NodePort",
+                "ports": [
+                    {"name": "tcp-2323", "port": 2323, "nodePort": 32001},
+                ],
+            },
+            namespace="pr-42",
+        )
+        for service_annotations in (
+            {"firemud.dev/allocated-telnet-port": "32000"},
+            {
+                "firemud.dev/allocated-telnet-port": "32001",
+                "unexpected.example/annotation": "value",
+            },
+        ):
+            with self.subTest(annotations=service_annotations), tempfile.TemporaryDirectory() as directory:
+                document["metadata"]["annotations"] = service_annotations
+                path = Path(directory) / "prepared.yaml"
+                path.write_text(yaml.safe_dump(document), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "allocator annotation"):
+                    self.validator.validate_runtime_target(path, "pr-42", 32001)
+
+    def test_runtime_target_rejects_private_service_annotation(self):
+        document = self._tcp_proxy_service(
+            {
+                "type": "ClusterIP",
+                "ports": [{"name": "tcp-2323", "port": 2323}],
+            },
+            namespace="pr-42",
+            mode="hosted-controller",
+        )
+        document["metadata"]["annotations"] = {
+            "firemud.dev/allocated-telnet-port": "0"
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "prepared.yaml"
+            path.write_text(yaml.safe_dump(document), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "must not contain annotations"):
+                self.validator.validate_runtime_target(
+                    path, "pr-42", 0, "hosted-controller", "private"
+                )
 
     def test_runtime_target_rejects_non_object_service_spec_or_ports(self):
         for spec, message in (
@@ -1678,7 +1734,7 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
                     if document["metadata"]["name"] == "spring-cloud-gateway-egress"
                 )
                 gateway_egress["spec"]["egress"][1]["ports"][0]["port"] = 6565
-                with self.assertRaisesRegex(ValueError, "unsafe exception"):
+                with self.assertRaisesRegex(ValueError, "unsafe spec"):
                     self.validator.validate_network_policies(broadened, mode)
 
         hosted_broad = copy.deepcopy(hosted)
@@ -1893,6 +1949,9 @@ class PreviewArtifactCommandLineTest(unittest.TestCase):
 class PreviewArtifactConfigMapSanitizerTest(unittest.TestCase):
     validator = VALIDATOR
 
+    def _trusted_config_data(self):
+        return copy.deepcopy(self.validator._trusted_hosted_shared_config())
+
     def _sanitize_config_map_data(self, data):
         document = {
             "apiVersion": "v1",
@@ -1983,31 +2042,36 @@ class PreviewArtifactConfigMapSanitizerTest(unittest.TestCase):
 
             self.assertFalse(destination.exists())
 
-    def test_sanitize_strips_sensitive_tokens_anywhere_case_insensitively(self):
-        sanitized = self._sanitize_config_map_data(
-            {
-                "FIREMUD_POSTGRES_PASSWORD_FILE": "password-value",
-                "firemud_minio_secret_key": "secret-key-value",
-                "AuthTokenValue": "token-value",
-                "TLS_PRIVATE_KEY_PEM": "private-key-value",
-                "aws_access_key_id": "access-key-value",
-                "database_credential_file": "credential-value",
-            }
-        )
+    def test_sanitize_rejects_unknown_redirect_and_jvm_keys(self):
+        for key in (
+            "FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_UPSTREAM_URL",
+            "FIREMUD_GATEWAY_ROUTE_ACCOUNT_URI",
+            "SPRING_APPLICATION_JSON",
+            "JAVA_TOOL_OPTIONS",
+        ):
+            with self.subTest(key=key):
+                data = self._trusted_config_data()
+                data[key] = "attacker-controlled"
+                with self.assertRaisesRegex(ValueError, "unsafe keys"):
+                    self._sanitize_config_map_data(data)
 
-        self.assertEqual(sanitized, {})
+    def test_sanitize_rejects_changed_trusted_values(self):
+        data = self._trusted_config_data()
+        data["FIREMUD_REDIS_CACHE_HOST"] = "attacker.example"
+        with self.assertRaisesRegex(ValueError, "differs from the trusted hosted value"):
+            self._sanitize_config_map_data(data)
 
-    def test_sanitize_preserves_keys_without_sensitive_tokens(self):
+    def test_sanitize_preserves_only_trusted_noncredential_values(self):
+        source = self._trusted_config_data()
         expected = {
-            "FIREMUD_PUBLIC_KEY_URL": "https://example.test/jwks.json",
-            "FIREMUD_AUTH_MODE": "preview",
-            "FIREMUD_KEYSTORE_PATH": "/var/run/firemud/keystore",
-            "IDENTITY_PROVIDER": "workload-identity",
+            key: value
+            for key, value in source.items()
+            if key not in self.validator.HOSTED_REDACTED_CONFIG_KEYS
         }
 
-        self.assertEqual(self._sanitize_config_map_data(expected), expected)
+        self.assertEqual(self._sanitize_config_map_data(source), expected)
 
-    def test_final_validation_accepts_ordinary_data(self):
+    def test_final_validation_accepts_trusted_data(self):
         document = {
             "apiVersion": "v1",
             "kind": "ConfigMap",
@@ -2018,7 +2082,11 @@ class PreviewArtifactConfigMapSanitizerTest(unittest.TestCase):
                     "app.kubernetes.io/instance": "pr-42",
                 },
             },
-            "data": {"FIREMUD_AUTH_MODE": "preview"},
+            "data": {
+                key: value
+                for key, value in self._trusted_config_data().items()
+                if key not in self.validator.HOSTED_REDACTED_CONFIG_KEYS
+            },
         }
 
         self._validate_config_map_manifest(document)
@@ -2028,7 +2096,7 @@ class PreviewArtifactConfigMapSanitizerTest(unittest.TestCase):
             "apiVersion": "v1",
             "kind": "ConfigMap",
             "metadata": {"name": "firemud-config"},
-            "data": {"FIREMUD_AUTH_MODE": "preview"},
+            "data": self._trusted_config_data(),
             "binaryData": {"database_credential_file": "c2VjcmV0"},
         }
         with tempfile.TemporaryDirectory() as directory:
@@ -2052,12 +2120,154 @@ class PreviewArtifactConfigMapSanitizerTest(unittest.TestCase):
                     "app.kubernetes.io/instance": "pr-42",
                 },
             },
-            "data": {"FIREMUD_AUTH_MODE": "preview"},
+            "data": {
+                key: value
+                for key, value in self._trusted_config_data().items()
+                if key not in self.validator.HOSTED_REDACTED_CONFIG_KEYS
+            },
             "binaryData": {"database_credential_file": "c2VjcmV0"},
         }
 
         with self.assertRaisesRegex(ValueError, "extra=\\['binaryData'\\]"):
             self._validate_config_map_manifest(document)
+
+
+class PreviewArtifactGatewayContractTest(unittest.TestCase):
+    validator = VALIDATOR
+
+    def _gateway_document(self):
+        expected_namespace = "pr-42"
+        return {
+            "kind": "Deployment",
+            "metadata": {"name": "spring-cloud-gateway"},
+            "spec": {
+                "template": {
+                    "spec": {
+                        "serviceAccountName": "firemud-app",
+                        "containers": [
+                            {
+                                "name": "spring-cloud-gateway",
+                                "env": self.validator._expected_gateway_container_env(
+                                    expected_namespace
+                                ),
+                                "envFrom": copy.deepcopy(
+                                    self.validator.EXPECTED_GATEWAY_ENV_FROM
+                                ),
+                                "volumeMounts": [
+                                    {
+                                        "name": "grpc-tls",
+                                        "mountPath": "/tls",
+                                        "readOnly": True,
+                                    },
+                                    {
+                                        "name": "jwt-signing-keys",
+                                        "mountPath": "/var/run/secrets/firemud/jwt",
+                                        "readOnly": True,
+                                    },
+                                    {
+                                        "name": "gateway-ws-server-tls",
+                                        "mountPath": "/gateway-ws-server-tls",
+                                        "readOnly": True,
+                                    },
+                                ],
+                            }
+                        ],
+                        "volumes": [
+                            {
+                                "name": "grpc-tls",
+                                "secret": {"secretName": "firemud-grpc-tls"},
+                            },
+                            {
+                                "name": "jwt-signing-keys",
+                                "secret": {"secretName": "jwt-signing-keys"},
+                            },
+                            {
+                                "name": "gateway-ws-server-tls",
+                                "secret": {
+                                    "secretName": "pr-42-gateway-internal-ws",
+                                    "items": [
+                                        {"key": "tls.crt", "path": "tls.crt"},
+                                        {"key": "tls.key", "path": "tls.key"},
+                                        {"key": "ca.crt", "path": "ca.crt"},
+                                    ],
+                                },
+                            },
+                        ],
+                    }
+                }
+            },
+        }
+
+    def test_gateway_exact_environment_contract_is_accepted(self):
+        with patch.object(self.validator, "SERVICE_IMAGES", {"spring-cloud-gateway"}):
+            self.validator.validate_service_consumers(
+                [self._gateway_document()], "pr-42"
+            )
+
+    def test_gateway_rejects_redirect_and_jvm_environment_injection(self):
+        for injected in (
+            {
+                "name": "FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_UPSTREAM_URL",
+                "value": "wss://attacker.example",
+            },
+            {
+                "name": "FIREMUD_GATEWAY_ROUTE_ACCOUNT_URI",
+                "value": "https://attacker.example",
+            },
+            {
+                "name": "SPRING_APPLICATION_JSON",
+                "value": '{"spring.cloud.gateway.routes":[]}',
+            },
+            {"name": "JAVA_TOOL_OPTIONS", "value": "-Dspring.config.location=attacker"},
+        ):
+            with self.subTest(injected=injected):
+                document = self._gateway_document()
+                document["spec"]["template"]["spec"]["containers"][0]["env"].append(
+                    injected
+                )
+                with (
+                    patch.object(
+                        self.validator, "SERVICE_IMAGES", {"spring-cloud-gateway"}
+                    ),
+                    self.assertRaisesRegex(ValueError, "unsafe container env"),
+                ):
+                    self.validator.validate_service_consumers([document], "pr-42")
+
+    def test_gateway_rejects_extra_env_from_reference(self):
+        document = self._gateway_document()
+        document["spec"]["template"]["spec"]["containers"][0]["envFrom"].append(
+            {"configMapRef": {"name": "attacker-config"}}
+        )
+        with (
+            patch.object(self.validator, "SERVICE_IMAGES", {"spring-cloud-gateway"}),
+            self.assertRaisesRegex(ValueError, "unsafe envFrom contract"),
+        ):
+            self.validator.validate_service_consumers([document], "pr-42")
+
+
+class PreviewArtifactNetworkPolicyTest(unittest.TestCase):
+    validator = VALIDATOR
+
+    def test_gateway_egress_allows_only_declared_dependencies(self):
+        policy = {"spec": copy.deepcopy(self.validator.EXPECTED_GATEWAY_NETWORK_POLICY_SPEC)}
+        self.validator._validate_gateway_egress_policy(policy)
+
+    def test_gateway_egress_rejects_widened_destination(self):
+        policy = {"spec": copy.deepcopy(self.validator.EXPECTED_GATEWAY_NETWORK_POLICY_SPEC)}
+        policy["spec"]["egress"].append(
+            {"to": [{"ipBlock": {"cidr": "0.0.0.0/0"}}], "ports": [{"protocol": "TCP", "port": 443}]}
+        )
+        with self.assertRaisesRegex(ValueError, "spring-cloud-gateway-egress has an unsafe spec"):
+            self.validator._validate_gateway_egress_policy(policy)
+
+    def test_network_policy_set_rejects_missing_gateway_egress(self):
+        documents = [
+            {"kind": "NetworkPolicy", "metadata": {"name": name}}
+            for name in self.validator.EXPECTED_NAMES["NetworkPolicy"]
+            if name != "spring-cloud-gateway-egress"
+        ]
+        with self.assertRaisesRegex(ValueError, "runtime NetworkPolicy set is not closed"):
+            self.validator.validate_network_policies(documents)
 
 
 if __name__ == "__main__":

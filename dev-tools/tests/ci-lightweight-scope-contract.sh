@@ -29,8 +29,12 @@ for expected in \
   require_contains "$CLASSIFIER" "$expected"
 done
 
-python3 - "$CI_WORKFLOW" "$SECURITY_WORKFLOW" "$PREVIEW_WORKFLOW" "$ZAP_WORKFLOW" <<'PY'
+python3 - "$CI_WORKFLOW" "$SECURITY_WORKFLOW" "$PREVIEW_WORKFLOW" "$ZAP_WORKFLOW" "$CLASSIFIER" <<'PY'
+import copy
+import json
 from pathlib import Path
+import re
+import subprocess
 import sys
 
 import yaml
@@ -96,6 +100,142 @@ def find_step(workflow, job_id, name_suffix, label):
     return matches[0]
 
 
+def require_no_step(workflow, job_id, name_suffix, label):
+    steps = value_at(workflow, ("jobs", job_id, "steps"), label)
+    matches = [
+        step
+        for step in steps
+        if isinstance(step, dict)
+        and isinstance(step.get("name"), str)
+        and step["name"].endswith(name_suffix)
+    ]
+    if matches:
+        raise SystemExit(
+            f"{label}: unexpected {name_suffix!r} step in jobs/{job_id}"
+        )
+
+
+def load_classifier_module_inventories(path_text):
+    node_script = """
+const { ALL_MODULES, BOOTABLE_MODULES } = require(process.argv[1]);
+process.stdout.write(JSON.stringify({
+  allModules: ALL_MODULES,
+  bootableModules: [...BOOTABLE_MODULES],
+}));
+"""
+    try:
+        result = subprocess.run(
+            ["node", "-e", node_script, path_text],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        inventories = json.loads(result.stdout)
+    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+        raise SystemExit(
+            f"classifier inventory export could not be loaded from {path_text}: {exc}"
+        ) from exc
+    if not isinstance(inventories, dict):
+        raise SystemExit("classifier inventory export must be an object")
+    return inventories
+
+
+def parse_shared_array(script, name, label):
+    matches = list(
+        re.finditer(
+            rf"(?ms)^[ \t]*const {re.escape(name)} = \[(.*?)\];",
+            script,
+        )
+    )
+    if len(matches) != 1:
+        raise SystemExit(
+            f"{label}: expected one shared {name} array, found {len(matches)}"
+        )
+    body = matches[0].group(1)
+    string_pattern = re.compile(r'"(?:\\.|[^"\\])*"')
+    values = []
+    cursor = 0
+    for match in string_pattern.finditer(body):
+        if not re.fullmatch(r"[\s,]*", body[cursor : match.start()]):
+            raise SystemExit(f"{label}: shared {name} array contains invalid syntax")
+        values.append(json.loads(match.group(0)))
+        cursor = match.end()
+    if not re.fullmatch(r"[\s,]*", body[cursor:]):
+        raise SystemExit(f"{label}: shared {name} array contains invalid syntax")
+    return values
+
+
+CI_GATING_STEPS = (
+    (
+        "helm-render-validation",
+        "Validate hosted Telnet TLS contract",
+        "bash ./dev-tools/tests/hosted-telnet-tls-contract.sh",
+    ),
+)
+
+DEV_TOOL_CONTRACT_COMMANDS = (
+    "bash ./dev-tools/tests/hosted-gateway-bridge-contract.sh",
+)
+
+
+def require_gating_run_step(workflow, job_id, name_suffix, command):
+    label = f"ci {name_suffix} contract"
+    step = find_step(workflow, job_id, name_suffix, "ci workflow")
+    if "if" in step:
+        raise SystemExit(f"{label}: step must run whenever its job runs")
+    if str(step.get("continue-on-error", "false")).strip().lower() != "false":
+        raise SystemExit(f"{label}: step failure must fail its job")
+    run = value_at(step, ("run",), label)
+    if not isinstance(run, str) or run.strip() != command:
+        raise SystemExit(
+            f"{label}: run must be exactly the executable command {command!r}, got {run!r}"
+        )
+
+
+def validate_ci_script_execution(workflow):
+    for job_id, name_suffix, command in CI_GATING_STEPS:
+        require_gating_run_step(workflow, job_id, name_suffix, command)
+
+
+def mutate_gating_step(workflow, job_id, name_suffix, changes):
+    mutated = copy.deepcopy(workflow)
+    step = find_step(mutated, job_id, name_suffix, "mutated ci workflow")
+    step.update(changes)
+    return mutated
+
+
+def require_dev_tool_contract_command(workflow, command):
+    label = f"ci dev-tool contract command {command!r}"
+    step = find_step(
+        workflow,
+        "dev-tool-contract-checks",
+        "Validate dev tool contracts",
+        "ci workflow",
+    )
+    run = value_at(step, ("run",), label)
+    if not isinstance(run, str) or not any(
+        line.strip() == command for line in run.splitlines()
+    ):
+        raise SystemExit(
+            f"{label}: command must appear as an executable run-block line"
+        )
+
+
+def mutate_dev_tool_contract_command(workflow, command):
+    mutated = copy.deepcopy(workflow)
+    step = find_step(
+        mutated,
+        "dev-tool-contract-checks",
+        "Validate dev tool contracts",
+        "mutated ci workflow",
+    )
+    run = value_at(step, ("run",), "mutated ci workflow")
+    step["run"] = "\n".join(
+        line for line in run.splitlines() if line.strip() != command
+    )
+    return mutated
+
+
 ci = load_workflow(sys.argv[1])
 security = load_workflow(sys.argv[2])
 preview = load_workflow(sys.argv[3])
@@ -135,6 +275,32 @@ require_contains(
     "Base revision predates the change classifier; using complete validation scope.",
     "ci workflow",
 )
+classifier_inventories = load_classifier_module_inventories(sys.argv[5])
+for output_key, constant_name, inventory_key in (
+    ("affected_modules", "completeModules", "allModules"),
+    ("bootable_modules", "completeBootableModules", "bootableModules"),
+):
+    expected = classifier_inventories.get(inventory_key)
+    if not isinstance(expected, list):
+        raise SystemExit(
+            f"classifier inventory export {inventory_key!r} must be an array"
+        )
+    actual = parse_shared_array(
+        value_at(ci_compute_step, ("with", "script"), "ci workflow"),
+        constant_name,
+        "ci workflow",
+    )
+    if actual != expected:
+        raise SystemExit(
+            f"ci workflow: shared {constant_name} must exactly match classifier export "
+            f"{inventory_key}, got {actual!r}, expected {expected!r}"
+        )
+    require_contains(
+        ci_compute_step,
+        ("with", "script"),
+        f"{output_key}: {constant_name}",
+        "ci workflow",
+    )
 
 require_equal(
     ci,
@@ -311,10 +477,49 @@ require_equal(
     "${{ (needs.changes.outputs.lightweight_only == 'true' && needs.changes.outputs.design_docs_changed == 'true' && needs.changes.outputs.validation_python_changed != 'true') && 'yaml' || 'ci' }}",
     "ci workflow",
 )
+validate_ci_script_execution(ci)
+require_no_step(
+    ci,
+    "helm-render-validation",
+    "Validate hosted Gateway bridge contract",
+    "ci workflow",
+)
+for job_id, name_suffix, command in CI_GATING_STEPS:
+    for description, changes in (
+        ("missing command", {"run": "true"}),
+        ("disabled step", {"if": "${{ false }}"}),
+        ("ignored failure", {"continue-on-error": "true"}),
+        ("heredoc decoy", {"run": f"cat <<'EOF'\n{command}\nEOF"}),
+        ("comment decoy", {"run": f"# {command}"}),
+    ):
+        mutation = mutate_gating_step(ci, job_id, name_suffix, changes)
+        try:
+            validate_ci_script_execution(mutation)
+        except SystemExit:
+            continue
+        raise SystemExit(
+            f"ci script execution contract accepted {name_suffix} {description}"
+        )
+for command in DEV_TOOL_CONTRACT_COMMANDS:
+    require_dev_tool_contract_command(ci, command)
+    mutation = mutate_dev_tool_contract_command(ci, command)
+    try:
+        require_dev_tool_contract_command(mutation, command)
+    except SystemExit:
+        continue
+    raise SystemExit(
+        f"ci dev-tool contract execution accepted removal of {command}"
+    )
 require_contains(
     complete_contract_step,
     ("run",),
     "python3 -m unittest discover -s dev-tools/validation -p 'test_*.py'",
+    "ci workflow",
+)
+require_contains(
+    complete_contract_step,
+    ("run",),
+    "python3 -m unittest discover -s dev-tools/tests -p 'test_*.py'",
     "ci workflow",
 )
 require_contains(

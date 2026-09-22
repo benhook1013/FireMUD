@@ -11,6 +11,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ReactiveWebApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
+import org.springframework.mock.web.server.MockServerWebExchange;
 import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
 import org.springframework.web.reactive.socket.server.support.WebSocketHandlerAdapter;
 
@@ -39,6 +41,36 @@ class GameplayWebSocketBridgeConfigTest {
           assertThat(mapping.getUrlMap()).containsKeys("/ws/game", "/ws/game/**");
           assertThat(mapping.getUrlMap().get("/ws/game"))
               .isSameAs(context.getBean(GameplayWebSocketBridgeHandler.class));
+        });
+  }
+
+  @Test
+  void gameplayWebSocketMappingUsesPathPatternSemanticsForMatrixParameters() {
+    contextRunner.run(
+        context -> {
+          SimpleUrlHandlerMapping mapping = context.getBean(SimpleUrlHandlerMapping.class);
+          GameplayWebSocketBridgeHandler handler =
+              context.getBean(GameplayWebSocketBridgeHandler.class);
+
+          for (String path :
+              new String[] {"/ws/game;probe", "/ws;probe/game", "/ws/game;probe/child"}) {
+            assertThat(
+                    mapping
+                        .getHandler(
+                            MockServerWebExchange.from(MockServerHttpRequest.get(path).build()))
+                        .block())
+                .as("path=%s", path)
+                .isSameAs(handler);
+          }
+
+          assertThat(
+                  mapping
+                      .getHandler(
+                          MockServerWebExchange.from(
+                              MockServerHttpRequest.get("/ws/game%3Bprobe").build()))
+                      .block())
+              .as("encoded semicolon is not a matrix parameter accepted by PathPattern")
+              .isNull();
         });
   }
 

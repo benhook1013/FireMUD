@@ -12,6 +12,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -27,7 +28,9 @@ import org.springframework.core.Ordered;
 import org.springframework.core.env.Environment;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.http.HttpCookie;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.server.PathContainer;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -58,6 +61,9 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
   static final String CONNECTION_MODE_FIRST_PARTY_WEB = "first_party_web";
   static final String CONNECTION_MODE_TRUSTED_TCP_PROXY = "trusted_tcp_proxy";
   static final String CONNECT_TOKEN_REJECTED = "CONNECT_TOKEN_REJECTED";
+  static final String HANDSHAKE_ERROR_REASON_HEADER = "X-Firemud-Handshake-Error-Reason";
+  static final String CONNECT_TOKEN_UNSUPPORTED_CARRIER_OR_ROUTE = "unsupported_carrier_or_route";
+  static final String CONNECT_TOKEN_INVALID_CONTENT = "invalid_token_content";
   static final String CONNECT_TOKEN_MISSING = "CONNECT_TOKEN_MISSING";
   static final String CONNECT_TOKEN_EXPIRED = "CONNECT_TOKEN_EXPIRED";
   static final String CONNECT_TOKEN_REPLAYED = "CONNECT_TOKEN_REPLAYED";
@@ -112,9 +118,17 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
 
   @Override
   public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
-    String path = exchange.getRequest().getPath().pathWithinApplication().value();
-    if (!path.startsWith("/ws/game")) {
+    PathContainer path = exchange.getRequest().getPath().pathWithinApplication();
+    GameplayRouteClassifier.Classification route = GameplayRouteClassifier.classify(path);
+    if (!route.gameplayRoute()) {
       return chain.filter(exchange);
+    }
+    if (route.matrixParameter()) {
+      return reject(
+          exchange,
+          CONNECT_TOKEN_REJECTED,
+          CONNECT_TOKEN_UNSUPPORTED_CARRIER_OR_ROUTE,
+          "connect token rejected");
     }
 
     if (isTrustedTcpProxy(exchange)) {
@@ -126,8 +140,12 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
               exchange,
               headers -> {
                 headers.remove(CONNECT_TOKEN_HEADER);
+                removeConnectTokenCookie(headers);
                 headers.remove(CONNECT_CONTEXT_HEADER);
+                headers.remove(CONNECTION_MODE_HEADER);
                 headers.remove(TRANSPORT_SESSION_HEADER);
+                headers.remove(HANDSHAKE_ERROR_CLASS_HEADER);
+                headers.remove(HANDSHAKE_ERROR_REASON_HEADER);
                 headers.set(CONNECTION_MODE_HEADER, CONNECTION_MODE_TRUSTED_TCP_PROXY);
               }));
     }
@@ -135,13 +153,14 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
     String connectTokenHeader = exchange.getRequest().getHeaders().getFirst(CONNECT_TOKEN_HEADER);
     HttpCookie connectTokenCookie =
         exchange.getRequest().getCookies().getFirst(CONNECT_TOKEN_COOKIE);
+    if (connectTokenHeader != null) {
+      return reject(
+          exchange,
+          CONNECT_TOKEN_REJECTED,
+          CONNECT_TOKEN_UNSUPPORTED_CARRIER_OR_ROUTE,
+          "connect token rejected");
+    }
     String connectToken = connectTokenCookie == null ? null : connectTokenCookie.getValue();
-    if (StringUtils.hasText(connectTokenHeader) && StringUtils.hasText(connectToken)) {
-      return reject(exchange, CONNECT_TOKEN_REJECTED, "multiple connect token carriers");
-    }
-    if (StringUtils.hasText(connectTokenHeader)) {
-      connectToken = connectTokenHeader;
-    }
     if (!StringUtils.hasText(connectToken)) {
       return reject(exchange, CONNECT_TOKEN_MISSING, "connect token required");
     }
@@ -200,6 +219,9 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
                             exchange,
                             headers -> {
                               headers.remove(CONNECT_TOKEN_HEADER);
+                              removeConnectTokenCookie(headers);
+                              headers.remove(HANDSHAKE_ERROR_CLASS_HEADER);
+                              headers.remove(HANDSHAKE_ERROR_REASON_HEADER);
                               headers.set(CONNECT_CONTEXT_HEADER, connectContext);
                               headers.set(CONNECTION_MODE_HEADER, CONNECTION_MODE_FIRST_PARTY_WEB);
                               headers.set(
@@ -229,14 +251,26 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
           .onErrorResume(
               IllegalArgumentException.class,
               ex -> {
-                return reject(exchange, CONNECT_TOKEN_REJECTED, "connect token rejected");
+                return reject(
+                    exchange,
+                    CONNECT_TOKEN_REJECTED,
+                    CONNECT_TOKEN_INVALID_CONTENT,
+                    "connect token rejected");
               });
     } catch (ExpiredJwtException ex) {
       return reject(exchange, CONNECT_TOKEN_EXPIRED, "connect token expired");
     } catch (JwtException ex) {
-      return reject(exchange, CONNECT_TOKEN_REJECTED, "connect token rejected");
+      return reject(
+          exchange,
+          CONNECT_TOKEN_REJECTED,
+          CONNECT_TOKEN_INVALID_CONTENT,
+          "connect token rejected");
     } catch (IllegalArgumentException ex) {
-      return reject(exchange, CONNECT_TOKEN_REJECTED, "connect token rejected");
+      return reject(
+          exchange,
+          CONNECT_TOKEN_REJECTED,
+          CONNECT_TOKEN_INVALID_CONTENT,
+          "connect token rejected");
     }
   }
 
@@ -337,6 +371,44 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
     return exchange.mutate().request(request -> request.headers(op)).build();
   }
 
+  private static void removeConnectTokenCookie(HttpHeaders headers) {
+    List<String> cookieHeaders = headers.get(HttpHeaders.COOKIE);
+    if (cookieHeaders != null) {
+      cookieHeaders = List.copyOf(cookieHeaders);
+    }
+    headers.remove(HttpHeaders.COOKIE);
+    if (cookieHeaders == null) {
+      return;
+    }
+    for (String cookieHeader : cookieHeaders) {
+      String filteredCookieHeader = removeConnectTokenCookie(cookieHeader);
+      if (filteredCookieHeader != null) {
+        headers.add(HttpHeaders.COOKIE, filteredCookieHeader);
+      }
+    }
+  }
+
+  @Nullable
+  private static String removeConnectTokenCookie(String cookieHeader) {
+    StringBuilder filtered = new StringBuilder(cookieHeader.length());
+    for (String cookiePair : cookieHeader.split(";")) {
+      String trimmedPair = cookiePair.trim();
+      int equalsIndex = trimmedPair.indexOf('=');
+      if (equalsIndex > 0
+          && CONNECT_TOKEN_COOKIE.equals(trimmedPair.substring(0, equalsIndex).trim())) {
+        continue;
+      }
+      if (trimmedPair.isEmpty()) {
+        continue;
+      }
+      if (filtered.length() > 0) {
+        filtered.append("; ");
+      }
+      filtered.append(trimmedPair);
+    }
+    return filtered.length() == 0 ? null : filtered.toString();
+  }
+
   RuntimeLoggingContext openLoggingContext(ServerWebExchange exchange) {
     String correlationId =
         firstNonBlank(
@@ -345,23 +417,44 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
     return RuntimeLoggingContext.open(runtimeIdentity, correlationId);
   }
 
-  private void logRejectedHandshake(ServerWebExchange exchange, String errorClass, String message) {
+  private void logRejectedHandshake(
+      ServerWebExchange exchange, String errorClass, String reason, String message) {
     try (RuntimeLoggingContext ignored = openLoggingContext(exchange)) {
-      logger.warn(
-          "Gameplay handshake rejected route={} status={} errorClass={} message={}",
-          GameplayWebSocketObservability.GAMEPLAY_ROUTE,
-          HttpStatus.FORBIDDEN.value(),
-          errorClass,
-          message);
+      if (reason == null) {
+        logger.warn(
+            "Gameplay handshake rejected route={} status={} errorClass={} message={}",
+            GameplayWebSocketObservability.GAMEPLAY_ROUTE,
+            HttpStatus.FORBIDDEN.value(),
+            errorClass,
+            message);
+      } else {
+        logger.warn(
+            "Gameplay handshake rejected route={} status={} errorClass={} reason={} message={}",
+            GameplayWebSocketObservability.GAMEPLAY_ROUTE,
+            HttpStatus.FORBIDDEN.value(),
+            errorClass,
+            reason,
+            message);
+      }
     }
   }
 
   private Mono<Void> reject(ServerWebExchange exchange, String errorClass, String message) {
+    return reject(exchange, errorClass, null, message);
+  }
+
+  private Mono<Void> reject(
+      ServerWebExchange exchange, String errorClass, String reason, String message) {
     gameplayWebSocketObservability.recordHandshakeRejection(
         HttpStatus.FORBIDDEN.value(), errorClass);
-    logRejectedHandshake(exchange, errorClass, message);
+    logRejectedHandshake(exchange, errorClass, reason, message);
     exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
     exchange.getResponse().getHeaders().set(HANDSHAKE_ERROR_CLASS_HEADER, errorClass);
+    if (CONNECT_TOKEN_REJECTED.equals(errorClass)) {
+      exchange.getResponse().getHeaders().set(HANDSHAKE_ERROR_REASON_HEADER, reason);
+    } else {
+      exchange.getResponse().getHeaders().remove(HANDSHAKE_ERROR_REASON_HEADER);
+    }
     return exchange.getResponse().setComplete();
   }
 

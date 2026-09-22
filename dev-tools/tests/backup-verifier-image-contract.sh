@@ -19,6 +19,22 @@ require_contains() {
   }
 }
 
+require_aws_cli_stage() {
+  local path="$1"
+  local declaration_pattern='^FROM[[:space:]]+(--platform=[^[:space:]]+[[:space:]]+)?public\.ecr\.aws/aws-cli/aws-cli'
+  local stage_pattern='^FROM[[:space:]]+(--platform=[^[:space:]]+[[:space:]]+)?public\.ecr\.aws/aws-cli/aws-cli:[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}([[:space:]]+[Aa][Ss][[:space:]]+[[:alnum:]_.-]+)?$'
+  local aws_cli_stages=()
+  mapfile -t aws_cli_stages < <(grep -E "$declaration_pattern" "$path" || true)
+  if [[ "${#aws_cli_stages[@]}" != 1 ]]; then
+    echo "$path must contain exactly one AWS CLI FROM declaration (found ${#aws_cli_stages[@]})" >&2
+    exit 1
+  fi
+  if [[ ! "${aws_cli_stages[0]}" =~ $stage_pattern ]]; then
+    echo "$path AWS CLI FROM declaration must be the sole versioned, sha256-pinned stage" >&2
+    exit 1
+  fi
+}
+
 require_count() {
   local path="$1"
   local expected="$2"
@@ -38,7 +54,30 @@ if [[ -z "$velero_version" || -z "$velero_digest" ]]; then
   exit 1
 fi
 require_contains "$dockerfile" "FROM velero/velero:v${velero_version}@${velero_digest} AS velero-cli"
-require_contains "$dockerfile" 'FROM public.ecr.aws/aws-cli/aws-cli:2.31.23@sha256:668ffb01408e03e1002b36886797c1a97b09f7d0f02fba3123f9fcd68a081dc5'
+require_aws_cli_stage "$dockerfile"
+
+fixture_dir="$(mktemp -d)"
+trap 'rm -rf -- "$fixture_dir"' EXIT
+pinned_aws_cli_stage='FROM public.ecr.aws/aws-cli/aws-cli:2.36.49@sha256:f42bf088cb1456ba9e179ce71fdeb22cc46ff64ea1e3aeae8251ff81391f5bb1'
+aliased_aws_cli_stage='FROM --platform=linux/amd64 public.ecr.aws/aws-cli/aws-cli:2.36.49@sha256:f42bf088cb1456ba9e179ce71fdeb22cc46ff64ea1e3aeae8251ff81391f5bb1 as aws-cli'
+printf '%s\n' "$aliased_aws_cli_stage" > "$fixture_dir/aliased-stage.Dockerfile"
+require_aws_cli_stage "$fixture_dir/aliased-stage.Dockerfile"
+cat > "$fixture_dir/extra-latest.Dockerfile" <<EOF
+$pinned_aws_cli_stage
+FROM public.ecr.aws/aws-cli/aws-cli:latest
+EOF
+if (require_aws_cli_stage "$fixture_dir/extra-latest.Dockerfile"); then
+  echo "backup verifier contract accepted an extra unpinned AWS CLI stage" >&2
+  exit 1
+fi
+cat > "$fixture_dir/extra-platform-latest.Dockerfile" <<EOF
+$pinned_aws_cli_stage
+FROM --platform=linux/amd64 public.ecr.aws/aws-cli/aws-cli:latest
+EOF
+if (require_aws_cli_stage "$fixture_dir/extra-platform-latest.Dockerfile"); then
+  echo "backup verifier contract accepted an extra platform-qualified unpinned AWS CLI stage" >&2
+  exit 1
+fi
 require_contains "$dockerfile" 'COPY --from=velero-cli /velero /usr/local/bin/velero'
 require_contains "$dockerfile" 'COPY dev-tools/backups/verify-backups.sh /opt/firemud/backups/verify-backups.sh'
 require_contains "$dockerfile" 'COPY dev-tools/backups/pg-dump-s3-selection.shlib /opt/firemud/backups/pg-dump-s3-selection.shlib'
@@ -100,6 +139,7 @@ for required in \
   require_contains "$push_verified_image" "$required"
 done
 python3 - "$runtime" <<'PY'
+import re
 import sys
 from pathlib import Path
 
@@ -134,24 +174,33 @@ publish_index = next(
 if not checkout_index < download_index < load_index < login_index < publish_index:
     raise SystemExit("Backup verifier publisher must checkout before artifact load and helper invocation")
 checkout = steps[checkout_index]
-if checkout.get("uses") != "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd":
-    raise SystemExit("Backup verifier publisher must use the pinned checkout action")
+if not re.fullmatch(r"actions/checkout@[0-9a-f]{40}", checkout.get("uses", "")):
+    raise SystemExit("Backup verifier publisher checkout must use an immutable commit pin")
 if checkout.get("with") != {
     "ref": "${{ needs.image-meta.outputs.checkout_ref }}",
     "persist-credentials": False,
 }:
     raise SystemExit("Backup verifier publisher checkout must use the trusted exact commit without persisted credentials")
+login = steps[login_index]
+if not re.fullmatch(r"docker/login-action@[0-9a-f]{40}", login.get("uses", "")):
+    raise SystemExit("Backup verifier publisher login must use an immutable commit pin")
+if login.get("with") != {
+    "registry": "ghcr.io",
+    "username": "${{ github.actor }}",
+    "password": "${{ secrets.GITHUB_TOKEN }}",
+}:
+    raise SystemExit("Backup verifier publisher login must use the scoped GHCR credentials")
 condition = job.get("if", "")
 for required in (
     "github.event_name != 'pull_request'",
-    "github.ref == 'refs/heads/main'",
-    "github.ref == 'refs/heads/develop'",
+    "needs.image-meta.outputs.head_branch == 'main'",
+    "needs.image-meta.outputs.head_branch == 'develop'",
 ):
     if required not in condition:
         raise SystemExit("Backup verifier publisher must remain default-branch-only")
 PY
 require_count "$runtime" 'uses: ./.github/actions/load-workflow-tool-versions' 2
-require_count "$runtime" 'config/workflow-tool-versions.env' 2
+require_count "$runtime" 'config/workflow-tool-versions.env' 3
 # shellcheck disable=SC2016 # Assert literal workflow expressions and shell fragments.
 require_count "$runtime" 'VELERO_VERSION: ${{ steps.workflow-tool-versions.outputs.velero-version }}' 2
 # shellcheck disable=SC2016 # Assert literal workflow expressions and shell fragments.

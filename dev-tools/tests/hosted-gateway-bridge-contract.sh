@@ -27,6 +27,17 @@ if ! grep -q '^    trustEnvironment: dev-demo-cluster$' "$TMP_DIR/rendered-dev-d
   echo "dev-demo renderer did not select dev-demo-cluster trust environment" >&2
   exit 1
 fi
+python3 - "$TMP_DIR/values.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+values = yaml.safe_load(path.read_text(encoding="utf-8"))
+values["previewStack"]["telnetTls"]["secretName"] = "pr-42-telnet-tls"
+path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
 
 if ! service_indexes="$(python3 - "$TMP_DIR/values.yaml" <<'PY'
 import pathlib
@@ -67,9 +78,29 @@ if [[ -z "$gateway_index" || -z "$proxy_index" ]]; then
   exit 1
 fi
 
+python3 - "$TMP_DIR/values.yaml" "$TMP_DIR/private-values.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+source_path, output_path = map(Path, sys.argv[1:])
+values = yaml.safe_load(source_path.read_text(encoding="utf-8"))
+values["previewStack"]["certificateIdentity"]["mode"] = "hosted-controller"
+proxy = next(
+    service
+    for service in values["previewStack"]["services"]
+    if service["name"] == "tcp-proxy-service"
+)
+proxy["serviceType"] = "ClusterIP"
+for port in proxy.get("ports", []):
+    port.pop("nodePort", None)
+output_path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+
 helm template pr-42 "$CHART_DIR" \
   --namespace pr-42 \
-  -f "$TMP_DIR/values.yaml" \
+  -f "$TMP_DIR/private-values.yaml" \
   >"$TMP_DIR/rendered.yaml"
 
 python3 - "$TMP_DIR/rendered.yaml" \
@@ -564,18 +595,25 @@ if proxy_deployments[0]["spec"].get("strategy") != {"type": "Recreate"}:
     raise SystemExit("dev-demo TCP Proxy Deployment must use the Recreate strategy")
 PY
 
-for unsafe_override in \
-  "previewStack.services[${proxy_index}].serviceType=NodePort" \
-  "previewStack.services[${proxy_index}].ports[0].nodePort=32042"; do
+for unsafe_case in \
+  "previewStack.services[${proxy_index}].ports[0].nodePort=32042|tcp-proxy-service nodePort requires serviceType NodePort or LoadBalancer" \
+  "previewStack.telnetTls.enabled=false previewStack.services[${proxy_index}].serviceType=NodePort|tcp-proxy-service must remain ClusterIP while Telnet TLS is disabled"; do
+  unsafe_override=${unsafe_case%%|*}
+  expected_unsafe_error=${unsafe_case#*|}
+  read -r -a unsafe_args <<<"$unsafe_override"
+  set_args=()
+  for arg in "${unsafe_args[@]}"; do
+    set_args+=(--set "$arg")
+  done
   if helm template unsafe-pr-42 "$CHART_DIR" \
     --namespace pr-42 \
-    -f "$TMP_DIR/values.yaml" \
-    --set "$unsafe_override" \
+    -f "$TMP_DIR/private-values.yaml" \
+    "${set_args[@]}" \
     >"$TMP_DIR/unsafe-rendered.yaml" 2>"$TMP_DIR/unsafe-error"; then
     echo "unsafe hosted TCP Proxy override unexpectedly rendered: $unsafe_override" >&2
     exit 1
   fi
-  if ! grep -q 'tcp-proxy-service must' "$TMP_DIR/unsafe-error"; then
+  if ! grep -Fq "$expected_unsafe_error" "$TMP_DIR/unsafe-error"; then
     echo "unsafe hosted TCP Proxy override failed for an unexpected reason: $unsafe_override" >&2
     cat "$TMP_DIR/unsafe-error" >&2
     exit 1
@@ -700,6 +738,584 @@ if any(
     raise SystemExit(
         "disabled hosted test values unexpectedly rendered the Gateway egress policy"
     )
+PY
+
+for collision in \
+  "tcp-proxy-service|TCP_PROXY_TLS_ENABLED|Telnet TLS" \
+  "spring-cloud-gateway|FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT|Gateway WebSocket server TLS" \
+  "tcp-proxy-service|GATEWAY_WS_URL|Gateway WebSocket client TLS"; do
+  IFS='|' read -r collision_service collision_key collision_surface <<<"$collision"
+  COLLISION_VALUES="$TMP_DIR/extra-env-${collision_key}.yaml"
+  python3 - "$TMP_DIR/values.yaml" "$COLLISION_VALUES" "$collision_service" "$collision_key" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+source_path, output_path = map(Path, sys.argv[1:3])
+service_name = sys.argv[3]
+key = sys.argv[4]
+values = yaml.safe_load(source_path.read_text(encoding="utf-8"))
+service = next(
+    service for service in values["previewStack"]["services"] if service["name"] == service_name
+)
+service.setdefault("extraEnv", {})[key] = "collision"
+output_path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+  if helm template pr-42 "$CHART_DIR" \
+    -f "$COLLISION_VALUES" \
+    --show-only templates/apps.yaml \
+    --namespace pr-42 >/dev/null 2>"$TMP_DIR/extra-env-${collision_key}.err"; then
+    echo "apps template rendered with a managed $collision_key extraEnv collision" >&2
+    exit 1
+  fi
+  if ! grep -Fq "extraEnv key $collision_key collides with the managed $collision_surface environment" \
+    "$TMP_DIR/extra-env-${collision_key}.err"; then
+    echo "apps template did not diagnose the managed $collision_key extraEnv collision" >&2
+    sed -n '1,20p' "$TMP_DIR/extra-env-${collision_key}.err" >&2
+    exit 1
+  fi
+done
+
+FOREIGN_TLS_MOUNTS_VALUES="$TMP_DIR/foreign-tls-mounts-values.yaml"
+FOREIGN_TLS_MOUNTS_RENDERED="$TMP_DIR/foreign-tls-mounts-rendered.yaml"
+python3 - "$TMP_DIR/values.yaml" "$FOREIGN_TLS_MOUNTS_VALUES" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+source_path, output_path = map(Path, sys.argv[1:])
+values = yaml.safe_load(source_path.read_text(encoding="utf-8"))
+for service in values["previewStack"]["services"]:
+    service["mountTelnetTls"] = True
+    service["mountGatewayWsServerTls"] = True
+    service["mountGatewayWsClientTls"] = True
+output_path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+helm template pr-42 "$CHART_DIR" \
+  -f "$FOREIGN_TLS_MOUNTS_VALUES" \
+  --namespace pr-42 \
+  --show-only templates/apps.yaml \
+  >"$FOREIGN_TLS_MOUNTS_RENDERED"
+python3 - "$FOREIGN_TLS_MOUNTS_RENDERED" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+expected_mounts = {
+    "tcp-proxy-service": {"telnet-tls", "gateway-ws-client-tls"},
+    "spring-cloud-gateway": {"gateway-ws-server-tls"},
+}
+documents = [
+    document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+for deployment in (document for document in documents if document.get("kind") == "Deployment"):
+    service = deployment["metadata"]["name"]
+    actual = {
+        mount["name"]
+        for mount in deployment["spec"]["template"]["spec"]["containers"][0].get("volumeMounts", [])
+        if mount["name"] in {"telnet-tls", "gateway-ws-server-tls", "gateway-ws-client-tls"}
+    }
+    expected = expected_mounts.get(service, set())
+    if actual != expected:
+        raise SystemExit(
+            f"{service} rendered role-specific TLS mounts {actual!r}; expected {expected!r}"
+        )
+PY
+
+for gateway_listener_collision in health http grpc; do
+  COLLISION_VALUES="$TMP_DIR/gateway-ws-tls-$gateway_listener_collision-collision-values.yaml"
+  python3 - "$TMP_DIR/values.yaml" "$COLLISION_VALUES" "$gateway_listener_collision" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+source_path, output_path = map(Path, sys.argv[1:3])
+collision = sys.argv[3]
+values = yaml.safe_load(source_path.read_text(encoding="utf-8"))
+gateway = next(
+    service
+    for service in values["previewStack"]["services"]
+    if service["name"] == "spring-cloud-gateway"
+)
+if collision == "health":
+    gateway["healthPort"] = 8443
+elif collision == "http":
+    next(port for port in gateway["ports"] if str(port["port"]) == "80")[
+        "targetPort"
+    ] = 8443
+else:
+    next(port for port in gateway["ports"] if str(port["port"]) == "6565")[
+        "targetPort"
+    ] = 8443
+output_path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+  if helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+    -f "$COLLISION_VALUES" \
+    --show-only templates/apps.yaml \
+    --namespace pr-123 >/dev/null 2>"$TMP_DIR/gateway-ws-tls-$gateway_listener_collision-collision.err"; then
+    echo "Gateway WebSocket TLS rendered with a managed $gateway_listener_collision listener collision" >&2
+    exit 1
+  fi
+  if [[ "$gateway_listener_collision" == "grpc" ]]; then
+    EXPECTED_COLLISION_FRAGMENT="collides with the Gateway managed gRPC listener service port 6565 targetPort 8443"
+  else
+    EXPECTED_COLLISION_FRAGMENT="collides with the Gateway managed health/HTTP listener"
+  fi
+  if ! grep -Fq "$EXPECTED_COLLISION_FRAGMENT" \
+    "$TMP_DIR/gateway-ws-tls-$gateway_listener_collision-collision.err"; then
+    echo "chart did not diagnose the Gateway WebSocket TLS $gateway_listener_collision listener collision" >&2
+    sed -n '1,20p' "$TMP_DIR/gateway-ws-tls-$gateway_listener_collision-collision.err" >&2
+    exit 1
+  fi
+done
+
+for gateway_ws_tls_enabled in false true; do
+  for invalid_gateway_ports in missing duplicate; do
+  INVALID_GATEWAY_PORTS_VALUES="$TMP_DIR/plaintext-gateway-$invalid_gateway_ports-values.yaml"
+  python3 - "$TMP_DIR/values.yaml" "$INVALID_GATEWAY_PORTS_VALUES" "$invalid_gateway_ports" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+source_path, output_path = map(Path, sys.argv[1:3])
+mutation = sys.argv[3]
+values = yaml.safe_load(source_path.read_text(encoding="utf-8"))
+gateway = next(
+    service
+    for service in values["previewStack"]["services"]
+    if service["name"] == "spring-cloud-gateway"
+)
+if mutation == "missing":
+    gateway["ports"] = [
+        port for port in gateway["ports"] if str(port.get("port")) != "80"
+    ]
+else:
+    gateway["ports"].append({"port": 80, "targetPort": 8282})
+output_path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+  if helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+    -f "$INVALID_GATEWAY_PORTS_VALUES" \
+    --set previewStack.gatewayWsTls.enabled="$gateway_ws_tls_enabled" \
+    --show-only templates/network-policies.yaml \
+    --namespace pr-123 >/dev/null 2>"$TMP_DIR/gateway-$gateway_ws_tls_enabled-$invalid_gateway_ports.err"; then
+    echo "Gateway WebSocket TLS=$gateway_ws_tls_enabled rendered with $invalid_gateway_ports port-80 Gateway service configuration" >&2
+    exit 1
+  fi
+  if ! grep -Fq \
+    "previewStack.services.spring-cloud-gateway must declare exactly one port: 80 for Gateway HTTP ingress" \
+    "$TMP_DIR/gateway-$gateway_ws_tls_enabled-$invalid_gateway_ports.err"; then
+    echo "chart did not reject $invalid_gateway_ports port-80 Gateway service configuration" >&2
+    sed -n '1,20p' "$TMP_DIR/gateway-$gateway_ws_tls_enabled-$invalid_gateway_ports.err" >&2
+    exit 1
+    fi
+  done
+done
+
+MISSING_GATEWAY_TARGET_PORT_VALUES="$TMP_DIR/plaintext-gateway-missing-target-port-values.yaml"
+python3 - "$TMP_DIR/values.yaml" "$MISSING_GATEWAY_TARGET_PORT_VALUES" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+source_path, output_path = map(Path, sys.argv[1:])
+values = yaml.safe_load(source_path.read_text(encoding="utf-8"))
+gateway = next(
+    service
+    for service in values["previewStack"]["services"]
+    if service["name"] == "spring-cloud-gateway"
+)
+gateway_port = next(port for port in gateway["ports"] if str(port["port"]) == "80")
+gateway_port.pop("targetPort", None)
+output_path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+if helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$MISSING_GATEWAY_TARGET_PORT_VALUES" \
+  --set previewStack.gatewayWsTls.enabled=false \
+  --show-only templates/network-policies.yaml \
+  --namespace pr-123 >/dev/null 2>"$TMP_DIR/plaintext-gateway-missing-target-port.err"; then
+  echo "disabled Gateway TLS rendered without the Gateway service targetPort" >&2
+  exit 1
+fi
+if ! grep -Fq \
+  "previewStack.services.spring-cloud-gateway port: 80 must declare a targetPort for Gateway HTTP ingress" \
+  "$TMP_DIR/plaintext-gateway-missing-target-port.err"; then
+  echo "chart did not reject a missing Gateway service targetPort" >&2
+  sed -n '1,20p' "$TMP_DIR/plaintext-gateway-missing-target-port.err" >&2
+  exit 1
+fi
+if helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$MISSING_GATEWAY_TARGET_PORT_VALUES" \
+  --set previewStack.gatewayWsTls.enabled=true \
+  --show-only templates/network-policies.yaml \
+  --namespace pr-123 >/dev/null 2>"$TMP_DIR/tls-gateway-missing-target-port.err"; then
+  echo "enabled Gateway TLS rendered without the Gateway service targetPort" >&2
+  exit 1
+fi
+if ! grep -Fq \
+  "previewStack.services.spring-cloud-gateway port: 80 must declare a targetPort for Gateway HTTP ingress" \
+  "$TMP_DIR/tls-gateway-missing-target-port.err"; then
+  echo "chart did not reject a missing Gateway service targetPort with TLS enabled" >&2
+  sed -n '1,20p' "$TMP_DIR/tls-gateway-missing-target-port.err" >&2
+  exit 1
+fi
+
+for gateway_ws_mount_service in spring-cloud-gateway tcp-proxy-service; do
+  for gateway_ws_mount_state in missing false; do
+    GATEWAY_WS_MOUNT_VALUES="$TMP_DIR/gateway-ws-$gateway_ws_mount_service-$gateway_ws_mount_state-values.yaml"
+    python3 - "$TMP_DIR/values.yaml" "$GATEWAY_WS_MOUNT_VALUES" \
+      "$gateway_ws_mount_service" "$gateway_ws_mount_state" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+source_path, output_path, service_name, mount_state = sys.argv[1:]
+values = yaml.safe_load(Path(source_path).read_text(encoding="utf-8"))
+service = next(
+    service
+    for service in values["previewStack"]["services"]
+    if service["name"] == service_name
+)
+mount_name = (
+    "mountGatewayWsServerTls"
+    if service_name == "spring-cloud-gateway"
+    else "mountGatewayWsClientTls"
+)
+if mount_state == "missing":
+    service.pop(mount_name, None)
+else:
+    service[mount_name] = False
+Path(output_path).write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+
+    if [[ "$gateway_ws_mount_service" == "spring-cloud-gateway" ]]; then
+      GATEWAY_WS_MOUNT_ERROR="previewStack.services.spring-cloud-gateway.mountGatewayWsServerTls must be true when previewStack.gatewayWsTls.enabled is true"
+    else
+      GATEWAY_WS_MOUNT_ERROR="previewStack.services.tcp-proxy-service.mountGatewayWsClientTls must be true when previewStack.gatewayWsTls.enabled is true"
+    fi
+    GATEWAY_WS_MOUNT_ERROR_FILE="$TMP_DIR/gateway-ws-$gateway_ws_mount_service-$gateway_ws_mount_state.err"
+    if helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+      -f "$GATEWAY_WS_MOUNT_VALUES" \
+      --show-only templates/apps.yaml \
+      --namespace pr-123 >/dev/null 2>"$GATEWAY_WS_MOUNT_ERROR_FILE"; then
+      echo "Gateway WebSocket TLS rendered with $gateway_ws_mount_service $gateway_ws_mount_state mount" >&2
+      exit 1
+    fi
+    if ! grep -Fq "$GATEWAY_WS_MOUNT_ERROR" "$GATEWAY_WS_MOUNT_ERROR_FILE"; then
+      echo "chart did not report the expected $gateway_ws_mount_service $gateway_ws_mount_state mount diagnostic" >&2
+      sed -n '1,20p' "$GATEWAY_WS_MOUNT_ERROR_FILE" >&2
+      exit 1
+    fi
+  done
+done
+
+ENABLED_POLICIES="$TMP_DIR/enabled-network-policies.yaml"
+DISABLED_POLICIES="$TMP_DIR/disabled-network-policies.yaml"
+helm template pr-42 "$CHART_DIR" \
+  --namespace pr-42 \
+  -f "$TMP_DIR/values.yaml" \
+  --show-only templates/network-policies.yaml \
+  >"$ENABLED_POLICIES"
+helm template pr-42 "$CHART_DIR" \
+  --namespace pr-42 \
+  -f "$TMP_DIR/values.yaml" \
+  --set previewStack.gatewayWsTls.enabled=false \
+  --show-only templates/network-policies.yaml \
+  >"$DISABLED_POLICIES"
+python3 - "$ENABLED_POLICIES" "$DISABLED_POLICIES" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+
+def policies(path):
+    return {
+        document["metadata"]["name"]: document
+        for document in yaml.safe_load_all(Path(path).read_text(encoding="utf-8"))
+        if isinstance(document, dict) and document.get("kind") == "NetworkPolicy"
+    }
+
+
+enabled = policies(sys.argv[1])
+disabled = policies(sys.argv[2])
+gateway_egress = enabled.get("spring-cloud-gateway-egress")
+if gateway_egress is None:
+    raise SystemExit("enabled Gateway render omitted the default-deny egress policy")
+if gateway_egress["spec"].get("policyTypes") != ["Egress"]:
+    raise SystemExit("enabled Gateway egress policy changed policyTypes")
+if not gateway_egress["spec"].get("egress"):
+    raise SystemExit("enabled Gateway egress policy lost canonical service routes")
+if "spring-cloud-gateway-egress" in disabled:
+    raise SystemExit("disabled Gateway render retained the TLS-only egress policy")
+
+enabled_proxy = [
+    rule for rule in enabled["tcp-proxy-service-egress"]["spec"].get("egress", [])
+    if rule.get("to") == [{"podSelector": {"matchLabels": {"app": "spring-cloud-gateway"}}}]
+]
+if len(enabled_proxy) != 1 or enabled_proxy[0].get("ports") != [{"protocol": "TCP", "port": 8443}]:
+    raise SystemExit(f"enabled Gateway TLS changed exact TCP Proxy egress: {enabled_proxy}")
+gateway_ingress = enabled.get("spring-cloud-gateway-ingress")
+if gateway_ingress is None:
+    raise SystemExit("enabled Gateway render omitted the Gateway listener ingress policy")
+listener_rules = [
+    rule for rule in gateway_ingress["spec"].get("ingress", [])
+    if rule.get("from") == [{"podSelector": {"matchLabels": {"app": "tcp-proxy-service"}}}]
+]
+if len(listener_rules) != 1 or listener_rules[0].get("ports") != [{"protocol": "TCP", "port": 8443}]:
+    raise SystemExit(f"enabled Gateway listener ingress changed target port: {listener_rules}")
+if "spring-cloud-gateway-ingress" in disabled:
+    raise SystemExit("disabled Gateway render retained the TLS-only listener policy")
+PY
+
+HOSTED_CONTROLLER_PUBLIC_VALUES="$TMP_DIR/hosted-controller-public-values.yaml"
+cp "$TMP_DIR/values.yaml" "$HOSTED_CONTROLLER_PUBLIC_VALUES"
+python3 - "$HOSTED_CONTROLLER_PUBLIC_VALUES" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+values = yaml.safe_load(path.read_text(encoding="utf-8"))
+proxy = next(
+    service
+    for service in values["previewStack"]["services"]
+    if service["name"] == "tcp-proxy-service"
+)
+proxy["serviceType"] = "NodePort"
+# The chart overrides this fixture value with preview.telnetPort before rendering.
+proxy["ports"][0]["nodePort"] = 30001
+path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+helm template hosted-controller-public-pr-42 "$CHART_DIR" \
+  --namespace pr-42 \
+  -f "$HOSTED_CONTROLLER_PUBLIC_VALUES" \
+  --set-string previewStack.telnetTls.secretName=pr-42-telnet-tls \
+  >"$TMP_DIR/hosted-controller-public-rendered.yaml"
+python3 - "$TMP_DIR/hosted-controller-public-rendered.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+documents = [
+    document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+proxy_service = next(
+    document
+    for document in documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+if proxy_service["spec"].get("type") != "NodePort":
+    raise SystemExit("public hosted-controller TCP Proxy Service must use NodePort")
+telnet_ports = [port for port in proxy_service["spec"].get("ports", []) if port.get("port") == 2323]
+if len(telnet_ports) != 1 or telnet_ports[0].get("nodePort") != 32042:
+    raise SystemExit("public hosted-controller Telnet NodePort must use the allocated preview port")
+if proxy_service.get("metadata", {}).get("annotations", {}).get(
+    "firemud.dev/allocated-telnet-port"
+) != "32042":
+    raise SystemExit("public hosted-controller Service lost its allocated-port annotation")
+if proxy_service.get("metadata", {}).get("labels", {}).get(
+    "firemud.dev/certificate-identity-mode"
+) != "hosted-controller":
+    raise SystemExit("public hosted-controller Service lost its identity-mode label")
+PY
+
+PUBLIC_VALUES="$TMP_DIR/public-values.yaml"
+cp "$TMP_DIR/values.yaml" "$PUBLIC_VALUES"
+python3 - "$PUBLIC_VALUES" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+values = yaml.safe_load(path.read_text(encoding="utf-8"))
+values["previewStack"]["certificateIdentity"]["mode"] = "standalone"
+proxy = next(
+    service
+    for service in values["previewStack"]["services"]
+    if service["name"] == "tcp-proxy-service"
+)
+proxy["serviceType"] = "NodePort"
+proxy["ports"][0]["nodePort"] = 30001
+path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+helm template public-pr-42 "$CHART_DIR" \
+  --namespace pr-42 \
+  -f "$PUBLIC_VALUES" \
+  --set-string previewStack.telnetTls.secretName=pr-42-telnet-tls \
+  >"$TMP_DIR/public-rendered.yaml"
+python3 - "$TMP_DIR/public-rendered.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+documents = [
+    document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+proxy_services = [
+    document
+    for document in documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+]
+if len(proxy_services) != 1:
+    raise SystemExit(f"expected exactly one public TCP Proxy Service, found {len(proxy_services)}")
+proxy_service = proxy_services[0]
+if proxy_service["spec"].get("type") != "NodePort":
+    raise SystemExit("standalone public TCP Proxy Service must use NodePort")
+telnet_ports = [port for port in proxy_service["spec"].get("ports", []) if port.get("port") == 2323]
+if len(telnet_ports) != 1 or telnet_ports[0].get("nodePort") != 30001:
+    raise SystemExit("standalone public Telnet NodePort must preserve the configured service port")
+labels = proxy_service.get("metadata", {}).get("labels", {})
+if labels.get("firemud.dev/certificate-identity-mode") != "standalone":
+    raise SystemExit("public TCP Proxy Service lost its standalone identity-mode label")
+PY
+
+helm template public-pr-42 "$CHART_DIR" \
+  --namespace pr-42 \
+  -f "$PUBLIC_VALUES" \
+  --set-string previewStack.telnetTls.secretName=pr-42-telnet-tls \
+  --show-only templates/gateway-ws-certificates.yaml \
+  >"$TMP_DIR/public-gateway-ws-certificates.yaml"
+python3 - "$TMP_DIR/public-gateway-ws-certificates.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+documents = [
+    document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+certificates = {
+    document["metadata"]["name"]: document
+    for document in documents
+    if document.get("apiVersion") == "cert-manager.io/v1"
+    and document.get("kind") == "Certificate"
+}
+expected_names = {"public-pr-42-gateway-internal-ws", "public-pr-42-tcp-proxy-bridge"}
+if set(certificates) != expected_names:
+    raise SystemExit(
+        "standalone public mode must render exactly the Gateway bridge Certificates: "
+        f"{set(certificates)!r}"
+    )
+server = certificates["public-pr-42-gateway-internal-ws"]["spec"]
+if server.get("dnsNames") != ["spring-cloud-gateway-mtls.pr-42.svc.cluster.local"]:
+    raise SystemExit("public Gateway server Certificate must use the namespace DNS SAN")
+if server.get("usages") != ["digital signature", "key encipherment", "server auth"]:
+    raise SystemExit("public Gateway server Certificate lost server-auth usage")
+client = certificates["public-pr-42-tcp-proxy-bridge"]["spec"]
+if client.get("uris") != ["spiffe://firemud/ns/pr-42/sa/tcp-proxy-service"]:
+    raise SystemExit("public bridge client Certificate must use the TCP Proxy SPIFFE URI")
+if client.get("usages") != ["digital signature", "key encipherment", "client auth"]:
+    raise SystemExit("public bridge client Certificate lost client-auth usage")
+PY
+
+PUBLIC_GATEWAY_WS_OVERRIDE="$TMP_DIR/public-gateway-ws-certificates-override.yaml"
+helm template public-pr-42 "$CHART_DIR" \
+  --namespace pr-42 \
+  -f "$PUBLIC_VALUES" \
+  --set-string previewStack.telnetTls.secretName=pr-42-telnet-tls \
+  --set-string previewStack.gatewayWsTls.clusterIssuer=custom-bridge-ca-issuer \
+  --show-only templates/gateway-ws-certificates.yaml \
+  >"$PUBLIC_GATEWAY_WS_OVERRIDE"
+python3 - "$TMP_DIR/public-gateway-ws-certificates.yaml" "$PUBLIC_GATEWAY_WS_OVERRIDE" <<'PY'
+import copy
+import sys
+from pathlib import Path
+
+import yaml
+
+
+def certificates(path):
+    return {
+        document["metadata"]["name"]: document
+        for document in yaml.safe_load_all(Path(path).read_text(encoding="utf-8"))
+        if isinstance(document, dict)
+        and document.get("apiVersion") == "cert-manager.io/v1"
+        and document.get("kind") == "Certificate"
+    }
+
+
+default = certificates(sys.argv[1])
+override = certificates(sys.argv[2])
+if set(default) != set(override):
+    raise SystemExit("Gateway bridge issuer override changed the Certificate set")
+for name, certificate in default.items():
+    expected = copy.deepcopy(certificate)
+    expected["spec"]["issuerRef"]["name"] = "custom-bridge-ca-issuer"
+    if override[name] != expected:
+        raise SystemExit(
+            f"Gateway bridge issuer override changed Certificate {name} beyond issuerRef.name"
+        )
+PY
+
+python3 - "$TMP_DIR/hosted-controller-public-rendered.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+documents = [
+    document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+if any(document.get("kind") == "Certificate" for document in documents):
+    raise SystemExit(
+        "public hosted-controller mode must not render a chart-owned Telnet Certificate"
+    )
+PY
+
+python3 - "$TMP_DIR/public-rendered.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+documents = [
+    document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+certificates = [
+    document
+    for document in documents
+    if document.get("apiVersion") == "cert-manager.io/v1"
+    and document.get("kind") == "Certificate"
+]
+telnet_certificates = [
+    certificate
+    for certificate in certificates
+    if certificate.get("metadata", {}).get("name") == "pr-42-telnet-tls"
+]
+if len(telnet_certificates) != 1:
+    raise SystemExit("public Telnet TLS must render exactly one named Certificate")
+if telnet_certificates[0]["spec"].get("privateKey") != {
+    "algorithm": "RSA",
+    "size": 2048,
+    "encoding": "PKCS8",
+    "rotationPolicy": "Always",
+}:
+    raise SystemExit("public Telnet TLS Certificate lost its private-key contract")
 PY
 
 echo "hosted Gateway WebSocket mTLS Helm contract passed"

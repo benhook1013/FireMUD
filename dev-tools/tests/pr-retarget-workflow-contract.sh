@@ -374,30 +374,179 @@ assert_job_contains smoke.yml smoke-summary-pending 'const smokeGateStatus = ful
 assert_job_contains smoke.yml smoke-summary-pending 'Full-stack smoke runs in Build Runtime Images and is tracked by Smoke Gate'
 assert_job_contains smoke.yml smoke-summary-pending 'firemud-smoke-summary'
 assert_job_contains smoke.yml smoke-summary-pending 'comment.user?.login === "github-actions[bot]"'
+assert_job_contains smoke.yml smoke-summary-pending 'github.paginate('
+assert_job_contains smoke.yml smoke-summary-pending 'comment.created_at || ""'
+assert_job_contains smoke.yml smoke-summary-pending 'candidateTimestamp < oldestTimestamp'
+assert_job_contains smoke.yml smoke-summary-pending 'const seenCommentIds = new Set();'
+assert_job_contains smoke.yml smoke-summary-pending 'String(comment.id) === String(existing?.id)'
+assert_job_excludes smoke.yml smoke-summary-pending 'comment.updated_at'
 assert_job_contains smoke.yml smoke-summary 'const smokeGateStatus ='
 assert_job_contains smoke.yml smoke-summary 'firemud-smoke-summary'
 assert_job_contains smoke.yml smoke-summary 'comment.user?.login === "github-actions[bot]"'
+assert_job_contains smoke.yml smoke-summary 'github.paginate('
+assert_job_contains smoke.yml smoke-summary 'comment.created_at || ""'
+assert_job_contains smoke.yml smoke-summary 'candidateTimestamp < oldestTimestamp'
+assert_job_contains smoke.yml smoke-summary 'const seenCommentIds = new Set();'
+assert_job_contains smoke.yml smoke-summary 'String(comment.id) === String(existing?.id)'
+assert_job_excludes smoke.yml smoke-summary 'comment.updated_at'
 assert_job_contains smoke.yml smoke-gate 'pull-requests: read'
 assert_job_contains smoke.yml smoke-gate 'github.rest.pulls.get'
 assert_job_contains smoke.yml smoke-gate 'pullRequest.state !== "open"'
 assert_job_contains smoke.yml smoke-gate 'pullRequest.head.sha !== headSha'
 assert_job_contains smoke.yml smoke-gate 'pullRequest.base.ref !== baseRef'
+assert_job_excludes smoke.yml smoke-gate 'pullRequest.base.sha'
+assert_job_contains smoke.yml smoke-gate 'github.rest.git.getRef'
+assert_job_contains smoke.yml smoke-gate 'github.rest.repos.getCommit'
+assert_job_contains smoke.yml smoke-gate 'parents.length !== 2'
+assert_job_contains smoke.yml smoke-gate 'parents[0]?.sha !== currentBaseSha'
+assert_job_contains smoke.yml smoke-gate 'parents[1]?.sha !== headSha'
+assert_job_contains smoke.yml smoke-gate 'const expectedRuntimeEvent = eventIdentityMatches(currentIdentity)'
+assert_job_contains smoke.yml smoke-gate 'event: expectedRuntimeEvent'
+assert_job_contains smoke.yml smoke-gate 'run.event !== expectedRuntimeEvent'
+assert_job_contains smoke.yml smoke-gate 'expectedRuntimeEvent === "repository_dispatch"'
+assert_job_contains smoke.yml smoke-gate 'no trusted refresh dispatch exists or it did not complete'
+assert_job_contains smoke.yml smoke-gate 'The stale pull_request source is not accepted.'
+assert_job_contains smoke.yml smoke-gate 'job.name === "PR Full-Stack Smoke"'
+assert_job_contains smoke.yml smoke-gate 'step.name === "Run credential-free full-stack smoke"'
+assert_job_contains smoke.yml smoke-gate 'Stopping stale smoke gate before accepting full-stack proof'
+assert_job_contains smoke.yml smoke-gate 'continue smokeGatePolling'
+assert_job_excludes smoke.yml smoke-gate 'github.rest.repos.createDispatchEvent'
+
+run_image_meta_exact_parent_fixture() {
+  python3 - "$runtime_images_path" <<'PY'
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+
+workflow_path = Path(sys.argv[1])
+workflow_source = workflow_path.read_text(encoding="utf-8")
+predicate = (
+    ".sha == $merge_sha and (.parents | type) == \"array\" and "
+    "(.parents | length) == 2 and .parents[0].sha == $base_sha and "
+    ".parents[1].sha == $head_sha"
+)
+if predicate not in workflow_source:
+    raise SystemExit("runtime image metadata must retain the exact ordered-parent predicate")
+
+
+def sha(prefix, fill):
+    return prefix + fill * (40 - len(prefix))
+
+
+stale_event_base = sha("d253", "a")
+current_base = sha("7d995", "b")
+head = sha("731", "c")
+merge = sha("156", "d")
+merge_commit = {
+    "sha": merge,
+    "parents": [{"sha": current_base}, {"sha": head}],
+}
+
+
+def image_meta_output(event_name, base_sha):
+    completed = subprocess.run(
+        [
+            "jq",
+            "-e",
+            "--arg",
+            "base_sha",
+            base_sha,
+            "--arg",
+            "head_sha",
+            head,
+            "--arg",
+            "merge_sha",
+            merge,
+            predicate,
+        ],
+        input=json.dumps(merge_commit),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return None
+    return {
+        "event": event_name,
+        "base_sha": base_sha,
+        "head_sha": head,
+        "merge_sha": merge,
+    }
+
+
+if image_meta_output("pull_request", stale_event_base) is not None:
+    raise SystemExit("stale ordinary PR tuple must not produce runtime metadata")
+refresh_output = image_meta_output("repository_dispatch", current_base)
+if refresh_output is None or refresh_output["event"] != "repository_dispatch":
+    raise SystemExit("valid typed refresh tuple must produce runtime metadata")
+if refresh_output["base_sha"] != current_base or refresh_output["head_sha"] != head or refresh_output["merge_sha"] != merge:
+    raise SystemExit("typed refresh metadata did not preserve the exact current tuple")
+
+PY
+}
+
+run_image_meta_exact_parent_fixture
 
 require_contains "$runtime_images_path" 'types: [opened, synchronize, reopened, edited]'
+require_contains "$runtime_images_path" 'types: [pr-runtime-base-refresh]'
+require_contains "$runtime_images_path" 'repository_dispatch:'
 require_contains "$runtime_images_path" "&& 'metadata' || 'required' }}"
 require_contains "$runtime_images_path" '  cancel-in-progress: true'
 require_contains "$runtime_images_path" 'run-name: Build Runtime Images '
 require_contains "$runtime_images_path" "format('secure-pr-artifact pr-{0}"
 require_contains "$runtime_images_path" 'github.event.pull_request.base.sha'
 require_contains "$runtime_images_path" 'github.event.pull_request.head.sha'
+require_contains "$runtime_images_path" 'github.event.client_payload.base_sha'
+require_contains "$runtime_images_path" 'github.event.client_payload.head_sha'
+require_contains "$runtime_images_path" 'github.event.client_payload.merge_sha'
 require_contains "$runtime_images_path" 'github.sha'
 require_contains "$runtime_images_path" 'mode-{4}'
+require_contains "$runtime_images_path" 'Runtime PR refresh must run from the repository default branch.'
+require_contains "$runtime_images_path" 'Runtime PR refresh base SHA is not the current ${BASE_REF} branch ref.'
+require_contains "$runtime_images_path" 'Runtime PR refresh payload is stale, conflicted, fork-owned, closed, or has an invalid merge tuple.'
+require_contains "$runtime_images_path" 'Runtime PR refresh merge commit does not have the exact current base/head parents.'
+require_contains "$runtime_images_path" "PR event merge commit does not have the event's exact base/head parents; refusing a stale PR artifact."
+require_contains "$runtime_images_path" 'GH_TOKEN: ${{ github.token }}'
+require_contains "$runtime_images_path" "format('trusted-branch branch-{0} sha-{1}'"
+require_contains "$runtime_images_path" "format('base-refresh-only branch-{0} sha-{1} ci-{2}'"
 require_contains "$runtime_images_path" '### PR runtime images and applicable full-stack smoke'
 require_contains "$runtime_images_path" 'built the PR merge commit and runs full-stack smoke when required by change scope'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'github.event.workflow_run.event == '\''push'\'''
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'github.event.workflow_run.status == '\''completed'\'''
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'github.event.workflow_run.head_repository.full_name == github.repository'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'contents: write'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'github.rest.git.getRef'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'github.rest.pulls.list'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'github.rest.repos.getCommit'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'currentBaseRef !== baseBranch'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'parents.length !== 2'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'parents[0] !== baseSha'
+assert_job_excludes runtime-images.yml dispatch-pr-base-refreshes '.base.sha'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'event_type: "pr-runtime-base-refresh"'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'pr_number: tuple.prNumber'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'base_sha: tuple.baseSha'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'head_sha: tuple.headSha'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'merge_sha: tuple.mergeSha'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'event_type: "preview-deploy"'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'action: "deploy"'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'preview_domain: "preview.firedevops.net"'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes '".github/actions/load-workflow-tool-versions/"'
+assert_job_excludes runtime-images.yml dispatch-pr-base-refreshes 'packages: write'
+assert_job_excludes runtime-images.yml dispatch-pr-base-refreshes 'environment:'
+assert_job_excludes runtime-images.yml dispatch-pr-base-refreshes 'secrets.'
+assert_job_contains runtime-images.yml pr-local-smoke 'github.event_name == '\''repository_dispatch'\'''
+assert_job_contains runtime-images.yml pr-local-smoke 'BASE_SHA="${{ needs.image-meta.outputs.base_sha }}"'
+assert_job_contains runtime-images.yml pr-local-smoke 'MERGE_SHA="${{ needs.image-meta.outputs.merge_sha }}"'
+assert_job_contains runtime-images.yml pr-controller-smoke 'github.event_name == '\''repository_dispatch'\'''
 require_contains "$image_wait_path" 'display_title = run.get("display_title", "")'
-require_contains "$image_wait_path" 'display_title.startswith("Build Runtime Images secure-pr-artifact ")'
-require_contains "$image_wait_path" 'and f" head-{head_sha} " in display_title'
-require_contains "$image_wait_path" 'and display_title.endswith(" mode-required")'
+require_contains "$image_wait_path" 'display_title.startswith("Build Runtime Images trusted-branch ")'
+require_contains "$image_wait_path" 'and f"sha-{head_sha}" in tokens'
+require_contains "$image_wait_path" 'and "branch-develop" in tokens'
+require_contains "$image_wait_path" 'and f"base-{base_sha}" in tokens'
+require_contains "$image_wait_path" 'and f"merge-{merge_sha}" in tokens'
+require_contains "$image_wait_path" 'run.get("event") == "workflow_run"'
 require_contains "$image_wait_path" 'gh api --paginate --slurp'
 require_contains "$image_wait_path" 'GitHub API poll failed while %s; retrying within the existing wait deadline.'
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
@@ -469,7 +618,12 @@ require_contains "$preview_path" 'MERGE_RETRY_LIMIT=5'
 require_contains "$preview_path" 'Preview merge computation unavailable'
 require_contains "$preview_path" 'Stale preview head SHA'
 assert_job_contains preview.yml preview-plan 'resolve-preview-image-tag.sh'
-assert_job_contains preview.yml preview-plan 'Expected the PR head or immutable base SHA.'
+assert_job_contains preview.yml preview-plan 'Expected the tested PR merge tag or immutable base SHA.'
+assert_job_contains preview.yml preview-plan '"$MERGE_SHA" "$PR_NUMBER" "$BASE_SHA"'
+assert_job_contains preview.yml preview-plan 'pr-merge-${MERGE_SHA}'
+require_contains "$ROOT_DIR/dev-tools/hosted/preview/resolve-preview-image-tag.sh" 'expected_file_count'
+require_contains "$ROOT_DIR/dev-tools/hosted/preview/resolve-preview-image-tag.sh" 'current_merge_sha'
+require_contains "$ROOT_DIR/dev-tools/hosted/preview/resolve-preview-image-tag.sh" 'refusing to select base images'
 assert_job_contains preview.yml preview-plan 'preview.firedevops.net'
 assert_job_contains preview.yml preview-render 'runs-on: ubuntu-latest'
 assert_job_contains preview.yml preview-render "needs.preview-plan.outputs.action == 'deploy'"
@@ -507,6 +661,8 @@ require_contains "$trusted_preview_path" 'validate-preview-intent.py'
 require_contains "$trusted_preview_path" 'repository="$(jq -r'
 require_contains "$trusted_preview_path" '[[ "$repository" == "$GITHUB_REPOSITORY" ]]'
 require_contains "$trusted_preview_path" '[[ "$base_ref" == main || "$base_ref" == develop ]]'
+require_contains "$trusted_preview_path" 'Ignoring lifecycle event without the current pull-request test-merge SHA.'
+require_contains "$trusted_preview_path" 'expected_merge_image_tag="pr-merge-${merge_sha}"'
 require_contains "$trusted_preview_path" 'labels_json="$(jq -c'
 require_contains "$trusted_preview_path" 'preview-eligibility.py'
 require_contains "$trusted_preview_path" '[[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]] || emit_no_action'
@@ -598,11 +754,12 @@ done
 require_contains "$pr_image_publisher_path" 'workflow_run:'
 require_exact_line "$pr_image_publisher_path" 'permissions: {}'
 # shellcheck disable=SC2016 # This assertion intentionally matches a literal GitHub expression.
-require_contains "$pr_image_publisher_path" 'run-name: Publish PR Runtime Images head-${{ github.event.workflow_run.head_sha }}'
+require_contains "$pr_image_publisher_path" 'run-name: Publish PR Runtime Images ${{ github.event.workflow_run.display_title }}'
 require_contains "$pr_image_publisher_path" "github.event.workflow_run.event == 'pull_request'"
 require_contains "$pr_image_publisher_path" "github.event.workflow_run.conclusion == 'success'"
 require_contains "$pr_image_publisher_path" 'github.event.workflow_run.head_repository.full_name == github.repository'
-require_contains "$pr_image_publisher_path" "startsWith(github.event.workflow_run.display_title, 'Build Runtime Images secure-pr-artifact ')"
+require_contains "$pr_image_publisher_path" 'TITLE_PATTERN = re.compile('
+require_contains "$pr_image_publisher_path" 'mode-required$'
 require_contains "$pr_image_publisher_path" 'actions: read'
 require_contains "$pr_image_publisher_path" 'packages: write'
 require_contains "$pr_image_publisher_path" '### Trusted PR runtime image publication'
@@ -612,12 +769,12 @@ require_contains "$pr_image_publisher_path" 'from html import escape'
 require_contains "$pr_image_publisher_path" '<code>{markdown_code(os.environ['
 assert_job_contains publish-pr-runtime-images.yml publish 'contents: read'
 # shellcheck disable=SC2016 # These are literal GitHub expression and shell source contracts.
-require_contains "$pr_image_publisher_path" 'pr-runtime-images-${{ github.event.workflow_run.head_sha }}'
+require_contains "$pr_image_publisher_path" 'pr-runtime-images-{image_tag}'
 # shellcheck disable=SC2016 # This assertion intentionally matches the unevaluated publisher script.
 require_contains "$pr_image_publisher_path" 'docker push "$image"'
 # shellcheck disable=SC2016 # These assertions intentionally match unevaluated publisher shell.
 require_contains "$pr_image_publisher_path" 'docker manifest inspect "$image"'
-require_contains "$pr_image_publisher_path" 'Fixed image tag already exists; preserving first publication'
+require_contains "$pr_image_publisher_path" 'Fixed image tag already exists with the validated source image ID; preserving first publication'
 require_contains "$pr_image_publisher_path" 'max_push_attempts=3'
 # shellcheck disable=SC2016 # These assertions intentionally match unevaluated publisher shell.
 require_contains "$pr_image_publisher_path" 'backoff_seconds=$((5 * 2 ** (push_attempt - 1)))'
@@ -636,11 +793,11 @@ from pathlib import Path
 if len(sys.argv) != 2:
     raise SystemExit("trusted PR image publisher contract requires one workflow path")
 workflow_text = Path(sys.argv[1]).read_text(encoding="utf-8")
-match = re.search(r"python3 - <<'PY'\n(?P<script>.*?)\n          PY", workflow_text, re.DOTALL)
-if match is None:
+matches = list(re.finditer(r"python3 - <<'PY'\n(?P<script>.*?)\n          PY", workflow_text, re.DOTALL))
+if len(matches) != 2:
     raise SystemExit("trusted PR image publisher summary script was not found")
 
-script = textwrap.dedent(match.group("script"))
+script = textwrap.dedent(matches[1].group("script"))
 with tempfile.NamedTemporaryFile(mode="r+", encoding="utf-8") as summary_file:
     test_environment = {
         "GITHUB_STEP_SUMMARY": summary_file.name,
@@ -649,6 +806,9 @@ with tempfile.NamedTemporaryFile(mode="r+", encoding="utf-8") as summary_file:
         "SOURCE_RUN_TITLE": "build `title` <script>&\nnext",
         "SOURCE_HEAD_BRANCH": "feature/`branch` <b>&",
         "SOURCE_HEAD_SHA": "abc123",
+        "HEAD_SHA": "abc123",
+        "MERGE_SHA": "def456",
+        "IMAGE_TAG": "pr-merge-def456",
     }
     previous_environment = os.environ.copy()
     try:
@@ -669,6 +829,12 @@ if "<script>" in summary:
 PY
 
 require_contains "$image_wait_path" 'publish-pr-runtime-images.yml/runs?event=workflow_run'
+require_contains "$image_wait_path" '"Publish", "PR", "Runtime", "Images", "Build", "Runtime", "Images"'
+require_contains "$image_wait_path" 're.fullmatch(r"pr-[1-9][0-9]{0,50}", tokens[8])'
+require_contains "$image_wait_path" 'tokens[9] == f"base-{base_sha}"'
+require_contains "$image_wait_path" 'tokens[10] == f"head-{head_sha}"'
+require_contains "$image_wait_path" 'tokens[11] == f"merge-{merge_sha}"'
+require_contains "$image_wait_path" 'tokens[12] == "mode-required"'
 require_contains "$image_wait_path" 'wait_for_pr_publisher'
 # shellcheck disable=SC2016 # This assertion intentionally matches a literal shell default expression.
 require_contains "$image_wait_path" 'publisher_timeout_seconds="${HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS:-${timeout_seconds}}"'
@@ -812,7 +978,7 @@ fi
 
 if [[ "$*" == *"publish-pr-runtime-images.yml"* ]]; then
   cat <<'JSON'
-[{"workflow_runs":[{"id":201,"status":"completed","conclusion":"success","html_url":"https://example.test/publisher/201","display_title":"Publish PR Runtime Images head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","created_at":"2026-07-24T00:03:00Z"}]}]
+[{"workflow_runs":[{"id":201,"status":"completed","conclusion":"success","html_url":"https://example.test/publisher/201","display_title":"Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:03:00Z"}]}]
 JSON
 else
   cat <<'JSON'
@@ -826,7 +992,9 @@ GH_TOKEN=contract-token \
 GITHUB_REPOSITORY=example/FireMUD \
 HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=5 \
 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
-bash "$image_wait_path" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+  "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" \
+  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
   >"$contract_fixture_dir/output"
 require_contains "$contract_fixture_dir/output" 'Matching runtime-images workflow 101 succeeded'
 require_contains "$contract_fixture_dir/output" 'Trusted PR image publisher 201 succeeded'
@@ -837,7 +1005,9 @@ GH_TOKEN=contract-token \
 GITHUB_REPOSITORY=example/FireMUD \
 HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=5 \
 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
-bash "$image_wait_path" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+  "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" \
+  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
   >"$contract_fixture_dir/retry-output" \
   2>"$contract_fixture_dir/retry-error"
 require_contains "$contract_fixture_dir/retry-error" \
@@ -851,15 +1021,14 @@ if (assert_job_excludes runtime-images.yml missing-job 'pull-requests: write') 2
   exit 1
 fi
 
-require_contains "$smoke_path" 'const baseSha = context.payload.pull_request.base.sha;'
+require_contains "$smoke_path" 'const eventBaseSha = context.payload.pull_request.base.sha;'
 require_contains "$smoke_path" 'const baseRef = context.payload.pull_request.base.ref;'
-require_contains "$smoke_path" 'const mergeSha = context.sha;'
+require_contains "$smoke_path" 'const eventMergeSha = context.sha;'
 require_contains "$smoke_path" 'github.rest.pulls.get({'
 require_contains "$smoke_path" 'pullRequest.state !== "open" ||'
 require_contains "$smoke_path" 'pullRequest.head.sha !== headSha ||'
 require_contains "$smoke_path" 'pullRequest.base.ref !== baseRef'
-require_contains "$smoke_path" 'const matchingRuns = runs.filter((run) => {'
-require_contains "$smoke_path" 'const matching = matchingRuns.reduce((newest, candidate) => {'
+require_contains "$smoke_path" 'let matching = null;'
 require_contains "$smoke_path" 'let fullSmokeJob = null;'
 require_contains "$smoke_path" 'async function failNonTerminalSnapshot(reason) {'
 # shellcheck disable=SC2016 # Assert literal JavaScript template syntax.
@@ -873,31 +1042,39 @@ require_contains "$smoke_path" 'completedJobSnapshotAttempt < maxCompletedJobSna
 require_contains "$smoke_path" 'const remainingBeforeSnapshotSleepMs = timeoutMs - (Date.now() - started);'
 require_contains "$smoke_path" 'if (remainingBeforeSnapshotSleepMs <= 0) {'
 require_contains "$smoke_path" 'Math.min(sleepMs, remainingBeforeSnapshotSleepMs)'
-require_contains "$smoke_path" 'did not expose a terminal PR Full-Stack Smoke job '
+require_contains "$smoke_path" 'did not expose a terminal PR Full-Stack Smoke job and smoke step '
 require_contains "$smoke_path" "Runtime images run \${matching.id} succeeded, but PR Full-Stack Smoke job did not complete successfully:"
 require_contains "$smoke_path" 'Stopping obsolete failed full-smoke gate for'
 require_contains "$smoke_path" 'pollIteration % pullRequestCheckInterval === 0'
 require_contains "$smoke_path" 'Stopping obsolete smoke gate for'
 require_ordered_sequence \
   "$smoke_path" \
-  'if (await isCurrentPullRequestObsolete("Stopping obsolete smoke gate for")) {' \
+  'if (resolvedIdentity?.obsolete) {' \
   'return;' \
   'github.rest.actions.listWorkflowRuns,'
 require_branch_return \
   "$smoke_path" \
-  'if (await isCurrentPullRequestObsolete("Stopping obsolete smoke gate for")) {'
-require_contains "$smoke_path" 'head_sha: headSha,'
+  'if (resolvedIdentity?.obsolete) {'
 require_contains "$smoke_path" 'mode-required'
 require_contains "$smoke_path" 'Build Runtime Images secure-pr-artifact pr-'
+require_contains "$smoke_path" 'workflowRunQuery.created = `${pullRequestCreatedAt}..*`;'
+require_contains "$smoke_path" 'github.paginate.iterator('
+require_contains "$smoke_path" 'for await (const response of github.paginate.iterator('
 require_contains "$smoke_path" 'run.display_title !== expectedDisplayTitle'
 require_contains "$smoke_path" 'const pullRequests = run.pull_requests ?? [];'
-require_contains "$smoke_path" 'pullRequests.length === 0 || pullRequests.some'
-require_contains "$smoke_path" 'pullRequest.base?.sha === baseSha'
-require_contains "$smoke_path" 'pullRequest.head?.sha === headSha'
+require_contains "$smoke_path" 'pullRequests.length > 0 &&'
+require_contains "$smoke_path" '!pullRequests.some'
+require_contains "$smoke_path" 'pullRequest.head?.sha === currentIdentity.headSha'
+require_contains "$smoke_path" 'break workflowRunPages;'
+require_contains "$smoke_path" 'workflowRunQuery.head_sha = currentIdentity.headSha;'
 require_contains "$smoke_path" 'github.rest.actions.listJobsForWorkflowRun'
 require_contains "$smoke_path" 'job.name === "PR Full-Stack Smoke"'
+require_contains "$smoke_path" 'step.name === "Run credential-free full-stack smoke"'
 require_contains "$smoke_path" 'fullSmokeJob?.status === "completed"'
 require_contains "$smoke_path" 'fullSmokeJob?.conclusion !== "success"'
+require_contains "$smoke_path" 'fullSmokeStep?.status === "completed"'
+require_contains "$smoke_path" 'fullSmokeStep?.conclusion !== "success"'
+require_contains "$smoke_path" 'credential-free full-stack smoke step did not pass'
 require_ordered_sequence \
   "$smoke_path" \
   'if (fullSmokeJob?.status === "completed") {' \
@@ -1083,7 +1260,19 @@ missing_prefixes = [
     for prefix in full_prefixes
     if not any(path_pattern_covers_prefix(pattern, prefix) for pattern in runtime_paths)
 ]
-missing_files = [file for file in full_files if file not in runtime_paths]
+missing_files = [
+    file
+    for file in full_files
+    if not any(
+        pattern == file
+        or (
+            not pattern.startswith("!")
+            and pattern.endswith("/**")
+            and file.startswith(pattern.removesuffix("**"))
+        )
+        for pattern in runtime_paths
+    )
+]
 
 if missing_prefixes or missing_files:
     details = []
@@ -1098,5 +1287,386 @@ if missing_prefixes or missing_files:
 
 print("smoke/runtime-images full-scope parity checks passed")
 PY
+
+python3 - "$smoke_path" <<'PY'
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import yaml
+
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+scope_script = next(
+    step["with"]["script"]
+    for step in workflow["jobs"]["changes"]["steps"]
+    if step.get("name") == "Compute smoke scope"
+)
+
+
+def run_scope(changed_paths):
+    node_source = """
+const scopeScript = %s;
+const changedFiles = %s;
+const outputs = {};
+const github = {
+  paginate: async () => changedFiles,
+  rest: { pulls: { listFiles: async () => undefined } },
+};
+const context = {
+  repo: { owner: "example", repo: "firemud" },
+  payload: { pull_request: { number: 1, changed_files: changedFiles.length } },
+};
+const core = {
+  warning: () => {},
+  setOutput: (name, value) => { outputs[name] = value; },
+};
+const execute = new Function(
+  "github",
+  "context",
+  "core",
+  "return (async () => {\\n" + scopeScript + "\\n})()"
+);
+await execute(github, context, core);
+process.stdout.write(JSON.stringify(outputs));
+""" % (
+        json.dumps(scope_script),
+        json.dumps([{"filename": path} for path in changed_paths]),
+    )
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", node_source],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise SystemExit(result.stderr)
+    return json.loads(result.stdout)
+
+
+controller_service = "services/hosted-environment-identity-controller/src/Main.java"
+controller_smoke_script = "dev-tools/hosted/controller/smoke-paused-controller-image.sh"
+runtime_service = "services/account-service/src/Main.java"
+
+assert run_scope([controller_service]) == {"run_smoke_full": "false"}
+assert run_scope([controller_smoke_script]) == {"run_smoke_full": "false"}
+assert run_scope([runtime_service]) == {"run_smoke_full": "true"}
+assert run_scope([controller_service, runtime_service]) == {"run_smoke_full": "true"}
+PY
+
+smoke_gate_script="$contract_fixture_dir/smoke-gate.js"
+python3 - "$smoke_path" "$smoke_gate_script" <<'PY'
+import sys
+import textwrap
+from pathlib import Path
+
+workflow_path, script_path = map(Path, sys.argv[1:])
+lines = workflow_path.read_text(encoding="utf-8").splitlines()
+anchor = next(
+    index for index, line in enumerate(lines)
+    if line.strip() == "- name: Track full-stack smoke result from Build Runtime Images"
+)
+start = next(index for index in range(anchor, len(lines)) if lines[index].strip() == "script: |")
+base_indent = len(lines[start]) - len(lines[start].lstrip())
+body = []
+for line in lines[start + 1 :]:
+    if line.strip() and len(line) - len(line.lstrip()) <= base_indent:
+        break
+    body.append(line)
+script_path.write_text(textwrap.dedent("\n".join(body)) + "\n", encoding="utf-8")
+PY
+
+node - "$smoke_gate_script" <<'NODE'
+const fs = require("node:fs");
+const script = fs.readFileSync(process.argv[2], "utf8");
+const headSha = "a".repeat(40);
+const baseSha = "b".repeat(40);
+const mergeSha = "c".repeat(40);
+let currentBaseSha = baseSha;
+let currentMergeSha = mergeSha;
+let currentMergeParents = [{ sha: baseSha }, { sha: headSha }];
+const context = {
+  repo: { owner: "owner", repo: "repo" },
+  sha: mergeSha,
+  payload: {
+    pull_request: {
+      number: 42,
+      created_at: "2026-09-01T00:00:00Z",
+      head: { sha: headSha },
+      base: { sha: baseSha, ref: "develop" },
+    },
+  },
+};
+const listWorkflowRuns = async () => undefined;
+const listJobsForWorkflowRun = async () => undefined;
+let smokeStepConclusion = "skipped";
+const workflowRunQueries = [];
+const workflowRunPageReads = [];
+let olderMatchingRunVisited = false;
+const jobQueries = [];
+const github = {
+  rest: {
+    pulls: {
+      get: async () => ({
+        data: {
+          state: "open",
+          head: { sha: headSha },
+          base: { sha: currentBaseSha, ref: "develop" },
+          merge_commit_sha: currentMergeSha,
+        },
+      }),
+    },
+    git: {
+      getRef: async () => ({ data: { object: { sha: currentBaseSha } } }),
+    },
+    repos: {
+      getCommit: async () => ({
+        data: {
+          sha: currentMergeSha,
+          parents: currentMergeParents,
+        },
+      }),
+    },
+    actions: { listWorkflowRuns, listJobsForWorkflowRun },
+  },
+  paginate: async (method, input) => {
+    if (method === listJobsForWorkflowRun) {
+      jobQueries.push(input);
+      return [{
+        name: "PR Full-Stack Smoke",
+        status: "completed",
+        conclusion: "success",
+        steps: [{
+          name: "Run credential-free full-stack smoke",
+          status: "completed",
+          conclusion: smokeStepConclusion,
+        }],
+      }];
+    }
+    throw new Error("unexpected paginated method");
+  },
+};
+github.paginate.iterator = (method, input) => {
+  if (method !== listWorkflowRuns) {
+    throw new Error("unexpected workflow-run iterator method");
+  }
+  workflowRunQueries.push(input);
+  const expectedTitle = `Build Runtime Images secure-pr-artifact pr-42 base-${currentBaseSha} head-${headSha} merge-${currentMergeSha} mode-required`;
+  const pages = currentBaseSha === baseSha
+    ? [[{
+        id: 101,
+        event: "pull_request",
+        head_sha: headSha,
+        display_title: expectedTitle,
+        status: "completed",
+        conclusion: "success",
+        created_at: "2026-09-20T00:00:00Z",
+        pull_requests: [],
+      }]]
+    : [
+        [
+          {
+            id: 102,
+            event: "pull_request",
+            head_sha: headSha,
+            display_title: `Build Runtime Images secure-pr-artifact pr-42 base-${baseSha} head-${headSha} merge-${mergeSha} mode-required`,
+            status: "completed",
+            conclusion: "success",
+            created_at: "2026-09-20T00:00:00Z",
+            pull_requests: [],
+          },
+          {
+            id: 202,
+            event: "repository_dispatch",
+            head_sha: headSha,
+            display_title: expectedTitle,
+            status: "completed",
+            conclusion: "success",
+            created_at: "2026-09-21T00:00:00Z",
+            pull_requests: [],
+          },
+          {
+            id: 201,
+            get event() {
+              olderMatchingRunVisited = true;
+              return "repository_dispatch";
+            },
+            head_sha: headSha,
+            display_title: expectedTitle,
+            status: "completed",
+            conclusion: "success",
+            created_at: "2026-09-20T00:00:00Z",
+            pull_requests: [],
+          },
+        ],
+        [{
+          id: 203,
+          event: "repository_dispatch",
+          head_sha: headSha,
+          display_title: expectedTitle,
+          status: "completed",
+          conclusion: "success",
+          created_at: "2026-09-19T00:00:00Z",
+          pull_requests: [],
+        }],
+      ];
+  return (async function* workflowRunPages() {
+    for (const runs of pages) {
+      workflowRunPageReads.push(runs);
+      yield { data: runs };
+    }
+  })();
+};
+const run = new Function("github", "context", "core", `return (async () => {\n${script}\n})()`);
+async function check(conclusion, expectedFailure) {
+  smokeStepConclusion = conclusion;
+  const failures = [];
+  const core = {
+    info: () => {},
+    warning: () => {},
+    setFailed: (message) => failures.push(message),
+  };
+  await run(github, context, core);
+  if (expectedFailure) {
+    if (failures.length !== 1 || !failures[0].includes("credential-free full-stack smoke step did not pass")) {
+      throw new Error(`skipped smoke step was accepted: ${JSON.stringify(failures)}`);
+    }
+  } else if (failures.length !== 0) {
+    throw new Error(`successful smoke step was rejected: ${JSON.stringify(failures)}`);
+  }
+}
+check("skipped", true).then(() => check("success", false)).then(() => {
+  currentBaseSha = "d".repeat(40);
+  currentMergeSha = "e".repeat(40);
+  currentMergeParents = [{ sha: currentBaseSha }, { sha: headSha }];
+  workflowRunQueries.length = 0;
+  workflowRunPageReads.length = 0;
+  jobQueries.length = 0;
+  return check("success", false).then(() => {
+    if (workflowRunQueries.length !== 1 || workflowRunQueries[0].event !== "repository_dispatch") {
+      throw new Error("stale PR identity must select a repository_dispatch runtime run");
+    }
+    if (workflowRunQueries[0].created !== "2026-09-01T00:00:00Z..*") {
+      throw new Error("repository_dispatch lookup must start at PR creation time");
+    }
+    if (workflowRunPageReads.length !== 1 || olderMatchingRunVisited) {
+      throw new Error("Smoke Gate must stop after the first exact newest-first event/title match");
+    }
+    if (jobQueries.length !== 1 || jobQueries[0].run_id !== 202) {
+      throw new Error("Smoke Gate must select the exact repository_dispatch event/title tuple");
+    }
+    console.log("Smoke Gate identity/event/title and step-conclusion contract passed");
+  });
+}).catch((error) => {
+  console.error(error.stack || error);
+  process.exit(1);
+});
+NODE
+
+smoke_summary_scripts="$({
+  python3 - "$smoke_path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+import yaml
+
+
+workflow = yaml.load(Path(sys.argv[1]).read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+scripts = {}
+for job_name in ("smoke-summary-pending", "smoke-summary"):
+    scripts[job_name] = next(
+        step["with"]["script"]
+        for step in workflow["jobs"][job_name]["steps"]
+        if step.get("name", "").startswith("💬 Publish")
+    )
+print(json.dumps(scripts))
+PY
+})"
+
+SMOKE_SUMMARY_SCRIPTS="$smoke_summary_scripts" node <<'NODE'
+const assert = require("node:assert/strict");
+
+const scripts = JSON.parse(process.env.SMOKE_SUMMARY_SCRIPTS);
+const context = {
+  repo: { owner: "example", repo: "firemud" },
+  issue: { number: 42 },
+};
+
+async function checkSummary(jobName, script) {
+  const firstPageNoise = Array.from({ length: 35 }, (_, index) => ({
+    id: index + 1,
+    user: { login: "github-actions[bot]" },
+    body: `### Unrelated Summary ${index + 1}`,
+    created_at: `2026-08-${String((index % 28) + 1).padStart(2, "0")}T00:00:00Z`,
+  }));
+  const comments = [
+    ...firstPageNoise,
+    {
+      id: 100,
+      user: { login: "github-actions[bot]" },
+      body: "### Smoke Summary\nold canonical",
+      created_at: "2026-09-01T00:00:00Z",
+      updated_at: "2026-09-03T00:00:00Z",
+    },
+    {
+      id: 101,
+      user: { login: "github-actions[bot]" },
+      body: "<!-- firemud-smoke-summary -->\n### Smoke Summary\nlater duplicate",
+      created_at: "2026-09-02T00:00:00Z",
+      updated_at: "2026-09-01T00:00:00Z",
+    },
+    {
+      id: 102,
+      user: { login: "contributor" },
+      body: "<!-- firemud-smoke-summary -->\n### Smoke Summary\nspoof",
+      created_at: "2026-08-01T00:00:00Z",
+    },
+  ];
+  const calls = { paginate: [], operations: [], creates: [] };
+  const listComments = async () => undefined;
+  const github = {
+    rest: {
+      issues: {
+        listComments,
+        updateComment: async ({ comment_id }) => calls.operations.push(`update:${comment_id}`),
+        deleteComment: async ({ comment_id }) => calls.operations.push(`delete:${comment_id}`),
+        createComment: async (request) => calls.creates.push(request),
+      },
+    },
+    paginate: async (method, params) => {
+      calls.paginate.push({ method, params });
+      return comments;
+    },
+  };
+
+  process.env.CHANGES_RESULT = "success";
+  process.env.RUN_SMOKE_FULL = "true";
+  process.env.SMOKE_GATE_RESULT = "success";
+  const run = new Function("github", "context", `return (async () => {\n${script}\n})()`);
+  await run(github, context);
+
+  assert.equal(calls.paginate.length, 1, `${jobName} must paginate once`);
+  assert.equal(calls.paginate[0].method, listComments, `${jobName} must paginate issue comments`);
+  assert.equal(calls.paginate[0].params.per_page, 100, `${jobName} must request 100 comments per page`);
+  assert.deepEqual(
+    calls.operations,
+    ["update:100", "delete:101"],
+    `${jobName} must update the oldest bot summary before deleting later duplicates`,
+  );
+  assert.deepEqual(calls.creates, [], `${jobName} must not create another summary`);
+}
+
+(async () => {
+  for (const [jobName, script] of Object.entries(scripts)) {
+    await checkSummary(jobName, script);
+  }
+  console.log("Smoke summary pagination and deduplication contract passed");
+})().catch((error) => {
+  console.error(error.stack || error);
+  process.exit(1);
+});
+NODE
 
 echo "PR retarget workflow contract checks passed"
