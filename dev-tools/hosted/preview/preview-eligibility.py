@@ -59,7 +59,7 @@ def evaluate(
     # priority label may authorize it.  The trusted workflow performs the
     # repository, base-ref, mergeability, and exact merge-parent checks before
     # it invokes this policy for a live target.
-    if base_ref not in SUPPORTED_BASE_REFS and not is_priority:
+    if operation in {"deploy", "retain"} and base_ref not in SUPPORTED_BASE_REFS and not is_priority:
         return False, "unsupported-base-branch", is_priority
     if operation in {"deploy", "retain"} and state != "open":
         return False, "pr-not-open", is_priority

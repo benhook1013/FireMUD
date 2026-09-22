@@ -140,6 +140,11 @@ if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
     snapshot_requested_image=""
   fi
   snapshot_uid="${FAKE_PR_901_NAMESPACE_UID:-uid-pr-901}"
+  snapshot_retry_count="${FAKE_PR_901_PROOF_RETRY_COUNT:-}"
+  snapshot_retry_base="${FAKE_PR_901_PROOF_RETRY_BASE_SHA:-}"
+  snapshot_retry_head="${FAKE_PR_901_PROOF_RETRY_HEAD_SHA:-}"
+  snapshot_retry_merge="${FAKE_PR_901_PROOF_RETRY_MERGE_SHA:-}"
+  snapshot_retry_image="${FAKE_PR_901_PROOF_RETRY_IMAGE_TAG:-}"
   if [[ "${FAKE_PR_901_PROOF_COMPLETE:-true}" == true ]]; then
     snapshot_proof_base="$snapshot_base"
     snapshot_proof_head="$snapshot_head"
@@ -167,8 +172,13 @@ if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
     --arg proof_merge "$snapshot_proof_merge" \
     --arg proof_image "$snapshot_proof_image" \
     --arg proof_uid "$snapshot_proof_uid" \
+    --arg retry_count "$snapshot_retry_count" \
+    --arg retry_base "$snapshot_retry_base" \
+    --arg retry_head "$snapshot_retry_head" \
+    --arg retry_merge "$snapshot_retry_merge" \
+    --arg retry_image "$snapshot_retry_image" \
     --arg uid "$snapshot_uid" \
-    '{metadata:{name:"pr-901",uid:$uid,resourceVersion:"rv-901",annotations:{"firemud.dev/last-preview-base-sha":$base,"firemud.dev/last-preview-head-sha":$head,"firemud.dev/last-preview-merge-sha":$merge,"firemud.dev/last-preview-image-tag":$image,"firemud.dev/requested-preview-base-sha":$requested_base,"firemud.dev/requested-preview-head-sha":$requested_head,"firemud.dev/requested-preview-merge-sha":$requested_merge,"firemud.dev/requested-preview-image-tag":$requested_image,"firemud.dev/proof-preview-base-sha":$proof_base,"firemud.dev/proof-preview-head-sha":$proof_head,"firemud.dev/proof-preview-merge-sha":$proof_merge,"firemud.dev/proof-preview-image-tag":$proof_image,"firemud.dev/proof-preview-namespace-uid":$proof_uid}}}'
+    '{metadata:{name:"pr-901",uid:$uid,resourceVersion:"rv-901",annotations:{"firemud.dev/last-preview-base-sha":$base,"firemud.dev/last-preview-head-sha":$head,"firemud.dev/last-preview-merge-sha":$merge,"firemud.dev/last-preview-image-tag":$image,"firemud.dev/requested-preview-base-sha":$requested_base,"firemud.dev/requested-preview-head-sha":$requested_head,"firemud.dev/requested-preview-merge-sha":$requested_merge,"firemud.dev/requested-preview-image-tag":$requested_image,"firemud.dev/proof-preview-base-sha":$proof_base,"firemud.dev/proof-preview-head-sha":$proof_head,"firemud.dev/proof-preview-merge-sha":$proof_merge,"firemud.dev/proof-preview-image-tag":$proof_image,"firemud.dev/proof-preview-namespace-uid":$proof_uid,"firemud.dev/proof-retry-count":$retry_count,"firemud.dev/proof-retry-base-sha":$retry_base,"firemud.dev/proof-retry-head-sha":$retry_head,"firemud.dev/proof-retry-merge-sha":$retry_merge,"firemud.dev/proof-retry-image-tag":$retry_image}}}'
   exit 0
 fi
 if [[ "$1" == get && "$2" == namespace &&
@@ -936,6 +946,9 @@ reset_case() {
     FAKE_PR_901_BASE_SHA FAKE_PR_901_MERGE_SHA FAKE_PR_901_IMAGE_TAG \
     FAKE_PR_901_REQUESTED_BASE_SHA FAKE_PR_901_REQUESTED_MERGE_SHA \
     FAKE_PR_901_REQUESTED_IMAGE_TAG
+  unset FAKE_PR_901_PROOF_RETRY_COUNT FAKE_PR_901_PROOF_RETRY_BASE_SHA \
+    FAKE_PR_901_PROOF_RETRY_HEAD_SHA FAKE_PR_901_PROOF_RETRY_MERGE_SHA \
+    FAKE_PR_901_PROOF_RETRY_IMAGE_TAG
   export FAKE_NAMESPACE_SNAPSHOT_ERROR=false
   export FAKE_NAMESPACE_SNAPSHOT_RECHECK_ERROR=false
   export FAKE_NAMESPACE_SNAPSHOT_PARSE_FAIL=false
@@ -2413,6 +2426,120 @@ grep -Fqx \
 grep -Fq 'repos/example/FireMUD/dispatches -f event_type=preview-deploy' "$FAKE_DISPATCH_LOG"
 
 reset_case
+reconciler_trusted_consumer_output="$TEMP_DIR/reconciler-trusted-consumer.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=head-901 \
+    FAKE_PR_901_PROOF_COMPLETE=false \
+    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON="$(jq -cn \
+      --arg title "Preview dispatch pr-901-base-${preview_base_sha}-head-${preview_head_sha}-merge-${preview_merge_sha}" \
+      '[{workflow_runs:[{id:5252,name:"Trusted Hosted Identity Request",head_branch:"develop",display_title:$title,status:"in_progress"}]}]')" \
+PREVIEW_MAX_ACTIVE=2 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_trusted_consumer_output"
+grep -Fqx \
+  "Skipping proof retry for PR #901: preview source or trusted consumer run 5252 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
+  "$reconciler_trusted_consumer_output"
+test ! -e "$FAKE_ANNOTATE_LOG"
+test ! -e "$FAKE_DISPATCH_LOG"
+
+reset_case
+reconciler_first_proof_retry_output="$TEMP_DIR/reconciler-first-proof-retry.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=head-901 \
+    FAKE_PR_901_PROOF_COMPLETE=false \
+PREVIEW_MAX_ACTIVE=2 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_first_proof_retry_output"
+grep -Fqx \
+  "Recorded proof retry 1/3 for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag})." \
+  "$reconciler_first_proof_retry_output"
+grep -Fq -- 'firemud.dev/proof-retry-count=1' "$FAKE_ANNOTATE_LOG"
+grep -Fq -- '--resource-version rv-901' "$FAKE_ANNOTATE_LOG"
+grep -Fq 'repos/example/FireMUD/dispatches -f event_type=preview-deploy' "$FAKE_DISPATCH_LOG"
+
+reset_case
+reconciler_exhausted_proof_retry_output="$TEMP_DIR/reconciler-exhausted-proof-retry.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=head-901 \
+    FAKE_PR_901_PROOF_COMPLETE=false \
+    FAKE_PR_901_PROOF_RETRY_COUNT=3 \
+    FAKE_PR_901_PROOF_RETRY_BASE_SHA="$preview_base_sha" \
+    FAKE_PR_901_PROOF_RETRY_HEAD_SHA="$preview_head_sha" \
+    FAKE_PR_901_PROOF_RETRY_MERGE_SHA="$preview_merge_sha" \
+    FAKE_PR_901_PROOF_RETRY_IMAGE_TAG="$preview_image_tag" \
+PREVIEW_MAX_ACTIVE=2 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_exhausted_proof_retry_output" 2>&1
+grep -Fq 'proof retry budget exhausted' "$reconciler_exhausted_proof_retry_output"
+test ! -e "$FAKE_ANNOTATE_LOG"
+test ! -e "$FAKE_DISPATCH_LOG"
+
+reset_case
+reconciler_changed_tuple_retry_output="$TEMP_DIR/reconciler-changed-tuple-retry.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=head-901 \
+    FAKE_PR_901_PROOF_COMPLETE=false \
+    FAKE_PR_901_PROOF_RETRY_COUNT=3 \
+    FAKE_PR_901_PROOF_RETRY_BASE_SHA=dddddddddddddddddddddddddddddddddddddddd \
+    FAKE_PR_901_PROOF_RETRY_HEAD_SHA=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee \
+    FAKE_PR_901_PROOF_RETRY_MERGE_SHA=ffffffffffffffffffffffffffffffffffffffff \
+    FAKE_PR_901_PROOF_RETRY_IMAGE_TAG=old-image \
+PREVIEW_MAX_ACTIVE=2 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_changed_tuple_retry_output"
+grep -Fqx \
+  "Recorded proof retry 1/3 for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag})." \
+  "$reconciler_changed_tuple_retry_output"
+grep -Fq -- "firemud.dev/proof-retry-count=1" "$FAKE_ANNOTATE_LOG"
+grep -Fq -- "firemud.dev/proof-retry-base-sha=${preview_base_sha}" "$FAKE_ANNOTATE_LOG"
+grep -Fq 'repos/example/FireMUD/dispatches -f event_type=preview-deploy' "$FAKE_DISPATCH_LOG"
+
+reset_case
+reconciler_malformed_proof_retry_output="$TEMP_DIR/reconciler-malformed-proof-retry.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=head-901 \
+    FAKE_PR_901_PROOF_COMPLETE=false \
+    FAKE_PR_901_PROOF_RETRY_COUNT=3 \
+PREVIEW_MAX_ACTIVE=2 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_malformed_proof_retry_output" 2>&1
+grep -Fq 'unable to parse namespace pr-901 snapshot' "$reconciler_malformed_proof_retry_output"
+test ! -e "$FAKE_ANNOTATE_LOG"
+test ! -e "$FAKE_DISPATCH_LOG"
+
+reset_case
+reconciler_resource_version_failure_output="$TEMP_DIR/reconciler-resource-version-failure.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=head-901 \
+    FAKE_PR_901_PROOF_COMPLETE=false \
+    FAKE_ANNOTATE_ERROR=true \
+PREVIEW_MAX_ACTIVE=2 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_resource_version_failure_output" 2>&1
+grep -Fq \
+  'Namespace pr-901 changed before proof retry evidence could be recorded' \
+  "$reconciler_resource_version_failure_output"
+test ! -e "$FAKE_DISPATCH_LOG"
+
+reset_case
 reconciler_paginated_active_output="$TEMP_DIR/reconciler-paginated-active.out"
 (
   cd "$ROOT_DIR"
@@ -2428,7 +2555,7 @@ PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_paginated_active_output"
 grep -Fqx \
-  "Skipping dispatch for PR #901: preview run 4242 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
+  "Skipping proof retry for PR #901: preview source or trusted consumer run 4242 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
   "$reconciler_paginated_active_output"
 test ! -e "$FAKE_DISPATCH_LOG"
 
@@ -2569,7 +2696,7 @@ PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_current_active_run_output"
 grep -qx \
-  "Skipping dispatch for PR #901: preview run 42 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
+  "Skipping proof retry for PR #901: preview source or trusted consumer run 42 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
   "$reconciler_current_active_run_output"
 test ! -e "$FAKE_DISPATCH_LOG"
 
@@ -3276,11 +3403,25 @@ PY
 grep -q -- '--retire-terminal-identities' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 grep -q 'Skipping ordinary PR #' "$reconciler_workflow"
 grep -q 'another preview repair was already dispatched this cycle' "$reconciler_workflow"
+# Proof repair is bounded by the exact deployed tuple and must not duplicate an
+# active source or trusted consumer run.
+grep -Fq 'firemud.dev/proof-retry-count' "$reconciler_workflow"
+grep -Fq 'firemud.dev/proof-retry-base-sha' "$reconciler_workflow"
+grep -Fq 'firemud.dev/proof-retry-head-sha' "$reconciler_workflow"
+grep -Fq 'firemud.dev/proof-retry-merge-sha' "$reconciler_workflow"
+grep -Fq 'firemud.dev/proof-retry-image-tag' "$reconciler_workflow"
+grep -Fq 'namespace proof-retry evidence is malformed' "$reconciler_workflow"
+grep -Fq 'proof retry budget exhausted' "$reconciler_workflow"
+# shellcheck disable=SC2016 # Assert literal resource-version fencing.
+grep -Fq -- '--resource-version "${namespace_resource_version}"' "$reconciler_workflow"
+grep -Fq -- '--arg trusted_workflow_name "Trusted Hosted Identity Request"' "$reconciler_workflow"
+grep -Fq 'Skipping proof retry for PR #' "$reconciler_workflow"
+grep -Fq "run-name: \${{ github.event_name == 'workflow_run' && github.event.workflow_run.display_title" "$trusted_workflow"
 # shellcheck disable=SC2016 # Assert one fail-closed JSON snapshot feeds each namespace decision.
 grep -Fq 'kubectl get namespace "${namespace}" --ignore-not-found -o json' \
   "$reconciler_workflow"
-# shellcheck disable=SC2016 # Assert the initial and fresh namespace snapshots.
-test "$(grep -Fc 'kubectl get namespace "${namespace}" --ignore-not-found -o json' "$reconciler_workflow")" -eq 3
+# shellcheck disable=SC2016 # Assert the initial, repair, and proof-retry namespace snapshots.
+test "$(grep -Fc 'kubectl get namespace "${namespace}" --ignore-not-found -o json' "$reconciler_workflow")" -eq 4
 # shellcheck disable=SC2016 # Assert the fresh namespace snapshot fences repair.
 grep -Fq 'requested preview tuple changed during annotation repair check' "$reconciler_workflow"
 # The janitor keeps explicit kubeconfig selection on the consuming kubectl steps;

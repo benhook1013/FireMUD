@@ -1,5 +1,7 @@
 name: Trusted Hosted Identity Request
 
+run-name: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.display_title || format('Trusted Hosted Identity Request pr-{0}', github.event.pull_request.number) }}
+
 on:
   workflow_run:
     workflows: [PR Preview Environment]

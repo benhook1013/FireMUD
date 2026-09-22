@@ -109,9 +109,24 @@ jobs:
                     annotation($annotations; "firemud.dev/proof-preview-merge-sha"),
                     annotation($annotations; "firemud.dev/proof-preview-image-tag"),
                     annotation($annotations; "firemud.dev/proof-preview-namespace-uid"),
+                    annotation($annotations; "firemud.dev/proof-retry-count"),
+                    annotation($annotations; "firemud.dev/proof-retry-base-sha"),
+                    annotation($annotations; "firemud.dev/proof-retry-head-sha"),
+                    annotation($annotations; "firemud.dev/proof-retry-merge-sha"),
+                    annotation($annotations; "firemud.dev/proof-retry-image-tag"),
                     metadata_field(.metadata; "uid"),
                     metadata_field(.metadata; "resourceVersion")
                   ]
+                | if (
+                    (.[13] == "" and .[14] == "" and .[15] == "" and .[16] == "" and .[17] == "")
+                    or (
+                      (.[13] | test("^[0-3]$"))
+                      and (.[14] | test("^[0-9a-fA-F]{40}$"))
+                      and (.[15] | test("^[0-9a-fA-F]{40}$"))
+                      and (.[16] | test("^[0-9a-fA-F]{40}$"))
+                      and (.[17] | test("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"))
+                    )
+                  ) then . else error("namespace proof-retry evidence is malformed") end
                 | join("|")
               end
             ' <<<"$1"
@@ -168,7 +183,8 @@ jobs:
             IFS='|' read -r fresh_last_base_sha fresh_last_head_sha fresh_last_merge_sha fresh_last_image_tag \
               fresh_requested_base_sha fresh_requested_head_sha fresh_requested_merge_sha fresh_requested_image_tag \
               fresh_proof_base_sha fresh_proof_head_sha fresh_proof_merge_sha fresh_proof_image_tag \
-              fresh_proof_namespace_uid fresh_namespace_uid \
+              fresh_proof_namespace_uid _ _ _ _ _ \
+              fresh_namespace_uid \
               fresh_namespace_resource_version <<<"${fresh_namespace_tuple}"
             if [[ "${fresh_last_base_sha}" != "${base_sha}" ||
               "${fresh_last_head_sha}" != "${head_sha}" ||
@@ -226,6 +242,99 @@ jobs:
               echo "Repaired stale requested preview tuple for ${namespace}"
             fi
             return "$repair_success"
+          }
+
+          record_proof_retry() {
+            local namespace="$1"
+            local pr_number="$2"
+            local base_sha="$3"
+            local head_sha="$4"
+            local merge_sha="$5"
+            local image_tag="$6"
+            local fresh_namespace_json
+            local fresh_namespace_tuple
+            local current_base_sha
+            local current_head_sha
+            local current_merge_sha
+            local current_image_tag
+            local requested_base_sha
+            local requested_head_sha
+            local requested_merge_sha
+            local requested_image_tag
+            local proof_base_sha
+            local proof_head_sha
+            local proof_merge_sha
+            local proof_image_tag
+            local proof_namespace_uid
+            local retry_count
+            local retry_base_sha
+            local retry_head_sha
+            local retry_merge_sha
+            local retry_image_tag
+            local namespace_uid
+            local namespace_resource_version
+            local next_retry_count
+
+            if ! fresh_namespace_json="$(
+              kubectl get namespace "${namespace}" --ignore-not-found -o json
+            )"; then
+              echo "Unable to recheck namespace ${namespace} before proof retry dispatch." >&2
+              return 1
+            fi
+            if [[ -z "${fresh_namespace_json}" ]]; then
+              echo "Skipping PR #${pr_number}: namespace ${namespace} disappeared before proof retry dispatch." >&2
+              return 1
+            fi
+            if ! fresh_namespace_tuple="$(parse_namespace_tuple "${fresh_namespace_json}")"; then
+              echo "Skipping PR #${pr_number}: malformed namespace proof-retry evidence; refusing dispatch." >&2
+              return 1
+            fi
+            IFS='|' read -r current_base_sha current_head_sha current_merge_sha current_image_tag \
+              requested_base_sha requested_head_sha requested_merge_sha requested_image_tag \
+              proof_base_sha proof_head_sha proof_merge_sha proof_image_tag proof_namespace_uid \
+              retry_count retry_base_sha retry_head_sha retry_merge_sha retry_image_tag \
+              namespace_uid namespace_resource_version <<<"${fresh_namespace_tuple}"
+            if [[ "${current_base_sha}" != "${base_sha}" ||
+              "${current_head_sha}" != "${head_sha}" ||
+              "${current_merge_sha}" != "${merge_sha}" ||
+              "${current_image_tag}" != "${image_tag}" ]]; then
+              echo "Skipping PR #${pr_number}: deployed preview tuple changed before proof retry dispatch." >&2
+              return 1
+            fi
+            if [[ "${proof_base_sha}" == "${base_sha}" &&
+              "${proof_head_sha}" == "${head_sha}" &&
+              "${proof_merge_sha}" == "${merge_sha}" &&
+              "${proof_image_tag}" == "${image_tag}" &&
+              -n "${namespace_uid}" &&
+              "${proof_namespace_uid}" == "${namespace_uid}" ]]; then
+              echo "Skipping PR #${pr_number}: proof completed before retry dispatch." >&2
+              return 2
+            fi
+            if [[ "${retry_base_sha}" == "${base_sha}" &&
+              "${retry_head_sha}" == "${head_sha}" &&
+              "${retry_merge_sha}" == "${merge_sha}" &&
+              "${retry_image_tag}" == "${image_tag}" ]]; then
+              next_retry_count=$((10#${retry_count} + 1))
+            else
+              next_retry_count=1
+            fi
+            if (( next_retry_count > 3 )); then
+              echo "Skipping PR #${pr_number}: proof retry budget exhausted for ${base_sha}/${head_sha}/${merge_sha}/${image_tag}." >&2
+              return 3
+            fi
+            if ! kubectl annotate namespace "${namespace}" \
+              "firemud.dev/proof-retry-count=${next_retry_count}" \
+              "firemud.dev/proof-retry-base-sha=${base_sha}" \
+              "firemud.dev/proof-retry-head-sha=${head_sha}" \
+              "firemud.dev/proof-retry-merge-sha=${merge_sha}" \
+              "firemud.dev/proof-retry-image-tag=${image_tag}" \
+              --overwrite \
+              --resource-version "${namespace_resource_version}" >/dev/null; then
+              echo "Skipping PR #${pr_number}: Namespace ${namespace} changed before proof retry evidence could be recorded." >&2
+              return 1
+            fi
+            echo "Recorded proof retry ${next_retry_count}/3 for PR #${pr_number} (${base_sha}/${head_sha}/${merge_sha}/${image_tag})."
+            return 0
           }
 
           active_count="$(kubectl get namespaces -l firemud.dev/preview=true -o name | sed '/^$/d' | wc -l)"
@@ -339,6 +448,7 @@ jobs:
               IFS='|' read -r current_base_sha current_head_sha current_merge_sha current_image_tag \
                 requested_base_sha requested_head_sha requested_merge_sha requested_image_tag \
                 proof_base_sha proof_head_sha proof_merge_sha proof_image_tag proof_namespace_uid \
+                _ _ _ _ _ \
                 namespace_uid _ <<<"${namespace_tuple}"
             fi
 
@@ -407,6 +517,7 @@ jobs:
             if ! active_preview_run_id="$(
               jq -r \
                 --arg workflow_name "${preview_workflow_name}" \
+                --arg trusted_workflow_name "Trusted Hosted Identity Request" \
                 --arg default_branch "${DEFAULT_BRANCH}" \
                 --arg run_name "Preview dispatch pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}" '
                     if type != "array" then
@@ -432,7 +543,7 @@ jobs:
                         else
                           $runs[]
                           | select(
-                              .name == $workflow_name
+                              ((.name == $workflow_name) or (.name == $trusted_workflow_name))
                               and .head_branch == $default_branch
                               and .display_title == $run_name
                               and (
@@ -453,8 +564,34 @@ jobs:
             fi
 
             if [[ -n "${active_preview_run_id}" ]]; then
-              echo "Skipping dispatch for PR #${pr_number}: preview run ${active_preview_run_id} for ${base_sha}/${head_sha}/${merge_sha} is already queued or in progress."
+              echo "Skipping proof retry for PR #${pr_number}: preview source or trusted consumer run ${active_preview_run_id} for ${base_sha}/${head_sha}/${merge_sha} is already queued or in progress."
               continue
+            fi
+
+            if [[ "${namespace_exists}" == "true" &&
+              "${current_base_sha}" == "${base_sha}" &&
+              "${current_head_sha}" == "${head_sha}" &&
+              "${current_merge_sha}" == "${merge_sha}" &&
+              "${current_image_tag}" == "${image_tag}" &&
+              ("${proof_base_sha}" != "${base_sha}" ||
+                "${proof_head_sha}" != "${head_sha}" ||
+                "${proof_merge_sha}" != "${merge_sha}" ||
+                "${proof_image_tag}" != "${image_tag}" ||
+                -z "${namespace_uid}" ||
+                "${proof_namespace_uid}" != "${namespace_uid}") ]]; then
+              if record_proof_retry "$namespace" "$pr_number" "$base_sha" "$head_sha" "$merge_sha" "$image_tag"; then
+                :
+              else
+                proof_retry_status=$?
+                case "$proof_retry_status" in
+                  2 | 3)
+                    continue
+                    ;;
+                  *)
+                    continue
+                    ;;
+                esac
+              fi
             fi
 
             echo "Dispatching preview render for PR #${pr_number} (${base_sha}/${head_sha}/${merge_sha}/${image_tag}) from trusted ref ${DEFAULT_BRANCH}"
