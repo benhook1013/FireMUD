@@ -4,6 +4,7 @@ import static net.firedevops.firemud.accountservice.jooq.Tables.ACCOUNTS;
 import static net.firedevops.firemud.accountservice.jooq.Tables.EMAIL_VERIFICATION_TOKEN;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.time.LocalDateTime;
 import java.util.Optional;
 import net.firedevops.firemud.accountservice.entity.EmailVerificationToken;
 import org.jooq.DSLContext;
@@ -64,6 +65,26 @@ public class EmailVerificationTokenRepository {
     dsl.deleteFrom(EMAIL_VERIFICATION_TOKEN)
         .where(EMAIL_VERIFICATION_TOKEN.ACCOUNT_ID.eq(accountId))
         .execute();
+  }
+
+  /** Deletes at most {@code batchSize} expired rows in deterministic expiry/id order. */
+  public int deleteExpired(LocalDateTime capturedNow, int batchSize) {
+    return JooqAccountRepositorySupport.deleteExpired(
+        dsl,
+        EMAIL_VERIFICATION_TOKEN,
+        EMAIL_VERIFICATION_TOKEN.ID,
+        EMAIL_VERIFICATION_TOKEN.EXPIRES_AT,
+        capturedNow,
+        batchSize);
+  }
+
+  public Optional<LocalDateTime> findOldestExpiredAt(LocalDateTime capturedNow) {
+    return JooqAccountRepositorySupport.findOldestExpiredAt(
+        dsl,
+        EMAIL_VERIFICATION_TOKEN,
+        EMAIL_VERIFICATION_TOKEN.ID,
+        EMAIL_VERIFICATION_TOKEN.EXPIRES_AT,
+        capturedNow);
   }
 
   private org.jooq.SelectOnConditionStep<? extends Record> baseSelect() {
