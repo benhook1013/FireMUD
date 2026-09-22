@@ -27,6 +27,8 @@ function makeGithub({
   deletedCommentStatuses = {},
   liveBaseShas = [],
   mergeCommitParents = [],
+  refErrors = [],
+  commitErrors = [],
 }) {
   const calls = {
     get: [],
@@ -58,7 +60,13 @@ function makeGithub({
       git: {
         getRef: async (params) => {
           calls.refs.push(params);
+          const errorConfig = refErrors[refIndex];
           const index = Math.min(refIndex++, effectivePullRequests.length - 1);
+          if (errorConfig) {
+            const error = new Error(errorConfig.message || "live ref failure");
+            if (errorConfig.status !== undefined) error.status = errorConfig.status;
+            throw error;
+          }
           const sha = liveBaseShas[index] ?? effectivePullRequests[index]?.base?.sha;
           return { data: { object: { sha } } };
         },
@@ -66,7 +74,13 @@ function makeGithub({
       repos: {
         getCommit: async (params) => {
           calls.commits.push(params);
+          const errorConfig = commitErrors[commitIndex];
           const index = Math.min(commitIndex++, effectivePullRequests.length - 1);
+          if (errorConfig) {
+            const error = new Error(errorConfig.message || "merge commit failure");
+            if (errorConfig.status !== undefined) error.status = errorConfig.status;
+            throw error;
+          }
           const pullRequest = effectivePullRequests[index];
           const parents =
             mergeCommitParents[index] ?? [
@@ -143,6 +157,8 @@ async function publish(options = {}) {
     previewHeadSha = "head-123",
     liveBaseShas,
     mergeCommitParents,
+    refErrors,
+    commitErrors,
     environment = {},
     ...publisherOptions
   } = options;
@@ -152,6 +168,8 @@ async function publish(options = {}) {
     deletedCommentStatuses,
     liveBaseShas,
     mergeCommitParents,
+    refErrors,
+    commitErrors,
   });
   const infos = [];
   const core = { info: (message) => infos.push(message) };
@@ -447,6 +465,40 @@ test("accepts base-commit and merge-scoped image tags for a complete tuple", asy
   }
 });
 
+test("accepts a lagging PR base SHA when the live base and ordered merge parents match", async () => {
+  const stalePrBaseSha = "c".repeat(40);
+  const result = await publish({
+    pullRequests: [
+      {
+        state: "open",
+        head: { sha: "head-123" },
+        base: { sha: stalePrBaseSha, ref: "develop" },
+        merge_commit_sha: MERGE_SHA,
+      },
+      {
+        state: "open",
+        head: { sha: "head-123" },
+        base: { sha: stalePrBaseSha, ref: "develop" },
+        merge_commit_sha: MERGE_SHA,
+      },
+    ],
+    previewBaseSha: BASE_SHA,
+    previewMergeSha: MERGE_SHA,
+    previewImageTag: BASE_SHA,
+    liveBaseShas: [BASE_SHA, BASE_SHA],
+    mergeCommitParents: [
+      [{ sha: BASE_SHA }, { sha: "head-123" }],
+      [{ sha: BASE_SHA }, { sha: "head-123" }],
+    ],
+  });
+
+  assert.equal(result.calls.get.length, 2);
+  assert.equal(result.calls.refs.length, 2);
+  assert.equal(result.calls.commits.length, 2);
+  assert.equal(result.summaryCalls.length, 1);
+  assert.equal(result.calls.creates.length, 1);
+});
+
 test("rejects a lagging PR API when the live base ref has advanced", async () => {
   const advancedBaseSha = "c".repeat(40);
   const result = await publish({
@@ -472,6 +524,67 @@ test("rejects a lagging PR API when the live base ref has advanced", async () =>
 
   assert.equal(result.calls.get.length, 1);
   assert.equal(result.calls.refs.length, 1);
+  assert.equal(result.calls.commits.length, 0);
+  assert.equal(result.summaryCalls.length, 0);
+  assert.equal(result.calls.paginate.length, 0);
+  assert.deepEqual(result.calls.deleted, []);
+  assert.deepEqual(result.calls.updates, []);
+  assert.deepEqual(result.calls.creates, []);
+});
+
+test("retries transient live-fence failures at both publication fences", async () => {
+  const result = await publish({
+    pullRequests: [
+      {
+        state: "open",
+        head: { sha: "head-123" },
+        base: { sha: BASE_SHA, ref: "develop" },
+        merge_commit_sha: MERGE_SHA,
+      },
+      {
+        state: "open",
+        head: { sha: "head-123" },
+        base: { sha: BASE_SHA, ref: "develop" },
+        merge_commit_sha: MERGE_SHA,
+      },
+    ],
+    previewBaseSha: BASE_SHA,
+    previewMergeSha: MERGE_SHA,
+    previewImageTag: BASE_SHA,
+    liveBaseShas: [BASE_SHA, BASE_SHA],
+    refErrors: [{ status: 503 }, null, { status: 503 }],
+    commitErrors: [null, { status: 429 }],
+  });
+
+  assert.equal(result.calls.refs.length, 4);
+  assert.equal(result.calls.commits.length, 3);
+  assert.equal(result.summaryCalls.length, 1);
+  assert.equal(result.calls.creates.length, 1);
+  assert.match(result.infos.join("\n"), /Transient live base ref failure/);
+  assert.match(result.infos.join("\n"), /Transient live merge commit failure/);
+});
+
+test("does not mutate comments when a transient live-fence read is exhausted", async () => {
+  const result = await publish({
+    pullRequests: [
+      {
+        state: "open",
+        head: { sha: "head-123" },
+        base: { sha: BASE_SHA, ref: "develop" },
+        merge_commit_sha: MERGE_SHA,
+      },
+    ],
+    comments: [
+      previewComment("204", "<!-- firemud-preview-summary -->\nold", "2026-09-01T00:00:00Z"),
+    ],
+    previewBaseSha: BASE_SHA,
+    previewMergeSha: MERGE_SHA,
+    previewImageTag: BASE_SHA,
+    refErrors: [{ status: 503 }, { status: 503 }, { status: 503 }],
+  });
+
+  assert.equal(result.calls.get.length, 1);
+  assert.equal(result.calls.refs.length, 3);
   assert.equal(result.calls.commits.length, 0);
   assert.equal(result.summaryCalls.length, 0);
   assert.equal(result.calls.paginate.length, 0);

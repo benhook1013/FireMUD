@@ -262,23 +262,29 @@ find_unsatisfied_priority_pr() {
     candidate_head_repository="$(jq -r '.head.repo.full_name // empty' <<<"$candidate_metadata_json")"
     candidate_head_sha="$(jq -r '.head.sha // empty' <<<"$candidate_metadata_json")"
     candidate_merge_sha="$(jq -r '.merge_commit_sha // empty' <<<"$candidate_metadata_json")"
-    candidate_mergeable="$(jq -r '.mergeable // empty' <<<"$candidate_metadata_json")"
-    candidate_mergeable_state="$(jq -r '.mergeable_state // empty' <<<"$candidate_metadata_json")"
+    candidate_mergeable="$(jq -r 'if (.mergeable | type) == "boolean" then (.mergeable | tostring) else "invalid" end' <<<"$candidate_metadata_json")"
+    candidate_mergeable_state="$(jq -r 'if (.mergeable_state | type) == "string" then .mergeable_state else "invalid" end' <<<"$candidate_metadata_json")"
     candidate_metadata_state="$(jq -r '.state // empty' <<<"$candidate_metadata_json")"
     if [[ "$candidate_base_repository" != "$GITHUB_REPOSITORY" ||
       "$candidate_head_repository" != "$GITHUB_REPOSITORY" ||
       "$candidate_metadata_state" != "$candidate_live_state" ||
       "$candidate_live_head" != "$head_sha" ||
       "$candidate_head_sha" != "$head_sha" ||
-      "$candidate_mergeable" != true ||
+      "$candidate_mergeable" == invalid ||
+      "$candidate_mergeable_state" == invalid ||
       "$candidate_mergeable_state" == unknown ||
-      "$candidate_mergeable_state" == dirty ||
-      "$candidate_mergeable_state" == conflicting ||
       -z "$candidate_mergeable_state" ||
       ! "$candidate_base_ref" =~ ^[A-Za-z0-9._/-]+$ ||
       ! "$candidate_merge_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
       printf '%s\n' "$pr_number"
       return
+    fi
+    if [[ "$candidate_mergeable" == false ||
+      "$candidate_mergeable_state" == dirty ||
+      "$candidate_mergeable_state" == conflicting ]]; then
+      # A confirmed conflict means this priority candidate cannot deploy and
+      # must not reserve an ordinary preview slot.
+      continue
     fi
     if ! candidate_base_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${candidate_base_ref}" --jq '.object.sha')" ||
       ! [[ "$candidate_base_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
@@ -326,20 +332,10 @@ target_allocation_timestamp=""
 candidate_rows=()
 for row in "${namespace_rows[@]}"; do
   IFS='|' read -r created_at namespace pr_number allocated_at field5 field6 field7 field8 <<<"$row"
-  if [[ -z "${field7:-}" && -z "${field8:-}" ]]; then
-    # Retain compatibility with namespaces created before tuple annotations;
-    # their missing base/merge evidence is deliberately treated as stale when
-    # a live candidate is revalidated.
-    previous_base_sha=""
-    previous_head_sha="${field5:-}"
-    previous_merge_sha=""
-    previous_image_tag="${field6:-}"
-  else
-    previous_base_sha="${field5:-}"
-    previous_head_sha="${field6:-}"
-    previous_merge_sha="${field7:-}"
-    previous_image_tag="${field8:-}"
-  fi
+  previous_base_sha="${field5:-}"
+  previous_head_sha="${field6:-}"
+  previous_merge_sha="${field7:-}"
+  previous_image_tag="${field8:-}"
   allocation_timestamp="${allocated_at:-$created_at}"
   if [[ "$namespace" == "$target_namespace" ]]; then
     if [[ "$pr_number" != "$target_pr_number" ]]; then

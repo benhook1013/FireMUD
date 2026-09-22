@@ -46,28 +46,49 @@ refuse_preview() {
 if ! pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}")"; then
   refuse_preview "current pull request metadata is unavailable"
 fi
+if jq -e '(.mergeable == null) or (.mergeable_state == "unknown")' \
+  <<<"$pull_request_json" >/dev/null 2>&1; then
+  retry_attempts="${PREVIEW_METADATA_RETRY_ATTEMPTS:-3}"
+  retry_delay_seconds="${PREVIEW_METADATA_RETRY_DELAY_SECONDS:-1}"
+  if ! [[ "$retry_attempts" =~ ^[1-9][0-9]*$ ]] ||
+    ! [[ "$retry_delay_seconds" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    refuse_preview "preview mergeability retry settings are invalid"
+  fi
+  for ((retry_attempt = 1; retry_attempt <= retry_attempts; retry_attempt++)); do
+    if ! refreshed_pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}")"; then
+      refuse_preview "current pull request metadata is unavailable"
+    fi
+    if ! jq -e 'type == "object"' <<<"$refreshed_pull_request_json" >/dev/null 2>&1; then
+      refuse_preview "current pull request metadata is malformed"
+    fi
+    pull_request_json="$refreshed_pull_request_json"
+    if ! jq -e '(.mergeable == null) or (.mergeable_state == "unknown")' \
+      <<<"$pull_request_json" >/dev/null 2>&1; then
+      break
+    fi
+    if (( retry_attempt < retry_attempts )); then
+      sleep "$retry_delay_seconds"
+    fi
+  done
+fi
 if [[ "$mode" == deploy ]]; then
   if ! jq -e 'type == "object"' <<<"$pull_request_json" >/dev/null 2>&1; then
     refuse_preview "current pull request metadata is malformed"
   fi
   base_ref="$(jq -er '.base.ref // empty' <<<"$pull_request_json" 2>/dev/null || true)"
   base_repository="$(jq -er '.base.repo.full_name // empty' <<<"$pull_request_json" 2>/dev/null || true)"
-  base_sha="$(jq -er '.base.sha // empty' <<<"$pull_request_json" 2>/dev/null || true)"
-  if [[ -z "$base_ref" || -z "$base_repository" || -z "$base_sha" ]]; then
+  if [[ -z "$base_ref" || -z "$base_repository" ]]; then
     refuse_preview "current pull request base metadata is missing"
   fi
   if [[ "$base_repository" != "$GITHUB_REPOSITORY" ]]; then
     refuse_preview "base repository is not trusted (expected=$GITHUB_REPOSITORY, current=$base_repository)"
   fi
-  if ! [[ "$base_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
-    refuse_preview "current pull request base SHA is not canonical"
-  fi
   if ! base_ref_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${base_ref}")"; then
     refuse_preview "base branch ${base_ref} is unavailable"
   fi
   current_base_sha="$(jq -er '.object.sha // empty' <<<"$base_ref_json" 2>/dev/null || true)"
-  if [[ "$current_base_sha" != "$base_sha" ]]; then
-    refuse_preview "base branch ${base_ref} is stale (expected=${base_sha}, current=${current_base_sha:-missing})"
+  if ! [[ "$current_base_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    refuse_preview "current base branch ref SHA is not canonical"
   fi
   if ! jq -e '
       .mergeable == true and

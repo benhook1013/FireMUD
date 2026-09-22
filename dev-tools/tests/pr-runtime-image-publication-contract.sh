@@ -273,6 +273,8 @@ from pathlib import Path
 
 path = Path(sys.argv[1])
 payload = json.loads(path.read_text(encoding="utf-8"))
+payload["base"]["ref"] = "develop"
+payload["labels"] = [{"name": "preview:priority"}]
 payload["base"]["sha"] = "d" * 40
 path.write_text(json.dumps(payload), encoding="utf-8")
 PY

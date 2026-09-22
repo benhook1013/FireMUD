@@ -87,16 +87,23 @@ evaluate_retention_eligibility() {
   eligible=""
   reason=""
 
-  if ! pr_metadata="$(
-    gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" \
-      --jq '
+  if ! live_pr_json="$(
+    gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" 2>/dev/null
+  )"; then
+    echo "Keeping ${subject}: PR #${pr_number} metadata is unavailable or malformed"
+    return 1
+  fi
+  if ! jq -e 'type == "object"' <<<"$live_pr_json" >/dev/null 2>&1; then
+    echo "Keeping ${subject}: PR #${pr_number} metadata is unavailable or malformed"
+    return 1
+  fi
+  if ! pr_metadata="$(jq -r '
         [
           .state,
           .base.ref,
           .user.login,
           (.labels | tojson | @base64)
-        ] | @tsv' 2>/dev/null
-  )"; then
+        ] | @tsv' <<<"$live_pr_json")"; then
     echo "Keeping ${subject}: PR #${pr_number} metadata is unavailable or malformed"
     return 1
   fi
@@ -144,12 +151,8 @@ evaluate_retention_eligibility() {
   # Every retained preview must be same-repository on both sides.  Unknown
   # API state is retained conservatively; it must never turn a transient
   # outage into destructive cleanup.
-  local live_pr_json base_repository head_repository mergeable mergeable_state
+  local base_repository head_repository mergeable mergeable_state
   local base_ref_response
-  if ! live_pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" 2>/dev/null)"; then
-    echo "Keeping ${subject}: PR #${pr_number} live ownership metadata is unavailable"
-    return 1
-  fi
   if ! base_repository="$(jq -er '.base.repo.full_name | select(type == "string" and length > 0)' <<<"$live_pr_json")" ||
     ! head_repository="$(jq -er '.head.repo.full_name | select(type == "string" and length > 0)' <<<"$live_pr_json")"; then
     echo "Keeping ${subject}: PR #${pr_number} live ownership metadata is malformed or incomplete"

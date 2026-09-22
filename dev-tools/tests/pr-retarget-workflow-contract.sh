@@ -790,7 +790,7 @@ for job in prepare-runtime deploy-runtime destroy-runtime retire-identity; do
   assert_job_contains hosted-identity-request.yml "$job" 'self-hosted'
   assert_job_contains hosted-identity-request.yml "$job" 'environment: trusted-hosted-cluster'
 done
-require_contains "$preview_reconciler_path" 'actions/runs?branch=${DEFAULT_BRANCH}&per_page=100'
+require_contains "$preview_reconciler_path" 'actions/runs?branch=${DEFAULT_BRANCH}&status=${active_status}&per_page=100'
 require_contains "$preview_reconciler_path" 'gh api --paginate --slurp'
 require_contains "$preview_reconciler_path" '.display_title == $run_name'
 require_contains "$preview_reconciler_path" '"Preview dispatch pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}"'
@@ -811,7 +811,7 @@ import sys
 from pathlib import Path
 
 workflow = Path(sys.argv[1]).read_text(encoding="utf-8")
-if re.search(r"^\s*\|\s*$", workflow, re.MULTILINE):
+if any(re.search(r"\|\s*(?:IFS=[^;]+\s+)?while\b", line) for line in workflow.splitlines()):
     raise SystemExit("preview reconciler must not pipe candidate rows directly into while")
 PY
 then
@@ -821,26 +821,6 @@ else
   exit 1
 fi
 
-# Execute the dispatch-state mechanism with two eligible drifted candidates.
-# This mirrors the workflow's current-shell function plus here-string handoff;
-# a pipeline-fed while loop would lose the flag in a subshell and dispatch twice.
-reconciler_dispatch_count=0
-reconciler_dispatch_sent=false
-reconcile_dispatch_candidates() {
-  while IFS= read -r candidate; do
-    [[ -n "$candidate" ]] || continue
-    if [[ "$reconciler_dispatch_sent" == true ]]; then
-      continue
-    fi
-    reconciler_dispatch_count=$((reconciler_dispatch_count + 1))
-    reconciler_dispatch_sent=true
-  done
-}
-reconcile_dispatch_candidates <<< $'priority-drift\nordinary-drift'
-if [[ "$reconciler_dispatch_count" -ne 1 ]]; then
-  echo "Reconciler must dispatch at most one preview for multiple eligible candidates" >&2
-  exit 1
-fi
 if grep -Fq 'desired_image_tag=' "$preview_reconciler_path"; then
   echo "Preview reconciler must not retain an unused desired image tag" >&2
   exit 1

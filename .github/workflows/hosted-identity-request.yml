@@ -252,13 +252,13 @@ jobs:
               <<<"$merge_commit_json" >/dev/null || emit_no_action \
                 "Ignoring lifecycle event whose merge commit parents are stale or do not match the current base and head."
           fi
-          mergeable="$(jq -r '.mergeable // empty' <<<"$pull_request_json")"
-          mergeable_state="$(jq -r '.mergeable_state // empty' <<<"$pull_request_json")"
+          mergeable="$(jq -r 'if (.mergeable | type) == "boolean" then (.mergeable | tostring) else "invalid" end' <<<"$pull_request_json")"
+          mergeable_state="$(jq -r 'if (.mergeable_state | type) == "string" then .mergeable_state else "invalid" end' <<<"$pull_request_json")"
           if [[ "$ACTION" == deploy ]]; then
             if [[ "$mergeable" == false || "$mergeable_state" == dirty || "$mergeable_state" == conflicting ]]; then
               emit_no_action "Ignoring lifecycle event because the current pull request is conflicting."
             fi
-            [[ "$mergeable" == true && -n "$mergeable_state" && "$mergeable_state" != unknown ]] || emit_no_action \
+            [[ "$mergeable" == true && -n "$mergeable_state" && "$mergeable_state" != unknown && "$mergeable_state" != invalid ]] || emit_no_action \
               "Ignoring lifecycle event because pull-request mergeability is unavailable."
           fi
           if [[ "$EVENT_NAME" == workflow_run && "$ARTIFACT_KIND" == render ]]; then

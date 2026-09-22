@@ -328,7 +328,7 @@ case "$namespace" in
       jq -cn \
         --arg owner "${FAKE_PR_101_OWNER:-101}" \
         --arg image "${FAKE_PR_101_IMAGE:-image-101}" \
-        '{metadata:{name:"pr-101",creationTimestamp:"2026-01-01T00:00:00Z",labels:{"firemud.dev/pr-number":$owner},annotations:{"firemud.dev/preview-allocated-at":"2026-01-02T00:00:00Z","firemud.dev/last-preview-head-sha":"head-101","firemud.dev/last-preview-image-tag":$image}}}'
+        '{metadata:{name:"pr-101",creationTimestamp:"2026-01-01T00:00:00Z",labels:{"firemud.dev/pr-number":$owner},annotations:{"firemud.dev/preview-allocated-at":"2026-01-02T00:00:00Z","firemud.dev/last-preview-base-sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","firemud.dev/last-preview-head-sha":"head-101","firemud.dev/last-preview-merge-sha":"cccccccccccccccccccccccccccccccccccccccc","firemud.dev/last-preview-image-tag":$image}}}'
       exit 0
     fi
     case "$*" in
@@ -353,6 +353,15 @@ case "$namespace" in
       exit 1
     fi
     if [[ "${FAKE_PRIORITY_CANDIDATE_NAMESPACE_ABSENT:-false}" == true ]]; then
+      exit 0
+    fi
+    if [[ "$*" == *last-preview-image-tag* && "$*" == *last-preview-base-sha* ]]; then
+      printf '%s\t%s\t%s\t%s\t%s' \
+        "${FAKE_PR_901_OWNER:-901}" \
+        "${FAKE_PR_901_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
+        "${FAKE_PR_901_HEAD:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" \
+        "${FAKE_PR_901_MERGE_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
+        "${FAKE_PR_901_IMAGE_TAG:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
       exit 0
     fi
     case "$*" in
@@ -394,16 +403,22 @@ fake_labels_json() {
   printf '%s' "$labels_json"
 }
 if [[ "$1" == api && "$resource" == */actions/runs\?branch=* ]]; then
+  active_query_status="${resource##*&status=}"
+  active_query_status="${active_query_status%%&*}"
   if [[ "${FAKE_ACTIVE_PREVIEW_RUNS_API_ERROR:-false}" == true ]]; then
     exit 1
   fi
   if [[ "${FAKE_ACTIVE_PREVIEW_RUNS_API_MALFORMED:-false}" == true ]]; then
     printf '%s' '[{"workflow_runs":[{"id":"not-a-number"}]}]'
   elif [[ -v FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON ]]; then
-    printf '%s' "$FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON"
+    jq -c --arg requested_status "$active_query_status" \
+      '[.[] | .workflow_runs = [.workflow_runs[] | select(.status == $requested_status)]]' \
+      <<<"$FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON"
   else
-    jq -cn --argjson runs "${FAKE_ACTIVE_PREVIEW_RUNS_JSON:-[]}" \
-      '[{workflow_runs:[$runs[] | {id:.databaseId,name:"PR Preview Environment",head_branch:"develop",display_title:.displayTitle,status:.status}]}]'
+    jq -cn \
+      --argjson runs "${FAKE_ACTIVE_PREVIEW_RUNS_JSON:-[]}" \
+      --arg requested_status "$active_query_status" \
+      '[{workflow_runs:[$runs[] | select(.status == $requested_status) | {id:.databaseId,name:"PR Preview Environment",head_branch:"develop",display_title:.displayTitle,status:.status}]}]'
   fi
   exit 0
 fi
@@ -480,6 +495,28 @@ case "$resource" in
         exit 1
       fi
       labels_json="$(fake_labels_json "$priority" "$labels_valid")"
+      mergeable_json=true
+      mergeable_state=clean
+      if [[ -n "${FAKE_TARGET_MERGEABILITY_SEQUENCE:-}" ]]; then
+        metadata_count=0
+        if [[ -f "$FAKE_TARGET_METADATA_CALLS" ]]; then
+          metadata_count="$(<"$FAKE_TARGET_METADATA_CALLS")"
+        fi
+        metadata_count=$((metadata_count + 1))
+        printf '%s' "$metadata_count" > "$FAKE_TARGET_METADATA_CALLS"
+        IFS=',' read -r -a metadata_sequence <<<"$FAKE_TARGET_MERGEABILITY_SEQUENCE"
+        sequence_index=$((metadata_count - 1))
+        if (( sequence_index >= ${#metadata_sequence[@]} )); then
+          sequence_index=$((${#metadata_sequence[@]} - 1))
+        fi
+        case "${metadata_sequence[$sequence_index]}" in
+          unknown) mergeable_state=unknown ;;
+          clean) : ;;
+          conflict) mergeable_json=false; mergeable_state=conflicting ;;
+          malformed) mergeable_json='"invalid"'; mergeable_state=clean ;;
+          *) echo "unsupported mergeability fixture state" >&2; exit 1 ;;
+        esac
+      fi
       jq -cn \
         --arg state "${FAKE_TARGET_STATE:-open}" \
         --arg head "$FAKE_TARGET_HEAD" \
@@ -487,9 +524,11 @@ case "$resource" in
         --arg base "${FAKE_TARGET_BASE_REF:-develop}" \
         --arg author "${FAKE_TARGET_AUTHOR:-human}" \
         --argjson labels "$labels_json" \
-        --arg base_sha bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+        --arg base_sha "${FAKE_TARGET_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
         --arg merge_sha cccccccccccccccccccccccccccccccccccccccc \
-        '{state: $state, head: {sha: $head, repo: {full_name: $repository}}, base: {ref: $base, sha: $base_sha, repo: {full_name: "example/FireMUD"}}, merge_commit_sha: $merge_sha, mergeable: true, mergeable_state: "clean", user: {login: $author}, labels: $labels}'
+        --argjson mergeable "$mergeable_json" \
+        --arg mergeable_state "$mergeable_state" \
+        '{state: $state, head: {sha: $head, repo: {full_name: $repository}}, base: {ref: $base, sha: $base_sha, repo: {full_name: "example/FireMUD"}}, merge_commit_sha: $merge_sha, mergeable: $mergeable, mergeable_state: $mergeable_state, user: {login: $author}, labels: $labels}'
       exit 0
     fi
     if [[ "${FAKE_TARGET_JQ_QUERY_FAIL:-false}" == true ]]; then
@@ -519,6 +558,12 @@ case "$resource" in
         "$(fake_labels_json "${FAKE_PR_901_PRIORITY:-true}" valid | base64 | tr -d '\n')"
       exit 0
     fi
+    mergeable_state_json="$(jq -cn --arg value "${FAKE_PR_901_MERGEABLE_STATE:-clean}" '$value')"
+    case "${FAKE_PR_901_MERGEABLE_STATE:-clean}" in
+      true|false|null)
+        mergeable_state_json="${FAKE_PR_901_MERGEABLE_STATE}"
+        ;;
+    esac
     jq -cn \
       --arg state "$live_state" \
       --arg head "$live_head" \
@@ -526,7 +571,7 @@ case "$resource" in
       --arg head_repository "${FAKE_PR_901_HEAD_REPOSITORY:-example/FireMUD}" \
       --arg base_repository "${FAKE_PR_901_BASE_REPOSITORY:-example/FireMUD}" \
       --arg mergeable "${FAKE_PR_901_MERGEABLE:-true}" \
-      --arg mergeable_state "${FAKE_PR_901_MERGEABLE_STATE:-clean}" \
+      --argjson mergeable_state "$mergeable_state_json" \
       --arg priority "${FAKE_PR_901_PRIORITY:-true}" \
       '{state:$state,head:{sha:$head,repo:{full_name:$head_repository}},base:{ref:$base_ref,repo:{full_name:$base_repository}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",changed_files:1,mergeable:($mergeable == "true"),mergeable_state:$mergeable_state,user:{login:"human"},labels:(if $priority == "true" then [{name:"preview:priority"}] else [] end)}'
     ;;
@@ -538,38 +583,60 @@ case "$resource" in
       exit 1
     fi
     if [[ "${FAKE_PRUNE_JQ_FAIL:-false}" == "true" ]]; then
-      jq_query='.'
-      previous=''
-      for arg in "$@"; do
-        if [[ "$previous" == '--jq' ]]; then
-          jq_query="$arg"
-          break
-        fi
-        previous="$arg"
-      done
-      jq -r "$jq_query" <<<'{invalid-json'
+      printf '%s' '{invalid-json'
       exit 0
     fi
-    if [[ "$has_jq" != true ]]; then
-      prune_state="open"
-      prune_base_ref="develop"
-      if [[ -n "${FAKE_PRUNE_METADATA:-}" ]]; then
-        IFS=$'\t' read -r prune_state prune_base_ref _ <<<"${FAKE_PRUNE_METADATA%%$'\n'*}"
+    if [[ "$has_jq" == true ]]; then
+      prune_priority="${FAKE_PR_101_PRIORITY:-false}"
+      prune_calls=0
+      if [[ -f "$FAKE_PR_101_CALLS" ]]; then
+        prune_calls="$(<"$FAKE_PR_101_CALLS")"
       fi
-      jq -cn \
-        --arg state "$prune_state" \
-        --arg base_ref "$prune_base_ref" \
-        --arg head_repository "${FAKE_PRUNE_HEAD_REPOSITORY:-example/FireMUD}" \
-        --arg base_repository "${FAKE_PRUNE_BASE_REPOSITORY:-example/FireMUD}" \
-        --arg mergeable "${FAKE_PRUNE_MERGEABLE:-true}" \
-        --arg mergeable_state "${FAKE_PRUNE_MERGEABLE_STATE:-clean}" \
-        '{state:$state,head:{sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",repo:{full_name:$head_repository}},base:{ref:$base_ref,repo:{full_name:$base_repository}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",changed_files:1,mergeable:($mergeable == "true"),mergeable_state:$mergeable_state,user:{login:"human"},labels:[]}'
+      prune_calls=$((prune_calls + 1))
+      printf '%s' "$prune_calls" > "$FAKE_PR_101_CALLS"
+      if [[ "${FAKE_PR_101_GAINS_PRIORITY:-false}" == true && "$prune_calls" -gt 1 ]]; then
+        prune_priority=true
+      fi
+      printf 'open\thead-101\t%s\n' "$(fake_labels_json "$prune_priority" "${FAKE_PR_101_LABELS_VALID:-valid}" | base64 | tr -d '\n')"
       exit 0
     fi
     if [[ -n "${FAKE_PRUNE_METADATA:-}" ]]; then
-      printf '%b' "$FAKE_PRUNE_METADATA"
-      exit 0
+      prune_metadata_lines=()
+      mapfile -t prune_metadata_lines < <(printf '%b' "$FAKE_PRUNE_METADATA")
+      if (( ${#prune_metadata_lines[@]} == 1 )); then
+        prune_record="${prune_metadata_lines[0]}"
+        prune_remainder=''
+      else
+        prune_record="${prune_metadata_lines[0]:-}"
+        prune_remainder='extra-records'
+      fi
+      IFS=$'\t' read -r prune_state prune_base_ref prune_author prune_labels_base64 prune_extra <<<"$prune_record"
+      if [[ -n "$prune_remainder" || -n "${prune_extra:-}" || -z "${prune_labels_base64:-}" ]]; then
+        prune_state='invalid'
+        prune_base_ref='invalid'
+        prune_author='invalid'
+        prune_labels_json='{}'
+      elif ! prune_labels_json="$(printf '%s' "$prune_labels_base64" | base64 --decode 2>/dev/null)" ||
+        ! jq -e 'type == "array"' <<<"$prune_labels_json" >/dev/null 2>&1; then
+        prune_labels_json='{}'
+      fi
+    else
+      prune_state='open'
+      prune_base_ref='develop'
+      prune_author='human'
+      prune_labels_json='[]'
     fi
+    jq -cn \
+      --arg state "$prune_state" \
+      --arg base_ref "$prune_base_ref" \
+      --arg author "$prune_author" \
+      --arg head_repository "${FAKE_PRUNE_HEAD_REPOSITORY:-example/FireMUD}" \
+      --arg base_repository "${FAKE_PRUNE_BASE_REPOSITORY:-example/FireMUD}" \
+      --arg mergeable "${FAKE_PRUNE_MERGEABLE:-true}" \
+      --arg mergeable_state "${FAKE_PRUNE_MERGEABLE_STATE:-clean}" \
+      --argjson labels "$prune_labels_json" \
+      '{state:$state,head:{sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",repo:{full_name:$head_repository}},base:{ref:$base_ref,repo:{full_name:$base_repository}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",changed_files:1,mergeable:($mergeable == "true"),mergeable_state:$mergeable_state,user:{login:$author},labels:$labels}'
+    exit 0
     count=0
     if [[ -f "$FAKE_PR_101_CALLS" ]]; then
       count="$(<"$FAKE_PR_101_CALLS")"
@@ -590,8 +657,17 @@ case "$resource" in
     if [[ "$has_jq" != true ]]; then
       prune_state="open"
       prune_base_ref="develop"
+      prune_labels_json='[]'
+      if [[ "${FAKE_PRUNE_MULTI_TEST:-false}" == true ]]; then
+        prune_base_ref='feature/stack'
+        prune_labels_json="$(fake_labels_json "${FAKE_PR_102_PRIORITY:-true}" valid)"
+      fi
       if [[ -n "${FAKE_PRUNE_METADATA:-}" ]]; then
-        IFS=$'\t' read -r prune_state prune_base_ref _ <<<"${FAKE_PRUNE_METADATA%%$'\n'*}"
+        prune_metadata_payload="$(printf '%b' "$FAKE_PRUNE_METADATA")"
+        IFS=$'\t' read -r prune_state metadata_base_ref _ <<<"${prune_metadata_payload%%$'\n'*}"
+        if [[ "${FAKE_PRUNE_MULTI_TEST:-false}" != true ]]; then
+          prune_base_ref="$metadata_base_ref"
+        fi
       fi
       jq -cn \
         --arg state "$prune_state" \
@@ -600,7 +676,8 @@ case "$resource" in
         --arg base_repository "${FAKE_PRUNE_BASE_REPOSITORY:-example/FireMUD}" \
         --arg mergeable "${FAKE_PRUNE_MERGEABLE:-true}" \
         --arg mergeable_state "${FAKE_PRUNE_MERGEABLE_STATE:-clean}" \
-        '{state:$state,head:{sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",repo:{full_name:$head_repository}},base:{ref:$base_ref,repo:{full_name:$base_repository}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",changed_files:1,mergeable:($mergeable == "true"),mergeable_state:$mergeable_state,user:{login:"human"},labels:[]}'
+        --argjson labels "$prune_labels_json" \
+        '{state:$state,head:{sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",repo:{full_name:$head_repository}},base:{ref:$base_ref,repo:{full_name:$base_repository}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",changed_files:1,mergeable:($mergeable == "true"),mergeable_state:$mergeable_state,user:{login:"human"},labels:$labels}'
       exit 0
     fi
     if [[ "${FAKE_PRUNE_MULTI_TEST:-false}" == true ]]; then
@@ -781,6 +858,7 @@ export FAKE_DISPATCH_LOG="$TEMP_DIR/dispatch.log"
 export FAKE_COMMENT_TARGET_LOG="$TEMP_DIR/comment-target.log"
 export FAKE_PREVIOUS_COMMENT_ID_LOG="$TEMP_DIR/previous-comment-id.log"
 export FAKE_TARGET_CALLS="$TEMP_DIR/target-calls"
+export FAKE_TARGET_METADATA_CALLS="$TEMP_DIR/target-metadata-calls"
 export FAKE_PR_101_CALLS="$TEMP_DIR/pr-101-calls"
 export FAKE_PRUNE_QUERY_LOG="$TEMP_DIR/prune-query.log"
 export FAKE_PRIORITY_QUERY_LOG="$TEMP_DIR/priority-query.log"
@@ -805,14 +883,14 @@ export FAKE_TARGET_HEAD="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 export FAKE_TARGET_BASE_SHA="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 export FAKE_TARGET_MERGE_SHA="cccccccccccccccccccccccccccccccccccccccc"
 priority_candidate_head="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
+export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|head-101|cccccccccccccccccccccccccccccccccccccccc|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|base-102|head-102|merge-102|image-102\n'
 priority_labels_base64="$(printf '%s' '[{"name":"preview:priority"}]' | base64 | tr -d '\n')"
 adversarial_priority_labels_base64="$(printf '%s' '[{"name":"preview:priority"},{"name":"quote\"slash\\label"}]' | base64 | tr -d '\n')"
 adversarial_labels_base64="$(printf '%s' '[{"name":"custom:label"},{"name":"quote\"slash\\label"}]' | base64 | tr -d '\n')"
 invalid_json_labels_base64="$(printf '%s' '{invalid-json' | base64 | tr -d '\n')"
 
 reset_case() {
-  rm -f "$FAKE_DELETE_LOG" "$FAKE_DELETE_TIMEOUT_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_SOURCE_BINDING_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_ANNOTATE_FAILURE_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_PRUNE_QUERY_LOG" "$FAKE_PRIORITY_QUERY_LOG" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_NAMESPACE_SNAPSHOT_LOG" "$FAKE_NAMESPACE_SNAPSHOT_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_DELETE_UID_LOG" "$FAKE_RUNTIME_NAMESPACE_DELETED_MARKER" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$FAKE_IDENTITY_LOG" "$FAKE_IDENTITY_LIST_KUBECONFIG_LOG" "$FAKE_IDENTITY_REQUEST_LOG" "$FAKE_IDENTITY_WAIT_LOG" "$FAKE_OPERATION_SEQUENCE" "$TEMP_DIR/output"
+  rm -f "$FAKE_DELETE_LOG" "$FAKE_DELETE_TIMEOUT_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_SOURCE_BINDING_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_ANNOTATE_FAILURE_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_TARGET_METADATA_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_PRUNE_QUERY_LOG" "$FAKE_PRIORITY_QUERY_LOG" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_NAMESPACE_SNAPSHOT_LOG" "$FAKE_NAMESPACE_SNAPSHOT_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_DELETE_UID_LOG" "$FAKE_RUNTIME_NAMESPACE_DELETED_MARKER" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$FAKE_IDENTITY_LOG" "$FAKE_IDENTITY_LIST_KUBECONFIG_LOG" "$FAKE_IDENTITY_REQUEST_LOG" "$FAKE_IDENTITY_WAIT_LOG" "$FAKE_OPERATION_SEQUENCE" "$TEMP_DIR/output"
   export GITHUB_OUTPUT="$TEMP_DIR/output"
   export FAKE_TARGET_PRIORITY=true
   export FAKE_TARGET_LABELS_VALID=valid
@@ -821,8 +899,10 @@ reset_case() {
   export FAKE_TARGET_STATE=open
   export FAKE_TARGET_REPOSITORY=example/FireMUD
   export FAKE_TARGET_BASE_REF=develop
+  export FAKE_TARGET_BASE_SHA="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   export FAKE_TARGET_AUTHOR=human
   export FAKE_TARGET_LOSES_PRIORITY=false
+  unset FAKE_TARGET_MERGEABILITY_SEQUENCE
   export FAKE_PR_101_PRIORITY=false
   export FAKE_PR_101_LABELS_VALID=valid
   export FAKE_PR_101_GAINS_PRIORITY=false
@@ -844,6 +924,7 @@ reset_case() {
   export FAKE_PR_901_BASE_REF=develop
   export FAKE_PR_901_PRIORITY=true
   export FAKE_PR_901_STATE=open
+  unset FAKE_PR_901_MERGEABLE FAKE_PR_901_MERGEABLE_STATE
   export FAKE_PR_901_REQUESTED_HEAD=''
   export FAKE_PR_901_NAMESPACE_ABSENT=false
   export FAKE_PR_901_NAMESPACE_ABSENT_ON_RECHECK=false
@@ -905,7 +986,7 @@ reset_case() {
   unset PREVIEW_NAMESPACE_DELETE_TIMEOUT_SECONDS PREVIEW_DELETE_TIMEOUT
   export FAKE_ELIGIBILITY_OUTPUT=''
   export PREVIEW_ELIGIBILITY_SCRIPT="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
-  export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
+  export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|head-101|cccccccccccccccccccccccccccccccccccccccc|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|base-102|head-102|merge-102|image-102\n'
   unset PREVIEW_REVALIDATE_SOURCE_BINDING_SCRIPT
 }
 
@@ -1217,7 +1298,7 @@ done
 reset_case
 export FAKE_TARGET_PRIORITY=false
 export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
-export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-900|900|2026-01-01T00:00:00Z|head-900|image-900\n2026-01-02T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n'
+export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-900|900|2026-01-01T00:00:00Z|base-900|head-900|merge-900|image-900\n2026-01-02T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|base-101|head-101|merge-101|image-101\n'
 if ! run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   echo "existing ordinary preview was blocked by an unsatisfied priority PR" >&2
   exit 1
@@ -1225,7 +1306,7 @@ fi
 test ! -e "$FAKE_DELETE_LOG"
 
 reset_case
-export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|preview-101|101|2026-01-02T00:00:00Z|head-101|image-101\n'
+export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|preview-101|101|2026-01-02T00:00:00Z|base-101|head-101|merge-101|image-101\n'
 if run_allocator pr-900 1 900 "$FAKE_TARGET_HEAD"; then
   echo "reclaim selected a noncanonical preview namespace" >&2
   exit 1
@@ -1329,7 +1410,7 @@ reset_case
 export FAKE_TARGET_PRIORITY=false
 export FAKE_PR_901_STATE=closed
 export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
-export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n'
+export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|base-101|head-101|merge-101|image-101\n'
 if ! run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   echo "ordinary allocation was blocked by a priority PR that had closed" >&2
   exit 1
@@ -1341,9 +1422,31 @@ reset_case
 export FAKE_TARGET_PRIORITY=false
 export FAKE_PR_901_PRIORITY=false
 export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
-export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n'
+export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|base-101|head-101|merge-101|image-101\n'
 if ! run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   echo "ordinary allocation was blocked after live priority-label removal" >&2
+  exit 1
+fi
+test ! -e "$FAKE_DELETE_LOG"
+
+reset_case
+export FAKE_TARGET_PRIORITY=false
+export FAKE_PR_901_MERGEABLE=false
+export FAKE_PR_901_MERGEABLE_STATE=dirty
+export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
+export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|base-101|head-101|merge-101|image-101\n'
+if ! run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+  echo "ordinary allocation was blocked by a confirmed non-deployable priority PR" >&2
+  exit 1
+fi
+test ! -e "$FAKE_DELETE_LOG"
+
+reset_case
+export FAKE_TARGET_PRIORITY=false
+export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
+export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|partial-base|partial-head\n'
+if run_allocator pr-900 1 900 "$FAKE_TARGET_HEAD"; then
+  echo "ordinary allocation accepted a partially annotated namespace tuple" >&2
   exit 1
 fi
 test ! -e "$FAKE_DELETE_LOG"
@@ -1384,6 +1487,19 @@ if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   exit 1
 fi
 test ! -e "$FAKE_DELETE_LOG"
+
+# A non-string mergeability state is malformed metadata and must not satisfy
+# the typed candidate guard or block ordinary allocation ambiguously.
+reset_case
+export FAKE_TARGET_PRIORITY=false
+export FAKE_PR_901_MERGEABLE_STATE=true
+export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
+if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+  echo "ordinary allocation accepted a non-string priority mergeability state" >&2
+  exit 1
+fi
+test ! -e "$FAKE_DELETE_LOG"
+unset FAKE_PR_901_MERGEABLE_STATE
 
 valid_open_pr_row="901"$'\t'"${priority_candidate_head}"$'\t'"example/FireMUD"$'\t'"human"$'\t'"develop"$'\t'"open"$'\t'"${priority_labels_base64}"
 for missing_identity_field in 1 2 4 5 6 7; do
@@ -1602,10 +1718,10 @@ bash "$PRUNER" --apply --retire-terminal-identities \
   >"$TEMP_DIR/recover-observed-and-absent.out"
 # PR #101 is evaluated once by the namespace loop; stranded recovery must skip
 # that observed runtime without a second eligibility query.
-# Retention reads the compact eligibility record and then independently
-# revalidates both repository owners from the live PR object.
-test "$(grep -Fxc 'repos/example/FireMUD/pulls/101' "$FAKE_PRUNE_QUERY_LOG")" -eq 2
-test "$(grep -Fxc 'repos/example/FireMUD/pulls/102' "$FAKE_PRUNE_QUERY_LOG")" -eq 2
+# Retention derives both eligibility and ownership/mergeability from one full
+# live PR payload per retained namespace.
+test "$(grep -Fxc 'repos/example/FireMUD/pulls/101' "$FAKE_PRUNE_QUERY_LOG")" -eq 1
+test "$(grep -Fxc 'repos/example/FireMUD/pulls/102' "$FAKE_PRUNE_QUERY_LOG")" -eq 1
 test "$(<"$FAKE_OPERATION_SEQUENCE")" = $'runtime-check\nidentity-request\nidentity-wait\nidentity-delete'
 grep -Fqx 'pr-102 Retired' "$FAKE_IDENTITY_REQUEST_LOG"
 if grep -Fq 'pr-101' "$FAKE_IDENTITY_REQUEST_LOG"; then
@@ -2170,7 +2286,7 @@ fi
 test ! -e "$FAKE_DELETE_LOG"
 
 reset_case
-export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-900|900|2026-01-01T00:00:00Z|head-900|image-900\n2026-01-02T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
+export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-900|900|2026-01-01T00:00:00Z|base-900|head-900|merge-900|image-900\n2026-01-02T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|base-101|head-101|merge-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|base-102|head-102|merge-102|image-102\n'
 run_allocator pr-900 1 900 "$FAKE_TARGET_HEAD"
 test ! -e "$FAKE_DELETE_LOG"
 
@@ -2206,7 +2322,9 @@ done
 grep -Fq 'case "$repair_status" in' "$RECONCILER_RUN"
 grep -Fq -- 'gh api --paginate --slurp' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert literal workflow source expressions.
-grep -Fq -- 'actions/runs?branch=${DEFAULT_BRANCH}&per_page=100' "$RECONCILER_RUN"
+grep -Fq -- 'actions/runs?branch=${DEFAULT_BRANCH}&status=${active_status}&per_page=100' "$RECONCILER_RUN"
+# shellcheck disable=SC2016 # Assert each supported active status is queried independently.
+grep -Fq -- 'for active_status in requested queued in_progress waiting pending; do' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert the active-run lookup is fenced to the candidate dispatch title.
 grep -Fq -- '--arg run_name "Preview dispatch pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}"' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert the literal jq display-title comparison in workflow source.
@@ -2821,6 +2939,97 @@ test "$(grep -Fc -- 'revalidate-preview-deploy.sh' "$ALLOCATOR")" -eq 1
 grep -Fq -- 'revalidation_mode="--revalidate-${mode}"' "$revalidation_helper"
 # shellcheck disable=SC2016 # Assert literal evaluator argument forwarding.
 grep -Fq -- '"$revalidation_mode"' "$revalidation_helper"
+# Eligibility-only deploy revalidation trusts the live branch ref rather than
+# the pull-request API's potentially lagging base.sha field. The source-binding
+# helper remains responsible for exact tuple equality.
+reset_case
+export FAKE_TARGET_BASE_SHA=cccccccccccccccccccccccccccccccccccccccc
+if ! (
+  cd "$ROOT_DIR"
+  PATH="$TEMP_DIR/bin:$PATH" GH_TOKEN=fake GITHUB_REPOSITORY=example/FireMUD \
+    bash "$revalidation_helper" 900 "$FAKE_TARGET_HEAD"
+); then
+  echo "deploy revalidation rejected a lagging pull-request base SHA" >&2
+  exit 1
+fi
+
+reset_case
+export FAKE_TARGET_BASE_SHA=cccccccccccccccccccccccccccccccccccccccc
+export FAKE_TARGET_MERGEABILITY_SEQUENCE='unknown,clean'
+export PREVIEW_METADATA_RETRY_DELAY_SECONDS=0
+if ! (
+  cd "$ROOT_DIR"
+  PATH="$TEMP_DIR/bin:$PATH" GH_TOKEN=fake GITHUB_REPOSITORY=example/FireMUD \
+    bash "$revalidation_helper" 900 "$FAKE_TARGET_HEAD"
+); then
+  echo "deploy revalidation rejected a transient unknown mergeability state" >&2
+  exit 1
+fi
+test "$(<"$FAKE_TARGET_METADATA_CALLS")" -eq 2
+
+reset_case
+export FAKE_TARGET_BASE_SHA=cccccccccccccccccccccccccccccccccccccccc
+export FAKE_TARGET_MERGEABILITY_SEQUENCE='unknown,unknown,unknown'
+export PREVIEW_METADATA_RETRY_ATTEMPTS=3
+export PREVIEW_METADATA_RETRY_DELAY_SECONDS=0
+if (
+  cd "$ROOT_DIR"
+  PATH="$TEMP_DIR/bin:$PATH" GH_TOKEN=fake GITHUB_REPOSITORY=example/FireMUD \
+    bash "$revalidation_helper" 900 "$FAKE_TARGET_HEAD"
+) >"$TEMP_DIR/revalidate-mergeability-exhausted.out" 2>&1; then
+  echo "deploy revalidation accepted exhausted unknown mergeability" >&2
+  exit 1
+fi
+test "$(<"$FAKE_TARGET_METADATA_CALLS")" -eq 4
+grep -Fq 'current pull request is not mergeable' \
+  "$TEMP_DIR/revalidate-mergeability-exhausted.out"
+unset PREVIEW_METADATA_RETRY_ATTEMPTS PREVIEW_METADATA_RETRY_DELAY_SECONDS
+
+source_revalidation_helper="$ROOT_DIR/dev-tools/hosted/preview/revalidate-preview-source-binding.sh"
+reset_case
+export FAKE_TARGET_MERGEABILITY_SEQUENCE='unknown,clean'
+export PREVIEW_METADATA_RETRY_DELAY_SECONDS=0
+if ! (
+  cd "$ROOT_DIR"
+  PATH="$TEMP_DIR/bin:$PATH" GH_TOKEN=fake GITHUB_REPOSITORY=example/FireMUD \
+    bash "$source_revalidation_helper" 900 \
+      "$FAKE_TARGET_HEAD" "$FAKE_TARGET_BASE_SHA" "$FAKE_TARGET_MERGE_SHA"
+); then
+  echo "source binding rejected a transient unknown mergeability state" >&2
+  exit 1
+fi
+test "$(<"$FAKE_TARGET_METADATA_CALLS")" -eq 2
+
+reset_case
+export FAKE_TARGET_MERGEABILITY_SEQUENCE='unknown,unknown,unknown'
+export PREVIEW_METADATA_RETRY_ATTEMPTS=3
+export PREVIEW_METADATA_RETRY_DELAY_SECONDS=0
+if (
+  cd "$ROOT_DIR"
+  PATH="$TEMP_DIR/bin:$PATH" GH_TOKEN=fake GITHUB_REPOSITORY=example/FireMUD \
+    bash "$source_revalidation_helper" 900 \
+      "$FAKE_TARGET_HEAD" "$FAKE_TARGET_BASE_SHA" "$FAKE_TARGET_MERGE_SHA"
+) >"$TEMP_DIR/source-revalidate-mergeability-exhausted.out" 2>&1; then
+  echo "source binding accepted exhausted unknown mergeability" >&2
+  exit 1
+fi
+test "$(<"$FAKE_TARGET_METADATA_CALLS")" -eq 4
+grep -Fq 'current PR head, base, merge, repository, or mergeability' \
+  "$TEMP_DIR/source-revalidate-mergeability-exhausted.out"
+unset PREVIEW_METADATA_RETRY_ATTEMPTS PREVIEW_METADATA_RETRY_DELAY_SECONDS
+
+reset_case
+export FAKE_PRUNE_BASE_REF_SHA=malformed
+if (
+  cd "$ROOT_DIR"
+  PATH="$TEMP_DIR/bin:$PATH" GH_TOKEN=fake GITHUB_REPOSITORY=example/FireMUD \
+    bash "$revalidation_helper" 900 "$FAKE_TARGET_HEAD"
+) >"$TEMP_DIR/revalidate-malformed-live-base.out" 2>&1; then
+  echo "deploy revalidation accepted a malformed live base SHA" >&2
+  exit 1
+fi
+grep -Fq 'current base branch ref SHA is not canonical' \
+  "$TEMP_DIR/revalidate-malformed-live-base.out"
 # shellcheck disable=SC2016 # Assert literal shell source in the revalidation helper.
 grep -Fq -- '--expected-repository "$GITHUB_REPOSITORY"' "$revalidation_helper"
 # shellcheck disable=SC2016 # Assert literal shell source in the revalidation helper.
@@ -2829,6 +3038,14 @@ grep -Fq -- '--expected-head-sha "$expected_head_sha"' "$revalidation_helper"
 grep -q -- '--batch-deploy-candidates' "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
 # shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.
 grep -q -- '--expected-repository "$GITHUB_REPOSITORY"' "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
+# Keep typed mergeability extraction rooted at each field rather than the full
+# pull-request object; malformed values must remain fail-closed.
+grep -Fq \
+  'if (.mergeable | type) == "boolean" then (.mergeable | tostring) else "invalid" end' \
+  "$ALLOCATOR"
+grep -Fq \
+  'if (.mergeable_state | type) == "string" then .mergeable_state else "invalid" end' \
+  "$ALLOCATOR"
 ALLOCATOR_PATH="$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh" \
   ELIGIBILITY_PATH="$eligibility_script" python3 - <<'PY'
 import ast
@@ -2906,6 +3123,7 @@ done
 reset_case
 export FAKE_TARGET_PRIORITY=false
 export FAKE_OPEN_PRIORITY_ROWS="$priority_limit_rows"
+export FAKE_PRIORITY_CANDIDATE_NAMESPACE_ABSENT=true
 if run_allocator pr-900 2 900 "$FAKE_TARGET_HEAD" \
   >"$TEMP_DIR/priority-limit.output" 2>&1; then
   echo "ordinary allocation unexpectedly succeeded with an unsatisfied priority PR" >&2

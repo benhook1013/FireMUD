@@ -11,6 +11,42 @@ const PREVIEW_STATE_POLICIES = new Set([
   "manual-any",
 ]);
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
+const LIVE_FENCE_MAX_ATTEMPTS = 3;
+const LIVE_FENCE_RETRY_DELAY_MS = 1000;
+
+function isRetryableLiveFenceError(error) {
+  const status = Number(error?.status);
+  return (
+    !Number.isInteger(status) ||
+    status === 429 ||
+    (status >= 500 && status <= 599)
+  );
+}
+
+async function readLiveFence(core, description, operation) {
+  for (let attempt = 1; attempt <= LIVE_FENCE_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!isRetryableLiveFenceError(error) || attempt === LIVE_FENCE_MAX_ATTEMPTS) {
+        throw error;
+      }
+      core.info(
+        "Transient " +
+          description +
+          " failure; retrying in " +
+          LIVE_FENCE_RETRY_DELAY_MS +
+          "ms (attempt " +
+          (attempt + 1) +
+          "/" +
+          LIVE_FENCE_MAX_ATTEMPTS +
+          ").",
+      );
+      await new Promise((resolve) => setTimeout(resolve, LIVE_FENCE_RETRY_DELAY_MS));
+    }
+  }
+  throw new Error("Unable to read " + description);
+}
 
 function commentTimestamp(comment) {
   const parsed = Date.parse(comment.created_at || "");
@@ -109,7 +145,7 @@ async function publishPreviewComment({
   const isStaleTarget = (pullRequest) =>
     pullRequest?.head?.sha !== headSha ||
     (hasTupleInput &&
-      (pullRequest?.base?.sha !== baseSha || pullRequest?.merge_commit_sha !== mergeSha)) ||
+      pullRequest?.merge_commit_sha !== mergeSha) ||
     (statePolicy === "expected-open" && pullRequest?.state !== "open") ||
     (statePolicy === "expected-closed" && pullRequest?.state !== "closed");
 
@@ -126,10 +162,15 @@ async function publishPreviewComment({
     }
 
     try {
-      const { data: liveBaseRef } = await github.rest.git.getRef({
-        ...context.repo,
-        ref: `heads/${baseRef}`,
-      });
+      const { data: liveBaseRef } = await readLiveFence(
+        core,
+        "live base ref",
+        () =>
+          github.rest.git.getRef({
+            ...context.repo,
+            ref: `heads/${baseRef}`,
+          }),
+      );
       const liveBaseSha = liveBaseRef?.object?.sha;
       if (!SHA_PATTERN.test(liveBaseSha || "") || liveBaseSha !== baseSha) {
         core.info(
@@ -139,10 +180,15 @@ async function publishPreviewComment({
         return false;
       }
 
-      const { data: mergeCommit } = await github.rest.repos.getCommit({
-        ...context.repo,
-        ref: mergeSha,
-      });
+      const { data: mergeCommit } = await readLiveFence(
+        core,
+        "live merge commit",
+        () =>
+          github.rest.repos.getCommit({
+            ...context.repo,
+            ref: mergeSha,
+          }),
+      );
       const parents = mergeCommit?.parents;
       if (
         mergeCommit?.sha !== mergeSha ||

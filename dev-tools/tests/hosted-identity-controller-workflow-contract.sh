@@ -1597,7 +1597,10 @@ for fragment in (
     'preview-(render|intent)-pr-[1-9][0-9]{0,50}-[0-9a-fA-F]{40}',
     "[[ \"$(jq 'length' <<<\"$canonical_artifacts\")\" == 1 ]]",
     'mergeable="$(jq -r',
+    'if (.mergeable | type) == "boolean" then (.mergeable | tostring) else "invalid" end',
+    'if (.mergeable_state | type) == "string" then .mergeable_state else "invalid" end',
     'Ignoring lifecycle event because the current pull request is conflicting.',
+    '[[ "$mergeable" == true && -n "$mergeable_state" && "$mergeable_state" != unknown && "$mergeable_state" != invalid ]] || emit_no_action',
     '--operation deploy --state "$state"',
     '[[ "$state" == closed ]] || emit_no_action',
     'Ignoring closed pull request because it has been reopened.',
@@ -6078,13 +6081,19 @@ case "$resource" in
     fi
     ;;
   repos/example/FireMUD/pulls/900)
+    mergeable_state_json="$(jq -cn --arg value "${TEST_PR_MERGEABLE_STATE:-clean}" '$value')"
+    case "${TEST_PR_MERGEABLE_STATE:-clean}" in
+      true|false|null)
+        mergeable_state_json="${TEST_PR_MERGEABLE_STATE}"
+        ;;
+    esac
     jq -nc \
       --arg state "${TEST_PR_STATE:-open}" \
       --arg head "${TEST_PR_HEAD_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
       --arg repository "${TEST_PR_HEAD_REPOSITORY:-example/FireMUD}" \
       --arg base_ref "${TEST_PR_BASE_REF:-develop}" \
       --argjson mergeable "${TEST_PR_MERGEABLE:-true}" \
-      --arg mergeable_state "${TEST_PR_MERGEABLE_STATE:-clean}" \
+      --argjson mergeable_state "$mergeable_state_json" \
       --argjson labels "${TEST_PR_LABELS_JSON:-[]}" \
       '{state:$state,changed_files:1,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:"dddddddddddddddddddddddddddddddddddddddd",repo:{full_name:"example/FireMUD"}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",mergeable:$mergeable,mergeable_state:$mergeable_state,labels:$labels}'
     ;;
@@ -6199,6 +6208,8 @@ run_deploy_target_fixture() {
       FAKE_METADATA_BASE_SHA="${FAKE_FIXTURE_METADATA_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
       FAKE_METADATA_MERGE_SHA="${FAKE_FIXTURE_METADATA_MERGE_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
       TEST_PR_LABELS_JSON="${FAKE_FIXTURE_PR_LABELS_JSON:-[]}" \
+      TEST_PR_MERGEABLE="${FAKE_FIXTURE_MERGEABLE:-${TEST_PR_MERGEABLE:-true}}" \
+      TEST_PR_MERGEABLE_STATE="${FAKE_FIXTURE_MERGEABLE_STATE:-${TEST_PR_MERGEABLE_STATE:-clean}}" \
       TEST_CERTIFICATE_MODE="${FAKE_FIXTURE_CERTIFICATE_MODE:-hosted-controller}" \
       FAKE_EXPOSURE_MODE="${FAKE_FIXTURE_EXPOSURE_MODE:-private}" \
       VALID_RENDER_MANIFEST="$target_rendered_manifest" \
@@ -6214,6 +6225,8 @@ run_deploy_target_fixture() {
   fi
   grep -Fq "$expected_message" "$output" "$stdout" "$stderr" 2>/dev/null || {
     echo "deploy target fixture ${scenario} did not emit expected diagnostic: ${expected_message}" >&2
+    echo "--- ${scenario} output ---" >&2
+    cat "$output" "$stdout" "$stderr" "$TEMP_DIR/deploy-target-${scenario}.gh.log" >&2
     return 1
   }
 }
@@ -6265,6 +6278,15 @@ FAKE_FIXTURE_PR_LABELS_JSON='{}' \
     'Refusing hosted preview lifecycle action: PR label metadata is missing or malformed.'
 TEST_PR_MERGEABLE_STATE=unknown \
   run_deploy_target_fixture unknown-mergeability 0 \
+    'Ignoring lifecycle event because pull-request mergeability is unavailable.'
+TEST_PR_MERGEABLE=false TEST_PR_MERGEABLE_STATE=dirty \
+  run_deploy_target_fixture explicit-conflict 0 \
+    'Ignoring lifecycle event because the current pull request is conflicting.'
+TEST_PR_MERGEABLE='"true"' \
+  run_deploy_target_fixture nonboolean-mergeability 0 \
+    'Ignoring lifecycle event because pull-request mergeability is unavailable.'
+TEST_PR_MERGEABLE=true TEST_PR_MERGEABLE_STATE=true \
+  run_deploy_target_fixture nonstring-mergeability-state 0 \
     'Ignoring lifecycle event because pull-request mergeability is unavailable.'
 FAKE_FIXTURE_WORKFLOW_RUN_JSON='{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"push","repository":{"full_name":"example/FireMUD"}}' \
   run_deploy_target_fixture unsupported-event 0 \
