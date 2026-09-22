@@ -80,6 +80,7 @@ public class AutomationScriptingClient
       return new PublishParticipantDigestDto(
           "AUTOMATION_SCRIPTING",
           binding.scriptPatchVersion(),
+          Long.valueOf(binding.baseVersionId()),
           null,
           null,
           null,
@@ -93,6 +94,9 @@ public class AutomationScriptingClient
           binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.FULL_VERSION
               ? binding.versionId()
               : binding.scriptPatchVersion(),
+          binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.FULL_VERSION
+              ? null
+              : Long.valueOf(binding.baseVersionId()),
           null,
           null,
           null,
@@ -102,6 +106,7 @@ public class AutomationScriptingClient
     return new PublishParticipantDigestDto(
         "AUTOMATION_SCRIPTING",
         response.hasVersionId() ? response.getVersionId() : response.getScriptPatchVersion(),
+        response.hasVersionId() ? null : Long.valueOf(binding.baseVersionId()),
         response.getAppliedCommitId(),
         response.getContentDigest(),
         response.getDigestSchemaVersion(),

@@ -11,6 +11,8 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -50,6 +52,8 @@ import net.firedevops.firemud.gamedesign.service.RecordedParticipantDigestServic
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
@@ -358,6 +362,46 @@ class VersionServiceImplTest {
     verify(versionRepository).delete(savedDraft);
     verify(publishAttemptService, org.mockito.Mockito.never())
         .markScriptPatchSucceeded(any(String.class));
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = Status.Code.class,
+      names = {"UNAVAILABLE", "DEADLINE_EXCEEDED"})
+  void transientParticipantReadLeavesScriptPatchPending(Status.Code statusCode) {
+    Game game = new Game();
+    game.setId(1L);
+    game.setTenantId("tenant-1");
+    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
+
+    PublicationDigestRequestBinding binding =
+        PublicationDigestRequestBinding.patch("tenant-1", "3", "patch-2", PUBLISH_REQUEST_ID);
+    PublishAttempt attempt = scriptPatchAttempt(binding, PublishAttemptStatus.PENDING, 11L, 8, 3L);
+    Version draft = scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.DRAFT, "notes");
+    when(publishAttemptService.findByPublishWorkflowId(binding.derivedWorkflowIdentity()))
+        .thenReturn(Optional.of(attempt));
+    when(versionRepository.findByTenantIdAndId("tenant-1", 11L)).thenReturn(Optional.of(draft));
+    when(publishGateService.collectScriptPatchParticipantDigests(
+            any(VersionDto.class), any(String.class), any(String.class)))
+        .thenThrow(new StatusRuntimeException(Status.fromCode(statusCode)));
+
+    IllegalStateException thrown =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.publishScriptPatchVersion(
+                    "tenant-1", 3L, "patch-2", "notes", PUBLISH_REQUEST_ID));
+
+    assertTrue(thrown.getMessage().contains("PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED"));
+    assertEquals(PublishAttemptStatus.PENDING, attempt.getStatus());
+    assertEquals(VersionLifecycleState.DRAFT, draft.getVersionState());
+    verify(publishAttemptService, org.mockito.Mockito.never())
+        .markScriptPatchFailed(any(String.class), any(String.class), any(String.class));
+    verify(versionRepository, org.mockito.Mockito.never()).delete(any(Version.class));
+    verify(publishAttemptService, org.mockito.Mockito.never())
+        .markScriptPatchSucceeded(any(String.class));
+    verify(scriptingClient, org.mockito.Mockito.never())
+        .notifyScriptVersionUpdate(any(String.class), any(String.class), any(List.class));
   }
 
   @Test
@@ -900,30 +944,83 @@ class VersionServiceImplTest {
 
   @Test
   void getDesignControlPlaneDigestForScriptPatchRejectsNonScriptVersion() {
-    Version fullVersion = scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.PUBLISHED, "notes");
-    fullVersion.setScriptOnly(false);
-    when(versionRepository.findTopByTenantIdAndScriptPatchVersionOrderByVersionNumberDesc(
-            "tenant-1", "patch-2"))
-        .thenReturn(Optional.of(fullVersion));
+    when(versionRepository
+            .findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndPublishedScriptOnly(
+                "tenant-1", 3L, "patch-2"))
+        .thenReturn(List.of());
 
     assertThrows(
         IllegalArgumentException.class,
-        () -> service.getDesignControlPlaneDigestForScriptPatch("tenant-1", "patch-2"));
+        () -> service.getDesignControlPlaneDigestForScriptPatch("tenant-1", "patch-2", 3L));
     verify(controlPlaneDigestService, org.mockito.Mockito.never())
         .getDigestForScriptPatch(any(VersionDto.class));
   }
 
   @Test
   void getDesignControlPlaneDigestForScriptPatchRejectsUnpublishedVersion() {
-    Version draft = scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.DRAFT, "notes");
-    when(versionRepository.findTopByTenantIdAndScriptPatchVersionOrderByVersionNumberDesc(
-            "tenant-1", "patch-2"))
-        .thenReturn(Optional.of(draft));
+    when(versionRepository
+            .findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndPublishedScriptOnly(
+                "tenant-1", 3L, "patch-2"))
+        .thenReturn(List.of());
 
     assertThrows(
         IllegalArgumentException.class,
-        () -> service.getDesignControlPlaneDigestForScriptPatch("tenant-1", "patch-2"));
+        () -> service.getDesignControlPlaneDigestForScriptPatch("tenant-1", "patch-2", 3L));
     verify(controlPlaneDigestService, org.mockito.Mockito.never())
+        .getDigestForScriptPatch(any(VersionDto.class));
+  }
+
+  @Test
+  void getDesignControlPlaneDigestForScriptPatchRejectsWrongBaseScope() {
+    when(versionRepository
+            .findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndPublishedScriptOnly(
+                "tenant-1", 99L, "patch-2"))
+        .thenReturn(List.of());
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.getDesignControlPlaneDigestForScriptPatch("tenant-1", "patch-2", 99L));
+    verify(controlPlaneDigestService, org.mockito.Mockito.never())
+        .getDigestForScriptPatch(any(VersionDto.class));
+  }
+
+  @Test
+  void getDesignControlPlaneDigestForScriptPatchRejectsAmbiguousSamePatchScope() {
+    Version first = scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.PUBLISHED, "first");
+    Version second = scriptPatchVersion(12L, 9, 3L, VersionLifecycleState.PUBLISHED, "second");
+    when(versionRepository
+            .findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndPublishedScriptOnly(
+                "tenant-1", 3L, "patch-2"))
+        .thenReturn(List.of(first, second));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.getDesignControlPlaneDigestForScriptPatch("tenant-1", "patch-2", 3L));
+    verify(controlPlaneDigestService, org.mockito.Mockito.never())
+        .getDigestForScriptPatch(any(VersionDto.class));
+  }
+
+  @Test
+  void getDesignControlPlaneDigestForScriptPatchKeepsSamePatchBasesSeparate() {
+    Version baseThree =
+        scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.PUBLISHED, "base-three");
+    Version baseFour = scriptPatchVersion(12L, 9, 4L, VersionLifecycleState.PUBLISHED, "base-four");
+    when(versionRepository
+            .findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndPublishedScriptOnly(
+                "tenant-1", 3L, "patch-2"))
+        .thenReturn(List.of(baseThree));
+    when(versionRepository
+            .findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndPublishedScriptOnly(
+                "tenant-1", 4L, "patch-2"))
+        .thenReturn(List.of(baseFour));
+    when(controlPlaneDigestService.getDigestForScriptPatch(any(VersionDto.class)))
+        .thenReturn(
+            new DesignControlPlaneDigestDto("tenant-1", "patch-2", "commit-1", "digest", 1));
+
+    service.getDesignControlPlaneDigestForScriptPatch("tenant-1", "patch-2", 3L);
+    service.getDesignControlPlaneDigestForScriptPatch("tenant-1", "patch-2", 4L);
+
+    org.mockito.Mockito.verify(controlPlaneDigestService, org.mockito.Mockito.times(2))
         .getDigestForScriptPatch(any(VersionDto.class));
   }
 

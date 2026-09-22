@@ -292,6 +292,7 @@ message GetDesignControlPlaneDigestRequest {
     int64 version_id = 2;
     string script_patch_version = 3;
   }
+  int64 base_version_id = 4;
 }
 
 message GetDesignControlPlaneDigestResponse {

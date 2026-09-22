@@ -35,6 +35,8 @@ public class RecordedParticipantDigestServiceImpl implements RecordedParticipant
                     tenantId,
                     publishType,
                     PublishParticipantKey.valueOf(digest.participantKey()),
+                    digest.baseVersionId(),
+                    digest.scopeValue(),
                     digest.appliedCommitId())
                 .ifPresent(recorded -> assertMatchesRecordedDigest(recorded, digest)));
   }
@@ -54,12 +56,18 @@ public class RecordedParticipantDigestServiceImpl implements RecordedParticipant
           RecordedParticipantDigest recorded =
               repository
                   .findByTenantIdAndPublishTypeAndParticipantKeyAndAppliedCommitId(
-                      tenantId, publishType, participantKey, digest.appliedCommitId())
+                      tenantId,
+                      publishType,
+                      participantKey,
+                      digest.baseVersionId(),
+                      digest.scopeValue(),
+                      digest.appliedCommitId())
                   .orElseGet(RecordedParticipantDigest::new);
           recorded.setTenantId(tenantId);
           recorded.setPublishType(publishType);
           recorded.setParticipantKey(participantKey);
           recorded.setScopeValue(digest.scopeValue());
+          recorded.setBaseVersionId(digest.baseVersionId());
           recorded.setAppliedCommitId(digest.appliedCommitId());
           recorded.setContentDigest(digest.contentDigest());
           recorded.setDigestSchemaVersion(digest.digestSchemaVersion());

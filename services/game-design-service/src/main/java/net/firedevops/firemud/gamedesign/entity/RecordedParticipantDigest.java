@@ -12,6 +12,7 @@ public class RecordedParticipantDigest {
   private PublishType publishType;
   private PublishParticipantKey participantKey;
   private String scopeValue;
+  private Long baseVersionId;
   private String appliedCommitId;
   private String contentDigest;
   private Integer digestSchemaVersion;

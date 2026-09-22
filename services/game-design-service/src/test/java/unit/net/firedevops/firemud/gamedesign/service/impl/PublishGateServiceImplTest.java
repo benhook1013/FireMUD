@@ -346,6 +346,7 @@ class PublishGateServiceImplTest {
             new PublishParticipantDigestDto(
                 "AUTOMATION_SCRIPTING",
                 "patch-1",
+                7L,
                 "script-patch:patch-1",
                 "digest-1",
                 4,
@@ -382,6 +383,7 @@ class PublishGateServiceImplTest {
             new PublishParticipantDigestDto(
                 "AUTOMATION_SCRIPTING",
                 "patch-1",
+                7L,
                 "script-patch:patch-1",
                 "digest-1",
                 4,
@@ -390,6 +392,7 @@ class PublishGateServiceImplTest {
             new PublishParticipantDigestDto(
                 "WORLD_MANAGEMENT",
                 "patch-1",
+                7L,
                 "script-patch:patch-1",
                 "digest-world",
                 2,
@@ -423,6 +426,7 @@ class PublishGateServiceImplTest {
             new PublishParticipantDigestDto(
                 "AUTOMATION_SCRIPTING",
                 "patch-1",
+                7L,
                 "script-patch:patch-1",
                 "digest-1",
                 3,
@@ -431,6 +435,7 @@ class PublishGateServiceImplTest {
             new PublishParticipantDigestDto(
                 "GAME_DESIGN_CONTROL_PLANE",
                 "patch-1",
+                7L,
                 "script-patch:patch-1",
                 "digest-2",
                 1,
@@ -442,5 +447,48 @@ class PublishGateServiceImplTest {
             PublishGateFailureException.class, () -> service.assertGatePassed(version, digests));
 
     assertEquals(PublishGateFailureCode.UNSUPPORTED_DIGEST_SCHEMA, thrown.failureCode());
+  }
+
+  @Test
+  void scriptPatchGateRejectsWrongBaseScope() {
+    VersionDto version =
+        new VersionDto(
+            9L,
+            "tenant-1",
+            10,
+            VersionLifecycleState.PUBLISHED,
+            2L,
+            "patch-1",
+            7L,
+            true,
+            "notes",
+            LocalDateTime.now(),
+            LocalDateTime.now());
+    List<PublishParticipantDigestDto> digests =
+        List.of(
+            new PublishParticipantDigestDto(
+                "AUTOMATION_SCRIPTING",
+                "patch-1",
+                8L,
+                "script-patch:patch-1",
+                "digest-1",
+                4,
+                null,
+                null),
+            new PublishParticipantDigestDto(
+                "GAME_DESIGN_CONTROL_PLANE",
+                "patch-1",
+                7L,
+                "script-patch:patch-1",
+                "digest-2",
+                1,
+                null,
+                null));
+
+    PublishGateFailureException thrown =
+        assertThrows(
+            PublishGateFailureException.class, () -> service.assertGatePassed(version, digests));
+
+    assertEquals(PublishGateFailureCode.PARTICIPANT_SCOPE_MISMATCH, thrown.failureCode());
   }
 }

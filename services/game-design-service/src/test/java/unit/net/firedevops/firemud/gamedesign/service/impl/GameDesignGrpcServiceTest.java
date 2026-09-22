@@ -218,7 +218,8 @@ class GameDesignGrpcServiceTest {
                 "notes",
                 LocalDateTime.parse("2026-04-14T11:00:00"),
                 LocalDateTime.parse("2026-04-14T12:00:00")));
-    Mockito.when(versionService.getDesignControlPlaneDigestForScriptPatch("tenant-1", "patch-1"))
+    Mockito.when(
+            versionService.getDesignControlPlaneDigestForScriptPatch("tenant-1", "patch-1", 7L))
         .thenReturn(
             new DesignControlPlaneDigestDto(
                 "tenant-1", "patch-1", "script-patch:patch-1", "digest-1", 1));
@@ -895,6 +896,24 @@ class GameDesignGrpcServiceTest {
     }
 
     assertEquals("digest-1", ref.get().getDigest().getContentDigest());
+  }
+
+  @Test
+  void getDesignControlPlaneDigestRejectsScriptPatchWithoutBaseScope() {
+    AtomicReference<GetDesignControlPlaneDigestResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.getDesignControlPlaneDigest(
+          GetDesignControlPlaneDigestRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setScriptPatchVersion("patch-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    Mockito.verify(versionService, Mockito.never())
+        .getDesignControlPlaneDigestForScriptPatch(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyLong());
   }
 
   @Test

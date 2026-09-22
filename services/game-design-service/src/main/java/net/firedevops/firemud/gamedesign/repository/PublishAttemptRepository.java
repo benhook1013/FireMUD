@@ -58,6 +58,42 @@ public class PublishAttemptRepository {
             .fetchOne(this::toEntity));
   }
 
+  /**
+   * Installs a compatibility digest only once, and only on the exact legacy full-version row whose
+   * identity was validated by the caller.
+   *
+   * <p>The conditional update makes concurrent retries idempotent: the first writer installs the
+   * digest and later writers can only read the already-installed value. It deliberately does not
+   * derive or replace a digest for any other attempt shape.
+   */
+  public Optional<PublishAttempt> backfillFullVersionRequestDigestIfAbsent(
+      Long attemptId,
+      String tenantId,
+      String publishWorkflowId,
+      Long versionId,
+      int versionNumber,
+      String requestDigest) {
+    if (attemptId == null || requestDigest == null || requestDigest.isBlank()) {
+      return Optional.empty();
+    }
+    dsl.update(PUBLISH_ATTEMPT_TABLE)
+        .set(REQUEST_DIGEST, requestDigest)
+        .where(
+            ID.eq(attemptId)
+                .and(TENANT_ID.eq(tenantId))
+                .and(PUBLISH_WORKFLOW_ID.eq(publishWorkflowId))
+                .and(PUBLISH_TYPE.eq(PublishType.FULL_VERSION.name()))
+                .and(VERSION_ID.eq(versionId))
+                .and(VERSION_NUMBER.eq(versionNumber))
+                .and(REQUEST_DIGEST.isNull()))
+        .execute();
+    return Optional.ofNullable(
+        dsl.selectFrom(PUBLISH_ATTEMPT_TABLE)
+            .where(ID.eq(attemptId))
+            .limit(1)
+            .fetchOne(this::toEntity));
+  }
+
   public PublishAttempt save(PublishAttempt attempt) {
     LocalDateTime createdAt =
         attempt.getCreatedAt() == null ? LocalDateTime.now() : attempt.getCreatedAt();

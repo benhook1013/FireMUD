@@ -27,6 +27,8 @@ public class RecordedParticipantDigestRepository {
   private static final Field<String> PARTICIPANT_KEY =
       DSL.field(DSL.name("participant_key"), String.class);
   private static final Field<String> SCOPE_VALUE = DSL.field(DSL.name("scope_value"), String.class);
+  private static final Field<Long> BASE_VERSION_ID =
+      DSL.field(DSL.name("base_version_id"), Long.class);
   private static final Field<String> APPLIED_COMMIT_ID =
       DSL.field(DSL.name("applied_commit_id"), String.class);
   private static final Field<String> CONTENT_DIGEST =
@@ -53,7 +55,11 @@ public class RecordedParticipantDigestRepository {
           String tenantId,
           PublishType publishType,
           PublishParticipantKey participantKey,
+          Long baseVersionId,
+          String scopeValue,
           String appliedCommitId) {
+    var baseCondition =
+        baseVersionId == null ? BASE_VERSION_ID.isNull() : BASE_VERSION_ID.eq(baseVersionId);
     return Optional.ofNullable(
         dsl.selectFrom(TABLE_REF)
             .where(
@@ -61,6 +67,8 @@ public class RecordedParticipantDigestRepository {
                     .eq(tenantId)
                     .and(PUBLISH_TYPE.eq(publishType.name()))
                     .and(PARTICIPANT_KEY.eq(participantKey.name()))
+                    .and(baseCondition)
+                    .and(SCOPE_VALUE.eq(scopeValue))
                     .and(APPLIED_COMMIT_ID.eq(appliedCommitId)))
             .limit(1)
             .fetchOne(this::toEntity));
@@ -78,6 +86,7 @@ public class RecordedParticipantDigestRepository {
               .set(PUBLISH_TYPE, digest.getPublishType().name())
               .set(PARTICIPANT_KEY, digest.getParticipantKey().name())
               .set(SCOPE_VALUE, digest.getScopeValue())
+              .set(BASE_VERSION_ID, digest.getBaseVersionId())
               .set(APPLIED_COMMIT_ID, digest.getAppliedCommitId())
               .set(CONTENT_DIGEST, digest.getContentDigest())
               .set(DIGEST_SCHEMA_VERSION, digest.getDigestSchemaVersion())
@@ -94,6 +103,7 @@ public class RecordedParticipantDigestRepository {
         .set(PUBLISH_TYPE, digest.getPublishType().name())
         .set(PARTICIPANT_KEY, digest.getParticipantKey().name())
         .set(SCOPE_VALUE, digest.getScopeValue())
+        .set(BASE_VERSION_ID, digest.getBaseVersionId())
         .set(APPLIED_COMMIT_ID, digest.getAppliedCommitId())
         .set(CONTENT_DIGEST, digest.getContentDigest())
         .set(DIGEST_SCHEMA_VERSION, digest.getDigestSchemaVersion())
@@ -107,6 +117,8 @@ public class RecordedParticipantDigestRepository {
             digest.getTenantId(),
             digest.getPublishType(),
             digest.getParticipantKey(),
+            digest.getBaseVersionId(),
+            digest.getScopeValue(),
             digest.getAppliedCommitId())
         .orElseThrow();
   }
@@ -124,6 +136,7 @@ public class RecordedParticipantDigestRepository {
     digest.setParticipantKey(
         participantKey == null ? null : PublishParticipantKey.valueOf(participantKey));
     digest.setScopeValue(record.get(SCOPE_VALUE));
+    digest.setBaseVersionId(record.get(BASE_VERSION_ID));
     digest.setAppliedCommitId(record.get(APPLIED_COMMIT_ID));
     digest.setContentDigest(record.get(CONTENT_DIGEST));
     digest.setDigestSchemaVersion(record.get(DIGEST_SCHEMA_VERSION));
