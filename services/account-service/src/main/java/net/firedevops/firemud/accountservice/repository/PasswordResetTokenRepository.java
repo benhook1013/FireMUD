@@ -67,8 +67,24 @@ public class PasswordResetTokenRepository {
         .execute();
   }
 
-  public void deleteExpired(LocalDateTime now) {
-    dsl.deleteFrom(PASSWORD_RESET_TOKEN).where(PASSWORD_RESET_TOKEN.EXPIRES_AT.lt(now)).execute();
+  /** Deletes at most {@code batchSize} expired rows in deterministic expiry/id order. */
+  public int deleteExpired(LocalDateTime capturedNow, int batchSize) {
+    return JooqAccountRepositorySupport.deleteExpired(
+        dsl,
+        PASSWORD_RESET_TOKEN,
+        PASSWORD_RESET_TOKEN.ID,
+        PASSWORD_RESET_TOKEN.EXPIRES_AT,
+        capturedNow,
+        batchSize);
+  }
+
+  public Optional<LocalDateTime> findOldestExpiredAt(LocalDateTime capturedNow) {
+    return JooqAccountRepositorySupport.findOldestExpiredAt(
+        dsl,
+        PASSWORD_RESET_TOKEN,
+        PASSWORD_RESET_TOKEN.ID,
+        PASSWORD_RESET_TOKEN.EXPIRES_AT,
+        capturedNow);
   }
 
   private org.jooq.SelectOnConditionStep<? extends Record> baseSelect() {

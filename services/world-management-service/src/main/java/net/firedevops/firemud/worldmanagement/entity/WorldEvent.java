@@ -5,6 +5,8 @@ import lombok.Data;
 
 @Data
 public class WorldEvent {
+  public static final String WEATHER_CHANGE_EVENT_TYPE = "WEATHER_CHANGE";
+
   private Long id;
   private Long tenantId;
   private Long gameInstanceId;
