@@ -58,7 +58,8 @@ public class WorldEventRepository {
                     WORLD_EVENT
                         .REGION_INSTANCE_ID
                         .isNull()
-                        .or(REGION_INSTANCE.SHARD_ID.eq(shardId))))
+                        .or(REGION_INSTANCE.SHARD_ID.eq(shardId)))
+                .and(WORLD_EVENT.EVENT_TYPE.ne(WorldEvent.WEATHER_CHANGE_EVENT_TYPE)))
         .fetch(this::toEntity);
   }
 
