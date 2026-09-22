@@ -24,6 +24,7 @@ import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
 import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
+import net.firedevops.firemud.gamedesign.service.PublicationFailureClassifier;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.PublishGateService;
@@ -100,6 +101,7 @@ public class VersionPublishCommandServiceImpl {
     if (attempt == null) {
       attempt = reserveDraftAttempt(request);
     }
+    attempt = backfillLegacyFullVersionRequestDigest(request, attempt);
     validateFullVersionAttempt(attempt, request);
     if (attempt.getStatus() == PublishAttemptStatus.SUCCEEDED) {
       return reconcileCommittedAttempt(request, attempt);
@@ -128,16 +130,39 @@ public class VersionPublishCommandServiceImpl {
           "pending full-version attempt does not reference a draft version");
     }
 
+    VersionDto dto;
     List<PublishParticipantDigestDto> participantDigests;
-    ExportedAssetManifest exportedManifest;
     try {
-      VersionDto dto = versionMapper.toDto(version);
+      dto = versionMapper.toDto(version);
       participantDigests =
           publishGateService.collectFullVersionParticipantDigests(
               dto, request.publishRequestId(), request.publishWorkflowId());
+    } catch (RuntimeException ex) {
+      if (PublicationFailureClassifier.isRetryableParticipantDependencyFailure(ex)) {
+        throw pendingReconciliation(
+            "participant digest dependency is temporarily unavailable; retry exact publish request",
+            ex);
+      }
+      return failDefinitively(request, attempt, version, null, ex);
+    }
+    try {
       publishGateService.assertGatePassed(dto, participantDigests);
+    } catch (RuntimeException ex) {
+      if (PublicationFailureClassifier.isRetryableParticipantDependencyFailure(ex)) {
+        throw pendingReconciliation(
+            "participant digest dependency is temporarily unavailable; retry exact publish request",
+            ex);
+      }
+      return failDefinitively(request, attempt, version, null, ex);
+    }
+    try {
       recordedParticipantDigestService.assertMatchesRecordedDigests(
           dto.tenantId(), PublishType.FULL_VERSION, participantDigests);
+    } catch (RuntimeException ex) {
+      return failDefinitively(request, attempt, version, null, ex);
+    }
+    ExportedAssetManifest exportedManifest;
+    try {
       exportedManifest = assetExportService.exportAssets(request.tenantId(), dto.versionNumber());
     } catch (RuntimeException ex) {
       return failDefinitively(request, attempt, version, null, ex);
@@ -418,11 +443,64 @@ public class VersionPublishCommandServiceImpl {
     }
   }
 
+  /**
+   * Repairs only the narrow legacy full-version shape that has an exact current request identity.
+   *
+   * <p>V25 could persist the request-digest column but could not compute a digest in SQL. A legacy
+   * full-version row is therefore retryable only after this application-side check proves the
+   * tenant, canonical workflow identity, version id, and version number all agree. Script-patch
+   * rows intentionally have no equivalent compatibility path: their old workflow identifiers do not
+   * establish the complete request binding, so ordinary validation continues to fail closed.
+   */
+  private PublishAttempt backfillLegacyFullVersionRequestDigest(
+      PublishWorkflowRequest request, PublishAttempt attempt) {
+    if (attempt == null
+        || attempt.getRequestDigest() != null
+        || attempt.getPublishType() != PublishType.FULL_VERSION
+        || !Objects.equals(attempt.getTenantId(), request.tenantId())
+        || !Objects.equals(attempt.getPublishWorkflowId(), request.publishWorkflowId())
+        || !Objects.equals(
+            attempt.getPublishWorkflowId(),
+            TemporalVersionPublishOrchestrator.workflowId(
+                request.tenantId(), request.publishRequestId()))
+        || attempt.getBaseVersionId() != null
+        || attempt.getScriptPatchVersion() != null
+        || attempt.getVersionId() == null
+        || attempt.getVersionNumber() <= 0) {
+      return attempt;
+    }
+
+    Optional<Version> version =
+        versionRepository.findByTenantIdAndId(request.tenantId(), attempt.getVersionId());
+    if (version.isEmpty()
+        || !Objects.equals(version.get().getTenantId(), request.tenantId())
+        || !Objects.equals(version.get().getId(), attempt.getVersionId())
+        || version.get().getVersionNumber() != attempt.getVersionNumber()
+        || version.get().isScriptOnly()) {
+      return attempt;
+    }
+
+    PublicationDigestRequestBinding binding =
+        PublicationDigestRequestBinding.full(
+            request.tenantId(), String.valueOf(attempt.getVersionId()), request.publishRequestId());
+    return publishAttemptRepository
+        .backfillFullVersionRequestDigestIfAbsent(
+            attempt.getId(),
+            request.tenantId(),
+            request.publishWorkflowId(),
+            attempt.getVersionId(),
+            attempt.getVersionNumber(),
+            binding.requestDigest())
+        .orElse(attempt);
+  }
+
   private void validateFullVersionAttempt(PublishAttempt attempt, PublishWorkflowRequest request) {
     if (attempt == null
         || !Objects.equals(attempt.getTenantId(), request.tenantId())
         || !Objects.equals(attempt.getPublishWorkflowId(), request.publishWorkflowId())
         || attempt.getPublishType() != PublishType.FULL_VERSION
+        || attempt.getBaseVersionId() != null
+        || attempt.getScriptPatchVersion() != null
         || attempt.getVersionId() == null
         || attempt.getVersionNumber() <= 0) {
       throw new IllegalStateException(

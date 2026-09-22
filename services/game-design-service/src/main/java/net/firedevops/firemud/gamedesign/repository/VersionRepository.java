@@ -89,6 +89,24 @@ public class VersionRepository {
             .fetchOne(this::toEntity));
   }
 
+  /**
+   * Returns every published script-patch candidate for an exact tenant/base/patch scope. Callers
+   * reject anything other than one row so duplicate retained scope is fail-closed.
+   */
+  public List<Version> findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndPublishedScriptOnly(
+      String tenantId, Long baseVersionId, String scriptPatchVersion) {
+    return dsl.selectFrom(VERSION_TABLE)
+        .where(
+            TENANT_ID
+                .eq(tenantId)
+                .and(BASE_VERSION_ID.eq(baseVersionId))
+                .and(SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
+                .and(VERSION_STATE.eq(VersionLifecycleState.PUBLISHED.name()))
+                .and(IS_SCRIPT_ONLY.isTrue()))
+        .orderBy(VERSION_NUMBER.desc(), ID.desc())
+        .fetch(this::toEntity);
+  }
+
   public Optional<Version> findById(Long id) {
     return Optional.ofNullable(
         dsl.selectFrom(VERSION_TABLE).where(ID.eq(id)).limit(1).fetchOne(this::toEntity));

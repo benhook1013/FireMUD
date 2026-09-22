@@ -39,6 +39,7 @@ import net.firedevops.firemud.gamedesign.service.ParsedPluginBundle;
 import net.firedevops.firemud.gamedesign.service.PluginBundleIntakeService;
 import net.firedevops.firemud.gamedesign.service.PluginBundleStorageService;
 import net.firedevops.firemud.gamedesign.service.PluginDistributionManifest;
+import net.firedevops.firemud.gamedesign.service.PublicationFailureClassifier;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.PublishGateService;
@@ -205,6 +206,13 @@ public class VersionServiceImpl implements VersionService {
           ex instanceof PublishAttemptService.ScriptPatchTransactionException transactionFailure
               ? transactionFailure.causeException()
               : ex;
+      if (!finalizationStarted
+          && PublicationFailureClassifier.isRetryableParticipantDependencyFailure(
+              operationFailure)) {
+        throw new IllegalStateException(
+            "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED: participant dependency is temporarily unavailable; retry exact publish request",
+            operationFailure);
+      }
       try {
         ScriptPatchFinalization failure =
             publishAttemptService.executeScriptPatchTransaction(
@@ -736,14 +744,23 @@ public class VersionServiceImpl implements VersionService {
   @Override
   @Transactional(readOnly = true)
   public DesignControlPlaneDigestDto getDesignControlPlaneDigestForScriptPatch(
-      String tenantId, String scriptPatchVersion) {
-    Version version =
-        versionRepository
-            .findTopByTenantIdAndScriptPatchVersionOrderByVersionNumberDesc(
-                tenantId, scriptPatchVersion)
-            .filter(Version::isScriptOnly)
-            .filter(candidate -> candidate.getVersionState() == VersionLifecycleState.PUBLISHED)
-            .orElseThrow(() -> new IllegalArgumentException("script patch version not found"));
+      String tenantId, String scriptPatchVersion, Long baseVersionId) {
+    if (baseVersionId == null || baseVersionId <= 0L) {
+      throw new IllegalArgumentException("INVALID_ARGUMENT: baseVersionId must be positive");
+    }
+    if (scriptPatchVersion == null || scriptPatchVersion.isBlank()) {
+      throw new IllegalArgumentException("INVALID_ARGUMENT: scriptPatchVersion is required");
+    }
+    List<Version> candidates =
+        versionRepository.findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndPublishedScriptOnly(
+            tenantId, baseVersionId, scriptPatchVersion);
+    if (candidates.size() != 1) {
+      throw new IllegalArgumentException(
+          candidates.isEmpty()
+              ? "script patch version scope not found"
+              : "script patch version scope is ambiguous");
+    }
+    Version version = candidates.get(0);
     return controlPlaneDigestService.getDigestForScriptPatch(versionMapper.toDto(version));
   }
 

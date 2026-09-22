@@ -129,13 +129,16 @@ public class PublishGateServiceImpl implements PublishGateService {
           "publish gate failed for "
               + failed.participantKey()
               + ": "
-              + (failed.errorMessage() == null ? failed.errorCode() : failed.errorMessage()));
+              + (failed.errorMessage() == null ? failed.errorCode() : failed.errorMessage()),
+          failed.errorCode());
     }
     String expectedScope =
         version.scriptOnly() ? version.scriptPatchVersion() : String.valueOf(version.id());
+    Long expectedBaseVersionId = version.scriptOnly() ? version.baseVersionId() : null;
     participantDigests.forEach(
         digest -> {
-          if (!expectedScope.equals(digest.scopeValue())) {
+          if (!expectedScope.equals(digest.scopeValue())
+              || !Objects.equals(expectedBaseVersionId, digest.baseVersionId())) {
             throw new PublishGateFailureException(
                 PublishGateFailureCode.PARTICIPANT_SCOPE_MISMATCH,
                 "publish gate failed: wrong scope from " + digest.participantKey());
@@ -184,7 +187,7 @@ public class PublishGateServiceImpl implements PublishGateService {
           automationScriptingClient.getDraftDesignDigestForVersion(binding);
       case GAME_DESIGN_CONTROL_PLANE ->
           toParticipantDigest(
-              participantKey, controlPlaneDigestService.getDigestForVersion(version));
+              participantKey, version, controlPlaneDigestService.getDigestForVersion(version));
     };
   }
 
@@ -204,21 +207,25 @@ public class PublishGateServiceImpl implements PublishGateService {
           automationScriptingClient.getDraftDesignDigestForScriptPatch(binding);
       case GAME_DESIGN_CONTROL_PLANE ->
           toParticipantDigest(
-              participantKey, controlPlaneDigestService.getDigestForScriptPatch(version));
+              participantKey, version, controlPlaneDigestService.getDigestForScriptPatch(version));
       default ->
           failedObservation(
               participantKey,
               version.scriptPatchVersion(),
+              version.baseVersionId(),
               "UNSUPPORTED_SCOPE",
               "participant is not part of the script-patch digest matrix");
     };
   }
 
   private PublishParticipantDigestDto toParticipantDigest(
-      PublishParticipantKey participantKey, DesignControlPlaneDigestDto digest) {
+      PublishParticipantKey participantKey,
+      VersionDto version,
+      DesignControlPlaneDigestDto digest) {
     return new PublishParticipantDigestDto(
         participantKey.name(),
         digest.scopeValue(),
+        version.scriptOnly() ? version.baseVersionId() : null,
         digest.appliedCommitId(),
         digest.contentDigest(),
         digest.digestSchemaVersion(),
@@ -229,9 +236,17 @@ public class PublishGateServiceImpl implements PublishGateService {
   private PublishParticipantDigestDto failedObservation(
       PublishParticipantKey participantKey,
       String scopeValue,
+      Long baseVersionId,
       String errorCode,
       String errorMessage) {
     return new PublishParticipantDigestDto(
-        participantKey.name(), scopeValue, null, null, null, errorCode, errorMessage);
+        participantKey.name(),
+        scopeValue,
+        baseVersionId,
+        null,
+        null,
+        null,
+        errorCode,
+        errorMessage);
   }
 }

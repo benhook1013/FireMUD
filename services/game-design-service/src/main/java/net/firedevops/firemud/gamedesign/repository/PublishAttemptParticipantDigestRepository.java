@@ -24,6 +24,8 @@ public class PublishAttemptParticipantDigestRepository {
   private static final Field<String> PARTICIPANT_KEY =
       DSL.field(DSL.name("participant_key"), String.class);
   private static final Field<String> SCOPE_VALUE = DSL.field(DSL.name("scope_value"), String.class);
+  private static final Field<Long> BASE_VERSION_ID =
+      DSL.field(DSL.name("base_version_id"), Long.class);
   private static final Field<String> APPLIED_COMMIT_ID =
       DSL.field(DSL.name("applied_commit_id"), String.class);
   private static final Field<String> CONTENT_DIGEST =
@@ -51,6 +53,7 @@ public class PublishAttemptParticipantDigestRepository {
               .set(PUBLISH_ATTEMPT_ID, digest.getPublishAttemptId())
               .set(PARTICIPANT_KEY, digest.getParticipantKey().name())
               .set(SCOPE_VALUE, digest.getScopeValue())
+              .set(BASE_VERSION_ID, digest.getBaseVersionId())
               .set(APPLIED_COMMIT_ID, digest.getAppliedCommitId())
               .set(CONTENT_DIGEST, digest.getContentDigest())
               .set(DIGEST_SCHEMA_VERSION, digest.getDigestSchemaVersion())
@@ -65,6 +68,7 @@ public class PublishAttemptParticipantDigestRepository {
         .set(PUBLISH_ATTEMPT_ID, digest.getPublishAttemptId())
         .set(PARTICIPANT_KEY, digest.getParticipantKey().name())
         .set(SCOPE_VALUE, digest.getScopeValue())
+        .set(BASE_VERSION_ID, digest.getBaseVersionId())
         .set(APPLIED_COMMIT_ID, digest.getAppliedCommitId())
         .set(CONTENT_DIGEST, digest.getContentDigest())
         .set(DIGEST_SCHEMA_VERSION, digest.getDigestSchemaVersion())
@@ -91,6 +95,7 @@ public class PublishAttemptParticipantDigestRepository {
     digest.setParticipantKey(
         participantKey == null ? null : PublishParticipantKey.valueOf(participantKey));
     digest.setScopeValue(record.get(SCOPE_VALUE));
+    digest.setBaseVersionId(record.get(BASE_VERSION_ID));
     digest.setAppliedCommitId(record.get(APPLIED_COMMIT_ID));
     digest.setContentDigest(record.get(CONTENT_DIGEST));
     digest.setDigestSchemaVersion(record.get(DIGEST_SCHEMA_VERSION));

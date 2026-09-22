@@ -298,7 +298,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               request.getTenantId(), request.getScriptPatchVersion());
       DesignControlPlaneDigestDto digest =
           versionService.getDesignControlPlaneDigestForScriptPatch(
-              request.getTenantId(), request.getScriptPatchVersion());
+              request.getTenantId(), request.getScriptPatchVersion(), version.baseVersionId());
       builder.setScriptPatch(toProtoPublishedScriptPatch(version, digest));
     } catch (AdminAuthorizationException ex) {
       builder.setError(
@@ -602,8 +602,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
           request.getScopeCase() == GetDesignControlPlaneDigestRequest.ScopeCase.VERSION_ID
               ? versionService.getDesignControlPlaneDigest(
                   request.getTenantId(), request.getVersionId())
-              : versionService.getDesignControlPlaneDigestForScriptPatch(
-                  request.getTenantId(), request.getScriptPatchVersion());
+              : getScriptPatchControlPlaneDigest(request);
       builder.setDigest(
           net.firedevops.firemud.gamedesign.v1.DesignControlPlaneDigest.newBuilder()
               .setTenantId(digest.tenantId())
@@ -634,6 +633,15 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     }
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();
+  }
+
+  private DesignControlPlaneDigestDto getScriptPatchControlPlaneDigest(
+      GetDesignControlPlaneDigestRequest request) {
+    if (request.getBaseVersionId() <= 0L) {
+      throw new IllegalArgumentException("INVALID_ARGUMENT: baseVersionId must be positive");
+    }
+    return versionService.getDesignControlPlaneDigestForScriptPatch(
+        request.getTenantId(), request.getScriptPatchVersion(), request.getBaseVersionId());
   }
 
   @Override

@@ -44,6 +44,8 @@ class RecordedParticipantDigestServiceImplTest {
             "tenant-1",
             PublishType.FULL_VERSION,
             PublishParticipantKey.GAME_DESIGN_CONTROL_PLANE,
+            null,
+            "7",
             "version:7"))
         .thenReturn(Optional.of(recorded));
 
@@ -73,6 +75,8 @@ class RecordedParticipantDigestServiceImplTest {
             "tenant-1",
             PublishType.FULL_VERSION,
             PublishParticipantKey.GAME_DESIGN_CONTROL_PLANE,
+            null,
+            "7",
             "version:7"))
         .thenReturn(Optional.empty());
     when(repository.save(any(RecordedParticipantDigest.class)))
@@ -87,5 +91,67 @@ class RecordedParticipantDigestServiceImplTest {
                 "GAME_DESIGN_CONTROL_PLANE", "7", "version:7", "digest-1", 1, null, null)));
 
     org.mockito.Mockito.verify(repository).save(any(RecordedParticipantDigest.class));
+  }
+
+  @Test
+  void patchDigestLookupIncludesBaseScopeAndDoesNotReuseAnotherBase() {
+    when(repository.findByTenantIdAndPublishTypeAndParticipantKeyAndAppliedCommitId(
+            "tenant-1",
+            PublishType.SCRIPT_PATCH,
+            PublishParticipantKey.AUTOMATION_SCRIPTING,
+            7L,
+            "patch-1",
+            "commit-1"))
+        .thenReturn(Optional.empty());
+
+    service.assertMatchesRecordedDigests(
+        "tenant-1",
+        PublishType.SCRIPT_PATCH,
+        List.of(
+            new PublishParticipantDigestDto(
+                "AUTOMATION_SCRIPTING", "patch-1", 7L, "commit-1", "digest-1", 4, null, null)));
+
+    org.mockito.Mockito.verify(repository)
+        .findByTenantIdAndPublishTypeAndParticipantKeyAndAppliedCommitId(
+            "tenant-1",
+            PublishType.SCRIPT_PATCH,
+            PublishParticipantKey.AUTOMATION_SCRIPTING,
+            7L,
+            "patch-1",
+            "commit-1");
+  }
+
+  @Test
+  void patchDigestRetriesReuseTheExactBasePatchAndCommitScope() {
+    RecordedParticipantDigest recorded = new RecordedParticipantDigest();
+    recorded.setBaseVersionId(7L);
+    recorded.setScopeValue("patch-1");
+    recorded.setAppliedCommitId("commit-1");
+    recorded.setContentDigest("digest-1");
+    recorded.setDigestSchemaVersion(4);
+    when(repository.findByTenantIdAndPublishTypeAndParticipantKeyAndAppliedCommitId(
+            "tenant-1",
+            PublishType.SCRIPT_PATCH,
+            PublishParticipantKey.AUTOMATION_SCRIPTING,
+            7L,
+            "patch-1",
+            "commit-1"))
+        .thenReturn(Optional.of(recorded));
+
+    service.assertMatchesRecordedDigests(
+        "tenant-1",
+        PublishType.SCRIPT_PATCH,
+        List.of(
+            new PublishParticipantDigestDto(
+                "AUTOMATION_SCRIPTING", "patch-1", 7L, "commit-1", "digest-1", 4, null, null)));
+
+    org.mockito.Mockito.verify(repository)
+        .findByTenantIdAndPublishTypeAndParticipantKeyAndAppliedCommitId(
+            "tenant-1",
+            PublishType.SCRIPT_PATCH,
+            PublishParticipantKey.AUTOMATION_SCRIPTING,
+            7L,
+            "patch-1",
+            "commit-1");
   }
 }

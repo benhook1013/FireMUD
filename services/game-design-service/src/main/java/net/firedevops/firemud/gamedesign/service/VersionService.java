@@ -69,7 +69,7 @@ public interface VersionService {
   DesignControlPlaneDigestDto getDesignControlPlaneDigest(String tenantId, Long versionId);
 
   DesignControlPlaneDigestDto getDesignControlPlaneDigestForScriptPatch(
-      String tenantId, String scriptPatchVersion);
+      String tenantId, String scriptPatchVersion, Long baseVersionId);
 
   PublishedReleaseBundleDto getPublishedReleaseBundle(String tenantId, long versionId);
 
