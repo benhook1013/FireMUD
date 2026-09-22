@@ -2057,6 +2057,90 @@ require_absent(
     ],
 )
 
+automation_base = (root / "k8s/base/automation-scripting-service.yaml").read_text(encoding="utf-8")
+game_design_base = (root / "k8s/base/game-design-service.yaml").read_text(encoding="utf-8")
+automation_helm = (root / "k8s/helm/firemud/templates/apps.yaml").read_text(encoding="utf-8")
+automation_runtime = (
+    root / "design/architecture/microservices/automation-scripting-service/runtime-and-data.md"
+).read_text(encoding="utf-8")
+game_design_version_control = (
+    root / "design/architecture/microservices/game-design-service/version-control.md"
+).read_text(encoding="utf-8")
+deployment_environments = (
+    root / "design/architecture/infrastructure/deployment-environments.md"
+).read_text(encoding="utf-8")
+
+if not re.search(
+    r"(?ms)^spec:\n  replicas: 2\n.*?^  strategy:\n    type: Recreate\n  selector:",
+    automation_base,
+):
+    raise SystemExit(
+        "k8s/base/automation-scripting-service.yaml: Automation Deployment must use Recreate"
+    )
+if not re.search(
+    r"(?ms)^spec:\n  replicas: 2\n.*?^  strategy:\n    type: Recreate\n  selector:",
+    game_design_base,
+):
+    raise SystemExit(
+        "k8s/base/game-design-service.yaml: Game Design Deployment must use Recreate"
+    )
+if not re.search(
+    r'(?ms)^\s*\{\{- if or \(eq \$service\.name "tcp-proxy-service"\) '
+    r'\(eq \$service\.name "automation-scripting-service"\) '
+    r'\(eq \$service\.name "game-design-service"\) \}\}.*?'
+    r'^\s+strategy:\n\s+type: Recreate\n\s+\{\{- end \}\}$',
+    automation_helm,
+):
+    raise SystemExit(
+        "k8s/helm/firemud/templates/apps.yaml: Automation, Game Design, and TCP Proxy Recreate gate drifted"
+    )
+require_contains(
+    "k8s/helm/firemud/templates/apps.yaml",
+    [
+        '{{- if or (eq $service.name "tcp-proxy-service") (eq $service.name "automation-scripting-service") (eq $service.name "game-design-service") }}',
+        "  strategy:\n    type: Recreate",
+        "# A TCP Proxy bridge-identity withdrawal must not leave an old pod serving",
+        "# V3 changes the persisted plugin lifecycle fence; executor generations",
+        "# V26 changes the persisted publication participant scope; old and new",
+    ],
+)
+for path, text in (
+    (
+        "design/architecture/microservices/automation-scripting-service/runtime-and-data.md",
+        automation_runtime,
+    ),
+    (
+        "design/architecture/infrastructure/deployment-environments.md",
+        deployment_environments,
+    ),
+):
+    for term in (
+        "coordinated/recreate",
+        "roll-forward-only",
+        "pre-V3 binary must not be rolled back",
+    ):
+        if term not in text:
+            raise SystemExit(f"{path}: missing Automation V3 rollout-compatibility term {term!r}")
+if "strategy.type: Recreate" not in deployment_environments:
+    raise SystemExit("deployment-environments.md: Automation Recreate strategy drifted")
+for path, text in (
+    (
+        "design/architecture/microservices/game-design-service/version-control.md",
+        game_design_version_control,
+    ),
+    (
+        "design/architecture/infrastructure/deployment-environments.md",
+        deployment_environments,
+    ),
+):
+    for term in (
+        "coordinated/recreate",
+        "roll-forward-only",
+        "pre-V26 binary must not be rolled back",
+    ):
+        if term not in text:
+            raise SystemExit(f"{path}: missing Game Design V26 rollout-compatibility term {term!r}")
+
 print("architecture doc contracts passed")
 PY
 
