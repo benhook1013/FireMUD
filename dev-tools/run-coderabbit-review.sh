@@ -87,7 +87,7 @@ done
   exit 2
 }
 
-for dependency in git gh jq coderabbit flock; do
+for dependency in git gh jq coderabbit flock python3; do
   command -v "$dependency" >/dev/null 2>&1 || {
     printf 'error: required executable not found: %s\n' "$dependency" >&2
     exit 1
@@ -289,14 +289,24 @@ printf 'checkpoint_marker=<!-- firemud-cli-run: %s -->\n' "$run_name"
 printf 'report_command=python3 dev-tools/validation/report-pr-review-checkpoints.py --repo %s --pr %s\n' "$repo" "$pr_number"
 
 set +e
+review_started_ns="$(python3 -c 'import time; print(time.monotonic_ns())')"
 (
   cd "$candidate_worktree"
   coderabbit review --agent --committed --base "$pinned_base_ref" \
     >"$log_dir/stdout" 2>"$log_dir/stderr"
 )
 cli_status=$?
+review_finished_ns="$(python3 -c 'import time; print(time.monotonic_ns())')"
 set -e
+[[ "$review_started_ns" =~ ^[0-9]+$ && "$review_finished_ns" =~ ^[0-9]+$ && "$review_finished_ns" -ge "$review_started_ns" ]] ||
+  die "could not measure CodeRabbit review process duration"
+review_duration_seconds="$(( (review_finished_ns - review_started_ns + 999999999) / 1000000000 ))"
 printf '%s\n' "$cli_status" >"$log_dir/exit-status"
+printf '%s\n' "$review_duration_seconds" >"$log_dir/review-duration-seconds"
+printf 'review_duration_seconds=%s\n' "$review_duration_seconds" >>"$log_dir/metadata"
+printf 'review_duration_seconds=%s\n' "$review_duration_seconds"
+printf 'checkpoint_duration=%ss\n' "$review_duration_seconds"
+printf 'checkpoint_duration_marker=<!-- firemud-review-duration-seconds: %s -->\n' "$review_duration_seconds"
 
 cat "$log_dir/stdout"
 if [[ -s "$log_dir/stderr" ]]; then

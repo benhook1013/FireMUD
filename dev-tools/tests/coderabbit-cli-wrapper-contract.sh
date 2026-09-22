@@ -382,6 +382,11 @@ set -e
 [[ -f "$RUN_LOG_DIR/metadata" && -f "$RUN_LOG_DIR/argv" && -f "$RUN_LOG_DIR/stdout" ]] || exit 1
 grep -q "^run_id=$RUN_ID$" "$RUN_LOG_DIR/metadata" || exit 1
 [[ "$(cat "$RUN_LOG_DIR/exit-status")" == 0 ]] || exit 1
+review_duration_seconds="$(sed -n 's/^review_duration_seconds=//p' "$RUN_LOG_DIR/metadata")"
+[[ "$review_duration_seconds" =~ ^[0-9]+$ ]] || exit 1
+[[ "$(cat "$RUN_LOG_DIR/review-duration-seconds")" == "$review_duration_seconds" ]] || exit 1
+[[ "$(sed -n 's/^checkpoint_duration=//p' "$TMP_DIR/output")" == "${review_duration_seconds}s" ]] || exit 1
+[[ "$(sed -n 's/^checkpoint_duration_marker=//p' "$TMP_DIR/output")" == "<!-- firemud-review-duration-seconds: $review_duration_seconds -->" ]] || exit 1
 candidate_path="$(sed -n 's/^candidate_worktree=//p' "$RUN_LOG_DIR/metadata")"
 [[ ! -e "$candidate_path" ]] || exit 1
 pinned_ref="$(sed -n 's/^pinned_base_ref=//p' "$RUN_LOG_DIR/metadata")"
@@ -543,6 +548,7 @@ grep -q '^candidate_sha=' "$BLOCK_OUTPUT" || {
   exit 1
 }
 grep -q '^log_dir=' "$BLOCK_OUTPUT" || exit 1
+! grep -q '^checkpoint_duration=' "$BLOCK_OUTPUT" || exit 1
 invocations_while_blocked="$(wc -l <"$INVOCATIONS_FILE")"
 set +e
 run_wrapper success 0 normal "$TMP_DIR/concurrent-output" "$TMP_DIR/concurrent-error"
@@ -563,6 +569,8 @@ blocked_candidate_path="$(sed -n 's/^candidate_worktree=//p' "$blocked_log_dir/m
 [[ ! -e "$blocked_candidate_path" ]] || exit 1
 blocked_pinned_ref="$(sed -n 's/^pinned_base_ref=//p' "$blocked_log_dir/metadata")"
 ! git -C "$REPO" show-ref --verify --quiet "$blocked_pinned_ref" || exit 1
+[[ "$(cat "$blocked_log_dir/review-duration-seconds")" =~ ^[0-9]+$ ]] || exit 1
+grep -q '^checkpoint_duration_marker=<!-- firemud-review-duration-seconds: [0-9][0-9]* -->$' "$BLOCK_OUTPUT" || exit 1
 
 set +e
 run_wrapper failure 0
@@ -572,6 +580,9 @@ set -e
 [[ "$RUN_OUTPUT" == *"mock review stdout"* ]] || exit 1
 [[ "$RUN_ERROR" == *"mock review stderr"* ]] || exit 1
 [[ "$(cat "$RUN_LOG_DIR/exit-status")" == 23 ]] || exit 1
+failure_duration="$(cat "$RUN_LOG_DIR/review-duration-seconds")"
+[[ "$failure_duration" =~ ^[0-9]+$ ]] || exit 1
+grep -q "^checkpoint_duration_marker=<!-- firemud-review-duration-seconds: $failure_duration -->$" "$TMP_DIR/output" || exit 1
 failure_candidate_path="$(sed -n 's/^candidate_worktree=//p' "$RUN_LOG_DIR/metadata")"
 [[ ! -e "$failure_candidate_path" ]] || exit 1
 failure_pinned_ref="$(sed -n 's/^pinned_base_ref=//p' "$RUN_LOG_DIR/metadata")"

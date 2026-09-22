@@ -960,6 +960,15 @@ jobs:
           fi
           echo "percent=$PERCENT" >> "$GITHUB_OUTPUT"
 
+      - name: 🔎 Verify Combined Unit and Integration Coverage
+        if: ${{ matrix.module == 'common-saga' }}
+        run: |
+          python3 dev-tools/validation/validate-jacoco-combined-report.py \
+            --report services/common-saga/build/reports/jacoco/test/jacocoTestReport.xml \
+            --require-covered-class net/firedevops/firemud/common/saga/SagaRunner \
+            --require-covered-class net/firedevops/firemud/common/saga/persistence/SagaInstanceRepository \
+            --require-covered-method net/firedevops/firemud/common/saga/persistence/SagaInstanceRepository#findAll
+
       - name: 📤 Upload Coverage Report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:

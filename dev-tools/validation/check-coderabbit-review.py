@@ -158,6 +158,7 @@ class TriggerState:
     trigger_command: str | None = None
     age_seconds: int | None = None
     manual_adjudication_required: bool = False
+    duration_seconds: int | None = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -1909,6 +1910,11 @@ def trigger_state(
         "noop": "CodeRabbit acknowledged the request without reviewing commits",
         "ambiguous": "the substantive response does not identify the captured head",
     }[state]
+    duration_seconds = None
+    if state not in {"active", "ambiguous"}:
+        elapsed = (response_dt - trigger_dt).total_seconds()
+        if elapsed >= 0:
+            duration_seconds = math.ceil(elapsed)
     return TriggerState(
         state,
         state != "active",
@@ -1920,6 +1926,7 @@ def trigger_state(
         cooldown_until=cooldown,
         reason=reason,
         age_seconds=age_seconds(trigger_dt),
+        duration_seconds=duration_seconds,
     )
 
 
@@ -2368,6 +2375,12 @@ def emit_trigger_text(state: TriggerState) -> None:
         elif value is None:
             value = "none"
         print(f"trigger_{key}={value}")
+    if state.state == "completed" and state.duration_seconds is not None:
+        print(f"checkpoint_duration={state.duration_seconds}s")
+        print(
+            "checkpoint_duration_marker="
+            f"<!-- firemud-review-duration-seconds: {state.duration_seconds} -->"
+        )
 
 
 def emit_text(summary: ReviewSummary) -> None:

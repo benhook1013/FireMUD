@@ -24,7 +24,8 @@ CHECKPOINT_HEADING = re.compile(
 )
 CHECKPOINT_SUFFIX = re.compile(
     r"^(?: · (?P<sha>`?[0-9a-fA-F]{7,40}`?))?"
-    r"(?: · (?P<files>\d+) files)?$"
+    r"(?: · (?P<files>\d+) files)?"
+    r"(?: · (?P<duration>\d+)s)?$"
 )
 CHECKPOINT_CANDIDATE = re.compile(r"^(?:\*\*)?(?:Correction — )?(?:Hosted|CLI):")
 SCOPE_CHANGE = re.compile(r"^\*\*Review scope changed:\*\* (?P<description>.+)$")
@@ -35,6 +36,9 @@ REPO_NAME = re.compile(r"^[^/\s]+/[^/\s]+$")
 RUN_MARKER = re.compile(r"^<!-- firemud-cli-run: (?P<run_id>run\.[A-Za-z0-9]{1,32}) -->$")
 RUN_ID = re.compile(r"^run\.[A-Za-z0-9]{1,32}$")
 HOSTED_MARKER = re.compile(r"^<!-- firemud-hosted-review: (?P<review_id>[1-9][0-9]*) -->$")
+DURATION_MARKER = re.compile(
+    r"^<!-- firemud-review-duration-seconds: (?P<seconds>0|[1-9][0-9]*) -->$"
+)
 DETAILS_TAG = re.compile(r"</?details\b[^>]*>", re.IGNORECASE)
 HTML_COMMENT = re.compile(r"<!--.*?-->\s*", re.DOTALL)
 CLI_AGENT_BOILERPLATE = re.compile(
@@ -63,6 +67,7 @@ class Checkpoint:
     updated_at: str | None
     run_id: str | None
     hosted_review_id: int | None
+    duration_seconds: int | None = None
 
     def as_json(self) -> dict[str, Any]:
         result: dict[str, Any] = {
@@ -81,6 +86,8 @@ class Checkpoint:
             result["updated_at"] = self.updated_at
         if self.hosted_review_id is not None:
             result["hosted_review_id"] = self.hosted_review_id
+        if self.duration_seconds is not None:
+            result["duration_seconds"] = self.duration_seconds
         return result
 
 
@@ -177,6 +184,64 @@ def _comment_hosted_review_id(body: str) -> int | None:
             return None
         marker_ids.append(int(match.group("review_id")))
     return marker_ids[0] if len(marker_ids) == 1 else None
+
+
+def _comment_duration_seconds(body: str) -> int | None:
+    durations: list[int] = []
+    for line in body.splitlines()[1:]:
+        stripped = line.strip()
+        if not stripped.startswith("<!-- firemud-review-duration-seconds:"):
+            continue
+        match = DURATION_MARKER.fullmatch(stripped)
+        if match is None:
+            return None
+        durations.append(int(match.group("seconds")))
+    return durations[0] if len(durations) == 1 else None
+
+
+def duration_marker_audit(comments: list[dict[str, Any]]) -> dict[str, int]:
+    malformed = 0
+    duplicate = 0
+    missing = 0
+    mismatch = 0
+    for position, comment in enumerate(comments, 1):
+        body, _, _, _, first_line = _comment_fields(comment, position)
+        if first_line is None:
+            continue
+        heading = CHECKPOINT_HEADING.fullmatch(first_line)
+        if heading is None:
+            continue
+        suffix_text = heading.group("suffix").split(r"\n", 1)[0]
+        suffix = CHECKPOINT_SUFFIX.fullmatch(suffix_text)
+        if suffix is None:
+            continue
+        visible = suffix.group("duration")
+        valid: list[int] = []
+        malformed_in_comment = False
+        for line in body.splitlines()[1:]:
+            stripped = line.strip()
+            if not stripped.startswith("<!-- firemud-review-duration-seconds:"):
+                continue
+            marker = DURATION_MARKER.fullmatch(stripped)
+            if marker is None:
+                malformed_in_comment = True
+                malformed += 1
+            else:
+                valid.append(int(marker.group("seconds")))
+        if len(valid) > 1:
+            duplicate += 1
+        if visible is None and not valid and not malformed_in_comment:
+            continue
+        if visible is None or (not valid and not malformed_in_comment):
+            missing += 1
+        elif len(valid) == 1 and not malformed_in_comment and int(visible) != valid[0]:
+            mismatch += 1
+    return {
+        "malformed_count": malformed,
+        "duplicate_count": duplicate,
+        "missing_count": missing,
+        "mismatch_count": mismatch,
+    }
 
 
 def _is_parsed_hosted_checkpoint(body: str) -> bool:
@@ -291,6 +356,15 @@ def parse_checkpoint_comments(
         if sha is not None:
             sha = sha.strip("`")
         file_count = suffix.group("files")
+        visible_duration = suffix.group("duration")
+        marker_duration = _comment_duration_seconds(body)
+        duration_seconds = (
+            marker_duration
+            if visible_duration is not None
+            and marker_duration is not None
+            and int(visible_duration) == marker_duration
+            else None
+        )
         checkpoints.append(
             Checkpoint(
                 comment_id=comment_id,
@@ -304,6 +378,7 @@ def parse_checkpoint_comments(
                 updated_at=(updated_at if updated_at is not None and updated_at != created_at else None),
                 run_id=_comment_run_id(body),
                 hosted_review_id=_comment_hosted_review_id(body),
+                duration_seconds=duration_seconds,
             )
         )
     return checkpoints, unparsed_candidates
@@ -378,6 +453,7 @@ def collect_report(
     checkpoints, unparsed_candidates = parse_checkpoint_comments(comments)
     scope_changes = parse_scope_changes(comments)
     marker_audit = hosted_marker_audit(comments)
+    duration_audit = duration_marker_audit(comments)
     checkpoints.sort(key=lambda checkpoint: checkpoint.created_at)
     scope_changes.sort(key=lambda change: change.created_at)
     returned = checkpoints if limit == 0 else checkpoints[-limit:]
@@ -385,6 +461,26 @@ def collect_report(
     warnings = (
         [f"{unlinked_cli_count} CLI checkpoint comment(s) lack a firemud-cli-run marker"] if unlinked_cli_count else []
     )
+    if duration_audit["malformed_count"]:
+        warnings.append(
+            f"{duration_audit['malformed_count']} malformed firemud-review-duration-seconds "
+            "marker(s) were not used"
+        )
+    if duration_audit["duplicate_count"]:
+        warnings.append(
+            f"{duration_audit['duplicate_count']} checkpoint comment(s) contain duplicate "
+            "firemud-review-duration-seconds markers"
+        )
+    if duration_audit["missing_count"]:
+        warnings.append(
+            f"{duration_audit['missing_count']} checkpoint comment(s) have incomplete visible/hidden "
+            "duration evidence"
+        )
+    if duration_audit["mismatch_count"]:
+        warnings.append(
+            f"{duration_audit['mismatch_count']} checkpoint comment(s) have mismatched visible/hidden "
+            "duration evidence"
+        )
     hosted_review_checkpoint: dict[str, Any] = {
         "available": False,
         "completed_count": None,
@@ -857,6 +953,7 @@ def _capture_round(
         "raw_found": checkpoint.raw_found,
         "accepted": checkpoint.accepted,
         "file_count": checkpoint.file_count,
+        "duration_seconds": checkpoint.duration_seconds,
         "run_id": checkpoint.run_id,
         "status": "linked",
         "message": (
@@ -1089,6 +1186,21 @@ def load_capture(checkpoint: Checkpoint, repo: str, pr_number: int) -> CaptureDa
         raise CaptureInvalid("linked capture file count does not match metadata")
     if checkpoint.file_count is not None and checkpoint.file_count != candidate_files:
         raise CaptureInvalid("checkpoint file count does not match linked capture metadata")
+    if checkpoint.duration_seconds is not None:
+        recorded_duration = metadata.get("review_duration_seconds")
+        if recorded_duration is None or not recorded_duration.isdigit():
+            raise CaptureInvalid("linked capture metadata has no valid review duration")
+        duration_path = _contained_file(run_dir, "review-duration-seconds")
+        assert duration_path is not None
+        try:
+            artifact_duration = duration_path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise CaptureUnavailable("linked capture review duration cannot be read") from exc
+        if (
+            int(recorded_duration) != checkpoint.duration_seconds
+            or artifact_duration != recorded_duration
+        ):
+            raise CaptureInvalid("checkpoint duration does not match linked capture metadata")
     decision_path = _contained_file(run_dir, "decisions.tsv", required=False)
     if decision_path is not None:
         decisions, unlinked, present = _read_decisions(decision_path, list(range(1, len(findings) + 1)))
@@ -1222,6 +1334,7 @@ def _collect_cli_round(
         "raw_found": checkpoint.raw_found,
         "accepted": checkpoint.accepted,
         "file_count": checkpoint.file_count,
+        "duration_seconds": checkpoint.duration_seconds,
         "run_id": checkpoint.run_id,
         "findings": [],
     }
@@ -1413,7 +1526,7 @@ def emit_text(report: dict[str, Any]) -> None:
             f"marked={hosted_review_checkpoint['marked_count']} "
             f"missing_checkpoints={hosted_review_checkpoint['missing_count']}"
         )
-    print("comment_id posted_at_nz type found/accepted sha files run_id hosted_review_id")
+    print("comment_id posted_at_nz type found/accepted sha files duration_seconds run_id hosted_review_id")
     for item in report["timeline"]:
         if item["kind"] == "scope_change":
             print(
@@ -1433,7 +1546,8 @@ def emit_text(report: dict[str, Any]) -> None:
             f"{format_human_timestamp(checkpoint['created_at'])} {checkpoint_type} "
             f"{checkpoint['raw_found']}/{checkpoint['accepted']} "
             f"{format_marker(checkpoint['reviewed_sha'])} "
-            f"{format_marker(checkpoint['file_count'])} {run_id} "
+            f"{format_marker(checkpoint['file_count'])} "
+            f"{format_marker(checkpoint.get('duration_seconds'))} {run_id} "
             f"{format_marker(checkpoint.get('hosted_review_id'))}"
         )
 
