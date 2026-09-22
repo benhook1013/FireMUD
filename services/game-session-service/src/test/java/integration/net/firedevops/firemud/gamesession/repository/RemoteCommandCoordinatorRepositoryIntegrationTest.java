@@ -95,7 +95,7 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
     duplicate.setCommandId("shared-command");
     assertThatThrownBy(() -> coordinatorRepository.save(duplicate))
         .isInstanceOf(org.jooq.exception.DataAccessException.class)
-        .hasMessageContaining("remote_command_coordinator_tenant_origin_instance_command_id");
+        .hasMessageContaining("idx_remote_command_coordinator_tenant_origin_instance_command_id");
   }
 
   @Test
