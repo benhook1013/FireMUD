@@ -41,7 +41,8 @@ class V28__quarantine_legacy_unattested_full_versionsTest {
     try (var stream =
         getClass()
             .getClassLoader()
-            .getResourceAsStream("db/migration/V28__quarantine_legacy_unattested_full_versions.sql")) {
+            .getResourceAsStream(
+                "db/migration/V28__quarantine_legacy_unattested_full_versions.sql")) {
       assertThat(stream).isNotNull();
       return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
     }
