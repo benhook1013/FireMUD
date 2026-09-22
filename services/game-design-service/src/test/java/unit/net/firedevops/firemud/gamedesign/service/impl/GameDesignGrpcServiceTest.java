@@ -204,7 +204,7 @@ class GameDesignGrpcServiceTest {
 
   @Test
   void getPublishedScriptPatchVersionReturnsPublicationReadModel() {
-    Mockito.when(versionService.getPublishedScriptPatchVersion("tenant-1", "patch-1"))
+    Mockito.when(versionService.getPublishedScriptPatchVersion("tenant-1", 7L, "patch-1"))
         .thenReturn(
             new VersionDto(
                 9L,
@@ -230,6 +230,7 @@ class GameDesignGrpcServiceTest {
           GetPublishedScriptPatchVersionRequest.newBuilder()
               .setTenantId("tenant-1")
               .setScriptPatchVersion("patch-1")
+              .setBaseVersionId(7L)
               .build(),
           observerFor(ref));
     }
@@ -239,6 +240,25 @@ class GameDesignGrpcServiceTest {
     assertEquals(9L, ref.get().getScriptPatch().getVersionId());
     assertEquals(7L, ref.get().getScriptPatch().getBaseVersionId());
     assertEquals("digest-1", ref.get().getScriptPatch().getControlPlaneDigest());
+  }
+
+  @Test
+  void getPublishedScriptPatchVersionRejectsMissingBaseScope() {
+    AtomicReference<GetPublishedScriptPatchVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.getPublishedScriptPatchVersion(
+          GetPublishedScriptPatchVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setScriptPatchVersion("patch-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    Mockito.verify(versionService, Mockito.never())
+        .getPublishedScriptPatchVersion(
+            Mockito.anyString(), Mockito.anyLong(), Mockito.anyString());
   }
 
   @Test

@@ -138,7 +138,10 @@ final class GameSessionRuntimeControlPlaneReadService {
         .setRegionEpoch(runtimeStatus.getRegionEpoch())
         .addAllCurrentAdmissionPointers(routingProjection.currentAdmissionPointers())
         .setPublication(
-            scriptPatchPublicationLink(instance.getTenantId(), instance.getScriptPatchVersion()))
+            scriptPatchPublicationLink(
+                instance.getTenantId(),
+                instance.getScriptPatchVersion(),
+                runtimeVersionId(instance)))
         .build();
   }
 
@@ -381,13 +384,13 @@ final class GameSessionRuntimeControlPlaneReadService {
   }
 
   private ScriptPatchPublicationLink scriptPatchPublicationLink(
-      long tenantId, String scriptPatchVersion) {
+      long tenantId, String scriptPatchVersion, Long baseVersionId) {
     String normalizedScriptPatchVersion = scriptPatchVersion == null ? "" : scriptPatchVersion;
     GetPublishedScriptPatchVersionResponse response =
         gameDesignClient == null
             ? GetPublishedScriptPatchVersionResponse.getDefaultInstance()
             : gameDesignClient.getPublishedScriptPatchVersion(
-                tenantId, normalizedScriptPatchVersion);
+                tenantId, normalizedScriptPatchVersion, baseVersionId == null ? 0L : baseVersionId);
     if (response.hasError() && !response.getError().getCode().isBlank()) {
       return ScriptPatchPublicationLink.newBuilder()
           .setScriptPatchVersion(normalizedScriptPatchVersion)
@@ -406,6 +409,21 @@ final class GameSessionRuntimeControlPlaneReadService {
         .setPublicationState(response.getScriptPatch().getPublicationState())
         .setLastChangedAtMs(response.getScriptPatch().getLastChangedAtMs())
         .build();
+  }
+
+  private Long runtimeVersionId(GameInstance instance) {
+    if (instance.getVersionId() != null && instance.getVersionId() > 0L) {
+      return instance.getVersionId();
+    }
+    if (instance.getRuntimeVersion() == null || instance.getRuntimeVersion().isBlank()) {
+      return null;
+    }
+    try {
+      long parsed = Long.parseLong(instance.getRuntimeVersion());
+      return parsed > 0L ? parsed : null;
+    } catch (NumberFormatException ex) {
+      return null;
+    }
   }
 
   private static long parseGameInstanceId(String gameInstanceId) {

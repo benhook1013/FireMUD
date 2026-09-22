@@ -53,7 +53,6 @@ import net.firedevops.firemud.automationscripting.v1.ScriptScheduleInstanceEntry
 import net.firedevops.firemud.automationscripting.v1.ScriptTimerAuditEventEntry;
 import net.firedevops.firemud.automationscripting.v1.SetAutomationAdmissionModeRequest;
 import net.firedevops.firemud.automationscripting.v1.SetAutomationAdmissionModeResponse;
-import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusResponse;
@@ -558,25 +557,21 @@ final class AutomationPatchControlPlaneService {
 
   private ScriptPatchPublicationLink scriptPatchPublicationLink(
       String tenantId, String scriptPatchVersion) {
-    GetPublishedScriptPatchVersionResponse response =
-        gameDesignControlPlaneClient.getPublishedScriptPatchVersion(tenantId, scriptPatchVersion);
-    if (response.hasError() && !response.getError().getCode().isBlank()) {
+    if (scriptPatchVersion == null || scriptPatchVersion.isBlank()) {
       return ScriptPatchPublicationLink.newBuilder()
-          .setScriptPatchVersion(AutomationControlPlaneSupport.normalize(scriptPatchVersion))
-          .setVersionId(0L)
-          .setBaseVersionId(0L)
-          .setPublicationState(VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED)
-          .setLastChangedAtMs(0L)
-          .setLookupErrorCode(response.getError().getCode())
-          .setLookupErrorMessage(response.getError().getMessage())
+          .setLookupErrorCode("INVALID_ARGUMENT")
+          .setLookupErrorMessage("script_patch_version is required")
           .build();
     }
+    // Pin convergence exposes only the patch identity. It does not carry the immutable base
+    // version tuple, so do not rediscover a base by patch-only lookup.
     return ScriptPatchPublicationLink.newBuilder()
-        .setScriptPatchVersion(response.getScriptPatch().getScriptPatchVersion())
-        .setVersionId(response.getScriptPatch().getVersionId())
-        .setBaseVersionId(response.getScriptPatch().getBaseVersionId())
-        .setPublicationState(response.getScriptPatch().getPublicationState())
-        .setLastChangedAtMs(response.getScriptPatch().getLastChangedAtMs())
+        .setScriptPatchVersion(AutomationControlPlaneSupport.normalize(scriptPatchVersion))
+        .setBaseVersionId(0L)
+        .setPublicationState(VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED)
+        .setLookupErrorCode("INVALID_ARGUMENT")
+        .setLookupErrorMessage(
+            "base_version_id is required for exact script-patch publication lookup")
         .build();
   }
 

@@ -262,6 +262,7 @@ public class VersionPublishCommandServiceImpl {
     Version version = requireAttemptVersion(attempt, request);
     PublicationReadback existingPublication = readPublication(request, attempt);
     if (existingPublication.isComplete()) {
+      assertCommittedBundleMayMarkSuccess(request, existingPublication);
       recordedParticipantDigestService.recordVerifiedDigests(
           request.tenantId(),
           PublishType.FULL_VERSION,
@@ -352,6 +353,7 @@ public class VersionPublishCommandServiceImpl {
             if (!Objects.equals(bundle, currentReadback.bundle())) {
               throw pendingReconciliation("published release bundle changed during reconciliation");
             }
+            assertCommittedBundleMayMarkSuccess(request, currentReadback);
             recordedParticipantDigestService.recordVerifiedDigests(
                 request.tenantId(),
                 PublishType.FULL_VERSION,
@@ -368,6 +370,28 @@ public class VersionPublishCommandServiceImpl {
     } catch (RuntimeException ex) {
       throw pendingReconciliation("committed publication readback could not be reconciled", ex);
     }
+  }
+
+  /**
+   * Revalidates durable publication evidence before it can bless an attempt as successful.
+   *
+   * <p>Readback proves that the bundle and artifact are structurally tied to this attempt, but it
+   * does not by itself prove that the participant matrix, typed scope, digest schema/content, and
+   * recorded baseline still satisfy the canonical publication gate. Reconciliation must apply the
+   * same local contracts as the initial publication path and fail closed for malformed or legacy
+   * evidence.
+   */
+  private void assertCommittedBundleMayMarkSuccess(
+      PublishWorkflowRequest request, PublicationReadback readback) {
+    if (!readback.isComplete() || readback.version() == null || readback.bundle() == null) {
+      throw pendingReconciliation(
+          "published release evidence is incomplete; readback/reconciliation is required");
+    }
+    VersionDto versionDto = versionMapper.toDto(readback.version());
+    PublishedReleaseBundleContract.requireSupportedSchemaForRead(readback.bundle());
+    publishGateService.assertGatePassed(versionDto, readback.bundle().participantDigests());
+    recordedParticipantDigestService.assertMatchesRecordedDigests(
+        request.tenantId(), PublishType.FULL_VERSION, readback.bundle().participantDigests());
   }
 
   private PublishWorkflowSnapshot failDefinitively(
@@ -622,12 +646,12 @@ public class VersionPublishCommandServiceImpl {
     return new PendingReconciliationException(message, cause);
   }
 
-  private static final class PendingReconciliationException extends IllegalStateException {
-    private PendingReconciliationException(String message) {
+  static final class PendingReconciliationException extends IllegalStateException {
+    PendingReconciliationException(String message) {
       super(message);
     }
 
-    private PendingReconciliationException(String message, RuntimeException cause) {
+    PendingReconciliationException(String message, RuntimeException cause) {
       super(message, cause);
     }
   }

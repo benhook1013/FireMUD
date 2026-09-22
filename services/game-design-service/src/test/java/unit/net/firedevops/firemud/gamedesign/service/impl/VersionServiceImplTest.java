@@ -906,28 +906,39 @@ class VersionServiceImplTest {
   }
 
   @Test
-  void getPublishedScriptPatchVersionRejectsUnpublishedVersion() {
-    Version draft = scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.DRAFT, "notes");
-    when(versionRepository.findTopByTenantIdAndScriptPatchVersionOrderByVersionNumberDesc(
-            "tenant-1", "patch-2"))
-        .thenReturn(Optional.of(draft));
+  void getPublishedScriptPatchVersionRejectsMissingBaseScope() {
+    when(versionRepository
+            .findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndPublishedScriptOnly(
+                "tenant-1", 3L, "patch-2"))
+        .thenReturn(List.of());
 
     assertThrows(
         IllegalArgumentException.class,
-        () -> service.getPublishedScriptPatchVersion("tenant-1", "patch-2"));
+        () -> service.getPublishedScriptPatchVersion("tenant-1", 3L, "patch-2"));
   }
 
   @Test
-  void getPublishedScriptPatchVersionRejectsNonScriptVersion() {
-    Version fullVersion = scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.PUBLISHED, "notes");
-    fullVersion.setScriptOnly(false);
-    when(versionRepository.findTopByTenantIdAndScriptPatchVersionOrderByVersionNumberDesc(
-            "tenant-1", "patch-2"))
-        .thenReturn(Optional.of(fullVersion));
+  void getPublishedScriptPatchVersionRejectsAmbiguousBaseScope() {
+    Version first = scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.PUBLISHED, "notes");
+    Version second = scriptPatchVersion(12L, 9, 3L, VersionLifecycleState.PUBLISHED, "notes");
+    when(versionRepository
+            .findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndPublishedScriptOnly(
+                "tenant-1", 3L, "patch-2"))
+        .thenReturn(List.of(first, second));
 
     assertThrows(
         IllegalArgumentException.class,
-        () -> service.getPublishedScriptPatchVersion("tenant-1", "patch-2"));
+        () -> service.getPublishedScriptPatchVersion("tenant-1", 3L, "patch-2"));
+  }
+
+  @Test
+  void getPublishedScriptPatchVersionRejectsNonPositiveBase() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.getPublishedScriptPatchVersion("tenant-1", 0L, "patch-2"));
+    verify(versionRepository, times(0))
+        .findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndPublishedScriptOnly(
+            any(), any(), any());
   }
 
   @Test

@@ -130,7 +130,9 @@ class GameSessionControlPlaneGrpcServiceTest {
 
   private static GameDesignClient gameDesignClient() {
     GameDesignClient client = Mockito.mock(GameDesignClient.class);
-    Mockito.when(client.getPublishedScriptPatchVersion(Mockito.anyLong(), Mockito.anyString()))
+    Mockito.when(
+            client.getPublishedScriptPatchVersion(
+                Mockito.anyLong(), Mockito.anyString(), Mockito.anyLong()))
         .thenAnswer(
             invocation ->
                 GetPublishedScriptPatchVersionResponse.newBuilder()
@@ -1993,6 +1995,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     command.setRegionId("origin-region");
     command.setRegionEpoch(4L);
     command.setScriptPatchVersion("patch-1");
+    command.setAdmittedVersionId(7L);
     command.setPluginId("plugin-1");
     command.setPluginVersionId("plugin-v1");
     command.setOriginSourceKind("GAMEPLAY_EVENT");
@@ -2076,7 +2079,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(remoteFollowupResultRepository.findLatestForCoordinator(coordinator))
         .thenReturn(Optional.of(result));
     GameDesignClient gameDesignClient = Mockito.mock(GameDesignClient.class);
-    Mockito.when(gameDesignClient.getPublishedScriptPatchVersion(1L, "patch-1"))
+    Mockito.when(gameDesignClient.getPublishedScriptPatchVersion(1L, "patch-1", 7L))
         .thenReturn(
             GetPublishedScriptPatchVersionResponse.newBuilder()
                 .setScriptPatch(
@@ -2118,6 +2121,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     GameInstance instance = runningGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
+    instance.setVersionId(7L);
+    instance.setRuntimeVersion("7");
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
     GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
@@ -2481,6 +2486,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     GameInstance instance = runningGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
+    instance.setVersionId(7L);
+    instance.setRuntimeVersion("7");
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
 
     GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService =
@@ -2600,6 +2607,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     GameInstance instance = runningGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
+    instance.setVersionId(7L);
+    instance.setRuntimeVersion("7");
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
 
     GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService =
@@ -2878,6 +2887,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     command.setRegionId("region-origin");
     command.setRegionEpoch(4L);
     command.setScriptPatchVersion("patch-2");
+    command.setAdmittedVersionId(7L);
     command.setPluginId("plugin-2");
     command.setPluginVersionId("plugin-v2");
     command.setOriginSourceKind("SCHEDULE_TIMER");
@@ -2939,7 +2949,7 @@ class GameSessionControlPlaneGrpcServiceTest {
                     1L, 9L, "region-target", 12L, "followup-2"))
         .thenReturn(Optional.of(remoteTargetCommand));
     GameDesignClient gameDesignClient = Mockito.mock(GameDesignClient.class);
-    Mockito.when(gameDesignClient.getPublishedScriptPatchVersion(1L, "patch-2"))
+    Mockito.when(gameDesignClient.getPublishedScriptPatchVersion(1L, "patch-2", 7L))
         .thenReturn(
             GetPublishedScriptPatchVersionResponse.newBuilder()
                 .setScriptPatch(
@@ -2981,6 +2991,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     GameInstance instance = runningGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
+    instance.setVersionId(7L);
+    instance.setRuntimeVersion("7");
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
     GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
@@ -3226,6 +3238,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     command.setRemoteCoordinatorId("coord-2");
     command.setRemoteFollowupId("followup-2");
     command.setScriptPatchVersion("patch-2");
+    command.setAdmittedVersionId(7L);
     command.setExecutionOutcome("APPLIED");
     command.setGameplayResult("APPLIED");
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
@@ -3283,7 +3296,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(remoteFollowupResultRepository.findLatestForCoordinator(coordinator))
         .thenReturn(Optional.of(result));
     GameDesignClient gameDesignClient = Mockito.mock(GameDesignClient.class);
-    Mockito.when(gameDesignClient.getPublishedScriptPatchVersion(1L, "patch-2"))
+    Mockito.when(gameDesignClient.getPublishedScriptPatchVersion(1L, "patch-2", 7L))
         .thenReturn(
             GetPublishedScriptPatchVersionResponse.newBuilder()
                 .setScriptPatch(
@@ -3310,6 +3323,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     GameInstance instance = runningGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
+    instance.setVersionId(7L);
+    instance.setRuntimeVersion("7");
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
     GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);

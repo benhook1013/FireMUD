@@ -79,16 +79,6 @@ public class VersionRepository {
             .fetchOne(this::toEntity));
   }
 
-  public Optional<Version> findTopByTenantIdAndScriptPatchVersionOrderByVersionNumberDesc(
-      String tenantId, String scriptPatchVersion) {
-    return Optional.ofNullable(
-        dsl.selectFrom(VERSION_TABLE)
-            .where(TENANT_ID.eq(tenantId).and(SCRIPT_PATCH_VERSION.eq(scriptPatchVersion)))
-            .orderBy(VERSION_NUMBER.desc(), ID.desc())
-            .limit(1)
-            .fetchOne(this::toEntity));
-  }
-
   /**
    * Returns every published script-patch candidate for an exact tenant/base/patch scope. Callers
    * reject anything other than one row so duplicate retained scope is fail-closed.

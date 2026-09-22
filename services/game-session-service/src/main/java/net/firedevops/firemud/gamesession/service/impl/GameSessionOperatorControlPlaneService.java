@@ -93,7 +93,10 @@ final class GameSessionOperatorControlPlaneService {
                 ? ""
                 : instance.getScriptPatchPinnedControlPlaneRequestId())
         .setPublication(
-            scriptPatchPublicationLink(instance.getTenantId(), instance.getScriptPatchVersion()))
+            scriptPatchPublicationLink(
+                instance.getTenantId(),
+                instance.getScriptPatchVersion(),
+                runtimeVersionId(instance)))
         .build();
   }
 
@@ -115,7 +118,10 @@ final class GameSessionOperatorControlPlaneService {
         .setObservedAtMs(toEpochMillis(instance.getScriptPatchPinnedAt()))
         .setIsStale(isPinConvergenceStale(instance.getScriptPatchPinnedAt()))
         .setPublication(
-            scriptPatchPublicationLink(instance.getTenantId(), instance.getScriptPatchVersion()))
+            scriptPatchPublicationLink(
+                instance.getTenantId(),
+                instance.getScriptPatchVersion(),
+                runtimeVersionId(instance)))
         .build();
   }
 
@@ -437,7 +443,8 @@ final class GameSessionOperatorControlPlaneService {
       publicationResponse =
           gameDesignClient == null
               ? null
-              : gameDesignClient.getPublishedScriptPatchVersion(tenantId, targetScriptPatchVersion);
+              : gameDesignClient.getPublishedScriptPatchVersion(
+                  tenantId, targetScriptPatchVersion, runtimeVersionId(instance));
     } catch (RuntimeException ex) {
       return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
     }
@@ -551,13 +558,13 @@ final class GameSessionOperatorControlPlaneService {
   }
 
   private ScriptPatchPublicationLink scriptPatchPublicationLink(
-      long tenantId, String scriptPatchVersion) {
+      long tenantId, String scriptPatchVersion, Long baseVersionId) {
     String normalizedScriptPatchVersion = scriptPatchVersion == null ? "" : scriptPatchVersion;
     GetPublishedScriptPatchVersionResponse response =
         gameDesignClient == null
             ? GetPublishedScriptPatchVersionResponse.getDefaultInstance()
             : gameDesignClient.getPublishedScriptPatchVersion(
-                tenantId, normalizedScriptPatchVersion);
+                tenantId, normalizedScriptPatchVersion, baseVersionId == null ? 0L : baseVersionId);
     if (response.hasError() && !response.getError().getCode().isBlank()) {
       return ScriptPatchPublicationLink.newBuilder()
           .setScriptPatchVersion(normalizedScriptPatchVersion)

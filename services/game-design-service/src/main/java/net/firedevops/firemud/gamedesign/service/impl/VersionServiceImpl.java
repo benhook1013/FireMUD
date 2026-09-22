@@ -456,17 +456,24 @@ public class VersionServiceImpl implements VersionService {
 
   @Override
   @Transactional(readOnly = true)
-  public VersionDto getPublishedScriptPatchVersion(String tenantId, String scriptPatchVersion) {
-    if (scriptPatchVersion == null || scriptPatchVersion.isBlank()) {
-      throw new IllegalArgumentException("script patch version is required");
+  public VersionDto getPublishedScriptPatchVersion(
+      String tenantId, Long baseVersionId, String scriptPatchVersion) {
+    if (baseVersionId == null || baseVersionId <= 0L) {
+      throw new IllegalArgumentException("INVALID_ARGUMENT: baseVersionId must be positive");
     }
-    return versionMapper.toDto(
-        versionRepository
-            .findTopByTenantIdAndScriptPatchVersionOrderByVersionNumberDesc(
-                tenantId, scriptPatchVersion)
-            .filter(Version::isScriptOnly)
-            .filter(candidate -> candidate.getVersionState() == VersionLifecycleState.PUBLISHED)
-            .orElseThrow(() -> new IllegalArgumentException("script patch version not found")));
+    if (scriptPatchVersion == null || scriptPatchVersion.isBlank()) {
+      throw new IllegalArgumentException("INVALID_ARGUMENT: scriptPatchVersion is required");
+    }
+    List<Version> candidates =
+        versionRepository.findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndPublishedScriptOnly(
+            tenantId, baseVersionId, scriptPatchVersion);
+    if (candidates.size() != 1) {
+      throw new IllegalArgumentException(
+          candidates.isEmpty()
+              ? "script patch version scope not found"
+              : "script patch version scope is ambiguous");
+    }
+    return versionMapper.toDto(candidates.get(0));
   }
 
   @Override
