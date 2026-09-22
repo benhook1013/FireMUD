@@ -35,6 +35,8 @@ For the combined 5C/5D successor, #2661's proposed TICK-20 deterministic-effect 
 
 Document published the combined 5C/5D successor as draft #2839 on exact #2829, head `e57b184c665b25614f0907deeb56896b1bca9870` (83 files). The complete #2661 source range (16 commits, 81 source files, 632 patch hunks) has zero lost, weakened, or contradictory obligations under independent no-loss audit. ADR 0183 remains pending and non-authoritative. Exact local validation is green and fresh whole-unit review is active; keep #2661 open until the corrected successor reaches its final no-loss checkpoint. #2839 is now the exact end-of-train parent for future Gate 2.
 
+After #2839 reaches its existing two-dry or four-cycle report boundary, Document publishes the corrected head, refreshes no-loss evidence, and marks #2661 as an Overseer closure candidate without closing it. Document then continues autonomously into exactly one successor: Unit 1A, Identity, entitlement, and hosted terms, as a new child of exact final #2839. Refresh the full allocated manifest and review the whole semantic unit plus material implementation/proof consequences; use one coherent PR, warn at 90 files, stop before publishing above 100 without approval, and stop after two consecutive zero-useful cycles or a four-cycle productive report boundary. Do not proceed to 1B or use CodeRabbit/Hosted.
+
 The true backlog outside the train is only Document’s post-5B corpus programme and General’s Phase 1 → Phase 2 programme. Shared tooling/refactoring, CI/hosted operations, default preview TLS, and failed-empty-preview capacity are candidate inputs or acceptance checks within those programmes, not standalone jobs. No later gameplay feature slice is selected.
 
 ## Operating invariants
