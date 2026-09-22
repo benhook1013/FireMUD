@@ -33,6 +33,8 @@ Document completed #2829's own Retention taper and three paired cumulative closu
 
 For the combined 5C/5D successor, #2661's proposed TICK-20 deterministic-effect allocator ADR collides with accepted certificate ADR 0182. Preserve the proposal by mechanically renumbering it to the next free number, ADR 0183 on the exact #2829 base, and retain `Proposed - Pending Human Review` status with updated registry/references. Renumbering preserves the proposal but does not accept it or authorize proposal-dependent implementation. Carry independently authoritative effect/replay consequences normally so #2661 can eventually close after no-loss proof.
 
+Document's in-progress combined 5C/5D successor is based on exact #2829 `dce1d8246e3ff2bf9c3bfcb9649ae0e5c4181e6b`. The complete #2661 source range (16 commits, 81 source files, 632 patch hunks) is applied and reconciled; the candidate is 82 files after correcting the live corpus index, below the 90-file warning threshold. ADR 0183 remains pending and non-authoritative. Complete exact validation, hunk-level classification, and baseline publication before starting fresh whole-unit Luna cycles; keep #2661 open until no-loss evidence is final.
+
 The true backlog outside the train is only Document’s post-5B corpus programme and General’s Phase 1 → Phase 2 programme. Shared tooling/refactoring, CI/hosted operations, default preview TLS, and failed-empty-preview capacity are candidate inputs or acceptance checks within those programmes, not standalone jobs. No later gameplay feature slice is selected.
 
 ## Operating invariants
