@@ -4,7 +4,7 @@ Updated 2026-09-22 NZST. This is the sole live orchestration authority for the a
 
 ## Current merge train
 
-General's direct-to-`develop` Gate 1 #2835 lands before the authored train. The authored train is:
+The immediate direct-to-`develop` order is #2837, then General's Gate 1 #2835. Gate 1 must land before the remaining stacked train can use prioritized preview. The authored train after those two prerequisites is:
 
 `develop → #2837 → #2818 → #2826 → #2827 → #2828 → #2829`
 
@@ -19,7 +19,9 @@ The train preserves Automation migration order V2 readiness → V3 lifecycle fen
 
 ## General programme
 
-General Gate 1 is a separate direct-to-`develop` PR: allow only an explicitly `preview:priority`-labelled, same-repository, human-authored stacked PR to use hosted preview. Keep ordinary unlabelled eligibility limited to `main`/`develop`; exclude forks and dependency bots; keep PR-controlled code credential-free; publish/deploy from trusted default-branch code with exact base/head/merge identity and immutable `pr-merge-<merge SHA>` artifacts. Preserve the existing two-slot priority/reclamation rules. Fix the reproduced metadata-only edit path so it cannot dispatch or cancel an unchanged exact-tuple runtime build or leave a duplicate failing required Smoke context. After a coherent handoff, Gate 1 temporarily takes Hosted, CodeRabbit, and merge priority; once it merges, #2837 and the authored train resume. Gate 1 must merge before stacked preview can be used.
+General Gate 1 is a separate direct-to-`develop` PR: allow only an explicitly `preview:priority`-labelled, same-repository, human-authored stacked PR to use hosted preview. Keep ordinary unlabelled eligibility limited to `main`/`develop`; exclude forks and dependency bots; keep PR-controlled code credential-free; publish/deploy from trusted default-branch code with exact base/head/merge identity and immutable `pr-merge-<merge SHA>` artifacts. Preserve the existing two-slot priority/reclamation rules. Fix the reproduced metadata-only edit path so it cannot dispatch or cancel an unchanged exact-tuple runtime build or leave a duplicate failing required Smoke context. #2837 may merge first; #2835 then reconciles onto current `develop`, receives final CodeRabbit/CI proof, and must merge before #2818 or later stacked previews are used.
+
+After General reports its currently active #2835 Luna cycle and Gameplay assumes #2835 merge-readiness ownership, General's next queued task is a small standalone develop-based review-tooling PR. Add elapsed duration to Hosted and CLI checkpoint comments and hidden markers: exclude known cooldown/sentinel waiting; use accepted-trigger-to-terminal elapsed time for Hosted and canonical process wall time for CLI; preserve found/accepted semantics and backward parsing of historical duration-less comments; add focused rendering, parsing, and malformed/missing-duration tests. This task must not interrupt the active #2835 cycle or modify the feature train, and it does not use CodeRabbit.
 
 After the train reaches its final published #2829 head, General Gate 2 is one coherent preview-priority child for protected bootstrap, controller/CA/issuer readiness, certificate projection/rotation convergence, CNI allow/deny, exact deployed identity, and Telnet/WebSocket `LOGIN → PLAY → LOOK` proof. Credentials, CA private material, and live cluster state never enter Git. A short post-merge develop/dev-demo confirmation is operational evidence, not a separate implementation PR. Split only for a concrete independent boundary or file ceiling.
 
