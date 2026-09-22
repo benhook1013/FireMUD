@@ -29,17 +29,13 @@ public class FactionServiceImpl implements FactionService {
       Long factionId,
       int delta) {
     String playableStateKey = playableStateKey(gameInstanceId, playableStateScope);
-    Faction faction =
-        factionRepository
-            .findByTenantIdAndId(tenantId, factionId)
-            .orElseThrow(
-                () -> new IllegalArgumentException("faction not found or not owned by tenant"));
     FactionStanding standing =
         standingRepository
             .findByTenantIdAndCharacterIdAndPlayableStateKeyAndFaction_Id(
                 tenantId, characterId, playableStateKey, factionId)
             .orElseGet(
                 () -> {
+                  Faction faction = factionRepository.findById(factionId).orElseThrow();
                   FactionStanding fs = new FactionStanding();
                   fs.setTenantId(tenantId);
                   fs.setCharacterId(characterId);
@@ -61,10 +57,6 @@ public class FactionServiceImpl implements FactionService {
       String gameInstanceId,
       PlayableStateScope playableStateScope,
       Long factionId) {
-    factionRepository
-        .findByTenantIdAndId(tenantId, factionId)
-        .orElseThrow(
-            () -> new IllegalArgumentException("faction not found or not owned by tenant"));
     return standingRepository
         .findByTenantIdAndCharacterIdAndPlayableStateKeyAndFaction_Id(
             tenantId, characterId, playableStateKey(gameInstanceId, playableStateScope), factionId)

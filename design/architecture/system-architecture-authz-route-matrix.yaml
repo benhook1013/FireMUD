@@ -845,12 +845,9 @@ coverage_drift:
         mutation_contract: audited_cross_tenant_billing_owner_transfer_with_verified_provider_replacement_before_cutover
     note: Payment/subscription foundations exist, but the unreviewed MS-AA-PAYMENT-INSTRUMENT wallet and payment-instrument contract is not currently routable and has no accepted ADR.
 routes:
-  # The target-only guidance below applies only to entries whose route_status is
-  # target_not_currently_routable; current entries such as
-  # current_openapi_operator_surface remain current contracts. Any still-live
-  # service-local REST adapters and caller-supplied tenant selectors require the
-  # owner-bound replacements documented by their services; removed adapters stay
-  # closed.
+  # These live REST adapters are intentionally recorded as target-only until
+  # their current public reachability and caller-supplied tenant selectors are
+  # replaced by the owner-bound contracts in the service documents.
   - service: entity-management-service
     route: POST /crafting/recipes
     scope: tenant
@@ -928,8 +925,8 @@ routes:
       any_of: [tenantAdmin]
     implementation_status:
       known_drift:
-        - service_local_http_controller_removed_and_route_fails_closed
-        - internal_grpc_leader_npc_tenant_ownership_is_not_checked
+        - current_openapi_security_is_empty_and_controller_accepts_caller_tenant_id
+        - leader_npc_tenant_ownership_is_not_checked
   - service: automation-scripting-service
     route: POST /formations/{id}/members
     scope: tenant
@@ -954,8 +951,8 @@ routes:
       any_of: [tenantAdmin]
     implementation_status:
       known_drift:
-        - service_local_http_controller_removed_and_route_fails_closed
-        - internal_grpc_member_npc_tenant_ownership_is_not_checked
+        - current_openapi_security_is_empty_and_tenant_selector_is_caller_supplied
+        - member_npc_tenant_ownership_is_not_checked
   - service: automation-scripting-service
     route: GET /formations/{id}/members
     scope: tenant
@@ -980,8 +977,8 @@ routes:
       any_of: [tenantAdmin]
     implementation_status:
       known_drift:
-        - service_local_http_controller_removed_and_route_fails_closed
-        - internal_grpc_cross_tenant_formation_and_member_read_is_not_proved_denied
+        - current_openapi_security_is_empty_and_tenant_selector_is_caller_supplied
+        - cross_tenant_formation_and_member_read_is_not_proved_denied
   - service: game-session-service
     route: GET /actuator/settings/effective
     applicability:
