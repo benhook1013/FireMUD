@@ -18,6 +18,9 @@ jobs:
   changes:
     name: Detect Smoke-Relevant Changes
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     if: ${{ github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     outputs:
       run_smoke_full: ${{ steps.compute.outputs.run_smoke_full }}
@@ -32,15 +35,38 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
-            const files = await github.paginate(
+            const fileEntries = await github.paginate(
               github.rest.pulls.listFiles,
               {
                 ...context.repo,
                 pull_number: context.payload.pull_request.number,
                 per_page: 100,
               },
-              (response) => response.data.map((file) => file.filename)
+              (response) => response.data
             );
+
+            const expectedFileCount = context.payload.pull_request.changed_files;
+            const fileListComplete =
+              Number.isInteger(expectedFileCount) && expectedFileCount === fileEntries.length;
+            const fileEntriesValid = fileEntries.every((file) =>
+              file &&
+              typeof file === "object" &&
+              typeof file.filename === "string" &&
+              file.filename.length > 0 &&
+              (file.previous_filename === undefined ||
+                (typeof file.previous_filename === "string" && file.previous_filename.length > 0))
+            );
+            const files = fileEntriesValid
+              ? fileEntries.flatMap((file) =>
+                  [file.filename, file.previous_filename].filter(Boolean)
+                )
+              : [];
+
+            if (!fileListComplete || !fileEntriesValid) {
+              core.warning("PR file-list detection was incomplete; requiring full-stack smoke.");
+              core.setOutput("run_smoke_full", "true");
+              return;
+            }
 
             const docsOnlyPredicate = (file) =>
               file === "AGENTS.md" ||
@@ -58,35 +84,32 @@ jobs:
               "gradle/",
               "protos/",
               "docker/",
-              "services/account-service/",
-              "services/automation-scripting-service/",
-              "services/common-library/",
-              "services/common-data-runtime/",
-              "services/common-platform-core/",
-              "services/common-saga/",
-              "services/common-security/",
-              "services/common-test-support/",
-              "services/common-web-support/",
-              "services/entity-management-service/",
-              "services/game-design-service/",
-              "services/game-logic-service/",
-              "services/game-session-service/",
-              "services/logging-admin-service/",
-              "services/social-groups-service/",
-              "services/spring-cloud-gateway/",
-              "services/tcp-proxy-service/",
-              "services/world-management-service/",
+              "services/",
+              ".github/actions/load-workflow-tool-versions/",
+              ".github/actions/setup-python/",
+              "dev-tools/smoke/",
             ];
             const fullRelevantFiles = new Set([
               "build.gradle.kts",
               "settings.gradle.kts",
               "gradle.properties",
+              "gradlew",
+              "gradlew.bat",
+              ".dockerignore",
+              ".python-version",
+              ".github/actions/load-workflow-tool-versions/action.yml",
               ".github/workflows/smoke.yml",
               ".github/workflows/smoke-full.yml",
               ".github/workflows/runtime-images.yml",
               ".github/workflows/publish-pr-runtime-images.yml",
+              "config/workflow-tool-versions.env",
+              "config/python/smoke-requirements.txt",
+              "config/python/smoke-requirements.in",
               "dev-tools/build-compose-service-jars.sh",
               "dev-tools/build-local-smoke-images.sh",
+              "dev-tools/backups/verify-backups.sh",
+              "dev-tools/backups/pg-dump-s3-selection.shlib",
+              "dev-tools/backups/smoke-backup-verifier-image.sh",
               "dev-tools/certs/generate-dev-certs.sh",
               "dev-tools/verify-compose-health.sh",
               "dev-tools/verify-fresh-bootstrap.sh",
@@ -106,7 +129,11 @@ jobs:
             const runSmokeFull = nonDocFiles.some(
               (file) =>
                 fullRelevantFiles.has(file) ||
-                fullRelevantPrefixes.some((prefix) => file.startsWith(prefix))
+                fullRelevantPrefixes.some(
+                  (prefix) =>
+                    file.startsWith(prefix) &&
+                    !file.startsWith("services/hosted-environment-identity-controller/")
+                )
             );
             core.setOutput("run_smoke_full", runSmokeFull ? "true" : "false");
 
@@ -181,25 +208,35 @@ jobs:
             );
 
             const isBotAuthored = (comment) => comment.user?.login === "github-actions[bot]";
-            const isWorkflowComment = (comment) =>
-              isBotAuthored(comment) && comment.body.includes("<!-- firemud-smoke-summary -->");
-            const isLegacyWorkflowComment = (comment) =>
-              isBotAuthored(comment) && comment.body.startsWith("### Smoke Summary");
-            const generatedComments = comments.filter(isWorkflowComment);
-            const legacyComments = comments.filter(isLegacyWorkflowComment);
-            const summaryComments = [...generatedComments, ...legacyComments];
-            const commentTimestamp = (comment) => {
-              const parsed = Date.parse(comment.updated_at || comment.created_at || "");
-              return Number.isNaN(parsed) ? 0 : parsed;
+            const isWorkflowComment = (comment) => {
+              const body = comment.body ?? "";
+              return isBotAuthored(comment) && body.includes("<!-- firemud-smoke-summary -->");
             };
-            const existing = summaryComments.reduce((latest, comment) => {
-              if (!latest) return comment;
-              const latestTimestamp = commentTimestamp(latest);
-              const candidateTimestamp = commentTimestamp(comment);
-              if (candidateTimestamp !== latestTimestamp) {
-                return candidateTimestamp > latestTimestamp ? comment : latest;
+            const isLegacyWorkflowComment = (comment) => {
+              const body = comment.body ?? "";
+              return isBotAuthored(comment) && body.startsWith("### Smoke Summary");
+            };
+            const summaryComments = [];
+            const seenCommentIds = new Set();
+            for (const comment of comments) {
+              if ((!isWorkflowComment(comment) && !isLegacyWorkflowComment(comment)) || seenCommentIds.has(comment.id)) {
+                continue;
               }
-              return Number(comment.id) > Number(latest.id) ? comment : latest;
+              seenCommentIds.add(comment.id);
+              summaryComments.push(comment);
+            }
+            const commentTimestamp = (comment) => {
+              const parsed = Date.parse(comment.created_at || "");
+              return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed;
+            };
+            const existing = summaryComments.reduce((oldest, comment) => {
+              if (!oldest) return comment;
+              const oldestTimestamp = commentTimestamp(oldest);
+              const candidateTimestamp = commentTimestamp(comment);
+              if (candidateTimestamp !== oldestTimestamp) {
+                return candidateTimestamp < oldestTimestamp ? comment : oldest;
+              }
+              return Number(comment.id) < Number(oldest.id) ? comment : oldest;
             }, null);
 
             const deleteCommentIfPresent = async (comment) => {
@@ -213,11 +250,6 @@ jobs:
               }
             };
 
-            for (const comment of summaryComments) {
-              if (comment.id === existing?.id) continue;
-              await deleteCommentIfPresent(comment);
-            }
-
             if (existing) {
               await github.rest.issues.updateComment({
                 ...context.repo,
@@ -230,6 +262,11 @@ jobs:
                 issue_number: context.issue.number,
                 body
               });
+            }
+
+            for (const comment of summaryComments) {
+              if (String(comment.id) === String(existing?.id)) continue;
+              await deleteCommentIfPresent(comment);
             }
 
   smoke-summary:
@@ -307,25 +344,35 @@ jobs:
             );
 
             const isBotAuthored = (comment) => comment.user?.login === "github-actions[bot]";
-            const isWorkflowComment = (comment) =>
-              isBotAuthored(comment) && comment.body.includes("<!-- firemud-smoke-summary -->");
-            const isLegacyWorkflowComment = (comment) =>
-              isBotAuthored(comment) && comment.body.startsWith("### Smoke Summary");
-            const generatedComments = comments.filter(isWorkflowComment);
-            const legacyComments = comments.filter(isLegacyWorkflowComment);
-            const summaryComments = [...generatedComments, ...legacyComments];
-            const commentTimestamp = (comment) => {
-              const parsed = Date.parse(comment.updated_at || comment.created_at || "");
-              return Number.isNaN(parsed) ? 0 : parsed;
+            const isWorkflowComment = (comment) => {
+              const body = comment.body ?? "";
+              return isBotAuthored(comment) && body.includes("<!-- firemud-smoke-summary -->");
             };
-            const existing = summaryComments.reduce((latest, comment) => {
-              if (!latest) return comment;
-              const latestTimestamp = commentTimestamp(latest);
-              const candidateTimestamp = commentTimestamp(comment);
-              if (candidateTimestamp !== latestTimestamp) {
-                return candidateTimestamp > latestTimestamp ? comment : latest;
+            const isLegacyWorkflowComment = (comment) => {
+              const body = comment.body ?? "";
+              return isBotAuthored(comment) && body.startsWith("### Smoke Summary");
+            };
+            const summaryComments = [];
+            const seenCommentIds = new Set();
+            for (const comment of comments) {
+              if ((!isWorkflowComment(comment) && !isLegacyWorkflowComment(comment)) || seenCommentIds.has(comment.id)) {
+                continue;
               }
-              return Number(comment.id) > Number(latest.id) ? comment : latest;
+              seenCommentIds.add(comment.id);
+              summaryComments.push(comment);
+            }
+            const commentTimestamp = (comment) => {
+              const parsed = Date.parse(comment.created_at || "");
+              return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed;
+            };
+            const existing = summaryComments.reduce((oldest, comment) => {
+              if (!oldest) return comment;
+              const oldestTimestamp = commentTimestamp(oldest);
+              const candidateTimestamp = commentTimestamp(comment);
+              if (candidateTimestamp !== oldestTimestamp) {
+                return candidateTimestamp < oldestTimestamp ? comment : oldest;
+              }
+              return Number(comment.id) < Number(oldest.id) ? comment : oldest;
             }, null);
 
             const deleteCommentIfPresent = async (comment) => {
@@ -339,11 +386,6 @@ jobs:
               }
             };
 
-            for (const comment of summaryComments) {
-              if (comment.id === existing?.id) continue;
-              await deleteCommentIfPresent(comment);
-            }
-
             if (existing) {
               await github.rest.issues.updateComment({
                 ...context.repo,
@@ -356,6 +398,11 @@ jobs:
                 issue_number: context.issue.number,
                 body
               });
+            }
+
+            for (const comment of summaryComments) {
+              if (String(comment.id) === String(existing?.id)) continue;
+              await deleteCommentIfPresent(comment);
             }
 
   smoke-gate:
@@ -425,16 +472,16 @@ jobs:
             const repo = context.repo.repo;
             const headSha = context.payload.pull_request.head.sha;
             const baseRef = context.payload.pull_request.base.ref;
-            const baseSha = context.payload.pull_request.base.sha;
-            const mergeSha = context.sha;
+            const eventBaseSha = context.payload.pull_request.base.sha;
+            const eventMergeSha = context.sha;
             const prNumber = String(context.payload.pull_request.number);
-            const expectedDisplayTitle = `Build Runtime Images secure-pr-artifact pr-${prNumber} base-${baseSha} head-${headSha} merge-${mergeSha} mode-required`;
             const started = Date.now();
             const timeoutMs = 25 * 60 * 1000;
             const sleepMs = 15000;
             const pullRequestCheckInterval = 4;
             const retryableStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
             let pollIteration = 0;
+            let identityDiagnostic = "current PR identity has not been resolved";
 
             async function withTransientGitHubRetry(label, operation) {
               const maxAttempts = 4;
@@ -468,8 +515,95 @@ jobs:
 
             function logObsoletePullRequest(label, pullRequest) {
               core.info(
-                `${label} ${baseRef}@${baseSha}...${headSha}; current PR state/base/head is ${pullRequest.state}/${pullRequest.base.ref}@${pullRequest.base.sha}/${pullRequest.head.sha}`
+                `${label} ${baseRef}@${eventBaseSha}...${headSha}; current PR state/base/head is ${pullRequest.state}/${pullRequest.base.ref}/${pullRequest.head.sha}`
               );
+            }
+
+            function identityKey(identity) {
+              return `${identity.baseRef}@${identity.baseSha}...${identity.headSha}#${identity.mergeSha}`;
+            }
+
+            function eventIdentityMatches(identity) {
+              return (
+                identity.baseRef === baseRef &&
+                identity.baseSha === eventBaseSha &&
+                identity.headSha === headSha &&
+                identity.mergeSha === eventMergeSha
+              );
+            }
+
+            async function resolveCurrentIdentity(label) {
+              let currentPullRequest;
+              try {
+                ({ data: currentPullRequest } = await withTransientGitHubRetry(
+                  "current pull request lookup",
+                  () => github.rest.pulls.get({
+                    owner,
+                    repo,
+                    pull_number: Number(prNumber),
+                  })
+                ));
+              } catch (error) {
+                identityDiagnostic = `${label} could not resolve the current pull request: ${error.message}`;
+                core.warning(identityDiagnostic);
+                return null;
+              }
+              if (isObsoletePullRequest(currentPullRequest)) {
+                logObsoletePullRequest(label, currentPullRequest);
+                return { obsolete: true };
+              }
+
+              const currentBaseRef = currentPullRequest.base.ref;
+              try {
+                const { data: currentBaseRefData } = await withTransientGitHubRetry(
+                  "current base ref lookup",
+                  () => github.rest.git.getRef({
+                    owner,
+                    repo,
+                    ref: `heads/${currentBaseRef}`,
+                  })
+                );
+                const currentBaseSha = currentBaseRefData.object?.sha;
+                const currentMergeSha = currentPullRequest.merge_commit_sha;
+                if (
+                  !/^[0-9a-f]{40}$/.test(currentBaseSha ?? "") ||
+                  !/^[0-9a-f]{40}$/.test(currentMergeSha ?? "")
+                ) {
+                  throw new Error("GitHub returned an invalid current base or test-merge SHA");
+                }
+
+                const { data: mergeCommit } = await withTransientGitHubRetry(
+                  "current test-merge lookup",
+                  () => github.rest.repos.getCommit({
+                    owner,
+                    repo,
+                    ref: currentMergeSha,
+                  })
+                );
+                const parents = mergeCommit.parents ?? [];
+                if (
+                  mergeCommit.sha !== currentMergeSha ||
+                  parents.length !== 2 ||
+                  parents[0]?.sha !== currentBaseSha ||
+                  parents[1]?.sha !== headSha
+                ) {
+                  throw new Error(
+                    `test merge parents are not [${currentBaseSha}, ${headSha}]`
+                  );
+                }
+
+                identityDiagnostic = `resolved current identity ${currentBaseRef}@${currentBaseSha}...${headSha}#${currentMergeSha}`;
+                return {
+                  baseRef: currentBaseRef,
+                  baseSha: currentBaseSha,
+                  headSha,
+                  mergeSha: currentMergeSha,
+                };
+              } catch (error) {
+                identityDiagnostic = `${label} could not resolve the current base ref and exact test merge: ${error.message}`;
+                core.warning(identityDiagnostic);
+                return null;
+              }
             }
 
             async function isCurrentPullRequestObsolete(label) {
@@ -488,62 +622,85 @@ jobs:
               return true;
             }
 
-            while (Date.now() - started < timeoutMs) {
-              if (pollIteration % pullRequestCheckInterval === 0) {
-                if (await isCurrentPullRequestObsolete("Stopping obsolete smoke gate for")) {
+            let currentIdentity = null;
+            smokeGatePolling: while (Date.now() - started < timeoutMs) {
+              if (pollIteration % pullRequestCheckInterval === 0 || !currentIdentity) {
+                const resolvedIdentity = await resolveCurrentIdentity(
+                  "Stopping obsolete smoke gate for"
+                );
+                if (resolvedIdentity?.obsolete) {
                   return;
                 }
+                currentIdentity = resolvedIdentity;
+              }
+              if (!currentIdentity) {
+                core.info(`Waiting for a current PR identity before selecting runtime smoke: ${identityDiagnostic}`);
+                await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                continue;
               }
               pollIteration += 1;
 
-              const runs = await withTransientGitHubRetry(
-                "runtime-images workflow lookup",
-                () => github.paginate(
-                  github.rest.actions.listWorkflowRuns,
-                  {
-                    owner,
-                    repo,
-                    workflow_id: "runtime-images.yml",
-                    event: "pull_request",
-                    head_sha: headSha,
-                    per_page: 100,
-                  }
-                )
-              );
-
-              const matchingRuns = runs.filter((run) => {
+              const expectedRuntimeEvent = eventIdentityMatches(currentIdentity)
+                ? "pull_request"
+                : "repository_dispatch";
+              const expectedDisplayTitle =
+                `Build Runtime Images secure-pr-artifact pr-${prNumber} ` +
+                `base-${currentIdentity.baseSha} head-${currentIdentity.headSha} ` +
+                `merge-${currentIdentity.mergeSha} mode-required`;
+              const workflowRunQuery = {
+                owner,
+                repo,
+                workflow_id: "runtime-images.yml",
+                event: expectedRuntimeEvent,
+                per_page: 100,
+              };
+              if (expectedRuntimeEvent === "pull_request") {
+                workflowRunQuery.head_sha = currentIdentity.headSha;
+              } else {
+                const pullRequestCreatedAt = context.payload.pull_request.created_at;
                 if (
-                  run.event !== "pull_request" ||
-                  run.head_sha !== headSha ||
-                  run.display_title !== expectedDisplayTitle
+                  typeof pullRequestCreatedAt !== "string" ||
+                  Number.isNaN(Date.parse(pullRequestCreatedAt))
                 ) {
-                  return false;
+                  throw new Error("current pull request creation timestamp is unavailable");
                 }
-                const pullRequests = run.pull_requests ?? [];
-                return pullRequests.length === 0 || pullRequests.some((pullRequest) =>
-                  String(pullRequest.number) === prNumber &&
-                  pullRequest.base?.sha === baseSha &&
-                  pullRequest.head?.sha === headSha
-                );
-              });
-              const matching = matchingRuns.reduce((newest, candidate) => {
-                if (!newest) {
-                  return candidate;
+                workflowRunQuery.created = `${pullRequestCreatedAt}..*`;
+              }
+              let matching = null;
+              await withTransientGitHubRetry(
+                "runtime-images workflow lookup",
+                async () => {
+                  workflowRunPages: for await (const response of github.paginate.iterator(
+                    github.rest.actions.listWorkflowRuns,
+                    workflowRunQuery
+                  )) {
+                    const runs = response.data ?? [];
+                    for (const run of runs) {
+                      if (
+                        run.event !== expectedRuntimeEvent ||
+                        (expectedRuntimeEvent === "pull_request" && run.head_sha !== currentIdentity.headSha) ||
+                        run.display_title !== expectedDisplayTitle
+                      ) {
+                        continue;
+                      }
+                      if (expectedRuntimeEvent === "pull_request") {
+                        const pullRequests = run.pull_requests ?? [];
+                        if (
+                          pullRequests.length > 0 &&
+                          !pullRequests.some((pullRequest) =>
+                            String(pullRequest.number) === prNumber &&
+                            pullRequest.head?.sha === currentIdentity.headSha
+                          )
+                        ) {
+                          continue;
+                        }
+                      }
+                      matching = run;
+                      break workflowRunPages;
+                    }
+                  }
                 }
-                const parsedNewestCreatedAt = Date.parse(newest.created_at ?? "");
-                const parsedCandidateCreatedAt = Date.parse(candidate.created_at ?? "");
-                const newestCreatedAt = Number.isNaN(parsedNewestCreatedAt) ? 0 : parsedNewestCreatedAt;
-                const candidateCreatedAt = Number.isNaN(parsedCandidateCreatedAt) ? 0 : parsedCandidateCreatedAt;
-                if (candidateCreatedAt !== newestCreatedAt) {
-                  return candidateCreatedAt > newestCreatedAt ? candidate : newest;
-                }
-                const newestRunNumber = Number(newest.run_number ?? 0);
-                const candidateRunNumber = Number(candidate.run_number ?? 0);
-                if (candidateRunNumber !== newestRunNumber) {
-                  return candidateRunNumber > newestRunNumber ? candidate : newest;
-                }
-                return Number(candidate.id) > Number(newest.id) ? candidate : newest;
-              }, null);
+              );
               if (matching) {
                 core.info(`Found runtime-images run ${matching.id} with status=${matching.status} conclusion=${matching.conclusion}`);
                 if (matching.status !== "completed") {
@@ -560,15 +717,31 @@ jobs:
                   return;
                 }
 
+                const latestIdentity = await resolveCurrentIdentity(
+                  "Stopping stale completed smoke gate for"
+                );
+                if (latestIdentity?.obsolete) {
+                  return;
+                }
+                if (!latestIdentity || identityKey(latestIdentity) !== identityKey(currentIdentity)) {
+                  currentIdentity = latestIdentity;
+                  core.info(
+                    `Runtime images run ${matching.id} was not accepted because the current PR identity changed or is unavailable; waiting for a fresh exact run.`
+                  );
+                  continue;
+                }
+
                 let fullSmokeJob = null;
+                let fullSmokeStep = null;
                 async function failNonTerminalSnapshot(reason) {
                   if (await isCurrentPullRequestObsolete("Stopping obsolete stale-snapshot smoke gate for")) {
                     return;
                   }
                   core.setFailed(
-                    `Runtime images run ${matching.id} did not expose a terminal PR Full-Stack Smoke job ` +
+                    `Runtime images run ${matching.id} did not expose a terminal PR Full-Stack Smoke job and smoke step ` +
                     `${reason}: ` +
-                    `${fullSmokeJob?.status ?? "missing"}/${fullSmokeJob?.conclusion ?? "unknown"}`
+                    `job=${fullSmokeJob?.status ?? "missing"}/${fullSmokeJob?.conclusion ?? "unknown"}, ` +
+                    `step=${fullSmokeStep?.status ?? "missing"}/${fullSmokeStep?.conclusion ?? "unknown"}`
                   );
                 }
                 const maxCompletedJobSnapshotRetries = 8;
@@ -600,8 +773,13 @@ jobs:
                   fullSmokeJob = jobs.find(
                     (job) => job.name === "PR Full-Stack Smoke"
                   ) ?? null;
+                  fullSmokeStep = fullSmokeJob?.steps?.find(
+                    (step) => step.name === "Run credential-free full-stack smoke"
+                  ) ?? null;
                   if (fullSmokeJob?.status === "completed") {
-                    break;
+                    if (fullSmokeStep?.status === "completed") {
+                      break;
+                    }
                   }
                   if (completedJobSnapshotAttempt < maxCompletedJobSnapshotRetries) {
                     const remainingBeforeSnapshotSleepMs = timeoutMs - (Date.now() - started);
@@ -610,8 +788,9 @@ jobs:
                       return;
                     }
                     core.info(
-                      `Runtime images run ${matching.id} succeeded but its PR Full-Stack Smoke job snapshot is not terminal yet: ` +
-                      `${fullSmokeJob?.status ?? "missing"}/${fullSmokeJob?.conclusion ?? "unknown"}; ` +
+                      `Runtime images run ${matching.id} succeeded but its PR Full-Stack Smoke job/step snapshot is not terminal yet: ` +
+                      `job=${fullSmokeJob?.status ?? "missing"}/${fullSmokeJob?.conclusion ?? "unknown"}, ` +
+                      `step=${fullSmokeStep?.status ?? "missing"}/${fullSmokeStep?.conclusion ?? "unknown"}; ` +
                       `retrying ${completedJobSnapshotAttempt + 1}/${maxCompletedJobSnapshotRetries}`
                     );
                     await new Promise((resolve) => setTimeout(
@@ -637,14 +816,64 @@ jobs:
                   );
                   return;
                 }
+                if (fullSmokeStep?.conclusion !== "success") {
+                  if (await isCurrentPullRequestObsolete("Stopping obsolete skipped full-smoke gate for")) {
+                    return;
+                  }
+                  core.setFailed(
+                    `Runtime images run ${matching.id} succeeded, but its credential-free full-stack smoke step did not pass: ` +
+                    `step=${fullSmokeStep?.status ?? "missing"}/${fullSmokeStep?.conclusion ?? "unknown"}`
+                  );
+                  return;
+                }
+                const finalIdentity = await resolveCurrentIdentity(
+                  "Stopping stale smoke gate before accepting full-stack proof"
+                );
+                if (finalIdentity?.obsolete) {
+                  return;
+                }
+                if (!finalIdentity || identityKey(finalIdentity) !== identityKey(currentIdentity)) {
+                  currentIdentity = finalIdentity;
+                  core.info(
+                    `Runtime images run ${matching.id} was not accepted because the current PR identity changed after its smoke snapshot; waiting for a fresh exact run.`
+                  );
+                  continue smokeGatePolling;
+                }
                 return;
               }
 
-              core.info(`No runtime-images/full-smoke run found yet for PR #${prNumber} base ${baseSha} head ${headSha} merge ${mergeSha}; waiting...`);
+              const sourceDescription = expectedRuntimeEvent === "repository_dispatch"
+                ? "trusted typed repository_dispatch refresh"
+                : "ordinary pull_request source";
+              core.info(
+                `No ${sourceDescription} runtime-images/full-smoke run found yet for PR #${prNumber} ` +
+                `base ${currentIdentity.baseSha} head ${currentIdentity.headSha} merge ${currentIdentity.mergeSha}; waiting...`
+              );
               await new Promise((resolve) => setTimeout(resolve, sleepMs));
             }
 
-            if (await isCurrentPullRequestObsolete("Stopping obsolete timed-out smoke gate for")) {
-              return;
+            try {
+              if (await isCurrentPullRequestObsolete("Stopping obsolete timed-out smoke gate for")) {
+                return;
+              }
+            } catch (error) {
+              core.warning(`Timed-out smoke gate could not re-check current PR identity: ${error.message}`);
             }
-            core.setFailed(`Timed out waiting for runtime-images/full-smoke run for PR #${prNumber} base ${baseSha} head ${headSha} merge ${mergeSha}`);
+            const timeoutIdentity = currentIdentity
+              ? `base ${currentIdentity.baseSha} head ${currentIdentity.headSha} merge ${currentIdentity.mergeSha}`
+              : `event base ${eventBaseSha} head ${headSha} merge ${eventMergeSha}`;
+            const timeoutEvent = currentIdentity && eventIdentityMatches(currentIdentity)
+              ? "pull_request"
+              : "repository_dispatch";
+            if (timeoutEvent === "repository_dispatch") {
+              core.setFailed(
+                `Timed out waiting for the trusted typed repository_dispatch runtime-images/full-smoke run for PR #${prNumber} ` +
+                `${timeoutIdentity}; no trusted refresh dispatch exists or it did not complete. ` +
+                `The stale pull_request source is not accepted. Diagnostic: ${identityDiagnostic}`
+              );
+            } else {
+              core.setFailed(
+                `Timed out waiting for the runtime-images/full-smoke run for PR #${prNumber} ${timeoutIdentity}. ` +
+                `Diagnostic: ${identityDiagnostic}`
+              );
+            }

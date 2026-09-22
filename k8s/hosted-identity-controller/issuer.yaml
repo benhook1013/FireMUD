@@ -1,0 +1,15 @@
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: firemud-ca-issuer
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/component: certificate-issuer
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+spec:
+  ca:
+    # cert-manager resolves ClusterIssuer CA secrets from its configured
+    # cluster-resource namespace. The operator provisions this Secret; this
+    # manifest deliberately contains no CA key or certificate material.
+    secretName: firemud-grpc-ca

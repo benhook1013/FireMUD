@@ -47,7 +47,7 @@ public class GrpcServerTlsReloader {
     }
   }
 
-  private synchronized void reload() {
+  synchronized void reload() {
     try {
       logger.info("TLS certificates changed; restarting gRPC server");
       logger.info("Stopping gRPC server to reload TLS certificates");
@@ -56,6 +56,7 @@ public class GrpcServerTlsReloader {
       serverLifecycle.start();
     } catch (Exception e) {
       logger.error("Failed to restart gRPC server", e);
+      throw new IllegalStateException("Failed to restart gRPC server", e);
     }
   }
 

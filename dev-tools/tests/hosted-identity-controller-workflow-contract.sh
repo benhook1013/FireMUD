@@ -31,6 +31,7 @@ mode_action="$ROOT_DIR/.github/actions/resolve-certificate-identity-mode/action.
 artifact_action="$ROOT_DIR/.github/actions/download-validated-preview-artifact/action.yml"
 requester="$ROOT_DIR/dev-tools/hosted/shared/request-hosted-identity.sh"
 artifact_validator="$ROOT_DIR/dev-tools/hosted/preview/validate-preview-artifact.py"
+telnet_port_resolver="$ROOT_DIR/dev-tools/hosted/preview/resolve-preview-telnet-port.sh"
 render_preview_values="$ROOT_DIR/dev-tools/hosted/preview/render-preview-values.py"
 preview_annotator="$ROOT_DIR/dev-tools/hosted/preview/annotate-preview-namespace.sh"
 runtime_rollout_waiter="$ROOT_DIR/dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh"
@@ -65,11 +66,11 @@ contains() {
   }
 }
 
-contains "$runtime" 'services/hosted-environment-identity-controller/**'
+contains "$runtime" 'services/**'
 # shellcheck disable=SC2016 # These assertions intentionally match literal publisher shell.
-contains "$publisher" 'if ! docker image inspect "$image" >/dev/null 2>&1; then'
+contains "$publisher" 'source_image_id="$(docker image inspect --format'
 # shellcheck disable=SC2016 # This assertion intentionally matches literal publisher shell.
-contains "$publisher" 'Required source artifact image for $service is missing: $image.'
+contains "$publisher" 'Required source artifact image for $service has no inspectable image ID: $image.'
 contains "$build_gradle" '"buildHostedEnvironmentIdentityControllerImage"'
 python3 - "$build_gradle" <<'PY'
 import sys
@@ -90,7 +91,7 @@ if grep -Fq -- '*.jar' "$controller_dockerfile"; then
   echo "$controller_dockerfile must copy only the canonical controller artifact" >&2
   exit 1
 fi
-python3 - "$runtime" "$publisher" "$workflow_tool_authority" <<'PY'
+python3 - "$runtime" "$publisher" <<'PY'
 import json
 import re
 import subprocess
@@ -101,6 +102,20 @@ import yaml
 
 workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
 publisher_workflow = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
+
+
+def assert_immutable_action_pin(step, action):
+    uses = step.get("uses", "")
+    assert re.fullmatch(rf"{re.escape(action)}@[0-9a-f]{{40}}", uses), uses
+
+
+for job in workflow["jobs"].values():
+    for step in job.get("steps") or []:
+        uses = step.get("uses", "")
+        for action in ("actions/checkout", "docker/login-action"):
+            if uses.startswith(f"{action}@"):
+                assert_immutable_action_pin(step, action)
+
 pull_request = workflow[True]["pull_request"]
 assert "dev-tools/smoke/**" in pull_request["paths"]
 for required_path in (
@@ -108,6 +123,7 @@ for required_path in (
     ".python-version",
     "config/python/smoke-requirements.txt",
     "config/python/smoke-requirements.in",
+    "services/**",
 ):
     assert required_path in pull_request["paths"], required_path
 image_meta = workflow["jobs"]["image-meta"]
@@ -142,18 +158,18 @@ for required in (
     "PR smoke scope detection failed; running both local smokes:",
     'core.setOutput("runtime_smoke_required", String(runtimeSmokeRequired))',
     'core.setOutput("controller_smoke_required", String(controllerSmokeRequired))',
-    "github.rest.repos.getContent",
     "workflowToolAuthorityPath",
-    "knownWorkflowToolKeys",
-    "Promise.all",
-    'data.encoding !== "base64"',
-    "const trimmedLine = line.trim();",
-    'key.startsWith("VELERO_")',
     "authorityChanged",
     "nonAuthorityPaths",
-    "Workflow tool authority comparison was incomplete; running full-stack smoke:",
 ):
     assert required in smoke_scope_script, required
+for obsolete in (
+    "github.rest.repos.getContent",
+    "knownWorkflowToolKeys",
+    "veleroAuthorityChanged",
+    "Workflow tool authority comparison was incomplete; running full-stack smoke:",
+):
+    assert obsolete not in smoke_scope_script, obsolete
 
 runtime_prefixes_script = smoke_scope_script[
     smoke_scope_script.index("const runtimePrefixes"):
@@ -179,33 +195,10 @@ controller_scope_script = smoke_scope_script[
 ]
 assert "services/hosted-environment-identity-controller/" in controller_scope_script
 
-authority_text = Path(sys.argv[3]).read_text(encoding="utf-8")
-base_sha = "a" * 40
-head_sha = "b" * 40
-
-
-def authority_with(**changes):
-    lines = []
-    for line in authority_text.splitlines():
-        if line and not line.startswith("#") and "=" in line:
-            key = line.split("=", 1)[0]
-            if key in changes:
-                line = f"{key}={changes[key]}"
-        lines.append(line)
-    return "\n".join(lines) + "\n"
-
-
-def run_scope(changed_paths, *, head_content=None, api_error=False, changed_file_count=None):
-    if head_content is None:
-        head_content = authority_text
+def run_scope(changed_paths, *, changed_file_count=None):
     node_source = """
 const scopeScript = %s;
-const baseSha = %s;
-const headSha = %s;
-const baseContent = %s;
-const headContent = %s;
 const changedFiles = %s;
-const apiError = %s;
 const apiCalls = [];
 const warnings = [];
 const outputs = {};
@@ -213,21 +206,7 @@ const github = {
   paginate: async () => changedFiles,
   rest: {
     pulls: { listFiles: async () => undefined },
-    repos: {
-      getContent: async ({ owner, repo, path, ref }) => {
-        apiCalls.push({ owner, repo, path, ref });
-        if (apiError) throw new Error("simulated API failure");
-        const content = ref === baseSha ? baseContent : headContent;
-        return {
-          data: {
-            type: "file",
-            path,
-            encoding: "base64",
-            content: Buffer.from(content, "utf8").toString("base64"),
-          },
-        };
-      },
-    },
+    repos: {},
   },
 };
 const context = {
@@ -238,8 +217,8 @@ const context = {
     pull_request: {
       number: 2786,
       changed_files: %s,
-      base: { sha: baseSha },
-      head: { sha: headSha, repo: { full_name: "fork-owner/fork-repo" } },
+      base: { sha: "a".repeat(40) },
+      head: { sha: "b".repeat(40), repo: { full_name: "fork-owner/fork-repo" } },
     },
   },
 };
@@ -257,12 +236,7 @@ await runner(github, context, core);
 process.stdout.write(JSON.stringify({ outputs, warnings, apiCalls }));
 """ % (
         json.dumps(smoke_scope_script),
-        json.dumps(base_sha),
-        json.dumps(head_sha),
-        json.dumps(authority_text),
-        json.dumps(head_content),
         json.dumps([{"filename": path} for path in changed_paths]),
-        json.dumps(api_error),
         json.dumps(
             len(changed_paths)
             if changed_file_count is None
@@ -281,59 +255,12 @@ process.stdout.write(JSON.stringify({ outputs, warnings, apiCalls }));
 
 
 authority_path = "config/workflow-tool-versions.env"
-non_velero_only = run_scope(
-    [authority_path], head_content=authority_with(TRIVY_VERSION="99.0.0")
-)
-assert non_velero_only["outputs"] == {
-    "runtime_smoke_required": "false",
+authority_change = run_scope([authority_path])
+assert authority_change["outputs"] == {
+    "runtime_smoke_required": "true",
     "controller_smoke_required": "false",
 }
-assert {call["owner"] for call in non_velero_only["apiCalls"]} == {
-    "base-owner",
-    "fork-owner",
-}
-assert all(call["path"] == authority_path for call in non_velero_only["apiCalls"])
-
-whitespace_only = run_scope(
-    [authority_path],
-    head_content=authority_text.replace("TRIVY_VERSION=", " \t\nTRIVY_VERSION=", 1),
-)
-whitespace_runtime = whitespace_only["outputs"]["runtime_smoke_required"]
-assert whitespace_runtime == "false"
-assert not whitespace_only["warnings"]
-
-velero_only = run_scope(
-    [authority_path], head_content=authority_with(VELERO_VERSION="99.0.0")
-)
-assert velero_only["outputs"]["runtime_smoke_required"] == "true"
-
-mixed_authority = run_scope(
-    [authority_path],
-    head_content=authority_with(VELERO_VERSION="99.0.0", TRIVY_VERSION="99.0.0"),
-)
-assert mixed_authority["outputs"]["runtime_smoke_required"] == "true"
-
-unknown_key = run_scope(
-    [authority_path], head_content=authority_text + "UNKNOWN_TOOL_VERSION=1.0.0\n"
-)
-assert unknown_key["outputs"]["runtime_smoke_required"] == "true"
-assert unknown_key["warnings"]
-
-missing_key = run_scope(
-    [authority_path],
-    head_content="\n".join(
-        line
-        for line in authority_text.splitlines()
-        if not line.startswith("TRIVY_VERSION=")
-    )
-    + "\n",
-)
-assert missing_key["outputs"]["runtime_smoke_required"] == "true"
-assert missing_key["warnings"]
-
-api_failure = run_scope([authority_path], api_error=True)
-assert api_failure["outputs"]["runtime_smoke_required"] == "true"
-assert api_failure["warnings"]
+assert authority_change["apiCalls"] == []
 
 incomplete_file_list = run_scope([authority_path], changed_file_count=2)
 assert incomplete_file_list["outputs"] == {
@@ -768,7 +695,7 @@ for required in \
   contains "$requester" "$required"
 done
 
-python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" "$janitor" "$mode_action" "$runtime" "$artifact_action" "$push_verified_image" <<'PY'
+python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" "$janitor" "$mode_action" "$runtime" "$artifact_action" "$push_verified_image" "$waiter" "$telnet_port_resolver" <<'PY'
 import os
 import re
 import subprocess
@@ -789,10 +716,26 @@ janitor_workflow = yaml.safe_load(Path(sys.argv[7]).read_text(encoding="utf-8"))
 mode_action = yaml.safe_load(Path(sys.argv[8]).read_text(encoding="utf-8"))
 runtime_workflow = yaml.safe_load(Path(sys.argv[9]).read_text(encoding="utf-8"))
 artifact_action = yaml.safe_load(Path(sys.argv[10]).read_text(encoding="utf-8"))
+
+
+def assert_immutable_action_pin(step, action):
+    uses = step.get("uses", "")
+    assert re.fullmatch(rf"{re.escape(action)}@[0-9a-f]{{40}}", uses), uses
+
+
+for job in runtime_workflow["jobs"].values():
+    for step in job.get("steps") or []:
+        uses = step.get("uses", "")
+        for action in ("actions/checkout", "docker/login-action"):
+            if uses.startswith(f"{action}@"):
+                assert_immutable_action_pin(step, action)
+
 push_verified_image = Path(sys.argv[11])
 push_verified_image_text = push_verified_image.read_text(encoding="utf-8")
 assert push_verified_image.is_file()
 assert push_verified_image.stat().st_mode & 0o111
+waiter = Path(sys.argv[12])
+telnet_port_resolver = Path(sys.argv[13])
 
 for job_name in ("validate-target", "prepare-runtime", "deploy-runtime"):
     caller_python_steps = [
@@ -959,6 +902,9 @@ validate_job = jobs["validate-target"]
 assert validate_job["outputs"]["certificate_identity_mode"] == (
     "${{ steps.certificate-identity.outputs.mode }}"
 )
+assert validate_job["outputs"]["exposure_mode"] == (
+    "${{ steps.target.outputs.exposure_mode }}"
+)
 mode_step = next(
     step for step in validate_job["steps"] if step.get("id") == "certificate-identity"
 )
@@ -1027,6 +973,9 @@ for job_name in ("verify-runtime", "destroy-runtime", "retire-identity"):
     assert jobs[job_name]["timeout-minutes"] == 60, job_name
 assert jobs["prepare-runtime"]["timeout-minutes"] == 45
 assert jobs["deploy-runtime"]["timeout-minutes"] == 45
+assert jobs["deploy-runtime"]["outputs"] == {
+    "runtime_namespace_uid": "${{ steps.record-runtime-namespace-uid.outputs.uid }}"
+}
 for job_name, step_name in (
     ("destroy-runtime", "Revalidate preview cleanup target before runtime deletion"),
     ("retire-identity", "Revalidate preview cleanup target before identity retirement"),
@@ -1050,8 +999,8 @@ publisher_script = next(
     for step in publisher_steps
     if step.get("name") == "Publish fixed PR image tags"
 )
-missing_image_check = 'if ! docker image inspect "$image" >/dev/null 2>&1; then'
-assert 'service_manifest=/tmp/pr-runtime-images/pr-runtime-services.txt' in publisher_script
+missing_image_check = 'source_image_id="$(docker image inspect --format'
+assert 'service_manifest="$PR_RUNTIME_ARTIFACT_DIR/pr-runtime-services.txt"' in publisher_script
 assert 'declare -A seen_services=()' in publisher_script
 assert 'Malformed PR runtime service inventory entry' in publisher_script
 assert 'Duplicate PR runtime service inventory entry' in publisher_script
@@ -1059,21 +1008,23 @@ assert 'PR runtime service inventory is empty; nothing was published.' in publis
 assert re.search(r"services=\(\s+account-service", publisher_script) is None
 assert missing_image_check in publisher_script
 assert publisher_script.count(
-    'echo "Required source artifact image for $service is missing: $image." >&2'
+    'echo "Required source artifact image for $service has no inspectable image ID: $image." >&2'
 ) == 1
-assert 'missing_source_images+=("$image")' in publisher_script
-assert 'if (( ${#missing_source_images[@]} > 0 )); then' in publisher_script
-preflight_index = publisher_script.index(missing_image_check)
 inventory_index = publisher_script.index(
-    'service_manifest=/tmp/pr-runtime-images/pr-runtime-services.txt'
+    'service_manifest="$PR_RUNTIME_ARTIFACT_DIR/pr-runtime-services.txt"'
 )
-failure_index = publisher_script.index(
-    'echo "Required source artifact is incomplete; ${#missing_source_images[@]} runtime image(s) are missing. Nothing was published." >&2'
+source_id_index = publisher_script.index(
+    'declare -A source_image_ids=()'
+)
+existing_scan_index = publisher_script.index(
+    'existing_services=()'
 )
 publish_index = publisher_script.index(
-    'if docker manifest inspect "$image" >/dev/null 2>&1; then'
+    'if docker push "$image"; then'
 )
-assert inventory_index < preflight_index < failure_index < publish_index
+assert inventory_index < source_id_index < existing_scan_index < publish_index
+assert 'verify_existing_target "$service"' in publisher_script
+assert 'does not match the validated source artifact' in publisher_script
 for obsolete_optional_controller_fragment in (
     "hosted-environment-identity-controller; do",
     "hosted-environment-identity-controller\\n",
@@ -1103,15 +1054,14 @@ exit 99
         fixture_env.update(
             DOCKER_CALLS=str(docker_calls),
             IMAGE_TAG="fixture-head",
+            PR_RUNTIME_ARTIFACT_DIR=str(fixture_root),
             PATH=f"{fixture_root}:{fixture_env['PATH']}",
         )
         result = subprocess.run(
             [
                 "bash",
                 "-c",
-                publisher_script.replace(
-                    "/tmp/pr-runtime-images/pr-runtime-services.txt", str(manifest_path)
-                ),
+                publisher_script,
             ],
             check=False,
             env=fixture_env,
@@ -1140,16 +1090,13 @@ with tempfile.TemporaryDirectory() as publisher_fixture_dir:
     fixture_root = Path(publisher_fixture_dir)
     docker_calls = fixture_root / "docker-calls"
     manifest_path = fixture_root / "pr-runtime-services.txt"
-    manifest_path.write_text("account-service\ntcp-proxy-service\n", encoding="utf-8")
+    manifest_path.write_text("account-service\n", encoding="utf-8")
     fake_docker = fixture_root / "docker"
     fake_docker.write_text(
         """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$DOCKER_CALLS"
 if [[ "$1 $2" == "image inspect" ]]; then
-  case "$3" in
-    *account-service*|*tcp-proxy-service*) exit 1 ;;
-    *) exit 0 ;;
-  esac
+  exit 1
 fi
 if [[ "$1 $2" == "manifest inspect" ]]; then
   exit 1
@@ -1166,15 +1113,14 @@ exit 99
     fixture_env.update(
         DOCKER_CALLS=str(docker_calls),
         IMAGE_TAG="fixture-head",
+        PR_RUNTIME_ARTIFACT_DIR=str(fixture_root),
         PATH=f"{fixture_root}:{fixture_env['PATH']}",
     )
     result = subprocess.run(
         [
             "bash",
             "-c",
-            publisher_script.replace(
-                "/tmp/pr-runtime-images/pr-runtime-services.txt", str(manifest_path)
-            ),
+                publisher_script,
         ],
         check=False,
         env=fixture_env,
@@ -1183,11 +1129,9 @@ exit 99
         text=True,
     )
     assert result.returncode == 1, result
-    assert "account-service is missing" in result.stderr
-    assert "tcp-proxy-service is missing" in result.stderr
-    assert "2 runtime image(s) are missing. Nothing was published." in result.stderr
+    assert "account-service has no inspectable image ID" in result.stderr
     calls = docker_calls.read_text(encoding="utf-8").splitlines()
-    assert len([call for call in calls if call.startswith("image inspect ")]) == 2
+    assert len([call for call in calls if call.startswith("image inspect ")]) == 1
     assert not any(call.startswith("manifest inspect ") for call in calls)
     assert not any(call.startswith("push ") for call in calls)
 
@@ -1206,6 +1150,7 @@ with tempfile.TemporaryDirectory() as partial_publish_fixture_dir:
         """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$DOCKER_CALLS"
 if [[ "$1 $2" == "image inspect" ]]; then
+  printf 'sha256:source-image\n'
   exit 0
 fi
 if [[ "$1 $2" == "manifest inspect" ]]; then
@@ -1213,6 +1158,9 @@ if [[ "$1 $2" == "manifest inspect" ]]; then
     *account-service*|*entity-management-service*) exit 0 ;;
     *) exit 1 ;;
   esac
+fi
+if [[ "$1" == pull ]]; then
+  exit 0
 fi
 if [[ "$1" == push ]]; then
   exit 1
@@ -1224,20 +1172,36 @@ exit 99
     fake_sleep.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     fake_docker.chmod(0o755)
     fake_sleep.chmod(0o755)
+    fake_curl = fixture_root / "curl"
+    fake_curl.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == *"https://ghcr.io/token"* ]]; then
+  printf '{"token":"fixture-token"}\n'
+elif [[ "$*" == *"account-service"* || "$*" == *"entity-management-service"* ]]; then
+  printf '200'
+else
+  printf '404'
+fi
+""",
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
     fixture_env = os.environ.copy()
     fixture_env.update(
         DOCKER_CALLS=str(docker_calls),
+        GHCR_USERNAME="fixture-user",
+        GHCR_TOKEN="fixture-token",
         GITHUB_STEP_SUMMARY=str(summary),
         IMAGE_TAG="fixture-head",
+        PR_RUNTIME_ARTIFACT_DIR=str(fixture_root),
         PATH=f"{fixture_root}:{fixture_env['PATH']}",
     )
     result = subprocess.run(
         [
             "bash",
             "-c",
-            publisher_script.replace(
-                "/tmp/pr-runtime-images/pr-runtime-services.txt", str(manifest_path)
-            ),
+                publisher_script,
         ],
         check=False,
         env=fixture_env,
@@ -1249,7 +1213,7 @@ exit 99
     summary_text = summary.read_text(encoding="utf-8")
     assert "Partial PR runtime image publication" in summary_text
     available_section, unpublished_section = summary_text.split(
-        "Unpublished fixed tags:", maxsplit=1
+        "Unpublished fixed tags (not rechecked after the failed push):", maxsplit=1
     )
     assert "`account-service`" in available_section
     assert "`entity-management-service`" in available_section
@@ -1271,6 +1235,7 @@ with tempfile.TemporaryDirectory() as publication_race_fixture_dir:
         """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$DOCKER_CALLS"
 if [[ "$1 $2" == "image inspect" ]]; then
+  printf 'sha256:source-image\n'
   exit 0
 fi
 if [[ "$1 $2" == "manifest inspect" ]]; then
@@ -1280,7 +1245,7 @@ if [[ "$1 $2" == "manifest inspect" ]]; then
   fi
   count=$((count + 1))
   printf '%s' "$count" > "$MANIFEST_CALLS"
-  if ((count <= 4)); then
+  if ((count <= 3)); then
     exit 1
   fi
   exit 0
@@ -1288,28 +1253,55 @@ fi
 if [[ "$1" == push ]]; then
   exit 1
 fi
+if [[ "$1" == pull ]]; then
+  exit 0
+fi
 exit 99
 """,
         encoding="utf-8",
     )
     fake_sleep.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    fake_curl = fixture_root / "curl"
+    fake_curl.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == *"https://ghcr.io/token"* ]]; then
+  printf '{"token":"fixture-token"}\n'
+  exit 0
+fi
+count=0
+if [[ -f "${MANIFEST_CALLS:?}" ]]; then
+  count="$(<"$MANIFEST_CALLS")"
+fi
+count=$((count + 1))
+printf '%s' "$count" >"$MANIFEST_CALLS"
+if ((count <= 2)); then
+  printf '404'
+else
+  printf '200'
+fi
+""",
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
     fake_docker.chmod(0o755)
     fake_sleep.chmod(0o755)
     fixture_env = os.environ.copy()
     fixture_env.update(
         DOCKER_CALLS=str(docker_calls),
+        GHCR_USERNAME="fixture-user",
+        GHCR_TOKEN="fixture-token",
         GITHUB_STEP_SUMMARY=str(summary),
         IMAGE_TAG="fixture-head",
         MANIFEST_CALLS=str(manifest_calls),
+        PR_RUNTIME_ARTIFACT_DIR=str(fixture_root),
         PATH=f"{fixture_root}:{fixture_env['PATH']}",
     )
     result = subprocess.run(
         [
             "bash",
             "-c",
-            publisher_script.replace(
-                "/tmp/pr-runtime-images/pr-runtime-services.txt", str(manifest_path)
-            ),
+                publisher_script,
         ],
         check=False,
         env=fixture_env,
@@ -1317,15 +1309,11 @@ exit 99
         stderr=subprocess.PIPE,
         text=True,
     )
-    assert result.returncode == 1, result
-    assert "Failed to publish" in result.stderr
-    summary_text = summary.read_text(encoding="utf-8")
-    available_section, unpublished_section = summary_text.split(
-        "Unpublished fixed tags:", maxsplit=1
-    )
-    assert "`account-service`" in available_section
-    assert unpublished_section.strip() == "- None"
-    assert "- ``" not in unpublished_section
+    assert result.returncode == 0, result
+    calls = docker_calls.read_text(encoding="utf-8").splitlines()
+    assert len([call for call in calls if call.startswith("push ")]) == 2
+    assert len([call for call in calls if call.startswith("pull ")]) == 1
+    assert not summary.exists()
 
 runtime_jobs = runtime_workflow["jobs"]
 trusted_build = runtime_jobs["build-runtime-images"]
@@ -1360,9 +1348,9 @@ assert "hosted-environment-identity-controller" not in matrix_entries
 controller_build_job = runtime_jobs["build-hosted-identity-controller"]
 assert controller_build_job["needs"] == ["image-meta", "build-base-image"]
 assert controller_build_job["timeout-minutes"] == 25
-assert all(token in controller_build_job["if"] for token in (
-    "github.event_name != 'pull_request'", "github.ref == 'refs/heads/main'", "github.ref == 'refs/heads/develop'"
-))
+assert "github.event_name != 'pull_request'" in controller_build_job["if"]
+assert "needs.image-meta.outputs.head_branch == 'develop'" in controller_build_job["if"]
+assert "needs.image-meta.outputs.head_branch == 'main'" in controller_build_job["if"]
 assert controller_build_job["permissions"] == {
     "contents": "read",
     "packages": "read",
@@ -1375,6 +1363,7 @@ assert all(
 assert controller_build_job["outputs"]["image_id"] == "${{ steps.smoke.outputs.image_id }}"
 controller_build_steps = controller_build_job["steps"]
 checkout = next(step for step in controller_build_steps if step.get("uses", "").startswith("actions/checkout@"))
+assert_immutable_action_pin(checkout, "actions/checkout")
 assert checkout["with"]["persist-credentials"] is False
 assert checkout["with"]["ref"] == "${{ needs.image-meta.outputs.checkout_ref }}"
 assert controller_build_job["env"]["CONTROLLER_IMAGE"] == (
@@ -1386,9 +1375,7 @@ smoke_index = next(i for i, step in enumerate(controller_build_steps) if step.ge
 export_index = next(i for i, step in enumerate(controller_build_steps) if step.get("name") == "Export exact verified controller image artifact")
 upload_index = next(i for i, step in enumerate(controller_build_steps) if step.get("name") == "Upload exact verified controller image artifact")
 assert login_index < build_index < smoke_index < export_index < upload_index
-assert controller_build_steps[login_index]["uses"] == (
-    "docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee"
-)
+assert_immutable_action_pin(controller_build_steps[login_index], "docker/login-action")
 assert controller_build_steps[login_index]["with"] == {
     "registry": "ghcr.io",
     "username": "${{ github.actor }}",
@@ -1434,15 +1421,13 @@ assert controller_publish_job["needs"] == [
     "build-hosted-identity-controller",
 ]
 assert controller_publish_job["timeout-minutes"] == 25
-assert all(token in controller_publish_job["if"] for token in (
-    "always()",
-    "github.event_name != 'pull_request'",
-    "github.ref == 'refs/heads/main'",
-    "github.ref == 'refs/heads/develop'",
-    "needs.image-meta.result == 'success'",
-    "needs.build-base-image.result == 'success'",
-    "needs.build-hosted-identity-controller.result == 'success'",
-))
+assert "always()" in controller_publish_job["if"]
+assert "github.event_name != 'pull_request'" in controller_publish_job["if"]
+assert "needs.image-meta.outputs.head_branch == 'develop'" in controller_publish_job["if"]
+assert "needs.image-meta.outputs.head_branch == 'main'" in controller_publish_job["if"]
+assert "needs.image-meta.result == 'success'" in controller_publish_job["if"]
+assert "needs.build-base-image.result == 'success'" in controller_publish_job["if"]
+assert "needs.build-hosted-identity-controller.result == 'success'" in controller_publish_job["if"]
 assert controller_publish_job["permissions"] == {
     "contents": "read",
     "packages": "write",
@@ -1457,9 +1442,7 @@ load_index = next(i for i, step in enumerate(controller_publish_steps) if step.g
 login_index = next(i for i, step in enumerate(controller_publish_steps) if step.get("name") == "Login to GHCR")
 publish_index = next(i for i, step in enumerate(controller_publish_steps) if step.get("name") == "Publish exact verified controller image")
 assert checkout_index < download_index < load_index < login_index < publish_index
-assert controller_publish_steps[checkout_index]["uses"] == (
-    "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
-)
+assert_immutable_action_pin(controller_publish_steps[checkout_index], "actions/checkout")
 assert controller_publish_steps[checkout_index]["with"] == {
     "ref": "${{ needs.image-meta.outputs.checkout_ref }}",
     "persist-credentials": False,
@@ -1523,7 +1506,9 @@ janitor_prune_step = next(
     step for step in janitor_steps if step.get("name") == "Prune stale preview namespaces"
 )
 janitor_runtime_writer = next(
-    step for step in janitor_steps if step.get("name") == "Write preview kubeconfig"
+    step
+    for step in janitor_steps
+    if step.get("name") == "Write trusted namespace-manager kubeconfig"
 )
 janitor_requester_step = next(
     step
@@ -1551,14 +1536,13 @@ assert janitor_requester_step["with"] == {
 assert janitor_prune_step["env"]["HOSTED_IDENTITY_REQUESTER_KUBECONFIG"] == (
     "${{ runner.temp }}/hosted-identity-requester.kubeconfig"
 )
-janitor_runtime_writer_run = janitor_runtime_writer["run"]
-for required in (
-    'KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"',
-    'echo "PREVIEW_RUNTIME_KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"',
-):
-    assert required in janitor_runtime_writer_run, required
-assert 'echo "KUBECONFIG=$KUBECONFIG_PATH"' not in janitor_runtime_writer_run
-janitor_runtime_path_expression = "${{ env.PREVIEW_RUNTIME_KUBECONFIG }}"
+assert janitor_runtime_writer["uses"] == "./.github/actions/write-kubeconfig"
+assert janitor_runtime_writer["with"] == {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
+    "export-to-github-env": "false",
+}
+janitor_runtime_path_expression = "${{ runner.temp }}/preview-namespace-manager.kubeconfig"
 for consumer in (janitor_verify_step, janitor_prune_step):
     assert consumer["env"]["KUBECONFIG"] == janitor_runtime_path_expression
     assert "${{ runner.temp }}/preview-kubeconfig.yaml" not in str(consumer)
@@ -1577,11 +1561,20 @@ assert janitor_cleanup_step.get("run") == (
 )
 assert janitor_runtime_cleanup_step.get("if") == "${{ always() }}"
 assert janitor_runtime_cleanup_step.get("run") == (
-    'rm -f -- "${PREVIEW_RUNTIME_KUBECONFIG:-$RUNNER_TEMP/preview-kubeconfig.yaml}"'
+    'rm -f -- "$RUNNER_TEMP/preview-namespace-manager.kubeconfig"'
 )
 target_step = next(step for step in validate_job["steps"] if step.get("id") == "target")
 target_script = target_step["run"]
-assert target_script.count("validate-preview-artifact.py") == 1
+assert target_script.count("validate-preview-artifact.py") == 2
+assert target_script.count(
+    'python3 ./dev-tools/hosted/preview/validate-preview-artifact.py'
+) == 2
+assert '"$ARTIFACT_DIRECTORY/preview-metadata.json"' in target_script
+assert '"$ARTIFACT_DIRECTORY/preview-rendered-sanitized.yaml"' in target_script
+assert 'exposure-mode "$ARTIFACT_DIRECTORY/preview-rendered-sanitized.yaml"' in target_script
+assert 'case "$exposure_mode" in' in target_script
+assert 'private|public) ;;' in target_script
+assert 'Private bridge proof requires hosted-controller identity.' in target_script
 assert '"${{ steps.certificate-identity.outputs.mode }}"' in target_script
 assert target_script.count('download_source_artifact "$ARTIFACT_NAME"') == 1
 assert target_script.count('metadata_event="$(jq -r') == 1
@@ -1671,12 +1664,10 @@ for artifact_job_name in ("prepare-runtime", "deploy-runtime"):
         for step in artifact_job_steps
         if step.get("uses", "").startswith("actions/checkout@")
     )
-    assert trusted_checkout == {
-        "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-        "with": {
-            "ref": "${{ github.event.repository.default_branch }}",
-            "persist-credentials": False,
-        },
+    assert_immutable_action_pin(trusted_checkout, "actions/checkout")
+    assert trusted_checkout["with"] == {
+        "ref": "${{ github.event.repository.default_branch }}",
+        "persist-credentials": False,
     }
     assert artifact_job_steps.index(trusted_checkout) < artifact_job_steps.index(
         artifact_call
@@ -1687,11 +1678,28 @@ active_request = deploy_by_name["Apply canonical Active request"]
 assert active_request["run"] == (
     'bash ./dev-tools/hosted/shared/request-hosted-identity.sh "$IDENTITY_NAME" Active'
 )
+deploy_manager_write = deploy_by_name["Write trusted namespace-manager kubeconfig"]
+assert deploy_manager_write["uses"] == "./.github/actions/write-kubeconfig"
+assert deploy_manager_write["with"] == {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
+    "export-to-github-env": "false",
+}
 deploy_runtime_write = deploy_by_name["Write runtime kubeconfig"]
 deploy_requester_write = deploy_by_name["Write requester kubeconfig"]
 assert deploy_runtime_write["with"]["path"] == (
     "${{ runner.temp }}/preview-runtime.kubeconfig"
 )
+assert deploy_runtime_write["with"]["content"] == (
+    "${{ secrets.TRUSTED_HOSTED_PREVIEW_RUNTIME_KUBECONFIG }}"
+)
+assert deploy_runtime_write["with"]["export-to-github-env"] == "false"
+deploy_writer_write = deploy_by_name["Write standalone certificate-writer kubeconfig"]
+assert deploy_writer_write["with"] == {
+    "content": "${{ secrets.TRUSTED_HOSTED_STANDALONE_CERTIFICATE_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/standalone-certificate-writer.kubeconfig",
+    "export-to-github-env": "false",
+}
 assert deploy_requester_write["with"] == {
     "content": "${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}",
     "path": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
@@ -1702,9 +1710,15 @@ assert deploy_by_name["Apply canonical Active request"]["env"] == {
     "KUBECONFIG": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
 }
 assert (
-    deploy_steps.index(deploy_runtime_write)
+    deploy_steps.index(deploy_manager_write)
+    < deploy_steps.index(deploy_runtime_write)
     < deploy_steps.index(deploy_requester_write)
     < deploy_steps.index(active_request)
+)
+assert (
+    deploy_steps.index(deploy_manager_write)
+    < deploy_steps.index(deploy_by_name["Bind scoped runtime and certificate roles"])
+    < deploy_steps.index(deploy_runtime_write)
 )
 deploy_requester_cleanup = deploy_by_name["Remove requester kubeconfig"]
 assert deploy_requester_cleanup["if"] == "${{ always() }}"
@@ -1716,6 +1730,10 @@ assert "Remember preview runtime kubeconfig" not in deploy_by_name
 assert "Restore preview runtime kubeconfig" not in deploy_by_name
 runtime_kubeconfig_path = "${{ runner.temp }}/preview-runtime.kubeconfig"
 runtime_kubeconfig_cleanup = 'rm -f -- "$RUNNER_TEMP/preview-runtime.kubeconfig"'
+runtime_kubeconfig_marker = '"$RUNNER_TEMP/preview-runtime.kubeconfig"'
+manager_kubeconfig_path = "${{ runner.temp }}/preview-namespace-manager.kubeconfig"
+manager_kubeconfig_cleanup = 'rm -f -- "$RUNNER_TEMP/preview-namespace-manager.kubeconfig"'
+manager_kubeconfig_marker = '"$RUNNER_TEMP/preview-namespace-manager.kubeconfig"'
 runtime_kubeconfig_jobs = set()
 for job_name, job in jobs.items():
     steps = job.get("steps", [])
@@ -1730,18 +1748,57 @@ for job_name, job in jobs.items():
         continue
     runtime_kubeconfig_jobs.add(job_name)
     assert len(writes) == 1, job_name
+    cleanup = next(step for step in steps if step.get("name") == "Remove runtime kubeconfig")
+    assert cleanup["if"] == "${{ always() }}", job_name
+    if job_name == "deploy-runtime":
+        assert runtime_kubeconfig_marker in cleanup["run"], job_name
+        assert manager_kubeconfig_marker in cleanup["run"], job_name
+    else:
+        assert cleanup["run"] == runtime_kubeconfig_cleanup, job_name
+    assert steps[-1] == cleanup, job_name
+assert runtime_kubeconfig_jobs == {"deploy-runtime", "verify-runtime"}
+manager_kubeconfig_jobs = set()
+for job_name, job in jobs.items():
+    steps = job.get("steps", [])
+    writes = [
+        step
+        for step in steps
+        if isinstance(step, dict)
+        and isinstance(step.get("with"), dict)
+        and step["with"].get("path") == manager_kubeconfig_path
+    ]
+    if not writes:
+        continue
+    manager_kubeconfig_jobs.add(job_name)
     cleanup = next(
         step for step in steps if step.get("name") == "Remove runtime kubeconfig"
     )
     assert cleanup["if"] == "${{ always() }}", job_name
-    assert cleanup["run"] == runtime_kubeconfig_cleanup, job_name
-    assert steps[-1] == cleanup, job_name
-assert runtime_kubeconfig_jobs == {"deploy-runtime", "verify-runtime", "destroy-runtime"}
+    if job_name == "destroy-runtime":
+        assert cleanup["run"] == manager_kubeconfig_cleanup, job_name
+    else:
+        assert manager_kubeconfig_marker in cleanup["run"], job_name
+assert manager_kubeconfig_jobs == {"deploy-runtime", "destroy-runtime"}
 assert "Set up Helm" not in deploy_by_name
 requested_step_index = next(
     index
     for index, step in enumerate(deploy_steps)
     if step.get("name") == "Create and annotate exact preview runtime namespace"
+)
+clean_revalidate_step_index = next(
+    index
+    for index, step in enumerate(deploy_steps)
+    if step.get("name") == "Revalidate exact PR target before clean runtime redeploy"
+)
+clean_delete_step_index = next(
+    index
+    for index, step in enumerate(deploy_steps)
+    if step.get("name") == "Delete exact preview runtime namespace before recreate"
+)
+allocate_port_step_index = next(
+    index
+    for index, step in enumerate(deploy_steps)
+    if step.get("name") == "Allocate stable preview Telnet port"
 )
 apply_step_index = next(
     index
@@ -1753,22 +1810,89 @@ deployed_step_index = next(
     for index, step in enumerate(deploy_steps)
     if step.get("name") == "Record exact deployed preview head"
 )
-assert requested_step_index < apply_step_index < deployed_step_index
-standalone_certificates = deploy_by_name["Prepare standalone preview transport certificates"]
-assert standalone_certificates["if"] == (
+assert (
+    allocate_port_step_index
+    < clean_revalidate_step_index
+    < clean_delete_step_index
+    < requested_step_index
+    < apply_step_index
+    < deployed_step_index
+)
+clean_revalidate = deploy_by_name[
+    "Revalidate exact PR target before clean runtime redeploy"
+]
+assert clean_revalidate["env"] == {
+    "GH_TOKEN": "${{ github.token }}",
+    "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
+    "EXPECTED_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
+    "EXPECTED_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
+    "EXPECTED_MERGE_SHA": "${{ needs.validate-target.outputs.merge_sha }}",
+}
+clean_revalidate_run = clean_revalidate["run"]
+assert clean_revalidate_run.index(
+    "bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh"
+) < clean_revalidate_run.index(
+    "bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh"
+)
+clean_delete = deploy_by_name["Delete exact preview runtime namespace before recreate"]
+assert clean_delete["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
+    "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}",
+    "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
+}
+assert '[[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]] || {' in clean_delete[
+    "run"
+]
+assert (
+    'bash ./dev-tools/hosted/shared/delete-hosted-namespace.sh \\\n'
+    '  "$RUNTIME_NAMESPACE" "$RUNTIME_NAMESPACE"'
+) in clean_delete["run"]
+create_step = deploy_by_name["Create and annotate exact preview runtime namespace"]
+assert create_step["env"]["ALLOCATED_TELNET_PORT"] == (
+    "${{ steps.allocate-telnet-port.outputs.port }}"
+)
+assert create_step["env"]["ALLOCATION_TIMESTAMP"] == (
+    "${{ steps.allocate-capacity.outputs.allocation_timestamp }}"
+)
+standalone_grpc = deploy_by_name["Prepare standalone gRPC TLS secret"]
+standalone_certificates = deploy_by_name["Prepare standalone transport certificates"]
+standalone_secret_wait = deploy_by_name["Wait for standalone transport Secret projections"]
+assert standalone_grpc["if"] == (
     "${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' }}"
 )
-assert standalone_certificates["env"] == {
+assert standalone_grpc["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/preview-runtime.kubeconfig",
     "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}"
 }
-assert standalone_certificates["run"].splitlines() == [
+assert standalone_certificates["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/standalone-certificate-writer.kubeconfig",
+    "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}"
+}
+assert standalone_grpc["run"].splitlines() == [
     "set -euo pipefail",
     'bash ./dev-tools/hosted/shared/ensure-grpc-tls-secret.sh "$RUNTIME_NAMESPACE"',
+]
+assert standalone_certificates["run"].splitlines() == [
+    "set -euo pipefail",
     'bash ./dev-tools/hosted/preview/ensure-standalone-transport-certificates.sh "$RUNTIME_NAMESPACE"',
+]
+assert standalone_secret_wait["if"] == (
+    "${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' }}"
+)
+assert standalone_secret_wait["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/preview-runtime.kubeconfig",
+    "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}"
+}
+assert standalone_secret_wait["run"].splitlines() == [
+    "set -euo pipefail",
+    "bash ./dev-tools/hosted/preview/ensure-standalone-transport-certificates.sh \\",
+    "  --wait \"$RUNTIME_NAMESPACE\"",
 ]
 assert (
     requested_step_index
+    < deploy_steps.index(standalone_grpc)
     < deploy_steps.index(standalone_certificates)
+    < deploy_steps.index(standalone_secret_wait)
     < apply_step_index
 )
 apply_step = deploy_steps[apply_step_index]
@@ -1776,13 +1900,33 @@ deployed_step = deploy_steps[deployed_step_index]
 assert apply_step["id"] == "deploy-runtime-artifact"
 assert deployed_step["if"] == "${{ steps.deploy-runtime-artifact.outcome == 'success' }}"
 assert "firemud.dev/last-preview-head-sha=${HEAD_SHA}" in deployed_step["run"]
+runtime_uid_step = deploy_by_name["Record exact deployed runtime Namespace UID"]
+runtime_uid_step_index = deploy_steps.index(runtime_uid_step)
+assert runtime_uid_step["id"] == "record-runtime-namespace-uid"
+assert runtime_uid_step["if"] == "${{ steps.deploy-runtime-artifact.outcome == 'success' }}"
+assert runtime_uid_step["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
+    "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}",
+    "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
+    "EXPECTED_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
+}
+assert deployed_step_index < runtime_uid_step_index
+runtime_uid_run = runtime_uid_step["run"]
+for required in (
+    'kubectl get namespace "$RUNTIME_NAMESPACE" --ignore-not-found -o json',
+    '"firemud.dev/preview"',
+    '"firemud.dev/pr-number"',
+    '"firemud.dev/requested-preview-head-sha"',
+    '"firemud.dev/last-preview-head-sha"',
+    'echo "uid=$runtime_uid" >> "$GITHUB_OUTPUT"',
+):
+    assert required in runtime_uid_run, required
 privileged_validation_guards = {
     "Allocate stable preview Telnet port": (
         ('[[ "$port" =~ ^32(00[0-9]|01[0-5])$ ]] || {', "Invalid allocated Telnet port"),
     ),
     "Create and annotate exact preview runtime namespace": (
         ('[[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]] || {', "Invalid preview runtime namespace"),
-        ('[[ "$TELNET_PORT" =~ ^32(00[0-9]|01[0-5])$ ]] || {', "Invalid allocated Telnet port"),
         (
             '[[ "$ALLOCATION_TIMESTAMP" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[^[:space:]]+Z$ ]] || {',
             "Invalid allocation timestamp",
@@ -1801,7 +1945,45 @@ for step_name, guards in privileged_validation_guards.items():
 inject_step = deploy_by_name["Inject trusted allocated Telnet port"]["run"]
 assert '"$RUNTIME_NAMESPACE" "$TELNET_PORT"' in inject_step
 assert '"${{ needs.validate-target.outputs.certificate_identity_mode }}"' in inject_step
-for step_name in ("Allocate stable preview Telnet port", "Create and annotate exact preview runtime namespace"):
+assert '"${{ needs.validate-target.outputs.exposure_mode }}"' in inject_step
+assert '"$EXPOSURE_MODE"' in inject_step
+telnet_port_resolver_call = (
+    'bash ./dev-tools/hosted/preview/resolve-preview-telnet-port.sh \\\n'
+    '  "$EXPOSURE_MODE" "$ALLOCATED_TELNET_PORT"'
+)
+for step_name in (
+    "Create and annotate exact preview runtime namespace",
+    "Inject trusted allocated Telnet port",
+    "Apply validated PR runtime artifact",
+):
+    assert deploy_by_name[step_name]["run"].count(telnet_port_resolver_call) == 1
+assert telnet_port_resolver.is_file()
+assert telnet_port_resolver.stat().st_mode & 0o111
+assert subprocess.run(
+    ["bash", str(telnet_port_resolver), "private", ""],
+    capture_output=True,
+    text=True,
+    check=True,
+).stdout == "0\n"
+assert subprocess.run(
+    ["bash", str(telnet_port_resolver), "public", "32015"],
+    capture_output=True,
+    text=True,
+    check=True,
+).stdout == "32015\n"
+for arguments, expected_error in (
+    (("untrusted", "32000"), "Invalid preview exposure mode"),
+    (("public", "31999"), "Invalid allocated Telnet port"),
+    (("public", "32016"), "Invalid allocated Telnet port"),
+):
+    result = subprocess.run(
+        ["bash", str(telnet_port_resolver), *arguments],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert expected_error in result.stderr
+for step_name in ("Allocate stable preview Telnet port",):
     assert "actual value was ${" in deploy_by_name[step_name]["run"]
 assert "Validate trusted preview runtime target" not in deploy_by_name
 assert "Final revalidate open PR before server dry-run and apply" not in deploy_by_name
@@ -1817,18 +1999,21 @@ assert apply_step["env"]["EXPECTED_BASE_SHA"] == "${{ needs.validate-target.outp
 assert apply_step["env"]["EXPECTED_MERGE_SHA"] == "${{ needs.validate-target.outputs.merge_sha }}"
 assert apply_run.count(target_validation) == 1
 assert '"${{ needs.validate-target.outputs.certificate_identity_mode }}"' in apply_run
+assert '"${{ needs.validate-target.outputs.exposure_mode }}"' in apply_run
 assert apply_run.count(revalidate_target) == 2
 source_binding_helper = (
     "bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh"
 )
-assert trusted_source.count(source_binding_helper) == 7
+assert trusted_source.count(source_binding_helper) == 9
 assert trusted_source.count('pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"') == 1
 assert "current_pull_request_json" not in trusted_source
 assert "(.head.repo.full_name == $repository)" not in trusted_source
 for stage in (
     "before privileged runtime mutation",
     "before capacity reclaim",
+    "before clean runtime redeploy",
     "before the identity request",
+    "before success publication",
 ):
     assert stage in trusted_source
 dry_run = "kubectl apply --dry-run=server"
@@ -1882,6 +2067,7 @@ assert deploy_failure["env"] == {
     "PREVIEW_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
     "PREVIEW_IMAGE_TAG": "${{ needs.validate-target.outputs.image_tag }}",
     "PREVIEW_HOSTNAME": "${{ needs.validate-target.outputs.hostname }}",
+    "PREVIEW_EXPOSURE_MODE": "${{ needs.validate-target.outputs.exposure_mode }}",
 }
 deploy_failure_script = deploy_failure["with"]["script"]
 for fragment in (
@@ -1922,8 +2108,8 @@ prepare_by_name = {
     for step in jobs["prepare-runtime"]["steps"]
     if isinstance(step, dict)
 }
-assert "Wait for fixed-head runtime images" in prepare_by_name
-assert "Wait for fixed-head runtime images" not in deploy_by_name
+assert "Wait for tested PR merge runtime images" in prepare_by_name
+assert "Wait for tested PR merge runtime images" not in deploy_by_name
 assert "Wait for exact controller identity readiness" not in deploy_by_name
 assert "Wait for runtime rollouts before operator validation" not in deploy_by_name
 
@@ -1931,7 +2117,44 @@ verify_steps = jobs["verify-runtime"]["steps"]
 verify_by_name = {
     step.get("name"): step for step in verify_steps if isinstance(step, dict)
 }
+verify_head_step_index = next(
+    index
+    for index, step in enumerate(verify_steps)
+    if step.get("name") == "Revalidate open PR before runtime verification"
+)
+capture_uid_step_index = next(
+    index
+    for index, step in enumerate(verify_steps)
+    if step.get("name") == "Capture exact runtime Namespace UID before verification"
+)
+capture_uid_step = verify_by_name[
+    "Capture exact runtime Namespace UID before verification"
+]
+assert capture_uid_step_index == verify_head_step_index + 1
+assert capture_uid_step["id"] == "capture-runtime-namespace"
+assert capture_uid_step["env"] == {
+    "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
+    "EXPECTED_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
+    "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}",
+    "EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID": (
+        "${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}"
+    ),
+}
+capture_uid_run = capture_uid_step["run"]
+for required in (
+    'kubectl get namespace "$RUNTIME_NAMESPACE" --ignore-not-found -o json',
+    '"firemud.dev/preview"',
+    '"firemud.dev/pr-number"',
+    '"firemud.dev/requested-preview-head-sha"',
+    '"firemud.dev/last-preview-head-sha"',
+    '"$runtime_uid" == "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID"',
+    'echo "uid=$runtime_uid" >> "$GITHUB_OUTPUT"',
+):
+    assert required in capture_uid_run, required
 runtime_port_run = verify_by_name["Read allocated TCP port"]["run"]
+assert verify_by_name["Read allocated TCP port"]["if"] == (
+    "${{ needs.validate-target.outputs.exposure_mode == 'public' }}"
+)
 assert "::error title=Invalid runtime Telnet port::" in runtime_port_run
 assert "actual value was ${port:-empty}." in runtime_port_run
 verify_success_index = next(
@@ -1947,9 +2170,81 @@ verify_failure_index = next(
 assert verify_success_index < verify_failure_index
 verify_success = verify_steps[verify_success_index]
 assert verify_success["if"] == "${{ success() }}"
+assert "needs.validate-target.outputs.exposure_mode == 'public'" in verify_by_name[
+    "Smoke hosted preview over TCP"
+]["if"]
+controller_wait = verify_by_name["Wait for exact controller identity projection"]
+assert controller_wait["if"] == (
+    "${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}"
+)
+assert '"${{ needs.validate-target.outputs.exposure_mode }}"' in controller_wait["run"]
+final_uid_step_index = next(
+    index
+    for index, step in enumerate(verify_steps)
+    if step.get("name")
+    == "Revalidate exact source binding and runtime Namespace UID before success publication"
+)
+final_uid_step = verify_by_name[
+    "Revalidate exact source binding and runtime Namespace UID before success publication"
+]
+assert final_uid_step_index + 1 == verify_success_index
+assert final_uid_step["env"] == {
+    "GH_TOKEN": "${{ github.token }}",
+    "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
+    "EXPECTED_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
+    "EXPECTED_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
+    "EXPECTED_MERGE_SHA": "${{ needs.validate-target.outputs.merge_sha }}",
+    "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}",
+    "EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID": (
+        "${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}"
+    ),
+    "CAPTURED_RUNTIME_NAMESPACE_UID": (
+        "${{ steps.capture-runtime-namespace.outputs.uid }}"
+    ),
+}
+final_uid_run = final_uid_step["run"]
+source_revalidation_position = final_uid_run.index(source_binding_helper)
+namespace_lookup_position = final_uid_run.index(
+    'kubectl get namespace "$RUNTIME_NAMESPACE" --ignore-not-found -o json'
+)
+uid_comparison_position = final_uid_run.index(
+    '[[ "$observed_uid" == "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID" ]] || {'
+)
+assert source_revalidation_position < namespace_lookup_position < uid_comparison_position
+for required in (
+    '"firemud.dev/preview"',
+    '"firemud.dev/pr-number"',
+    '"firemud.dev/requested-preview-head-sha"',
+    '"firemud.dev/last-preview-head-sha"',
+    '"$CAPTURED_RUNTIME_NAMESPACE_UID" == "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID"',
+    '::error title=Missing deployed preview runtime Namespace UID::The deploy job did not publish its post-apply Namespace UID.',
+    '::error title=Preview runtime namespace UID fence failed::',
+    '::error title=Preview runtime namespace UID changed::',
+):
+    assert required in final_uid_run, required
 verify_failure = verify_steps[verify_failure_index]
 assert verify_failure["if"] == "${{ !cancelled() && failure() }}"
+assert verify_failure["env"] == {
+    "PREVIEW_PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
+    "PREVIEW_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
+    "PREVIEW_IMAGE_TAG": "${{ needs.validate-target.outputs.image_tag }}",
+    "PREVIEW_HOSTNAME": "${{ needs.validate-target.outputs.hostname }}",
+    "PREVIEW_EXPOSURE_MODE": "${{ needs.validate-target.outputs.exposure_mode }}",
+    "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}",
+    "EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID": (
+        "${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}"
+    ),
+}
 failure_script = verify_failure["with"]["script"]
+for fragment in (
+    'const { execFileSync } = require("node:child_process");',
+    '"--ignore-not-found"',
+    "JSON.parse(namespaceJson)",
+    "observedUid !== process.env.EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID",
+    "Skipping stale preview verification failure publication",
+    "core.warning(",
+):
+    assert fragment in failure_script, fragment
 assert 'mode: "failure"' in failure_script
 assert 'markerPolicy: "replace"' in failure_script
 assert 'statePolicy: "expected-open"' in failure_script
@@ -2066,14 +2361,20 @@ assert "for deployment in" not in dev_demo_rollout_step["run"]
 assert "rollout status" not in dev_demo_rollout_step["run"]
 dev_demo_render_step = dev_demo_by_name["Validate dev-demo chart render"]
 dev_demo_render_run = dev_demo_render_step["run"]
-dev_demo_kubeconfig_step = dev_demo_by_name["Write dev-demo runtime kubeconfig"]
-assert '"$RUNNER_TEMP/dev-demo-runtime.kubeconfig"' in dev_demo_kubeconfig_step[
-    "run"
-]
-assert "DEV_DEMO_RUNTIME_KUBECONFIG" not in dev_demo_kubeconfig_step["run"]
-assert 'echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"' in (
-    dev_demo_kubeconfig_step["run"]
-)
+dev_demo_manager_write = dev_demo_by_name["Write trusted namespace-manager kubeconfig"]
+assert dev_demo_manager_write["uses"] == "./.github/actions/write-kubeconfig"
+assert dev_demo_manager_write["with"] == {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
+    "export-to-github-env": "false",
+}
+dev_demo_runtime_write = dev_demo_by_name["Write dev-demo runtime credentials"]
+assert dev_demo_runtime_write["uses"] == "./.github/actions/write-kubeconfig"
+assert dev_demo_runtime_write["with"] == {
+    "content": "${{ secrets.TRUSTED_HOSTED_PREVIEW_RUNTIME_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "export-to-github-env": "false",
+}
 dev_demo_requester_write = dev_demo_by_name["Write hosted identity requester kubeconfig"]
 assert dev_demo_requester_write["uses"] == "./.github/actions/write-kubeconfig"
 assert dev_demo_requester_write["with"] == {
@@ -2105,12 +2406,14 @@ preflight_command_start = dev_demo_preflight.index(
 assert preflight_start < preflight_command_start < preflight_end
 preflight_lines = [line.strip() for line in dev_demo_preflight.splitlines()]
 preflight_line_start = preflight_lines.index("FIREMUD_PREFLIGHT_CONTEXT=ci-static \\")
-assert preflight_lines[preflight_line_start : preflight_line_start + 5] == [
+assert preflight_lines[preflight_line_start : preflight_line_start + 7] == [
     "FIREMUD_PREFLIGHT_CONTEXT=ci-static \\",
     "python3 ./dev-tools/deploy/preflight.py hosted-bridge \\",
     "/tmp/dev-demo-rendered.yaml \\",
     '"${{ needs.dev-demo-plan.outputs.namespace }}" \\',
-    '"${{ needs.dev-demo-plan.outputs.release_name }}"',
+    '"${{ needs.dev-demo-plan.outputs.release_name }}" \\',
+    "--expected-hosted-telnet-node-port \\",
+    '"${{ needs.dev-demo-plan.outputs.telnet_port }}"',
 ]
 render_position = dev_demo_preflight.index(">/tmp/dev-demo-rendered.yaml")
 dry_run_position = dev_demo_preflight.index("kubectl apply --dry-run=server")
@@ -2128,7 +2431,8 @@ assert operator_step["if"] == (
 operator_run = operator_step["run"]
 assert "FIREMUD_PREFLIGHT_CONTEXT=operator" in operator_run
 assert "python3 ./dev-tools/deploy/preflight.py hosted-bridge" in operator_run
-assert '--expected-hosted-telnet-node-port' not in operator_run
+assert operator_run.count("--expected-hosted-telnet-node-port") == 1
+assert operator_run.count("needs.dev-demo-plan.outputs.telnet_port") == 1
 
 preview_plan_steps = preview_workflow["jobs"]["preview-plan"]["steps"]
 preview_plan_outputs = preview_workflow["jobs"]["preview-plan"]["outputs"]
@@ -2144,9 +2448,27 @@ assert preview_plan_checkouts[0]["with"] == {
 }
 assert set(preview_workflow["jobs"]) == {
     "preview-plan",
+    "preview-runtime-base-refresh",
     "preview-render",
     "preview-destroy-intent",
 }
+refresh_job = preview_workflow["jobs"]["preview-runtime-base-refresh"]
+assert refresh_job["needs"] == "preview-plan"
+assert "base_refresh_required == 'true'" in refresh_job["if"]
+assert "image_tag != needs.preview-plan.outputs.base_sha" in refresh_job["if"]
+assert refresh_job["permissions"] == {"contents": "write", "pull-requests": "read"}
+refresh_step = next(
+    step
+    for step in refresh_job["steps"]
+    if step.get("name") == "Dispatch exact current-base runtime refresh when event metadata is stale"
+)
+assert "createDispatchEvent" in refresh_step["with"]["script"]
+assert "git.getRef" in refresh_step["with"]["script"]
+assert "parents[0]" in refresh_step["with"]["script"]
+assert "parents[1]" in refresh_step["with"]["script"]
+render_job = preview_workflow["jobs"]["preview-render"]
+assert render_job["needs"] == ["preview-plan", "preview-runtime-base-refresh"]
+assert "always()" in render_job["if"]
 assert "close_certificate_identity_mode" not in preview_plan_outputs
 assert "certificate_identity_mode" not in preview_plan_outputs
 preview_derive_step = next(
@@ -2181,8 +2503,9 @@ assert preview_derive_run.index('HEAD_SHA="${HEAD_SHA,,}"') < preview_derive_run
 )
 assert 'resolve-preview-image-tag.sh' in preview_derive_run
 assert 'IMAGE_TAG="$HEAD_SHA"' in preview_derive_run
-assert 'IMAGE_TAG" != "$BASE_SHA"' in preview_derive_run
-image_tag_validation = '[[ "$IMAGE_TAG" != "$HEAD_SHA" && "$IMAGE_TAG" != "$BASE_SHA" ]]'
+assert 'EXPECTED_MERGE_IMAGE_TAG="pr-merge-${MERGE_SHA}"' in preview_derive_run
+assert 'IMAGE_TAG" != "$EXPECTED_MERGE_IMAGE_TAG"' in preview_derive_run
+image_tag_validation = '[[ "$IMAGE_TAG" != "$EXPECTED_MERGE_IMAGE_TAG" && "$IMAGE_TAG" != "$BASE_SHA" ]]'
 assert image_tag_validation in preview_derive_run
 assert "Invalid preview domain" in preview_derive_run
 assert preview_derive_run.count(
@@ -2190,11 +2513,15 @@ assert preview_derive_run.count(
 ) == 1
 assert "PULL_REQUEST_JSON=" in preview_derive_run
 assert ".head.sha" in preview_derive_run
-assert ".base.sha" in preview_derive_run
+assert ".base.ref" in preview_derive_run
+assert "git/ref/heads/${CURRENT_BASE_REF}" in preview_derive_run
+assert ".object.sha" in preview_derive_run
+assert ".parents[0].sha" in preview_derive_run
+assert ".parents[1].sha" in preview_derive_run
 assert ".mergeable" in preview_derive_run
 assert ".mergeable_state" in preview_derive_run
 assert "MERGE_RETRY_LIMIT=5" in preview_derive_run
-assert "Stale preview base SHA" in preview_derive_run
+assert "BASE_REFRESH_REQUIRED=true" in preview_derive_run
 assert "Preview merge conflict" in preview_derive_run
 assert "Preview merge computation unavailable" in preview_derive_run
 assert "EVENT_MERGE_SHA" not in preview_derive_step["env"]
@@ -2233,6 +2560,10 @@ assert projection_lines == [
 ]
 assert "kubectl" not in projection_wait
 assert "deadline=" not in projection_wait
+assert "[private|public]" in Path(waiter).read_text(encoding="utf-8")
+assert 'exposure_mode="${5:-public}"' in Path(waiter).read_text(encoding="utf-8")
+assert 'namespace_telnet_port=0' in Path(waiter).read_text(encoding="utf-8")
+assert 'profile_telnet_port" != 0' in Path(waiter).read_text(encoding="utf-8")
 
 retirement_wait = next(
     step["run"]
@@ -2241,23 +2572,27 @@ retirement_wait = next(
 )
 assert '--retired "$IDENTITY_NAME" 600' in retirement_wait
 requester_credentials = retire_by_name["Check Hosted identity requester credentials"]
-assert requester_credentials["id"] == "requester-credentials"
+assert "id" not in requester_credentials
 assert requester_credentials["env"] == {
     "REQUESTER_KUBECONFIG": "${{ secrets.TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}"
 }
 for required in (
     '[[ -z "$REQUESTER_KUBECONFIG" ]]',
-    'available=false',
-    'available=true',
-    "skipping identity retirement",
+    '::error title=Missing Hosted identity requester credentials::Cannot retire hosted identity without the trusted requester kubeconfig.',
+    'exit 1',
 ):
     assert required in requester_credentials["run"]
+assert 'available=true' not in requester_credentials["run"]
+assert 'available=false' not in requester_credentials["run"]
+assert "skipping identity retirement" not in requester_credentials["run"]
 requester_writer = retire_by_name["Write requester kubeconfig"]
-assert requester_writer["if"] == "${{ steps.requester-credentials.outputs.available == 'true' }}"
+assert "if" not in requester_writer
 assert requester_writer["with"]["export-to-github-env"] == "false"
+requester_kubectl_validation = retire_by_name["Validate kubectl client/server skew"]
+assert "if" not in requester_kubectl_validation
 identity_api = retire_by_name["Discover HostedEnvironmentIdentity API"]
 assert identity_api["id"] == "identity-api"
-assert identity_api["if"] == "${{ steps.requester-credentials.outputs.available == 'true' }}"
+assert "if" not in identity_api
 assert identity_api["env"] == {
     "KUBECONFIG": "${{ runner.temp }}/hosted-identity-requester.kubeconfig"
 }
@@ -2571,31 +2906,45 @@ run_preview_annotator() {
 : >"$preview_annotator_log"
 run_preview_annotator \
   pr-42 42 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-  32015 2026-09-13T01:02:03Z
+  public 32015 2026-09-13T01:02:03Z
 mapfile -t preview_annotator_calls <"$preview_annotator_log"
 [[ "${#preview_annotator_calls[@]}" -eq 2 ]]
 [[ "${preview_annotator_calls[0]}" == \
-  "annotate namespace pr-42 firemud.dev/requested-preview-head-sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa firemud.dev/last-preview-image-tag=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa firemud.dev/last-preview-telnet-port=32015 firemud.dev/preview-allocated-at=2026-09-13T01:02:03Z "*" --overwrite" ]]
+  "annotate namespace pr-42 firemud.dev/requested-preview-head-sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa firemud.dev/last-preview-image-tag=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa firemud.dev/preview-allocated-at=2026-09-13T01:02:03Z firemud.dev/last-preview-sync-at="*" firemud.dev/last-preview-telnet-port=32015 --overwrite" ]]
 [[ "${preview_annotator_calls[1]}" == \
-  "label namespace pr-42 firemud.dev/preview=true firemud.dev/pr-number=42 --overwrite" ]]
+  "label namespace pr-42 firemud.dev/preview=true firemud.dev/pr-number=42 firemud.dev/preview-exposure-mode=public --overwrite" ]]
+
+: >"$preview_annotator_log"
+run_preview_annotator \
+  pr-42 42 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  private 0 2026-09-13T01:02:03Z
+mapfile -t preview_annotator_calls <"$preview_annotator_log"
+[[ "${#preview_annotator_calls[@]}" -eq 2 ]]
+[[ "${preview_annotator_calls[0]}" == \
+  "annotate namespace pr-42 firemud.dev/requested-preview-head-sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa firemud.dev/last-preview-image-tag=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa firemud.dev/preview-allocated-at=2026-09-13T01:02:03Z firemud.dev/last-preview-sync-at="*" firemud.dev/last-preview-telnet-port- --overwrite" ]]
+[[ "${preview_annotator_calls[1]}" == \
+  "label namespace pr-42 firemud.dev/preview=true firemud.dev/pr-number=42 firemud.dev/preview-exposure-mode=private --overwrite" ]]
 
 invalid_preview_annotator_cases=(
-  "pr-042|042|32000|2026-09-13T01:02:03Z"
-  "pr-43|42|32000|2026-09-13T01:02:03Z"
-  "pr-42|42|31999|2026-09-13T01:02:03Z"
-  "pr-42|42|32016|2026-09-13T01:02:03Z"
-  "pr-42|42|032000|2026-09-13T01:02:03Z"
-  "pr-42|42|32000|2026-02-30T01:02:03Z"
-  "pr-42|42|32000|2026-09-13T01:02:03+00:00"
-  "pr-42|42|32000|2026-09-13T01:02:03Z injected"
+  "pr-042|042|public|32000|2026-09-13T01:02:03Z"
+  "pr-43|42|public|32000|2026-09-13T01:02:03Z"
+  "pr-42|42|public|31999|2026-09-13T01:02:03Z"
+  "pr-42|42|public|32016|2026-09-13T01:02:03Z"
+  "pr-42|42|public|032000|2026-09-13T01:02:03Z"
+  "pr-42|42|private|32000|2026-09-13T01:02:03Z"
+  "pr-42|42|public|0|2026-09-13T01:02:03Z"
+  "pr-42|42|untrusted|32000|2026-09-13T01:02:03Z"
+  "pr-42|42|public|32000|2026-02-30T01:02:03Z"
+  "pr-42|42|public|32000|2026-09-13T01:02:03+00:00"
+  "pr-42|42|public|32000|2026-09-13T01:02:03Z injected"
 )
 for invalid_preview_annotator_case in "${invalid_preview_annotator_cases[@]}"; do
-  IFS='|' read -r invalid_namespace invalid_pr invalid_port invalid_timestamp \
+  IFS='|' read -r invalid_namespace invalid_pr invalid_mode invalid_port invalid_timestamp \
     <<<"$invalid_preview_annotator_case"
   : >"$preview_annotator_log"
   if run_preview_annotator \
     "$invalid_namespace" "$invalid_pr" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$invalid_port" "$invalid_timestamp" \
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$invalid_mode" "$invalid_port" "$invalid_timestamp" \
     >"$TEMP_DIR/invalid-preview-annotator.output" \
     2>"$TEMP_DIR/invalid-preview-annotator.error"; then
     echo "preview namespace annotator accepted invalid target metadata: $invalid_preview_annotator_case" >&2
@@ -2878,7 +3227,19 @@ cat >"$preview_derive_stub_dir/gh" <<'SH'
 set -euo pipefail
 [[ "$1" == api ]]
 if [[ "$2" == repos/example/FireMUD/pulls/901/files\?per_page=100 ]]; then
-  printf '%s\n' "${PREVIEW_DERIVE_CHANGED_FILES:-docs/readme.md}"
+  jq -cn --arg filename "${PREVIEW_DERIVE_CHANGED_FILES:-docs/readme.md}" '[[{filename: $filename}]]'
+  exit 0
+fi
+if [[ "$2" == repos/example/FireMUD/git/ref/heads/develop ]]; then
+  printf '%s\n' '{"ref":"refs/heads/develop","object":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
+  exit 0
+fi
+if [[ "$2" == repos/example/FireMUD/commits/cccccccccccccccccccccccccccccccccccccccc ]]; then
+  if [[ "${PREVIEW_DERIVE_STALE_MERGE_PARENTS:-false}" == true ]]; then
+    printf '%s\n' '{"sha":"cccccccccccccccccccccccccccccccccccccccc","parents":[{"sha":"dddddddddddddddddddddddddddddddddddddddd"},{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}'
+  else
+    printf '%s\n' '{"sha":"cccccccccccccccccccccccccccccccccccccccc","parents":[{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}'
+  fi
   exit 0
 fi
 [[ $# -eq 2 && "$2" == repos/example/FireMUD/pulls/* ]]
@@ -2900,7 +3261,7 @@ preview_derive_base_upper=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
 preview_derive_base_lower=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 preview_derive_merge_upper=CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
 preview_derive_merge_lower=cccccccccccccccccccccccccccccccccccccccc
-preview_derive_pr_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"sha\":\"$preview_derive_base_upper\"},\"mergeable\":true,\"mergeable_state\":\"clean\",\"merge_commit_sha\":\"$preview_derive_merge_upper\"}"
+preview_derive_pr_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"ref\":\"develop\",\"sha\":\"$preview_derive_base_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"changed_files\":1,\"mergeable\":true,\"mergeable_state\":\"clean\",\"merge_commit_sha\":\"$preview_derive_merge_upper\"}"
 run_preview_derive_dispatch() {
   local input_pr_number="$1"
   local input_head_sha="$2"
@@ -2954,7 +3315,7 @@ grep -Fxq "head_sha=$preview_derive_head_lower" "$preview_derive_output"
 grep -Fxq "image_tag=$preview_derive_base_lower" "$preview_derive_output"
 grep -Fxq "base_sha=$preview_derive_base_lower" "$preview_derive_output"
 grep -Fxq "merge_sha=$preview_derive_merge_lower" "$preview_derive_output"
-test "$(wc -l <"${preview_derive_output}.gh.log")" -eq 1
+test "$(wc -l <"${preview_derive_output}.gh.log")" -eq 2
 grep -Fxq 'api repos/example/FireMUD/pulls/901' "${preview_derive_output}.gh.log"
 
 preview_derive_runtime_output="$TEMP_DIR/preview-derive-runtime.output"
@@ -2966,7 +3327,7 @@ PREVIEW_DERIVE_CHANGED_FILES='.github/workflows/runtime-images.yml' run_preview_
   preview.firedevops.net \
   "$preview_derive_runtime_output" \
   "$TEMP_DIR/preview-derive-runtime.error"
-grep -Fxq "image_tag=$preview_derive_head_lower" "$preview_derive_runtime_output"
+grep -Fxq "image_tag=pr-merge-$preview_derive_merge_lower" "$preview_derive_runtime_output"
 
 preview_derive_snapshot_output="$TEMP_DIR/preview-derive-snapshot.output"
 run_preview_derive_dispatch \
@@ -2979,18 +3340,18 @@ run_preview_derive_dispatch \
   "$TEMP_DIR/preview-derive-snapshot.error"
 grep -Fxq "head_sha=$preview_derive_head_lower" "$preview_derive_snapshot_output"
 grep -Fxq "base_sha=$preview_derive_base_lower" "$preview_derive_snapshot_output"
-test "$(wc -l <"${preview_derive_snapshot_output}.gh.log")" -eq 1
+test "$(wc -l <"${preview_derive_snapshot_output}.gh.log")" -eq 2
 
 for invalid_snapshot_case in missing-head malformed-base; do
   invalid_snapshot_output="$TEMP_DIR/preview-derive-${invalid_snapshot_case}.output"
   case "$invalid_snapshot_case" in
     missing-head)
-      invalid_snapshot_json="{\"head\":{\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"sha\":\"$preview_derive_base_upper\"}}"
-      expected_snapshot_error='::error title=Invalid pull request metadata::Expected string current head and base SHAs.'
+      invalid_snapshot_json="{\"head\":{\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"ref\":\"develop\",\"sha\":\"$preview_derive_base_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}}}"
+      expected_snapshot_error='::error title=Invalid pull request metadata::Expected string current head SHA and base ref.'
       ;;
     malformed-base)
-      invalid_snapshot_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"sha\":\"not-a-sha\"},\"mergeable\":true,\"mergeable_state\":\"clean\",\"merge_commit_sha\":\"$preview_derive_merge_upper\"}"
-      expected_snapshot_error='::error title=Invalid pull request metadata::Expected 40-character hexadecimal current head and base SHAs.'
+      invalid_snapshot_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"ref\":\"not a ref\",\"sha\":\"$preview_derive_base_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"mergeable\":true,\"mergeable_state\":\"clean\",\"merge_commit_sha\":\"$preview_derive_merge_upper\"}"
+      expected_snapshot_error='::error title=Invalid pull request metadata::Expected a 40-character hexadecimal current head SHA and a valid base ref.'
       ;;
   esac
   if PREVIEW_DERIVE_PR_JSON="$invalid_snapshot_json" run_preview_derive_dispatch \
@@ -3038,7 +3399,7 @@ run_preview_derive_dispatch \
   "$TEMP_DIR/preview-derive-default.error"
 grep -Fxq "image_tag=${preview_derive_base_lower}" "$preview_derive_default_output"
 
-preview_derive_pending_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"sha\":\"$preview_derive_base_upper\"},\"mergeable\":null,\"mergeable_state\":\"unknown\"}"
+preview_derive_pending_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"ref\":\"develop\",\"sha\":\"$preview_derive_base_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"mergeable\":null,\"mergeable_state\":\"unknown\"}"
 preview_derive_pending_output="$TEMP_DIR/preview-derive-pending.output"
 PREVIEW_MERGE_RETRY_DELAY_SECONDS=0 \
 PREVIEW_DERIVE_PR_JSON_1="$preview_derive_pending_json" \
@@ -3052,9 +3413,9 @@ run_preview_derive_dispatch \
   "$preview_derive_pending_output" \
   "$TEMP_DIR/preview-derive-pending.error"
 grep -Fxq "merge_sha=${preview_derive_merge_lower}" "$preview_derive_pending_output"
-test "$(<"${preview_derive_pending_output}.calls")" -eq 2
+test "$(<"${preview_derive_pending_output}.calls")" -eq 3
 
-preview_derive_conflict_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"sha\":\"$preview_derive_base_upper\"},\"mergeable\":false,\"mergeable_state\":\"dirty\"}"
+preview_derive_conflict_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"base\":{\"ref\":\"develop\",\"sha\":\"$preview_derive_base_upper\",\"repo\":{\"full_name\":\"example/FireMUD\"}},\"mergeable\":false,\"mergeable_state\":\"dirty\"}"
 preview_derive_conflict_output="$TEMP_DIR/preview-derive-conflict.output"
 if PREVIEW_DERIVE_PR_JSON_1="$preview_derive_conflict_json" run_preview_derive_dispatch \
   901 \
@@ -3123,6 +3484,7 @@ run_preview_derive_target() {
     PREVIEW_DERIVE_PR_JSON_4='' \
     PREVIEW_DERIVE_PR_JSON_5='' \
     PREVIEW_DERIVE_CALL_COUNT="${output_path}.calls" \
+    PREVIEW_DERIVE_STALE_MERGE_PARENTS="${PREVIEW_DERIVE_STALE_MERGE_PARENTS:-false}" \
     PREVIEW_MERGE_RETRY_DELAY_SECONDS=0 \
     PREVIEW_DERIVE_GH_LOG="${output_path}.gh.log" \
     GITHUB_OUTPUT="$output_path" \
@@ -3143,17 +3505,28 @@ grep -Fxq \
   "$TEMP_DIR/preview-derive-stale-head.error"
 
 preview_derive_stale_base_output="$TEMP_DIR/preview-derive-stale-base.output"
-if run_preview_derive_target \
+run_preview_derive_target \
   "$preview_derive_head_lower" \
   "$preview_derive_head_lower" \
   "$preview_derive_stale_base_output" \
-  "$TEMP_DIR/preview-derive-stale-base.error"; then
-  echo "preview plan accepted a stale pull_request_target base SHA" >&2
+  "$TEMP_DIR/preview-derive-stale-base.error"
+grep -Fxq "base_sha=$preview_derive_base_lower" "$preview_derive_stale_base_output"
+grep -Fxq 'base_refresh_required=true' "$preview_derive_stale_base_output"
+
+preview_derive_stale_merge_output="$TEMP_DIR/preview-derive-stale-merge.output"
+if PREVIEW_DERIVE_STALE_MERGE_PARENTS=true \
+  PREVIEW_MERGE_RETRY_DELAY_SECONDS=0 \
+  run_preview_derive_target \
+    "$preview_derive_head_lower" \
+    "$preview_derive_base_lower" \
+    "$preview_derive_stale_merge_output" \
+    "$TEMP_DIR/preview-derive-stale-merge.error"; then
+  echo "preview plan accepted a merge commit with stale parents" >&2
   exit 1
 fi
 grep -Fxq \
-  '::error title=Stale preview base SHA::Supplied base SHA does not equal the current pull request base.' \
-  "$TEMP_DIR/preview-derive-stale-base.error"
+  '::error title=Preview merge computation unavailable::The current test-merge commit does not have the exact current base and head parents after 5 attempts.' \
+  "$TEMP_DIR/preview-derive-stale-merge.error"
 
 hostile_dispatch_marker="$TEMP_DIR/hostile-dispatch-executed"
 hostile_dispatch_payload="\"; printf injected >\"$hostile_dispatch_marker\"; #"
@@ -4043,6 +4416,29 @@ python3 "$render_preview_values" \
   "$ROOT_DIR/k8s/helm/firemud/values-hosted-shared.example.yaml" \
   "$rendered_values" 42 pr-42 pr-42 pr-42.preview.example.test \
   pr-42-head-42 32000
+# This controller contract exercises the private parent boundary. The shared
+# example is also used by public Telnet proof, so make this fixture explicit:
+# private TCP Proxy is ClusterIP, has no configured NodePort, and receives no
+# allocator annotation. Public annotation/NodePort binding is covered by the
+# separate public preview contract.
+python3 - "$rendered_values" <<'PY'
+import sys
+
+import yaml
+
+path = sys.argv[1]
+values = yaml.safe_load(open(path, encoding="utf-8"))
+for service in values["previewStack"]["services"]:
+    if service["name"] != "tcp-proxy-service":
+        continue
+    service["serviceType"] = "ClusterIP"
+    for port in service["ports"]:
+        if port.get("port") == 2323:
+            port.pop("nodePort", None)
+values["preview"]["telnetPort"] = 0
+with open(path, "w", encoding="utf-8") as stream:
+    yaml.safe_dump(values, stream, sort_keys=False)
+PY
 helm template pr-42 "$ROOT_DIR/k8s/helm/firemud" \
   -f "$rendered_values" --namespace pr-42 \
   --show-only templates/apps.yaml >"$rendered_manifest"
@@ -4091,11 +4487,18 @@ documents = [
 ]
 
 for document in documents:
-    metadata = validator["_validate_object_metadata"](document, "pr-42")
-    assert metadata["labels"] == {
+    metadata = validator["_validate_object_metadata"](
+        document, "pr-42", certificate_identity_mode="hosted-controller"
+    )
+    expected_labels = {
         **validator["_expected_top_level_labels"](),
         "app.kubernetes.io/instance": "pr-42",
     }
+    if document["kind"] in {"Deployment", "Service"} and (
+        document["metadata"]["name"] == "tcp-proxy-service"
+    ):
+        expected_labels["firemud.dev/certificate-identity-mode"] = "hosted-controller"
+    assert metadata["labels"] == expected_labels
     if document["kind"] == "Deployment":
         validator["_validate_workload_selector_metadata"](document)
 PY
@@ -4262,13 +4665,18 @@ for description, documents in mutations.items():
     else:
         raise AssertionError(f"validator accepted {description}")
 
+trusted_config = validator["_trusted_hosted_shared_config"]()
 cleaned_config = clean_config_map(
     {
         "metadata": {"name": "firemud-config"},
-        "data": {"SAFE_VALUE": "retained", "API_TOKEN": "removed"},
+        "data": trusted_config,
     }
 )
-assert cleaned_config["data"] == {"SAFE_VALUE": "retained"}
+assert cleaned_config["data"] == {
+    key: value
+    for key, value in trusted_config.items()
+    if key not in validator["HOSTED_REDACTED_CONFIG_KEYS"]
+}
 for malformed_data in (["not", "a", "mapping"], "not-a-mapping"):
     try:
         clean_config_map(
@@ -4284,7 +4692,7 @@ for malformed_data in (["not", "a", "mapping"], "not-a-mapping"):
 PY
 
 # Trusted post-validation preparation makes the runtime namespace explicit on
-# every object and permits exactly the allocator-owned TCP Proxy NodePort.
+# every object and keeps the private TCP Proxy Service ClusterIP-only.
 python3 - "$artifact_validator" "$TEMP_DIR" <<'PY'
 import copy
 import runpy
@@ -4343,8 +4751,8 @@ documents = [
     },
 ]
 source.write_text(yaml.safe_dump_all(documents), encoding="utf-8")
-inject(source, prepared, 32000, "pr-42", "hosted-controller")
-validate_target(prepared, "pr-42", 32000, "hosted-controller")
+inject(source, prepared, 0, "pr-42", "hosted-controller", "private")
+validate_target(prepared, "pr-42", 0, "hosted-controller", "private")
 prepared_documents = list(yaml.safe_load_all(prepared.read_text(encoding="utf-8")))
 if any(document["metadata"].get("namespace") != "pr-42" for document in prepared_documents):
     raise SystemExit("trusted runtime preparation left a namespace implicit")
@@ -4365,7 +4773,7 @@ def expect_rejected(case_name, mutation, expected_message=None):
     path = tmp / f"runtime-target-{case_name}.yaml"
     path.write_text(yaml.safe_dump_all(mutated), encoding="utf-8")
     try:
-        validate_target(path, "pr-42", 32000, "hosted-controller")
+        validate_target(path, "pr-42", 0, "hosted-controller", "private")
     except ValueError as exc:
         if expected_message is not None and expected_message not in str(exc):
             raise AssertionError((case_name, str(exc))) from exc
@@ -4476,6 +4884,7 @@ for source, target in {
     "${{ needs.validate-target.outputs.base_sha }}": "$EXPECTED_BASE_SHA",
     "${{ needs.validate-target.outputs.merge_sha }}": "$EXPECTED_MERGE_SHA",
     "${{ needs.validate-target.outputs.certificate_identity_mode }}": "hosted-controller",
+    "${{ needs.validate-target.outputs.exposure_mode }}": "private",
 }.items():
     apply_run = apply_run.replace(source, target)
 Path(sys.argv[3]).write_text(apply_run, encoding="utf-8")
@@ -4488,6 +4897,27 @@ mkdir -p "$apply_stub_dir"
 cat >"$apply_stub_dir/gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "$1" == api && "$2" == repos/example/FireMUD/git/ref/heads/develop ]]; then
+  branch_sha="${TEST_EXPECTED_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
+  if [[ "${TEST_APPLY_SCENARIO:?}" == wrong-base ]]; then
+    branch_sha=dddddddddddddddddddddddddddddddddddddddd
+  fi
+  jq -nc --arg sha "$branch_sha" '{ref:"refs/heads/develop",object:{sha:$sha}}'
+  exit 0
+fi
+if [[ "$1" == api && "$2" == repos/example/FireMUD/commits/* ]]; then
+  merge_ref="${2##*/}"
+  merge_head="${TEST_EXPECTED_HEAD:?}"
+  if [[ "${TEST_APPLY_SCENARIO:?}" == stale-second && -f "${TEST_GH_COUNT:?}" && "$(<"$TEST_GH_COUNT")" -ge 2 ]]; then
+    merge_head=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  fi
+  jq -nc \
+    --arg sha "$merge_ref" \
+    --arg base "${TEST_EXPECTED_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
+    --arg head "$merge_head" \
+    '{sha:$sha,parents:[{sha:$base},{sha:$head}]}'
+  exit 0
+fi
 [[ $# -eq 2 && "$1" == api && "$2" == "repos/example/FireMUD/pulls/42" ]]
 count=0
 if [[ -f "${TEST_GH_COUNT:?}" ]]; then
@@ -4537,7 +4967,7 @@ jq -nc \
   --arg repository "$repository_name" \
   --arg base "$base_sha" \
   --arg merge "$merge_sha" \
-  '{state:$state,head:{sha:$head,repo:{full_name:$repository}},base:{ref:"develop",sha:$base},merge_commit_sha:$merge,user:{login:"trusted-user"},labels:[]}'
+  '{state:$state,head:{sha:$head,repo:{full_name:$repository}},base:{ref:"develop",sha:$base,repo:{full_name:"example/FireMUD"}},merge_commit_sha:$merge,user:{login:"trusted-user"},labels:[]}'
 SH
 cat >"$apply_stub_dir/kubectl" <<'SH'
 #!/usr/bin/env bash
@@ -4597,6 +5027,8 @@ run_apply_fixture() {
       RUNTIME_NAMESPACE=pr-42 \
       ARTIFACT_PATH="$prepared_render" \
       TELNET_PORT=32000 \
+      EXPOSURE_MODE=private \
+      ALLOCATED_TELNET_PORT=32000 \
       TEST_APPLY_SCENARIO="$scenario" \
       TEST_EXPECTED_HEAD="$head_sha" \
       TEST_GH_COUNT="$gh_count" \
@@ -4901,6 +5333,7 @@ namespace_json() {
   jq -nc --arg expected_head "${WAITER_EXPECTED_HEAD:?}" '{
     metadata: {
       uid: "uid-pr-42",
+      labels: {"firemud.dev/preview-exposure-mode": "public"},
       annotations: {
         "firemud.dev/requested-preview-head-sha": $expected_head,
         "firemud.dev/last-preview-head-sha": $expected_head,
@@ -4930,6 +5363,7 @@ identity_json() {
         runtimeNamespaceUid: "uid-pr-42",
         requestedHeadSha: $expected_head,
         deployedHeadSha: $expected_head,
+        exposureMode: "public",
         telnetPort: $profile_telnet_port
       },
       ingress: {revision: "ingress-1"},
@@ -5197,6 +5631,7 @@ run_active_waiter_fixture() {
   [[ "$(wc -l <"$sleep_log")" -eq "$expected_sleep_calls" ]]
   if [[ "$expected_status" -eq 0 ]]; then
     grep -Fq 'identity=pr-42' "$output"
+    grep -Fq 'exposureMode=public' "$output"
     grep -Fq 'telnetPort=32000' "$output"
   else
     grep -Fq 'kubectl get failed' "$error"
@@ -5458,7 +5893,7 @@ target_run = target["run"]
 for source, replacement in {
     "${{ github.event.pull_request.number }}": "$EVENT_PR_NUMBER",
     "${{ github.event.pull_request.head.sha }}": "$EVENT_HEAD_SHA",
-    "${{ steps.certificate-identity.outputs.mode }}": "hosted-controller",
+    "${{ steps.certificate-identity.outputs.mode }}": "$TEST_CERTIFICATE_MODE",
 }.items():
     target_run = target_run.replace(source, replacement)
 Path(sys.argv[2]).write_text(target_run, encoding="utf-8")
@@ -5544,7 +5979,17 @@ case "$resource" in
       --arg repository "${TEST_PR_HEAD_REPOSITORY:-example/FireMUD}" \
       --arg base_ref "${TEST_PR_BASE_REF:-develop}" \
       --argjson labels "${TEST_PR_LABELS_JSON:-[]}" \
-      '{state:$state,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",labels:$labels}'
+      '{state:$state,changed_files:1,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:"dddddddddddddddddddddddddddddddddddddddd",repo:{full_name:"example/FireMUD"}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",labels:$labels}'
+    ;;
+  repos/example/FireMUD/git/ref/heads/*)
+    printf '%s' '{"ref":"refs/heads/develop","object":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
+    ;;
+  repos/example/FireMUD/commits/cccccccccccccccccccccccccccccccccccccccc)
+    if [[ "${FAKE_STALE_MERGE_PARENTS:-false}" == true ]]; then
+      printf '%s' '{"sha":"cccccccccccccccccccccccccccccccccccccccc","parents":[{"sha":"dddddddddddddddddddddddddddddddddddddddd"},{"sha":"cccccccccccccccccccccccccccccccccccccccc"}]}'
+    else
+      printf '%s' '{"sha":"cccccccccccccccccccccccccccccccccccccccc","parents":[{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},{"sha":"cccccccccccccccccccccccccccccccccccccccc"}]}'
+    fi
     ;;
   repos/example/FireMUD/actions/runs/42/artifacts\?per_page=100)
     if [[ -n "${FAKE_ARTIFACTS_JSON:-}" ]]; then
@@ -5554,7 +5999,7 @@ case "$resource" in
     fi
     ;;
   repos/example/FireMUD/pulls/900/files\?per_page=100)
-    printf '%s' '[]'
+    printf '%s' '[[{"filename":"docs/readme.md"}]]'
     ;;
   *)
     printf 'unexpected fake gh invocation: %s\n' "$*" >&2
@@ -5596,6 +6041,11 @@ cat >"$target_fixture_bin/python3" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-}" == ./dev-tools/hosted/preview/validate-preview-artifact.py ]]; then
+  if [[ "${2:-}" == exposure-mode ]]; then
+    [[ -f "${3:-}" ]]
+    printf '%s\n' "${FAKE_EXPOSURE_MODE:-private}"
+    exit 0
+  fi
   [[ -f "${2:-}" && -f "${3:-}" ]]
   exit 0
 fi
@@ -5642,6 +6092,8 @@ run_deploy_target_fixture() {
       FAKE_METADATA_BASE_SHA="${FAKE_FIXTURE_METADATA_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
       FAKE_METADATA_MERGE_SHA="${FAKE_FIXTURE_METADATA_MERGE_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
       TEST_PR_LABELS_JSON="${FAKE_FIXTURE_PR_LABELS_JSON:-[]}" \
+      TEST_CERTIFICATE_MODE="${FAKE_FIXTURE_CERTIFICATE_MODE:-hosted-controller}" \
+      FAKE_EXPOSURE_MODE="${FAKE_FIXTURE_EXPOSURE_MODE:-private}" \
       VALID_RENDER_MANIFEST="$target_rendered_manifest" \
       bash "$TEMP_DIR/target.sh"
   ) >"$stdout" 2>"$stderr"
@@ -5661,6 +6113,14 @@ run_deploy_target_fixture() {
 
 run_deploy_target_fixture valid 0 'action=deploy'
 grep -Fxq "artifact_name=${canonical_artifact_name}" "$TEMP_DIR/deploy-target-valid.output"
+FAKE_FIXTURE_CERTIFICATE_MODE=standalone \
+  run_deploy_target_fixture standalone-private 1 \
+    'Private bridge proof requires hosted-controller identity.'
+test ! -s "$TEMP_DIR/deploy-target-standalone-private.output"
+FAKE_FIXTURE_EXPOSURE_MODE=public \
+  run_deploy_target_fixture controller-public 0 'action=deploy'
+FAKE_FIXTURE_CERTIFICATE_MODE=standalone FAKE_FIXTURE_EXPOSURE_MODE=public \
+  run_deploy_target_fixture standalone-public 0 'action=deploy'
 
 # workflow_run.head_sha identifies the source/default-branch workflow run here,
 # while the PR head remains bound by the current PR and artifact metadata.
@@ -5684,6 +6144,9 @@ FAKE_FIXTURE_ARTIFACT_FILES=missing-manifest \
 FAKE_FIXTURE_ARTIFACT_FILES=extra \
   run_deploy_target_fixture extra-artifact-file 1 \
     'Unexpected preview artifact contents'
+FAKE_STALE_MERGE_PARENTS=true \
+  run_deploy_target_fixture stale-merge-parents 0 \
+    'Ignoring lifecycle event whose merge commit parents are stale or do not match the current base and head.'
 FAKE_FIXTURE_METADATA_BASE_SHA=dddddddddddddddddddddddddddddddddddddddd \
   run_deploy_target_fixture base-mismatch 0 \
     'Ignoring render artifact bound to a stale or different pull-request base.'
@@ -5698,7 +6161,7 @@ FAKE_FIXTURE_WORKFLOW_RUN_JSON='{"conclusion":"success","head_sha":"cccccccccccc
     'Ignoring source run with unsupported event push.'
 unset FAKE_FIXTURE_ARTIFACTS_JSON FAKE_FIXTURE_ARTIFACT_FILES \
   FAKE_FIXTURE_METADATA_BASE_SHA FAKE_FIXTURE_METADATA_MERGE_SHA \
-  FAKE_FIXTURE_PR_LABELS_JSON FAKE_FIXTURE_WORKFLOW_RUN_JSON
+  FAKE_FIXTURE_PR_LABELS_JSON FAKE_FIXTURE_WORKFLOW_RUN_JSON FAKE_STALE_MERGE_PARENTS
 
 run_target_without_pull_request_metadata() {
   local scenario="$1"

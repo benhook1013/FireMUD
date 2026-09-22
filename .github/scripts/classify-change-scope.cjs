@@ -14,6 +14,31 @@ const ALL_SERVICES = [
   "world-management-service",
 ];
 
+const ALL_MODULES = [
+  "common-data-runtime",
+  "common-platform-core",
+  "common-saga",
+  "common-temporal",
+  "common-security",
+  "common-test-support",
+  "common-web-support",
+  ...ALL_SERVICES,
+  "hosted-environment-identity-controller",
+  "load-testing",
+];
+
+const MODULE_PATHS = new Map([
+  ...ALL_MODULES
+    .filter((module) => module !== "load-testing")
+    .map((module) => [module, `services/${module}/`]),
+  ["load-testing", "dev-tools/load-testing/"],
+]);
+
+const BOOTABLE_MODULES = new Set([
+  ...ALL_SERVICES,
+  "hosted-environment-identity-controller",
+]);
+
 const SHARED_PREFIXES = [
   "buildSrc/",
   "gradle/",
@@ -26,6 +51,7 @@ const SHARED_PREFIXES = [
   "services/common-data-runtime/",
   "services/common-platform-core/",
   "services/common-saga/",
+  "services/common-temporal/",
   "services/common-security/",
   "services/common-test-support/",
   "services/common-web-support/",
@@ -38,6 +64,8 @@ const SHARED_FILES = new Set([
   "build.gradle.kts",
   "settings.gradle.kts",
   "gradle.properties",
+  "gradlew",
+  "gradlew.bat",
 ]);
 
 function isDocumentation(file) {
@@ -81,7 +109,16 @@ function isFrontend(file) {
 
 function isUnknownServicePath(file) {
   const match = /^services\/([^/]+)(?:\/|$)/.exec(file);
-  return match !== null && !ALL_SERVICES.includes(match[1]);
+  return match !== null && !ALL_MODULES.includes(match[1]);
+}
+
+function moduleForFile(file) {
+  for (const [module, prefix] of MODULE_PATHS) {
+    if (file.startsWith(prefix)) {
+      return module;
+    }
+  }
+  return null;
 }
 
 function classifyChangeScope(inputFiles, options = {}) {
@@ -98,13 +135,17 @@ function classifyChangeScope(inputFiles, options = {}) {
     );
 
   const affectedServices = new Set();
+  const affectedModules = new Set();
   if (runAll) {
     ALL_SERVICES.forEach((service) => affectedServices.add(service));
+    ALL_MODULES.forEach((module) => affectedModules.add(module));
   } else {
     for (const file of files) {
-      for (const service of ALL_SERVICES) {
-        if (file.startsWith(`services/${service}/`)) {
-          affectedServices.add(service);
+      const module = moduleForFile(file);
+      if (module !== null) {
+        affectedModules.add(module);
+        if (ALL_SERVICES.includes(module)) {
+          affectedServices.add(module);
         }
       }
     }
@@ -117,6 +158,8 @@ function classifyChangeScope(inputFiles, options = {}) {
   return {
     runAll,
     affectedServices: [...affectedServices],
+    affectedModules: [...affectedModules],
+    bootableModules: [...affectedModules].filter((module) => BOOTABLE_MODULES.has(module)),
     docsChanged: runAll || files.some((file) => isDocumentation(file) || isRuntimeAuthority(file)),
     frontendChanged:
       runAll ||
@@ -138,28 +181,54 @@ async function classifyGithubChangeScope(github, context) {
     return classifyChangeScope([], { forceAll: true });
   }
 
-  const files = await github.paginate(
+  const fileEntries = await github.paginate(
     github.rest.pulls.listFiles,
     {
       ...context.repo,
       pull_number: context.payload.pull_request.number,
       per_page: 100,
     },
-    (response) => response.data.map((file) => file.filename),
+    (response) => response.data,
   );
+  const files = [];
+  let fileEntriesValid = true;
+  for (const entry of fileEntries) {
+    if (
+      !entry ||
+      typeof entry !== "object" ||
+      typeof entry.filename !== "string" ||
+      entry.filename.length === 0
+    ) {
+      fileEntriesValid = false;
+      continue;
+    }
+    files.push(entry.filename);
+    if (entry.previous_filename !== undefined) {
+      if (typeof entry.previous_filename !== "string" || entry.previous_filename.length === 0) {
+        fileEntriesValid = false;
+      } else {
+        files.push(entry.previous_filename);
+      }
+    }
+  }
   const expectedFileCount = context.payload.pull_request.changed_files;
   const fileListComplete =
-    Number.isInteger(expectedFileCount) && expectedFileCount === files.length;
+    fileEntriesValid &&
+    Number.isInteger(expectedFileCount) &&
+    expectedFileCount === fileEntries.length;
 
   return classifyChangeScope(files, { forceAll: !fileListComplete });
 }
 
 module.exports = {
   ALL_SERVICES,
+  ALL_MODULES,
+  BOOTABLE_MODULES,
   classifyChangeScope,
   classifyGithubChangeScope,
   isDocumentation,
   isLightweightEligible,
   isValidationPython,
   isValidationTooling,
+  moduleForFile,
 };

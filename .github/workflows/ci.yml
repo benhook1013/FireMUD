@@ -29,6 +29,8 @@ jobs:
     outputs:
       run_all: ${{ steps.compute.outputs.run_all }}
       affected_services: ${{ steps.compute.outputs.affected_services }}
+      affected_modules: ${{ steps.compute.outputs.affected_modules }}
+      bootable_modules: ${{ steps.compute.outputs.bootable_modules }}
       docs_changed: ${{ steps.compute.outputs.docs_changed }}
       frontend_changed: ${{ steps.compute.outputs.frontend_changed }}
       python_changed: ${{ steps.compute.outputs.python_changed }}
@@ -54,13 +56,53 @@ jobs:
           script: |
             const fs = require("node:fs");
             const classifierPath = `${process.env.GITHUB_WORKSPACE}/.github/scripts/classify-change-scope.cjs`;
+            const completeModules = [
+              "common-data-runtime",
+              "common-platform-core",
+              "common-saga",
+              "common-temporal",
+              "common-security",
+              "common-test-support",
+              "common-web-support",
+              "account-service",
+              "automation-scripting-service",
+              "entity-management-service",
+              "game-design-service",
+              "game-logic-service",
+              "game-session-service",
+              "logging-admin-service",
+              "social-groups-service",
+              "spring-cloud-gateway",
+              "tcp-proxy-service",
+              "world-management-service",
+              "hosted-environment-identity-controller",
+              "load-testing",
+            ];
+            const completeBootableModules = [
+              "account-service",
+              "automation-scripting-service",
+              "entity-management-service",
+              "game-design-service",
+              "game-logic-service",
+              "game-session-service",
+              "logging-admin-service",
+              "social-groups-service",
+              "spring-cloud-gateway",
+              "tcp-proxy-service",
+              "world-management-service",
+              "hosted-environment-identity-controller",
+            ];
             let outputs;
             if (fs.existsSync(classifierPath)) {
               const { classifyGithubChangeScope } = require(classifierPath);
               const scope = await classifyGithubChangeScope(github, context);
+              const moduleScopeAvailable =
+                Array.isArray(scope.affectedModules) && Array.isArray(scope.bootableModules);
               outputs = {
-                run_all: scope.runAll,
+                run_all: scope.runAll || !moduleScopeAvailable,
                 affected_services: scope.affectedServices,
+                affected_modules: moduleScopeAvailable ? scope.affectedModules : completeModules,
+                bootable_modules: moduleScopeAvailable ? scope.bootableModules : completeBootableModules,
                 docs_changed: scope.docsChanged,
                 frontend_changed: scope.frontendChanged,
                 python_changed: scope.pythonChanged,
@@ -85,6 +127,8 @@ jobs:
                   "tcp-proxy-service",
                   "world-management-service",
                 ],
+                affected_modules: completeModules,
+                bootable_modules: completeBootableModules,
                 docs_changed: true,
                 frontend_changed: true,
                 python_changed: true,
@@ -184,10 +228,28 @@ jobs:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Load workflow tool versions
+        id: workflow-tool-versions
+        uses: ./.github/actions/load-workflow-tool-versions
+
       - name: 📦 Install ShellCheck
+        env:
+          SHELLCHECK_VERSION: ${{ steps.workflow-tool-versions.outputs.shellcheck-version }}
+          SHELLCHECK_SHA256: ${{ steps.workflow-tool-versions.outputs.shellcheck-linux-x86-64-sha256 }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y shellcheck
+          set -euo pipefail
+          [[ "$(uname -s)/$(uname -m)" == "Linux/x86_64" ]] || { echo "Unsupported ShellCheck platform" >&2; exit 1; }
+          archive="shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
+            --connect-timeout 10 --max-time 60 \
+            "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/${archive}" \
+            -o "/tmp/${archive}"
+          echo "${SHELLCHECK_SHA256}  /tmp/${archive}" | sha256sum --check --status
+          extract_dir="${RUNNER_TEMP:?}/shellcheck"
+          mkdir -p "$extract_dir"
+          tar -xJf "/tmp/${archive}" -C "$extract_dir"
+          sudo install -m 0755 "$extract_dir/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+          shellcheck --version
 
       - name: 🐚 Lint tracked shell scripts
         run: |
@@ -241,6 +303,11 @@ jobs:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Load workflow tool versions
+        id: workflow-tool-versions
+        if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
+        uses: ./.github/actions/load-workflow-tool-versions
+
       - name: 🧰 Set up kubectl
         if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
         uses: ./.github/actions/setup-kubectl
@@ -256,9 +323,19 @@ jobs:
 
       - name: 📦 Install cloc
         if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
+        env:
+          CLOC_VERSION: ${{ steps.workflow-tool-versions.outputs.cloc-version }}
+          CLOC_SHA256: ${{ steps.workflow-tool-versions.outputs.cloc-source-sha256 }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y cloc
+          set -euo pipefail
+          archive="cloc-${CLOC_VERSION}.pl"
+          curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
+            --connect-timeout 10 --max-time 60 \
+            "https://github.com/AlDanial/cloc/releases/download/v${CLOC_VERSION}/${archive}" \
+            -o "/tmp/${archive}"
+          echo "${CLOC_SHA256}  /tmp/${archive}" | sha256sum --check --status
+          sudo install -m 0755 "/tmp/${archive}" /usr/local/bin/cloc
+          cloc --version
 
       - name: Set up Helm
         if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
@@ -277,6 +354,9 @@ jobs:
           bash ./dev-tools/tests/testcontainers-disabled-contract.sh
           bash ./dev-tools/tests/pr-retarget-workflow-contract.sh
           bash ./dev-tools/tests/static-analysis-summary-contract.sh
+          bash ./dev-tools/tests/ci-validation-summary-contract.sh
+          bash ./dev-tools/tests/security-summary-contract.sh
+          bash ./dev-tools/tests/pr-runtime-image-publication-contract.sh
           bash ./dev-tools/tests/pr-required-gate-context-contract.sh
           bash ./dev-tools/tests/dev-demo-workflow-contract.sh
           bash ./dev-tools/tests/erd-workflow-contract.sh
@@ -285,8 +365,14 @@ jobs:
           bash ./dev-tools/tests/preview-eligibility-contract.sh
           bash ./dev-tools/tests/preview-priority-contract.sh
           bash ./dev-tools/tests/gameplay-bridge-network-policy-contract.sh
+          bash ./dev-tools/tests/hosted-gateway-bridge-contract.sh
           bash ./dev-tools/tests/preview-runner-isolation-contract.sh
           bash ./dev-tools/tests/preview-standalone-transport-certificates-contract.sh
+          bash ./dev-tools/tests/preview-ca-recovery-contract.sh
+          bash ./dev-tools/tests/trust-bootstrap-rbac-contract.sh
+          bash ./dev-tools/tests/trust-bootstrap-issuance-contract.sh
+          bash ./dev-tools/tests/trust-bootstrap-live-proof-contract.sh
+          bash ./dev-tools/tests/trust-bootstrap-provision-contract.sh
           bash ./dev-tools/tests/hosted-identity-controller-manifest-contract.sh
           bash ./dev-tools/tests/hosted-identity-controller-workflow-contract.sh
           bash ./dev-tools/tests/worktree-topology-contract.sh
@@ -298,6 +384,7 @@ jobs:
           bash ./dev-tools/tests/kubectl-version-skew-contract.sh
           bash ./dev-tools/tests/helm-transaction-proof-contract.sh
           bash ./dev-tools/tests/preview-image-tag-contract.sh
+          bash ./dev-tools/tests/preview-merge-image-tag-contract.sh
           bash ./dev-tools/tests/overlay-preflight-contract.sh
           bash ./dev-tools/tests/validate-external-credentials-contract.sh
           bash ./dev-tools/tests/observability-validator-contract.sh
@@ -307,6 +394,7 @@ jobs:
           bash ./dev-tools/tests/architecture-doc-contracts.sh
           bash ./dev-tools/tests/lint-yaml-contract.sh
           python3 -m unittest discover -s dev-tools/validation -p 'test_*.py'
+          python3 -m unittest discover -s dev-tools/tests -p 'test_*.py'
 
       - name: 🧪 Validate architecture document contracts
         if: ${{ needs.changes.outputs.lightweight_only == 'true' && needs.changes.outputs.design_docs_changed == 'true' }}
@@ -553,6 +641,9 @@ jobs:
       - name: 🧪 Validate rendered Helm manifests
         run: bash ./dev-tools/validation/validate-helm.sh render
 
+      - name: 🧪 Validate hosted Telnet TLS contract
+        run: bash ./dev-tools/tests/hosted-telnet-tls-contract.sh
+
   helm-transaction-proof:
     name: Helm Transaction Proof
     needs: [changes]
@@ -692,6 +783,10 @@ jobs:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Load workflow tool versions
+        id: workflow-tool-versions
+        uses: ./.github/actions/load-workflow-tool-versions
+
       - name: Set up canonical Python
         uses: ./.github/actions/setup-python
 
@@ -736,37 +831,48 @@ jobs:
           npm run format -- -c
         working-directory: web-client
 
-      - name: Cache Chrome .deb
-        id: cache-chrome
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: ./google-chrome-stable_current_amd64.deb
-          key: chrome-deb-v1
-
-      - name: Install wget & Download Chrome .deb (if not cached)
-        if: steps.cache-chrome.outputs.cache-hit != 'true'
+      - name: Install pinned Chrome for Testing and ChromeDriver
+        env:
+          CHROME_FOR_TESTING_VERSION: ${{ steps.workflow-tool-versions.outputs.chrome-for-testing-version }}
+          CHROME_FOR_TESTING_SHA256: ${{ steps.workflow-tool-versions.outputs.chrome-for-testing-linux-x86-64-sha256 }}
+          CHROMEDRIVER_VERSION: ${{ steps.workflow-tool-versions.outputs.chromedriver-version }}
+          CHROMEDRIVER_SHA256: ${{ steps.workflow-tool-versions.outputs.chromedriver-linux-x86-64-sha256 }}
         run: |
-          sudo apt update
-          sudo apt install -y wget
-          wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-
-      - name: Install Chrome
-        run: sudo apt install -y --allow-downgrades ./google-chrome-stable_current_amd64.deb
-
-      - name: Install ChromeDriver for axe
-        run: |
-          CHROME_VERSION="$(google-chrome --product-version)"
-          CHROME_BUILD="${CHROME_VERSION%.*}"
-          DRIVER_ZIP_URL=$(
-            curl -fsSL https://googlechromelabs.github.io/chrome-for-testing/latest-patch-versions-per-build-with-downloads.json \
-              | CHROME_BUILD="$CHROME_BUILD" python3 -c "import json, os, sys; data = json.load(sys.stdin); build = os.environ['CHROME_BUILD']; print(next(item['url'] for item in data['builds'][build]['downloads']['chromedriver'] if item['platform'] == 'linux64'))"
-          )
-          DRIVER_DIR=/tmp/chromedriver-for-testing
-          curl -fsSL "$DRIVER_ZIP_URL" -o /tmp/chromedriver-linux64.zip
-          rm -rf "$DRIVER_DIR"
-          mkdir -p "$DRIVER_DIR"
-          unzip -q /tmp/chromedriver-linux64.zip -d "$DRIVER_DIR"
-          echo "CHROMEDRIVER_PATH=$DRIVER_DIR/chromedriver-linux64/chromedriver" >> "$GITHUB_ENV"
+          set -euo pipefail
+          [[ "$(uname -s)/$(uname -m)" == "Linux/x86_64" ]] || { echo "Unsupported Chrome for Testing platform" >&2; exit 1; }
+          [[ "$CHROME_FOR_TESTING_VERSION" == "$CHROMEDRIVER_VERSION" ]] || { echo "Chrome and ChromeDriver versions differ" >&2; exit 1; }
+          chrome_archive="${RUNNER_TEMP:?}/chrome-linux64-${CHROME_FOR_TESTING_VERSION}.zip"
+          driver_archive="${RUNNER_TEMP:?}/chromedriver-linux64-${CHROMEDRIVER_VERSION}.zip"
+          curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
+            --connect-timeout 10 --max-time 120 \
+            "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_FOR_TESTING_VERSION}/linux64/chrome-linux64.zip" \
+            -o "$chrome_archive"
+          echo "${CHROME_FOR_TESTING_SHA256}  ${chrome_archive}" | sha256sum --check --status
+          curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
+            --connect-timeout 10 --max-time 60 \
+            "https://storage.googleapis.com/chrome-for-testing-public/${CHROMEDRIVER_VERSION}/linux64/chromedriver-linux64.zip" \
+            -o "$driver_archive"
+          echo "${CHROMEDRIVER_SHA256}  ${driver_archive}" | sha256sum --check --status
+          chrome_dir="${RUNNER_TEMP}/chrome-for-testing-${CHROME_FOR_TESTING_VERSION}"
+          driver_dir="${RUNNER_TEMP}/chromedriver-for-testing-${CHROMEDRIVER_VERSION}"
+          mkdir -p "$chrome_dir" "$driver_dir"
+          unzip -q "$chrome_archive" -d "$chrome_dir"
+          unzip -q "$driver_archive" -d "$driver_dir"
+          chrome_path="$chrome_dir/chrome-linux64/chrome"
+          chromedriver_path="$driver_dir/chromedriver-linux64/chromedriver"
+          chrome_bin_dir="${RUNNER_TEMP}/pinned-chrome-bin"
+          mkdir -p "$chrome_bin_dir"
+          ln -s "$chrome_path" "$chrome_bin_dir/google-chrome"
+          export PATH="$chrome_bin_dir:$PATH"
+          echo "$chrome_bin_dir" >> "$GITHUB_PATH"
+          {
+            echo "CHROMEDRIVER_PATH=$chromedriver_path"
+            echo "CHROME_PATH=$chrome_path"
+            echo "CHROME_BIN_DIR=$chrome_bin_dir"
+          } >> "$GITHUB_ENV"
+          [[ "$(command -v google-chrome)" == "$chrome_bin_dir/google-chrome" ]] || { echo "Pinned Chrome wrapper was not selected" >&2; exit 1; }
+          [[ "$(google-chrome --product-version)" == "$CHROME_FOR_TESTING_VERSION" ]] || { echo "Pinned Chrome version mismatch" >&2; exit 1; }
+          [[ "$("$chromedriver_path" --version | awk '{print $2}')" == "$CHROMEDRIVER_VERSION" ]] || { echo "Pinned ChromeDriver version mismatch" >&2; exit 1; }
 
       - name: ♿ Run Accessibility Audit
         run: |
@@ -776,13 +882,15 @@ jobs:
           SERVER_PID=$!
           trap 'kill $SERVER_PID' EXIT
           npx wait-on http://localhost:5000/index.html
-          npx axe http://localhost:5000/index.html --chromedriver-path "$CHROMEDRIVER_PATH" --chrome-options="--no-sandbox" --exit
+          [[ "$(command -v google-chrome)" == "$CHROME_BIN_DIR/google-chrome" ]]
+          [[ "$("$CHROME_PATH" --product-version)" == "${{ steps.workflow-tool-versions.outputs.chrome-for-testing-version }}" ]]
+          npx axe http://localhost:5000/index.html --chromedriver-path "$CHROMEDRIVER_PATH" --chrome-path "$CHROME_PATH" --chrome-options="--no-sandbox" --exit
 
-  # Service validation matrix
+  # Gradle module validation matrix
   build-and-test:
-    name: Build and Test (${{ matrix.service }})
-    needs: [changes, buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation]
-    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.affected_services != '[]' }}
+    name: Build and Test (${{ matrix.module }})
+    needs: [changes]
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.affected_modules != '[]' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -792,7 +900,7 @@ jobs:
       fail-fast: false
       matrix:
         java-version: [21]
-        service: ${{ fromJSON(needs.changes.outputs.affected_services) }}
+        module: ${{ fromJSON(needs.changes.outputs.affected_modules) }}
 
     steps:
       - name: Harden runner
@@ -823,14 +931,20 @@ jobs:
       - name: 🧪 Run Gradle Checks
         id: checks
         run: |
-          echo "::group::Run Service Validation"
-          ./gradlew :${{ matrix.service }}:check :${{ matrix.service }}:bootJar -PfullCheck
+          echo "::group::Run Module Validation"
+          ./gradlew :${{ matrix.module }}:check -PfullCheck
           echo "::endgroup::"
+
+      - name: 📦 Build Runtime JAR
+        if: ${{ contains(fromJSON(needs.changes.outputs.bootable_modules), matrix.module) }}
+        run: ./gradlew :${{ matrix.module }}:bootJar -PfullCheck
 
       - name: 📈 Parse Coverage %
         id: coverage
+        env:
+          MODULE_DIR: ${{ matrix.module == 'load-testing' && 'dev-tools/load-testing' || format('services/{0}', matrix.module) }}
         run: |
-          COVERAGE_FILE=services/${{ matrix.service }}/build/reports/jacoco/test/jacocoTestReport.xml
+          COVERAGE_FILE="$MODULE_DIR/build/reports/jacoco/test/jacocoTestReport.xml"
           if [ -f "$COVERAGE_FILE" ]; then
             COVERAGE_LINE=$(grep -A 1 "<counter type=\"LINE\"" "$COVERAGE_FILE" | tail -n 1 || true)
             MISSED=$(echo "$COVERAGE_LINE" | sed -n 's/.*missed="\([0-9]*\)".*/\1/p')
@@ -850,8 +964,8 @@ jobs:
       - name: 📤 Upload Coverage Report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: jacoco-${{ matrix.service }}-report-${{ github.sha }}
-          path: services/${{ matrix.service }}/build/reports/jacoco/test/
+          name: jacoco-${{ matrix.module }}-report-${{ github.sha }}
+          path: ${{ matrix.module == 'load-testing' && 'dev-tools/load-testing/build/reports/jacoco/test/' || format('services/{0}/build/reports/jacoco/test/', matrix.module) }}
 
       - name: ☂️ Upload Coverage to Codecov
         continue-on-error: true
@@ -861,17 +975,17 @@ jobs:
           fail_ci_if_error: false
           handle_no_reports_found: true
           disable_search: true
-          files: services/${{ matrix.service }}/build/reports/jacoco/test/jacocoTestReport.xml
-          flags: ${{ matrix.service }}
-          name: ${{ matrix.service }}-jacoco
+          files: ${{ matrix.module == 'load-testing' && 'dev-tools/load-testing/build/reports/jacoco/test/jacocoTestReport.xml' || format('services/{0}/build/reports/jacoco/test/jacocoTestReport.xml', matrix.module) }}
+          flags: ${{ matrix.module }}
+          name: ${{ matrix.module }}-jacoco
           verbose: true
 
       - name: 📤 Upload Test Logs if Failed
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: test-logs-${{ matrix.service }}-${{ github.sha }}
-          path: services/${{ matrix.service }}/build/reports/tests/
+          name: test-logs-${{ matrix.module }}-${{ github.sha }}
+          path: ${{ matrix.module == 'load-testing' && 'dev-tools/load-testing/build/reports/tests/' || format('services/{0}/build/reports/tests/', matrix.module) }}
 
   # Final gating and PR reporting
   validation-summary:
@@ -936,6 +1050,7 @@ jobs:
 
             const body = [
               "### Validation Summary",
+              "<!-- firemud-validation-summary -->",
               headline,
               "",
               ...validationChecks.map(([name, result]) => `- ${statusIcon(result)} ${name}: \`${result}\``),
@@ -948,24 +1063,50 @@ jobs:
               .addList(validationChecks.map(([name, result]) => `${statusIcon(result)} ${name}: ${result}`))
               .write();
 
-            const { data: comments } = await github.rest.issues.listComments({
+            const expectedHeadSha = context.payload.pull_request.head.sha;
+            const expectedBaseRef = context.payload.pull_request.base.ref;
+            const expectedBaseSha = context.payload.pull_request.base.sha;
+            const { data: currentPullRequest } = await github.rest.pulls.get({
               ...context.repo,
-              issue_number: context.issue.number
+              pull_number: context.issue.number,
+            });
+            if (
+              currentPullRequest.state !== "open" ||
+              currentPullRequest.head.sha !== expectedHeadSha ||
+              currentPullRequest.base.ref !== expectedBaseRef ||
+              currentPullRequest.base.sha !== expectedBaseSha
+            ) {
+              core.info(
+                `Skipping stale validation summary for ${expectedBaseRef}@${expectedBaseSha}...${expectedHeadSha}; ` +
+                `current PR state/base/head is ${currentPullRequest.state}/${currentPullRequest.base.ref}@${currentPullRequest.base.sha}/${currentPullRequest.head.sha}`
+              );
+              return;
+            }
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              ...context.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
             });
 
             const summaryComments = comments.filter(comment =>
-              comment.body.startsWith("### Validation Summary")
+              comment.user?.login === "github-actions[bot]" &&
+              (comment.body?.startsWith("### Validation Summary") ||
+                comment.body?.includes("<!-- firemud-validation-summary -->"))
             );
-            const existing = summaryComments[0];
-
-            if (summaryComments.length > 1) {
-              for (const comment of summaryComments.slice(1)) {
-                await github.rest.issues.deleteComment({
-                  ...context.repo,
-                  comment_id: comment.id,
-                });
+            const commentTimestamp = (comment) => {
+              const parsed = Date.parse(comment.created_at || "");
+              return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed;
+            };
+            const existing = summaryComments.reduce((oldest, comment) => {
+              if (!oldest) return comment;
+              const oldestTimestamp = commentTimestamp(oldest);
+              const candidateTimestamp = commentTimestamp(comment);
+              if (candidateTimestamp !== oldestTimestamp) {
+                return candidateTimestamp < oldestTimestamp ? comment : oldest;
               }
-            }
+              return Number(comment.id) < Number(oldest.id) ? comment : oldest;
+            }, null);
 
             if (existing) {
               await github.rest.issues.updateComment({
@@ -979,6 +1120,18 @@ jobs:
                 issue_number: context.issue.number,
                 body
               });
+            }
+
+            for (const comment of summaryComments) {
+              if (comment.id === existing?.id) continue;
+              try {
+                await github.rest.issues.deleteComment({
+                  ...context.repo,
+                  comment_id: comment.id,
+                });
+              } catch (error) {
+                if (error?.status !== 404) throw error;
+              }
             }
 
   validation-gate:
@@ -1022,7 +1175,7 @@ jobs:
           DESIGN_DOCS_CHANGED: ${{ needs.changes.outputs.design_docs_changed }}
           VALIDATION_PYTHON_CHANGED: ${{ needs.changes.outputs.validation_python_changed }}
           LIGHTWEIGHT_ONLY: ${{ needs.changes.outputs.lightweight_only }}
-          AFFECTED_SERVICES: ${{ needs.changes.outputs.affected_services }}
+          AFFECTED_MODULES: ${{ needs.changes.outputs.affected_modules }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           BUF_CHECK: ${{ needs.buf-check.result }}
           DOCKER_LINT: ${{ needs.docker-lint.result }}
@@ -1133,7 +1286,7 @@ jobs:
           fi
 
           echo "Build and Test Matrix => $BUILD_AND_TEST"
-          if [ "$AFFECTED_SERVICES" != "[]" ]; then
+          if [ "$AFFECTED_MODULES" != "[]" ]; then
             if [ "$BUILD_AND_TEST" != "success" ]; then
               failed=1
             fi

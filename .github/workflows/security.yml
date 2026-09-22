@@ -244,24 +244,49 @@ jobs:
               ...checks.map(([name, result]) => `- ${statusIcon(result)} ${name}: \`${result}\``),
             ].join("\n");
 
-            const { data: comments } = await github.rest.issues.listComments({
+            const expectedHeadSha = context.payload.pull_request.head.sha;
+            const expectedBaseRef = context.payload.pull_request.base.ref;
+            const expectedBaseSha = context.payload.pull_request.base.sha;
+            const { data: currentPullRequest } = await github.rest.pulls.get({
               ...context.repo,
-              issue_number: context.issue.number
+              pull_number: context.issue.number,
+            });
+            if (
+              currentPullRequest.state !== "open" ||
+              currentPullRequest.head.sha !== expectedHeadSha ||
+              currentPullRequest.base.ref !== expectedBaseRef ||
+              currentPullRequest.base.sha !== expectedBaseSha
+            ) {
+              core.info(
+                `Skipping stale security summary for ${expectedBaseRef}@${expectedBaseSha}...${expectedHeadSha}; ` +
+                `current PR state/base/head is ${currentPullRequest.state}/${currentPullRequest.base.ref}@${currentPullRequest.base.sha}/${currentPullRequest.head.sha}`
+              );
+              return;
+            }
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              ...context.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
             });
 
             const summaryComments = comments.filter(comment =>
-              comment.body.startsWith("### Security Summary")
+              comment.user?.login === "github-actions[bot]" &&
+              comment.body?.startsWith("### Security Summary")
             );
-            const existing = summaryComments[0];
-
-            if (summaryComments.length > 1) {
-              for (const comment of summaryComments.slice(1)) {
-                await github.rest.issues.deleteComment({
-                  ...context.repo,
-                  comment_id: comment.id,
-                });
+            const commentTimestamp = (comment) => {
+              const parsed = Date.parse(comment.created_at || "");
+              return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed;
+            };
+            const existing = summaryComments.reduce((oldest, comment) => {
+              if (!oldest) return comment;
+              const oldestTimestamp = commentTimestamp(oldest);
+              const candidateTimestamp = commentTimestamp(comment);
+              if (candidateTimestamp !== oldestTimestamp) {
+                return candidateTimestamp < oldestTimestamp ? comment : oldest;
               }
-            }
+              return Number(comment.id) < Number(oldest.id) ? comment : oldest;
+            }, null);
 
             if (existing) {
               await github.rest.issues.updateComment({
@@ -275,4 +300,16 @@ jobs:
                 issue_number: context.issue.number,
                 body
               });
+            }
+
+            for (const comment of summaryComments) {
+              if (comment.id === existing?.id) continue;
+              try {
+                await github.rest.issues.deleteComment({
+                  ...context.repo,
+                  comment_id: comment.id,
+                });
+              } catch (error) {
+                if (error?.status !== 404) throw error;
+              }
             }

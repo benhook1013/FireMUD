@@ -38,8 +38,10 @@ jobs:
       hostname: ${{ steps.derive.outputs.hostname }}
       image_tag: ${{ steps.derive.outputs.image_tag }}
       head_sha: ${{ steps.derive.outputs.head_sha }}
+      base_ref: ${{ steps.derive.outputs.base_ref }}
       base_sha: ${{ steps.derive.outputs.base_sha }}
       merge_sha: ${{ steps.derive.outputs.merge_sha }}
+      base_refresh_required: ${{ steps.derive.outputs.base_refresh_required }}
       eligible: ${{ steps.eligibility.outputs.eligible }}
       eligibility_reason: ${{ steps.eligibility.outputs.reason }}
     steps:
@@ -87,7 +89,7 @@ jobs:
           if [[ "$EVENT_NAME" == pull_request_target ]]; then
             PR_NUMBER="$EVENT_PR_NUMBER"
             HEAD_SHA="$EVENT_HEAD_SHA"
-            BASE_SHA="$EVENT_BASE_SHA"
+            BASE_SHA=""
             MERGE_SHA=""
             ACTION=deploy
             PREVIEW_DOMAIN=preview.firedevops.net
@@ -145,32 +147,39 @@ jobs:
             exit 1
           fi
           MERGE_ATTEMPT=0
+          BASE_REFRESH_REQUIRED=false
           while :; do
             MERGE_ATTEMPT=$((MERGE_ATTEMPT + 1))
             PULL_REQUEST_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-            if [[ "$(jq -r '.head.repo.full_name // empty' <<<"$PULL_REQUEST_JSON")" != "$GITHUB_REPOSITORY" ]]; then
+            if [[ "$(jq -r '.head.repo.full_name // empty' <<<"$PULL_REQUEST_JSON")" != "$GITHUB_REPOSITORY" ]] ||
+              [[ "$(jq -r '.base.repo.full_name // empty' <<<"$PULL_REQUEST_JSON")" != "$GITHUB_REPOSITORY" ]]; then
               echo "::error title=Untrusted preview pull request::Preview operations require a pull request from this repository." >&2
               exit 1
             fi
             if ! CURRENT_HEAD_SHA="$(jq -er '.head.sha | select(type == "string")' <<<"$PULL_REQUEST_JSON")" ||
-              ! CURRENT_BASE_SHA="$(jq -er '.base.sha | select(type == "string")' <<<"$PULL_REQUEST_JSON")"; then
-              echo "::error title=Invalid pull request metadata::Expected string current head and base SHAs." >&2
+              ! CURRENT_BASE_REF="$(jq -er '.base.ref | select(type == "string" and length > 0)' <<<"$PULL_REQUEST_JSON")"; then
+              echo "::error title=Invalid pull request metadata::Expected string current head SHA and base ref." >&2
               exit 1
             fi
             if [[ ! "$CURRENT_HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]] ||
-              [[ ! "$CURRENT_BASE_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
-              echo "::error title=Invalid pull request metadata::Expected 40-character hexadecimal current head and base SHAs." >&2
+              [[ ! "$CURRENT_BASE_REF" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+              echo "::error title=Invalid pull request metadata::Expected a 40-character hexadecimal current head SHA and a valid base ref." >&2
               exit 1
             fi
             CURRENT_HEAD_SHA="${CURRENT_HEAD_SHA,,}"
+            if ! CURRENT_BASE_REF_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${CURRENT_BASE_REF}")" ||
+              ! CURRENT_BASE_SHA="$(jq -er '.object.sha | select(type == "string")' <<<"$CURRENT_BASE_REF_JSON")" ||
+              [[ ! "$CURRENT_BASE_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+              echo "::error title=Invalid pull request base ref::Unable to read a 40-character hexadecimal SHA from the current base branch ref." >&2
+              exit 1
+            fi
             CURRENT_BASE_SHA="${CURRENT_BASE_SHA,,}"
             if [[ "${HEAD_SHA,,}" != "$CURRENT_HEAD_SHA" ]]; then
               echo "::error title=Stale preview head SHA::Supplied head SHA does not equal the current pull request head." >&2
               exit 1
             fi
-            if [[ "$EVENT_NAME" == pull_request_target && "${BASE_SHA,,}" != "$CURRENT_BASE_SHA" ]]; then
-              echo "::error title=Stale preview base SHA::Supplied base SHA does not equal the current pull request base." >&2
-              exit 1
+            if [[ "$EVENT_NAME" == pull_request_target && "${EVENT_BASE_SHA,,}" != "$CURRENT_BASE_SHA" ]]; then
+              BASE_REFRESH_REQUIRED=true
             fi
             HEAD_SHA="$CURRENT_HEAD_SHA"
             BASE_SHA="$CURRENT_BASE_SHA"
@@ -210,6 +219,20 @@ jobs:
               exit 1
             fi
             MERGE_SHA="${MERGE_SHA,,}"
+            if ! MERGE_COMMIT_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${MERGE_SHA}")" ||
+              ! jq -e \
+                --arg merge_sha "$MERGE_SHA" \
+                --arg base_sha "$BASE_SHA" \
+                --arg head_sha "$HEAD_SHA" \
+                '.sha == $merge_sha and (.parents | type) == "array" and (.parents | length) == 2 and .parents[0].sha == $base_sha and .parents[1].sha == $head_sha' \
+                <<<"$MERGE_COMMIT_JSON" >/dev/null; then
+              if (( MERGE_ATTEMPT >= MERGE_RETRY_LIMIT )); then
+                echo "::error title=Preview merge computation unavailable::The current test-merge commit does not have the exact current base and head parents after ${MERGE_RETRY_LIMIT} attempts." >&2
+                exit 1
+              fi
+              sleep "$MERGE_RETRY_DELAY_SECONDS"
+              continue
+            fi
             break
           done
 
@@ -229,9 +252,10 @@ jobs:
           IMAGE_TAG="$HEAD_SHA"
           if [[ "$ACTION" == deploy ]]; then
             IMAGE_TAG="$(bash ./dev-tools/hosted/preview/resolve-preview-image-tag.sh \
-              "$HEAD_SHA" "$PR_NUMBER" "$BASE_SHA")"
-            if [[ "$IMAGE_TAG" != "$HEAD_SHA" && "$IMAGE_TAG" != "$BASE_SHA" ]]; then
-              echo "::error title=Invalid preview image resolution::Expected the PR head or immutable base SHA." >&2
+              "$MERGE_SHA" "$PR_NUMBER" "$BASE_SHA")"
+            EXPECTED_MERGE_IMAGE_TAG="pr-merge-${MERGE_SHA}"
+            if [[ "$IMAGE_TAG" != "$EXPECTED_MERGE_IMAGE_TAG" && "$IMAGE_TAG" != "$BASE_SHA" ]]; then
+              echo "::error title=Invalid preview image resolution::Expected the tested PR merge tag or immutable base SHA." >&2
               exit 1
             fi
           fi
@@ -249,8 +273,10 @@ jobs:
             echo "hostname=${PREVIEW_HOSTNAME}"
             echo "image_tag=${IMAGE_TAG}"
             echo "head_sha=${HEAD_SHA}"
+            echo "base_ref=${CURRENT_BASE_REF}"
             echo "base_sha=${BASE_SHA}"
             echo "merge_sha=${MERGE_SHA}"
+            echo "base_refresh_required=${BASE_REFRESH_REQUIRED}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Resolve preview target metadata
@@ -338,12 +364,106 @@ jobs:
           head_sha=${{ steps.derive.outputs.head_sha }}
           base_sha=${{ steps.derive.outputs.base_sha }}
           merge_sha=${{ steps.derive.outputs.merge_sha }}
+          base_refresh_required=${{ steps.derive.outputs.base_refresh_required }}
           EOF
+
+  preview-runtime-base-refresh:
+    name: Refresh PR Runtime Images For Current Base
+    needs: preview-plan
+    if: ${{ needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'deploy' && needs.preview-plan.outputs.base_refresh_required == 'true' && needs.preview-plan.outputs.image_tag != needs.preview-plan.outputs.base_sha }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
+      - name: Dispatch exact current-base runtime refresh when event metadata is stale
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          BASE_REFRESH_REQUIRED: ${{ needs.preview-plan.outputs.base_refresh_required }}
+          PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
+          BASE_REF: ${{ needs.preview-plan.outputs.base_ref }}
+          BASE_SHA: ${{ needs.preview-plan.outputs.base_sha }}
+          HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
+          MERGE_SHA: ${{ needs.preview-plan.outputs.merge_sha }}
+          IMAGE_TAG: ${{ needs.preview-plan.outputs.image_tag }}
+        with:
+          script: |
+            if (process.env.BASE_REFRESH_REQUIRED !== "true") {
+              core.info("Preview event already carried the current base branch SHA; no runtime refresh dispatch is required.");
+              return;
+            }
+
+            const shaPattern = /^[0-9a-f]{40}$/;
+            const {data: pullRequest} = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: Number(process.env.PR_NUMBER),
+            });
+            const baseRef = pullRequest.base?.ref;
+            const headRepository = pullRequest.head?.repo?.full_name;
+            const baseRepository = pullRequest.base?.repo?.full_name;
+            if (pullRequest.state !== "open" ||
+              headRepository !== context.payload.repository.full_name ||
+              baseRepository !== context.payload.repository.full_name ||
+              baseRef !== process.env.BASE_REF ||
+              pullRequest.head?.sha !== process.env.HEAD_SHA ||
+              pullRequest.merge_commit_sha !== process.env.MERGE_SHA) {
+              core.setFailed("Current pull-request metadata no longer matches the planned preview tuple.");
+              return;
+            }
+
+            const {data: branchRef} = await github.rest.git.getRef({
+              ...context.repo,
+              ref: `heads/${baseRef}`,
+            });
+            if (branchRef.object?.sha !== process.env.BASE_SHA) {
+              core.setFailed("Current base branch ref no longer matches the planned preview tuple.");
+              return;
+            }
+
+            const {data: mergeCommit} = await github.rest.repos.getCommit({
+              ...context.repo,
+              ref: process.env.MERGE_SHA,
+            });
+            const parents = mergeCommit.parents?.map((parent) => parent.sha) || [];
+            if (mergeCommit.sha !== process.env.MERGE_SHA ||
+              parents.length !== 2 ||
+              parents[0] !== process.env.BASE_SHA ||
+              parents[1] !== process.env.HEAD_SHA) {
+              core.setFailed("Current merge commit does not have the exact planned base/head parents.");
+              return;
+            }
+
+            if (!shaPattern.test(process.env.BASE_SHA) ||
+              !shaPattern.test(process.env.HEAD_SHA) ||
+              !shaPattern.test(process.env.MERGE_SHA) ||
+              process.env.IMAGE_TAG === process.env.BASE_SHA) {
+              core.setFailed("Runtime refresh dispatch has an invalid PR image tuple.");
+              return;
+            }
+
+            await github.rest.repos.createDispatchEvent({
+              ...context.repo,
+              event_type: "pr-runtime-base-refresh",
+              client_payload: {
+                pr_number: process.env.PR_NUMBER,
+                base_ref: baseRef,
+                base_sha: process.env.BASE_SHA,
+                head_sha: process.env.HEAD_SHA,
+                merge_sha: process.env.MERGE_SHA,
+              },
+            });
+            core.info(`Dispatched current-base runtime refresh for PR #${process.env.PR_NUMBER}.`);
 
   preview-render:
     name: Render Sanitized Preview Artifact
-    needs: preview-plan
-    if: ${{ needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'deploy' }}
+    needs: [preview-plan, preview-runtime-base-refresh]
+    if: ${{ always() && needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'deploy' && (needs.preview-runtime-base-refresh.result == 'success' || needs.preview-runtime-base-refresh.result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

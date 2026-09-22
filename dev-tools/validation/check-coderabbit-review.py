@@ -987,7 +987,12 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
     latest_review_request_rate_limited = (
         not rate_limit_superseded_by_substantive_review
         and (
-            latest_rate_limit_without_expiry
+            (
+                latest_rate_limit_without_expiry
+                and latest_rate_limit_at_dt is not None
+                and latest_rate_limit_at_dt + timedelta(hours=1)
+                > datetime.now(timezone.utc)
+            )
             or (
                 latest_rate_limit_until_dt is not None
                 and latest_rate_limit_until_dt > datetime.now(timezone.utc)
