@@ -383,18 +383,6 @@ workflows = {
     "security.yml": ("security", "security-gate", "Security Gate"),
     "smoke.yml": ("smoke", "smoke-gate", "Smoke Gate"),
 }
-required_contexts = {
-    "Validation Gate": "success",
-    "Security Gate": "success",
-    "License Gate": "success",
-    "Smoke Gate": "success",
-    "CodeQL Gate": "success",
-}
-metadata_contexts = {
-    "Validation Summary": "skipped",
-    "Security Summary": "skipped",
-    "Smoke Summary": "skipped",
-}
 metadata_guard = "github.event.action != 'edited' || github.event.changes.base.ref != null"
 metadata_events = (91001, 91002)
 
@@ -430,18 +418,54 @@ for workflow, (prefix, gate_job, gate_name) in workflows.items():
     if gate.get("name") != gate_name and workflow != "smoke.yml":
         raise SystemExit(f"{workflow} required gate name changed")
 
+gate_workflows = {
+    **workflows,
+    "license-scan.yml": ("license", "license-gate", "License Gate"),
+    "codeql.yml": ("codeql", "codeql-gate", "CodeQL Gate"),
+}
+required_gate_fixtures = []
+for workflow, (_prefix, gate_job, gate_name) in gate_workflows.items():
+    path = root / ".github" / "workflows" / workflow
+    data = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    job = data["jobs"][gate_job]
+    required_gate_fixtures.append(
+        {
+            "workflow": workflow,
+            "job": gate_job,
+            "context": gate_name,
+            "status": "completed",
+            "conclusion": "success",
+        }
+    )
+    if workflow != "smoke.yml" and job.get("name") != gate_name:
+        raise SystemExit(f"{workflow} required gate fixture has no matching job context")
+
+# Build the aggregate from event/job fixtures sourced from each workflow. The
+# required gate is preserved successfully on a metadata edit; all other jobs
+# are skipped by their metadata guard and therefore cannot leave residue.
+metadata_job_fixtures = []
+for workflow, (_prefix, gate_job, gate_name) in workflows.items():
+    path = root / ".github" / "workflows" / workflow
+    data = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    for job_name, job in data["jobs"].items():
+        metadata_job_fixtures.append(
+            {
+                "workflow": workflow,
+                "job": job_name,
+                "context": gate_name if job_name == gate_job else job.get("name", job_name),
+                "status": "completed" if job_name == gate_job else "completed",
+                "conclusion": "success" if job_name == gate_job else "skipped",
+            }
+        )
+
+required_contexts = {fixture["context"]: fixture["conclusion"] for fixture in required_gate_fixtures}
+metadata_contexts = {fixture["context"]: fixture["conclusion"] for fixture in metadata_job_fixtures}
 aggregate = {**required_contexts, **metadata_contexts}
 residue = {"failure", "cancelled"}
 if residue.intersection(aggregate.values()):
     raise SystemExit("metadata edit aggregate contains failed or cancelled residue")
-if set(required_contexts) != {
-    "Validation Gate",
-    "Security Gate",
-    "License Gate",
-    "Smoke Gate",
-    "CodeQL Gate",
-}:
-    raise SystemExit("the five required gate contexts are not all authoritative")
+if len(required_contexts) != len(required_gate_fixtures):
+    raise SystemExit("required gate event/job fixtures do not expose distinct authoritative contexts")
 PY
 
 # shellcheck disable=SC2016 # Match the checked-in arithmetic assignment literally.

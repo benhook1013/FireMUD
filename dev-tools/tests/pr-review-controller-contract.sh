@@ -56,6 +56,9 @@ for token in \
   if rg -n --hidden --glob '!.git/**' --glob '!dev-tools/tests/pr-review-controller-contract.sh' \
       -F "$retired" . >/dev/null; then
     fail "retired public tool is still referenced: $retired"
+  else
+    rg_status=$?
+    (( rg_status == 1 )) || fail "retired reference scan failed for $retired (rg exit $rg_status)"
   fi
 done
 

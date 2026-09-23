@@ -166,6 +166,41 @@ class StatusTest(unittest.TestCase):
         report = self._ready_report(github_payload())
         self.assertEqual(report["unresolved_threads"][0]["id"], "PRRT_1")
 
+    def test_graphql_errors_and_missing_review_connections_fail_closed(self) -> None:
+        graphql_error = {"errors": [{"message": "partial response"}], "data": {}}
+        with patch.object(github, "run_gh_query", return_value=graphql_error), self.assertRaisesRegex(
+            RuntimeError, "GraphQL response contains errors"
+        ):
+            github.fetch_pull_request("owner/repo", 2838)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "graphql-error.json"
+            path.write_text(json.dumps(graphql_error), encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "GraphQL response contains errors"):
+                github.load_pull_request(path, "owner/repo", 2838)
+
+        for connection in github.REVIEW_CONNECTIONS:
+            for missing in (False, True):
+                payload = github_payload()
+                pull_request = payload["data"]["repository"]["pullRequest"]
+                for existing in github.REVIEW_CONNECTIONS:
+                    if isinstance(pull_request.get(existing), dict):
+                        pull_request[existing]["pageInfo"] = {"hasNextPage": False}
+                if missing:
+                    del pull_request[connection]
+                else:
+                    pull_request[connection] = None
+                expected = f"missing {connection} connection"
+                with self.subTest(connection=connection, missing=missing):
+                    with patch.object(github, "run_gh_query", return_value=payload), self.assertRaisesRegex(
+                        TypeError, expected
+                    ):
+                        github.fetch_pull_request("owner/repo", 2838)
+                    with tempfile.TemporaryDirectory() as directory:
+                        path = Path(directory) / "missing-connection.json"
+                        path.write_text(json.dumps(payload), encoding="utf-8")
+                        with self.assertRaisesRegex(TypeError, expected):
+                            github.load_pull_request(path, "owner/repo", 2838)
+
     def test_live_comment_shape_is_converted_to_historical_checkpoint_evidence(self) -> None:
         payload = github_payload()
         payload["data"]["repository"]["pullRequest"]["comments"] = {

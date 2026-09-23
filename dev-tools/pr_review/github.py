@@ -22,6 +22,7 @@ REVIEW_COMMAND_TYPES = {
     "@coderabbitai full review": "full",
 }
 REPO_NAME = re.compile(r"^[^/\s]+/[^/\s]+$")
+REVIEW_CONNECTIONS = ("reviewThreads", "comments", "reviews")
 
 
 def parse_repo(repo: str) -> tuple[str, str]:
@@ -126,21 +127,50 @@ query($owner:String!, $repo:String!, $number:Int!, $after:String!) {{
 """.strip()
 
 
+def _pull_request_from_graphql_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate the review-bearing portion of a GraphQL response."""
+
+    errors = payload.get("errors")
+    if errors is not None and (not isinstance(errors, list) or errors):
+        raise RuntimeError("GitHub GraphQL response contains errors")
+    try:
+        pull_request = payload["data"]["repository"]["pullRequest"]
+    except (KeyError, TypeError) as exc:
+        raise RuntimeError("GitHub response has no pull request") from exc
+    if not isinstance(pull_request, dict):
+        raise TypeError("GitHub response has no pull request")
+    return pull_request
+
+
+def _review_connection(
+    pull_request: dict[str, Any], connection: str, *, require_page_info: bool
+) -> tuple[list[Any], dict[str, Any] | None]:
+    value = pull_request.get(connection)
+    if not isinstance(value, dict):
+        raise TypeError(f"GitHub response is missing {connection} connection")
+    nodes = value.get("nodes")
+    if not isinstance(nodes, list):
+        raise TypeError(f"GitHub {connection} connection has malformed nodes")
+    page_info = value.get("pageInfo")
+    if require_page_info:
+        if not isinstance(page_info, dict) or not isinstance(page_info.get("hasNextPage"), bool):
+            raise TypeError(f"GitHub {connection} connection has malformed page info")
+    elif page_info is not None and not isinstance(page_info, dict):
+        raise TypeError(f"GitHub {connection} connection has malformed page info")
+    return nodes, page_info
+
+
 def fetch_pull_request(repo: str, pr_number: int) -> dict[str, Any]:
     """Fetch a complete PR payload, paginating every review-bearing connection."""
 
     owner, name = parse_repo(repo)
     payload = run_gh_query(_BASE_QUERY, {"owner": owner, "repo": name, "number": pr_number})
-    try:
-        pr = payload["data"]["repository"]["pullRequest"]
-    except (KeyError, TypeError) as exc:
-        raise RuntimeError("GitHub response has no pull request") from exc
-    for connection in ("reviewThreads", "comments", "reviews"):
-        initial = pr.get(connection) or {"nodes": [], "pageInfo": {}}
-        nodes = list(initial.get("nodes") or [])
-        page = initial.get("pageInfo") or {}
+    pr = _pull_request_from_graphql_payload(payload)
+    for connection in REVIEW_CONNECTIONS:
+        nodes, page = _review_connection(pr, connection, require_page_info=True)
+        nodes = list(nodes)
         query = _connection_query(connection)
-        while page.get("hasNextPage"):
+        while page["hasNextPage"]:
             cursor = page.get("endCursor")
             if not isinstance(cursor, str) or not cursor:
                 raise RuntimeError(f"GitHub {connection} pagination has no cursor")
@@ -148,12 +178,9 @@ def fetch_pull_request(repo: str, pr_number: int) -> dict[str, Any]:
                 query,
                 {"owner": owner, "repo": name, "number": pr_number, "after": cursor},
             )
-            try:
-                page_value = next_payload["data"]["repository"]["pullRequest"][connection]
-            except (KeyError, TypeError) as exc:
-                raise RuntimeError(f"GitHub response is missing {connection} page") from exc
-            nodes.extend(page_value.get("nodes") or [])
-            page = page_value.get("pageInfo") or {}
+            next_pr = _pull_request_from_graphql_payload(next_payload)
+            page_nodes, page = _review_connection(next_pr, connection, require_page_info=True)
+            nodes.extend(page_nodes)
         pr[connection] = {"nodes": nodes}
     return payload
 
@@ -164,6 +191,9 @@ def load_pull_request(input_path: str | Path | None, repo: str, pr_number: int) 
     payload = json.loads(Path(input_path).read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise TypeError("input payload must be a JSON object")
+    pr = _pull_request_from_graphql_payload(payload)
+    for connection in REVIEW_CONNECTIONS:
+        _review_connection(pr, connection, require_page_info=False)
     return payload
 
 
