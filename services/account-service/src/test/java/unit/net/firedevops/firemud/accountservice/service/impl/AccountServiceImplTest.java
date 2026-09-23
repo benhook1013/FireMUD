@@ -2563,6 +2563,7 @@ class AccountServiceImplTest {
     profile.setTenantId(1L);
     profile.setDisplayName("demo");
     profile.setPresenceVisibilityPolicy(ProfilePresenceVisibilityPolicy.FRIENDS_ONLY);
+    when(accountTenantMembershipRepository.existsByAccountIdAndTenantId(2L, 1L)).thenReturn(true);
     when(profileRepository.findByAccountIdAndTenantId(2L, 1L)).thenReturn(Optional.of(profile));
     when(profileMapper.toDto(profile))
         .thenReturn(
@@ -2596,6 +2597,7 @@ class AccountServiceImplTest {
     profile.setAccount(new Account());
     profile.setTenantId(1L);
     profile.setPresenceVisibilityPolicy(ProfilePresenceVisibilityPolicy.FRIENDS_ONLY);
+    when(accountTenantMembershipRepository.existsByAccountIdAndTenantId(2L, 1L)).thenReturn(true);
     when(profileRepository.findByAccountIdAndTenantId(2L, 1L)).thenReturn(Optional.of(profile));
     when(profileRepository.save(profile)).thenReturn(profile);
     when(profileMapper.toDto(profile))
@@ -2611,6 +2613,27 @@ class AccountServiceImplTest {
     assertEquals("demo", dto.displayName());
     assertEquals(ProfilePresenceVisibilityPolicy.PRIVATE, profile.getPresenceVisibilityPolicy());
     org.mockito.Mockito.verify(notificationService).sendNotification(1L, 2L, "Profile updated");
+  }
+
+  @Test
+  void profileReadAndUpdateFailClosedWithoutCurrentTenantMembership() {
+    when(accountTenantMembershipRepository.existsByAccountIdAndTenantId(2L, 1L)).thenReturn(false);
+
+    assertEquals(
+        "Profile not found",
+        assertThrows(IllegalArgumentException.class, () -> service.getProfile(1L, 2L))
+            .getMessage());
+    assertEquals(
+        "Profile not found",
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                    service.updateProfile(
+                        new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
+                            1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE)))
+            .getMessage());
+
+    verifyNoInteractions(profileRepository, profileMapper, notificationService);
   }
 
   @Test

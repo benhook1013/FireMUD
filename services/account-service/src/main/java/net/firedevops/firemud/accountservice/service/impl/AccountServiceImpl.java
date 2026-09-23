@@ -1143,6 +1143,7 @@ public class AccountServiceImpl implements AccountService {
   @Transactional(readOnly = true)
   @Timed(value = "account.get_profile")
   public ProfileDto getProfile(Long tenantId, Long accountId) {
+    requireProfileMembership(tenantId, accountId);
     Profile profile =
         profileRepository
             .findByAccountIdAndTenantId(accountId, tenantId)
@@ -1176,6 +1177,7 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.update_profile")
   public ProfileDto updateProfile(UpdateProfileRequest request) {
     request.presenceVisibilityPolicy().requireSelectableByAccountHolder();
+    requireProfileMembership(request.tenantId(), request.accountId());
     Profile profile =
         profileRepository
             .findByAccountIdAndTenantId(request.accountId(), request.tenantId())
@@ -1189,6 +1191,12 @@ public class AccountServiceImpl implements AccountService {
             notificationService.sendNotification(
                 request.tenantId(), request.accountId(), "Profile updated"));
     return profileMapper.toDto(profile);
+  }
+
+  private void requireProfileMembership(Long tenantId, Long accountId) {
+    if (!accountTenantMembershipRepository.existsByAccountIdAndTenantId(accountId, tenantId)) {
+      throw new IllegalArgumentException("Profile not found");
+    }
   }
 
   @Override

@@ -7,6 +7,7 @@ import net.firedevops.firemud.accountservice.dto.UpdateProfileRequest;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.common.security.SessionContext;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -15,6 +16,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestController
 @RequestMapping("/profiles")
@@ -33,7 +35,7 @@ public class ProfileController {
       @PathVariable String accountId, @RequestParam String tenantId) {
     long parsedAccountId = AccountRequestReaders.requireAccountId(accountId);
     long parsedTenantId = AccountRequestReaders.requireTenantId(tenantId);
-    SessionContext.requireAccountAccess(parsedTenantId, parsedAccountId);
+    requireProfileOwner(parsedAccountId);
     ProfileDto dto = accountService.getProfile(parsedTenantId, parsedAccountId);
     return ResponseEntity.ok(ApiResponse.success(dto));
   }
@@ -43,7 +45,7 @@ public class ProfileController {
       @PathVariable String accountId, @Valid @RequestBody UpdateProfileRequest request) {
     long parsedAccountId = AccountRequestReaders.requireAccountId(accountId);
     long parsedTenantId = AccountRequestReaders.requireTenantId(request.tenantId());
-    SessionContext.requireAccountAccess(parsedTenantId, parsedAccountId);
+    requireProfileOwner(parsedAccountId);
     if (request.presenceVisibilityPolicy() == null) {
       throw new IllegalArgumentException("presenceVisibilityPolicy must be provided");
     }
@@ -57,5 +59,11 @@ public class ProfileController {
                 request.bio(),
                 request.presenceVisibilityPolicy()));
     return ResponseEntity.ok(ApiResponse.success(dto));
+  }
+
+  private static void requireProfileOwner(long accountId) {
+    if (!SessionContext.isCurrentAccount(accountId)) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Profile access required");
+    }
   }
 }

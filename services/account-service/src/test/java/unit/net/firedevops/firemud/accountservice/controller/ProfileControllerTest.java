@@ -51,7 +51,7 @@ class ProfileControllerTest {
         new ProfileDto(1L, 1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.FRIENDS_ONLY);
     when(accountService.getProfile(1L, 2L)).thenReturn(dto);
 
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = jwtUtil.generateToken("2", Map.of("accountId", "2"));
     mockMvc
         .perform(
             get("/profiles/2")
@@ -70,7 +70,7 @@ class ProfileControllerTest {
         new ProfileDto(1L, 1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
     when(accountService.updateProfile(req)).thenReturn(dto);
 
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = jwtUtil.generateToken("2", Map.of("accountId", "2"));
     mockMvc
         .perform(
             put("/profiles/2")
@@ -93,6 +93,35 @@ class ProfileControllerTest {
                 .param("tenantId", "1")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void getProfileRejectsSameTenantAdminForAnotherAccount() throws Exception {
+    String token =
+        jwtUtil.generateToken("3", Map.of("scopedRoles", Map.of("1", List.of("tenantAdmin"))));
+
+    mockMvc
+        .perform(
+            get("/profiles/2")
+                .param("tenantId", "1")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isForbidden());
+
+    verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void getProfileRejectsGlobalAdminForAnotherAccount() throws Exception {
+    String token = jwtUtil.generateToken("3", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            get("/profiles/2")
+                .param("tenantId", "1")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isForbidden());
+
+    verifyNoInteractions(accountService);
   }
 
   @Test
@@ -174,6 +203,41 @@ class ProfileControllerTest {
         new UpdateProfileRequest(
             1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.HIDDEN_STAFF);
     String token = jwtUtil.generateToken("3", Map.of("accountId", "3"));
+
+    mockMvc
+        .perform(
+            put("/profiles/2")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isForbidden());
+
+    verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void updateProfileRejectsSameTenantAdminForAnotherAccount() throws Exception {
+    UpdateProfileRequest request =
+        new UpdateProfileRequest(1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
+    String token =
+        jwtUtil.generateToken("3", Map.of("scopedRoles", Map.of("1", List.of("tenantAdmin"))));
+
+    mockMvc
+        .perform(
+            put("/profiles/2")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isForbidden());
+
+    verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void updateProfileRejectsGlobalAdminForAnotherAccount() throws Exception {
+    UpdateProfileRequest request =
+        new UpdateProfileRequest(1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
+    String token = jwtUtil.generateToken("3", Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
