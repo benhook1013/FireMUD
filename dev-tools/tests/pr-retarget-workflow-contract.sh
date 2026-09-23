@@ -399,18 +399,15 @@ assert_job_contains smoke.yml smoke-gate 'github.rest.pulls.get'
 assert_job_contains smoke.yml smoke-gate 'pullRequest.state !== "open"'
 assert_job_contains smoke.yml smoke-gate 'pullRequest.head.sha !== headSha'
 assert_job_contains smoke.yml smoke-gate 'pullRequest.base.ref !== baseRef'
-assert_job_excludes smoke.yml smoke-gate 'pullRequest.base.sha'
-assert_job_contains smoke.yml smoke-gate 'github.rest.git.getRef'
 assert_job_contains smoke.yml smoke-gate 'github.rest.repos.getCommit'
 assert_job_contains smoke.yml smoke-gate 'parents.length !== 2'
-assert_job_contains smoke.yml smoke-gate 'parents[0]?.sha !== currentBaseSha'
+assert_job_contains smoke.yml smoke-gate 'parents[0]?.sha !== eventBaseSha'
 assert_job_contains smoke.yml smoke-gate 'parents[1]?.sha !== headSha'
-assert_job_contains smoke.yml smoke-gate 'const expectedRuntimeEvent = eventIdentityMatches(currentIdentity)'
-assert_job_contains smoke.yml smoke-gate 'event: expectedRuntimeEvent'
-assert_job_contains smoke.yml smoke-gate 'run.event !== expectedRuntimeEvent'
-assert_job_contains smoke.yml smoke-gate 'expectedRuntimeEvent === "repository_dispatch"'
-assert_job_contains smoke.yml smoke-gate 'no trusted refresh dispatch exists or it did not complete'
-assert_job_contains smoke.yml smoke-gate 'The stale pull_request source is not accepted.'
+assert_job_contains smoke.yml smoke-gate 'event: "pull_request"'
+assert_job_contains smoke.yml smoke-gate 'run.event !== "pull_request"'
+assert_job_excludes smoke.yml smoke-gate 'github.rest.git.getRef'
+assert_job_excludes smoke.yml smoke-gate 'expectedRuntimeEvent === "repository_dispatch"'
+assert_job_excludes smoke.yml smoke-gate 'The stale pull_request source is not accepted.'
 assert_job_contains smoke.yml smoke-gate 'job.name === "PR Full-Stack Smoke"'
 assert_job_contains smoke.yml smoke-gate 'step.name === "Run credential-free full-stack smoke"'
 assert_job_contains smoke.yml smoke-gate 'Stopping stale smoke gate before accepting full-stack proof'
@@ -419,8 +416,9 @@ assert_job_excludes smoke.yml smoke-gate 'github.rest.repos.createDispatchEvent'
 
 # Reproduce the metadata-edit sequence structurally: the edit has its own
 # concurrency namespace, all runtime construction jobs remain skipped, and no
-# dispatch-capable step exists in Smoke Gate. A live tuple change is handled by
-# the already-proved exact repository_dispatch refresh path instead.
+# dispatch-capable step exists in Smoke Gate. The original event tuple remains
+# valid for merge gating while trusted image publication and preview continue
+# to require current-base provenance.
 python3 - "$smoke_path" "$runtime_images_path" <<'PY'
 from pathlib import Path
 import sys
@@ -1202,7 +1200,7 @@ require_branch_return \
   'if (resolvedIdentity?.obsolete) {'
 require_contains "$smoke_path" 'mode-required'
 require_contains "$smoke_path" 'Build Runtime Images secure-pr-artifact pr-'
-require_contains "$smoke_path" 'workflowRunQuery.created = `${pullRequestCreatedAt}..*`;'
+require_contains "$smoke_path" 'event: "pull_request",'
 require_contains "$smoke_path" 'github.paginate.iterator('
 require_contains "$smoke_path" 'for await (const response of github.paginate.iterator('
 require_contains "$smoke_path" 'run.display_title !== expectedDisplayTitle'
@@ -1211,7 +1209,7 @@ require_contains "$smoke_path" 'pullRequests.length > 0 &&'
 require_contains "$smoke_path" '!pullRequests.some'
 require_contains "$smoke_path" 'pullRequest.head?.sha === currentIdentity.headSha'
 require_contains "$smoke_path" 'break workflowRunPages;'
-require_contains "$smoke_path" 'workflowRunQuery.head_sha = currentIdentity.headSha;'
+require_contains "$smoke_path" 'head_sha: currentIdentity.headSha,'
 require_contains "$smoke_path" 'github.rest.actions.listJobsForWorkflowRun'
 require_contains "$smoke_path" 'job.name === "PR Full-Stack Smoke"'
 require_contains "$smoke_path" 'step.name === "Run credential-free full-stack smoke"'
@@ -1528,9 +1526,51 @@ const script = fs.readFileSync(process.argv[2], "utf8");
 const headSha = "a".repeat(40);
 const baseSha = "b".repeat(40);
 const mergeSha = "c".repeat(40);
+let currentHeadSha = headSha;
+let currentBaseRef = "develop";
 let currentBaseSha = baseSha;
 let currentMergeSha = mergeSha;
-let currentMergeParents = [{ sha: baseSha }, { sha: headSha }];
+let currentPullRequestState = "open";
+let eventMergeParents = [{ sha: baseSha }, { sha: headSha }];
+let availableRuns = [];
+let requestedCommitRefs = [];
+let forbiddenCurrentBaseLookups = 0;
+let fakeNow = 1000;
+Date.now = () => fakeNow;
+global.setTimeout = (callback, milliseconds, ...args) => {
+  fakeNow += Number(milliseconds);
+  queueMicrotask(() => callback(...args));
+  return 0;
+};
+
+function runtimeTitle(base, head, merge) {
+  return `Build Runtime Images secure-pr-artifact pr-42 base-${base} head-${head} merge-${merge} mode-required`;
+}
+
+function runtimeRun(id, title) {
+  return {
+    id,
+    event: "pull_request",
+    head_sha: headSha,
+    display_title: title,
+    status: "completed",
+    conclusion: "success",
+    created_at: "2026-09-20T00:00:00Z",
+    pull_requests: [],
+  };
+}
+
+function setExactEventRun(id = 202) {
+  availableRuns = [runtimeRun(id, runtimeTitle(baseSha, headSha, mergeSha))];
+}
+
+function setOnlyNonExactRuns() {
+  availableRuns = [
+    runtimeRun(301, runtimeTitle(currentBaseSha, headSha, currentMergeSha)),
+    runtimeRun(302, `Build Runtime Images secure-pr-artifact pr-42 head-${headSha} mode-required`),
+  ];
+}
+
 const context = {
   repo: { owner: "owner", repo: "repo" },
   sha: mergeSha,
@@ -1547,31 +1587,30 @@ const listWorkflowRuns = async () => undefined;
 const listJobsForWorkflowRun = async () => undefined;
 let smokeStepConclusion = "skipped";
 const workflowRunQueries = [];
-const workflowRunPageReads = [];
-let olderMatchingRunVisited = false;
 const jobQueries = [];
 const github = {
   rest: {
     pulls: {
       get: async () => ({
         data: {
-          state: "open",
-          head: { sha: headSha },
-          base: { sha: currentBaseSha, ref: "develop" },
+          state: currentPullRequestState,
+          head: { sha: currentHeadSha },
+          base: { sha: currentBaseSha, ref: currentBaseRef },
           merge_commit_sha: currentMergeSha,
         },
       }),
     },
     git: {
-      getRef: async () => ({ data: { object: { sha: currentBaseSha } } }),
+      getRef: async () => {
+        forbiddenCurrentBaseLookups += 1;
+        throw new Error("Smoke Gate must not require the current base SHA");
+      },
     },
     repos: {
-      getCommit: async () => ({
-        data: {
-          sha: currentMergeSha,
-          parents: currentMergeParents,
-        },
-      }),
+      getCommit: async ({ ref }) => {
+        requestedCommitRefs.push(ref);
+        return { data: { sha: ref, parents: eventMergeParents } };
+      },
     },
     actions: { listWorkflowRuns, listJobsForWorkflowRun },
   },
@@ -1597,74 +1636,12 @@ github.paginate.iterator = (method, input) => {
     throw new Error("unexpected workflow-run iterator method");
   }
   workflowRunQueries.push(input);
-  const expectedTitle = `Build Runtime Images secure-pr-artifact pr-42 base-${currentBaseSha} head-${headSha} merge-${currentMergeSha} mode-required`;
-  const pages = currentBaseSha === baseSha
-    ? [[{
-        id: 101,
-        event: "pull_request",
-        head_sha: headSha,
-        display_title: expectedTitle,
-        status: "completed",
-        conclusion: "success",
-        created_at: "2026-09-20T00:00:00Z",
-        pull_requests: [],
-      }]]
-    : [
-        [
-          {
-            id: 102,
-            event: "pull_request",
-            head_sha: headSha,
-            display_title: `Build Runtime Images secure-pr-artifact pr-42 base-${baseSha} head-${headSha} merge-${mergeSha} mode-required`,
-            status: "completed",
-            conclusion: "success",
-            created_at: "2026-09-20T00:00:00Z",
-            pull_requests: [],
-          },
-          {
-            id: 202,
-            event: "repository_dispatch",
-            head_sha: headSha,
-            display_title: expectedTitle,
-            status: "completed",
-            conclusion: "success",
-            created_at: "2026-09-21T00:00:00Z",
-            pull_requests: [],
-          },
-          {
-            id: 201,
-            get event() {
-              olderMatchingRunVisited = true;
-              return "repository_dispatch";
-            },
-            head_sha: headSha,
-            display_title: expectedTitle,
-            status: "completed",
-            conclusion: "success",
-            created_at: "2026-09-20T00:00:00Z",
-            pull_requests: [],
-          },
-        ],
-        [{
-          id: 203,
-          event: "repository_dispatch",
-          head_sha: headSha,
-          display_title: expectedTitle,
-          status: "completed",
-          conclusion: "success",
-          created_at: "2026-09-19T00:00:00Z",
-          pull_requests: [],
-        }],
-      ];
   return (async function* workflowRunPages() {
-    for (const runs of pages) {
-      workflowRunPageReads.push(runs);
-      yield { data: runs };
-    }
+    yield { data: availableRuns };
   })();
 };
 const run = new Function("github", "context", "core", `return (async () => {\n${script}\n})()`);
-async function check(conclusion, expectedFailure) {
+async function check(conclusion, expectedFailure, expectedFailureText) {
   smokeStepConclusion = conclusion;
   const failures = [];
   const core = {
@@ -1674,39 +1651,106 @@ async function check(conclusion, expectedFailure) {
   };
   await run(github, context, core);
   if (expectedFailure) {
-    if (failures.length !== 1 || !failures[0].includes("credential-free full-stack smoke step did not pass")) {
-      throw new Error(`skipped smoke step was accepted: ${JSON.stringify(failures)}`);
+    if (failures.length !== 1 || !failures[0].includes(expectedFailureText)) {
+      throw new Error(`Smoke Gate failure did not include ${expectedFailureText}: ${JSON.stringify(failures)}`);
     }
   } else if (failures.length !== 0) {
     throw new Error(`successful smoke step was rejected: ${JSON.stringify(failures)}`);
   }
 }
-check("skipped", true).then(() => check("success", false)).then(() => {
-  currentBaseSha = "d".repeat(40);
-  currentMergeSha = "e".repeat(40);
-  currentMergeParents = [{ sha: currentBaseSha }, { sha: headSha }];
-  workflowRunQueries.length = 0;
-  workflowRunPageReads.length = 0;
-  jobQueries.length = 0;
-  return check("success", false).then(() => {
-    if (workflowRunQueries.length !== 1 || workflowRunQueries[0].event !== "repository_dispatch") {
-      throw new Error("stale PR identity must select a repository_dispatch runtime run");
+setExactEventRun(101);
+check("skipped", true, "credential-free full-stack smoke step did not pass")
+  .then(() => check("success", false))
+  .then(() => {
+    currentBaseSha = "d".repeat(40);
+    currentMergeSha = "e".repeat(40);
+    eventMergeParents = [{ sha: baseSha }, { sha: headSha }];
+    const queryStart = workflowRunQueries.length;
+    const jobStart = jobQueries.length;
+    availableRuns = [
+      runtimeRun(303, runtimeTitle(currentBaseSha, headSha, currentMergeSha)),
+      runtimeRun(304, `Build Runtime Images secure-pr-artifact pr-42 head-${headSha} mode-required`),
+      runtimeRun(202, runtimeTitle(baseSha, headSha, mergeSha)),
+    ];
+    return check("success", false).then(() => {
+      const queries = workflowRunQueries.slice(queryStart);
+      if (queries.length !== 1 || queries[0].event !== "pull_request") {
+        throw new Error("base advance must continue selecting the original pull_request smoke event");
+      }
+      if (queries[0].head_sha !== headSha) {
+        throw new Error("Smoke Gate lookup must remain pinned to the event head SHA");
+      }
+      if (requestedCommitRefs.at(-1) !== mergeSha) {
+        throw new Error("Smoke Gate must verify the event merge commit, not the regenerated current merge");
+      }
+      if (jobQueries.length !== jobStart + 1 || jobQueries.at(-1).run_id !== 202) {
+        throw new Error("Smoke Gate must select the exact successful event base/head/merge tuple");
+      }
+      if (forbiddenCurrentBaseLookups !== 0) {
+        throw new Error("Smoke Gate must not require the live base SHA to accept event-tuple smoke");
+      }
+    });
+  })
+  .then(() => {
+    const jobStart = jobQueries.length;
+    eventMergeParents = [{ sha: headSha }, { sha: baseSha }];
+    setExactEventRun(305);
+    return check("success", true, "event test merge parents are not").then(() => {
+      if (jobQueries.length !== jobStart) {
+        throw new Error("Smoke Gate must reject an event merge with reversed base/head parents");
+      }
+    });
+  })
+  .then(() => {
+    const queryStart = workflowRunQueries.length;
+    const jobStart = jobQueries.length;
+    eventMergeParents = [{ sha: baseSha }, { sha: headSha }];
+    setOnlyNonExactRuns();
+    return check("success", true, "Timed out waiting for the exact event-tuple").then(() => {
+      if (workflowRunQueries.length <= queryStart || jobQueries.length !== jobStart) {
+        throw new Error("a head-only or current-base-only runtime run must not satisfy Smoke Gate");
+      }
+    });
+  })
+  .then(() => {
+    currentHeadSha = "f".repeat(40);
+    const queryStart = workflowRunQueries.length;
+    setExactEventRun(404);
+    return check("success", false).then(() => {
+      if (workflowRunQueries.length !== queryStart) {
+        throw new Error("Smoke Gate must stop when the live PR head changed after the event");
+      }
+    });
+  })
+  .then(() => {
+    currentHeadSha = headSha;
+    currentBaseRef = "feature/retargeted";
+    const queryStart = workflowRunQueries.length;
+    return check("success", false).then(() => {
+      if (workflowRunQueries.length !== queryStart) {
+        throw new Error("Smoke Gate must stop when the live PR base ref changed after the event");
+      }
+    });
+  })
+  .then(() => {
+    currentBaseRef = "develop";
+    currentPullRequestState = "closed";
+    const queryStart = workflowRunQueries.length;
+    return check("success", false).then(() => {
+      if (workflowRunQueries.length !== queryStart) {
+        throw new Error("Smoke Gate must stop when the event PR is no longer open");
+      }
+    });
+  })
+  .then(() => {
+    if (workflowRunQueries.some((query) => query.event !== "pull_request")) {
+      throw new Error("Smoke Gate must never fall back to a trusted repository_dispatch run");
     }
-    if (workflowRunQueries[0].created !== "2026-09-01T00:00:00Z..*") {
-      throw new Error("repository_dispatch lookup must start at PR creation time");
-    }
-    if (workflowRunPageReads.length !== 1 || olderMatchingRunVisited) {
-      throw new Error("Smoke Gate must stop after the first exact newest-first event/title match");
-    }
-    if (jobQueries.length !== 1 || jobQueries[0].run_id !== 202) {
-      throw new Error("Smoke Gate must select the exact repository_dispatch event/title tuple");
-    }
-    console.log("Smoke Gate identity/event/title and step-conclusion contract passed");
+    console.log("Smoke Gate event-tuple, base-advance, and live PR identity contract passed");
+  }).catch((error) => {
+    console.error(error.stack || error);
+    process.exit(1);
   });
-}).catch((error) => {
-  console.error(error.stack || error);
-  process.exit(1);
-});
 NODE
 
 smoke_summary_scripts="$({
