@@ -2872,41 +2872,21 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void updateLoginAuthModesPersistsVerifiedEmailOtpOnlySelection() {
-    Account account = new Account();
-    account.setId(44L);
-    account.setEmailVerified(true);
-    when(accountRepository.findById(44L)).thenReturn(Optional.of(account));
-    when(accountRepository.save(account)).thenReturn(account);
-
-    var result =
-        service.updateLoginAuthModes(
-            44L,
-            new UpdateAccountLoginAuthModesRequest(
-                java.util.Set.of(AccountLoginAuthMode.EMAIL_OTP)));
-
-    assertEquals(java.util.Set.of(AccountLoginAuthMode.EMAIL_OTP), result.loginAuthModes());
-    assertEquals("EMAIL_OTP", account.getLoginAuthModes());
-    org.mockito.Mockito.verify(accountRepository).save(account);
-  }
-
-  @Test
-  void updateLoginAuthModesRejectsEmailOtpBeforeEmailVerification() {
-    Account account = new Account();
-    account.setId(44L);
-    when(accountRepository.findById(44L)).thenReturn(Optional.of(account));
-
-    IllegalArgumentException exception =
+  void updateLoginAuthModesFailsClosedBeforeReadingOrPersistingAccount() {
+    org.springframework.web.server.ResponseStatusException exception =
         assertThrows(
-            IllegalArgumentException.class,
+            org.springframework.web.server.ResponseStatusException.class,
             () ->
                 service.updateLoginAuthModes(
                     44L,
                     new UpdateAccountLoginAuthModesRequest(
                         java.util.Set.of(AccountLoginAuthMode.EMAIL_OTP))));
 
-    assertEquals("Email OTP requires a verified email address", exception.getMessage());
-    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never()).save(account);
+    assertEquals(501, exception.getStatusCode().value());
+    assertEquals(
+        "Recent ordinary reauthentication is required; login-factor changes are unavailable until Account implements its evidence mechanism",
+        exception.getReason());
+    org.mockito.Mockito.verifyNoInteractions(accountRepository);
   }
 
   private static String hash(String password) {

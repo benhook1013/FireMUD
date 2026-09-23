@@ -11,6 +11,7 @@ import net.firedevops.firemud.accountservice.dto.UpdateAccountLoginAuthModesRequ
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.common.security.SessionContext;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -56,8 +57,9 @@ public class AccountController {
       @Valid @RequestBody UpdateAccountLoginAuthModesRequest request) {
     long parsedAccountId = AccountRequestReaders.requireAccountId(accountId);
     requireCurrentAccountOrGlobalPrivilegedRole(parsedAccountId);
-    return ResponseEntity.ok(
-        ApiResponse.success(accountService.updateLoginAuthModes(parsedAccountId, request)));
+    throw new org.springframework.web.server.ResponseStatusException(
+        HttpStatus.NOT_IMPLEMENTED,
+        "Recent ordinary reauthentication is required; login-factor changes are unavailable until Account implements its evidence mechanism");
   }
 
   @GetMapping("/{accountId}/export")

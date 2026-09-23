@@ -602,7 +602,7 @@ paths:
         '403':
           description: Account access required
     put:
-      summary: Replace allowed primary login mechanisms for an account
+      summary: Replace allowed primary login mechanisms for an account (currently unavailable)
       operationId: updateLoginAuthModes
       parameters:
         - name: accountId
@@ -627,6 +627,8 @@ paths:
           description: Invalid account ID, login mechanism set, or unverified email-OTP selection
         '403':
           description: Account access required
+        '501':
+          description: Recent ordinary reauthentication is required, but this mutation is unavailable until Account implements its evidence mechanism
   /accounts/{accountId}/tenant-export:
     get:
       summary: Export tenant-scoped account data

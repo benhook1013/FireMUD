@@ -16,7 +16,6 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
@@ -86,11 +85,13 @@ import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.jooq.exception.IntegrityConstraintViolationException;
 import org.slf4j.Logger;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.util.StringUtils;
+import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class AccountServiceImpl implements AccountService {
@@ -1212,15 +1213,9 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.update_login_auth_modes")
   public AccountLoginAuthModesDto updateLoginAuthModes(
       Long accountId, UpdateAccountLoginAuthModesRequest request) {
-    Set<AccountLoginAuthMode> modes = request.loginAuthModes();
-    String serializedModes = AccountLoginAuthModes.normalize(modes);
-    Account account = requireAccount(accountId);
-    if (modes.contains(AccountLoginAuthMode.EMAIL_OTP) && !account.isEmailVerified()) {
-      throw new IllegalArgumentException("Email OTP requires a verified email address");
-    }
-    account.setLoginAuthModes(serializedModes);
-    accountRepository.save(account);
-    return new AccountLoginAuthModesDto(AccountLoginAuthModes.read(serializedModes));
+    throw new ResponseStatusException(
+        HttpStatus.NOT_IMPLEMENTED,
+        "Recent ordinary reauthentication is required; login-factor changes are unavailable until Account implements its evidence mechanism");
   }
 
   @Override

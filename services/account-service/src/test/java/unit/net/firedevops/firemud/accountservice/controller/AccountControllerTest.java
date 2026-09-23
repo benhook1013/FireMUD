@@ -1,5 +1,7 @@
 package net.firedevops.firemud.accountservice.controller;
 
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -257,11 +259,6 @@ class AccountControllerTest {
     AccountLoginAuthModesDto modes =
         new AccountLoginAuthModesDto(java.util.Set.of(AccountLoginAuthMode.EMAIL_OTP));
     when(accountService.getLoginAuthModes(42L)).thenReturn(modes);
-    when(accountService.updateLoginAuthModes(
-            42L,
-            new UpdateAccountLoginAuthModesRequest(
-                java.util.Set.of(AccountLoginAuthMode.EMAIL_OTP))))
-        .thenReturn(modes);
     String token = jwtUtil.generateToken("42", Map.of("accountId", "42"));
 
     mockMvc
@@ -277,8 +274,35 @@ class AccountControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"loginAuthModes\":[\"EMAIL_OTP\"]}")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.data.loginAuthModes[0]").value("EMAIL_OTP"));
+        .andExpect(status().isNotImplemented())
+        .andExpect(jsonPath("$.error.code").value("NOT_IMPLEMENTED"))
+        .andExpect(
+            jsonPath("$.error.message")
+                .value(
+                    "Recent ordinary reauthentication is required; login-factor changes are unavailable until Account implements its evidence mechanism"));
+
+    verify(accountService, never())
+        .updateLoginAuthModes(
+            42L,
+            new UpdateAccountLoginAuthModesRequest(
+                java.util.Set.of(AccountLoginAuthMode.EMAIL_OTP)));
+  }
+
+  @Test
+  void updateLoginAuthModesRejectsPlatformAdminBeforeDispatch() throws Exception {
+    String token =
+        jwtUtil.generateToken("operator", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            put("/accounts/42/login-auth-modes")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"loginAuthModes\":[\"PASSWORD\"]}")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isNotImplemented())
+        .andExpect(jsonPath("$.error.code").value("NOT_IMPLEMENTED"));
+
+    verifyNoInteractions(accountService);
   }
 
   @Test
