@@ -17,6 +17,8 @@ The shared `ConflictTracker` is another concrete consumer of this generic wiring
 
 The hosted Helm Cache/Rate-Limit Redis process has a separate configuration drift: the enabled hosted overlay provisions a persistent cache volume, while the in-chart `redis-cache` Deployment starts Redis with AOF enabled and does not set `maxmemory` or an eviction policy. This does not provide the bounded, eviction-driven Cache/Rate-Limit profile and can retain disposable cache/rate-limit state across restart; the hosted cache process must load the cache profile or declare equivalent bounded settings before this environment can claim the target cache posture.
 
+The checked Coordination configurations (`config/redis/redis.conf`, the in-chart `redis-coord`, and production Coordination values) do not set an internal Redis `maxmemory` bound. Container and pod resource limits are external process constraints, not Redis `maxmemory`; while Redis defaults to `noeviction` when no policy is configured, the absent internal bound does not establish the required bounded Coordination profile. Concrete per-environment sizing and configuration remain with Platform Operations/6D.
+
 ---
 
 ## Table of Contents
