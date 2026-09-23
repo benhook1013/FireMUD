@@ -377,6 +377,7 @@ Your next included review will be available in 39 minutes.
         self.assertTrue(state.terminal)
         self.assertTrue(state.attributed)
         self.assertEqual(state.cooldown_until, "2026-09-14T01:39:07+00:00")
+        self.assertEqual(state.duration_seconds, 7)
 
     def test_rate_limit_reply_with_seconds_window_is_terminal(self) -> None:
         body = """<!-- This is an auto-generated reply by CodeRabbit -->
@@ -409,6 +410,17 @@ Your included review limit is currently reached under our [Fair Usage Limits Pol
         self.assertTrue(state.terminal)
         self.assertTrue(state.attributed)
         self.assertEqual(state.response_id, 11)
+        self.assertEqual(state.duration_seconds, 6)
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            CHECKER.emit_trigger_text(state)
+        self.assertIn("trigger_duration_seconds=6", output.getvalue())
+        self.assertIn("checkpoint_duration=6s", output.getvalue())
+        self.assertIn(
+            "checkpoint_duration_marker=<!-- firemud-review-duration-seconds: 6 -->",
+            output.getvalue(),
+        )
 
         summary = CHECKER.summarize(REPO, PR, payload(comments))
         self.assertTrue(summary.ok)
@@ -479,6 +491,7 @@ Your included review limit is currently reached under our [Fair Usage Limits Pol
         }
         state = self.state(reviews=[review])
         self.assertEqual((state.state, state.response_id), ("completed", 55))
+        self.assertEqual(state.duration_seconds, 180)
 
     def test_outside_the_diff_review_layout_is_terminal(self) -> None:
         review = {

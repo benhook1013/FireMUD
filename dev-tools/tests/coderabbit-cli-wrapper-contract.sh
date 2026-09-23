@@ -17,8 +17,10 @@ STARTED_FILE="$TMP_DIR/review-started"
 RELEASE_FILE="$TMP_DIR/review-release"
 BLOCK_OUTPUT="$TMP_DIR/block-output"
 BLOCK_ERROR="$TMP_DIR/block-error"
+CLOCK_CALLS_FILE="$TMP_DIR/clock-calls"
 WEIRD_PATH=$'line\nbreak.txt'
 BLOCK_PID=""
+REAL_PYTHON="$(command -v python3)"
 mkdir -p "$MOCK_BIN" "$REPO"
 
 cleanup() {
@@ -80,7 +82,7 @@ fi
 
 scenario="$TEST_SCENARIO"
 case "$scenario" in
-  normal|closed|merged|unmerged|unavailable|unrelated|ambiguous)
+  normal|closed|merged|unmerged|unavailable|unrelated|ambiguous|duration-invalid)
     base_ref="develop"
     base_sha="$TEST_BASE_SHA"
     head_sha="$TEST_PR_HEAD_SHA"
@@ -163,7 +165,24 @@ if [[ "${TEST_MODE:-success}" == "failure" ]]; then
   exit 23
 fi
 EOF
-chmod +x "$MOCK_BIN/gh" "$MOCK_BIN/coderabbit"
+
+cat >"$MOCK_BIN/python3" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${TEST_SCENARIO:-}" == "duration-invalid" ]]; then
+  if [[ -e "$TEST_CLOCK_CALLS_FILE" ]]; then
+    printf 'invalid\n'
+  else
+    : >"$TEST_CLOCK_CALLS_FILE"
+    printf '100\n'
+  fi
+  exit 0
+fi
+
+exec "$TEST_REAL_PYTHON" "$@"
+EOF
+chmod +x "$MOCK_BIN/gh" "$MOCK_BIN/coderabbit" "$MOCK_BIN/python3"
 
 git -C "$REPO" init -q -b develop
 git -C "$REPO" config user.name "FireMUD Test"
@@ -287,6 +306,8 @@ export TEST_STATUS_FILE="$STATUS_FILE"
 export TEST_INVOCATIONS_FILE="$INVOCATIONS_FILE"
 export TEST_STARTED_FILE="$STARTED_FILE"
 export TEST_RELEASE_FILE="$RELEASE_FILE"
+export TEST_CLOCK_CALLS_FILE="$CLOCK_CALLS_FILE"
+export TEST_REAL_PYTHON="$REAL_PYTHON"
 
 help_output="$("$WRAPPER" --help)"
 if [[ "$help_output" == *"Launches the CodeRabbit CLI"* && "$help_output" == *"consumes the separate CLI review quota"* && "$help_output" == *"report-pr-review-checkpoints.py"* ]]; then
@@ -382,6 +403,11 @@ set -e
 [[ -f "$RUN_LOG_DIR/metadata" && -f "$RUN_LOG_DIR/argv" && -f "$RUN_LOG_DIR/stdout" ]] || exit 1
 grep -q "^run_id=$RUN_ID$" "$RUN_LOG_DIR/metadata" || exit 1
 [[ "$(cat "$RUN_LOG_DIR/exit-status")" == 0 ]] || exit 1
+review_duration_seconds="$(sed -n 's/^review_duration_seconds=//p' "$RUN_LOG_DIR/metadata")"
+[[ "$review_duration_seconds" =~ ^[0-9]+$ ]] || exit 1
+[[ "$(cat "$RUN_LOG_DIR/review-duration-seconds")" == "$review_duration_seconds" ]] || exit 1
+[[ "$(sed -n 's/^checkpoint_duration=//p' "$TMP_DIR/output")" == "${review_duration_seconds}s" ]] || exit 1
+[[ "$(sed -n 's/^checkpoint_duration_marker=//p' "$TMP_DIR/output")" == "<!-- firemud-review-duration-seconds: $review_duration_seconds -->" ]] || exit 1
 candidate_path="$(sed -n 's/^candidate_worktree=//p' "$RUN_LOG_DIR/metadata")"
 [[ ! -e "$candidate_path" ]] || exit 1
 pinned_ref="$(sed -n 's/^pinned_base_ref=//p' "$RUN_LOG_DIR/metadata")"
@@ -543,6 +569,7 @@ grep -q '^candidate_sha=' "$BLOCK_OUTPUT" || {
   exit 1
 }
 grep -q '^log_dir=' "$BLOCK_OUTPUT" || exit 1
+! grep -q '^checkpoint_duration=' "$BLOCK_OUTPUT" || exit 1
 invocations_while_blocked="$(wc -l <"$INVOCATIONS_FILE")"
 set +e
 run_wrapper success 0 normal "$TMP_DIR/concurrent-output" "$TMP_DIR/concurrent-error"
@@ -563,6 +590,8 @@ blocked_candidate_path="$(sed -n 's/^candidate_worktree=//p' "$blocked_log_dir/m
 [[ ! -e "$blocked_candidate_path" ]] || exit 1
 blocked_pinned_ref="$(sed -n 's/^pinned_base_ref=//p' "$blocked_log_dir/metadata")"
 ! git -C "$REPO" show-ref --verify --quiet "$blocked_pinned_ref" || exit 1
+[[ "$(cat "$blocked_log_dir/review-duration-seconds")" =~ ^[0-9]+$ ]] || exit 1
+grep -q '^checkpoint_duration_marker=<!-- firemud-review-duration-seconds: [0-9][0-9]* -->$' "$BLOCK_OUTPUT" || exit 1
 
 set +e
 run_wrapper failure 0
@@ -572,10 +601,22 @@ set -e
 [[ "$RUN_OUTPUT" == *"mock review stdout"* ]] || exit 1
 [[ "$RUN_ERROR" == *"mock review stderr"* ]] || exit 1
 [[ "$(cat "$RUN_LOG_DIR/exit-status")" == 23 ]] || exit 1
+failure_duration="$(cat "$RUN_LOG_DIR/review-duration-seconds")"
+[[ "$failure_duration" =~ ^[0-9]+$ ]] || exit 1
+grep -q "^checkpoint_duration_marker=<!-- firemud-review-duration-seconds: $failure_duration -->$" "$TMP_DIR/output" || exit 1
 failure_candidate_path="$(sed -n 's/^candidate_worktree=//p' "$RUN_LOG_DIR/metadata")"
 [[ ! -e "$failure_candidate_path" ]] || exit 1
 failure_pinned_ref="$(sed -n 's/^pinned_base_ref=//p' "$RUN_LOG_DIR/metadata")"
 ! git -C "$REPO" show-ref --verify --quiet "$failure_pinned_ref" || exit 1
+
+set +e
+run_wrapper success 0 duration-invalid
+invalid_duration_status="$?"
+set -e
+[[ "$invalid_duration_status" == 1 ]] || exit 1
+[[ "$RUN_ERROR" == *"could not measure CodeRabbit review process duration"* ]] || exit 1
+[[ "$(cat "$RUN_LOG_DIR/stdout")" == "mock review stdout" ]] || exit 1
+[[ "$(cat "$RUN_LOG_DIR/exit-status")" == 0 ]] || exit 1
 
 invocations_before_rejection="$(wc -l <"$INVOCATIONS_FILE")"
 
