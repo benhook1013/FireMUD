@@ -169,6 +169,45 @@ class GithubAndEvidenceTests(unittest.TestCase):
             with self.assertRaises(evidence.CaptureInvalid):
                 evidence.load_cli_capture(checkpoint, REPO, PR, Path(directory))
 
+    def _cli_capture(self, common: Path, *, decision_text: str | None, accepted: int = 0):
+        run_id = "run.Decision"
+        run = common / "coderabbit-review-logs" / run_id
+        run.mkdir(parents=True)
+        (run / "metadata").write_text(
+            f"run_id={run_id}\nrepository={REPO}\npull_request={PR}\ncandidate_sha={HEAD}\ncandidate_files=1\n",
+            encoding="utf-8",
+        )
+        (run / "stdout").write_text(
+            json.dumps({"type": "finding", "message": "one"})
+            + "\n"
+            + json.dumps({"type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["a"]})
+            + "\n",
+            encoding="utf-8",
+        )
+        (run / "exit-status").write_text("0\n", encoding="utf-8")
+        if decision_text is not None:
+            (run / "decisions.tsv").write_text(decision_text, encoding="utf-8")
+        checkpoint = evidence.Checkpoint(
+            1, "2026-09-23T00:00:00Z", "CLI", 1, accepted, HEAD[:12], 1, False, None, run_id, None
+        )
+        return evidence.load_cli_capture(checkpoint, REPO, PR, common)
+
+    def test_raw_positive_cli_capture_requires_complete_decisions_and_matching_accepted_count(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "complete linked"):
+                self._cli_capture(common, decision_text=None)
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "accepted count"):
+                self._cli_capture(common, decision_text="1\taccepted\tuseful fix\n", accepted=0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            capture = self._cli_capture(common, decision_text="1\trejected\tduplicate finding\n")
+            self.assertEqual(capture.decisions, {1: ("rejected", "duplicate finding")})
+
 
 class HostedEvidenceTests(unittest.TestCase):
     def test_wrong_target_assertion_happens_before_request_preparation(self):
@@ -204,6 +243,14 @@ class HostedEvidenceTests(unittest.TestCase):
         state = hosted.trigger_state(REPO, PR, review_payload([trigger, summary]), trigger_record())
         self.assertEqual(state.state, "completed")
         self.assertEqual(state.duration_seconds, 60)
+
+    def test_recorded_trigger_author_login_comparison_is_case_insensitive(self):
+        trigger = comment(10, "Owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        record = trigger_record()
+        record["trigger"]["author_login"] = "owner"
+        state = hosted.trigger_state(REPO, PR, review_payload([trigger]), record)
+        self.assertEqual(state.state, "awaiting_response")
+        self.assertTrue(state.attributed)
 
     def test_suffixed_coderabbit_bot_identity_is_attributable(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
@@ -244,6 +291,34 @@ class HostedEvidenceTests(unittest.TestCase):
             state = hosted.trigger_state(REPO, PR, review_payload(), record, path)
             self.assertEqual(state.state, "ambiguous")
             self.assertFalse(state.attributed)
+
+    def test_posting_recovery_fails_closed_when_multiple_live_commands_match(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "status": "posting",
+                        "repository": REPO,
+                        "pr_number": PR,
+                        "head_sha": HEAD,
+                        "posting_started_at": "2026-09-23T00:00:00Z",
+                        "posting_actor_login": "maintainer",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            comments = [
+                comment(31, "maintainer", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z"),
+                comment(32, "maintainer", hosted.FULL_COMMAND, "2026-09-23T00:02:00Z"),
+            ]
+            with (
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                self.assertRaisesRegex(ValueError, "exactly one live command"),
+            ):
+                hosted.adopt_posting_reservation(path, REPO, PR, HEAD, review_payload(comments))
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "posting")
 
     def test_retirement_refuses_an_active_review(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")

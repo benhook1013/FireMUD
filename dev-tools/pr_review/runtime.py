@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from . import evidence, github, hosted
+from . import status as status_module
 from .cli_runner import PullRequestSnapshot, ReviewRunnerError, ReviewTarget, run_cli_review
 from .controller import ControllerError, DefaultGitProvider, ReviewController
 from .state import StateStore
@@ -84,6 +85,7 @@ class LiveEvidence:
                     "body": item.get("body"),
                     "created_at": item.get("createdAt"),
                     "updated_at": item.get("updatedAt"),
+                    "author_login": ((item.get("author") or {}).get("login")),
                 }
             )
         return values
@@ -153,36 +155,51 @@ class LiveEvidence:
                 and self._anchor_complete(anchor)
                 and anchor.get("child_head", "").casefold() == head.casefold()
             ):
-                return record, proof
+                trigger_id = state.trigger_comment_id
+                trigger = next(
+                    (
+                        item
+                        for item in payload["data"]["repository"]["pullRequest"]["comments"]["nodes"]
+                        if github.immutable_database_id(item) == trigger_id
+                    ),
+                    None,
+                )
+                trigger_author = ((trigger or {}).get("author") or {}).get("login")
+                checkpoint_author = checkpoint.author_login
+                if (
+                    isinstance(trigger_author, str)
+                    and isinstance(checkpoint_author, str)
+                    and checkpoint_author.casefold() == trigger_author.casefold()
+                    and not github.is_coderabbit_login(checkpoint_author)
+                ):
+                    return record, proof
         return None
 
     @staticmethod
     def _summary_action_counts(payload: dict[str, Any], head: str) -> tuple[int, int, str | None]:
-        pr = payload["data"]["repository"]["pullRequest"]
-        candidates: list[tuple[datetime, int, int, str | None]] = []
-        items = [*pr.get("comments", {}).get("nodes", []), *pr.get("reviews", {}).get("nodes", [])]
-        for item in items:
-            author = (item.get("author") or {}).get("login", "")
-            if not github.is_coderabbit_login(author):
-                continue
-            body = item.get("body") or ""
-            if item.get("state") == "DISMISSED":
-                continue
-            commit = (item.get("commit") or {}).get("oid")
-            if not hosted._substantive(body) or (commit != head and not hosted._matches_head(body, head)):
-                continue
-            created = hosted.parse_timestamp(item.get("createdAt") or item.get("submittedAt"))
-            if created is None:
-                continue
-            try:
-                outside, duplicate = evidence.summary_action_counts(body)
-            except evidence.EvidenceError:
-                outside, duplicate = 1, 1
-            candidates.append((created, outside, duplicate, item.get("url")))
-        if not candidates:
+        try:
+            selected = status_module._summary_evidence(payload, head)
+        except status_module.StatusError:
+            return 1, 1, None
+        if selected.get("status") != "current":
             return 0, 0, None
-        _, outside, duplicate, url = max(candidates, key=lambda value: value[0])
-        return outside, duplicate, url
+        counts = {"outside_diff": 0, "duplicate": 0}
+        for finding in selected.get("findings", []):
+            kind, count = finding.get("kind"), finding.get("count")
+            if kind in counts and isinstance(count, int) and not isinstance(count, bool) and count >= 0:
+                counts[kind] = count
+        identity = selected.get("identity")
+        pr = payload["data"]["repository"]["pullRequest"]
+        items = (
+            pr.get("reviews", {}).get("nodes", [])
+            if selected.get("source") == "review"
+            else pr.get("comments", {}).get("nodes", [])
+        )
+        url = next(
+            (item.get("url") for item in items if github.immutable_database_id(item) == identity),
+            None,
+        )
+        return counts["outside_diff"], counts["duplicate"], url
 
     def _global_blockers(self, pr: int, head: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
         pull = payload["data"]["repository"]["pullRequest"]
@@ -286,10 +303,12 @@ class LiveEvidence:
         live = self.live.pull_request(pr)
         head = live.head_sha
         checkpoints, _ = evidence.parse_checkpoint_comments(self._comments(payload))
+        checkpoints.sort(key=lambda item: (item.created_at, item.comment_id or 0))
         reviews = self._reviews(payload)
         values: list[dict[str, Any]] = []
         public_cli_run_ids: set[str] = set()
         emitted_cli_sources: set[tuple[str, str]] = set()
+        emitted_hosted_review_ids: set[int] = set()
         for checkpoint in checkpoints:
             if checkpoint.type.casefold() != channel:
                 continue
@@ -312,20 +331,26 @@ class LiveEvidence:
                     if checkpoint.run_id:
                         public_cli_run_ids.add(checkpoint.run_id)
                     identity = (checkpoint.run_id or "", capture.source_identity or checkpoint.run_id or "")
-                    if identity in emitted_cli_sources:
+                    if identity in emitted_cli_sources and not checkpoint.correction:
                         continue
-                    emitted_cli_sources.add(identity)
+                    if not checkpoint.correction:
+                        emitted_cli_sources.add(identity)
                     exact_head = capture.metadata.get("candidate_sha", exact_head)
                     completed = attributable = True
                     provisional = capture.metadata.get("provisional", "false").casefold() == "true"
                     anchor = self._anchor(capture.metadata)
             else:
                 matched = self._hosted_trigger_for_checkpoint(pr, head, checkpoint, reviews, payload)
-                if matched is not None:
-                    record, proof = matched
-                    completed = attributable = True
-                    exact_head = str(proof["commit_id"])
-                    anchor = dict(record["anchor"])
+                if matched is None:
+                    continue
+                record, proof = matched
+                if checkpoint.hosted_review_id is not None and not checkpoint.correction:
+                    if checkpoint.hosted_review_id in emitted_hosted_review_ids:
+                        continue
+                    emitted_hosted_review_ids.add(checkpoint.hosted_review_id)
+                completed = attributable = True
+                exact_head = str(proof["commit_id"])
+                anchor = dict(record["anchor"])
             anchor_complete = self._anchor_complete(anchor)
             values.append(
                 {
@@ -337,6 +362,7 @@ class LiveEvidence:
                     "anchored": anchor_complete if completed else None,
                     "accepted": checkpoint.accepted,
                     "raw": checkpoint.raw_found,
+                    "correction": checkpoint.correction,
                     "corrected_state": completed and exact_head == head,
                     "provisional": provisional,
                     "reason": capture.metadata.get("reason", "") if channel == "cli" and capture is not None else "",
@@ -448,6 +474,17 @@ class HostedRunner:
     def _timestamp(value: str) -> datetime:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
 
+    @staticmethod
+    def _authenticated_login() -> str:
+        try:
+            completed = subprocess.run(["gh", "api", "user"], check=True, capture_output=True, text=True, timeout=30)
+            login = json.loads(completed.stdout).get("login")
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError, AttributeError) as exc:
+            raise ControllerError("could not verify the authenticated GitHub user before Hosted posting") from exc
+        if not isinstance(login, str) or not login.strip() or github.is_coderabbit_login(login):
+            raise ControllerError("authenticated GitHub user has no trusted login identity")
+        return login
+
     def __call__(self, target: ReviewTarget, *, expect_pr: int | None = None, **_: Any) -> dict[str, Any]:
         pr = target.snapshot.number
         hosted.assert_expected_pr(pr, expect_pr)
@@ -471,6 +508,15 @@ class HostedRunner:
                 current_path = current_records[0]
                 record = hosted.load_trigger_reservation(current_path, self.repo, pr)
                 payload = github.fetch_pull_request(self.repo, pr)
+                if record.get("status") == "posting" and not isinstance(record.get("trigger"), dict):
+                    try:
+                        record = hosted._adopt_posting_reservation_locked(
+                            current_path, self.repo, pr, before.head_sha, payload
+                        )
+                    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+                        raise ControllerError(
+                            f"existing Hosted posting reservation cannot be adopted safely: {exc}"
+                        ) from exc
                 state = hosted.trigger_state(self.repo, pr, payload, record, current_path)
                 if state.state in {"active", "awaiting_response", "ambiguous", "unattributed", "timed_out"}:
                     raise ControllerError(f"existing Hosted trigger requires resolution: {state.state}")
@@ -495,6 +541,8 @@ class HostedRunner:
                 "merge_base": target.merge_base,
                 "patch_id": target.patch_identity,
             }
+            posting_actor = self._authenticated_login()
+            posting_started_at = hosted.utc_now()
             posting = {
                 "schema_version": 2,
                 "status": "posting",
@@ -502,6 +550,8 @@ class HostedRunner:
                 "pr_number": pr,
                 "head_sha": target.snapshot.head_sha,
                 "anchor": anchor,
+                "posting_started_at": posting_started_at,
+                "posting_actor_login": posting_actor,
             }
             hosted.atomic_write_json(path, posting)
             try:
@@ -531,7 +581,12 @@ class HostedRunner:
                 "author": {"login": ((comment.get("user") or {}).get("login"))},
             }
             trigger_id = github.immutable_database_id(normalized)
-            if trigger_id is None or hosted.normalize_command(str(normalized.get("body") or "")) != hosted.FULL_COMMAND:
+            if (
+                trigger_id is None
+                or not isinstance(normalized["author"].get("login"), str)
+                or normalized["author"]["login"].casefold() != posting_actor.casefold()
+                or hosted.normalize_command(str(normalized.get("body") or "")) != hosted.FULL_COMMAND
+            ):
                 raise ControllerError("Hosted request response has no immutable full-review identity")
             after = self.live.pull_request(pr)
             status = "posted" if after == before else "posted_boundary_changed"
@@ -542,6 +597,7 @@ class HostedRunner:
                     "id": trigger_id,
                     "created_at": normalized["createdAt"],
                     "url": normalized["url"],
+                    "author_login": normalized["author"]["login"],
                     "type": "full",
                     "command": hosted.FULL_COMMAND,
                 },

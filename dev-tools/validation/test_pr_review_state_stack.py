@@ -205,6 +205,26 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertFalse(taper_satisfied(Channel.CLI, history, 3))
         self.assertEqual(completion_status(state, Channel.CLI, history), ReviewStatus.READY)
 
+    def test_correction_checkpoint_remains_evidence_but_never_changes_the_taper(self):
+        reviews = tuple(Evidence(1, "h", f"review-{index}", completed=True, attributable=True) for index in range(3))
+        correction = Evidence(
+            1,
+            "h",
+            "correction-1",
+            completed=True,
+            attributable=True,
+            accepted=1,
+            raw=1,
+            correction=True,
+        )
+        state = ReviewState(ordered_prs=(1,))
+        self.assertTrue(taper_satisfied(Channel.CLI, (*reviews, correction), 3))
+        self.assertEqual(
+            select_review_target(state, Channel.CLI, (1,), {1: (*reviews, correction)}).status,
+            ReviewStatus.COMPLETE,
+        )
+        self.assertFalse(taper_satisfied(Channel.CLI, (correction,), 3))
+
     def test_cross_channel_change_requires_exact_bound_judgment_and_provisional_never_tapers(self):
         evidence = tuple(Evidence(1, "h", f"c{i}", completed=True, attributable=True) for i in range(3))
         state = ReviewState(ordered_prs=(1,))

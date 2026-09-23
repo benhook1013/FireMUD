@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import math
 import os
 import re
 import stat
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -213,6 +215,44 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
             pass
 
 
+def _write_json_exclusive(path: Path, payload: dict[str, Any]) -> None:
+    """Create a private JSON file without replacing any existing audit."""
+
+    if path.is_symlink() or path.parent.is_symlink():
+        raise OSError("audit path must not be a symbolic link")
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path.parent.chmod(0o700)
+    descriptor = -1
+    created = False
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        created = True
+        os.fchmod(descriptor, stat.S_IRUSR | stat.S_IWUSR)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            descriptor = -1
+            json.dump(payload, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except BaseException:
+        if descriptor != -1:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        if created:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        raise
+
+
 def _with_lock(path: Path):
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     descriptor = os.open(path.parent / "request.lock", os.O_RDWR | os.O_CREAT, 0o600)
@@ -230,6 +270,11 @@ def assert_expected_pr(derived_pr: int, expected_pr: int | None) -> None:
 def prepare_full_trigger(derived_pr: int, expected_pr: int | None = None) -> dict[str, Any]:
     assert_expected_pr(derived_pr, expected_pr)
     return {"pr_number": derived_pr, "command": FULL_COMMAND, "type": "full"}
+
+
+def _comment_author_login(comment: dict[str, Any]) -> Any:
+    author = comment.get("author") or comment.get("user") or {}
+    return author.get("login") if isinstance(author, dict) else None
 
 
 def record_posted_trigger(
@@ -253,18 +298,18 @@ def record_posted_trigger(
     trigger_id = immutable_database_id(comment)
     created_at = comment.get("createdAt")
     url = comment.get("url")
+    author_login = _comment_author_login(comment)
     if (
         trigger_id is None
         or not isinstance(created_at, str)
         or parse_timestamp(created_at) is None
         or not isinstance(url, str)
         or not url
+        or not isinstance(author_login, str)
+        or not author_login.strip()
     ):
         raise ValueError("posted trigger response has incomplete immutable identity")
-    if (
-        is_coderabbit_login((comment.get("author") or {}).get("login"))
-        or normalize_command(comment.get("body") or "") != FULL_COMMAND
-    ):
+    if is_coderabbit_login(author_login) or normalize_command(comment.get("body") or "") != FULL_COMMAND:
         raise ValueError("posted trigger response is not an externally authored full-review command")
     record_path = Path(path) if path is not None else default_trigger_record_path(repo, pr_number)
     descriptor = _with_lock(record_path)
@@ -281,6 +326,7 @@ def record_posted_trigger(
                     "id": trigger_id,
                     "created_at": created_at,
                     "url": url,
+                    "author_login": author_login,
                     "type": "full",
                     "command": FULL_COMMAND,
                 },
@@ -290,6 +336,251 @@ def record_posted_trigger(
         fcntl.flock(descriptor, fcntl.LOCK_UN)
         os.close(descriptor)
     return record_path
+
+
+def _adopt_posting_reservation_locked(
+    path: str | Path,
+    repo: str,
+    pr_number: int,
+    expected_head_sha: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Adopt one uniquely observed POST result for a durable pre-POST reservation.
+
+    No comment is posted here. Missing attempt metadata, no matching live comment,
+    multiple possible comments, or any identity mismatch leave the reservation
+    untouched and fail closed.
+    """
+
+    if not EXACT_SHA.fullmatch(expected_head_sha):
+        raise ValueError("posting recovery requires an exact expected head")
+    record_path = Path(path)
+    record = load_trigger_reservation(record_path, repo, pr_number)
+    if record.get("status") != "posting" or isinstance(record.get("trigger"), dict):
+        raise ValueError("posting recovery requires an unresolved pre-POST reservation")
+    if record.get("head_sha", "").casefold() != expected_head_sha.casefold():
+        raise ValueError("posting reservation head does not match recovery request")
+    started_at = parse_timestamp(record.get("posting_started_at"))
+    actor_login = record.get("posting_actor_login")
+    if started_at is None or not isinstance(actor_login, str) or not actor_login.strip():
+        raise ValueError("posting reservation has no trusted POST attempt identity")
+
+    pr = payload.get("data", {}).get("repository", {}).get("pullRequest", {})
+    current_head = pr.get("headRefOid")
+    if not isinstance(current_head, str) or current_head.casefold() != expected_head_sha.casefold():
+        raise ValueError("current pull-request head does not match posting recovery request")
+    comments = (pr.get("comments") or {}).get("nodes")
+    if not isinstance(comments, list):
+        raise TypeError("complete pull-request comment history is unavailable for posting recovery")
+
+    candidates: dict[int, dict[str, Any]] = {}
+    for item in comments:
+        if not isinstance(item, dict):
+            continue
+        created_at = item.get("createdAt")
+        created = parse_timestamp(created_at)
+        author_login_value = _comment_author_login(item)
+        if (
+            created is None
+            or created < started_at
+            or not isinstance(author_login_value, str)
+            or author_login_value.casefold() != actor_login.casefold()
+            or not isinstance(item.get("body"), str)
+            or normalize_command(item["body"]) != FULL_COMMAND
+        ):
+            continue
+        comment_id = immutable_database_id(item)
+        url = item.get("url") or item.get("html_url")
+        if comment_id is None or not isinstance(created_at, str) or not isinstance(url, str) or not url:
+            raise ValueError("a possible POST result has incomplete live identity")
+        prior = candidates.get(comment_id)
+        if prior is not None and prior != item:
+            raise ValueError("live comment history contains conflicting copies of a possible POST result")
+        candidates[comment_id] = item
+    if len(candidates) != 1:
+        raise ValueError("posting recovery requires exactly one live command matching the reserved attempt")
+
+    comment_id, comment = next(iter(candidates.items()))
+    trigger = {
+        "id": comment_id,
+        "created_at": comment["createdAt"],
+        "url": comment.get("url") or comment.get("html_url"),
+        "author_login": _comment_author_login(comment),
+        "type": "full",
+        "command": FULL_COMMAND,
+    }
+    current = load_trigger_reservation(record_path, repo, pr_number)
+    if json.dumps(current, sort_keys=True) != json.dumps(record, sort_keys=True):
+        raise ValueError("posting reservation changed during recovery")
+    updated = {
+        **record,
+        "status": "posted",
+        "trigger": trigger,
+        "recovery": {"action": "adopt_observed_post", "at": utc_now(), "comment_id": comment_id},
+    }
+    atomic_write_json(record_path, updated)
+    return updated
+
+
+def adopt_posting_reservation(
+    path: str | Path,
+    repo: str,
+    pr_number: int,
+    expected_head_sha: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Acquire the Hosted reservation lock and adopt one exact observed POST result."""
+
+    descriptor = _with_lock(default_trigger_record_path(repo, pr_number))
+    try:
+        return _adopt_posting_reservation_locked(path, repo, pr_number, expected_head_sha, payload)
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def recover_prepost_reservation(
+    path: str | Path,
+    repo: str,
+    pr_number: int,
+    expected_head_sha: str,
+    reason: str,
+    confirmed_not_posted: bool,
+    fetch_payload: Callable[[], dict[str, Any]],
+) -> dict[str, Any]:
+    """Archive a reservation only after an operator-confirmed, live no-post check.
+
+    The callback is invoked while holding the same per-PR lock as Hosted posting,
+    so its result is fresh with respect to this controller's POST path. The
+    current record is re-read after the fetch and retained in a private audit
+    file; this function never submits a GitHub request.
+    """
+
+    if (
+        not isinstance(expected_head_sha, str)
+        or not EXACT_SHA.fullmatch(expected_head_sha)
+        or not isinstance(reason, str)
+        or not reason.strip()
+        or len(reason) > 240
+        or any(ord(char) < 0x20 for char in reason)
+    ):
+        raise ValueError("invalid pre-POST recovery request")
+    if confirmed_not_posted is not True:
+        raise ValueError("pre-POST recovery requires --confirmed-not-posted operator assertion")
+    if not callable(fetch_payload):
+        raise TypeError("pre-POST recovery requires a live pull-request fetch callback")
+
+    record_path = Path(path)
+    descriptor = _with_lock(default_trigger_record_path(repo, pr_number))
+    try:
+        current_paths = current_trigger_record_paths(repo, pr_number)
+        if len(current_paths) != 1 or current_paths[0] != record_path:
+            raise ValueError("pre-POST recovery requires exactly one current reservation at the selected path")
+        record = load_trigger_reservation(record_path, repo, pr_number)
+        if record.get("status") != "posting" or isinstance(record.get("trigger"), dict):
+            raise ValueError("pre-POST recovery requires an unresolved posting reservation")
+        if record.get("head_sha", "").casefold() != expected_head_sha.casefold():
+            raise ValueError("posting reservation head does not match recovery request")
+
+        started_at_text = record.get("posting_started_at")
+        started_at = parse_timestamp(started_at_text)
+        actor_login = record.get("posting_actor_login")
+        if (
+            started_at is None
+            or not isinstance(started_at_text, str)
+            or not isinstance(actor_login, str)
+            or not actor_login.strip()
+        ):
+            raise ValueError("posting reservation has no trusted original actor/time identity")
+
+        payload = fetch_payload()
+        if not isinstance(payload, dict):
+            raise TypeError("live pull-request response is not an object")
+        try:
+            pr = payload["data"]["repository"]["pullRequest"]
+        except (KeyError, TypeError) as error:
+            raise TypeError("live pull-request data is unavailable for pre-POST recovery") from error
+        if not isinstance(pr, dict):
+            raise TypeError("live pull-request data is unavailable for pre-POST recovery")
+        current_head = pr.get("headRefOid")
+        if not isinstance(current_head, str) or current_head.casefold() != expected_head_sha.casefold():
+            raise ValueError("current pull-request head does not match pre-POST recovery request")
+        comment_connection = pr.get("comments")
+        comments = comment_connection.get("nodes") if isinstance(comment_connection, dict) else None
+        if not isinstance(comments, list):
+            raise TypeError("complete paginated pull-request comment history is unavailable")
+
+        for item in comments:
+            if not isinstance(item, dict):
+                raise TypeError("live comment history contains an invalid comment; refusing recovery")
+            body = item.get("body")
+            if not isinstance(body, str) or normalize_command(body) != FULL_COMMAND:
+                continue
+            created = parse_timestamp(item.get("createdAt"))
+            if created is None:
+                raise ValueError("a full-review command has unknown time; refusing pre-POST recovery")
+            if created < started_at:
+                continue
+            observed_actor = _comment_author_login(item)
+            if isinstance(observed_actor, str) and observed_actor.casefold() == actor_login.casefold():
+                raise ValueError("matching full-review command is already present in live history")
+            raise ValueError("ambiguous full-review command is present in live history")
+
+        current = load_trigger_reservation(record_path, repo, pr_number)
+        if json.dumps(current, sort_keys=True) != json.dumps(record, sort_keys=True):
+            raise ValueError("posting reservation changed during pre-POST recovery")
+
+        reservation_key = json.dumps(
+            {
+                "repository": repo,
+                "pr_number": pr_number,
+                "head_sha": record["head_sha"].casefold(),
+                "posting_started_at": started_at_text,
+                "posting_actor_login": actor_login.casefold(),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        archive_id = hashlib.sha256(reservation_key.encode("utf-8")).hexdigest()[:20]
+        archive_path = record_path.with_name(f"prepost-abandoned-{archive_id}.json")
+        if archive_path.exists() or archive_path.is_symlink():
+            raise ValueError("pre-POST recovery audit path already exists; refusing to overwrite it")
+
+        updated = {
+            **record,
+            "status": "abandoned_prepost",
+            "recovery": {
+                "action": "operator_confirmed_prepost_abandon",
+                "at": utc_now(),
+                "reason": reason.strip(),
+                "confirmed_not_posted": True,
+                "expected_head_sha": expected_head_sha,
+                "posting_started_at": started_at_text,
+                "posting_actor_login": actor_login,
+                "live_comment_history": "complete_paginated_no_candidate",
+            },
+        }
+        # Persist a complete audit without replacing anything before removing
+        # the active hold. Any write/fsync failure leaves the reservation
+        # untouched; an unlink failure leaves it active alongside the audit.
+        _write_json_exclusive(archive_path, updated)
+        current = load_trigger_reservation(record_path, repo, pr_number)
+        if json.dumps(current, sort_keys=True) != json.dumps(record, sort_keys=True):
+            raise ValueError("posting reservation changed before pre-POST archival")
+        os.unlink(record_path)
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+    return {
+        "operation": "recover_prepost_reservation",
+        "status": "abandoned_no_post",
+        "repository": repo,
+        "pr_number": pr_number,
+        "head_sha": expected_head_sha,
+        "audit_path": str(archive_path),
+        "reason": reason.strip(),
+        "confirmed_not_posted": True,
+    }
 
 
 def _substantive(body: str) -> bool:
@@ -406,11 +697,23 @@ def trigger_state(
             cooldown_until=None,
             reason="captured trigger comment is absent from complete GitHub history",
         )
+    captured_author = _comment_author_login(captured)
+    recorded_author = trigger.get("author_login")
     if (
-        is_coderabbit_login((captured.get("author") or {}).get("login"))
+        not isinstance(captured_author, str)
+        or not captured_author.strip()
+        or is_coderabbit_login(captured_author)
         or normalize_command(captured.get("body") or "") != FULL_COMMAND
         or captured.get("createdAt") != trigger_at
         or captured.get("url") != trigger.get("url")
+        or (
+            recorded_author is not None
+            and (
+                not isinstance(recorded_author, str)
+                or not recorded_author.strip()
+                or captured_author.casefold() != recorded_author.casefold()
+            )
+        )
     ):
         return TriggerState(
             "ambiguous",

@@ -42,6 +42,7 @@ class Evidence:
     anchored: bool | None = None
     accepted: int = 0
     raw: int = 0
+    correction: bool = False
     corrected_state: bool = False
     provisional: bool = False
     rate_limited: bool = False
@@ -99,7 +100,7 @@ def taper_satisfied(channel: Channel | str, history: Iterable[Evidence | Mapping
 
     if required < 0:
         raise ValueError("required taper must be non-negative")
-    values = [Evidence.from_value(value) for value in history]
+    values = [item for value in history if not (item := Evidence.from_value(value)).correction]
     if not values:
         return required == 0
     latest_head = values[-1].head
@@ -143,7 +144,7 @@ def completion_status(
     """Classify one channel without consulting GitHub or copying live state."""
 
     selected = Channel(channel)
-    history = [Evidence.from_value(item) for item in evidence]
+    history = [item for value in evidence if not (item := Evidence.from_value(value)).correction]
     if not history:
         return ReviewStatus.MISSING_EVIDENCE
     latest = history[-1]
@@ -197,7 +198,7 @@ def select_review_target(
     other_channel_heads = other_channel_heads or {}
     for pr in live_prs:
         history = evidence_by_pr.get(pr, ())
-        evidence = [Evidence.from_value(item) for item in history]
+        evidence = [item for value in history if not (item := Evidence.from_value(value)).correction]
         latest = evidence[-1] if evidence else Evidence(pr, "", "")
         blocked = _blocked(latest, reconciliation_by_pr.get(pr))
         if blocked:

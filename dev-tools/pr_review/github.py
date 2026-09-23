@@ -98,8 +98,8 @@ _BASE_QUERY = """
 query($owner:String!, $repo:String!, $number:Int!) {
   repository(owner:$owner, name:$repo) { pullRequest(number:$number) {
     headRefOid
-    commits(last:1) { nodes { commit { oid committedDate } } }
-    reviewThreads(first:100) { nodes { isResolved isOutdated path line comments(first:20) {
+    commits(last:1) { nodes { commit { oid committedDate statusCheckRollup { state } } } }
+    reviewThreads(first:100) { nodes { id isResolved isOutdated path line comments(first:20) {
       nodes { id databaseId author { login } body url createdAt updatedAt }
     } } pageInfo { hasNextPage endCursor } }
     comments(first:100) { nodes { id databaseId author { login } body createdAt updatedAt url }
@@ -113,7 +113,7 @@ query($owner:String!, $repo:String!, $number:Int!) {
 
 def _connection_query(connection: str) -> str:
     fields = {
-        "reviewThreads": "nodes { isResolved isOutdated path line comments(first:20) { nodes { id databaseId author { login } body url createdAt updatedAt } } }",
+        "reviewThreads": "nodes { id isResolved isOutdated path line comments(first:20) { nodes { id databaseId author { login } body url createdAt updatedAt } } }",
         "comments": "nodes { id databaseId author { login } body createdAt updatedAt url }",
         "reviews": "nodes { id databaseId author { login } body state submittedAt url commit { oid } }",
     }[connection]
@@ -196,13 +196,126 @@ def fetch_api_endpoint(endpoint: str) -> list[dict[str, Any]]:
     return values
 
 
+def _fetch_api_pages(endpoint: str) -> list[dict[str, Any]]:
+    """Read an object-shaped REST endpoint through GitHub CLI pagination."""
+
+    try:
+        completed = subprocess.run(
+            ["gh", "api", "--method", "GET", "--paginate", "--slurp", endpoint],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=GH_API_TIMEOUT_SECONDS,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("gh CLI is required") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"gh api timed out after {GH_API_TIMEOUT_SECONDS} seconds") from exc
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(exc.stderr.strip() if exc.stderr else "gh api failed") from exc
+    try:
+        pages = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("gh api returned invalid JSON") from exc
+    if not isinstance(pages, list) or any(not isinstance(page, dict) for page in pages):
+        raise RuntimeError("gh api returned an unexpected paginated object response")
+    return pages
+
+
+def _fetch_api_object(endpoint: str) -> dict[str, Any]:
+    """Read one non-paginated REST object and validate its shape."""
+
+    try:
+        completed = subprocess.run(
+            ["gh", "api", "--method", "GET", endpoint],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=GH_API_TIMEOUT_SECONDS,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("gh CLI is required") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"gh api timed out after {GH_API_TIMEOUT_SECONDS} seconds") from exc
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(exc.stderr.strip() if exc.stderr else "gh api failed") from exc
+    try:
+        value = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("gh api returned invalid JSON") from exc
+    if not isinstance(value, dict):
+        raise TypeError("gh api returned a non-object response")
+    return value
+
+
+def fetch_required_status_checks(repo: str, branch: str) -> dict[str, Any]:
+    """Fetch the branch-protection authority for required contexts and apps."""
+
+    parse_repo(repo)
+    if not branch or any(character in branch for character in "\r\n"):
+        raise ValueError("branch ref must be a non-empty single line")
+    value = _fetch_api_object(f"repos/{repo}/branches/{branch}/protection/required_status_checks")
+    contexts = value.get("contexts", [])
+    checks = value.get("checks", [])
+    if not isinstance(contexts, list) or any(not isinstance(item, str) or not item for item in contexts):
+        raise RuntimeError("GitHub required status-check authority has malformed contexts")
+    if not isinstance(checks, list) or any(not isinstance(item, dict) for item in checks):
+        raise RuntimeError("GitHub required status-check authority has malformed checks")
+    normalized_checks: list[dict[str, Any]] = []
+    for index, item in enumerate(checks, 1):
+        context = item.get("context")
+        app_id = item.get("app_id")
+        if not isinstance(context, str) or not context:
+            raise RuntimeError(f"GitHub required status-check {index} has no context")
+        if app_id is not None and (isinstance(app_id, bool) or not isinstance(app_id, int) or app_id <= 0):
+            raise RuntimeError(f"GitHub required status-check {index} has an invalid app_id")
+        normalized_checks.append({"context": context, "app_id": app_id})
+    return {
+        "available": True,
+        "strict": value.get("strict"),
+        "contexts": contexts,
+        "checks": normalized_checks,
+    }
+
+
+def fetch_check_inventory(repo: str, head_sha: str) -> dict[str, Any]:
+    """Fetch every check run and commit status attached to one exact head."""
+
+    parse_repo(repo)
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", head_sha):
+        raise ValueError("head_sha must be an exact commit SHA")
+    check_runs: list[dict[str, Any]] = []
+    for page in _fetch_api_pages(f"repos/{repo}/commits/{head_sha}/check-runs?per_page=100"):
+        values = page.get("check_runs")
+        if not isinstance(values, list) or any(not isinstance(item, dict) for item in values):
+            raise RuntimeError("GitHub check-run inventory has malformed check_runs")
+        for item in values:
+            normalized = dict(item)
+            suite = normalized.get("check_suite")
+            if isinstance(suite, dict) and isinstance(suite.get("workflow_name"), str):
+                normalized.setdefault("workflowName", suite["workflow_name"])
+            check_runs.append(normalized)
+    status_contexts: list[dict[str, Any]] = []
+    for page in _fetch_api_pages(f"repos/{repo}/commits/{head_sha}/status?per_page=100"):
+        values = page.get("statuses")
+        if not isinstance(values, list) or any(not isinstance(item, dict) for item in values):
+            raise RuntimeError("GitHub status inventory has malformed statuses")
+        status_contexts.extend(values)
+    return {
+        "available": True,
+        "head_sha": head_sha.lower(),
+        "check_runs": check_runs,
+        "status_contexts": status_contexts,
+    }
+
+
 def fetch_pr_metadata(repo: str, pr_number: int) -> dict[str, Any]:
     """Read the complete compact PR/CI snapshot used by status and stack policy."""
 
     parse_repo(repo)
     fields = (
         "number,title,state,headRefName,headRefOid,baseRefName,baseRefOid,"
-        "changedFiles,body,statusCheckRollup,mergeable,mergeStateStatus,isDraft,url,mergedAt"
+        "changedFiles,body,statusCheckRollup,mergeable,mergeStateStatus,reviewDecision,isDraft,url,mergedAt"
     )
     try:
         completed = subprocess.run(

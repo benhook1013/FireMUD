@@ -14,7 +14,7 @@ import re
 import subprocess
 from collections import defaultdict
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 try:  # package import (the normal controller path)
@@ -33,6 +33,7 @@ PENDING = {"EXPECTED", "IN_PROGRESS", "PENDING", "QUEUED", "REQUESTED", "RUNNING
 KNOWN = SUCCESS | FAILURE | PENDING | {"COMPLETED"}
 MERGEABLE = {"MERGEABLE", "CONFLICTING", "UNKNOWN"}
 MERGE_STATE = {"BEHIND", "BLOCKED", "CLEAN", "DIRTY", "DRAFT", "HAS_HOOKS", "UNKNOWN", "UNSTABLE"}
+REVIEW_DECISIONS = {"", "APPROVED", "CHANGES_REQUESTED", "COMMENTED", "REVIEW_REQUIRED"}
 LOC_METADATA = re.compile(r"^<!-- firemud:cloc-report:metadata (?P<payload>\{.*\}) -->$")
 
 
@@ -132,6 +133,10 @@ def _validate_github(pr: Mapping[str, Any], number: int) -> None:
         raise StatusError("GitHub PR evidence has an invalid mergeable value")
     if pr.get("mergeStateStatus", "").upper() not in MERGE_STATE:
         raise StatusError("GitHub PR evidence has an invalid mergeStateStatus value")
+    if pr.get("reviewDecision") is not None and (
+        not isinstance(pr["reviewDecision"], str) or pr["reviewDecision"].upper() not in REVIEW_DECISIONS
+    ):
+        raise StatusError("GitHub PR evidence has an invalid reviewDecision")
     _nonnegative(pr.get("changedFiles"), "GitHub changedFiles")
     if not isinstance(pr.get("isDraft"), bool):
         raise StatusError("GitHub PR evidence has an invalid isDraft")
@@ -200,6 +205,256 @@ def normalize_checks(raw: list[Any]) -> tuple[list[dict[str, Any]], list[dict[st
         rendered["url"] = next((value[key] for key in ("detailsUrl", "targetUrl") if value.get(key)), None)
         (pending if category == "pending" else failed).append(rendered)
     return pending, failed, len(raw)
+
+
+def _check_outcome(value: Mapping[str, Any]) -> str:
+    lifecycle = {
+        candidate
+        for key in ("state", "status", "conclusion")
+        for candidate in [_check_text(value, key)]
+        if candidate is not None
+    }
+    if lifecycle & PENDING:
+        return "PENDING"
+    if lifecycle & FAILURE:
+        return "FAILURE"
+    if lifecycle & SUCCESS:
+        return "SUCCESS"
+    return "UNKNOWN"
+
+
+def _app_identity(value: Mapping[str, Any]) -> dict[str, Any] | None:
+    app = value.get("app")
+    if app is None:
+        app = value.get("creator")
+    if not isinstance(app, Mapping):
+        return None
+    app_id = app.get("id", app.get("databaseId"))
+    if isinstance(app_id, bool) or (app_id is not None and not isinstance(app_id, (int, str))):
+        return None
+    if isinstance(app_id, str) and app_id.isdigit():
+        app_id = int(app_id)
+    identity: dict[str, Any] = {}
+    if app_id is not None:
+        identity["id"] = app_id
+    for key in ("slug", "name", "login"):
+        if isinstance(app.get(key), str) and app[key]:
+            identity[key] = app[key]
+    return identity or None
+
+
+def _check_timestamp(value: Mapping[str, Any], index: int) -> tuple[str | None, datetime | None]:
+    for key in (
+        "completed_at",
+        "completedAt",
+        "updated_at",
+        "updatedAt",
+        "started_at",
+        "startedAt",
+        "created_at",
+        "createdAt",
+    ):
+        candidate = value.get(key)
+        if candidate is None:
+            continue
+        if not isinstance(candidate, str):
+            raise StatusError(f"GitHub status check {index} has an invalid {key}")
+        return candidate, _timestamp(candidate, f"GitHub status check {index} {key}")
+    return None, None
+
+
+def _inventory_entries(raw: list[Any], current_head: str) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for index, value in enumerate(raw, 1):
+        if not isinstance(value, Mapping):
+            raise StatusError(f"GitHub status check {index} is not an object")
+        name = value.get("name", value.get("context"))
+        if not isinstance(name, str) or not name:
+            raise StatusError(f"GitHub status check {index} has no valid name")
+        # REST commit statuses are fetched against the exact requested commit;
+        # their endpoint does not repeat the SHA, so the adapter marks it.
+        head = value.get("head_sha", value.get("headSha"))
+        if head is not None and (not isinstance(head, str) or not EXACT_SHA.fullmatch(head)):
+            raise StatusError(f"GitHub status check {index} has an invalid head SHA")
+        timestamp, parsed_timestamp = _check_timestamp(value, index)
+        app = _app_identity(value)
+        entry = {
+            "name": name,
+            "kind": value.get("__typename", "CheckRun" if "conclusion" in value else "StatusContext"),
+            "status": _check_text(value, "status"),
+            "state": _check_text(value, "state"),
+            "conclusion": _check_text(value, "conclusion"),
+            "head_sha": head,
+            "app": app,
+            "timestamp": timestamp,
+            "outcome": _check_outcome(value),
+            "url": next((value[key] for key in ("details_url", "detailsUrl", "target_url", "targetUrl") if value.get(key)), None),
+            "_timestamp": parsed_timestamp,
+            "_index": index,
+        }
+        entry["exact_head"] = isinstance(head, str) and head.casefold() == current_head.casefold()
+        entries.append(entry)
+    return entries
+
+
+def _inventory_report(
+    raw: list[Any],
+    current_head: str,
+    *,
+    aggregate: Any = None,
+) -> dict[str, Any]:
+    pending, failed, observed = normalize_checks(raw)
+    entries = _inventory_entries(raw, current_head)
+    if isinstance(aggregate, Mapping):
+        aggregate = aggregate.get("state")
+    if isinstance(aggregate, str) and aggregate:
+        aggregate_state = aggregate.upper()
+        aggregate_source = "github"
+    else:
+        effective: dict[tuple[str, str], dict[str, Any]] = {}
+
+        def order(entry: Mapping[str, Any]) -> tuple[bool, datetime, int]:
+            return (
+                entry["_timestamp"] is not None,
+                entry["_timestamp"] or datetime.min.replace(tzinfo=timezone.utc),
+                entry["_index"],
+            )
+
+        for entry in entries:
+            identity = (str(entry["kind"]), str(entry["name"]))
+            previous = effective.get(identity)
+            if previous is None or order(entry) > order(previous):
+                effective[identity] = entry
+        outcomes = {entry["outcome"] for entry in effective.values()}
+        if "FAILURE" in outcomes:
+            aggregate_state = "FAILURE"
+        elif "PENDING" in outcomes:
+            aggregate_state = "PENDING"
+        elif "UNKNOWN" in outcomes or not outcomes:
+            aggregate_state = "UNKNOWN"
+        else:
+            aggregate_state = "SUCCESS"
+        aggregate_source = "derived"
+    if aggregate_state not in {"SUCCESS", "FAILURE", "PENDING", "UNKNOWN"}:
+        raise StatusError(f"GitHub status aggregate has an invalid state: {aggregate_state}")
+    return {
+        "available": True,
+        "head_sha": current_head,
+        "observed": observed,
+        "inventory": [{key: value for key, value in entry.items() if not key.startswith("_")} for entry in entries],
+        "_entries": entries,
+        "pending": pending,
+        "failed": failed,
+        "aggregate": {"state": aggregate_state, "source": aggregate_source},
+    }
+
+
+def _required_authority(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or value.get("available") is False:
+        reason = value.get("reason") if isinstance(value, Mapping) else None
+        return {
+            "available": False,
+            "status": "unavailable",
+            "reason": reason or "authoritative branch protection is unavailable",
+            "contexts": [],
+        }
+    contexts = value.get("contexts", [])
+    checks = value.get("checks", [])
+    if not isinstance(contexts, list) or any(not isinstance(item, str) or not item for item in contexts):
+        return {"available": False, "status": "unavailable", "reason": "branch protection contexts are malformed", "contexts": []}
+    if not isinstance(checks, list) or any(not isinstance(item, Mapping) for item in checks):
+        return {"available": False, "status": "unavailable", "reason": "branch protection checks are malformed", "contexts": []}
+    app_by_context: dict[str, Any] = {}
+    for item in checks:
+        context = item.get("context")
+        app_id = item.get("app_id", item.get("appId"))
+        if not isinstance(context, str) or not context:
+            return {"available": False, "status": "unavailable", "reason": "branch protection check has no context", "contexts": []}
+        if app_id is not None and (isinstance(app_id, bool) or not isinstance(app_id, (int, str))):
+            return {"available": False, "status": "unavailable", "reason": f"branch protection app for {context} is malformed", "contexts": []}
+        if isinstance(app_id, str) and app_id.isdigit():
+            app_id = int(app_id)
+        if context in app_by_context and app_by_context[context] != app_id:
+            return {"available": False, "status": "unavailable", "reason": f"branch protection has conflicting apps for {context}", "contexts": []}
+        app_by_context[context] = app_id
+    names = list(dict.fromkeys(contexts + list(app_by_context)))
+    required = []
+    for context in names:
+        app_id = app_by_context.get(context)
+        required.append(
+            {
+                "context": context,
+                "expected_app": {"id": app_id} if app_id is not None else {"any": True},
+            }
+        )
+    return {"available": True, "status": "available", "strict": value.get("strict"), "contexts": required}
+
+
+def _required_results(authority: dict[str, Any], inventory: dict[str, Any]) -> dict[str, Any]:
+    if not authority["available"]:
+        return authority
+    results: list[dict[str, Any]] = []
+    entries = inventory.get("_entries", inventory["inventory"])
+    for expected in authority["contexts"]:
+        context = expected["context"]
+        matching = [entry for entry in entries if entry["name"] == context]
+        exact = [entry for entry in matching if entry["exact_head"]]
+
+        def newest(values: list[dict[str, Any]]) -> dict[str, Any] | None:
+            values.sort(
+                key=lambda item: (
+                    item["_timestamp"] is not None,
+                    item["_timestamp"] or datetime.min.replace(tzinfo=timezone.utc),
+                    item["_index"],
+                )
+            )
+            return values[-1] if values else None
+
+        app_id = expected["expected_app"].get("id")
+        app_matches = (
+            [entry for entry in exact if (entry["app"] or {}).get("id") == app_id]
+            if app_id is not None
+            else exact
+        )
+        result = newest(app_matches)
+        wrong_app_result = newest(exact) if exact else None
+        wrong_app_results = [
+            {key: value for key, value in entry.items() if not key.startswith("_")}
+            for entry in exact
+            if app_id is not None and (entry["app"] or {}).get("id") != app_id
+        ]
+        if result is None:
+            result = wrong_app_result
+        if result is None:
+            status = "stale" if matching else "missing"
+        elif app_id is not None and (result["app"] or {}).get("id") != app_id:
+            status = "wrong_app"
+        else:
+            status = result["outcome"].lower()
+        rendered = {key: value for key, value in (result or {}).items() if not key.startswith("_")}
+        results.append(
+            {
+                "context": context,
+                "expected_app": expected["expected_app"],
+                "status": status,
+                "result": rendered or None,
+                "latest_exact_head": rendered or None,
+                "wrong_app_results": wrong_app_results,
+            }
+        )
+    statuses = {item["status"] for item in results}
+    if statuses & {"failed", "wrong_app", "stale", "missing", "unknown"}:
+        overall = "failed" if statuses & {"failed", "wrong_app"} else "pending"
+    elif statuses & {"pending"}:
+        overall = "pending"
+    else:
+        overall = "passed"
+    return {
+        "available": True,
+        "status": overall,
+        "strict": authority.get("strict"),
+        "contexts": results,
+    }
 
 
 def _loc_status(pr: Mapping[str, Any]) -> dict[str, Any]:
@@ -322,7 +577,7 @@ def _counts(checkpoints: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _thread_summary(payload: Mapping[str, Any]) -> dict[str, int]:
+def _thread_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
     nodes = (
         ((payload.get("data") or {}).get("repository") or {})
         .get("pullRequest", {})
@@ -330,6 +585,7 @@ def _thread_summary(payload: Mapping[str, Any]) -> dict[str, int]:
         .get("nodes", [])
     )
     current = outdated = 0
+    unresolved: list[dict[str, Any]] = []
     if not isinstance(nodes, list):
         raise StatusError("GitHub reviewThreads evidence is malformed")
     for thread in nodes:
@@ -340,11 +596,68 @@ def _thread_summary(payload: Mapping[str, Any]) -> dict[str, int]:
         ):
             raise StatusError("GitHub review thread evidence is malformed")
         if not thread["isResolved"]:
+            rendered = {
+                "id": thread.get("id") if isinstance(thread.get("id"), str) else None,
+                "path": thread.get("path"),
+                "line": thread.get("line"),
+                "outdated": thread["isOutdated"],
+            }
+            unresolved.append(rendered)
             if thread["isOutdated"]:
                 outdated += 1
             else:
                 current += 1
-    return {"current": current, "outdated": outdated, "total": current + outdated}
+    return {"current": current, "outdated": outdated, "total": current + outdated, "_items": unresolved}
+
+
+def _review_decision(payload: Mapping[str, Any], current_head: str, pull_request: Mapping[str, Any]) -> dict[str, Any]:
+    """Report the latest decision attributable to the current exact head."""
+
+    explicit = pull_request.get("reviewDecision")
+    if isinstance(explicit, str) and explicit.upper() in REVIEW_DECISIONS - {""}:
+        decision = explicit.upper()
+        source = "github"
+    else:
+        reviews = (
+            ((payload.get("data") or {}).get("repository") or {}).get("pullRequest", {}).get("reviews") or {}
+        ).get("nodes")
+        if not isinstance(reviews, list):
+            raise StatusError("GitHub review decision evidence is malformed")
+        current: list[tuple[datetime, int, str, int | None]] = []
+        for index, review in enumerate(reviews, 1):
+            if not isinstance(review, dict):
+                raise StatusError(f"GitHub review {index} is not an object")
+            state = review.get("state")
+            if not isinstance(state, str):
+                raise StatusError(f"GitHub review {index} has no state")
+            commit = (review.get("commit") or {}).get("oid")
+            if not isinstance(commit, str) or not EXACT_SHA.fullmatch(commit) or commit.casefold() != current_head.casefold():
+                continue
+            submitted_at = review.get("submittedAt")
+            if not isinstance(submitted_at, str):
+                continue
+            current.append(
+                (
+                    _timestamp(submitted_at, f"GitHub review {index} submittedAt"),
+                    index,
+                    state.upper(),
+                    github.immutable_database_id(review),
+                )
+            )
+        if not current:
+            return {"status": "UNKNOWN", "head_sha": current_head, "source": "unavailable"}
+        current.sort(key=lambda item: (item[0], item[1]))
+        states = {item[2] for item in current}
+        if "CHANGES_REQUESTED" in states:
+            decision = "CHANGES_REQUESTED"
+        elif current[-1][2] == "APPROVED":
+            decision = "APPROVED"
+        elif current[-1][2] in {"COMMENTED", "DISMISSED"}:
+            decision = "COMMENTED"
+        else:
+            decision = "UNKNOWN"
+        source = "reviews"
+    return {"status": decision, "head_sha": current_head, "source": source}
 
 
 def _summary_sections(body: str) -> list[dict[str, str | int]]:
@@ -517,26 +830,134 @@ def _trigger(repo: str, number: int, payload: dict[str, Any], head: str) -> dict
         }
 
 
+def _inventory_source(value: Any, current_head: str) -> tuple[list[Any], Any] | None:
+    if isinstance(value, list):
+        return value, None
+    if not isinstance(value, Mapping):
+        return None
+    if isinstance(value.get("inventory"), list):
+        return value["inventory"], value.get("aggregate_state", value.get("aggregate"))
+    runs = value.get("check_runs", value.get("checkRuns", []))
+    statuses = value.get("status_contexts", value.get("statusContexts", []))
+    if not isinstance(runs, list) or not isinstance(statuses, list):
+        return None
+    combined = list(runs)
+    for item in statuses:
+        if not isinstance(item, Mapping):
+            combined.append(item)
+            continue
+        marked = dict(item)
+        marked.setdefault("__typename", "StatusContext")
+        marked.setdefault("head_sha", current_head)
+        combined.append(marked)
+    return combined, value.get("aggregate_state", value.get("aggregate"))
+
+
+def _graphql_aggregate(payload: Mapping[str, Any], current_head: str) -> tuple[str | None, str | None]:
+    """Read the aggregate rollup only when its GraphQL commit is the PR head."""
+
+    pr = ((payload.get("data") or {}).get("repository") or {}).get("pullRequest", {})
+    commits = pr.get("commits")
+    if not isinstance(commits, Mapping) or not isinstance(commits.get("nodes"), list) or len(commits["nodes"]) != 1:
+        return None, "GitHub aggregate rollup evidence is missing its exact-head commit"
+    commit = commits["nodes"][0].get("commit") if isinstance(commits["nodes"][0], Mapping) else None
+    if not isinstance(commit, Mapping):
+        return None, "GitHub aggregate rollup evidence has no commit"
+    oid = commit.get("oid")
+    if not isinstance(oid, str) or not EXACT_SHA.fullmatch(oid):
+        return None, "GitHub aggregate rollup evidence has no exact commit OID"
+    if oid.casefold() != current_head.casefold():
+        return None, "GitHub aggregate rollup commit does not match the current PR head"
+    rollup = commit.get("statusCheckRollup")
+    state = rollup.get("state") if isinstance(rollup, Mapping) else None
+    if not isinstance(state, str) or state.upper() not in {"SUCCESS", "FAILURE", "PENDING", "EXPECTED", "ERROR"}:
+        return None, "GitHub aggregate rollup state is missing or malformed"
+    normalized = state.upper()
+    if normalized in {"EXPECTED", "ERROR"}:
+        normalized = "PENDING" if normalized == "EXPECTED" else "FAILURE"
+    return normalized, None
+
+
 def build_report(
     repo: str,
     pr_number: int,
     *,
     pull_request_payload: dict[str, Any] | None = None,
     checkpoint_payload: Mapping[str, Any] | None = None,
+    required_status_checks_payload: Mapping[str, Any] | None = None,
+    check_inventory_payload: Mapping[str, Any] | list[Any] | None = None,
 ) -> dict[str, Any]:
     repo = _repo_name(repo)
     if isinstance(pr_number, bool) or not isinstance(pr_number, int) or pr_number <= 0:
         raise StatusError("pr must be a positive integer")
-    raw_payload = pull_request_payload or github.fetch_pull_request(repo, pr_number)
+    live = pull_request_payload is None
+    raw_payload = github.fetch_pull_request(repo, pr_number) if live else pull_request_payload
     try:
         pr = raw_payload["data"]["repository"]["pullRequest"]
     except (KeyError, TypeError) as exc:
         raise StatusError("GitHub response has no pull request") from exc
-    if pull_request_payload is None:
+    if live:
         # Review conversations require GraphQL pagination, while ``gh pr view`` is
         # the stable compact source for the PR, CI, mergeability, and LOC fields.
         pr.update(github.fetch_pr_metadata(repo, pr_number))
     _validate_github(pr, pr_number)
+    if required_status_checks_payload is not None:
+        required_source: Any = required_status_checks_payload
+    elif isinstance(raw_payload.get("required_status_checks"), Mapping):
+        required_source = raw_payload["required_status_checks"]
+    elif isinstance(pr.get("required_status_checks"), Mapping):
+        required_source = pr["required_status_checks"]
+    elif live:
+        try:
+            required_source = github.fetch_required_status_checks(repo, pr["baseRefName"])
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            required_source = {"available": False, "reason": f"authoritative branch protection unavailable: {exc}"}
+    else:
+        required_source = None
+    authority = _required_authority(required_source)
+    aggregate_state, aggregate_error = _graphql_aggregate(raw_payload, pr["headRefOid"])
+
+    if check_inventory_payload is not None:
+        inventory_input: Any = check_inventory_payload
+    elif isinstance(raw_payload.get("check_inventory"), (Mapping, list)):
+        inventory_input = raw_payload["check_inventory"]
+    elif isinstance(pr.get("check_inventory"), (Mapping, list)):
+        inventory_input = pr["check_inventory"]
+    elif live:
+        try:
+            inventory_input = github.fetch_check_inventory(repo, pr["headRefOid"])
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            inventory_input = {"available": False, "reason": f"complete check inventory unavailable: {exc}"}
+    else:
+        inventory_input = pr["statusCheckRollup"]
+    if isinstance(inventory_input, Mapping) and inventory_input.get("available") is False:
+        inventory = {
+            "available": False,
+            "status": "unavailable",
+            "reason": inventory_input.get("reason", "complete check inventory is unavailable"),
+        }
+    else:
+        source = _inventory_source(inventory_input, pr["headRefOid"])
+        if source is None:
+            inventory = {"available": False, "status": "unavailable", "reason": "complete check inventory is malformed"}
+        else:
+            raw_checks, aggregate = source
+            inventory = _inventory_report(
+                raw_checks,
+                pr["headRefOid"],
+                aggregate=aggregate_state if aggregate_state is not None else aggregate,
+            )
+            if aggregate_error:
+                inventory["aggregate"] = {"state": "UNKNOWN", "source": "unavailable"}
+    if inventory.get("available"):
+        required = _required_results(authority, inventory)
+    else:
+        required = authority if not authority["available"] else {
+            "available": False,
+            "status": "unavailable",
+            "reason": inventory["reason"],
+            "contexts": [],
+        }
     if checkpoint_payload is None:
         try:
             checkpoints_payload = evidence.collect_evidence(_historical_comments(raw_payload))
@@ -545,9 +966,20 @@ def build_report(
     else:
         checkpoints_payload = checkpoint_payload
     checkpoints = _validate_checkpoint_report(checkpoints_payload)
-    pending, failed, observed = normalize_checks(pr["statusCheckRollup"])
+    if inventory.get("available"):
+        pending = inventory["pending"]
+        failed = inventory["failed"]
+        observed = inventory["observed"]
+    else:
+        pending, failed, observed = normalize_checks(pr["statusCheckRollup"])
+    aggregate = (
+        {"state": aggregate_state, "source": "github"}
+        if aggregate_state is not None and not aggregate_error
+        else inventory.get("aggregate", {"state": "UNKNOWN", "source": "unavailable"})
+    )
     threads = _thread_summary(raw_payload)
     summary_evidence = _summary_evidence(raw_payload, pr["headRefOid"])
+    review_decision = _review_decision(raw_payload, pr["headRefOid"], pr)
     loc = _loc_status(pr)
     reasons: list[str] = []
     if threads["total"]:
@@ -556,20 +988,57 @@ def build_report(
         reasons.append(
             f"CodeRabbit summary has {len(summary_evidence['findings'])} actionable duplicate/outside-diff finding(s)"
         )
-    if pending:
-        reasons.append(f"{len(pending)} CI check(s) are pending")
-    if failed:
-        reasons.append(f"{len(failed)} CI check(s) are failed")
-    if observed == 0:
+    if review_decision["status"] == "CHANGES_REQUESTED":
+        reasons.append("review decision is CHANGES_REQUESTED")
+    elif review_decision["status"] == "REVIEW_REQUIRED":
+        reasons.append("review decision is REVIEW_REQUIRED")
+    if not inventory.get("available"):
+        reasons.append(inventory["reason"])
+    if aggregate_error:
+        reasons.append(aggregate_error)
+    elif aggregate["state"] != "SUCCESS":
+        reasons.append(f"GitHub aggregate rollup is {aggregate['state']}")
+    if not required["available"]:
+        reasons.append(required["reason"])
+    elif required["status"] == "pending":
+        reasons.append("one or more required status checks are pending or missing")
+    elif required["status"] == "failed":
+        reasons.append("one or more required status checks failed or used the wrong app")
+    if observed == 0 and inventory.get("available"):
         reasons.append("no CI checks were returned")
-    if pr["mergeStateStatus"].upper() != "CLEAN":
-        reasons.append("GitHub mergeStateStatus is not CLEAN")
-    if pr["mergeable"].upper() != "MERGEABLE":
+    merge_state = pr["mergeStateStatus"].upper()
+    mergeable_state = pr["mergeable"].upper()
+    if mergeable_state == "CONFLICTING":
+        reasons.append("PR has merge conflicts")
+    elif mergeable_state == "UNKNOWN":
+        reasons.append("PR mergeability is unknown")
+    if pr["mergeable"].upper() != "MERGEABLE" and mergeable_state not in {"CONFLICTING", "UNKNOWN"}:
         reasons.append("GitHub mergeable is not MERGEABLE")
     if pr["isDraft"]:
         reasons.append("PR is a draft")
+    if merge_state not in {"CLEAN", "BLOCKED"}:
+        reasons.append(f"GitHub mergeStateStatus is {merge_state}")
     if loc["status"] != "fresh":
         reasons.append(f"LOC metadata is {loc['status']}")
+    blocked_unknown = merge_state == "BLOCKED" and not reasons
+    if blocked_unknown:
+        reasons.append("BLOCKED — cause not exposed by available API")
+    verdict = "BLOCKED — cause not exposed by available API" if blocked_unknown else ("READY" if not reasons else "NOT READY")
+    unresolved_threads = threads.pop("_items", [])
+    optional_failed = [item for item in failed if item["name"] not in {item["context"] for item in required.get("contexts", [])}]
+    optional_pending = [item for item in pending if item["name"] not in {item["context"] for item in required.get("contexts", [])}]
+    ci = {
+        "observed": observed,
+        "pending": pending,
+        "failed": failed,
+        "optional": {"pending": optional_pending, "failed": optional_failed},
+        "aggregate": aggregate,
+        "inventory": inventory.get("inventory", []),
+        "required": required,
+    }
+    rendered_inventory = {key: value for key, value in inventory.items() if key != "_entries"}
+    if aggregate_error:
+        rendered_inventory["aggregate_error"] = aggregate_error
     return {
         "repo": repo,
         "pr_number": pr_number,
@@ -585,6 +1054,7 @@ def build_report(
                 "changedFiles",
                 "mergeable",
                 "mergeStateStatus",
+                "reviewDecision",
                 "isDraft",
                 "url",
             )
@@ -598,17 +1068,24 @@ def build_report(
         "checkpoint_report": dict(checkpoints_payload),
         "checkpoint_counts": _counts(checkpoints),
         "threads": threads,
+        "unresolved_threads": unresolved_threads,
+        "review_decision": review_decision,
         "coderabbit_summary": summary_evidence,
-        "ci": {"observed": observed, "pending": pending, "failed": failed},
+        "check_inventory": rendered_inventory,
+        "aggregate_error": aggregate_error,
+        "required_checks": required,
+        "aggregate": ci["aggregate"],
+        "ci": ci,
         "loc_metadata": loc,
         "hosted_trigger": _trigger(repo, pr_number, raw_payload, pr["headRefOid"]),
         "mergeability": {
             "mergeStateStatus": pr["mergeStateStatus"],
             "mergeable": pr["mergeable"],
             "clean": not reasons,
+            "diagnosis": verdict,
         },
         "ready": not reasons,
-        "verdict": "READY" if not reasons else "NOT READY",
+        "verdict": verdict,
         "reasons": reasons,
     }
 
@@ -624,11 +1101,23 @@ def status(pr: int | None = None, as_json: bool = False, *, repo: str | None = N
 def emit_text(report: Mapping[str, Any]) -> str:
     """Render a compact human report from the same structure emitted as JSON."""
     pr = report["pull_request"]
+    required = report["ci"]["required"]
+    required_contexts = ", ".join(
+        f"{item['context']}[app={item['expected_app'].get('id', 'any')}]={item['status']}/"
+        f"{(item.get('latest_exact_head') or {}).get('outcome', 'none')}"
+        for item in required.get("contexts", [])
+    ) or "none"
+    pending_names = ", ".join(item["name"] for item in report["ci"]["pending"]) or "none"
+    failed_names = ", ".join(item["name"] for item in report["ci"]["failed"]) or "none"
     lines = [
         f"PR #{report['pr_number']} — {pr['title']}",
-        f"head/base: {pr['headRefName']} -> {pr['baseRefName']} · {pr['headRefOid'][:12]} · {pr['changedFiles']} files",
+        f"head/base: {pr['headRefName']} {pr['headRefOid'][:12]} -> {pr['baseRefName']} {pr['baseRefOid'][:12]} · {pr['changedFiles']} files",
+        f"state: draft={pr['isDraft']} · mergeable={pr['mergeable']} · mergeStateStatus={pr['mergeStateStatus']}",
         f"threads: current={report['threads']['current']} · outdated={report['threads']['outdated']} · total={report['threads']['total']}",
-        f"CI: pending={len(report['ci']['pending'])} · failed={len(report['ci']['failed'])} · observed={report['ci']['observed']}",
+        f"review: decision={report['review_decision']['status']} · required={required.get('status')} ({required_contexts})",
+        f"CI: aggregate={report['ci']['aggregate']['state']} · pending={len(report['ci']['pending'])} · failed={len(report['ci']['failed'])} · optional_failed={len(report['ci']['optional']['failed'])} · observed={report['ci']['observed']}",
+        f"pending checks: {pending_names}",
+        f"failed checks: {failed_names}",
         f"verdict: {report['verdict']}",
     ]
     for reason in report["reasons"]:

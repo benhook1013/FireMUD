@@ -99,6 +99,14 @@ def _parser() -> argparse.ArgumentParser:
     retirement.add_argument("--head", required=True)
     retirement.add_argument("--reason", required=True)
     retirement.add_argument("--json", action="store_true", dest="as_json")
+    prepost_recovery = decide_commands.add_parser(
+        "trigger-recover-prepost", help="archive an operator-confirmed Hosted reservation that was never posted"
+    )
+    prepost_recovery.add_argument("--pr", required=True, type=_positive_int)
+    prepost_recovery.add_argument("--head", required=True)
+    prepost_recovery.add_argument("--reason", required=True)
+    prepost_recovery.add_argument("--confirmed-not-posted", action="store_true")
+    prepost_recovery.add_argument("--json", action="store_true", dest="as_json")
     return parser
 
 
@@ -132,6 +140,14 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
         if stack_item is None:
             review_reasons.append("PR is not configured in the repository review stack")
         else:
+            pull_request = report.get("pull_request", {})
+            snapshot_matches = (
+                pull_request.get("headRefOid") == stack_item.get("head")
+                and pull_request.get("baseRefName") == stack_item.get("base")
+                and pull_request.get("baseRefOid") == stack_item.get("parent_head")
+            )
+            if not snapshot_matches:
+                review_reasons.append("PR base/head changed between status snapshots")
             if stack_item["reconciliation"] != "COHERENT":
                 review_reasons.append(f"review stack is {stack_item['reconciliation']}")
             for channel, state in stack_item["channels"].items():
@@ -164,6 +180,21 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
         )
         return result, int(getattr(result, "exit_status", 0))
     if args.command == "decide":
+        if args.decide_command == "trigger-recover-prepost":
+            if not args.confirmed_not_posted:
+                raise CliError("pre-POST recovery requires --confirmed-not-posted operator assertion")
+            paths = hosted.current_trigger_record_paths(controller.repository, args.pr)
+            if len(paths) != 1:
+                raise CliError(f"PR #{args.pr} requires exactly one current Hosted reservation for recovery")
+            return hosted.recover_prepost_reservation(
+                paths[0],
+                controller.repository,
+                args.pr,
+                args.head,
+                args.reason,
+                args.confirmed_not_posted,
+                lambda: github.fetch_pull_request(controller.repository, args.pr),
+            ), 0
         if args.decide_command == "trigger-retire":
             paths = hosted.trigger_record_paths(controller.repository, args.pr)
             if not paths:

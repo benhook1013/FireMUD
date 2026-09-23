@@ -7,16 +7,17 @@ import json
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
-from pr_review import status
+from pr_review import cli, github, status
 
 BASE = "a" * 40
 HEAD = "b" * 40
 MERGE_BASE = "c" * 40
+REQUIRED_CONTEXTS = ["Validation Gate", "Security Gate", "License Gate", "Smoke Gate", "CodeQL Gate"]
 
 
 def checkpoint_payload() -> dict:
@@ -50,6 +51,30 @@ def checkpoint_payload() -> dict:
 
 
 def github_payload(checks: list[dict] | None = None) -> dict:
+    default_checks = [
+        {
+            "__typename": "CheckRun",
+            "workflowName": context,
+            "name": context,
+            "startedAt": "2026-09-23T00:00:00Z",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "head_sha": HEAD,
+            "app": {"id": 42, "slug": "github-actions"},
+        }
+        for context in REQUIRED_CONTEXTS
+    ]
+    selected_checks = checks or default_checks
+    lifecycle = {
+        str(value.get(key)).upper()
+        for value in selected_checks
+        if isinstance(value, dict)
+        for key in ("status", "state", "conclusion")
+        if value.get(key) is not None
+    }
+    aggregate_state = "FAILURE" if lifecycle & {"FAILURE", "ERROR", "CANCELLED"} else (
+        "PENDING" if lifecycle & {"EXPECTED", "IN_PROGRESS", "PENDING", "QUEUED", "RUNNING"} else "SUCCESS"
+    )
     return {
         "data": {
             "repository": {
@@ -65,6 +90,9 @@ def github_payload(checks: list[dict] | None = None) -> dict:
                     "mergeStateStatus": "CLEAN",
                     "isDraft": False,
                     "url": "https://github.test/pull/2838",
+                    "commits": {
+                        "nodes": [{"commit": {"oid": HEAD, "statusCheckRollup": {"state": aggregate_state}}}]
+                    },
                     "body": (
                         "<!-- firemud:cloc-report:start -->\n"
                         "<!-- firemud:cloc-report:metadata "
@@ -79,9 +107,17 @@ def github_payload(checks: list[dict] | None = None) -> dict:
                         + " -->\n"
                         "<!-- firemud:cloc-report:end -->"
                     ),
-                    "statusCheckRollup": checks or [{"name": "build", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+                    "statusCheckRollup": selected_checks,
+                    "required_status_checks": {
+                        "available": True,
+                        "contexts": REQUIRED_CONTEXTS,
+                        "checks": [{"context": context, "app_id": 42} for context in REQUIRED_CONTEXTS],
+                    },
                     "reviewThreads": {
-                        "nodes": [{"isResolved": False, "isOutdated": False}, {"isResolved": True, "isOutdated": False}]
+                        "nodes": [
+                            {"id": "PRRT_1", "isResolved": False, "isOutdated": False},
+                            {"id": "PRRT_2", "isResolved": True, "isOutdated": False},
+                        ]
                     },
                     "comments": {"nodes": []},
                     "reviews": {"nodes": []},
@@ -122,6 +158,12 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(report["checkpoint_counts"]["by_type"]["CLI"]["accepted"], 1)
         self.assertEqual(report["threads"], {"current": 1, "outdated": 0, "total": 1})
         self.assertFalse(report["ready"])
+
+    def test_review_thread_queries_use_opaque_ids_without_database_id(self) -> None:
+        self.assertNotIn("databaseId isResolved", github._BASE_QUERY)
+        self.assertNotIn("databaseId isResolved", github._connection_query("reviewThreads"))
+        report = self._ready_report(github_payload())
+        self.assertEqual(report["unresolved_threads"][0]["id"], "PRRT_1")
 
     def test_live_comment_shape_is_converted_to_historical_checkpoint_evidence(self) -> None:
         payload = github_payload()
@@ -196,6 +238,214 @@ class StatusTest(unittest.TestCase):
         with patch.object(status, "build_report", return_value={"verdict": "READY", "pr_number": 2838}):
             report = status.status(2838, as_json=True, repo="owner/repo")
         self.assertEqual(report["verdict"], "READY")
+
+    def test_2838_required_gates_and_aggregate_success_can_still_be_blocked(self) -> None:
+        payload = github_payload()
+        pr = payload["data"]["repository"]["pullRequest"]
+        pr["mergeStateStatus"] = "BLOCKED"
+        pr["reviewThreads"] = {"nodes": []}
+
+        report = self._ready_report(payload)
+
+        self.assertEqual(report["ci"]["required"]["status"], "passed")
+        self.assertEqual(
+            [item["status"] for item in report["ci"]["required"]["contexts"]],
+            ["success"] * 5,
+        )
+        self.assertEqual(report["ci"]["aggregate"], {"state": "SUCCESS", "source": "github"})
+        self.assertEqual(report["threads"]["total"], 0)
+        self.assertFalse(report["ready"])
+        self.assertEqual(report["verdict"], "BLOCKED — cause not exposed by available API")
+        self.assertEqual(report["reasons"], ["BLOCKED — cause not exposed by available API"])
+        json.dumps(report)
+
+    def test_2838_close_reopen_fixture_shows_newly_pending_required_gates(self) -> None:
+        pending_checks = [
+            {
+                "__typename": "CheckRun",
+                "workflowName": context,
+                "name": context,
+                "startedAt": "2026-09-23T03:00:00Z",
+                "status": "IN_PROGRESS",
+                "conclusion": None,
+                "head_sha": HEAD,
+                "app": {"id": 42, "slug": "github-actions"},
+            }
+            for context in REQUIRED_CONTEXTS
+        ]
+        payload = github_payload(pending_checks)
+        pr = payload["data"]["repository"]["pullRequest"]
+        pr["mergeStateStatus"] = "BLOCKED"
+        pr["reviewThreads"] = {"nodes": []}
+
+        report = self._ready_report(payload)
+
+        self.assertEqual(report["ci"]["aggregate"]["state"], "PENDING")
+        self.assertEqual(report["ci"]["required"]["status"], "pending")
+        self.assertEqual(
+            {item["status"] for item in report["ci"]["required"]["contexts"]},
+            {"pending"},
+        )
+        self.assertFalse(report["ready"])
+        self.assertIn("required status checks are pending", report["reasons"][-1])
+
+    def test_required_context_prefers_expected_app_over_later_wrong_app(self) -> None:
+        payload = github_payload()
+        pr = payload["data"]["repository"]["pullRequest"]
+        pr["reviewThreads"] = {"nodes": []}
+        wrong_app = dict(pr["statusCheckRollup"][0])
+        wrong_app.update(
+            {
+                "startedAt": "2026-09-23T02:00:00Z",
+                "conclusion": "FAILURE",
+                "app": {"id": 99, "slug": "untrusted-app"},
+            }
+        )
+        pr["statusCheckRollup"].append(wrong_app)
+
+        report = self._ready_report(payload)
+
+        validation = report["ci"]["required"]["contexts"][0]
+        self.assertEqual(validation["status"], "success")
+        self.assertEqual(validation["result"]["app"]["id"], 42)
+        self.assertEqual(report["ci"]["aggregate"]["state"], "SUCCESS")
+
+    def test_required_context_with_only_wrong_app_is_visible_failure(self) -> None:
+        payload = github_payload()
+        pr = payload["data"]["repository"]["pullRequest"]
+        pr["reviewThreads"] = {"nodes": []}
+        pr["statusCheckRollup"][0]["app"] = {"id": 99, "slug": "untrusted-app"}
+        pr["statusCheckRollup"][0]["conclusion"] = "SUCCESS"
+
+        report = self._ready_report(payload)
+
+        validation = report["ci"]["required"]["contexts"][0]
+        self.assertEqual(validation["status"], "wrong_app")
+        self.assertEqual(report["ci"]["required"]["status"], "failed")
+        self.assertIn("wrong app", " ".join(report["reasons"]))
+
+    def test_missing_or_mismatched_aggregate_head_fails_visibly(self) -> None:
+        for mutate in (lambda pr: pr.pop("commits"), lambda pr: pr["commits"]["nodes"][0]["commit"].update({"oid": "c" * 40})):
+            with self.subTest(mutate=mutate):
+                payload = github_payload()
+                pr = payload["data"]["repository"]["pullRequest"]
+                pr["reviewThreads"] = {"nodes": []}
+                mutate(pr)
+
+                report = self._ready_report(payload)
+
+                self.assertEqual(report["ci"]["aggregate"]["state"], "UNKNOWN")
+                self.assertFalse(report["ready"])
+                self.assertTrue(any("aggregate rollup" in reason for reason in report["reasons"]))
+
+    def test_optional_cancelled_check_is_separate_from_required_gates(self) -> None:
+        payload = github_payload()
+        pr = payload["data"]["repository"]["pullRequest"]
+        pr["reviewThreads"] = {"nodes": []}
+        pr["statusCheckRollup"].append(
+            {
+                "__typename": "CheckRun",
+                "workflowName": "Optional Workflow",
+                "name": "Optional Summary",
+                "startedAt": "2026-09-23T02:00:00Z",
+                "status": "COMPLETED",
+                "conclusion": "CANCELLED",
+                "head_sha": HEAD,
+                "app": {"id": 42, "slug": "github-actions"},
+            }
+        )
+        pr["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["state"] = "FAILURE"
+
+        report = self._ready_report(payload)
+
+        self.assertEqual(report["ci"]["required"]["status"], "passed")
+        self.assertEqual([item["name"] for item in report["ci"]["optional"]["failed"]], ["Optional Summary"])
+        self.assertEqual(report["ci"]["aggregate"]["state"], "FAILURE")
+        self.assertFalse(report["ready"])
+        self.assertIn("GitHub aggregate rollup is FAILURE", report["reasons"])
+
+    def test_missing_branch_protection_authority_is_visible_and_blocks_readiness(self) -> None:
+        payload = github_payload()
+        del payload["data"]["repository"]["pullRequest"]["required_status_checks"]
+
+        report = self._ready_report(payload)
+
+        self.assertFalse(report["ci"]["required"]["available"])
+        self.assertIn("authoritative branch protection is unavailable", report["ci"]["required"]["reason"])
+        self.assertFalse(report["ready"])
+
+    def test_cli_status_fails_closed_when_snapshots_have_different_base_or_head(self) -> None:
+        report = {
+            "pull_request": {
+                "headRefOid": HEAD,
+                "baseRefName": "develop",
+                "baseRefOid": BASE,
+            },
+            "reasons": [],
+            "ready": True,
+            "verdict": "READY",
+        }
+        for stack_head, stack_parent_head in (("e" * 40, BASE), (HEAD, "f" * 40)):
+            with self.subTest(head=stack_head, parent_head=stack_parent_head):
+                controller = Mock()
+                controller.status.return_value = {
+                    "prs": [
+                        {
+                            "pr": 2838,
+                            "head": stack_head,
+                            "base": "develop",
+                            "parent_head": stack_parent_head,
+                            "reconciliation": "COHERENT",
+                            "channels": {"hosted": "COMPLETE", "cli": "COMPLETE"},
+                        }
+                    ]
+                }
+
+                with (
+                    patch.object(cli, "default_controller", return_value=controller),
+                    patch.object(status, "status", return_value=report),
+                ):
+                    value, exit_status = cli._dispatch(cli._parser().parse_args(["status", "--pr", "2838", "--json"]))
+
+                self.assertEqual(exit_status, 0)
+                self.assertFalse(value["ready"])
+                self.assertEqual(value["verdict"], "NOT READY")
+                self.assertIn("PR base/head changed between status snapshots", value["reasons"])
+
+    def test_cli_status_remains_ready_when_base_and_head_snapshots_match(self) -> None:
+        report = {
+            "pull_request": {
+                "headRefOid": HEAD,
+                "baseRefName": "develop",
+                "baseRefOid": BASE,
+            },
+            "reasons": [],
+            "ready": True,
+            "verdict": "READY",
+        }
+        controller = Mock()
+        controller.status.return_value = {
+            "prs": [
+                {
+                    "pr": 2838,
+                    "head": HEAD,
+                    "base": "develop",
+                    "parent_head": BASE,
+                    "reconciliation": "COHERENT",
+                    "channels": {"hosted": "COMPLETE", "cli": "COMPLETE"},
+                }
+            ]
+        }
+
+        with (
+            patch.object(cli, "default_controller", return_value=controller),
+            patch.object(status, "status", return_value=report),
+        ):
+            value, exit_status = cli._dispatch(cli._parser().parse_args(["status", "--pr", "2838", "--json"]))
+
+        self.assertEqual(exit_status, 0)
+        self.assertTrue(value["ready"], value["reasons"])
+        self.assertEqual(value["verdict"], "READY")
 
     def test_latest_exact_head_summary_only_outside_diff_finding_blocks_readiness(self) -> None:
         payload = github_payload()

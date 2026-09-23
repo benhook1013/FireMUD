@@ -10,11 +10,13 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from subprocess import CompletedProcess
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
+from pr_review import cli as review_cli
 from pr_review import evidence, github, hosted
 from pr_review.cli_runner import EffectiveParent, PullRequestSnapshot, ReviewTarget
 from pr_review.controller import ControllerError
@@ -115,6 +117,7 @@ class RuntimeTest(unittest.TestCase):
                 encoding="utf-8",
             )
             (run / "exit-status").write_text("0\n", encoding="utf-8")
+            (run / "decisions.tsv").write_text("1\trejected\talready fixed\n", encoding="utf-8")
             live = LiveGitHub("owner/repo")
             with (
                 patch.object(github, "fetch_pull_request", return_value=payload),
@@ -145,6 +148,11 @@ class RuntimeTest(unittest.TestCase):
             "body": hosted.FULL_COMMAND,
             "user": {"login": "maintainer"},
         }
+
+        def gh_call(args, **kwargs):
+            output = {"login": "maintainer"} if args == ["gh", "api", "user"] else comment
+            return CompletedProcess(args, 0, json.dumps(output), "")
+
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "trigger.json"
             with (
@@ -153,7 +161,7 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(hosted, "default_trigger_record_path", return_value=path),
                 patch(
                     "pr_review.runtime.subprocess.run",
-                    return_value=CompletedProcess([], 0, json.dumps(comment), ""),
+                    side_effect=gh_call,
                 ),
             ):
                 result = HostedRunner("owner/repo", live)(target, expect_pr=42)
@@ -309,6 +317,56 @@ class RuntimeTest(unittest.TestCase):
             history = self._history(common, payload)
             self.assertFalse(any(item.get("checkpoint") == "12" and item.get("completed") for item in history))
 
+    def test_hosted_duplicate_or_forged_zero_checkpoint_cannot_override_adjudicated_response(self) -> None:
+        reviewed = "2026-09-23T00:02:00Z"
+        trigger = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-23T00:01:00Z",
+            "updatedAt": "2026-09-23T00:01:00Z",
+            "url": "https://example.test/comments/10",
+        }
+        original = {
+            "databaseId": 12,
+            "author": {"login": "maintainer"},
+            "body": f"Hosted: 1 found / 1 accepted · `{HEAD[:12]}` · 1 files · 5s\n<!-- firemud-hosted-review: 55 -->",
+            "createdAt": reviewed,
+            "updatedAt": reviewed,
+        }
+        forged_zero = {
+            **original,
+            "databaseId": 13,
+            "author": {"login": "other-user"},
+            "body": f"Hosted: 1 found / 0 accepted · `{HEAD[:12]}` · 1 files · 5s\n<!-- firemud-hosted-review: 55 -->",
+            "createdAt": "2026-09-23T00:03:00Z",
+            "updatedAt": "2026-09-23T00:03:00Z",
+        }
+        duplicate_zero = {
+            **forged_zero,
+            "databaseId": 14,
+            "author": {"login": "maintainer"},
+            "createdAt": "2026-09-23T00:04:00Z",
+            "updatedAt": "2026-09-23T00:04:00Z",
+        }
+        review = {
+            "databaseId": 55,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+            "state": "COMMENTED",
+            "submittedAt": reviewed,
+            "commit": {"oid": HEAD},
+        }
+        payload = self._payload([trigger, original, forged_zero, duplicate_zero], [review])
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            record_path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            record_path.parent.mkdir(parents=True)
+            record_path.write_text(json.dumps(self._trigger_record(created="2026-09-23T00:01:00Z")), encoding="utf-8")
+            history = self._history(common, payload)
+        self.assertEqual([item["accepted"] for item in history], [1])
+        self.assertEqual([item["checkpoint"] for item in history], ["12"])
+
     def test_legacy_posting_record_in_any_current_location_holds_runner(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
         target = ReviewTarget(
@@ -341,11 +399,248 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(github, "fetch_pull_request", return_value=self._payload()),
                 patch.object(hosted, "default_trigger_record_path", return_value=common / "firemud" / "new.json"),
                 patch.object(evidence, "git_common_dir", return_value=common),
-                self.assertRaisesRegex(ControllerError, "ambiguous"),
+                self.assertRaisesRegex(ControllerError, "cannot be adopted safely"),
             ):
                 HostedRunner("owner/repo", live)(target, expect_pr=42)
             self.assertEqual(hosted.current_trigger_record_paths("owner/repo", 42, common), [old])
             self.assertEqual(legacy_path, [])
+
+    def test_hosted_runner_adopts_only_one_live_comment_matching_pre_post_reservation(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
+        live = LiveGitHub("owner/repo")
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            path.parent.mkdir(parents=True)
+            posting = {
+                **self._trigger_record(),
+                "status": "posting",
+                "trigger": None,
+                "posting_started_at": "2026-09-23T00:00:00Z",
+                "posting_actor_login": "maintainer",
+            }
+            path.write_text(json.dumps(posting), encoding="utf-8")
+            observed = {
+                "databaseId": 123,
+                "author": {"login": "maintainer"},
+                "body": hosted.FULL_COMMAND,
+                "createdAt": "2026-09-23T00:01:00Z",
+                "updatedAt": "2026-09-23T00:01:00Z",
+                "url": "https://example.test/comments/123",
+            }
+            payload = self._payload([observed])
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                self.assertRaisesRegex(ControllerError, "awaiting_response"),
+            ):
+                HostedRunner("owner/repo", live)(target, expect_pr=42)
+            recovered = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(recovered["status"], "posted")
+            self.assertEqual(recovered["trigger"]["id"], 123)
+            self.assertEqual(recovered["recovery"]["action"], "adopt_observed_post")
+
+    def test_operator_prepost_recovery_archives_only_confirmed_live_no_post(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            path.parent.mkdir(parents=True)
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "status": "posting",
+                        "repository": "owner/repo",
+                        "pr_number": 42,
+                        "head_sha": HEAD,
+                        "posting_started_at": "2026-09-23T00:00:00Z",
+                        "posting_actor_login": "maintainer",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            args = review_cli._parser().parse_args(
+                [
+                    "decide",
+                    "trigger-recover-prepost",
+                    "--pr",
+                    "42",
+                    "--head",
+                    HEAD,
+                    "--reason",
+                    "verified no POST was issued",
+                    "--confirmed-not-posted",
+                ]
+            )
+            with (
+                patch.object(review_cli, "default_controller", return_value=SimpleNamespace(repository="owner/repo")),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[path]),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(github, "fetch_pull_request", return_value=self._payload()),
+            ):
+                result, exit_status = review_cli._dispatch(args)
+
+            self.assertEqual(exit_status, 0)
+            self.assertEqual(result["status"], "abandoned_no_post")
+            self.assertFalse(path.exists())
+            audit_path = Path(result["audit_path"])
+            audit = json.loads(audit_path.read_text(encoding="utf-8"))
+            self.assertEqual(audit["status"], "abandoned_prepost")
+            self.assertEqual(audit["recovery"]["action"], "operator_confirmed_prepost_abandon")
+            self.assertEqual(audit["recovery"]["reason"], "verified no POST was issued")
+            self.assertTrue(audit["recovery"]["confirmed_not_posted"])
+            self.assertEqual(audit_path.parent, path.parent)
+            self.assertEqual(hosted.current_trigger_record_paths("owner/repo", 42, common), [])
+            self.assertNotIn(audit_path, hosted.trigger_record_paths("owner/repo", 42, common))
+
+    def test_prepost_audit_write_failure_leaves_active_reservation_untouched(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            self._posting_record(path)
+            original = json.loads(path.read_text(encoding="utf-8"))
+            with (
+                patch.object(hosted, "_write_json_exclusive", side_effect=OSError("injected audit write failure")),
+                self.assertRaisesRegex(OSError, "injected audit write failure"),
+            ):
+                self._dispatch_prepost_recovery(path, self._prepost_recovery_args())
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), original)
+            self.assertEqual(list(path.parent.glob("prepost-abandoned-*.json")), [])
+
+    def test_prepost_unlink_failure_keeps_active_hold_when_audit_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            self._posting_record(path)
+            original = json.loads(path.read_text(encoding="utf-8"))
+            with (
+                patch.object(hosted.os, "unlink", side_effect=PermissionError("injected reservation unlink failure")),
+                self.assertRaisesRegex(PermissionError, "injected reservation unlink failure"),
+            ):
+                self._dispatch_prepost_recovery(path, self._prepost_recovery_args())
+
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), original)
+            audit_paths = list(path.parent.glob("prepost-abandoned-*.json"))
+            self.assertEqual(len(audit_paths), 1)
+            audit = json.loads(audit_paths[0].read_text(encoding="utf-8"))
+            self.assertEqual(audit["status"], "abandoned_prepost")
+            self.assertEqual(hosted.current_trigger_record_paths("owner/repo", 42, common), [path])
+            self.assertNotIn(audit_paths[0], hosted.trigger_record_paths("owner/repo", 42, common))
+
+    def _posting_record(self, path: Path, *, actor="maintainer", include_identity=True) -> None:
+        record = {
+            "schema_version": 2,
+            "status": "posting",
+            "repository": "owner/repo",
+            "pr_number": 42,
+            "head_sha": HEAD,
+        }
+        if include_identity:
+            record["posting_started_at"] = "2026-09-23T00:00:00Z"
+            record["posting_actor_login"] = actor
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record), encoding="utf-8")
+
+    def _prepost_recovery_args(self, *, head=HEAD, confirmed=True):
+        values = [
+            "decide",
+            "trigger-recover-prepost",
+            "--pr",
+            "42",
+            "--head",
+            head,
+            "--reason",
+            "operator verified no POST was issued",
+        ]
+        if confirmed:
+            values.append("--confirmed-not-posted")
+        return review_cli._parser().parse_args(values)
+
+    def _dispatch_prepost_recovery(self, path: Path, args, payload=None):
+        with (
+            patch.object(review_cli, "default_controller", return_value=SimpleNamespace(repository="owner/repo")),
+            patch.object(hosted, "current_trigger_record_paths", return_value=[path]),
+            patch.object(hosted, "default_trigger_record_path", return_value=path),
+            patch.object(github, "fetch_pull_request", return_value=payload or self._payload()),
+        ):
+            return review_cli._dispatch(args)
+
+    def test_prepost_recovery_refuses_matching_live_command(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pr-42" / "trigger.json"
+            self._posting_record(path)
+            command = {
+                "databaseId": 123,
+                "author": {"login": "maintainer"},
+                "body": hosted.FULL_COMMAND,
+                "createdAt": "2026-09-23T00:01:00Z",
+                "url": "https://example.test/comments/123",
+            }
+            with self.assertRaisesRegex(ValueError, "matching full-review command"):
+                self._dispatch_prepost_recovery(path, self._prepost_recovery_args(), self._payload([command]))
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "posting")
+
+    def test_prepost_recovery_refuses_ambiguous_live_command(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pr-42" / "trigger.json"
+            self._posting_record(path)
+            command = {
+                "databaseId": 123,
+                "author": {"login": "another-maintainer"},
+                "body": hosted.FULL_COMMAND,
+                "createdAt": "2026-09-23T00:01:00Z",
+                "url": "https://example.test/comments/123",
+            }
+            with self.assertRaisesRegex(ValueError, "ambiguous full-review command"):
+                self._dispatch_prepost_recovery(path, self._prepost_recovery_args(), self._payload([command]))
+            self.assertTrue(path.exists())
+
+    def test_prepost_recovery_requires_exact_current_head(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pr-42" / "trigger.json"
+            self._posting_record(path)
+            payload = self._payload()
+            payload["data"]["repository"]["pullRequest"]["headRefOid"] = "d" * 40
+            with self.assertRaisesRegex(ValueError, "current pull-request head"):
+                self._dispatch_prepost_recovery(path, self._prepost_recovery_args(), payload)
+            self.assertTrue(path.exists())
+
+    def test_prepost_recovery_requires_operator_assertion(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pr-42" / "trigger.json"
+            self._posting_record(path)
+            args = self._prepost_recovery_args(confirmed=False)
+            with (
+                patch.object(
+                    review_cli,
+                    "default_controller",
+                    return_value=SimpleNamespace(repository="owner/repo"),
+                ),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[path]),
+                patch.object(github, "fetch_pull_request") as fetch,
+                self.assertRaisesRegex(review_cli.CliError, "--confirmed-not-posted"),
+            ):
+                review_cli._dispatch(args)
+            fetch.assert_not_called()
+            self.assertTrue(path.exists())
+
+    def test_prepost_recovery_refuses_legacy_reservation_without_attempt_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pr-42" / "trigger.json"
+            self._posting_record(path, include_identity=False)
+            with self.assertRaisesRegex(ValueError, "no trusted original actor/time identity"):
+                self._dispatch_prepost_recovery(path, self._prepost_recovery_args())
+            self.assertTrue(path.exists())
 
     def test_duplicate_public_checkpoints_for_one_cli_capture_count_once(self) -> None:
         run_id = "run.Duplicate"
@@ -437,6 +732,43 @@ class RuntimeTest(unittest.TestCase):
             any(item.get("held") and item.get("checkpoint", "").startswith("summary-actions:") for item in history)
         )
         self.assertTrue(any(item.get("over_ceiling") for item in history))
+
+    def test_summary_selector_uses_current_head_updated_time_and_rejects_ties(self) -> None:
+        first = {
+            "databaseId": 31,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": (
+                f"Reviewing files that changed from the base of the PR and between `{BASE}` and `{HEAD}`.\n"
+                "Outside diff range comments (1)"
+            ),
+            "createdAt": "2026-09-23T00:01:00Z",
+            "updatedAt": "2026-09-23T00:02:00Z",
+            "url": "https://example.test/31",
+        }
+        latest = {
+            **first,
+            "databaseId": 32,
+            "body": (
+                f"Reviewing files that changed from the base of the PR and between `{BASE}` and `{HEAD}`.\n"
+                "Duplicate comments (2)"
+            ),
+            "updatedAt": "2026-09-23T00:03:00Z",
+            "url": "https://example.test/32",
+        }
+        stale_head = {
+            "databaseId": 33,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "<!-- walkthrough_start -->\nOutside diff range comments (9)",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-23T00:04:00Z",
+            "commit": {"oid": BASE},
+        }
+        selected = LiveEvidence._summary_action_counts(self._payload([first, latest], [stale_head]), HEAD)
+        self.assertEqual(selected, (0, 2, "https://example.test/32"))
+
+        tied = {**latest, "databaseId": 34, "url": "https://example.test/34"}
+        ambiguous = LiveEvidence._summary_action_counts(self._payload([latest, tied]), HEAD)
+        self.assertEqual(ambiguous, (1, 1, None))
 
 
 if __name__ == "__main__":

@@ -317,7 +317,12 @@ if not isinstance(result_env, dict) or result_env.get("CHANGES_RESULT") != "${{ 
 PY
 
   group_line=$(grep -m1 '^  group:' "$path" || true)
-  if [[ "$group_line" != *"&& 'metadata' || 'required' }}"* ]]; then
+  if [[ "$workflow" == "ci.yml" || "$workflow" == "security.yml" || "$workflow" == "smoke.yml" ]]; then
+    if [[ "$group_line" != *"format('metadata-{0}', github.run_id) || 'required' }}"* ]]; then
+      echo "$workflow concurrency group must give every metadata-only run a unique namespace" >&2
+      exit 1
+    fi
+  elif [[ "$group_line" != *"&& 'metadata' || 'required' }}"* ]]; then
     echo "$workflow concurrency group must separate metadata and required PR runs" >&2
     exit 1
   fi
@@ -340,6 +345,83 @@ license-scan.yml|license-gate|License Gate|License Checks|license-scan.yml|.gith
 smoke.yml|smoke-gate|Smoke Gate|PR Smoke Gate|smoke.yml|.github/workflows/smoke.yml
 codeql.yml|codeql-gate|CodeQL Gate|CodeQL Analysis|codeql.yml|.github/workflows/codeql.yml
 EOF
+
+# Model two rapid metadata edits against the unchanged head. Each lightweight
+# run gets an independent namespace, while the required gate contexts remain
+# the sole authoritative checks and optional summaries cannot leave cancelled
+# or failed residue in the aggregate rollup.
+python3 - "$ROOT_DIR" <<'PY'
+from pathlib import Path
+import sys
+
+import yaml
+
+root = Path(sys.argv[1])
+workflows = {
+    "ci.yml": ("ci", "validation-gate", "Validation Gate"),
+    "security.yml": ("security", "security-gate", "Security Gate"),
+    "smoke.yml": ("smoke", "smoke-gate", "Smoke Gate"),
+}
+required_contexts = {
+    "Validation Gate": "success",
+    "Security Gate": "success",
+    "License Gate": "success",
+    "Smoke Gate": "success",
+    "CodeQL Gate": "success",
+}
+metadata_contexts = {
+    "Validation Summary": "skipped",
+    "Security Summary": "skipped",
+    "Smoke Summary": "skipped",
+}
+metadata_guard = "github.event.action != 'edited' || github.event.changes.base.ref != null"
+metadata_events = (91001, 91002)
+
+for workflow, (prefix, gate_job, gate_name) in workflows.items():
+    path = root / ".github" / "workflows" / workflow
+    data = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    group = data["concurrency"]["group"]
+    if "github.run_id" not in group:
+        raise SystemExit(f"{workflow} metadata group must include github.run_id")
+    if "github.event.pull_request.number" not in group:
+        raise SystemExit(f"{workflow} concurrency group must remain PR-scoped")
+    jobs = data["jobs"]
+    for job_name, job in jobs.items():
+        if job_name == gate_job:
+            continue
+        condition = job.get("if", "") if isinstance(job, dict) else ""
+        if metadata_guard not in condition:
+            raise SystemExit(
+                f"{workflow} job {job_name} could duplicate substantive work on metadata edits"
+            )
+
+    # The production expression resolves to a run-specific metadata suffix;
+    # this fixture makes the two-event isolation requirement executable.
+    groups = {
+        f"{prefix}-pr-2844-metadata-{run_id}" for run_id in metadata_events
+    }
+    if len(groups) != len(metadata_events):
+        raise SystemExit(f"{workflow} rapid metadata edits share a concurrency group")
+    if f"{prefix}-pr-2844-required" in groups:
+        raise SystemExit(f"{workflow} metadata edits can cancel the required group")
+
+    gate = jobs[gate_job]
+    if gate.get("name") != gate_name and workflow != "smoke.yml":
+        raise SystemExit(f"{workflow} required gate name changed")
+
+aggregate = {**required_contexts, **metadata_contexts}
+residue = {"failure", "cancelled"}
+if residue.intersection(aggregate.values()):
+    raise SystemExit("metadata edit aggregate contains failed or cancelled residue")
+if set(required_contexts) != {
+    "Validation Gate",
+    "Security Gate",
+    "License Gate",
+    "Smoke Gate",
+    "CodeQL Gate",
+}:
+    raise SystemExit("the five required gate contexts are not all authoritative")
+PY
 
 # shellcheck disable=SC2016 # Match the checked-in arithmetic assignment literally.
 poll_timeout_minutes="$(sed -n 's/^poll_timeout_seconds=\$((\([1-9][0-9]*\) \* 60))$/\1/p' "$POLL_SCRIPT")"

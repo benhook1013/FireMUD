@@ -23,8 +23,12 @@ import tempfile
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
+
+from . import github as github_api
+from . import hosted
 
 
 class ReviewRunnerError(RuntimeError):
@@ -240,6 +244,34 @@ def _common_dir(runner: CommandRunner, source_root: Path) -> Path:
     return path
 
 
+def _assert_no_active_hosted_review(repo: str, pr_number: int, common_dir: Path) -> None:
+    """Refuse CLI work while a durable Hosted request for this PR is unresolved."""
+
+    records = hosted.current_trigger_record_paths(repo, pr_number, common=common_dir)
+    if not records:
+        return
+    if len(records) > 1:
+        raise ReviewRunnerError("multiple current Hosted reservations require operator resolution")
+
+    try:
+        payload = github_api.fetch_pull_request(repo, pr_number)
+        for record_path in records:
+            record = hosted.load_trigger_reservation(record_path, repo, pr_number)
+            state = hosted.trigger_state(repo, pr_number, payload, record, record_path)
+            if state.state in {"active", "awaiting_response", "ambiguous", "unattributed", "timed_out"}:
+                raise ReviewRunnerError(f"Hosted review requires resolution before CLI review: {state.state}")
+            if state.state == "rate_limited":
+                reset = hosted.parse_timestamp(state.cooldown_until)
+                if reset is None or reset > datetime.now(timezone.utc):
+                    raise ReviewRunnerError("Hosted review cooldown is unresolved")
+            elif state.state not in {"completed", "noop", "failed", "retired"}:
+                raise ReviewRunnerError(f"Hosted review has an unsupported state before CLI review: {state.state}")
+    except ReviewRunnerError:
+        raise
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
+        raise ReviewRunnerError("current Hosted reservation cannot be safely classified") from error
+
+
 def _ensure_commit(runner: CommandRunner, source_root: Path, commit: str, label: str) -> None:
     """Make an exact GitHub SHA available without accepting FETCH_HEAD ambiguity."""
 
@@ -369,7 +401,26 @@ def run_cli_review(
             fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
             raise ReviewRunnerError(f"another CLI review is already running (lock: {lock_path})") from error
+        hosted_lock_handle = None
+        hosted_lock_acquired = False
         try:
+            repository = target.repository or str(getattr(github, "repo", "unknown/unknown"))
+            hosted_record_path = hosted.default_trigger_record_path(
+                repository, target.snapshot.number, common=common_dir
+            )
+            hosted_record_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            hosted_record_path.parent.chmod(0o700)
+            hosted_lock_path = hosted_record_path.parent / "request.lock"
+            hosted_lock_path.touch(mode=0o600, exist_ok=True)
+            hosted_lock_handle = hosted_lock_path.open("r+")
+            try:
+                fcntl.flock(hosted_lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as error:
+                raise ReviewRunnerError(
+                    f"another review request is active for PR #{target.snapshot.number} (lock: {hosted_lock_path})"
+                ) from error
+            hosted_lock_acquired = True
+            _assert_no_active_hosted_review(repository, target.snapshot.number, common_dir)
             capture_dir.mkdir(mode=0o700)
             live = github.pull_request(target.snapshot.number)
             live_files = github.pull_request_files(target.snapshot.number)
@@ -491,6 +542,10 @@ def run_cli_review(
                 (capture_dir / "error").write_text(f"{error}\n", encoding="utf-8")
             raise
         finally:
+            if hosted_lock_handle is not None:
+                if hosted_lock_acquired:
+                    fcntl.flock(hosted_lock_handle.fileno(), fcntl.LOCK_UN)
+                hosted_lock_handle.close()
             fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
 
 

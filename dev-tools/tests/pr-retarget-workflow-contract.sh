@@ -328,14 +328,18 @@ preview_comment_test_path="$ROOT_DIR/dev-tools/tests/publish-preview-comment.tes
 
 node --test "$preview_comment_test_path"
 
-for path in "$ci_path" "$smoke_path"; do
+security_path="$ROOT_DIR/.github/workflows/security.yml"
+
+for path in "$ci_path" "$security_path" "$smoke_path"; do
   require_contains "$path" 'types: [opened, synchronize, reopened, edited]'
-  require_contains "$path" "&& 'metadata' || 'required' }}"
+  require_contains "$path" "format('metadata-{0}', github.run_id) || 'required' }}"
+  require_contains "$path" 'github.event.pull_request.number'
   require_contains "$path" '  cancel-in-progress: true'
 done
 
-require_contains "$ci_path" 'PR Metadata Edit (Validation Summary)'
-require_contains "$smoke_path" 'PR Metadata Edit (Smoke Summary)'
+require_exact_line "$ci_path" '    name: Validation Summary'
+require_exact_line "$security_path" '    name: Security Summary'
+require_exact_line "$smoke_path" '    name: Smoke Summary'
 # A metadata-only edit starts a non-required controller job so its preservation
 # failure cannot create a second failed branch-protection context named Smoke
 # Gate. A base retarget still uses the canonical required name.
