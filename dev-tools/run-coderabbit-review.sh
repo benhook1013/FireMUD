@@ -298,10 +298,10 @@ review_started_ns="$(python3 -c 'import time; print(time.monotonic_ns())')"
 cli_status=$?
 review_finished_ns="$(python3 -c 'import time; print(time.monotonic_ns())')"
 set -e
+printf '%s\n' "$cli_status" >"$log_dir/exit-status"
 [[ "$review_started_ns" =~ ^[0-9]+$ && "$review_finished_ns" =~ ^[0-9]+$ && "$review_finished_ns" -ge "$review_started_ns" ]] ||
   die "could not measure CodeRabbit review process duration"
 review_duration_seconds="$(( (review_finished_ns - review_started_ns + 999999999) / 1000000000 ))"
-printf '%s\n' "$cli_status" >"$log_dir/exit-status"
 printf '%s\n' "$review_duration_seconds" >"$log_dir/review-duration-seconds"
 printf 'review_duration_seconds=%s\n' "$review_duration_seconds" >>"$log_dir/metadata"
 printf 'review_duration_seconds=%s\n' "$review_duration_seconds"
