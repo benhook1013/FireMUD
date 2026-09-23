@@ -65,6 +65,12 @@ Update `AGENTS.md`, PR lifecycle guidance, AI delegation guidance when applicabl
 
 Use no CodeRabbit on this implementation. Run up to six fresh serial Luna xhigh whole-boundary cycles. Integrate, validate, publish, and record every useful cycle before the next. Stop at the first zero-useful cycle or after six productive cycles.
 
+## 2026-09-23: metadata-check rollup repair
+
+Include the reproduced #2838 metadata-edit defect in this same PR. Three rapid body/metadata edits on unchanged head `304ea81ce` launched three workflow waves under `cancel-in-progress`; superseded runs left cancelled Validation, Security, and Smoke summary jobs attached to the same commit. The first-page check view hid some of them, while the full 230-check inventory made the aggregate rollup `FAILURE` despite all five required gates passing. Skipped summary jobs also exposed their unevaluated `${{ ... }}` job-name expression as the visible check name.
+
+Correct the workflow boundary so rapid metadata-only edits cannot leave cancelled optional summaries that poison the commit rollup or produce a misleading blocked merge state. Preserve fail-closed required-gate behavior and substantive-run cancellation semantics. Use stable, readable check names rather than conditional expressions that render literally when skipped. Add focused contract coverage for repeated metadata edits/concurrency behavior and verify the final aggregate contains no cancelled/failed residue while required Validation, Security, License, Smoke, and CodeQL contexts remain authoritative.
+
 The final handoff must include the exact head, parent, unique file count, operator commands, migrated/deleted surfaces, focused and full validation, review-cycle results, known limits, clean worktree state, and PR metadata state.
 
 ## Overseer acceptance gate
