@@ -173,33 +173,94 @@ class HostedIdentityReconcilerSafetyTest {
 
   @Test
   void protectedPublicationProjectionMustBeAcceptedBeforeReadiness() {
-    List<SecretProjectionService.ProjectionResult> projections =
-        new java.util.ArrayList<>(
-            java.util.stream.Stream.concat(
-                    java.util.stream.Stream.of(
-                        SecretProjectionService.ProjectionResult.synced("ingress"),
-                        SecretProjectionService.ProjectionResult.synced("telnet"),
-                        SecretProjectionService.ProjectionResult.synced("gateway"),
-                        SecretProjectionService.ProjectionResult.synced("bridge"),
-                        SecretProjectionService.ProjectionResult.synced("grpc")),
-                    HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
-                        .map(
-                            workload ->
-                                "game-logic-service".equals(workload)
-                                    ? SecretProjectionService.ProjectionResult.awaiting(
-                                        "predecessor-not-accepted", workload)
-                                    : SecretProjectionService.ProjectionResult.synced(workload)))
-                .toList());
+    DeploymentHeadGateFixture fixture =
+        new DeploymentHeadGateFixture(
+            new RuntimeProfileService.RuntimeProfile(
+                "uid",
+                "a".repeat(40),
+                "a".repeat(40),
+                HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+                32016,
+                true));
+    when(fixture.rollout.sync(
+            org.mockito.ArgumentMatchers.eq(fixture.client),
+            org.mockito.ArgumentMatchers.eq(fixture.plan),
+            anyString(),
+            anyString(),
+            anyString(),
+            anyMap(),
+            any()))
+        .thenReturn(new DeploymentRolloutService.RolloutResult(true, true, true));
+    when(fixture.probes.probe(
+            any(),
+            anyString(),
+            anyInt(),
+            anyString(),
+            anyString(),
+            any(Secret.class),
+            anyString(),
+            any(Secret.class),
+            anyString()))
+        .thenReturn(new ServedEnvironmentProbe.ProbeResult(true, "served"));
+    Map<String, SecretProjectionService.ProjectionResult> acknowledgedProjections =
+        new java.util.LinkedHashMap<>();
+    when(fixture.projections.acknowledge(
+            any(), any(), anyString(), anyString(), anyLong(), anyLong(), anyString(), any()))
+        .thenAnswer(
+            invocation -> {
+              String role = invocation.getArgument(2, String.class);
+              String revision = invocation.getArgument(3, String.class);
+              SecretProjectionService.ProjectionResult result =
+                  HostedIdentityContract.grpcPublicationRole("game-logic-service").equals(role)
+                      ? SecretProjectionService.ProjectionResult.awaiting(
+                          "awaiting-acceptance", revision)
+                      : SecretProjectionService.ProjectionResult.synced(revision);
+              acknowledgedProjections.put(role, result);
+              return result;
+            });
 
-    assertReadinessStatus(
-        HostedIdentityReconciler.readinessStatus(
-            projections,
-            new DeploymentRolloutService.RolloutResult(true, true, true),
-            new ServedEnvironmentProbe.ProbeResult(true, "served")),
-        HostedEnvironmentIdentityStatus.Phase.Syncing,
-        "AwaitingAcceptance",
-        "predecessor-not-accepted",
-        false);
+    UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
+
+    HostedEnvironmentIdentityStatus status = result.getResource().orElseThrow().getStatus();
+    assertEquals(HostedEnvironmentIdentityStatus.Phase.Syncing, status.getPhase());
+    assertEquals("AwaitingAcceptance", status.getConditions().get(0).getReason());
+    assertEquals("awaiting-acceptance", status.getConditions().get(0).getMessage());
+    assertEquals(
+        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.size() + 5,
+        acknowledgedProjections.size());
+    assertEquals(
+        "awaiting-acceptance",
+        acknowledgedProjections
+            .get(HostedIdentityContract.grpcPublicationRole("game-logic-service"))
+            .state());
+    assertTrue(
+        acknowledgedProjections.entrySet().stream()
+            .filter(
+                entry ->
+                    !entry
+                        .getKey()
+                        .equals(HostedIdentityContract.grpcPublicationRole("game-logic-service")))
+            .allMatch(entry -> entry.getValue().isSynced()));
+    verify(fixture.rollout)
+        .sync(
+            org.mockito.ArgumentMatchers.eq(fixture.client),
+            org.mockito.ArgumentMatchers.eq(fixture.plan),
+            anyString(),
+            anyString(),
+            anyString(),
+            anyMap(),
+            any());
+    verify(fixture.probes)
+        .probe(
+            any(),
+            anyString(),
+            anyInt(),
+            anyString(),
+            anyString(),
+            any(Secret.class),
+            anyString(),
+            any(Secret.class),
+            anyString());
   }
 
   @Test

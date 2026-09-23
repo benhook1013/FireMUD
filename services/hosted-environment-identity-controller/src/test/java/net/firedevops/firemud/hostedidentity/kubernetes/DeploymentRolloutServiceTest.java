@@ -122,6 +122,12 @@ class DeploymentRolloutServiceTest {
             .getMetadata()
             .getAnnotations()
             .get(HostedIdentityContract.GRPC_REVISION_ANNOTATION));
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      if (!"game-logic-service".equals(workload)) {
+        verify(graph.resources().get(workload), never()).lockResourceVersion(anyString());
+      }
+    }
+    verify(graph.resources().get("account-service"), never()).lockResourceVersion(anyString());
   }
 
   @Test
