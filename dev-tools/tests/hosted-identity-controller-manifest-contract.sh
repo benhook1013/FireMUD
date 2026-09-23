@@ -1352,6 +1352,32 @@ assert "object.spec.issuerRef.name == 'letsencrypt-prod'" in profile_expression
 assert "object.spec.issuerRef.name == 'firemud-ca-issuer'" in profile_expression
 assert "object.spec.issuerRef.kind == 'ClusterIssuer'" in profile_expression
 assert "object.spec.issuerRef.group == 'cert-manager.io'" in profile_expression
+publication_issuer_profile = (
+    "((object.metadata.labels['firemud.dev/role'] in "
+    "['gateway-internal-ws', 'tcp-proxy-bridge'] || "
+    "object.metadata.labels['firemud.dev/role'].startsWith('grpc-publication-')) && "
+    "object.spec.issuerRef.name == 'firemud-ca-issuer')"
+)
+assert publication_issuer_profile in normalized_profile_expression
+publication_san_guard = (
+    "object.spec.usages == ['digital signature', 'key encipherment', 'client auth'])) && "
+    "(!object.metadata.labels['firemud.dev/role'].startsWith('grpc-publication-') ||"
+)
+assert publication_san_guard in normalized_profile_expression
+for required_publication_common_guard in (
+    "request.operation != 'DELETE'",
+    "object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller'",
+    "object.spec.issuerRef.kind == 'ClusterIssuer'",
+    "object.spec.issuerRef.group == 'cert-manager.io'",
+    "object.spec.privateKey.algorithm == 'RSA'",
+    "object.spec.privateKey.size == 2048",
+    "object.spec.privateKey.encoding == 'PKCS8'",
+    "object.spec.usages.all(usage,",
+):
+    assert required_publication_common_guard in normalized_profile_expression
+    assert normalized_profile_expression.index(required_publication_common_guard) < normalized_profile_expression.index(
+        "(!object.metadata.labels['firemud.dev/role'].startsWith('grpc-publication-') ||"
+    )
 assert (
     "object.metadata.labels['firemud.dev/role'] != 'tcp-proxy-bridge' || "
     "((!has(object.spec.dnsNames) || object.spec.dnsNames.size() == 0) &&"
