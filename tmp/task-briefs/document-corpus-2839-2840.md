@@ -1,38 +1,46 @@
-# Document task brief: finish #2839, then resume #2840
+# Document task brief: finish Unit 1A #2840
 
 Status: active
 
 Owner: Document
 
-## Current state
+This rewrite replaces the completed #2839 assignment and every earlier resume instruction in this file.
 
-- #2839 is the combined 5C/5D successor, based on final #2829.
-- Published checkpoint: `bd9728099cae2e219245c75b5a23a7937c3c6b51`, 94 unique files.
-- Cycles 9–12 were `17/0 → 12/1 → 26/2 → 8/0`. Cycle 12 is the first dry corrected-state cycle after productive Cycle 11, so taper is not established.
-- Exact-head preview and dependency submission pass. Full exact-head Validation and Docker/Testcontainers runtime proof remain absent.
-- The independent no-loss audit accounts for all #2661 source hunks with zero lost obligations; #2661 is closed as superseded.
-- ADR 0183 remains `Proposed - Pending Human Review` and non-authoritative.
-- #2840 is the Unit 1A child at `1dc0ddb5449047554ff19ff288a9c12e02857568`, 17 unique files. Cycles 1–4 were all productive: `16/1 → 24/1 → 18/1 → 33/1`.
+## Settled parent
+
+- Combined 5C/5D draft #2839 is final at `a38861d006521b1e604b525a01d21ba0ce2de8f3`, 94 files unique to #2829.
+- Whole-unit Cycles 14 and 15 were consecutive corrected-state dry cycles, so corpus taper is established.
+- The final exact-head Validation run executed database tests but remained red on four inherited Automation fixtures/assertions and one inherited Game Session constraint-name assertion. #2839 changes none of those failing paths. Preserve this proof limit; do not reopen #2839 discovery or claim it is CI-green.
+- #2839 was propagated normally into #2840 with #2840's unique patch preserved.
+
+## Active target
+
+- #2840 is the Unit 1A child of #2839.
+- Published head: `985391edca00410ddab2a15be0b7d7b011c1fb73`.
+- Unique scope: 46 files.
+- Cycles 1–8 were all productive: `16/1 → 24/1 → 18/1 → 33/1 → 13/1 → 17/1 → 47/3 → 28/3` raw/useful.
+- Current dry streak: zero. Unit 1A is not corpus-tapered or merge-ready.
+- Cycle 8's accepted corrections fail closed on unknown pointer scope, bound Game Session routing availability, and require gameplay-admitting membership for character discovery. Current focused validation is green; Docker-backed Account proof remains skipped.
 
 ## Assignment
 
-Continue #2839 only from the exact published checkpoint with a fresh whole-unit Cycle 13.
+Resume only #2840 with fresh serial whole-Unit-1A reviews starting at Cycle 9.
 
-- If Cycle 13 is dry, it combines with Cycle 12 to establish taper. Complete the best available exact-head validation, publish and ledger the final checkpoint, then propagate that exact parent normally into #2840 without changing #2840's unique patch.
-- If Cycle 13 is productive, adjudicate, integrate, validate, publish, and continue serial whole-unit cycles through Cycle 16 as the next report boundary.
-- Warn at 99 files and stop before publishing #2839 above 100 files. Do not silently split or alter topology.
-- Keep Docker/Testcontainers proof limitations explicit; do not infer runtime proof from compilation or unrelated green checks.
-
-After #2839 tapers and its exact checkpoint is propagated, resume #2840 at fresh whole-unit Cycle 5. Continue serial corrected-state cycles with the established two-consecutive-dry taper and four-cycle report boundary. Integrate and validate every useful cycle before the next.
+- Review the complete corrected semantic unit, not merely the latest diff.
+- Adjudicate every candidate. Integrate, validate, publish, and ledger every useful accepted correction before starting the next cycle.
+- Require two consecutive corrected-state zero-useful cycles for taper. Any useful accepted finding resets the dry streak.
+- Cycles 9–12 are the next report boundary. Stop earlier if two consecutive dry cycles establish taper; otherwise finish Cycle 12, publish the coherent checkpoint, and report the exact next resume point.
+- A numerical cycle boundary is a report boundary, not merge readiness and not permission to leave accepted work unfixed.
 
 ## Boundaries
 
+- Keep #2839 and all earlier train PRs untouched.
 - Do not use CodeRabbit or Hosted capacity.
 - Do not merge or enable auto-merge.
 - Do not begin Unit 1B while Unit 1A remains unfinished.
-- Do not touch Gameplay, General, or earlier train PRs except for the normal #2839-to-#2840 parent propagation described above.
+- Keep Docker/Testcontainers and live-deployment proof limits explicit.
 - Do not implement proposal-dependent ADR 0183 behavior.
 
 ## Handoff
 
-At each report boundary, provide exact head/base, unique file count, raw/useful cycle sequence, accepted-finding significance, validation with executed/skipped proof, clean/publication state, taper state, and the precise next resume point. A report boundary is not merge readiness.
+Report exact head/base, unique file count, Cycles 9–12 raw/useful sequence, accepted-finding significance, executed and skipped validation, clean/publication state, dry streak, and the precise next action. State plainly whether Unit 1A tapered; do not call it merge-ready solely from corpus taper.
