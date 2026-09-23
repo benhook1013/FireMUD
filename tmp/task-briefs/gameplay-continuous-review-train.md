@@ -4,7 +4,7 @@ Status: active; #2844 acceptance-tested head published on 2026-09-24
 
 Owner: Gameplay
 
-This rewritten brief supersedes the earlier #2838-only contents and every earlier Gameplay chat instruction about stopping after #2838 or advancing directly to #2818. It preserves the current #2838 obligation, adds the intervening review-control prerequisite, and authorizes continuous review through #2827. Do not reconstruct policy from chat history.
+This rewritten brief supersedes the earlier #2838-only contents and every earlier Gameplay chat instruction about stopping after #2838 or advancing directly to #2818. It records #2838 as merged, places the review-control prerequisite before #2818, and authorizes continuous review through #2827. Do not reconstruct policy from chat history.
 
 ## Authorized queue
 
