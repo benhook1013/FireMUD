@@ -183,8 +183,8 @@ class StatusTest(unittest.TestCase):
         self.assertFalse(report["ready"])
 
     def test_review_thread_queries_use_opaque_ids_without_database_id(self) -> None:
-        self.assertNotIn("databaseId isResolved", github._BASE_QUERY)
-        self.assertNotIn("databaseId isResolved", github._connection_query("reviewThreads"))
+        self.assertNotRegex(github._BASE_QUERY, r"databaseId\s+isResolved")
+        self.assertNotRegex(github._connection_query("reviewThreads"), r"databaseId\s+isResolved")
         report = self._ready_report(github_payload())
         self.assertEqual(report["unresolved_threads"][0]["id"], "PRRT_1")
 
