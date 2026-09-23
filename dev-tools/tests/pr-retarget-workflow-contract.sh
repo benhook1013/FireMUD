@@ -400,14 +400,18 @@ assert_job_contains smoke.yml smoke-gate 'pullRequest.state !== "open"'
 assert_job_contains smoke.yml smoke-gate 'pullRequest.head.sha !== headSha'
 assert_job_contains smoke.yml smoke-gate 'pullRequest.base.ref !== baseRef'
 assert_job_contains smoke.yml smoke-gate 'github.rest.repos.getCommit'
-assert_job_contains smoke.yml smoke-gate 'parents.length !== 2'
-assert_job_contains smoke.yml smoke-gate 'parents[0]?.sha !== eventBaseSha'
-assert_job_contains smoke.yml smoke-gate 'parents[1]?.sha !== headSha'
-assert_job_contains smoke.yml smoke-gate 'event: "pull_request"'
-assert_job_contains smoke.yml smoke-gate 'run.event !== "pull_request"'
-assert_job_excludes smoke.yml smoke-gate 'github.rest.git.getRef'
-assert_job_excludes smoke.yml smoke-gate 'expectedRuntimeEvent === "repository_dispatch"'
-assert_job_excludes smoke.yml smoke-gate 'The stale pull_request source is not accepted.'
+assert_job_contains smoke.yml smoke-gate 'ref: `heads/${baseRef}`'
+assert_job_contains smoke.yml smoke-gate 'const currentMergeSha = currentPullRequest.merge_commit_sha;'
+assert_job_contains smoke.yml smoke-gate 'parents.length === 2'
+assert_job_contains smoke.yml smoke-gate 'parents[0]?.sha === eventBaseSha'
+assert_job_contains smoke.yml smoke-gate 'parents[1]?.sha === headSha'
+assert_job_contains smoke.yml smoke-gate 'currentParents.length !== 2'
+assert_job_contains smoke.yml smoke-gate 'currentParents[0]?.sha !== currentBaseSha'
+assert_job_contains smoke.yml smoke-gate 'currentParents[1]?.sha !== headSha'
+assert_job_contains smoke.yml smoke-gate 'sourceEvent: "pull_request"'
+assert_job_contains smoke.yml smoke-gate 'run.event !== currentIdentity.sourceEvent'
+assert_job_contains smoke.yml smoke-gate 'github.rest.git.getRef'
+assert_job_contains smoke.yml smoke-gate 'currentIdentity.sourceEvent === "pull_request"'
 assert_job_contains smoke.yml smoke-gate 'job.name === "PR Full-Stack Smoke"'
 assert_job_contains smoke.yml smoke-gate 'step.name === "Run credential-free full-stack smoke"'
 assert_job_contains smoke.yml smoke-gate 'Stopping stale smoke gate before accepting full-stack proof'
@@ -1200,7 +1204,10 @@ require_branch_return \
   'if (resolvedIdentity?.obsolete) {'
 require_contains "$smoke_path" 'mode-required'
 require_contains "$smoke_path" 'Build Runtime Images secure-pr-artifact pr-'
-require_contains "$smoke_path" 'event: "pull_request",'
+require_contains "$smoke_path" 'sourceEvent: "pull_request",'
+require_contains "$smoke_path" 'sourceEvent: "repository_dispatch",'
+require_contains "$smoke_path" 'event: currentIdentity.sourceEvent,'
+require_contains "$smoke_path" 'workflowRunQuery.created = `${pullRequestCreatedAt}..*`;'
 require_contains "$smoke_path" 'github.paginate.iterator('
 require_contains "$smoke_path" 'for await (const response of github.paginate.iterator('
 require_contains "$smoke_path" 'run.display_title !== expectedDisplayTitle'
@@ -1209,7 +1216,7 @@ require_contains "$smoke_path" 'pullRequests.length > 0 &&'
 require_contains "$smoke_path" '!pullRequests.some'
 require_contains "$smoke_path" 'pullRequest.head?.sha === currentIdentity.headSha'
 require_contains "$smoke_path" 'break workflowRunPages;'
-require_contains "$smoke_path" 'head_sha: currentIdentity.headSha,'
+require_contains "$smoke_path" 'workflowRunQuery.head_sha = currentIdentity.headSha;'
 require_contains "$smoke_path" 'github.rest.actions.listJobsForWorkflowRun'
 require_contains "$smoke_path" 'job.name === "PR Full-Stack Smoke"'
 require_contains "$smoke_path" 'step.name === "Run credential-free full-stack smoke"'
@@ -1529,9 +1536,11 @@ const mergeSha = "c".repeat(40);
 let currentHeadSha = headSha;
 let currentBaseRef = "develop";
 let currentBaseSha = baseSha;
+let liveBaseSha = baseSha;
 let currentMergeSha = mergeSha;
 let currentPullRequestState = "open";
 let eventMergeParents = [{ sha: baseSha }, { sha: headSha }];
+let currentMergeParents = [{ sha: baseSha }, { sha: headSha }];
 let availableRuns = [];
 let requestedCommitRefs = [];
 let forbiddenCurrentBaseLookups = 0;
@@ -1562,6 +1571,13 @@ function runtimeRun(id, title) {
 
 function setExactEventRun(id = 202) {
   availableRuns = [runtimeRun(id, runtimeTitle(baseSha, headSha, mergeSha))];
+}
+
+function dispatchRun(id, base, head, merge) {
+  return {
+    ...runtimeRun(id, runtimeTitle(base, head, merge)),
+    event: "repository_dispatch",
+  };
 }
 
 function setOnlyNonExactRuns() {
@@ -1603,13 +1619,18 @@ const github = {
     git: {
       getRef: async () => {
         forbiddenCurrentBaseLookups += 1;
-        throw new Error("Smoke Gate must not require the current base SHA");
+        return { data: { object: { sha: liveBaseSha } } };
       },
     },
     repos: {
       getCommit: async ({ ref }) => {
         requestedCommitRefs.push(ref);
-        return { data: { sha: ref, parents: eventMergeParents } };
+        return {
+          data: {
+            sha: ref,
+            parents: ref === currentMergeSha ? currentMergeParents : eventMergeParents,
+          },
+        };
       },
     },
     actions: { listWorkflowRuns, listJobsForWorkflowRun },
@@ -1695,7 +1716,7 @@ check("skipped", true, "credential-free full-stack smoke step did not pass")
     const jobStart = jobQueries.length;
     eventMergeParents = [{ sha: headSha }, { sha: baseSha }];
     setExactEventRun(305);
-    return check("success", true, "event test merge parents are not").then(() => {
+    return check("success", true, "Timed out waiting for the exact runtime-images/full-smoke run").then(() => {
       if (jobQueries.length !== jobStart) {
         throw new Error("Smoke Gate must reject an event merge with reversed base/head parents");
       }
@@ -1706,9 +1727,75 @@ check("skipped", true, "credential-free full-stack smoke step did not pass")
     const jobStart = jobQueries.length;
     eventMergeParents = [{ sha: baseSha }, { sha: headSha }];
     setOnlyNonExactRuns();
-    return check("success", true, "Timed out waiting for the exact event-tuple").then(() => {
+    return check("success", true, "Timed out waiting for the exact runtime-images/full-smoke run").then(() => {
       if (workflowRunQueries.length <= queryStart || jobQueries.length !== jobStart) {
         throw new Error("a head-only or current-base-only runtime run must not satisfy Smoke Gate");
+      }
+    });
+  })
+  .then(() => {
+    // GitHub can deliver a PR event whose base SHA predates the branch ref.
+    // The trusted refresh may satisfy the gate only for the exact current tuple.
+    currentBaseSha = "8".repeat(40);
+    liveBaseSha = "d".repeat(40);
+    currentMergeSha = "e".repeat(40);
+    currentMergeParents = [{ sha: liveBaseSha }, { sha: headSha }];
+    eventMergeParents = [{ sha: "7".repeat(40) }, { sha: headSha }];
+    const queryStart = workflowRunQueries.length;
+    const jobStart = jobQueries.length;
+    availableRuns = [dispatchRun(501, liveBaseSha, headSha, currentMergeSha)];
+    return check("success", false).then(() => {
+      const queries = workflowRunQueries.slice(queryStart);
+      if (!queries.some((query) => query.event === "repository_dispatch")) {
+        throw new Error("stale event base must permit lookup of a typed repository_dispatch run");
+      }
+      const dispatchQuery = queries.find((query) => query.event === "repository_dispatch");
+      if (dispatchQuery.created !== "2026-09-01T00:00:00Z..*") {
+        throw new Error("dispatch lookup must be bounded to runs created after the PR existed");
+      }
+      if (Object.hasOwn(dispatchQuery, "head_sha")) {
+        throw new Error("dispatch lookup must identify the exact tuple by its typed title, not head SHA");
+      }
+      if (requestedCommitRefs.at(-1) !== currentMergeSha) {
+        throw new Error("dispatch fallback must verify the exact current PR merge commit");
+      }
+      if (jobQueries.length !== jobStart + 1 || jobQueries.at(-1).run_id !== 501) {
+        throw new Error("Smoke Gate must accept only the successful smoke run for the current tuple");
+      }
+    });
+  })
+  .then(() => {
+    const jobStart = jobQueries.length;
+    availableRuns = [
+      dispatchRun(502, currentBaseSha, headSha, currentMergeSha),
+      {
+        ...runtimeRun(505, `Build Runtime Images secure-pr-artifact pr-42 head-${headSha} mode-required`),
+        event: "repository_dispatch",
+      },
+    ];
+    return check("success", true, "Timed out waiting for the exact runtime-images/full-smoke run").then(() => {
+      if (jobQueries.length !== jobStart) {
+        throw new Error("Smoke Gate must reject a dispatch for the stale event base SHA");
+      }
+    });
+  })
+  .then(() => {
+    const jobStart = jobQueries.length;
+    currentMergeParents = [{ sha: headSha }, { sha: liveBaseSha }];
+    availableRuns = [dispatchRun(503, liveBaseSha, headSha, currentMergeSha)];
+    return check("success", true, "Timed out waiting for the exact runtime-images/full-smoke run").then(() => {
+      if (jobQueries.length !== jobStart) {
+        throw new Error("Smoke Gate must reject a current merge with an incorrect ordered base parent");
+      }
+    });
+  })
+  .then(() => {
+    const jobStart = jobQueries.length;
+    currentMergeParents = [{ sha: liveBaseSha }, { sha: headSha }];
+    availableRuns = [{ ...runtimeRun(504, "arbitrary dispatch"), event: "repository_dispatch" }];
+    return check("success", true, "Timed out waiting for the exact runtime-images/full-smoke run").then(() => {
+      if (jobQueries.length !== jobStart) {
+        throw new Error("Smoke Gate must reject arbitrary repository_dispatch runs");
       }
     });
   })
@@ -1743,10 +1830,7 @@ check("skipped", true, "credential-free full-stack smoke step did not pass")
     });
   })
   .then(() => {
-    if (workflowRunQueries.some((query) => query.event !== "pull_request")) {
-      throw new Error("Smoke Gate must never fall back to a trusted repository_dispatch run");
-    }
-    console.log("Smoke Gate event-tuple, base-advance, and live PR identity contract passed");
+    console.log("Smoke Gate event-tuple, base-advance, and exact-current-tuple dispatch contract passed");
   }).catch((error) => {
     console.error(error.stack || error);
     process.exit(1);

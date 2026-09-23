@@ -13,6 +13,10 @@ inputs:
   workflow-path:
     description: Exact workflow path returned by the Actions API.
     required: true
+  allow-pending:
+    description: Succeed when no prior required gate is visible or its selected run is pending.
+    required: false
+    default: 'false'
 runs:
   using: composite
   steps:
@@ -29,4 +33,5 @@ runs:
         EXPECTED_WORKFLOW_NAME: ${{ inputs.workflow-name }}
         EXPECTED_WORKFLOW_FILE: ${{ inputs.workflow-file }}
         EXPECTED_WORKFLOW_PATH: ${{ inputs.workflow-path }}
+        ALLOW_PENDING: ${{ inputs.allow-pending }}
       run: bash "$GITHUB_ACTION_PATH/poll-required-gate.sh"
