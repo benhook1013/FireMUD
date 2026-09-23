@@ -95,3 +95,14 @@ Those checks must execute `dev-tools/pr-review`, inspect persisted isolated stat
 ## Stopping point
 
 Publish a clean draft at the exact reconciled parent, refresh its body and LOC metadata, consume only any already-running Luna review and its valid findings, complete affected validation, and stop for Overseer hands-on acceptance. Do not start a fresh Luna review round: further discovery would delay the CodeRabbit handoff. Do not use CodeRabbit, merge, enable auto-merge, start Gate 2, or touch #2818 and later feature PRs.
+
+## 2026-09-24: Overseer hands-on acceptance findings
+
+General handed off draft #2844 at `7b125df94d15024d83fec4a5003872bbd941d795`, directly against `develop`, with 48 unique files and a clean worktree. Two fresh root-owned subagents executed the actual `dev-tools/pr-review` command against separate mode-0700 isolated synthetic fixtures; neither contacted GitHub, consumed review quota, or edited the repository.
+
+- Happy path passed: three configured PRs, independent Hosted/CLI targets, CLI advancing across two completed PRs, exact-head retain judgment, isolated state persistence, and no simulated quota consumption.
+- Adversarial gates passed for wrong target, Hosted rate limits with and without reset time, accepted-finding reset, merged-parent selection, moved-parent and unreconciled refusal, stale exact-bound decisions, locking, and atomic state writes.
+- **Accepted acceptance defect:** two immediate identical synthetic `run cli --allow-unreconciled` calls both succeeded with `provisional=true`, because the first simulated run left no isolated provisional evidence. Pre-seeding the evidence made the second call fail, but that does not prove the end-to-end one-shot boundary. Make acceptance mode record enough isolated synthetic evidence for the second identical call to fail, without contacting a provider, changing canonical state, counting provisional evidence toward taper, or weakening production behavior. Add focused regression proof and repeat this hands-on acceptance case.
+- **Accepted safety/usability correction:** whole-stack `status --json` omits the `isolated=true`, `network=false`, `review_quota=false` marker shown by scoped status. Add the marker to the whole-stack acceptance output so operators cannot mistake fixture status for live status. Keep fixture/live output distinguishable in focused proof. Explicit target fields and the synthetic `evidence` layout may be improved if they are narrow; they are not handoff blockers.
+
+Fix only those accepted points, inspect the resulting diff, run affected focused validation and required CI on the corrected head, update PR body/LOC and ledger, and return for a narrow repeat of the failed acceptance checks. Start no new Luna discovery or CodeRabbit review. Gameplay priority remains held until Overseer confirms acceptance and exact-head required CI.
