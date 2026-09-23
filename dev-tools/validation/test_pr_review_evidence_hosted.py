@@ -7,6 +7,7 @@ import json
 import sys
 import tempfile
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -485,6 +486,81 @@ class GithubAndEvidenceTests(unittest.TestCase):
             (run / "review-duration-seconds").write_text("9\n", encoding="utf-8")
             capture = evidence.load_cli_capture(checkpoint, REPO, PR, common)
             self.assertEqual(capture.metadata["review_duration_seconds"], "9")
+
+    def test_cli_capture_text_read_failures_are_classified(self):
+        artifact_names = (
+            "metadata",
+            "stdout",
+            "exit-status",
+            "review-duration-seconds",
+            "decisions.tsv",
+            "rejections.tsv",
+        )
+        original_read_text = Path.read_text
+        for artifact_name in artifact_names:
+            for failure, expected_error in (
+                ("unreadable", evidence.CaptureUnavailable),
+                ("invalid_utf8", evidence.CaptureInvalid),
+            ):
+                with self.subTest(artifact=artifact_name, failure=failure), tempfile.TemporaryDirectory() as directory:
+                    common = Path(directory)
+                    run_id = "run.ReadFailure"
+                    run = common / "coderabbit-review-logs" / run_id
+                    run.mkdir(parents=True)
+                    (run / "metadata").write_text(
+                        f"run_id={run_id}\nrepository={REPO}\npull_request={PR}\n"
+                        f"candidate_sha={HEAD}\ncandidate_files=1\nreview_duration_seconds=3\n",
+                        encoding="utf-8",
+                    )
+                    (run / "stdout").write_text(
+                        json.dumps(
+                            {
+                                "type": "complete",
+                                "status": "review_completed",
+                                "findings": 0,
+                                "reviewedFiles": ["a"],
+                            }
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                    (run / "exit-status").write_text("0\n", encoding="utf-8")
+                    (run / "review-duration-seconds").write_text("3\n", encoding="utf-8")
+                    (run / "decisions.tsv").write_text("", encoding="utf-8")
+                    (run / "rejections.tsv").write_text("", encoding="utf-8")
+                    if artifact_name == "rejections.tsv":
+                        (run / "decisions.tsv").unlink()
+                    target = run / artifact_name
+                    if failure == "invalid_utf8":
+                        target.write_bytes(b"\xff\xfe")
+
+                    checkpoint = evidence.Checkpoint(
+                        1,
+                        "2026-09-23T00:00:00Z",
+                        "CLI",
+                        0,
+                        0,
+                        HEAD[:12],
+                        1,
+                        False,
+                        None,
+                        run_id,
+                        None,
+                        3,
+                    )
+                    if failure == "unreadable":
+                        def fail_target_read(path, *args, expected_target=target, **kwargs):
+                            if path == expected_target:
+                                raise OSError("permission denied")
+                            return original_read_text(path, *args, **kwargs)
+
+                        read_context = patch.object(Path, "read_text", autospec=True, side_effect=fail_target_read)
+                    else:
+                        read_context = nullcontext()
+
+                    expected_message = "cannot be read" if failure == "unreadable" else "not valid UTF-8"
+                    with read_context, self.assertRaisesRegex(expected_error, expected_message):
+                        evidence.load_cli_capture(checkpoint, REPO, PR, common)
 
     def test_historical_rejections_capture_is_attributable_only_for_zero_accepted(self):
         with tempfile.TemporaryDirectory() as directory:

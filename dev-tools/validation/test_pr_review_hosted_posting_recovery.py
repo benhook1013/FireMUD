@@ -58,10 +58,40 @@ class HostedPostingRecoveryTests(unittest.TestCase):
                     "pullRequest": {
                         "headRefOid": head,
                         "comments": {"nodes": comments or []},
+                        "reviews": {"nodes": []},
                     }
                 }
             }
         }
+
+    def _boundary_changed_trigger(self, path: Path) -> dict[str, object]:
+        trigger = self._comment(31)
+        trigger["createdAt"] = "2026-09-23T00:01:00Z"
+        hosted.record_posted_trigger(REPO, PR, CAPTURED_HEAD, trigger, path=path)
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["status"] = "posted_boundary_changed"
+        record["recovery"] = {
+            "captured_head_sha": CAPTURED_HEAD,
+            "live_head_sha": ADVANCED_HEAD,
+        }
+        path.write_text(json.dumps(record), encoding="utf-8")
+        return record
+
+    def _retire_stuck(self, path: Path, payload: dict[str, object]) -> dict[str, object]:
+        with (
+            patch.object(hosted, "default_trigger_record_path", return_value=path.with_name("request.lock")),
+            patch.object(hosted, "current_trigger_record_paths", return_value=[path]),
+        ):
+            return hosted.retire_stuck_trigger_after_head_advance(
+                path,
+                REPO,
+                PR,
+                31,
+                ADVANCED_HEAD,
+                "captured head advanced and response is terminal",
+                True,
+                lambda: payload,
+            )
 
     def _adopt(self, path: Path, expected_head: str, payload: dict[str, object]) -> dict[str, object]:
         with patch.object(hosted, "default_trigger_record_path", return_value=path.with_name("request.lock")):
@@ -186,6 +216,53 @@ class HostedPostingRecoveryTests(unittest.TestCase):
                     self._recover_prepost(path, CAPTURED_HEAD, self._payload(live_head))
 
                 self.assertTrue(path.exists())
+
+    def test_boundary_changed_trigger_can_be_retired_after_terminal_response(self) -> None:
+        responses = {
+            "completed": "Reviewing files that changed from the base of the PR and between `aaaaaa` and `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`.\n\n**Actionable comments posted: 1**",
+            "rate_limited": hosted.REVIEW_LIMIT_MARKER,
+            "noop": hosted.NOOP_MARKER,
+            "failed": "The review failed while processing this request.",
+        }
+        for state, body in responses.items():
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "trigger.json"
+                self._boundary_changed_trigger(path)
+                response = self._comment(32, actor="coderabbitai[bot]")
+                response["createdAt"] = "2026-09-23T00:02:00Z"
+                response["body"] = body
+                payload = self._payload(ADVANCED_HEAD, [self._comment(31), response])
+
+                result = self._retire_stuck(path, payload)
+
+                self.assertEqual(result["status"], "retired")
+                self.assertEqual(result["observed_live_state"], state)
+                retired = json.loads(path.read_text(encoding="utf-8"))
+                self.assertEqual(retired["status"], "retired")
+                self.assertEqual(retired["retirement"]["observed_response_id"], 32)
+
+    def test_terminal_response_does_not_enable_retirement_for_other_records(self) -> None:
+        response = self._comment(32, actor="coderabbitai[bot]")
+        response["createdAt"] = "2026-09-23T00:02:00Z"
+        response["body"] = hosted.REVIEW_LIMIT_MARKER
+        payload = self._payload(ADVANCED_HEAD, [self._comment(31), response])
+
+        for original_status in ("posted", "timed_out"):
+            with self.subTest(status=original_status), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "trigger.json"
+                record = self._boundary_changed_trigger(path)
+                record["status"] = original_status
+                if original_status == "timed_out":
+                    record["timeout"] = {
+                        "observed_state": "awaiting_response",
+                        "at": "2026-09-23T00:01:30Z",
+                    }
+                path.write_text(json.dumps(record), encoding="utf-8")
+
+                with self.assertRaisesRegex(ValueError, "cannot retire stuck trigger in live state rate_limited"):
+                    self._retire_stuck(path, payload)
+
+                self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], original_status)
 
 
 if __name__ == "__main__":

@@ -609,8 +609,50 @@ class StatusTest(unittest.TestCase):
 
         validation = report["ci"]["required"]["contexts"][0]
         self.assertEqual(validation["status"], "wrong_app")
+        self.assertEqual(validation["wrong_app_results"][0]["app"]["id"], 99)
         self.assertEqual(report["ci"]["required"]["status"], "failed")
         self.assertIn("wrong app", " ".join(report["reasons"]))
+
+    def test_required_context_without_app_identity_is_unknown(self) -> None:
+        payload = github_payload()
+        pr = payload["data"]["repository"]["pullRequest"]
+        pr["reviewThreads"] = {"nodes": []}
+        pr["statusCheckRollup"][0].pop("app")
+
+        report = self._ready_report(payload)
+
+        validation = report["ci"]["required"]["contexts"][0]
+        self.assertEqual(validation["status"], "unknown")
+        self.assertEqual(validation["wrong_app_results"], [])
+        self.assertEqual(report["ci"]["required"]["status"], "pending")
+
+    def test_status_context_creator_user_id_is_not_an_app_identity(self) -> None:
+        payload = github_payload()
+        pr = payload["data"]["repository"]["pullRequest"]
+        pr["reviewThreads"] = {"nodes": []}
+        check = pr["statusCheckRollup"][0]
+        check.pop("app")
+        check.update({"__typename": "StatusContext", "creator": {"id": 99, "login": "ben"}})
+
+        report = self._ready_report(payload)
+
+        validation = report["ci"]["required"]["contexts"][0]
+        self.assertEqual(validation["status"], "unknown")
+        self.assertEqual(validation["result"]["app"], None)
+        self.assertEqual(validation["wrong_app_results"], [])
+        self.assertEqual(report["ci"]["required"]["status"], "pending")
+
+    def test_matching_check_run_app_identity_satisfies_required_context(self) -> None:
+        payload = github_payload()
+        pr = payload["data"]["repository"]["pullRequest"]
+        pr["reviewThreads"] = {"nodes": []}
+
+        report = self._ready_report(payload)
+
+        validation = report["ci"]["required"]["contexts"][0]
+        self.assertEqual(validation["status"], "success")
+        self.assertEqual(validation["result"]["kind"], "CheckRun")
+        self.assertEqual(validation["result"]["app"]["id"], 42)
 
     def test_missing_or_mismatched_aggregate_head_fails_visibly(self) -> None:
         for mutate in (lambda pr: pr.pop("commits"), lambda pr: pr["commits"]["nodes"][0]["commit"].update({"oid": "c" * 40})):

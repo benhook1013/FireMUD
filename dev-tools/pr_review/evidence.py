@@ -427,11 +427,17 @@ def _contained_file(directory: Path, name: str, required: bool = True) -> Path |
     return candidate
 
 
-def _read_metadata(path: Path) -> dict[str, str]:
+def _read_capture_text(path: Path, description: str) -> str:
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        return path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise CaptureUnavailable("linked capture metadata cannot be read") from exc
+        raise CaptureUnavailable(f"linked capture {description} cannot be read") from exc
+    except UnicodeDecodeError as exc:
+        raise CaptureInvalid(f"linked capture {description} is not valid UTF-8") from exc
+
+
+def _read_metadata(path: Path) -> dict[str, str]:
+    lines = _read_capture_text(path, "metadata").splitlines()
     result: dict[str, str] = {}
     for line in lines:
         if not line or "=" not in line:
@@ -446,10 +452,7 @@ def _read_metadata(path: Path) -> dict[str, str]:
 def _parse_capture_stdout(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     completes: list[dict[str, Any]] = []
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError as exc:
-        raise CaptureUnavailable("linked capture stdout cannot be read") from exc
+    lines = _read_capture_text(path, "stdout").splitlines()
     for number, line in enumerate(lines, 1):
         if not line.strip():
             continue
@@ -529,7 +532,7 @@ def _load_cli_capture(
         checkpoint.reviewed_sha and not candidate_sha.lower().startswith(checkpoint.reviewed_sha.lower())
     ):
         raise CaptureInvalid("linked capture candidate SHA does not match checkpoint")
-    if status_path.read_text(encoding="utf-8").strip() != "0":
+    if _read_capture_text(status_path, "exit status").strip() != "0":
         raise CaptureInvalid("linked capture did not exit successfully")
     findings, complete = _parse_capture_stdout(stdout_path)
     if len(findings) != checkpoint.raw_found:
@@ -546,10 +549,7 @@ def _load_cli_capture(
             raise CaptureInvalid("linked capture metadata has no valid review duration")
         duration_path = _contained_file(run_dir, "review-duration-seconds")
         assert duration_path is not None
-        try:
-            artifact_duration = duration_path.read_text(encoding="utf-8").strip()
-        except OSError as exc:
-            raise CaptureUnavailable("linked capture review duration cannot be read") from exc
+        artifact_duration = _read_capture_text(duration_path, "review duration").strip()
         if int(recorded_duration) != checkpoint.duration_seconds or artifact_duration != recorded_duration:
             raise CaptureInvalid("checkpoint duration does not match linked capture metadata")
     decision_path = _contained_file(run_dir, "decisions.tsv", required=False)
@@ -562,7 +562,7 @@ def _load_cli_capture(
             return capture
         decisions: dict[int, tuple[str, str]] = {}
         unlinked: list[dict[str, Any]] = []
-        for number, line in enumerate(rejection_path.read_text(encoding="utf-8").splitlines(), 1):
+        for number, line in enumerate(_read_capture_text(rejection_path, "rejections").splitlines(), 1):
             if not line.strip():
                 continue
             fields = line.split("\t")
@@ -586,7 +586,7 @@ def _load_cli_capture(
         return capture
     decisions: dict[int, tuple[str, str]] = {}
     unlinked: list[dict[str, Any]] = []
-    for number, line in enumerate(decision_path.read_text(encoding="utf-8").splitlines(), 1):
+    for number, line in enumerate(_read_capture_text(decision_path, "decisions").splitlines(), 1):
         if not line.strip():
             continue
         fields = line.split("\t")

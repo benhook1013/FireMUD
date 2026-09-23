@@ -227,8 +227,6 @@ def _check_outcome(value: Mapping[str, Any]) -> str:
 
 def _app_identity(value: Mapping[str, Any]) -> dict[str, Any] | None:
     app = value.get("app")
-    if app is None:
-        app = value.get("creator")
     if not isinstance(app, Mapping):
         return None
     app_id = app.get("id", app.get("databaseId"))
@@ -423,14 +421,16 @@ def _required_results(authority: dict[str, Any], inventory: dict[str, Any]) -> d
         wrong_app_results = [
             {key: value for key, value in entry.items() if not key.startswith("_")}
             for entry in exact
-            if app_id is not None and (entry["app"] or {}).get("id") != app_id
+            if app_id is not None
+            and (entry["app"] or {}).get("id") is not None
+            and (entry["app"] or {}).get("id") != app_id
         ]
         if result is None:
             result = wrong_app_result
         if result is None:
             status = "stale" if matching else "missing"
         elif app_id is not None and (result["app"] or {}).get("id") != app_id:
-            status = "wrong_app"
+            status = "wrong_app" if (result["app"] or {}).get("id") is not None else "unknown"
         elif result["outcome"] in FAILURE:
             status = "failed"
         elif result["outcome"] in PENDING:

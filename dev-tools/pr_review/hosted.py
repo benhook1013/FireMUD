@@ -1149,7 +1149,13 @@ def retire_stuck_trigger_after_head_advance(
         state = trigger_state(repo, pr_number, payload, state_record, record_path)
         if state.head_sha.casefold() != captured_head.casefold() or state.trigger_comment_id != trigger_id:
             raise ValueError("live Hosted trigger identity changed during stuck-trigger retirement")
-        if state.state not in {"active", "awaiting_response"}:
+        terminal_boundary_changed = record.get("status") == "posted_boundary_changed" and state.state in {
+            "completed",
+            "rate_limited",
+            "noop",
+            "failed",
+        }
+        if state.state not in {"active", "awaiting_response"} and not terminal_boundary_changed:
             raise ValueError(f"cannot retire stuck trigger in live state {state.state}")
 
         current = load_trigger_record(record_path, repo, pr_number)
