@@ -3,11 +3,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from subprocess import CompletedProcess
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
@@ -15,6 +19,7 @@ sys.path.insert(0, str(ROOT / "dev-tools"))
 from pr_review.cli import _parser
 from pr_review.controller import (
     ControllerError,
+    DefaultGitProvider,
     LivePullRequest,
     ReviewController,
     WrongStackTarget,
@@ -74,6 +79,28 @@ class ControllerTests(unittest.TestCase):
             git=FakeGit(heads),
             evidence=evidence or {},
         )
+
+    def test_default_git_provider_translates_timeout_expired(self):
+        provider = DefaultGitProvider(timeout_seconds=7)
+        with patch(
+            "pr_review.controller.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(["git"], 7),
+        ) as run, self.assertRaisesRegex(ControllerError, "git command timed out after 7 seconds"):
+            provider.branch_exists("develop")
+        self.assertEqual(run.call_args.kwargs["timeout"], 7)
+
+    def test_default_git_provider_hashes_raw_diff_bytes(self):
+        raw_diff = b"diff --git a/file b/file\n\xff\x80\x00\n"
+        results = [
+            CompletedProcess(["git"], 0, b"", b""),
+            CompletedProcess(["git"], 0, b"", b""),
+            CompletedProcess(["git"], 0, raw_diff, b""),
+        ]
+        with patch("pr_review.controller.subprocess.run", side_effect=results) as run:
+            actual = DefaultGitProvider(timeout_seconds=9).patch_identity("a" * 40, "b" * 40)
+        self.assertEqual(actual, hashlib.sha256(raw_diff).hexdigest())
+        self.assertFalse(run.call_args.kwargs["text"])
+        self.assertEqual(run.call_args.kwargs["timeout"], 9)
 
     def test_one_private_ordered_stack_and_effective_parent(self):
         values = {1: pr(1, HEAD_1), 2: pr(2, HEAD_2, "feature-1", HEAD_1)}

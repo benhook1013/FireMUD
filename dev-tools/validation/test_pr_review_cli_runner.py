@@ -1,5 +1,7 @@
 import fcntl
+import hashlib
 import json
+import subprocess
 import sys
 import tempfile
 import threading
@@ -35,6 +37,9 @@ class FakeGitHub:
     mergeable = "MERGEABLE"
     base_exists = True
 
+    def __init__(self, files=None):
+        self.files = files or ["src/Representative.java"]
+
     def pull_request(self, number):
         return PullRequestSnapshot(
             number,
@@ -42,20 +47,31 @@ class FakeGitHub:
             "develop",
             BASE,
             HEAD,
-            changed_files=1,
+            changed_files=len(self.files),
             mergeable=self.mergeable,
             base_exists=self.base_exists,
         )
 
     def pull_request_files(self, number):
-        return ["src/Representative.java"]
+        return self.files
 
     def branch_head(self, ref_name):
         return PARENT
 
 
 class FakeCommands:
-    def __init__(self, root, delay=0, candidate=HEAD, review_started=None, allow_review_finish=None):
+    def __init__(
+        self,
+        root,
+        delay=0,
+        candidate=HEAD,
+        review_started=None,
+        allow_review_finish=None,
+        files=None,
+        patch_bytes=None,
+        timeout_review=False,
+        timeout_git=False,
+    ):
         self.root = root
         self.delay = delay
         self.review_started = review_started
@@ -65,10 +81,18 @@ class FakeCommands:
         self.calls = []
         self.guard = threading.Lock()
         self.candidate = candidate
+        self.files = files or ["src/Representative.java"]
+        self.patch_bytes = patch_bytes or f"candidate patch {self.candidate}\n".encode()
+        self.timeout_review = timeout_review
+        self.timeout_git = timeout_git
+        self.timeout_calls = []
 
     def run(self, args, *, cwd=None, capture_output=False, check=True, text=True, timeout=None):
         self.calls.append((tuple(args), cwd))
+        self.timeout_calls.append((tuple(args), timeout, text))
         if args[0] == "coderabbit":
+            if self.timeout_review:
+                raise subprocess.TimeoutExpired(args, timeout, output=b"partial \xff\n", stderr=b"timed out\n")
             with self.guard:
                 self.active += 1
                 if self.active > 1:
@@ -82,19 +106,17 @@ class FakeCommands:
                 self.active -= 1
             return CompletedProcess(args, 0, "review output\n", "")
         if args[:3] == ["git", "-C", str(self.root)]:
+            if self.timeout_git:
+                raise subprocess.TimeoutExpired(args, timeout, output=b"partial git\n", stderr=b"timed out\n")
             git_args = args[3:]
             if git_args == ["rev-parse", "--git-common-dir"]:
                 return CompletedProcess(args, 0, ".git\n", "")
             if git_args == ["rev-parse", "HEAD^{commit}"]:
                 return CompletedProcess(args, 0, f"{self.candidate}\n", "")
-            if git_args == ["diff", "--name-only", "-z", f"{BASE}...{HEAD}"]:
-                return CompletedProcess(args, 0, "src/Representative.java\0", "")
-            if git_args == ["diff", "--name-only", "-z", f"{PARENT}...{HEAD}"]:
-                return CompletedProcess(args, 0, "src/Representative.java\0", "")
-            if git_args == ["diff", "--name-only", "-z", f"{PARENT}...{self.candidate}"]:
-                return CompletedProcess(args, 0, "src/Representative.java\0", "")
+            if git_args[:3] == ["diff", "--name-only", "-z"]:
+                return CompletedProcess(args, 0, "\0".join(self.files) + "\0", "")
             if git_args == ["diff", "--binary", "--full-index", f"{PARENT}...{self.candidate}"]:
-                output = f"candidate patch {self.candidate}\n".encode() if not text else f"candidate patch {self.candidate}\n"
+                output = self.patch_bytes if not text else self.patch_bytes.decode("utf-8")
                 return CompletedProcess(args, 0, output, b"" if not text else "")
             if git_args == ["rev-list", "--count", f"{HEAD}..{self.candidate}"]:
                 return CompletedProcess(args, 0, "1\n", "")
@@ -185,6 +207,80 @@ def write_hosted_trigger(common_dir, *, legacy=False, status="posted"):
 
 
 class CliReviewRunnerTests(unittest.TestCase):
+    def test_git_timeout_is_translated_to_review_runner_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            with self.assertRaisesRegex(ReviewRunnerError, "git command timed out after 7 seconds"):
+                run_cli_review(
+                    target(),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=FakeCommands(root, timeout_git=True),
+                    git_timeout_seconds=7,
+                )
+
+    def test_review_timeout_is_translated_and_partial_capture_is_retained(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = FakeCommands(root, timeout_review=True)
+            with self.assertRaisesRegex(ReviewRunnerError, "CodeRabbit review timed out after 13 seconds"):
+                run_cli_review(
+                    target(),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=commands,
+                    review_timeout_seconds=13,
+                )
+
+            run_dirs = list((root / ".git" / "firemud" / "pr-review" / "runs").glob("run.*"))
+            self.assertEqual(len(run_dirs), 1)
+            capture_dir = run_dirs[0]
+            self.assertEqual((capture_dir / "stdout").read_text(), "partial �\n")
+            self.assertEqual((capture_dir / "stderr").read_text(), "timed out\n")
+            self.assertEqual((capture_dir / "exit-status").read_text(), "timeout\n")
+            metadata = json.loads((capture_dir / "metadata.json").read_text())
+            self.assertTrue(metadata["timed_out"])
+            self.assertIsNone(metadata["exit_status"])
+
+    def test_nul_path_output_preserves_multiple_paths_and_timeout_configuration(self):
+        files = ["src/Representative.java", "src/path with spaces\n.txt"]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = FakeCommands(root, files=files)
+            result = run_cli_review(
+                target(),
+                github=FakeGitHub(files=files),
+                source_root=root,
+                runner=commands,
+                git_timeout_seconds=11,
+                review_timeout_seconds=101,
+            )
+            self.assertEqual(result.published_files, 2)
+            self.assertEqual(result.candidate_files, 2)
+            path_calls = [call for call in commands.calls if call[0][0] == "git" and "--name-only" in call[0]]
+            self.assertEqual(len(path_calls), 2)
+            self.assertTrue(all("-z" in call[0] for call in path_calls))
+            self.assertTrue(all(timeout == 11 for args, timeout, _text in commands.timeout_calls if args[0] == "git"))
+            review_timeouts = [timeout for args, timeout, _text in commands.timeout_calls if args[0] == "coderabbit"]
+            self.assertEqual(review_timeouts, [101])
+
+    def test_patch_identity_hashes_raw_diff_bytes(self):
+        patch_bytes = b"diff --git a/file b/file\n\xff\x80\x00\n"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            result = run_cli_review(
+                target(),
+                github=FakeGitHub(),
+                source_root=root,
+                runner=FakeCommands(root, patch_bytes=patch_bytes),
+            )
+            metadata = json.loads((result.capture_dir / "metadata.json").read_text())
+            self.assertEqual(metadata["patch_identity"], hashlib.sha256(patch_bytes).hexdigest())
+
     def test_wrong_expectation_fails_before_runner(self):
         resolver = Mock()
         resolver.resolve_cli_target.return_value = target()
