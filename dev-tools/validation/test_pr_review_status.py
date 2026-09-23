@@ -92,6 +92,24 @@ def github_payload(checks: list[dict] | None = None) -> dict:
 
 
 class StatusTest(unittest.TestCase):
+    def _ready_report(self, payload: dict) -> dict:
+        with patch.object(status, "_loc_status", return_value={"status": "fresh", "merge_base_checked": True}):
+            return status.build_report(
+                "owner/repo", 2838, pull_request_payload=payload, checkpoint_payload=checkpoint_payload()
+            )
+
+    @staticmethod
+    def _coderabbit_review(body: str, commit: str = HEAD, submitted_at: str = "2026-09-23T01:00:00Z") -> dict:
+        return {
+            "databaseId": 501,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": body,
+            "state": "COMMENTED",
+            "submittedAt": submitted_at,
+            "url": "https://github.test/reviews/501",
+            "commit": {"oid": commit},
+        }
+
     def test_historical_checkpoint_duration_and_counts_are_retained(self) -> None:
         report = status.build_report(
             "owner/repo",
@@ -178,6 +196,93 @@ class StatusTest(unittest.TestCase):
         with patch.object(status, "build_report", return_value={"verdict": "READY", "pr_number": 2838}):
             report = status.status(2838, as_json=True, repo="owner/repo")
         self.assertEqual(report["verdict"], "READY")
+
+    def test_latest_exact_head_summary_only_outside_diff_finding_blocks_readiness(self) -> None:
+        payload = github_payload()
+        pr = payload["data"]["repository"]["pullRequest"]
+        pr["reviewThreads"] = {"nodes": []}
+        pr["reviews"] = {
+            "nodes": [
+                self._coderabbit_review("Duplicate comments (1)", commit="c" * 40),
+                self._coderabbit_review("Outside diff range comments (1)"),
+            ]
+        }
+
+        report = self._ready_report(payload)
+
+        self.assertFalse(report["ready"])
+        self.assertEqual(
+            report["coderabbit_summary"]["findings"],
+            [{"kind": "outside_diff", "count": 1}],
+        )
+        self.assertTrue(any("actionable duplicate/outside-diff" in reason for reason in report["reasons"]))
+
+    def test_latest_exact_head_summary_replaces_older_actionable_summary(self) -> None:
+        payload = github_payload()
+        pr = payload["data"]["repository"]["pullRequest"]
+        pr["reviewThreads"] = {"nodes": []}
+        pr["reviews"] = {
+            "nodes": [
+                self._coderabbit_review("Duplicate comments (1)", submitted_at="2026-09-23T00:00:00Z"),
+                self._coderabbit_review("Duplicate comments (0)", submitted_at="2026-09-23T02:00:00Z"),
+            ]
+        }
+
+        report = self._ready_report(payload)
+
+        self.assertEqual(report["coderabbit_summary"]["findings"], [])
+        self.assertTrue(report["ready"], report["reasons"])
+
+    def test_latest_exact_head_summary_comment_replaces_older_actionable_comment(self) -> None:
+        payload = github_payload()
+        pr = payload["data"]["repository"]["pullRequest"]
+        pr["reviewThreads"] = {"nodes": []}
+        pr["comments"] = {
+            "nodes": [
+                {
+                    "databaseId": 601,
+                    "author": {"login": "coderabbitai"},
+                    "body": (
+                        f"Reviewing files that changed from the base of the PR and between `{BASE[:12]}` and `{HEAD[:12]}`.\n\n"
+                        "Duplicate comments (1)"
+                    ),
+                    "createdAt": "2026-09-23T01:30:00Z",
+                    "updatedAt": "2026-09-23T01:30:00Z",
+                    "url": "https://github.test/comments/601",
+                },
+                {
+                    "databaseId": 602,
+                    "author": {"login": "coderabbitai"},
+                    "body": f"Reviewing files that changed from the base of the PR and between `{BASE[:12]}` and `{HEAD[:12]}`.\n\nDuplicate comments (0)",
+                    "createdAt": "2026-09-23T02:00:00Z",
+                    "updatedAt": "2026-09-23T02:00:00Z",
+                    "url": "https://github.test/comments/602",
+                },
+            ]
+        }
+
+        report = self._ready_report(payload)
+
+        self.assertTrue(report["ready"], report["reasons"])
+        self.assertEqual(report["coderabbit_summary"]["source"], "comment")
+        self.assertEqual(report["coderabbit_summary"]["identity"], 602)
+        self.assertEqual(report["coderabbit_summary"]["findings"], [])
+
+    def test_malformed_exact_head_summary_fails_closed(self) -> None:
+        payload = github_payload()
+        payload["data"]["repository"]["pullRequest"]["reviews"] = {
+            "nodes": [self._coderabbit_review("Duplicate comments\n\n## Other section\ncontent")]
+        }
+
+        with self.assertRaisesRegex(status.StatusError, "summary section has no canonical count"):
+            self._ready_report(payload)
+
+    def test_missing_paginated_review_evidence_fails_closed(self) -> None:
+        payload = github_payload()
+        del payload["data"]["repository"]["pullRequest"]["reviews"]
+
+        with self.assertRaisesRegex(status.StatusError, "summary evidence is malformed or missing"):
+            self._ready_report(payload)
 
 
 if __name__ == "__main__":

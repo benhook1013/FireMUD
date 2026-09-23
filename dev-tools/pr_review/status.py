@@ -347,6 +347,93 @@ def _thread_summary(payload: Mapping[str, Any]) -> dict[str, int]:
     return {"current": current, "outdated": outdated, "total": current + outdated}
 
 
+def _summary_sections(body: str) -> list[dict[str, str | int]]:
+    """Extract canonical summary-only counts from a substantive review body."""
+
+    try:
+        outside, duplicate = evidence.summary_action_counts(body)
+    except evidence.EvidenceError as exc:
+        raise StatusError(str(exc)) from exc
+    findings: list[dict[str, str | int]] = []
+    if outside:
+        findings.append({"kind": "outside_diff", "count": outside})
+    if duplicate:
+        findings.append({"kind": "duplicate", "count": duplicate})
+    return findings
+
+
+def _summary_evidence(payload: Mapping[str, Any], current_head: str) -> dict[str, Any]:
+    """Select and inspect the latest CodeRabbit summary attributable to this head."""
+    pr = ((payload.get("data") or {}).get("repository") or {}).get("pullRequest", {})
+    reviews = (pr.get("reviews") or {}).get("nodes")
+    comments = (pr.get("comments") or {}).get("nodes")
+    if not isinstance(reviews, list) or not isinstance(comments, list):
+        raise StatusError("GitHub review summary evidence is malformed or missing")
+
+    candidates: list[tuple[datetime, int, str, str, int | None]] = []
+    for index, review in enumerate(reviews, 1):
+        if not isinstance(review, dict):
+            raise StatusError(f"GitHub review {index} is not an object")
+        author = review.get("author") or {}
+        if not isinstance(author, dict):
+            raise StatusError(f"GitHub review {index} has a malformed author")
+        if not github.is_coderabbit_login(author.get("login")) or review.get("state") == "DISMISSED":
+            continue
+        body = review.get("body")
+        commit = (review.get("commit") or {}).get("oid")
+        submitted_at = review.get("submittedAt")
+        if body is None:
+            body = ""
+        if not isinstance(body, str):
+            raise StatusError(f"CodeRabbit review {index} body is malformed")
+        if not hosted._substantive(body):
+            continue
+        if not isinstance(commit, str) or not EXACT_SHA.fullmatch(commit):
+            if _summary_sections(body):
+                raise StatusError(f"CodeRabbit review {index} summary has no exact commit identity")
+            continue
+        if commit.casefold() != current_head.casefold():
+            continue
+        submitted = _timestamp(submitted_at, f"CodeRabbit review {index} submittedAt")
+        candidates.append((submitted, index, body, "review", github.immutable_database_id(review)))
+
+    for index, comment in enumerate(comments, 1):
+        if not isinstance(comment, dict):
+            raise StatusError(f"GitHub comment {index} is not an object")
+        author = comment.get("author") or {}
+        if not isinstance(author, dict):
+            raise StatusError(f"GitHub comment {index} has a malformed author")
+        if not github.is_coderabbit_login(author.get("login")):
+            continue
+        body = comment.get("body")
+        if not isinstance(body, str):
+            raise StatusError(f"CodeRabbit comment {index} body is malformed")
+        if not hosted._substantive(body) or not hosted._matches_head(body, current_head):
+            continue
+        # A later exact-head summary with no duplicate/outside-diff section
+        # supersedes an older summary that did report one.
+        created = _timestamp(
+            comment.get("updatedAt") or comment.get("createdAt"), f"CodeRabbit comment {index} timestamp"
+        )
+        candidates.append((created, index, body, "comment", github.immutable_database_id(comment)))
+
+    if not candidates:
+        return {"status": "missing", "head_sha": current_head, "findings": []}
+    latest_at = max(candidate[0] for candidate in candidates)
+    latest = [candidate for candidate in candidates if candidate[0] == latest_at]
+    if len(latest) != 1:
+        raise StatusError("latest CodeRabbit summary for the current head is ambiguous")
+    _, _, body, source, identity = latest[0]
+    return {
+        "status": "current",
+        "head_sha": current_head,
+        "source": source,
+        "identity": identity,
+        "submitted_at": latest_at.isoformat(),
+        "findings": _summary_sections(body),
+    }
+
+
 def _historical_comments(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Convert the paginated GraphQL comment shape to the evidence-reader shape."""
     pr = ((payload.get("data") or {}).get("repository") or {}).get("pullRequest", {})
@@ -460,10 +547,15 @@ def build_report(
     checkpoints = _validate_checkpoint_report(checkpoints_payload)
     pending, failed, observed = normalize_checks(pr["statusCheckRollup"])
     threads = _thread_summary(raw_payload)
+    summary_evidence = _summary_evidence(raw_payload, pr["headRefOid"])
     loc = _loc_status(pr)
     reasons: list[str] = []
     if threads["total"]:
         reasons.append(f"{threads['total']} unresolved review thread(s)")
+    if summary_evidence["findings"]:
+        reasons.append(
+            f"CodeRabbit summary has {len(summary_evidence['findings'])} actionable duplicate/outside-diff finding(s)"
+        )
     if pending:
         reasons.append(f"{len(pending)} CI check(s) are pending")
     if failed:
@@ -506,6 +598,7 @@ def build_report(
         "checkpoint_report": dict(checkpoints_payload),
         "checkpoint_counts": _counts(checkpoints),
         "threads": threads,
+        "coderabbit_summary": summary_evidence,
         "ci": {"observed": observed, "pending": pending, "failed": failed},
         "loc_metadata": loc,
         "hosted_trigger": _trigger(repo, pr_number, raw_payload, pr["headRefOid"]),

@@ -123,12 +123,82 @@ class Judgment:
 
 
 @dataclasses.dataclass(frozen=True)
+class StackReconciliationDecision:
+    """Explicitly reopen review after one checkpoint's parent moved."""
+
+    pr: int
+    channel: str
+    checkpoint: str
+    prior_head: str
+    child_head: str
+    parent_identity: str
+    parent_head: str
+    merge_base: str
+    patch_id: str
+    reason: str
+
+    def __post_init__(self) -> None:
+        if isinstance(self.pr, bool) or not isinstance(self.pr, int) or self.pr <= 0:
+            raise StateError("reconciliation PR must be a positive integer")
+        if self.channel not in {"hosted", "cli"}:
+            raise StateError("reconciliation channel must be hosted or cli")
+        if not all(
+            isinstance(value, str) and value.strip()
+            for value in (
+                self.checkpoint,
+                self.prior_head,
+                self.child_head,
+                self.parent_identity,
+                self.parent_head,
+                self.merge_base,
+                self.patch_id,
+                self.reason,
+            )
+        ):
+            raise StateError("reconciliation decisions require complete identities and a reason")
+
+    def matches(self, pr: int, anchor: Mapping[str, Any]) -> bool:
+        return self.pr == pr and all(
+            getattr(self, key) == anchor.get(field)
+            for key, field in (
+                ("child_head", "child_head"),
+                ("parent_identity", "parent_identity"),
+                ("parent_head", "parent_head"),
+                ("merge_base", "merge_base"),
+                ("patch_id", "patch_id"),
+            )
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return dataclasses.asdict(self)
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> StackReconciliationDecision:
+        allowed = {
+            "pr",
+            "channel",
+            "checkpoint",
+            "prior_head",
+            "child_head",
+            "parent_identity",
+            "parent_head",
+            "merge_base",
+            "patch_id",
+            "reason",
+        }
+        if set(value) - allowed:
+            raise StateError("stack reconciliation contains fields outside the private schema")
+        return cls(**{key: value[key] for key in allowed})
+
+
+@dataclasses.dataclass(frozen=True)
 class ReviewState:
     """The complete persisted document, excluding all live review observations."""
 
     ordered_prs: tuple[int, ...] = ()
     policy_overrides: Mapping[str, PolicyOverride] = dataclasses.field(default_factory=dict)
     judgments: tuple[Judgment, ...] = ()
+    reconciliations: tuple[StackReconciliationDecision, ...] = ()
     schema_version: int = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -152,11 +222,12 @@ class ReviewState:
             "ordered_prs": list(self.ordered_prs),
             "policy_overrides": {identity: item.to_dict() for identity, item in sorted(self.policy_overrides.items())},
             "judgments": [item.to_dict() for item in self.judgments],
+            "reconciliations": [item.to_dict() for item in self.reconciliations],
         }
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> ReviewState:
-        if set(value) - {"schema_version", "ordered_prs", "policy_overrides", "judgments"}:
+        if set(value) - {"schema_version", "ordered_prs", "policy_overrides", "judgments", "reconciliations"}:
             raise StateError("state contains fields outside the private configuration schema")
         if value.get("schema_version") != SCHEMA_VERSION:
             raise StateError("state has an unsupported schema version")
@@ -167,6 +238,9 @@ class ReviewState:
             ordered_prs=tuple(value.get("ordered_prs", ())),
             policy_overrides=overrides,
             judgments=tuple(Judgment.from_dict(item) for item in value.get("judgments", ())),
+            reconciliations=tuple(
+                StackReconciliationDecision.from_dict(item) for item in value.get("reconciliations", ())
+            ),
         )
 
 

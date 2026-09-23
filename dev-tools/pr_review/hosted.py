@@ -136,6 +136,22 @@ def default_trigger_record_path(repo: str, pr_number: int, common: Path | None =
     return root / "firemud" / "hosted" / _safe_repo(repo) / f"pr-{pr_number}" / "trigger.json"
 
 
+def current_trigger_record_paths(repo: str, pr_number: int, common: Path | None = None) -> list[Path]:
+    """Return every current reservation path, including legacy locations."""
+
+    root = common or _git_common_dir()
+    return [
+        path
+        for directory in (
+            root / "firemud" / "hosted" / _safe_repo(repo) / f"pr-{pr_number}",
+            root / "coderabbit-review-logs" / "hosted" / _safe_repo(repo) / f"pr-{pr_number}",
+        )
+        if not directory.is_symlink()
+        for path in [directory / "trigger.json"]
+        if path.is_file() and not path.is_symlink()
+    ]
+
+
 def load_trigger_record(path: str | Path, repo: str, pr_number: int) -> dict[str, Any]:
     record_path = Path(path)
     if record_path.is_symlink():
@@ -148,6 +164,24 @@ def load_trigger_record(path: str | Path, repo: str, pr_number: int) -> dict[str
     if not isinstance(head, str) or not EXACT_SHA.fullmatch(head) or not isinstance(trigger, dict):
         raise ValueError("trigger record has invalid identity")
     return record
+
+
+def load_trigger_reservation(path: str | Path, repo: str, pr_number: int) -> dict[str, Any]:
+    """Read a valid trigger record or a legacy ambiguous posting reservation."""
+
+    record_path = Path(path)
+    if record_path.is_symlink():
+        raise ValueError("trigger record must not be a symbolic link")
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    if not isinstance(record, dict) or record.get("repository") != repo or record.get("pr_number") != pr_number:
+        raise ValueError("trigger record repository or pull request does not match")
+    trigger = record.get("trigger")
+    if record.get("status") == "posting" and not isinstance(trigger, dict):
+        head = record.get("head_sha")
+        if not isinstance(head, str) or not EXACT_SHA.fullmatch(head):
+            raise ValueError("legacy posting reservation has invalid head identity")
+        return record
+    return load_trigger_record(record_path, repo, pr_number)
 
 
 def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -611,29 +645,42 @@ def retire_trigger_record(
         or any(ord(char) < 0x20 for char in reason)
     ):
         raise ValueError("invalid trigger retirement request")
-    record = load_trigger_record(path, repo, pr_number)
-    state = trigger_state(repo, pr_number, payload, record, path)
-    current = payload["data"]["repository"]["pullRequest"].get("headRefOid")
-    if state.trigger_comment_id != trigger_id or current.casefold() != expected_head_sha.casefold():
-        raise ValueError("trigger identity or current head does not match retirement request")
-    later_completed = (
-        state.state == "ambiguous"
-        and record["head_sha"].casefold() != expected_head_sha.casefold()
-        and state.reason.startswith("a later or concurrent")
-    )
-    if state.state not in {"timed_out", "active"} and not later_completed:
-        raise ValueError(f"cannot retire trigger in state {state.state}")
-    updated = dict(record)
-    updated["status"] = "retired"
-    updated["retirement"] = {
-        "action": "operator_retire",
-        "retired_at": utc_now(),
-        "reason": reason.strip(),
-        "trigger_comment_id": trigger_id,
-        "expected_head_sha": expected_head_sha,
-        "evidence": {"state": state.state, "captured_head_sha": record["head_sha"], "current_head_sha": current},
-    }
-    atomic_write_json(Path(path), updated)
+    record_path = Path(path)
+    descriptor = _with_lock(default_trigger_record_path(repo, pr_number))
+    try:
+        # Re-read after taking the same per-PR lock used by Hosted posting.
+        record = load_trigger_record(record_path, repo, pr_number)
+        state = trigger_state(repo, pr_number, payload, record, record_path)
+        current = payload["data"]["repository"]["pullRequest"].get("headRefOid")
+        if (
+            state.trigger_comment_id != trigger_id
+            or not isinstance(current, str)
+            or current.casefold() != expected_head_sha.casefold()
+        ):
+            raise ValueError("trigger identity or current head does not match retirement request")
+        if state.state == "active":
+            raise ValueError("cannot retire a Hosted review while it is active")
+        superseded = state.state in {"ambiguous", "unattributed"} and _has_later_completed_exact_head(
+            repo, pr_number, record, expected_head_sha, payload
+        )
+        if state.state != "timed_out" and not superseded:
+            raise ValueError(
+                f"cannot retire trigger in state {state.state} without a later completed exact-head review"
+            )
+        updated = dict(record)
+        updated["status"] = "retired"
+        updated["retirement"] = {
+            "action": "operator_retire",
+            "retired_at": utc_now(),
+            "reason": reason.strip(),
+            "trigger_comment_id": trigger_id,
+            "expected_head_sha": expected_head_sha,
+            "evidence": {"state": state.state, "captured_head_sha": record["head_sha"], "current_head_sha": current},
+        }
+        atomic_write_json(record_path, updated)
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
     return {
         "operation": "retire_trigger",
         "status": "retired",
@@ -643,3 +690,40 @@ def retire_trigger_record(
         "expected_head_sha": expected_head_sha,
         "reason": reason.strip(),
     }
+
+
+def _has_later_completed_exact_head(
+    repo: str,
+    pr_number: int,
+    retired_record: dict[str, Any],
+    expected_head_sha: str,
+    payload: dict[str, Any],
+) -> bool:
+    retired_at = parse_timestamp((retired_record.get("trigger") or {}).get("created_at"))
+    retired_id = (retired_record.get("trigger") or {}).get("id")
+    for candidate_path in trigger_record_paths(repo, pr_number):
+        try:
+            candidate = load_trigger_record(candidate_path, repo, pr_number)
+            trigger = candidate.get("trigger") or {}
+            created = parse_timestamp(trigger.get("created_at"))
+            response = trigger_state(repo, pr_number, payload, candidate, candidate_path)
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+            continue
+        anchor = candidate.get("anchor")
+        anchor_complete = isinstance(anchor, dict) and all(
+            isinstance(anchor.get(key), str) and anchor.get(key)
+            for key in ("child_head", "parent_identity", "parent_head", "merge_base", "patch_id")
+        )
+        if (
+            candidate.get("head_sha", "").casefold() == expected_head_sha.casefold()
+            and trigger.get("id") != retired_id
+            and created is not None
+            and (retired_at is None or created > retired_at)
+            and response.state == "completed"
+            and response.head_sha.casefold() == expected_head_sha.casefold()
+            and response.response_id is not None
+            and anchor_complete
+            and anchor.get("child_head", "").casefold() == expected_head_sha.casefold()
+        ):
+            return True
+    return False

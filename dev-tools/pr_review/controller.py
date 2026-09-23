@@ -29,7 +29,7 @@ from .cli_runner import (
     run_cli_review,
 )
 from .hosted import prepare_full_trigger
-from .state import Judgment, PolicyOverride, ReviewState, StateStore
+from .state import Judgment, PolicyOverride, ReviewState, StackReconciliationDecision, StateStore
 
 
 class ControllerError(RuntimeError):
@@ -372,13 +372,37 @@ class ReviewController:
 
     def _reconciliation(self, state: ReviewState) -> tuple[dict[int, LivePullRequest], stack.Reconciliation]:
         live, snapshots, default_tip = self._live_snapshots(state)
+        baseline = stack.reconcile_stack(
+            state.ordered_prs,
+            snapshots,
+            self.default_base_ref,
+            default_tip,
+            is_ancestor=self.git.is_ancestor,
+        )
+        reconciled: dict[int, StackReconciliationDecision] = {}
+        for pr in state.ordered_prs:
+            if live[pr].merged or baseline.status_for(pr) != stack.ReconciliationStatus.COHERENT:
+                continue
+            link = baseline.links[pr]
+            if not self._current_branches_match(state, live, baseline, pr):
+                continue
+            current = self._anchor(pr, live[pr], link)
+            decision = self._active_stack_reconciliation(state, pr, current)
+            if decision is not None:
+                reconciled[pr] = decision
         anchored: dict[int, str] = {}
         for pr in state.ordered_prs:
+            if pr in reconciled:
+                continue
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
                 history = _history(self._evidence_provider, pr, channel)
                 if history:
                     parent_head = _field(history[-1], "parent_head")
-                    if isinstance(parent_head, str):
+                    if (
+                        isinstance(parent_head, str)
+                        and len(parent_head) == 40
+                        and all(character in "0123456789abcdefABCDEF" for character in parent_head)
+                    ):
                         anchored[pr] = parent_head
                         break
         result = stack.reconcile_stack(
@@ -391,6 +415,21 @@ class ReviewController:
         )
         reasons = dict(result.reasons)
         statuses = dict(result.statuses)
+
+        def set_anchor_status(pr: int, status: stack.ReconciliationStatus, reason: str) -> None:
+            # Evidence from another channel must not downgrade a topology blocker.
+            priority = {
+                stack.ReconciliationStatus.COHERENT: 0,
+                stack.ReconciliationStatus.PATCH_CHANGED: 1,
+                stack.ReconciliationStatus.EQUIVALENT_HISTORY: 2,
+                stack.ReconciliationStatus.UNRECONCILED: 3,
+                stack.ReconciliationStatus.PARENT_MOVED: 4,
+            }
+            previous = statuses.get(pr, stack.ReconciliationStatus.COHERENT)
+            if priority[status] >= priority[previous]:
+                statuses[pr] = status
+                reasons[pr] = reason
+
         moved: set[int] = set(result.affected_descendants)
         # GitHub's PR head is the candidate identity, while the source branch is
         # the parent ref used by a child.  A branch moving without a child base
@@ -463,18 +502,27 @@ class ReviewController:
                     statuses[pr] = stack.ReconciliationStatus.UNRECONCILED
                     continue
                 if classification == stack.ReconciliationStatus.PARENT_MOVED:
-                    reasons[pr] = "review evidence is anchored to a moved parent"
-                    statuses[pr] = stack.ReconciliationStatus.PARENT_MOVED
-                    moved.add(pr)
+                    if pr in reconciled:
+                        set_anchor_status(pr, stack.ReconciliationStatus.PATCH_CHANGED, "stack parent was reconciled")
+                    else:
+                        set_anchor_status(
+                            pr, stack.ReconciliationStatus.PARENT_MOVED, "review evidence is anchored to a moved parent"
+                        )
+                        moved.add(pr)
                 elif classification == stack.ReconciliationStatus.PATCH_CHANGED:
-                    reasons[pr] = "review evidence patch identity changed"
-                    statuses[pr] = stack.ReconciliationStatus.PATCH_CHANGED
+                    set_anchor_status(
+                        pr, stack.ReconciliationStatus.PATCH_CHANGED, "review evidence patch identity changed"
+                    )
                 elif classification == stack.ReconciliationStatus.UNRECONCILED:
-                    reasons[pr] = "review evidence merge-base identity changed"
-                    statuses[pr] = stack.ReconciliationStatus.UNRECONCILED
+                    set_anchor_status(
+                        pr, stack.ReconciliationStatus.UNRECONCILED, "review evidence merge-base identity changed"
+                    )
                 elif classification == stack.ReconciliationStatus.EQUIVALENT_HISTORY:
-                    reasons[pr] = "review evidence has equivalent history at a new child head"
-                    statuses[pr] = stack.ReconciliationStatus.EQUIVALENT_HISTORY
+                    set_anchor_status(
+                        pr,
+                        stack.ReconciliationStatus.EQUIVALENT_HISTORY,
+                        "review evidence has equivalent history at a new child head",
+                    )
         changed = True
         while changed:
             changed = False
@@ -502,12 +550,139 @@ class ReviewController:
             statuses=statuses,
         )
 
+    def _current_branches_match(
+        self,
+        state: ReviewState,
+        live: Mapping[int, LivePullRequest],
+        reconciliation: stack.Reconciliation,
+        pr: int,
+    ) -> bool:
+        """Require the target and all earlier links to match live remote refs."""
+
+        try:
+            last = state.ordered_prs.index(pr)
+        except ValueError:
+            return False
+        for candidate in state.ordered_prs[: last + 1]:
+            item = live[candidate]
+            if item.merged:
+                continue
+            if (
+                reconciliation.status_for(candidate) != stack.ReconciliationStatus.COHERENT
+                or item.state != "OPEN"
+                or item.mergeable != "MERGEABLE"
+                or not item.base_exists
+                or not self.git.branch_exists(item.base_ref)
+            ):
+                return False
+            if _sha(self.git.branch_head(item.base_ref), f"PR #{candidate} base branch") != item.base_tip:
+                return False
+            if item.head_ref:
+                if not self.git.branch_exists(item.head_ref):
+                    return False
+                if _sha(self.git.branch_head(item.head_ref), f"PR #{candidate} head branch") != item.head:
+                    return False
+        return True
+
+    def _checkpoint_for_reconciliation(
+        self, pr: int, channel: policy.Channel, checkpoint: str, prior_head: str, current: AnchorFacts
+    ) -> Any:
+        for item in _history(self._evidence_provider, pr, channel):
+            if (
+                _field(item, "checkpoint", "checkpoint_id") != checkpoint
+                or _field(item, "head", "reviewed_head") != prior_head
+                or _field(item, "pr") != pr
+                or not _field(item, "completed")
+                or not _field(item, "attributable")
+                or _field(item, "provisional")
+            ):
+                continue
+            values = {
+                name: _field(item, name)
+                for name in ("pr", "child_head", "parent_identity", "parent_head", "merge_base", "patch_id")
+            }
+            if not isinstance(values["pr"], int) or not all(
+                isinstance(values[name], str) and values[name]
+                for name in ("child_head", "parent_identity", "parent_head", "merge_base", "patch_id")
+            ):
+                continue
+            previous = stack.ReviewAnchor(**values)
+            if previous.child_head != prior_head:
+                continue
+            if stack.classify_anchor(previous, current.as_anchor()) == stack.ReconciliationStatus.PARENT_MOVED:
+                return item
+        raise ControllerError("checkpoint must be attributable evidence anchored to a moved parent")
+
+    def _active_stack_reconciliation(
+        self, state: ReviewState, pr: int, current: AnchorFacts
+    ) -> StackReconciliationDecision | None:
+        for decision in reversed(state.reconciliations):
+            if not decision.matches(pr, current.as_dict()):
+                continue
+            try:
+                self._checkpoint_for_reconciliation(
+                    pr,
+                    policy.Channel(decision.channel),
+                    decision.checkpoint,
+                    decision.prior_head,
+                    current,
+                )
+            except ControllerError:
+                continue
+            return decision
+        return None
+
     def _anchor(self, pr: int, item: LivePullRequest, link: stack.ParentLink) -> AnchorFacts:
         merge_base = _sha(self.git.merge_base(link.parent_head, item.head), "merge base")
         patch_id = self.git.patch_identity(merge_base, item.head)
         if not isinstance(patch_id, str) or not patch_id:
             raise ControllerError("Git provider returned an empty patch identity")
         return AnchorFacts(pr, item.head, link.identity, link.parent_head, merge_base, patch_id)
+
+    def decide_reconciliation(
+        self, *, pr: int, channel: str, checkpoint: str, prior_head: str, reason: str
+    ) -> dict[str, Any]:
+        """Record one exact-current-anchor decision that reopens normal review."""
+
+        selected_channel = policy.Channel(channel)
+        if not reason.strip():
+            raise ControllerError("stack reconciliation requires a reason")
+        state = self._state()
+        if pr not in state.ordered_prs:
+            raise ControllerError(f"PR #{pr} is not in the configured review stack")
+        live, snapshots, default_tip = self._live_snapshots(state)
+        baseline = stack.reconcile_stack(
+            state.ordered_prs,
+            snapshots,
+            self.default_base_ref,
+            default_tip,
+            is_ancestor=self.git.is_ancestor,
+        )
+        if not self._current_branches_match(state, live, baseline, pr):
+            raise ControllerError("stack reconciliation requires a coherent exact-current live topology")
+        link = baseline.links[pr]
+        current = self._anchor(pr, live[pr], link)
+        normalized_prior_head = _sha(prior_head, "prior checkpoint head")
+        self._checkpoint_for_reconciliation(pr, selected_channel, checkpoint, normalized_prior_head, current)
+        decision = StackReconciliationDecision(
+            pr,
+            selected_channel.value,
+            checkpoint,
+            normalized_prior_head,
+            current.child_head,
+            current.parent_identity,
+            current.parent_head,
+            current.merge_base,
+            current.patch_id,
+            reason,
+        )
+        updated = self.store.update(
+            lambda current_state: dataclasses.replace(
+                current_state,
+                reconciliations=current_state.reconciliations + (decision,),
+            )
+        )
+        return {"decision": decision.to_dict(), "reconciliations": [item.to_dict() for item in updated.reconciliations]}
 
     def _target(self, channel: policy.Channel | str, expected_pr: int | None = None) -> Target:
         selected = policy.Channel(channel)
@@ -752,6 +927,8 @@ class ReviewController:
             return self.decide_judgment(decision=operation, **kwargs)
         if operation == "policy":
             return self.decide_policy(**kwargs)
+        if operation == "reconcile":
+            return self.decide_reconciliation(**kwargs)
         raise ControllerError("decision must be retain, reopen, or policy")
 
 

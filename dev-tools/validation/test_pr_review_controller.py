@@ -12,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
+from pr_review.cli import _parser
 from pr_review.controller import (
     ControllerError,
     LivePullRequest,
@@ -180,6 +181,243 @@ class ControllerTests(unittest.TestCase):
         target = controller.resolve_cli_target()
         self.assertTrue(target.reconciled)
         self.assertTrue(target.ancestor_links_valid)
+
+    def test_anchorless_historical_evidence_is_readable_without_false_parent_movement(self):
+        values = {1: pr(1, HEAD_1)}
+        evidence = {
+            (1, "cli"): [
+                {
+                    "pr": 1,
+                    "head": HEAD_1,
+                    "checkpoint": "legacy",
+                    "completed": True,
+                    "attributable": True,
+                    "anchored": False,
+                    "accepted": 0,
+                    "parent_head": "",
+                }
+            ]
+        }
+        controller = self.make(values, evidence)
+        controller.set_stack([1])
+        result = controller.status()
+        self.assertEqual(result["prs"][0]["reconciliation"], "COHERENT")
+        self.assertEqual(result["prs"][0]["channels"]["cli"], "READY")
+
+    def test_exact_stack_reconciliation_reopens_review_and_unblocks_descendants(self):
+        values = {
+            1: pr(1, HEAD_1),
+            2: pr(2, HEAD_2, "feature-1", HEAD_1),
+            3: pr(3, "7" * 40, "feature-2", HEAD_2),
+        }
+        evidence = {
+            (1, "cli"): [
+                {
+                    "pr": 1,
+                    "head": HEAD_1,
+                    "checkpoint": f"parent-cli-{index}",
+                    "completed": True,
+                    "attributable": True,
+                    "accepted": 0,
+                    "child_head": HEAD_1,
+                    "parent_identity": "develop",
+                    "parent_head": BASE,
+                    "merge_base": BASE,
+                    "patch_id": f"patch-{HEAD_1[:4]}",
+                }
+                for index in range(3)
+            ],
+            (2, "cli"): [
+                {
+                    "pr": 2,
+                    "head": "9" * 40,
+                    "checkpoint": "cli-old-parent",
+                    "completed": True,
+                    "attributable": True,
+                    "child_head": "9" * 40,
+                    "parent_identity": "1",
+                    "parent_head": PARENT,
+                    "merge_base": BASE,
+                    "patch_id": "old-patch",
+                }
+            ],
+        }
+        controller = self.make(
+            values,
+            evidence,
+            heads={"feature-1": HEAD_1, "feature-2": HEAD_2, "feature-3": "7" * 40},
+        )
+        controller.set_stack([1, 2, 3])
+        before = controller.status()
+        self.assertEqual(before["prs"][1]["reconciliation"], "PARENT_MOVED")
+        self.assertEqual(before["prs"][2]["reconciliation"], "PARENT_MOVED")
+
+        decision = controller.decide_reconciliation(
+            pr=2,
+            channel="cli",
+            checkpoint="cli-old-parent",
+            prior_head="9" * 40,
+            reason="rebased onto the current parent and reopen review",
+        )
+        self.assertEqual(decision["decision"]["child_head"], HEAD_2)
+        after = controller.status()
+        self.assertEqual(after["prs"][1]["reconciliation"], "PATCH_CHANGED")
+        self.assertEqual(after["prs"][1]["channels"]["cli"], "READY")
+        self.assertEqual(after["prs"][2]["reconciliation"], "COHERENT")
+        self.assertEqual(controller.resolve_cli_target(expected_pr=2).snapshot.number, 2)
+
+    def test_reconciliation_decision_is_available_under_decide_command(self):
+        args = _parser().parse_args(
+            [
+                "decide",
+                "reconcile",
+                "--pr",
+                "2",
+                "--channel",
+                "cli",
+                "--checkpoint",
+                "cli-old-parent",
+                "--prior-head",
+                "9" * 40,
+                "--reason",
+                "reopen after rebase",
+            ]
+        )
+        self.assertEqual(args.decide_command, "reconcile")
+
+    def test_stack_reconciliation_rejects_wrong_checkpoint_and_incoherent_live_topology(self):
+        values = {1: pr(1, HEAD_1), 2: pr(2, HEAD_2, "feature-1", HEAD_1)}
+        evidence = {
+            (2, "hosted"): [
+                {
+                    "pr": 2,
+                    "head": "9" * 40,
+                    "checkpoint": "hosted-old-parent",
+                    "completed": True,
+                    "attributable": True,
+                    "child_head": "9" * 40,
+                    "parent_identity": "1",
+                    "parent_head": PARENT,
+                    "merge_base": BASE,
+                    "patch_id": "old-patch",
+                }
+            ]
+        }
+        controller = self.make(values, evidence, heads={"feature-1": HEAD_1, "feature-2": HEAD_2})
+        controller.set_stack([1, 2])
+        with self.assertRaisesRegex(ControllerError, "attributable evidence"):
+            controller.decide_reconciliation(
+                pr=2, channel="hosted", checkpoint="wrong", prior_head="9" * 40, reason="reconcile"
+            )
+        controller.git.heads["feature-1"] = "8" * 40
+        with self.assertRaisesRegex(ControllerError, "coherent exact-current live topology"):
+            controller.decide_reconciliation(
+                pr=2,
+                channel="hosted",
+                checkpoint="hosted-old-parent",
+                prior_head="9" * 40,
+                reason="reconcile",
+            )
+
+    def test_recorded_reconciliation_stops_applying_after_anchor_changes(self):
+        values = {1: pr(1, HEAD_1), 2: pr(2, HEAD_2, "feature-1", HEAD_1)}
+        evidence = {
+            (2, "cli"): [
+                {
+                    "pr": 2,
+                    "head": "9" * 40,
+                    "checkpoint": "cli-old-parent",
+                    "completed": True,
+                    "attributable": True,
+                    "child_head": "9" * 40,
+                    "parent_identity": "1",
+                    "parent_head": PARENT,
+                    "merge_base": BASE,
+                    "patch_id": "old-patch",
+                }
+            ]
+        }
+        controller = self.make(values, evidence, heads={"feature-1": HEAD_1, "feature-2": HEAD_2})
+        controller.set_stack([1, 2])
+        controller.decide_reconciliation(
+            pr=2,
+            channel="cli",
+            checkpoint="cli-old-parent",
+            prior_head="9" * 40,
+            reason="rebased and ready for a fresh review",
+        )
+        values[2] = pr(2, "8" * 40, "feature-1", HEAD_1)
+        controller.git.heads["feature-2"] = "8" * 40
+        self.assertEqual(controller.status()["prs"][1]["reconciliation"], "PARENT_MOVED")
+
+    def test_later_channel_anchor_cannot_downgrade_parent_moved_or_unreconciled(self):
+        moved_evidence = {
+            (1, "hosted"): [
+                {
+                    "pr": 1,
+                    "head": HEAD_1,
+                    "checkpoint": "hosted-parent-moved",
+                    "completed": True,
+                    "attributable": True,
+                    "child_head": HEAD_1,
+                    "parent_identity": "develop",
+                    "parent_head": PARENT,
+                    "merge_base": BASE,
+                    "patch_id": "old-patch",
+                }
+            ],
+            (1, "cli"): [
+                {
+                    "pr": 1,
+                    "head": HEAD_1,
+                    "checkpoint": "cli-patch-changed",
+                    "completed": True,
+                    "attributable": True,
+                    "child_head": HEAD_1,
+                    "parent_identity": "develop",
+                    "parent_head": BASE,
+                    "merge_base": BASE,
+                    "patch_id": "old-patch",
+                }
+            ],
+        }
+        moved = self.make({1: pr(1, HEAD_1)}, moved_evidence)
+        moved.set_stack([1])
+        self.assertEqual(moved.status()["prs"][0]["reconciliation"], "PARENT_MOVED")
+
+        unreconciled_evidence = {
+            (1, "hosted"): [
+                {
+                    "pr": 1,
+                    "head": HEAD_1,
+                    "checkpoint": "hosted-merge-base-changed",
+                    "completed": True,
+                    "attributable": True,
+                    "child_head": HEAD_1,
+                    "parent_identity": "develop",
+                    "parent_head": BASE,
+                    "merge_base": PARENT,
+                    "patch_id": f"patch-{HEAD_1[:4]}",
+                }
+            ],
+            (1, "cli"): [
+                {
+                    "pr": 1,
+                    "head": HEAD_1,
+                    "checkpoint": "cli-patch-changed",
+                    "completed": True,
+                    "attributable": True,
+                    "child_head": HEAD_1,
+                    "parent_identity": "develop",
+                    "parent_head": BASE,
+                    "merge_base": BASE,
+                    "patch_id": "old-patch",
+                }
+            ],
+        }
+        unreconciled = self.make({1: pr(1, HEAD_1)}, unreconciled_evidence)
+        unreconciled.set_stack([1])
+        self.assertEqual(unreconciled.status()["prs"][0]["reconciliation"], "UNRECONCILED")
 
 
 if __name__ == "__main__":

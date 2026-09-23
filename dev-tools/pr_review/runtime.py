@@ -5,6 +5,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import subprocess
 from collections.abc import Sequence
 from datetime import datetime, timezone
@@ -14,6 +15,13 @@ from . import evidence, github, hosted
 from .cli_runner import PullRequestSnapshot, ReviewRunnerError, ReviewTarget, run_cli_review
 from .controller import ControllerError, DefaultGitProvider, ReviewController
 from .state import StateStore
+
+_PLAN_CEILING_PATTERN = re.compile(
+    r"(?is)(?:(?:exceed\w*|too many|over|reject\w*|skip\w*).{0,120}"
+    r"(?:file|files).{0,120}(?:plan|limit|ceiling|maximum|cap)"
+    r"|(?:plan|review).{0,120}(?:file|files).{0,120}"
+    r"(?:limit|ceiling|maximum|cap).{0,120}(?:exceed\w*|too many|over|reject\w*|skip\w*))"
+)
 
 
 class LiveGitHub:
@@ -111,6 +119,165 @@ class LiveEvidence:
             "patch_id": patch,
         }
 
+    @staticmethod
+    def _anchor_complete(anchor: Any) -> bool:
+        return isinstance(anchor, dict) and all(
+            isinstance(anchor.get(name), str) and bool(anchor[name])
+            for name in ("child_head", "parent_identity", "parent_head", "merge_base", "patch_id")
+        )
+
+    def _hosted_trigger_for_checkpoint(
+        self,
+        pr: int,
+        head: str,
+        checkpoint: evidence.Checkpoint,
+        reviews: list[dict[str, Any]],
+        payload: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        proof = evidence.hosted_checkpoint_evidence(checkpoint, reviews, head)
+        if proof.get("status") != "completed":
+            return None
+        for path in hosted.trigger_record_paths(self.repo, pr):
+            try:
+                record = hosted.load_trigger_record(path, self.repo, pr)
+                state = hosted.trigger_state(self.repo, pr, payload, record, path)
+            except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+                continue
+            anchor = record.get("anchor")
+            if (
+                state.state == "completed"
+                and state.head_sha.casefold() == head.casefold()
+                and state.response_id == checkpoint.hosted_review_id
+                and state.response_id == proof.get("review_id")
+                and state.head_sha.casefold() == str(proof.get("commit_id", "")).casefold()
+                and self._anchor_complete(anchor)
+                and anchor.get("child_head", "").casefold() == head.casefold()
+            ):
+                return record, proof
+        return None
+
+    @staticmethod
+    def _summary_action_counts(payload: dict[str, Any], head: str) -> tuple[int, int, str | None]:
+        pr = payload["data"]["repository"]["pullRequest"]
+        candidates: list[tuple[datetime, int, int, str | None]] = []
+        items = [*pr.get("comments", {}).get("nodes", []), *pr.get("reviews", {}).get("nodes", [])]
+        for item in items:
+            author = (item.get("author") or {}).get("login", "")
+            if not github.is_coderabbit_login(author):
+                continue
+            body = item.get("body") or ""
+            if item.get("state") == "DISMISSED":
+                continue
+            commit = (item.get("commit") or {}).get("oid")
+            if not hosted._substantive(body) or (commit != head and not hosted._matches_head(body, head)):
+                continue
+            created = hosted.parse_timestamp(item.get("createdAt") or item.get("submittedAt"))
+            if created is None:
+                continue
+            try:
+                outside, duplicate = evidence.summary_action_counts(body)
+            except evidence.EvidenceError:
+                outside, duplicate = 1, 1
+            candidates.append((created, outside, duplicate, item.get("url")))
+        if not candidates:
+            return 0, 0, None
+        _, outside, duplicate, url = max(candidates, key=lambda value: value[0])
+        return outside, duplicate, url
+
+    def _global_blockers(self, pr: int, head: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        pull = payload["data"]["repository"]["pullRequest"]
+        values: list[dict[str, Any]] = []
+        threads = (pull.get("reviewThreads") or {}).get("nodes")
+        if not isinstance(threads, list):
+            values.append(
+                {
+                    "pr": pr,
+                    "head": head,
+                    "checkpoint": "review-threads:unavailable",
+                    "unstable": True,
+                    "reason": "complete GitHub review-thread evidence is unavailable",
+                }
+            )
+        else:
+            unresolved = [
+                thread for thread in threads if isinstance(thread, dict) and thread.get("isResolved") is False
+            ]
+            malformed = any(
+                not isinstance(thread, dict)
+                or not isinstance(thread.get("isResolved"), bool)
+                or not isinstance(thread.get("isOutdated"), bool)
+                for thread in threads
+            )
+            if malformed:
+                values.append(
+                    {
+                        "pr": pr,
+                        "head": head,
+                        "checkpoint": "review-threads:malformed",
+                        "unstable": True,
+                        "reason": "GitHub review-thread evidence is malformed",
+                    }
+                )
+            if unresolved:
+                current = sum(thread["isOutdated"] is False for thread in unresolved)
+                outdated = sum(thread["isOutdated"] is True for thread in unresolved)
+                values.append(
+                    {
+                        "pr": pr,
+                        "head": head,
+                        "checkpoint": f"review-threads:{current}:{outdated}",
+                        "held": True,
+                        "reason": f"{current} unresolved current and {outdated} unresolved outdated review thread(s)",
+                    }
+                )
+        outside, duplicate, url = self._summary_action_counts(payload, head)
+        if outside or duplicate:
+            values.append(
+                {
+                    "pr": pr,
+                    "head": head,
+                    "checkpoint": f"summary-actions:{outside}:{duplicate}",
+                    "held": True,
+                    "reason": f"latest CodeRabbit summary has {outside} outside-diff and {duplicate} duplicate actionable comment(s)",
+                    "url": url,
+                }
+            )
+        all_reviews = [*pull.get("comments", {}).get("nodes", []), *pull.get("reviews", {}).get("nodes", [])]
+        latest_exact_completion = datetime.min.replace(tzinfo=timezone.utc)
+        for item in all_reviews:
+            if not github.is_coderabbit_login((item.get("author") or {}).get("login", "")):
+                continue
+            body = item.get("body") or ""
+            committed = (item.get("commit") or {}).get("oid")
+            if not hosted._substantive(body) or item.get("state") == "DISMISSED":
+                continue
+            if committed != head and not hosted._matches_head(body, head):
+                continue
+            timestamp = hosted.parse_timestamp(item.get("submittedAt") or item.get("createdAt"))
+            if timestamp and timestamp > latest_exact_completion:
+                latest_exact_completion = timestamp
+        for item in all_reviews:
+            if not github.is_coderabbit_login((item.get("author") or {}).get("login", "")):
+                continue
+            body = item.get("body") or ""
+            timestamp = hosted.parse_timestamp(item.get("createdAt") or item.get("submittedAt"))
+            if (
+                "<!-- This is an auto-generated comment: skip review by coderabbit.ai -->" in body
+                and _PLAN_CEILING_PATTERN.search(body)
+                and timestamp is not None
+                and timestamp >= latest_exact_completion
+            ):
+                values.append(
+                    {
+                        "pr": pr,
+                        "head": head,
+                        "checkpoint": f"over-ceiling:{github.immutable_database_id(item) or 'unknown'}",
+                        "over_ceiling": True,
+                        "reason": "CodeRabbit rejected the review because the PR exceeds its file ceiling; a topology decision is required",
+                    }
+                )
+        return values
+
     def history(self, pr: int, channel: str) -> Sequence[dict[str, Any]]:
         key = (pr, channel)
         if key in self._histories:
@@ -121,9 +288,12 @@ class LiveEvidence:
         checkpoints, _ = evidence.parse_checkpoint_comments(self._comments(payload))
         reviews = self._reviews(payload)
         values: list[dict[str, Any]] = []
+        public_cli_run_ids: set[str] = set()
+        emitted_cli_sources: set[tuple[str, str]] = set()
         for checkpoint in checkpoints:
             if checkpoint.type.casefold() != channel:
                 continue
+            capture = None
             exact_head = (
                 head
                 if checkpoint.reviewed_sha and head.casefold().startswith(checkpoint.reviewed_sha.casefold())
@@ -139,27 +309,24 @@ class LiveEvidence:
                 except evidence.EvidenceError:
                     capture = None
                 if capture is not None:
+                    if checkpoint.run_id:
+                        public_cli_run_ids.add(checkpoint.run_id)
+                    identity = (checkpoint.run_id or "", capture.source_identity or checkpoint.run_id or "")
+                    if identity in emitted_cli_sources:
+                        continue
+                    emitted_cli_sources.add(identity)
                     exact_head = capture.metadata.get("candidate_sha", exact_head)
                     completed = attributable = True
                     provisional = capture.metadata.get("provisional", "false").casefold() == "true"
                     anchor = self._anchor(capture.metadata)
             else:
-                proof = evidence.hosted_checkpoint_evidence(checkpoint, reviews, head)
-                completed = attributable = proof.get("status") == "completed"
-                if completed:
+                matched = self._hosted_trigger_for_checkpoint(pr, head, checkpoint, reviews, payload)
+                if matched is not None:
+                    record, proof = matched
+                    completed = attributable = True
                     exact_head = str(proof["commit_id"])
-                for path in hosted.trigger_record_paths(self.repo, pr):
-                    try:
-                        record = hosted.load_trigger_record(path, self.repo, pr)
-                    except (OSError, ValueError, json.JSONDecodeError):
-                        continue
-                    if record.get("head_sha") == exact_head and isinstance(record.get("anchor"), dict):
-                        anchor = dict(record["anchor"])
-                        break
-            anchor_complete = all(
-                isinstance(anchor.get(name), str) and bool(anchor[name])
-                for name in ("child_head", "parent_identity", "parent_head", "merge_base", "patch_id")
-            )
+                    anchor = dict(record["anchor"])
+            anchor_complete = self._anchor_complete(anchor)
             values.append(
                 {
                     "pr": pr,
@@ -176,25 +343,96 @@ class LiveEvidence:
                     **anchor,
                 }
             )
+        if channel == "cli":
+            for capture in evidence.discover_cli_captures(self.repo, pr):
+                run_id = capture.metadata.get("run_id", "")
+                if run_id in public_cli_run_ids:
+                    continue
+                identity = (run_id, capture.source_identity or run_id)
+                if identity in emitted_cli_sources:
+                    continue
+                emitted_cli_sources.add(identity)
+                values.append(
+                    {
+                        "pr": pr,
+                        "head": capture.metadata.get("candidate_sha", ""),
+                        "checkpoint": f"pending-capture:{run_id}",
+                        "completed": False,
+                        "attributable": False,
+                        "anchored": False,
+                        "accepted": 0,
+                        "raw": len(capture.findings),
+                        "corrected_state": False,
+                        "provisional": capture.metadata.get("provisional", "false").casefold() == "true",
+                        "held": capture.metadata.get("candidate_sha", "").casefold() == head.casefold(),
+                        "reason": (
+                            "a successful private CLI capture has no public checkpoint and requires adjudication"
+                            if capture.metadata.get("candidate_sha", "").casefold() == head.casefold()
+                            else "a successful private CLI capture belongs to an older head"
+                        ),
+                        **self._anchor(capture.metadata),
+                    }
+                )
         if channel == "hosted":
-            paths = hosted.trigger_record_paths(self.repo, pr)
-            if paths:
+            paths = hosted.current_trigger_record_paths(self.repo, pr)
+            if len(paths) > 1:
+                values.append(
+                    {
+                        "pr": pr,
+                        "head": head,
+                        "checkpoint": "trigger:multiple-current-reservations",
+                        "unstable": True,
+                        "held": True,
+                        "reason": "multiple current Hosted trigger reservations require operator resolution",
+                    }
+                )
+            for path in paths:
                 try:
-                    record = hosted.load_trigger_record(paths[0], self.repo, pr)
-                    state = hosted.trigger_state(self.repo, pr, payload, record, paths[0])
+                    record = hosted.load_trigger_reservation(path, self.repo, pr)
+                    state = hosted.trigger_state(self.repo, pr, payload, record, path)
                 except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
-                    state = None
-                if state and state.state in {"rate_limited", "active", "awaiting_response", "ambiguous", "timed_out"}:
+                    values.append(
+                        {
+                            "pr": pr,
+                            "head": head,
+                            "checkpoint": f"trigger:unreadable:{path.name}",
+                            "held": True,
+                            "unstable": True,
+                            "reason": "a discovered current Hosted reservation is unreadable or ambiguous",
+                        }
+                    )
+                    continue
+                if state.state == "rate_limited":
+                    reset = hosted.parse_timestamp(state.cooldown_until)
+                    now = datetime.now(timezone.utc)
+                    if reset is not None and reset <= now:
+                        continue
                     values.append(
                         {
                             "pr": pr,
                             "head": state.head_sha,
                             "checkpoint": f"trigger:{state.trigger_comment_id or 'pending'}",
-                            "rate_limited": state.state == "rate_limited",
-                            "held": state.state in {"active", "awaiting_response"},
-                            "unstable": state.state in {"ambiguous", "timed_out"},
+                            "rate_limited": True,
+                            "held": reset is None,
+                            "unstable": reset is None,
+                            "reason": "Hosted cooldown remains active"
+                            if reset
+                            else "Hosted cooldown has no attributable reset time",
+                            "cooldown_until": state.cooldown_until,
                         }
                     )
+                elif state.state in {"active", "awaiting_response", "ambiguous", "unattributed", "timed_out"}:
+                    values.append(
+                        {
+                            "pr": pr,
+                            "head": state.head_sha,
+                            "checkpoint": f"trigger:{state.trigger_comment_id or 'pending'}",
+                            "held": state.state in {"active", "awaiting_response", "ambiguous", "unattributed"},
+                            "unstable": state.state in {"ambiguous", "unattributed", "timed_out"},
+                            "reason": state.reason,
+                        }
+                    )
+        values.extend(self._global_blockers(pr, head, payload))
         self._histories[key] = values
         return values
 
@@ -226,10 +464,14 @@ class HostedRunner:
                 fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
                 raise ControllerError(f"another Hosted request is active for PR #{pr}") from exc
-            if path.exists():
-                record = hosted.load_trigger_record(path, self.repo, pr)
+            current_records = hosted.current_trigger_record_paths(self.repo, pr)
+            if len(current_records) > 1:
+                raise ControllerError("multiple current Hosted reservations require operator resolution")
+            if current_records:
+                current_path = current_records[0]
+                record = hosted.load_trigger_reservation(current_path, self.repo, pr)
                 payload = github.fetch_pull_request(self.repo, pr)
-                state = hosted.trigger_state(self.repo, pr, payload, record, path)
+                state = hosted.trigger_state(self.repo, pr, payload, record, current_path)
                 if state.state in {"active", "awaiting_response", "ambiguous", "unattributed", "timed_out"}:
                     raise ControllerError(f"existing Hosted trigger requires resolution: {state.state}")
                 if state.state == "rate_limited":
@@ -239,10 +481,10 @@ class HostedRunner:
                         raise ControllerError(f"Hosted review is rate limited until {state.cooldown_until}")
                 trigger_id = (record.get("trigger") or {}).get("id")
                 if isinstance(trigger_id, int) and trigger_id > 0:
-                    archive = path.with_name(f"trigger-{trigger_id}.json")
+                    archive = current_path.with_name(f"trigger-{trigger_id}.json")
                     if archive.exists():
                         raise ControllerError(f"Hosted trigger archive already exists: {archive}")
-                    os.replace(path, archive)
+                    os.replace(current_path, archive)
                 else:
                     raise ControllerError("existing Hosted trigger has no archivable identity")
             anchor = {

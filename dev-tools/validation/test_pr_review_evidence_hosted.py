@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import tempfile
 import unittest
@@ -224,6 +225,97 @@ class HostedEvidenceTests(unittest.TestCase):
             old.write_text("{}")
             self.assertTrue(str(new).startswith(str(common / "firemud")))
             self.assertIn(old, hosted.trigger_record_paths(REPO, PR, common))
+
+    def test_legacy_posting_reservation_without_trigger_identity_is_readable_as_ambiguous(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "legacy.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "status": "posting",
+                        "repository": REPO,
+                        "pr_number": PR,
+                        "head_sha": HEAD,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            record = hosted.load_trigger_reservation(path, REPO, PR)
+            state = hosted.trigger_state(REPO, PR, review_payload(), record, path)
+            self.assertEqual(state.state, "ambiguous")
+            self.assertFalse(state.attributed)
+
+    def test_retirement_refuses_an_active_review(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        active = comment(11, "coderabbitai", "Full review triggered", "2026-09-23T00:02:00Z")
+        payload = review_payload([trigger, active])
+        record = trigger_record()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            path.write_text(json.dumps(record), encoding="utf-8")
+            lock_path = Path(directory) / "lock-trigger.json"
+            with (
+                patch.object(hosted, "default_trigger_record_path", return_value=lock_path),
+                self.assertRaisesRegex(ValueError, "active"),
+            ):
+                hosted.retire_trigger_record(path, REPO, PR, 10, HEAD, "stale", payload)
+
+    def test_retirement_accepts_only_durable_later_exact_head_completion(self):
+        earlier = trigger_record("c" * 40)
+        later = {
+            **trigger_record(HEAD),
+            "anchor": {
+                "child_head": HEAD,
+                "parent_identity": "develop",
+                "parent_head": BASE,
+                "merge_base": BASE,
+                "patch_id": "d" * 64,
+            },
+            "trigger": {
+                "id": 20,
+                "created_at": "2026-09-23T00:03:00Z",
+                "url": "https://example.test/comments/20",
+                "type": "full",
+                "command": hosted.FULL_COMMAND,
+            },
+        }
+        earlier["status"] = "posted"
+        later_trigger = comment(20, "owner", hosted.FULL_COMMAND, "2026-09-23T00:03:00Z")
+        completed = {
+            **comment(
+                21,
+                "coderabbitai[bot]",
+                f"<!-- walkthrough_start -->\nReviewing files that changed from the base of the PR and between {BASE} and {HEAD}.",
+                "2026-09-23T00:04:00Z",
+            ),
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-23T00:04:00Z",
+            "commit": {"oid": HEAD},
+        }
+        payload = review_payload([later_trigger], [completed])
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            lock_path = hosted.default_trigger_record_path(REPO, PR, common)
+            old_path = common / "old.json"
+            old_path.write_text(json.dumps(earlier), encoding="utf-8")
+            later_path = lock_path
+            later_path.parent.mkdir(parents=True)
+            later_path.write_text(json.dumps(later), encoding="utf-8")
+            with (
+                patch.object(hosted, "default_trigger_record_path", return_value=lock_path),
+                patch.object(hosted, "trigger_record_paths", return_value=[later_path]),
+            ):
+                result = hosted.retire_trigger_record(old_path, REPO, PR, 10, HEAD, "superseded", payload)
+            self.assertEqual(result["status"], "retired")
+
+            unverified_path = common / "unverified.json"
+            unverified_path.write_text(json.dumps(earlier), encoding="utf-8")
+            with (
+                patch.object(hosted, "default_trigger_record_path", return_value=lock_path),
+                patch.object(hosted, "trigger_record_paths", return_value=[]),
+                self.assertRaisesRegex(ValueError, "later completed exact-head"),
+            ):
+                hosted.retire_trigger_record(unverified_path, REPO, PR, 10, HEAD, "superseded", payload)
 
 
 if __name__ == "__main__":

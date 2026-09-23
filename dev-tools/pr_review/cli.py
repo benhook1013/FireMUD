@@ -84,6 +84,15 @@ def _parser() -> argparse.ArgumentParser:
     policy.add_argument("--cli-zero-useful", type=_nonnegative_int)
     policy.add_argument("--reason", required=True)
     policy.add_argument("--json", action="store_true", dest="as_json")
+    reconcile = decide_commands.add_parser(
+        "reconcile", help="reopen review against one exact coherent current stack anchor"
+    )
+    reconcile.add_argument("--pr", required=True, type=_positive_int)
+    reconcile.add_argument("--channel", required=True, choices=("hosted", "cli"))
+    reconcile.add_argument("--checkpoint", required=True)
+    reconcile.add_argument("--prior-head", required=True)
+    reconcile.add_argument("--reason", required=True)
+    reconcile.add_argument("--json", action="store_true", dest="as_json")
     retirement = decide_commands.add_parser("trigger-retire")
     retirement.add_argument("--pr", required=True, type=_positive_int)
     retirement.add_argument("--trigger-id", required=True, type=_positive_int)
@@ -176,6 +185,14 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 decision=args.decision,
                 head=args.head,
                 checkpoint=args.checkpoint,
+                reason=args.reason,
+            ), 0
+        if args.decide_command == "reconcile":
+            return controller.decide_reconciliation(
+                pr=args.pr,
+                channel=args.channel,
+                checkpoint=args.checkpoint,
+                prior_head=args.prior_head,
                 reason=args.reason,
             ), 0
         return controller.decide_policy(

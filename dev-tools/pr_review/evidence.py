@@ -31,6 +31,10 @@ SCOPE_CHANGE = re.compile(r"^\*\*Review scope changed:\*\* (?P<description>.+)$"
 SCOPE_MARKER = "<!-- firemud-review-scope-change -->"
 RUN_ID = re.compile(r"^run\.[A-Za-z0-9]{1,32}$")
 EXACT_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
+SUMMARY_MARKERS = {
+    "outside_diff": ("Outside diff range comments", "Outside the diff"),
+    "duplicate": ("Duplicate comments",),
+}
 
 
 @dataclass(frozen=True)
@@ -101,6 +105,20 @@ class CaptureInvalid(EvidenceError):
     """A linked private capture is present but cannot be trusted."""
 
 
+def summary_action_counts(body: str) -> tuple[int, int]:
+    """Return canonical summary-only counts, rejecting malformed marked sections."""
+
+    counts: dict[str, int] = {"outside_diff": 0, "duplicate": 0}
+    for kind, markers in SUMMARY_MARKERS.items():
+        found: list[int] = []
+        for marker in markers:
+            found.extend(int(value) for value in re.findall(rf"{re.escape(marker)}\s*\((\d+)\)", body, re.IGNORECASE))
+        if any(marker.casefold() in body.casefold() for marker in markers) and not found:
+            raise EvidenceError(f"CodeRabbit {kind} summary section has no canonical count")
+        counts[kind] = max(found, default=0)
+    return counts["outside_diff"], counts["duplicate"]
+
+
 @dataclass(frozen=True)
 class CaptureData:
     metadata: dict[str, str]
@@ -108,6 +126,7 @@ class CaptureData:
     decisions: dict[int, tuple[str, str]] = field(default_factory=dict)
     unlinked_decisions: list[dict[str, Any]] = field(default_factory=list)
     decision_file_present: bool = False
+    source_identity: str | None = None
 
 
 @dataclass(frozen=True)
@@ -398,7 +417,7 @@ def load_cli_capture(checkpoint: Checkpoint, repo: str, pr_number: int, common: 
     if decision_path is None:
         rejection_path = _contained_file(run_dir, "rejections.tsv", required=False)
         if rejection_path is None:
-            return CaptureData(metadata, findings)
+            return CaptureData(metadata, findings, source_identity=str(run_dir.resolve()))
         decisions: dict[int, tuple[str, str]] = {}
         unlinked: list[dict[str, Any]] = []
         for number, line in enumerate(rejection_path.read_text(encoding="utf-8").splitlines(), 1):
@@ -419,7 +438,7 @@ def load_cli_capture(checkpoint: Checkpoint, repo: str, pr_number: int, common: 
                 unlinked.append({"format": "legacy", "reference": fields[0], "reason": fields[1]})
             else:
                 raise CaptureInvalid(f"rejection records are malformed at line {number}")
-        return CaptureData(metadata, findings, decisions, unlinked, False)
+        return CaptureData(metadata, findings, decisions, unlinked, False, str(run_dir.resolve()))
     decisions: dict[int, tuple[str, str]] = {}
     unlinked: list[dict[str, Any]] = []
     for number, line in enumerate(decision_path.read_text(encoding="utf-8").splitlines(), 1):
@@ -435,7 +454,65 @@ def load_cli_capture(checkpoint: Checkpoint, repo: str, pr_number: int, common: 
             raise CaptureInvalid("decision records duplicate a finding")
         else:
             decisions[finding_id] = (disposition, reason)
-    return CaptureData(metadata, findings, decisions, unlinked, True)
+    return CaptureData(metadata, findings, decisions, unlinked, True, str(run_dir.resolve()))
+
+
+def discover_cli_captures(repo: str, pr_number: int, common: Path | None = None) -> list[CaptureData]:
+    """Find complete private CLI captures that may not yet have a public checkpoint."""
+
+    roots = private_review_roots(common)
+    candidate_roots = (
+        roots[-1],
+        roots[0] / "pr-review" / "runs",
+        roots[0] / "runs",
+        roots[0] / "coderabbit-review-logs",
+    )
+    captures: list[CaptureData] = []
+    visited: set[Path] = set()
+    for root in candidate_roots:
+        if root.is_symlink() or not root.is_dir():
+            continue
+        try:
+            run_dirs = list(root.iterdir())
+        except OSError:
+            continue
+        for run_dir in run_dirs:
+            if not RUN_ID.fullmatch(run_dir.name) or run_dir.is_symlink() or not run_dir.is_dir():
+                continue
+            resolved = run_dir.resolve()
+            if resolved in visited:
+                continue
+            visited.add(resolved)
+            try:
+                metadata = _read_metadata(_contained_file(run_dir, "metadata"))
+                if (
+                    metadata.get("run_id") != run_dir.name
+                    or metadata.get("repository", "").casefold() != repo.casefold()
+                    or metadata.get("pull_request") != str(pr_number)
+                ):
+                    continue
+                candidate_sha = metadata.get("candidate_sha", "")
+                candidate_files = int(metadata.get("candidate_files", "-1"))
+                stdout = _contained_file(run_dir, "stdout")
+                assert stdout is not None
+                findings, _ = _parse_capture_stdout(stdout)
+                checkpoint = Checkpoint(
+                    comment_id=None,
+                    created_at="",
+                    type="CLI",
+                    raw_found=len(findings),
+                    accepted=0,
+                    reviewed_sha=candidate_sha[:12] if EXACT_SHA.fullmatch(candidate_sha) else None,
+                    file_count=candidate_files,
+                    correction=False,
+                    updated_at=None,
+                    run_id=run_dir.name,
+                    hosted_review_id=None,
+                )
+                captures.append(load_cli_capture(checkpoint, repo, pr_number, common))
+            except (EvidenceError, OSError, ValueError):
+                continue
+    return captures
 
 
 def _is_coderabbit(login: Any) -> bool:

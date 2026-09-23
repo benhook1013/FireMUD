@@ -32,6 +32,8 @@ grep -Eq -- '--expect-pr' <<<"$(python3 dev-tools/pr-review run cli --help)" \
   || fail 'CLI help does not expose --expect-pr'
 grep -Fq 'trigger-retire' <<<"$(python3 dev-tools/pr-review decide --help)" \
   || fail 'decide help does not expose guarded Hosted trigger retirement'
+grep -Fq 'reconcile' <<<"$(python3 dev-tools/pr-review decide --help)" \
+  || fail 'decide help does not expose exact stack reconciliation'
 
 # Keep the deletion/reference assertion hermetic. The contract itself constructs
 # the retired basenames so it can check every other tracked file without failing

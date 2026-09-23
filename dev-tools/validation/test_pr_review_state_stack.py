@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from pr_review.policy import Channel, Evidence, ReviewStatus, completion_status, select_review_target, taper_satisfied
 from pr_review.stack import PRSnapshot, ReconciliationStatus, ReviewAnchor, classify_anchor, reconcile_stack
-from pr_review.state import Judgment, PolicyOverride, ReviewState, StateStore
+from pr_review.state import Judgment, PolicyOverride, ReviewState, StackReconciliationDecision, StateStore
 
 
 def _append_pr(path: str, pr: int) -> None:
@@ -32,6 +32,20 @@ class ReviewStateStackTest(unittest.TestCase):
                     "2838:hosted": PolicyOverride(hosted_zero_useful=2, head="h1", checkpoint="c1", reason="close-out")
                 },
                 judgments=(Judgment(2838, "cli", "retain", "h1", "c1", "equivalent history reviewed"),),
+                reconciliations=(
+                    StackReconciliationDecision(
+                        2838,
+                        "cli",
+                        "old-checkpoint",
+                        "old-child",
+                        "current-child",
+                        "2818",
+                        "parent-head",
+                        "merge-base",
+                        "patch-id",
+                        "rebased to exact current parent",
+                    ),
+                ),
             )
             store = StateStore(path)
             store.update(lambda _: state)
@@ -40,6 +54,7 @@ class ReviewStateStackTest(unittest.TestCase):
             document = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(document["schema_version"], 1)
             self.assertEqual(document["policy_overrides"]["2838:hosted"]["head"], "h1")
+            self.assertEqual(document["reconciliations"][0]["parent_head"], "parent-head")
             self.assertNotIn("live_head", json.dumps(document))
             self.assertNotIn("base_tip", json.dumps(document))
             self.assertNotIn("evidence", json.dumps(document))
@@ -91,6 +106,30 @@ class ReviewStateStackTest(unittest.TestCase):
         result = reconcile_stack((1, 2, 3), snapshots, "develop", "d", is_ancestor=lambda parent, child: True)
         self.assertEqual(result.status_for(2), ReconciliationStatus.PARENT_MOVED)
         self.assertEqual(result.status_for(3), ReconciliationStatus.PARENT_MOVED)
+
+    def test_reconciliation_decision_matches_only_its_exact_current_anchor(self):
+        decision = StackReconciliationDecision(
+            2,
+            "cli",
+            "checkpoint",
+            "prior-head",
+            "child-head",
+            "parent-pr",
+            "parent-head",
+            "merge-base",
+            "patch-id",
+            "rebase confirmed",
+        )
+        anchor = {
+            "child_head": "child-head",
+            "parent_identity": "parent-pr",
+            "parent_head": "parent-head",
+            "merge_base": "merge-base",
+            "patch_id": "patch-id",
+        }
+        self.assertTrue(decision.matches(2, anchor))
+        self.assertFalse(decision.matches(1, anchor))
+        self.assertFalse(decision.matches(2, {**anchor, "parent_head": "new-parent-head"}))
 
     def test_unreconciled_child_is_not_cleared_by_an_available_merge_base(self):
         snapshots = {
