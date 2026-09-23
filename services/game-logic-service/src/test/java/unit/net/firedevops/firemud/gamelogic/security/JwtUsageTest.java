@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
@@ -14,6 +15,10 @@ import org.junit.jupiter.api.Test;
 class JwtUsageTest {
   private static final Pattern QUOTED_AUTHORIZATION_HEADER =
       Pattern.compile("(?i)(['\"])authorization\\1");
+  private static final Pattern HTTP_HEADERS_AUTHORIZATION_REFERENCE =
+      Pattern.compile("(?<![\\w$])HttpHeaders\\s*\\.\\s*AUTHORIZATION(?![\\w$])");
+  private static final Pattern AUTHORIZATION_HEADER_IDENTIFIER =
+      Pattern.compile("(?<![\\w$])AUTHORIZATION_HEADER(?![\\w$])");
   private static final Pattern STATIC_AUTHORIZATION_IMPORT =
       Pattern.compile("(?m)^\\s*import\\s+static\\s+[\\w$.]+\\.AUTHORIZATION\\s*;");
   private static final Pattern STATIC_HTTP_HEADERS_WILDCARD_IMPORT =
@@ -42,6 +47,31 @@ class JwtUsageTest {
   }
 
   @Test
+  void commentsDoNotTriggerAuthorizationHeaderReferences() {
+    assertFalse(
+        containsAuthorizationHeaderReference(
+            "// request.header(HttpHeaders.AUTHORIZATION)\n"
+                + "/* \"Authorization\" AUTHORIZATION_HEADER */\n"
+                + "class Example {}"));
+    assertFalse(
+        containsAuthorizationHeaderReference(
+            "import static org.springframework.http.HttpHeaders.*;\n"
+                + "// AUTHORIZATION\n"
+                + "String text = \"ordinary value\";"));
+  }
+
+  @Test
+  void detectsQuotedAuthorizationOnlyInRealStringOrCharacterLiterals() {
+    assertTrue(containsAuthorizationHeaderReference("request.header(\"Authorization\")"));
+    assertTrue(containsAuthorizationHeaderReference("request.header('aUtHoRiZaTiOn')"));
+    assertFalse(containsAuthorizationHeaderReference("// request.header(\"Authorization\")"));
+    assertFalse(containsAuthorizationHeaderReference("/* request.header('Authorization') */"));
+    assertFalse(
+        containsAuthorizationHeaderReference(
+            "String text = \"https://example.invalid/\"; // Authorization"));
+  }
+
+  @Test
   void authorizationExceptionNamesAreNotHeaderReferences() {
     assertFalse(
         containsAuthorizationHeaderReference(
@@ -63,6 +93,13 @@ class JwtUsageTest {
         containsAuthorizationHeaderReference(
             "import static org.springframework.http.HttpHeaders.*;\n"
                 + "String AUTHORIZATION_TOKEN = \"example\";"));
+    assertFalse(
+        containsAuthorizationHeaderReference("request.header(MyHttpHeaders.AUTHORIZATION)"));
+    assertFalse(
+        containsAuthorizationHeaderReference("request.header(HttpHeaders.AUTHORIZATION_VALUE)"));
+    assertFalse(containsAuthorizationHeaderReference("String MY_AUTHORIZATION_HEADER = \"x\";"));
+    assertFalse(
+        containsAuthorizationHeaderReference("String AUTHORIZATION_HEADER_SUFFIX = \"x\";"));
   }
 
   @Test
@@ -99,12 +136,25 @@ class JwtUsageTest {
   }
 
   private static boolean containsAuthorizationHeaderReference(String content) {
-    String javaCode = JAVA_COMMENTS_AND_LITERALS.matcher(content).replaceAll(" ");
-    return QUOTED_AUTHORIZATION_HEADER.matcher(content).find()
-        || content.contains("HttpHeaders.AUTHORIZATION")
-        || content.contains("AUTHORIZATION_HEADER")
+    StringBuilder javaCode = new StringBuilder(content.length());
+    StringBuilder javaLiterals = new StringBuilder();
+    Matcher matcher = JAVA_COMMENTS_AND_LITERALS.matcher(content);
+    int cursor = 0;
+    while (matcher.find()) {
+      javaCode.append(content, cursor, matcher.start());
+      String token = matcher.group();
+      if (token.startsWith("\"") || token.startsWith("'")) {
+        javaLiterals.append(token).append(' ');
+      }
+      cursor = matcher.end();
+    }
+    javaCode.append(content, cursor, content.length());
+    String code = javaCode.toString();
+    return QUOTED_AUTHORIZATION_HEADER.matcher(javaLiterals).find()
+        || HTTP_HEADERS_AUTHORIZATION_REFERENCE.matcher(code).find()
+        || AUTHORIZATION_HEADER_IDENTIFIER.matcher(code).find()
         || STATIC_AUTHORIZATION_IMPORT.matcher(javaCode).find()
-        || (STATIC_HTTP_HEADERS_WILDCARD_IMPORT.matcher(javaCode).find()
-            && BARE_AUTHORIZATION_IDENTIFIER.matcher(javaCode).find());
+        || (STATIC_HTTP_HEADERS_WILDCARD_IMPORT.matcher(code).find()
+            && BARE_AUTHORIZATION_IDENTIFIER.matcher(code).find());
   }
 }
