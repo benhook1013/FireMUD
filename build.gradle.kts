@@ -306,7 +306,6 @@ subprojects {
 
     tasks.test {
         useJUnitPlatform()
-        if (fullCheck) finalizedBy("jacocoTestReport")
     }
 
     val coverageTestTaskNames = buildList {
@@ -327,6 +326,10 @@ subprojects {
             csv.required.set(false)
             html.required.set(true)
         }
+    }
+
+    tasks.named("check") {
+        if (fullCheck) dependsOn("jacocoTestReport")
     }
 }
 

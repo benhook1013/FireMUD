@@ -348,6 +348,7 @@ jobs:
           bash ./dev-tools/tests/ci-lightweight-scope-contract.sh
           bash ./dev-tools/tests/workflow-version-authority-contract.sh
           bash ./dev-tools/tests/workflow-tool-updater-contract.sh
+          bash ./dev-tools/tests/jacoco-combined-report-contract.sh
           bash ./dev-tools/tests/coderabbit-cli-wrapper-contract.sh
           bash ./dev-tools/tests/coderabbit-review-contract.sh
           bash ./dev-tools/tests/coderabbit-trigger-retirement-contract.sh
