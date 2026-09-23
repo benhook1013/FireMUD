@@ -968,8 +968,10 @@ class ReviewController:
     def decide_judgment(
         self, *, pr: int, channel: str, decision: str, head: str, checkpoint: str, reason: str
     ) -> dict[str, Any]:
-        patch_id = self._validate_decision_identity(pr, channel, head, checkpoint)
-        judgment = Judgment(pr, channel, decision, head, checkpoint, reason, patch_id)
+        checkpoint_head, patch_id = self._validate_decision_identity(
+            pr, channel, head, checkpoint, allow_equivalent_history=True
+        )
+        judgment = Judgment(pr, channel, decision, checkpoint_head, checkpoint, reason, patch_id)
         state = self.store.update(
             lambda current: dataclasses.replace(current, judgments=current.judgments + (judgment,))
         )
@@ -994,7 +996,7 @@ class ReviewController:
         value = hosted_zero_useful if selected_channel == "hosted" else cli_zero_useful
         if value is None or not isinstance(value, int) or isinstance(value, bool) or value <= 0:
             raise ControllerError("a policy override must require at least one zero-useful review")
-        patch_id = self._validate_decision_identity(
+        _, patch_id = self._validate_decision_identity(
             pr, selected_channel, head, checkpoint, require_zero_useful=True
         )
         override = PolicyOverride(hosted_zero_useful, cli_zero_useful, head, checkpoint, reason, patch_id)
@@ -1019,7 +1021,8 @@ class ReviewController:
         checkpoint: str,
         *,
         require_zero_useful: bool = False,
-    ) -> str:
+        allow_equivalent_history: bool = False,
+    ) -> tuple[str, str]:
         try:
             selected_channel = policy.Channel(channel)
         except ValueError as exc:
@@ -1034,15 +1037,16 @@ class ReviewController:
             raise ControllerError("decision head does not match the live pull-request head")
         link = reconciliation.links[pr]
         anchor = self._anchor(pr, current, link)
+        reconciliation_status = reconciliation.status_for(pr, selected_channel.value)
         history = _history(self._evidence_provider, pr, selected_channel)
         matching = [
             policy.Evidence.from_value(item)
             for item in history
             if _field(item, "checkpoint", "checkpoint_id") == checkpoint
-            and _field(item, "head", "reviewed_head") == normalized_head
+            and _field(item, "pr") == pr
         ]
         if not matching:
-            raise ControllerError("decision checkpoint is not attributable to the exact head")
+            raise ControllerError("decision checkpoint is not attributable to the pull request")
         checkpoint_evidence = matching[-1]
         if not (
             checkpoint_evidence.completed is True
@@ -1051,13 +1055,22 @@ class ReviewController:
             and checkpoint_evidence.provisional is False
         ):
             raise ControllerError("decision checkpoint must be completed attributable anchored evidence")
+        checkpoint_head = _sha(checkpoint_evidence.head, "decision checkpoint head")
+        if checkpoint_head != normalized_head:
+            if reconciliation_status in {
+                stack.ReconciliationStatus.PARENT_MOVED,
+                stack.ReconciliationStatus.UNRECONCILED,
+            }:
+                raise ControllerError("equivalent-history judgment requires coherent live topology")
+            if not allow_equivalent_history or reconciliation_status != stack.ReconciliationStatus.EQUIVALENT_HISTORY:
+                raise ControllerError("decision checkpoint head must match the live head or equivalent history")
         if checkpoint_evidence.patch_id != anchor.patch_id:
             raise ControllerError("decision checkpoint patch identity does not match the live stack anchor")
         if require_zero_useful and (
             checkpoint_evidence.corrected_state is not True or checkpoint_evidence.accepted != 0
         ):
             raise ControllerError("policy override requires a corrected-state zero-useful checkpoint")
-        return anchor.patch_id
+        return checkpoint_head, anchor.patch_id
 
     def decide(self, operation: str, **kwargs: Any) -> dict[str, Any]:
         if operation in {"retain", "reopen"}:

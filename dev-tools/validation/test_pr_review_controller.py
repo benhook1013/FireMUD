@@ -202,6 +202,138 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaisesRegex(ControllerError, "all cli targets are complete"):
             controller.resolve_cli_target()
 
+    def test_equivalent_history_judgments_bind_prior_head_and_current_patch(self):
+        live_head = HEAD_2
+        patch_id = f"patch-{live_head[:4]}"
+        cases = (
+            ("hosted", "retain", 2, "COMPLETE"),
+            ("cli", "reopen", 3, "READY"),
+        )
+        for channel, decision, count, expected_status in cases:
+            with self.subTest(channel=channel, decision=decision):
+                history = [
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": f"{channel}-{index}",
+                        "completed": True,
+                        "attributable": True,
+                        "anchored": True,
+                        "corrected_state": channel == "hosted",
+                        "accepted": 0,
+                        "child_head": HEAD_1,
+                        "parent_identity": "develop",
+                        "parent_head": BASE,
+                        "merge_base": BASE,
+                        "patch_id": patch_id,
+                    }
+                    for index in range(count)
+                ]
+                controller = self.make({1: pr(1, live_head)}, {(1, channel): history})
+                controller.set_stack([1])
+                checkpoint = f"{channel}-{count - 1}"
+
+                self.assertEqual(
+                    controller.status()["prs"][0]["channels"][channel],
+                    "JUDGMENT_REQUIRED",
+                )
+                result = controller.decide_judgment(
+                    pr=1,
+                    channel=channel,
+                    decision=decision,
+                    head=live_head,
+                    checkpoint=checkpoint,
+                    reason="same reviewed patch after equivalent history",
+                )
+
+                self.assertEqual(result["decision"]["head"], HEAD_1)
+                self.assertEqual(result["decision"]["patch_id"], patch_id)
+                self.assertEqual(controller.status()["prs"][0]["channels"][channel], expected_status)
+
+    def test_equivalent_history_judgment_rejects_wrong_patch_wrong_live_head_and_policy_override(self):
+        live_head = HEAD_2
+        current_patch = f"patch-{live_head[:4]}"
+        prior_evidence = {
+            "pr": 1,
+            "head": HEAD_1,
+            "completed": True,
+            "attributable": True,
+            "anchored": True,
+            "corrected_state": True,
+            "accepted": 0,
+            "child_head": HEAD_1,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": current_patch,
+        }
+        history = [
+            dict(prior_evidence, checkpoint="wrong-patch", patch_id="different-patch"),
+            dict(prior_evidence, checkpoint="latest"),
+        ]
+        controller = self.make({1: pr(1, live_head)}, {(1, "hosted"): history})
+        controller.set_stack([1])
+
+        with self.assertRaisesRegex(ControllerError, "decision checkpoint patch identity"):
+            controller.decide_judgment(
+                pr=1,
+                channel="hosted",
+                decision="retain",
+                head=live_head,
+                checkpoint="wrong-patch",
+                reason="wrong patch must not retain review",
+            )
+        with self.assertRaisesRegex(ControllerError, "decision head does not match the live"):
+            controller.decide_judgment(
+                pr=1,
+                channel="hosted",
+                decision="retain",
+                head=HEAD_1,
+                checkpoint="latest",
+                reason="caller head must be current",
+            )
+        with self.assertRaisesRegex(ControllerError, "decision checkpoint head must match the live"):
+            controller.decide_policy(
+                pr=1,
+                head=live_head,
+                checkpoint="latest",
+                hosted_zero_useful=1,
+                reason="policy overrides cannot bind prior-head evidence",
+            )
+
+    def test_equivalent_history_judgment_rejects_moved_topology(self):
+        live_head = HEAD_2
+        history = [
+            {
+                "pr": 1,
+                "head": HEAD_1,
+                "checkpoint": "prior",
+                "completed": True,
+                "attributable": True,
+                "anchored": True,
+                "corrected_state": True,
+                "accepted": 0,
+                "child_head": HEAD_1,
+                "parent_identity": "develop",
+                "parent_head": BASE,
+                "merge_base": BASE,
+                "patch_id": f"patch-{live_head[:4]}",
+            }
+        ]
+        controller = self.make({1: pr(1, live_head, base_tip="9" * 40)}, {(1, "hosted"): history})
+        controller.set_stack([1])
+
+        self.assertEqual(controller.status()["prs"][0]["reconciliation"], "PARENT_MOVED")
+        with self.assertRaisesRegex(ControllerError, "requires coherent live topology"):
+            controller.decide_judgment(
+                pr=1,
+                channel="hosted",
+                decision="retain",
+                head=live_head,
+                checkpoint="prior",
+                reason="moved topology must not retain history",
+            )
+
     def test_policy_override_requires_current_corrected_zero_useful_patch_bound_checkpoint(self):
         values = {1: pr(1, HEAD_1)}
         evidence = {
