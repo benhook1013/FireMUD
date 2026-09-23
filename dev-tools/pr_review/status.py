@@ -770,11 +770,14 @@ def _summary_evidence(payload: Mapping[str, Any], current_head: str) -> dict[str
             raise StatusError(f"CodeRabbit comment {index} body is malformed")
         if not hosted._substantive(body) or not hosted._matches_head(body, current_head):
             continue
+        try:
+            if not evidence.has_summary_action_sections(body):
+                continue
+        except evidence.EvidenceError as exc:
+            raise StatusError(str(exc)) from exc
         # A later exact-head summary with no duplicate/outside-diff section
         # supersedes an older summary that did report one.
-        created = _timestamp(
-            comment.get("updatedAt") or comment.get("createdAt"), f"CodeRabbit comment {index} timestamp"
-        )
+        created = _timestamp(comment.get("createdAt"), f"CodeRabbit comment {index} createdAt")
         candidates.append((created, index, body, "comment", github.immutable_database_id(comment)))
 
     if not candidates:

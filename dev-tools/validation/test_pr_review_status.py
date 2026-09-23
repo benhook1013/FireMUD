@@ -907,6 +907,94 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(report["coderabbit_summary"]["identity"], 602)
         self.assertEqual(report["coderabbit_summary"]["findings"], [])
 
+    def test_walkthrough_comment_without_summary_section_cannot_hide_exact_head_review(self) -> None:
+        payload = github_payload()
+        pr = payload["data"]["repository"]["pullRequest"]
+        pr["reviews"] = {
+            "nodes": [
+                self._coderabbit_review(
+                    "Duplicate comments (1)", submitted_at="2026-09-23T02:00:00Z", database_id=603
+                )
+            ]
+        }
+        pr["comments"] = {
+            "nodes": [
+                {
+                    "databaseId": 604,
+                    "author": {"login": "coderabbitai[bot]"},
+                    "body": (
+                        f"<!-- walkthrough_start -->\nReviewing files that changed from the base of the PR and between "
+                        f"`{BASE[:12]}` and `{HEAD[:12]}`."
+                    ),
+                    "createdAt": "2026-09-23T01:00:00Z",
+                    "updatedAt": "2026-09-23T03:00:00Z",
+                    "url": "https://github.test/comments/604",
+                }
+            ]
+        }
+
+        selected = status._summary_evidence(payload, HEAD)
+
+        self.assertEqual(selected["source"], "review")
+        self.assertEqual(selected["identity"], 603)
+        self.assertEqual(selected["findings"], [{"kind": "duplicate", "count": 1}])
+
+    def test_summary_comment_selection_uses_created_at_and_keeps_canonical_zero_counts(self) -> None:
+        payload = github_payload()
+        pr = payload["data"]["repository"]["pullRequest"]
+        pr["comments"] = {
+            "nodes": [
+                {
+                    "databaseId": 605,
+                    "author": {"login": "coderabbitai[bot]"},
+                    "body": (
+                        f"Reviewing files that changed from the base of the PR and between `{BASE[:12]}` and "
+                        f"`{HEAD[:12]}`.\nDuplicate comments (1)"
+                    ),
+                    "createdAt": "2026-09-23T01:00:00Z",
+                    "updatedAt": "2026-09-23T03:00:00Z",
+                    "url": "https://github.test/comments/605",
+                },
+                {
+                    "databaseId": 606,
+                    "author": {"login": "coderabbitai[bot]"},
+                    "body": (
+                        f"Reviewing files that changed from the base of the PR and between `{BASE[:12]}` and "
+                        f"`{HEAD[:12]}`.\n### Duplicate comments (0)"
+                    ),
+                    "createdAt": "2026-09-23T02:00:00Z",
+                    "updatedAt": "2026-09-23T02:00:00Z",
+                    "url": "https://github.test/comments/606",
+                },
+            ]
+        }
+
+        selected = status._summary_evidence(payload, HEAD)
+
+        self.assertEqual(selected["source"], "comment")
+        self.assertEqual(selected["identity"], 606)
+        self.assertEqual(selected["findings"], [])
+
+    def test_malformed_explicit_summary_comment_fails_closed(self) -> None:
+        payload = github_payload()
+        payload["data"]["repository"]["pullRequest"]["comments"] = {
+            "nodes": [
+                {
+                    "databaseId": 607,
+                    "author": {"login": "coderabbitai[bot]"},
+                    "body": (
+                        f"Reviewing files that changed from the base of the PR and between `{BASE[:12]}` and "
+                        f"`{HEAD[:12]}`.\n## Duplicate comments: 1"
+                    ),
+                    "createdAt": "2026-09-23T02:00:00Z",
+                    "updatedAt": "2026-09-23T02:00:00Z",
+                }
+            ]
+        }
+
+        with self.assertRaisesRegex(status.StatusError, "summary section has no canonical count"):
+            status._summary_evidence(payload, HEAD)
+
     def test_malformed_exact_head_summary_fails_closed(self) -> None:
         payload = github_payload()
         payload["data"]["repository"]["pullRequest"]["reviews"] = {

@@ -87,11 +87,24 @@ class GithubAndEvidenceTests(unittest.TestCase):
         )
         self.assertEqual(evidence.summary_action_counts(body), (2, 1))
 
+    def test_same_line_details_summary_and_trailing_blockquote_accept_counts(self):
+        body = (
+            "<details><summary>⚠️ Outside diff range comments (2)</summary><blockquote>\n"
+            "<details><summary>Duplicate comments (1)</summary><blockquote>"
+        )
+        self.assertEqual(evidence.summary_action_counts(body), (2, 1))
+
+    def test_details_summary_markup_inside_prose_is_not_a_summary_section(self):
+        body = "Example syntax: <details><summary>Duplicate comments (9)</summary><blockquote>"
+        self.assertFalse(evidence.has_summary_action_sections(body))
+        self.assertEqual(evidence.summary_action_counts(body), (0, 0))
+
     def test_malformed_heading_or_bold_summary_fails_closed(self):
         for body in (
             "### Outside diff range comments: 2",
             "**Duplicate comments: 1**",
             "<summary>⚠️ Outside diff range comments: 2</summary>",
+            "<details><summary>Duplicate comments: 1</summary><blockquote>",
             "### :warning: **Duplicate comments**",
         ):
             with self.subTest(body=body), self.assertRaisesRegex(

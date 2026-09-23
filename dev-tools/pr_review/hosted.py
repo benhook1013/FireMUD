@@ -378,8 +378,9 @@ def _adopt_posting_reservation_locked(
     record = load_trigger_reservation(record_path, repo, pr_number)
     if record.get("status") != "posting" or isinstance(record.get("trigger"), dict):
         raise ValueError("posting recovery requires an unresolved pre-POST reservation")
-    if record.get("head_sha", "").casefold() != expected_head_sha.casefold():
-        raise ValueError("posting reservation head does not match recovery request")
+    captured_head = record.get("head_sha")
+    if not isinstance(captured_head, str) or not EXACT_SHA.fullmatch(captured_head):
+        raise ValueError("posting reservation has no exact captured head")
     started_at = parse_timestamp(record.get("posting_started_at"))
     actor_login = record.get("posting_actor_login")
     if started_at is None or not isinstance(actor_login, str) or not actor_login.strip():
@@ -388,11 +389,22 @@ def _adopt_posting_reservation_locked(
     if type(comment_id_floor) is not int or comment_id_floor < 0:
         raise ValueError("posting reservation has no trusted comment-ID floor")
 
-    pr = payload.get("data", {}).get("repository", {}).get("pullRequest", {})
+    try:
+        pr = payload["data"]["repository"]["pullRequest"]
+    except (KeyError, TypeError) as error:
+        raise TypeError("live pull-request data is unavailable for posting recovery") from error
+    if not isinstance(pr, dict):
+        raise TypeError("live pull-request data is unavailable for posting recovery")
     current_head = pr.get("headRefOid")
-    if not isinstance(current_head, str) or current_head.casefold() != expected_head_sha.casefold():
-        raise ValueError("current pull-request head does not match posting recovery request")
-    comments = (pr.get("comments") or {}).get("nodes")
+    if not isinstance(current_head, str) or not EXACT_SHA.fullmatch(current_head):
+        raise ValueError("live pull-request head is not an exact SHA during posting recovery")
+    # HostedRunner supplies the live head, while direct recovery callers may
+    # bind the captured reservation head. Either exact identity is valid here;
+    # the reservation's own captured head is always retained below.
+    if expected_head_sha.casefold() not in {captured_head.casefold(), current_head.casefold()}:
+        raise ValueError("recovery head matches neither the posting reservation nor the live pull request")
+    comment_connection = pr.get("comments")
+    comments = comment_connection.get("nodes") if isinstance(comment_connection, dict) else None
     if not isinstance(comments, list):
         raise TypeError("complete pull-request comment history is unavailable for posting recovery")
 
@@ -405,19 +417,19 @@ def _adopt_posting_reservation_locked(
             raise ValueError("live comment history contains a comment without immutable identity")
         if comment_id <= comment_id_floor:
             continue
-        created_at = item.get("createdAt")
-        created = parse_timestamp(created_at)
-        author_login_value = _comment_author_login(item)
-        if (
-            created is None
-            or not isinstance(author_login_value, str)
-            or author_login_value.casefold() != actor_login.casefold()
-            or not isinstance(item.get("body"), str)
-            or normalize_command(item["body"]) != FULL_COMMAND
-        ):
+        body = item.get("body")
+        if not isinstance(body, str) or normalize_command(body) != FULL_COMMAND:
             continue
+        created_at = item.get("createdAt")
+        if parse_timestamp(created_at) is None:
+            raise ValueError("a possible POST result has unknown time")
+        author_login_value = _comment_author_login(item)
+        if not isinstance(author_login_value, str) or not author_login_value.strip():
+            raise ValueError("a possible POST result has unknown actor")
+        if author_login_value.casefold() != actor_login.casefold():
+            raise ValueError("ambiguous full-review command is present in live history")
         url = item.get("url") or item.get("html_url")
-        if comment_id is None or not isinstance(created_at, str) or not isinstance(url, str) or not url:
+        if not isinstance(created_at, str) or not isinstance(url, str) or not url:
             raise ValueError("a possible POST result has incomplete live identity")
         prior = candidates.get(comment_id)
         if prior is not None and prior != item:
@@ -438,11 +450,18 @@ def _adopt_posting_reservation_locked(
     current = load_trigger_reservation(record_path, repo, pr_number)
     if json.dumps(current, sort_keys=True) != json.dumps(record, sort_keys=True):
         raise ValueError("posting reservation changed during recovery")
+    advanced = current_head.casefold() != captured_head.casefold()
     updated = {
         **record,
-        "status": "posted",
+        "status": "posted_boundary_changed" if advanced else "posted",
         "trigger": trigger,
-        "recovery": {"action": "adopt_observed_post", "at": utc_now(), "comment_id": comment_id},
+        "recovery": {
+            "action": "adopt_observed_post",
+            "at": utc_now(),
+            "comment_id": comment_id,
+            "captured_head_sha": captured_head,
+            "live_head_sha": current_head,
+        },
     }
     atomic_write_json(record_path, updated)
     return updated
@@ -505,7 +524,10 @@ def recover_prepost_reservation(
         record = load_trigger_reservation(record_path, repo, pr_number)
         if record.get("status") != "posting" or isinstance(record.get("trigger"), dict):
             raise ValueError("pre-POST recovery requires an unresolved posting reservation")
-        if record.get("head_sha", "").casefold() != expected_head_sha.casefold():
+        captured_head = record.get("head_sha")
+        if not isinstance(captured_head, str) or not EXACT_SHA.fullmatch(captured_head):
+            raise ValueError("posting reservation has no exact captured head")
+        if captured_head.casefold() != expected_head_sha.casefold():
             raise ValueError("posting reservation head does not match recovery request")
 
         started_at_text = record.get("posting_started_at")
@@ -532,8 +554,8 @@ def recover_prepost_reservation(
         if not isinstance(pr, dict):
             raise TypeError("live pull-request data is unavailable for pre-POST recovery")
         current_head = pr.get("headRefOid")
-        if not isinstance(current_head, str) or current_head.casefold() != expected_head_sha.casefold():
-            raise ValueError("current pull-request head does not match pre-POST recovery request")
+        if not isinstance(current_head, str) or not EXACT_SHA.fullmatch(current_head):
+            raise ValueError("live pull-request head is not an exact SHA during pre-POST recovery")
         comment_connection = pr.get("comments")
         comments = comment_connection.get("nodes") if isinstance(comment_connection, dict) else None
         if not isinstance(comments, list):
@@ -587,6 +609,8 @@ def recover_prepost_reservation(
                 "reason": reason.strip(),
                 "confirmed_not_posted": True,
                 "expected_head_sha": expected_head_sha,
+                "captured_head_sha": captured_head,
+                "live_head_sha": current_head,
                 "posting_started_at": started_at_text,
                 "posting_actor_login": actor_login,
                 "live_comment_history": "complete_paginated_no_candidate",
@@ -609,6 +633,8 @@ def recover_prepost_reservation(
         "repository": repo,
         "pr_number": pr_number,
         "head_sha": expected_head_sha,
+        "captured_head_sha": captured_head,
+        "current_head_sha": current_head,
         "audit_path": str(archive_path),
         "reason": reason.strip(),
         "confirmed_not_posted": True,

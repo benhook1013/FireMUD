@@ -887,11 +887,39 @@ class RuntimeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "pr-42" / "trigger.json"
             self._posting_record(path)
+            advanced_head = "d" * 40
             payload = self._payload()
-            payload["data"]["repository"]["pullRequest"]["headRefOid"] = "d" * 40
-            with self.assertRaisesRegex(ValueError, "current pull-request head"):
-                self._dispatch_prepost_recovery(path, self._prepost_recovery_args(), payload)
-            self.assertTrue(path.exists())
+            payload["data"]["repository"]["pullRequest"]["headRefOid"] = advanced_head
+
+            result, exit_status = self._dispatch_prepost_recovery(path, self._prepost_recovery_args(), payload)
+
+            self.assertEqual(exit_status, 0)
+            self.assertEqual(result["captured_head_sha"], HEAD)
+            self.assertEqual(result["current_head_sha"], advanced_head)
+            self.assertFalse(path.exists())
+            audit = json.loads(Path(result["audit_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(audit["head_sha"], HEAD)
+            self.assertEqual(audit["recovery"]["captured_head_sha"], HEAD)
+            self.assertEqual(audit["recovery"]["live_head_sha"], advanced_head)
+
+        for live_head in (None, "not-a-sha"):
+            with self.subTest(live_head=live_head), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "pr-42" / "trigger.json"
+                self._posting_record(path)
+                payload = self._payload()
+                payload["data"]["repository"]["pullRequest"]["headRefOid"] = live_head
+
+                with self.assertRaisesRegex(ValueError, "live pull-request head is not an exact SHA"):
+                    self._dispatch_prepost_recovery(path, self._prepost_recovery_args(), payload)
+
+                self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "posting")
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pr-42" / "trigger.json"
+            self._posting_record(path)
+            with self.assertRaisesRegex(ValueError, "posting reservation head does not match recovery request"):
+                self._dispatch_prepost_recovery(path, self._prepost_recovery_args(head="c" * 40))
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "posting")
 
     def test_prepost_recovery_requires_operator_assertion(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1074,16 +1102,16 @@ class RuntimeTest(unittest.TestCase):
             completed_history = self._history(Path(directory), completed_payload, "cli", changed_files=101)
             self.assertFalse(any(item.get("over_ceiling") for item in completed_history))
 
-    def test_summary_selector_uses_current_head_updated_time_and_rejects_ties(self) -> None:
+    def test_summary_selector_uses_created_at_canonical_sections_and_rejects_ties(self) -> None:
         first = {
             "databaseId": 31,
             "author": {"login": "coderabbitai[bot]"},
             "body": (
                 f"Reviewing files that changed from the base of the PR and between `{BASE}` and `{HEAD}`.\n"
-                "Outside diff range comments (1)"
+                "### Outside diff range comments (1)"
             ),
             "createdAt": "2026-09-23T00:01:00Z",
-            "updatedAt": "2026-09-23T00:02:00Z",
+            "updatedAt": "2026-09-23T00:03:00Z",
             "url": "https://example.test/31",
         }
         latest = {
@@ -1091,10 +1119,22 @@ class RuntimeTest(unittest.TestCase):
             "databaseId": 32,
             "body": (
                 f"Reviewing files that changed from the base of the PR and between `{BASE}` and `{HEAD}`.\n"
-                "Duplicate comments (2)"
+                "## Duplicate comments (2)"
             ),
+            "createdAt": "2026-09-23T00:02:00Z",
             "updatedAt": "2026-09-23T00:03:00Z",
             "url": "https://example.test/32",
+        }
+        edited_walkthrough = {
+            "databaseId": 35,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": (
+                f"<!-- walkthrough_start -->\nReviewing files that changed from the base of the PR and between "
+                f"`{BASE}` and `{HEAD}`.\nReviewing the changed files now."
+            ),
+            "createdAt": "2026-09-23T00:01:30Z",
+            "updatedAt": "2026-09-23T00:05:00Z",
+            "url": "https://example.test/35",
         }
         stale_head = {
             "databaseId": 33,
@@ -1104,7 +1144,9 @@ class RuntimeTest(unittest.TestCase):
             "submittedAt": "2026-09-23T00:04:00Z",
             "commit": {"oid": BASE},
         }
-        selected = LiveEvidence._summary_action_counts(self._payload([first, latest], [stale_head]), HEAD)
+        selected = LiveEvidence._summary_action_counts(
+            self._payload([first, edited_walkthrough, latest], [stale_head]), HEAD
+        )
         self.assertEqual(selected, (0, 2, "https://example.test/32"))
 
         tied = {**latest, "databaseId": 34, "url": "https://example.test/34"}

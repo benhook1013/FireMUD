@@ -406,6 +406,8 @@ class ReviewState:
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> ReviewState:
+        if not isinstance(value, Mapping):
+            raise StateError("review-stack state must be an object")
         if set(value) - {
             "schema_version",
             "ordered_prs",
@@ -417,20 +419,28 @@ class ReviewState:
             raise StateError("state contains fields outside the private configuration schema")
         if value.get("schema_version") != SCHEMA_VERSION:
             raise StateError("state has an unsupported schema version")
-        overrides = {
-            identity: PolicyOverride.from_dict(item) for identity, item in value.get("policy_overrides", {}).items()
-        }
-        return cls(
-            ordered_prs=tuple(value.get("ordered_prs", ())),
-            policy_overrides=overrides,
-            judgments=tuple(Judgment.from_dict(item) for item in value.get("judgments", ())),
-            reconciliations=tuple(
-                StackReconciliationDecision.from_dict(item) for item in value.get("reconciliations", ())
-            ),
-            summary_dispositions=tuple(
-                SummaryFindingDisposition.from_dict(item) for item in value.get("summary_dispositions", ())
-            ),
-        )
+        raw_overrides = value.get("policy_overrides", {})
+        if not isinstance(raw_overrides, Mapping):
+            raise StateError("policy overrides must be an object")
+        if any(not isinstance(item, Mapping) for item in raw_overrides.values()):
+            raise StateError("policy override records must be objects")
+        try:
+            overrides = {identity: PolicyOverride.from_dict(item) for identity, item in raw_overrides.items()}
+            return cls(
+                ordered_prs=tuple(value.get("ordered_prs", ())),
+                policy_overrides=overrides,
+                judgments=tuple(Judgment.from_dict(item) for item in value.get("judgments", ())),
+                reconciliations=tuple(
+                    StackReconciliationDecision.from_dict(item) for item in value.get("reconciliations", ())
+                ),
+                summary_dispositions=tuple(
+                    SummaryFindingDisposition.from_dict(item) for item in value.get("summary_dispositions", ())
+                ),
+            )
+        except StateError:
+            raise
+        except (KeyError, AttributeError, TypeError) as exc:
+            raise StateError("state contains malformed private records") from exc
 
 
 def git_common_dir(cwd: str | os.PathLike[str] | None = None) -> Path:

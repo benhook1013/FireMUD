@@ -85,6 +85,30 @@ class ReviewStateStackTest(unittest.TestCase):
             self.assertNotIn("base_tip", json.dumps(document))
             self.assertNotIn("evidence", json.dumps(document))
 
+    def test_malformed_nested_state_records_raise_state_error(self):
+        malformed_states = (
+            {"policy_overrides": None},
+            {"policy_overrides": []},
+            {"policy_overrides": {"1:hosted": None}},
+            {"judgments": [{}]},
+            {"reconciliations": [{}]},
+            {"summary_dispositions": [{}]},
+        )
+        for malformed in malformed_states:
+            with self.subTest(malformed=malformed), self.assertRaisesRegex(
+                StateError, "(policy overrides|policy override records|malformed private records)"
+            ):
+                ReviewState.from_dict({"schema_version": 1, **malformed})
+
+    def test_state_error_from_nested_record_is_preserved(self):
+        with self.assertRaisesRegex(StateError, "hosted_zero_useful must be a positive integer or null"):
+            ReviewState.from_dict(
+                {
+                    "schema_version": 1,
+                    "policy_overrides": {"1:hosted": {"hosted_zero_useful": 0}},
+                }
+            )
+
     def test_summary_dispositions_are_all_or_nothing_and_exactly_bound(self):
         head = "a" * 40
         summary = {

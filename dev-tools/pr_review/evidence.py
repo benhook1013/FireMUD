@@ -35,9 +35,12 @@ SUMMARY_MARKERS = {
     "outside_diff": ("Outside diff range comments", "Outside the diff"),
     "duplicate": ("Duplicate comments",),
 }
-SUMMARY_WRAPPER = re.compile(r"^<(?:summary|strong|b|em|span)(?:\s[^>]*)?>\s*", re.IGNORECASE)
+SUMMARY_WRAPPER = re.compile(r"^<(?:details|summary|strong|b|em|span)(?:\s[^>]*)?>\s*", re.IGNORECASE)
 SUMMARY_EMOJI = re.compile(r"^(?:[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F]|:[A-Za-z0-9_+-]+:)\s*")
-SUMMARY_CLOSER = re.compile(r"(?:\s*(?:</(?:summary|strong|b|em|span)>|\*\*|__))+\s*$", re.IGNORECASE)
+SUMMARY_CLOSER = re.compile(
+    r"(?:\s*(?:</(?:details|summary|blockquote|strong|b|em|span)>|<blockquote(?:\s[^>]*)?>|\*\*|__))+\s*$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -145,10 +148,9 @@ def _summary_marker_context(line: str, marker: str) -> tuple[bool, str] | None:
     return explicit, text[len(marker) :]
 
 
-def summary_action_counts(body: str) -> tuple[int, int]:
-    """Return canonical summary-only counts, rejecting malformed marked sections."""
-
+def _summary_action_evidence(body: str) -> tuple[tuple[int, int], bool]:
     counts: dict[str, int] = {"outside_diff": 0, "duplicate": 0}
+    has_sections = False
     for kind, markers in SUMMARY_MARKERS.items():
         found: list[int] = []
         for line in body.splitlines():
@@ -163,10 +165,23 @@ def summary_action_counts(body: str) -> tuple[int, int]:
                 count = re.fullmatch(r"\((\d+)\)", tail)
                 if count:
                     found.append(int(count.group(1)))
+                    has_sections = True
                 elif explicit or tail.startswith("("):
                     raise EvidenceError(f"CodeRabbit {kind} summary section has no canonical count")
         counts[kind] = max(found, default=0)
-    return counts["outside_diff"], counts["duplicate"]
+    return (counts["outside_diff"], counts["duplicate"]), has_sections
+
+
+def summary_action_counts(body: str) -> tuple[int, int]:
+    """Return canonical summary-only counts, rejecting malformed marked sections."""
+    counts, _ = _summary_action_evidence(body)
+    return counts
+
+
+def has_summary_action_sections(body: str) -> bool:
+    """Return whether a body contains a canonical summary count, including zero."""
+    _, has_sections = _summary_action_evidence(body)
+    return has_sections
 
 
 @dataclass(frozen=True)
