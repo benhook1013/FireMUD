@@ -10,11 +10,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
-from pr_review import state
+from pr_review import cli, state
 from pr_review.acceptance import AcceptanceFixtureError, load
 
 BASE = "a" * 40
@@ -113,6 +114,13 @@ class AcceptanceCliTest(unittest.TestCase):
             self.assertTrue(status_json["acceptance_fixture"]["isolated"])
             self.assertEqual(status_json["prs"][0]["parent"], "develop")
 
+            whole_status = self.run_cli(fixture, isolated, "status", "--json")
+            self.assertEqual(whole_status.returncode, 0, whole_status.stderr)
+            self.assertEqual(
+                json.loads(whole_status.stdout)["acceptance_fixture"],
+                {"isolated": True, "network": False, "review_quota": False},
+            )
+
             evidence = self.run_cli(fixture, isolated, "evidence", "1", "--json")
             self.assertEqual(evidence.returncode, 0, evidence.stderr)
             self.assertEqual(json.loads(evidence.stdout)["checkpoints"], [])
@@ -146,6 +154,52 @@ class AcceptanceCliTest(unittest.TestCase):
             self.assertEqual(persisted["ordered_prs"], [1, 2])
             self.assertEqual(persisted["judgments"][0]["pr"], 1)
             self.assertEqual(canonical.read_bytes() if canonical.exists() else None, before)
+
+    def test_second_identical_provisional_cli_run_uses_isolated_evidence_to_fail(self):
+        canonical = state.state_path()
+        before = canonical.read_bytes() if canonical.exists() else None
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "unreconciled.json"
+            isolated = root / "state.json"
+            payload = fixture_payload()
+            payload["ancestors"] = []
+            payload["evidence"]["1"]["cli"] = []
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+
+            self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1").returncode, 0)
+            command = (
+                "run", "cli", "--expect-pr", "1", "--allow-unreconciled", "--reason", "one isolated discovery"
+            )
+            first = self.run_cli(fixture, isolated, *command)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            self.assertIn("provisional=True", first.stdout)
+
+            evidence = self.run_cli(fixture, isolated, "evidence", "1", "--json")
+            self.assertEqual(evidence.returncode, 0, evidence.stderr)
+            recorded = json.loads(evidence.stdout)["policy"]["cli"]
+            self.assertEqual(len(recorded), 1)
+            self.assertTrue(recorded[0]["provisional"])
+            self.assertFalse(recorded[0]["completed"])
+            self.assertFalse(recorded[0]["attributable"])
+            self.assertEqual(recorded[0]["head"], HEAD_1)
+            self.assertEqual(recorded[0]["parent_head"], BASE)
+
+            second = self.run_cli(fixture, isolated, *command)
+            self.assertEqual(second.returncode, 1)
+            self.assertIn("already recorded", second.stderr)
+            self.assertEqual(json.loads(isolated.read_text(encoding="utf-8"))["ordered_prs"], [1])
+            sidecar = root / "state.json.fixture-evidence.json"
+            self.assertEqual(len(json.loads(sidecar.read_text(encoding="utf-8"))["evidence"]), 1)
+            self.assertEqual(canonical.read_bytes() if canonical.exists() else None, before)
+
+    def test_live_whole_stack_status_does_not_claim_fixture_isolation(self):
+        args = cli._parser().parse_args(["status", "--json"])
+        with patch.object(cli, "default_controller") as factory:
+            factory.return_value.status.return_value = {"ordered_prs": [], "status": "EMPTY"}
+            report, exit_status = cli._dispatch(args)
+        self.assertEqual(exit_status, 0)
+        self.assertNotIn("acceptance_fixture", report)
 
     def test_fixture_options_are_paired_and_canonical_state_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

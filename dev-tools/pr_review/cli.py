@@ -153,7 +153,7 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
 
     if args.command == "status":
         if args.pr is None:
-            return controller.status(), 0
+            return fixture.status(controller) if fixture is not None else controller.status(), 0
         if fixture is not None:
             return fixture.status(controller, args.pr), 0
         report = status_module.status(args.pr)

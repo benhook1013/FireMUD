@@ -9,9 +9,11 @@ repository's private stack state or review quota.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import stat
+import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -119,11 +121,14 @@ class FixtureGit:
 
 
 class FixtureEvidence:
-    """Historical evidence provider with no private capture or network access."""
+    """Fixture evidence plus atomically persisted, isolated simulated discoveries."""
 
-    def __init__(self, fixture: Mapping[str, Any]) -> None:
+    def __init__(self, fixture: Mapping[str, Any], state_path: Path, repository: str) -> None:
         values = _mapping(fixture.get("evidence", {}), "evidence")
         self._values: dict[tuple[int, str], tuple[Any, ...]] = {}
+        self.repository = repository
+        self.path = state_path.with_name(f"{state_path.name}.fixture-evidence.json")
+        self.lock_path = state_path.with_name(f".{state_path.name}.fixture-evidence.lock")
         for pr_key, channels in values.items():
             if not isinstance(pr_key, str) or not pr_key.isdecimal():
                 raise AcceptanceFixtureError("evidence PR keys must be positive decimal strings")
@@ -137,17 +142,107 @@ class FixtureEvidence:
                     raise AcceptanceFixtureError(f"evidence[{pr_key!r}][{channel!r}] entries must be objects")
                 self._values[(pr, channel)] = tuple(raw)
 
+    def _recorded(self) -> list[dict[str, Any]]:
+        if not self.path.exists():
+            return []
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise AcceptanceFixtureError("isolated synthetic evidence is unreadable") from exc
+        if not isinstance(payload, dict) or set(payload) != {"schema_version", "repository", "evidence"}:
+            raise AcceptanceFixtureError("isolated synthetic evidence has an invalid schema")
+        if payload["schema_version"] != 1 or payload["repository"] != self.repository:
+            raise AcceptanceFixtureError("isolated synthetic evidence belongs to another fixture repository")
+        entries = payload["evidence"]
+        if not isinstance(entries, list) or any(not isinstance(item, dict) for item in entries):
+            raise AcceptanceFixtureError("isolated synthetic evidence entries are invalid")
+        return entries
+
     def history(self, pr: int, channel: str) -> Sequence[Any]:
-        return self._values.get((pr, channel), ())
+        baseline = self._values.get((pr, channel), ())
+        if channel != "cli":
+            return baseline
+        recorded = tuple(item for item in self._recorded() if item.get("pr") == pr)
+        return (*baseline, *recorded)
+
+    def record_provisional(self, target: ReviewTarget, reason: str) -> None:
+        """Atomically reserve one synthetic child/parent discovery identity."""
+
+        pr = target.snapshot.number
+        head = target.snapshot.head_sha
+        parent_head = target.parent.head_sha
+        with self.lock_path.open("a+", encoding="utf-8") as lock:
+            os.fchmod(lock.fileno(), 0o600)
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                recorded = self._recorded()
+                existing = (*self._values.get((pr, "cli"), ()), *recorded)
+                if any(
+                    item.get("provisional") is True
+                    and item.get("pr") == pr
+                    and item.get("head") == head
+                    and item.get("parent_head") == parent_head
+                    for item in existing
+                ):
+                    raise AcceptanceFixtureError(
+                        "one provisional CLI discovery is already recorded for this exact child/parent identity"
+                    )
+                recorded.append(
+                    {
+                        "pr": pr,
+                        "head": head,
+                        "child_head": head,
+                        "parent_head": parent_head,
+                        "parent_identity": str(target.parent.pr_number or target.parent.ref_name),
+                        "merge_base": target.merge_base,
+                        "patch_id": target.patch_identity,
+                        "checkpoint": f"fixture-provisional-{pr}-{head[:12]}-{parent_head[:12]}",
+                        "completed": False,
+                        "attributable": False,
+                        "anchored": True,
+                        "corrected_state": False,
+                        "provisional": True,
+                        "accepted": 0,
+                        "raw": 0,
+                        "reason": reason,
+                    }
+                )
+                with tempfile.NamedTemporaryFile(
+                    mode="w", encoding="utf-8", dir=self.path.parent, prefix=f".{self.path.name}.", delete=False
+                ) as handle:
+                    temporary = Path(handle.name)
+                    os.fchmod(handle.fileno(), 0o600)
+                    json.dump(
+                        {"schema_version": 1, "repository": self.repository, "evidence": recorded},
+                        handle,
+                        sort_keys=True,
+                    )
+                    handle.write("\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                try:
+                    os.replace(temporary, self.path)
+                    directory_fd = os.open(self.path.parent, os.O_RDONLY)
+                    try:
+                        os.fsync(directory_fd)
+                    finally:
+                        os.close(directory_fd)
+                finally:
+                    temporary.unlink(missing_ok=True)
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
 class FixtureReviewAdapter:
     """Return deterministic review results without posting or consuming quota."""
 
-    def __init__(self, channel: str) -> None:
+    def __init__(self, channel: str, evidence: FixtureEvidence) -> None:
         self.channel = channel
+        self.evidence = evidence
 
     def __call__(self, target: ReviewTarget, **kwargs: Any) -> dict[str, Any]:
+        if self.channel == "cli" and kwargs.get("allow_unreconciled"):
+            self.evidence.record_provisional(target, str(kwargs.get("reason", "")))
         return {
             "acceptance_fixture": True,
             "simulated": True,
@@ -260,7 +355,7 @@ class AcceptanceFixture:
         payload["default_base_tip"] = default_tip
         self.github = FixtureGitHub(pull_requests)
         self.git = FixtureGit(payload)
-        self.evidence = FixtureEvidence(payload)
+        self.evidence = FixtureEvidence(payload, self.state_path, self.repository)
         self.pull_requests = pull_requests
         self.initial_stack = tuple(ordered)
 
@@ -272,8 +367,8 @@ class AcceptanceFixture:
             evidence=self.evidence,
             default_base_ref=self.default_base_ref,
             repository=self.repository,
-            hosted_adapter=FixtureReviewAdapter("hosted"),
-            cli_adapter=FixtureReviewAdapter("cli"),
+            hosted_adapter=FixtureReviewAdapter("hosted", self.evidence),
+            cli_adapter=FixtureReviewAdapter("cli", self.evidence),
         )
         return controller
 
