@@ -95,6 +95,10 @@ class FixtureGit:
         except KeyError as exc:
             raise AcceptanceFixtureError(f"fixture has no head for branch {ref_name!r}") from exc
 
+    def remote_heads(self) -> Mapping[str, str]:
+        """Return one immutable-in-practice snapshot of all fixture branch heads."""
+        return dict(self._heads)
+
     def branch_exists(self, ref_name: str) -> bool:
         return ref_name in self._heads
 
