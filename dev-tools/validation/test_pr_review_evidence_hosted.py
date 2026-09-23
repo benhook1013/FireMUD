@@ -414,6 +414,24 @@ class HostedEvidenceTests(unittest.TestCase):
         self.assertEqual(state.state, "completed")
         self.assertEqual(state.duration_seconds, 60)
 
+    def test_substantive_exact_head_review_wins_over_incidental_failure_wording(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        summary = comment(
+            11,
+            "coderabbitai",
+            f"<!-- walkthrough_start -->\nReviewing files that changed from the base of the PR and between {BASE} and {HEAD}.\n"
+            "The review failed to identify an issue in the previous implementation; this review found it.",
+            "2026-09-23T00:02:00Z",
+        )
+        state = hosted.trigger_state(REPO, PR, review_payload([trigger, summary]), trigger_record())
+        self.assertEqual(state.state, "completed")
+
+    def test_explicit_review_failure_without_substantive_evidence_remains_failed(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        failure = comment(11, "coderabbitai", "The review failed. Something went wrong.", "2026-09-23T00:02:00Z")
+        state = hosted.trigger_state(REPO, PR, review_payload([trigger, failure]), trigger_record())
+        self.assertEqual(state.state, "failed")
+
     def test_recorded_trigger_author_login_comparison_is_case_insensitive(self):
         trigger = comment(10, "Owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
         record = trigger_record()

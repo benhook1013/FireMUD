@@ -28,6 +28,66 @@ PATCH = "c" * 64
 
 
 class RuntimeTest(unittest.TestCase):
+    def test_trigger_retirement_selects_the_unique_record_matching_trigger_id(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            records = []
+            for trigger_id in (10, 20):
+                path = root / f"trigger-{trigger_id}.json"
+                path.write_text(
+                    json.dumps(
+                        {
+                            "status": "posted",
+                            "repository": "owner/repo",
+                            "pr_number": 42,
+                            "head_sha": HEAD,
+                            "trigger": {
+                                "id": trigger_id,
+                                "created_at": "2026-09-23T00:00:00Z",
+                                "url": f"https://example.test/comments/{trigger_id}",
+                                "type": "full",
+                                "command": hosted.FULL_COMMAND,
+                            },
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                records.append(path)
+            args = review_cli._parser().parse_args(
+                [
+                    "decide",
+                    "trigger-retire",
+                    "--pr",
+                    "42",
+                    "--trigger-id",
+                    "20",
+                    "--head",
+                    HEAD,
+                    "--reason",
+                    "retire selected trigger",
+                ]
+            )
+            with (
+                patch.object(review_cli, "default_controller", return_value=SimpleNamespace(repository="owner/repo")),
+                patch.object(hosted, "trigger_record_paths", return_value=records),
+                patch.object(github, "fetch_pull_request", return_value={}),
+                patch.object(hosted, "retire_trigger_record", return_value={"status": "retired"}) as retire,
+            ):
+                result, exit_status = review_cli._dispatch(args)
+            self.assertEqual(exit_status, 0)
+            self.assertEqual(result["status"], "retired")
+            self.assertEqual(retire.call_args.args[0], records[1])
+
+            args.trigger_id = 30
+            with (
+                patch.object(review_cli, "default_controller", return_value=SimpleNamespace(repository="owner/repo")),
+                patch.object(hosted, "trigger_record_paths", return_value=records),
+                patch.object(github, "fetch_pull_request") as fetch,
+                self.assertRaisesRegex(review_cli.CliError, "exactly one durable Hosted trigger with ID 30"),
+            ):
+                review_cli._dispatch(args)
+            fetch.assert_not_called()
+
     def test_default_controller_derives_the_repository_default_base(self) -> None:
         with patch.object(
             github,

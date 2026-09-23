@@ -227,9 +227,20 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             paths = hosted.trigger_record_paths(controller.repository, args.pr)
             if not paths:
                 raise CliError(f"PR #{args.pr} has no durable Hosted trigger")
+            matching_paths = []
+            for path in paths:
+                record = hosted.load_trigger_record(path, controller.repository, args.pr)
+                trigger = record.get("trigger")
+                trigger_id = trigger.get("id") if isinstance(trigger, dict) else None
+                if type(trigger_id) is int and trigger_id == args.trigger_id:
+                    matching_paths.append(path)
+            if len(matching_paths) != 1:
+                raise CliError(
+                    f"PR #{args.pr} requires exactly one durable Hosted trigger with ID {args.trigger_id}"
+                )
             payload = github.fetch_pull_request(controller.repository, args.pr)
             return hosted.retire_trigger_record(
-                paths[0],
+                matching_paths[0],
                 controller.repository,
                 args.pr,
                 args.trigger_id,

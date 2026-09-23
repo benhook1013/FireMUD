@@ -769,10 +769,10 @@ def trigger_state(
             candidates.append((created, "rate_limited", item, cooldown))
         elif NOOP_MARKER in body:
             candidates.append((created, "noop", item, None))
-        elif FAILED_PATTERN.search(_unquoted(body)):
-            candidates.append((created, "failed", item, None))
         elif _substantive(body) and _matches_head(body, record["head_sha"]):
             candidates.append((created, "completed", item, None))
+        elif FAILED_PATTERN.search(_unquoted(body)):
+            candidates.append((created, "failed", item, None))
         elif ACTIVE_PATTERN.search(_unquoted(body)):
             candidates.append((created, "active", item, None))
         elif FINISHED_REVIEW_PATTERN.search(_unquoted(body)) and _zero_finding_summary(
