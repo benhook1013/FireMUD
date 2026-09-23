@@ -73,6 +73,10 @@ Correct the workflow boundary so rapid metadata-only edits cannot leave cancelle
 
 The final handoff must include the exact head, parent, unique file count, operator commands, migrated/deleted surfaces, focused and full validation, review-cycle results, known limits, clean worktree state, and PR metadata state.
 
+## 2026-09-23: merge-state diagnosis
+
+Make `pr-review status` explain merge readiness from live, paginated evidence rather than treating GitHub's coarse `mergeStateStatus` as a diagnosis. Show the current head/base, draft/conflict state, every required context with its expected app and latest exact-head result, pending and failed checks from the complete check inventory, review decision and unresolved threads, and the aggregate rollup separately. Distinguish optional failed/cancelled checks from required gates. When those known conditions pass but GitHub still returns `BLOCKED`, report `BLOCKED — cause not exposed by available API` instead of guessing that CI, CodeRabbit, or the metadata-summary defect caused it. Include a focused fixture for #2838's prior state: all five required gates and aggregate rollup successful, zero unresolved threads, yet `BLOCKED`; and a fixture for its close/reopen state with newly pending required runs. Keep this diagnostic read-only and do not trigger workflow reruns or metadata edits to make the label change.
+
 ## Overseer acceptance gate
 
 Do not hand the PR to Gameplay until the Overseer completes at least two fresh root-owned hands-on acceptance runs against isolated state:
