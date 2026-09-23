@@ -53,10 +53,8 @@ class PaymentGrpcServiceTest {
   }
 
   @Test
-  void createSubscriptionErrorReturnsErrorDetail() {
+  void createSubscriptionReturnsFailedPreconditionWithoutCallingService() {
     PaymentService paymentService = Mockito.mock(PaymentService.class);
-    Mockito.when(paymentService.createSubscription(1L, 2L, "plan"))
-        .thenThrow(new IllegalArgumentException("bad"));
     PaymentGrpcService service = new PaymentGrpcService(paymentService, new SimpleMeterRegistry());
 
     AtomicReference<CreateSubscriptionResponse> ref = new AtomicReference<>();
@@ -80,7 +78,9 @@ class PaymentGrpcServiceTest {
         });
 
     assertNotNull(ref.get());
-    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("FAILED_PRECONDITION", ref.get().getError().getCode());
+    assertEquals("Subscription creation is unavailable", ref.get().getError().getMessage());
+    Mockito.verifyNoInteractions(paymentService);
   }
 
   @Test
