@@ -605,11 +605,11 @@ class HostedRunner:
                 "posting_started_at": posting_started_at,
                 "posting_actor_login": posting_actor,
             }
-            hosted.atomic_write_json(path, posting)
             # Establish a durable post-reservation boundary before issuing
-            # POST.  Adoption must not widen its timestamp window to guess
-            # through clock skew; only a newly observed comment ID may be
-            # adopted, and failure to establish the floor remains held.
+            # POST.  Do all live identity and comment-floor checks while the
+            # request lock is held, then write one complete reservation.  A
+            # floor-fetch failure must leave no trigger.json and must never
+            # reach the POST below.
             try:
                 reservation_payload = github.fetch_pull_request(self.repo, pr)
                 reservation_pr = reservation_payload["data"]["repository"]["pullRequest"]
@@ -620,14 +620,16 @@ class HostedRunner:
                     or reservation_head.casefold() != target.snapshot.head_sha.casefold()
                 ):
                     raise ControllerError("pull request changed before the Hosted posting boundary")
+                if self.live.branch_head(target.parent.ref_name) != target.parent.head_sha:
+                    raise ControllerError("effective parent changed before the Hosted posting boundary")
                 posting["posting_comment_id_floor"] = hosted._comment_id_floor(reservation_payload)
-                hosted.atomic_write_json(path, posting)
             except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
                 if isinstance(exc, ControllerError):
                     raise
                 raise ControllerError(
                     f"could not establish the Hosted pre-POST comment identity floor: {exc}"
                 ) from exc
+            hosted.atomic_write_json(path, posting)
             try:
                 completed = subprocess.run(
                     [

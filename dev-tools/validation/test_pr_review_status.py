@@ -430,6 +430,30 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(result["historical"]["classification"], "historical")
         self.assertNotEqual(result["historical"]["state"], result["state"])
 
+    def test_current_posting_reservation_is_ambiguous_not_malformed(self) -> None:
+        payload = github_payload()
+        record = {
+            "schema_version": 2,
+            "status": "posting",
+            "repository": "owner/repo",
+            "pr_number": 2838,
+            "head_sha": HEAD,
+            "posting_started_at": "2026-09-22T00:00:00Z",
+            "posting_actor_login": "maintainer",
+            "posting_comment_id_floor": 101,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            current = Path(directory) / "trigger.json"
+            current.write_text(json.dumps(record), encoding="utf-8")
+            with (
+                patch.object(status.evidence, "git_common_dir", return_value=Path(directory)),
+                patch.object(status.hosted, "trigger_record_paths", return_value=[current]),
+            ):
+                result = status._trigger("owner/repo", 2838, payload, HEAD)
+        self.assertEqual(result["state"], "ambiguous")
+        self.assertEqual(result["validation_outcome"], "valid")
+        self.assertTrue(result["record_available"])
+
     def test_compact_and_json_views_use_the_same_report(self) -> None:
         report = status.build_report(
             "owner/repo", 2838, pull_request_payload=github_payload(), checkpoint_payload=checkpoint_payload()

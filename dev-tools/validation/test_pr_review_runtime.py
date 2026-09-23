@@ -248,6 +248,40 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(record["anchor"]["patch_id"], PATCH)
             self.assertEqual(record["posting_comment_id_floor"], 0)
 
+    def test_hosted_request_floor_failure_leaves_no_reservation_or_post(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
+        live = LiveGitHub("owner/repo")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            post_calls = []
+
+            def gh_call(args, **kwargs):
+                if args == ["gh", "api", "user"]:
+                    return CompletedProcess(args, 0, json.dumps({"login": "maintainer"}), "")
+                post_calls.append(args)
+                return CompletedProcess(args, 0, "{}", "")
+
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=self._payload()),
+                patch.object(hosted, "_comment_id_floor", side_effect=TypeError("incomplete comments")),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=Path(directory)),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+                self.assertRaisesRegex(ControllerError, "pre-POST comment identity floor"),
+            ):
+                HostedRunner("owner/repo", live)(target, expect_pr=42)
+            self.assertFalse(path.exists())
+            self.assertEqual(post_calls, [])
+
     @staticmethod
     def _payload(comments=None, reviews=None, threads=None, *, head=HEAD):
         return {

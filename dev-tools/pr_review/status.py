@@ -904,7 +904,12 @@ def _trigger(repo: str, number: int, payload: dict[str, Any], head: str) -> dict
         }
     try:
         current_path = current_paths[0]
-        record = hosted.load_trigger_record(current_path, repo, number)
+        # A posting reservation is a valid current record even though it does
+        # not have a verified trigger identity yet.  Read it through the
+        # reservation validator so status reports the same fail-closed
+        # ambiguous state as the Hosted runner instead of misclassifying it as
+        # malformed.
+        record = hosted.load_trigger_reservation(current_path, repo, number)
         state = hosted.trigger_state(repo, number, payload, record, current_path)
         value = state.as_dict()
         if value.get("current_head_sha", "").casefold() != head.casefold():
