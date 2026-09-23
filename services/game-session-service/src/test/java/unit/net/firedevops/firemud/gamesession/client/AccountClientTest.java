@@ -27,6 +27,7 @@ import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
+import net.firedevops.firemud.account.v1.RequestEmailLoginOtpRequest;
 import net.firedevops.firemud.account.v1.RequestEmailLoginOtpResponse;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
@@ -42,8 +43,7 @@ class AccountClientTest {
 
   @Test
   void authenticateReturnsUnavailableWhenStubIsNotInitialized() throws Exception {
-    AuthenticateResponse response =
-        newClient(null).authenticate("22", "demo@example.com", "swordfish");
+    AuthenticateResponse response = newClient(null).authenticate("demo@example.com", "swordfish");
 
     assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
     assertThat(response.getError().getMessage()).isEqualTo("Authentication service unavailable");
@@ -52,7 +52,7 @@ class AccountClientTest {
   @Test
   void authenticateForReadinessReturnsUnavailableWhenStubIsNotInitialized() throws Exception {
     AuthenticateResponse response =
-        newClient(null).authenticateForReadiness("22", "demo@example.com", "swordfish");
+        newClient(null).authenticateForReadiness("demo@example.com", "swordfish");
 
     assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
     assertThat(response.getError().getMessage()).isEqualTo("Authentication service unavailable");
@@ -61,7 +61,7 @@ class AccountClientTest {
   @Test
   void requestEmailLoginOtpReturnsUnavailableWhenStubIsNotInitialized() throws Exception {
     RequestEmailLoginOtpResponse response =
-        newClient(null).requestEmailLoginOtp("22", "demo@example.com");
+        newClient(null).requestEmailLoginOtp("demo@example.com");
 
     assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
     assertThat(response.getError().getMessage()).isEqualTo("Authentication service unavailable");
@@ -82,7 +82,7 @@ class AccountClientTest {
     GrpcChannelFactory channelFactory = newChannelFactory();
     AccountClient client = newClient(stub, channelFactory);
 
-    AuthenticateResponse response = client.authenticate("22", "demo@example.com", "swordfish");
+    AuthenticateResponse response = client.authenticate("demo@example.com", "swordfish");
 
     assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
     assertThat(response.getError().getMessage()).isEqualTo("Authentication service unavailable");
@@ -100,7 +100,7 @@ class AccountClientTest {
         .thenThrow(new IllegalStateException("channel failed before a response completed"));
     AccountClient client = newClient(stub);
 
-    AuthenticateResponse response = client.authenticate("22", "demo@example.com", "swordfish");
+    AuthenticateResponse response = client.authenticate("demo@example.com", "swordfish");
 
     assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
     assertThat(response.getError().getMessage()).isEqualTo("Authentication service unavailable");
@@ -129,7 +129,7 @@ class AccountClientTest {
                     .withDescription("upstream credential details")));
     AccountClient client = newClient(stub);
 
-    AuthenticateResponse response = client.authenticate("22", "demo@example.com", "swordfish");
+    AuthenticateResponse response = client.authenticate("demo@example.com", "swordfish");
 
     assertThat(response.getError().getCode()).isEqualTo(statusName);
     assertThat(response.getError().getMessage()).isEqualTo("Authentication request failed");
@@ -147,7 +147,7 @@ class AccountClientTest {
                 Status.fromCode(Status.Code.INVALID_ARGUMENT).withDescription("   ")));
     AccountClient client = newClient(stub);
 
-    AuthenticateResponse response = client.authenticate("22", "demo@example.com", "swordfish");
+    AuthenticateResponse response = client.authenticate("demo@example.com", "swordfish");
 
     assertThat(response.getError().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT.name());
     assertThat(response.getError().getMessage()).isEqualTo("Authentication request failed");
@@ -170,14 +170,34 @@ class AccountClientTest {
     when(stub.authenticate(any(AuthenticateRequest.class))).thenReturn(expected);
     AccountClient client = newClient(stub);
 
-    AuthenticateResponse response = client.authenticate("22", "demo@example.com", "swordfish");
+    AuthenticateResponse response = client.authenticate("demo@example.com", "swordfish");
 
     assertThat(response).isEqualTo(expected);
     ArgumentCaptor<AuthenticateRequest> requestCaptor =
         ArgumentCaptor.forClass(AuthenticateRequest.class);
     verify(stub).authenticate(requestCaptor.capture());
     assertThat(requestCaptor.getValue().getEmail()).isEqualTo("demo@example.com");
-    assertThat(requestCaptor.getValue().getTenantId()).isEqualTo("22");
+    assertThat(requestCaptor.getValue().getDescriptorForType().findFieldByName("tenant_id"))
+        .isNull();
+  }
+
+  @Test
+  void emailLoginChallengeRequestHasNoTenantScopeField() throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.requestEmailLoginOtp(any(RequestEmailLoginOtpRequest.class)))
+        .thenReturn(RequestEmailLoginOtpResponse.newBuilder().setAccepted(true).build());
+    AccountClient client = newClient(stub);
+
+    client.requestEmailLoginOtp("demo@example.com");
+
+    ArgumentCaptor<RequestEmailLoginOtpRequest> requestCaptor =
+        ArgumentCaptor.forClass(RequestEmailLoginOtpRequest.class);
+    verify(stub).requestEmailLoginOtp(requestCaptor.capture());
+    assertThat(requestCaptor.getValue().getEmail()).isEqualTo("demo@example.com");
+    assertThat(requestCaptor.getValue().getDescriptorForType().findFieldByName("tenant_id"))
+        .isNull();
   }
 
   @Test

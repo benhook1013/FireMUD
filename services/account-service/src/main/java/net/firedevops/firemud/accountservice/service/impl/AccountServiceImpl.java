@@ -255,7 +255,7 @@ public class AccountServiceImpl implements AccountService {
   @Transactional
   @Timed(value = "account.authenticate_gameplay")
   public net.firedevops.firemud.accountservice.dto.AuthenticationResult authenticateForGameplay(
-      Long tenantId, String email, String password) {
+      String email, String password) {
     Account gameplayAccount =
         accountRepository
             .findByEmail(EmailCanonicalization.normalize(email))
@@ -263,14 +263,14 @@ public class AccountServiceImpl implements AccountService {
     PrimaryAuthentication authentication =
         authenticateAccountIdentity(gameplayAccount, password, true);
     Account account = authentication.account();
-    requireGameplayMembership(account.getId(), tenantId, "Invalid credentials");
     authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
     String token =
         mintToken(
             account.getId().toString(),
             jwtAuthProperties.getJwtExpirationMs(),
             authenticationTokenClaims(GAMEPLAY_DELEGATION_AUDIENCE, account));
-    sessionService.storeSession(tenantId, account.getId(), token);
+    sessionService.storeAccountSession(
+        account.getId(), token, jwtAuthProperties.getJwtExpirationMs());
     return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
         account.getId(), token);
   }
@@ -278,7 +278,7 @@ public class AccountServiceImpl implements AccountService {
   @Override
   @Transactional
   @Timed(value = "account.request_email_login_otp")
-  public void requestEmailLoginOtp(Long tenantId, String email) {
+  public void requestEmailLoginOtp(String email) {
     Optional<Account> account =
         accountRepository.findByEmail(EmailCanonicalization.normalize(email));
     if (account.isEmpty()
@@ -289,7 +289,6 @@ public class AccountServiceImpl implements AccountService {
     Account resolvedAccount = account.orElseThrow();
     try {
       requireAuthenticationEligible(resolvedAccount);
-      requireGameplayMembership(resolvedAccount.getId(), tenantId, "Invalid credentials");
     } catch (AuthenticationException ex) {
       return;
     }
@@ -317,7 +316,7 @@ public class AccountServiceImpl implements AccountService {
   @Transactional
   @Timed(value = "account.verify_email_login_otp")
   public net.firedevops.firemud.accountservice.dto.AuthenticationResult verifyEmailLoginOtp(
-      Long tenantId, String email, String code) {
+      String email, String code) {
     Account account =
         accountRepository
             .findByEmail(EmailCanonicalization.normalize(email))
@@ -338,14 +337,14 @@ public class AccountServiceImpl implements AccountService {
       throw invalidCredentials();
     }
     requireAuthenticationEligible(account);
-    requireGameplayMembership(account.getId(), tenantId, "Invalid credentials");
     accountEmailLoginChallengeRepository.delete(challenge);
     String token =
         mintToken(
             account.getId().toString(),
             jwtAuthProperties.getJwtExpirationMs(),
             authenticationTokenClaims(GAMEPLAY_DELEGATION_AUDIENCE, account));
-    sessionService.storeSession(tenantId, account.getId(), token);
+    sessionService.storeAccountSession(
+        account.getId(), token, jwtAuthProperties.getJwtExpirationMs());
     return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
         account.getId(), token);
   }
@@ -1046,19 +1045,6 @@ public class AccountServiceImpl implements AccountService {
     return accountRepository
         .findById(accountId)
         .orElseThrow(() -> new IllegalArgumentException("Account not found"));
-  }
-
-  private void requireGameplayMembership(Long accountId, Long tenantId, String message) {
-    AccountTenantMembership membership =
-        accountTenantMembershipRepository
-            .findByAccountIdAndTenantId(accountId, tenantId)
-            .orElseThrow(
-                () ->
-                    new AuthenticationException(
-                        AuthenticationErrorCodes.INVALID_CREDENTIALS, message));
-    if (!membership.isGameplayAdmissionAllowed()) {
-      throw new AuthenticationException(AuthenticationErrorCodes.INVALID_CREDENTIALS, message);
-    }
   }
 
   private boolean hasRealmAccessGrant(

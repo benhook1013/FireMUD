@@ -253,7 +253,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
             .setShortDescription("A narrow testing hall")
             .setLongDescription("A narrow testing hall used for login verification.")
             .build();
-    when(accountClient.authenticate(eq("22"), eq("demo@example.com"), eq("swordfish")))
+    when(accountClient.authenticate(eq("demo@example.com"), eq("swordfish")))
         .thenReturn(
             AuthenticateResponse.newBuilder()
                 .setAuthToken("stub-token")
@@ -1159,7 +1159,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   @Test
   void websocketFailedReloginFailsClosedWithoutLeakingOldAuthenticatedState() throws Exception {
-    when(accountClient.authenticate(eq("22"), eq("demo@example.com"), eq("wrongpass")))
+    when(accountClient.authenticate(eq("demo@example.com"), eq("wrongpass")))
         .thenReturn(
             AuthenticateResponse.newBuilder()
                 .setError(

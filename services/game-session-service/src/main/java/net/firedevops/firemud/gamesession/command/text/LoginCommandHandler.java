@@ -130,8 +130,7 @@ public final class LoginCommandHandler {
     GameInstance instance = maybeInstance.get();
 
     AuthenticateResponse authResponse =
-        accountClient.authenticate(
-            String.valueOf(instance.getTenantId()), canonicalLoginName, credentials.password());
+        accountClient.authenticate(canonicalLoginName, credentials.password());
     var error = authResponse.getError();
     if (error != null
         && (!Optional.ofNullable(error.getCode()).orElse("").isBlank()
@@ -181,15 +180,12 @@ public final class LoginCommandHandler {
     if (bootstrapGameInstanceId <= 0) {
       return failure("SESSION_NOT_FOUND", "Session not found");
     }
-    Optional<GameInstance> maybeInstance = gameInstanceRepository.findById(bootstrapGameInstanceId);
-    if (maybeInstance.isEmpty()) {
+    if (gameInstanceRepository.findById(bootstrapGameInstanceId).isEmpty()) {
       return failure("SESSION_NOT_FOUND", "Session not found");
     }
-    GameInstance instance = maybeInstance.orElseThrow();
 
     RequestEmailLoginOtpResponse response =
         accountClient.requestEmailLoginOtp(
-            String.valueOf(instance.getTenantId()),
             EmailCanonicalization.normalize(challengeRequest.email()));
     if (hasError(response.getError()) || !response.getAccepted()) {
       return failure(AUTHENTICATION_UNAVAILABLE_CODE, "Authentication service unavailable");

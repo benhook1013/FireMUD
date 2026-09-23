@@ -160,7 +160,7 @@ class SessionResumptionFlowTest {
             });
     when(commandService.enqueue(anyString(), anyString(), anyBoolean()))
         .thenReturn(CommandEnqueueResult.success());
-    when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+    when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder().setAuthToken("jwt").setAccountId("77").build());
     when(accountClient.getTenantMembershipForRuntime(
@@ -489,7 +489,7 @@ class SessionResumptionFlowTest {
     TextCommandInterpretationResult firstLook = interpreter.interpret("1", LOOK_PAYLOAD, false);
     assertTrue(firstLook.commandResult().accepted());
 
-    when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+    when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder()
                 .setError(

@@ -50,16 +50,12 @@ public final class AccountClient
   }
 
   /** Authenticates a player via the Account Service. */
-  public AuthenticateResponse authenticate(String tenantId, String email, String password) {
+  public AuthenticateResponse authenticate(String email, String password) {
     if (stub() == null) {
       return authenticationUnavailable();
     }
     AuthenticateRequest request =
-        AuthenticateRequest.newBuilder()
-            .setTenantId(tenantId)
-            .setEmail(email)
-            .setPassword(password)
-            .build();
+        AuthenticateRequest.newBuilder().setEmail(email).setPassword(password).build();
     try {
       return callStub().authenticate(request);
     } catch (StatusRuntimeException ex) {
@@ -104,12 +100,12 @@ public final class AccountClient
   }
 
   /** Requests a neutral email-login challenge from the Account Service. */
-  public RequestEmailLoginOtpResponse requestEmailLoginOtp(String tenantId, String email) {
+  public RequestEmailLoginOtpResponse requestEmailLoginOtp(String email) {
     if (stub() == null) {
       return emailLoginOtpUnavailable();
     }
     RequestEmailLoginOtpRequest request =
-        RequestEmailLoginOtpRequest.newBuilder().setTenantId(tenantId).setEmail(email).build();
+        RequestEmailLoginOtpRequest.newBuilder().setEmail(email).build();
     try {
       return callStub().requestEmailLoginOtp(request);
     } catch (StatusRuntimeException ex) {
@@ -134,8 +130,7 @@ public final class AccountClient
     return emailLoginOtpUnavailable();
   }
 
-  public AuthenticateResponse authenticateForReadiness(
-      String tenantId, String email, String password) {
+  public AuthenticateResponse authenticateForReadiness(String email, String password) {
     if (stub() == null) {
       return AuthenticateResponse.newBuilder()
           .setError(
@@ -145,11 +140,7 @@ public final class AccountClient
           .build();
     }
     AuthenticateRequest request =
-        AuthenticateRequest.newBuilder()
-            .setTenantId(tenantId)
-            .setEmail(email)
-            .setPassword(password)
-            .build();
+        AuthenticateRequest.newBuilder().setEmail(email).setPassword(password).build();
     return stub()
         .withDeadlineAfter(READINESS_DEADLINE_SECONDS, TimeUnit.SECONDS)
         .authenticate(request);

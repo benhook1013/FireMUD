@@ -29,7 +29,6 @@ import net.firedevops.firemud.gamesession.testsupport.InMemorySessionContextTest
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
@@ -97,7 +96,7 @@ class GameSessionLoginIntegrationTest {
             })
         .when(redisTemplate)
         .delete(anyString());
-    when(accountClient.authenticate(anyString(), anyString(), anyString()))
+    when(accountClient.authenticate(anyString(), anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder().setAuthToken("stub-token").setAccountId("7").build());
     when(sharedSettingsAuthorityReader.readOverrides(anyLong(), org.mockito.ArgumentMatchers.any()))
@@ -142,9 +141,6 @@ class GameSessionLoginIntegrationTest {
     assertThat(payloads).anyMatch(s -> s.startsWith("OK LOGIN"));
     assertThat(sessionContextService.findByTenantAndSessionId(42L, 1L)).isPresent();
 
-    ArgumentCaptor<String> tenantCaptor = ArgumentCaptor.forClass(String.class);
-    verify(accountClient)
-        .authenticate(tenantCaptor.capture(), eq("demo@example.com"), eq("swordfish"));
-    assertThat(tenantCaptor.getValue()).isEqualTo("42");
+    verify(accountClient).authenticate(eq("demo@example.com"), eq("swordfish"));
   }
 }

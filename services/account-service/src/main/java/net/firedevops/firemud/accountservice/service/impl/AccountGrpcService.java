@@ -125,10 +125,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       AuthenticateRequest request, StreamObserver<AuthenticateResponse> responseObserver) {
     try {
       net.firedevops.firemud.accountservice.dto.AuthenticationResult result =
-          accountService.authenticateForGameplay(
-              requirePositiveRequestId(request.getTenantId(), "tenantId"),
-              request.getEmail(),
-              request.getPassword());
+          accountService.authenticateForGameplay(request.getEmail(), request.getPassword());
       AuthenticateResponse response =
           AuthenticateResponse.newBuilder()
               .setAuthToken(result.authToken())
@@ -166,8 +163,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       RequestEmailLoginOtpRequest request,
       StreamObserver<RequestEmailLoginOtpResponse> responseObserver) {
     try {
-      accountService.requestEmailLoginOtp(
-          requirePositiveRequestId(request.getTenantId(), "tenantId"), request.getEmail());
+      accountService.requestEmailLoginOtp(request.getEmail());
       responseObserver.onNext(RequestEmailLoginOtpResponse.newBuilder().setAccepted(true).build());
     } catch (InvalidRequestException ex) {
       responseObserver.onNext(
@@ -183,11 +179,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   public void verifyEmailLoginOtp(
       VerifyEmailLoginOtpRequest request, StreamObserver<AuthenticateResponse> responseObserver) {
     try {
-      var result =
-          accountService.verifyEmailLoginOtp(
-              requirePositiveRequestId(request.getTenantId(), "tenantId"),
-              request.getEmail(),
-              request.getCode());
+      var result = accountService.verifyEmailLoginOtp(request.getEmail(), request.getCode());
       responseObserver.onNext(
           AuthenticateResponse.newBuilder()
               .setAuthToken(result.authToken())

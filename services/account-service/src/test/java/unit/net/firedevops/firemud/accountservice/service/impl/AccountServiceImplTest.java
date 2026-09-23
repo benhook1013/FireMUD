@@ -241,7 +241,7 @@ class AccountServiceImplTest {
   void emailLoginOtpRequestIsNeutralForUnknownEmail() {
     when(accountRepository.findByEmail("unknown@example.com")).thenReturn(Optional.empty());
 
-    service.requestEmailLoginOtp(7L, "unknown@example.com");
+    service.requestEmailLoginOtp("unknown@example.com");
 
     verifyNoInteractions(emailService, accountEmailLoginChallengeRepository);
   }
@@ -259,7 +259,7 @@ class AccountServiceImplTest {
     account.setLifecycleState(lifecycleState);
     when(accountRepository.findByEmail("verified@example.com")).thenReturn(Optional.of(account));
 
-    service.requestEmailLoginOtp(7L, "verified@example.com");
+    service.requestEmailLoginOtp("verified@example.com");
 
     verifyNoInteractions(
         accountTenantMembershipRepository, accountEmailLoginChallengeRepository, emailService);
@@ -271,11 +271,7 @@ class AccountServiceImplTest {
     account.setId(9L);
     account.setEmail("verified@example.com");
     account.setEmailVerified(true);
-    AccountTenantMembership membership = new AccountTenantMembership();
-    membership.setGameplayAdmissionAllowed(true);
     when(accountRepository.findByEmail("verified@example.com")).thenReturn(Optional.of(account));
-    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(9L, 7L))
-        .thenReturn(Optional.of(membership));
     when(accountEmailLoginChallengeRepository.findByAccountId(9L)).thenReturn(Optional.empty());
     when(accountEmailLoginChallengeRepository.save(org.mockito.ArgumentMatchers.any()))
         .thenAnswer(
@@ -286,7 +282,7 @@ class AccountServiceImplTest {
               return challenge;
             });
 
-    service.requestEmailLoginOtp(7L, "verified@example.com");
+    service.requestEmailLoginOtp("verified@example.com");
 
     org.mockito.ArgumentCaptor<
             net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge>
@@ -303,6 +299,7 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.eq("verified@example.com"),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.matches(".*\\b\\d{6}\\b.*"));
+    verifyNoInteractions(accountTenantMembershipRepository);
   }
 
   @Test
@@ -312,16 +309,12 @@ class AccountServiceImplTest {
     account.setEmail("verified@example.com");
     account.setEmailVerified(true);
     account.setRole("player");
-    AccountTenantMembership membership = new AccountTenantMembership();
-    membership.setGameplayAdmissionAllowed(true);
     when(accountRepository.findByEmail("verified@example.com")).thenReturn(Optional.of(account));
-    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(9L, 7L))
-        .thenReturn(Optional.of(membership));
     when(accountEmailLoginChallengeRepository.findByAccountId(9L)).thenReturn(Optional.empty());
     when(accountEmailLoginChallengeRepository.save(org.mockito.ArgumentMatchers.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
-    service.requestEmailLoginOtp(7L, "verified@example.com");
+    service.requestEmailLoginOtp("verified@example.com");
 
     org.mockito.ArgumentCaptor<
             net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge>
@@ -343,17 +336,18 @@ class AccountServiceImplTest {
         .thenReturn(Optional.of(challengeCaptor.getValue()));
 
     AuthenticationResult result =
-        service.verifyEmailLoginOtp(7L, "verified@example.com", codeMatcher.group(1));
+        service.verifyEmailLoginOtp("verified@example.com", codeMatcher.group(1));
 
     assertEquals(9L, result.accountId());
     assertNotNull(result.authToken());
     org.mockito.Mockito.verify(accountEmailLoginChallengeRepository)
         .delete(challengeCaptor.getValue());
     org.mockito.Mockito.verify(sessionService)
-        .storeSession(
-            org.mockito.ArgumentMatchers.eq(7L),
+        .storeAccountSession(
             org.mockito.ArgumentMatchers.eq(9L),
-            org.mockito.ArgumentMatchers.eq(result.authToken()));
+            org.mockito.ArgumentMatchers.eq(result.authToken()),
+            org.mockito.ArgumentMatchers.eq(jwtAuthProperties.getJwtExpirationMs()));
+    verifyNoInteractions(accountTenantMembershipRepository);
   }
 
   @Test
@@ -368,19 +362,17 @@ class AccountServiceImplTest {
     challenge.setAccountId(9L);
     challenge.setCodeHash(hash("123456"));
     challenge.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(5));
-    AccountTenantMembership membership = new AccountTenantMembership();
-    membership.setGameplayAdmissionAllowed(true);
     when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
     when(accountEmailLoginChallengeRepository.findByAccountId(9L))
         .thenReturn(Optional.of(challenge));
-    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(9L, 7L))
-        .thenReturn(Optional.of(membership));
 
-    AuthenticationResult result = service.authenticateForGameplay(7L, "demo@example.com", "123456");
+    AuthenticationResult result = service.authenticateForGameplay("demo@example.com", "123456");
 
     assertEquals(9L, result.accountId());
     org.mockito.Mockito.verify(accountEmailLoginChallengeRepository).delete(challenge);
-    org.mockito.Mockito.verify(sessionService).storeSession(7L, 9L, result.authToken());
+    org.mockito.Mockito.verify(sessionService)
+        .storeAccountSession(9L, result.authToken(), jwtAuthProperties.getJwtExpirationMs());
+    verifyNoInteractions(accountTenantMembershipRepository);
   }
 
   @Test
@@ -395,16 +387,11 @@ class AccountServiceImplTest {
     challenge.setAccountId(9L);
     challenge.setCodeHash(hash("123456"));
     challenge.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(5));
-    AccountTenantMembership membership = new AccountTenantMembership();
-    membership.setGameplayAdmissionAllowed(true);
     when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
     when(accountEmailLoginChallengeRepository.findByAccountId(9L))
         .thenReturn(Optional.of(challenge));
-    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(9L, 7L))
-        .thenReturn(Optional.of(membership));
 
-    AuthenticationResult result =
-        service.authenticateForGameplay(7L, "demo@example.com", "password");
+    AuthenticationResult result = service.authenticateForGameplay("demo@example.com", "password");
 
     assertEquals(9L, result.accountId());
     org.mockito.Mockito.verify(accountEmailLoginChallengeRepository, org.mockito.Mockito.never())
@@ -433,7 +420,7 @@ class AccountServiceImplTest {
     AuthenticationException exception =
         assertThrows(
             AuthenticationException.class,
-            () -> service.authenticateForGameplay(7L, "demo@example.com", "wrong"));
+            () -> service.authenticateForGameplay("demo@example.com", "wrong"));
 
     assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
     assertEquals(1, challenge.getInvalidAttemptCount());
@@ -450,7 +437,7 @@ class AccountServiceImplTest {
     account.setLoginAuthModes("PASSWORD");
     when(accountRepository.findByEmail("verified@example.com")).thenReturn(Optional.of(account));
 
-    service.requestEmailLoginOtp(7L, "verified@example.com");
+    service.requestEmailLoginOtp("verified@example.com");
 
     verifyNoInteractions(
         accountTenantMembershipRepository, accountEmailLoginChallengeRepository, emailService);
@@ -463,7 +450,7 @@ class AccountServiceImplTest {
     AuthenticationException exception =
         assertThrows(
             AuthenticationException.class,
-            () -> service.verifyEmailLoginOtp(7L, "unknown@example.com", "123456"));
+            () -> service.verifyEmailLoginOtp("unknown@example.com", "123456"));
 
     assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
     verifyNoInteractions(accountEmailLoginChallengeRepository, sessionService);
@@ -475,8 +462,6 @@ class AccountServiceImplTest {
     account.setId(9L);
     account.setEmail("verified@example.com");
     account.setRole("player");
-    AccountTenantMembership membership = new AccountTenantMembership();
-    membership.setGameplayAdmissionAllowed(true);
     net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge challenge =
         new net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge();
     challenge.setId(5L);
@@ -485,12 +470,10 @@ class AccountServiceImplTest {
     challenge.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(10));
     challenge.setInvalidAttemptCount(0);
     when(accountRepository.findByEmail("verified@example.com")).thenReturn(Optional.of(account));
-    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(9L, 7L))
-        .thenReturn(Optional.of(membership));
     when(accountEmailLoginChallengeRepository.findByAccountId(9L))
         .thenReturn(Optional.of(challenge));
 
-    AuthenticationResult result = service.verifyEmailLoginOtp(7L, "verified@example.com", "123456");
+    AuthenticationResult result = service.verifyEmailLoginOtp("verified@example.com", "123456");
 
     assertEquals(9L, result.accountId());
     var claims = new JwtUtil(JWT_SECRET, 3600000L).parseToken(result.authToken()).getPayload();
@@ -573,12 +556,9 @@ class AccountServiceImplTest {
     account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
-    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(1L, 1L))
-        .thenReturn(Optional.of(membership(account, 1L)));
     jwtAuthProperties.setJwtSecret(null);
 
-    AuthenticationResult result =
-        service.authenticateForGameplay(1L, "demo@example.com", "password");
+    AuthenticationResult result = service.authenticateForGameplay("demo@example.com", "password");
 
     assertNotNull(result.authToken());
     assertEquals(1L, result.accountId());
@@ -587,7 +567,9 @@ class AccountServiceImplTest {
     assertEquals(1L, claims.get("accountId", Long.class));
     assertEquals(java.util.List.of("player"), claims.get("globalRoles"));
     assertNotNull(claims.get("jti"));
-    org.mockito.Mockito.verify(sessionService).storeSession(1L, 1L, result.authToken());
+    org.mockito.Mockito.verify(sessionService)
+        .storeAccountSession(1L, result.authToken(), jwtAuthProperties.getJwtExpirationMs());
+    verifyNoInteractions(accountTenantMembershipRepository);
   }
 
   @Test
@@ -1132,15 +1114,15 @@ class AccountServiceImplTest {
     account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
-    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(1L, 1L))
-        .thenReturn(Optional.of(membership(account, 1L)));
 
     AuthenticationResult result =
-        service.authenticateForGameplay(1L, "  DEMO@example.com ", "password");
+        service.authenticateForGameplay("  DEMO@example.com ", "password");
 
     assertNotNull(result.authToken());
     assertEquals(1L, result.accountId());
-    org.mockito.Mockito.verify(sessionService).storeSession(1L, 1L, result.authToken());
+    org.mockito.Mockito.verify(sessionService)
+        .storeAccountSession(1L, result.authToken(), jwtAuthProperties.getJwtExpirationMs());
+    verifyNoInteractions(accountTenantMembershipRepository);
     org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
         .findByUsername(org.mockito.ArgumentMatchers.anyString());
   }
@@ -1150,8 +1132,7 @@ class AccountServiceImplTest {
     when(accountRepository.findByEmail("demo")).thenReturn(Optional.empty());
     AuthenticationException exception =
         assertThrows(
-            AuthenticationException.class,
-            () -> service.authenticateForGameplay(1L, "demo", "bad"));
+            AuthenticationException.class, () -> service.authenticateForGameplay("demo", "bad"));
     assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
   }
 
@@ -1162,7 +1143,7 @@ class AccountServiceImplTest {
     AuthenticationException exception =
         assertThrows(
             AuthenticationException.class,
-            () -> service.authenticateForGameplay(1L, "demo@example.com", "password"));
+            () -> service.authenticateForGameplay("demo@example.com", "password"));
 
     assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
     org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
@@ -1170,22 +1151,19 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void authenticateRejectsMissingGameplayMembership() {
+  void authenticateAllowsGlobalIdentityWithoutTenantMembership() {
     Account account = new Account();
     account.setId(7L);
     account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
-    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(7L, 1L))
-        .thenReturn(Optional.empty());
+    AuthenticationResult result = service.authenticateForGameplay("demo@example.com", "password");
 
-    AuthenticationException exception =
-        assertThrows(
-            AuthenticationException.class,
-            () -> service.authenticateForGameplay(1L, "demo@example.com", "password"));
-
-    assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
-    assertEquals("Invalid credentials", exception.getMessage());
+    assertEquals(7L, result.accountId());
+    assertNotNull(result.authToken());
+    org.mockito.Mockito.verify(sessionService)
+        .storeAccountSession(7L, result.authToken(), jwtAuthProperties.getJwtExpirationMs());
+    verifyNoInteractions(accountTenantMembershipRepository);
   }
 
   @Test
