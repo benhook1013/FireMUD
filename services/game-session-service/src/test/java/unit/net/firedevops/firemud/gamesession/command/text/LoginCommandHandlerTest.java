@@ -778,6 +778,61 @@ class LoginCommandHandlerTest {
   }
 
   @Test
+  void reloginAsDifferentAccountClearsExistingGameplayBinding() {
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("other@example.com", "swordfish"),
+            "LOGIN other@example.com swordfish");
+
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate(anyString(), anyString()))
+        .thenReturn(
+            AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("99").build());
+    SessionContext existing =
+        new SessionContext(
+            1L,
+            22L,
+            77L,
+            "demo@example.com",
+            88L,
+            "Sora",
+            1L,
+            "R-2045",
+            "old-jwt",
+            "en-NZ",
+            1L,
+            "demo",
+            "production",
+            1L,
+            "SHARED",
+            "scope-live",
+            "req-live");
+    stubSessionContext(existing);
+
+    handler.handle("1", command, false);
+
+    ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService).save(captor.capture());
+    SessionContext context = captor.getValue();
+    assertEquals(99L, context.accountId());
+    assertEquals("other@example.com", context.loginName());
+    assertEquals(0L, context.characterId());
+    assertNull(context.characterName());
+    assertEquals(0L, context.gameInstanceId());
+    assertNull(context.roomInstanceId());
+    assertEquals(AUTH_TOKEN, context.jwt());
+    assertEquals(1L, context.bootstrapGameInstanceId());
+    assertNull(context.worldSlug());
+    assertNull(context.realmSlug());
+    assertEquals(0L, context.pointerVersion());
+    assertNull(context.playableStateScope());
+    assertNull(context.connectScopeId());
+    assertNull(context.connectRequestId());
+  }
+
+  @Test
   void reloginClearsStaleGameplayBindingBeforeRefreshingLoginContext() {
     TextCommand command =
         new TextCommand(

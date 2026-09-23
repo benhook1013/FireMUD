@@ -234,12 +234,12 @@ components:
         email:
           type: string
       required: [email]
-    AccountIdRequest:
+    EmailVerificationRequest:
       type: object
       properties:
-        accountId:
+        email:
           type: string
-      required: [accountId]
+      required: [email]
     VerifyEmailRequest:
       type: object
       properties:
@@ -486,7 +486,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AccountIdRequest'
+              $ref: '#/components/schemas/EmailVerificationRequest'
       responses:
         '200':
           description: Request accepted

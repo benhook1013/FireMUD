@@ -2640,6 +2640,16 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void requestPasswordResetUnknownEmailIsNeutral() {
+    when(accountRepository.findByEmail("unknown@example.com")).thenReturn(Optional.empty());
+
+    service.requestPasswordReset(new PasswordResetRequest("unknown@example.com"));
+
+    org.mockito.Mockito.verifyNoInteractions(
+        passwordResetTokenRepository, emailService, notificationService);
+  }
+
+  @Test
   void sendUsernameReminderEmailsUsername() {
     Account account = new Account();
     account.setId(1L);
@@ -2657,6 +2667,17 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.eq("Username Reminder"),
             org.mockito.ArgumentMatchers.anyString());
     org.mockito.Mockito.verifyNoInteractions(notificationService);
+  }
+
+  @Test
+  void sendUsernameReminderUnknownEmailIsNeutral() {
+    when(accountRepository.findByEmail("unknown@example.com")).thenReturn(Optional.empty());
+
+    service.sendUsernameReminder(
+        new net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest(
+            "unknown@example.com"));
+
+    org.mockito.Mockito.verifyNoInteractions(emailService, notificationService);
   }
 
   @Test
@@ -2696,6 +2717,35 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.eq("Email Verification"),
             org.mockito.ArgumentMatchers.anyString());
     org.mockito.Mockito.verifyNoInteractions(notificationService);
+  }
+
+  @Test
+  void requestEmailVerificationByEmailCreatesTokenForResolvedAccount() {
+    Account account = new Account();
+    account.setId(6L);
+    account.setEmail("demo@example.com");
+    when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
+
+    service.requestEmailVerification("  DEMO@example.com ");
+
+    org.mockito.Mockito.verify(emailVerificationTokenRepository)
+        .save(org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(emailService)
+        .sendEmail(
+            org.mockito.ArgumentMatchers.eq("demo@example.com"),
+            org.mockito.ArgumentMatchers.eq("Email Verification"),
+            org.mockito.ArgumentMatchers.anyString());
+    org.mockito.Mockito.verifyNoInteractions(notificationService);
+  }
+
+  @Test
+  void requestEmailVerificationByUnknownEmailIsNeutral() {
+    when(accountRepository.findByEmail("unknown@example.com")).thenReturn(Optional.empty());
+
+    service.requestEmailVerification("unknown@example.com");
+
+    org.mockito.Mockito.verifyNoInteractions(
+        emailVerificationTokenRepository, emailService, notificationService);
   }
 
   @Test

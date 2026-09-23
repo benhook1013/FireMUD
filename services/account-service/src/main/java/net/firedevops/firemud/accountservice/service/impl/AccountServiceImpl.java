@@ -1273,10 +1273,12 @@ public class AccountServiceImpl implements AccountService {
   @Transactional
   @Timed(value = "account.request_password_reset")
   public void requestPasswordReset(PasswordResetRequest request) {
-    net.firedevops.firemud.accountservice.entity.Account account =
-        accountRepository
-            .findByEmail(EmailCanonicalization.normalize(request.email()))
-            .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    Optional<Account> accountOptional =
+        accountRepository.findByEmail(EmailCanonicalization.normalize(request.email()));
+    if (accountOptional.isEmpty()) {
+      return;
+    }
+    Account account = accountOptional.get();
     net.firedevops.firemud.accountservice.entity.PasswordResetToken token =
         new net.firedevops.firemud.accountservice.entity.PasswordResetToken();
     token.setAccount(account);
@@ -1314,6 +1316,22 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.request_email_verification")
   public void requestEmailVerification(Long accountId) {
     Account account = requireAccount(accountId);
+    issueEmailVerification(account);
+  }
+
+  @Override
+  @Transactional
+  @Timed(value = "account.request_email_verification_public")
+  public void requestEmailVerification(String email) {
+    Optional<Account> accountOptional =
+        accountRepository.findByEmail(EmailCanonicalization.normalize(email));
+    if (accountOptional.isEmpty()) {
+      return;
+    }
+    issueEmailVerification(accountOptional.get());
+  }
+
+  private void issueEmailVerification(Account account) {
     EmailVerificationToken token = new EmailVerificationToken();
     token.setAccount(account);
     token.setToken(java.util.UUID.randomUUID().toString());
@@ -1370,10 +1388,12 @@ public class AccountServiceImpl implements AccountService {
   @Transactional
   @Timed(value = "account.username_reminder")
   public void sendUsernameReminder(UsernameRecoveryRequest request) {
-    Account account =
-        accountRepository
-            .findByEmail(EmailCanonicalization.normalize(request.email()))
-            .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    Optional<Account> accountOptional =
+        accountRepository.findByEmail(EmailCanonicalization.normalize(request.email()));
+    if (accountOptional.isEmpty()) {
+      return;
+    }
+    Account account = accountOptional.get();
     runAfterCommit(
         () ->
             emailService.sendEmail(

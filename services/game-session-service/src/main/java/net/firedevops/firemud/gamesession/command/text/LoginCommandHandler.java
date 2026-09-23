@@ -299,11 +299,12 @@ public final class LoginCommandHandler {
             .resolveProjectedSessionContext(Long.toString(sessionId))
             .filter(context -> context.tenantId() == tenantId)
             .orElse(null);
+    boolean sameAuthenticatedAccount = existing != null && existing.accountId() == accountId;
     // LOGIN authenticates account identity. If this session already has gameplay scope, preserve it
-    // so reconnect on the same transport session can continue through PLAY without losing room
-    // state.
+    // only when it is still bound to the newly authenticated account. A different account starts
+    // with a fresh authenticated context so gameplay identity and routing cannot cross accounts.
     SessionContext context =
-        existing == null
+        !sameAuthenticatedAccount
             ? new SessionContext(
                 sessionId,
                 tenantId,

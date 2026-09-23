@@ -86,6 +86,8 @@ public interface AccountService {
 
   void requestEmailVerification(Long accountId);
 
+  void requestEmailVerification(String email);
+
   void verifyEmail(net.firedevops.firemud.accountservice.dto.VerifyEmailRequest request);
 
   /** Send the username associated with an email address. */
