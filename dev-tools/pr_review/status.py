@@ -429,6 +429,12 @@ def _required_results(authority: dict[str, Any], inventory: dict[str, Any]) -> d
             status = "stale" if matching else "missing"
         elif app_id is not None and (result["app"] or {}).get("id") != app_id:
             status = "wrong_app"
+        elif result["outcome"] in FAILURE:
+            status = "failed"
+        elif result["outcome"] in PENDING:
+            status = "pending"
+        elif result["outcome"] in SUCCESS:
+            status = "success"
         else:
             status = result["outcome"].lower()
         rendered = {key: value for key, value in (result or {}).items() if not key.startswith("_")}

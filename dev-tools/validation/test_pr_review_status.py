@@ -402,6 +402,23 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(validation["result"]["app"]["id"], 42)
         self.assertEqual(report["ci"]["aggregate"]["state"], "SUCCESS")
 
+    def test_expected_app_failure_blocks_required_check_readiness(self) -> None:
+        payload = github_payload()
+        pr = payload["data"]["repository"]["pullRequest"]
+        pr["reviewThreads"] = {"nodes": []}
+        pr["statusCheckRollup"][0]["conclusion"] = "FAILURE"
+        pr["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["state"] = "SUCCESS"
+
+        report = self._ready_report(payload)
+
+        validation = report["ci"]["required"]["contexts"][0]
+        self.assertEqual(validation["expected_app"], {"id": 42})
+        self.assertEqual(validation["status"], "failed")
+        self.assertEqual(report["ci"]["required"]["status"], "failed")
+        self.assertEqual(report["ci"]["aggregate"]["state"], "SUCCESS")
+        self.assertFalse(report["ready"])
+        self.assertIn("one or more required status checks failed or used the wrong app", report["reasons"])
+
     def test_required_context_with_only_wrong_app_is_visible_failure(self) -> None:
         payload = github_payload()
         pr = payload["data"]["repository"]["pullRequest"]
