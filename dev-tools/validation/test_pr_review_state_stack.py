@@ -12,7 +12,16 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 from pr_review import state as state_module
 from pr_review.policy import Channel, Evidence, ReviewStatus, completion_status, select_review_target, taper_satisfied
 from pr_review.stack import PRSnapshot, ReconciliationStatus, ReviewAnchor, classify_anchor, reconcile_stack
-from pr_review.state import Judgment, PolicyOverride, ReviewState, StackReconciliationDecision, StateError, StateStore
+from pr_review.state import (
+    Judgment,
+    PolicyOverride,
+    ReviewState,
+    StackReconciliationDecision,
+    StateError,
+    StateStore,
+    SummaryFindingDisposition,
+    adjudicate_summary_findings,
+)
 
 
 def _append_pr(path: str, pr: int) -> None:
@@ -50,6 +59,18 @@ class ReviewStateStackTest(unittest.TestCase):
                         "rebased to exact current parent",
                     ),
                 ),
+                summary_dispositions=(
+                    SummaryFindingDisposition(
+                        2838,
+                        "1" * 40,
+                        "review",
+                        71,
+                        "duplicate",
+                        2,
+                        "rejected",
+                        "these duplicate annotations do not apply to this PR",
+                    ),
+                ),
             )
             store = StateStore(path)
             store.update(lambda _: state)
@@ -59,9 +80,76 @@ class ReviewStateStackTest(unittest.TestCase):
             self.assertEqual(document["schema_version"], 1)
             self.assertEqual(document["policy_overrides"]["2838:hosted"]["head"], "h1")
             self.assertEqual(document["reconciliations"][0]["parent_head"], "parent-head")
+            self.assertEqual(document["summary_dispositions"][0]["summary_id"], 71)
             self.assertNotIn("live_head", json.dumps(document))
             self.assertNotIn("base_tip", json.dumps(document))
             self.assertNotIn("evidence", json.dumps(document))
+
+    def test_summary_dispositions_are_all_or_nothing_and_exactly_bound(self):
+        head = "a" * 40
+        summary = {
+            "status": "current",
+            "head_sha": head,
+            "source": "review",
+            "identity": 42,
+            "findings": [
+                {"kind": "outside_diff", "count": 2},
+                {"kind": "duplicate", "count": 1},
+            ],
+        }
+        rejected = SummaryFindingDisposition(
+            2838, head, "review", 42, "outside_diff", 2, "rejected", "outside annotations are harmless"
+        )
+
+        remaining, matched = adjudicate_summary_findings(2838, head, summary, (rejected,))
+
+        self.assertEqual(remaining, [{"kind": "duplicate", "count": 1}])
+        self.assertEqual(matched, [rejected.to_dict()])
+        self.assertEqual(len(summary["findings"]), 2)
+        for disposition in (
+            dataclasses.replace(rejected, pr=1),
+            dataclasses.replace(rejected, count=1),
+            dataclasses.replace(rejected, summary_id=43),
+        ):
+            with self.subTest(disposition=disposition):
+                remaining, matched = adjudicate_summary_findings(2838, head, summary, (disposition,))
+                self.assertEqual(remaining, summary["findings"])
+                self.assertEqual(matched, [])
+
+        accepted_unfixed = dataclasses.replace(rejected, decision="accepted_unfixed")
+        remaining, _ = adjudicate_summary_findings(2838, head, summary, (accepted_unfixed,))
+        self.assertEqual(remaining, summary["findings"])
+
+        later_summary = {**summary, "identity": 44}
+        remaining, matched = adjudicate_summary_findings(2838, head, later_summary, (rejected,))
+        self.assertEqual(remaining, later_summary["findings"])
+        self.assertEqual(matched, [])
+
+    def test_accepted_fixed_disposition_cannot_clear_current_head_summary(self):
+        head = "a" * 40
+        summary = {
+            "status": "current",
+            "head_sha": head,
+            "source": "review",
+            "identity": 42,
+            "findings": [{"kind": "duplicate", "count": 1}],
+        }
+        accepted_fixed = SummaryFindingDisposition(
+            2838,
+            head,
+            "review",
+            42,
+            "duplicate",
+            1,
+            "accepted_fixed",
+            "fix is present on the subsequent head",
+            corrected_head="b" * 40,
+        )
+
+        remaining, matched = adjudicate_summary_findings(2838, head, summary, (accepted_fixed,))
+
+        self.assertEqual(remaining, summary["findings"])
+        self.assertEqual(matched, [accepted_fixed.to_dict()])
 
     def test_concurrent_updates_are_serialized_and_leave_valid_json(self):
         with tempfile.TemporaryDirectory() as directory:

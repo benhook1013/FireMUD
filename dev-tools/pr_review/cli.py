@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
+import re
 import sys
 from collections.abc import Mapping
 from typing import Any
@@ -13,6 +15,7 @@ from . import evidence as evidence_module
 from . import status as status_module
 from .controller import ReviewController
 from .runtime import default_controller
+from .state import SummaryFindingDisposition
 
 
 class CliError(RuntimeError):
@@ -37,6 +40,12 @@ def _nonnegative_int(value: str) -> int:
     if parsed < 0:
         raise argparse.ArgumentTypeError("must be a non-negative integer")
     return parsed
+
+
+def _exact_sha(value: str) -> str:
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", value):
+        raise argparse.ArgumentTypeError("must be a full 40-character commit SHA")
+    return value
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -94,6 +103,22 @@ def _parser() -> argparse.ArgumentParser:
     policy.add_argument("--cli-zero-useful", type=_nonnegative_int)
     policy.add_argument("--reason", required=True)
     policy.add_argument("--json", action="store_true", dest="as_json")
+    summary_disposition = decide_commands.add_parser(
+        "summary-disposition",
+        help="adjudicate one exact CodeRabbit summary-only finding bucket",
+    )
+    summary_disposition.add_argument(
+        "decision", choices=("rejected", "accepted-unfixed", "accepted-fixed")
+    )
+    summary_disposition.add_argument("--pr", required=True, type=_positive_int)
+    summary_disposition.add_argument("--head", required=True, type=_exact_sha)
+    summary_disposition.add_argument("--source", required=True, choices=("review", "comment"))
+    summary_disposition.add_argument("--summary-id", required=True, type=_positive_int)
+    summary_disposition.add_argument("--kind", required=True, choices=("outside_diff", "duplicate"))
+    summary_disposition.add_argument("--count", required=True, type=_positive_int)
+    summary_disposition.add_argument("--reason", required=True)
+    summary_disposition.add_argument("--corrected-head", type=_exact_sha)
+    summary_disposition.add_argument("--json", action="store_true", dest="as_json")
     reconcile = decide_commands.add_parser(
         "reconcile", help="reopen review against one exact coherent current stack anchor"
     )
@@ -170,7 +195,9 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             return fixture.status(controller) if fixture is not None else controller.status(), 0
         if fixture is not None:
             return fixture.status(controller, args.pr), 0
-        report = status_module.status(args.pr)
+        state_store = getattr(controller, "store", None)
+        summary_dispositions = state_store.load().summary_dispositions if state_store is not None else ()
+        report = status_module.status(args.pr, summary_dispositions=summary_dispositions)
         stack_report = controller.status()
         report["review_stack"] = stack_report
         stack_item = next((item for item in stack_report.get("prs", []) if item.get("pr") == args.pr), None)
@@ -224,8 +251,59 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             "trigger-recover-prepost",
             "trigger-retire",
             "trigger-retire-stuck",
+            "summary-disposition",
         }:
-            raise CliError("Hosted trigger commands are unavailable in acceptance fixture mode")
+            raise CliError("live-state decisions are unavailable in acceptance fixture mode")
+        if args.decide_command == "summary-disposition":
+            if args.decision == "accepted_fixed" and args.corrected_head is None:
+                raise CliError("accepted-fixed summary disposition requires --corrected-head")
+            if args.decision != "accepted_fixed" and args.corrected_head is not None:
+                raise CliError("--corrected-head is valid only for accepted-fixed summary disposition")
+            payload = github.fetch_pull_request(controller.repository, args.pr)
+            pull_request = payload.get("data", {}).get("repository", {}).get("pullRequest", {})
+            if not isinstance(pull_request, Mapping):
+                raise CliError("live PR response is malformed for summary adjudication")
+            live_head = pull_request.get("headRefOid")
+            if not isinstance(live_head, str) or not status_module.EXACT_SHA.fullmatch(live_head):
+                raise CliError("live PR response has no exact head for summary adjudication")
+            if args.decision == "accepted_fixed":
+                if args.corrected_head.casefold() != live_head.casefold():
+                    raise CliError("--corrected-head must equal the live PR head")
+                if args.head.casefold() == live_head.casefold():
+                    raise CliError("accepted-fixed disposition must refer to a prior reviewed head")
+            elif args.head.casefold() != live_head.casefold():
+                raise CliError("rejected and accepted-unfixed dispositions require the live PR head")
+            selected = status_module._summary_evidence(payload, args.head)
+            if (
+                selected.get("status") != "current"
+                or selected.get("source") != args.source
+                or selected.get("identity") != args.summary_id
+            ):
+                raise CliError("the exact summary identity is not attributable to the requested head")
+            if not any(
+                finding.get("kind") == args.kind and finding.get("count") == args.count
+                for finding in selected.get("findings", [])
+            ):
+                raise CliError("the exact summary does not contain the requested finding kind and count")
+            decision = args.decision.replace("-", "_")
+            disposition = SummaryFindingDisposition(
+                pr=args.pr,
+                head=args.head,
+                source=args.source,
+                summary_id=args.summary_id,
+                kind=args.kind,
+                count=args.count,
+                decision=decision,
+                reason=args.reason,
+                corrected_head=args.corrected_head,
+            )
+
+            def record(current):
+                retained = tuple(item for item in current.summary_dispositions if item.identity != disposition.identity)
+                return dataclasses.replace(current, summary_dispositions=(*retained, disposition))
+
+            controller.store.update(record)
+            return {"status": "recorded", "disposition": disposition.to_dict()}, 0
         if args.decide_command == "trigger-recover-prepost":
             if not args.confirmed_not_posted:
                 raise CliError("pre-POST recovery requires --confirmed-not-posted operator assertion")

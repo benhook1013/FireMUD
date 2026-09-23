@@ -13,16 +13,18 @@ import os
 import re
 import subprocess
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Any
 
 try:  # package import (the normal controller path)
     from . import evidence, github, hosted
+    from .state import SummaryFindingDisposition, adjudicate_summary_findings
 except ImportError:  # direct loading by repository contract tests
     import evidence  # type: ignore[no-redef]
     import github  # type: ignore[no-redef]
     import hosted  # type: ignore[no-redef]
+    from state import SummaryFindingDisposition, adjudicate_summary_findings  # type: ignore[no-redef]
 
 
 EXACT_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
@@ -963,6 +965,7 @@ def build_report(
     checkpoint_payload: Mapping[str, Any] | None = None,
     required_status_checks_payload: Mapping[str, Any] | None = None,
     check_inventory_payload: Mapping[str, Any] | list[Any] | None = None,
+    summary_dispositions: Sequence[SummaryFindingDisposition] = (),
 ) -> dict[str, Any]:
     repo = _repo_name(repo)
     if isinstance(pr_number, bool) or not isinstance(pr_number, int) or pr_number <= 0:
@@ -1056,14 +1059,22 @@ def build_report(
     )
     threads = _thread_summary(raw_payload)
     summary_evidence = _summary_evidence(raw_payload, pr["headRefOid"])
+    unresolved_summary_findings, applied_summary_dispositions = adjudicate_summary_findings(
+        pr_number,
+        pr["headRefOid"],
+        summary_evidence,
+        summary_dispositions,
+    )
+    summary_evidence["unresolved_findings"] = unresolved_summary_findings
+    summary_evidence["dispositions"] = applied_summary_dispositions
     review_decision = _review_decision(raw_payload, pr["headRefOid"], pr)
     loc = _loc_status(pr)
     reasons: list[str] = []
     if threads["total"]:
         reasons.append(f"{threads['total']} unresolved review thread(s)")
-    if summary_evidence["findings"]:
+    if unresolved_summary_findings:
         reasons.append(
-            f"CodeRabbit summary has {len(summary_evidence['findings'])} actionable duplicate/outside-diff finding(s)"
+            f"CodeRabbit summary has {len(unresolved_summary_findings)} actionable duplicate/outside-diff finding(s)"
         )
     if review_decision["status"] == "CHANGES_REQUESTED":
         reasons.append("review decision is CHANGES_REQUESTED")
@@ -1167,11 +1178,17 @@ def build_report(
     }
 
 
-def status(pr: int | None = None, as_json: bool = False, *, repo: str | None = None) -> dict[str, Any]:
+def status(
+    pr: int | None = None,
+    as_json: bool = False,
+    *,
+    repo: str | None = None,
+    summary_dispositions: Sequence[SummaryFindingDisposition] = (),
+) -> dict[str, Any]:
     """Return the current report; ``as_json`` controls the CLI rendering form."""
     if pr is None:
         raise StatusError("status requires --pr until stack live-target integration is available")
-    report = build_report(_repo_name(repo), pr)
+    report = build_report(_repo_name(repo), pr, summary_dispositions=summary_dispositions)
     return report
 
 

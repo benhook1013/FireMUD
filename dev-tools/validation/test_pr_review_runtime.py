@@ -21,6 +21,7 @@ from pr_review import evidence, github, hosted
 from pr_review.cli_runner import EffectiveParent, PullRequestSnapshot, ReviewTarget
 from pr_review.controller import ControllerError
 from pr_review.runtime import HostedRunner, LiveEvidence, LiveGitHub, default_controller
+from pr_review.state import ReviewState, StateStore, SummaryFindingDisposition
 
 BASE = "a" * 40
 HEAD = "b" * 40
@@ -959,6 +960,97 @@ class RuntimeTest(unittest.TestCase):
         tied = {**latest, "databaseId": 34, "url": "https://example.test/34"}
         ambiguous = LiveEvidence._summary_action_counts(self._payload([latest, tied]), HEAD)
         self.assertEqual(ambiguous, (1, 1, None))
+
+    def test_persisted_summary_disposition_matches_status_and_preserves_thread_gate(self) -> None:
+        review = {
+            "databaseId": 77,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": (
+                f"Reviewing files that changed from the base of the PR and between `{BASE}` and `{HEAD}`.\n"
+                "Outside diff range comments (1)"
+            ),
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-23T00:01:00Z",
+            "commit": {"oid": HEAD},
+        }
+        payload = self._payload(reviews=[review], threads=[{"isResolved": False, "isOutdated": False}])
+        rejected = SummaryFindingDisposition(
+            42, HEAD, "review", 77, "outside_diff", 1, "rejected", "finding is outside this PR's candidate"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            store = StateStore(Path(directory) / "state.json")
+            store.save(ReviewState(summary_dispositions=(rejected,)))
+            observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), store)
+
+            blockers = observer._global_blockers(42, HEAD, payload)
+
+        self.assertFalse(any(item.get("checkpoint", "").startswith("summary-actions:") for item in blockers))
+        self.assertTrue(any(item.get("checkpoint") == "review-threads:1:0" for item in blockers))
+
+    def test_summary_disposition_command_requires_and_records_live_exact_identity(self) -> None:
+        review = {
+            "databaseId": 77,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": (
+                f"Reviewing files that changed from the base of the PR and between `{BASE}` and `{HEAD}`.\n"
+                "Duplicate comments (1)"
+            ),
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-23T00:01:00Z",
+            "commit": {"oid": HEAD},
+        }
+        payload = self._payload(reviews=[review])
+        with tempfile.TemporaryDirectory() as directory:
+            store = StateStore(Path(directory) / "state.json")
+            controller = SimpleNamespace(repository="owner/repo", store=store)
+            args = review_cli._parser().parse_args(
+                [
+                    "decide",
+                    "summary-disposition",
+                    "rejected",
+                    "--pr",
+                    "42",
+                    "--head",
+                    HEAD,
+                    "--source",
+                    "review",
+                    "--summary-id",
+                    "77",
+                    "--kind",
+                    "duplicate",
+                    "--count",
+                    "1",
+                    "--reason",
+                    "the duplicate annotation does not apply to this candidate",
+                ]
+            )
+            with (
+                patch.object(review_cli, "default_controller", return_value=controller),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+            ):
+                result, exit_status = review_cli._dispatch(args)
+
+            self.assertEqual(exit_status, 0)
+            self.assertEqual(result["status"], "recorded")
+            self.assertEqual(len(store.load().summary_dispositions), 1)
+            self.assertEqual(
+                LiveEvidence._summary_action_counts(
+                    payload,
+                    HEAD,
+                    pr=42,
+                    dispositions=store.load().summary_dispositions,
+                ),
+                (0, 0, None),
+            )
+
+            args.summary_id = 78
+            with (
+                patch.object(review_cli, "default_controller", return_value=controller),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                self.assertRaisesRegex(review_cli.CliError, "exact summary identity is not attributable"),
+            ):
+                review_cli._dispatch(args)
+            self.assertEqual(len(store.load().summary_dispositions), 1)
 
 
 if __name__ == "__main__":

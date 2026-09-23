@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import sys
 import tempfile
@@ -14,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
 from pr_review import cli, github, status
+from pr_review.state import SummaryFindingDisposition
 
 BASE = "a" * 40
 HEAD = "b" * 40
@@ -129,10 +131,14 @@ def github_payload(checks: list[dict] | None = None) -> dict:
 
 
 class StatusTest(unittest.TestCase):
-    def _ready_report(self, payload: dict) -> dict:
+    def _ready_report(self, payload: dict, **kwargs) -> dict:
         with patch.object(status, "_loc_status", return_value={"status": "fresh", "merge_base_checked": True}):
             return status.build_report(
-                "owner/repo", 2838, pull_request_payload=payload, checkpoint_payload=checkpoint_payload()
+                "owner/repo",
+                2838,
+                pull_request_payload=payload,
+                checkpoint_payload=checkpoint_payload(),
+                **kwargs,
             )
 
     @staticmethod
@@ -556,6 +562,41 @@ class StatusTest(unittest.TestCase):
         self.assertTrue(value["ready"], value["reasons"])
         self.assertEqual(value["verdict"], "READY")
 
+    def test_cli_status_supplies_persisted_summary_dispositions_to_report(self) -> None:
+        disposition = SummaryFindingDisposition(
+            2838, HEAD, "review", 501, "outside_diff", 1, "rejected", "finding does not apply"
+        )
+        controller = Mock()
+        controller.store.load.return_value = Mock(summary_dispositions=(disposition,))
+        controller.status.return_value = {
+            "prs": [
+                {
+                    "pr": 2838,
+                    "head": HEAD,
+                    "base": "develop",
+                    "parent_head": BASE,
+                    "reconciliation": "COHERENT",
+                    "channels": {"hosted": "COMPLETE", "cli": "COMPLETE"},
+                }
+            ]
+        }
+        report = {
+            "pull_request": {"headRefOid": HEAD, "baseRefName": "develop", "baseRefOid": BASE},
+            "reasons": [],
+            "ready": True,
+            "verdict": "READY",
+        }
+
+        with (
+            patch.object(cli, "default_controller", return_value=controller),
+            patch.object(status, "status", return_value=report) as status_call,
+        ):
+            value, exit_status = cli._dispatch(cli._parser().parse_args(["status", "--pr", "2838", "--json"]))
+
+        self.assertEqual(exit_status, 0)
+        self.assertTrue(value["ready"])
+        self.assertEqual(status_call.call_args.kwargs["summary_dispositions"], (disposition,))
+
     def test_latest_exact_head_summary_only_outside_diff_finding_blocks_readiness(self) -> None:
         payload = github_payload()
         pr = payload["data"]["repository"]["pullRequest"]
@@ -575,6 +616,68 @@ class StatusTest(unittest.TestCase):
             [{"kind": "outside_diff", "count": 1}],
         )
         self.assertTrue(any("actionable duplicate/outside-diff" in reason for reason in report["reasons"]))
+
+    def test_exact_rejected_summary_bucket_clears_only_that_bucket_and_preserves_raw_evidence(self) -> None:
+        payload = github_payload()
+        pr = payload["data"]["repository"]["pullRequest"]
+        pr["reviewThreads"] = {"nodes": []}
+        pr["reviews"] = {"nodes": [self._coderabbit_review("Outside diff range comments (2)")]}
+        rejected = SummaryFindingDisposition(
+            2838,
+            HEAD,
+            "review",
+            501,
+            "outside_diff",
+            2,
+            "rejected",
+            "the outside-diff annotations are unrelated to this candidate",
+        )
+
+        report = self._ready_report(payload, summary_dispositions=(rejected,))
+
+        self.assertTrue(report["ready"], report["reasons"])
+        self.assertEqual(report["coderabbit_summary"]["findings"], [{"kind": "outside_diff", "count": 2}])
+        self.assertEqual(report["coderabbit_summary"]["unresolved_findings"], [])
+        self.assertEqual(report["coderabbit_summary"]["dispositions"], [rejected.to_dict()])
+
+        for stale in (
+            dataclasses.replace(rejected, summary_id=502),
+            dataclasses.replace(rejected, count=1),
+            dataclasses.replace(rejected, head="c" * 40),
+        ):
+            with self.subTest(disposition=stale):
+                blocked = self._ready_report(payload, summary_dispositions=(stale,))
+                self.assertFalse(blocked["ready"])
+                self.assertEqual(
+                    blocked["coderabbit_summary"]["unresolved_findings"],
+                    blocked["coderabbit_summary"]["findings"],
+                )
+
+        pr["reviews"] = {
+            "nodes": [
+                self._coderabbit_review("Outside diff range comments (2)\nDuplicate comments (1)")
+            ]
+        }
+        partial = self._ready_report(payload, summary_dispositions=(rejected,))
+        self.assertFalse(partial["ready"])
+        self.assertEqual(partial["coderabbit_summary"]["unresolved_findings"], [{"kind": "duplicate", "count": 1}])
+
+    def test_summary_disposition_does_not_bypass_review_thread_gate(self) -> None:
+        payload = github_payload()
+        pr = payload["data"]["repository"]["pullRequest"]
+        pr["reviewThreads"] = {"nodes": [{"id": "PRRT_open", "isResolved": False, "isOutdated": False}]}
+        pr["reviews"] = {"nodes": [self._coderabbit_review("Outside diff range comments (1)")]}
+        rejected = SummaryFindingDisposition(
+            2838, HEAD, "review", 501, "outside_diff", 1, "rejected", "finding does not apply"
+        )
+
+        report = self._ready_report(payload, summary_dispositions=(rejected,))
+
+        self.assertFalse(report["ready"])
+        self.assertEqual(report["coderabbit_summary"]["unresolved_findings"], [])
+        self.assertEqual(report["threads"]["current"], 1)
+        self.assertTrue(any("unresolved review thread" in reason for reason in report["reasons"]))
+        self.assertFalse(any("actionable duplicate/outside-diff" in reason for reason in report["reasons"]))
 
     def test_latest_exact_head_summary_replaces_older_actionable_summary(self) -> None:
         payload = github_payload()

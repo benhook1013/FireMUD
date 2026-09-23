@@ -15,7 +15,7 @@ from . import evidence, github, hosted
 from . import status as status_module
 from .cli_runner import PullRequestSnapshot, ReviewRunnerError, ReviewTarget, run_cli_review
 from .controller import ControllerError, DefaultGitProvider, ReviewController
-from .state import StateStore
+from .state import StateError, StateStore, SummaryFindingDisposition, adjudicate_summary_findings
 
 _PLAN_CEILING_PATTERN = re.compile(
     r"(?is)(?:(?:exceed\w*|too many|over|reject\w*|skip\w*).{0,120}"
@@ -65,9 +65,10 @@ class LiveGitHub:
 class LiveEvidence:
     """Map complete live comments plus private captures into policy evidence."""
 
-    def __init__(self, repo: str, live: LiveGitHub) -> None:
+    def __init__(self, repo: str, live: LiveGitHub, state_store: StateStore | None = None) -> None:
         self.repo = repo
         self.live = live
+        self.state_store = state_store
         self._payloads: dict[int, dict[str, Any]] = {}
         self._histories: dict[tuple[int, str], list[dict[str, Any]]] = {}
 
@@ -180,15 +181,24 @@ class LiveEvidence:
         return None
 
     @staticmethod
-    def _summary_action_counts(payload: dict[str, Any], head: str) -> tuple[int, int, str | None]:
+    def _summary_action_counts(
+        payload: dict[str, Any],
+        head: str,
+        *,
+        pr: int | None = None,
+        dispositions: Sequence[SummaryFindingDisposition] = (),
+    ) -> tuple[int, int, str | None]:
         try:
             selected = status_module._summary_evidence(payload, head)
         except status_module.StatusError:
             return 1, 1, None
         if selected.get("status") != "current":
             return 0, 0, None
+        remaining = list(selected.get("findings", []))
+        if pr is not None:
+            remaining, _ = adjudicate_summary_findings(pr, head, selected, dispositions)
         counts = {"outside_diff": 0, "duplicate": 0}
-        for finding in selected.get("findings", []):
+        for finding in remaining:
             kind, count = finding.get("kind"), finding.get("count")
             if kind in counts and isinstance(count, int) and not isinstance(count, bool) and count >= 0:
                 counts[kind] = count
@@ -268,7 +278,16 @@ class LiveEvidence:
                             "reason": f"{current} unresolved current and {outdated} unresolved outdated review thread(s)",
                         }
                     )
-            outside, duplicate, url = self._summary_action_counts(payload, head)
+            try:
+                dispositions = self.state_store.load().summary_dispositions if self.state_store is not None else ()
+                outside, duplicate, url = self._summary_action_counts(
+                    payload,
+                    head,
+                    pr=pr,
+                    dispositions=dispositions,
+                )
+            except (OSError, StateError, TypeError, ValueError):
+                outside, duplicate, url = 1, 1, None
             if outside or duplicate:
                 values.append(
                     {
@@ -653,7 +672,8 @@ def default_controller(repo: str | None = None) -> ReviewController:
     selected = github.infer_repo(repo)
     repository = github.repository_metadata(selected)
     live = LiveGitHub(selected)
-    observations = LiveEvidence(selected, live)
+    store = StateStore()
+    observations = LiveEvidence(selected, live, store)
     git_provider = DefaultGitProvider()
     hosted_runner = HostedRunner(selected, live)
 
@@ -661,7 +681,7 @@ def default_controller(repo: str | None = None) -> ReviewController:
         return run_cli_review(target, github=live, **kwargs)
 
     return ReviewController(
-        store=StateStore(),
+        store=store,
         github=live,
         git=git_provider,
         evidence=observations,

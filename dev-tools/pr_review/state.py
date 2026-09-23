@@ -14,11 +14,12 @@ import os
 import re
 import subprocess
 import tempfile
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 SCHEMA_VERSION = 1
+EXACT_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
 class StateError(ValueError):
@@ -99,6 +100,128 @@ class PolicyOverride:
             reason=value.get("reason", ""),
             patch_id=value.get("patch_id"),
         )
+
+
+@dataclasses.dataclass(frozen=True)
+class SummaryFindingDisposition:
+    """An operator disposition for one exact CodeRabbit summary count bucket."""
+
+    pr: int
+    head: str
+    source: str
+    summary_id: int
+    kind: str
+    count: int
+    decision: str
+    reason: str
+    corrected_head: str | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.pr, bool) or not isinstance(self.pr, int) or self.pr <= 0:
+            raise StateError("summary disposition PR must be a positive integer")
+        if not isinstance(self.head, str) or not EXACT_SHA.fullmatch(self.head):
+            raise StateError("summary disposition requires an exact reviewed head")
+        if self.source not in {"review", "comment"}:
+            raise StateError("summary disposition source must be review or comment")
+        if isinstance(self.summary_id, bool) or not isinstance(self.summary_id, int) or self.summary_id <= 0:
+            raise StateError("summary disposition requires an immutable summary ID")
+        if self.kind not in {"outside_diff", "duplicate"}:
+            raise StateError("summary disposition kind must be outside_diff or duplicate")
+        if isinstance(self.count, bool) or not isinstance(self.count, int) or self.count <= 0:
+            raise StateError("summary disposition count must be a positive integer")
+        if self.decision not in {"rejected", "accepted_unfixed", "accepted_fixed"}:
+            raise StateError("summary disposition decision is invalid")
+        if not isinstance(self.reason, str) or not self.reason.strip() or len(self.reason) > 500:
+            raise StateError("summary disposition requires a reason of at most 500 characters")
+        if any(ord(char) < 0x20 for char in self.reason):
+            raise StateError("summary disposition reason must not contain control characters")
+        if self.decision == "accepted_fixed":
+            if not isinstance(self.corrected_head, str) or not EXACT_SHA.fullmatch(self.corrected_head):
+                raise StateError("accepted-fixed summary disposition requires an exact corrected head")
+            if self.corrected_head.casefold() == self.head.casefold():
+                raise StateError("accepted-fixed summary disposition requires a changed head")
+        elif self.corrected_head is not None:
+            raise StateError("only accepted-fixed summary dispositions may set a corrected head")
+
+    @property
+    def identity(self) -> tuple[int, str, str, int, str, int]:
+        return (self.pr, self.head.casefold(), self.source, self.summary_id, self.kind, self.count)
+
+    def to_dict(self) -> dict[str, Any]:
+        return dataclasses.asdict(self)
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> SummaryFindingDisposition:
+        allowed = {
+            "pr",
+            "head",
+            "source",
+            "summary_id",
+            "kind",
+            "count",
+            "decision",
+            "reason",
+            "corrected_head",
+        }
+        if set(value) - allowed:
+            raise StateError("summary disposition contains fields outside the private schema")
+        return cls(**{key: value[key] for key in allowed if key in value})
+
+
+def adjudicate_summary_findings(
+    pr: int,
+    current_head: str,
+    summary: Mapping[str, Any],
+    dispositions: Sequence[SummaryFindingDisposition],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Apply exact-bucket dispositions while preserving raw findings and decisions.
+
+    A rejection clears only its exact summary identity, reviewed head, finding
+    kind, and count. Accepted-unfixed remains unresolved. Accepted-fixed is an
+    audit disposition for an older head and cannot clear a finding still
+    reported on the live head.
+    """
+
+    raw = summary.get("findings")
+    identity = summary.get("identity")
+    source = summary.get("source")
+    reviewed_head = summary.get("head_sha")
+    if (
+        summary.get("status") != "current"
+        or not isinstance(raw, list)
+        or not isinstance(identity, int)
+        or isinstance(identity, bool)
+        or not isinstance(source, str)
+        or not isinstance(reviewed_head, str)
+        or reviewed_head.casefold() != current_head.casefold()
+    ):
+        return list(raw) if isinstance(raw, list) else [], []
+
+    remaining: list[dict[str, Any]] = []
+    matched: list[dict[str, Any]] = []
+    for finding in raw:
+        if not isinstance(finding, Mapping):
+            remaining.append(dict(finding) if isinstance(finding, Mapping) else {"malformed": True})
+            continue
+        kind, count = finding.get("kind"), finding.get("count")
+        candidates = [
+            item
+            for item in dispositions
+            if item.identity == (pr, reviewed_head.casefold(), source, identity, kind, count)
+        ]
+        if len(candidates) > 1:
+            raise StateError("multiple summary dispositions match one exact finding bucket")
+        disposition = candidates[0] if candidates else None
+        if disposition is None:
+            remaining.append(dict(finding))
+            continue
+        matched.append(disposition.to_dict())
+        # A fixed disposition refers to a prior head and can never clear a
+        # finding in a current-head summary. It remains in state as a historical
+        # operator decision; any new summary has a distinct identity.
+        if disposition.decision != "rejected":
+            remaining.append(dict(finding))
+    return remaining, matched
 
 
 @dataclasses.dataclass(frozen=True)
@@ -248,6 +371,7 @@ class ReviewState:
     policy_overrides: Mapping[str, PolicyOverride] = dataclasses.field(default_factory=dict)
     judgments: tuple[Judgment, ...] = ()
     reconciliations: tuple[StackReconciliationDecision, ...] = ()
+    summary_dispositions: tuple[SummaryFindingDisposition, ...] = ()
     schema_version: int = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -264,6 +388,11 @@ class ReviewState:
                 or not isinstance(override, PolicyOverride)
             ):
                 raise StateError("policy overrides must be keyed by PR and channel")
+        if any(not isinstance(item, SummaryFindingDisposition) for item in self.summary_dispositions):
+            raise StateError("summary dispositions must contain validated disposition records")
+        identities = [item.identity for item in self.summary_dispositions]
+        if len(set(identities)) != len(identities):
+            raise StateError("summary dispositions must have unique exact finding identities")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -272,11 +401,19 @@ class ReviewState:
             "policy_overrides": {identity: item.to_dict() for identity, item in sorted(self.policy_overrides.items())},
             "judgments": [item.to_dict() for item in self.judgments],
             "reconciliations": [item.to_dict() for item in self.reconciliations],
+            "summary_dispositions": [item.to_dict() for item in self.summary_dispositions],
         }
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> ReviewState:
-        if set(value) - {"schema_version", "ordered_prs", "policy_overrides", "judgments", "reconciliations"}:
+        if set(value) - {
+            "schema_version",
+            "ordered_prs",
+            "policy_overrides",
+            "judgments",
+            "reconciliations",
+            "summary_dispositions",
+        }:
             raise StateError("state contains fields outside the private configuration schema")
         if value.get("schema_version") != SCHEMA_VERSION:
             raise StateError("state has an unsupported schema version")
@@ -289,6 +426,9 @@ class ReviewState:
             judgments=tuple(Judgment.from_dict(item) for item in value.get("judgments", ())),
             reconciliations=tuple(
                 StackReconciliationDecision.from_dict(item) for item in value.get("reconciliations", ())
+            ),
+            summary_dispositions=tuple(
+                SummaryFindingDisposition.from_dict(item) for item in value.get("summary_dispositions", ())
             ),
         )
 
