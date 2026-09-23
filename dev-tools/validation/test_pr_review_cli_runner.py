@@ -21,8 +21,11 @@ from pr_review.cli_runner import (
     PullRequestSnapshot,
     ReviewRunnerError,
     ReviewTarget,
+    SubprocessRunner,
     UnreconciledReviewError,
     WrongTargetError,
+    _name_only_diff_args,
+    _validate_target,
     run_cli_review,
     target_from_resolver,
 )
@@ -281,6 +284,101 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertTrue(all(timeout == 11 for args, timeout, _text in commands.timeout_calls if args[0] == "git"))
             review_timeouts = [timeout for args, timeout, _text in commands.timeout_calls if args[0] == "coderabbit"]
             self.assertEqual(review_timeouts, [101])
+
+    def test_name_only_diffs_fix_rename_detection_and_disable_configured_drivers(self):
+        files = ["src/renamed.txt"]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = FakeCommands(root, files=files)
+            result = run_cli_review(
+                target(),
+                github=FakeGitHub(files=files),
+                source_root=root,
+                runner=commands,
+            )
+
+            self.assertEqual((result.published_files, result.candidate_files), (1, 1))
+            path_calls = [call[0][3:] for call in commands.calls if call[0][0] == "git" and "--name-only" in call[0]]
+            self.assertEqual(len(path_calls), 2)
+            for args in path_calls:
+                self.assertEqual(args[:3], ("diff", "--name-only", "-z"))
+                self.assertIn("--find-renames=50%", args)
+                self.assertIn("-l0", args)
+                self.assertIn("--diff-algorithm=myers", args)
+                self.assertIn("--no-ext-diff", args)
+                self.assertIn("--no-textconv", args)
+
+        self.assertEqual(
+            _name_only_diff_args(BASE, HEAD),
+            (
+                "diff",
+                "--name-only",
+                "-z",
+                "--find-renames=50%",
+                "-l0",
+                "--diff-algorithm=myers",
+                "--no-ext-diff",
+                "--no-textconv",
+                f"{BASE}...{HEAD}",
+            ),
+        )
+
+    def test_name_only_preflight_uses_destination_path_without_textconv_driver(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            marker = root / "textconv-invoked"
+            driver = root / "textconv-driver"
+            driver.write_text(f"#!/bin/sh\nprintf 'normalized\\n'\nprintf 'used\\n' >> {marker}\n")
+            driver.chmod(0o755)
+
+            def git(*args):
+                return subprocess.run(
+                    ["git", "-C", str(root), *args],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+
+            git("init", "--quiet")
+            git("config", "user.name", "CLI runner test")
+            git("config", "user.email", "cli-runner-test@example.invalid")
+            git("config", "diff.renames", "false")
+            git("config", "diff.fixture.textconv", str(driver))
+            (root / "src").mkdir()
+            (root / ".gitattributes").write_text("*.txt diff=fixture\n")
+            (root / "src" / "original.txt").write_text("unchanged file contents\n")
+            git("add", ".")
+            git("commit", "--quiet", "-m", "base")
+            base_sha = git("rev-parse", "HEAD")
+
+            (root / "src" / "original.txt").rename(root / "src" / "renamed.txt")
+            git("add", "-A")
+            git("commit", "--quiet", "-m", "rename")
+            head_sha = git("rev-parse", "HEAD")
+
+            snapshot = PullRequestSnapshot(
+                42,
+                "OPEN",
+                "develop",
+                base_sha,
+                head_sha,
+                changed_files=1,
+            )
+            selected = ReviewTarget(snapshot, EffectiveParent("develop", base_sha), repository="owner/repo")
+            result = _validate_target(
+                selected,
+                snapshot,
+                ["src/renamed.txt"],
+                base_sha,
+                head_sha,
+                SubprocessRunner(),
+                root,
+                allow_unreconciled=False,
+            )
+
+            self.assertEqual(result[1:3], (1, 1))
+            self.assertFalse(marker.exists(), "configured textconv driver must not run during path preflight")
 
     def test_patch_identity_hashes_raw_diff_bytes(self):
         patch_bytes = b"diff --git a/file b/file\n\xff\x80\x00\n"

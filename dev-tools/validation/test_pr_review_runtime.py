@@ -1234,11 +1234,28 @@ class RuntimeTest(unittest.TestCase):
             "createdAt": "2026-09-23T00:04:00Z",
         }
         current_head_commit = {"nodes": [{"commit": {"oid": HEAD, "committedDate": "2026-09-23T00:01:00Z"}}]}
+        current_completion = {
+            "databaseId": 21,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": (
+                f"<!-- walkthrough_start -->\nReviewing files that changed from the base of the PR and between "
+                f"`{BASE}` and `{HEAD}`."
+            ),
+            "createdAt": "2026-09-23T00:02:00Z",
+        }
         with tempfile.TemporaryDirectory() as directory:
-            stale_payload = self._payload([old_summary, skip])
+            stale_skip = {**skip, "createdAt": "2026-09-23T00:00:00Z"}
+            stale_payload = self._payload([old_summary, stale_skip, current_completion])
             stale_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
             stale_history = self._history(Path(directory), stale_payload, "cli", changed_files=100)
             self.assertFalse(any(item.get("over_ceiling") for item in stale_history))
+
+            stale_over_ceiling_payload = self._payload([old_summary, stale_skip, current_completion])
+            stale_over_ceiling_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
+            stale_over_ceiling_history = self._history(
+                Path(directory), stale_over_ceiling_payload, "cli", changed_files=101
+            )
+            self.assertFalse(any(item.get("over_ceiling") for item in stale_over_ceiling_history))
 
             current_skip = {**skip, "createdAt": "2026-09-23T00:06:00Z"}
             current_payload = self._payload([old_summary, current_skip])
@@ -1246,7 +1263,7 @@ class RuntimeTest(unittest.TestCase):
             current_history = self._history(Path(directory), current_payload, "cli", changed_files=101)
             self.assertTrue(any(item.get("over_ceiling") for item in current_history))
 
-            current_completion = {
+            later_completion = {
                 "databaseId": 21,
                 "author": {"login": "coderabbitai[bot]"},
                 "body": (
@@ -1255,7 +1272,7 @@ class RuntimeTest(unittest.TestCase):
                 ),
                 "createdAt": "2026-09-23T00:07:00Z",
             }
-            completed_payload = self._payload([old_summary, current_skip, current_completion])
+            completed_payload = self._payload([old_summary, current_skip, later_completion])
             completed_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
             completed_history = self._history(Path(directory), completed_payload, "cli", changed_files=101)
             self.assertFalse(any(item.get("over_ceiling") for item in completed_history))

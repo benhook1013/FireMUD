@@ -47,6 +47,22 @@ GIT_TIMEOUT_SECONDS = 30
 CODERABBIT_TIMEOUT_SECONDS = 30 * 60
 
 
+def _name_only_diff_args(base: str, head: str) -> tuple[str, ...]:
+    """Return deterministic path-list arguments matching GitHub rename reporting."""
+
+    return (
+        "diff",
+        "--name-only",
+        "-z",
+        "--find-renames=50%",
+        "-l0",
+        "--diff-algorithm=myers",
+        "--no-ext-diff",
+        "--no-textconv",
+        f"{base}...{head}",
+    )
+
+
 @dataclasses.dataclass(frozen=True)
 class EffectiveParent:
     """The exact parent identity against which a child review is anchored."""
@@ -414,10 +430,7 @@ def _validate_target(
     published = _nul_paths(
         runner,
         source_root,
-        "diff",
-        "--name-only",
-        "-z",
-        f"{live.base_sha}...{child_head}",
+        *_name_only_diff_args(live.base_sha, child_head),
         timeout=git_timeout_seconds,
     )
     if published != sorted(live_files):
@@ -452,10 +465,7 @@ def _validate_target(
         _nul_paths(
             runner,
             source_root,
-            "diff",
-            "--name-only",
-            "-z",
-            f"{merge_base}...{candidate_sha}",
+            *_name_only_diff_args(merge_base, candidate_sha),
             timeout=git_timeout_seconds,
         )
     )
