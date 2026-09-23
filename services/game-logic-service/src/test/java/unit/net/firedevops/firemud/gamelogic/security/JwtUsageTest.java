@@ -7,13 +7,19 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
 class JwtUsageTest {
+  private static final Pattern QUOTED_AUTHORIZATION_HEADER =
+      Pattern.compile("(?i)(['\"])authorization\\1");
+
   @Test
   void detectsAuthorizationHeaderReferenceForms() {
     assertTrue(containsAuthorizationHeaderReference("Metadata.Key.of(\"Authorization\", ...)"));
+    assertTrue(containsAuthorizationHeaderReference("Metadata.Key.of(\"AUTHORIZATION\", ...)"));
+    assertTrue(containsAuthorizationHeaderReference("Metadata.Key.of('aUtHoRiZaTiOn', ...)"));
     assertTrue(containsAuthorizationHeaderReference("request.header(HttpHeaders.AUTHORIZATION)"));
     assertTrue(containsAuthorizationHeaderReference("AUTHORIZATION_HEADER"));
   }
@@ -59,8 +65,7 @@ class JwtUsageTest {
   }
 
   private static boolean containsAuthorizationHeaderReference(String content) {
-    return content.contains("\"Authorization\"")
-        || content.contains("\"authorization\"")
+    return QUOTED_AUTHORIZATION_HEADER.matcher(content).find()
         || content.contains("HttpHeaders.AUTHORIZATION")
         || content.contains("AUTHORIZATION_HEADER");
   }

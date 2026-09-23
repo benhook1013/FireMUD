@@ -1236,6 +1236,13 @@ assert "request.operation == 'DELETE'" in secret_match
 assert "request.operation != 'DELETE'" in secret_match
 assert "request.name == 'firemud-grpc-tls'" in secret_match
 assert "object.metadata.name == 'firemud-grpc-tls'" in secret_match
+for publication_secret_pattern in (
+    "request.name.matches('^firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)$')",
+    "object.metadata.name.matches('^firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)$')",
+    "request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$')",
+    "object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$')",
+):
+    assert publication_secret_pattern in normalized_secret_match
 
 secret_expressions = [
     validation["expression"]

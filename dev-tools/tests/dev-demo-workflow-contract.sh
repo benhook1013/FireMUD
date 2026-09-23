@@ -44,6 +44,10 @@ for required in \
   'ca_secret="firemud-grpc-ca"' \
   'if ! secret_exists "$shared_secret"; then' \
   'if secret_exists "$ca_secret"; then' \
+  'assert_certificate_unexpired "$source_ca"' \
+  'assert_certificate_unexpired "$workload_cert"' \
+  'standalone gRPC CA certificate in Secret' \
+  'publication certificate in Secret' \
   'if secret_exists "$secret_name"; then' \
   'URI:${expected_uri}' \
   '"${workload}.${namespace}.svc.cluster.local"' \
@@ -149,12 +153,115 @@ validator_source="$certificate_fixture_dir/validate-workload-certificate.sh"
     capture { print }
   ' "$standalone_grpc_tls"
   awk '
+    /^assert_certificate_unexpired\(\)/ { capture = 1 }
+    /^validate_workload_certificate\(\)/ { capture = 0 }
+    capture { print }
+  ' "$standalone_grpc_tls"
+  awk '
     /^validate_workload_certificate\(\)/ { capture = 1 }
     /^shared_ca=/ { capture = 0 }
     capture { print }
   ' "$standalone_grpc_tls"
 } >"$validator_source"
 echo "dev-demo certificate fixture: validator extracted" >&2
+
+expiry_helper_source="$certificate_fixture_dir/validate-certificate-expiry.sh"
+awk '
+  /^assert_certificate_unexpired\(\)/ { capture = 1 }
+  /^validate_workload_certificate\(\)/ { capture = 0 }
+  capture { print }
+' "$standalone_grpc_tls" >"$expiry_helper_source"
+expiry_fixture_dir="$certificate_fixture_dir/expiry"
+mkdir -p "$expiry_fixture_dir/newcerts"
+: >"$expiry_fixture_dir/index.txt"
+printf '1000\n' >"$expiry_fixture_dir/serial"
+cat >"$expiry_fixture_dir/openssl.cnf" <<EOF
+[ ca ]
+default_ca = CA_default
+[ CA_default ]
+database = $expiry_fixture_dir/index.txt
+serial = $expiry_fixture_dir/serial
+new_certs_dir = $expiry_fixture_dir/newcerts
+private_key = $certificate_fixture_dir/ca.key
+certificate = $certificate_fixture_dir/ca.crt
+default_md = sha256
+policy = policy_any
+[ policy_any ]
+commonName = supplied
+[ v3_ca ]
+basicConstraints = critical,CA:true,pathlen:0
+keyUsage = critical,keyCertSign,cRLSign
+[ v3_leaf ]
+basicConstraints = critical,CA:false
+keyUsage = critical,digitalSignature,keyEncipherment
+extendedKeyUsage = serverAuth,clientAuth
+EOF
+openssl req -newkey rsa:2048 -nodes \
+  -keyout "$expiry_fixture_dir/expired-ca.key" \
+  -out "$expiry_fixture_dir/expired-ca.csr" \
+  -subj '/CN=expired-contract-CA' >/dev/null 2>&1
+openssl ca -selfsign -batch -config "$expiry_fixture_dir/openssl.cnf" \
+  -keyfile "$expiry_fixture_dir/expired-ca.key" \
+  -in "$expiry_fixture_dir/expired-ca.csr" \
+  -out "$expiry_fixture_dir/expired-ca.crt" \
+  -startdate 20200101000000Z -enddate 20200102000000Z \
+  -extensions v3_ca >/dev/null 2>&1
+openssl req -newkey rsa:2048 -nodes \
+  -keyout "$expiry_fixture_dir/expired-leaf.key" \
+  -out "$expiry_fixture_dir/expired-leaf.csr" \
+  -subj '/CN=expired-contract-leaf' >/dev/null 2>&1
+openssl ca -batch -config "$expiry_fixture_dir/openssl.cnf" \
+  -in "$expiry_fixture_dir/expired-leaf.csr" \
+  -out "$expiry_fixture_dir/expired-leaf.crt" \
+  -startdate 20200101000000Z -enddate 20200102000000Z \
+  -extensions v3_leaf >/dev/null 2>&1
+
+expect_expired_certificate() {
+  local description="$1"
+  local rotation_secrets="$2"
+  local expected_message="$3"
+  local certificate="$4"
+  local output
+  if output="$(
+    {
+      # shellcheck disable=SC1090 # The test extracts the exact expiry helper body.
+      source "$expiry_helper_source"
+      assert_certificate_unexpired "$certificate" "$description" "$rotation_secrets"
+    } 2>&1
+  )"; then
+    echo "accepted expired certificate for ${description}" >&2
+    exit 1
+  fi
+  [[ "$output" == *"$expected_message"* ]] || {
+    echo "expired certificate diagnostic lacked: ${expected_message}" >&2
+    printf '%s\n' "$output" >&2
+    exit 1
+  }
+}
+
+expect_expired_certificate \
+  'standalone gRPC CA certificate in Secret pr-42/firemud-grpc-ca' \
+  'pr-42/firemud-grpc-ca pr-42/pr-42-grpc-game-design-service pr-42/firemud-grpc-game-design-service' \
+  'delete these retained Secrets before rerunning: pr-42/firemud-grpc-ca pr-42/pr-42-grpc-game-design-service pr-42/firemud-grpc-game-design-service' \
+  "$expiry_fixture_dir/expired-ca.crt"
+expect_expired_certificate \
+  'publication certificate in Secret pr-42/pr-42-grpc-game-design-service' \
+  'pr-42/pr-42-grpc-game-design-service pr-42/firemud-grpc-game-design-service' \
+  'delete these retained Secrets before rerunning: pr-42/pr-42-grpc-game-design-service pr-42/firemud-grpc-game-design-service' \
+  "$expiry_fixture_dir/expired-leaf.crt"
+python3 - "$standalone_grpc_tls" <<'PY'
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+ca_expiry = source.index('assert_certificate_unexpired "$source_ca"')
+leaf_expiry = source.index('assert_certificate_unexpired "$workload_cert"')
+leaf_verification = source.index(
+    'openssl verify -CAfile "$source_ca" "$workload_cert"'
+)
+assert ca_expiry < leaf_verification
+assert leaf_expiry < leaf_verification
+PY
 
 if ! (
   # shellcheck disable=SC2030 # The extracted validator reads this subshell-local namespace.

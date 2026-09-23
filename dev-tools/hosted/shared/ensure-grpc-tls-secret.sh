@@ -91,6 +91,21 @@ ca_bundle_contains() {
   openssl verify -CAfile "$bundle" "$certificate" >/dev/null 2>&1
 }
 
+assert_certificate_unexpired() {
+  local certificate="$1"
+  local description="$2"
+  local rotation_secrets="$3"
+
+  if ! openssl x509 -in "$certificate" -noout >/dev/null 2>&1; then
+    return 0
+  fi
+  if ! openssl x509 -in "$certificate" -checkend 0 -noout >/dev/null 2>&1; then
+    echo "$description is expired; for safe rotation, an operator must delete these retained Secrets before rerunning:" \
+      "$rotation_secrets" >&2
+    return 1
+  fi
+}
+
 validate_workload_certificate() {
   local certificate="$1"
   local key="$2"
@@ -254,6 +269,21 @@ else
     --from-file=ca.key="$source_key"
 fi
 
+ca_rotation_secrets=("${namespace}/${ca_secret}")
+for workload in "${workloads[@]}"; do
+  source_name="${namespace}-grpc-${workload}"
+  secret_name="firemud-grpc-${workload}"
+  if secret_exists "$source_name"; then
+    ca_rotation_secrets+=("${namespace}/${source_name}")
+  fi
+  if secret_exists "$secret_name"; then
+    ca_rotation_secrets+=("${namespace}/${secret_name}")
+  fi
+done
+assert_certificate_unexpired "$source_ca" \
+  "standalone gRPC CA certificate in Secret ${namespace}/${ca_secret}" \
+  "${ca_rotation_secrets[*]}" || exit 1
+
 openssl x509 -in "$source_ca" -noout >/dev/null
 openssl pkey -in "$source_key" -noout >/dev/null
 assert_key_matches_certificate "$source_ca" "$source_key" 2>/dev/null || {
@@ -302,8 +332,21 @@ for workload in "${workloads[@]}"; do
       echo "existing publication Secret lacks a usable tls.key: $secret_name" >&2
       exit 1
     }
+    assert_certificate_unexpired "$workload_cert" \
+      "publication certificate in Secret ${namespace}/${secret_name}" \
+      "${namespace}/${secret_name}" || exit 1
   else
     "$legacy_generator" --workload "$source_ca" "$source_key" "$workload_cert" "$workload_key" "$namespace" "$workload"
+  fi
+
+  if secret_exists "$source_name"; then
+    leaf_rotation_secrets=("${namespace}/${source_name}")
+    if secret_exists "$secret_name"; then
+      leaf_rotation_secrets+=("${namespace}/${secret_name}")
+    fi
+    assert_certificate_unexpired "$workload_cert" \
+      "publication certificate in Secret ${namespace}/${source_name}" \
+      "${leaf_rotation_secrets[*]}" || exit 1
   fi
 
   validate_workload_certificate "$workload_cert" "$workload_key" "$workload"
