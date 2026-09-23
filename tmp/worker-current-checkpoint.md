@@ -2,6 +2,14 @@
 
 Updated 2026-09-22 NZST. This is a subordinate resume card, not queue authority; [project-direction-notes.md](./project-direction-notes.md) controls order.
 
+## Active task briefs
+
+- Gameplay #2838 completion: `/home/ben/src/FireMUD-project-direction/tmp/task-briefs/gameplay-pr-2838-completion.md`
+- General review-control refactor: `/home/ben/src/FireMUD-project-direction/tmp/task-briefs/general-pr-review-control.md`
+- Document #2839 → #2840 corpus work: `/home/ben/src/FireMUD-project-direction/tmp/task-briefs/document-corpus-2839-2840.md`
+
+Each brief is authoritative for its worker. Later substantial corrections are appended there, or the brief is explicitly realigned under the Overseer policy in `AGENTS.md`.
+
 Current checkpoint: combined 5C/5D draft #2839 is published at `bd9728099cae2e219245c75b5a23a7937c3c6b51`, 94 files. Cycles 9–12 returned `17/0`, `12/1`, `26/2`, `8/0`; Cycle 12 is only the first dry corrected-state cycle after productive Cycle 11, so taper is not established. Focused documentation and architecture proof, exact-head preview, and dependency submission pass. Full exact-head Validation and Docker/Testcontainers runtime proof remain absent. Final independent no-loss proof found zero lost obligations; #2661 is closed as superseded. ADR 0183 remains pending and non-authoritative.
 
 Current corpus tail: Unit 1A draft #2840 is published at `1dc0ddb5449047554ff19ff288a9c12e02857568`, 17 files on #2839. Cycles 1–4 were all productive (`16/1`, `24/1`, `18/1`, `33/1`), so Unit 1A is not tapered.
