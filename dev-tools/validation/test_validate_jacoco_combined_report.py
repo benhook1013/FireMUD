@@ -15,12 +15,16 @@ sys.modules[SPEC.name] = VALIDATOR
 SPEC.loader.exec_module(VALIDATOR)
 
 
-def report_xml(unit_covered: int = 4, integration_covered: int = 7) -> str:
+def report_xml(
+    unit_covered: int = 4, integration_covered: int = 7, run_covered: int | None = None
+) -> str:
+    if run_covered is None:
+        run_covered = unit_covered
     return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <report name="fixture">
   <package name="net/firedevops/firemud/common/saga">
     <class name="net/firedevops/firemud/common/saga/SagaRunner" sourcefilename="SagaRunner.java">
-      <method name="run" desc="()V" line="1"><counter type="LINE" missed="1" covered="{unit_covered}"/></method>
+      <method name="run" desc="()V" line="1"><counter type="LINE" missed="1" covered="{run_covered}"/></method>
       <counter type="LINE" missed="1" covered="{unit_covered}"/>
     </class>
   </package>
@@ -68,6 +72,23 @@ class CombinedCoverageTests(unittest.TestCase):
                 report,
                 ["net/firedevops/firemud/common/saga/persistence/MissingRepository"],
                 [],
+            )
+
+    def test_rejects_uncovered_and_missing_required_methods(self) -> None:
+        uncovered_method = self.write_report(report_xml(run_covered=0))
+        with self.assertRaisesRegex(VALIDATOR.CoverageError, "required method"):
+            VALIDATOR.verify_required_coverage(
+                uncovered_method,
+                ["net/firedevops/firemud/common/saga/SagaRunner"],
+                ["net/firedevops/firemud/common/saga/SagaRunner#run"],
+            )
+
+        missing_method = self.write_report(report_xml())
+        with self.assertRaisesRegex(VALIDATOR.CoverageError, "required method"):
+            VALIDATOR.verify_required_coverage(
+                missing_method,
+                ["net/firedevops/firemud/common/saga/SagaRunner"],
+                ["net/firedevops/firemud/common/saga/SagaRunner#missing"],
             )
 
     def test_rejects_malformed_xml_and_duplicate_classes(self) -> None:

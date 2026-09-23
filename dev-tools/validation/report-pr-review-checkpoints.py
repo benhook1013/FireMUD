@@ -68,6 +68,7 @@ class Checkpoint:
     run_id: str | None
     hosted_review_id: int | None
     duration_seconds: int | None = None
+    duration_invalid: bool = False
 
     def as_json(self) -> dict[str, Any]:
         result: dict[str, Any] = {
@@ -88,6 +89,8 @@ class Checkpoint:
             result["hosted_review_id"] = self.hosted_review_id
         if self.duration_seconds is not None:
             result["duration_seconds"] = self.duration_seconds
+        if self.duration_invalid:
+            result["duration_invalid"] = True
         return result
 
 
@@ -186,17 +189,27 @@ def _comment_hosted_review_id(body: str) -> int | None:
     return marker_ids[0] if len(marker_ids) == 1 else None
 
 
-def _comment_duration_seconds(body: str) -> int | None:
+def _comment_duration_evidence(body: str, visible_duration: str | None) -> tuple[int | None, bool]:
     durations: list[int] = []
+    malformed = False
     for line in body.splitlines()[1:]:
         stripped = line.strip()
         if not stripped.startswith("<!-- firemud-review-duration-seconds:"):
             continue
         match = DURATION_MARKER.fullmatch(stripped)
         if match is None:
-            return None
+            malformed = True
+            continue
         durations.append(int(match.group("seconds")))
-    return durations[0] if len(durations) == 1 else None
+    if malformed or len(durations) > 1:
+        return None, True
+    if visible_duration is None and not durations:
+        return None, False
+    if visible_duration is None or not durations:
+        return None, True
+    if int(visible_duration) != durations[0]:
+        return None, True
+    return durations[0], False
 
 
 def duration_marker_audit(comments: list[dict[str, Any]]) -> dict[str, int]:
@@ -357,14 +370,7 @@ def parse_checkpoint_comments(
             sha = sha.strip("`")
         file_count = suffix.group("files")
         visible_duration = suffix.group("duration")
-        marker_duration = _comment_duration_seconds(body)
-        duration_seconds = (
-            marker_duration
-            if visible_duration is not None
-            and marker_duration is not None
-            and int(visible_duration) == marker_duration
-            else None
-        )
+        duration_seconds, duration_invalid = _comment_duration_evidence(body, visible_duration)
         checkpoints.append(
             Checkpoint(
                 comment_id=comment_id,
@@ -379,6 +385,7 @@ def parse_checkpoint_comments(
                 run_id=_comment_run_id(body),
                 hosted_review_id=_comment_hosted_review_id(body),
                 duration_seconds=duration_seconds,
+                duration_invalid=duration_invalid,
             )
         )
     return checkpoints, unparsed_candidates
@@ -1238,6 +1245,15 @@ def collect_detail(comments: list[dict[str, Any]], comment_id: int, repo: str, p
             "unparsed_candidates": unparsed_candidates,
         }
     result: dict[str, Any] = {"comment_id": comment_id, "checkpoint": checkpoint.as_json()}
+    if checkpoint.duration_invalid:
+        result.update(
+            {
+                "linkage_status": "invalid",
+                "no_linked_data": True,
+                "message": "checkpoint has invalid visible/hidden duration evidence",
+            }
+        )
+        return result
     if checkpoint.type == "Hosted":
         if checkpoint.hosted_review_id is None:
             result.update(
@@ -1335,9 +1351,18 @@ def _collect_cli_round(
         "accepted": checkpoint.accepted,
         "file_count": checkpoint.file_count,
         "duration_seconds": checkpoint.duration_seconds,
+        "duration_invalid": checkpoint.duration_invalid,
         "run_id": checkpoint.run_id,
         "findings": [],
     }
+    if checkpoint.duration_invalid:
+        round_result.update(
+            {
+                "status": "invalid",
+                "message": "checkpoint has invalid visible/hidden duration evidence",
+            }
+        )
+        return round_result
     try:
         capture = load_capture(checkpoint, repo, pr_number)
     except CaptureUnavailable as exc:

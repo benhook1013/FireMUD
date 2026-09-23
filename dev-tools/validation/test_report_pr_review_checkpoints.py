@@ -276,16 +276,49 @@ class CheckpointReporterTest(unittest.TestCase):
             },
         ]
 
+        checkpoints, _ = self.reporter.parse_checkpoint_comments(comments)
         report = self.reporter.collect_report(comments, 0)
 
         self.assertEqual(report["matched_checkpoints"], 6)
         self.assertEqual(report["unparsed_candidates"], 0)
         self.assertNotIn("duration_seconds", report["checkpoints"][0])
+        self.assertNotIn("duration_invalid", report["checkpoints"][0])
+        self.assertFalse(checkpoints[0].duration_invalid)
         self.assertTrue(all("duration_seconds" not in item for item in report["checkpoints"]))
         self.assertTrue(any("malformed" in warning for warning in report["warnings"]))
         self.assertTrue(any("duplicate" in warning for warning in report["warnings"]))
         self.assertTrue(any("incomplete" in warning for warning in report["warnings"]))
         self.assertTrue(any("mismatched" in warning for warning in report["warnings"]))
+
+    def test_conflicting_duration_evidence_invalidates_detail_and_round_linkage(self) -> None:
+        comments = [
+            {
+                "id": 7,
+                "body": (
+                    "CLI: 1 found / 0 accepted · `abcdef1` · 2 files · 14s\n"
+                    "<!-- firemud-cli-run: run.A1b2C3 -->\n"
+                    "<!-- firemud-review-duration-seconds: 15 -->"
+                ),
+                "created_at": "2026-09-10T00:06:00Z",
+            }
+        ]
+
+        checkpoints, unparsed = self.reporter.parse_checkpoint_comments(comments)
+        self.assertEqual(unparsed, 0)
+        self.assertTrue(checkpoints[0].duration_invalid)
+        self.assertEqual(checkpoints[0].duration_seconds, None)
+
+        detail = self.reporter.collect_detail(comments, 7, "owner/repo", 42)
+        self.assertEqual(detail["linkage_status"], "invalid")
+        self.assertTrue(detail["no_linked_data"])
+        self.assertIn("duration", detail["message"])
+        self.assertTrue(detail["checkpoint"]["duration_invalid"])
+
+        rounds = self.reporter.collect_rejections(
+            comments, 1, "owner/repo", 42, source="cli", disposition="all"
+        )
+        self.assertEqual(rounds["rounds"][0]["status"], "invalid")
+        self.assertIn("duration", rounds["rounds"][0]["message"])
 
     def test_preserves_bold_checkpoint_syntax_and_rejects_unpaired_bold(self) -> None:
         comments = [
