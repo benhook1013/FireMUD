@@ -33,7 +33,7 @@ There is one repository stack, not named Gameplay, General, or Document trains. 
 - An accepted finding resets that channel's streak.
 - Either channel stops at a held, unstable, unreconciled, over-ceiling, or judgment-blocked PR.
 - A cross-channel head change after taper produces `JUDGMENT_REQUIRED` until an explicit head/checkpoint-bound reopen-or-retain decision is recorded.
-- Default Hosted taper is one corrected-state zero-useful completed review. Support explicit head-bound policy overrides for deliberate human close-out decisions.
+- Matching the canonical repository workflow, default Hosted taper is two consecutive completed full corrected-state zero-useful reviews after the latest accepted useful fix. Support an explicit head- and patch-bound human override for a deliberate one-dry close-out of a narrowly bounded case; never infer it automatically. Critical/security findings, broad corrections, and material boundary changes remain on the normal two-dry rule unless the recorded decision is more conservative.
 - Remove ordinary workflow guidance that presents incremental `@coderabbitai review` as an alternative. A file-ceiling refusal stops for a topology decision.
 
 ## Stack reconciliation
