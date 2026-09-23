@@ -76,6 +76,13 @@ def fixture_payload() -> dict[str, object]:
     }
 
 
+def fixture_payload_with_uppercase_default_sha() -> dict[str, object]:
+    payload = fixture_payload()
+    payload["default_base_tip"] = BASE
+    payload["branch_heads"] = {"develop": BASE.upper(), "feature-1": HEAD_1, "feature-2": HEAD_2}
+    return payload
+
+
 class AcceptanceCliTest(unittest.TestCase):
     def run_cli(self, fixture: Path, isolated: Path, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -193,6 +200,14 @@ class AcceptanceCliTest(unittest.TestCase):
             self.assertEqual(len(json.loads(sidecar.read_text(encoding="utf-8"))["evidence"]), 1)
             self.assertEqual(canonical.read_bytes() if canonical.exists() else None, before)
 
+    def test_default_base_tip_accepts_case_differences_in_fixture_branch_sha(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "fixture.json"
+            fixture.write_text(json.dumps(fixture_payload_with_uppercase_default_sha()), encoding="utf-8")
+            loaded = load(fixture, root / "acceptance-state.json")
+            self.assertEqual(loaded.git.branch_head("develop"), BASE)
+
     def test_live_whole_stack_status_does_not_claim_fixture_isolation(self):
         args = cli._parser().parse_args(["status", "--json"])
         with patch.object(cli, "default_controller") as factory:
@@ -246,7 +261,13 @@ class AcceptanceCliTest(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 2)
             self.assertIn("unavailable in acceptance fixture mode", result.stderr)
-            self.assertFalse((root / "request.lock").exists())
+            fixture_common = root / "fixture-git-common"
+            fixture_request_lock = fixture_common / "firemud" / "hosted" / "fixture_firemud" / "pr-1" / "request.lock"
+            canonical_request_lock = (
+                state.state_path().parent / "hosted" / "fixture_firemud" / "pr-1" / "request.lock"
+            )
+            self.assertFalse(fixture_request_lock.exists())
+            self.assertFalse(canonical_request_lock.exists())
 
 
 if __name__ == "__main__":

@@ -106,13 +106,12 @@ def _judgment(state: ReviewState, channel: Channel, evidence: Evidence) -> Judgm
 def _valid_complete(evidence: Evidence, channel: Channel | str | None = None) -> bool:
     """Return whether one checkpoint is eligible to contribute to taper."""
 
-    selected = Channel(channel) if channel is not None else None
     return (
         evidence.completed is True
         and evidence.attributable is True
         and evidence.anchored is True
         and evidence.provisional is False
-        and (selected != Channel.HOSTED or evidence.corrected_state is True)
+        and evidence.corrected_state is True
     )
 
 
@@ -129,12 +128,41 @@ def _review_entries(history: Iterable[Evidence | Mapping[str, Any]]) -> list[Evi
     ]
 
 
+def _same_head_provisional_barrier(history: Sequence[Evidence], reviews: Sequence[Evidence]) -> bool:
+    """Return whether a newer provisional checkpoint blocks an older taper."""
+
+    if not reviews:
+        return False
+    last_review = max(
+        (
+            index
+            for index, item in enumerate(history)
+            if not item.correction
+            and item.completed is True
+            and item.attributable is True
+            and item.provisional is False
+        ),
+        default=-1,
+    )
+    last_provisional = max(
+        (index for index, item in enumerate(history) if not item.correction and item.provisional),
+        default=-1,
+    )
+    return (
+        last_provisional > last_review
+        and history[last_provisional].head == reviews[-1].head
+    )
+
+
 def taper_satisfied(channel: Channel | str, history: Iterable[Evidence | Mapping[str, Any]], required: int) -> bool:
     """Return true only for a trailing run of completed, non-provisional zero-accepted reviews."""
 
     if required < 0:
         raise ValueError("required taper must be non-negative")
-    values = _review_entries(history)
+    materialized = [Evidence.from_value(value) for value in history]
+    values = _review_entries(materialized)
+    if _same_head_provisional_barrier(materialized, values):
+        return False
     if not values:
         return required == 0
     latest_head = values[-1].head
@@ -178,7 +206,10 @@ def completion_status(
     """Classify one channel without consulting GitHub or copying live state."""
 
     selected = Channel(channel)
-    history = [item for value in evidence if not (item := Evidence.from_value(value)).correction]
+    all_items = [Evidence.from_value(value) for value in evidence]
+    if len({item.pr for item in all_items}) > 1:
+        return ReviewStatus.MISSING_EVIDENCE
+    history = [item for item in all_items if not item.correction]
     if not history:
         return ReviewStatus.MISSING_EVIDENCE
     for item in history:
@@ -191,6 +222,8 @@ def completion_status(
         return blocked
     if not reviews:
         return ReviewStatus.READY
+    if _same_head_provisional_barrier(history, reviews):
+        return ReviewStatus.PROVISIONAL
     latest = reviews[-1]
     reconciliation_value = reconciliation.value if isinstance(reconciliation, ReconciliationStatus) else reconciliation
     if reconciliation_value == ReconciliationStatus.PATCH_CHANGED.value:
@@ -209,7 +242,7 @@ def completion_status(
             return ReviewStatus.JUDGMENT_REQUIRED
         if judgment.decision == "reopen":
             return ReviewStatus.READY
-    if selected == Channel.HOSTED and not latest.corrected_state:
+    if not latest.corrected_state:
         return ReviewStatus.MISSING_EVIDENCE
     if taper_satisfied(selected, history, required):
         judgment = _judgment(state, selected, latest)
@@ -237,7 +270,15 @@ def select_review_target(
     other_channel_heads = other_channel_heads or {}
     for pr in live_prs:
         history = evidence_by_pr.get(pr, ())
-        evidence = [item for value in history if not (item := Evidence.from_value(value)).correction]
+        all_items = [Evidence.from_value(value) for value in history]
+        if any(item.pr != pr for item in all_items):
+            return ChannelDecision(
+                selected,
+                pr,
+                ReviewStatus.MISSING_EVIDENCE,
+                f"{pr} has evidence bound to another PR",
+            )
+        evidence = [item for item in all_items if not item.correction]
         reviews = _review_entries(evidence)
         latest = reviews[-1] if reviews else Evidence(pr, "", "")
         blocked = None
@@ -259,6 +300,10 @@ def select_review_target(
         if status == ReviewStatus.COMPLETE:
             continue
         return ChannelDecision(
-            selected, pr, status, f"{pr} is the earliest incomplete {selected.value} target", latest.provisional
+            selected,
+            pr,
+            status,
+            f"{pr} is the earliest incomplete {selected.value} target",
+            latest.provisional or status == ReviewStatus.PROVISIONAL,
         )
     return ChannelDecision(selected, None, ReviewStatus.COMPLETE, f"all {selected.value} targets are complete")

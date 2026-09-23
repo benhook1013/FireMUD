@@ -469,22 +469,24 @@ def _loc_status(pr: Mapping[str, Any]) -> dict[str, Any]:
     body = pr.get("body") or ""
     start = "<!-- firemud:cloc-report:start -->"
     end = "<!-- firemud:cloc-report:end -->"
+    lines = body.splitlines()
     markers = [
         (offset, match)
-        for offset, line in enumerate(body.splitlines())
+        for offset, line in enumerate(lines)
         if (match := LOC_METADATA.fullmatch(line.strip())) is not None
     ]
     if not markers:
         return {"status": "missing", "merge_base_checked": False, "reason": "LOC metadata is absent"}
-    if len(markers) != 1 or body.count(start) != 1 or body.count(end) != 1:
+    start_lines = [offset for offset, line in enumerate(lines) if line.strip() == start]
+    end_lines = [offset for offset, line in enumerate(lines) if line.strip() == end]
+    if len(markers) != 1 or len(start_lines) != 1 or len(end_lines) != 1:
         return {
             "status": "ambiguous",
             "merge_base_checked": False,
             "reason": "LOC report markers are duplicated or incomplete",
         }
     marker_line, match = markers[0]
-    lines = [line.strip() for line in body.splitlines()]
-    if not (lines.index(start) < marker_line < lines.index(end)):
+    if not (start_lines[0] < marker_line < end_lines[0]):
         return {
             "status": "ambiguous",
             "merge_base_checked": False,
@@ -639,7 +641,7 @@ def _review_decision(payload: Mapping[str, Any], current_head: str, pull_request
         ).get("nodes")
         if not isinstance(reviews, list):
             raise StatusError("GitHub review decision evidence is malformed")
-        current: list[tuple[datetime, int, str, int | None]] = []
+        current: list[tuple[datetime, int, str, int | None, str]] = []
         for index, review in enumerate(reviews, 1):
             if not isinstance(review, dict):
                 raise StatusError(f"GitHub review {index} is not an object")
@@ -652,12 +654,21 @@ def _review_decision(payload: Mapping[str, Any], current_head: str, pull_request
             submitted_at = review.get("submittedAt")
             if not isinstance(submitted_at, str):
                 continue
+            reviewer = (review.get("author") or {}).get("login")
+            review_id = github.immutable_database_id(review)
+            if isinstance(reviewer, str) and reviewer.strip():
+                reviewer_key = f"login:{reviewer.casefold()}"
+            elif review_id is not None:
+                reviewer_key = f"id:{review_id}"
+            else:
+                reviewer_key = f"index:{index}"
             current.append(
                 (
                     _timestamp(submitted_at, f"GitHub review {index} submittedAt"),
                     index,
                     state.upper(),
-                    github.immutable_database_id(review),
+                    review_id,
+                    reviewer_key,
                 )
             )
         if not current:
@@ -669,12 +680,20 @@ def _review_decision(payload: Mapping[str, Any], current_head: str, pull_request
                 "exact_head": True,
             }
         current.sort(key=lambda item: (item[0], item[1]))
-        states = {item[2] for item in current}
+        reviews_by_reviewer: defaultdict[str, list[tuple[datetime, int, str, int | None, str]]] = defaultdict(list)
+        for item in current:
+            reviews_by_reviewer[item[4]].append(item)
+        effective: list[tuple[datetime, int, str, int | None, str]] = []
+        decisive = {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}
+        for reviewer_reviews in reviews_by_reviewer.values():
+            effective_decisions = [item for item in reviewer_reviews if item[2] in decisive]
+            effective.append(max(effective_decisions or reviewer_reviews, key=lambda item: (item[0], item[1])))
+        states = {item[2] for item in effective}
         if "CHANGES_REQUESTED" in states:
             decision = "CHANGES_REQUESTED"
-        elif current[-1][2] == "APPROVED":
+        elif "APPROVED" in states:
             decision = "APPROVED"
-        elif current[-1][2] in {"COMMENTED", "DISMISSED"}:
+        elif states & {"COMMENTED", "DISMISSED"}:
             decision = "COMMENTED"
         else:
             decision = "UNKNOWN"

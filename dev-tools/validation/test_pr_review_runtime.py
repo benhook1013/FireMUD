@@ -210,7 +210,21 @@ class RuntimeTest(unittest.TestCase):
         }
 
         def gh_call(args, **kwargs):
-            output = {"login": "maintainer"} if args == ["gh", "api", "user"] else comment
+            if args == ["gh", "api", "user"]:
+                output = {"login": "maintainer"}
+            else:
+                expected = [
+                    "gh",
+                    "api",
+                    "repos/owner/repo/issues/42/comments",
+                    "--method",
+                    "POST",
+                    "-f",
+                    f"body={hosted.FULL_COMMAND}",
+                ]
+                if args != expected:
+                    raise AssertionError(f"unexpected GitHub command: {args!r}")
+                output = comment
             return CompletedProcess(args, 0, json.dumps(output), "")
 
         with tempfile.TemporaryDirectory() as directory:
@@ -218,7 +232,9 @@ class RuntimeTest(unittest.TestCase):
             with (
                 patch.object(live, "pull_request", return_value=snapshot),
                 patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=self._payload()),
                 patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=Path(directory)),
                 patch(
                     "pr_review.runtime.subprocess.run",
                     side_effect=gh_call,
@@ -230,6 +246,7 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(record["anchor"]["child_head"], HEAD)
             self.assertEqual(record["anchor"]["parent_head"], BASE)
             self.assertEqual(record["anchor"]["patch_id"], PATCH)
+            self.assertEqual(record["posting_comment_id_floor"], 0)
 
     @staticmethod
     def _payload(comments=None, reviews=None, threads=None, *, head=HEAD):
@@ -553,6 +570,7 @@ class RuntimeTest(unittest.TestCase):
                 "trigger": None,
                 "posting_started_at": "2026-09-23T00:00:00Z",
                 "posting_actor_login": "maintainer",
+                "posting_comment_id_floor": 0,
             }
             path.write_text(json.dumps(posting), encoding="utf-8")
             observed = {
@@ -593,6 +611,7 @@ class RuntimeTest(unittest.TestCase):
                         "head_sha": HEAD,
                         "posting_started_at": "2026-09-23T00:00:00Z",
                         "posting_actor_login": "maintainer",
+                        "posting_comment_id_floor": 0,
                     }
                 ),
                 encoding="utf-8",
@@ -676,6 +695,7 @@ class RuntimeTest(unittest.TestCase):
         if include_identity:
             record["posting_started_at"] = "2026-09-23T00:00:00Z"
             record["posting_actor_login"] = actor
+            record["posting_comment_id_floor"] = 0
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(record), encoding="utf-8")
 

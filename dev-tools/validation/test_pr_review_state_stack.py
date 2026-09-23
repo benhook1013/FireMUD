@@ -242,7 +242,7 @@ class ReviewStateStackTest(unittest.TestCase):
         )
         self.assertEqual(completion_status(state, Channel.HOSTED, (accepted,)), ReviewStatus.READY)
 
-    def test_valid_complete_requires_true_anchor_and_hosted_corrected_state_for_every_round(self):
+    def test_valid_complete_requires_true_anchor_and_corrected_state_for_every_round(self):
         unanchored = Evidence(
             1, "h", "c", patch_id="p", completed=True, attributable=True, corrected_state=True, anchored=None
         )
@@ -254,6 +254,11 @@ class ReviewStateStackTest(unittest.TestCase):
             1, "h", "c2", patch_id="p", anchored=True, completed=True, attributable=True, corrected_state=True
         )
         self.assertFalse(taper_satisfied(Channel.HOSTED, (not_corrected, corrected), 2))
+        self.assertFalse(taper_satisfied(Channel.CLI, (not_corrected,), 1))
+        self.assertEqual(
+            completion_status(ReviewState(ordered_prs=(1,)), Channel.CLI, (not_corrected,)),
+            ReviewStatus.MISSING_EVIDENCE,
+        )
 
     def test_hosted_default_requires_two_corrected_state_dry_rounds_but_override_allows_one(self):
         first = Evidence(
@@ -355,18 +360,55 @@ class ReviewStateStackTest(unittest.TestCase):
     def test_cli_advances_through_consecutive_stable_prs_after_three_zero_useful(self):
         state = ReviewState(ordered_prs=(1, 2, 3))
         history = tuple(
-            Evidence(1, "h1", f"c{i}", anchored=True, completed=True, attributable=True) for i in range(3)
+            Evidence(
+                1,
+                "h1",
+                f"c{i}",
+                anchored=True,
+                completed=True,
+                attributable=True,
+                corrected_state=True,
+            )
+            for i in range(3)
         )
-        target = select_review_target(state, Channel.CLI, (1, 2, 3), {1: history, 2: history, 3: ()})
+        second_history = tuple(dataclasses.replace(item, pr=2) for item in history)
+        target = select_review_target(state, Channel.CLI, (1, 2, 3), {1: history, 2: second_history, 3: ()})
         self.assertEqual((target.target, target.status), (3, ReviewStatus.MISSING_EVIDENCE))
+
+    def test_evidence_bound_to_another_pr_cannot_advance_target(self):
+        state = ReviewState(ordered_prs=(1, 2))
+        complete_for_first = tuple(
+            Evidence(
+                1,
+                "h",
+                f"c{i}",
+                anchored=True,
+                completed=True,
+                attributable=True,
+                corrected_state=True,
+            )
+            for i in range(3)
+        )
+        target = select_review_target(state, Channel.CLI, (2,), {2: complete_for_first})
+        self.assertEqual(target.target, 2)
+        self.assertEqual(target.status, ReviewStatus.MISSING_EVIDENCE)
 
     def test_cli_stops_at_blocked_pr_and_accepted_finding_resets_streak(self):
         state = ReviewState(ordered_prs=(1, 2))
         history = (
-            Evidence(1, "h", "c1", anchored=True, completed=True, attributable=True),
-            Evidence(1, "h", "c2", anchored=True, completed=True, attributable=True),
-            Evidence(1, "h", "c3", anchored=True, completed=True, attributable=True, accepted=1),
-            Evidence(1, "h", "c4", anchored=True, completed=True, attributable=True),
+            Evidence(1, "h", "c1", anchored=True, completed=True, attributable=True, corrected_state=True),
+            Evidence(1, "h", "c2", anchored=True, completed=True, attributable=True, corrected_state=True),
+            Evidence(
+                1,
+                "h",
+                "c3",
+                anchored=True,
+                completed=True,
+                attributable=True,
+                corrected_state=True,
+                accepted=1,
+            ),
+            Evidence(1, "h", "c4", anchored=True, completed=True, attributable=True, corrected_state=True),
         )
         target = select_review_target(state, Channel.CLI, (1, 2), {1: history, 2: ()})
         self.assertEqual((target.target, target.status), (1, ReviewStatus.READY))
@@ -376,7 +418,18 @@ class ReviewStateStackTest(unittest.TestCase):
             Channel.CLI,
             (1, 2),
             {
-                1: tuple(Evidence(1, "h", f"c{i}", anchored=True, completed=True, attributable=True) for i in range(3)),
+                1: tuple(
+                    Evidence(
+                        1,
+                        "h",
+                        f"c{i}",
+                        anchored=True,
+                        completed=True,
+                        attributable=True,
+                        corrected_state=True,
+                    )
+                    for i in range(3)
+                ),
                 2: (blocked,),
             },
         )
@@ -385,9 +438,9 @@ class ReviewStateStackTest(unittest.TestCase):
     def test_zero_useful_rounds_do_not_accumulate_across_child_heads(self):
         state = ReviewState(ordered_prs=(1,))
         history = (
-            Evidence(1, "old", "c1", completed=True, attributable=True),
-            Evidence(1, "old", "c2", completed=True, attributable=True),
-            Evidence(1, "new", "c3", completed=True, attributable=True),
+            Evidence(1, "old", "c1", completed=True, attributable=True, anchored=True, corrected_state=True),
+            Evidence(1, "old", "c2", completed=True, attributable=True, anchored=True, corrected_state=True),
+            Evidence(1, "new", "c3", completed=True, attributable=True, anchored=True, corrected_state=True),
         )
         target = select_review_target(state, Channel.CLI, (1,), {1: history})
         self.assertEqual(target.status, ReviewStatus.READY)
@@ -395,7 +448,15 @@ class ReviewStateStackTest(unittest.TestCase):
     def test_status_only_tail_cannot_hide_completed_review_taper_or_blocker(self):
         state = ReviewState(ordered_prs=(1,))
         reviews = tuple(
-            Evidence(1, "current", f"review-{index}", anchored=True, completed=True, attributable=True)
+            Evidence(
+                1,
+                "current",
+                f"review-{index}",
+                anchored=True,
+                completed=True,
+                attributable=True,
+                corrected_state=True,
+            )
             for index in range(3)
         )
         old_pending_capture = Evidence(
@@ -427,7 +488,15 @@ class ReviewStateStackTest(unittest.TestCase):
 
     def test_correction_checkpoint_remains_evidence_but_never_changes_the_taper(self):
         reviews = tuple(
-            Evidence(1, "h", f"review-{index}", anchored=True, completed=True, attributable=True)
+            Evidence(
+                1,
+                "h",
+                f"review-{index}",
+                anchored=True,
+                completed=True,
+                attributable=True,
+                corrected_state=True,
+            )
             for index in range(3)
         )
         correction = Evidence(
@@ -440,6 +509,7 @@ class ReviewStateStackTest(unittest.TestCase):
             raw=1,
             correction=True,
             anchored=True,
+            corrected_state=True,
         )
         state = ReviewState(ordered_prs=(1,))
         self.assertTrue(taper_satisfied(Channel.CLI, (*reviews, correction), 3))
@@ -451,7 +521,16 @@ class ReviewStateStackTest(unittest.TestCase):
 
     def test_cross_channel_change_requires_exact_bound_judgment_and_provisional_never_tapers(self):
         evidence = tuple(
-            Evidence(1, "h", f"c{i}", patch_id="p", anchored=True, completed=True, attributable=True)
+            Evidence(
+                1,
+                "h",
+                f"c{i}",
+                patch_id="p",
+                anchored=True,
+                completed=True,
+                attributable=True,
+                corrected_state=True,
+            )
             for i in range(3)
         )
         state = ReviewState(ordered_prs=(1,))
@@ -471,9 +550,49 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertFalse(target.provisional)
         self.assertFalse(taper_satisfied(Channel.CLI, provisional, 3))
 
+    def test_newer_same_head_provisional_evidence_blocks_prior_taper(self):
+        reviewed = tuple(
+            Evidence(
+                1,
+                "h",
+                f"c{i}",
+                anchored=True,
+                completed=True,
+                attributable=True,
+                corrected_state=True,
+            )
+            for i in range(3)
+        )
+        provisional = Evidence(
+            1,
+            "h",
+            "provisional-h",
+            anchored=True,
+            completed=True,
+            attributable=True,
+            corrected_state=True,
+            provisional=True,
+        )
+        history = (*reviewed, provisional)
+        state = ReviewState(ordered_prs=(1,))
+        self.assertEqual(completion_status(state, Channel.CLI, history), ReviewStatus.PROVISIONAL)
+        target = select_review_target(state, Channel.CLI, (1,), {1: history})
+        self.assertEqual(target.status, ReviewStatus.PROVISIONAL)
+        self.assertTrue(target.provisional)
+        self.assertFalse(taper_satisfied(Channel.CLI, history, 3))
+
     def test_provisional_history_does_not_override_equivalent_history_judgment(self):
         reviewed = tuple(
-            Evidence(1, "h1", f"c{i}", patch_id="p1", anchored=True, completed=True, attributable=True)
+            Evidence(
+                1,
+                "h1",
+                f"c{i}",
+                patch_id="p1",
+                anchored=True,
+                completed=True,
+                attributable=True,
+                corrected_state=True,
+            )
             for i in range(3)
         )
         provisional = Evidence(
@@ -547,7 +666,16 @@ class ReviewStateStackTest(unittest.TestCase):
 
     def test_judgment_cannot_apply_to_another_pr_with_same_head_and_checkpoint(self):
         history = tuple(
-            Evidence(2, "h", f"c{i}", anchored=True, completed=True, attributable=True) for i in range(3)
+            Evidence(
+                2,
+                "h",
+                f"c{i}",
+                anchored=True,
+                completed=True,
+                attributable=True,
+                corrected_state=True,
+            )
+            for i in range(3)
         )
         state = ReviewState(
             ordered_prs=(2,),

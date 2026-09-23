@@ -276,6 +276,8 @@ def _live(value: Any, number: int) -> LivePullRequest:
             raise ControllerError("provider returned the wrong pull request")
         return value
     if isinstance(value, PullRequestSnapshot):
+        if value.number != number:
+            raise ControllerError("provider returned the wrong pull request")
         return LivePullRequest(
             value.number,
             _sha(value.head_sha, "head"),
@@ -1039,11 +1041,18 @@ class ReviewController:
         anchor = self._anchor(pr, current, link)
         reconciliation_status = reconciliation.status_for(pr, selected_channel.value)
         history = _history(self._evidence_provider, pr, selected_channel)
+        parsed_history = [policy.Evidence.from_value(item) for item in history]
+        effective_reviews: list[tuple[int, policy.Evidence]] = []
+        for index, item in enumerate(parsed_history):
+            if item.correction or item.completed is not True or item.attributable is not True or item.provisional:
+                continue
+            if item.pr != pr:
+                raise ControllerError("decision evidence is attributable to another pull request")
+            effective_reviews.append((index, item))
         matching = [
-            policy.Evidence.from_value(item)
-            for item in history
-            if _field(item, "checkpoint", "checkpoint_id") == checkpoint
-            and _field(item, "pr") == pr
+            item
+            for item in parsed_history
+            if item.checkpoint == checkpoint and item.pr == pr and not item.correction
         ]
         if not matching:
             raise ControllerError("decision checkpoint is not attributable to the pull request")
@@ -1055,6 +1064,14 @@ class ReviewController:
             and checkpoint_evidence.provisional is False
         ):
             raise ControllerError("decision checkpoint must be completed attributable anchored evidence")
+        if not effective_reviews or checkpoint_evidence.checkpoint != effective_reviews[-1][1].checkpoint:
+            raise ControllerError("decision checkpoint must be the latest policy-effective completed review")
+        latest_effective_index = effective_reviews[-1][0]
+        if any(
+            item.provisional and item.head == checkpoint_evidence.head
+            for item in parsed_history[latest_effective_index + 1 :]
+        ):
+            raise ControllerError("decision checkpoint is blocked by a later provisional review")
         checkpoint_head = _sha(checkpoint_evidence.head, "decision checkpoint head")
         if checkpoint_head != normalized_head:
             if reconciliation_status in {

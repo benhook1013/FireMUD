@@ -21,6 +21,7 @@ from pr_review.controller import (
     ControllerError,
     DefaultGitProvider,
     LivePullRequest,
+    PullRequestSnapshot,
     ReviewController,
     WrongStackTarget,
     compact_result,
@@ -149,6 +150,23 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaises(WrongStackTarget):
             controller.resolve_cli_target(expected_pr=2)
 
+    def test_pull_request_snapshot_number_must_match_requested_pr(self):
+        values = {
+            1: PullRequestSnapshot(
+                2,
+                "OPEN",
+                "develop",
+                BASE,
+                HEAD_1,
+                head_ref_name="feature-2",
+                changed_files=1,
+            )
+        }
+        controller = self.make(values)
+        controller.set_stack([1])
+        with self.assertRaisesRegex(ControllerError, "provider returned the wrong pull request"):
+            controller.status()
+
     def test_hosted_rate_limit_and_cross_channel_head_change_do_not_advance(self):
         values = {1: pr(1, HEAD_1), 2: pr(2, HEAD_2)}
         evidence = {
@@ -176,7 +194,16 @@ class ControllerTests(unittest.TestCase):
     def test_exact_bound_judgment_allows_cross_channel_history(self):
         values = {1: pr(1, HEAD_1)}
         history = [
-            Evidence(1, HEAD_1, f"c{i}", patch_id=f"patch-{HEAD_1[:4]}", anchored=True, completed=True, attributable=True)
+            Evidence(
+                1,
+                HEAD_1,
+                f"c{i}",
+                patch_id=f"patch-{HEAD_1[:4]}",
+                anchored=True,
+                completed=True,
+                attributable=True,
+                corrected_state=True,
+            )
             for i in range(3)
         ]
         evidence = {
@@ -274,7 +301,7 @@ class ControllerTests(unittest.TestCase):
         controller = self.make({1: pr(1, live_head)}, {(1, "hosted"): history})
         controller.set_stack([1])
 
-        with self.assertRaisesRegex(ControllerError, "decision checkpoint patch identity"):
+        with self.assertRaisesRegex(ControllerError, "latest policy-effective"):
             controller.decide_judgment(
                 pr=1,
                 channel="hosted",
@@ -300,6 +327,53 @@ class ControllerTests(unittest.TestCase):
                 hosted_zero_useful=1,
                 reason="policy overrides cannot bind prior-head evidence",
             )
+
+    def test_decision_checkpoint_must_be_latest_policy_effective_review(self):
+        patch_id = f"patch-{HEAD_1[:4]}"
+        history = [
+            {
+                "pr": 1,
+                "head": HEAD_1,
+                "checkpoint": "older",
+                "completed": True,
+                "attributable": True,
+                "anchored": True,
+                "corrected_state": True,
+                "accepted": 0,
+                "patch_id": patch_id,
+            },
+            {
+                "pr": 1,
+                "head": HEAD_1,
+                "checkpoint": "latest",
+                "completed": True,
+                "attributable": True,
+                "anchored": True,
+                "corrected_state": True,
+                "accepted": 0,
+                "patch_id": patch_id,
+            },
+        ]
+        controller = self.make({1: pr(1, HEAD_1)}, {(1, "hosted"): history})
+        controller.set_stack([1])
+
+        with self.assertRaisesRegex(ControllerError, "latest policy-effective"):
+            controller.decide_policy(
+                pr=1,
+                head=HEAD_1,
+                checkpoint="older",
+                hosted_zero_useful=1,
+                reason="stale checkpoint must not authorize a policy override",
+            )
+
+        result = controller.decide_policy(
+            pr=1,
+            head=HEAD_1,
+            checkpoint="latest",
+            hosted_zero_useful=1,
+            reason="latest checkpoint is policy-effective",
+        )
+        self.assertEqual(result["policy_override"]["checkpoint"], "latest")
 
     def test_equivalent_history_judgment_rejects_moved_topology(self):
         live_head = HEAD_2
@@ -464,6 +538,7 @@ class ControllerTests(unittest.TestCase):
                     "completed": True,
                     "anchored": True,
                     "attributable": True,
+                    "corrected_state": True,
                     "accepted": 0,
                     "child_head": HEAD_1,
                     "parent_identity": "develop",
@@ -544,6 +619,7 @@ class ControllerTests(unittest.TestCase):
                     "completed": True,
                     "anchored": True,
                     "attributable": True,
+                    "corrected_state": True,
                     "accepted": 0,
                     "child_head": HEAD_1,
                     "parent_identity": "develop",

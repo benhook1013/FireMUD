@@ -112,13 +112,27 @@ class GithubAndEvidenceTests(unittest.TestCase):
         )
 
     def test_graphql_paginates_threads_comments_and_reviews(self):
+        thread_1 = {
+            "id": "thread-1",
+            "isResolved": False,
+            "isOutdated": False,
+            "path": "README.md",
+            "line": 1,
+            "comments": {
+                "nodes": ["thread-comment-1"],
+                "pageInfo": {"hasNextPage": True, "endCursor": "tc1"},
+            },
+        }
         initial = {
             "data": {
                 "repository": {
                     "pullRequest": {
                         "headRefOid": HEAD,
                         "commits": {"nodes": []},
-                        "reviewThreads": {"nodes": ["thread-1"], "pageInfo": {"hasNextPage": True, "endCursor": "t1"}},
+                        "reviewThreads": {
+                            "nodes": [thread_1],
+                            "pageInfo": {"hasNextPage": True, "endCursor": "t1"},
+                        },
                         "comments": {"nodes": ["comment-1"], "pageInfo": {"hasNextPage": True, "endCursor": "c1"}},
                         "reviews": {"nodes": ["review-1"], "pageInfo": {"hasNextPage": True, "endCursor": "r1"}},
                     }
@@ -126,33 +140,73 @@ class GithubAndEvidenceTests(unittest.TestCase):
             }
         }
         pages = {
-            "reviewThreads": {"nodes": ["thread-2"], "pageInfo": {"hasNextPage": False}},
+            "reviewThreads": {
+                "nodes": [
+                    {
+                        "id": "thread-2",
+                        "isResolved": False,
+                        "isOutdated": False,
+                        "path": "README.md",
+                        "line": 2,
+                        "comments": {"nodes": ["thread-comment-2"], "pageInfo": {"hasNextPage": False}},
+                    }
+                ],
+                "pageInfo": {"hasNextPage": False},
+            },
             "comments": {"nodes": ["comment-2"], "pageInfo": {"hasNextPage": False}},
             "reviews": {"nodes": ["review-2"], "pageInfo": {"hasNextPage": False}},
         }
 
-        def query(_query, variables):
-            if variables["after"] == "t1":
+        nested_page = {
+            "data": {
+                "node": {
+                    "comments": {
+                        "nodes": ["thread-comment-1b"],
+                        "pageInfo": {"hasNextPage": False},
+                    }
+                }
+            }
+        }
+        seen: list[tuple[str, str | None, str | None]] = []
+
+        def query(query_text, variables):
+            after = variables.get("after")
+            seen.append((query_text, variables.get("threadId"), after))
+            if variables.get("threadId") == "thread-1":
+                self.assertEqual(after, "tc1")
+                return nested_page
+            if after == "t1":
                 connection = "reviewThreads"
-            elif variables["after"] == "c1":
+            elif after == "c1":
                 connection = "comments"
-            else:
+            elif after == "r1":
                 connection = "reviews"
+            else:
+                self.fail(f"unexpected pagination cursor: {variables!r}")
             return {"data": {"repository": {"pullRequest": {connection: pages[connection]}}}}
 
-        with patch.object(
-            github,
-            "run_gh_query",
-            side_effect=[
-                initial,
-                query(None, {"after": "t1"}),
-                query(None, {"after": "c1"}),
-                query(None, {"after": "r1"}),
-            ],
-        ):
+        def run_query(query_text, variables):
+            if "after" not in variables:
+                return initial
+            return query(query_text, variables)
+
+        with patch.object(github, "run_gh_query", side_effect=run_query) as run:
             payload = github.fetch_pull_request(REPO, PR)
         pr = payload["data"]["repository"]["pullRequest"]
-        self.assertEqual(pr["reviewThreads"]["nodes"], ["thread-1", "thread-2"])
+        self.assertEqual(
+            pr["reviewThreads"]["nodes"][0]["comments"]["nodes"],
+            ["thread-comment-1", "thread-comment-1b"],
+        )
+        self.assertEqual(
+            [call.args[1].get("after") for call in run.call_args_list[1:]],
+            ["tc1", "t1", "c1", "r1"],
+        )
+        self.assertEqual(
+            [(thread_id, after) for _, thread_id, after in seen],
+            [("thread-1", "tc1"), (None, "t1"), (None, "c1"), (None, "r1")],
+        )
+        self.assertIn("node(id:$threadId)", run.call_args_list[1].args[0])
+        self.assertEqual(pr["reviewThreads"]["nodes"][1]["id"], "thread-2")
         self.assertEqual(pr["comments"]["nodes"], ["comment-1", "comment-2"])
         self.assertEqual(pr["reviews"]["nodes"], ["review-1", "review-2"])
 
@@ -560,6 +614,7 @@ class HostedEvidenceTests(unittest.TestCase):
                         "head_sha": HEAD,
                         "posting_started_at": "2026-09-23T00:00:00Z",
                         "posting_actor_login": "maintainer",
+                        "posting_comment_id_floor": 30,
                     }
                 ),
                 encoding="utf-8",
@@ -575,6 +630,30 @@ class HostedEvidenceTests(unittest.TestCase):
                 hosted.adopt_posting_reservation(path, REPO, PR, HEAD, review_payload(comments))
             self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "posting")
 
+    def test_posting_recovery_uses_new_comment_id_when_github_clock_precedes_reservation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "status": "posting",
+                        "repository": REPO,
+                        "pr_number": PR,
+                        "head_sha": HEAD,
+                        "posting_started_at": "2026-09-23T00:00:00Z",
+                        "posting_actor_login": "maintainer",
+                        "posting_comment_id_floor": 30,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            observed = comment(31, "maintainer", hosted.FULL_COMMAND, "2026-09-22T23:00:00Z")
+            with patch.object(hosted, "default_trigger_record_path", return_value=path):
+                recovered = hosted.adopt_posting_reservation(path, REPO, PR, HEAD, review_payload([observed]))
+            self.assertEqual(recovered["status"], "posted")
+            self.assertEqual(recovered["trigger"]["id"], 31)
+
     def test_retirement_refuses_an_active_review(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
         active = comment(11, "coderabbitai", "Full review triggered", "2026-09-23T00:02:00Z")
@@ -589,6 +668,25 @@ class HostedEvidenceTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "active"),
             ):
                 hosted.retire_trigger_record(path, REPO, PR, 10, HEAD, "stale", payload)
+
+    def test_retirement_refuses_unresolved_timed_out_trigger_on_same_head(self):
+        record = trigger_record()
+        record["status"] = "timed_out"
+        record["timeout"] = {
+            "at": "2026-09-23T00:02:00Z",
+            "observed_state": "awaiting_response",
+            "reason": hosted.TIMEOUT_REASON,
+        }
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            path.write_text(json.dumps(record), encoding="utf-8")
+            with (
+                patch.object(hosted, "default_trigger_record_path", return_value=Path(directory) / "lock.json"),
+                self.assertRaisesRegex(ValueError, "same head"),
+            ):
+                hosted.retire_trigger_record(path, REPO, PR, 10, HEAD, "stale", review_payload([trigger]))
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "timed_out")
 
     def test_retirement_accepts_only_durable_later_exact_head_completion(self):
         earlier = trigger_record("c" * 40)
@@ -750,6 +848,22 @@ class HostedEvidenceTests(unittest.TestCase):
         self.assertEqual(state.state, "ambiguous")
         self.assertNotEqual(state.state, "completed")
 
+    def test_explicit_wrong_review_commit_cannot_be_rescued_by_body_head(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        review = {
+            **comment(
+                11,
+                "coderabbitai[bot]",
+                f"<!-- walkthrough_start -->\nReviewing files that changed from the base of the PR and between {BASE} and {HEAD}.",
+                "2026-09-23T00:02:00Z",
+            ),
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-23T00:02:00Z",
+            "commit": {"oid": "c" * 40},
+        }
+        state = hosted.trigger_state(REPO, PR, review_payload([trigger], [review]), trigger_record())
+        self.assertEqual(state.state, "ambiguous")
+
     def test_stuck_trigger_recovery_fails_closed_without_wait_assertion_or_on_same_head(self):
         record = trigger_record()
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
@@ -884,6 +998,43 @@ class HostedEvidenceTests(unittest.TestCase):
                     True,
                     lambda: review_payload([trigger], head=current_head),
                 )
+
+    def test_prepost_recovery_tolerates_bounded_clock_skew_without_missing_a_post(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "status": "posting",
+                        "repository": REPO,
+                        "pr_number": PR,
+                        "head_sha": HEAD,
+                        "posting_started_at": "2026-09-23T00:00:00Z",
+                        "posting_actor_login": "maintainer",
+                        "posting_comment_id_floor": 30,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            # GitHub's timestamp is slightly before the local reservation
+            # stamp, but the ID is newer than the durable pre-POST floor.
+            observed = comment(31, "maintainer", hosted.FULL_COMMAND, "2026-09-22T23:00:00Z")
+            with (
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[path]),
+                self.assertRaisesRegex(ValueError, "matching full-review command"),
+            ):
+                hosted.recover_prepost_reservation(
+                    path,
+                    REPO,
+                    PR,
+                    HEAD,
+                    "operator verified no POST was issued",
+                    True,
+                    lambda: review_payload([observed]),
+                )
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "posting")
 
 
 if __name__ == "__main__":

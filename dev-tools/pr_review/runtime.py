@@ -606,6 +606,28 @@ class HostedRunner:
                 "posting_actor_login": posting_actor,
             }
             hosted.atomic_write_json(path, posting)
+            # Establish a durable post-reservation boundary before issuing
+            # POST.  Adoption must not widen its timestamp window to guess
+            # through clock skew; only a newly observed comment ID may be
+            # adopted, and failure to establish the floor remains held.
+            try:
+                reservation_payload = github.fetch_pull_request(self.repo, pr)
+                reservation_pr = reservation_payload["data"]["repository"]["pullRequest"]
+                reservation_head = reservation_pr.get("headRefOid") if isinstance(reservation_pr, dict) else None
+                if (
+                    not isinstance(reservation_pr, dict)
+                    or not isinstance(reservation_head, str)
+                    or reservation_head.casefold() != target.snapshot.head_sha.casefold()
+                ):
+                    raise ControllerError("pull request changed before the Hosted posting boundary")
+                posting["posting_comment_id_floor"] = hosted._comment_id_floor(reservation_payload)
+                hosted.atomic_write_json(path, posting)
+            except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                if isinstance(exc, ControllerError):
+                    raise
+                raise ControllerError(
+                    f"could not establish the Hosted pre-POST comment identity floor: {exc}"
+                ) from exc
             try:
                 completed = subprocess.run(
                     [

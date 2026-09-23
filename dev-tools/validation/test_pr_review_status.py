@@ -118,8 +118,18 @@ def github_payload(checks: list[dict] | None = None) -> dict:
                     },
                     "reviewThreads": {
                         "nodes": [
-                            {"id": "PRRT_1", "isResolved": False, "isOutdated": False},
-                            {"id": "PRRT_2", "isResolved": True, "isOutdated": False},
+                            {
+                                "id": "PRRT_1",
+                                "isResolved": False,
+                                "isOutdated": False,
+                                "comments": {"nodes": [], "pageInfo": {"hasNextPage": False}},
+                            },
+                            {
+                                "id": "PRRT_2",
+                                "isResolved": True,
+                                "isOutdated": False,
+                                "comments": {"nodes": [], "pageInfo": {"hasNextPage": False}},
+                            },
                         ]
                     },
                     "comments": {"nodes": []},
@@ -142,14 +152,20 @@ class StatusTest(unittest.TestCase):
             )
 
     @staticmethod
-    def _coderabbit_review(body: str, commit: str = HEAD, submitted_at: str = "2026-09-23T01:00:00Z") -> dict:
+    def _coderabbit_review(
+        body: str,
+        commit: str = HEAD,
+        submitted_at: str = "2026-09-23T01:00:00Z",
+        database_id: int = 501,
+        author: str = "coderabbitai[bot]",
+    ) -> dict:
         return {
-            "databaseId": 501,
-            "author": {"login": "coderabbitai[bot]"},
+            "databaseId": database_id,
+            "author": {"login": author},
             "body": body,
             "state": "COMMENTED",
             "submittedAt": submitted_at,
-            "url": "https://github.test/reviews/501",
+            "url": f"https://github.test/reviews/{database_id}",
             "commit": {"oid": commit},
         }
 
@@ -257,6 +273,133 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(decision["scope"], "exact_head_review_node")
         self.assertEqual(decision["head_sha"], HEAD)
         self.assertTrue(decision["exact_head"])
+
+    def test_latest_effective_review_per_reviewer_clears_older_changes_request(self) -> None:
+        payload = github_payload()
+        pull_request = payload["data"]["repository"]["pullRequest"]
+        pull_request["reviews"]["nodes"] = [
+            {
+                "databaseId": 501,
+                "author": {"login": "reviewer-a"},
+                "state": "CHANGES_REQUESTED",
+                "submittedAt": "2026-09-23T01:00:00Z",
+                "commit": {"oid": HEAD},
+            },
+            {
+                "databaseId": 502,
+                "author": {"login": "reviewer-a"},
+                "state": "APPROVED",
+                "submittedAt": "2026-09-23T02:00:00Z",
+                "commit": {"oid": HEAD},
+            },
+            {
+                "databaseId": 503,
+                "author": {"login": "reviewer-b"},
+                "state": "APPROVED",
+                "submittedAt": "2026-09-23T03:00:00Z",
+                "commit": {"oid": HEAD},
+            },
+        ]
+
+        decision = status._review_decision(payload, HEAD, pull_request)
+
+        self.assertEqual(decision["status"], "APPROVED")
+        self.assertEqual(decision["head_sha"], HEAD)
+
+    def test_commented_review_does_not_clear_changes_requested(self) -> None:
+        payload = github_payload()
+        pull_request = payload["data"]["repository"]["pullRequest"]
+        pull_request["reviews"]["nodes"] = [
+            {
+                "databaseId": 504,
+                "author": {"login": "reviewer-a"},
+                "state": "CHANGES_REQUESTED",
+                "submittedAt": "2026-09-23T01:00:00Z",
+                "commit": {"oid": HEAD},
+            },
+            {
+                "databaseId": 505,
+                "author": {"login": "reviewer-a"},
+                "state": "COMMENTED",
+                "submittedAt": "2026-09-23T02:00:00Z",
+                "commit": {"oid": HEAD},
+            },
+        ]
+
+        decision = status._review_decision(payload, HEAD, pull_request)
+
+        self.assertEqual(decision["status"], "CHANGES_REQUESTED")
+
+    def test_commented_review_does_not_clear_approval(self) -> None:
+        payload = github_payload()
+        pull_request = payload["data"]["repository"]["pullRequest"]
+        pull_request["reviews"]["nodes"] = [
+            {
+                "databaseId": 506,
+                "author": {"login": "reviewer-a"},
+                "state": "APPROVED",
+                "submittedAt": "2026-09-23T01:00:00Z",
+                "commit": {"oid": HEAD},
+            },
+            {
+                "databaseId": 507,
+                "author": {"login": "reviewer-a"},
+                "state": "COMMENTED",
+                "submittedAt": "2026-09-23T02:00:00Z",
+                "commit": {"oid": HEAD},
+            },
+        ]
+
+        decision = status._review_decision(payload, HEAD, pull_request)
+
+        self.assertEqual(decision["status"], "APPROVED")
+
+    def test_later_comment_by_another_reviewer_does_not_clear_approval(self) -> None:
+        payload = github_payload()
+        pull_request = payload["data"]["repository"]["pullRequest"]
+        pull_request["reviews"]["nodes"] = [
+            {
+                "databaseId": 508,
+                "author": {"login": "reviewer-a"},
+                "state": "APPROVED",
+                "submittedAt": "2026-09-23T01:00:00Z",
+                "commit": {"oid": HEAD},
+            },
+            {
+                "databaseId": 509,
+                "author": {"login": "reviewer-b"},
+                "state": "COMMENTED",
+                "submittedAt": "2026-09-23T02:00:00Z",
+                "commit": {"oid": HEAD},
+            },
+        ]
+
+        decision = status._review_decision(payload, HEAD, pull_request)
+
+        self.assertEqual(decision["status"], "APPROVED")
+
+    def test_loc_markers_must_be_complete_lines_before_metadata(self) -> None:
+        payload = github_payload()
+        pull_request = payload["data"]["repository"]["pullRequest"]
+        pull_request["body"] = (
+            "prefix <!-- firemud:cloc-report:start -->\n"
+            "<!-- firemud:cloc-report:metadata "
+            + json.dumps(
+                {
+                    "base_oid": BASE,
+                    "head_oid": HEAD,
+                    "merge_base": MERGE_BASE,
+                    "classifier_sha256": "d" * 64,
+                }
+            )
+            + " -->\n"
+            "<!-- firemud:cloc-report:end -->"
+        )
+
+        result = status._loc_status(pull_request)
+
+        self.assertEqual(result["status"], "ambiguous")
+        self.assertIn("markers", result["reason"])
 
     def test_archived_hosted_trigger_is_historical_not_current(self) -> None:
         payload = github_payload()
@@ -603,8 +746,8 @@ class StatusTest(unittest.TestCase):
         pr["reviewThreads"] = {"nodes": []}
         pr["reviews"] = {
             "nodes": [
-                self._coderabbit_review("Duplicate comments (1)", commit="c" * 40),
-                self._coderabbit_review("Outside diff range comments (1)"),
+                self._coderabbit_review("Duplicate comments (1)", commit="c" * 40, database_id=501),
+                self._coderabbit_review("Outside diff range comments (1)", database_id=502),
             ]
         }
 
@@ -685,8 +828,12 @@ class StatusTest(unittest.TestCase):
         pr["reviewThreads"] = {"nodes": []}
         pr["reviews"] = {
             "nodes": [
-                self._coderabbit_review("Duplicate comments (1)", submitted_at="2026-09-23T00:00:00Z"),
-                self._coderabbit_review("Duplicate comments (0)", submitted_at="2026-09-23T02:00:00Z"),
+                self._coderabbit_review(
+                    "Duplicate comments (1)", submitted_at="2026-09-23T00:00:00Z", database_id=501
+                ),
+                self._coderabbit_review(
+                    "Duplicate comments (0)", submitted_at="2026-09-23T02:00:00Z", database_id=502
+                ),
             ]
         }
 

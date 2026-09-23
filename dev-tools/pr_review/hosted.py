@@ -92,6 +92,26 @@ def normalize_command(body: str) -> str:
     return " ".join(body.strip().split()).lower()
 
 
+def _comment_id_floor(payload: dict[str, Any]) -> int:
+    """Return the highest immutable issue-comment ID in a complete PR payload."""
+
+    try:
+        comments = payload["data"]["repository"]["pullRequest"]["comments"]["nodes"]
+    except (KeyError, TypeError) as exc:
+        raise TypeError("complete pull-request comment history is unavailable") from exc
+    if not isinstance(comments, list):
+        raise TypeError("complete pull-request comment history is unavailable")
+    floor = 0
+    for item in comments:
+        if not isinstance(item, dict):
+            raise TypeError("live comment history contains an invalid comment")
+        comment_id = immutable_database_id(item)
+        if comment_id is None:
+            raise ValueError("live comment history contains a comment without immutable identity")
+        floor = max(floor, comment_id)
+    return floor
+
+
 def _git_common_dir() -> Path:
     try:
         from .evidence import git_common_dir
@@ -364,6 +384,9 @@ def _adopt_posting_reservation_locked(
     actor_login = record.get("posting_actor_login")
     if started_at is None or not isinstance(actor_login, str) or not actor_login.strip():
         raise ValueError("posting reservation has no trusted POST attempt identity")
+    comment_id_floor = record.get("posting_comment_id_floor")
+    if type(comment_id_floor) is not int or comment_id_floor < 0:
+        raise ValueError("posting reservation has no trusted comment-ID floor")
 
     pr = payload.get("data", {}).get("repository", {}).get("pullRequest", {})
     current_head = pr.get("headRefOid")
@@ -376,20 +399,23 @@ def _adopt_posting_reservation_locked(
     candidates: dict[int, dict[str, Any]] = {}
     for item in comments:
         if not isinstance(item, dict):
+            raise TypeError("live comment history contains an invalid comment")
+        comment_id = immutable_database_id(item)
+        if comment_id is None:
+            raise ValueError("live comment history contains a comment without immutable identity")
+        if comment_id <= comment_id_floor:
             continue
         created_at = item.get("createdAt")
         created = parse_timestamp(created_at)
         author_login_value = _comment_author_login(item)
         if (
             created is None
-            or created < started_at
             or not isinstance(author_login_value, str)
             or author_login_value.casefold() != actor_login.casefold()
             or not isinstance(item.get("body"), str)
             or normalize_command(item["body"]) != FULL_COMMAND
         ):
             continue
-        comment_id = immutable_database_id(item)
         url = item.get("url") or item.get("html_url")
         if comment_id is None or not isinstance(created_at, str) or not isinstance(url, str) or not url:
             raise ValueError("a possible POST result has incomplete live identity")
@@ -492,6 +518,9 @@ def recover_prepost_reservation(
             or not actor_login.strip()
         ):
             raise ValueError("posting reservation has no trusted original actor/time identity")
+        comment_id_floor = record.get("posting_comment_id_floor")
+        if type(comment_id_floor) is not int or comment_id_floor < 0:
+            raise ValueError("posting reservation has no trusted comment-ID floor")
 
         payload = fetch_payload()
         if not isinstance(payload, dict):
@@ -513,14 +542,17 @@ def recover_prepost_reservation(
         for item in comments:
             if not isinstance(item, dict):
                 raise TypeError("live comment history contains an invalid comment; refusing recovery")
+            comment_id = immutable_database_id(item)
+            if comment_id is None:
+                raise ValueError("live comment history contains a comment without immutable identity")
+            if comment_id <= comment_id_floor:
+                continue
             body = item.get("body")
             if not isinstance(body, str) or normalize_command(body) != FULL_COMMAND:
                 continue
             created = parse_timestamp(item.get("createdAt"))
             if created is None:
                 raise ValueError("a full-review command has unknown time; refusing pre-POST recovery")
-            if created < started_at:
-                continue
             observed_actor = _comment_author_login(item)
             if isinstance(observed_actor, str) and observed_actor.casefold() == actor_login.casefold():
                 raise ValueError("matching full-review command is already present in live history")
@@ -791,10 +823,13 @@ def trigger_state(
         ):
             continue
         commit = (review.get("commit") or {}).get("oid")
+        # An explicit review commit is authoritative.  Body prose is only a
+        # fallback for older/API responses that omit the commit object; it must
+        # never override a mismatched immutable commit.
         matched = (
-            isinstance(commit, str)
-            and commit.casefold() == record["head_sha"].casefold()
-            or _matches_head(review.get("body") or "", record["head_sha"])
+            commit.casefold() == record["head_sha"].casefold()
+            if isinstance(commit, str) and commit.strip()
+            else _matches_head(review.get("body") or "", record["head_sha"])
         )
         candidates.append((submitted, "completed" if matched else "ambiguous", review, None))
     if not candidates:
@@ -970,6 +1005,8 @@ def retire_trigger_record(
             raise ValueError(
                 f"cannot retire trigger in state {state.state} without a later completed exact-head review"
             )
+        if state.state == "timed_out" and record["head_sha"].casefold() == current.casefold():
+            raise ValueError("cannot retire an unresolved timed-out trigger on the same head")
         updated = dict(record)
         updated["status"] = "retired"
         updated["retirement"] = {

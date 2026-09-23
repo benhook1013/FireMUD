@@ -103,6 +103,7 @@ query($owner:String!, $repo:String!, $number:Int!) {
     commits(last:1) { nodes { commit { oid committedDate statusCheckRollup { state } } } }
     reviewThreads(first:100) { nodes { id isResolved isOutdated path line comments(first:20) {
       nodes { id databaseId author { login } body url createdAt updatedAt }
+      pageInfo { hasNextPage endCursor }
     } } pageInfo { hasNextPage endCursor } }
     comments(first:100) { nodes { id databaseId author { login } body createdAt updatedAt url }
       pageInfo { hasNextPage endCursor } }
@@ -115,7 +116,7 @@ query($owner:String!, $repo:String!, $number:Int!) {
 
 def _connection_query(connection: str) -> str:
     fields = {
-        "reviewThreads": "nodes { id isResolved isOutdated path line comments(first:20) { nodes { id databaseId author { login } body url createdAt updatedAt } } }",
+        "reviewThreads": "nodes { id isResolved isOutdated path line comments(first:20) { nodes { id databaseId author { login } body url createdAt updatedAt } pageInfo { hasNextPage endCursor } } }",
         "comments": "nodes { id databaseId author { login } body createdAt updatedAt url }",
         "reviews": "nodes { id databaseId author { login } body state submittedAt url commit { oid } }",
     }[connection]
@@ -125,6 +126,21 @@ query($owner:String!, $repo:String!, $number:Int!, $after:String!) {{
     {connection}(first:100, after:$after) {{ {fields} pageInfo {{ hasNextPage endCursor }} }}
   }} }}
 }}
+""".strip()
+
+
+def _thread_comments_query() -> str:
+    return """
+query($threadId:ID!, $after:String!) {
+  node(id:$threadId) {
+    ... on PullRequestReviewThread {
+      comments(first:20, after:$after) {
+        nodes { id databaseId author { login } body url createdAt updatedAt }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}
 """.strip()
 
 
@@ -161,6 +177,53 @@ def _review_connection(
     return nodes, page_info
 
 
+def _thread_comments_from_graphql_payload(
+    payload: dict[str, Any], thread_id: str
+) -> tuple[list[Any], dict[str, Any] | None]:
+    errors = payload.get("errors")
+    if errors is not None and (not isinstance(errors, list) or errors):
+        raise RuntimeError("GitHub GraphQL response contains errors")
+    try:
+        node = payload["data"]["node"]
+    except (KeyError, TypeError) as exc:
+        raise RuntimeError(f"GitHub response has no review thread {thread_id}") from exc
+    if not isinstance(node, dict):
+        raise TypeError(f"GitHub response has malformed review thread {thread_id}")
+    return _review_connection({"comments": node.get("comments")}, "comments", require_page_info=True)
+
+
+def _paginate_thread_comments(thread: dict[str, Any]) -> None:
+    thread_id = thread.get("id")
+    if not isinstance(thread_id, str) or not thread_id:
+        raise TypeError("GitHub review thread has no opaque id")
+    nodes, page = _review_connection(thread, "comments", require_page_info=True)
+    nodes = list(nodes)
+    query = _thread_comments_query()
+    while page["hasNextPage"]:
+        cursor = page.get("endCursor")
+        if not isinstance(cursor, str) or not cursor:
+            raise RuntimeError(f"GitHub review thread {thread_id} pagination has no cursor")
+        next_payload = run_gh_query(
+            query,
+            {
+                "threadId": thread_id,
+                "after": cursor,
+            },
+        )
+        page_nodes, page = _thread_comments_from_graphql_payload(next_payload, thread_id)
+        nodes.extend(page_nodes)
+    thread["comments"] = {"nodes": nodes}
+
+
+def _paginate_review_thread_nodes(
+    threads: list[Any],
+) -> None:
+    for thread in threads:
+        if not isinstance(thread, dict):
+            raise TypeError("GitHub reviewThreads connection has malformed node")
+        _paginate_thread_comments(thread)
+
+
 def fetch_pull_request(repo: str, pr_number: int) -> dict[str, Any]:
     """Fetch a complete PR payload, paginating every review-bearing connection."""
 
@@ -170,6 +233,8 @@ def fetch_pull_request(repo: str, pr_number: int) -> dict[str, Any]:
     for connection in REVIEW_CONNECTIONS:
         nodes, page = _review_connection(pr, connection, require_page_info=True)
         nodes = list(nodes)
+        if connection == "reviewThreads":
+            _paginate_review_thread_nodes(nodes)
         query = _connection_query(connection)
         while page["hasNextPage"]:
             cursor = page.get("endCursor")
@@ -181,6 +246,8 @@ def fetch_pull_request(repo: str, pr_number: int) -> dict[str, Any]:
             )
             next_pr = _pull_request_from_graphql_payload(next_payload)
             page_nodes, page = _review_connection(next_pr, connection, require_page_info=True)
+            if connection == "reviewThreads":
+                _paginate_review_thread_nodes(page_nodes)
             nodes.extend(page_nodes)
         pr[connection] = {"nodes": nodes}
     return payload

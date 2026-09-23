@@ -290,7 +290,10 @@ class AcceptanceFixture:
         if not self.default_base_ref:
             raise AcceptanceFixtureError("default_base_ref must be non-empty")
         default_tip = _sha(payload.get("default_base_tip"), "default_base_tip")
-        branch_heads = _mapping(payload.get("branch_heads"), "branch_heads")
+        branch_heads = {
+            str(name): _sha(value, f"branch_heads[{name!r}]")
+            for name, value in _mapping(payload.get("branch_heads"), "branch_heads").items()
+        }
         if branch_heads.get(self.default_base_ref) != default_tip:
             raise AcceptanceFixtureError("default_base_tip must equal branch_heads[default_base_ref]")
         raw_prs = payload.get("pull_requests")

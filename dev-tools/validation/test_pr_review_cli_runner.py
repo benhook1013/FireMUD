@@ -428,7 +428,13 @@ class CliReviewRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / ".git").mkdir()
-            commands = FakeCommands(root, delay=0.06)
+            review_started = threading.Event()
+            allow_review_finish = threading.Event()
+            commands = FakeCommands(
+                root,
+                review_started=review_started,
+                allow_review_finish=allow_review_finish,
+            )
             results = []
             errors = []
 
@@ -441,9 +447,13 @@ class CliReviewRunnerTests(unittest.TestCase):
             first = threading.Thread(target=run)
             second = threading.Thread(target=run)
             first.start()
+            self.assertTrue(review_started.wait(timeout=3))
             second.start()
-            first.join()
-            second.join()
+            second.join(timeout=3)
+            self.assertFalse(second.is_alive())
+            allow_review_finish.set()
+            first.join(timeout=3)
+            self.assertFalse(first.is_alive())
             self.assertEqual(len(results), 1)
             self.assertEqual(len(errors), 1)
             self.assertIn("already running", errors[0])
