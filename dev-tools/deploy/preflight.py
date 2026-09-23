@@ -138,6 +138,14 @@ GRPC_TLS_PATH_NAMES = (
     "FIREMUD_GRPC_PRIVATE_KEY_PATH",
     "FIREMUD_GRPC_CA_CERT_PATH",
 )
+PUBLICATION_GRPC_WORKLOADS = (
+    "game-design-service",
+    "world-management-service",
+    "entity-management-service",
+    "game-logic-service",
+    "automation-scripting-service",
+)
+PUBLICATION_GRPC_SECRET_KEYS = {"ca.crt", "tls.crt", "tls.key"}
 BASE_SECRET_COMPLIANCE_CLASSES = frozenset(
     {
         "jwt-signing-keys-jwks",
@@ -890,6 +898,45 @@ def expected_player_secret_bindings(
             "internalBindings.jwt.jwksRef",
         )
     )
+
+
+def publication_workload_secret_requirements(
+    expected: dict[str, Any],
+) -> tuple[tuple[str, str, set[str]], ...]:
+    """Resolve publication leaf Secrets in the namespace owned by expected bindings."""
+    namespace = secret_binding_namespace(get(expected, "internalBindings.postgres.credentialsRef"))
+    if namespace is None:
+        raise ValueError(
+            "Cannot resolve publication workload Secret namespace from internalBindings.postgres.credentialsRef"
+        )
+    return tuple(
+        (
+            f"firemud-grpc-{workload}",
+            namespace,
+            set(PUBLICATION_GRPC_SECRET_KEYS),
+        )
+        for workload in PUBLICATION_GRPC_WORKLOADS
+    )
+
+
+def publication_workload_secret_issues(
+    expected: dict[str, Any],
+) -> list[str]:
+    """Verify each required publication certificate Secret and its data keys."""
+    try:
+        requirements = publication_workload_secret_requirements(expected)
+    except ValueError as exc:
+        return [str(exc)]
+    issues = []
+    for secret_name, namespace, required_keys in requirements:
+        issue, _, _ = secret_keys_lookup_failure(
+            secret_name,
+            namespace,
+            required_keys,
+        )
+        if issue is not None:
+            issues.append(issue)
+    return issues
 
 
 def is_missing(value: Any) -> bool:
@@ -7109,11 +7156,30 @@ def main() -> int:
                 secret_check_failed = True
                 break
         if not secret_check_failed:
-            has_required_failure = append_result(
-                check_results,
-                "PREFLIGHT-SECRETS-001", True, "pass",
-                "Required player-facing Secrets exist in the target cluster",
-            ) or has_required_failure
+            publication_secret_issues = publication_workload_secret_issues(expected_bindings)
+            if publication_secret_issues:
+                has_required_failure = (
+                    append_result(
+                        check_results,
+                        "PREFLIGHT-SECRETS-001",
+                        True,
+                        "fail",
+                        "Publication workload certificate: " + "; ".join(publication_secret_issues),
+                    )
+                    or has_required_failure
+                )
+                secret_check_failed = True
+        if not secret_check_failed:
+            has_required_failure = (
+                append_result(
+                    check_results,
+                    "PREFLIGHT-SECRETS-001",
+                    True,
+                    "pass",
+                    "Required player-facing and publication workload Secrets and keys exist in the target cluster",
+                )
+                or has_required_failure
+            )
 
     jwks_namespace = secret_binding_namespace(
         get(expected_bindings, "internalBindings.jwt.jwksRef")

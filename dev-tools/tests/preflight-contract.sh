@@ -9215,6 +9215,78 @@ module = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
+publication_expected = module.load_yaml(
+    root / "design/operations/environments/production/expected-bindings.yaml"
+)
+publication_requirements = module.publication_workload_secret_requirements(
+    publication_expected
+)
+expected_publication_names = {
+    f"firemud-grpc-{workload}"
+    for workload in module.PUBLICATION_GRPC_WORKLOADS
+}
+if {name for name, _, _ in publication_requirements} != expected_publication_names:
+    raise SystemExit(
+        "publication Secret requirements do not cover exactly the five workload identities"
+    )
+if any(
+    namespace != "firemud"
+    or keys != {"ca.crt", "tls.crt", "tls.key"}
+    for _, namespace, keys in publication_requirements
+):
+    raise SystemExit(
+        "publication Secret requirements did not use expected-binding namespace and keys"
+    )
+
+publication_success_fixture = {
+    name: {"ca.crt", "tls.crt", "tls.key"}
+    for name, _, _ in publication_requirements
+}
+with patch.object(
+    module,
+    "secret_keys_lookup_failure",
+    side_effect=lambda name, namespace, required: (
+        (None, False, False)
+        if required <= publication_success_fixture[name]
+        else (f"Required Secret {namespace}/{name} is missing keys", True, False)
+    ),
+):
+    if module.publication_workload_secret_issues(publication_expected):
+        raise SystemExit("complete publication Secret fixture failed preflight")
+
+missing_publication_name = publication_requirements[0][0]
+with patch.object(
+    module,
+    "secret_keys_lookup_failure",
+    side_effect=lambda name, namespace, required: (
+        (f"Missing required Secret in cluster: {namespace}/{name}", True, False)
+        if name == missing_publication_name
+        else (None, False, False)
+    ),
+):
+    missing_secret_issues = module.publication_workload_secret_issues(
+        publication_expected
+    )
+if len(missing_secret_issues) != 1 or "Missing required Secret" not in missing_secret_issues[0]:
+    raise SystemExit(
+        f"missing publication Secret fixture did not fail closed: {missing_secret_issues}"
+    )
+
+with patch.object(
+    module,
+    "secret_keys_lookup_failure",
+    side_effect=lambda name, namespace, required: (
+        (f"Required Secret {namespace}/{name} is missing keys: tls.key", True, False)
+        if name == missing_publication_name
+        else (None, False, False)
+    ),
+):
+    missing_key_issues = module.publication_workload_secret_issues(publication_expected)
+if len(missing_key_issues) != 1 or "missing keys: tls.key" not in missing_key_issues[0]:
+    raise SystemExit(
+        f"missing publication Secret key fixture did not fail closed: {missing_key_issues}"
+    )
+
 namespace = "pr-42"
 release = "pr-42"
 node_port = 32007
