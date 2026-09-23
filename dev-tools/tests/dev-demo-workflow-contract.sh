@@ -29,6 +29,7 @@ annotator="$ROOT_DIR/dev-tools/hosted/dev-demo/annotate-dev-demo-namespace.sh"
 target_validator="$ROOT_DIR/dev-tools/hosted/dev-demo/validate-dev-demo-target.sh"
 runtime_rollout_waiter="$ROOT_DIR/dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh"
 standalone_grpc_tls="$ROOT_DIR/dev-tools/hosted/shared/ensure-grpc-tls-secret.sh"
+certificate_generator="$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh"
 
 contains_literal() {
   grep -Fq -- "$2" "$1" || {
@@ -38,6 +39,10 @@ contains_literal() {
 }
 
 bash -n "$standalone_grpc_tls" "$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh"
+# This is a literal source snippet; expansion would change what the contract checks.
+# shellcheck disable=SC2016
+contains_literal "$certificate_generator" \
+  'openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$output_key"'
 # These are literal source snippets; expansion would change what the contract checks.
 # shellcheck disable=SC2016
 for required in \
@@ -93,6 +98,21 @@ echo "dev-demo certificate fixture: generating canonical workload certificate" >
   "$certificate_fixture_dir/ca.crt" "$certificate_fixture_dir/ca.key" \
   "$certificate_fixture_dir/valid.crt" "$certificate_fixture_dir/valid.key" \
   pr-42 game-design-service
+key_pem_label="$(head -n 1 "$certificate_fixture_dir/valid.key")"
+[[ "$key_pem_label" == '-----BEGIN PRIVATE KEY-----' ]] || {
+  echo "generated publication key is not PKCS#8: $key_pem_label" >&2
+  exit 1
+}
+key_profile="$(openssl pkey -in "$certificate_fixture_dir/valid.key" -text -noout 2>/dev/null \
+  | head -n 1)"
+if ! grep -Eq '^Private-Key: \(2048 bit(, [0-9]+ primes)?\)$' <<<"$key_profile"; then
+  echo "generated publication key does not match the RSA 2048 profile: $key_profile" >&2
+  exit 1
+fi
+openssl pkey -in "$certificate_fixture_dir/valid.key" -check -noout >/dev/null 2>&1 || {
+  echo "generated publication key failed OpenSSL key validation" >&2
+  exit 1
+}
 echo "dev-demo certificate fixture: canonical workload certificate generated" >&2
 
 make_profile_certificate() {

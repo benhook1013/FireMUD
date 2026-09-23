@@ -88,6 +88,14 @@ class DeploymentRolloutServiceTest {
               readyDeployment(
                   workload, Map.of(HostedIdentityContract.GRPC_REVISION_ANNOTATION, revision), 3L));
     }
+    ArgumentCaptor<Deployment> replacement = ArgumentCaptor.forClass(Deployment.class);
+    when(graph.resources().get("game-logic-service").get())
+        .thenReturn(
+            readyDeployment(
+                "game-logic-service",
+                Map.of(HostedIdentityContract.GRPC_REVISION_ANNOTATION, "publication-old"),
+                3L))
+        .thenAnswer(invocation -> replacement.getValue());
     ReplaceDeletable<Deployment> lockedGameLogic = mock(ReplaceDeletable.class);
     when(graph.resources().get("game-logic-service").lockResourceVersion("rv-3"))
         .thenReturn(lockedGameLogic);
@@ -111,7 +119,6 @@ class DeploymentRolloutServiceTest {
     assertEquals(false, result.ready());
     assertEquals(true, result.telnetReady());
     assertEquals(false, result.grpcReady());
-    ArgumentCaptor<Deployment> replacement = ArgumentCaptor.forClass(Deployment.class);
     verify(lockedGameLogic).replace(replacement.capture());
     assertEquals(
         "publication-current",
@@ -122,6 +129,29 @@ class DeploymentRolloutServiceTest {
             .getMetadata()
             .getAnnotations()
             .get(HostedIdentityContract.GRPC_REVISION_ANNOTATION));
+
+    Deployment converged = replacement.getValue();
+    converged.getMetadata().setGeneration(4L);
+    converged.getStatus().setObservedGeneration(4L);
+    DeploymentRolloutService.RolloutResult secondResult =
+        new DeploymentRolloutService()
+            .sync(
+                graph.client(),
+                plan,
+                "telnet-current",
+                "gateway-current",
+                "grpc-current",
+                publicationRevisions,
+                () -> {});
+
+    assertEquals(true, secondResult.ready());
+    assertEquals(true, secondResult.telnetReady());
+    assertEquals(true, secondResult.grpcReady());
+    assertEquals(4L, converged.getMetadata().getGeneration());
+    assertEquals(4L, converged.getStatus().getObservedGeneration());
+    verify(graph.resources().get("game-logic-service"), times(2)).get();
+    verify(graph.resources().get("game-logic-service")).lockResourceVersion("rv-3");
+    verify(lockedGameLogic, times(1)).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
     for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
       if (!"game-logic-service".equals(workload)) {
         verify(graph.resources().get(workload), never()).lockResourceVersion(anyString());
