@@ -282,6 +282,31 @@ class ReviewStateStackTest(unittest.TestCase):
         target = select_review_target(state, Channel.CLI, (1,), {1: history})
         self.assertEqual(target.status, ReviewStatus.READY)
 
+    def test_status_only_tail_cannot_hide_completed_review_taper_or_blocker(self):
+        state = ReviewState(ordered_prs=(1,))
+        reviews = tuple(
+            Evidence(1, "current", f"review-{index}", anchored=True, completed=True, attributable=True)
+            for index in range(3)
+        )
+        old_pending_capture = Evidence(
+            1,
+            "old",
+            "pending-capture:run-old",
+            completed=False,
+            attributable=False,
+            anchored=False,
+            held=False,
+        )
+        history = (*reviews, old_pending_capture)
+        self.assertEqual(completion_status(state, Channel.CLI, history), ReviewStatus.COMPLETE)
+        self.assertEqual(
+            select_review_target(state, Channel.CLI, (1,), {1: history}).status,
+            ReviewStatus.COMPLETE,
+        )
+
+        held_capture = dataclasses.replace(old_pending_capture, held=True)
+        self.assertEqual(completion_status(state, Channel.CLI, (*reviews, held_capture)), ReviewStatus.HELD)
+
     def test_readable_historical_evidence_without_modern_anchor_cannot_taper(self):
         history = tuple(
             Evidence(1, "h", f"legacy-{index}", completed=True, attributable=True, anchored=False) for index in range(3)

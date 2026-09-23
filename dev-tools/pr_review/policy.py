@@ -116,12 +116,24 @@ def _valid_complete(evidence: Evidence, channel: Channel | str | None = None) ->
     )
 
 
+def _review_entries(history: Iterable[Evidence | Mapping[str, Any]]) -> list[Evidence]:
+    """Return attributable completed checkpoints, excluding status observations."""
+
+    return [
+        item
+        for value in history
+        if not (item := Evidence.from_value(value)).correction
+        and item.completed is True
+        and item.attributable is True
+    ]
+
+
 def taper_satisfied(channel: Channel | str, history: Iterable[Evidence | Mapping[str, Any]], required: int) -> bool:
     """Return true only for a trailing run of completed, non-provisional zero-accepted reviews."""
 
     if required < 0:
         raise ValueError("required taper must be non-negative")
-    values = [item for value in history if not (item := Evidence.from_value(value)).correction]
+    values = _review_entries(history)
     if not values:
         return required == 0
     latest_head = values[-1].head
@@ -168,10 +180,17 @@ def completion_status(
     history = [item for value in evidence if not (item := Evidence.from_value(value)).correction]
     if not history:
         return ReviewStatus.MISSING_EVIDENCE
-    latest = history[-1]
-    blocked = _blocked(latest, reconciliation)
+    for item in history:
+        blocked = _blocked(item, None)
+        if blocked:
+            return blocked
+    reviews = _review_entries(history)
+    blocked = _blocked(Evidence(history[0].pr, "", ""), reconciliation)
     if blocked:
         return blocked
+    if not reviews:
+        return ReviewStatus.READY
+    latest = reviews[-1]
     reconciliation_value = reconciliation.value if isinstance(reconciliation, ReconciliationStatus) else reconciliation
     if reconciliation_value == ReconciliationStatus.PATCH_CHANGED.value:
         return ReviewStatus.READY
@@ -220,8 +239,15 @@ def select_review_target(
     for pr in live_prs:
         history = evidence_by_pr.get(pr, ())
         evidence = [item for value in history if not (item := Evidence.from_value(value)).correction]
-        latest = evidence[-1] if evidence else Evidence(pr, "", "")
-        blocked = _blocked(latest, reconciliation_by_pr.get(pr))
+        reviews = _review_entries(evidence)
+        latest = reviews[-1] if reviews else Evidence(pr, "", "")
+        blocked = None
+        for item in evidence:
+            blocked = _blocked(item, None)
+            if blocked:
+                break
+        if blocked is None:
+            blocked = _blocked(latest, reconciliation_by_pr.get(pr))
         if blocked:
             return ChannelDecision(selected, pr, blocked, f"{pr} is {blocked.value.lower()}", latest.provisional)
         status = completion_status(
