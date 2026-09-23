@@ -943,6 +943,49 @@ class ControllerTests(unittest.TestCase):
         controller.git.heads["feature-2"] = "8" * 40
         self.assertEqual(controller.status()["prs"][1]["reconciliation"], "PARENT_MOVED")
 
+    def test_reconciled_parent_move_classifies_review_by_patch_identity(self):
+        values = {1: pr(1, HEAD_1), 2: pr(2, HEAD_2, "feature-1", HEAD_1)}
+        for prior_patch_id, expected_channel_status in (
+            (f"patch-{HEAD_2[:4]}", "EQUIVALENT_HISTORY"),
+            ("different-patch", "PATCH_CHANGED"),
+        ):
+            with self.subTest(expected_channel_status=expected_channel_status):
+                evidence = {
+                    (2, "cli"): [
+                        {
+                            "pr": 2,
+                            "head": HEAD_2,
+                            "checkpoint": "cli-before-parent-move",
+                            "completed": True,
+                            "anchored": True,
+                            "attributable": True,
+                            "child_head": HEAD_2,
+                            "parent_identity": "1",
+                            "parent_head": PARENT,
+                            "merge_base": BASE,
+                            "patch_id": prior_patch_id,
+                        }
+                    ]
+                }
+                controller = self.make(
+                    values,
+                    evidence,
+                    heads={"feature-1": HEAD_1, "feature-2": HEAD_2},
+                )
+                controller.set_stack([1, 2])
+                controller.decide_reconciliation(
+                    pr=2,
+                    channel="cli",
+                    checkpoint="cli-before-parent-move",
+                    prior_head=HEAD_2,
+                    reason="reconcile the child after its parent advanced",
+                )
+
+                _, reconciliation = controller._reconciliation(controller._state())
+
+                self.assertEqual(reconciliation.status_for(2), "COHERENT")
+                self.assertEqual(reconciliation.status_for(2, "cli"), expected_channel_status)
+
     def test_later_channel_anchor_cannot_downgrade_parent_moved_or_unreconciled(self):
         moved_evidence = {
             (1, "hosted"): [

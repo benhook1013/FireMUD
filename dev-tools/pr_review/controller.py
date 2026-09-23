@@ -656,7 +656,12 @@ class ReviewController:
                     continue
                 if classification == stack.ReconciliationStatus.PARENT_MOVED:
                     if pr in reconciled:
-                        set_channel_anchor_status(pr, channel, stack.ReconciliationStatus.PATCH_CHANGED)
+                        channel_status = (
+                            stack.ReconciliationStatus.EQUIVALENT_HISTORY
+                            if values["patch_id"] == current.patch_id
+                            else stack.ReconciliationStatus.PATCH_CHANGED
+                        )
+                        set_channel_anchor_status(pr, channel, channel_status)
                     else:
                         set_anchor_status(
                             pr, stack.ReconciliationStatus.PARENT_MOVED, "review evidence is anchored to a moved parent"
