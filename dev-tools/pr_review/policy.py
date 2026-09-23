@@ -125,6 +125,7 @@ def _review_entries(history: Iterable[Evidence | Mapping[str, Any]]) -> list[Evi
         if not (item := Evidence.from_value(value)).correction
         and item.completed is True
         and item.attributable is True
+        and item.provisional is False
     ]
 
 
@@ -202,8 +203,6 @@ def completion_status(
         value = override.hosted_zero_useful if selected == Channel.HOSTED else override.cli_zero_useful
         if value is not None:
             required = value
-    if latest.provisional:
-        return ReviewStatus.PROVISIONAL
     if reconciliation_value == ReconciliationStatus.EQUIVALENT_HISTORY.value:
         judgment = _judgment(state, selected, latest)
         if judgment is None:

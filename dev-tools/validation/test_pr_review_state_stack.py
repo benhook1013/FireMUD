@@ -357,7 +357,83 @@ class ReviewStateStackTest(unittest.TestCase):
             for i in range(3)
         )
         target = select_review_target(state, Channel.CLI, (1,), {1: provisional})
-        self.assertEqual(target.status, ReviewStatus.PROVISIONAL)
+        self.assertEqual(target.status, ReviewStatus.READY)
+        self.assertFalse(target.provisional)
+        self.assertFalse(taper_satisfied(Channel.CLI, provisional, 3))
+
+    def test_provisional_history_does_not_override_equivalent_history_judgment(self):
+        reviewed = tuple(
+            Evidence(1, "h1", f"c{i}", patch_id="p1", anchored=True, completed=True, attributable=True)
+            for i in range(3)
+        )
+        provisional = Evidence(
+            1,
+            "h2",
+            "provisional-h2",
+            patch_id="p2",
+            anchored=True,
+            completed=True,
+            attributable=True,
+            provisional=True,
+        )
+        state = ReviewState(ordered_prs=(1,))
+        history = (*reviewed, provisional)
+        self.assertEqual(
+            completion_status(
+                state,
+                Channel.CLI,
+                history,
+                reconciliation=ReconciliationStatus.EQUIVALENT_HISTORY,
+            ),
+            ReviewStatus.JUDGMENT_REQUIRED,
+        )
+        target = select_review_target(
+            state,
+            Channel.CLI,
+            (1,),
+            {1: history},
+            reconciliation_by_pr={1: ReconciliationStatus.EQUIVALENT_HISTORY},
+        )
+        self.assertEqual(target.status, ReviewStatus.JUDGMENT_REQUIRED)
+
+        judged = ReviewState(
+            ordered_prs=(1,),
+            judgments=(Judgment(1, "cli", "retain", "h1", "c2", "retain reviewed history", "p1"),),
+        )
+        self.assertEqual(
+            completion_status(
+                judged,
+                Channel.CLI,
+                history,
+                reconciliation=ReconciliationStatus.EQUIVALENT_HISTORY,
+            ),
+            ReviewStatus.COMPLETE,
+        )
+
+    def test_all_provisional_history_is_ready_after_reconciliation(self):
+        provisional = tuple(
+            Evidence(1, "h2", f"provisional-{i}", anchored=True, completed=True, attributable=True, provisional=True)
+            for i in range(3)
+        )
+        state = ReviewState(ordered_prs=(1,))
+        self.assertEqual(
+            completion_status(
+                state,
+                Channel.CLI,
+                provisional,
+                reconciliation=ReconciliationStatus.EQUIVALENT_HISTORY,
+            ),
+            ReviewStatus.READY,
+        )
+        target = select_review_target(
+            state,
+            Channel.CLI,
+            (1,),
+            {1: provisional},
+            reconciliation_by_pr={1: ReconciliationStatus.EQUIVALENT_HISTORY},
+        )
+        self.assertEqual(target.status, ReviewStatus.READY)
+        self.assertFalse(target.provisional)
 
     def test_judgment_cannot_apply_to_another_pr_with_same_head_and_checkpoint(self):
         history = tuple(

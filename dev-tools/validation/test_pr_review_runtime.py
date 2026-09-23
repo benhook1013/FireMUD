@@ -814,6 +814,53 @@ class RuntimeTest(unittest.TestCase):
         self.assertTrue(any(item.get("over_ceiling") for item in hosted_history))
         self.assertTrue(any(item.get("over_ceiling") for item in cli_history))
 
+    def test_file_ceiling_skip_is_scoped_to_the_current_head_and_later_completion_clears_it(self) -> None:
+        old_head = "d" * 40
+        old_summary = {
+            "databaseId": 19,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": (
+                f"<!-- walkthrough_start -->\nReviewing files that changed from the base of the PR and between "
+                f"`{BASE}` and `{old_head}`."
+            ),
+            "createdAt": "2026-09-23T00:03:00Z",
+        }
+        skip = {
+            "databaseId": 20,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": (
+                "<!-- This is an auto-generated comment: skip review by coderabbit.ai -->\n"
+                "Your plan exceeds the file limit for this review."
+            ),
+            "createdAt": "2026-09-23T00:04:00Z",
+        }
+        current_head_commit = {"nodes": [{"commit": {"oid": HEAD, "committedDate": "2026-09-23T00:05:00Z"}}]}
+        with tempfile.TemporaryDirectory() as directory:
+            stale_payload = self._payload([old_summary, skip])
+            stale_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
+            stale_history = self._history(Path(directory), stale_payload, "cli")
+            self.assertFalse(any(item.get("over_ceiling") for item in stale_history))
+
+            current_skip = {**skip, "createdAt": "2026-09-23T00:06:00Z"}
+            current_payload = self._payload([old_summary, current_skip])
+            current_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
+            current_history = self._history(Path(directory), current_payload, "cli")
+            self.assertTrue(any(item.get("over_ceiling") for item in current_history))
+
+            current_completion = {
+                "databaseId": 21,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": (
+                    f"<!-- walkthrough_start -->\nReviewing files that changed from the base of the PR and between "
+                    f"`{BASE}` and `{HEAD}`."
+                ),
+                "createdAt": "2026-09-23T00:07:00Z",
+            }
+            completed_payload = self._payload([old_summary, current_skip, current_completion])
+            completed_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
+            completed_history = self._history(Path(directory), completed_payload, "cli")
+            self.assertFalse(any(item.get("over_ceiling") for item in completed_history))
+
     def test_summary_selector_uses_current_head_updated_time_and_rejects_ties(self) -> None:
         first = {
             "databaseId": 31,

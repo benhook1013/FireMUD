@@ -277,6 +277,12 @@ class LiveEvidence:
                 )
         all_reviews = [*pull.get("comments", {}).get("nodes", []), *pull.get("reviews", {}).get("nodes", [])]
         latest_exact_completion = datetime.min.replace(tzinfo=timezone.utc)
+        current_head_commit_at = None
+        for node in (pull.get("commits") or {}).get("nodes", []):
+            commit = node.get("commit") if isinstance(node, dict) else None
+            if isinstance(commit, dict) and commit.get("oid") == head:
+                current_head_commit_at = hosted.parse_timestamp(commit.get("committedDate"))
+                break
         for item in all_reviews:
             if not github.is_coderabbit_login((item.get("author") or {}).get("login", "")):
                 continue
@@ -299,6 +305,7 @@ class LiveEvidence:
                 and _PLAN_CEILING_PATTERN.search(body)
                 and timestamp is not None
                 and timestamp >= latest_exact_completion
+                and (current_head_commit_at is None or timestamp >= current_head_commit_at)
             ):
                 values.append(
                     {
