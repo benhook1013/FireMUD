@@ -28,6 +28,15 @@ public class SubscriptionRepository {
         .fetch(this::toEntity);
   }
 
+  /** Shares the row lock with subscription writers through the JOIN commit boundary. */
+  public List<Subscription> findByTenantIdForUpdate(Long tenantId) {
+    return baseSelect()
+        .where(SUBSCRIPTION.TENANT_ID.eq(tenantId))
+        .orderBy(SUBSCRIPTION.ID.asc())
+        .forUpdate()
+        .fetch(this::toEntity);
+  }
+
   public List<Subscription> findByAccountId(Long accountId) {
     return baseSelect()
         .where(SUBSCRIPTION.ACCOUNT_ID.eq(accountId))
@@ -46,9 +55,11 @@ public class SubscriptionRepository {
               .set(SUBSCRIPTION.STARTED_AT, entity.getStartedAt())
               .set(SUBSCRIPTION.ENDED_AT, entity.getEndedAt())
               .set(SUBSCRIPTION.TENANT_ID, entity.getTenantId())
+              .set(SUBSCRIPTION.ENTITLEMENT_VERSION, 1L)
               .returningResult(SUBSCRIPTION.ID)
               .fetchOne(SUBSCRIPTION.ID);
       entity.setId(id);
+      entity.setEntitlementVersion(1L);
       return entity;
     }
     int updated =
@@ -59,11 +70,17 @@ public class SubscriptionRepository {
             .set(SUBSCRIPTION.STARTED_AT, entity.getStartedAt())
             .set(SUBSCRIPTION.ENDED_AT, entity.getEndedAt())
             .set(SUBSCRIPTION.TENANT_ID, entity.getTenantId())
-            .where(SUBSCRIPTION.ID.eq(entity.getId()))
+            .set(SUBSCRIPTION.ENTITLEMENT_VERSION, SUBSCRIPTION.ENTITLEMENT_VERSION.add(1L))
+            .where(
+                SUBSCRIPTION
+                    .ID
+                    .eq(entity.getId())
+                    .and(SUBSCRIPTION.ENTITLEMENT_VERSION.eq(entity.getEntitlementVersion())))
             .execute();
     if (updated != 1) {
       throw JooqAccountRepositorySupport.staleWrite("subscription", entity.getId());
     }
+    entity.setEntitlementVersion(entity.getEntitlementVersion() + 1L);
     return entity;
   }
 
@@ -86,6 +103,7 @@ public class SubscriptionRepository {
             SUBSCRIPTION.STARTED_AT,
             SUBSCRIPTION.ENDED_AT,
             SUBSCRIPTION.TENANT_ID,
+            SUBSCRIPTION.ENTITLEMENT_VERSION,
             ACCOUNTS.ID,
             ACCOUNTS.USERNAME,
             ACCOUNTS.EMAIL,
@@ -115,6 +133,7 @@ public class SubscriptionRepository {
     entity.setStartedAt(record.get(SUBSCRIPTION.STARTED_AT));
     entity.setEndedAt(record.get(SUBSCRIPTION.ENDED_AT));
     entity.setTenantId(record.get(SUBSCRIPTION.TENANT_ID));
+    entity.setEntitlementVersion(record.get(SUBSCRIPTION.ENTITLEMENT_VERSION));
     return entity;
   }
 }

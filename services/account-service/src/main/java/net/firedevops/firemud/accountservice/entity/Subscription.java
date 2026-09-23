@@ -27,4 +27,5 @@ public class Subscription {
   private LocalDateTime startedAt;
   private LocalDateTime endedAt;
   private Long tenantId;
+  private long entitlementVersion = 1L;
 }

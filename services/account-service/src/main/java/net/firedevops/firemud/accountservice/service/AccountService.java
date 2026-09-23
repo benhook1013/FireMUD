@@ -10,6 +10,11 @@ import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
 import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
+import net.firedevops.firemud.accountservice.dto.DirectTextCallerContext;
+import net.firedevops.firemud.accountservice.dto.DirectTextJoinScope;
+import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
+import net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest;
+import net.firedevops.firemud.accountservice.dto.JoinPublicProductionResult;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.PlayerBootstrapResult;
 import net.firedevops.firemud.accountservice.dto.ProfileDto;
@@ -46,6 +51,15 @@ public interface AccountService {
       String bootstrapToken, String worldSlug, String realmSlug, String connectScopeId);
 
   ConnectTokenResult issueConnectToken(String bootstrapToken, ConnectTokenRequest request);
+
+  JoinPublicProductionResult joinPublicProduction(
+      String bootstrapToken, JoinPublicProductionRequest request);
+
+  DirectTextJoinScope issueDirectTextConnectScope(
+      DirectTextCallerContext caller, DirectTextJoinTarget target);
+
+  JoinPublicProductionResult joinPublicProductionFromGameSession(
+      DirectTextCallerContext caller, JoinPublicProductionRequest request);
 
   RuntimeMembershipDto getTenantMembershipForRuntime(
       Long accountId, Long tenantId, String requestId);

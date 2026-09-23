@@ -274,6 +274,7 @@ These modes are complementary: public browse remains available before authentica
 - The canonical `JOIN` idempotency digest is `SHA-256` over the UTF-8 bytes of this exact newline-delimited preimage, including the final newline and preserving this field order:
 
   ```text
+  joinDigestVersion=v1
   operationKind=JOIN
   accountId=<authenticated accountId>
   callerBinding=<validated caller binding>
@@ -282,12 +283,16 @@ These modes are complementary: public browse remains available before authentica
   realmSlug=<resolved realmSlug>
   playableStateNamespaceId=<bound playableStateNamespaceId>
   playableStateScope=<bound playableStateScope>
+  gameInstanceId=<bound gameInstanceId>
   connectScopeId=<verified connectScopeId>
   catalogRevision=<bound catalogRevision>
   pointerVersion=<bound pointerVersion>
+  entitlementAuthorityAvailability=<AVAILABLE|UNAVAILABLE|NOT_EVALUATED>
+  [allowPublicJoin=<exact authoritative boolean>]
+  [entitlementVersion=<exact authoritative version>]
   ```
 
-  Field names, separators, and the final newline are literal ASCII bytes; values are the exact canonical UTF-8 wire strings from the authenticated caller binding and verified scope and may not contain `=` or a newline. No trimming, case folding, Unicode normalization, alternate serialization, or client-supplied replacement is permitted. Account stores the resulting `requestDigest` with the `requestId`; an exact retry replays the stored outcome and a different digest returns `IDEMPOTENCY_CONFLICT`.
+  Field names, separators, and the final newline are literal ASCII bytes; values are the exact canonical UTF-8 wire strings from the authenticated caller binding and verified scope and may not contain `=` or a newline. No trimming, case folding, Unicode normalization, alternate serialization, or client-supplied replacement is permitted. Account calculates this unpublished pre-v1 `v1` digest only after establishing entitlement authority availability; when `AVAILABLE`, both policy lines are required and `allowPublicJoin` is lowercase `true` or `false` with a positive canonical decimal `entitlementVersion`. When authority is `UNAVAILABLE` or routing failed before policy evaluation (`NOT_EVALUATED`), both policy lines are omitted entirely, not filled with synthetic values. Account stores the digest version and exact availability/policy evidence with the `requestId`; an exact retry replays the stored outcome and a different digest returns `IDEMPOTENCY_CONFLICT`. No earlier JOIN digest was persisted, so no version-compatibility path is required.
 - Account validates the caller binding, `connectScopeId`/`connectScopeSnapshotDigest`, scope validity, expiry, and exact bound routing snapshot `{tenantId, realmId, worldSlug, realmSlug, playableStateNamespaceId, playableStateScope, gameInstanceId, catalogRevision, pointerVersion, evaluatedAt, connectScopeExpiresAt}` before applying the join operation; `evaluatedAt` is the same immutable, canonical UTC RFC3339 value committed in the scope record and hashed by `connectScopeSnapshotDigest/v1`. A non-public target additionally requires exact `playtestLifecycleId` and positive `playtestStateGeneration`, while public production omits both. A missing, expired, or mismatched retained scope fails closed and requires fresh authenticated `REALMS` discovery. An unavailable authority dependency returns `AUTH_UNAVAILABLE` and does not permit selector fallback; reachable invalid or contradictory scope evidence returns the applicable scope failure. The server must not re-resolve a stale selector or accept client-supplied target fields as fallback.
 
 Normative semantic split:

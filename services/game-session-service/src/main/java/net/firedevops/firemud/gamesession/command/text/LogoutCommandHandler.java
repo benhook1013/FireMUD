@@ -8,6 +8,7 @@ import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
+import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -17,6 +18,7 @@ import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /** Handles deliberate player logout distinct from reconnect-loss recovery. */
@@ -29,7 +31,9 @@ public final class LogoutCommandHandler {
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService;
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
   private final ScriptEventPublisher scriptEventPublisher;
+  private final DirectTextConnectScopeSessionStore directTextConnectScopeSessionStore;
 
+  @Autowired
   public LogoutCommandHandler(
       SessionAuthenticationService sessionAuthenticationService,
       SessionContextService sessionContextService,
@@ -37,7 +41,8 @@ public final class LogoutCommandHandler {
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       GameplayPresenceLifecycleService gameplayPresenceLifecycleService,
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
-      ScriptEventPublisher scriptEventPublisher) {
+      ScriptEventPublisher scriptEventPublisher,
+      DirectTextConnectScopeSessionStore directTextConnectScopeSessionStore) {
     this.sessionAuthenticationService =
         Objects.requireNonNull(
             sessionAuthenticationService, "sessionAuthenticationService must not be null");
@@ -57,6 +62,29 @@ public final class LogoutCommandHandler {
             firstPartyConnectContextRegistry, "firstPartyConnectContextRegistry must not be null");
     this.scriptEventPublisher =
         Objects.requireNonNull(scriptEventPublisher, "scriptEventPublisher must not be null");
+    this.directTextConnectScopeSessionStore =
+        Objects.requireNonNull(
+            directTextConnectScopeSessionStore,
+            "directTextConnectScopeSessionStore must not be null");
+  }
+
+  public LogoutCommandHandler(
+      SessionAuthenticationService sessionAuthenticationService,
+      SessionContextService sessionContextService,
+      GameInstanceService gameInstanceService,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      GameplayPresenceLifecycleService gameplayPresenceLifecycleService,
+      FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
+      ScriptEventPublisher scriptEventPublisher) {
+    this(
+        sessionAuthenticationService,
+        sessionContextService,
+        gameInstanceService,
+        gameplayAdmissionPointerAuthorityService,
+        gameplayPresenceLifecycleService,
+        firstPartyConnectContextRegistry,
+        scriptEventPublisher,
+        new DirectTextConnectScopeSessionStore());
   }
 
   public LogoutCommandHandlingResult handle(String sessionId, TextCommand command) {
@@ -83,6 +111,7 @@ public final class LogoutCommandHandler {
           context.sessionId(), AccountRecentPresenceDisposition.LOGOUT);
       firstPartyConnectContextRegistry.unregister(context.sessionId());
       sessionContextService.deleteBySessionId(context.tenantId(), context.sessionId());
+      directTextConnectScopeSessionStore.clearSession(context.sessionId());
       return new LogoutCommandHandlingResult(
           CommandEnqueueResult.success(),
           List.of(PlayerOutput.notice("Logged out.", "notice.logout.success", Map.of())));

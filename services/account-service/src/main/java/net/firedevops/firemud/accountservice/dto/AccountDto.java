@@ -8,5 +8,5 @@ public record AccountDto(
     Long id,
     @NotNull @Size(max = 50) String username,
     @NotNull @Email @Size(max = 100) String email,
-    @NotNull @Size(max = 20) String role,
+    @Size(max = 20) String role,
     boolean emailVerified) {}

@@ -37,6 +37,8 @@ class AccountRepositoryIntegrationTest {
       "account_migration_collision_proof";
   private static final String PROFILE_IDENTITY_MIGRATION_PROOF_SCHEMA =
       "account_profile_identity_migration_proof";
+  private static final String GLOBAL_REGISTRATION_MIGRATION_PROOF_SCHEMA =
+      "account_global_registration_migration_proof";
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -284,6 +286,104 @@ class AccountRepositoryIntegrationTest {
                     303L)
                 .fetchOne(0, Long.class))
         .isEqualTo(2L);
+  }
+
+  @Test
+  void globalRegistrationMigrationPreservesAndQuarantinesUnprovenTenantRows() {
+    String schema = GLOBAL_REGISTRATION_MIGRATION_PROOF_SCHEMA;
+    Flyway.configure()
+        .dataSource(dataSource)
+        .locations(MIGRATION_LOCATION)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .target("25")
+        .load()
+        .migrate();
+
+    long legacyAccountId =
+        Objects.requireNonNull(
+                (Number)
+                    dsl.fetchValue(
+                        "INSERT INTO "
+                            + schema
+                            + ".accounts (username, email, password_hash, tenant_id) "
+                            + "VALUES ('legacy-global', 'legacy-global@example.com', 'hash', 1) RETURNING id"))
+            .longValue();
+    dsl.execute(
+        "INSERT INTO " + schema + ".profiles (account_id, tenant_id) VALUES (?, ?)",
+        legacyAccountId,
+        7L);
+    dsl.execute(
+        "INSERT INTO "
+            + schema
+            + ".account_tenant_membership (account_id, tenant_id, gameplay_admission_allowed) "
+            + "VALUES (?, ?, TRUE)",
+        legacyAccountId,
+        7L);
+
+    Flyway.configure()
+        .dataSource(dataSource)
+        .locations(MIGRATION_LOCATION)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .load()
+        .migrate();
+
+    assertThat(
+            dsl.fetchValue(
+                "SELECT tenant_id FROM " + schema + ".accounts WHERE id = ?", legacyAccountId))
+        .isEqualTo(1L);
+    assertThat(
+            dsl.fetchValue(
+                "SELECT disposition FROM "
+                    + schema
+                    + ".account_legacy_tenant_sources "
+                    + "WHERE account_id = ?",
+                legacyAccountId))
+        .isEqualTo("TENANT_MISMATCH");
+    assertThat(
+            dsl.fetchValue(
+                "SELECT original_gameplay_admission_allowed FROM "
+                    + schema
+                    + ".account_legacy_membership_sources WHERE account_id = ?",
+                legacyAccountId))
+        .isEqualTo(true);
+    assertThat(
+            dsl.fetchValue(
+                "SELECT gameplay_admission_allowed FROM "
+                    + schema
+                    + ".account_tenant_membership WHERE account_id = ?",
+                legacyAccountId))
+        .isEqualTo(false);
+    assertThat(
+            dsl.fetchValue(
+                "SELECT COUNT(*) FROM " + schema + ".profiles WHERE account_id = ?",
+                legacyAccountId))
+        .isEqualTo(1L);
+
+    long newAccountId =
+        Objects.requireNonNull(
+                (Number)
+                    dsl.fetchValue(
+                        "INSERT INTO "
+                            + schema
+                            + ".accounts (username, email, password_hash) "
+                            + "VALUES ('new-global', 'new-global@example.com', 'hash') RETURNING id"))
+            .longValue();
+    assertThat(
+            dsl.fetchValue(
+                "SELECT tenant_id FROM " + schema + ".accounts WHERE id = ?", newAccountId))
+        .isNull();
+    assertThat(
+            dsl.fetchValue("SELECT role FROM " + schema + ".accounts WHERE id = ?", newAccountId))
+        .isNull();
+    assertThat(
+            dsl.fetchValue(
+                "SELECT COUNT(*) FROM "
+                    + schema
+                    + ".account_tenant_membership WHERE account_id = ?",
+                newAccountId))
+        .isEqualTo(0L);
   }
 
   private Account account(String username, String email, AccountLifecycleState lifecycleState) {

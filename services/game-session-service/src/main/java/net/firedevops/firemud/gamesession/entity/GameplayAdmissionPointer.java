@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.entity;
 
 import java.time.Instant;
+import java.util.UUID;
 import lombok.Data;
 
 @Data
@@ -13,6 +14,9 @@ public class GameplayAdmissionPointer {
   private Long tenantId;
   private Long gameInstanceId;
   private Long pointerVersion;
+  private Long catalogRevision;
+  private UUID realmId;
+  private UUID playableStateNamespaceId;
   private boolean visible;
   private boolean publicProductionRealm;
   private boolean requiresCharacterSelection;

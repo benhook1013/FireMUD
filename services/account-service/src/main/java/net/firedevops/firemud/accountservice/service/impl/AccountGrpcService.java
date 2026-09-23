@@ -24,6 +24,10 @@ import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
+import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeRequest;
+import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse;
+import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipRequest;
+import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipResponse;
 import net.firedevops.firemud.account.v1.PingRequest;
 import net.firedevops.firemud.account.v1.PingResponse;
 import net.firedevops.firemud.account.v1.RequestEmailLoginOtpRequest;
@@ -32,6 +36,9 @@ import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.account.v1.UpdateProfileResponse;
 import net.firedevops.firemud.account.v1.VerifyEmailLoginOtpRequest;
 import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
+import net.firedevops.firemud.accountservice.dto.DirectTextCallerContext;
+import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
+import net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
 import net.firedevops.firemud.accountservice.service.AccountService;
@@ -40,12 +47,14 @@ import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExi
 import net.firedevops.firemud.accountservice.service.exception.AccountLifecycleException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.grpc.server.service.GrpcService;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -57,9 +66,15 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   private final PingService pingService;
   private final AccountService accountService;
   private final MeterRegistry meterRegistry;
+  private final String workloadNamespace;
 
   public AccountGrpcService(PingService pingService, AccountService accountService) {
-    this(pingService, accountService, null);
+    this(pingService, accountService, null, null);
+  }
+
+  public AccountGrpcService(
+      PingService pingService, AccountService accountService, MeterRegistry meterRegistry) {
+    this(pingService, accountService, meterRegistry, null);
   }
 
   @Autowired
@@ -67,10 +82,136 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       value = "EI_EXPOSE_REP2",
       justification = "Injected services and registry remain internal collaborators.")
   public AccountGrpcService(
-      PingService pingService, AccountService accountService, MeterRegistry meterRegistry) {
+      PingService pingService,
+      AccountService accountService,
+      MeterRegistry meterRegistry,
+      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
     this.pingService = pingService;
     this.accountService = accountService;
     this.meterRegistry = meterRegistry;
+    this.workloadNamespace = workloadNamespace;
+  }
+
+  @Override
+  @Timed(value = "accountGrpc.issueDirectTextConnectScope")
+  public void issueDirectTextConnectScope(
+      IssueDirectTextConnectScopeRequest request,
+      StreamObserver<IssueDirectTextConnectScopeResponse> responseObserver) {
+    IssueDirectTextConnectScopeResponse.Builder response =
+        IssueDirectTextConnectScopeResponse.newBuilder();
+    try {
+      requireGameSessionPeer();
+      DirectTextCallerContext caller = directTextCaller(request.getPlayerContext());
+      long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
+      long realmId = requirePositiveRequestId(request.getRealmId(), "realmId");
+      long gameInstanceId = requirePositiveRequestId(request.getGameInstanceId(), "gameInstanceId");
+      if (caller.tenantId() != tenantId
+          || caller.realmId() != realmId
+          || caller.gameInstanceId() != gameInstanceId
+          || !caller.playableStateNamespaceId().equals(request.getPlayableStateNamespaceId())
+          || !caller.playableStateScope().equals(request.getPlayableStateScope())) {
+        throw new InvalidRequestException("Player context and selected realm disagree", null);
+      }
+      var scope =
+          accountService.issueDirectTextConnectScope(
+              caller,
+              new DirectTextJoinTarget(
+                  tenantId,
+                  realmId,
+                  requireText(request.getWorldSlug(), "worldSlug"),
+                  requireText(request.getRealmSlug(), "realmSlug"),
+                  requireText(request.getPlayableStateNamespaceId(), "playableStateNamespaceId"),
+                  requireText(request.getPlayableStateScope(), "playableStateScope"),
+                  gameInstanceId,
+                  request.getCatalogRevision(),
+                  request.getPointerVersion()));
+      response
+          .setConnectScopeId(scope.connectScopeId())
+          .setConnectScopeExpiresAt(scope.connectScopeExpiresAt());
+    } catch (AdminAuthorizationException ex) {
+      response.setError(
+          appError("IssueDirectTextConnectScope", "PERMISSION_DENIED", ex.getMessage()));
+    } catch (AuthenticationException ex) {
+      response.setError(appError("IssueDirectTextConnectScope", ex.getCode(), ex.getMessage()));
+    } catch (InvalidRequestException | IllegalArgumentException ex) {
+      response.setError(
+          appError("IssueDirectTextConnectScope", "INVALID_ARGUMENT", ex.getMessage()));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "accountGrpc.joinPublicProductionMembership")
+  public void joinPublicProductionMembership(
+      JoinPublicProductionMembershipRequest request,
+      StreamObserver<JoinPublicProductionMembershipResponse> responseObserver) {
+    JoinPublicProductionMembershipResponse.Builder response =
+        JoinPublicProductionMembershipResponse.newBuilder();
+    try {
+      requireGameSessionPeer();
+      DirectTextCallerContext caller = directTextCaller(request.getPlayerContext());
+      String requestId = requireText(request.getRequestId(), "requestId");
+      if (!requestId.equals(caller.requestId())) {
+        throw new InvalidRequestException("Player context and JOIN request ID disagree", null);
+      }
+      var result =
+          accountService.joinPublicProductionFromGameSession(
+              caller,
+              new JoinPublicProductionRequest(
+                  requireText(request.getConnectScopeId(), "connectScopeId"), requestId));
+      response
+          .setSuccess(result.success())
+          .setOutcomeCode(result.outcomeCode())
+          .setAccountId(Long.toString(result.accountId()))
+          .setTenantId(Long.toString(result.tenantId()))
+          .setMembershipId(Long.toString(result.membershipId()))
+          .setMembershipVersion(result.membershipVersion())
+          .setMembershipAuthorityGeneration(result.membershipAuthorityGeneration())
+          .setReplayed(result.replayed());
+    } catch (AdminAuthorizationException ex) {
+      response.setError(
+          appError("JoinPublicProductionMembership", "PERMISSION_DENIED", ex.getMessage()));
+    } catch (AuthenticationException ex) {
+      response.setError(appError("JoinPublicProductionMembership", ex.getCode(), ex.getMessage()));
+    } catch (InvalidRequestException | IllegalArgumentException ex) {
+      response.setError(
+          appError("JoinPublicProductionMembership", "INVALID_ARGUMENT", ex.getMessage()));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  private void requireGameSessionPeer() {
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    if (peer == null
+        || workloadNamespace == null
+        || workloadNamespace.isBlank()
+        || !peer.uri()
+            .equals("spiffe://firemud/ns/" + workloadNamespace + "/sa/game-session-service")) {
+      throw new AdminAuthorizationException("Verified Game Session workload identity is required");
+    }
+  }
+
+  private DirectTextCallerContext directTextCaller(
+      net.firedevops.firemud.shared.v1.PlayerExecutionContext context) {
+    return new DirectTextCallerContext(
+        requirePositiveRequestId(context.getAccountId(), "accountId"),
+        requirePositiveRequestId(context.getTenantId(), "tenantId"),
+        requirePositiveRequestId(context.getRealmId(), "realmId"),
+        requireText(context.getPlayableStateNamespaceId(), "playableStateNamespaceId"),
+        requireText(context.getPlayableStateScope(), "playableStateScope"),
+        requirePositiveRequestId(context.getGameInstanceId(), "gameInstanceId"),
+        requireText(context.getSessionId(), "sessionId"),
+        context.getRequestId());
+  }
+
+  private String requireText(String value, String fieldName) {
+    int maxLength = "connectScopeId".equals(fieldName) ? 2048 : 128;
+    if (value == null || value.isBlank() || value.length() > maxLength) {
+      throw new InvalidRequestException(fieldName + " is required and bounded", null);
+    }
+    return value;
   }
 
   @Override
@@ -89,10 +230,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     try {
       net.firedevops.firemud.accountservice.dto.CreateAccountRequest dto =
           new net.firedevops.firemud.accountservice.dto.CreateAccountRequest(
-              requirePositiveRequestId(request.getTenantId(), "tenantId"),
-              request.getUsername(),
-              request.getEmail(),
-              request.getPassword());
+              request.getUsername(), request.getEmail(), request.getPassword());
       var account = accountService.createAccount(dto);
       CreateAccountResponse response =
           CreateAccountResponse.newBuilder().setAccountId(account.id().toString()).build();
@@ -221,6 +359,8 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .setMembershipExists(dto.membershipExists())
               .setGameplayAdmissionAllowed(dto.gameplayAdmissionAllowed())
               .setMembershipVersion(dto.membershipVersion())
+              .setMembershipLifecycleState(dto.membershipLifecycleState())
+              .setMembershipAuthorityGeneration(dto.membershipAuthorityGeneration())
               .setEvaluatedAt(dto.evaluatedAt())
               .build();
       responseObserver.onNext(response);
