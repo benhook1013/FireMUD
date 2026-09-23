@@ -914,6 +914,12 @@ jobs:
           fetch-depth: 2
           persist-credentials: false
 
+      - name: ⚙️ Set Up Python for Combined Coverage Verification
+        if: ${{ matrix.module == 'common-saga' }}
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: none
+
       - name: ⚙️ Set Up Java
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
