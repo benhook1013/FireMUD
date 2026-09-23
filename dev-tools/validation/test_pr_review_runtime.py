@@ -958,8 +958,15 @@ class RuntimeTest(unittest.TestCase):
             path = hosted.default_trigger_record_path("owner/repo", 42, common)
             self._posting_record(path)
             original = json.loads(path.read_text(encoding="utf-8"))
+            original_unlink = hosted.os.unlink
+
+            def fail_reservation_unlink(unlink_path, *args, **kwargs):
+                if Path(unlink_path) == path:
+                    raise PermissionError("injected reservation unlink failure")
+                return original_unlink(unlink_path, *args, **kwargs)
+
             with (
-                patch.object(hosted.os, "unlink", side_effect=PermissionError("injected reservation unlink failure")),
+                patch.object(hosted.os, "unlink", side_effect=fail_reservation_unlink),
                 self.assertRaisesRegex(PermissionError, "injected reservation unlink failure"),
             ):
                 self._dispatch_prepost_recovery(path, self._prepost_recovery_args())
