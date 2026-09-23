@@ -2565,6 +2565,24 @@ test ! -e "$FAKE_ANNOTATE_LOG"
 test ! -e "$FAKE_DISPATCH_LOG"
 
 reset_case
+reconciler_active_status_advance_output="$TEMP_DIR/reconciler-active-status-advance.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=head-901 \
+    FAKE_PR_901_PROOF_COMPLETE=false \
+    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[{"id":5256,"event":"branch","name":"Trusted Hosted Identity Request","head_branch":"feature-preview","display_title":"PR preview 901","status":"queued"},{"id":5256,"event":"workflow_run","name":"Trusted Hosted Identity Request","head_branch":"feature-preview","display_title":"PR preview 901","status":"in_progress"}]}]' \
+PREVIEW_MAX_ACTIVE=2 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_active_status_advance_output"
+grep -Fqx \
+  "Skipping proof retry for PR #901: preview source or trusted consumer run 5256 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
+  "$reconciler_active_status_advance_output"
+test ! -e "$FAKE_ANNOTATE_LOG"
+test ! -e "$FAKE_DISPATCH_LOG"
+
+reset_case
 reconciler_first_proof_retry_output="$TEMP_DIR/reconciler-first-proof-retry.out"
 (
   cd "$ROOT_DIR"

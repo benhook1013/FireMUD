@@ -663,7 +663,6 @@ jobs:
                           .name != $runs[0].name
                           or .head_branch != $runs[0].head_branch
                           or .display_title != $runs[0].display_title
-                          or .status != $runs[0].status
                         ) then
                           error("active preview workflow run metadata differs between query scopes")
                         else
