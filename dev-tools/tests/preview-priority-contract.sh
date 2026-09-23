@@ -412,7 +412,7 @@ fake_labels_json() {
   fi
   printf '%s' "$labels_json"
 }
-if [[ "$1" == api && "$resource" == */actions/runs\?branch=* ]]; then
+if [[ "$1" == api && ("$resource" == */actions/runs\?branch=* || "$resource" == */actions/runs\?event=pull_request_target\&status=*) ]]; then
   active_query_status="${resource##*&status=}"
   active_query_status="${active_query_status%%&*}"
   if [[ "${FAKE_ACTIVE_PREVIEW_RUNS_API_ERROR:-false}" == true ]]; then
@@ -2405,6 +2405,8 @@ grep -Fq 'case "$repair_status" in' "$RECONCILER_RUN"
 grep -Fq -- 'gh api --paginate --slurp' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert literal workflow source expressions.
 grep -Fq -- 'actions/runs?branch=${DEFAULT_BRANCH}&status=${active_status}&per_page=100' "$RECONCILER_RUN"
+# shellcheck disable=SC2016 # Assert the additional pull_request_target lookup without a branch filter.
+grep -Fq -- 'actions/runs?event=pull_request_target&status=${active_status}&per_page=100' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert each supported active status is queried independently.
 grep -Fq -- 'for active_status in requested queued in_progress waiting pending; do' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert the active-run lookup is fenced to the candidate dispatch title.
@@ -2502,6 +2504,24 @@ PREVIEW_MAX_ACTIVE=2 \
 grep -Fqx \
   "Skipping proof retry for PR #901: preview source or trusted consumer run 5253 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
   "$reconciler_source_title_consumer_output"
+test ! -e "$FAKE_ANNOTATE_LOG"
+test ! -e "$FAKE_DISPATCH_LOG"
+
+reset_case
+reconciler_pull_request_target_output="$TEMP_DIR/reconciler-pull-request-target.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=head-901 \
+    FAKE_PR_901_PROOF_COMPLETE=false \
+    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[{"id":5254,"name":"PR Preview Environment","head_branch":"feature-preview","display_title":"PR preview 901","status":"queued"}]}]' \
+PREVIEW_MAX_ACTIVE=2 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_pull_request_target_output"
+grep -Fqx \
+  "Skipping proof retry for PR #901: preview source or trusted consumer run 5254 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
+  "$reconciler_pull_request_target_output"
 test ! -e "$FAKE_ANNOTATE_LOG"
 test ! -e "$FAKE_DISPATCH_LOG"
 
@@ -3556,7 +3576,7 @@ assert run.count(
     "actions/runs?branch=${DEFAULT_BRANCH}&status=${active_status}&per_page=100"
 ) == 1
 candidate_rows_start = run.index("candidate_rows=")
-active_runs_start = run.index("active_preview_runs_json='[]'", candidate_rows_start)
+active_runs_start = run.index("active_preview_run_sets=()", candidate_rows_start)
 dispatch_call = run.index("dispatch_candidates <<<", active_runs_start)
 assert candidate_rows_start < active_runs_start < dispatch_call
 PY

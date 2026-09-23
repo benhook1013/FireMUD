@@ -522,42 +522,38 @@ jobs:
                 --arg pr_title "PR preview ${pr_number}" \
                 --arg run_name "Preview dispatch pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}" '
                     if type != "array" then
-                      error("workflow run pages are not an array")
+                      error("workflow runs are not an array")
                     else
-                      [
-                        .[] as $page
-                        | if ($page | type) != "object" or ($page.workflow_runs | type) != "array" then
-                            error("workflow run page is malformed")
-                          else
-                            $page.workflow_runs[]
-                          end
-                      ] as $runs
-                      | if any($runs[];
+                      if any(.[];
                           (type != "object")
                           or ((.id | type) != "number")
                           or ((.name | type) != "string")
                           or ((.head_branch | type) != "string")
                           or ((.display_title | type) != "string")
                           or ((.status | type) != "string")
+                          or ((.firemud_reconciler_branch_filtered | type) != "boolean")
                         ) then
-                          error("workflow run entry is malformed")
-                        else
-                          $runs[]
-                          | select(
-                              ((.name == $workflow_name) or (.name == $trusted_workflow_name))
-                              and .head_branch == $default_branch
-                              and (.display_title == $run_name or .display_title == $pr_title)
-                              and (
-                                .status == "requested"
-                                or .status == "queued"
-                                or .status == "in_progress"
-                                or .status == "waiting"
-                                or .status == "pending"
-                              )
+                        error("workflow run entry is malformed")
+                      else
+                        .[]
+                        | select(
+                            ((.name == $workflow_name) or (.name == $trusted_workflow_name))
+                            and (
+                              (.firemud_reconciler_branch_filtered == false)
+                              or (.firemud_reconciler_branch_filtered == true and .head_branch == $default_branch)
                             )
-                          | .id
-                        end
+                            and (.display_title == $run_name or .display_title == $pr_title)
+                            and (
+                              .status == "requested"
+                              or .status == "queued"
+                              or .status == "in_progress"
+                              or .status == "waiting"
+                              or .status == "pending"
+                            )
+                          )
+                        | .id
                       end
+                    end
                   ' <<<"${active_preview_runs_json}"
             )"; then
               echo "Unable to parse active preview workflow runs; refusing preview reconcile." >&2
@@ -606,25 +602,79 @@ jobs:
               | sort -t $'\t' -k1,1n -k2,2n
           )"
           if [[ -n "$candidate_rows" ]]; then
-            active_preview_runs_json='[]'
+            active_preview_run_sets=()
             for active_status in requested queued in_progress waiting pending; do
-              active_preview_run_pages_json=""
-              if ! active_preview_run_pages_json="$(
-                gh api --paginate --slurp \
-                  "repos/${GITHUB_REPOSITORY}/actions/runs?branch=${DEFAULT_BRANCH}&status=${active_status}&per_page=100"
-              )"; then
-                echo "Unable to inspect active preview workflow runs; refusing preview reconcile." >&2
-                exit 1
-              fi
-              if ! active_preview_runs_json="$(
-                jq -c -s '.[0] + .[1]' \
-                  <(printf '%s\n' "$active_preview_runs_json") \
-                  <(printf '%s\n' "$active_preview_run_pages_json")
-              )"; then
-                echo "Unable to aggregate active preview workflow runs; refusing preview reconcile." >&2
-                exit 1
-              fi
+              for active_run_scope in branch pull_request_target; do
+                if [[ "$active_run_scope" == branch ]]; then
+                  active_run_query="repos/${GITHUB_REPOSITORY}/actions/runs?branch=${DEFAULT_BRANCH}&status=${active_status}&per_page=100"
+                  active_run_branch_filtered=true
+                else
+                  active_run_query="repos/${GITHUB_REPOSITORY}/actions/runs?event=pull_request_target&status=${active_status}&per_page=100"
+                  active_run_branch_filtered=false
+                fi
+                if ! active_preview_run_pages_json="$(gh api --paginate --slurp "$active_run_query")"; then
+                  echo "Unable to inspect active preview workflow runs; refusing preview reconcile." >&2
+                  exit 1
+                fi
+                if ! active_preview_runs_for_query="$(
+                  jq -c \
+                    --argjson branch_filtered "$active_run_branch_filtered" '
+                      if type != "array" then
+                        error("workflow run pages are not an array")
+                      else
+                        [
+                          .[] as $page
+                          | if ($page | type) != "object" or ($page.workflow_runs | type) != "array" then
+                              error("workflow run page is malformed")
+                            else
+                              $page.workflow_runs[]
+                            end
+                          | if type != "object" then
+                              error("workflow run entry is malformed")
+                            else
+                              . + {firemud_reconciler_branch_filtered: $branch_filtered}
+                            end
+                        ]
+                      end
+                    ' <<<"$active_preview_run_pages_json"
+                )"; then
+                  echo "Unable to normalize active preview workflow runs; refusing preview reconcile." >&2
+                  exit 1
+                fi
+                active_preview_run_sets+=("$active_preview_runs_for_query")
+              done
             done
+            if ! active_preview_runs_json="$(
+              printf '%s\n' "${active_preview_run_sets[@]}" | jq -c -s '
+                if any(.[]; type != "array") then
+                  error("active preview workflow run result is not an array")
+                else
+                  add
+                  | group_by(.id)
+                  | map(
+                      . as $runs
+                      | if any($runs[];
+                          .name != $runs[0].name
+                          or .head_branch != $runs[0].head_branch
+                          or .display_title != $runs[0].display_title
+                          or .status != $runs[0].status
+                        ) then
+                          error("active preview workflow run metadata differs between query scopes")
+                        else
+                          $runs[0] + {
+                            firemud_reconciler_branch_filtered: all(
+                              $runs[];
+                              .firemud_reconciler_branch_filtered == true
+                            )
+                          }
+                        end
+                    )
+                end
+              '
+            )"; then
+              echo "Unable to merge active preview workflow runs; refusing preview reconcile." >&2
+              exit 1
+            fi
             dispatch_candidates <<<"$candidate_rows"
           fi
 
