@@ -71,7 +71,8 @@ def is_coderabbit_login(value: Any) -> bool:
 def run_gh_query(query: str, variables: dict[str, str | int]) -> dict[str, Any]:
     args = ["gh", "api", "graphql", "-f", f"query={query}"]
     for key, value in variables.items():
-        args.extend(["-F", f"{key}={value}"])
+        option = "-F" if isinstance(value, int) and not isinstance(value, bool) else "-f"
+        args.extend([option, f"{key}={value}"])
     try:
         completed = subprocess.run(
             args,

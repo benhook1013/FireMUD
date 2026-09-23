@@ -83,6 +83,34 @@ def trigger_record(head: str = HEAD):
 
 
 class GithubAndEvidenceTests(unittest.TestCase):
+    def test_graphql_variables_preserve_strings_and_type_only_non_boolean_integers(self):
+        query = "query($owner:String!, $repo:String!, $number:Int!, $after:String!) { viewer { login } }"
+        variables = {"owner": "123", "repo": "@project", "number": 42, "after": "007", "enabled": True}
+
+        with patch.object(github.subprocess, "run", return_value=SimpleNamespace(stdout="{}")) as run:
+            self.assertEqual(github.run_gh_query(query, variables), {})
+
+        self.assertEqual(
+            run.call_args.args[0],
+            [
+                "gh",
+                "api",
+                "graphql",
+                "-f",
+                f"query={query}",
+                "-f",
+                "owner=123",
+                "-f",
+                "repo=@project",
+                "-F",
+                "number=42",
+                "-f",
+                "after=007",
+                "-f",
+                "enabled=True",
+            ],
+        )
+
     def test_graphql_paginates_threads_comments_and_reviews(self):
         initial = {
             "data": {
