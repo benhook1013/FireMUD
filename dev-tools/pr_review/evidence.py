@@ -728,10 +728,7 @@ def _read_decisions(
 ) -> tuple[dict[int, tuple[str, str]], list[dict[str, Any]], bool]:
     if path is None:
         return {}, [], False
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError as exc:
-        raise CaptureUnavailable("decision records cannot be read") from exc
+    lines = _read_capture_text(path, "decision records").splitlines()
     decisions: dict[int, tuple[str, str]] = {}
     unlinked: list[dict[str, Any]] = []
     for number, line in enumerate(lines, 1):
@@ -773,9 +770,10 @@ def load_hosted_capture(repo: str, pr_number: int, review_id: int, common: Path 
     )
     if snapshot_path is None:
         raise CaptureUnavailable(f"hosted review snapshot {review_id} is missing")
+    snapshot_text = _read_capture_text(snapshot_path, "hosted review snapshot")
     try:
-        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        snapshot = json.loads(snapshot_text)
+    except json.JSONDecodeError as exc:
         raise CaptureInvalid("hosted review snapshot is unreadable or malformed") from exc
     if (
         not isinstance(snapshot, dict)

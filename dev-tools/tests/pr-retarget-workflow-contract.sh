@@ -334,10 +334,10 @@ for path in "$ci_path" "$security_path" "$smoke_path"; do
   require_contains "$path" 'types: [opened, synchronize, reopened, edited]'
 done
 
-require_exact_line "$security_path" '    name: Security Summary'
 # Metadata-only edits get distinct optional summary contexts; substantive events
 # retain each summary's canonical name.
 # shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
+assert_job_contains security.yml security-summary "name: \${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Security Summary)' || 'Security Summary' }}"
 assert_job_contains ci.yml validation-summary "name: \${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Validation Summary)' || 'Validation Summary' }}"
 assert_job_contains smoke.yml smoke-summary "name: \${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Summary)' || 'Smoke Summary' }}"
 # A metadata-only edit starts a non-required controller job so its preservation

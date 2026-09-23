@@ -177,6 +177,16 @@ def _review_connection(
     return nodes, page_info
 
 
+def _reject_incomplete_input_connection(connection: str, page_info: dict[str, Any] | None) -> None:
+    if page_info is None:
+        return
+    has_next_page = page_info.get("hasNextPage")
+    if not isinstance(has_next_page, bool):
+        raise TypeError(f"GitHub {connection} connection has malformed page info")
+    if has_next_page:
+        raise TypeError(f"GitHub {connection} connection has incomplete pages")
+
+
 def _thread_comments_from_graphql_payload(
     payload: dict[str, Any], thread_id: str
 ) -> tuple[list[Any], dict[str, Any] | None]:
@@ -269,7 +279,15 @@ def load_pull_request(input_path: str | Path | None, repo: str, pr_number: int) 
         raise TypeError("input payload must be a JSON object")
     pr = _pull_request_from_graphql_payload(payload)
     for connection in REVIEW_CONNECTIONS:
-        _review_connection(pr, connection, require_page_info=False)
+        nodes, page_info = _review_connection(pr, connection, require_page_info=False)
+        _reject_incomplete_input_connection(connection, page_info)
+        if connection == "reviewThreads":
+            for thread in nodes:
+                if isinstance(thread, dict) and "comments" in thread:
+                    _, thread_page_info = _review_connection(
+                        thread, "comments", require_page_info=False
+                    )
+                    _reject_incomplete_input_connection("review-thread comments", thread_page_info)
     return payload
 
 

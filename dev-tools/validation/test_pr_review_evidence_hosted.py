@@ -396,6 +396,47 @@ class GithubAndEvidenceTests(unittest.TestCase):
         )
         return evidence.load_cli_capture(checkpoint, REPO, PR, common)
 
+    def _hosted_capture_snapshot(self, common: Path) -> Path:
+        review_id = 99
+        capture_dir = common / "firemud" / f"hosted-review.{review_id}"
+        capture_dir.mkdir(parents=True)
+        snapshot_path = capture_dir / "snapshot.json"
+        snapshot_path.write_text(
+            json.dumps(
+                {
+                    "source": "hosted",
+                    "repository": REPO,
+                    "pull_request": PR,
+                    "review": {
+                        "id": review_id,
+                        "user": {"login": "coderabbitai[bot]"},
+                        "state": "COMMENTED",
+                        "submitted_at": "2026-09-23T00:00:00Z",
+                        "commit_id": HEAD,
+                    },
+                    "comments": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return snapshot_path
+
+    def test_hosted_capture_snapshot_invalid_utf8_is_capture_invalid(self):
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot_path = self._hosted_capture_snapshot(Path(directory))
+            snapshot_path.write_bytes(b"\xff\xfe")
+
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "not valid UTF-8"):
+                evidence.load_hosted_capture(REPO, PR, 99, Path(directory))
+
+    def test_hosted_capture_decisions_invalid_utf8_is_capture_invalid(self):
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot_path = self._hosted_capture_snapshot(Path(directory))
+            (snapshot_path.parent / "decisions.tsv").write_bytes(b"\xff\xfe")
+
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "not valid UTF-8"):
+                evidence.load_hosted_capture(REPO, PR, 99, Path(directory))
+
     def test_raw_positive_cli_capture_requires_complete_decisions_and_matching_accepted_count(self):
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)

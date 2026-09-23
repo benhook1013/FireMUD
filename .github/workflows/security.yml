@@ -202,7 +202,7 @@ jobs:
           fi
 
   security-summary:
-    name: Security Summary
+    name: ${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Security Summary)' || 'Security Summary' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
