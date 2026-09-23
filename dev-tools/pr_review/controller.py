@@ -998,10 +998,17 @@ class ReviewController:
         value = hosted_zero_useful if selected_channel == "hosted" else cli_zero_useful
         if value is None or not isinstance(value, int) or isinstance(value, bool) or value <= 0:
             raise ControllerError("a policy override must require at least one zero-useful review")
-        _, patch_id = self._validate_decision_identity(
+        normalized_head, patch_id = self._validate_decision_identity(
             pr, selected_channel, head, checkpoint, require_zero_useful=True
         )
-        override = PolicyOverride(hosted_zero_useful, cli_zero_useful, head, checkpoint, reason, patch_id)
+        override = PolicyOverride(
+            hosted_zero_useful,
+            cli_zero_useful,
+            normalized_head,
+            checkpoint,
+            reason,
+            patch_id,
+        )
         identity = f"{pr}:{channels[0]}"
         state = self.store.update(
             lambda current: dataclasses.replace(

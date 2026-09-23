@@ -429,12 +429,13 @@ class ControllerTests(unittest.TestCase):
         controller.set_stack([1])
         result = controller.decide_policy(
             pr=1,
-            head=HEAD_1,
+            head=HEAD_1.upper(),
             checkpoint="hosted-close",
             hosted_zero_useful=1,
             reason="narrow corrected-state close-out",
         )
         self.assertEqual(result["policy_override"]["patch_id"], f"patch-{HEAD_1[:4]}")
+        self.assertEqual(result["policy_override"]["head"], HEAD_1)
         self.assertEqual(controller.status()["prs"][0]["channels"]["hosted"], "COMPLETE")
 
         with self.assertRaises(ControllerError):
