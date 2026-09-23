@@ -51,3 +51,20 @@ If condition 1 completes before #2835 merges, remain on #2838 and wait for the a
 ## Required handoff
 
 Report the final head and base, unique file count, Hosted and any additional CLI sequence, finding significance, open/outdated thread counts, exact required-CI state, patch-identity/reconciliation proof, body/LOC freshness, mergeability, and any real remaining blocker.
+
+## 2026-09-23: #2835 merged; reconcile after active Hosted terminates
+
+#2835 merged into `develop` as `c45a1e3e98253af53740943940eb799fd5877f9b`. This section activates the parent-reconciliation work that the original brief deferred.
+
+First consume the already-active manually triggered Hosted review on #2838. Do not publish, retarget, or otherwise invalidate that review while it is active. Adjudicate and preserve any accepted fixes locally until its terminal result is recorded.
+
+After the active Hosted result is terminal:
+
+1. Verify the live `develop` tip and record it. It must contain merge `c45a1e3e98253af53740943940eb799fd5877f9b`.
+2. Merge current `develop` normally into `codex/review-checkpoint-duration`; do not rebase or rewrite reviewed history.
+3. Preserve #2838's owned behavior through any conflict and prove the unique child patch against `develop`, including its file count and stable patch identity before and after reconciliation.
+4. Retarget #2838 from `codex/priority-stacked-previews` to `develop`.
+5. Apply and publish any accepted Hosted fixes in the same coherent corrected-state preparation, then run the focused validation and required exact-head CI.
+6. Make the review-evidence judgment explicitly: parent-only movement with an unchanged owned patch may retain existing CLI taper; any material owned-patch change reopens only the review channel whose assessed boundary changed. A useful Hosted fix requires corrected-state Hosted evidence under the main assignment above.
+
+This section supersedes only the original instruction to wait for a later reconciliation update. All other scope, review, boundary, stopping, and handoff instructions remain active.
