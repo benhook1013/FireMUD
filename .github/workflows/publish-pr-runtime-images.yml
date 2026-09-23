@@ -72,6 +72,7 @@ jobs:
           import re
           import subprocess
           import sys
+          import time
           from pathlib import Path
 
           import importlib.util
@@ -133,6 +134,17 @@ jobs:
                   return json.loads(result.stdout)
               except json.JSONDecodeError as error:
                   fail(f"GitHub API returned malformed JSON for {endpoint}: {error}")
+
+          def current_pull_request(endpoint):
+              for attempt in range(3):
+                  pull_request = gh_json(endpoint)
+                  if pull_request.get("mergeable") is not None and \
+                      pull_request.get("mergeable_state") != "unknown":
+                      return pull_request
+                  if attempt == 2:
+                      fail("current pull request mergeability remained unknown after bounded retries")
+                  time.sleep(2)
+              fail("current pull request mergeability could not be resolved")
 
           repository = required_environment("CURRENT_REPOSITORY")
           source_run_id_text = required_environment("SOURCE_RUN_ID")
@@ -198,7 +210,7 @@ jobs:
               if not default_branch or source_head_branch != default_branch:
                   fail("typed refresh source run is not on the repository default branch")
 
-          pull_request = gh_json(f"repos/{repository}/pulls/{pr_number_int}")
+          pull_request = current_pull_request(f"repos/{repository}/pulls/{pr_number_int}")
           if pull_request.get("number") != pr_number_int or pull_request.get("state") != "open":
               fail("source pull request is not the current open pull request")
           if (pull_request.get("head") or {}).get("sha") != head_sha:

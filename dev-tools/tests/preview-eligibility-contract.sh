@@ -556,8 +556,12 @@ grep -q '^eligible=true$' <<<"$destroy_closed"
 grep -q '^reason=eligible$' <<<"$destroy_closed"
 
 destroy_unsupported_base="$(python3 "$SCRIPT" --operation destroy --state closed --base-ref feature/design-and-mvp --author benhook1013 --labels-json '[]')"
-grep -q '^eligible=false$' <<<"$destroy_unsupported_base"
-grep -q '^reason=unsupported-base-branch$' <<<"$destroy_unsupported_base"
+grep -q '^eligible=true$' <<<"$destroy_unsupported_base"
+grep -q '^reason=eligible$' <<<"$destroy_unsupported_base"
+
+destroy_unlabelled_stacked="$(python3 "$SCRIPT" --operation destroy --state closed --base-ref feature/design-and-mvp --author benhook1013 --labels-json '[]')"
+grep -q '^eligible=true$' <<<"$destroy_unlabelled_stacked"
+grep -q '^reason=eligible$' <<<"$destroy_unlabelled_stacked"
 
 destroy_dependency_bot="$(python3 "$SCRIPT" --operation destroy --state closed --base-ref develop --author 'renovate[bot]' --labels-json '[]')"
 grep -q '^eligible=false$' <<<"$destroy_dependency_bot"

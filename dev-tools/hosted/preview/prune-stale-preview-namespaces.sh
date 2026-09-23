@@ -325,7 +325,7 @@ recover_stranded_hosted_identities() {
       continue
     fi
     case "$reason" in
-      dependency-bot|unsupported-base-branch|priority-label-required|pr-not-open|missing-base-branch|merge-conflict|untrusted-repository)
+      dependency-bot|unsupported-base-branch|priority-label-required|pr-not-open|missing-base-branch|untrusted-repository)
         ;;
       *)
         echo "Keeping HostedEnvironmentIdentity/${identity_name}: PR #${pr_number} eligibility reason is not authoritative for retirement (reason=${reason})"
@@ -398,7 +398,7 @@ for row in "${namespace_rows[@]}"; do
       echo "Hosted runtime deletion failed for ${namespace}; skipping identity retirement and continuing stale cleanup." >&2
       continue
     fi
-    if [[ "$retire_terminal_identities" == true ]]; then
+    if [[ "$retire_terminal_identities" == true && "$reason" != "merge-conflict" ]]; then
       if ! retire_hosted_identity "$namespace"; then
         retirement_failures=$((retirement_failures + 1))
       fi
