@@ -426,13 +426,20 @@ class ReviewController:
             is_ancestor=self.git.is_ancestor,
         )
         reconciled: dict[int, StackReconciliationDecision] = {}
+        anchors: dict[int, AnchorFacts] = {}
+        anchor_failures: dict[int, str] = {}
         for pr in state.ordered_prs:
             if live[pr].merged or baseline.status_for(pr) != stack.ReconciliationStatus.COHERENT:
                 continue
             link = baseline.links[pr]
             if not self._current_branches_match(state, live, baseline, pr, remote_heads):
                 continue
-            current = self._anchor(pr, live[pr], link)
+            try:
+                current = self._anchor(pr, live[pr], link)
+            except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as error:
+                anchor_failures[pr] = f"could not compute current Git anchor: {type(error).__name__}: {error}"
+                continue
+            anchors[pr] = current
             decision = self._active_stack_reconciliation(state, pr, current)
             if decision is not None:
                 reconciled[pr] = decision
@@ -461,9 +468,11 @@ class ReviewController:
         )
         reasons = dict(result.reasons)
         statuses = dict(result.statuses)
+        channel_statuses = dict(result.channel_statuses)
 
         def set_anchor_status(pr: int, status: stack.ReconciliationStatus, reason: str) -> None:
-            # Evidence from another channel must not downgrade a topology blocker.
+            # Topology failures apply to both review channels. Evidence identity
+            # changes are recorded separately below.
             priority = {
                 stack.ReconciliationStatus.COHERENT: 0,
                 stack.ReconciliationStatus.PATCH_CHANGED: 1,
@@ -475,6 +484,21 @@ class ReviewController:
             if priority[status] >= priority[previous]:
                 statuses[pr] = status
                 reasons[pr] = reason
+
+        def set_channel_anchor_status(pr: int, channel: policy.Channel, status: stack.ReconciliationStatus) -> None:
+            if status in {
+                stack.ReconciliationStatus.PARENT_MOVED,
+                stack.ReconciliationStatus.UNRECONCILED,
+            }:
+                set_anchor_status(pr, status, "review evidence is anchored to an unproven parent or merge base")
+            elif status in {
+                stack.ReconciliationStatus.PATCH_CHANGED,
+                stack.ReconciliationStatus.EQUIVALENT_HISTORY,
+            }:
+                channel_statuses[(pr, channel.value)] = status
+
+        for pr, reason in anchor_failures.items():
+            set_anchor_status(pr, stack.ReconciliationStatus.UNRECONCILED, reason)
 
         moved: set[int] = set(result.affected_descendants)
         # GitHub's PR head is the candidate identity, while the source branch is
@@ -515,8 +539,19 @@ class ReviewController:
         for pr in state.ordered_prs:
             if live[pr].merged:
                 continue
+            if pr in anchor_failures:
+                continue
             link = result.links[pr]
-            current = self._anchor(pr, live[pr], link)
+            current = anchors.get(pr)
+            if current is None:
+                try:
+                    current = self._anchor(pr, live[pr], link)
+                except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as error:
+                    reason = f"could not compute current Git anchor: {type(error).__name__}: {error}"
+                    anchor_failures[pr] = reason
+                    set_anchor_status(pr, stack.ReconciliationStatus.UNRECONCILED, reason)
+                    continue
+                anchors[pr] = current
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
                 latest = _latest_review(_history(self._evidence_provider, pr, channel))
                 if latest is None:
@@ -544,31 +579,26 @@ class ReviewController:
                         current.as_anchor(),
                     )
                 except (TypeError, ValueError):
-                    reasons[pr] = "review evidence has an invalid identity anchor"
-                    statuses[pr] = stack.ReconciliationStatus.UNRECONCILED
+                    set_anchor_status(
+                        pr,
+                        stack.ReconciliationStatus.UNRECONCILED,
+                        "review evidence has an invalid identity anchor",
+                    )
                     continue
                 if classification == stack.ReconciliationStatus.PARENT_MOVED:
                     if pr in reconciled:
-                        set_anchor_status(pr, stack.ReconciliationStatus.PATCH_CHANGED, "stack parent was reconciled")
+                        set_channel_anchor_status(pr, channel, stack.ReconciliationStatus.PATCH_CHANGED)
                     else:
                         set_anchor_status(
                             pr, stack.ReconciliationStatus.PARENT_MOVED, "review evidence is anchored to a moved parent"
                         )
                         moved.add(pr)
-                elif classification == stack.ReconciliationStatus.PATCH_CHANGED:
-                    set_anchor_status(
-                        pr, stack.ReconciliationStatus.PATCH_CHANGED, "review evidence patch identity changed"
-                    )
-                elif classification == stack.ReconciliationStatus.UNRECONCILED:
-                    set_anchor_status(
-                        pr, stack.ReconciliationStatus.UNRECONCILED, "review evidence merge-base identity changed"
-                    )
-                elif classification == stack.ReconciliationStatus.EQUIVALENT_HISTORY:
-                    set_anchor_status(
-                        pr,
-                        stack.ReconciliationStatus.EQUIVALENT_HISTORY,
-                        "review evidence has equivalent history at a new child head",
-                    )
+                elif classification in {
+                    stack.ReconciliationStatus.PATCH_CHANGED,
+                    stack.ReconciliationStatus.UNRECONCILED,
+                    stack.ReconciliationStatus.EQUIVALENT_HISTORY,
+                }:
+                    set_channel_anchor_status(pr, channel, classification)
         changed = True
         while changed:
             changed = False
@@ -582,10 +612,6 @@ class ReviewController:
             overall = stack.ReconciliationStatus.PARENT_MOVED
         elif any(value == stack.ReconciliationStatus.UNRECONCILED for value in statuses.values()):
             overall = stack.ReconciliationStatus.UNRECONCILED
-        elif any(value == stack.ReconciliationStatus.PATCH_CHANGED for value in statuses.values()):
-            overall = stack.ReconciliationStatus.PATCH_CHANGED
-        elif any(value == stack.ReconciliationStatus.EQUIVALENT_HISTORY for value in statuses.values()):
-            overall = stack.ReconciliationStatus.EQUIVALENT_HISTORY
         else:
             overall = result.status
         return live, dataclasses.replace(
@@ -594,6 +620,7 @@ class ReviewController:
             affected_descendants=tuple(pr for pr in state.ordered_prs if pr in moved),
             reasons=reasons,
             statuses=statuses,
+            channel_statuses=channel_statuses,
         )
 
     def _current_branches_match(
@@ -744,7 +771,11 @@ class ReviewController:
         for pr in state.ordered_prs:
             values = _history(self._evidence_provider, pr, other)
             latest = _latest_review(values)
-            if latest is not None:
+            other_anchor_status = reconciliation.status_for(pr, other.value)
+            if latest is not None and other_anchor_status not in {
+                stack.ReconciliationStatus.PATCH_CHANGED,
+                stack.ReconciliationStatus.EQUIVALENT_HISTORY,
+            }:
                 value = _field(latest, "head", "reviewed_head")
                 if isinstance(value, str):
                     other_heads[pr] = value
@@ -753,7 +784,7 @@ class ReviewController:
             selected,
             tuple(pr for pr in state.ordered_prs if not live[pr].merged),
             history,
-            reconciliation_by_pr={pr: reconciliation.status_for(pr) for pr in state.ordered_prs},
+            reconciliation_by_pr={pr: reconciliation.status_for(pr, selected.value) for pr in state.ordered_prs},
             other_channel_heads=other_heads,
         )
         if decision.target is None:
@@ -816,13 +847,29 @@ class ReviewController:
                 other_history = _history(self._evidence_provider, pr, other)
                 latest = _latest_review(other_history)
                 other_head = _field(latest, "head", "reviewed_head") if latest is not None else None
-                channel_status[channel.value] = policy.completion_status(
-                    state,
-                    channel,
-                    _history(self._evidence_provider, pr, channel),
-                    reconciliation=reconciliation_status,
-                    other_channel_head=other_head if isinstance(other_head, str) else None,
-                ).value
+                channel_reconciliation = reconciliation.status_for(pr, channel.value)
+                if channel_reconciliation in {
+                    stack.ReconciliationStatus.PARENT_MOVED,
+                    stack.ReconciliationStatus.UNRECONCILED,
+                }:
+                    channel_status[channel.value] = channel_reconciliation.value
+                else:
+                    channel_status[channel.value] = policy.completion_status(
+                        state,
+                        channel,
+                        _history(self._evidence_provider, pr, channel),
+                        reconciliation=channel_reconciliation,
+                        other_channel_head=(
+                            other_head
+                            if isinstance(other_head, str)
+                            and reconciliation.status_for(pr, other.value)
+                            not in {
+                                stack.ReconciliationStatus.PATCH_CHANGED,
+                                stack.ReconciliationStatus.EQUIVALENT_HISTORY,
+                            }
+                            else None
+                        ),
+                    ).value
             values.append(
                 {
                     "pr": pr,

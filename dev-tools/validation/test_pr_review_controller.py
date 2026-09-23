@@ -286,7 +286,7 @@ class ControllerTests(unittest.TestCase):
                 pr=1, head=HEAD_1, checkpoint="stale", hosted_zero_useful=1, reason="stale patch"
             )
     def test_provisional_discovery_is_one_exact_pass_and_never_tapers(self):
-        values = {1: pr(1, HEAD_1, base_tip="9" * 40)}
+        values = {1: pr(1, HEAD_1, "unrelated-base", "9" * 40)}
         evidence = {
             (1, "cli"): [
                 Evidence(1, HEAD_1, "p1", anchored=True, completed=True, attributable=True, provisional=True)
@@ -296,6 +296,7 @@ class ControllerTests(unittest.TestCase):
         controller.set_stack([1])
         # The exact reason is checked by the controller before a runner is invoked.
         selected = controller._target("cli")
+        self.assertEqual(selected.status.value, "UNRECONCILED")
         evidence[(1, "cli")].append(
             {
                 "pr": 1,
@@ -309,7 +310,10 @@ class ControllerTests(unittest.TestCase):
                 "reason": "one",
             }
         )
-        with self.assertRaises(ControllerError):
+        with self.assertRaisesRegex(
+            ControllerError,
+            "one provisional CLI discovery is already recorded for this exact child/parent identity",
+        ):
             controller.run_cli(allow_unreconciled=True, reason="one")
 
     def test_compact_and_json_results_are_structured(self):
@@ -452,10 +456,145 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertEqual(decision["decision"]["child_head"], HEAD_2)
         after = controller.status()
-        self.assertEqual(after["prs"][1]["reconciliation"], "PATCH_CHANGED")
+        self.assertEqual(after["prs"][1]["reconciliation"], "COHERENT")
+        self.assertEqual(after["prs"][1]["channels"]["hosted"], "MISSING_EVIDENCE")
         self.assertEqual(after["prs"][1]["channels"]["cli"], "READY")
         self.assertEqual(after["prs"][2]["reconciliation"], "COHERENT")
         self.assertEqual(controller.resolve_cli_target(expected_pr=2).snapshot.number, 2)
+
+    def test_stale_cli_patch_evidence_does_not_block_hosted_completion(self):
+        live_head = HEAD_2
+        current_hosted = {
+            "pr": 1,
+            "head": live_head,
+            "checkpoint": "hosted",
+            "completed": True,
+            "attributable": True,
+            "anchored": True,
+            "corrected_state": True,
+            "accepted": 0,
+            "child_head": live_head,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": f"patch-{live_head[:4]}",
+        }
+        stale_cli = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "cli-old",
+            "completed": True,
+            "attributable": True,
+            "anchored": True,
+            "accepted": 0,
+            "child_head": HEAD_1,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": f"patch-{HEAD_1[:4]}",
+        }
+        controller = self.make(
+            {1: pr(1, live_head)},
+            {
+                (1, "hosted"): [dict(current_hosted, checkpoint="h1"), dict(current_hosted, checkpoint="h2")],
+                (1, "cli"): [stale_cli],
+            },
+        )
+        controller.set_stack([1])
+
+        result = controller.status()["prs"][0]
+
+        self.assertEqual(result["reconciliation"], "COHERENT")
+        self.assertEqual(result["channels"]["hosted"], "COMPLETE")
+        self.assertEqual(result["channels"]["cli"], "READY")
+        with self.assertRaisesRegex(ControllerError, "all hosted targets are complete"):
+            controller.resolve_hosted_target(expected_pr=1)
+
+    def test_equivalent_history_is_classified_per_channel(self):
+        live_head = HEAD_2
+        hosted = {
+            "pr": 1,
+            "head": live_head,
+            "checkpoint": "hosted",
+            "completed": True,
+            "attributable": True,
+            "anchored": True,
+            "corrected_state": True,
+            "accepted": 0,
+            "child_head": live_head,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": f"patch-{live_head[:4]}",
+        }
+        old_cli = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "cli-old",
+            "completed": True,
+            "attributable": True,
+            "anchored": True,
+            "accepted": 0,
+            "child_head": HEAD_1,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": f"patch-{live_head[:4]}",
+        }
+        controller = self.make(
+            {1: pr(1, live_head)},
+            {
+                (1, "hosted"): [dict(hosted, checkpoint="h1"), dict(hosted, checkpoint="h2")],
+                (1, "cli"): [old_cli],
+            },
+        )
+        controller.set_stack([1])
+
+        result = controller.status()["prs"][0]
+
+        self.assertEqual(result["reconciliation"], "COHERENT")
+        self.assertEqual(result["channels"]["hosted"], "COMPLETE")
+        self.assertEqual(result["channels"]["cli"], "JUDGMENT_REQUIRED")
+
+    def test_git_anchor_failures_are_unreconciled_per_pr_in_both_reconciliation_paths(self):
+        scenarios = {
+            "initial anchor check": ({"feature-1": HEAD_1, "feature-2": HEAD_2}, 1),
+            "review evidence anchor check": ({"feature-1": HEAD_1}, 2),
+        }
+        for name, (heads, failed_pr) in scenarios.items():
+            with self.subTest(path=name):
+                controller = self.make(
+                    {1: pr(1, HEAD_1), 2: pr(2, HEAD_2, "feature-1", HEAD_1)},
+                    heads=heads,
+                )
+                controller.set_stack([1, 2])
+                original_merge_base = controller.git.merge_base
+                failing_calls = 0
+                failed_head = {1: HEAD_1, 2: HEAD_2}[failed_pr]
+
+                def fail_one_pr(
+                    parent,
+                    child,
+                    merge_base=original_merge_base,
+                    expected_head=failed_head,
+                ):
+                    nonlocal failing_calls
+                    if child == expected_head:
+                        failing_calls += 1
+                        raise OSError("simulated merge-base failure")
+                    return merge_base(parent, child)
+
+                controller.git.merge_base = fail_one_pr
+                result = controller.status()
+
+                self.assertEqual(failing_calls, 1)
+                failed_index = failed_pr - 1
+                healthy_index = 1 - failed_index
+                self.assertEqual(result["prs"][failed_index]["reconciliation"], "UNRECONCILED")
+                self.assertIn("simulated merge-base failure", result["prs"][failed_index]["reason"])
+                self.assertEqual(result["prs"][failed_index]["channels"]["hosted"], "UNRECONCILED")
+                self.assertEqual(result["prs"][failed_index]["channels"]["cli"], "UNRECONCILED")
+                self.assertEqual(result["prs"][healthy_index]["reconciliation"], "COHERENT")
 
     def test_reconciliation_decision_is_available_under_decide_command(self):
         args = _parser().parse_args(

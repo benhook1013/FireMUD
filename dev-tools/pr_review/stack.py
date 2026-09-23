@@ -74,13 +74,26 @@ class Reconciliation:
     merge_bases: Mapping[int, str] = dataclasses.field(default_factory=dict)
     patch_ids: Mapping[int, str] = dataclasses.field(default_factory=dict)
     statuses: Mapping[int, ReconciliationStatus] = dataclasses.field(default_factory=dict)
+    channel_statuses: Mapping[tuple[int, str], ReconciliationStatus] = dataclasses.field(default_factory=dict)
 
-    def status_for(self, pr: int) -> ReconciliationStatus:
-        if pr in self.statuses:
-            return self.statuses[pr]
-        if pr in self.affected_descendants:
-            return ReconciliationStatus.PARENT_MOVED
-        return self.status if not self.statuses else ReconciliationStatus.COHERENT
+    def status_for(self, pr: int, channel: str | None = None) -> ReconciliationStatus:
+        status = self.statuses.get(pr)
+        if status is None:
+            status = (
+                ReconciliationStatus.PARENT_MOVED
+                if pr in self.affected_descendants
+                else self.status if not self.statuses else ReconciliationStatus.COHERENT
+            )
+        # Parent movement and an unproven merge base describe the PR topology,
+        # so neither review channel can proceed. Candidate-patch changes and
+        # equivalent history belong only to the channel whose evidence changed.
+        if status in {ReconciliationStatus.PARENT_MOVED, ReconciliationStatus.UNRECONCILED}:
+            return status
+        if channel is not None:
+            selected = self.channel_statuses.get((pr, channel))
+            if selected is not None:
+                return selected
+        return status
 
     def allowed(self, pr: int, *, allow_unreconciled: bool = False) -> bool:
         status = self.status_for(pr)
