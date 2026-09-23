@@ -234,7 +234,11 @@ public class SecretProjectionService {
       Secret existing,
       Runnable runtimeProfileFence) {
     runtimeProfileFence.run();
-    String name = targetName + "-previous";
+    String predecessorSourceName =
+        HostedIdentityContract.isGrpcPublicationRole(role)
+            ? plan.grpcPublicationSourceSecretNames().get(role)
+            : targetName;
+    String name = predecessorSourceName + "-previous";
     Map<String, String> annotations = new LinkedHashMap<>(existing.getMetadata().getAnnotations());
     annotations.put(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION, "predecessor");
     // Retain the predecessor in identityNamespace; the projected source is in disposable

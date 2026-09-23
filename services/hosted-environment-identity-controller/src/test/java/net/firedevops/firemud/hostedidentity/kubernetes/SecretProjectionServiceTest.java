@@ -717,6 +717,70 @@ class SecretProjectionServiceTest {
   }
 
   @Test
+  void publicationRotationStoresPredecessorUnderCanonicalSourceName() {
+    EnvironmentIdentityPlan plan = plan();
+    SecretClient secretClient = secretClient(plan);
+    String workload = "game-design-service";
+    String role = HostedIdentityContract.grpcPublicationRole(workload);
+    String projectionName = plan.grpcPublicationSecretName(workload);
+    String sourceName = plan.grpcPublicationSourceSecretName(workload);
+    Map<String, String> acceptedData =
+        Map.of("tls.crt", encoded("accepted"), "tls.key", encoded("key-1"));
+    String acceptedRevision = SecretProjectionService.revisionForRole(role, acceptedData);
+    String acceptedSpki = "1".repeat(64);
+    Secret existing =
+        ownedSecret(
+            plan,
+            role,
+            projectionName,
+            acceptedData,
+            acceptedAnnotations(acceptedRevision, acceptedSpki));
+    existing.getMetadata().setResourceVersion("7");
+    Map<String, String> replacementData =
+        Map.of("tls.crt", encoded("replacement"), "tls.key", encoded("key-2"));
+    Secret replacement =
+        new SecretBuilder().withType("kubernetes.io/tls").withData(replacementData).build();
+    Resource<Secret> existingResource = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(projectionName)).thenReturn(existingResource);
+    when(existingResource.get()).thenReturn(existing);
+    Resource<Secret> predecessorResource = mock(Resource.class);
+    when(secretClient.identitySecrets().withName(sourceName + "-previous"))
+        .thenReturn(predecessorResource);
+    when(predecessorResource.get()).thenReturn(null);
+    Resource<Secret> predecessorCreate = mock(Resource.class);
+    when(secretClient.identitySecrets().resource(org.mockito.ArgumentMatchers.any(Secret.class)))
+        .thenReturn(predecessorCreate);
+    Resource<Secret> replacementResource = mock(Resource.class);
+    ReplaceDeletable<Secret> lockedReplacementResource = mock(ReplaceDeletable.class);
+    when(secretClient.runtimeSecrets().resource(org.mockito.ArgumentMatchers.any(Secret.class)))
+        .thenReturn(replacementResource);
+    when(replacementResource.lockResourceVersion("7")).thenReturn(lockedReplacementResource);
+
+    var result =
+        new SecretProjectionService()
+            .project(
+                secretClient.client(),
+                plan,
+                role,
+                replacement,
+                2,
+                2,
+                "2".repeat(64),
+                "cert-manager",
+                ALWAYS_CURRENT);
+
+    ArgumentCaptor<Secret> predecessor = ArgumentCaptor.forClass(Secret.class);
+    verify(secretClient.identitySecrets()).resource(predecessor.capture());
+    assertEquals(sourceName + "-previous", predecessor.getValue().getMetadata().getName());
+    assertEquals(plan.identityNamespace(), predecessor.getValue().getMetadata().getNamespace());
+    assertEquals(acceptedData, predecessor.getValue().getData());
+    verify(secretClient.identitySecrets(), never()).withName(projectionName + "-previous");
+    assertEquals("projected", result.state());
+    verify(predecessorCreate).create();
+    verify(lockedReplacementResource).replace();
+  }
+
+  @Test
   void equalRevisionTypeDriftIsRepairedAndMustBeAcceptedAgain() {
     EnvironmentIdentityPlan plan = plan();
     SecretProjectionService service = new SecretProjectionService();
