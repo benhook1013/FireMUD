@@ -4,7 +4,7 @@ Updated 2026-09-22 NZST. This is a subordinate resume card, not queue authority;
 
 ## Active task briefs
 
-- Gameplay #2838 completion: `/home/ben/src/FireMUD-project-direction/tmp/task-briefs/gameplay-pr-2838-completion.md`
+- Gameplay #2838 completion: `/home/ben/src/FireMUD-project-direction/tmp/task-briefs/gameplay-continuous-review-train.md`
 - General review-control refactor: `/home/ben/src/FireMUD-project-direction/tmp/task-briefs/general-pr-review-control.md`
 - Document #2839 → #2840 corpus work: `/home/ben/src/FireMUD-project-direction/tmp/task-briefs/document-corpus-2839-2840.md`
 
