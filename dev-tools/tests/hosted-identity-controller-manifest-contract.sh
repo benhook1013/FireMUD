@@ -539,6 +539,47 @@ assert all(
     binding.get("spec", {}).get("validationActions") == ["Deny"]
     for binding in binding_documents
 )
+
+
+def assert_balanced_cel_delimiters(expression, context):
+    pairs = {")": "(", "]": "[", "}": "{"}
+    opening = set(pairs.values())
+    stack = []
+    quote = None
+    escaped = False
+    for character in expression:
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+            continue
+        if character in ("'", '"'):
+            quote = character
+        elif character in opening:
+            stack.append(character)
+        elif character in pairs:
+            assert stack and stack[-1] == pairs[character], (
+                f"{context}: unmatched or misnested closing delimiter {character!r}"
+            )
+            stack.pop()
+    assert quote is None, f"{context}: unterminated string literal"
+    assert not stack, f"{context}: unmatched opening delimiter {stack[-1]!r}"
+
+
+assert_balanced_cel_delimiters(
+    r'''object.note == "literal ] } \" and [text" && items[0] == 'brace }' ''',
+    "quoted-delimiter fixture",
+)
+try:
+    assert_balanced_cel_delimiters("items[0]] == 'ignored ['", "negative fixture")
+except AssertionError as error:
+    assert "negative fixture: unmatched or misnested closing delimiter ']'" in str(error)
+else:
+    raise AssertionError("CEL delimiter checker accepted an unmatched closing bracket")
+
 valid_admission_operations = {"CREATE", "UPDATE", "DELETE", "CONNECT"}
 for policy in policy_documents:
     rules = policy.get("spec", {}).get("matchConstraints", {}).get("resourceRules", [])
@@ -554,6 +595,20 @@ for policy in policy_documents:
             policy["metadata"]["name"],
             operations,
         )
+    for expression_group in ("matchConditions", "validations"):
+        for index, expression_entry in enumerate(
+            policy.get("spec", {}).get(expression_group, [])
+        ):
+            expression = expression_entry.get("expression", "")
+            assert isinstance(expression, str) and expression, (
+                policy["metadata"]["name"],
+                expression_group,
+                index,
+            )
+            assert_balanced_cel_delimiters(
+                expression,
+                f"{policy['metadata']['name']} {expression_group}[{index}]",
+            )
     for validation in policy.get("spec", {}).get("validations", []):
         assert "PATCH" not in validation.get("expression", ""), (
             policy["metadata"]["name"],

@@ -222,7 +222,7 @@ spec:
                  ((request.namespace == 'dev' || request.namespace == 'dev-identity') ? 'dev' :
                   request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$') ?
                     request.namespace.substring(0, request.namespace.size() - 9) :
-                    request.namespace) + '-'))))))) ||
+                    request.namespace) + '-')))))))) ||
         (request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' &&
          request.operation in ['CREATE', 'UPDATE'] &&
          request.namespace.matches('^(dev-identity|pr-[1-9][0-9]{0,50}-identity)$') &&
@@ -397,7 +397,7 @@ spec:
             (object.spec.secretName == object.metadata.name &&
              object.spec.dnsNames == [object.metadata.labels['firemud.dev/role'].substring(17), object.metadata.labels['firemud.dev/role'].substring(17) + '.' + ((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)), object.metadata.labels['firemud.dev/role'].substring(17) + '.' + ((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)) + '.svc', object.metadata.labels['firemud.dev/role'].substring(17) + '.' + ((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)) + '.svc.cluster.local'] &&
              object.spec.uris == ['spiffe://firemud/ns/' + ((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)) + '/sa/' + object.metadata.labels['firemud.dev/role'].substring(17)] &&
-             object.spec.usages == ['digital signature', 'key encipherment', 'server auth', 'client auth']))) ||
+             object.spec.usages == ['digital signature', 'key encipherment', 'server auth', 'client auth']))))) ||
         (request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' &&
          request.subResource == 'status' &&
          request.operation == 'UPDATE' &&
