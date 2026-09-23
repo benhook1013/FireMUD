@@ -460,11 +460,13 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertIn("already running", errors[0])
             self.assertFalse(commands.overlap)
 
-    def test_cli_holds_the_hosted_per_pr_lock_through_review_execution(self):
+    def test_cli_holds_hosted_lock_during_preflight_and_releases_it_for_provider(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             common_dir = root / ".git"
             common_dir.mkdir()
+            preflight_started = threading.Event()
+            allow_preflight_finish = threading.Event()
             review_started = threading.Event()
             allow_review_finish = threading.Event()
             commands = FakeCommands(
@@ -472,24 +474,49 @@ class CliReviewRunnerTests(unittest.TestCase):
                 review_started=review_started,
                 allow_review_finish=allow_review_finish,
             )
+            github = FakeGitHub()
+            pull_request = github.pull_request
+
+            def gated_pull_request(number):
+                preflight_started.set()
+                if not allow_preflight_finish.wait(timeout=3):
+                    raise RuntimeError("test did not release CLI preflight")
+                return pull_request(number)
+
+            github.pull_request = gated_pull_request
+            results = []
             errors = []
 
             def run():
                 try:
-                    run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
-                except ReviewRunnerError as error:
+                    results.append(run_cli_review(target(), github=github, source_root=root, runner=commands))
+                except (ReviewRunnerError, RuntimeError) as error:
                     errors.append(error)
 
             thread = threading.Thread(target=run)
             thread.start()
-            self.assertTrue(review_started.wait(timeout=3))
+            self.assertTrue(preflight_started.wait(timeout=3))
             request_lock = common_dir / "firemud" / "hosted" / "owner_repo" / "pr-42" / "request.lock"
             with request_lock.open("a+") as lock_handle, self.assertRaises(BlockingIOError):
                 fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+            allow_preflight_finish.set()
+            self.assertTrue(review_started.wait(timeout=3))
+            capture_dirs = list((common_dir / "firemud" / "pr-review" / "runs").iterdir())
+            self.assertEqual(len(capture_dirs), 1)
+            capture_metadata = json.loads((capture_dirs[0] / "metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(capture_metadata["candidate_sha"], HEAD)
+            with request_lock.open("a+") as lock_handle:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                # A Hosted request can take the per-PR lock while the CLI provider
+                # is still running; the repository-wide CLI lock remains occupied.
+                self.assertTrue(thread.is_alive())
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
             allow_review_finish.set()
             thread.join(timeout=3)
             self.assertFalse(thread.is_alive())
             self.assertEqual(errors, [])
+            self.assertEqual(len(results), 1)
 
     def test_posted_active_or_awaiting_hosted_reservation_allows_cli_and_preserves_record(self):
         for include_response in (True, False):
@@ -527,8 +554,9 @@ class CliReviewRunnerTests(unittest.TestCase):
                     thread.start()
                     self.assertTrue(review_started.wait(timeout=3))
                     request_lock = record_path.parent / "request.lock"
-                    with request_lock.open("a+") as lock_handle, self.assertRaises(BlockingIOError):
+                    with request_lock.open("a+") as lock_handle:
                         fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
                     allow_review_finish.set()
                     thread.join(timeout=3)
 

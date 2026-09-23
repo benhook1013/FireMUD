@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import sys
 import tempfile
@@ -13,24 +12,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
-PR_REVIEW = ROOT / "dev-tools" / "pr_review"
-sys.path.insert(0, str(PR_REVIEW))
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
-
-def load(name: str):
-    spec = importlib.util.spec_from_file_location(name, PR_REVIEW / f"{name}.py")
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-github = load("github")
-evidence = load("evidence")
-hosted = load("hosted")
 from pr_review import cli as cli_module
+from pr_review import evidence, github, hosted
 
 REPO = "owner/repo"
 PR = 42

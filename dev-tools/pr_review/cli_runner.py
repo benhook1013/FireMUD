@@ -322,10 +322,10 @@ def _assert_no_active_hosted_review(repo: str, pr_number: int, common_dir: Path)
             record = hosted.load_trigger_reservation(record_path, repo, pr_number)
             state = hosted.trigger_state(repo, pr_number, payload, record, record_path)
             # An already-posted Hosted request can run alongside the independent
-            # CLI process.  The caller holds request.lock for the full CLI run,
-            # so all local Hosted reservation mutations remain serialized.  An
-            # ambiguous, unattributed, or timed-out response still fails closed:
-            # it needs operator resolution before another review is allowed.
+            # CLI process. The caller holds request.lock through CLI preflight and
+            # capture initialization, so trigger classification and candidate
+            # snapshotting remain serialized with Hosted posting. An ambiguous,
+            # unattributed, or timed-out response still fails closed.
             if state.state in {"ambiguous", "unattributed", "timed_out"}:
                 raise ReviewRunnerError(f"Hosted review requires resolution before CLI review: {state.state}")
             if state.state not in {
@@ -647,6 +647,15 @@ def run_cli_review(
                 )
                 os.chmod(capture_dir / "metadata", 0o600)
                 _atomic_json(capture_dir / "metadata.json", metadata)
+                # Hosted posting and CLI preflight share request.lock. Release it
+                # only after the candidate and durable capture are pinned; the
+                # repository-wide CLI lock remains held through provider execution.
+                if hosted_lock_handle is not None:
+                    if hosted_lock_acquired:
+                        fcntl.flock(hosted_lock_handle.fileno(), fcntl.LOCK_UN)
+                        hosted_lock_acquired = False
+                    hosted_lock_handle.close()
+                    hosted_lock_handle = None
                 started = monotonic_ns()
                 try:
                     process = runner.run(
