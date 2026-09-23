@@ -103,7 +103,12 @@ def _judgment(state: ReviewState, channel: Channel, evidence: Evidence) -> Judgm
     return None
 
 
-def _valid_complete(evidence: Evidence, channel: Channel | str | None = None) -> bool:
+def _valid_complete(
+    evidence: Evidence,
+    channel: Channel | str | None = None,
+    *,
+    require_corrected_state: bool = True,
+) -> bool:
     """Return whether one checkpoint is eligible to contribute to taper."""
 
     return (
@@ -111,7 +116,7 @@ def _valid_complete(evidence: Evidence, channel: Channel | str | None = None) ->
         and evidence.attributable is True
         and evidence.anchored is True
         and evidence.provisional is False
-        and evidence.corrected_state is True
+        and (not require_corrected_state or evidence.corrected_state is True)
     )
 
 
@@ -154,11 +159,20 @@ def _same_head_provisional_barrier(history: Sequence[Evidence], reviews: Sequenc
     )
 
 
-def taper_satisfied(channel: Channel | str, history: Iterable[Evidence | Mapping[str, Any]], required: int) -> bool:
+def taper_satisfied(
+    channel: Channel | str,
+    history: Iterable[Evidence | Mapping[str, Any]],
+    required: int,
+    *,
+    allow_uncorrected_state: bool = False,
+    retained_patch_id: str | None = None,
+) -> bool:
     """Return true only for a trailing run of completed, non-provisional zero-accepted reviews."""
 
     if required < 0:
         raise ValueError("required taper must be non-negative")
+    if allow_uncorrected_state and not retained_patch_id:
+        return False
     materialized = [Evidence.from_value(value) for value in history]
     values = _review_entries(materialized)
     if _same_head_provisional_barrier(materialized, values):
@@ -169,7 +183,9 @@ def taper_satisfied(channel: Channel | str, history: Iterable[Evidence | Mapping
     for count, item in enumerate(reversed(values), start=1):
         if item.head != latest_head:
             break
-        if not _valid_complete(item, channel):
+        if allow_uncorrected_state and item.patch_id != retained_patch_id:
+            break
+        if not _valid_complete(item, channel, require_corrected_state=not allow_uncorrected_state):
             break
         if item.accepted != 0:
             break
@@ -236,15 +252,27 @@ def completion_status(
         value = override.hosted_zero_useful if selected == Channel.HOSTED else override.cli_zero_useful
         if value is not None:
             required = value
+    retained_equivalent_history = False
     if reconciliation_value == ReconciliationStatus.EQUIVALENT_HISTORY.value:
         judgment = _judgment(state, selected, latest)
         if judgment is None:
             return ReviewStatus.JUDGMENT_REQUIRED
         if judgment.decision == "reopen":
             return ReviewStatus.READY
-    if not latest.corrected_state:
+        # A retain judgment explicitly binds the latest reviewed checkpoint to
+        # the live, equivalent patch.  It may preserve a valid review streak
+        # whose old-head evidence predates the corrected-state annotation; it
+        # must not manufacture corrected evidence for unrelated histories.
+        retained_equivalent_history = judgment.decision == "retain"
+    if not latest.corrected_state and not retained_equivalent_history:
         return ReviewStatus.MISSING_EVIDENCE
-    if taper_satisfied(selected, history, required):
+    if taper_satisfied(
+        selected,
+        history,
+        required,
+        allow_uncorrected_state=retained_equivalent_history,
+        retained_patch_id=latest.patch_id if retained_equivalent_history else None,
+    ):
         judgment = _judgment(state, selected, latest)
         if judgment and judgment.decision == "reopen":
             return ReviewStatus.READY

@@ -95,8 +95,20 @@ class GithubAndEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(evidence.EvidenceError, "summary section has no canonical count"):
             evidence.summary_action_counts("## Outside diff range comments")
 
+    def test_summary_tag_and_emoji_markup_accept_canonical_counts(self):
+        body = (
+            "<summary>⚠️ Outside diff range comments (2)</summary>\n"
+            "### :warning: **Duplicate comments (1)**"
+        )
+        self.assertEqual(evidence.summary_action_counts(body), (2, 1))
+
     def test_malformed_heading_or_bold_summary_fails_closed(self):
-        for body in ("### Outside diff range comments: 2", "**Duplicate comments: 1**"):
+        for body in (
+            "### Outside diff range comments: 2",
+            "**Duplicate comments: 1**",
+            "<summary>⚠️ Outside diff range comments: 2</summary>",
+            "### :warning: **Duplicate comments**",
+        ):
             with self.subTest(body=body), self.assertRaisesRegex(
                 evidence.EvidenceError, "summary section has no canonical count"
             ):

@@ -35,6 +35,9 @@ SUMMARY_MARKERS = {
     "outside_diff": ("Outside diff range comments", "Outside the diff"),
     "duplicate": ("Duplicate comments",),
 }
+SUMMARY_WRAPPER = re.compile(r"^<(?:summary|strong|b|em|span)(?:\s[^>]*)?>\s*", re.IGNORECASE)
+SUMMARY_EMOJI = re.compile(r"^(?:[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F]|:[A-Za-z0-9_+-]+:)\s*")
+SUMMARY_CLOSER = re.compile(r"(?:\s*(?:</(?:summary|strong|b|em|span)>|\*\*|__))+\s*$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -111,6 +114,37 @@ class CaptureInvalid(EvidenceError):
     """A linked private capture is present but cannot be trusted."""
 
 
+def _summary_marker_context(line: str, marker: str) -> tuple[bool, str] | None:
+    """Return whether a line has explicit summary markup and its marker suffix."""
+
+    text = line.strip()
+    explicit = False
+    while text:
+        previous = text
+        heading = re.match(r"^#{1,6}\s+", text)
+        if heading:
+            text = text[heading.end() :]
+            explicit = True
+        elif text.startswith(("**", "__", "- ", "+ ", "* ")):
+            text = text[2:].lstrip()
+            explicit = True
+        else:
+            wrapper = SUMMARY_WRAPPER.match(text)
+            if wrapper:
+                text = text[wrapper.end() :]
+                explicit = True
+            else:
+                emoji = SUMMARY_EMOJI.match(text)
+                if emoji:
+                    text = text[emoji.end() :]
+                    explicit = True
+        if text == previous:
+            break
+    if not text.casefold().startswith(marker.casefold()):
+        return None
+    return explicit, text[len(marker) :]
+
+
 def summary_action_counts(body: str) -> tuple[int, int]:
     """Return canonical summary-only counts, rejecting malformed marked sections."""
 
@@ -119,19 +153,11 @@ def summary_action_counts(body: str) -> tuple[int, int]:
         found: list[int] = []
         for line in body.splitlines():
             for marker in markers:
-                prefix = re.match(
-                    rf"^\s*(?:(?P<heading>#{{1,6}})\s+)?(?P<bold>\*\*)?{re.escape(marker)}(?P<tail>.*)$",
-                    line,
-                    re.IGNORECASE,
-                )
-                if not prefix:
+                context = _summary_marker_context(line, marker)
+                if context is None:
                     continue
-                explicit = prefix.group("heading") is not None or prefix.group("bold") is not None
-                tail = prefix.group("tail").strip()
-                if tail.startswith("**"):
-                    tail = tail[2:].lstrip()
-                if tail.endswith("**"):
-                    tail = tail[:-2].rstrip()
+                explicit, tail = context
+                tail = SUMMARY_CLOSER.sub("", tail.strip())
                 if not tail:
                     raise EvidenceError(f"CodeRabbit {kind} summary section has no canonical count")
                 count = re.fullmatch(r"\((\d+)\)", tail)

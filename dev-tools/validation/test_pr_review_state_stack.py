@@ -591,7 +591,9 @@ class ReviewStateStackTest(unittest.TestCase):
                 anchored=True,
                 completed=True,
                 attributable=True,
-                corrected_state=True,
+                # The retain judgment is what authorizes this old-head
+                # streak; it must not rewrite the evidence as corrected.
+                corrected_state=False,
             )
             for i in range(3)
         )
@@ -637,6 +639,53 @@ class ReviewStateStackTest(unittest.TestCase):
                 reconciliation=ReconciliationStatus.EQUIVALENT_HISTORY,
             ),
             ReviewStatus.COMPLETE,
+        )
+
+    def test_equivalent_history_retain_does_not_count_an_older_patch(self):
+        history = (
+            Evidence(
+                1,
+                "h1",
+                "c0",
+                patch_id="older-patch",
+                anchored=True,
+                completed=True,
+                attributable=True,
+                corrected_state=True,
+            ),
+            Evidence(
+                1,
+                "h1",
+                "c1",
+                patch_id="current-patch",
+                anchored=True,
+                completed=True,
+                attributable=True,
+                corrected_state=False,
+            ),
+            Evidence(
+                1,
+                "h1",
+                "c2",
+                patch_id="current-patch",
+                anchored=True,
+                completed=True,
+                attributable=True,
+                corrected_state=False,
+            ),
+        )
+        state = ReviewState(
+            ordered_prs=(1,),
+            judgments=(Judgment(1, "cli", "retain", "h1", "c2", "retain current patch only", "current-patch"),),
+        )
+        self.assertEqual(
+            completion_status(
+                state,
+                Channel.CLI,
+                history,
+                reconciliation=ReconciliationStatus.EQUIVALENT_HISTORY,
+            ),
+            ReviewStatus.READY,
         )
 
     def test_all_provisional_history_is_ready_after_reconciliation(self):

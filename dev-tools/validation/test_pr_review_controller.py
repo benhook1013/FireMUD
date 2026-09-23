@@ -235,6 +235,8 @@ class ControllerTests(unittest.TestCase):
         cases = (
             ("hosted", "retain", 2, "COMPLETE"),
             ("cli", "reopen", 3, "READY"),
+            ("hosted", "reopen", 2, "READY"),
+            ("cli", "retain", 3, "COMPLETE"),
         )
         for channel, decision, count, expected_status in cases:
             with self.subTest(channel=channel, decision=decision):
@@ -246,7 +248,11 @@ class ControllerTests(unittest.TestCase):
                         "completed": True,
                         "attributable": True,
                         "anchored": True,
-                        "corrected_state": channel == "hosted",
+                        # Equivalent-history retention is an explicit judgment
+                        # over the old reviewed head; it must not pretend that
+                        # that historical evidence was corrected on the new
+                        # head.
+                        "corrected_state": False,
                         "accepted": 0,
                         "child_head": HEAD_1,
                         "parent_identity": "develop",
