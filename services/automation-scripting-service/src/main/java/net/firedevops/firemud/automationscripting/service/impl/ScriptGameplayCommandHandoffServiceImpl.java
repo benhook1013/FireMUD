@@ -1,11 +1,12 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.entity.ScriptHandoffEvent;
@@ -29,13 +30,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected collaborators are framework-managed and retained internally")
 public class ScriptGameplayCommandHandoffServiceImpl
     implements ScriptGameplayCommandHandoffService {
   private static final Logger LOGGER =
@@ -44,6 +43,8 @@ public class ScriptGameplayCommandHandoffServiceImpl
   private static final String STATUS_PENDING_EVALUATION = "PENDING_EVALUATION";
   private static final String STATUS_CANCELED = "CANCELED";
   private static final String STATUS_DEAD_LETTERED = "DEAD_LETTERED";
+  private static final String OUTCOME_HANDOFF_IN_FLIGHT = "HANDOFF_IN_FLIGHT";
+  private static final String REASON_HANDOFF_IN_FLIGHT = "handoff_in_flight";
   private static final String REMOTE_LATE_RESULT_POLICY = "late_result_safe_to_ignore";
 
   private final GameSessionControlPlaneClient gameSessionClient;
@@ -54,6 +55,8 @@ public class ScriptGameplayCommandHandoffServiceImpl
   private final AutomationQueueService automationQueueService;
   private final AutomationAdmissionStateService automationAdmissionStateService;
   private final ScriptPatchInstanceRolloutProjectionService rolloutProjectionService;
+  private final TransactionTemplate handoffTransactionTemplate;
+  private final TransactionTemplate rpcTransactionTemplate;
   private final ThreadLocal<Set<Long>> aggregateFanouts = ThreadLocal.withInitial(HashSet::new);
   private final ThreadLocal<Map<Long, AggregateAdmissionSnapshot>> aggregateAdmissionSnapshots =
       ThreadLocal.withInitial(HashMap::new);
@@ -73,7 +76,8 @@ public class ScriptGameplayCommandHandoffServiceImpl
         (DSLContext) null,
         null,
         automationAdmissionStateService,
-        rolloutProjectionService);
+        rolloutProjectionService,
+        null);
   }
 
   public ScriptGameplayCommandHandoffServiceImpl(
@@ -92,7 +96,8 @@ public class ScriptGameplayCommandHandoffServiceImpl
         (DSLContext) null,
         null,
         automationAdmissionStateService,
-        rolloutProjectionService);
+        rolloutProjectionService,
+        null);
   }
 
   /** Legacy constructor retained for focused unit tests that do not exercise queue publication. */
@@ -112,7 +117,30 @@ public class ScriptGameplayCommandHandoffServiceImpl
         dsl,
         null,
         automationAdmissionStateService,
-        rolloutProjectionService);
+        rolloutProjectionService,
+        null);
+  }
+
+  /** Compatibility constructor for focused tests that do not provide a transaction manager. */
+  public ScriptGameplayCommandHandoffServiceImpl(
+      GameSessionControlPlaneClient gameSessionClient,
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptHandoffEventRepository handoffEventRepository,
+      DSLContext dsl,
+      AutomationQueueService automationQueueService,
+      AutomationAdmissionStateService automationAdmissionStateService,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService) {
+    this(
+        gameSessionClient,
+        workItemRepository,
+        auditRepository,
+        handoffEventRepository,
+        dsl,
+        automationQueueService,
+        automationAdmissionStateService,
+        rolloutProjectionService,
+        null);
   }
 
   @Autowired
@@ -124,7 +152,33 @@ public class ScriptGameplayCommandHandoffServiceImpl
       DSLContext dsl,
       AutomationQueueService automationQueueService,
       AutomationAdmissionStateService automationAdmissionStateService,
-      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService) {
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      PlatformTransactionManager transactionManager) {
+    this(
+        gameSessionClient,
+        workItemRepository,
+        auditRepository,
+        handoffEventRepository,
+        dsl,
+        automationQueueService,
+        automationAdmissionStateService,
+        rolloutProjectionService,
+        newTransactionTemplate(transactionManager, TransactionDefinition.PROPAGATION_REQUIRES_NEW),
+        newTransactionTemplate(
+            transactionManager, TransactionDefinition.PROPAGATION_NOT_SUPPORTED));
+  }
+
+  private ScriptGameplayCommandHandoffServiceImpl(
+      GameSessionControlPlaneClient gameSessionClient,
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptHandoffEventRepository handoffEventRepository,
+      DSLContext dsl,
+      AutomationQueueService automationQueueService,
+      AutomationAdmissionStateService automationAdmissionStateService,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      TransactionTemplate handoffTransactionTemplate,
+      TransactionTemplate rpcTransactionTemplate) {
     this.gameSessionClient = gameSessionClient;
     this.workItemRepository = workItemRepository;
     this.auditRepository = auditRepository;
@@ -133,21 +187,41 @@ public class ScriptGameplayCommandHandoffServiceImpl
     this.automationQueueService = automationQueueService;
     this.automationAdmissionStateService = automationAdmissionStateService;
     this.rolloutProjectionService = rolloutProjectionService;
+    this.handoffTransactionTemplate = handoffTransactionTemplate;
+    this.rpcTransactionTemplate = rpcTransactionTemplate;
+  }
+
+  private static TransactionTemplate newTransactionTemplate(
+      PlatformTransactionManager transactionManager, int propagationBehavior) {
+    if (transactionManager == null) {
+      return null;
+    }
+    TransactionTemplate template = new TransactionTemplate(transactionManager);
+    template.setPropagationBehavior(propagationBehavior);
+    return template;
   }
 
   @Override
-  @Transactional(propagation = Propagation.MANDATORY)
   public void beginAggregateFanout(ScriptWorkItem workItem) {
     requireWorkItem(workItem);
+    HandoffPreflight preflight = preflight(workItem);
+    executeIntentBoundary(() -> beginAggregateFanoutInTransaction(workItem, preflight));
+  }
+
+  private void beginAggregateFanoutInTransaction(
+      ScriptWorkItem workItem, HandoffPreflight preflight) {
     lockAdmissionScope(workItem);
     aggregateFanouts.get().add(workItem.getId());
     try {
+      String admissionFenceReason =
+          handoffTransactionTemplate == null
+              ? preflight.admissionFenceReason()
+              : admissionFenceReason(workItem);
       aggregateAdmissionSnapshots
           .get()
           .put(
               workItem.getId(),
-              new AggregateAdmissionSnapshot(
-                  admissionFenceReason(workItem), runtimeRegionScopeStatus(workItem)));
+              new AggregateAdmissionSnapshot(admissionFenceReason, preflight.runtimeScopeStatus()));
     } catch (RuntimeException ex) {
       clearAggregateFanout(workItem.getId());
       throw ex;
@@ -174,29 +248,146 @@ public class ScriptGameplayCommandHandoffServiceImpl
   }
 
   @Override
-  @Transactional
   public HandoffResult handoff(ScriptWorkItem workItem, EmittedCommand command) {
     requireWorkItem(workItem);
     requireCommand(command);
     String dispatchId = dispatchId(workItem, command.ordinal());
+    AggregateAdmissionSnapshot aggregateSnapshot =
+        aggregateAdmissionSnapshots.get().get(workItem.getId());
+    HandoffPreflight preflight =
+        aggregateSnapshot == null ? preflight(workItem) : HandoffPreflight.from(aggregateSnapshot);
+    HandoffPreparation preparation;
+    try {
+      preparation = executeIntentTransaction(workItem, command, dispatchId, preflight);
+    } catch (RuntimeException ex) {
+      LOGGER.warn(
+          "Unable to durably prepare script handoff for workItemId={} commandOrdinal={}",
+          workItem.getId(),
+          command.ordinal(),
+          ex);
+      return retryablePreparationResult(ex);
+    }
+    if (preparation.result() != null) {
+      return preparation.result();
+    }
+    HandoffResult downstreamResult;
+    try {
+      downstreamResult =
+          executeRpcWithoutLocalTransaction(
+              () -> invokeDownstream(workItem, command, dispatchId, preparation.remoteHandoff()));
+    } catch (RuntimeException ex) {
+      LOGGER.warn(
+          "Script handoff RPC failed for workItemId={} commandOrdinal={}; retaining in-flight evidence",
+          workItem.getId(),
+          command.ordinal(),
+          ex);
+      return reconciliationRequiredResult(ex);
+    }
+    if (isReconciliationRequired(downstreamResult)) {
+      return downstreamResult;
+    }
+    try {
+      return executeResponseTransaction(
+          () ->
+              persistDownstreamResponse(
+                  workItem, command, dispatchId, downstreamResult, preparation.intentRowVersion()));
+    } catch (RuntimeException ex) {
+      LOGGER.warn(
+          "Unable to persist script handoff response for workItemId={} commandOrdinal={}; retaining in-flight evidence",
+          workItem.getId(),
+          command.ordinal(),
+          ex);
+      return reconciliationRequiredResult(ex);
+    }
+  }
+
+  private HandoffPreparation executeIntentTransaction(
+      ScriptWorkItem workItem,
+      EmittedCommand command,
+      String dispatchId,
+      HandoffPreflight preflight) {
+    if (handoffTransactionTemplate == null) {
+      return prepareHandoff(workItem, command, dispatchId, preflight);
+    }
+    return handoffTransactionTemplate.execute(
+        status -> prepareHandoff(workItem, command, dispatchId, preflight));
+  }
+
+  private void executeIntentBoundary(Runnable action) {
+    if (handoffTransactionTemplate == null) {
+      action.run();
+      return;
+    }
+    handoffTransactionTemplate.execute(
+        status -> {
+          action.run();
+          return null;
+        });
+  }
+
+  private HandoffResult executeRpcWithoutLocalTransaction(RpcCall rpcCall) {
+    if (rpcTransactionTemplate == null) {
+      return rpcCall.invoke();
+    }
+    return rpcTransactionTemplate.execute(status -> rpcCall.invoke());
+  }
+
+  private HandoffResult executeResponseTransaction(ResponseCommit responseCommit) {
+    if (handoffTransactionTemplate == null) {
+      return responseCommit.commit();
+    }
+    return handoffTransactionTemplate.execute(status -> responseCommit.commit());
+  }
+
+  @FunctionalInterface
+  private interface RpcCall {
+    HandoffResult invoke();
+  }
+
+  @FunctionalInterface
+  private interface ResponseCommit {
+    HandoffResult commit();
+  }
+
+  private record HandoffPreparation(
+      HandoffResult result, boolean remoteHandoff, int intentRowVersion) {
+    HandoffPreparation(HandoffResult result, boolean remoteHandoff) {
+      this(result, remoteHandoff, -1);
+    }
+  }
+
+  private HandoffPreparation prepareHandoff(
+      ScriptWorkItem workItem,
+      EmittedCommand command,
+      String dispatchId,
+      HandoffPreflight preflight) {
+    requireWorkItem(workItem);
+    requireCommand(command);
+    // Every child intent owns a short local transaction. Reacquire the admission lock and reread
+    // the local fence in that transaction even when aggregate fanout retained a remote runtime
+    // snapshot; the aggregate snapshot is not local admission authority.
     lockAdmissionScope(workItem);
     AggregateAdmissionSnapshot aggregateSnapshot =
         aggregateAdmissionSnapshots.get().get(workItem.getId());
     String admissionFenceReason =
         aggregateSnapshot == null
-            ? admissionFenceReason(workItem)
-            : aggregateSnapshot.admissionFenceReason();
+            ? handoffTransactionTemplate == null
+                ? preflight.admissionFenceReason()
+                : admissionFenceReason(workItem)
+            : admissionFenceReason(workItem);
     if (ScriptHandoffOutcomeSupport.REASON_RUNTIME_PAUSED.equals(admissionFenceReason)) {
       Instant now = Instant.now();
       cancelForAdmissionPause(
           workItem, command, dispatchId, now, deferAggregateTerminalization(workItem));
-      return new HandoffResult(
-          false,
-          ScriptHandoffOutcomeSupport.REASON_RUNTIME_PAUSED,
-          "",
-          "",
-          "",
-          ScriptHandoffOutcomeSupport.ERROR_RUNTIME_PAUSED);
+      return new HandoffPreparation(
+          new HandoffResult(
+              false,
+              ScriptHandoffOutcomeSupport.REASON_RUNTIME_PAUSED,
+              "",
+              "",
+              "",
+              ScriptHandoffOutcomeSupport.ERROR_RUNTIME_PAUSED),
+          false);
     }
     if (ScriptHandoffOutcomeSupport.REASON_AUTHORITY_UNAVAILABLE.equals(admissionFenceReason)) {
       Instant now = Instant.now();
@@ -210,25 +401,34 @@ public class ScriptGameplayCommandHandoffServiceImpl
               ScriptHandoffOutcomeSupport.ERROR_AUTHORITY_UNAVAILABLE,
               "automation admission state unavailable");
       applyOutcome(workItem, command, dispatchId, result, now);
-      return result;
+      return new HandoffPreparation(result, false);
     }
     if (ScriptHandoffOutcomeSupport.REASON_ROLLBACK_EPOCH_ADVANCED.equals(admissionFenceReason)) {
       Instant now = Instant.now();
       cancelForRollbackEpochAdvance(
           workItem, command, dispatchId, now, deferAggregateTerminalization(workItem));
-      return new HandoffResult(
-          false, ScriptHandoffOutcomeSupport.REASON_ROLLBACK_EPOCH_ADVANCED, "", "", "", "");
+      return new HandoffPreparation(
+          new HandoffResult(
+              false, ScriptHandoffOutcomeSupport.REASON_ROLLBACK_EPOCH_ADVANCED, "", "", "", ""),
+          false);
     }
     RuntimeRegionScopeStatus runtimeScopeStatus =
         aggregateSnapshot == null
-            ? runtimeRegionScopeStatus(workItem)
+            ? preflight.runtimeScopeStatus()
             : aggregateSnapshot.runtimeRegionScopeStatus();
     if (runtimeScopeStatus == RuntimeRegionScopeStatus.ADVANCED) {
       Instant now = Instant.now();
       cancelForRuntimeRegionScopeAdvance(
           workItem, command, dispatchId, now, deferAggregateTerminalization(workItem));
-      return new HandoffResult(
-          false, ScriptHandoffOutcomeSupport.REASON_RUNTIME_REGION_SCOPE_ADVANCED, "", "", "", "");
+      return new HandoffPreparation(
+          new HandoffResult(
+              false,
+              ScriptHandoffOutcomeSupport.REASON_RUNTIME_REGION_SCOPE_ADVANCED,
+              "",
+              "",
+              "",
+              ""),
+          false);
     }
     boolean remoteHandoff = requiresRemoteHandoff(workItem, command);
     if (runtimeScopeStatus != RuntimeRegionScopeStatus.CURRENT) {
@@ -251,7 +451,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
               errorCode,
               message);
       applyOutcome(workItem, command, dispatchId, result, now);
-      return result;
+      return new HandoffPreparation(result, remoteHandoff);
     }
     if (remoteHandoff && !hasRepresentableDeadline(workItem, command)) {
       Instant now = Instant.now();
@@ -264,52 +464,92 @@ public class ScriptGameplayCommandHandoffServiceImpl
               "",
               ScriptHandoffOutcomeSupport.ERROR_INVALID_ARGUMENT);
       applyOutcome(workItem, command, dispatchId, result, now);
-      return result;
+      return new HandoffPreparation(result, remoteHandoff);
     }
     Instant now = Instant.now();
-    workItem.setStatus(STATUS_HANDOFF_IN_FLIGHT);
-    workItem.setUpdatedAt(now);
-    workItemRepository.save(workItem);
-    rolloutProjectionService.refreshForWorkItem(workItem);
-
-    EnqueueAutomationCommandIfAbsentResponse response =
-        remoteHandoff
-            ? null
-            : gameSessionClient.enqueueAutomationCommandIfAbsent(
-                toRequest(workItem, command, dispatchId));
-    HandoffResult result;
-    if (remoteHandoff) {
-      ScopeValidationResult scopeValidation = validateRemoteHandoffScope(workItem, command);
-      if (scopeValidation != null) {
-        result =
+    Optional<ScriptHandoffEvent> existingHandoff =
+        handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal(
+            workItem.getTenantId(), workItem.getId(), command.ordinal());
+    if (existingHandoff.isPresent()) {
+      ScriptHandoffEvent existing = existingHandoff.orElseThrow();
+      if (!handoffIdentityMatches(existing, workItem, command, dispatchId)) {
+        return new HandoffPreparation(
             new HandoffResult(
                 false,
                 ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
                 "",
                 "",
                 "",
-                scopeValidation.errorCode(),
-                scopeValidation.message());
-      } else {
-        ScheduleRemoteFollowupResponse remoteResponse =
-            gameSessionClient.scheduleRemoteFollowup(
-                toRemoteScheduleRequest(workItem, command, dispatchId));
-        result = remoteHandoffResult(remoteResponse);
+                ScriptHandoffOutcomeSupport.REASON_IDEMPOTENCY_CONFLICT,
+                "existing handoff child identity does not match request"),
+            remoteHandoff);
       }
-    } else if (response == null) {
-      result =
-          new HandoffResult(
-              false,
-              ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
-              "",
-              "",
-              "",
-              ScriptHandoffOutcomeSupport.ERROR_REMOTE_RESPONSE_INVALID,
-              "local owner response was null");
-    } else {
-      result = localHandoffResult(response);
+      if (isAcceptedHandoff(existing)) {
+        return new HandoffPreparation(handoffResult(existing), remoteHandoff);
+      }
     }
-    applyOutcome(workItem, command, dispatchId, result, now);
+    workItem.setStatus(STATUS_HANDOFF_IN_FLIGHT);
+    workItem.setUpdatedAt(now);
+    workItemRepository.save(workItem);
+    rolloutProjectionService.refreshForWorkItem(workItem);
+
+    ScriptHandoffEvent intent = appendHandoffIntent(workItem, command, dispatchId, now);
+    return new HandoffPreparation(null, remoteHandoff, intent.getRowVersion());
+  }
+
+  private HandoffResult invokeDownstream(
+      ScriptWorkItem workItem, EmittedCommand command, String dispatchId, boolean remoteHandoff) {
+    if (remoteHandoff) {
+      ScopeValidationResult scopeValidation = validateRemoteHandoffScope(workItem, command);
+      if (scopeValidation != null) {
+        return new HandoffResult(
+            false,
+            ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
+            "",
+            "",
+            "",
+            scopeValidation.errorCode(),
+            scopeValidation.message());
+      }
+      ScheduleRemoteFollowupResponse remoteResponse =
+          gameSessionClient.scheduleRemoteFollowup(
+              toRemoteScheduleRequest(workItem, command, dispatchId));
+      return remoteHandoffResult(remoteResponse);
+    }
+    EnqueueAutomationCommandIfAbsentResponse response =
+        gameSessionClient.enqueueAutomationCommandIfAbsent(
+            toRequest(workItem, command, dispatchId));
+    if (response == null) {
+      return reconciliationRequiredResult("local owner response was null");
+    }
+    return localHandoffResult(response);
+  }
+
+  private HandoffResult persistDownstreamResponse(
+      ScriptWorkItem workItem,
+      EmittedCommand command,
+      String dispatchId,
+      HandoffResult result,
+      int intentRowVersion) {
+    if (isReconciliationRequired(result)) {
+      return result;
+    }
+    if (handoffTransactionTemplate != null) {
+      Optional<ScriptHandoffEvent> existingHandoff =
+          handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal(
+              workItem.getTenantId(), workItem.getId(), command.ordinal());
+      if (existingHandoff.isEmpty()) {
+        return reconciliationRequiredResult("durable handoff intent was not found");
+      }
+      ScriptHandoffEvent existing = existingHandoff.orElseThrow();
+      if (isAcceptedHandoff(existing)) {
+        return handoffResult(existing);
+      }
+      if (intentRowVersion >= 0 && existing.getRowVersion() != intentRowVersion) {
+        return reconciliationRequiredResult("durable handoff intent fence advanced");
+      }
+    }
+    applyOutcome(workItem, command, dispatchId, result, Instant.now());
     return result;
   }
 
@@ -352,27 +592,14 @@ public class ScriptGameplayCommandHandoffServiceImpl
     if (normalize(response.getCommandId()).isBlank()
         || hasNonBlankErrorMetadata
         || !coherentOutcome) {
-      return new HandoffResult(
-          false,
-          ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
-          "",
-          "",
-          "",
-          ScriptHandoffOutcomeSupport.ERROR_REMOTE_RESPONSE_INVALID);
+      return reconciliationRequiredResult("local owner response was incomplete");
     }
     return new HandoffResult(true, admissionOutcome, response.getCommandId(), "", "", "");
   }
 
   private static HandoffResult remoteHandoffResult(ScheduleRemoteFollowupResponse remoteResponse) {
     if (remoteResponse == null) {
-      return new HandoffResult(
-          false,
-          ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
-          "",
-          "",
-          "",
-          ScriptHandoffOutcomeSupport.ERROR_REMOTE_RESPONSE_INVALID,
-          "remote owner response was null");
+      return reconciliationRequiredResult("remote owner response was null");
     }
     String remoteCoordinatorId = remoteResponse.getCoordinatorId();
     String remoteFollowupId = remoteResponse.getFollowupId();
@@ -393,15 +620,114 @@ public class ScriptGameplayCommandHandoffServiceImpl
             && !remoteCoordinatorId.isBlank()
             && remoteFollowupId != null
             && !remoteFollowupId.isBlank();
+    if (!hasDurableIds) {
+      return reconciliationRequiredResult("remote owner response omitted durable identifiers");
+    }
     return new HandoffResult(
-        hasDurableIds,
-        hasDurableIds
-            ? ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_SCHEDULED
-            : ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
+        true,
+        ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_SCHEDULED,
         "",
         remoteCoordinatorId,
         remoteFollowupId,
-        hasDurableIds ? "" : ScriptHandoffOutcomeSupport.ERROR_REMOTE_RESPONSE_INVALID);
+        "");
+  }
+
+  private static HandoffResult reconciliationRequiredResult(String message) {
+    return new HandoffResult(
+        false,
+        OUTCOME_HANDOFF_IN_FLIGHT,
+        "",
+        "",
+        "",
+        OUTCOME_HANDOFF_IN_FLIGHT,
+        message == null ? "" : message);
+  }
+
+  private static HandoffResult reconciliationRequiredResult(Throwable failure) {
+    return reconciliationRequiredResult(
+        failure == null || failure.getMessage() == null ? "" : failure.getMessage());
+  }
+
+  private static HandoffResult retryablePreparationResult(Throwable failure) {
+    return new HandoffResult(
+        false,
+        ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
+        "",
+        "",
+        "",
+        "UNAVAILABLE",
+        failure == null || failure.getMessage() == null ? "" : failure.getMessage());
+  }
+
+  private static boolean isReconciliationRequired(HandoffResult result) {
+    return result != null
+        && (OUTCOME_HANDOFF_IN_FLIGHT.equalsIgnoreCase(normalize(result.outcome()))
+            || OUTCOME_HANDOFF_IN_FLIGHT.equalsIgnoreCase(normalize(result.errorCode())));
+  }
+
+  private static boolean isAcceptedHandoff(ScriptHandoffEvent event) {
+    String outcome = normalize(event.getHandoffOutcome()).trim().toUpperCase(Locale.ROOT);
+    return "ENQUEUED".equals(outcome)
+        || "DUPLICATE_NOOP".equals(outcome)
+        || "REMOTE_SCHEDULED".equals(outcome);
+  }
+
+  private static HandoffResult handoffResult(ScriptHandoffEvent event) {
+    String outcome = normalize(event.getHandoffOutcome()).trim().toUpperCase(Locale.ROOT);
+    return new HandoffResult(
+        true,
+        outcome,
+        normalize(event.getGameSessionCommandId()),
+        normalize(event.getRemoteCoordinatorId()),
+        normalize(event.getRemoteFollowupId()),
+        "");
+  }
+
+  private static boolean handoffIdentityMatches(
+      ScriptHandoffEvent existing,
+      ScriptWorkItem workItem,
+      EmittedCommand command,
+      String dispatchId) {
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.normalize(
+            workItem.getWorldSlug(), workItem.getRealmSlug(), workItem.getPointerVersion());
+    return Objects.equals(existing.getEventId(), handoffEventId(workItem, command.ordinal()))
+        && Objects.equals(existing.getTenantId(), workItem.getTenantId())
+        && Objects.equals(existing.getGameInstanceId(), workItem.getGameInstanceId())
+        && Objects.equals(existing.getScriptPatchVersion(), workItem.getScriptPatchVersion())
+        && existing.getScriptPinEpoch() == workItem.getScriptPinEpoch()
+        && Objects.equals(
+            normalize(existing.getScriptPinControlPlaneRequestId()),
+            normalize(workItem.getScriptPinControlPlaneRequestId()))
+        && Objects.equals(existing.getScriptId(), workItem.getScriptId())
+        && Objects.equals(normalize(existing.getBindingId()), normalize(workItem.getBindingId()))
+        && Objects.equals(normalize(existing.getPluginId()), normalize(workItem.getPluginId()))
+        && Objects.equals(
+            normalize(existing.getPluginVersionId()), normalize(workItem.getPluginVersionId()))
+        && existing.getPluginActivationEpoch() == workItem.getPluginActivationEpoch()
+        && existing.getLifecycleRevision() == workItem.getLifecycleRevision()
+        && Objects.equals(existing.getWorkItemId(), workItem.getId())
+        && existing.getCommandOrdinal() == command.ordinal()
+        && Objects.equals(existing.getAutomationDispatchId(), dispatchId)
+        && Objects.equals(
+            normalize(existing.getTargetGameInstanceId()),
+            normalize(command.targetGameInstanceId()))
+        && Objects.equals(
+            normalize(existing.getTargetRegionId()), normalize(command.targetRegionId()))
+        && existing.getTargetRegionEpoch() == zeroIfNull(command.targetRegionEpoch())
+        && Objects.equals(existing.getTargetEntityId(), command.targetEntityId())
+        && Objects.equals(
+            normalize(existing.getPlayableStateScope()),
+            normalize(workItem.getPlayableStateScope()))
+        && Objects.equals(existing.getWorldSlug(), routingBundle.worldSlug())
+        && Objects.equals(existing.getRealmSlug(), routingBundle.realmSlug())
+        && Objects.equals(existing.getPointerVersion(), routingBundle.pointerVersion())
+        && Objects.equals(existing.getSourceKind(), normalize(workItem.getSourceKind()))
+        && Objects.equals(existing.getSourceState(), normalize(workItem.getSourceState()))
+        && Objects.equals(existing.getSourceOrdinal(), workItem.getSourceOrdinal())
+        && Objects.equals(existing.getSourceDueTickId(), workItem.getSourceDueTickId())
+        && Objects.equals(existing.getSourceDueAtMs(), workItem.getSourceDueAtMs())
+        && Objects.equals(existing.getEmittedCommandText(), command.commandText());
   }
 
   private String admissionFenceReason(ScriptWorkItem workItem) {
@@ -426,10 +752,9 @@ public class ScriptGameplayCommandHandoffServiceImpl
   }
 
   /**
-   * Uses the same transaction-scoped owner lock as admission mutations. The handoff method is
-   * transactional, so this lock remains held through the durable handoff outcome and the remote
-   * Game Session admission call; a concurrent pause cannot commit between the fence read and that
-   * call. Reentrant PostgreSQL advisory locks are safe for aggregate fan-out on one transaction.
+   * Uses the same transaction-scoped owner lock as admission mutations. The lock fences the pre-RPC
+   * admission read and intent commit; the RPC itself runs after that transaction commits and
+   * therefore never holds this local transaction open.
    */
   private void lockAdmissionScope(ScriptWorkItem workItem) {
     if (dsl == null
@@ -517,6 +842,31 @@ public class ScriptGameplayCommandHandoffServiceImpl
 
   private record AggregateAdmissionSnapshot(
       String admissionFenceReason, RuntimeRegionScopeStatus runtimeRegionScopeStatus) {}
+
+  private record HandoffPreflight(
+      String admissionFenceReason, RuntimeRegionScopeStatus runtimeScopeStatus) {
+    static HandoffPreflight from(AggregateAdmissionSnapshot snapshot) {
+      return new HandoffPreflight(
+          snapshot.admissionFenceReason(), snapshot.runtimeRegionScopeStatus());
+    }
+  }
+
+  private HandoffPreflight preflight(ScriptWorkItem workItem) {
+    String admissionFenceReason = admissionFenceReason(workItem);
+    RuntimeRegionScopeStatus runtimeScopeStatus =
+        admissionFenceReason == null
+            ? runtimeRegionScopeStatusOutsideTransaction(workItem)
+            : RuntimeRegionScopeStatus.MALFORMED;
+    return new HandoffPreflight(admissionFenceReason, runtimeScopeStatus);
+  }
+
+  private RuntimeRegionScopeStatus runtimeRegionScopeStatusOutsideTransaction(
+      ScriptWorkItem workItem) {
+    if (rpcTransactionTemplate == null) {
+      return runtimeRegionScopeStatus(workItem);
+    }
+    return rpcTransactionTemplate.execute(status -> runtimeRegionScopeStatus(workItem));
+  }
 
   private RuntimeRegionScopeStatus runtimeRegionScopeStatus(ScriptWorkItem workItem) {
     if (workItem.getTenantId() == null
@@ -710,6 +1060,11 @@ public class ScriptGameplayCommandHandoffServiceImpl
       HandoffResult result,
       Instant now) {
     appendHandoffEvent(workItem, command, dispatchId, result, now);
+    if (isReconciliationRequired(result)) {
+      // A lost/ambiguous downstream response is not a terminal rejection. The child remains
+      // HANDOFF_IN_FLIGHT until a later exact-identity reconciliation determines the outcome.
+      return;
+    }
     if (result.accepted()) {
       // The executor owns the aggregate terminal outcome. This child is only durably accepted;
       // recording handoff_accepted here would falsely claim that all siblings were accepted.
@@ -803,7 +1158,12 @@ public class ScriptGameplayCommandHandoffServiceImpl
     return "workItem:" + workItem.getId() + "#" + ordinal;
   }
 
-  private void appendHandoffEvent(
+  private ScriptHandoffEvent appendHandoffIntent(
+      ScriptWorkItem workItem, EmittedCommand command, String dispatchId, Instant now) {
+    return appendHandoffEvent(workItem, command, dispatchId, reconciliationRequiredResult(""), now);
+  }
+
+  private ScriptHandoffEvent appendHandoffEvent(
       ScriptWorkItem workItem,
       EmittedCommand command,
       String dispatchId,
@@ -859,7 +1219,8 @@ public class ScriptGameplayCommandHandoffServiceImpl
               event.setId(existing.getId());
               event.setRowVersion(existing.getRowVersion());
             });
-    handoffEventRepository.save(event);
+    ScriptHandoffEvent saved = handoffEventRepository.save(event);
+    return saved == null ? event : saved;
   }
 
   private static String handoffEventId(ScriptWorkItem workItem, int commandOrdinal) {
@@ -867,6 +1228,9 @@ public class ScriptGameplayCommandHandoffServiceImpl
   }
 
   private static String handoffReason(HandoffResult result) {
+    if (isReconciliationRequired(result)) {
+      return REASON_HANDOFF_IN_FLIGHT;
+    }
     if (result.accepted()) {
       return result.remoteFollowupId().isBlank()
           ? "game_session_accepted"
