@@ -1793,6 +1793,11 @@ clean_delete_step_index = next(
     for index, step in enumerate(deploy_steps)
     if step.get("name") == "Delete exact preview runtime namespace before recreate"
 )
+capture_retry_step_index = next(
+    index
+    for index, step in enumerate(deploy_steps)
+    if step.get("name") == "Capture exact proof-retry record before namespace recreation"
+)
 allocate_port_step_index = next(
     index
     for index, step in enumerate(deploy_steps)
@@ -1811,6 +1816,7 @@ deployed_step_index = next(
 assert (
     allocate_port_step_index
     < clean_revalidate_step_index
+    < capture_retry_step_index
     < clean_delete_step_index
     < requested_step_index
     < apply_step_index
@@ -1845,6 +1851,30 @@ assert (
     'bash ./dev-tools/hosted/shared/delete-hosted-namespace.sh \\\n'
     '  "$RUNTIME_NAMESPACE" "$RUNTIME_NAMESPACE"'
 ) in clean_delete["run"]
+capture_retry = deploy_by_name[
+    "Capture exact proof-retry record before namespace recreation"
+]
+assert capture_retry["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
+    "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}",
+    "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
+    "EXPECTED_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
+    "EXPECTED_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
+    "EXPECTED_MERGE_SHA": "${{ needs.validate-target.outputs.merge_sha }}",
+    "EXPECTED_IMAGE_TAG": "${{ needs.validate-target.outputs.image_tag }}",
+}
+for required in (
+    'kubectl get namespace "$RUNTIME_NAMESPACE" --ignore-not-found -o json',
+    'firemud.dev/proof-retry-count',
+    'firemud.dev/proof-retry-base-sha',
+    'firemud.dev/proof-retry-head-sha',
+    'firemud.dev/proof-retry-merge-sha',
+    'firemud.dev/proof-retry-image-tag',
+    'Retry annotations must be a complete string record before namespace recreation.',
+    'Existing proof-retry record belongs to another tuple; resetting its budget.',
+    'proof_retry_count=$retry_count',
+):
+    assert required in capture_retry["run"], required
 create_step = deploy_by_name["Create and annotate exact preview runtime namespace"]
 assert create_step["env"]["ALLOCATED_TELNET_PORT"] == (
     "${{ steps.allocate-telnet-port.outputs.port }}"
@@ -1852,6 +1882,14 @@ assert create_step["env"]["ALLOCATED_TELNET_PORT"] == (
 assert create_step["env"]["ALLOCATION_TIMESTAMP"] == (
     "${{ steps.allocate-capacity.outputs.allocation_timestamp }}"
 )
+for output_name in (
+    "proof_retry_count",
+    "proof_retry_base_sha",
+    "proof_retry_head_sha",
+    "proof_retry_merge_sha",
+    "proof_retry_image_tag",
+):
+    assert f"steps.capture-proof-retry.outputs.{output_name}" in create_step["run"]
 standalone_grpc = deploy_by_name["Prepare standalone gRPC TLS secret"]
 standalone_certificates = deploy_by_name["Prepare standalone transport certificates"]
 standalone_secret_wait = deploy_by_name["Wait for standalone transport Secret projections"]
@@ -3035,6 +3073,110 @@ mapfile -t preview_annotator_calls <"$preview_annotator_log"
   "annotate namespace pr-42 firemud.dev/requested-preview-base-sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb firemud.dev/requested-preview-head-sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa firemud.dev/requested-preview-merge-sha=cccccccccccccccccccccccccccccccccccccccc firemud.dev/requested-preview-image-tag=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa firemud.dev/preview-allocated-at=2026-09-13T01:02:03Z firemud.dev/last-preview-sync-at="*" firemud.dev/last-preview-telnet-port- --overwrite" ]]
 [[ "${preview_annotator_calls[1]}" == \
   "label namespace pr-42 firemud.dev/preview=true firemud.dev/pr-number=42 firemud.dev/preview-exposure-mode=private --overwrite" ]]
+
+: >"$preview_annotator_log"
+run_preview_annotator \
+  pr-42 42 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa cccccccccccccccccccccccccccccccccccccccc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  private 0 2026-09-13T01:02:03Z \
+  2 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  cccccccccccccccccccccccccccccccccccccccc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+mapfile -t preview_annotator_calls <"$preview_annotator_log"
+[[ "${#preview_annotator_calls[@]}" -eq 2 ]]
+[[ "${preview_annotator_calls[0]}" == *"firemud.dev/proof-retry-count=2"* ]]
+[[ "${preview_annotator_calls[0]}" == *"firemud.dev/proof-retry-base-sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"* ]]
+[[ "${preview_annotator_calls[0]}" == *"firemud.dev/proof-retry-head-sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"* ]]
+[[ "${preview_annotator_calls[0]}" == *"firemud.dev/proof-retry-merge-sha=cccccccccccccccccccccccccccccccccccccccc"* ]]
+[[ "${preview_annotator_calls[0]}" == *"firemud.dev/proof-retry-image-tag=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"* ]]
+
+for partial_retry_args in \
+  "2" \
+  "2 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; do
+  : >"$preview_annotator_log"
+  read -r -a partial_retry_values <<<"$partial_retry_args"
+  if run_preview_annotator \
+    pr-42 42 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa cccccccccccccccccccccccccccccccccccccccc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    private 0 2026-09-13T01:02:03Z "${partial_retry_values[@]}" \
+    >"$TEMP_DIR/invalid-preview-retry.output" \
+    2>"$TEMP_DIR/invalid-preview-retry.error"; then
+    echo "preview namespace annotator accepted a partial proof-retry record: $partial_retry_args" >&2
+    exit 1
+  fi
+  [[ ! -s "$preview_annotator_log" ]]
+done
+
+capture_retry_step="$TEMP_DIR/capture-proof-retry.sh"
+python3 - "$trusted" "$capture_retry_step" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+steps = workflow["jobs"]["deploy-runtime"]["steps"]
+step = next(
+    step
+    for step in steps
+    if step.get("name") == "Capture exact proof-retry record before namespace recreation"
+)
+Path(sys.argv[2]).write_text(step["run"], encoding="utf-8")
+PY
+chmod +x "$capture_retry_step"
+capture_retry_stub_dir="$TEMP_DIR/capture-retry-stubs"
+capture_retry_namespace_json="$TEMP_DIR/capture-retry-namespace.json"
+capture_retry_output="$TEMP_DIR/capture-retry-output"
+mkdir -p "$capture_retry_stub_dir"
+cat >"$capture_retry_stub_dir/kubectl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == get && "$2" == namespace ]]; then
+  cat "${CAPTURE_RETRY_NAMESPACE_JSON:?}"
+  exit 0
+fi
+printf 'unexpected capture-retry kubectl invocation: %s\n' "$*" >&2
+exit 2
+SH
+chmod +x "$capture_retry_stub_dir/kubectl"
+run_capture_retry() {
+  env \
+    PATH="$capture_retry_stub_dir:$PATH" \
+    KUBECONFIG=fake \
+    RUNTIME_NAMESPACE=pr-42 \
+    PR_NUMBER=42 \
+    EXPECTED_BASE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+    EXPECTED_HEAD_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    EXPECTED_MERGE_SHA=cccccccccccccccccccccccccccccccccccccccc \
+    EXPECTED_IMAGE_TAG=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    GITHUB_OUTPUT="$capture_retry_output" \
+    CAPTURE_RETRY_NAMESPACE_JSON="$capture_retry_namespace_json" \
+    bash "$capture_retry_step"
+}
+jq -nc \
+  '{metadata:{annotations:{
+    "firemud.dev/proof-retry-count":"2",
+    "firemud.dev/proof-retry-base-sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "firemud.dev/proof-retry-head-sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "firemud.dev/proof-retry-merge-sha":"cccccccccccccccccccccccccccccccccccccccc",
+    "firemud.dev/proof-retry-image-tag":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }}}' >"$capture_retry_namespace_json"
+: >"$capture_retry_output"
+run_capture_retry
+grep -Fqx 'proof_retry_count=2' "$capture_retry_output"
+grep -Fqx 'proof_retry_base_sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "$capture_retry_output"
+grep -Fqx 'proof_retry_head_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$capture_retry_output"
+grep -Fqx 'proof_retry_merge_sha=cccccccccccccccccccccccccccccccccccccccc' "$capture_retry_output"
+grep -Fqx 'proof_retry_image_tag=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$capture_retry_output"
+
+jq -nc \
+  '{metadata:{annotations:{
+    "firemud.dev/proof-retry-count":"2",
+    "firemud.dev/proof-retry-base-sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }}}' >"$capture_retry_namespace_json"
+: >"$capture_retry_output"
+if run_capture_retry; then
+  echo "capture accepted a partial proof-retry annotation record" >&2
+  exit 1
+fi
+[[ ! -s "$capture_retry_output" ]]
 
 invalid_preview_annotator_cases=(
   "pr-042|042|public|32000|2026-09-13T01:02:03Z"

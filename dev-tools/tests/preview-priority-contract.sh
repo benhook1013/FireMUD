@@ -2524,6 +2524,28 @@ grep -Fq -- '--resource-version rv-901' "$FAKE_ANNOTATE_LOG"
 grep -Fq 'repos/example/FireMUD/dispatches -f event_type=preview-deploy' "$FAKE_DISPATCH_LOG"
 
 reset_case
+reconciler_preserved_proof_retry_output="$TEMP_DIR/reconciler-preserved-proof-retry.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=head-901 \
+    FAKE_PR_901_PROOF_COMPLETE=false \
+    FAKE_PR_901_PROOF_RETRY_COUNT=2 \
+    FAKE_PR_901_PROOF_RETRY_BASE_SHA="$preview_base_sha" \
+    FAKE_PR_901_PROOF_RETRY_HEAD_SHA="$preview_head_sha" \
+    FAKE_PR_901_PROOF_RETRY_MERGE_SHA="$preview_merge_sha" \
+    FAKE_PR_901_PROOF_RETRY_IMAGE_TAG="$preview_image_tag" \
+PREVIEW_MAX_ACTIVE=2 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_preserved_proof_retry_output"
+grep -Fqx \
+  "Recorded proof retry 3/3 for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag})." \
+  "$reconciler_preserved_proof_retry_output"
+grep -Fq -- 'firemud.dev/proof-retry-count=3' "$FAKE_ANNOTATE_LOG"
+grep -Fq 'repos/example/FireMUD/dispatches -f event_type=preview-deploy' "$FAKE_DISPATCH_LOG"
+
+reset_case
 reconciler_exhausted_proof_retry_output="$TEMP_DIR/reconciler-exhausted-proof-retry.out"
 (
   cd "$ROOT_DIR"
