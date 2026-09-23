@@ -80,7 +80,8 @@ final class AutomationGameplayCommandAdmissionSupport {
     GameplayCommand requestedCommand = acceptedAutomationCommand(request);
     Optional<GameplayCommand> existing = findExistingCommand(request, gameplayCommandRepository);
     if (existing.isPresent()) {
-      return existingDurableAdmission(existing.orElseThrow(), requestedCommand);
+      return existingDurableAdmission(
+          existing.orElseThrow(), requestedCommand, request, runtimeRegionStatusRepository);
     }
 
     return admitFreshDurably(
@@ -125,7 +126,8 @@ final class AutomationGameplayCommandAdmissionSupport {
     Optional<GameplayCommand> existing = findExistingCommand(request, gameplayCommandRepository);
     if (existing.isPresent()) {
       return materializeAcceptedCommand(
-          existingDurableAdmission(existing.orElseThrow(), requestedCommand),
+          existingDurableAdmission(
+              existing.orElseThrow(), requestedCommand, request, runtimeRegionStatusRepository),
           request,
           gameplayCommandRepository,
           tickService);
@@ -246,7 +248,8 @@ final class AutomationGameplayCommandAdmissionSupport {
     }
     command = insertResult.command();
     if (!insertResult.inserted()) {
-      return existingDurableAdmission(command, requestedCommand);
+      return existingDurableAdmission(
+          command, requestedCommand, request, runtimeRegionStatusRepository);
     }
     return new DurableAdmission(null, command, true);
   }
@@ -303,13 +306,23 @@ final class AutomationGameplayCommandAdmissionSupport {
   }
 
   private static DurableAdmission existingDurableAdmission(
-      GameplayCommand existing, GameplayCommand requestedCommand) {
+      GameplayCommand existing,
+      GameplayCommand requestedCommand,
+      AdmissionRequest request,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository) {
     AdmissionResult result = existingAdmissionResult(existing, requestedCommand);
     boolean retryExisting =
         "ACCEPTED".equals(existing.getExecutionOutcome())
             && existing.getStagedAt() == null
             && existing.getCompletedAt() == null
             && "UNAVAILABLE".equals(result.errorCode());
+    if (retryExisting) {
+      Optional<AdmissionResult> ownershipRejected =
+          rejectIfOwnershipClosed(request, runtimeRegionStatusRepository);
+      if (ownershipRejected.isPresent()) {
+        return new DurableAdmission(ownershipRejected.orElseThrow(), null, false);
+      }
+    }
     return new DurableAdmission(result, retryExisting ? existing : null, false, retryExisting);
   }
 
