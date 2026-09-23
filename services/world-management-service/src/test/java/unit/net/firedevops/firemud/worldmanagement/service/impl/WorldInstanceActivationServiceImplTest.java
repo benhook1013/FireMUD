@@ -1,8 +1,10 @@
 package net.firedevops.firemud.worldmanagement.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -10,12 +12,15 @@ import static org.mockito.Mockito.when;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
+import net.firedevops.firemud.entitymanagement.v1.CleanupRuntimeInstanceResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot;
+import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.config.WorldProperties;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
@@ -33,8 +38,10 @@ import net.firedevops.firemud.worldmanagement.repository.ZoneInstanceRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionOperations;
 
-class WorldLifecycleCommandServiceImplTest {
+class WorldInstanceActivationServiceImplTest {
   private WorldInstanceRepository worldInstanceRepository;
   private RegionInstanceRepository regionInstanceRepository;
   private ZoneRepository zoneRepository;
@@ -44,7 +51,9 @@ class WorldLifecycleCommandServiceImplTest {
   private RoomInstanceRepository roomInstanceRepository;
   private RoomInstanceExitRepository roomInstanceExitRepository;
   private WorldEventRepository worldEventRepository;
+  private EntityManagementClient entityManagementClient;
   private GameDesignClient gameDesignClient;
+  private AtomicBoolean localTransactionActive;
   private WorldLifecycleCommandServiceImpl service;
 
   @BeforeEach
@@ -58,7 +67,22 @@ class WorldLifecycleCommandServiceImplTest {
     roomInstanceRepository = mock(RoomInstanceRepository.class);
     roomInstanceExitRepository = mock(RoomInstanceExitRepository.class);
     worldEventRepository = mock(WorldEventRepository.class);
+    entityManagementClient = mock(EntityManagementClient.class);
     gameDesignClient = mock(GameDesignClient.class);
+    localTransactionActive = new AtomicBoolean();
+    TransactionOperations transactionOperations =
+        new TransactionOperations() {
+          @Override
+          public <T> T execute(TransactionCallback<T> action) {
+            assertFalse(localTransactionActive.get());
+            localTransactionActive.set(true);
+            try {
+              return action.doInTransaction(null);
+            } finally {
+              localTransactionActive.set(false);
+            }
+          }
+        };
     WorldProperties worldProperties = new WorldProperties();
     worldProperties.setLocalShardId(7);
     service =
@@ -74,7 +98,9 @@ class WorldLifecycleCommandServiceImplTest {
             worldEventRepository,
             worldProperties,
             gameDesignClient,
-            new SimpleMeterRegistry());
+            entityManagementClient,
+            new SimpleMeterRegistry(),
+            transactionOperations);
     service.initMetrics();
     when(gameDesignClient.getPublishedReleaseBundle(42L, 11L))
         .thenReturn(
@@ -239,6 +265,71 @@ class WorldLifecycleCommandServiceImplTest {
   }
 
   @Test
+  void terminateWorldInstanceDoesNotCommitTerminationWhenWorldCleanupFails() {
+    WorldInstance instance = activeWorldInstance();
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.of(instance));
+    when(worldInstanceRepository.save(any(WorldInstance.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    doThrow(new IllegalStateException("world cleanup failed"))
+        .when(roomInstanceExitRepository)
+        .deleteByTenantIdAndGameInstanceId(42L, 101L);
+
+    assertThrows(
+        IllegalStateException.class,
+        () -> service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop"));
+
+    assertEquals("TERMINATING", instance.getStatus());
+    verify(worldInstanceRepository).save(instance);
+    verify(worldEventRepository).deleteByTenantIdAndGameInstanceId(42L, 101L);
+    verify(roomInstanceExitRepository).deleteByTenantIdAndGameInstanceId(42L, 101L);
+  }
+
+  @Test
+  void terminateWorldInstanceRetriesSameRequestAfterLocalCleanupFailure() {
+    WorldInstance instance = activeWorldInstance();
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.of(instance));
+    when(worldInstanceRepository.save(any(WorldInstance.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    doThrow(new IllegalStateException("world cleanup failed"))
+        .when(roomInstanceExitRepository)
+        .deleteByTenantIdAndGameInstanceId(42L, 101L);
+
+    assertThrows(
+        IllegalStateException.class,
+        () -> service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop"));
+
+    org.mockito.Mockito.doNothing()
+        .when(roomInstanceExitRepository)
+        .deleteByTenantIdAndGameInstanceId(42L, 101L);
+    var snapshot = service.terminateWorldInstance(42L, 101L, 3L, "term-1", "stop");
+
+    assertEquals("TERMINATED", snapshot.status());
+    verify(entityManagementClient, org.mockito.Mockito.times(2))
+        .cleanupRuntimeInstance(42L, 101L, "term-1");
+  }
+
+  @Test
+  void entityCleanupRunsBeforeTheLocalWorldTransaction() {
+    WorldInstance instance = activeWorldInstance();
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.of(instance));
+    when(worldInstanceRepository.save(any(WorldInstance.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(entityManagementClient.cleanupRuntimeInstance(42L, 101L, "term-1"))
+        .thenAnswer(
+            invocation -> {
+              assertFalse(localTransactionActive.get());
+              return CleanupRuntimeInstanceResponse.newBuilder().build();
+            });
+
+    service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop");
+
+    assertFalse(localTransactionActive.get());
+  }
+
+  @Test
   void prepareWorldInstanceRejectsReleaseBundleMismatch() {
     when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
         .thenReturn(Optional.empty());
@@ -350,6 +441,23 @@ class WorldLifecycleCommandServiceImplTest {
     assertEquals(
         "RELEASE_ATTESTATION_MISMATCH: published asset artifact state is missing required manifest asset keys",
         error.getMessage());
+  }
+
+  private WorldInstance activeWorldInstance() {
+    WorldInstance instance = new WorldInstance();
+    instance.setTenantId(42L);
+    instance.setGameInstanceId(101L);
+    instance.setGameTemplateId(7L);
+    instance.setControlPlaneRequestId("cp-1");
+    instance.setLaunchDescriptorId("ld-1");
+    instance.setVersionId(11L);
+    instance.setReleaseBundleId(77L);
+    instance.setGenerationConfigRevision("genrev-11");
+    instance.setPublishedReleaseBundleRef("prb:42:11:77");
+    instance.setVersionStateEpoch(77L);
+    instance.setLifecycleEpoch(2L);
+    instance.setStatus("ACTIVE");
+    return instance;
   }
 
   private Room templateRoom(long tenantId, long roomId) {
