@@ -660,6 +660,41 @@ class AccountGrpcServiceTest {
   }
 
   @Test
+  void getTenantEntitlementsForRuntimeReturnsUnavailableAuthorityError() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.getTenantEntitlementsForRuntime(1L, "req-ambiguous"))
+        .thenThrow(
+            new AuthenticationException(
+                "AUTH_UNAVAILABLE",
+                "Tenant entitlement authority is missing or ambiguous; retry later"));
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<GetTenantEntitlementsForRuntimeResponse> ref = new AtomicReference<>();
+    service.getTenantEntitlementsForRuntime(
+        GetTenantEntitlementsForRuntimeRequest.newBuilder()
+            .setTenantId("1")
+            .setRequestId("req-ambiguous")
+            .build(),
+        new StreamObserver<GetTenantEntitlementsForRuntimeResponse>() {
+          @Override
+          public void onNext(GetTenantEntitlementsForRuntimeResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertTrue(ref.get().hasError());
+    assertEquals("AUTH_UNAVAILABLE", ref.get().getError().getCode());
+  }
+
+  @Test
   void getTenantEntitlementsForRuntimeRejectsZeroTenantIdBeforeLookup() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);

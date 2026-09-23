@@ -104,6 +104,18 @@ class AccountServiceImplTest {
   @BeforeEach
   void setup() throws net.firedevops.firemud.common.saga.SagaException {
     MockitoAnnotations.openMocks(this);
+    Subscription explicitActiveEntitlement = new Subscription();
+    explicitActiveEntitlement.setId(1L);
+    explicitActiveEntitlement.setTenantId(7L);
+    explicitActiveEntitlement.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L))
+        .thenReturn(java.util.List.of(explicitActiveEntitlement));
+    Subscription explicitActiveEntitlementForSecondTenant = new Subscription();
+    explicitActiveEntitlementForSecondTenant.setId(2L);
+    explicitActiveEntitlementForSecondTenant.setTenantId(8L);
+    explicitActiveEntitlementForSecondTenant.setStatus("active");
+    when(subscriptionRepository.findByTenantId(8L))
+        .thenReturn(java.util.List.of(explicitActiveEntitlementForSecondTenant));
     AccountMapper mapper = Mappers.getMapper(AccountMapper.class);
     JwtUtil jwtUtil = new ReloadableJwtUtil(JWT_SECRET, 3600000L);
     jwtAuthProperties.setJwtSecret(JWT_SECRET);
@@ -1232,6 +1244,38 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void getTenantEntitlementsForRuntimeTreatsMissingSubscriptionAsUnavailable() {
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of());
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.getTenantEntitlementsForRuntime(7L, "req-missing-entitlement"));
+
+    assertEquals("AUTH_UNAVAILABLE", exception.getCode());
+  }
+
+  @Test
+  void getTenantEntitlementsForRuntimeTreatsMixedSubscriptionRowsAsUnavailable() {
+    Subscription active = new Subscription();
+    active.setId(31L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    Subscription canceled = new Subscription();
+    canceled.setId(32L);
+    canceled.setTenantId(7L);
+    canceled.setStatus("canceled");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active, canceled));
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.getTenantEntitlementsForRuntime(7L, "req-ambiguous-entitlement"));
+
+    assertEquals("AUTH_UNAVAILABLE", exception.getCode());
+  }
+
+  @Test
   void issueConnectTokenReturnsShortLivedConnectToken() {
     Account account = new Account();
     account.setId(11L);
@@ -1278,6 +1322,59 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.eq(11L),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.eq(30000L));
+  }
+
+  @Test
+  void issueConnectTokenRetriesAfterEntitlementAuthorityRecoversWithoutCachingFailure() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L))
+        .thenReturn(java.util.List.of(active), java.util.List.of(), java.util.List.of(active));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    ConnectTokenRequest request = new ConnectTokenRequest(connectScopeId, "req-entitlement-retry");
+
+    AuthenticationException unavailable =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.issueConnectToken(bootstrap.bootstrapToken(), request));
+    assertEquals("AUTH_UNAVAILABLE", unavailable.getCode());
+    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
+        .storeConnectTokenReplay(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.eq("req-entitlement-retry"),
+            org.mockito.ArgumentMatchers.argThat(
+                replay -> !replay.success() && "AUTH_UNAVAILABLE".equals(replay.errorCode())),
+            org.mockito.ArgumentMatchers.anyLong());
+
+    ConnectTokenResult retried = service.issueConnectToken(bootstrap.bootstrapToken(), request);
+
+    assertEquals("req-entitlement-retry", retried.requestId());
+    assertNotNull(retried.connectToken());
+    assertFalse(retried.replayed());
+    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.times(1))
+        .storeConnectTokenReplay(
+            org.mockito.ArgumentMatchers.eq(7L),
+            org.mockito.ArgumentMatchers.eq(11L),
+            org.mockito.ArgumentMatchers.eq(connectScopeId),
+            org.mockito.ArgumentMatchers.eq("req-entitlement-retry"),
+            org.mockito.ArgumentMatchers.argThat(replay -> replay.success()),
+            org.mockito.ArgumentMatchers.anyLong());
   }
 
   @Test

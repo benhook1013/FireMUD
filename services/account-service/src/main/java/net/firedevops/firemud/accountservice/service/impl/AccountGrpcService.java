@@ -314,6 +314,13 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (AuthenticationException ex) {
+      GetTenantEntitlementsForRuntimeResponse response =
+          GetTenantEntitlementsForRuntimeResponse.newBuilder()
+              .setError(appError("GetTenantEntitlementsForRuntime", ex.getCode(), ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       GetTenantEntitlementsForRuntimeResponse response =
           GetTenantEntitlementsForRuntimeResponse.newBuilder()

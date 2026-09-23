@@ -487,14 +487,16 @@ public class AccountServiceImpl implements AccountService {
     try {
       return issueConnectTokenFresh(bootstrapContext, scopeContext, request);
     } catch (AuthenticationException ex) {
-      sessionService.storeConnectTokenReplay(
-          scopeContext.tenantId(),
-          bootstrapContext.accountId(),
-          request.connectScopeId(),
-          request.requestId(),
-          new net.firedevops.firemud.accountservice.service.session.SessionService
-              .ConnectTokenReplay(false, null, ex.getCode(), ex.getMessage()),
-          remainingConnectScopeReplayTtl(scopeContext));
+      if (!"AUTH_UNAVAILABLE".equals(ex.getCode())) {
+        sessionService.storeConnectTokenReplay(
+            scopeContext.tenantId(),
+            bootstrapContext.accountId(),
+            request.connectScopeId(),
+            request.requestId(),
+            new net.firedevops.firemud.accountservice.service.session.SessionService
+                .ConnectTokenReplay(false, null, ex.getCode(), ex.getMessage()),
+            remainingConnectScopeReplayTtl(scopeContext));
+      }
       throw ex;
     }
   }
@@ -701,17 +703,15 @@ public class AccountServiceImpl implements AccountService {
   public RuntimeEntitlementsDto getTenantEntitlementsForRuntime(Long tenantId, String requestId) {
     List<net.firedevops.firemud.accountservice.entity.Subscription> subscriptions =
         subscriptionRepository.findByTenantId(tenantId);
-    boolean gameplayAvailable =
-        subscriptions.isEmpty()
-            || subscriptions.stream().anyMatch(s -> isGameplayAvailableStatus(s.getStatus()));
-    boolean allowPublicJoin =
-        subscriptions.isEmpty()
-            || subscriptions.stream().anyMatch(s -> isPublicJoinAllowedStatus(s.getStatus()));
-    long version =
-        subscriptions.stream()
-            .mapToLong(subscription -> subscription.getId() == null ? 0L : subscription.getId())
-            .max()
-            .orElse(0L);
+    if (subscriptions.size() != 1) {
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "Tenant entitlement authority is missing or ambiguous; retry later");
+    }
+    net.firedevops.firemud.accountservice.entity.Subscription subscription =
+        subscriptions.getFirst();
+    boolean gameplayAvailable = isGameplayAvailableStatus(subscription.getStatus());
+    boolean allowPublicJoin = isPublicJoinAllowedStatus(subscription.getStatus());
+    long version = subscription.getId() == null ? 0L : subscription.getId();
     return new RuntimeEntitlementsDto(
         tenantId, gameplayAvailable, allowPublicJoin, version, version, Instant.now().toString());
   }
