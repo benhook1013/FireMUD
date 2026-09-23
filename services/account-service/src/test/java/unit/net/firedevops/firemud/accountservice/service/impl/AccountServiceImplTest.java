@@ -1676,7 +1676,7 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void issueConnectTokenRejectsUnavailableGameplayBeforeMissingMembershipOutcomes() {
+  void issueConnectTokenClassifiesKnownBillingDenialAndReplaysItDeterministically() {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
@@ -1699,6 +1699,105 @@ class AccountServiceImplTest {
     when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    ConnectTokenRequest request = new ConnectTokenRequest(connectScopeId, "req-gameplay-disabled");
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.issueConnectToken(bootstrap.bootstrapToken(), request));
+
+    assertEquals("TENANT_BILLING_BLOCKED", exception.getCode());
+    assertEquals("Gameplay is not available for this tenant", exception.getMessage());
+    org.mockito.Mockito.verify(sessionService)
+        .storeConnectTokenReplay(
+            org.mockito.ArgumentMatchers.eq(7L),
+            org.mockito.ArgumentMatchers.eq(11L),
+            org.mockito.ArgumentMatchers.eq(connectScopeId),
+            org.mockito.ArgumentMatchers.eq("req-gameplay-disabled"),
+            org.mockito.ArgumentMatchers.argThat(
+                replay -> !replay.success() && "TENANT_BILLING_BLOCKED".equals(replay.errorCode())),
+            org.mockito.ArgumentMatchers.anyLong());
+    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
+        .saveAndFlush(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
+        .storeSession(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyLong());
+
+    when(sessionService.getConnectTokenReplay(7L, 11L, connectScopeId, "req-gameplay-disabled"))
+        .thenReturn(
+            Optional.of(
+                new SessionService.ConnectTokenReplay(
+                    false, null, "TENANT_BILLING_BLOCKED", exception.getMessage())));
+    AuthenticationException replayed =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.issueConnectToken(bootstrap.bootstrapToken(), request));
+
+    assertEquals("TENANT_BILLING_BLOCKED", replayed.getCode());
+    assertEquals(exception.getMessage(), replayed.getMessage());
+  }
+
+  @Test
+  void issueConnectTokenKeepsGenericMembershipRejectionDistinctFromBillingDenial() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    AccountTenantMembership deniedMembership = membership(account, 7L);
+    deniedMembership.setGameplayAdmissionAllowed(true);
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(deniedMembership));
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("preview")
+                    .setDisplayName("Preview Realm")
+                    .setTenantId("7")
+                    .setGameInstanceId("55")
+                    .setPointerVersion(19L)
+                    .setVisible(true)
+                    .setPublicProductionRealm(false)
+                    .setRequiresCharacterSelection(false)
+                    .setStateScope("SHARED")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build()));
+    when(gameSessionClient.getAdmissionPointer(7L, "demo", "preview"))
+        .thenReturn(
+            net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
+                .setWorldSlug("demo")
+                .setWorldDisplayName("Demo World")
+                .setRealmSlug("preview")
+                .setRealmDisplayName("Preview Realm")
+                .setTenantId("7")
+                .setGameInstanceId("55")
+                .setPointerVersion(19L)
+                .setVisible(true)
+                .setPublicProductionRealm(false)
+                .setRequiresCharacterSelection(false)
+                .setStateScope("SHARED")
+                .setCharacterCreationPolicy("ALLOW_NEW")
+                .build());
+    when(accountRealmAccessGrantRepository.existsByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+            11L, 7L, "demo", "preview"))
+        .thenReturn(true);
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    deniedMembership.setGameplayAdmissionAllowed(false);
 
     AuthenticationException exception =
         assertThrows(
@@ -1706,12 +1805,18 @@ class AccountServiceImplTest {
             () ->
                 service.issueConnectToken(
                     bootstrap.bootstrapToken(),
-                    new ConnectTokenRequest(connectScopeId, "req-gameplay-disabled")));
+                    new ConnectTokenRequest(connectScopeId, "req-membership-denied")));
 
     assertEquals("CONNECT_TOKEN_REJECTED", exception.getCode());
-    assertEquals("Gameplay is not available for this tenant", exception.getMessage());
+    assertEquals("Gameplay admission is not allowed for this account", exception.getMessage());
     org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
         .saveAndFlush(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
+        .storeSession(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyLong());
   }
 
   @Test

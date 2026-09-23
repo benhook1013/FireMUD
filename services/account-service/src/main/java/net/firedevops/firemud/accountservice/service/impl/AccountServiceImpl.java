@@ -511,7 +511,7 @@ public class AccountServiceImpl implements AccountService {
         getTenantEntitlementsForRuntime(scopeContext.tenantId(), request.requestId());
     if (!entitlements.gameplayAvailable()) {
       throw new AuthenticationException(
-          "CONNECT_TOKEN_REJECTED", "Gameplay is not available for this tenant");
+          "TENANT_BILLING_BLOCKED", "Gameplay is not available for this tenant");
     }
     RuntimeMembershipDto membership =
         getTenantMembershipForRuntime(
