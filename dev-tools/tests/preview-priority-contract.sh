@@ -412,17 +412,26 @@ fake_labels_json() {
   fi
   printf '%s' "$labels_json"
 }
-if [[ "$1" == api && ("$resource" == */actions/runs\?branch=* || "$resource" == */actions/runs\?event=pull_request_target\&status=*) ]]; then
+if [[ "$1" == api && ("$resource" == */actions/runs\?branch=* || "$resource" == */actions/runs\?event=pull_request_target\&status=* || "$resource" == */actions/runs\?event=workflow_run\&status=*) ]]; then
   active_query_status="${resource##*&status=}"
   active_query_status="${active_query_status%%&*}"
+  if [[ "$resource" == */actions/runs\?branch=* ]]; then
+    active_query_scope=branch
+  elif [[ "$resource" == */actions/runs\?event=pull_request_target\&status=* ]]; then
+    active_query_scope=pull_request_target
+  else
+    active_query_scope=workflow_run
+  fi
   if [[ "${FAKE_ACTIVE_PREVIEW_RUNS_API_ERROR:-false}" == true ]]; then
     exit 1
   fi
   if [[ "${FAKE_ACTIVE_PREVIEW_RUNS_API_MALFORMED:-false}" == true ]]; then
     printf '%s' '[{"workflow_runs":[{"id":"not-a-number"}]}]'
   elif [[ -v FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON ]]; then
-    jq -c --arg requested_status "$active_query_status" \
-      '[.[] | .workflow_runs = [.workflow_runs[] | select(.status == $requested_status)]]' \
+    jq -c \
+      --arg requested_status "$active_query_status" \
+      --arg requested_scope "$active_query_scope" \
+      '[.[] | .workflow_runs = [.workflow_runs[] | select(.status == $requested_status) | select((.event // $requested_scope) == $requested_scope)]]' \
       <<<"$FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON"
   else
     jq -cn \
@@ -438,6 +447,9 @@ if [[ "$*" == *"repos/example/FireMUD/dispatches"* ]]; then
 fi
 case "$resource" in
   */git/ref/heads/*)
+    if [[ -n "${FAKE_RECONCILER_RESOLUTION_LOG:-}" ]]; then
+      printf '%s\n' "$resource" >> "$FAKE_RECONCILER_RESOLUTION_LOG"
+    fi
     if [[ "${FAKE_PRUNE_BASE_REF_STATUS:-}" == 404 ]]; then
       echo 'gh: Not Found (HTTP 404)' >&2
       exit 1
@@ -454,12 +466,18 @@ case "$resource" in
     fi
     ;;
   */pulls/901/files\?per_page=100)
+    if [[ -n "${FAKE_RECONCILER_RESOLUTION_LOG:-}" ]]; then
+      printf '%s\n' "$resource" >> "$FAKE_RECONCILER_RESOLUTION_LOG"
+    fi
     printf '%s' '[[{"filename":"README.md"}]]'
     ;;
   */pulls/101/files\?per_page=100|*/pulls/102/files\?per_page=100)
     printf '%s' '[[{"filename":"README.md"}]]'
     ;;
   */commits/*)
+    if [[ -n "${FAKE_RECONCILER_RESOLUTION_LOG:-}" ]]; then
+      printf '%s\n' "$resource" >> "$FAKE_RECONCILER_RESOLUTION_LOG"
+    fi
     commit_head="${FAKE_PR_901_HEAD:-head-901}"
     case "$commit_head" in
       head-901|stale-head) commit_head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;;
@@ -877,6 +895,7 @@ export FAKE_PR_101_CALLS="$TEMP_DIR/pr-101-calls"
 export FAKE_PRUNE_QUERY_LOG="$TEMP_DIR/prune-query.log"
 export FAKE_PRIORITY_QUERY_LOG="$TEMP_DIR/priority-query.log"
 export FAKE_NAMESPACE_JSON_CALLS="$TEMP_DIR/namespace-json-calls"
+export FAKE_RECONCILER_RESOLUTION_LOG="$TEMP_DIR/reconciler-resolution.log"
 export FAKE_NAMESPACE_SNAPSHOT_LOG="$TEMP_DIR/namespace-snapshot.log"
 export FAKE_NAMESPACE_SNAPSHOT_CALLS="$TEMP_DIR/namespace-snapshot-calls"
 export FAKE_RUNTIME_KUBECTL_LOG="$TEMP_DIR/runtime-kubectl.log"
@@ -904,7 +923,7 @@ adversarial_labels_base64="$(printf '%s' '[{"name":"custom:label"},{"name":"quot
 invalid_json_labels_base64="$(printf '%s' '{invalid-json' | base64 | tr -d '\n')"
 
 reset_case() {
-  rm -f "$FAKE_DELETE_LOG" "$FAKE_DELETE_TIMEOUT_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_SOURCE_BINDING_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_ANNOTATE_FAILURE_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_TARGET_METADATA_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_PRUNE_QUERY_LOG" "$FAKE_PRIORITY_QUERY_LOG" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_NAMESPACE_SNAPSHOT_LOG" "$FAKE_NAMESPACE_SNAPSHOT_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_DELETE_UID_LOG" "$FAKE_RUNTIME_NAMESPACE_DELETED_MARKER" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$FAKE_IDENTITY_LOG" "$FAKE_IDENTITY_LIST_KUBECONFIG_LOG" "$FAKE_IDENTITY_REQUEST_LOG" "$FAKE_IDENTITY_WAIT_LOG" "$FAKE_OPERATION_SEQUENCE" "$TEMP_DIR/output"
+  rm -f "$FAKE_DELETE_LOG" "$FAKE_DELETE_TIMEOUT_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_SOURCE_BINDING_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_ANNOTATE_FAILURE_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_TARGET_METADATA_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_PRUNE_QUERY_LOG" "$FAKE_PRIORITY_QUERY_LOG" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_RECONCILER_RESOLUTION_LOG" "$FAKE_NAMESPACE_SNAPSHOT_LOG" "$FAKE_NAMESPACE_SNAPSHOT_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_DELETE_UID_LOG" "$FAKE_RUNTIME_NAMESPACE_DELETED_MARKER" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$FAKE_IDENTITY_LOG" "$FAKE_IDENTITY_LIST_KUBECONFIG_LOG" "$FAKE_IDENTITY_REQUEST_LOG" "$FAKE_IDENTITY_WAIT_LOG" "$FAKE_OPERATION_SEQUENCE" "$TEMP_DIR/output"
   export GITHUB_OUTPUT="$TEMP_DIR/output"
   export FAKE_TARGET_PRIORITY=true
   export FAKE_TARGET_LABELS_VALID=valid
@@ -2407,6 +2426,8 @@ grep -Fq -- 'gh api --paginate --slurp' "$RECONCILER_RUN"
 grep -Fq -- 'actions/runs?branch=${DEFAULT_BRANCH}&status=${active_status}&per_page=100' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert the additional pull_request_target lookup without a branch filter.
 grep -Fq -- 'actions/runs?event=pull_request_target&status=${active_status}&per_page=100' "$RECONCILER_RUN"
+# shellcheck disable=SC2016 # Assert workflow_run consumers are included without a branch filter.
+grep -Fq -- 'actions/runs?event=workflow_run&status=${active_status}&per_page=100' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert each supported active status is queried independently.
 grep -Fq -- 'for active_status in requested queued in_progress waiting pending; do' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert the active-run lookup is fenced to the candidate dispatch title.
@@ -2522,6 +2543,24 @@ PREVIEW_MAX_ACTIVE=2 \
 grep -Fqx \
   "Skipping proof retry for PR #901: preview source or trusted consumer run 5254 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
   "$reconciler_pull_request_target_output"
+test ! -e "$FAKE_ANNOTATE_LOG"
+test ! -e "$FAKE_DISPATCH_LOG"
+
+reset_case
+reconciler_workflow_run_output="$TEMP_DIR/reconciler-workflow-run.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=head-901 \
+    FAKE_PR_901_PROOF_COMPLETE=false \
+    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[{"id":5255,"event":"workflow_run","name":"Trusted Hosted Identity Request","head_branch":"feature-preview","display_title":"PR preview 901","status":"queued"}]}]' \
+PREVIEW_MAX_ACTIVE=2 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_workflow_run_output"
+grep -Fqx \
+  "Skipping proof retry for PR #901: preview source or trusted consumer run 5255 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
+  "$reconciler_workflow_run_output"
 test ! -e "$FAKE_ANNOTATE_LOG"
 test ! -e "$FAKE_DISPATCH_LOG"
 
@@ -2755,6 +2794,7 @@ reconciler_unvalidated_priority_output="$TEMP_DIR/reconciler-unvalidated-priorit
 grep -qx 'Skipping ordinary PR #901: preview capacity is full.' \
   "$reconciler_unvalidated_priority_output"
 test ! -e "$FAKE_DISPATCH_LOG"
+test ! -e "$FAKE_RECONCILER_RESOLUTION_LOG"
 
 reset_case
 reconciler_validated_priority_output="$TEMP_DIR/reconciler-validated-priority.out"
@@ -3579,6 +3619,11 @@ candidate_rows_start = run.index("candidate_rows=")
 active_runs_start = run.index("active_preview_run_sets=()", candidate_rows_start)
 dispatch_call = run.index("dispatch_candidates <<<", active_runs_start)
 assert candidate_rows_start < active_runs_start < dispatch_call
+eligible_guard = run.index('if [[ "$eligible" != "true" ]]')
+dispatch_guard = run.index('if [[ "$dispatch_sent" == "true" ]]', eligible_guard)
+namespace_snapshot = run.index('if ! namespace_json="$(\n', dispatch_guard)
+base_ref_resolution = run.index('if ! base_ref_json=', namespace_snapshot)
+assert eligible_guard < dispatch_guard < namespace_snapshot < base_ref_resolution
 PY
 # shellcheck disable=SC2016 # Assert malformed label metadata fails closed before eligibility.
 grep -Fq -- 'if ! labels_json="$(printf '\''%s'\'' "$labels_json_base64" | base64 --decode 2>/dev/null)" ||' \

@@ -385,35 +385,8 @@ jobs:
               continue
             fi
 
-            mergeable="$(jq -r 'if (.mergeable | type) == "boolean" then (.mergeable | tostring) else "invalid" end' <<<"${live_pr_json}")"
-            mergeable_state="$(jq -r 'if (.mergeable_state | type) == "string" then .mergeable_state else "invalid" end' <<<"${live_pr_json}")"
-            if [[ "${mergeable}" != true || "${mergeable_state}" == invalid ||
-              "${mergeable_state}" == unknown || "${mergeable_state}" == dirty ||
-              "${mergeable_state}" == conflicting ]]; then
-              echo "Skipping preview reconcile for PR #${pr_number}: current base/head merge is not ready (mergeable=${mergeable}, state=${mergeable_state})."
-              continue
-            fi
-            if ! base_ref_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${pr_base_ref}")" ||
-              ! base_sha="$(jq -er '.object.sha | select(type == "string" and test("^[0-9a-fA-F]{40}$"))' <<<"${base_ref_json}")" ||
-              ! merge_sha="$(jq -er '.merge_commit_sha | select(type == "string" and test("^[0-9a-fA-F]{40}$"))' <<<"${live_pr_json}")"; then
-              echo "Skipping preview reconcile for PR #${pr_number}: current base ref or merge SHA is unavailable." >&2
-              continue
-            fi
-            base_sha="${base_sha,,}"
-            merge_sha="${merge_sha,,}"
-            if ! merge_commit_json="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${merge_sha}")" ||
-              ! jq -e \
-                --arg merge_sha "${merge_sha}" \
-                --arg base_sha "${base_sha}" \
-                --arg head_sha "${head_sha}" \
-                '.sha == $merge_sha and (.parents | type) == "array" and (.parents | length) == 2 and .parents[0].sha == $base_sha and .parents[1].sha == $head_sha' \
-                <<<"${merge_commit_json}" >/dev/null; then
-              echo "Skipping preview reconcile for PR #${pr_number}: current merge SHA does not have the exact base/head parents." >&2
-              continue
-            fi
-            if ! image_tag="$(bash ./dev-tools/hosted/preview/resolve-preview-image-tag.sh \
-              "${merge_sha}" "${pr_number}" "${base_sha}")"; then
-              echo "Skipping preview reconcile for PR #${pr_number}: runtime image identity could not be resolved." >&2
+            if [[ "$dispatch_sent" == "true" ]]; then
+              echo "Skipping PR #${pr_number}: another preview repair was already dispatched this cycle."
               continue
             fi
 
@@ -450,6 +423,41 @@ jobs:
                 proof_base_sha proof_head_sha proof_merge_sha proof_image_tag proof_namespace_uid \
                 _ _ _ _ _ \
                 namespace_uid _ <<<"${namespace_tuple}"
+            elif [[ "$priority" != "true" && "$available_slots" -le 0 ]]; then
+              echo "Skipping ordinary PR #${pr_number}: preview capacity is full."
+              continue
+            fi
+
+            mergeable="$(jq -r 'if (.mergeable | type) == "boolean" then (.mergeable | tostring) else "invalid" end' <<<"${live_pr_json}")"
+            mergeable_state="$(jq -r 'if (.mergeable_state | type) == "string" then .mergeable_state else "invalid" end' <<<"${live_pr_json}")"
+            if [[ "${mergeable}" != true || "${mergeable_state}" == invalid ||
+              "${mergeable_state}" == unknown || "${mergeable_state}" == dirty ||
+              "${mergeable_state}" == conflicting ]]; then
+              echo "Skipping preview reconcile for PR #${pr_number}: current base/head merge is not ready (mergeable=${mergeable}, state=${mergeable_state})."
+              continue
+            fi
+            if ! base_ref_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${pr_base_ref}")" ||
+              ! base_sha="$(jq -er '.object.sha | select(type == "string" and test("^[0-9a-fA-F]{40}$"))' <<<"${base_ref_json}")" ||
+              ! merge_sha="$(jq -er '.merge_commit_sha | select(type == "string" and test("^[0-9a-fA-F]{40}$"))' <<<"${live_pr_json}")"; then
+              echo "Skipping preview reconcile for PR #${pr_number}: current base ref or merge SHA is unavailable." >&2
+              continue
+            fi
+            base_sha="${base_sha,,}"
+            merge_sha="${merge_sha,,}"
+            if ! merge_commit_json="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${merge_sha}")" ||
+              ! jq -e \
+                --arg merge_sha "${merge_sha}" \
+                --arg base_sha "${base_sha}" \
+                --arg head_sha "${head_sha}" \
+                '.sha == $merge_sha and (.parents | type) == "array" and (.parents | length) == 2 and .parents[0].sha == $base_sha and .parents[1].sha == $head_sha' \
+                <<<"${merge_commit_json}" >/dev/null; then
+              echo "Skipping preview reconcile for PR #${pr_number}: current merge SHA does not have the exact base/head parents." >&2
+              continue
+            fi
+            if ! image_tag="$(bash ./dev-tools/hosted/preview/resolve-preview-image-tag.sh \
+              "${merge_sha}" "${pr_number}" "${base_sha}")"; then
+              echo "Skipping preview reconcile for PR #${pr_number}: runtime image identity could not be resolved." >&2
+              continue
             fi
 
             if [[ "${current_base_sha}" == "${base_sha}" &&
@@ -500,11 +508,6 @@ jobs:
               "${current_merge_sha}" == "${merge_sha}" &&
               "${current_image_tag}" == "${image_tag}" ]]; then
               echo "Preview ${namespace} deployed tuple is missing proof for ${base_sha}/${head_sha}/${merge_sha}/${image_tag}; dispatching retry."
-            fi
-
-            if [[ "$dispatch_sent" == "true" ]]; then
-              echo "Skipping PR #${pr_number}: another preview repair was already dispatched this cycle."
-              continue
             fi
 
             if [[ "$namespace_exists" != "true" ]]; then
@@ -604,12 +607,15 @@ jobs:
           if [[ -n "$candidate_rows" ]]; then
             active_preview_run_sets=()
             for active_status in requested queued in_progress waiting pending; do
-              for active_run_scope in branch pull_request_target; do
+              for active_run_scope in branch pull_request_target workflow_run; do
                 if [[ "$active_run_scope" == branch ]]; then
                   active_run_query="repos/${GITHUB_REPOSITORY}/actions/runs?branch=${DEFAULT_BRANCH}&status=${active_status}&per_page=100"
                   active_run_branch_filtered=true
-                else
+                elif [[ "$active_run_scope" == pull_request_target ]]; then
                   active_run_query="repos/${GITHUB_REPOSITORY}/actions/runs?event=pull_request_target&status=${active_status}&per_page=100"
+                  active_run_branch_filtered=false
+                else
+                  active_run_query="repos/${GITHUB_REPOSITORY}/actions/runs?event=workflow_run&status=${active_status}&per_page=100"
                   active_run_branch_filtered=false
                 fi
                 if ! active_preview_run_pages_json="$(gh api --paginate --slurp "$active_run_query")"; then

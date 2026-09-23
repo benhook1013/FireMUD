@@ -130,7 +130,7 @@ Hosted preview uses the canonical bundle-based internal gRPC mTLS contract. Serv
 
 Preview and dev-demo have shared rollout diagnostics through `dev-tools/hosted/shared/show-rollout-diagnostics.sh`; the preview and dev-demo wrappers and workflows invoke it after cluster access succeeds. It reports target metadata, blocked readiness reasons, service/target ports, safe ConfigMap values, secret/TLS summaries, recent events, unavailable workload descriptions, and current/previous logs for problematic containers. This makes the first blocked dependency visible instead of waiting for a Helm timeout.
 
-Post-apply verification reacquires the `preview-allocation-lifecycle` queue after `deploy-runtime` releases it, so another lifecycle job may run between deployment and verification. The reconciler suppresses duplicate repair while the exact source or trusted consumer is queued, running, or verifying, and permits at most three Namespace-backed proof-retry dispatches for one exact base/head/merge/image tuple. Retry evidence is fenced by Namespace `resourceVersion`; malformed counters or tuples fail closed, and this bound is not live-proof evidence.
+Post-apply verification and bounded preview repair have focused local/static contract evidence; the remaining hosted behavior and live proof are unverified. Normative lock, active-run suppression, tuple fencing, and retry rules are owned by [Deployment Environments](../../architecture/infrastructure/deployment-environments.md#pr-preview-environment).
 
 ### Hosted identity controller lifecycle
 
