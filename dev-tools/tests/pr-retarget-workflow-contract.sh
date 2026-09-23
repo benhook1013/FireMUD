@@ -356,9 +356,12 @@ for workflow_path in map(Path, sys.argv[1:]):
         raise SystemExit(f"{workflow_path.name}: substantive stale-run cancellation is disabled")
 PY
 
-require_exact_line "$ci_path" '    name: Validation Summary'
 require_exact_line "$security_path" '    name: Security Summary'
-require_exact_line "$smoke_path" '    name: Smoke Summary'
+# Metadata-only edits get distinct optional summary contexts; substantive events
+# retain each summary's canonical name.
+# shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
+assert_job_contains ci.yml validation-summary "name: \${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Validation Summary)' || 'Validation Summary' }}"
+assert_job_contains smoke.yml smoke-summary "name: \${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Summary)' || 'Smoke Summary' }}"
 # A metadata-only edit starts a non-required controller job so its preservation
 # failure cannot create a second failed branch-protection context named Smoke
 # Gate. A base retarget still uses the canonical required name.

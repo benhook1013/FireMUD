@@ -1002,7 +1002,7 @@ jobs:
 
   # Final gating and PR reporting
   validation-summary:
-    name: Validation Summary
+    name: ${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Validation Summary)' || 'Validation Summary' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

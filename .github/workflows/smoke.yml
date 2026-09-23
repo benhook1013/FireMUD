@@ -270,7 +270,7 @@ jobs:
             }
 
   smoke-summary:
-    name: Smoke Summary
+    name: ${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Summary)' || 'Smoke Summary' }}
     runs-on: ubuntu-latest
     permissions:
       # This job updates the canonical comment to the terminal Smoke Gate result.
