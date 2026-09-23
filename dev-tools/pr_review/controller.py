@@ -25,7 +25,6 @@ from .cli_runner import (
     EffectiveParent,
     PullRequestSnapshot,
     ReviewTarget,
-    run_cli_review,
 )
 from .hosted import prepare_full_trigger
 from .patch_identity import patch_identity
@@ -194,6 +193,7 @@ class LivePullRequest:
     mergeable: str = "MERGEABLE"
     base_exists: bool = True
     changed_files: int = 0
+    head_repository: str | None = None
 
     def snapshot(self) -> stack.PRSnapshot:
         return stack.PRSnapshot(
@@ -217,6 +217,7 @@ class LivePullRequest:
             self.mergeable,
             self.merged,
             self.base_exists,
+            self.head_repository,
         )
 
 
@@ -271,6 +272,22 @@ def _as_bool(value: Any, default: bool = False) -> bool:
     return value if isinstance(value, bool) else default
 
 
+def _head_repository(value: Any) -> str | None:
+    """Normalize GitHub's source repository identity without guessing when absent."""
+
+    if value is None:
+        return None
+    if isinstance(value, Mapping):
+        value = value.get("nameWithOwner")
+    if (
+        not isinstance(value, str)
+        or value.count("/") != 1
+        or any(not part or any(character.isspace() for character in part) for part in value.split("/"))
+    ):
+        raise ControllerError("pull request has a malformed head repository identity")
+    return value
+
+
 def _live(value: Any, number: int) -> LivePullRequest:
     if isinstance(value, LivePullRequest):
         if value.number != number:
@@ -290,6 +307,7 @@ def _live(value: Any, number: int) -> LivePullRequest:
             value.mergeable.upper(),
             value.base_exists,
             value.changed_files,
+            value.head_repository,
         )
     if not isinstance(value, Mapping):
         raise ControllerError("pull-request provider returned an unsupported value")
@@ -302,6 +320,7 @@ def _live(value: Any, number: int) -> LivePullRequest:
     head = data.get("head", data.get("headRefOid", data.get("head_sha")))
     base = data.get("base", data.get("baseRefOid", data.get("base_sha")))
     head_ref = data.get("head_ref", data.get("headRefName", ""))
+    head_repository = _head_repository(data.get("head_repository", data.get("headRepository")))
     base_ref = data.get("base_ref", data.get("baseRefName"))
     if not isinstance(base_ref, str) or not base_ref:
         raise ControllerError("pull request has no base ref")
@@ -318,6 +337,7 @@ def _live(value: Any, number: int) -> LivePullRequest:
         mergeable,
         _as_bool(data.get("base_exists"), True),
         int(data.get("changed_files", data.get("changedFiles", 0))),
+        head_repository,
     )
 
 
@@ -396,8 +416,26 @@ class ReviewController:
             raise ControllerError("stack must contain positive pull-request numbers")
         if len(set(numbers)) != len(numbers):
             raise ControllerError("stack pull requests must be unique")
+        if self.github is not None:
+            if not self.repository:
+                raise ControllerError("repository identity is required to validate stack head repositories")
+            for pr in numbers:
+                item = _live(self.github.pull_request(pr), pr)
+                problem = self._head_repository_problem(item)
+                if problem:
+                    raise ControllerError(f"PR #{pr} {problem}")
         state = self.store.update(lambda current: dataclasses.replace(current, ordered_prs=numbers))
         return {"ordered_prs": list(state.ordered_prs), "schema_version": state.schema_version}
+
+    def _head_repository_problem(self, item: LivePullRequest) -> str | None:
+        if item.head_repository is None:
+            return "has no head repository identity; same-repository review stacks require GitHub headRepository"
+        if item.head_repository.casefold() != self.repository.casefold():
+            return (
+                f"uses unsupported cross-repository head {item.head_repository!r}; "
+                f"the configured repository is {self.repository!r}"
+            )
+        return None
 
     def show_stack(self) -> dict[str, Any]:
         state = self._state()
@@ -428,6 +466,34 @@ class ReviewController:
             default_tip,
             is_ancestor=self.git.is_ancestor,
         )
+        unsupported: set[int] = set()
+        reasons = dict(baseline.reasons)
+        statuses = dict(baseline.statuses)
+        for pr in state.ordered_prs:
+            item = live[pr]
+            if item.merged:
+                continue
+            problem = self._head_repository_problem(item)
+            parent_pr = baseline.links[pr].parent_pr
+            if problem:
+                unsupported.add(pr)
+                reasons[pr] = problem
+                statuses[pr] = stack.ReconciliationStatus.UNRECONCILED
+            elif parent_pr in unsupported:
+                unsupported.add(pr)
+                reasons[pr] = f"effective parent PR #{parent_pr} has an unsupported head repository"
+                statuses[pr] = stack.ReconciliationStatus.UNRECONCILED
+        if unsupported:
+            baseline = dataclasses.replace(
+                baseline,
+                status=(
+                    stack.ReconciliationStatus.PARENT_MOVED
+                    if baseline.status == stack.ReconciliationStatus.PARENT_MOVED
+                    else stack.ReconciliationStatus.UNRECONCILED
+                ),
+                reasons=reasons,
+                statuses=statuses,
+            )
         reconciled: dict[int, StackReconciliationDecision] = {}
         anchors: dict[int, AnchorFacts] = {}
         anchor_failures: dict[int, str] = {}
@@ -655,6 +721,11 @@ class ReviewController:
             if _sha(remote_heads[item.base_ref], f"PR #{candidate} base branch") != item.base_tip:
                 return False
             if item.head_ref:
+                if (
+                    item.head_repository is None
+                    or item.head_repository.casefold() != self.repository.casefold()
+                ):
+                    return False
                 if item.head_ref not in remote_heads:
                     return False
                 if _sha(remote_heads[item.head_ref], f"PR #{candidate} head branch") != item.head:
@@ -768,6 +839,10 @@ class ReviewController:
         if not state.ordered_prs:
             raise ControllerError("review stack is empty")
         live, reconciliation = self._reconciliation(state)
+        for pr in state.ordered_prs:
+            problem = self._head_repository_problem(live[pr])
+            if problem:
+                raise ControllerError(f"PR #{pr} {problem}")
         history = {pr: _history(self._evidence_provider, pr, selected) for pr in state.ordered_prs}
         other = policy.Channel.CLI if selected == policy.Channel.HOSTED else policy.Channel.HOSTED
         other_heads = {}
@@ -943,9 +1018,9 @@ class ReviewController:
         }:
             raise ControllerError(f"CLI review cannot run: {selected.status.value}")
         self._ensure_runnable(selected, provisional=allow_unreconciled)
-        if self.cli_adapter is not None:
-            return self.cli_adapter(selected.target, allow_unreconciled=allow_unreconciled, reason=reason, **kwargs)
-        return run_cli_review(selected.target, allow_unreconciled=allow_unreconciled, reason=reason, **kwargs)
+        if self.cli_adapter is None:
+            raise ControllerError("CLI adapter is not configured")
+        return self.cli_adapter(selected.target, allow_unreconciled=allow_unreconciled, reason=reason, **kwargs)
 
     def evidence(self, pr: int | None = None) -> dict[str, Any]:
         state = self._state()

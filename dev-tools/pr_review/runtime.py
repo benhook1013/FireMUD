@@ -37,6 +37,11 @@ class LiveGitHub:
 
     def pull_request(self, number: int) -> PullRequestSnapshot:
         value = self.metadata(number)
+        head_repository = value.get("headRepository")
+        if isinstance(head_repository, dict):
+            head_repository = head_repository.get("nameWithOwner")
+        if head_repository is not None and not isinstance(head_repository, str):
+            raise ReviewRunnerError("GitHub pull-request head repository identity is malformed")
         return PullRequestSnapshot(
             number=int(value["number"]),
             state=str(value["state"]),
@@ -48,6 +53,7 @@ class LiveGitHub:
             mergeable=str(value["mergeable"]),
             merged=value.get("mergedAt") is not None,
             base_exists=True,
+            head_repository=head_repository,
         )
 
     # cli_runner.GitHubReader

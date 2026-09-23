@@ -70,6 +70,7 @@ class PullRequestSnapshot:
     mergeable: str = "MERGEABLE"
     merged: bool = False
     base_exists: bool = True
+    head_repository: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)

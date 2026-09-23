@@ -412,7 +412,7 @@ def fetch_pr_metadata(repo: str, pr_number: int) -> dict[str, Any]:
 
     parse_repo(repo)
     fields = (
-        "number,title,state,headRefName,headRefOid,baseRefName,baseRefOid,"
+        "number,title,state,headRefName,headRefOid,headRepository,baseRefName,baseRefOid,"
         "changedFiles,body,statusCheckRollup,mergeable,mergeStateStatus,reviewDecision,isDraft,url,mergedAt"
     )
     try:

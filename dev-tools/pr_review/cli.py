@@ -167,7 +167,7 @@ def _controller(args: argparse.Namespace) -> tuple[ReviewController, acceptance.
     if fixture_path is not None and isolated_state is not None:
         fixture = acceptance.load(fixture_path, isolated_state)
         return fixture.controller(), fixture
-    if args.command == "stack":
+    if args.command == "stack" and args.stack_command == "show":
         return ReviewController(), None
     return default_controller(), None
 
@@ -222,6 +222,8 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             report["reasons"].extend(review_reasons)
             report["ready"] = False
             report["verdict"] = "NOT READY"
+            report["mergeability"]["clean"] = False
+            report["mergeability"]["diagnosis"] = "NOT READY"
         return report if args.as_json else status_module.emit_text(report), 0
     if args.command == "evidence":
         if args.pr is None:

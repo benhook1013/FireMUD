@@ -40,6 +40,7 @@ def fixture_payload() -> dict[str, object]:
                 "base_tip": BASE,
                 "head": HEAD_1,
                 "head_ref": "feature-1",
+                "head_repository": "fixture/firemud",
                 "changed_files": 3,
             },
             {
@@ -48,6 +49,7 @@ def fixture_payload() -> dict[str, object]:
                 "base_tip": HEAD_1,
                 "head": HEAD_2,
                 "head_ref": "feature-2",
+                "head_repository": "fixture/firemud",
                 "changed_files": 4,
             },
         ],
@@ -207,6 +209,32 @@ class AcceptanceCliTest(unittest.TestCase):
             fixture.write_text(json.dumps(fixture_payload_with_uppercase_default_sha()), encoding="utf-8")
             loaded = load(fixture, root / "acceptance-state.json")
             self.assertEqual(loaded.git.branch_head("develop"), BASE)
+
+    def test_foreign_head_repository_is_rejected_before_acceptance_stack_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "fixture.json"
+            isolated = root / "state.json"
+            payload = fixture_payload()
+            payload["pull_requests"][0]["head_repository"] = "outside/fork"
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+
+            result = self.run_cli(fixture, isolated, "stack", "set", "1")
+
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("unsupported cross-repository head", result.stderr)
+            self.assertFalse(isolated.exists())
+
+    def test_acceptance_fixture_requires_explicit_head_repository_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "fixture.json"
+            payload = fixture_payload()
+            del payload["pull_requests"][0]["head_repository"]
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+
+            with self.assertRaisesRegex(AcceptanceFixtureError, "head_repository"):
+                load(fixture, root / "acceptance-state.json")
 
     def test_live_whole_stack_status_does_not_claim_fixture_isolation(self):
         args = cli._parser().parse_args(["status", "--json"])

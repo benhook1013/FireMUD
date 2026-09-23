@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import subprocess
@@ -16,6 +17,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
+from pr_review import cli_runner
 from pr_review.cli import _parser
 from pr_review.controller import (
     ControllerError,
@@ -72,8 +74,16 @@ class FakeGitHub:
         return self.values[number]
 
 
-def pr(number, head, base_ref="develop", base_tip=BASE, *, merged=False):
-    return LivePullRequest(number, head, base_ref, base_tip, f"feature-{number}", merged=merged)
+def pr(number, head, base_ref="develop", base_tip=BASE, *, merged=False, head_repository="owner/repo"):
+    return LivePullRequest(
+        number,
+        head,
+        base_ref,
+        base_tip,
+        f"feature-{number}",
+        merged=merged,
+        head_repository=head_repository,
+    )
 
 
 class ControllerTests(unittest.TestCase):
@@ -85,6 +95,7 @@ class ControllerTests(unittest.TestCase):
             github=FakeGitHub(values),
             git=FakeGit(heads),
             evidence=evidence or {},
+            repository="owner/repo",
         )
 
     def test_default_git_provider_translates_timeout_expired(self):
@@ -139,6 +150,21 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(result["prs"][1]["parent"], "1")
         self.assertEqual(controller.show_stack()["ordered_prs"], [1, 2])
 
+    def test_stack_set_rejects_unknown_or_cross_repository_heads_before_writing(self):
+        for identity in (None, "fork/repo"):
+            with self.subTest(head_repository=identity):
+                controller = self.make({1: pr(1, HEAD_1, head_repository=identity)})
+                with self.assertRaisesRegex(ControllerError, "head repository|cross-repository"):
+                    controller.set_stack([1])
+                self.assertEqual(controller.show_stack()["ordered_prs"], [])
+
+    def test_persisted_cross_repository_stack_cannot_select_a_review_target(self):
+        controller = self.make({1: pr(1, HEAD_1, head_repository="fork/repo")})
+        controller.store.update(lambda current: dataclasses.replace(current, ordered_prs=(1,)))
+
+        with self.assertRaisesRegex(ControllerError, "unsupported cross-repository head"):
+            controller.resolve_cli_target()
+
     def test_parent_move_marks_descendants_and_blocks_target(self):
         values = {1: pr(1, HEAD_1), 2: pr(2, HEAD_2, "feature-1", HEAD_1)}
         controller = self.make(values, heads={"feature-1": "1" * 40})
@@ -155,6 +181,21 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaises(WrongStackTarget):
             controller.resolve_cli_target(expected_pr=2)
 
+    def test_run_cli_requires_and_uses_the_configured_adapter(self):
+        controller = self.make({1: pr(1, HEAD_1)})
+        controller.set_stack([1])
+
+        with patch.object(cli_runner, "run_cli_review") as lower_level_runner:
+            with self.assertRaisesRegex(ControllerError, "CLI adapter is not configured"):
+                controller.run_cli()
+            lower_level_runner.assert_not_called()
+
+            controller.cli_adapter = lambda target, **kwargs: (target, kwargs)
+            target, options = controller.run_cli()
+
+        self.assertEqual(target.snapshot.number, 1)
+        self.assertEqual(options, {"allow_unreconciled": False, "reason": None})
+
     def test_pull_request_snapshot_number_must_match_requested_pr(self):
         values = {
             1: PullRequestSnapshot(
@@ -168,7 +209,7 @@ class ControllerTests(unittest.TestCase):
             )
         }
         controller = self.make(values)
-        controller.set_stack([1])
+        controller.store.update(lambda current: dataclasses.replace(current, ordered_prs=(1,)))
         with self.assertRaisesRegex(ControllerError, "provider returned the wrong pull request"):
             controller.status()
 

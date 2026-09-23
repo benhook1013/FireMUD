@@ -106,6 +106,7 @@ class RuntimeTest(unittest.TestCase):
             "baseRefOid": BASE,
             "headRefName": "feature",
             "headRefOid": HEAD,
+            "headRepository": {"nameWithOwner": "owner/repo"},
             "changedFiles": 2,
             "mergeable": "MERGEABLE",
             "mergedAt": None,
@@ -122,7 +123,19 @@ class RuntimeTest(unittest.TestCase):
             snapshot = live.pull_request(42)
             self.assertEqual(snapshot.head_sha, HEAD)
             self.assertEqual(snapshot.base_sha, BASE)
+            self.assertEqual(snapshot.head_repository, "owner/repo")
             self.assertEqual(live.pull_request_files(42), ["a.txt", "b.txt"])
+
+    def test_fetch_pr_metadata_requests_head_repository_identity(self) -> None:
+        metadata = {"number": 42, "headRepository": {"nameWithOwner": "owner/repo"}}
+        with patch(
+            "pr_review.github.subprocess.run",
+            return_value=CompletedProcess(["gh"], 0, json.dumps(metadata), ""),
+        ) as run:
+            value = github.fetch_pr_metadata("owner/repo", 42)
+
+        self.assertEqual(value["headRepository"]["nameWithOwner"], "owner/repo")
+        self.assertIn("headRepository", run.call_args.args[0][-1])
 
     def test_historical_cli_capture_remains_attributable(self) -> None:
         body = (

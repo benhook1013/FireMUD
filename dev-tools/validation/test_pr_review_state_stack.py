@@ -33,6 +33,11 @@ def _append_pr(path: str, pr: int) -> None:
     store.update(append)
 
 
+def _append_prs(path: str, prs: tuple[int, ...]) -> None:
+    for pr in prs:
+        _append_pr(path, pr)
+
+
 class ReviewStateStackTest(unittest.TestCase):
     def test_state_is_schema_versioned_and_atomic_store_keeps_only_configuration(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -180,13 +185,24 @@ class ReviewStateStackTest(unittest.TestCase):
             path = str(Path(directory) / "firemud" / "pr-review-stack.json")
             StateStore(path).save(ReviewState())
             context = multiprocessing.get_context("fork")
-            processes = [context.Process(target=_append_pr, args=(path, pr)) for pr in (11, 22)]
+            pr_batches = [tuple(range(first_pr, first_pr + 5)) for first_pr in (11, 21, 31, 41)]
+            expected_prs = {pr for batch in pr_batches for pr in batch}
+            processes = [context.Process(target=_append_prs, args=(path, batch)) for batch in pr_batches]
             for process in processes:
                 process.start()
             for process in processes:
                 process.join(5)
+                if process.is_alive():
+                    process.terminate()
+                    process.join(5)
+                    if process.is_alive():
+                        process.kill()
+                        process.join()
+                    self.fail(f"child process {process.pid} remained alive after the join timeout")
                 self.assertEqual(process.exitcode, 0)
-            self.assertEqual(set(StateStore(path).load().ordered_prs), {11, 22})
+            actual_prs = StateStore(path).load().ordered_prs
+            self.assertEqual(len(actual_prs), len(expected_prs))
+            self.assertEqual(set(actual_prs), expected_prs)
 
     def test_hosted_and_cli_policy_overrides_can_coexist_for_one_pr(self):
         state = ReviewState(

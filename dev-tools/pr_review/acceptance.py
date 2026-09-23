@@ -41,6 +41,16 @@ def _positive_pr(value: Any, label: str) -> int:
     return value
 
 
+def _repository_identity(value: Any, label: str) -> str:
+    if (
+        not isinstance(value, str)
+        or value.count("/") != 1
+        or any(not part or any(character.isspace() for character in part) for part in value.split("/"))
+    ):
+        raise AcceptanceFixtureError(f"{label} must be an owner/name repository identity")
+    return value
+
+
 def _mapping(value: Any, label: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise AcceptanceFixtureError(f"{label} must be an object")
@@ -283,9 +293,7 @@ class AcceptanceFixture:
         self.payload = payload
         self.fixture_path = fixture_path
         self.state_path = state_path
-        self.repository = str(payload.get("repository", "acceptance/fixture"))
-        if not self.repository or "/" not in self.repository:
-            raise AcceptanceFixtureError("repository must be an owner/name identity")
+        self.repository = _repository_identity(payload.get("repository", "acceptance/fixture"), "repository")
         self.default_base_ref = str(payload.get("default_base_ref", "develop"))
         if not self.default_base_ref:
             raise AcceptanceFixtureError("default_base_ref must be non-empty")
@@ -307,6 +315,7 @@ class AcceptanceFixture:
                 raise AcceptanceFixtureError(f"duplicate pull request #{number}")
             base_ref = item.get("base_ref")
             head_ref = item.get("head_ref", "")
+            head_repository = _repository_identity(item.get("head_repository"), f"pull request #{number} head_repository")
             if not isinstance(base_ref, str) or not base_ref or not isinstance(head_ref, str):
                 raise AcceptanceFixtureError(f"pull request #{number} has invalid branch names")
             allowed_pr_fields = {
@@ -315,6 +324,7 @@ class AcceptanceFixture:
                 "base_tip",
                 "head",
                 "head_ref",
+                "head_repository",
                 "merged",
                 "state",
                 "mergeable",
@@ -351,6 +361,7 @@ class AcceptanceFixture:
                 mergeable=mergeable_value,
                 base_exists=bool(item.get("base_exists", True)),
                 changed_files=changed_files,
+                head_repository=head_repository,
             )
         ordered = payload.get("ordered_prs", list(pull_requests))
         if not isinstance(ordered, list) or tuple(ordered) != tuple(dict.fromkeys(ordered)):

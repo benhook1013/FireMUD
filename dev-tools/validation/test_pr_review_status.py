@@ -672,6 +672,7 @@ class StatusTest(unittest.TestCase):
             "reasons": [],
             "ready": True,
             "verdict": "READY",
+            "mergeability": {"clean": True, "diagnosis": "READY"},
         }
         for stack_head, stack_parent_head in (("e" * 40, BASE), (HEAD, "f" * 40)):
             with self.subTest(head=stack_head, parent_head=stack_parent_head):
@@ -699,6 +700,8 @@ class StatusTest(unittest.TestCase):
                 self.assertFalse(value["ready"])
                 self.assertEqual(value["verdict"], "NOT READY")
                 self.assertIn("PR base/head changed between status snapshots", value["reasons"])
+                self.assertFalse(value["mergeability"]["clean"])
+                self.assertEqual(value["mergeability"]["diagnosis"], "NOT READY")
 
     def test_cli_status_remains_ready_when_base_and_head_snapshots_match(self) -> None:
         report = {
@@ -710,6 +713,7 @@ class StatusTest(unittest.TestCase):
             "reasons": [],
             "ready": True,
             "verdict": "READY",
+            "mergeability": {"clean": True, "diagnosis": "READY"},
         }
         controller = Mock()
         controller.status.return_value = {
@@ -734,6 +738,8 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(exit_status, 0)
         self.assertTrue(value["ready"], value["reasons"])
         self.assertEqual(value["verdict"], "READY")
+        self.assertTrue(value["mergeability"]["clean"])
+        self.assertEqual(value["mergeability"]["diagnosis"], "READY")
 
     def test_cli_status_supplies_persisted_summary_dispositions_to_report(self) -> None:
         disposition = SummaryFindingDisposition(
