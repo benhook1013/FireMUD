@@ -16,6 +16,8 @@ For every stacked PR after the first, review preflight derives the effective par
 
 General may use bounded implementation helpers, then runs up to six fresh serial Luna xhigh whole-boundary cycles, integrating and validating after every productive cycle. Stop at the first zero-useful cycle or after six productive cycles, publish a clean draft with current body/LOC and required CI, and hand it to Gameplay for priority CodeRabbit review. General does not use CodeRabbit.
 
+Gameplay handoff is preceded by independent Overseer acceptance. At least two fresh root-owned subagents must operate the actual command with isolated private state and no review quota: one completes the normal configure/status/evidence/run-selection/decision workflow and assesses concise output usability; the other drives wrong-target, cooldown, reset, parent-movement, unreconciled, merged-parent, provisional-override, stale-decision, locking, and atomic-write failures. This is hands-on behavior testing, not another diff review. General must make the state location or adapter safely injectable for this test without weakening the production default. Any accepted acceptance-test defect is fixed and revalidated before Gameplay receives priority.
+
 ## Gate 2 — playable delivery
 
 After the final #2829 head is available, General prepares one coherent preview-priority child. Use the combined stack to prove protected requester/controller/CA/issuer setup, certificate issue/serve/projection/rotation convergence, CNI allow/deny, exact deployed SHA, and Telnet/WebSocket `LOGIN → PLAY → LOOK`, including reconnect and failure behavior where practical. Credentials, CA private material, and live cluster state never enter Git. Post-merge develop/dev-demo confirmation is operational evidence.
