@@ -336,6 +336,11 @@ done
 
 require_contains "$ci_path" 'PR Metadata Edit (Validation Summary)'
 require_contains "$smoke_path" 'PR Metadata Edit (Smoke Summary)'
+# A metadata-only edit starts a non-required controller job so its preservation
+# failure cannot create a second failed branch-protection context named Smoke
+# Gate. A base retarget still uses the canonical required name.
+# shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
+assert_job_contains smoke.yml smoke-gate "name: \${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Gate)' || 'Smoke Gate' }}"
 assert_job_contains smoke.yml smoke-summary-pending 'name: Smoke Summary (Pending)'
 assert_job_contains smoke.yml smoke-summary-pending 'tracked-by-smoke-gate'
 assert_job_contains smoke.yml smoke-summary 'needs: [changes, smoke-gate, smoke-summary-pending]'
@@ -411,6 +416,43 @@ assert_job_contains smoke.yml smoke-gate 'step.name === "Run credential-free ful
 assert_job_contains smoke.yml smoke-gate 'Stopping stale smoke gate before accepting full-stack proof'
 assert_job_contains smoke.yml smoke-gate 'continue smokeGatePolling'
 assert_job_excludes smoke.yml smoke-gate 'github.rest.repos.createDispatchEvent'
+
+# Reproduce the metadata-edit sequence structurally: the edit has its own
+# concurrency namespace, all runtime construction jobs remain skipped, and no
+# dispatch-capable step exists in Smoke Gate. A live tuple change is handled by
+# the already-proved exact repository_dispatch refresh path instead.
+python3 - "$smoke_path" "$runtime_images_path" <<'PY'
+from pathlib import Path
+import sys
+
+import yaml
+
+smoke_path, runtime_path = map(Path, sys.argv[1:])
+smoke = yaml.load(smoke_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+runtime = yaml.load(runtime_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+
+metadata_name = (
+    "${{ github.event.action == 'edited' && github.event.changes.base.ref == null "
+    "&& 'PR Metadata Edit (Smoke Gate)' || 'Smoke Gate' }}"
+)
+if smoke["jobs"]["smoke-gate"].get("name") != metadata_name:
+    raise SystemExit("metadata-only smoke must use a non-required job context")
+
+runtime_jobs = runtime["jobs"]
+metadata_guard = "github.event.action != 'edited' || github.event.changes.base.ref != null"
+for job_name in ("image-meta", "pr-local-smoke", "pr-controller-smoke"):
+    condition = runtime_jobs[job_name].get("if", "")
+    if metadata_guard not in condition:
+        raise SystemExit(f"{job_name} can run for a metadata-only edited event")
+
+concurrency_group = runtime["concurrency"]["group"]
+if "&& 'metadata' || 'required'" not in concurrency_group:
+    raise SystemExit("metadata-only runtime events can cancel substantive runtime builds")
+
+dispatch_condition = runtime_jobs["dispatch-pr-base-refreshes"].get("if", "")
+if "github.event_name == 'workflow_run'" not in dispatch_condition:
+    raise SystemExit("runtime refresh dispatch is not isolated from pull-request metadata events")
+PY
 
 run_image_meta_exact_parent_fixture() {
   python3 - "$runtime_images_path" <<'PY'
@@ -582,7 +624,7 @@ for forbidden in \
   fi
 done
 require_contains "$preview_path" 'run-name: ${{ github.event_name == '
-require_contains "$preview_path" "format('Preview dispatch pr-{0}-{1}', github.event.client_payload.pr_number, github.event.client_payload.head_sha)"
+require_contains "$preview_path" "format('Preview dispatch pr-{0}-base-{1}-head-{2}-merge-{3}', github.event.client_payload.pr_number, github.event.client_payload.base_sha || 'unknown', github.event.client_payload.head_sha, github.event.client_payload.merge_sha || 'unknown')"
 require_contains "$preview_path" 'contents: read'
 require_contains "$preview_path" 'pull-requests: read'
 require_contains "$preview_path" 'pull_request_target:'
@@ -591,11 +633,13 @@ require_contains "$preview_path" '      - opened'
 require_contains "$preview_path" '      - synchronize'
 require_contains "$preview_path" '      - reopened'
 require_contains "$preview_path" '      - labeled'
+require_contains "$preview_path" '      - unlabeled'
+require_contains "$preview_path" '      - edited'
 require_contains "$preview_path" 'CLIENT_HEAD_SHA: ${{ github.event.client_payload.head_sha }}'
-if grep -Fq 'CLIENT_IMAGE_TAG: ${{ github.event.client_payload.image_tag }}' "$preview_path"; then
-  echo "Preview source must resolve the effective image tag independently of dispatch payload image_tag" >&2
-  exit 1
-fi
+require_contains "$preview_path" 'CLIENT_BASE_REF: ${{ github.event.client_payload.base_ref }}'
+require_contains "$preview_path" 'CLIENT_BASE_SHA: ${{ github.event.client_payload.base_sha }}'
+require_contains "$preview_path" 'CLIENT_MERGE_SHA: ${{ github.event.client_payload.merge_sha }}'
+require_contains "$preview_path" 'CLIENT_IMAGE_TAG: ${{ github.event.client_payload.image_tag }}'
 require_contains "$preview_path" 'CLIENT_PREVIEW_DOMAIN: ${{ github.event.client_payload.preview_domain }}'
 if grep -Fq 'workflow_dispatch:' "$preview_path"; then
   echo "Preview source workflow must not expose a branch-selectable workflow_dispatch trigger" >&2
@@ -610,6 +654,7 @@ require_contains "$preview_path" 'ref: ${{ github.event.repository.default_branc
 require_contains "$preview_path" "github.event_name == 'pull_request_target'"
 require_contains "$preview_path" "github.event_name == 'repository_dispatch'"
 require_contains "$preview_path" 'github.event.pull_request.head.repo.full_name == github.repository'
+require_contains "$preview_path" 'github.event.pull_request.base.repo.full_name == github.repository'
 if grep -Fq 'github.event.pull_request.merge_commit_sha' "$preview_path"; then
   echo "Preview source must resolve a fresh REST test merge, not trust the event payload" >&2
   exit 1
@@ -617,6 +662,72 @@ fi
 require_contains "$preview_path" 'MERGE_RETRY_LIMIT=5'
 require_contains "$preview_path" 'Preview merge computation unavailable'
 require_contains "$preview_path" 'Stale preview head SHA'
+require_contains "$preview_path" '"$CURRENT_BASE_REF" != main && "$CURRENT_BASE_REF" != develop'
+require_contains "$preview_path" 'Stale preview dispatch tuple'
+require_contains "$preview_path" 'Stale preview image identity'
+require_contains "$preview_path" 'Incomplete preview dispatch tuple'
+require_contains "$preview_path" '-n "$PLANNED_IMAGE_TAG" ]]; then'
+
+# Execute the preview plan's refresh predicate with the documented minimal
+# repository_dispatch payload. A live stacked base must refresh its exact
+# merge image even when the dispatch carries no planned tuple.
+python3 - "$preview_path" <<'PY'
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+
+
+workflow_path = Path(sys.argv[1])
+workflow = workflow_path.read_text(encoding="utf-8")
+predicate_start = workflow.index(
+    '            if [[ "$EVENT_NAME" == pull_request_target && "$CURRENT_BASE_REF" != main && "$CURRENT_BASE_REF" != develop ]] ||'
+)
+predicate_end = workflow.index(
+    '\n            if [[ "$ACTION" != deploy ]]; then',
+    predicate_start,
+)
+predicate = workflow[predicate_start:predicate_end]
+
+
+def refresh_required(event_name, current_base_ref, planned_base_sha="", planned_image_tag=""):
+    script = "\n".join(
+        [
+            "set -euo pipefail",
+            f"EVENT_NAME={shlex.quote(event_name)}",
+            f"CURRENT_BASE_REF={shlex.quote(current_base_ref)}",
+            f"PLANNED_BASE_SHA={shlex.quote(planned_base_sha)}",
+            f"PLANNED_IMAGE_TAG={shlex.quote(planned_image_tag)}",
+            "BASE_REFRESH_REQUIRED=false",
+            predicate,
+            'printf \'%s\\n\' "$BASE_REFRESH_REQUIRED"',
+        ]
+    )
+    completed = subprocess.run(
+        ["bash", "-c", script],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise SystemExit(
+            f"preview refresh predicate failed: {completed.stderr.strip()}"
+        )
+    return completed.stdout.strip()
+
+
+if refresh_required("repository_dispatch", "feature/parent") != "true":
+    raise SystemExit(
+        "minimal repository_dispatch payload must refresh a live stacked base image"
+    )
+if refresh_required("repository_dispatch", "develop") != "false":
+    raise SystemExit("ordinary develop previews must continue reusing base images")
+if refresh_required(
+    "repository_dispatch", "develop", "a" * 40, "base-image"
+) != "true":
+    raise SystemExit("planned image refresh must remain enabled for ordinary bases")
+PY
+
 assert_job_contains preview.yml preview-plan 'resolve-preview-image-tag.sh'
 assert_job_contains preview.yml preview-plan 'Expected the tested PR merge tag or immutable base SHA.'
 assert_job_contains preview.yml preview-plan '"$MERGE_SHA" "$PR_NUMBER" "$BASE_SHA"'
@@ -660,7 +771,7 @@ require_contains "$trusted_preview_path" 'metadata_action="$(jq -r'
 require_contains "$trusted_preview_path" 'validate-preview-intent.py'
 require_contains "$trusted_preview_path" 'repository="$(jq -r'
 require_contains "$trusted_preview_path" '[[ "$repository" == "$GITHUB_REPOSITORY" ]]'
-require_contains "$trusted_preview_path" '[[ "$base_ref" == main || "$base_ref" == develop ]]'
+require_contains "$trusted_preview_path" 'base_ref="$(jq -r'
 require_contains "$trusted_preview_path" 'Ignoring lifecycle event without the current pull-request test-merge SHA.'
 require_contains "$trusted_preview_path" 'expected_merge_image_tag="pr-merge-${merge_sha}"'
 require_contains "$trusted_preview_path" 'labels_json="$(jq -c'
@@ -679,21 +790,55 @@ for job in prepare-runtime deploy-runtime destroy-runtime retire-identity; do
   assert_job_contains hosted-identity-request.yml "$job" 'self-hosted'
   assert_job_contains hosted-identity-request.yml "$job" 'environment: trusted-hosted-cluster'
 done
-require_contains "$preview_reconciler_path" '--branch "${DEFAULT_BRANCH}"'
-require_contains "$preview_reconciler_path" '--json databaseId,status,displayTitle'
-require_contains "$preview_reconciler_path" '"Preview dispatch pr-${pr_number}-${head_sha}"'
+require_contains "$preview_reconciler_path" 'actions/runs?branch=${DEFAULT_BRANCH}&status=${active_status}&per_page=100'
+require_contains "$preview_reconciler_path" 'gh api --paginate --slurp'
+require_contains "$preview_reconciler_path" '.display_title == $run_name'
+require_contains "$preview_reconciler_path" '"Preview dispatch pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}"'
 require_contains "$preview_reconciler_path" '"repos/${GITHUB_REPOSITORY}/dispatches"'
 require_contains "$preview_reconciler_path" '-f event_type=preview-deploy'
 require_contains "$preview_reconciler_path" 'client_payload[head_sha]=${head_sha}'
+require_contains "$preview_reconciler_path" 'client_payload[base_ref]=${pr_base_ref}'
+require_contains "$preview_reconciler_path" 'client_payload[base_sha]=${base_sha}'
+require_contains "$preview_reconciler_path" 'client_payload[merge_sha]=${merge_sha}'
+require_contains "$preview_reconciler_path" 'client_payload[image_tag]=${image_tag}'
 require_contains "$preview_reconciler_path" 'client_payload[action]=deploy'
+require_contains "$preview_reconciler_path" 'dispatch_candidates() {'
+require_contains "$preview_reconciler_path" 'candidate_rows="$('
+require_contains "$preview_reconciler_path" 'dispatch_candidates <<<"$candidate_rows"'
+if python3 - "$preview_reconciler_path" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+workflow = Path(sys.argv[1]).read_text(encoding="utf-8")
+if any(re.search(r"\|\s*(?:IFS=[^;]+\s+)?while\b", line) for line in workflow.splitlines()):
+    raise SystemExit("preview reconciler must not pipe candidate rows directly into while")
+PY
+then
+  :
+else
+  echo "Preview reconciler candidate processing must keep dispatch state in the current shell" >&2
+  exit 1
+fi
+
 if grep -Fq 'desired_image_tag=' "$preview_reconciler_path"; then
   echo "Preview reconciler must not retain an unused desired image tag" >&2
   exit 1
 fi
-if grep -Fq 'client_payload[image_tag]' "$preview_reconciler_path"; then
-  echo "Preview reconciler must let the trusted consumer resolve the effective image tag" >&2
-  exit 1
-fi
+require_contains "$preview_reconciler_path" 'resolve-preview-image-tag.sh'
+for annotation in \
+  'firemud.dev/last-preview-base-sha' \
+  'firemud.dev/last-preview-head-sha' \
+  'firemud.dev/last-preview-merge-sha' \
+  'firemud.dev/last-preview-image-tag' \
+  'firemud.dev/requested-preview-base-sha' \
+  'firemud.dev/requested-preview-head-sha' \
+  'firemud.dev/requested-preview-merge-sha' \
+  'firemud.dev/requested-preview-image-tag'; do
+  require_contains "$preview_reconciler_path" "$annotation"
+done
+require_contains "$preview_reconciler_path" 'mergeable_state'
+require_contains "$ROOT_DIR/dev-tools/hosted/preview/revalidate-preview-source-binding.sh" '.mergeable == true'
 if grep -Fq 'actions/workflows/preview.yml/dispatches' "$preview_reconciler_path" ||
   grep -Fq 'inputs[ref]=' "$preview_reconciler_path"; then
   echo "Preview reconciler must use typed repository_dispatch from the default branch" >&2
