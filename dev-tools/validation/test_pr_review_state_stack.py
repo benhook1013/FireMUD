@@ -191,16 +191,33 @@ class ReviewStateStackTest(unittest.TestCase):
             processes = [context.Process(target=_append_prs, args=(path, batch)) for batch in pr_batches]
             for process in processes:
                 process.start()
-            for process in processes:
-                process.join(5)
-                if process.is_alive():
-                    process.terminate()
+            timed_out = []
+            try:
+                for process in processes:
                     process.join(5)
                     if process.is_alive():
-                        process.kill()
-                        process.join()
-                    self.fail(f"child process {process.pid} remained alive after the join timeout")
-                self.assertEqual(process.exitcode, 0)
+                        timed_out.append(process)
+            finally:
+                active_processes = [process for process in processes if process.is_alive()]
+                for process in active_processes:
+                    process.terminate()
+                for process in active_processes:
+                    process.join(5)
+
+                active_processes = [process for process in active_processes if process.is_alive()]
+                for process in active_processes:
+                    process.kill()
+                for process in active_processes:
+                    process.join()
+
+            for process in processes:
+                if process not in timed_out:
+                    self.assertEqual(process.exitcode, 0)
+            if timed_out:
+                self.fail(
+                    "child process(es) remained alive after the join timeout: "
+                    + ", ".join(str(process.pid) for process in timed_out)
+                )
             actual_prs = StateStore(path).load().ordered_prs
             self.assertEqual(len(actual_prs), len(expected_prs))
             self.assertEqual(set(actual_prs), expected_prs)

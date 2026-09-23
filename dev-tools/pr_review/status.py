@@ -771,8 +771,7 @@ def _summary_evidence(payload: Mapping[str, Any], current_head: str) -> dict[str
         if not hosted._substantive(body) or not hosted._matches_head(body, current_head):
             continue
         try:
-            if not evidence.has_summary_action_sections(body):
-                continue
+            evidence.summary_action_counts(body)
         except evidence.EvidenceError as exc:
             raise StatusError(str(exc)) from exc
         # A later exact-head summary with no duplicate/outside-diff section

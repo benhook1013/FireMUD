@@ -1184,7 +1184,7 @@ class ReviewController:
             return self.decide_policy(**kwargs)
         if operation == "reconcile":
             return self.decide_reconciliation(**kwargs)
-        raise ControllerError("decision must be retain, reopen, or policy")
+        raise ControllerError("decision must be retain, reopen, policy, or reconcile")
 
 
 # Stable aliases make the integration seam discoverable to the thin command layer.

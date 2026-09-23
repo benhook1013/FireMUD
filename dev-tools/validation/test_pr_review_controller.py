@@ -876,6 +876,11 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertEqual(args.decide_command, "reconcile")
 
+    def test_unsupported_decision_error_lists_reconcile(self):
+        controller = self.make({})
+        with self.assertRaisesRegex(ControllerError, "retain, reopen, policy, or reconcile"):
+            controller.decide("unsupported")
+
     def test_stack_reconciliation_rejects_wrong_checkpoint_and_incoherent_live_topology(self):
         values = {1: pr(1, HEAD_1), 2: pr(2, HEAD_2, "feature-1", HEAD_1)}
         evidence = {

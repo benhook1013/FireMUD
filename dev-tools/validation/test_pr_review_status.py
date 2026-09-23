@@ -986,6 +986,43 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(report["coderabbit_summary"]["identity"], 602)
         self.assertEqual(report["coderabbit_summary"]["findings"], [])
 
+    def test_later_section_free_exact_head_summary_comment_clears_older_finding(self) -> None:
+        payload = github_payload()
+        pr = payload["data"]["repository"]["pullRequest"]
+        pr["reviewThreads"] = {"nodes": []}
+        pr["comments"] = {
+            "nodes": [
+                {
+                    "databaseId": 608,
+                    "author": {"login": "coderabbitai[bot]"},
+                    "body": (
+                        f"Reviewing files that changed from the base of the PR and between `{BASE[:12]}` and "
+                        f"`{HEAD[:12]}`.\n\nDuplicate comments (1)"
+                    ),
+                    "createdAt": "2026-09-23T01:00:00Z",
+                    "updatedAt": "2026-09-23T01:00:00Z",
+                },
+                {
+                    "databaseId": 609,
+                    "author": {"login": "coderabbitai[bot]"},
+                    "body": (
+                        "<!-- walkthrough_start -->\n"
+                        f"Reviewing files that changed from the base of the PR and between `{BASE[:12]}` and "
+                        f"`{HEAD[:12]}`.\n\nThe current changes look clean."
+                    ),
+                    "createdAt": "2026-09-23T02:00:00Z",
+                    "updatedAt": "2026-09-23T02:00:00Z",
+                },
+            ]
+        }
+
+        report = self._ready_report(payload)
+
+        self.assertTrue(report["ready"], report["reasons"])
+        self.assertEqual(report["coderabbit_summary"]["source"], "comment")
+        self.assertEqual(report["coderabbit_summary"]["identity"], 609)
+        self.assertEqual(report["coderabbit_summary"]["findings"], [])
+
     def test_walkthrough_comment_without_summary_section_cannot_hide_exact_head_review(self) -> None:
         payload = github_payload()
         pr = payload["data"]["repository"]["pullRequest"]
