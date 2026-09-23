@@ -18,6 +18,10 @@ public class AuthenticationExceptionHandler {
   public ResponseEntity<ApiResponse<ErrorDetail>> handleAuthenticationException(
       AuthenticationException ex) {
     ErrorDetail detail = new ErrorDetail(ex.getCode(), ex.getMessage());
-    return new ResponseEntity<>(ApiResponse.error(detail), HttpStatus.UNAUTHORIZED);
+    HttpStatus status =
+        "AUTH_UNAVAILABLE".equals(ex.getCode())
+            ? HttpStatus.SERVICE_UNAVAILABLE
+            : HttpStatus.UNAUTHORIZED;
+    return new ResponseEntity<>(ApiResponse.error(detail), status);
   }
 }

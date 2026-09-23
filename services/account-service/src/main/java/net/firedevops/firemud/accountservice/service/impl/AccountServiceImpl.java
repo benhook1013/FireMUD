@@ -99,6 +99,8 @@ public class AccountServiceImpl implements AccountService {
       "Selected gameplay target is no longer admissible; rerun bootstrap discovery and request a fresh connect scope";
   private static final String INVALID_CONNECT_SCOPE_MESSAGE =
       "Connect scope is invalid or expired; rerun bootstrap discovery and request a fresh connect scope";
+  private static final String JOIN_REQUIRED_CHARACTERS_MESSAGE =
+      "Join the selected world before discovering characters";
   private static final String GAMEPLAY_DELEGATION_AUDIENCE = "account-service";
   private static final int EMAIL_LOGIN_OTP_MAX_ATTEMPTS = 5;
   private static final SecureRandom EMAIL_LOGIN_OTP_RANDOM = new SecureRandom();
@@ -939,12 +941,22 @@ public class AccountServiceImpl implements AccountService {
   private RuntimeRealmTarget requireCurrentAdmissibleConnectScopeTarget(
       BootstrapContext bootstrapContext, ConnectScopeContext scopeContext) {
     RuntimeRealmTarget currentRealm = requireCurrentConnectScopeTarget(scopeContext);
+    requireGameplayAdmissionMembership(bootstrapContext.accountId(), currentRealm);
     if (!isRealmAdmissible(bootstrapContext, currentRealm)) {
       throw new AuthenticationException(
           "ADMISSION_POINTER_UNAVAILABLE",
           "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
     }
     return currentRealm;
+  }
+
+  private void requireGameplayAdmissionMembership(long accountId, RuntimeRealmTarget realm) {
+    if (accountTenantMembershipRepository
+        .findByAccountIdAndTenantId(accountId, realm.tenantId())
+        .filter(AccountTenantMembership::isGameplayAdmissionAllowed)
+        .isEmpty()) {
+      throw new AuthenticationException("JOIN_REQUIRED", JOIN_REQUIRED_CHARACTERS_MESSAGE);
+    }
   }
 
   private long remainingConnectScopeReplayTtl(ConnectScopeContext scopeContext) {
@@ -1547,6 +1559,9 @@ public class AccountServiceImpl implements AccountService {
     if (!StringUtils.hasText(realmSlug)) {
       throw new IllegalArgumentException("realmSlug is required");
     }
+    if (!"SHARED".equals(stateScope) && !"ISOLATED".equals(stateScope)) {
+      throw new IllegalArgumentException("stateScope must be SHARED or ISOLATED");
+    }
     return new RuntimeRealmTarget(
         tenantId,
         gameInstanceId,
@@ -1562,10 +1577,13 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private PlayableStateScope toPlayableStateScope(RuntimeRealmTarget realm) {
-    return switch (realm.stateScope()) {
-      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
-      default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
-    };
+    if ("SHARED".equals(realm.stateScope())) {
+      return PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+    }
+    if ("ISOLATED".equals(realm.stateScope())) {
+      return PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+    }
+    throw new IllegalArgumentException("stateScope must be SHARED or ISOLATED");
   }
 
   private long requirePositiveLong(Object value, String field) {

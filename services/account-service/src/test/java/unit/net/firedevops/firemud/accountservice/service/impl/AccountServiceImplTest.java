@@ -1740,6 +1740,49 @@ class AccountServiceImplTest {
     assertEquals("ALLOW_NEW", characters.getFirst().characterCreationPolicy());
   }
 
+  @ParameterizedTest
+  @CsvSource({"false", "true"})
+  void listBootstrapCharactersRequiresCurrentAdmittingMembership(boolean membershipExists) {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    if (membershipExists) {
+      AccountTenantMembership membership = membership(account, 7L);
+      membership.setGameplayAdmissionAllowed(false);
+      when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+          .thenReturn(Optional.of(membership));
+    } else {
+      when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+          .thenReturn(Optional.empty());
+    }
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.listBootstrapCharacters(
+                    bootstrap.bootstrapToken(), "demo", "production", connectScopeId));
+
+    assertEquals("JOIN_REQUIRED", exception.getCode());
+    assertEquals("Join the selected world before discovering characters", exception.getMessage());
+    verifyNoInteractions(entityManagementClient);
+    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
+        .saveAndFlush(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+  }
+
   @Test
   void listBootstrapCharactersRejectsAmbiguousRealmBeforeAdmissionFiltering() {
     Account account = new Account();
@@ -2018,6 +2061,49 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void listBootstrapCharactersRejectsAdmissionPointerWithUnknownStateScope() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+    when(gameSessionClient.getAdmissionPointer(7L, "demo", "production"))
+        .thenReturn(
+            net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
+                .setWorldSlug("demo")
+                .setWorldDisplayName("Demo World")
+                .setRealmSlug("production")
+                .setRealmDisplayName("Live Realm")
+                .setTenantId("7")
+                .setGameInstanceId("44")
+                .setPointerVersion(17L)
+                .setVisible(true)
+                .setPublicProductionRealm(true)
+                .setRequiresCharacterSelection(false)
+                .setStateScope("UNKNOWN")
+                .setCharacterCreationPolicy("ALLOW_NEW")
+                .build());
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.listBootstrapCharacters(
+                    bootstrap.bootstrapToken(), "demo", "production", connectScopeId));
+
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", exception.getCode());
+    verifyNoInteractions(entityManagementClient);
+  }
+
+  @Test
   void listBootstrapCharactersUsesWorldQualifiedPointerLookupWhenRealmSlugDuplicatesAcrossWorlds() {
     Account account = new Account();
     account.setId(11L);
@@ -2115,7 +2201,7 @@ class AccountServiceImplTest {
     when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(
             org.mockito.ArgumentMatchers.eq(11L), org.mockito.ArgumentMatchers.anyLong()))
-        .thenReturn(Optional.empty());
+        .thenReturn(Optional.of(membership(account, 7L)));
     when(gameSessionClient.listGameplayRealms("demo"))
         .thenReturn(
             java.util.List.of(
