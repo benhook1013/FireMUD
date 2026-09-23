@@ -141,32 +141,34 @@ def target(*, reconciled=True, ancestor_links_valid=True):
     )
 
 
-def hosted_payload(body="Full review triggered"):
+def hosted_payload(body="Full review triggered", *, include_response=True):
     trigger_at = "2026-01-01T00:00:00Z"
     response_at = "2026-01-01T00:01:00Z"
+    comments = [
+        {
+            "databaseId": 100,
+            "author": {"login": "ben"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": trigger_at,
+            "url": "https://example.test/trigger",
+        }
+    ]
+    if include_response:
+        comments.append(
+            {
+                "databaseId": 101,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": body,
+                "createdAt": response_at,
+                "url": "https://example.test/response",
+            }
+        )
     return {
         "data": {
             "repository": {
                 "pullRequest": {
                     "headRefOid": HEAD,
-                    "comments": {
-                        "nodes": [
-                            {
-                                "databaseId": 100,
-                                "author": {"login": "ben"},
-                                "body": hosted.FULL_COMMAND,
-                                "createdAt": trigger_at,
-                                "url": "https://example.test/trigger",
-                            },
-                            {
-                                "databaseId": 101,
-                                "author": {"login": "coderabbitai[bot]"},
-                                "body": body,
-                                "createdAt": response_at,
-                                "url": "https://example.test/response",
-                            },
-                        ]
-                    },
+                    "comments": {"nodes": comments},
                     "reviews": {"nodes": []},
                 }
             }
@@ -366,23 +368,125 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertFalse(thread.is_alive())
             self.assertEqual(errors, [])
 
-    def test_current_or_legacy_active_hosted_reservation_blocks_cli(self):
-        for legacy in (False, True):
-            with self.subTest(legacy=legacy), tempfile.TemporaryDirectory() as directory:
+    def test_posted_active_or_awaiting_hosted_reservation_allows_cli_and_preserves_record(self):
+        for include_response in (True, False):
+            with self.subTest(include_response=include_response), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 common_dir = root / ".git"
                 common_dir.mkdir()
-                write_hosted_trigger(common_dir, legacy=legacy)
+                record_path = write_hosted_trigger(common_dir)
+                original_record = json.loads(record_path.read_text())
+                review_started = threading.Event()
+                allow_review_finish = threading.Event()
+                commands = FakeCommands(
+                    root,
+                    review_started=review_started,
+                    allow_review_finish=allow_review_finish,
+                )
+                errors = []
+
+                def run(run_root=root, run_commands=commands, run_errors=errors):
+                    try:
+                        run_cli_review(
+                            target(),
+                            github=FakeGitHub(),
+                            source_root=run_root,
+                            runner=run_commands,
+                        )
+                    except ReviewRunnerError as error:
+                        run_errors.append(error)
+
+                with patch(
+                    "pr_review.cli_runner.github_api.fetch_pull_request",
+                    return_value=hosted_payload(include_response=include_response),
+                ):
+                    thread = threading.Thread(target=run)
+                    thread.start()
+                    self.assertTrue(review_started.wait(timeout=3))
+                    request_lock = record_path.parent / "request.lock"
+                    with request_lock.open("a+") as lock_handle, self.assertRaises(BlockingIOError):
+                        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    allow_review_finish.set()
+                    thread.join(timeout=3)
+
+                self.assertFalse(thread.is_alive())
+                self.assertEqual(errors, [])
+                self.assertTrue(any(call[0][0] == "coderabbit" for call in commands.calls))
+                self.assertEqual(json.loads(record_path.read_text()), original_record)
+
+    def test_ambiguous_unattributed_and_timed_out_hosted_reservations_block_cli(self):
+        cases = ("ambiguous", "unattributed", "timed_out")
+        for state in cases:
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                common_dir = root / ".git"
+                common_dir.mkdir()
+                record_path = write_hosted_trigger(common_dir)
+                if state == "timed_out":
+                    timed_out_record = json.loads(record_path.read_text())
+                    timed_out_record["status"] = "timed_out"
+                    record_path.write_text(json.dumps(timed_out_record))
+                original_record = json.loads(record_path.read_text())
+                payload = hosted_payload(include_response=False)
+                comments = payload["data"]["repository"]["pullRequest"]["comments"]["nodes"]
+                if state == "unattributed":
+                    comments.clear()
+                elif state == "ambiguous":
+                    comments.append(
+                        {
+                            "databaseId": 102,
+                            "author": {"login": "another-maintainer"},
+                            "body": hosted.FULL_COMMAND,
+                            "createdAt": "2026-01-01T00:02:00Z",
+                            "url": "https://example.test/later-trigger",
+                        }
+                    )
                 commands = FakeCommands(root)
                 with (
-                    patch("pr_review.cli_runner.github_api.fetch_pull_request", return_value=hosted_payload()),
+                    patch("pr_review.cli_runner.github_api.fetch_pull_request", return_value=payload),
                     self.assertRaisesRegex(
                         ReviewRunnerError,
-                        "Hosted review requires resolution before CLI review: active",
+                        f"Hosted review requires resolution before CLI review: {state}",
                     ),
                 ):
                     run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
                 self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+                self.assertEqual(json.loads(record_path.read_text()), original_record)
+
+    def test_malformed_hosted_reservation_blocks_cli(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            common_dir = root / ".git"
+            common_dir.mkdir()
+            record_path = write_hosted_trigger(common_dir)
+            original_record = json.loads(record_path.read_text())
+            malformed_record = dict(original_record)
+            malformed_record["trigger"] = {**original_record["trigger"], "type": "not-full"}
+            record_path.write_text(json.dumps(malformed_record))
+            commands = FakeCommands(root)
+            with (
+                patch("pr_review.cli_runner.github_api.fetch_pull_request", return_value=hosted_payload()),
+                self.assertRaisesRegex(ReviewRunnerError, "current Hosted reservation cannot be safely classified"),
+            ):
+                run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+            self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+            self.assertEqual(json.loads(record_path.read_text()), malformed_record)
+
+    def test_multiple_current_hosted_reservations_block_cli_before_lookup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            common_dir = root / ".git"
+            common_dir.mkdir()
+            write_hosted_trigger(common_dir)
+            write_hosted_trigger(common_dir, legacy=True)
+            commands = FakeCommands(root)
+            with (
+                patch("pr_review.cli_runner.github_api.fetch_pull_request") as fetch,
+                self.assertRaisesRegex(ReviewRunnerError, "multiple current Hosted reservations"),
+            ):
+                run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+            fetch.assert_not_called()
+            self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
 
     def test_hosted_posting_lock_blocks_cli_before_live_lookup(self):
         with tempfile.TemporaryDirectory() as directory:

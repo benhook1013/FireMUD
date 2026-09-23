@@ -201,64 +201,80 @@ class LiveEvidence:
         )
         return counts["outside_diff"], counts["duplicate"], url
 
-    def _global_blockers(self, pr: int, head: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
+    def _global_blockers(
+        self,
+        pr: int,
+        head: str,
+        payload: dict[str, Any],
+        *,
+        include_hosted_findings: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Return blockers shared by review channels and Hosted-only obligations.
+
+        Review threads and CodeRabbit summary actions are Hosted findings: they
+        remain merge-readiness obligations, but must not suppress independent CLI
+        discovery.  File-ceiling evidence remains global because it limits the
+        candidate itself rather than one review channel.
+        """
+
         pull = payload["data"]["repository"]["pullRequest"]
         values: list[dict[str, Any]] = []
-        threads = (pull.get("reviewThreads") or {}).get("nodes")
-        if not isinstance(threads, list):
-            values.append(
-                {
-                    "pr": pr,
-                    "head": head,
-                    "checkpoint": "review-threads:unavailable",
-                    "unstable": True,
-                    "reason": "complete GitHub review-thread evidence is unavailable",
-                }
-            )
-        else:
-            unresolved = [
-                thread for thread in threads if isinstance(thread, dict) and thread.get("isResolved") is False
-            ]
-            malformed = any(
-                not isinstance(thread, dict)
-                or not isinstance(thread.get("isResolved"), bool)
-                or not isinstance(thread.get("isOutdated"), bool)
-                for thread in threads
-            )
-            if malformed:
+        if include_hosted_findings:
+            threads = (pull.get("reviewThreads") or {}).get("nodes")
+            if not isinstance(threads, list):
                 values.append(
                     {
                         "pr": pr,
                         "head": head,
-                        "checkpoint": "review-threads:malformed",
+                        "checkpoint": "review-threads:unavailable",
                         "unstable": True,
-                        "reason": "GitHub review-thread evidence is malformed",
+                        "reason": "complete GitHub review-thread evidence is unavailable",
                     }
                 )
-            if unresolved:
-                current = sum(thread["isOutdated"] is False for thread in unresolved)
-                outdated = sum(thread["isOutdated"] is True for thread in unresolved)
+            else:
+                unresolved = [
+                    thread for thread in threads if isinstance(thread, dict) and thread.get("isResolved") is False
+                ]
+                malformed = any(
+                    not isinstance(thread, dict)
+                    or not isinstance(thread.get("isResolved"), bool)
+                    or not isinstance(thread.get("isOutdated"), bool)
+                    for thread in threads
+                )
+                if malformed:
+                    values.append(
+                        {
+                            "pr": pr,
+                            "head": head,
+                            "checkpoint": "review-threads:malformed",
+                            "unstable": True,
+                            "reason": "GitHub review-thread evidence is malformed",
+                        }
+                    )
+                if unresolved:
+                    current = sum(thread["isOutdated"] is False for thread in unresolved)
+                    outdated = sum(thread["isOutdated"] is True for thread in unresolved)
+                    values.append(
+                        {
+                            "pr": pr,
+                            "head": head,
+                            "checkpoint": f"review-threads:{current}:{outdated}",
+                            "held": True,
+                            "reason": f"{current} unresolved current and {outdated} unresolved outdated review thread(s)",
+                        }
+                    )
+            outside, duplicate, url = self._summary_action_counts(payload, head)
+            if outside or duplicate:
                 values.append(
                     {
                         "pr": pr,
                         "head": head,
-                        "checkpoint": f"review-threads:{current}:{outdated}",
+                        "checkpoint": f"summary-actions:{outside}:{duplicate}",
                         "held": True,
-                        "reason": f"{current} unresolved current and {outdated} unresolved outdated review thread(s)",
+                        "reason": f"latest CodeRabbit summary has {outside} outside-diff and {duplicate} duplicate actionable comment(s)",
+                        "url": url,
                     }
                 )
-        outside, duplicate, url = self._summary_action_counts(payload, head)
-        if outside or duplicate:
-            values.append(
-                {
-                    "pr": pr,
-                    "head": head,
-                    "checkpoint": f"summary-actions:{outside}:{duplicate}",
-                    "held": True,
-                    "reason": f"latest CodeRabbit summary has {outside} outside-diff and {duplicate} duplicate actionable comment(s)",
-                    "url": url,
-                }
-            )
         all_reviews = [*pull.get("comments", {}).get("nodes", []), *pull.get("reviews", {}).get("nodes", [])]
         latest_exact_completion = datetime.min.replace(tzinfo=timezone.utc)
         for item in all_reviews:
@@ -458,7 +474,7 @@ class LiveEvidence:
                             "reason": state.reason,
                         }
                     )
-        values.extend(self._global_blockers(pr, head, payload))
+        values.extend(self._global_blockers(pr, head, payload, include_hosted_findings=channel == "hosted"))
         self._histories[key] = values
         return values
 

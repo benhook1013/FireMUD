@@ -702,7 +702,7 @@ class RuntimeTest(unittest.TestCase):
             self.assertTrue(pending[0]["held"])
             self.assertFalse(pending[0]["completed"])
 
-    def test_unresolved_threads_actionable_summary_and_file_ceiling_block_targeting(self) -> None:
+    def test_hosted_findings_hold_hosted_but_not_cli_and_file_ceiling_is_global(self) -> None:
         comments = [
             {
                 "databaseId": 20,
@@ -729,14 +729,25 @@ class RuntimeTest(unittest.TestCase):
             {"isResolved": False, "isOutdated": True, "path": "b.py", "line": 2},
         ]
         with tempfile.TemporaryDirectory() as directory:
-            history = self._history(Path(directory), self._payload(comments, threads=threads), "cli")
+            payload = self._payload(comments, threads=threads)
+            hosted_history = self._history(Path(directory), payload, "hosted")
+            cli_history = self._history(Path(directory), payload, "cli")
         self.assertTrue(
-            any(item.get("held") and item.get("checkpoint", "").startswith("review-threads:") for item in history)
+            any(
+                item.get("held") and item.get("checkpoint", "").startswith("review-threads:")
+                for item in hosted_history
+            )
         )
         self.assertTrue(
-            any(item.get("held") and item.get("checkpoint", "").startswith("summary-actions:") for item in history)
+            any(
+                item.get("held") and item.get("checkpoint", "").startswith("summary-actions:")
+                for item in hosted_history
+            )
         )
-        self.assertTrue(any(item.get("over_ceiling") for item in history))
+        self.assertFalse(any(item.get("checkpoint", "").startswith("review-threads:") for item in cli_history))
+        self.assertFalse(any(item.get("checkpoint", "").startswith("summary-actions:") for item in cli_history))
+        self.assertTrue(any(item.get("over_ceiling") for item in hosted_history))
+        self.assertTrue(any(item.get("over_ceiling") for item in cli_history))
 
     def test_summary_selector_uses_current_head_updated_time_and_rejects_ties(self) -> None:
         first = {

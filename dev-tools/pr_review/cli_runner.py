@@ -312,7 +312,7 @@ def _common_dir(
 
 
 def _assert_no_active_hosted_review(repo: str, pr_number: int, common_dir: Path) -> None:
-    """Refuse CLI work while a durable Hosted request for this PR is unresolved."""
+    """Refuse CLI work only when Hosted attribution is unsafe or unresolved."""
 
     records = hosted.current_trigger_record_paths(repo, pr_number, common=common_dir)
     if not records:
@@ -325,12 +325,22 @@ def _assert_no_active_hosted_review(repo: str, pr_number: int, common_dir: Path)
         for record_path in records:
             record = hosted.load_trigger_reservation(record_path, repo, pr_number)
             state = hosted.trigger_state(repo, pr_number, payload, record, record_path)
-            if state.state in {"active", "awaiting_response", "ambiguous", "unattributed", "timed_out"}:
+            # An already-posted Hosted request can run alongside the independent
+            # CLI process.  The caller holds request.lock for the full CLI run,
+            # so all local Hosted reservation mutations remain serialized.  An
+            # ambiguous, unattributed, or timed-out response still fails closed:
+            # it needs operator resolution before another review is allowed.
+            if state.state in {"ambiguous", "unattributed", "timed_out"}:
                 raise ReviewRunnerError(f"Hosted review requires resolution before CLI review: {state.state}")
-            # A terminal Hosted quota response holds Hosted targeting, not the
-            # independent CLI channel. Only an in-flight or ambiguous Hosted
-            # request needs the shared per-PR execution fence.
-            if state.state not in {"completed", "noop", "failed", "retired", "rate_limited"}:
+            if state.state not in {
+                "active",
+                "awaiting_response",
+                "completed",
+                "noop",
+                "failed",
+                "retired",
+                "rate_limited",
+            }:
                 raise ReviewRunnerError(f"Hosted review has an unsupported state before CLI review: {state.state}")
     except ReviewRunnerError:
         raise
