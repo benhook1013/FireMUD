@@ -56,7 +56,7 @@ The #2844 acceptance and publication conditions are satisfied. Gameplay should b
 - A fix discovered by either channel must be considered against evidence from the other. Material behavior or proof changes reopen the affected channel; direct narrow corrections may retain evidence only with a written head/patch-bound rationale.
 - Never move a cursor because a worker has been idle, a numerical allowance elapsed, or a provider cooldown is inconvenient.
 - Numerical allowances are report boundaries, not automatic completion. Continue productive review after reporting unless Overseer explicitly stops it.
-- Use wake-capable sentinels for provider cooldowns and CI. The parent task waits on them rather than polling or narrating unchanged state.
+- Do not occupy a scarce subagent slot with passive CI watching while accepted findings, disjoint fixes, focused tests, or review adjudication can make useful progress. Let GitHub CI run unattended; inspect its result after the coherent fix batch is validated and published, or when a specific CI result becomes the next blocking input. A read-only CI watcher may be stopped or deferred without cancelling the GitHub run. Use a wake-capable sentinel for a necessary wait only when it does not displace useful work; the parent task does not poll or narrate unchanged state.
 
 ## Per-PR readiness and continuation
 
@@ -76,7 +76,7 @@ Report a genuine blocker immediately instead of silently advancing around it. Th
 
 ## Delegation and evidence
 
-Use bounded Luna lanes for separable implementation, mechanical proof, and CI/provider waits. Gameplay retains finding adjudication, diff inspection, integration, publication, review/merge-readiness judgment, and the final handoff. Do not consume overlapping agents for the same task.
+Use bounded Luna lanes first for disjoint accepted-finding fixes and focused proof. Allocate remaining capacity to CI/provider waits only when no ready substantive assignment needs that slot. Gameplay retains finding adjudication, diff inspection, integration, publication, review/merge-readiness judgment, and the final handoff. Do not consume overlapping agents for the same task.
 
 Keep PR bodies and private ledgers current with detailed findings and proof. The task brief owns queue and process; do not duplicate every finding here.
 
