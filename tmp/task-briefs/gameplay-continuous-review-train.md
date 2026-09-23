@@ -18,7 +18,7 @@ Work through this single queue in order:
 
 Stop before #2828. Do not touch #2828, #2829, #2839, #2840, or later Document work under this assignment.
 
-If the review-control prerequisite is not ready when #2838 finishes, wait at that queue slot and report the dependency. Do not bypass it to spend review quota on #2818.
+If the review-control prerequisite is not ready when #2838 finishes, stop cleanly at that queue slot and report the dependency. Do not bypass it to spend review quota on #2818. Do not allocate a sentinel or poll the private task brief: Overseer owns appending the accepted PR/head and will explicitly wake Gameplay when the slot becomes actionable.
 
 ## Preparation before each PR
 
