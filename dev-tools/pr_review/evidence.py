@@ -124,8 +124,9 @@ def _summary_marker_context(line: str, marker: str) -> tuple[bool, str] | None:
     explicit = False
     while text:
         previous = text
-        heading = re.match(r"^#{1,6}\s+", text)
-        if heading:
+        if text.startswith(">"):
+            text = text[1:].lstrip()
+        elif (heading := re.match(r"^#{1,6}\s+", text)):
             text = text[heading.end() :]
             explicit = True
         elif text.startswith(("**", "__", "- ", "+ ", "* ")):

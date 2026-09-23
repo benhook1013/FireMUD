@@ -537,6 +537,151 @@ class RuntimeTest(unittest.TestCase):
             history = self._history(common, payload)
             self.assertFalse(any(item.get("checkpoint") == "12" and item.get("completed") for item in history))
 
+    def test_zero_hosted_checkpoint_can_link_to_attributable_finished_reply(self) -> None:
+        trigger_at = "2026-09-23T00:01:00Z"
+        summary_at = "2026-09-23T00:02:00Z"
+        reply_at = "2026-09-23T00:03:00Z"
+        checkpoint_at = "2026-09-23T00:04:00Z"
+        trigger = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": trigger_at,
+            "updatedAt": trigger_at,
+            "url": "https://example.test/comments/10",
+        }
+        summary = {
+            "databaseId": 12,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": (
+                "No actionable comments were generated in the recent review.\n"
+                f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}."
+            ),
+            "createdAt": summary_at,
+            "updatedAt": summary_at,
+        }
+        reply = {
+            "databaseId": 11,
+            "author": {"login": "coderabbitai"},
+            "body": "Full review finished.",
+            "createdAt": reply_at,
+            "updatedAt": reply_at,
+        }
+        checkpoint = {
+            "databaseId": 13,
+            "author": {"login": "maintainer"},
+            "body": (
+                f"Hosted: 0 found / 0 accepted · `{HEAD[:12]}` · 1 files · 120s\n"
+                "<!-- firemud-hosted-review: 11 -->\n"
+                "<!-- firemud-review-duration-seconds: 120 -->"
+            ),
+            "createdAt": checkpoint_at,
+            "updatedAt": checkpoint_at,
+        }
+
+        def history_for(comments, reviews=None):
+            with tempfile.TemporaryDirectory() as directory:
+                common = Path(directory)
+                record_path = hosted.default_trigger_record_path("owner/repo", 42, common)
+                record_path.parent.mkdir(parents=True)
+                record_path.write_text(
+                    json.dumps(self._trigger_record(created=trigger_at)), encoding="utf-8"
+                )
+                return self._history(common, self._payload(comments, reviews))
+
+        valid = history_for([trigger, summary, reply, checkpoint])
+        self.assertTrue(any(item.get("checkpoint") == "13" and item.get("completed") for item in valid))
+
+        mismatched_summary = {**summary, "body": summary["body"].replace(HEAD, "d" * 40)}
+        missing_summary = [trigger, reply, checkpoint]
+        for invalid_comments in (
+            [trigger, mismatched_summary, reply, checkpoint],
+            missing_summary,
+            [trigger, summary, {**reply, "author": {"login": "other-user"}}, checkpoint],
+            [trigger, summary, {**reply, "body": "Review rate limited; next reviews available in 30 minutes"}, checkpoint],
+        ):
+            with self.subTest(comments=invalid_comments):
+                rejected = history_for(invalid_comments)
+                self.assertFalse(any(item.get("checkpoint") == "13" and item.get("completed") for item in rejected))
+
+        later_substantive_summary = {
+            "databaseId": 15,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": (
+                "<!-- walkthrough_start -->\n"
+                f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}."
+            ),
+            "createdAt": "2026-09-23T00:02:30Z",
+            "updatedAt": "2026-09-23T00:02:30Z",
+        }
+        later_summary_history = history_for([trigger, summary, later_substantive_summary, reply, checkpoint])
+        self.assertFalse(
+            any(item.get("checkpoint") == "13" and item.get("completed") for item in later_summary_history)
+        )
+
+        wrong_duration = {
+            **checkpoint,
+            "body": checkpoint["body"].replace("120s", "121s").replace("seconds: 120", "seconds: 121"),
+        }
+        wrong_duration_history = history_for([trigger, summary, reply, wrong_duration])
+        self.assertFalse(
+            any(item.get("checkpoint") == "13" and item.get("completed") for item in wrong_duration_history)
+        )
+
+        conflicting_review = {
+            "databaseId": 55,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+            "state": "COMMENTED",
+            "submittedAt": summary_at,
+            "commit": {"oid": "d" * 40},
+        }
+        conflicted = history_for([trigger, summary, reply, checkpoint], [conflicting_review])
+        self.assertFalse(any(item.get("checkpoint") == "13" and item.get("completed") for item in conflicted))
+
+    def test_completed_hosted_trigger_without_checkpoint_is_held(self) -> None:
+        trigger_at = "2026-09-23T00:01:00Z"
+        summary_at = "2026-09-23T00:02:00Z"
+        reply_at = "2026-09-23T00:03:00Z"
+        trigger = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": trigger_at,
+            "updatedAt": trigger_at,
+            "url": "https://example.test/comments/10",
+        }
+        summary = {
+            "databaseId": 12,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": (
+                "No actionable comments were generated in the recent review.\n"
+                f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}."
+            ),
+            "createdAt": summary_at,
+            "updatedAt": summary_at,
+        }
+        reply = {
+            "databaseId": 11,
+            "author": {"login": "coderabbitai"},
+            "body": "Full review finished.",
+            "createdAt": reply_at,
+            "updatedAt": reply_at,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            record_path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            record_path.parent.mkdir(parents=True)
+            record_path.write_text(
+                json.dumps(self._trigger_record(created=trigger_at)), encoding="utf-8"
+            )
+            history = self._history(common, self._payload([trigger, summary, reply]))
+
+        held = [item for item in history if item.get("checkpoint") == "trigger-uncheckpointed:11"]
+        self.assertEqual(len(held), 1)
+        self.assertTrue(held[0]["held"])
+        self.assertFalse(held[0].get("completed", False))
+
     def test_historical_hosted_checkpoint_uses_captured_head_after_live_head_moves(self) -> None:
         current_head = "d" * 40
         created = "2026-09-23T00:01:00Z"

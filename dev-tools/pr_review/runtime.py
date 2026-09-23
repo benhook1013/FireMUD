@@ -136,6 +136,118 @@ class LiveEvidence:
             for name in ("child_head", "parent_identity", "parent_head", "merge_base", "patch_id")
         )
 
+    @staticmethod
+    def _hosted_zero_reply_proof(
+        checkpoint: evidence.Checkpoint,
+        response_id: int | None,
+        response_duration_seconds: int | None,
+        captured_head: str,
+        record: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Validate a finished-reply checkpoint when no PR review object exists.
+
+        ``hosted.trigger_state`` supplies the terminal trigger attribution. This
+        additional check binds the checkpoint to that exact finished reply and
+        to a zero-finding summary inside the same trigger window.
+        """
+
+        if (
+            checkpoint.duration_invalid
+            or checkpoint.type.casefold() != "hosted"
+            or checkpoint.raw_found != 0
+            or checkpoint.accepted != 0
+            or checkpoint.hosted_review_id is None
+            or response_id != checkpoint.hosted_review_id
+            or (
+                checkpoint.duration_seconds is not None
+                and checkpoint.duration_seconds != response_duration_seconds
+            )
+        ):
+            return None
+
+        pr = payload["data"]["repository"]["pullRequest"]
+        comments = pr["comments"]["nodes"]
+        response = next(
+            (item for item in comments if github.immutable_database_id(item) == response_id),
+            None,
+        )
+        response_author = ((response or {}).get("author") or {}).get("login")
+        response_body = (response or {}).get("body") or ""
+        response_at = hosted.parse_timestamp((response or {}).get("createdAt"))
+        trigger = record.get("trigger") or {}
+        trigger_id = trigger.get("id")
+        trigger_at = hosted.parse_timestamp(trigger.get("created_at"))
+        if (
+            response is None
+            or not hosted.is_coderabbit_login(response_author)
+            or not hosted.FINISHED_REVIEW_PATTERN.search(hosted._unquoted(response_body))
+            or response_at is None
+            or trigger_at is None
+            or response_at <= trigger_at
+        ):
+            return None
+
+        later_triggers: list[datetime] = []
+        for item in comments:
+            author = ((item.get("author") or {}).get("login"))
+            if (
+                github.immutable_database_id(item) == trigger_id
+                or hosted.is_coderabbit_login(author)
+                or hosted.normalize_command(item.get("body") or "") != hosted.FULL_COMMAND
+            ):
+                continue
+            created = hosted.parse_timestamp(item.get("createdAt"))
+            if created is None:
+                return None
+            if created >= trigger_at:
+                later_triggers.append(created)
+        next_trigger = min(later_triggers, default=None)
+        if next_trigger is not None and response_at >= next_trigger:
+            return None
+
+        summaries: list[tuple[datetime, int, bool]] = []
+        for item in comments:
+            author = ((item.get("author") or {}).get("login"))
+            body = item.get("body") or ""
+            updated = hosted.parse_timestamp(item.get("updatedAt"))
+            if (
+                not hosted.is_coderabbit_login(author)
+                or updated is None
+                or updated <= trigger_at
+                or (next_trigger is not None and updated >= next_trigger)
+                or hosted._rate_limit(body, updated) is not None
+            ):
+                continue
+            exact_head = hosted._matches_head(body, captured_head)
+            zero_finding = (
+                "No actionable comments were generated in the recent review." in body and exact_head
+            )
+            if zero_finding or (hosted._substantive(body) and exact_head):
+                summaries.append((updated, github.immutable_database_id(item) or 0, zero_finding))
+        if not summaries or not max(summaries)[2]:
+            return None
+
+        # A reply-only checkpoint is intentionally limited to runs with no PR
+        # review object in the captured trigger window. This avoids choosing a
+        # reply over a conflicting or mismatched immutable review commit.
+        for review in pr["reviews"]["nodes"]:
+            author = ((review.get("author") or {}).get("login"))
+            if not hosted.is_coderabbit_login(author) or review.get("state") == "DISMISSED":
+                continue
+            submitted = hosted.parse_timestamp(review.get("submittedAt"))
+            if submitted is None:
+                return None
+            if submitted > trigger_at and (next_trigger is None or submitted < next_trigger):
+                return None
+
+        return {
+            "status": "completed",
+            "review_id": response_id,
+            "commit_id": captured_head,
+            "submitted_at": response.get("createdAt"),
+        }
+
     def _hosted_trigger_for_checkpoint(
         self,
         pr: int,
@@ -152,6 +264,15 @@ class LiveEvidence:
                 continue
             captured_head = record["head_sha"]
             proof = evidence.hosted_checkpoint_evidence(checkpoint, reviews, captured_head)
+            if proof.get("status") != "completed":
+                proof = self._hosted_zero_reply_proof(
+                    checkpoint,
+                    state.response_id,
+                    state.duration_seconds,
+                    captured_head,
+                    record,
+                    payload,
+                ) or proof
             if proof.get("status") != "completed":
                 continue
             anchor = record.get("anchor")
@@ -359,6 +480,7 @@ class LiveEvidence:
         public_cli_run_ids: set[str] = set()
         emitted_cli_sources: set[tuple[str, str]] = set()
         emitted_hosted_review_ids: set[int] = set()
+        emitted_hosted_response_ids: set[int] = set()
         for checkpoint in checkpoints:
             if checkpoint.type.casefold() != channel:
                 continue
@@ -398,6 +520,8 @@ class LiveEvidence:
                     if checkpoint.hosted_review_id in emitted_hosted_review_ids:
                         continue
                     emitted_hosted_review_ids.add(checkpoint.hosted_review_id)
+                if state_response_id := proof.get("review_id"):
+                    emitted_hosted_response_ids.add(state_response_id)
                 completed = attributable = True
                 exact_head = str(proof["commit_id"])
                 anchor = dict(record["anchor"])
@@ -495,6 +619,16 @@ class LiveEvidence:
                             if reset
                             else "Hosted cooldown has no attributable reset time",
                             "cooldown_until": state.cooldown_until,
+                        }
+                    )
+                elif state.state == "completed" and state.response_id not in emitted_hosted_response_ids:
+                    values.append(
+                        {
+                            "pr": pr,
+                            "head": state.head_sha,
+                            "checkpoint": f"trigger-uncheckpointed:{state.response_id or 'unknown'}",
+                            "held": True,
+                            "reason": "completed Hosted review has no valid public checkpoint and requires adjudication",
                         }
                     )
                 elif state.state in {"active", "awaiting_response", "ambiguous", "unattributed", "timed_out"}:

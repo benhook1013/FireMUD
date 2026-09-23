@@ -754,6 +754,7 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertFalse(target.provisional)
 
     def test_judgment_cannot_apply_to_another_pr_with_same_head_and_checkpoint(self):
+        patch_id = "shared-patch"
         history = tuple(
             Evidence(
                 2,
@@ -763,12 +764,13 @@ class ReviewStateStackTest(unittest.TestCase):
                 completed=True,
                 attributable=True,
                 corrected_state=True,
+                patch_id=patch_id,
             )
             for i in range(3)
         )
         state = ReviewState(
             ordered_prs=(2,),
-            judgments=(Judgment(1, "cli", "retain", "h", "c2", "belongs to PR one", "p"),),
+            judgments=(Judgment(1, "cli", "retain", "h", "c2", "belongs to PR one", patch_id),),
         )
         target = select_review_target(
             state,
@@ -778,6 +780,19 @@ class ReviewStateStackTest(unittest.TestCase):
             other_channel_heads={2: "old"},
         )
         self.assertEqual(target.status, ReviewStatus.JUDGMENT_REQUIRED)
+
+        correctly_bound = dataclasses.replace(
+            state,
+            judgments=(Judgment(2, "cli", "retain", "h", "c2", "belongs to PR two", patch_id),),
+        )
+        target = select_review_target(
+            correctly_bound,
+            Channel.CLI,
+            (2,),
+            {2: history},
+            other_channel_heads={2: "old"},
+        )
+        self.assertEqual(target.status, ReviewStatus.COMPLETE)
 
 
 if __name__ == "__main__":

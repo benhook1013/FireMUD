@@ -199,10 +199,14 @@ def _paginate_thread_comments(thread: dict[str, Any]) -> None:
     nodes, page = _review_connection(thread, "comments", require_page_info=True)
     nodes = list(nodes)
     query = _thread_comments_query()
+    used_cursors: set[str] = set()
     while page["hasNextPage"]:
         cursor = page.get("endCursor")
         if not isinstance(cursor, str) or not cursor:
             raise RuntimeError(f"GitHub review thread {thread_id} pagination has no cursor")
+        if cursor in used_cursors:
+            raise RuntimeError(f"GitHub review thread {thread_id} pagination repeated cursor {cursor!r}")
+        used_cursors.add(cursor)
         next_payload = run_gh_query(
             query,
             {
@@ -236,10 +240,14 @@ def fetch_pull_request(repo: str, pr_number: int) -> dict[str, Any]:
         if connection == "reviewThreads":
             _paginate_review_thread_nodes(nodes)
         query = _connection_query(connection)
+        used_cursors: set[str] = set()
         while page["hasNextPage"]:
             cursor = page.get("endCursor")
             if not isinstance(cursor, str) or not cursor:
                 raise RuntimeError(f"GitHub {connection} pagination has no cursor")
+            if cursor in used_cursors:
+                raise RuntimeError(f"GitHub {connection} pagination repeated cursor {cursor!r}")
+            used_cursors.add(cursor)
             next_payload = run_gh_query(
                 query,
                 {"owner": owner, "repo": name, "number": pr_number, "after": cursor},

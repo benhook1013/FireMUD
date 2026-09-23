@@ -378,8 +378,14 @@ class AcceptanceFixture:
         self.initial_stack = tuple(ordered)
 
     def controller(self) -> ReviewController:
+        store = state.StateStore(self.state_path)
+        store.update(
+            lambda current: state.ReviewState(ordered_prs=self.initial_stack)
+            if not store.path.exists()
+            else current
+        )
         controller = ReviewController(
-            store=state.StateStore(self.state_path),
+            store=store,
             github=self.github,
             git=self.git,
             evidence=self.evidence,

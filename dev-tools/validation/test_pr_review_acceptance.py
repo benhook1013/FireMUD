@@ -164,6 +164,23 @@ class AcceptanceCliTest(unittest.TestCase):
             self.assertEqual(persisted["judgments"][0]["pr"], 1)
             self.assertEqual(canonical.read_bytes() if canonical.exists() else None, before)
 
+    def test_controller_seeds_initial_stack_only_for_new_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "fixture.json"
+            fixture.write_text(json.dumps(fixture_payload()), encoding="utf-8")
+            fresh_state = root / "fresh-state.json"
+
+            fresh = load(fixture, fresh_state)
+            self.assertEqual(fresh.controller().show_stack()["ordered_prs"], [1, 2])
+            self.assertEqual(state.StateStore(fresh_state).load().ordered_prs, (1, 2))
+
+            existing_state = root / "existing-state.json"
+            state.StateStore(existing_state).save(state.ReviewState(ordered_prs=(2,)))
+            existing = load(fixture, existing_state)
+            self.assertEqual(existing.controller().show_stack()["ordered_prs"], [2])
+            self.assertEqual(state.StateStore(existing_state).load().ordered_prs, (2,))
+
     def test_second_identical_provisional_cli_run_uses_isolated_evidence_to_fail(self):
         canonical = state.state_path()
         before = canonical.read_bytes() if canonical.exists() else None
@@ -223,7 +240,7 @@ class AcceptanceCliTest(unittest.TestCase):
 
             self.assertEqual(result.returncode, 1)
             self.assertIn("unsupported cross-repository head", result.stderr)
-            self.assertFalse(isolated.exists())
+            self.assertEqual(state.StateStore(isolated).load().ordered_prs, (1, 2))
 
     def test_acceptance_fixture_requires_explicit_head_repository_identity(self):
         with tempfile.TemporaryDirectory() as directory:

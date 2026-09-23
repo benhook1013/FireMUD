@@ -87,6 +87,16 @@ class GithubAndEvidenceTests(unittest.TestCase):
         )
         self.assertEqual(evidence.summary_action_counts(body), (2, 1))
 
+    def test_quoted_explicit_summary_counts_but_quoted_prose_does_not(self):
+        self.assertEqual(
+            evidence.summary_action_counts(
+                "> **⚠️ Outside diff range comments (1)**\n"
+                "> Outside diff range comments are discussed in prose.\n"
+                "> Duplicate comments are discussed in prose."
+            ),
+            (1, 0),
+        )
+
     def test_same_line_details_summary_and_trailing_blockquote_accept_counts(self):
         body = (
             "<details><summary>⚠️ Outside diff range comments (2)</summary><blockquote>\n"
