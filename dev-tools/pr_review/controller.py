@@ -40,6 +40,9 @@ class WrongStackTarget(ControllerError):
     """The requested PR is not the target selected by the configured stack."""
 
 
+GIT_TIMEOUT_SECONDS = 30
+
+
 class GitProvider(Protocol):
     """Git facts needed to anchor a review to one exact candidate."""
 
@@ -74,14 +77,33 @@ class EvidenceProvider(Protocol):
 class DefaultGitProvider:
     """Small subprocess-backed Git implementation used by the real CLI."""
 
-    def __init__(self, root: str | Path | None = None) -> None:
+    def __init__(self, root: str | Path | None = None, *, timeout_seconds: float = GIT_TIMEOUT_SECONDS) -> None:
         self.root = Path(root or Path.cwd()).resolve()
+        self.timeout_seconds = timeout_seconds
+
+    def _run_process(
+        self,
+        args: Sequence[str],
+        *,
+        check: bool = True,
+        capture_output: bool = True,
+        text: bool = False,
+    ) -> subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]:
+        try:
+            return subprocess.run(
+                list(args),
+                check=check,
+                capture_output=capture_output,
+                text=text,
+                timeout=self.timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise ControllerError(f"git command timed out after {self.timeout_seconds} seconds") from error
 
     def _run(self, *args: str, check: bool = True) -> str:
-        result = subprocess.run(
+        result = self._run_process(
             ["git", "-C", str(self.root), *args],
             check=check,
-            capture_output=True,
             text=True,
         )
         return result.stdout.strip()
@@ -93,18 +115,16 @@ class DefaultGitProvider:
         return _sha(lines[0].split()[0], f"branch {ref_name!r} head")
 
     def branch_exists(self, ref_name: str) -> bool:
-        result = subprocess.run(
+        result = self._run_process(
             ["git", "-C", str(self.root), "ls-remote", "--exit-code", "--heads", "origin", f"refs/heads/{ref_name}"],
             check=False,
-            capture_output=True,
         )
         return result.returncode == 0
 
     def _ensure_commit(self, commit: str) -> None:
-        present = subprocess.run(
+        present = self._run_process(
             ["git", "-C", str(self.root), "cat-file", "-e", f"{commit}^{{commit}}"],
             check=False,
-            capture_output=True,
         )
         if present.returncode != 0:
             self._run("fetch", "--no-tags", "origin", commit)
@@ -113,7 +133,7 @@ class DefaultGitProvider:
         self._ensure_commit(ancestor)
         self._ensure_commit(descendant)
         return (
-            subprocess.run(
+            self._run_process(
                 ["git", "-C", str(self.root), "merge-base", "--is-ancestor", ancestor, descendant],
                 check=False,
             ).returncode
@@ -131,12 +151,14 @@ class DefaultGitProvider:
     def patch_identity(self, merge_base: str, head: str) -> str:
         self._ensure_commit(merge_base)
         self._ensure_commit(head)
-        result = subprocess.run(
+        result = self._run_process(
             ["git", "-C", str(self.root), "diff", "--binary", "--full-index", f"{merge_base}...{head}"],
             check=True,
-            capture_output=True,
         )
-        return hashlib.sha256(result.stdout).hexdigest()
+        output = result.stdout
+        if isinstance(output, str):
+            output = output.encode("utf-8")
+        return hashlib.sha256(output).hexdigest()
 
 
 class EmptyEvidence:

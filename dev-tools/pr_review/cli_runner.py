@@ -42,6 +42,10 @@ class UnreconciledReviewError(ReviewRunnerError):
     """A normal review was requested while stack reconciliation is incomplete."""
 
 
+GIT_TIMEOUT_SECONDS = 30
+CODERABBIT_TIMEOUT_SECONDS = 30 * 60
+
+
 @dataclasses.dataclass(frozen=True)
 class EffectiveParent:
     """The exact parent identity against which a child review is anchored."""
@@ -112,7 +116,9 @@ class CommandRunner(Protocol):
         cwd: Path | None = None,
         capture_output: bool = False,
         check: bool = True,
-    ) -> subprocess.CompletedProcess[str]: ...
+        text: bool = True,
+        timeout: float = GIT_TIMEOUT_SECONDS,
+    ) -> subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]: ...
 
 
 class SubprocessRunner:
@@ -123,13 +129,16 @@ class SubprocessRunner:
         cwd: Path | None = None,
         capture_output: bool = False,
         check: bool = True,
-    ) -> subprocess.CompletedProcess[str]:
+        text: bool = True,
+        timeout: float = GIT_TIMEOUT_SECONDS,
+    ) -> subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]:
         return subprocess.run(
             list(args),
             cwd=cwd,
-            text=True,
+            text=text,
             capture_output=capture_output,
             check=check,
+            timeout=timeout,
         )
 
 
@@ -175,16 +184,28 @@ def _git(
     *args: str,
     capture_output: bool = True,
     check: bool = True,
-) -> subprocess.CompletedProcess[str]:
-    return runner.run(
-        ["git", "-C", str(source_root), *args],
-        capture_output=capture_output,
-        check=check,
-    )
+    text: bool = True,
+    timeout: float = GIT_TIMEOUT_SECONDS,
+) -> subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]:
+    try:
+        return runner.run(
+            ["git", "-C", str(source_root), *args],
+            capture_output=capture_output,
+            check=check,
+            text=text,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise ReviewRunnerError(f"git command timed out after {timeout} seconds") from error
 
 
-def _git_output(runner: CommandRunner, source_root: Path, *args: str) -> str:
-    result = _git(runner, source_root, *args)
+def _git_output(
+    runner: CommandRunner,
+    source_root: Path,
+    *args: str,
+    timeout: float = GIT_TIMEOUT_SECONDS,
+) -> str:
+    result = _git(runner, source_root, *args, timeout=timeout)
     return result.stdout.strip()
 
 
@@ -194,15 +215,30 @@ def _sha(value: str, label: str) -> str:
     return value.lower()
 
 
-def _unique_merge_base(runner: CommandRunner, source_root: Path, left: str, right: str) -> str:
-    result = _git(runner, source_root, "merge-base", "--all", left, right)
+def _unique_merge_base(
+    runner: CommandRunner,
+    source_root: Path,
+    left: str,
+    right: str,
+    *,
+    timeout: float = GIT_TIMEOUT_SECONDS,
+) -> str:
+    result = _git(runner, source_root, "merge-base", "--all", left, right, timeout=timeout)
     bases = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     if len(bases) != 1:
         raise ReviewRunnerError("candidate and effective parent have ambiguous merge bases")
     return _sha(bases[0], "merge base")
 
 
-def _ancestor(runner: CommandRunner, source_root: Path, ancestor: str, descendant: str, message: str) -> None:
+def _ancestor(
+    runner: CommandRunner,
+    source_root: Path,
+    ancestor: str,
+    descendant: str,
+    message: str,
+    *,
+    timeout: float = GIT_TIMEOUT_SECONDS,
+) -> None:
     result = _git(
         runner,
         source_root,
@@ -211,21 +247,48 @@ def _ancestor(runner: CommandRunner, source_root: Path, ancestor: str, descendan
         ancestor,
         descendant,
         check=False,
+        timeout=timeout,
     )
     if result.returncode != 0:
         raise ReviewRunnerError(message)
 
 
-def _nul_paths(runner: CommandRunner, source_root: Path, *args: str) -> list[str]:
-    result = _git(runner, source_root, *args)
+def _nul_paths(
+    runner: CommandRunner,
+    source_root: Path,
+    *args: str,
+    timeout: float = GIT_TIMEOUT_SECONDS,
+) -> list[str]:
+    result = _git(runner, source_root, *args, timeout=timeout)
     return sorted(path for path in result.stdout.split("\0") if path)
 
 
-def _patch_identity(runner: CommandRunner, source_root: Path, merge_base: str, head: str) -> str:
+def _patch_identity(
+    runner: CommandRunner,
+    source_root: Path,
+    merge_base: str,
+    head: str,
+    *,
+    timeout: float = GIT_TIMEOUT_SECONDS,
+) -> str:
     """Hash the complete binary-capable candidate patch used by the review."""
 
-    result = _git(runner, source_root, "diff", "--binary", "--full-index", f"{merge_base}...{head}")
-    return hashlib.sha256(result.stdout.encode("utf-8")).hexdigest()
+    result = _git(
+        runner,
+        source_root,
+        "diff",
+        "--binary",
+        "--full-index",
+        f"{merge_base}...{head}",
+        text=False,
+        timeout=timeout,
+    )
+    output = result.stdout
+    if isinstance(output, str):
+        # Keep injected text-mode runners compatible; the real subprocess runner
+        # returns bytes for this call so the hash is over the exact diff bytes.
+        output = output.encode("utf-8")
+    return hashlib.sha256(output).hexdigest()
 
 
 def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
@@ -235,8 +298,13 @@ def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
     os.replace(temporary, path)
 
 
-def _common_dir(runner: CommandRunner, source_root: Path) -> Path:
-    value = _git_output(runner, source_root, "rev-parse", "--git-common-dir")
+def _common_dir(
+    runner: CommandRunner,
+    source_root: Path,
+    *,
+    timeout: float = GIT_TIMEOUT_SECONDS,
+) -> Path:
+    value = _git_output(runner, source_root, "rev-parse", "--git-common-dir", timeout=timeout)
     path = Path(value)
     if not path.is_absolute():
         path = (source_root / path).resolve()
@@ -270,16 +338,26 @@ def _assert_no_active_hosted_review(repo: str, pr_number: int, common_dir: Path)
         raise ReviewRunnerError("current Hosted reservation cannot be safely classified") from error
 
 
-def _ensure_commit(runner: CommandRunner, source_root: Path, commit: str, label: str) -> None:
+def _ensure_commit(
+    runner: CommandRunner,
+    source_root: Path,
+    commit: str,
+    label: str,
+    *,
+    timeout: float = GIT_TIMEOUT_SECONDS,
+) -> None:
     """Make an exact GitHub SHA available without accepting FETCH_HEAD ambiguity."""
 
     commit = _sha(commit, label)
-    present = _git(runner, source_root, "cat-file", "-e", f"{commit}^{{commit}}", check=False)
+    present = _git(runner, source_root, "cat-file", "-e", f"{commit}^{{commit}}", check=False, timeout=timeout)
     if present.returncode == 0:
         return
-    _git(runner, source_root, "remote", "get-url", "origin")
-    _git(runner, source_root, "fetch", "--no-tags", "origin", commit)
-    fetched = _sha(_git_output(runner, source_root, "rev-parse", "FETCH_HEAD^{commit}"), "fetched commit")
+    _git(runner, source_root, "remote", "get-url", "origin", timeout=timeout)
+    _git(runner, source_root, "fetch", "--no-tags", "origin", commit, timeout=timeout)
+    fetched = _sha(
+        _git_output(runner, source_root, "rev-parse", "FETCH_HEAD^{commit}", timeout=timeout),
+        "fetched commit",
+    )
     if fetched != commit:
         raise ReviewRunnerError(f"fetched {label} does not match the live GitHub SHA")
 
@@ -294,6 +372,7 @@ def _validate_target(
     source_root: Path,
     *,
     allow_unreconciled: bool,
+    git_timeout_seconds: float = GIT_TIMEOUT_SECONDS,
 ) -> tuple[str, int, int, str]:
     expected = target.snapshot
     if live.number != expected.number:
@@ -325,7 +404,15 @@ def _validate_target(
         )
     if not live_files:
         raise ReviewRunnerError("pull request has zero changed files; refusing to spend review quota")
-    published = _nul_paths(runner, source_root, "diff", "--name-only", f"{live.base_sha}...{child_head}")
+    published = _nul_paths(
+        runner,
+        source_root,
+        "diff",
+        "--name-only",
+        "-z",
+        f"{live.base_sha}...{child_head}",
+        timeout=git_timeout_seconds,
+    )
     if published != sorted(live_files):
         raise ReviewRunnerError("published pull request file paths do not match GitHub's file list")
     _ancestor(
@@ -334,16 +421,34 @@ def _validate_target(
         child_head,
         candidate_sha,
         "committed HEAD is neither the pull request head nor a descendant containing its fixes",
+        timeout=git_timeout_seconds,
     )
-    merge_base = _unique_merge_base(runner, source_root, target.parent.head_sha, candidate_sha)
+    merge_base = _unique_merge_base(
+        runner,
+        source_root,
+        target.parent.head_sha,
+        candidate_sha,
+        timeout=git_timeout_seconds,
+    )
     _ancestor(
         runner,
         source_root,
         target.parent.head_sha,
         candidate_sha,
         "committed HEAD does not contain the exact effective parent tip",
+        timeout=git_timeout_seconds,
     )
-    candidate_count = len(_nul_paths(runner, source_root, "diff", "--name-only", f"{merge_base}...{candidate_sha}"))
+    candidate_count = len(
+        _nul_paths(
+            runner,
+            source_root,
+            "diff",
+            "--name-only",
+            "-z",
+            f"{merge_base}...{candidate_sha}",
+            timeout=git_timeout_seconds,
+        )
+    )
     if candidate_count == 0:
         raise ReviewRunnerError("candidate has zero changed files; refusing to spend review quota")
     return merge_base, len(published), candidate_count, child_head
@@ -358,6 +463,8 @@ def run_cli_review(
     allow_unreconciled: bool = False,
     reason: str | None = None,
     review_executable: str = "coderabbit",
+    git_timeout_seconds: float = GIT_TIMEOUT_SECONDS,
+    review_timeout_seconds: float = CODERABBIT_TIMEOUT_SECONDS,
     monotonic_ns: Callable[[], int] = time.monotonic_ns,
 ) -> ReviewResult:
     """Run one isolated committed CLI review for an already-selected target.
@@ -377,8 +484,11 @@ def run_cli_review(
     if not allow_unreconciled and (not target.reconciled or not target.ancestor_links_valid):
         raise UnreconciledReviewError("stack is unreconciled; reconcile it before running a normal CLI review")
     runner = runner or SubprocessRunner()
-    source_root = (source_root or Path(_git_output(runner, Path.cwd(), "rev-parse", "--show-toplevel"))).resolve()
-    common_dir = _common_dir(runner, source_root)
+    source_root = (
+        source_root
+        or Path(_git_output(runner, Path.cwd(), "rev-parse", "--show-toplevel", timeout=git_timeout_seconds))
+    ).resolve()
+    common_dir = _common_dir(runner, source_root, timeout=git_timeout_seconds)
     private_root = common_dir / "firemud" / "pr-review"
     capture_root = private_root / "runs"
     private_root.mkdir(parents=True, exist_ok=True)
@@ -423,10 +533,13 @@ def run_cli_review(
             live = github.pull_request(target.snapshot.number)
             live_files = github.pull_request_files(target.snapshot.number)
             parent_tip = github.branch_head(target.parent.ref_name)
-            _ensure_commit(runner, source_root, live.base_sha, "pull request base")
-            _ensure_commit(runner, source_root, parent_tip, "effective parent tip")
-            _ensure_commit(runner, source_root, live.head_sha, "pull request head")
-            candidate_sha = _sha(_git_output(runner, source_root, "rev-parse", "HEAD^{commit}"), "candidate HEAD")
+            _ensure_commit(runner, source_root, live.base_sha, "pull request base", timeout=git_timeout_seconds)
+            _ensure_commit(runner, source_root, parent_tip, "effective parent tip", timeout=git_timeout_seconds)
+            _ensure_commit(runner, source_root, live.head_sha, "pull request head", timeout=git_timeout_seconds)
+            candidate_sha = _sha(
+                _git_output(runner, source_root, "rev-parse", "HEAD^{commit}", timeout=git_timeout_seconds),
+                "candidate HEAD",
+            )
             merge_base, published_files, candidate_files, child_head = _validate_target(
                 target,
                 live,
@@ -436,22 +549,45 @@ def run_cli_review(
                 runner,
                 source_root,
                 allow_unreconciled=allow_unreconciled,
+                git_timeout_seconds=git_timeout_seconds,
             )
-            candidate_patch_identity = _patch_identity(runner, source_root, merge_base, candidate_sha)
+            candidate_patch_identity = _patch_identity(
+                runner,
+                source_root,
+                merge_base,
+                candidate_sha,
+                timeout=git_timeout_seconds,
+            )
             if target.merge_base and _sha(target.merge_base, "selected merge base") != merge_base:
                 raise ReviewRunnerError("candidate merge base changed since target selection")
             if candidate_sha == child_head:
                 published_status = "published-head"
             else:
-                ahead = _git_output(runner, source_root, "rev-list", "--count", f"{child_head}..{candidate_sha}")
+                ahead = _git_output(
+                    runner,
+                    source_root,
+                    "rev-list",
+                    "--count",
+                    f"{child_head}..{candidate_sha}",
+                    timeout=git_timeout_seconds,
+                )
                 if not ahead.isdigit():
                     raise ReviewRunnerError("could not count candidate commits ahead of the published head")
                 published_status = f"unpublished-commits-ahead:{ahead}"
-            _git(runner, source_root, "update-ref", pinned_ref, merge_base)
+            _git(runner, source_root, "update-ref", pinned_ref, merge_base, timeout=git_timeout_seconds)
             temp_root = Path(tempfile.mkdtemp(prefix="firemud-pr-review-"))
             candidate_worktree = temp_root / "candidate"
             try:
-                _git(runner, source_root, "worktree", "add", "--detach", str(candidate_worktree), candidate_sha)
+                _git(
+                    runner,
+                    source_root,
+                    "worktree",
+                    "add",
+                    "--detach",
+                    str(candidate_worktree),
+                    candidate_sha,
+                    timeout=git_timeout_seconds,
+                )
                 metadata: dict[str, Any] = {
                     "run_id": run_id,
                     "kind": "cli",
@@ -499,12 +635,42 @@ def run_cli_review(
                 os.chmod(capture_dir / "metadata", 0o600)
                 _atomic_json(capture_dir / "metadata.json", metadata)
                 started = monotonic_ns()
-                process = runner.run(
-                    [review_executable, "review", "--agent", "--committed", "--base", pinned_ref],
-                    cwd=candidate_worktree,
-                    capture_output=True,
-                    check=False,
-                )
+                try:
+                    process = runner.run(
+                        [review_executable, "review", "--agent", "--committed", "--base", pinned_ref],
+                        cwd=candidate_worktree,
+                        capture_output=True,
+                        check=False,
+                        text=True,
+                        timeout=review_timeout_seconds,
+                    )
+                except subprocess.TimeoutExpired as error:
+                    finished = monotonic_ns()
+                    if finished < started:
+                        raise ReviewRunnerError("process clock moved backwards while measuring review duration")
+                    duration = max(0, (finished - started + 999_999_999) // 1_000_000_000)
+                    timeout_stdout = error.stdout if error.stdout is not None else error.output
+                    timeout_stderr = error.stderr
+                    stdout = (
+                        timeout_stdout.decode("utf-8", errors="replace")
+                        if isinstance(timeout_stdout, bytes)
+                        else timeout_stdout or ""
+                    )
+                    stderr = (
+                        timeout_stderr.decode("utf-8", errors="replace")
+                        if isinstance(timeout_stderr, bytes)
+                        else timeout_stderr or ""
+                    )
+                    (capture_dir / "stdout").write_text(stdout, encoding="utf-8")
+                    (capture_dir / "stderr").write_text(stderr, encoding="utf-8")
+                    (capture_dir / "exit-status").write_text("timeout\n", encoding="utf-8")
+                    metadata.update({"duration_seconds": duration, "exit_status": None, "timed_out": True})
+                    _atomic_json(capture_dir / "metadata.json", metadata)
+                    with (capture_dir / "metadata").open("a", encoding="utf-8") as legacy_file:
+                        legacy_file.write(f"review_duration_seconds={duration}\n")
+                    raise ReviewRunnerError(
+                        f"CodeRabbit review timed out after {review_timeout_seconds} seconds"
+                    ) from error
                 finished = monotonic_ns()
                 if finished < started:
                     raise ReviewRunnerError("process clock moved backwards while measuring review duration")
@@ -532,8 +698,17 @@ def run_cli_review(
                 )
             finally:
                 if candidate_worktree is not None:
-                    _git(runner, source_root, "worktree", "remove", "--force", str(candidate_worktree), check=False)
-                _git(runner, source_root, "update-ref", "-d", pinned_ref, check=False)
+                    _git(
+                        runner,
+                        source_root,
+                        "worktree",
+                        "remove",
+                        "--force",
+                        str(candidate_worktree),
+                        check=False,
+                        timeout=git_timeout_seconds,
+                    )
+                _git(runner, source_root, "update-ref", "-d", pinned_ref, check=False, timeout=git_timeout_seconds)
                 shutil.rmtree(temp_root, ignore_errors=True)
         except Exception as error:
             if capture_dir.exists():

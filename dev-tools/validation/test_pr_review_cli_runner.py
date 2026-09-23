@@ -66,7 +66,7 @@ class FakeCommands:
         self.guard = threading.Lock()
         self.candidate = candidate
 
-    def run(self, args, *, cwd=None, capture_output=False, check=True):
+    def run(self, args, *, cwd=None, capture_output=False, check=True, text=True, timeout=None):
         self.calls.append((tuple(args), cwd))
         if args[0] == "coderabbit":
             with self.guard:
@@ -87,14 +87,15 @@ class FakeCommands:
                 return CompletedProcess(args, 0, ".git\n", "")
             if git_args == ["rev-parse", "HEAD^{commit}"]:
                 return CompletedProcess(args, 0, f"{self.candidate}\n", "")
-            if git_args == ["diff", "--name-only", f"{BASE}...{HEAD}"]:
+            if git_args == ["diff", "--name-only", "-z", f"{BASE}...{HEAD}"]:
                 return CompletedProcess(args, 0, "src/Representative.java\0", "")
-            if git_args == ["diff", "--name-only", f"{PARENT}...{HEAD}"]:
+            if git_args == ["diff", "--name-only", "-z", f"{PARENT}...{HEAD}"]:
                 return CompletedProcess(args, 0, "src/Representative.java\0", "")
-            if git_args == ["diff", "--name-only", f"{PARENT}...{self.candidate}"]:
+            if git_args == ["diff", "--name-only", "-z", f"{PARENT}...{self.candidate}"]:
                 return CompletedProcess(args, 0, "src/Representative.java\0", "")
             if git_args == ["diff", "--binary", "--full-index", f"{PARENT}...{self.candidate}"]:
-                return CompletedProcess(args, 0, f"candidate patch {self.candidate}\n", "")
+                output = f"candidate patch {self.candidate}\n".encode() if not text else f"candidate patch {self.candidate}\n"
+                return CompletedProcess(args, 0, output, b"" if not text else "")
             if git_args == ["rev-list", "--count", f"{HEAD}..{self.candidate}"]:
                 return CompletedProcess(args, 0, "1\n", "")
             if git_args[:3] == ["merge-base", "--all", PARENT]:
