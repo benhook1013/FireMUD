@@ -1665,6 +1665,20 @@ grep -Fq 'PR #101 is not preview-eligible (reason=merge-conflict)' \
 
 reset_case
 export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+export FAKE_PRUNE_METADATA="open\tdevelop\thuman\t${adversarial_labels_base64}\n"
+export FAKE_PRUNE_MERGEABLE=false
+export FAKE_PRUNE_MERGEABLE_STATE=dirty
+export HOSTED_IDENTITY_MODE=hosted-controller
+export FAKE_RUNTIME_NAMESPACE_PRESENT=false
+export FAKE_RECORD_RUNTIME_CHECK=true
+export FAKE_IDENTITY_JSON='{"apiVersion":"platform.firemud.dev/v1alpha1","kind":"HostedEnvironmentIdentity","metadata":{"namespace":"firemud-system","name":"pr-101"}}'
+bash "$PRUNER" --apply --retire-terminal-identities >"$TEMP_DIR/prune-conflict-no-retire.out"
+test "$(<"$FAKE_OPERATION_SEQUENCE")" = $'runtime-delete'
+test ! -e "$FAKE_IDENTITY_REQUEST_LOG"
+test ! -e "$FAKE_IDENTITY_WAIT_LOG"
+
+reset_case
+export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
 export FAKE_PRUNE_METADATA="open\tmain\thuman\t${adversarial_labels_base64}\n"
 export FAKE_PRUNE_BASE_REF_STATUS=404
 bash "$PRUNER" --apply >"$TEMP_DIR/prune-ordinary-missing-base.out"
@@ -1807,6 +1821,34 @@ for stranded_phase in RuntimeAbsent Retiring Retired; do
   grep -Fq "Recovering HostedEnvironmentIdentity/pr-101 from phase ${stranded_phase}" \
     "$TEMP_DIR/recover-${stranded_phase}.out"
 done
+
+reset_case
+export FAKE_NAMESPACE_ROWS=''
+export FAKE_PRUNE_METADATA="open\tdevelop\thuman\t${adversarial_labels_base64}\n"
+export FAKE_PRUNE_MERGEABLE=false
+export FAKE_PRUNE_MERGEABLE_STATE=dirty
+export HOSTED_IDENTITY_MODE=hosted-controller
+export FAKE_RUNTIME_NAMESPACE_PRESENT=false
+export FAKE_RECORD_RUNTIME_CHECK=true
+FAKE_IDENTITY_LIST_JSON="$({
+  jq -nc '{
+    apiVersion: "platform.firemud.dev/v1alpha1",
+    kind: "HostedEnvironmentIdentityList",
+    items: [{
+      apiVersion: "platform.firemud.dev/v1alpha1",
+      kind: "HostedEnvironmentIdentity",
+      metadata: {namespace: "firemud-system", name: "pr-101"},
+      spec: {desiredState: "Active"},
+      status: {phase: "RuntimeAbsent"}
+    }]
+  }'
+})"
+export FAKE_IDENTITY_LIST_JSON
+bash "$PRUNER" --apply --retire-terminal-identities >"$TEMP_DIR/recover-conflict-no-retire.out"
+test ! -e "$FAKE_IDENTITY_REQUEST_LOG"
+test ! -e "$FAKE_IDENTITY_WAIT_LOG"
+grep -Fq 'eligibility reason is not authoritative for retirement (reason=merge-conflict)' \
+  "$TEMP_DIR/recover-conflict-no-retire.out"
 
 # Recovery rows must use a dedicated descriptor so request helpers retain the
 # caller's stdin instead of consuming the candidate-row transport.
@@ -2446,6 +2488,24 @@ test ! -e "$FAKE_ANNOTATE_LOG"
 test ! -e "$FAKE_DISPATCH_LOG"
 
 reset_case
+reconciler_source_title_consumer_output="$TEMP_DIR/reconciler-source-title-consumer.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=head-901 \
+    FAKE_PR_901_PROOF_COMPLETE=false \
+    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[{"id":5253,"name":"Trusted Hosted Identity Request","head_branch":"develop","display_title":"PR preview 901","status":"queued"}]}]' \
+PREVIEW_MAX_ACTIVE=2 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_source_title_consumer_output"
+grep -Fqx \
+  "Skipping proof retry for PR #901: preview source or trusted consumer run 5253 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
+  "$reconciler_source_title_consumer_output"
+test ! -e "$FAKE_ANNOTATE_LOG"
+test ! -e "$FAKE_DISPATCH_LOG"
+
+reset_case
 reconciler_first_proof_retry_output="$TEMP_DIR/reconciler-first-proof-retry.out"
 (
   cd "$ROOT_DIR"
@@ -2986,6 +3046,7 @@ expected_gates = {
     "prepare-runtime": "needs.validate-target.outputs.action == 'deploy'",
     "deploy-runtime": "needs.validate-target.outputs.action == 'deploy'",
     "verify-runtime": "needs.validate-target.outputs.action == 'deploy'",
+    "publish-preview-proof": "needs.validate-target.outputs.action == 'deploy'",
     "destroy-runtime": "needs.validate-target.outputs.action == 'destroy'",
     "retire-identity": "needs.validate-target.outputs.action == 'destroy'",
 }

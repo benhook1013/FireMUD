@@ -177,7 +177,25 @@ set -euo pipefail
 [[ "${1:-}" == api ]] || exit 2
 case "${2:-}" in
   repos/benhook1013/FireMUD/actions/runs/4242) cat "$FIXTURE_DIR/source-run.json" ;;
-  repos/benhook1013/FireMUD/pulls/42) cat "$FIXTURE_DIR/pull-request.json" ;;
+  repos/benhook1013/FireMUD/pulls/42)
+    if [[ -n "${PULL_REQUEST_SEQUENCE_DIR:-}" ]]; then
+      count_file="$PULL_REQUEST_SEQUENCE_DIR/count"
+      count=0
+      if [[ -f "$count_file" ]]; then
+        count="$(<"$count_file")"
+      fi
+      count=$((count + 1))
+      printf '%s' "$count" > "$count_file"
+      sequence_file="$PULL_REQUEST_SEQUENCE_DIR/${count}.json"
+      if [[ -f "$sequence_file" ]]; then
+        cat "$sequence_file"
+      else
+        cat "$PULL_REQUEST_SEQUENCE_DIR/last.json"
+      fi
+    else
+      cat "$FIXTURE_DIR/pull-request.json"
+    fi
+    ;;
   repos/benhook1013/FireMUD/git/ref/heads/develop) cat "$FIXTURE_DIR/base-ref.json" ;;
   repos/benhook1013/FireMUD/git/ref/heads/*) cat "$FIXTURE_DIR/base-ref.json" ;;
   repos/benhook1013/FireMUD/commits/cccccccccccccccccccccccccccccccccccccccc) cat "$FIXTURE_DIR/merge-commit.json" ;;
@@ -198,8 +216,12 @@ run_validation() {
   local source_sha="${3:-$head_sha}"
   local environment_file="$fixture_dir/github-env"
   : > "$environment_file"
+  if [[ -n "${PULL_REQUEST_SEQUENCE_DIR:-}" ]]; then
+    rm -f "$PULL_REQUEST_SEQUENCE_DIR/count"
+  fi
   PATH="$fake_bin:$PATH" \
   FIXTURE_DIR="$fixture_dir" \
+  PULL_REQUEST_SEQUENCE_DIR="${PULL_REQUEST_SEQUENCE_DIR:-}" \
   REGISTRY_MARKER="$fixture_dir/registry-marker" \
   PR_RUNTIME_ARTIFACT_ROOT="$artifact_root" \
   CURRENT_REPOSITORY="$repository" \
@@ -226,6 +248,41 @@ if [[ -e "$fixture_dir/registry-marker" ]]; then
   echo "valid source validation reached a registry operation" >&2
   exit 1
 fi
+
+sequence_dir="$fixture_dir/pull-request-sequence"
+mkdir -p "$sequence_dir"
+python3 - "$fixture_dir/pull-request.json" "$sequence_dir" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+directory = Path(sys.argv[2])
+pending = dict(source, mergeable=None, mergeable_state="unknown")
+Path(directory / "1.json").write_text(json.dumps(pending), encoding="utf-8")
+Path(directory / "2.json").write_text(json.dumps(source), encoding="utf-8")
+Path(directory / "last.json").write_text(json.dumps(pending), encoding="utf-8")
+PY
+PULL_REQUEST_SEQUENCE_DIR="$sequence_dir" run_validation
+test "$(<"$sequence_dir/count")" -eq 2
+
+python3 - "$sequence_dir" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+directory = Path(sys.argv[1])
+pending = json.loads((directory / "1.json").read_text(encoding="utf-8"))
+for number in (1, 2, 3):
+    (directory / f"{number}.json").write_text(json.dumps(pending), encoding="utf-8")
+(directory / "last.json").write_text(json.dumps(pending), encoding="utf-8")
+PY
+if PULL_REQUEST_SEQUENCE_DIR="$sequence_dir" run_validation; then
+  echo "publisher accepted a pull request whose transient mergeability never resolved" >&2
+  exit 1
+fi
+test "$(<"$sequence_dir/count")" -eq 3
+unset PULL_REQUEST_SEQUENCE_DIR
 
 python3 - "$fixture_dir/pull-request.json" <<'PY'
 import json

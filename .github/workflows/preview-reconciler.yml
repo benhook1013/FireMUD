@@ -519,6 +519,7 @@ jobs:
                 --arg workflow_name "${preview_workflow_name}" \
                 --arg trusted_workflow_name "Trusted Hosted Identity Request" \
                 --arg default_branch "${DEFAULT_BRANCH}" \
+                --arg pr_title "PR preview ${pr_number}" \
                 --arg run_name "Preview dispatch pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}" '
                     if type != "array" then
                       error("workflow run pages are not an array")
@@ -545,7 +546,7 @@ jobs:
                           | select(
                               ((.name == $workflow_name) or (.name == $trusted_workflow_name))
                               and .head_branch == $default_branch
-                              and .display_title == $run_name
+                              and (.display_title == $run_name or .display_title == $pr_title)
                               and (
                                 .status == "requested"
                                 or .status == "queued"
@@ -579,19 +580,7 @@ jobs:
                 "${proof_image_tag}" != "${image_tag}" ||
                 -z "${namespace_uid}" ||
                 "${proof_namespace_uid}" != "${namespace_uid}") ]]; then
-              if record_proof_retry "$namespace" "$pr_number" "$base_sha" "$head_sha" "$merge_sha" "$image_tag"; then
-                :
-              else
-                proof_retry_status=$?
-                case "$proof_retry_status" in
-                  2 | 3)
-                    continue
-                    ;;
-                  *)
-                    continue
-                    ;;
-                esac
-              fi
+              record_proof_retry "$namespace" "$pr_number" "$base_sha" "$head_sha" "$merge_sha" "$image_tag" || continue
             fi
 
             echo "Dispatching preview render for PR #${pr_number} (${base_sha}/${head_sha}/${merge_sha}/${image_tag}) from trusted ref ${DEFAULT_BRANCH}"

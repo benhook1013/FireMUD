@@ -530,16 +530,12 @@ jobs:
                 const headRepository = pullRequest.head?.repo?.full_name;
                 const baseRepository = pullRequest.base?.repo?.full_name;
                 const author = pullRequest.user?.login;
-                const priority = (pullRequest.labels || []).some(
-                  (label) => label?.name === "preview:priority"
-                );
                 if (pullRequest.state !== "open" ||
                   headRepository !== context.payload.repository.full_name ||
                   baseRepository !== context.payload.repository.full_name ||
                   currentBaseRef !== baseBranch ||
                   !shaPattern.test(currentHeadSha || "") ||
-                  dependencyBotAuthors.has(author) ||
-                  (!['main', 'develop'].includes(currentBaseRef) && !priority)) {
+                  dependencyBotAuthors.has(author)) {
                   return null;
                 }
 

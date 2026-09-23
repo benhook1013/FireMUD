@@ -879,6 +879,7 @@ expected_gates = {
     "prepare-runtime": "needs.validate-target.outputs.action == 'deploy'",
     "deploy-runtime": "needs.validate-target.outputs.action == 'deploy'",
     "verify-runtime": "needs.validate-target.outputs.action == 'deploy'",
+    "publish-preview-proof": "needs.validate-target.outputs.action == 'deploy'",
     "destroy-runtime": "needs.validate-target.outputs.action == 'destroy'",
     "retire-identity": "needs.validate-target.outputs.action == 'destroy'",
 }
@@ -1724,7 +1725,7 @@ assert deploy_steps.index(active_request) < deploy_steps.index(deploy_requester_
 assert "Remember preview runtime kubeconfig" not in deploy_by_name
 assert "Restore preview runtime kubeconfig" not in deploy_by_name
 runtime_kubeconfig_path = "${{ runner.temp }}/preview-runtime.kubeconfig"
-runtime_kubeconfig_cleanup = 'rm -f -- "$RUNNER_TEMP/preview-runtime.kubeconfig"'
+runtime_kubeconfig_cleanup = 'rm -f -- "$RUNNER_TEMP/preview-runtime.kubeconfig"\n'
 runtime_kubeconfig_marker = '"$RUNNER_TEMP/preview-runtime.kubeconfig"'
 manager_kubeconfig_path = "${{ runner.temp }}/preview-namespace-manager.kubeconfig"
 manager_kubeconfig_cleanup = 'rm -f -- "$RUNNER_TEMP/preview-namespace-manager.kubeconfig"'
@@ -1745,7 +1746,7 @@ for job_name, job in jobs.items():
     assert len(writes) == 1, job_name
     cleanup = next(step for step in steps if step.get("name") == "Remove runtime kubeconfig")
     assert cleanup["if"] == "${{ always() }}", job_name
-    if job_name in ("deploy-runtime", "verify-runtime"):
+    if job_name == "deploy-runtime":
         assert runtime_kubeconfig_marker in cleanup["run"], job_name
         assert manager_kubeconfig_marker in cleanup["run"], job_name
     else:
@@ -1773,7 +1774,9 @@ for job_name, job in jobs.items():
         assert cleanup["run"] == manager_kubeconfig_cleanup, job_name
     else:
         assert manager_kubeconfig_marker in cleanup["run"], job_name
-assert manager_kubeconfig_jobs == {"deploy-runtime", "verify-runtime", "destroy-runtime"}
+assert manager_kubeconfig_jobs == {
+    "deploy-runtime", "publish-preview-proof", "destroy-runtime"
+}
 assert "Set up Helm" not in deploy_by_name
 requested_step_index = next(
     index
@@ -2029,7 +2032,6 @@ for stage in (
     "before capacity reclaim",
     "before clean runtime redeploy",
     "before the identity request",
-    "before success publication",
 ):
     assert stage in trusted_source
 dry_run = "kubectl apply --dry-run=server"
@@ -2124,7 +2126,10 @@ assert "for deployment in" not in rollout_step["run"]
 assert "rollout status" not in rollout_step["run"]
 
 assert "concurrency" not in jobs["prepare-runtime"]
-for job_name in ("deploy-runtime", "verify-runtime", "destroy-runtime", "retire-identity"):
+assert "concurrency" not in jobs["verify-runtime"]
+for job_name in (
+    "deploy-runtime", "publish-preview-proof", "destroy-runtime", "retire-identity"
+):
     assert jobs[job_name]["concurrency"] == {
         "group": "preview-allocation-lifecycle",
         "cancel-in-progress": False,
@@ -2148,12 +2153,16 @@ verify_steps = jobs["verify-runtime"]["steps"]
 verify_by_name = {
     step.get("name"): step for step in verify_steps if isinstance(step, dict)
 }
+proof_steps = jobs["publish-preview-proof"]["steps"]
+proof_by_name = {
+    step.get("name"): step for step in proof_steps if isinstance(step, dict)
+}
 for publisher in (
     prepare_by_name["Publish trusted preview preparation failure"],
     deploy_by_name["Publish trusted preview unavailable capacity"],
     deploy_by_name["Publish trusted preview deployment failure"],
     verify_by_name["Publish trusted preview deployment state"],
-    verify_by_name["Publish trusted preview success"],
+    proof_by_name["Publish trusted preview success"],
     verify_by_name["Publish trusted preview verification failure"],
 ):
     assert publisher["env"]["PREVIEW_BASE_SHA"] == (
@@ -2213,7 +2222,7 @@ assert "::error title=Invalid runtime Telnet port::" in runtime_port_run
 assert "actual value was ${port:-empty}." in runtime_port_run
 verify_success_index = next(
     index
-    for index, step in enumerate(verify_steps)
+    for index, step in enumerate(proof_steps)
     if step.get("name") == "Publish trusted preview success"
 )
 verify_failure_index = next(
@@ -2221,8 +2230,7 @@ verify_failure_index = next(
     for index, step in enumerate(verify_steps)
     if step.get("name") == "Publish trusted preview verification failure"
 )
-assert verify_success_index < verify_failure_index
-verify_success = verify_steps[verify_success_index]
+verify_success = proof_steps[verify_success_index]
 assert verify_success["if"] == "${{ success() }}"
 assert "needs.validate-target.outputs.exposure_mode == 'public'" in verify_by_name[
     "Smoke hosted preview over TCP"
@@ -2234,22 +2242,17 @@ assert controller_wait["if"] == (
 assert '"${{ needs.validate-target.outputs.exposure_mode }}"' in controller_wait["run"]
 final_uid_step_index = next(
     index
-    for index, step in enumerate(verify_steps)
+    for index, step in enumerate(proof_steps)
     if step.get("name")
-    == "Revalidate exact source binding and runtime Namespace UID before success publication"
+    == "Revalidate exact source binding and runtime Namespace UID before proof publication"
 )
-final_uid_step = verify_by_name[
-    "Revalidate exact source binding and runtime Namespace UID before success publication"
+final_uid_step = proof_by_name[
+    "Revalidate exact source binding and runtime Namespace UID before proof publication"
 ]
-proof_tuple_step_index = next(
-    index
-    for index, step in enumerate(verify_steps)
-    if step.get("name") == "Record proof-complete preview tuple"
-)
-assert final_uid_step_index + 1 == proof_tuple_step_index
-assert proof_tuple_step_index + 1 == verify_success_index
+assert final_uid_step_index + 1 == verify_success_index
 assert final_uid_step["env"] == {
     "GH_TOKEN": "${{ github.token }}",
+    "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
     "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
     "EXPECTED_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
     "EXPECTED_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
@@ -2260,7 +2263,7 @@ assert final_uid_step["env"] == {
         "${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}"
     ),
     "CAPTURED_RUNTIME_NAMESPACE_UID": (
-        "${{ steps.capture-runtime-namespace.outputs.uid }}"
+        "${{ needs.verify-runtime.outputs.runtime_namespace_uid }}"
     ),
 }
 final_uid_run = final_uid_step["run"]
@@ -2269,7 +2272,7 @@ namespace_lookup_position = final_uid_run.index(
     'kubectl get namespace "$RUNTIME_NAMESPACE" --ignore-not-found -o json'
 )
 uid_comparison_position = final_uid_run.index(
-    '[[ "$observed_uid" == "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID" ]] || {'
+    'IFS=\'|\' read -r namespace_uid namespace_resource_version <<<"$namespace_identity"'
 )
 assert source_revalidation_position < namespace_lookup_position < uid_comparison_position
 for required in (
@@ -2278,15 +2281,16 @@ for required in (
     '"firemud.dev/requested-preview-head-sha"',
     '"firemud.dev/last-preview-head-sha"',
     '"$CAPTURED_RUNTIME_NAMESPACE_UID" == "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID"',
-    '::error title=Missing deployed preview runtime Namespace UID::The deploy job did not publish its post-apply Namespace UID.',
-    '::error title=Preview runtime namespace UID fence failed::',
-    '::error title=Preview runtime namespace UID changed::',
+    '::error title=Missing deployed preview Namespace UID::The deploy job did not publish its Namespace UID.',
+    '::error title=Preview runtime proof fence failed::',
 ):
     assert required in final_uid_run, required
-proof_tuple_step = verify_by_name["Record proof-complete preview tuple"]
-assert proof_tuple_step["if"] == "${{ success() }}"
+proof_tuple_step = proof_by_name[
+    "Revalidate exact source binding and runtime Namespace UID before proof publication"
+]
 assert proof_tuple_step["env"] == {
     "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
+    "GH_TOKEN": "${{ github.token }}",
     "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
     "EXPECTED_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
     "EXPECTED_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
@@ -2295,6 +2299,9 @@ assert proof_tuple_step["env"] == {
     "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}",
     "EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID": (
         "${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}"
+    ),
+    "CAPTURED_RUNTIME_NAMESPACE_UID": (
+        "${{ needs.verify-runtime.outputs.runtime_namespace_uid }}"
     ),
 }
 proof_tuple_run = proof_tuple_step["run"]
