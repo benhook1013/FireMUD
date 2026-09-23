@@ -36,11 +36,11 @@ This file is the always-on project, authority, and safety kernel for AI work. Re
 
 ## Conditional Workflows
 
-- PR status, CodeRabbit, CI, Renovate, merge authorization, branch topology, and post-merge cleanup use [PR lifecycle](design/developer-workflows/pr-lifecycle.md).
+- PR status, Hosted/CLI review, CI, Renovate, merge authorization, branch topology, and post-merge cleanup use [PR lifecycle](design/developer-workflows/pr-lifecycle.md).
 - Every code or documentation change uses [validation and runtime proof](design/developer-workflows/validation-and-runtime-proof.md) to select and report the required formatting and checks; use its runtime sections when the change affects runtime or smoke behavior.
 - Subagent selection, delegation boundaries, and independent review use [AI delegation and review](design/developer-workflows/ai-delegation-and-review.md). That linked workflow is authoritative for complete delegation boundaries; keep this root file lean rather than duplicating its full list.
 - Human-requested repository maintenance checks use the [repository health check](design/developer-workflows/repository-health-check.md); it routes detailed PR, hosted-environment, validation, and Renovate mechanics to their existing owners.
-- PR or review status handling starts with unresolved non-outdated review threads and the latest completed review summary, reports outdated unresolved threads separately, and checks CI and mergeability second. Summary-only duplicate and outside-diff findings still require verification. Before calling a review complete or merge-ready, use `python3 dev-tools/validation/check-coderabbit-review.py --repo <owner/repo> --pr <number>`; request a full CodeRabbit review at meaningful checkpoints only after current and outdated findings are resolved and no review is active or rate limited.
+- PR or review status handling starts with `dev-tools/pr-review status` and `dev-tools/pr-review evidence`, which inspect unresolved non-outdated review threads and the latest completed review summary, report outdated unresolved threads separately, and check CI and mergeability second. Summary-only duplicate and outside-diff findings still require verification. Before calling a review complete or merge-ready, use `dev-tools/pr-review status --pr <number>` and reconcile its fail-closed evidence with the current changes. Start a review only through `dev-tools/pr-review run hosted|cli` after current findings are resolved and the target is stable.
 
 ## Orchestration
 

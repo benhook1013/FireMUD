@@ -1,0 +1,271 @@
+"""Locked, atomic persistence for the one private repository review stack.
+
+Only operator configuration and explicit, identity-bound decisions are stored here.
+Live GitHub heads, bases, evidence, cooldowns, and merge state deliberately do not
+have a representation in :class:`ReviewState`.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import dataclasses
+import json
+import os
+import re
+import subprocess
+import tempfile
+from collections.abc import Callable, Iterator, Mapping
+from pathlib import Path
+from typing import Any
+
+SCHEMA_VERSION = 1
+
+
+class StateError(ValueError):
+    """Raised when private review-stack state is invalid or unavailable."""
+
+
+@dataclasses.dataclass(frozen=True)
+class PolicyOverride:
+    """An optional taper override bound to one exact evidence identity."""
+
+    hosted_zero_useful: int | None = None
+    cli_zero_useful: int | None = None
+    head: str | None = None
+    checkpoint: str | None = None
+    reason: str = ""
+
+    def __post_init__(self) -> None:
+        for name in ("hosted_zero_useful", "cli_zero_useful"):
+            value = getattr(self, name)
+            if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 0):
+                raise StateError(f"{name} must be a non-negative integer or null")
+        if (self.head is None) != (self.checkpoint is None):
+            raise StateError("policy overrides require both exact head and checkpoint")
+        if not self.reason.strip() and (
+            self.head is not None or self.hosted_zero_useful is not None or self.cli_zero_useful is not None
+        ):
+            raise StateError("policy overrides require a reason")
+
+    def applies(self, head: str, checkpoint: str) -> bool:
+        return self.head == head and self.checkpoint == checkpoint
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "hosted_zero_useful": self.hosted_zero_useful,
+            "cli_zero_useful": self.cli_zero_useful,
+            "head": self.head,
+            "checkpoint": self.checkpoint,
+            "reason": self.reason,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> PolicyOverride:
+        allowed = {"hosted_zero_useful", "cli_zero_useful", "head", "checkpoint", "reason"}
+        if set(value) - allowed:
+            raise StateError("policy override contains fields outside the private schema")
+        return cls(
+            hosted_zero_useful=value.get("hosted_zero_useful"),
+            cli_zero_useful=value.get("cli_zero_useful"),
+            head=value.get("head"),
+            checkpoint=value.get("checkpoint"),
+            reason=value.get("reason", ""),
+        )
+
+
+@dataclasses.dataclass(frozen=True)
+class Judgment:
+    """A human decision for one channel, exact head, and exact checkpoint."""
+
+    pr: int
+    channel: str
+    decision: str
+    head: str
+    checkpoint: str
+    reason: str
+
+    def __post_init__(self) -> None:
+        if isinstance(self.pr, bool) or not isinstance(self.pr, int) or self.pr <= 0:
+            raise StateError("judgment PR must be a positive integer")
+        if self.channel not in {"hosted", "cli"}:
+            raise StateError("judgment channel must be hosted or cli")
+        if self.decision not in {"reopen", "retain"}:
+            raise StateError("judgment decision must be reopen or retain")
+        if not self.head or not self.checkpoint or not self.reason.strip():
+            raise StateError("judgments require head, checkpoint, and reason")
+
+    def applies(self, pr: int, channel: str, head: str, checkpoint: str) -> bool:
+        return self.pr == pr and self.channel == channel and self.head == head and self.checkpoint == checkpoint
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "pr": self.pr,
+            "channel": self.channel,
+            "decision": self.decision,
+            "head": self.head,
+            "checkpoint": self.checkpoint,
+            "reason": self.reason,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Judgment:
+        allowed = {"pr", "channel", "decision", "head", "checkpoint", "reason"}
+        if set(value) - allowed:
+            raise StateError("judgment contains fields outside the private schema")
+        return cls(
+            pr=value["pr"],
+            channel=value["channel"],
+            decision=value["decision"],
+            head=value["head"],
+            checkpoint=value["checkpoint"],
+            reason=value["reason"],
+        )
+
+
+@dataclasses.dataclass(frozen=True)
+class ReviewState:
+    """The complete persisted document, excluding all live review observations."""
+
+    ordered_prs: tuple[int, ...] = ()
+    policy_overrides: Mapping[str, PolicyOverride] = dataclasses.field(default_factory=dict)
+    judgments: tuple[Judgment, ...] = ()
+    schema_version: int = SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if self.schema_version != SCHEMA_VERSION:
+            raise StateError(f"unsupported schema version: {self.schema_version}")
+        if len(set(self.ordered_prs)) != len(self.ordered_prs) or any(
+            not isinstance(pr, int) or isinstance(pr, bool) or pr <= 0 for pr in self.ordered_prs
+        ):
+            raise StateError("ordered_prs must contain unique positive integers")
+        for identity, override in self.policy_overrides.items():
+            if (
+                not isinstance(identity, str)
+                or not re.fullmatch(r"[1-9][0-9]*:(?:hosted|cli)", identity)
+                or not isinstance(override, PolicyOverride)
+            ):
+                raise StateError("policy overrides must be keyed by PR and channel")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "ordered_prs": list(self.ordered_prs),
+            "policy_overrides": {identity: item.to_dict() for identity, item in sorted(self.policy_overrides.items())},
+            "judgments": [item.to_dict() for item in self.judgments],
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> ReviewState:
+        if set(value) - {"schema_version", "ordered_prs", "policy_overrides", "judgments"}:
+            raise StateError("state contains fields outside the private configuration schema")
+        if value.get("schema_version") != SCHEMA_VERSION:
+            raise StateError("state has an unsupported schema version")
+        overrides = {
+            identity: PolicyOverride.from_dict(item) for identity, item in value.get("policy_overrides", {}).items()
+        }
+        return cls(
+            ordered_prs=tuple(value.get("ordered_prs", ())),
+            policy_overrides=overrides,
+            judgments=tuple(Judgment.from_dict(item) for item in value.get("judgments", ())),
+        )
+
+
+def git_common_dir(cwd: str | os.PathLike[str] | None = None) -> Path:
+    """Resolve the repository's shared Git common directory."""
+
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise StateError("cannot resolve the repository Git common directory") from exc
+    common = Path(result.stdout.strip())
+    if not common.is_absolute():
+        common = Path(cwd or os.getcwd()) / common
+    return common.resolve()
+
+
+def state_path(common_dir: str | os.PathLike[str] | None = None) -> Path:
+    """Return ``<git-common-dir>/firemud/pr-review-stack.json``."""
+
+    common = Path(common_dir).resolve() if common_dir is not None else git_common_dir()
+    return common / "firemud" / "pr-review-stack.json"
+
+
+@contextlib.contextmanager
+def _locked(lock_path: Path) -> Iterator[None]:
+    lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    lock_path.parent.chmod(0o700)
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        os.fchmod(handle.fileno(), 0o600)
+        try:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        except ImportError:  # pragma: no cover - repository execution is Linux/WSL
+            pass
+        try:
+            yield
+        finally:
+            try:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except ImportError:  # pragma: no cover
+                pass
+
+
+class StateStore:
+    """Read and update state under an exclusive lock with atomic replacement."""
+
+    def __init__(self, path: str | os.PathLike[str] | None = None) -> None:
+        self.path = Path(path).resolve() if path is not None else state_path()
+        self.lock_path = self.path.with_name(".pr-review-stack.lock")
+
+    def load(self) -> ReviewState:
+        if not self.path.exists():
+            return ReviewState()
+        try:
+            with self.path.open("r", encoding="utf-8") as handle:
+                value = json.load(handle)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise StateError(f"cannot read review-stack state: {self.path}") from exc
+        if not isinstance(value, dict):
+            raise StateError("review-stack state must be a JSON object")
+        return ReviewState.from_dict(value)
+
+    def save(self, state: ReviewState) -> None:
+        if not isinstance(state, ReviewState):
+            raise TypeError("save expects ReviewState")
+        with _locked(self.lock_path):
+            self._save_unlocked(state)
+
+    def _save_unlocked(self, state: ReviewState) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=self.path.parent, prefix=f".{self.path.name}.", delete=False
+        ) as handle:
+            temporary = Path(handle.name)
+            json.dump(state.to_dict(), handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.replace(temporary, self.path)
+            directory_fd = os.open(self.path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def update(self, mutate: Callable[[ReviewState], ReviewState]) -> ReviewState:
+        with _locked(self.lock_path):
+            updated = mutate(self.load())
+            self._save_unlocked(updated)
+            return updated
