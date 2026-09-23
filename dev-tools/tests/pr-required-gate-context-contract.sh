@@ -440,21 +440,30 @@ for workflow, (_prefix, gate_job, gate_name) in gate_workflows.items():
     if workflow != "smoke.yml" and job.get("name") != gate_name:
         raise SystemExit(f"{workflow} required gate fixture has no matching job context")
 
-# Build the aggregate from event/job fixtures sourced from each workflow. The
-# required gate is preserved successfully on a metadata edit; all other jobs
-# are skipped by their metadata guard and therefore cannot leave residue.
+# Build metadata-event fixtures only after checking the parsed job conditions.
+# A non-gate job is expected to skip only when its own condition contains the
+# guard that excludes metadata-only edits. The required gate remains backed by
+# the successful required-gate fixtures above and its preservation action.
 metadata_job_fixtures = []
-for workflow, (_prefix, gate_job, gate_name) in workflows.items():
+metadata_guard = "github.event.action != 'edited' || github.event.changes.base.ref != null"
+for workflow, (_prefix, gate_job, _gate_name) in workflows.items():
     path = root / ".github" / "workflows" / workflow
     data = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     for job_name, job in data["jobs"].items():
+        if job_name == gate_job:
+            continue
+        condition = job.get("if", "") if isinstance(job, dict) else ""
+        if metadata_guard not in condition:
+            raise SystemExit(
+                f"{workflow} job {job_name} can run for a metadata-only edited event"
+            )
         metadata_job_fixtures.append(
             {
                 "workflow": workflow,
                 "job": job_name,
-                "context": gate_name if job_name == gate_job else job.get("name", job_name),
-                "status": "completed" if job_name == gate_job else "completed",
-                "conclusion": "success" if job_name == gate_job else "skipped",
+                "context": job.get("name", job_name),
+                "status": "completed",
+                "conclusion": "skipped",
             }
         )
 
@@ -466,6 +475,10 @@ if residue.intersection(aggregate.values()):
     raise SystemExit("metadata edit aggregate contains failed or cancelled residue")
 if len(required_contexts) != len(required_gate_fixtures):
     raise SystemExit("required gate event/job fixtures do not expose distinct authoritative contexts")
+if not required_contexts or any(conclusion != "success" for conclusion in required_contexts.values()):
+    raise SystemExit("metadata edit must retain successful authoritative required-gate fixtures")
+if not metadata_job_fixtures or any(fixture["conclusion"] != "skipped" for fixture in metadata_job_fixtures):
+    raise SystemExit("metadata-only non-gate jobs must be skipped by their verified job guards")
 PY
 
 # shellcheck disable=SC2016 # Match the checked-in arithmetic assignment literally.

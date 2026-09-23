@@ -358,7 +358,7 @@ for workflow_path in map(Path, sys.argv[1:]):
     substantive = expression.replace("format('metadata-{0}', github.run_id)", "required")
     if first_edit == second_edit or first_edit == substantive or second_edit == substantive:
         raise SystemExit(f"{workflow_path.name}: rapid metadata edits can cancel each other or substantive CI")
-    if not workflow["concurrency"]["cancel-in-progress"]:
+    if workflow["concurrency"]["cancel-in-progress"] != "true":
         raise SystemExit(f"{workflow_path.name}: substantive stale-run cancellation is disabled")
 PY
 
