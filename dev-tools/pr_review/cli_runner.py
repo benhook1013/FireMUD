@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import unicodedata
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -490,6 +491,10 @@ def run_cli_review(
 
     if allow_unreconciled and not reason:
         raise ReviewRunnerError("--allow-unreconciled requires a non-empty --reason")
+    if allow_unreconciled and len(reason) > 240:
+        raise ReviewRunnerError("--reason must be 240 characters or fewer")
+    if allow_unreconciled and any(unicodedata.category(character) == "Cc" for character in reason):
+        raise ReviewRunnerError("--reason must not contain control characters")
     if not allow_unreconciled and reason:
         raise ReviewRunnerError("--reason is only valid with --allow-unreconciled")
     if allow_unreconciled and target.reconciled and target.ancestor_links_valid:

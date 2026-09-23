@@ -324,6 +324,30 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertTrue(metadata["provisional"])
             self.assertIn("one-pass", metadata["reason"])
 
+    def test_unreconciled_reason_rejects_long_and_control_text_before_capture(self):
+        invalid_reasons = (
+            ("x" * 241, "240 characters or fewer"),
+            ("line one\nline two", "control characters"),
+            ("tab\tseparator", "control characters"),
+            ("c1\x85separator", "control characters"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for reason, error in invalid_reasons:
+                with self.subTest(reason=repr(reason)):
+                    commands = FakeCommands(root)
+                    with self.assertRaisesRegex(ReviewRunnerError, error):
+                        run_cli_review(
+                            target(reconciled=False),
+                            github=FakeGitHub(),
+                            source_root=root,
+                            runner=commands,
+                            allow_unreconciled=True,
+                            reason=reason,
+                        )
+                    self.assertEqual(commands.calls, [])
+                    self.assertFalse((root / ".git" / "firemud" / "pr-review" / "runs").exists())
+
     def test_provisional_run_allows_parent_tip_outside_candidate_history(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

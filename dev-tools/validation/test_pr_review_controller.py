@@ -187,7 +187,8 @@ class ControllerTests(unittest.TestCase):
         }
         controller = self.make(values, evidence)
         controller.set_stack([1])
-        with self.assertRaises(ControllerError):
+        self.assertEqual(controller.status()["prs"][0]["channels"]["cli"], "JUDGMENT_REQUIRED")
+        with self.assertRaisesRegex(ControllerError, "cli review cannot run: JUDGMENT_REQUIRED"):
             controller.resolve_cli_target()
         controller.decide_judgment(
             pr=1,
@@ -197,7 +198,8 @@ class ControllerTests(unittest.TestCase):
             checkpoint="c2",
             reason="same reviewed candidate",
         )
-        with self.assertRaises(ControllerError):
+        self.assertEqual(controller.status()["prs"][0]["channels"]["cli"], "COMPLETE")
+        with self.assertRaisesRegex(ControllerError, "all cli targets are complete"):
             controller.resolve_cli_target()
 
     def test_policy_override_requires_current_corrected_zero_useful_patch_bound_checkpoint(self):
