@@ -40,6 +40,11 @@ MERGE_2 = "f" * 40
 class FakeGit:
     def __init__(self, heads=None):
         self.heads = {"develop": BASE, **(heads or {})}
+        self.remote_heads_calls = 0
+
+    def remote_heads(self):
+        self.remote_heads_calls += 1
+        return dict(self.heads)
 
     def branch_head(self, ref_name):
         return self.heads[ref_name]
@@ -101,6 +106,24 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(actual, hashlib.sha256(raw_diff).hexdigest())
         self.assertFalse(run.call_args.kwargs["text"])
         self.assertEqual(run.call_args.kwargs["timeout"], 9)
+
+    def test_default_git_provider_rejects_ambiguous_remote_head_snapshot(self):
+        with patch(
+            "pr_review.controller.subprocess.run",
+            return_value=CompletedProcess(
+                ["git"],
+                0,
+                f"{HEAD_1} refs/heads/develop\nmalformed\n",
+                "",
+            ),
+        ), self.assertRaisesRegex(ControllerError, "remote branch snapshot line 2 is malformed"):
+            DefaultGitProvider().remote_heads()
+
+    def test_reconciliation_uses_one_remote_head_snapshot(self):
+        controller = self.make({1: pr(1, HEAD_1)})
+        controller.set_stack([1])
+        controller.status()
+        self.assertEqual(controller.git.remote_heads_calls, 1)
 
     def test_one_private_ordered_stack_and_effective_parent(self):
         values = {1: pr(1, HEAD_1), 2: pr(2, HEAD_2, "feature-1", HEAD_1)}
@@ -340,6 +363,33 @@ class ControllerTests(unittest.TestCase):
         result = controller.status()
         self.assertEqual(result["prs"][0]["reconciliation"], "COHERENT")
         self.assertEqual(result["prs"][0]["channels"]["cli"], "READY")
+
+    def test_reconciliation_uses_latest_completed_attributable_review_anchor(self):
+        review = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "review",
+            "completed": True,
+            "attributable": True,
+            "anchored": True,
+            "child_head": HEAD_1,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": f"patch-{HEAD_1[:4]}",
+        }
+        trailing_status = {
+            "pr": 1,
+            "head": "9" * 40,
+            "checkpoint": "pending-capture:run.old",
+            "completed": False,
+            "attributable": False,
+            "parent_head": "8" * 40,
+        }
+        controller = self.make({1: pr(1, HEAD_1)}, {(1, "hosted"): [review, trailing_status]})
+        controller.set_stack([1])
+        result = controller.status()
+        self.assertEqual(result["prs"][0]["reconciliation"], "COHERENT")
 
     def test_exact_stack_reconciliation_reopens_review_and_unblocks_descendants(self):
         values = {

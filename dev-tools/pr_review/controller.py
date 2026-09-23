@@ -46,6 +46,8 @@ GIT_TIMEOUT_SECONDS = 30
 class GitProvider(Protocol):
     """Git facts needed to anchor a review to one exact candidate."""
 
+    def remote_heads(self) -> Mapping[str, str]: ...
+
     def branch_head(self, ref_name: str) -> str: ...
 
     def branch_exists(self, ref_name: str) -> bool: ...
@@ -108,18 +110,29 @@ class DefaultGitProvider:
         )
         return result.stdout.strip()
 
+    def remote_heads(self) -> Mapping[str, str]:
+        """Read one unambiguous snapshot of every remote branch head."""
+
+        heads: dict[str, str] = {}
+        output = self._run("ls-remote", "--heads", "origin")
+        for line_number, line in enumerate(output.splitlines(), 1):
+            fields = line.split()
+            if len(fields) != 2 or not fields[1].startswith("refs/heads/"):
+                raise ControllerError(f"remote branch snapshot line {line_number} is malformed")
+            ref_name = fields[1][len("refs/heads/") :]
+            if not ref_name or ref_name in heads:
+                raise ControllerError(f"remote branch snapshot has an ambiguous {ref_name!r} ref")
+            heads[ref_name] = _sha(fields[0], f"remote branch {ref_name!r} head")
+        return heads
+
     def branch_head(self, ref_name: str) -> str:
-        lines = self._run("ls-remote", "--heads", "origin", f"refs/heads/{ref_name}").splitlines()
-        if len(lines) != 1:
+        heads = self.remote_heads()
+        if ref_name not in heads:
             raise ControllerError(f"branch {ref_name!r} does not resolve to one remote head")
-        return _sha(lines[0].split()[0], f"branch {ref_name!r} head")
+        return heads[ref_name]
 
     def branch_exists(self, ref_name: str) -> bool:
-        result = self._run_process(
-            ["git", "-C", str(self.root), "ls-remote", "--exit-code", "--heads", "origin", f"refs/heads/{ref_name}"],
-            check=False,
-        )
-        return result.returncode == 0
+        return ref_name in self.remote_heads()
 
     def _ensure_commit(self, commit: str) -> None:
         present = self._run_process(
@@ -325,6 +338,15 @@ def _history(provider: Any, pr: int, channel: policy.Channel) -> list[Any]:
     return list(value)
 
 
+def _latest_review(history: Sequence[Any]) -> Any | None:
+    """Return the latest completed, attributable review, ignoring status records."""
+
+    for item in reversed(history):
+        if _field(item, "completed") is True and _field(item, "attributable") is True:
+            return item
+    return None
+
+
 def _field(value: Any, name: str, *aliases: str) -> Any:
     if isinstance(value, Mapping):
         for key in (name, *aliases):
@@ -384,16 +406,18 @@ class ReviewController:
     stack_show = show_stack
 
     def _live_snapshots(
-        self, state: ReviewState
+        self, state: ReviewState, remote_heads: Mapping[str, str] | None = None
     ) -> tuple[dict[int, LivePullRequest], dict[int, stack.PRSnapshot], str]:
         github = self._require_github()
-        default_tip = _sha(self.git.branch_head(self.default_base_ref), "default base tip")
+        heads = remote_heads if remote_heads is not None else self.git.remote_heads()
+        default_tip = _sha(heads.get(self.default_base_ref), "default base tip")
         live = {pr: _live(github.pull_request(pr), pr) for pr in state.ordered_prs}
         snapshots = {pr: item.snapshot() for pr, item in live.items()}
         return live, snapshots, default_tip
 
     def _reconciliation(self, state: ReviewState) -> tuple[dict[int, LivePullRequest], stack.Reconciliation]:
-        live, snapshots, default_tip = self._live_snapshots(state)
+        remote_heads = self.git.remote_heads()
+        live, snapshots, default_tip = self._live_snapshots(state, remote_heads)
         baseline = stack.reconcile_stack(
             state.ordered_prs,
             snapshots,
@@ -406,7 +430,7 @@ class ReviewController:
             if live[pr].merged or baseline.status_for(pr) != stack.ReconciliationStatus.COHERENT:
                 continue
             link = baseline.links[pr]
-            if not self._current_branches_match(state, live, baseline, pr):
+            if not self._current_branches_match(state, live, baseline, pr, remote_heads):
                 continue
             current = self._anchor(pr, live[pr], link)
             decision = self._active_stack_reconciliation(state, pr, current)
@@ -417,9 +441,9 @@ class ReviewController:
             if pr in reconciled:
                 continue
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
-                history = _history(self._evidence_provider, pr, channel)
-                if history:
-                    parent_head = _field(history[-1], "parent_head")
+                latest = _latest_review(_history(self._evidence_provider, pr, channel))
+                if latest is not None:
+                    parent_head = _field(latest, "parent_head")
                     if (
                         isinstance(parent_head, str)
                         and len(parent_head) == 40
@@ -458,9 +482,9 @@ class ReviewController:
         # refresh is therefore a real parent movement, even when the PR payload
         # itself has not changed yet.
         for pr, item in live.items():
-            if item.merged or not item.head_ref or not self.git.branch_exists(item.head_ref):
+            if item.merged or not item.head_ref or item.head_ref not in remote_heads:
                 continue
-            branch_tip = _sha(self.git.branch_head(item.head_ref), f"PR #{pr} head branch")
+            branch_tip = _sha(remote_heads[item.head_ref], f"PR #{pr} head branch")
             if branch_tip != item.head:
                 reasons[pr] = "parent source branch moved since the live PR head"
                 moved.add(pr)
@@ -476,7 +500,7 @@ class ReviewController:
         for pr, item in live.items():
             if item.merged:
                 continue
-            if not item.base_exists or not self.git.branch_exists(item.base_ref):
+            if not item.base_exists or item.base_ref not in remote_heads:
                 reasons[pr] = "pull request base branch does not exist"
                 statuses[pr] = stack.ReconciliationStatus.UNRECONCILED
             if item.state != "OPEN":
@@ -494,10 +518,10 @@ class ReviewController:
             link = result.links[pr]
             current = self._anchor(pr, live[pr], link)
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
-                history = _history(self._evidence_provider, pr, channel)
-                if not history:
+                latest = _latest_review(_history(self._evidence_provider, pr, channel))
+                if latest is None:
                     continue
-                previous = history[-1]
+                previous = latest
                 values = {
                     name: _field(previous, name)
                     for name in ("pr", "child_head", "parent_identity", "parent_head", "merge_base", "patch_id")
@@ -578,6 +602,7 @@ class ReviewController:
         live: Mapping[int, LivePullRequest],
         reconciliation: stack.Reconciliation,
         pr: int,
+        remote_heads: Mapping[str, str],
     ) -> bool:
         """Require the target and all earlier links to match live remote refs."""
 
@@ -594,15 +619,15 @@ class ReviewController:
                 or item.state != "OPEN"
                 or item.mergeable != "MERGEABLE"
                 or not item.base_exists
-                or not self.git.branch_exists(item.base_ref)
+                or item.base_ref not in remote_heads
             ):
                 return False
-            if _sha(self.git.branch_head(item.base_ref), f"PR #{candidate} base branch") != item.base_tip:
+            if _sha(remote_heads[item.base_ref], f"PR #{candidate} base branch") != item.base_tip:
                 return False
             if item.head_ref:
-                if not self.git.branch_exists(item.head_ref):
+                if item.head_ref not in remote_heads:
                     return False
-                if _sha(self.git.branch_head(item.head_ref), f"PR #{candidate} head branch") != item.head:
+                if _sha(remote_heads[item.head_ref], f"PR #{candidate} head branch") != item.head:
                     return False
         return True
 
@@ -672,7 +697,8 @@ class ReviewController:
         state = self._state()
         if pr not in state.ordered_prs:
             raise ControllerError(f"PR #{pr} is not in the configured review stack")
-        live, snapshots, default_tip = self._live_snapshots(state)
+        remote_heads = self.git.remote_heads()
+        live, snapshots, default_tip = self._live_snapshots(state, remote_heads)
         baseline = stack.reconcile_stack(
             state.ordered_prs,
             snapshots,
@@ -680,7 +706,7 @@ class ReviewController:
             default_tip,
             is_ancestor=self.git.is_ancestor,
         )
-        if not self._current_branches_match(state, live, baseline, pr):
+        if not self._current_branches_match(state, live, baseline, pr, remote_heads):
             raise ControllerError("stack reconciliation requires a coherent exact-current live topology")
         link = baseline.links[pr]
         current = self._anchor(pr, live[pr], link)
@@ -717,8 +743,9 @@ class ReviewController:
         other_heads = {}
         for pr in state.ordered_prs:
             values = _history(self._evidence_provider, pr, other)
-            if values:
-                value = _field(values[-1], "head", "reviewed_head")
+            latest = _latest_review(values)
+            if latest is not None:
+                value = _field(latest, "head", "reviewed_head")
                 if isinstance(value, str):
                     other_heads[pr] = value
         decision = policy.select_review_target(
@@ -787,7 +814,8 @@ class ReviewController:
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
                 other = policy.Channel.CLI if channel == policy.Channel.HOSTED else policy.Channel.HOSTED
                 other_history = _history(self._evidence_provider, pr, other)
-                other_head = _field(other_history[-1], "head", "reviewed_head") if other_history else None
+                latest = _latest_review(other_history)
+                other_head = _field(latest, "head", "reviewed_head") if latest is not None else None
                 channel_status[channel.value] = policy.completion_status(
                     state,
                     channel,
