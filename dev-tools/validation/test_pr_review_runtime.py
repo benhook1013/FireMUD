@@ -65,9 +65,8 @@ class RuntimeTest(unittest.TestCase):
 
     def test_historical_cli_capture_remains_attributable(self) -> None:
         body = (
-            f"CLI: 1 found / 0 accepted · `{HEAD[:12]}` · 1 files · 4s\n"
-            "<!-- firemud-cli-run: run.Legacy -->\n"
-            "<!-- firemud-review-duration-seconds: 4 -->"
+            f"CLI: 1 found / 0 accepted · `{HEAD[:12]}` · 1 files\n"
+            "<!-- firemud-cli-run: run.Legacy -->"
         )
         payload = {
             "data": {
@@ -330,7 +329,10 @@ class RuntimeTest(unittest.TestCase):
         original = {
             "databaseId": 12,
             "author": {"login": "maintainer"},
-            "body": f"Hosted: 1 found / 1 accepted · `{HEAD[:12]}` · 1 files · 5s\n<!-- firemud-hosted-review: 55 -->",
+            "body": (
+                f"Hosted: 1 found / 1 accepted · `{HEAD[:12]}` · 1 files · 5s\n"
+                "<!-- firemud-hosted-review: 55 -->\n<!-- firemud-review-duration-seconds: 5 -->"
+            ),
             "createdAt": reviewed,
             "updatedAt": reviewed,
         }
@@ -338,7 +340,10 @@ class RuntimeTest(unittest.TestCase):
             **original,
             "databaseId": 13,
             "author": {"login": "other-user"},
-            "body": f"Hosted: 1 found / 0 accepted · `{HEAD[:12]}` · 1 files · 5s\n<!-- firemud-hosted-review: 55 -->",
+            "body": (
+                f"Hosted: 1 found / 0 accepted · `{HEAD[:12]}` · 1 files · 5s\n"
+                "<!-- firemud-hosted-review: 55 -->\n<!-- firemud-review-duration-seconds: 5 -->"
+            ),
             "createdAt": "2026-09-23T00:03:00Z",
             "updatedAt": "2026-09-23T00:03:00Z",
         }
@@ -645,8 +650,8 @@ class RuntimeTest(unittest.TestCase):
     def test_duplicate_public_checkpoints_for_one_cli_capture_count_once(self) -> None:
         run_id = "run.Duplicate"
         body = (
-            f"CLI: 0 found / 0 accepted · `{HEAD[:12]}` · 1 files · 3s\n"
-            f"<!-- firemud-cli-run: {run_id} -->\n<!-- firemud-review-duration-seconds: 3 -->"
+            f"CLI: 0 found / 0 accepted · `{HEAD[:12]}` · 1 files\n"
+            f"<!-- firemud-cli-run: {run_id} -->"
         )
         comments = [
             {

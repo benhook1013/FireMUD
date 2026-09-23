@@ -51,6 +51,7 @@ class Checkpoint:
     run_id: str | None
     hosted_review_id: int | None
     duration_seconds: int | None = None
+    duration_invalid: bool = False
     author_login: str | None = None
 
     def as_json(self) -> dict[str, Any]:
@@ -75,6 +76,8 @@ class Checkpoint:
             value["updated_at"] = self.updated_at
         if self.author_login is not None:
             value["author_login"] = self.author_login
+        if self.duration_invalid:
+            value["duration_invalid"] = True
         return value
 
 
@@ -180,15 +183,31 @@ def _hosted_id(body: str) -> tuple[int | None, bool]:
     return (int(match.group("review_id")) if match else None), False
 
 
-def _duration_marker(body: str) -> int | None:
+def _duration_evidence(body: str, visible_duration: str | None) -> tuple[int | None, bool]:
+    """Return duration only when visible and hidden evidence agree.
+
+    Historical comments without either representation remain readable. Once
+    either representation is present, malformed, duplicate, incomplete, or
+    mismatched evidence is explicitly invalid so linkage cannot infer a
+    duration from a partially trusted comment.
+    """
+
     found: list[int] = []
+    malformed = False
     for line in body.splitlines()[1:]:
         if line.strip().startswith("<!-- firemud-review-duration-seconds:"):
             match = DURATION_MARKER.fullmatch(line.strip())
             if match is None:
-                return None
-            found.append(int(match.group("seconds")))
-    return found[0] if len(found) == 1 else None
+                malformed = True
+            else:
+                found.append(int(match.group("seconds")))
+    if malformed or len(found) > 1:
+        return None, True
+    if visible_duration is None and not found:
+        return None, False
+    if visible_duration is None or not found or int(visible_duration) != found[0]:
+        return None, True
+    return found[0], False
 
 
 def parse_checkpoint_comments(comments: list[dict[str, Any]]) -> tuple[list[Checkpoint], int]:
@@ -214,8 +233,7 @@ def parse_checkpoint_comments(comments: list[dict[str, Any]]) -> tuple[list[Chec
             unparsed += 1
             continue
         visible = suffix.group("duration")
-        marker = _duration_marker(body)
-        duration = marker if visible is not None and marker is not None and int(visible) == marker else None
+        duration, duration_invalid = _duration_evidence(body, visible)
         sha = suffix.group("sha")
         checkpoints.append(
             Checkpoint(
@@ -231,6 +249,7 @@ def parse_checkpoint_comments(comments: list[dict[str, Any]]) -> tuple[list[Chec
                 run_id=run_id,
                 hosted_review_id=hosted_review_id,
                 duration_seconds=duration,
+                duration_invalid=duration_invalid,
                 author_login=(
                     comment.get("author_login")
                     if isinstance(comment.get("author_login"), str)
@@ -413,6 +432,8 @@ def _validate_cli_checkpoint_decisions(checkpoint: Checkpoint, capture: CaptureD
 def load_cli_capture(checkpoint: Checkpoint, repo: str, pr_number: int, common: Path | None = None) -> CaptureData:
     if checkpoint.type != "CLI" or not checkpoint.run_id or not RUN_ID.fullmatch(checkpoint.run_id):
         raise CaptureUnavailable("checkpoint has no valid CLI capture marker")
+    if checkpoint.duration_invalid:
+        raise CaptureInvalid("checkpoint has invalid visible/hidden duration evidence")
     roots = private_review_roots(common)
     # Legacy CLI captures are directly below <git-common>/coderabbit-review-logs.
     # New callers may place captures below the firemud review namespace.
@@ -452,6 +473,18 @@ def load_cli_capture(checkpoint: Checkpoint, repo: str, pr_number: int, common: 
         raise CaptureInvalid("linked capture candidate file count is invalid") from exc
     if len(complete["reviewedFiles"]) != candidate_files or checkpoint.file_count not in (None, candidate_files):
         raise CaptureInvalid("linked capture file count does not match checkpoint")
+    if checkpoint.duration_seconds is not None:
+        recorded_duration = metadata.get("review_duration_seconds")
+        if recorded_duration is None or not recorded_duration.isdigit():
+            raise CaptureInvalid("linked capture metadata has no valid review duration")
+        duration_path = _contained_file(run_dir, "review-duration-seconds")
+        assert duration_path is not None
+        try:
+            artifact_duration = duration_path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise CaptureUnavailable("linked capture review duration cannot be read") from exc
+        if int(recorded_duration) != checkpoint.duration_seconds or artifact_duration != recorded_duration:
+            raise CaptureInvalid("checkpoint duration does not match linked capture metadata")
     decision_path = _contained_file(run_dir, "decisions.tsv", required=False)
     if decision_path is None:
         rejection_path = _contained_file(run_dir, "rejections.tsv", required=False)
@@ -701,6 +734,8 @@ def hosted_checkpoint_evidence(
 ) -> dict[str, Any]:
     """Return attributable completed Hosted proof; missing proof is never completion."""
 
+    if checkpoint.duration_invalid:
+        return {"status": "missing", "reason": "Hosted checkpoint has invalid visible/hidden duration evidence"}
     if checkpoint.type != "Hosted" or checkpoint.hosted_review_id is None:
         return {"status": "missing", "reason": "Hosted checkpoint has no valid review marker"}
     for review in reviews:

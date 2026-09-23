@@ -26,6 +26,14 @@ grep -Fq '  gate-name:' "$ACTION" || {
   echo "required-gate preservation action must expose a gate-name input" >&2
   exit 1
 }
+grep -A3 -Fxq '  allow-pending:' "$ACTION" || {
+  echo "required-gate preservation action must declare the optional allow-pending input" >&2
+  exit 1
+}
+grep -Fxq "    default: 'false'" <(sed -n '/^  allow-pending:/,/^[^ ]/p' "$ACTION") || {
+  echo "required-gate preservation allow-pending input must default to false" >&2
+  exit 1
+}
 
 assert_required_input_declaration() {
   local action_path="$1"
@@ -91,6 +99,7 @@ if ! grep -Fq 'GH_TOKEN: ${{ github.token }}' "$ACTION" ||
   ! grep -Fq 'EXPECTED_WORKFLOW_NAME: ${{ inputs.workflow-name }}' "$ACTION" ||
   ! grep -Fq 'EXPECTED_WORKFLOW_FILE: ${{ inputs.workflow-file }}' "$ACTION" ||
   ! grep -Fq 'EXPECTED_WORKFLOW_PATH: ${{ inputs.workflow-path }}' "$ACTION" ||
+  ! grep -Fq 'ALLOW_PENDING: ${{ inputs.allow-pending }}' "$ACTION" ||
   grep -Fq 'EXPECTED_JOB_ID' "$ACTION"; then
   echo "required-gate action must retain caller, head, gate, and workflow identity inputs without local job identity" >&2
   exit 1
@@ -133,6 +142,9 @@ while IFS='|' read -r workflow gate_job_id gate workflow_name workflow_file work
       echo "$workflow must separate its metadata-only job name from the required $gate context" >&2
       exit 1
     fi
+  elif grep -Fq 'allow-pending:' <<<"$gate_block"; then
+    echo "$workflow must retain fail-closed required-gate polling" >&2
+    exit 1
   elif ! grep -Fxq "    name: $gate" <<<"$gate_block"; then
     echo "$workflow must always emit the required $gate context" >&2
     exit 1
@@ -187,6 +199,15 @@ while IFS='|' read -r workflow gate_job_id gate workflow_name workflow_file work
     echo "$workflow $gate preservation must retain its metadata-only condition" >&2
     exit 1
   }
+  if [[ "$workflow" == "smoke.yml" ]]; then
+    grep -Eq "^          allow-pending: 'true'([[:space:]]+#.*)?$" <<<"$preserve_block" || {
+      echo "$workflow metadata-only preservation must allow the required gate to remain pending" >&2
+      exit 1
+    }
+  elif grep -Fq 'allow-pending:' <<<"$preserve_block"; then
+    echo "$workflow must retain fail-closed required-gate polling" >&2
+    exit 1
+  fi
   checkout_block="$(awk '
     /^      - name: Check out required-gate action$/ {
       if (found) exit
@@ -917,6 +938,7 @@ run_action() {
   local failure_mode="$2"
   local scenario="${3:-failure-retry}"
   local call_count_dir="${4:-}"
+  local allow_pending="${5:-false}"
   GH_RETRY_COUNT_FILE="$count_file" \
   GH_FAILURE_MODE="$failure_mode" \
   GH_SCENARIO="$scenario" \
@@ -933,6 +955,7 @@ run_action() {
   EXPECTED_WORKFLOW_NAME='CI — Validation' \
   EXPECTED_WORKFLOW_FILE=ci.yml \
   EXPECTED_WORKFLOW_PATH=.github/workflows/ci.yml \
+  ALLOW_PENDING="$allow_pending" \
   bash "$POLL_SCRIPT"
 }
 
@@ -1093,6 +1116,39 @@ pending_count="$tmp_dir/count-pending-predecessor"
 run_action "$pending_count" none pending-predecessor
 [[ "$(<"$pending_count")" == "2" ]] || {
   echo "required-gate action did not poll the relevant prior run while it was finishing" >&2
+  exit 1
+}
+
+allowed_pending_output="$tmp_dir/allowed-pending-output"
+allowed_pending_count="$tmp_dir/count-allowed-pending"
+run_action "$allowed_pending_count" none pending-predecessor '' true >"$allowed_pending_output" 2>&1
+[[ "$(<"$allowed_pending_count")" == "1" ]] || {
+  echo "required-gate action did not immediately allow a pending prior gate when opted in" >&2
+  exit 1
+}
+grep -Fq 'allowing the distinct metadata-only job' "$allowed_pending_output" || {
+  echo "required-gate action did not report its pending opt-in result" >&2
+  exit 1
+}
+
+allowed_missing_count="$tmp_dir/count-allowed-missing"
+run_action "$allowed_missing_count" none no-prior '' true
+[[ "$(<"$allowed_missing_count")" == "1" ]] || {
+  echo "required-gate action did not immediately allow a missing prior gate when opted in" >&2
+  exit 1
+}
+
+allowed_failure_output="$tmp_dir/allowed-failure-output"
+set +e
+run_action "$tmp_dir/count-allowed-failure" none failed-predecessor '' true >"$allowed_failure_output" 2>&1
+allowed_failure_status=$?
+set -e
+[[ "$allowed_failure_status" -ne 0 ]] || {
+  echo "required-gate action allowed allow-pending to mask a terminal failed required gate" >&2
+  exit 1
+}
+grep -Fq 'concluded failure' "$allowed_failure_output" || {
+  echo "required-gate action did not retain terminal failure behavior when opted in" >&2
   exit 1
 }
 

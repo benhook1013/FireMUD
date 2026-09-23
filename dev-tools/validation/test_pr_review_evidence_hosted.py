@@ -154,6 +154,68 @@ class GithubAndEvidenceTests(unittest.TestCase):
         self.assertIsNone(report["checkpoints"][0].get("duration_seconds"))
         self.assertTrue(report["warnings"])
 
+    def test_duration_evidence_requires_matching_visible_and_hidden_values(self):
+        comments = [
+            {
+                "id": 1,
+                "body": "Hosted: 0 found / 0 accepted · `abcdef1` · 1 files",
+                "created_at": "2026-09-23T00:00:00Z",
+            },
+            {
+                "id": 2,
+                "body": "Hosted: 0 found / 0 accepted · `abcdef1` · 1 files · 4s\n"
+                "<!-- firemud-hosted-review: 10 -->\n"
+                "<!-- firemud-review-duration-seconds: 4 -->",
+                "created_at": "2026-09-23T00:01:00Z",
+            },
+            {
+                "id": 3,
+                "body": "Hosted: 0 found / 0 accepted · `abcdef1` · 1 files · 4s\n"
+                "<!-- firemud-review-duration-seconds: 4 -->",
+                "created_at": "2026-09-23T00:02:00Z",
+            },
+            {
+                "id": 4,
+                "body": "Hosted: 0 found / 0 accepted · `abcdef1` · 1 files\n"
+                "<!-- firemud-review-duration-seconds: 4 -->",
+                "created_at": "2026-09-23T00:03:00Z",
+            },
+            {
+                "id": 5,
+                "body": "Hosted: 0 found / 0 accepted · `abcdef1` · 1 files · 4s\n"
+                "<!-- firemud-review-duration-seconds: nope -->",
+                "created_at": "2026-09-23T00:04:00Z",
+            },
+            {
+                "id": 6,
+                "body": "Hosted: 0 found / 0 accepted · `abcdef1` · 1 files · 4s\n"
+                "<!-- firemud-review-duration-seconds: 5 -->",
+                "created_at": "2026-09-23T00:05:00Z",
+            },
+            {
+                "id": 7,
+                "body": "Hosted: 0 found / 0 accepted · `abcdef1` · 1 files · 4s\n"
+                "<!-- firemud-review-duration-seconds: 4 -->\n"
+                "<!-- firemud-review-duration-seconds: 4 -->",
+                "created_at": "2026-09-23T00:06:00Z",
+            },
+        ]
+        parsed, unparsed = evidence.parse_checkpoint_comments(comments)
+
+        self.assertEqual(unparsed, 0)
+        self.assertIsNone(parsed[0].duration_seconds)
+        self.assertFalse(parsed[0].duration_invalid)
+        self.assertEqual(parsed[1].duration_seconds, 4)
+        self.assertEqual(parsed[2].duration_seconds, 4)
+        self.assertFalse(parsed[2].duration_invalid)
+        self.assertTrue(all(item.duration_invalid for item in parsed[3:]))
+        self.assertTrue(evidence.hosted_checkpoint_evidence(parsed[5], [], HEAD)["status"] == "missing")
+        report = evidence.collect_evidence(comments)
+        self.assertEqual(report["duration_audit"]["malformed_count"], 1)
+        self.assertEqual(report["duration_audit"]["duplicate_count"], 1)
+        self.assertEqual(report["duration_audit"]["missing_count"], 2)
+        self.assertEqual(report["duration_audit"]["mismatch_count"], 1)
+
     def test_malformed_private_capture_fails_closed(self):
         checkpoint = evidence.Checkpoint(
             1, "2026-09-23T00:00:00Z", "CLI", 1, 1, HEAD[:7], 1, False, None, "run.A1", None
@@ -216,6 +278,45 @@ class GithubAndEvidenceTests(unittest.TestCase):
             common = Path(directory)
             capture = self._cli_capture(common, decision_text="1\trejected\tduplicate finding\n")
             self.assertEqual(capture.decisions, {1: ("rejected", "duplicate finding")})
+
+    def test_cli_duration_evidence_fails_closed_and_valid_duration_checks_capture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            run = common / "coderabbit-review-logs" / "run.Decision"
+            run.mkdir(parents=True)
+            (run / "metadata").write_text(
+                f"run_id=run.Decision\nrepository={REPO}\npull_request={PR}\n"
+                f"candidate_sha={HEAD}\ncandidate_files=1\nreview_duration_seconds=9\n",
+                encoding="utf-8",
+            )
+            (run / "stdout").write_text(
+                json.dumps({"type": "complete", "status": "review_completed", "findings": 0, "reviewedFiles": ["a"]})
+                + "\n",
+                encoding="utf-8",
+            )
+            (run / "exit-status").write_text("0\n", encoding="utf-8")
+            checkpoint = evidence.Checkpoint(
+                1,
+                "2026-09-23T00:00:00Z",
+                "CLI",
+                0,
+                0,
+                HEAD[:12],
+                1,
+                False,
+                None,
+                "run.Decision",
+                None,
+                9,
+            )
+            with self.assertRaisesRegex(evidence.CaptureUnavailable, "duration"):
+                evidence.load_cli_capture(checkpoint, REPO, PR, common)
+            (run / "review-duration-seconds").write_text("8\n", encoding="utf-8")
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "duration"):
+                evidence.load_cli_capture(checkpoint, REPO, PR, common)
+            (run / "review-duration-seconds").write_text("9\n", encoding="utf-8")
+            capture = evidence.load_cli_capture(checkpoint, REPO, PR, common)
+            self.assertEqual(capture.metadata["review_duration_seconds"], "9")
 
     def test_historical_rejections_capture_is_attributable_only_for_zero_accepted(self):
         with tempfile.TemporaryDirectory() as directory:
