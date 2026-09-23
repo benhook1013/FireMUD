@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Supplier;
 import net.firedevops.firemud.hostedidentity.admission.AdmissionValidator;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
@@ -1027,7 +1028,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       reason = "PublicationIdentityEvidenceIncomplete";
       message = "all five protected publication identity proofs are required for readiness";
     }
-    resource.setStatus(
+    HostedEnvironmentIdentityStatus updatedStatus =
         statusService.status(
             resource,
             phase,
@@ -1049,8 +1050,27 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
                 previousRole(resource, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE)),
             roleStatus(
                 materials.material(HostedIdentityContract.GRPC_ROLE),
-                previousRole(resource, HostedIdentityContract.GRPC_ROLE))));
+                previousRole(resource, HostedIdentityContract.GRPC_ROLE)));
+    updatedStatus.setGrpcPublication(publicationRoleStatus(resource, materials));
+    resource.setStatus(updatedStatus);
     return UpdateControl.patchStatus(resource).rescheduleAfter(properties.getReconcileInterval());
+  }
+
+  private static Map<String, HostedEnvironmentIdentityStatus.RoleStatus> publicationRoleStatus(
+      HostedEnvironmentIdentity resource, RoleMaterials materials) {
+    Map<String, HostedEnvironmentIdentityStatus.RoleStatus> previous =
+        previousPublicationRoles(resource);
+    Map<String, HostedEnvironmentIdentityStatus.RoleStatus> current = new LinkedHashMap<>();
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      String role = HostedIdentityContract.grpcPublicationRole(workload);
+      HostedEnvironmentIdentityStatus.RoleStatus prior =
+          previous == null ? null : previous.get(role);
+      HostedEnvironmentIdentityStatus.RoleStatus evidence =
+          roleStatus(materials.material(role), prior);
+      current.put(
+          role, evidence == null ? new HostedEnvironmentIdentityStatus.RoleStatus() : evidence);
+    }
+    return current;
   }
 
   private static HostedEnvironmentIdentityStatus.RoleStatus roleStatus(
@@ -1072,10 +1092,12 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
         material.state().statusValue());
   }
 
-  private static HostedEnvironmentIdentityStatus.RoleStatus previousRole(
+  static HostedEnvironmentIdentityStatus.RoleStatus previousRole(
       HostedEnvironmentIdentity resource, String role) {
     if (HostedIdentityContract.isGrpcPublicationRole(role)) {
-      return null;
+      Map<String, HostedEnvironmentIdentityStatus.RoleStatus> publicationRoles =
+          previousPublicationRoles(resource);
+      return publicationRoles == null ? null : publicationRoles.get(role);
     }
     if (resource.getStatus() == null) return null;
     return switch (role) {
@@ -1087,6 +1109,29 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       case HostedIdentityContract.GRPC_ROLE -> resource.getStatus().getGrpc();
       default -> throw new IllegalArgumentException("unsupported identity role: " + role);
     };
+  }
+
+  private static Map<String, HostedEnvironmentIdentityStatus.RoleStatus> previousPublicationRoles(
+      HostedEnvironmentIdentity resource) {
+    if (resource.getStatus() == null) {
+      return null;
+    }
+    Map<String, HostedEnvironmentIdentityStatus.RoleStatus> publicationRoles =
+        resource.getStatus().getGrpcPublication();
+    if (publicationRoles == null) {
+      // Existing status objects predate publication-role high-water evidence.
+      return null;
+    }
+    Set<String> expectedRoles =
+        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
+            .map(HostedIdentityContract::grpcPublicationRole)
+            .collect(java.util.stream.Collectors.toUnmodifiableSet());
+    if (!publicationRoles.keySet().equals(expectedRoles)
+        || publicationRoles.values().stream().anyMatch(java.util.Objects::isNull)) {
+      throw new IllegalStateException(
+          "grpc publication status must contain exactly five role entries");
+    }
+    return publicationRoles;
   }
 
   static void validateSourceProgress(

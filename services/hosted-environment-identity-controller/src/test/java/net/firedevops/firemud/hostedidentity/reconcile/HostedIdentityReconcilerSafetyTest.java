@@ -226,6 +226,12 @@ class HostedIdentityReconcilerSafetyTest {
     assertEquals("AwaitingAcceptance", status.getConditions().get(0).getReason());
     assertEquals("awaiting-acceptance", status.getConditions().get(0).getMessage());
     assertEquals(
+        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
+            .map(HostedIdentityContract::grpcPublicationRole)
+            .collect(java.util.stream.Collectors.toSet()),
+        status.getGrpcPublication().keySet());
+    assertTrue(status.getGrpcPublication().values().stream().allMatch(java.util.Objects::nonNull));
+    assertEquals(
         HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.size() + 5,
         acknowledgedProjections.size());
     assertEquals(
@@ -1473,6 +1479,81 @@ class HostedIdentityReconcilerSafetyTest {
                 IllegalStateException.class,
                 () -> HostedIdentityReconciler.validateSourceProgress(reusedKey, previous))
             .getMessage());
+  }
+
+  @Test
+  void grpcPublicationRollbackIsRejectedBeforeRecreatingMissingRuntimeProjection() {
+    String role = HostedIdentityContract.grpcPublicationRole("game-design-service");
+    DeploymentHeadGateFixture fixture =
+        new DeploymentHeadGateFixture(
+            new RuntimeProfileService.RuntimeProfile(
+                "uid",
+                "a".repeat(40),
+                "a".repeat(40),
+                HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+                32016,
+                true));
+    Map<String, HostedEnvironmentIdentityStatus.RoleStatus> publicationHistory =
+        new java.util.LinkedHashMap<>();
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      String publicationRole = HostedIdentityContract.grpcPublicationRole(workload);
+      var persistedRole = new HostedEnvironmentIdentityStatus.RoleStatus();
+      persistedRole.setRevision("sha256:" + "a".repeat(64));
+      persistedRole.setSourceGeneration(publicationRole.equals(role) ? 4L : 1L);
+      persistedRole.setSourceObjectGeneration(2L);
+      persistedRole.setSpkiSha256("b".repeat(64));
+      persistedRole.setProvenance("cert-manager");
+      persistedRole.setState("source-ready");
+      publicationHistory.put(publicationRole, persistedRole);
+    }
+    HostedEnvironmentIdentityStatus status = new HostedEnvironmentIdentityStatus();
+    status.setGrpcPublication(publicationHistory);
+    fixture.resource.setStatus(status);
+
+    Secret olderSourceSecret =
+        new SecretBuilder()
+            .withType("kubernetes.io/tls")
+            .withData(Map.of("tls.crt", encoded("older")))
+            .build();
+    CertificateMaterialService.RoleMaterial olderSource =
+        new CertificateMaterialService.RoleMaterial(
+            role,
+            olderSourceSecret,
+            new SecretMaterialValidator.MaterialSummary(
+                "c".repeat(64), "d".repeat(64), Instant.EPOCH, Instant.MAX, "e".repeat(64)),
+            3,
+            2,
+            "cert-manager",
+            SOURCE_READY);
+    when(fixture.batch.grpcPublication("game-design-service")).thenReturn(olderSource);
+
+    UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
+
+    HostedEnvironmentIdentityStatus blocked = result.getResource().orElseThrow().getStatus();
+    assertEquals(HostedEnvironmentIdentityStatus.Phase.Blocked, blocked.getPhase());
+    assertEquals("ReconciliationBlocked", blocked.getConditions().get(0).getReason());
+    assertEquals(4L, blocked.getGrpcPublication().get(role).getSourceGeneration());
+    verifyNoInteractions(fixture.projections);
+  }
+
+  @Test
+  void grpcPublicationHistoryAllowsLegacyAbsenceAndRejectsMalformedPartialMap() {
+    String role = HostedIdentityContract.grpcPublicationRole("game-design-service");
+    HostedEnvironmentIdentity resource = resource();
+    HostedEnvironmentIdentityStatus legacyStatus = new HostedEnvironmentIdentityStatus();
+    resource.setStatus(legacyStatus);
+    assertNull(HostedIdentityReconciler.previousRole(resource, role));
+
+    HostedEnvironmentIdentityStatus malformedStatus = new HostedEnvironmentIdentityStatus();
+    malformedStatus.setGrpcPublication(
+        Map.of(role, new HostedEnvironmentIdentityStatus.RoleStatus()));
+    resource.setStatus(malformedStatus);
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () -> HostedIdentityReconciler.previousRole(resource, role));
+    assertEquals(
+        "grpc publication status must contain exactly five role entries", failure.getMessage());
   }
 
   @Test

@@ -203,6 +203,12 @@ spec:
                 gatewayInternalWs: *consumer_status_schema
                 tcpProxyBridge: *consumer_status_schema
                 grpc: *consumer_status_schema
+                grpcPublication:
+                  type: object
+                  additionalProperties: *consumer_status_schema
+                  x-kubernetes-validations:
+                    - rule: "self.size() == 5 && self.all(role, role in ['grpc-publication-game-design-service', 'grpc-publication-world-management-service', 'grpc-publication-entity-management-service', 'grpc-publication-game-logic-service', 'grpc-publication-automation-scripting-service'])"
+                      message: grpcPublication must contain exactly the five supported publication roles
           x-kubernetes-validations:
             - rule: "self.metadata.name.matches('^(dev-demo|pr-[1-9][0-9]{0,50})$')"
               message: name must be dev-demo or pr-N with a positive decimal PR number
