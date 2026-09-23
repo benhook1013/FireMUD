@@ -1,6 +1,6 @@
 # Gameplay task brief: continuous merge-train review
 
-Status: active and fully realigned on 2026-09-23
+Status: active; #2844 acceptance passed locally on 2026-09-24, publication pending active Hosted review
 
 Owner: Gameplay
 
@@ -10,15 +10,15 @@ This rewritten brief supersedes the earlier #2838-only contents and every earlie
 
 Work through this single queue in order:
 
-1. **#2838 — review-duration and Codecov tooling.** Current published head `304ea81ce05f40f7dd057cba8ba515269cdb6144`, targeting `develop`, 14 owned files. CLI completed `0/0 → 1/1 → 1/1 → 0/0 → 0/0 → 0/0`; retain that taper under the recorded patch-bound judgment because the later changes are a narrow CI-environment correction and direct Hosted fixes. Hosted completed `0/0` on the earlier corrected patch, then `2/2` on `1d76bef6e`; both minor findings are fixed in the current head. Preserve and consume active Hosted/CLI reviews, CI, or fix work already producing evidence, but start no new review on #2838. A cooldown-only sentinel whose sole purpose was to issue a now-forbidden future request is obsolete: stop or detach it immediately and do not wait for it. Apply and validate any valid finding already returned by pending evidence-producing work without requesting recursive rereview. Require green required CI, zero threads, current body/LOC, and a clean merge-readiness handoff, then continue immediately to the next queue item without pausing for another Overseer instruction.
-2. **Review-control refactor — PR number pending.** General owns its implementation as a child of #2838. Do not begin review until Overseer appends the exact PR/head and confirms completion of the required independent hands-on acceptance. Do not skip this slot.
+1. **#2838 — review-duration and Codecov tooling.** Merged into `develop` as `9f8ceba9bf8ff44866db11543d7bd27e95d50fbd`. No further work in this queue slot.
+2. **#2844 — unified review control.** General's published head is `7b125df94d15024d83fec4a5003872bbd941d795`, directly against `develop`. Overseer's two independent hands-on acceptance runs and the narrow retests **passed** on clean local candidate `19383cd79b8b7cc9f9bc50211dcfbd420266f02c`. A user-triggered full Hosted review remains active on the published prior head, so General is holding the accepted commit locally. Gameplay may immediately inspect and adjudicate existing #2844 Hosted findings and the prior-head Smoke Gate failure read-only, but must not edit the shared branch, request another review, or ask General to push before that active review is terminal. Once General publishes exactly `19383cd79` with current body/LOC, take #2844 CodeRabbit and CI ownership without another Overseer pause. Required CI need not be green before review starts, but must be green before merge readiness. If General publishes a different patch, hold and request narrow re-acceptance. Do not bypass this slot.
 3. **#2818 — publication workload identity and production activation.** Current published head `24c258ddb1db5a671d008552e8c5bee4bbfdc4ac`, currently based on #2838. Before counted review it must be reconciled normally onto the accepted review-control prerequisite and retain its owned patch.
 4. **#2826 — 5B Schema.** Current published head `b0632a4c8f82c54931f3e2229cba5779258b797d`, currently based on #2818. Preserve the reviewed Schema boundary and reconcile only after its exact parent is stable.
 5. **#2827 — V3 plugin lifecycle/fences.** Current published head `443759f5304d651842ee9bfeb722dc9d4370c841`, currently based on #2826.
 
 Stop before #2828. Do not touch #2828, #2829, #2839, #2840, or later Document work under this assignment.
 
-If the review-control prerequisite is not ready when #2838 finishes, stop cleanly at that queue slot and report the dependency. Do not bypass it to spend review quota on #2818. Do not allocate a sentinel or poll the private task brief: Overseer owns appending the accepted PR/head and will explicitly wake Gameplay when the slot becomes actionable.
+The #2844 acceptance condition is recorded above. Gameplay may resume read-only preparation now and should move into full review as soon as the accepted head is published; no separate CI or Overseer handoff is required for that transition. Do not bypass #2844 to spend review quota on #2818. A single existing-review waiter may observe the active Hosted request, but avoid duplicate polling or any new trigger before it is terminal.
 
 ## Preparation before each PR
 
