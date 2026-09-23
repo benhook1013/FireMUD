@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from pr_review.policy import Channel, Evidence, ReviewStatus, completion_status, select_review_target, taper_satisfied
 from pr_review.stack import PRSnapshot, ReconciliationStatus, ReviewAnchor, classify_anchor, reconcile_stack
-from pr_review.state import Judgment, PolicyOverride, ReviewState, StackReconciliationDecision, StateStore
+from pr_review.state import Judgment, PolicyOverride, ReviewState, StackReconciliationDecision, StateError, StateStore
 
 
 def _append_pr(path: str, pr: int) -> None:
@@ -29,9 +29,11 @@ class ReviewStateStackTest(unittest.TestCase):
             state = ReviewState(
                 ordered_prs=(2838, 2818),
                 policy_overrides={
-                    "2838:hosted": PolicyOverride(hosted_zero_useful=2, head="h1", checkpoint="c1", reason="close-out")
+                    "2838:hosted": PolicyOverride(
+                        hosted_zero_useful=2, head="h1", checkpoint="c1", reason="close-out", patch_id="p1"
+                    )
                 },
-                judgments=(Judgment(2838, "cli", "retain", "h1", "c1", "equivalent history reviewed"),),
+                judgments=(Judgment(2838, "cli", "retain", "h1", "c1", "equivalent history reviewed", "p1"),),
                 reconciliations=(
                     StackReconciliationDecision(
                         2838,
@@ -77,13 +79,91 @@ class ReviewStateStackTest(unittest.TestCase):
             ordered_prs=(1,),
             policy_overrides={
                 "1:hosted": PolicyOverride(
-                    hosted_zero_useful=2, head="h", checkpoint="hosted-1", reason="hosted close-out"
+                    hosted_zero_useful=2, head="h", checkpoint="hosted-1", reason="hosted close-out", patch_id="p"
                 ),
-                "1:cli": PolicyOverride(cli_zero_useful=1, head="h", checkpoint="cli-1", reason="CLI close-out"),
+                "1:cli": PolicyOverride(
+                    cli_zero_useful=1, head="h", checkpoint="cli-1", reason="CLI close-out", patch_id="p"
+                ),
             },
         )
         self.assertEqual(state.policy_overrides["1:hosted"].hosted_zero_useful, 2)
         self.assertEqual(state.policy_overrides["1:cli"].cli_zero_useful, 1)
+
+    def test_zero_useful_override_is_rejected_at_the_state_boundary(self):
+        with self.assertRaises(StateError):
+            PolicyOverride(hosted_zero_useful=0, head="h", checkpoint="c", reason="close-out", patch_id="p")
+
+    def test_legacy_or_stale_policy_override_cannot_apply_without_exact_patch_identity(self):
+        state = ReviewState(
+            ordered_prs=(1,),
+            policy_overrides={
+                "1:cli": PolicyOverride(cli_zero_useful=1, head="h", checkpoint="c", reason="close-out", patch_id="p")
+            },
+        )
+        current = Evidence(1, "h", "c", patch_id="other", anchored=True, completed=True, attributable=True)
+        self.assertEqual(completion_status(state, Channel.CLI, (current,)), ReviewStatus.READY)
+        legacy = ReviewState(
+            ordered_prs=(1,),
+            policy_overrides={
+                "1:cli": PolicyOverride(cli_zero_useful=1, head="h", checkpoint="c", reason="legacy")
+            },
+        )
+        self.assertEqual(completion_status(legacy, Channel.CLI, (dataclasses.replace(current, patch_id=None),)), ReviewStatus.READY)
+
+    def test_override_cannot_bypass_an_accepted_or_non_zero_useful_checkpoint(self):
+        state = ReviewState(
+            ordered_prs=(1,),
+            policy_overrides={
+                "1:hosted": PolicyOverride(
+                    hosted_zero_useful=1, head="h", checkpoint="c", reason="narrow close-out", patch_id="p"
+                )
+            },
+        )
+        accepted = Evidence(
+            1,
+            "h",
+            "c",
+            patch_id="p",
+            anchored=True,
+            completed=True,
+            attributable=True,
+            corrected_state=True,
+            accepted=1,
+        )
+        self.assertEqual(completion_status(state, Channel.HOSTED, (accepted,)), ReviewStatus.READY)
+
+    def test_valid_complete_requires_true_anchor_and_hosted_corrected_state_for_every_round(self):
+        unanchored = Evidence(
+            1, "h", "c", patch_id="p", completed=True, attributable=True, corrected_state=True, anchored=None
+        )
+        self.assertFalse(taper_satisfied(Channel.CLI, (unanchored,), 1))
+        not_corrected = Evidence(
+            1, "h", "c1", patch_id="p", anchored=True, completed=True, attributable=True, corrected_state=False
+        )
+        corrected = Evidence(
+            1, "h", "c2", patch_id="p", anchored=True, completed=True, attributable=True, corrected_state=True
+        )
+        self.assertFalse(taper_satisfied(Channel.HOSTED, (not_corrected, corrected), 2))
+
+    def test_hosted_default_requires_two_corrected_state_dry_rounds_but_override_allows_one(self):
+        first = Evidence(
+            1, "h", "c1", patch_id="p", anchored=True, completed=True, attributable=True, corrected_state=True
+        )
+        second = Evidence(
+            1, "h", "c2", patch_id="p", anchored=True, completed=True, attributable=True, corrected_state=True
+        )
+        state = ReviewState(ordered_prs=(1,))
+        self.assertEqual(completion_status(state, Channel.HOSTED, (first,)), ReviewStatus.READY)
+        self.assertEqual(completion_status(state, Channel.HOSTED, (first, second)), ReviewStatus.COMPLETE)
+        override = ReviewState(
+            ordered_prs=(1,),
+            policy_overrides={
+                "1:hosted": PolicyOverride(
+                    hosted_zero_useful=1, head="h", checkpoint="c1", reason="narrow close-out", patch_id="p"
+                )
+            },
+        )
+        self.assertEqual(completion_status(override, Channel.HOSTED, (first,)), ReviewStatus.COMPLETE)
 
     def test_merged_predecessors_collapse_to_nearest_unmerged_or_default(self):
         snapshots = {
@@ -164,17 +244,19 @@ class ReviewStateStackTest(unittest.TestCase):
 
     def test_cli_advances_through_consecutive_stable_prs_after_three_zero_useful(self):
         state = ReviewState(ordered_prs=(1, 2, 3))
-        history = tuple(Evidence(1, "h1", f"c{i}", completed=True, attributable=True) for i in range(3))
+        history = tuple(
+            Evidence(1, "h1", f"c{i}", anchored=True, completed=True, attributable=True) for i in range(3)
+        )
         target = select_review_target(state, Channel.CLI, (1, 2, 3), {1: history, 2: history, 3: ()})
         self.assertEqual((target.target, target.status), (3, ReviewStatus.MISSING_EVIDENCE))
 
     def test_cli_stops_at_blocked_pr_and_accepted_finding_resets_streak(self):
         state = ReviewState(ordered_prs=(1, 2))
         history = (
-            Evidence(1, "h", "c1", completed=True, attributable=True),
-            Evidence(1, "h", "c2", completed=True, attributable=True),
-            Evidence(1, "h", "c3", completed=True, attributable=True, accepted=1),
-            Evidence(1, "h", "c4", completed=True, attributable=True),
+            Evidence(1, "h", "c1", anchored=True, completed=True, attributable=True),
+            Evidence(1, "h", "c2", anchored=True, completed=True, attributable=True),
+            Evidence(1, "h", "c3", anchored=True, completed=True, attributable=True, accepted=1),
+            Evidence(1, "h", "c4", anchored=True, completed=True, attributable=True),
         )
         target = select_review_target(state, Channel.CLI, (1, 2), {1: history, 2: ()})
         self.assertEqual((target.target, target.status), (1, ReviewStatus.READY))
@@ -183,7 +265,10 @@ class ReviewStateStackTest(unittest.TestCase):
             state,
             Channel.CLI,
             (1, 2),
-            {1: tuple(Evidence(1, "h", f"c{i}", completed=True, attributable=True) for i in range(3)), 2: (blocked,)},
+            {
+                1: tuple(Evidence(1, "h", f"c{i}", anchored=True, completed=True, attributable=True) for i in range(3)),
+                2: (blocked,),
+            },
         )
         self.assertEqual((target.target, target.status), (2, ReviewStatus.HELD))
 
@@ -206,7 +291,10 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertEqual(completion_status(state, Channel.CLI, history), ReviewStatus.READY)
 
     def test_correction_checkpoint_remains_evidence_but_never_changes_the_taper(self):
-        reviews = tuple(Evidence(1, "h", f"review-{index}", completed=True, attributable=True) for index in range(3))
+        reviews = tuple(
+            Evidence(1, "h", f"review-{index}", anchored=True, completed=True, attributable=True)
+            for index in range(3)
+        )
         correction = Evidence(
             1,
             "h",
@@ -216,6 +304,7 @@ class ReviewStateStackTest(unittest.TestCase):
             accepted=1,
             raw=1,
             correction=True,
+            anchored=True,
         )
         state = ReviewState(ordered_prs=(1,))
         self.assertTrue(taper_satisfied(Channel.CLI, (*reviews, correction), 3))
@@ -226,26 +315,32 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertFalse(taper_satisfied(Channel.CLI, (correction,), 3))
 
     def test_cross_channel_change_requires_exact_bound_judgment_and_provisional_never_tapers(self):
-        evidence = tuple(Evidence(1, "h", f"c{i}", completed=True, attributable=True) for i in range(3))
+        evidence = tuple(
+            Evidence(1, "h", f"c{i}", patch_id="p", anchored=True, completed=True, attributable=True)
+            for i in range(3)
+        )
         state = ReviewState(ordered_prs=(1,))
         target = select_review_target(state, Channel.CLI, (1,), {1: evidence}, other_channel_heads={1: "old"})
         self.assertEqual(target.status, ReviewStatus.JUDGMENT_REQUIRED)
         judged = ReviewState(
-            ordered_prs=(1,), judgments=(Judgment(1, "cli", "retain", "h", "c2", "retain exact checkpoint"),)
+            ordered_prs=(1,), judgments=(Judgment(1, "cli", "retain", "h", "c2", "retain exact checkpoint", "p"),)
         )
         target = select_review_target(judged, Channel.CLI, (1,), {1: evidence}, other_channel_heads={1: "old"})
         self.assertEqual(target.status, ReviewStatus.COMPLETE)
         provisional = tuple(
-            Evidence(1, "p", f"p{i}", completed=True, attributable=True, provisional=True) for i in range(3)
+            Evidence(1, "p", f"p{i}", anchored=True, completed=True, attributable=True, provisional=True)
+            for i in range(3)
         )
         target = select_review_target(state, Channel.CLI, (1,), {1: provisional})
         self.assertEqual(target.status, ReviewStatus.PROVISIONAL)
 
     def test_judgment_cannot_apply_to_another_pr_with_same_head_and_checkpoint(self):
-        history = tuple(Evidence(2, "h", f"c{i}", completed=True, attributable=True) for i in range(3))
+        history = tuple(
+            Evidence(2, "h", f"c{i}", anchored=True, completed=True, attributable=True) for i in range(3)
+        )
         state = ReviewState(
             ordered_prs=(2,),
-            judgments=(Judgment(1, "cli", "retain", "h", "c2", "belongs to PR one"),),
+            judgments=(Judgment(1, "cli", "retain", "h", "c2", "belongs to PR one", "p"),),
         )
         target = select_review_target(
             state,

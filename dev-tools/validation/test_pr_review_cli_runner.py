@@ -306,20 +306,23 @@ class CliReviewRunnerTests(unittest.TestCase):
                 self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
                 fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
 
-    def test_unresolved_hosted_cooldown_blocks_cli(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            common_dir = root / ".git"
-            common_dir.mkdir()
-            write_hosted_trigger(common_dir)
-            commands = FakeCommands(root)
-            payload = hosted_payload(hosted.REVIEW_LIMIT_MARKER)
-            with (
-                patch("pr_review.cli_runner.github_api.fetch_pull_request", return_value=payload),
-                self.assertRaisesRegex(ReviewRunnerError, "Hosted review cooldown is unresolved"),
-            ):
-                run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
-            self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+    def test_terminal_hosted_cooldown_with_or_without_reset_does_not_block_cli(self):
+        for response in (
+            hosted.REVIEW_LIMIT_MARKER,
+            f"{hosted.REVIEW_LIMIT_MARKER}\nMore included reviews available in 30 minutes",
+        ):
+            with self.subTest(response=response), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                common_dir = root / ".git"
+                common_dir.mkdir()
+                write_hosted_trigger(common_dir)
+                commands = FakeCommands(root)
+                with patch(
+                    "pr_review.cli_runner.github_api.fetch_pull_request",
+                    return_value=hosted_payload(response),
+                ):
+                    run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+                self.assertTrue(any(call[0][0] == "coderabbit" for call in commands.calls))
 
     def test_durable_posting_reservation_blocks_cli_without_trigger_identity(self):
         with tempfile.TemporaryDirectory() as directory:

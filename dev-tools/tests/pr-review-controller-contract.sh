@@ -74,7 +74,7 @@ grep -Fq 'merge-base SHA' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not require merge-base anchoring'
 grep -Fq 'unique patch identity' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not require patch anchoring'
-grep -Fq 'one corrected-state zero-useful' design/developer-workflows/pr-lifecycle.md \
+grep -Fq 'two consecutive corrected-state zero-useful' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not define Hosted taper'
 grep -Fq 'three consecutive zero-useful' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not define CLI taper'

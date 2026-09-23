@@ -23,7 +23,6 @@ import tempfile
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -260,11 +259,10 @@ def _assert_no_active_hosted_review(repo: str, pr_number: int, common_dir: Path)
             state = hosted.trigger_state(repo, pr_number, payload, record, record_path)
             if state.state in {"active", "awaiting_response", "ambiguous", "unattributed", "timed_out"}:
                 raise ReviewRunnerError(f"Hosted review requires resolution before CLI review: {state.state}")
-            if state.state == "rate_limited":
-                reset = hosted.parse_timestamp(state.cooldown_until)
-                if reset is None or reset > datetime.now(timezone.utc):
-                    raise ReviewRunnerError("Hosted review cooldown is unresolved")
-            elif state.state not in {"completed", "noop", "failed", "retired"}:
+            # A terminal Hosted quota response holds Hosted targeting, not the
+            # independent CLI channel. Only an in-flight or ambiguous Hosted
+            # request needs the shared per-PR execution fence.
+            if state.state not in {"completed", "noop", "failed", "retired", "rate_limited"}:
                 raise ReviewRunnerError(f"Hosted review has an unsupported state before CLI review: {state.state}")
     except ReviewRunnerError:
         raise

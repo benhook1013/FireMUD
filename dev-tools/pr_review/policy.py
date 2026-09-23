@@ -37,6 +37,7 @@ class Evidence:
     pr: int
     head: str
     checkpoint: str
+    patch_id: str | None = None
     completed: bool = False
     attributable: bool = False
     anchored: bool | None = None
@@ -56,7 +57,12 @@ class Evidence:
     def from_value(cls, value: Evidence | Mapping[str, Any]) -> Evidence:
         if isinstance(value, cls):
             return value
-        aliases = {"number": "pr", "reviewed_head": "head", "checkpoint_id": "checkpoint"}
+        aliases = {
+            "number": "pr",
+            "reviewed_head": "head",
+            "checkpoint_id": "checkpoint",
+            "patch_identity": "patch_id",
+        }
         data = {aliases.get(key, key): item for key, item in value.items()}
         return cls(**{field.name: data[field.name] for field in dataclasses.fields(cls) if field.name in data})
 
@@ -81,18 +87,33 @@ class ChannelDecision:
 
 def _override(state: ReviewState, pr: int, channel: Channel, evidence: Evidence) -> PolicyOverride | None:
     candidate = state.policy_overrides.get(f"{pr}:{channel.value}")
-    return candidate if candidate and candidate.applies(evidence.head, evidence.checkpoint) else None
+    if not candidate or not candidate.applies(evidence.head, evidence.checkpoint, evidence.patch_id):
+        return None
+    # An override can shorten the required dry streak, never turn malformed,
+    # accepted, provisional, or uncorrected evidence into a completed round.
+    if not _valid_complete(evidence, channel) or evidence.corrected_state is not True or evidence.accepted != 0:
+        return None
+    return candidate
 
 
 def _judgment(state: ReviewState, channel: Channel, evidence: Evidence) -> Judgment | None:
     for candidate in reversed(state.judgments):
-        if candidate.applies(evidence.pr, channel.value, evidence.head, evidence.checkpoint):
+        if candidate.applies(evidence.pr, channel.value, evidence.head, evidence.checkpoint, evidence.patch_id):
             return candidate
     return None
 
 
-def _valid_complete(evidence: Evidence) -> bool:
-    return evidence.completed and evidence.attributable and evidence.anchored is not False and not evidence.provisional
+def _valid_complete(evidence: Evidence, channel: Channel | str | None = None) -> bool:
+    """Return whether one checkpoint is eligible to contribute to taper."""
+
+    selected = Channel(channel) if channel is not None else None
+    return (
+        evidence.completed is True
+        and evidence.attributable is True
+        and evidence.anchored is True
+        and evidence.provisional is False
+        and (selected != Channel.HOSTED or evidence.corrected_state is True)
+    )
 
 
 def taper_satisfied(channel: Channel | str, history: Iterable[Evidence | Mapping[str, Any]], required: int) -> bool:
@@ -107,9 +128,9 @@ def taper_satisfied(channel: Channel | str, history: Iterable[Evidence | Mapping
     for count, item in enumerate(reversed(values), start=1):
         if item.head != latest_head:
             break
-        if not _valid_complete(item):
+        if not _valid_complete(item, channel):
             break
-        if item.accepted:
+        if item.accepted != 0:
             break
         if count >= required:
             return True
@@ -154,10 +175,10 @@ def completion_status(
     reconciliation_value = reconciliation.value if isinstance(reconciliation, ReconciliationStatus) else reconciliation
     if reconciliation_value == ReconciliationStatus.PATCH_CHANGED.value:
         return ReviewStatus.READY
-    if latest.anchored is False:
+    if latest.anchored is not True:
         return ReviewStatus.READY
     override = _override(state, latest.pr, selected, latest)
-    required = 1 if selected == Channel.HOSTED else 3
+    required = 2 if selected == Channel.HOSTED else 3
     if override:
         value = override.hosted_zero_useful if selected == Channel.HOSTED else override.cli_zero_useful
         if value is not None:

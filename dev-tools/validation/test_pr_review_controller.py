@@ -103,9 +103,20 @@ class ControllerTests(unittest.TestCase):
         values = {1: pr(1, HEAD_1), 2: pr(2, HEAD_2)}
         evidence = {
             (1, "hosted"): [
-                Evidence(1, HEAD_1, "h1", completed=True, attributable=True, corrected_state=True, rate_limited=True)
+                Evidence(
+                    1,
+                    HEAD_1,
+                    "h1",
+                    anchored=True,
+                    completed=True,
+                    attributable=True,
+                    corrected_state=True,
+                    rate_limited=True,
+                )
             ],
-            (1, "cli"): [Evidence(1, "9" * 40, "c1", completed=True, attributable=True) for _ in range(3)],
+            (1, "cli"): [
+                Evidence(1, "9" * 40, "c1", anchored=True, completed=True, attributable=True) for _ in range(3)
+            ],
         }
         controller = self.make(values, evidence)
         controller.set_stack([1, 2])
@@ -114,24 +125,121 @@ class ControllerTests(unittest.TestCase):
 
     def test_exact_bound_judgment_allows_cross_channel_history(self):
         values = {1: pr(1, HEAD_1)}
-        history = [Evidence(1, HEAD_1, f"c{i}", completed=True, attributable=True) for i in range(3)]
+        history = [
+            Evidence(1, HEAD_1, f"c{i}", patch_id=f"patch-{HEAD_1[:4]}", anchored=True, completed=True, attributable=True)
+            for i in range(3)
+        ]
         evidence = {
             (1, "cli"): history,
-            (1, "hosted"): [Evidence(1, "9" * 40, "h", completed=True, attributable=True, corrected_state=True)],
+            (1, "hosted"): [
+                Evidence(1, "9" * 40, "h", anchored=True, completed=True, attributable=True, corrected_state=True)
+            ],
         }
         controller = self.make(values, evidence)
         controller.set_stack([1])
         with self.assertRaises(ControllerError):
             controller.resolve_cli_target()
         controller.decide_judgment(
-            pr=1, channel="cli", decision="retain", head=HEAD_1, checkpoint="c2", reason="same reviewed candidate"
+            pr=1,
+            channel="cli",
+            decision="retain",
+            head=HEAD_1,
+            checkpoint="c2",
+            reason="same reviewed candidate",
         )
         with self.assertRaises(ControllerError):
             controller.resolve_cli_target()
 
+    def test_policy_override_requires_current_corrected_zero_useful_patch_bound_checkpoint(self):
+        values = {1: pr(1, HEAD_1)}
+        evidence = {
+            (1, "hosted"): [
+                {
+                    "pr": 1,
+                    "head": HEAD_1,
+                    "checkpoint": "hosted-close",
+                    "completed": True,
+                    "attributable": True,
+                    "anchored": True,
+                    "corrected_state": True,
+                    "accepted": 0,
+                    "patch_id": f"patch-{HEAD_1[:4]}",
+                }
+            ]
+        }
+        controller = self.make(values, evidence)
+        controller.set_stack([1])
+        result = controller.decide_policy(
+            pr=1,
+            head=HEAD_1,
+            checkpoint="hosted-close",
+            hosted_zero_useful=1,
+            reason="narrow corrected-state close-out",
+        )
+        self.assertEqual(result["policy_override"]["patch_id"], f"patch-{HEAD_1[:4]}")
+        self.assertEqual(controller.status()["prs"][0]["channels"]["hosted"], "COMPLETE")
+
+        with self.assertRaises(ControllerError):
+            controller.decide_policy(
+                pr=1,
+                head=HEAD_1,
+                checkpoint="hosted-close",
+                hosted_zero_useful=0,
+                reason="must not bypass taper",
+            )
+
+    def test_policy_override_rejects_accepted_or_stale_checkpoint(self):
+        values = {1: pr(1, HEAD_1)}
+        accepted = {
+            (1, "hosted"): [
+                {
+                    "pr": 1,
+                    "head": HEAD_1,
+                    "checkpoint": "accepted",
+                    "completed": True,
+                    "attributable": True,
+                    "anchored": True,
+                    "corrected_state": True,
+                    "accepted": 1,
+                    "patch_id": f"patch-{HEAD_1[:4]}",
+                }
+            ]
+        }
+        controller = self.make(values, accepted)
+        controller.set_stack([1])
+        with self.assertRaisesRegex(ControllerError, "zero-useful"):
+            controller.decide_policy(
+                pr=1, head=HEAD_1, checkpoint="accepted", hosted_zero_useful=1, reason="accepted is not dry"
+            )
+
+        stale = {
+            (1, "hosted"): [
+                {
+                    "pr": 1,
+                    "head": HEAD_1,
+                    "checkpoint": "stale",
+                    "completed": True,
+                    "attributable": True,
+                    "anchored": True,
+                    "corrected_state": True,
+                    "accepted": 0,
+                    "patch_id": "different-patch",
+                }
+            ]
+        }
+        controller = self.make(values, stale)
+        controller.set_stack([1])
+        with self.assertRaisesRegex(ControllerError, "patch identity"):
+            controller.decide_policy(
+                pr=1, head=HEAD_1, checkpoint="stale", hosted_zero_useful=1, reason="stale patch"
+            )
     def test_provisional_discovery_is_one_exact_pass_and_never_tapers(self):
         values = {1: pr(1, HEAD_1, base_tip="9" * 40)}
-        evidence = {(1, "cli"): [Evidence(1, HEAD_1, "p1", completed=True, attributable=True, provisional=True)]}
+        evidence = {
+            (1, "cli"): [
+                Evidence(1, HEAD_1, "p1", anchored=True, completed=True, attributable=True, provisional=True)
+            ]
+        }
         controller = self.make(values, evidence)
         controller.set_stack([1])
         # The exact reason is checked by the controller before a runner is invoked.
@@ -142,6 +250,7 @@ class ControllerTests(unittest.TestCase):
                 "head": HEAD_1,
                 "checkpoint": "p2",
                 "completed": True,
+                "anchored": True,
                 "attributable": True,
                 "provisional": True,
                 "parent_head": selected.anchor.parent_head,
@@ -165,6 +274,7 @@ class ControllerTests(unittest.TestCase):
                     "head": HEAD_1,
                     "checkpoint": f"c{index}",
                     "completed": True,
+                    "anchored": True,
                     "attributable": True,
                     "accepted": 0,
                     "child_head": HEAD_1,
@@ -217,6 +327,7 @@ class ControllerTests(unittest.TestCase):
                     "head": HEAD_1,
                     "checkpoint": f"parent-cli-{index}",
                     "completed": True,
+                    "anchored": True,
                     "attributable": True,
                     "accepted": 0,
                     "child_head": HEAD_1,
@@ -233,6 +344,7 @@ class ControllerTests(unittest.TestCase):
                     "head": "9" * 40,
                     "checkpoint": "cli-old-parent",
                     "completed": True,
+                    "anchored": True,
                     "attributable": True,
                     "child_head": "9" * 40,
                     "parent_identity": "1",
@@ -294,6 +406,7 @@ class ControllerTests(unittest.TestCase):
                     "head": "9" * 40,
                     "checkpoint": "hosted-old-parent",
                     "completed": True,
+                    "anchored": True,
                     "attributable": True,
                     "child_head": "9" * 40,
                     "parent_identity": "1",
@@ -328,6 +441,7 @@ class ControllerTests(unittest.TestCase):
                     "head": "9" * 40,
                     "checkpoint": "cli-old-parent",
                     "completed": True,
+                    "anchored": True,
                     "attributable": True,
                     "child_head": "9" * 40,
                     "parent_identity": "1",
@@ -358,6 +472,7 @@ class ControllerTests(unittest.TestCase):
                     "head": HEAD_1,
                     "checkpoint": "hosted-parent-moved",
                     "completed": True,
+                    "anchored": True,
                     "attributable": True,
                     "child_head": HEAD_1,
                     "parent_identity": "develop",
@@ -372,6 +487,7 @@ class ControllerTests(unittest.TestCase):
                     "head": HEAD_1,
                     "checkpoint": "cli-patch-changed",
                     "completed": True,
+                    "anchored": True,
                     "attributable": True,
                     "child_head": HEAD_1,
                     "parent_identity": "develop",
@@ -392,6 +508,7 @@ class ControllerTests(unittest.TestCase):
                     "head": HEAD_1,
                     "checkpoint": "hosted-merge-base-changed",
                     "completed": True,
+                    "anchored": True,
                     "attributable": True,
                     "child_head": HEAD_1,
                     "parent_identity": "develop",

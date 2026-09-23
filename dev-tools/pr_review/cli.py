@@ -8,8 +8,8 @@ import sys
 from collections.abc import Mapping
 from typing import Any
 
+from . import acceptance, github, hosted
 from . import evidence as evidence_module
-from . import github, hosted
 from . import status as status_module
 from .controller import ReviewController
 from .runtime import default_controller
@@ -41,6 +41,16 @@ def _nonnegative_int(value: str) -> int:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dev-tools/pr-review")
+    parser.add_argument(
+        "--acceptance-fixture",
+        metavar="JSON",
+        help="use a synthetic fixture for an isolated hands-on acceptance run",
+    )
+    parser.add_argument(
+        "--state-path",
+        metavar="PATH",
+        help="isolated state file (required with --acceptance-fixture)",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
 
     stack = commands.add_parser("stack", help="configure the one repository review stack")
@@ -110,6 +120,19 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _controller(args: argparse.Namespace) -> tuple[ReviewController, acceptance.AcceptanceFixture | None]:
+    fixture_path = args.acceptance_fixture
+    isolated_state = args.state_path
+    if (fixture_path is None) != (isolated_state is None):
+        raise CliError("--acceptance-fixture and --state-path must be supplied together")
+    if fixture_path is not None and isolated_state is not None:
+        fixture = acceptance.load(fixture_path, isolated_state)
+        return fixture.controller(), fixture
+    if args.command == "stack":
+        return ReviewController(), None
+    return default_controller(), None
+
+
 def _render(value: Any, as_json: bool = False) -> str:
     if hasattr(value, "as_dict"):
         value = value.as_dict()
@@ -123,15 +146,16 @@ def _render(value: Any, as_json: bool = False) -> str:
 
 
 def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
+    controller, fixture = _controller(args)
     if args.command == "stack":
-        controller = ReviewController()
         value = controller.set_stack(args.pr_numbers) if args.stack_command == "set" else controller.show_stack()
         return value, 0
 
-    controller = default_controller()
     if args.command == "status":
         if args.pr is None:
             return controller.status(), 0
+        if fixture is not None:
+            return fixture.status(controller, args.pr), 0
         report = status_module.status(args.pr)
         stack_report = controller.status()
         report["review_stack"] = stack_report
@@ -161,6 +185,8 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
     if args.command == "evidence":
         if args.pr is None:
             return controller.evidence(), 0
+        if fixture is not None:
+            return {"pr": args.pr, "policy": controller.evidence(args.pr)[str(args.pr)], "checkpoints": []}, 0
         return {
             "pr": args.pr,
             "policy": controller.evidence(args.pr)[str(args.pr)],
@@ -180,6 +206,8 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
         )
         return result, int(getattr(result, "exit_status", 0))
     if args.command == "decide":
+        if fixture is not None and args.decide_command in {"trigger-recover-prepost", "trigger-retire"}:
+            raise CliError("Hosted trigger commands are unavailable in acceptance fixture mode")
         if args.decide_command == "trigger-recover-prepost":
             if not args.confirmed_not_posted:
                 raise CliError("pre-POST recovery requires --confirmed-not-posted operator assertion")

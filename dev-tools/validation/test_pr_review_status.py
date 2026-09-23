@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -188,6 +189,62 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(report["review_sequence"][0]["hosted_review_id"], 500)
         self.assertEqual(report["review_sequence"][0]["duration_seconds"], 17)
         self.assertEqual(report["checkpoint_counts"]["by_type"]["Hosted"]["count"], 1)
+
+    def test_pr_level_review_decision_is_not_labeled_exact_head(self) -> None:
+        payload = github_payload()
+        pull_request = payload["data"]["repository"]["pullRequest"]
+        pull_request["reviewDecision"] = "CHANGES_REQUESTED"
+        decision = status._review_decision(payload, HEAD, pull_request)
+        self.assertEqual(decision["status"], "CHANGES_REQUESTED")
+        self.assertEqual(decision["scope"], "pull_request")
+        self.assertIsNone(decision["head_sha"])
+        self.assertFalse(decision["exact_head"])
+
+    def test_review_node_fallback_remains_exact_head_scoped(self) -> None:
+        payload = github_payload()
+        pull_request = payload["data"]["repository"]["pullRequest"]
+        pull_request["reviews"]["nodes"] = [
+            {
+                "databaseId": 501,
+                "state": "APPROVED",
+                "submittedAt": "2026-09-23T01:00:00Z",
+                "commit": {"oid": HEAD},
+            }
+        ]
+        decision = status._review_decision(payload, HEAD, pull_request)
+        self.assertEqual(decision["status"], "APPROVED")
+        self.assertEqual(decision["scope"], "exact_head_review_node")
+        self.assertEqual(decision["head_sha"], HEAD)
+        self.assertTrue(decision["exact_head"])
+
+    def test_archived_hosted_trigger_is_historical_not_current(self) -> None:
+        payload = github_payload()
+        record = {
+            "schema_version": 1,
+            "status": "posted",
+            "repository": "owner/repo",
+            "pr_number": 2838,
+            "head_sha": HEAD,
+            "trigger": {
+                "id": 10,
+                "created_at": "2026-09-22T00:00:00Z",
+                "url": "https://github.test/comments/10",
+                "type": "full",
+                "command": "@coderabbitai full review",
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "trigger-7.json"
+            archive.write_text(json.dumps(record), encoding="utf-8")
+            with (
+                patch.object(status.evidence, "git_common_dir", return_value=Path(directory)),
+                patch.object(status.hosted, "trigger_record_paths", return_value=[archive]),
+            ):
+                result = status._trigger("owner/repo", 2838, payload, HEAD)
+        self.assertEqual(result["state"], "unavailable")
+        self.assertEqual(result["classification"], "unavailable/no-current-request")
+        self.assertEqual(result["historical"]["classification"], "historical")
+        self.assertNotEqual(result["historical"]["state"], result["state"])
 
     def test_compact_and_json_views_use_the_same_report(self) -> None:
         report = status.build_report(

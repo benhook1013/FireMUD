@@ -871,8 +871,8 @@ class ReviewController:
     def decide_judgment(
         self, *, pr: int, channel: str, decision: str, head: str, checkpoint: str, reason: str
     ) -> dict[str, Any]:
-        self._validate_decision_identity(pr, channel, head, checkpoint)
-        judgment = Judgment(pr, channel, decision, head, checkpoint, reason)
+        patch_id = self._validate_decision_identity(pr, channel, head, checkpoint)
+        judgment = Judgment(pr, channel, decision, head, checkpoint, reason, patch_id)
         state = self.store.update(
             lambda current: dataclasses.replace(current, judgments=current.judgments + (judgment,))
         )
@@ -893,8 +893,14 @@ class ReviewController:
         ]
         if len(channels) != 1:
             raise ControllerError("a policy decision must set exactly one channel")
-        self._validate_decision_identity(pr, channels[0], head, checkpoint)
-        override = PolicyOverride(hosted_zero_useful, cli_zero_useful, head, checkpoint, reason)
+        selected_channel = channels[0]
+        value = hosted_zero_useful if selected_channel == "hosted" else cli_zero_useful
+        if value is None or not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ControllerError("a policy override must require at least one zero-useful review")
+        patch_id = self._validate_decision_identity(
+            pr, selected_channel, head, checkpoint, require_zero_useful=True
+        )
+        override = PolicyOverride(hosted_zero_useful, cli_zero_useful, head, checkpoint, reason, patch_id)
         identity = f"{pr}:{channels[0]}"
         state = self.store.update(
             lambda current: dataclasses.replace(
@@ -908,19 +914,53 @@ class ReviewController:
             "policy_overrides": {k: v.to_dict() for k, v in state.policy_overrides.items()},
         }
 
-    def _validate_decision_identity(self, pr: int, channel: str, head: str, checkpoint: str) -> None:
+    def _validate_decision_identity(
+        self,
+        pr: int,
+        channel: str,
+        head: str,
+        checkpoint: str,
+        *,
+        require_zero_useful: bool = False,
+    ) -> str:
+        try:
+            selected_channel = policy.Channel(channel)
+        except ValueError as exc:
+            raise ControllerError("decision channel must be hosted or cli") from exc
         state = self._state()
         if pr not in state.ordered_prs:
             raise ControllerError(f"PR #{pr} is not in the configured review stack")
-        current = _live(self._require_github().pull_request(pr), pr)
-        if _sha(head, "decision head") != current.head:
+        live, reconciliation = self._reconciliation(state)
+        current = live[pr]
+        normalized_head = _sha(head, "decision head")
+        if normalized_head != current.head:
             raise ControllerError("decision head does not match the live pull-request head")
-        history = _history(self._evidence_provider, pr, policy.Channel(channel))
-        if not any(
-            _field(item, "checkpoint", "checkpoint_id") == checkpoint and _field(item, "head", "reviewed_head") == head
+        link = reconciliation.links[pr]
+        anchor = self._anchor(pr, current, link)
+        history = _history(self._evidence_provider, pr, selected_channel)
+        matching = [
+            policy.Evidence.from_value(item)
             for item in history
-        ):
+            if _field(item, "checkpoint", "checkpoint_id") == checkpoint
+            and _field(item, "head", "reviewed_head") == normalized_head
+        ]
+        if not matching:
             raise ControllerError("decision checkpoint is not attributable to the exact head")
+        checkpoint_evidence = matching[-1]
+        if not (
+            checkpoint_evidence.completed is True
+            and checkpoint_evidence.attributable is True
+            and checkpoint_evidence.anchored is True
+            and checkpoint_evidence.provisional is False
+        ):
+            raise ControllerError("decision checkpoint must be completed attributable anchored evidence")
+        if checkpoint_evidence.patch_id != anchor.patch_id:
+            raise ControllerError("decision checkpoint patch identity does not match the live stack anchor")
+        if require_zero_useful and (
+            checkpoint_evidence.corrected_state is not True or checkpoint_evidence.accepted != 0
+        ):
+            raise ControllerError("policy override requires a corrected-state zero-useful checkpoint")
+        return anchor.patch_id
 
     def decide(self, operation: str, **kwargs: Any) -> dict[str, Any]:
         if operation in {"retain", "reopen"}:

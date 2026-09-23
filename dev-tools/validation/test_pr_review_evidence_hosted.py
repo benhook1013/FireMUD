@@ -169,7 +169,14 @@ class GithubAndEvidenceTests(unittest.TestCase):
             with self.assertRaises(evidence.CaptureInvalid):
                 evidence.load_cli_capture(checkpoint, REPO, PR, Path(directory))
 
-    def _cli_capture(self, common: Path, *, decision_text: str | None, accepted: int = 0):
+    def _cli_capture(
+        self,
+        common: Path,
+        *,
+        decision_text: str | None,
+        rejection_text: str | None = None,
+        accepted: int = 0,
+    ):
         run_id = "run.Decision"
         run = common / "coderabbit-review-logs" / run_id
         run.mkdir(parents=True)
@@ -187,6 +194,8 @@ class GithubAndEvidenceTests(unittest.TestCase):
         (run / "exit-status").write_text("0\n", encoding="utf-8")
         if decision_text is not None:
             (run / "decisions.tsv").write_text(decision_text, encoding="utf-8")
+        if rejection_text is not None:
+            (run / "rejections.tsv").write_text(rejection_text, encoding="utf-8")
         checkpoint = evidence.Checkpoint(
             1, "2026-09-23T00:00:00Z", "CLI", 1, accepted, HEAD[:12], 1, False, None, run_id, None
         )
@@ -207,6 +216,66 @@ class GithubAndEvidenceTests(unittest.TestCase):
             common = Path(directory)
             capture = self._cli_capture(common, decision_text="1\trejected\tduplicate finding\n")
             self.assertEqual(capture.decisions, {1: ("rejected", "duplicate finding")})
+
+    def test_historical_rejections_capture_is_attributable_only_for_zero_accepted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            capture = self._cli_capture(
+                Path(directory), decision_text=None, rejection_text="1\tlegacy-ref\tduplicate finding\n"
+            )
+            self.assertEqual(capture.decisions, {1: ("rejected", "duplicate finding")})
+
+        with tempfile.TemporaryDirectory() as directory, self.assertRaisesRegex(
+            evidence.CaptureInvalid, "complete linked|cannot explain"
+        ):
+            self._cli_capture(Path(directory), decision_text=None, rejection_text="2\tlegacy-ref\tduplicate finding\n")
+
+        with tempfile.TemporaryDirectory() as directory, self.assertRaisesRegex(evidence.CaptureInvalid, "cannot explain"):
+            self._cli_capture(
+                Path(directory),
+                decision_text=None,
+                rejection_text="1\tlegacy-ref\tduplicate finding\n",
+                accepted=1,
+            )
+
+    def test_duplicate_hidden_linkage_markers_are_ambiguous(self):
+        comments = [
+            {
+                "body": (
+                    "CLI: 1 found / 0 accepted · `abcdef1` · 1 files\n"
+                    "<!-- firemud-cli-run: run.A1 -->\n"
+                    "<!-- firemud-cli-run: run.A2 -->"
+                ),
+                "created_at": "2026-09-23T00:00:00Z",
+            },
+            {
+                "body": (
+                    "Hosted: 1 found / 0 accepted · `abcdef1` · 1 files\n"
+                    "<!-- firemud-hosted-review: 10 -->\n"
+                    "<!-- firemud-hosted-review: 11 -->"
+                ),
+                "created_at": "2026-09-23T00:01:00Z",
+            },
+        ]
+        parsed, unparsed = evidence.parse_checkpoint_comments(comments)
+        self.assertEqual(parsed, [])
+        self.assertEqual(unparsed, 2)
+
+    def test_single_hidden_linkage_marker_and_missing_duration_remain_valid(self):
+        comments = [
+            {
+                "body": "CLI: 1 found / 0 accepted · `abcdef1` · 1 files\n<!-- firemud-cli-run: run.A1 -->",
+                "created_at": "2026-09-23T00:00:00Z",
+            },
+            {
+                "body": "Hosted: 0 found / 0 accepted · `abcdef1` · 1 files\n<!-- firemud-hosted-review: 10 -->",
+                "created_at": "2026-09-23T00:01:00Z",
+            },
+        ]
+        parsed, unparsed = evidence.parse_checkpoint_comments(comments)
+        self.assertEqual(unparsed, 0)
+        self.assertEqual(parsed[0].run_id, "run.A1")
+        self.assertEqual(parsed[1].hosted_review_id, 10)
+        self.assertIsNone(parsed[0].duration_seconds)
 
 
 class HostedEvidenceTests(unittest.TestCase):

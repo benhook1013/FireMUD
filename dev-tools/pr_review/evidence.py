@@ -158,20 +158,26 @@ def _fields(comment: Any, position: int) -> tuple[str, str, str | None, int | No
     return body, created, updated, comment_id, first
 
 
-def _run_id(body: str) -> str | None:
-    for line in body.splitlines()[1:]:
-        if line.strip().startswith("<!-- firemud-cli-run:"):
-            match = RUN_MARKER.fullmatch(line.strip())
-            return match.group("run_id") if match else None
-    return None
+def _run_id(body: str) -> tuple[str | None, bool]:
+    markers = [line.strip() for line in body.splitlines()[1:] if line.strip().startswith("<!-- firemud-cli-run:")]
+    if len(markers) > 1:
+        return None, True
+    if not markers:
+        return None, False
+    match = RUN_MARKER.fullmatch(markers[0])
+    return (match.group("run_id") if match else None), False
 
 
-def _hosted_id(body: str) -> int | None:
-    for line in body.splitlines()[1:]:
-        if line.strip().startswith("<!-- firemud-hosted-review:"):
-            match = HOSTED_MARKER.fullmatch(line.strip())
-            return int(match.group("review_id")) if match else None
-    return None
+def _hosted_id(body: str) -> tuple[int | None, bool]:
+    markers = [
+        line.strip() for line in body.splitlines()[1:] if line.strip().startswith("<!-- firemud-hosted-review:")
+    ]
+    if len(markers) > 1:
+        return None, True
+    if not markers:
+        return None, False
+    match = HOSTED_MARKER.fullmatch(markers[0])
+    return (int(match.group("review_id")) if match else None), False
 
 
 def _duration_marker(body: str) -> int | None:
@@ -202,6 +208,11 @@ def parse_checkpoint_comments(comments: list[dict[str, Any]]) -> tuple[list[Chec
         if suffix is None or accepted > raw:
             unparsed += 1
             continue
+        run_id, duplicate_run_marker = _run_id(body)
+        hosted_review_id, duplicate_hosted_marker = _hosted_id(body)
+        if duplicate_run_marker or duplicate_hosted_marker:
+            unparsed += 1
+            continue
         visible = suffix.group("duration")
         marker = _duration_marker(body)
         duration = marker if visible is not None and marker is not None and int(visible) == marker else None
@@ -217,8 +228,8 @@ def parse_checkpoint_comments(comments: list[dict[str, Any]]) -> tuple[list[Chec
                 file_count=int(suffix.group("files")) if suffix.group("files") else None,
                 correction=match.group("correction") is not None,
                 updated_at=updated if updated and updated != created else None,
-                run_id=_run_id(body),
-                hosted_review_id=_hosted_id(body),
+                run_id=run_id,
+                hosted_review_id=hosted_review_id,
                 duration_seconds=duration,
                 author_login=(
                     comment.get("author_login")
@@ -384,12 +395,16 @@ def _parse_capture_stdout(path: Path) -> tuple[list[dict[str, Any]], dict[str, A
 def _validate_cli_checkpoint_decisions(checkpoint: Checkpoint, capture: CaptureData) -> None:
     if checkpoint.raw_found == 0:
         return
-    if (
-        not capture.decision_file_present
-        or capture.unlinked_decisions
-        or len(capture.decisions) != checkpoint.raw_found
-    ):
+    if capture.unlinked_decisions or len(capture.decisions) != checkpoint.raw_found:
         raise CaptureInvalid("raw-positive CLI checkpoint has no complete linked findings decisions")
+    # Historical CLI runs recorded rejected findings in rejections.tsv before
+    # decisions.tsv existed.  That format is attributable only when every
+    # finding is linked as rejected and the public checkpoint reports zero
+    # accepted findings; all other raw-positive cases remain fail-closed.
+    if not capture.decision_file_present and (
+        checkpoint.accepted != 0 or any(disposition != "rejected" for disposition, _ in capture.decisions.values())
+    ):
+        raise CaptureInvalid("historical rejection records cannot explain accepted CLI findings")
     accepted = sum(disposition == "accepted" for disposition, _ in capture.decisions.values())
     if accepted != checkpoint.accepted:
         raise CaptureInvalid("CLI checkpoint accepted count does not match linked findings decisions")

@@ -27,28 +27,54 @@ class StateError(ValueError):
 
 @dataclasses.dataclass(frozen=True)
 class PolicyOverride:
-    """An optional taper override bound to one exact evidence identity."""
+    """An optional taper override bound to one exact head/checkpoint/patch identity."""
 
     hosted_zero_useful: int | None = None
     cli_zero_useful: int | None = None
     head: str | None = None
     checkpoint: str | None = None
     reason: str = ""
+    patch_id: str | None = None
 
     def __post_init__(self) -> None:
         for name in ("hosted_zero_useful", "cli_zero_useful"):
             value = getattr(self, name)
-            if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 0):
-                raise StateError(f"{name} must be a non-negative integer or null")
+            if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value <= 0):
+                raise StateError(f"{name} must be a positive integer or null")
+        if self.hosted_zero_useful is not None and self.cli_zero_useful is not None:
+            raise StateError("policy overrides must set exactly one channel")
+        if (
+            self.hosted_zero_useful is None
+            and self.cli_zero_useful is None
+            and any(value is not None for value in (self.head, self.checkpoint, self.patch_id))
+        ):
+            raise StateError("policy overrides require one channel value")
         if (self.head is None) != (self.checkpoint is None):
             raise StateError("policy overrides require both exact head and checkpoint")
+        for name in ("head", "checkpoint"):
+            value = getattr(self, name)
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise StateError(f"policy override {name} must be a non-empty string or null")
+        if self.patch_id is not None and (not isinstance(self.patch_id, str) or not self.patch_id.strip()):
+            raise StateError("policy override patch identity must be a non-empty string or null")
+        if self.patch_id is not None and self.head is None:
+            raise StateError("policy override patch identity requires exact head and checkpoint")
+        if not isinstance(self.reason, str):
+            raise StateError("policy overrides require a textual reason")
         if not self.reason.strip() and (
             self.head is not None or self.hosted_zero_useful is not None or self.cli_zero_useful is not None
         ):
             raise StateError("policy overrides require a reason")
 
-    def applies(self, head: str, checkpoint: str) -> bool:
-        return self.head == head and self.checkpoint == checkpoint
+    def applies(self, head: str, checkpoint: str, patch_id: str | None = None) -> bool:
+        # Overrides written before patch binding remain readable, but are never
+        # eligible to change taper policy.
+        return (
+            self.patch_id is not None
+            and self.head == head
+            and self.checkpoint == checkpoint
+            and self.patch_id == patch_id
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -57,11 +83,12 @@ class PolicyOverride:
             "head": self.head,
             "checkpoint": self.checkpoint,
             "reason": self.reason,
+            "patch_id": self.patch_id,
         }
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> PolicyOverride:
-        allowed = {"hosted_zero_useful", "cli_zero_useful", "head", "checkpoint", "reason"}
+        allowed = {"hosted_zero_useful", "cli_zero_useful", "head", "checkpoint", "reason", "patch_id"}
         if set(value) - allowed:
             raise StateError("policy override contains fields outside the private schema")
         return cls(
@@ -70,12 +97,13 @@ class PolicyOverride:
             head=value.get("head"),
             checkpoint=value.get("checkpoint"),
             reason=value.get("reason", ""),
+            patch_id=value.get("patch_id"),
         )
 
 
 @dataclasses.dataclass(frozen=True)
 class Judgment:
-    """A human decision for one channel, exact head, and exact checkpoint."""
+    """A human decision for one channel and exact head/checkpoint/patch identity."""
 
     pr: int
     channel: str
@@ -83,6 +111,7 @@ class Judgment:
     head: str
     checkpoint: str
     reason: str
+    patch_id: str | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.pr, bool) or not isinstance(self.pr, int) or self.pr <= 0:
@@ -91,11 +120,29 @@ class Judgment:
             raise StateError("judgment channel must be hosted or cli")
         if self.decision not in {"reopen", "retain"}:
             raise StateError("judgment decision must be reopen or retain")
-        if not self.head or not self.checkpoint or not self.reason.strip():
+        if (
+            not isinstance(self.head, str)
+            or not self.head.strip()
+            or not isinstance(self.checkpoint, str)
+            or not self.checkpoint.strip()
+            or not isinstance(self.reason, str)
+            or not self.reason.strip()
+        ):
             raise StateError("judgments require head, checkpoint, and reason")
+        if self.patch_id is not None and (not isinstance(self.patch_id, str) or not self.patch_id.strip()):
+            raise StateError("judgment patch identity must be a non-empty string or null")
 
-    def applies(self, pr: int, channel: str, head: str, checkpoint: str) -> bool:
-        return self.pr == pr and self.channel == channel and self.head == head and self.checkpoint == checkpoint
+    def applies(self, pr: int, channel: str, head: str, checkpoint: str, patch_id: str | None = None) -> bool:
+        # A legacy judgment without a patch identity cannot retain or reopen
+        # evidence after the patch-bound policy was introduced.
+        return (
+            self.patch_id is not None
+            and self.patch_id == patch_id
+            and self.pr == pr
+            and self.channel == channel
+            and self.head == head
+            and self.checkpoint == checkpoint
+        )
 
     def to_dict(self) -> dict[str, str]:
         return {
@@ -105,11 +152,12 @@ class Judgment:
             "head": self.head,
             "checkpoint": self.checkpoint,
             "reason": self.reason,
+            "patch_id": self.patch_id,
         }
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> Judgment:
-        allowed = {"pr", "channel", "decision", "head", "checkpoint", "reason"}
+        allowed = {"pr", "channel", "decision", "head", "checkpoint", "reason", "patch_id"}
         if set(value) - allowed:
             raise StateError("judgment contains fields outside the private schema")
         return cls(
@@ -119,6 +167,7 @@ class Judgment:
             head=value["head"],
             checkpoint=value["checkpoint"],
             reason=value["reason"],
+            patch_id=value.get("patch_id"),
         )
 
 

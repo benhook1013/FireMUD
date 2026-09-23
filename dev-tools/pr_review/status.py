@@ -611,12 +611,20 @@ def _thread_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _review_decision(payload: Mapping[str, Any], current_head: str, pull_request: Mapping[str, Any]) -> dict[str, Any]:
-    """Report the latest decision attributable to the current exact head."""
+    """Report the PR decision or an exact-head review-node fallback."""
 
     explicit = pull_request.get("reviewDecision")
     if isinstance(explicit, str) and explicit.upper() in REVIEW_DECISIONS - {""}:
         decision = explicit.upper()
-        source = "github"
+        # GitHub exposes reviewDecision at PR scope; it is not an exact-head
+        # review-node assertion.  Keep that distinction visible to consumers.
+        return {
+            "status": decision,
+            "scope": "pull_request",
+            "source": "github",
+            "head_sha": None,
+            "exact_head": False,
+        }
     else:
         reviews = (
             ((payload.get("data") or {}).get("repository") or {}).get("pullRequest", {}).get("reviews") or {}
@@ -645,7 +653,13 @@ def _review_decision(payload: Mapping[str, Any], current_head: str, pull_request
                 )
             )
         if not current:
-            return {"status": "UNKNOWN", "head_sha": current_head, "source": "unavailable"}
+            return {
+                "status": "UNKNOWN",
+                "scope": "exact_head_review_node",
+                "head_sha": current_head,
+                "source": "unavailable",
+                "exact_head": True,
+            }
         current.sort(key=lambda item: (item[0], item[1]))
         states = {item[2] for item in current}
         if "CHANGES_REQUESTED" in states:
@@ -657,7 +671,13 @@ def _review_decision(payload: Mapping[str, Any], current_head: str, pull_request
         else:
             decision = "UNKNOWN"
         source = "reviews"
-    return {"status": decision, "head_sha": current_head, "source": source}
+    return {
+        "status": decision,
+        "scope": "exact_head_review_node",
+        "head_sha": current_head,
+        "source": source,
+        "exact_head": True,
+    }
 
 
 def _summary_sections(body: str) -> list[dict[str, str | int]]:
@@ -808,9 +828,57 @@ def _trigger(repo: str, number: int, payload: dict[str, Any], head: str) -> dict
         paths = []
     if not paths:
         return {"available": False, "classification": "unavailable/no-request", "state": "unavailable"}
+
+    current_paths = [path for path in paths if path.name == "trigger.json"]
+    archive_paths = [path for path in paths if re.fullmatch(r"trigger-[1-9][0-9]*\.json", path.name)]
+
+    def historical_record() -> dict[str, Any] | None:
+        for path in archive_paths:
+            try:
+                record = hosted.load_trigger_record(path, repo, number)
+                value = hosted.trigger_state(repo, number, payload, record, path).as_dict()
+                value.update(
+                    {
+                        "available": True,
+                        "record_available": True,
+                        "classification": "historical",
+                        "validation_outcome": "historical",
+                        "path": str(path),
+                    }
+                )
+                return value
+            except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+                continue
+        return None
+
+    # Archived trigger records are audit history, not a current Hosted
+    # reservation.  Keep any readable latest archive separately so callers do
+    # not mistake it for an active/current request.
+    if not current_paths:
+        historical = historical_record()
+        result = {
+            "available": False,
+            "record_available": False,
+            "classification": "unavailable/no-current-request",
+            "state": "unavailable",
+            "validation_outcome": "not-current",
+        }
+        if historical is not None:
+            result["historical"] = historical
+        return result
+    if len(current_paths) != 1:
+        return {
+            "available": True,
+            "record_available": False,
+            "classification": "ambiguous/overlapping",
+            "state": "ambiguous",
+            "validation_outcome": "invalid",
+            "reason": "multiple current Hosted trigger records are present",
+        }
     try:
-        record = hosted.load_trigger_record(paths[0], repo, number)
-        state = hosted.trigger_state(repo, number, payload, record, paths[0])
+        current_path = current_paths[0]
+        record = hosted.load_trigger_record(current_path, repo, number)
+        state = hosted.trigger_state(repo, number, payload, record, current_path)
         value = state.as_dict()
         if value.get("current_head_sha", "").casefold() != head.casefold():
             value.update(
@@ -818,6 +886,9 @@ def _trigger(repo: str, number: int, payload: dict[str, Any], head: str) -> dict
             )
         else:
             value.update({"available": True, "record_available": True, "validation_outcome": "valid"})
+        historical = historical_record()
+        if historical is not None:
+            value["historical"] = historical
         return value
     except (OSError, ValueError, KeyError, TypeError) as exc:
         return {
