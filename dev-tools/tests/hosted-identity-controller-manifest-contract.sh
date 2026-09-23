@@ -1290,6 +1290,71 @@ assert canonical_primary_name("pr-42-identity", "pr-42-gateway-internal-ws")
 assert not canonical_primary_name("pr-42-identity", "pr-43-gateway-internal-ws")
 assert not canonical_primary_name("dev-identity", "pr-42-tls")
 assert canonical_primary_name("pr-42-identity", "pr-42-grpc-game-design-service")
+
+publication_workloads = (
+    "game-design-service",
+    "world-management-service",
+    "entity-management-service",
+    "game-logic-service",
+    "automation-scripting-service",
+)
+publication_controller = (
+    "system:serviceaccount:firemud-system:firemud-hosted-identity-controller"
+)
+controller_grants = normalized_controller_secret_expression.split(
+    f"(request.userInfo.username == '{publication_controller}' &&", 1
+)[1].split(
+    f" || (request.userInfo.username == '{publication_controller}' &&", 1
+)[0]
+assert "request.namespace.matches('^(dev|pr-[1-9][0-9]{0,50})$')" in controller_grants
+assert "request.operation == 'DELETE'" in controller_grants
+assert "request.operation in ['CREATE', 'UPDATE']" in controller_grants
+assert "object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller'" in controller_grants
+assert "object.metadata.labels['firemud.dev/retention'] == 'retained'" in controller_grants
+for workload in publication_workloads:
+    assert f"request.name.matches('^firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)$')" in controller_grants
+    assert (
+        f"object.metadata.name == 'firemud-grpc-{workload}' && "
+        f"object.metadata.labels['firemud.dev/role'] == 'grpc-publication-{workload}'"
+    ) in controller_grants
+
+
+def publication_projection_is_allowed(operation, namespace, name, role=None):
+    if namespace != "dev" and not re.fullmatch(r"pr-[1-9][0-9]{0,50}", namespace):
+        return False
+    if operation == "DELETE":
+        return name in {f"firemud-grpc-{workload}" for workload in publication_workloads}
+    if operation not in {"CREATE", "UPDATE"}:
+        return False
+    return any(
+        name == f"firemud-grpc-{workload}"
+        and role == f"grpc-publication-{workload}"
+        for workload in publication_workloads
+    )
+
+
+assert publication_projection_is_allowed(
+    "CREATE", "dev", "firemud-grpc-game-design-service", "grpc-publication-game-design-service"
+)
+assert publication_projection_is_allowed(
+    "UPDATE", "pr-42", "firemud-grpc-world-management-service", "grpc-publication-world-management-service"
+)
+assert not publication_projection_is_allowed(
+    "CREATE", "dev", "firemud-grpc-game-design-service", "grpc-publication-world-management-service"
+)
+assert not publication_projection_is_allowed(
+    "CREATE", "pr-42-identity", "firemud-grpc-game-design-service", "grpc-publication-game-design-service"
+)
+assert publication_projection_is_allowed(
+    "DELETE", "pr-42", "firemud-grpc-automation-scripting-service"
+)
+assert not publication_projection_is_allowed(
+    "DELETE", "dev-identity", "firemud-grpc-automation-scripting-service"
+)
+assert not publication_projection_is_allowed(
+    "DELETE", "dev", "dev-grpc-automation-scripting-service"
+)
+
 cert_manager_expression = next(
     expression
     for expression in secret_expressions

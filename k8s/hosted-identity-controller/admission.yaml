@@ -187,6 +187,19 @@ spec:
                request.namespace.substring(0, request.namespace.size() - 9) :
                request.namespace) + '-'))) ||
         (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
+         request.namespace.matches('^(dev|pr-[1-9][0-9]{0,50})$') &&
+         ((request.operation == 'DELETE' &&
+           request.name.matches('^firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)$')) ||
+          (request.operation in ['CREATE', 'UPDATE'] &&
+           has(object.metadata.labels) &&
+           object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller' &&
+           object.metadata.labels['firemud.dev/retention'] == 'retained' &&
+           ((object.metadata.name == 'firemud-grpc-game-design-service' && object.metadata.labels['firemud.dev/role'] == 'grpc-publication-game-design-service') ||
+            (object.metadata.name == 'firemud-grpc-world-management-service' && object.metadata.labels['firemud.dev/role'] == 'grpc-publication-world-management-service') ||
+            (object.metadata.name == 'firemud-grpc-entity-management-service' && object.metadata.labels['firemud.dev/role'] == 'grpc-publication-entity-management-service') ||
+            (object.metadata.name == 'firemud-grpc-game-logic-service' && object.metadata.labels['firemud.dev/role'] == 'grpc-publication-game-logic-service') ||
+            (object.metadata.name == 'firemud-grpc-automation-scripting-service' && object.metadata.labels['firemud.dev/role'] == 'grpc-publication-automation-scripting-service'))))) ||
+        (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
          ((request.operation == 'DELETE' &&
            (request.name == 'firemud-grpc-tls' ||
            (request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$') &&

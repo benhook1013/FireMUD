@@ -1590,10 +1590,32 @@ class HostedIdentityReconcilerSafetyTest {
     assertEquals("4".repeat(64), status.getTcpProxyBridge().getSpkiSha256());
     assertEquals("5".repeat(64), status.getGrpc().getSpkiSha256());
     ArgumentCaptor<String> gatewayRevision = ArgumentCaptor.forClass(String.class);
+    ArgumentCaptor<Map<String, String>> publicationRevisions =
+        ArgumentCaptor.forClass(Map.class);
     verify(fixture.rollout)
-        .sync(any(), any(), anyString(), gatewayRevision.capture(), anyString(), anyMap(), any());
+        .sync(
+            any(),
+            any(),
+            anyString(),
+            gatewayRevision.capture(),
+            anyString(),
+            publicationRevisions.capture(),
+            any());
     assertEquals(
         "revision-" + HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE, gatewayRevision.getValue());
+    assertEquals(
+        Map.of(
+            "grpc-publication-game-design-service",
+            "revision-grpc-publication-game-design-service",
+            "grpc-publication-world-management-service",
+            "revision-grpc-publication-world-management-service",
+            "grpc-publication-entity-management-service",
+            "revision-grpc-publication-entity-management-service",
+            "grpc-publication-game-logic-service",
+            "revision-grpc-publication-game-logic-service",
+            "grpc-publication-automation-scripting-service",
+            "revision-grpc-publication-automation-scripting-service"),
+        publicationRevisions.getValue());
     verify(fixture.runtime, times(2))
         .validateTcpProxyService(fixture.client, fixture.plan, expected);
   }
