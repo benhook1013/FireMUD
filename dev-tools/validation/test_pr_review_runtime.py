@@ -1041,7 +1041,7 @@ class RuntimeTest(unittest.TestCase):
                 self._dispatch_prepost_recovery(path, self._prepost_recovery_args(), self._payload([command]))
             self.assertTrue(path.exists())
 
-    def test_prepost_recovery_requires_exact_current_head(self) -> None:
+    def test_prepost_recovery_requires_captured_head_match_and_records_valid_live_head(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "pr-42" / "trigger.json"
             self._posting_record(path)
