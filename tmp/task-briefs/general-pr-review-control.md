@@ -94,4 +94,4 @@ Those checks must execute `dev-tools/pr-review`, inspect persisted isolated stat
 
 ## Stopping point
 
-Publish a clean draft at the exact reconciled parent, refresh its body and LOC metadata, complete the authorized Luna boundary and validation, and stop for Overseer hands-on acceptance. Do not use CodeRabbit, merge, enable auto-merge, start Gate 2, or touch #2818 and later feature PRs.
+Publish a clean draft at the exact reconciled parent, refresh its body and LOC metadata, consume only any already-running Luna review and its valid findings, complete affected validation, and stop for Overseer hands-on acceptance. Do not start a fresh Luna review round: further discovery would delay the CodeRabbit handoff. Do not use CodeRabbit, merge, enable auto-merge, start Gate 2, or touch #2818 and later feature PRs.
