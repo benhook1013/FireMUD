@@ -60,6 +60,8 @@ for required in \
   '  world-management-service' \
   '  entity-management-service' \
   '  game-logic-service' \
+  '  account-service' \
+  '  game-session-service' \
   '  automation-scripting-service'; do
   contains_literal "$standalone_grpc_tls" "$required"
 done
@@ -1041,6 +1043,8 @@ for required in (
     '"firemud-grpc-tls|grpc|tls.crt,tls.key,ca.crt,client.crt,client.key"',
     'publication_workloads=(',
     'firemud-grpc-${workload}|grpc-publication-${workload}|tls.crt,tls.key,ca.crt',
+    'firemud-grpc-account-service|grpc-account-service|tls.crt,tls.key,ca.crt',
+    'firemud-grpc-game-session-service|grpc-game-session-service|tls.crt,tls.key,ca.crt',
     '    game-design-service',
     '    world-management-service',
     '    entity-management-service',

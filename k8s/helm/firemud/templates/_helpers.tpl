@@ -32,7 +32,7 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- end -}}
 
 {{- define "firemud.grpcWorkloadNames" -}}
-{{- list "game-design-service" "world-management-service" "entity-management-service" "game-logic-service" "automation-scripting-service" | toJson -}}
+{{- list "account-service" "game-session-service" "game-design-service" "world-management-service" "entity-management-service" "game-logic-service" "automation-scripting-service" | toJson -}}
 {{- end -}}
 
 {{- define "firemud.grpcSecretName" -}}

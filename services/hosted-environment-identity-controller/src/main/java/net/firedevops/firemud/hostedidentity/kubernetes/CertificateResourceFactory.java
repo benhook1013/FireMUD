@@ -79,14 +79,53 @@ public class CertificateResourceFactory {
   /** Builds one retained client/server identity for a protected publication workload. */
   public GenericKubernetesResource grpcPublication(
       EnvironmentIdentityPlan plan, String workload, Duration renewBefore) {
-    return certificate(
+    return grpcWorkloadIdentity(
         plan,
         HostedIdentityContract.grpcPublicationRole(workload),
+        workload,
         plan.grpcPublicationCertificateName(workload),
         plan.grpcPublicationSourceSecretName(workload),
+        renewBefore);
+  }
+
+  /** Builds the retained Account workload identity used by protected audit ingress. */
+  public GenericKubernetesResource grpcAccount(EnvironmentIdentityPlan plan, Duration renewBefore) {
+    return grpcWorkloadIdentity(
+        plan,
+        HostedIdentityContract.GRPC_ACCOUNT_ROLE,
+        HostedIdentityContract.GRPC_ACCOUNT_WORKLOAD,
+        plan.grpcAccountCertificateName(),
+        plan.grpcAccountSourceSecretName(),
+        renewBefore);
+  }
+
+  /** Builds the retained Game Session workload identity used for Account JOIN calls. */
+  public GenericKubernetesResource grpcGameSession(
+      EnvironmentIdentityPlan plan, Duration renewBefore) {
+    return grpcWorkloadIdentity(
+        plan,
+        HostedIdentityContract.GRPC_GAME_SESSION_ROLE,
+        HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD,
+        plan.grpcGameSessionCertificateName(),
+        plan.grpcGameSessionSourceSecretName(),
+        renewBefore);
+  }
+
+  GenericKubernetesResource grpcWorkloadIdentity(
+      EnvironmentIdentityPlan plan,
+      String role,
+      String workload,
+      String certificateName,
+      String secretName,
+      Duration renewBefore) {
+    return certificate(
+        plan,
+        role,
+        certificateName,
+        secretName,
         plan.grpcIssuer(),
-        plan.grpcPublicationDnsNames(workload),
-        List.of(plan.grpcPublicationUriSan(workload)),
+        plan.grpcWorkloadIdentityDnsNames(workload),
+        List.of(plan.grpcWorkloadIdentityUriSan(workload)),
         List.of("digital signature", "key encipherment", "server auth", "client auth"),
         HostedIdentityProperties.INTERNAL_CERTIFICATE_DURATION,
         renewBefore);

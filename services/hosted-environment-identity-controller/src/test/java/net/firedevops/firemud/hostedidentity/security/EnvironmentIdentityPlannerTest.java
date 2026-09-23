@@ -48,6 +48,20 @@ class EnvironmentIdentityPlannerTest {
     assertEquals(
         "spiffe://firemud/ns/pr-42/sa/game-design-service",
         plan.grpcPublicationUriSan("game-design-service"));
+    assertEquals("pr-42-grpc-account-service", plan.grpcAccountCertificateName());
+    assertEquals("pr-42-grpc-account-service", plan.grpcAccountSourceSecretName());
+    assertEquals("firemud-grpc-account-service", plan.grpcAccountSecretName());
+    assertEquals(
+        plan.grpcAccountSecretName(), plan.secretName(HostedIdentityContract.GRPC_ACCOUNT_ROLE));
+    assertEquals("pr-42-grpc-game-session-service", plan.grpcGameSessionCertificateName());
+    assertEquals("pr-42-grpc-game-session-service", plan.grpcGameSessionSourceSecretName());
+    assertEquals("firemud-grpc-game-session-service", plan.grpcGameSessionSecretName());
+    assertEquals(
+        "spiffe://firemud/ns/pr-42/sa/game-session-service",
+        plan.grpcWorkloadIdentityUriSan(HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD));
+    assertEquals(
+        plan.grpcGameSessionSecretName(),
+        plan.secretName(HostedIdentityContract.GRPC_GAME_SESSION_ROLE));
   }
 
   @Test

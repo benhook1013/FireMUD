@@ -66,6 +66,11 @@ PUBLICATION_GRPC_WORKLOADS = {
     "game-logic-service",
     "automation-scripting-service",
 }
+ACCOUNT_GRPC_WORKLOADS = {"account-service"}
+GAME_SESSION_GRPC_WORKLOADS = {"game-session-service"}
+DISTINCT_GRPC_WORKLOADS = (
+    PUBLICATION_GRPC_WORKLOADS | ACCOUNT_GRPC_WORKLOADS | GAME_SESSION_GRPC_WORKLOADS
+)
 EXPECTED_NAMES = {
     "Deployment": SERVICE_IMAGES | {"postgres", "redis-coord", "redis-cache", "minio"},
     "Service": SERVICE_IMAGES
@@ -132,7 +137,7 @@ EXPECTED_SECRET_REFS = {
     "jwt-signing-keys",
     "minio-credentials",
     "firemud-grpc-tls",
-} | {f"firemud-grpc-{service}" for service in PUBLICATION_GRPC_WORKLOADS}
+} | {f"firemud-grpc-{service}" for service in DISTINCT_GRPC_WORKLOADS}
 CANONICAL_INGRESS_ISSUER = "letsencrypt-prod"
 ALLOCATED_TELNET_PORT_ANNOTATION = "firemud.dev/allocated-telnet-port"
 CERTIFICATE_IDENTITY_MODES = {"standalone", "hosted-controller"}
@@ -1496,7 +1501,7 @@ def validate_service_consumers(
                 "FIREMUD_GRPC_PRIVATE_KEY_PATH": "/tls/tls.key",
                 "FIREMUD_GRPC_CA_CERT_PATH": "/tls/ca.crt",
             }
-            if service in PUBLICATION_GRPC_WORKLOADS
+            if service in DISTINCT_GRPC_WORKLOADS
             else {
                 "FIREMUD_GRPC_CERT_CHAIN_PATH": "/tls/client.crt",
                 "FIREMUD_GRPC_PRIVATE_KEY_PATH": "/tls/client.key",
@@ -1508,6 +1513,24 @@ def validate_service_consumers(
             for entry in container.get("env", [])
             if isinstance(entry, dict)
         }
+        if service in DISTINCT_GRPC_WORKLOADS:
+            namespace_identity = next(
+                (
+                    entry
+                    for entry in container.get("env", [])
+                    if isinstance(entry, dict)
+                    and entry.get("name") == "FIREMUD_GRPC_WORKLOAD_NAMESPACE"
+                ),
+                None,
+            )
+            if namespace_identity != {
+                "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+                "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
+            }:
+                fail(
+                    f"Deployment/{service} must derive FIREMUD_GRPC_WORKLOAD_NAMESPACE "
+                    "from metadata.namespace"
+                )
         for env_name, expected_path in expected_grpc_paths.items():
             if declared_grpc_paths.get(env_name) != expected_path:
                 fail(
@@ -1516,7 +1539,7 @@ def validate_service_consumers(
 
         grpc_secret_name = (
             f"firemud-grpc-{service}"
-            if service in PUBLICATION_GRPC_WORKLOADS
+            if service in DISTINCT_GRPC_WORKLOADS
             else "firemud-grpc-tls"
         )
         expected_mounts = {
@@ -1586,6 +1609,15 @@ def validate_service_consumers(
                     f"Deployment/{service}.spec.template.spec.volumes[{volume_name}].secret",
                 )
                 if source.get("secretName") != source_name:
+                    if (
+                        service in DISTINCT_GRPC_WORKLOADS
+                        and volume_name == "grpc-tls"
+                        and source.get("secretName") == "firemud-grpc-tls"
+                    ):
+                        fail(
+                            f"Deployment/{service} distinct workload falls back to "
+                            "shared firemud-grpc-tls"
+                        )
                     fail(f"Deployment/{service} has an unexpected {volume_name} source")
                 if volume_name in {"gateway-ws-server-tls", "gateway-ws-client-tls"}:
                     expected_source = {

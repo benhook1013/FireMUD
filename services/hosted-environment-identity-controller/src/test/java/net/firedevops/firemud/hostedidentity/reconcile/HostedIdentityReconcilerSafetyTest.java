@@ -172,7 +172,7 @@ class HostedIdentityReconcilerSafetyTest {
   }
 
   @Test
-  void protectedPublicationProjectionMustBeAcceptedBeforeReadiness() {
+  void accountAndPublicationProjectionsMustBeAcceptedBeforeReadiness() {
     List<SecretProjectionService.ProjectionResult> projections =
         new java.util.ArrayList<>(
             java.util.stream.Stream.concat(
@@ -182,13 +182,17 @@ class HostedIdentityReconcilerSafetyTest {
                         SecretProjectionService.ProjectionResult.synced("gateway"),
                         SecretProjectionService.ProjectionResult.synced("bridge"),
                         SecretProjectionService.ProjectionResult.synced("grpc")),
-                    HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
-                        .map(
-                            workload ->
-                                "game-logic-service".equals(workload)
-                                    ? SecretProjectionService.ProjectionResult.awaiting(
-                                        "predecessor-not-accepted", workload)
-                                    : SecretProjectionService.ProjectionResult.synced(workload)))
+                    java.util.stream.Stream.concat(
+                        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
+                            .map(
+                                workload ->
+                                    "game-logic-service".equals(workload)
+                                        ? SecretProjectionService.ProjectionResult.awaiting(
+                                            "predecessor-not-accepted", workload)
+                                        : SecretProjectionService.ProjectionResult.synced(
+                                            workload)),
+                        java.util.stream.Stream.of(
+                            SecretProjectionService.ProjectionResult.synced("account-service"))))
                 .toList());
 
     assertReadinessStatus(
@@ -1731,6 +1735,10 @@ class HostedIdentityReconcilerSafetyTest {
                   "4",
                   SERIALIZED_DEFERRED_DRIFT));
       when(batch.grpc(any())).thenReturn(material(plan, HostedIdentityContract.GRPC_ROLE, "5"));
+      when(batch.grpcAccount())
+          .thenReturn(material(plan, HostedIdentityContract.GRPC_ACCOUNT_ROLE, "b"));
+      when(batch.grpcGameSession())
+          .thenReturn(material(plan, HostedIdentityContract.GRPC_GAME_SESSION_ROLE, "c"));
       when(batch.grpcPublication(anyString()))
           .thenAnswer(
               invocation -> {

@@ -56,13 +56,14 @@ class DeploymentRolloutServiceTest {
   }
 
   @Test
-  void publicationRevisionRollsEachProtectedDeploymentAndBlocksReadinessUntilAllReady() {
+  void workloadIdentityRevisionRollsAccountAndPublicationDeploymentsUntilAllReady() {
     EnvironmentIdentityPlan plan = planWithConsumers("account-service");
     DeploymentClientGraph graph =
         deploymentClient(
             plan,
             "tcp-proxy-service",
             "account-service",
+            "game-session-service",
             "game-design-service",
             "world-management-service",
             "entity-management-service",
@@ -78,8 +79,17 @@ class DeploymentRolloutServiceTest {
         .thenReturn(
             readyDeployment(
                 "account-service",
-                Map.of(HostedIdentityContract.GRPC_REVISION_ANNOTATION, "grpc-current"),
+                Map.of(HostedIdentityContract.GRPC_REVISION_ANNOTATION, "account-old"),
                 3L));
+    when(graph.resources().get("game-session-service").get())
+        .thenReturn(
+            readyDeployment(
+                "game-session-service",
+                Map.of(HostedIdentityContract.GRPC_REVISION_ANNOTATION, "game-session-current"),
+                3L));
+    ReplaceDeletable<Deployment> lockedAccount = mock(ReplaceDeletable.class);
+    when(graph.resources().get("account-service").lockResourceVersion("rv-3"))
+        .thenReturn(lockedAccount);
     for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
       String revision =
           "game-logic-service".equals(workload) ? "publication-old" : "publication-current";
@@ -92,11 +102,14 @@ class DeploymentRolloutServiceTest {
     when(graph.resources().get("game-logic-service").lockResourceVersion("rv-3"))
         .thenReturn(lockedGameLogic);
 
-    Map<String, String> publicationRevisions = new LinkedHashMap<>();
+    Map<String, String> workloadIdentityRevisions = new LinkedHashMap<>();
     for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
-      publicationRevisions.put(
+      workloadIdentityRevisions.put(
           HostedIdentityContract.grpcPublicationRole(workload), "publication-current");
     }
+    workloadIdentityRevisions.put(HostedIdentityContract.GRPC_ACCOUNT_ROLE, "account-current");
+    workloadIdentityRevisions.put(
+        HostedIdentityContract.GRPC_GAME_SESSION_ROLE, "game-session-current");
     DeploymentRolloutService.RolloutResult result =
         new DeploymentRolloutService()
             .sync(
@@ -105,7 +118,7 @@ class DeploymentRolloutServiceTest {
                 "telnet-current",
                 "gateway-current",
                 "grpc-current",
-                publicationRevisions,
+                workloadIdentityRevisions,
                 () -> {});
 
     assertEquals(false, result.ready());
@@ -116,6 +129,17 @@ class DeploymentRolloutServiceTest {
     assertEquals(
         "publication-current",
         replacement
+            .getValue()
+            .getSpec()
+            .getTemplate()
+            .getMetadata()
+            .getAnnotations()
+            .get(HostedIdentityContract.GRPC_REVISION_ANNOTATION));
+    ArgumentCaptor<Deployment> accountReplacement = ArgumentCaptor.forClass(Deployment.class);
+    verify(lockedAccount).replace(accountReplacement.capture());
+    assertEquals(
+        "account-current",
+        accountReplacement
             .getValue()
             .getSpec()
             .getTemplate()

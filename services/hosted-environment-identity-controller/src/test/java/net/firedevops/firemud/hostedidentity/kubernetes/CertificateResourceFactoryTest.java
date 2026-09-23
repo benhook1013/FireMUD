@@ -132,6 +132,60 @@ class CertificateResourceFactoryTest {
   }
 
   @Test
+  void accountCertificateUsesExactStableWorkloadIdentity() {
+    var properties = propertiesWithRenewBefore();
+    var plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
+    var certificate =
+        new CertificateResourceFactory().grpcAccount(plan, properties.getGrpcRenewBefore());
+    var certificateSpec = spec(certificate);
+
+    assertEquals("pr-42-grpc-account-service", certificate.getMetadata().getName());
+    assertEquals("pr-42-grpc-account-service", certificateSpec.get("secretName"));
+    assertEquals("firemud-ca-issuer", issuerName(certificateSpec));
+    assertEquals(
+        java.util.List.of("spiffe://firemud/ns/pr-42/sa/account-service"),
+        certificateSpec.get("uris"));
+    assertEquals(
+        java.util.List.of(
+            "account-service",
+            "account-service.pr-42",
+            "account-service.pr-42.svc",
+            "account-service.pr-42.svc.cluster.local"),
+        certificateSpec.get("dnsNames"));
+    assertEquals(
+        java.util.List.of("digital signature", "key encipherment", "server auth", "client auth"),
+        certificateSpec.get("usages"));
+    assertSecretTemplate(certificateSpec, plan, HostedIdentityContract.GRPC_ACCOUNT_ROLE);
+  }
+
+  @Test
+  void gameSessionCertificateUsesExactStableWorkloadIdentity() {
+    var properties = propertiesWithRenewBefore();
+    var plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
+    var certificate =
+        new CertificateResourceFactory().grpcGameSession(plan, properties.getGrpcRenewBefore());
+    var certificateSpec = spec(certificate);
+
+    assertEquals("pr-42-grpc-game-session-service", certificate.getMetadata().getName());
+    assertEquals("pr-42-grpc-game-session-service", certificateSpec.get("secretName"));
+    assertEquals("firemud-ca-issuer", issuerName(certificateSpec));
+    assertEquals(
+        java.util.List.of("spiffe://firemud/ns/pr-42/sa/game-session-service"),
+        certificateSpec.get("uris"));
+    assertEquals(
+        java.util.List.of(
+            "game-session-service",
+            "game-session-service.pr-42",
+            "game-session-service.pr-42.svc",
+            "game-session-service.pr-42.svc.cluster.local"),
+        certificateSpec.get("dnsNames"));
+    assertEquals(
+        java.util.List.of("digital signature", "key encipherment", "server auth", "client auth"),
+        certificateSpec.get("usages"));
+    assertSecretTemplate(certificateSpec, plan, HostedIdentityContract.GRPC_GAME_SESSION_ROLE);
+  }
+
+  @Test
   void certificateFactoryPublicSurfaceContainsOnlyMaterialFactories() {
     var declaredMethods =
         java.util.Arrays.stream(CertificateResourceFactory.class.getDeclaredMethods())
@@ -142,10 +196,16 @@ class CertificateResourceFactoryTest {
             .filter(method -> java.lang.reflect.Modifier.isPublic(method.getModifiers()))
             .toList();
 
-    assertEquals(5, publicMethods.size());
+    assertEquals(7, publicMethods.size());
     assertEquals(
         java.util.Set.of(
-            "ingress", "telnet", "gatewayInternalWs", "tcpProxyBridge", "grpcPublication"),
+            "ingress",
+            "telnet",
+            "gatewayInternalWs",
+            "tcpProxyBridge",
+            "grpcPublication",
+            "grpcAccount",
+            "grpcGameSession"),
         publicMethods.stream()
             .map(java.lang.reflect.Method::getName)
             .collect(java.util.stream.Collectors.toUnmodifiableSet()));

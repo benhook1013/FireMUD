@@ -41,6 +41,8 @@ if [[ "$temporary_cert_dir" == true ]]; then
 fi
 
 workloads=(
+  account-service
+  game-session-service
   game-design-service
   world-management-service
   entity-management-service
@@ -239,8 +241,8 @@ else
   fi
 
   # Keep the legacy shared leaf and CA intact. A separate, stable CA signs the
-  # five distinct publication leaves; the CA key is retained only in this
-  # unmounted source Secret so it can be reused for future missing projections.
+  # five publication leaves plus the Account and Game Session workload leaves.
+  # The CA key is retained only in this unmounted source Secret for reuse.
   openssl genrsa -out "$source_key" 2048 >/dev/null 2>&1
   openssl req -x509 -new -nodes -key "$source_key" -sha256 -days 365 \
     -subj "/CN=FireMUD-Standalone-gRPC-CA" \
@@ -332,4 +334,4 @@ for workload in "${workloads[@]}"; do
     --from-file=tls.key="$workload_key"
 done
 
-echo "Stable standalone gRPC TLS material is ready in namespace ${namespace}: shared leaf plus ${#workloads[@]} distinct publication leaves"
+echo "Stable standalone gRPC TLS material is ready in namespace ${namespace}: shared leaf plus ${#workloads[@]} distinct workload leaves"

@@ -613,12 +613,18 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
                     "name": "account-service",
                     "env": [
                         {
+                            "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+                            "valueFrom": {
+                                "fieldRef": {"fieldPath": "metadata.namespace"}
+                            },
+                        },
+                        {
                             "name": "FIREMUD_GRPC_CERT_CHAIN_PATH",
-                            "value": "/tls/client.crt",
+                            "value": "/tls/tls.crt",
                         },
                         {
                             "name": "FIREMUD_GRPC_PRIVATE_KEY_PATH",
-                            "value": "/tls/client.key",
+                            "value": "/tls/tls.key",
                         },
                         {
                             "name": "FIREMUD_GRPC_CA_CERT_PATH",
@@ -632,15 +638,24 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
                             "mountPath": "/var/run/secrets/firemud/jwt",
                             "readOnly": True,
                         },
+                        {
+                            "name": "jwt-jwks",
+                            "mountPath": "/var/run/secrets/firemud/jwks",
+                            "readOnly": True,
+                        },
                     ],
                 }
             ],
             "volumes": [
-                {"name": "grpc-tls", "secret": {"secretName": "firemud-grpc-tls"}},
+                {
+                    "name": "grpc-tls",
+                    "secret": {"secretName": "firemud-grpc-account-service"},
+                },
                 {
                     "name": "jwt-signing-keys",
                     "secret": {"secretName": "jwt-signing-keys"},
                 },
+                {"name": "jwt-jwks", "configMap": {"name": "jwt-jwks"}},
             ],
         }
         document = {
@@ -648,6 +663,21 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
             "metadata": {"name": "account-service"},
             "spec": {"template": {"spec": pod}},
         }
+        with patch.object(self.validator, "SERVICE_IMAGES", {"account-service"}):
+            self.validator.validate_service_consumers(
+                [document], "pr-42", "standalone", "public"
+            )
+            fallback = copy.deepcopy(document)
+            fallback["spec"]["template"]["spec"]["volumes"][0]["secret"][
+                "secretName"
+            ] = "firemud-grpc-tls"
+            with self.assertRaisesRegex(
+                ValueError,
+                "Deployment/account-service distinct workload falls back to shared firemud-grpc-tls",
+            ):
+                self.validator.validate_service_consumers(
+                    [fallback], "pr-42", "standalone", "public"
+                )
         for field, malformed in (
             ("volumeMounts", ["not-a-mapping"]),
             ("volumes", ["not-a-mapping"]),

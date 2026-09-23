@@ -1193,7 +1193,11 @@ controller_secret_expression = next(
 )
 normalized_controller_secret_expression = " ".join(controller_secret_expression.split())
 assert "object.metadata.labels['firemud.dev/role'].startsWith('grpc-publication-')" in controller_secret_expression
+assert "'grpc-account-service'" in controller_secret_expression
+assert "'grpc-game-session-service'" in controller_secret_expression
 assert "object.metadata.name == 'firemud-grpc-tls'" in controller_secret_expression
+assert "object.metadata.name == 'firemud-grpc-account-service'" in controller_secret_expression
+assert "object.metadata.name == 'firemud-grpc-game-session-service'" in controller_secret_expression
 assert normalized_controller_secret_expression.count("request.name.startsWith(") == 3
 assert normalized_controller_secret_expression.count("object.metadata.name.startsWith(") == 2
 assert "request.namespace.size() - 9" in normalized_controller_secret_expression
@@ -1219,6 +1223,8 @@ def canonical_primary_name(namespace, name):
         "grpc-entity-management-service",
         "grpc-game-logic-service",
         "grpc-automation-scripting-service",
+        "grpc-account-service",
+        "grpc-game-session-service",
     }
 
 
@@ -1244,6 +1250,10 @@ assert "object.metadata.name == 'dev-telnet-tls'" in cert_manager_expression
 assert "object.metadata.name == 'dev-gateway-internal-ws'" in cert_manager_expression
 assert "object.metadata.name == 'dev-tcp-proxy-bridge'" in cert_manager_expression
 assert "object.metadata.labels['firemud.dev/role'].startsWith('grpc-publication-')" in cert_manager_expression
+assert "object.metadata.labels['firemud.dev/role'] == 'grpc-account-service'" in cert_manager_expression
+assert "object.metadata.labels['firemud.dev/role'] == 'grpc-game-session-service'" in cert_manager_expression
+assert "object.metadata.name == 'dev-grpc-account-service'" in cert_manager_expression
+assert "object.metadata.name == 'dev-grpc-game-session-service'" in cert_manager_expression
 assert "request.namespace.substring(0, request.namespace.size() - 9) + '-tls'" in cert_manager_expression
 assert "request.namespace.substring(0, request.namespace.size() - 9) + '-telnet-tls'" in cert_manager_expression
 assert "request.namespace.substring(0, request.namespace.size() - 9) + '-gateway-internal-ws'" in cert_manager_expression
@@ -1295,8 +1305,10 @@ assert "firemud-grpc-tls" not in controller_delete_expression
 assert "request.name.startsWith(" in controller_delete_expression
 assert "(request.operation != 'DELETE' && has(object.metadata.labels)" in certificate_match
 assert "object.metadata.labels['firemud.dev/identity-name'] == ((request.namespace == 'dev-identity') ? 'dev-demo' : request.namespace.substring(0, request.namespace.size() - 9))" in certificate_match
-assert "object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'gateway-internal-ws', 'tcp-proxy-bridge']" in certificate_match
+assert "object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'gateway-internal-ws', 'tcp-proxy-bridge', 'grpc-account-service', 'grpc-game-session-service']" in certificate_match
 assert "grpc-publication-" in certificate_match
+assert "grpc-account-service" in certificate_match
+assert "grpc-game-session-service" in certificate_match
 assert "object.metadata.name == 'firemud-grpc-tls'" not in certificate_match
 
 certificate_expressions = [
@@ -1312,6 +1324,7 @@ controller_non_delete_expression = certificate_expressions[0].split(
 assert "firemud-grpc-tls" not in controller_non_delete_expression
 assert "'grpc'" not in controller_non_delete_expression
 assert "grpc-publication-" in controller_non_delete_expression
+assert "grpc-account-service" in controller_non_delete_expression
 assert "has(object.spec.isCA)" in controller_non_delete_expression
 assert "object.spec.isCA == false" in controller_non_delete_expression
 assert "(!has(object.spec.commonName) || object.spec.commonName == '')" in controller_non_delete_expression
@@ -1336,6 +1349,9 @@ profile_expression = next(
 normalized_profile_expression = " ".join(profile_expression.split())
 assert "spring-cloud-gateway-mtls." in profile_expression
 assert ".svc.cluster.local" in profile_expression
+assert "object.spec.uris == ['spiffe://firemud/ns/'" in profile_expression
+assert "object.spec.dnsNames == ['account-service'" in profile_expression
+assert "object.spec.dnsNames == ['game-session-service'" in profile_expression
 assert "spiffe://firemud/ns/" in profile_expression
 assert "/sa/tcp-proxy-service" in profile_expression
 assert "has(object.spec.encodeUsagesInRequest)" in profile_expression
@@ -1772,7 +1788,10 @@ for portable_render_fragment in \
   require_literal "$BOOTSTRAP" "$portable_render_fragment"
 done
 require_literal "$ADMISSION" "'firemud-grpc-tls-previous', "
-require_literal "$ADMISSION" "'-grpc-automation-scripting-service-previous')] &&"
+require_literal "$ADMISSION" "'firemud-grpc-account-service'"
+require_literal "$ADMISSION" "'firemud-grpc-game-session-service'"
+require_literal "$ADMISSION" "'-grpc-account-service-previous'), "
+require_literal "$ADMISSION" "'-grpc-game-session-service-previous')] &&"
 require_literal "$ADMISSION" "request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' ||"
 require_literal "$BOOTSTRAP" "crd_deadline=\$((SECONDS + WAIT_SECONDS))"
 # shellcheck disable=SC2016 # Match the literal bootstrap default.
@@ -3450,13 +3469,7 @@ def service_consumer_documents():
                 "/tls",
                 "secret",
                 f"firemud-grpc-{service}"
-                if service in {
-                    "game-design-service",
-                    "world-management-service",
-                    "entity-management-service",
-                    "game-logic-service",
-                    "automation-scripting-service",
-                }
+                if service in validator.DISTINCT_GRPC_WORKLOADS
                 else "firemud-grpc-tls",
             ),
             "jwt-signing-keys": (
@@ -3507,14 +3520,12 @@ def service_consumer_documents():
             "name": service,
             "volumeMounts": mounts,
         }
-        if service in {
-            "game-design-service",
-            "world-management-service",
-            "entity-management-service",
-            "game-logic-service",
-            "automation-scripting-service",
-        }:
+        if service in validator.DISTINCT_GRPC_WORKLOADS:
             container["env"] = [
+                {
+                    "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+                    "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
+                },
                 {
                     "name": "FIREMUD_GRPC_CERT_CHAIN_PATH",
                     "value": "/tls/tls.crt",
@@ -4051,9 +4062,8 @@ publication_services = (
     "game-logic-service",
     "automation-scripting-service",
 )
+distinct_workload_services = publication_services + ("account-service", "game-session-service")
 shared_services = (
-    "account-service",
-    "game-session-service",
     "logging-admin-service",
     "social-groups-service",
     "spring-cloud-gateway",
@@ -4118,7 +4128,7 @@ def assert_paths_and_mount(container, service, cert_path, key_path):
         fail(f"Deployment/{service} grpc-tls must mount read-only at /tls")
 
 
-for service in publication_services:
+for service in distinct_workload_services:
     deployment = deployment_for(service)
     container, pod_spec = workload_container(deployment, service)
     assert_paths_and_mount(container, service, "/tls/tls.crt", "/tls/tls.key")
@@ -4142,7 +4152,7 @@ for service in publication_services:
     if secret_name != expected_secret:
         if secret_name == "firemud-grpc-tls":
             fail(
-                f"Deployment/{service} publication workload falls back to "
+                f"Deployment/{service} distinct workload falls back to "
                 "shared firemud-grpc-tls"
             )
         fail(

@@ -165,6 +165,12 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
         materialRequests.add(
             new RoleMaterialRequest(role, () -> materialization.grpcPublication(workload)));
       }
+      materialRequests.add(
+          new RoleMaterialRequest(
+              HostedIdentityContract.GRPC_ACCOUNT_ROLE, materialization::grpcAccount));
+      materialRequests.add(
+          new RoleMaterialRequest(
+              HostedIdentityContract.GRPC_GAME_SESSION_ROLE, materialization::grpcGameSession));
       List<RoleMaterialBinding> rolePipeline = new ArrayList<>();
       for (RoleMaterialRequest request : materialRequests) {
         CertificateMaterialService.RoleMaterial material = request.material().get();
@@ -225,11 +231,17 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
             beforeRollout.profile(),
             roleMaterials);
       }
-      Map<String, String> publicationRevisions = new LinkedHashMap<>();
+      Map<String, String> workloadIdentityRevisions = new LinkedHashMap<>();
       for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
         String role = HostedIdentityContract.grpcPublicationRole(workload);
-        publicationRevisions.put(role, projections.get(role).revision());
+        workloadIdentityRevisions.put(role, projections.get(role).revision());
       }
+      workloadIdentityRevisions.put(
+          HostedIdentityContract.GRPC_ACCOUNT_ROLE,
+          projections.get(HostedIdentityContract.GRPC_ACCOUNT_ROLE).revision());
+      workloadIdentityRevisions.put(
+          HostedIdentityContract.GRPC_GAME_SESSION_ROLE,
+          projections.get(HostedIdentityContract.GRPC_GAME_SESSION_ROLE).revision());
       DeploymentRolloutService.RolloutResult rollout =
           deploymentRolloutService.sync(
               client,
@@ -237,7 +249,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
               projections.get(HostedIdentityContract.TELNET_ROLE).revision(),
               projections.get(HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE).revision(),
               projections.get(HostedIdentityContract.GRPC_ROLE).revision(),
-              publicationRevisions,
+              workloadIdentityRevisions,
               () -> assertRuntimeProfileCurrent(plan, runtimeProfile, "rollout mutation"));
       ServedEnvironmentProbe.ProbeResult probes;
       if (rollout.ready()) {
@@ -487,13 +499,15 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
               HostedIdentityContract.TELNET_ROLE,
               HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE,
               HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE,
-              HostedIdentityContract.GRPC_ROLE -> {
+              HostedIdentityContract.GRPC_ROLE,
+              HostedIdentityContract.GRPC_ACCOUNT_ROLE,
+              HostedIdentityContract.GRPC_GAME_SESSION_ROLE -> {
             if (materialsByRole.putIfAbsent(role, material) != null) {
               throw new IllegalArgumentException("duplicate identity material role: " + role);
             }
           }
           default -> {
-            if (HostedIdentityContract.isGrpcPublicationRole(role)) {
+            if (HostedIdentityContract.isGrpcWorkloadIdentityRole(role)) {
               if (materialsByRole.putIfAbsent(role, material) != null) {
                 throw new IllegalArgumentException("duplicate identity material role: " + role);
               }
@@ -517,14 +531,21 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       return materialsByRole.get(role);
     }
 
-    private boolean publicationEvidenceComplete() {
+    private boolean workloadIdentityEvidenceComplete() {
       return HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
-          .map(HostedIdentityContract::grpcPublicationRole)
-          .allMatch(
-              role -> {
-                CertificateMaterialService.RoleMaterial material = materialsByRole.get(role);
-                return material != null && material.ready();
-              });
+              .map(HostedIdentityContract::grpcPublicationRole)
+              .allMatch(
+                  role -> {
+                    CertificateMaterialService.RoleMaterial material = materialsByRole.get(role);
+                    return material != null && material.ready();
+                  })
+          && roleReady(HostedIdentityContract.GRPC_ACCOUNT_ROLE)
+          && roleReady(HostedIdentityContract.GRPC_GAME_SESSION_ROLE);
+    }
+
+    private boolean roleReady(String role) {
+      CertificateMaterialService.RoleMaterial material = materialsByRole.get(role);
+      return material != null && material.ready();
     }
   }
 
@@ -882,17 +903,21 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
             plan.gatewayInternalWsSecretName() + "-previous",
             plan.tcpProxyBridgeSecretName() + "-previous",
             plan.grpcSecretName() + "-previous");
-    List<String> publicationSecretNames =
-        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
-            .flatMap(
-                workload ->
-                    java.util.stream.Stream.of(
-                        plan.grpcPublicationSourceSecretName(workload),
-                        plan.grpcPublicationSourceSecretName(workload) + "-previous"))
-            .toList();
+    List<String> workloadSecretNames =
+        new ArrayList<>(
+            HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
+                .flatMap(
+                    workload ->
+                        java.util.stream.Stream.of(
+                            plan.grpcPublicationSourceSecretName(workload),
+                            plan.grpcPublicationSourceSecretName(workload) + "-previous"))
+                .toList());
+    workloadSecretNames.add(plan.grpcAccountSourceSecretName());
+    workloadSecretNames.add(plan.grpcAccountSourceSecretName() + "-previous");
+    workloadSecretNames.add(plan.grpcGameSessionSourceSecretName());
+    workloadSecretNames.add(plan.grpcGameSessionSourceSecretName() + "-previous");
     secretNames =
-        java.util.stream.Stream.concat(secretNames.stream(), publicationSecretNames.stream())
-            .toList();
+        java.util.stream.Stream.concat(secretNames.stream(), workloadSecretNames.stream()).toList();
     List<String> ownedSecretNames = new ArrayList<>();
     for (String name : secretNames) {
       Secret secret = client.secrets().inNamespace(plan.identityNamespace()).withName(name).get();
@@ -910,11 +935,15 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
             plan.telnetCertificateName(),
             plan.gatewayInternalWsCertificateName(),
             plan.tcpProxyBridgeCertificateName());
+    List<String> workloadCertificateNames =
+        new ArrayList<>(
+            HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
+                .map(plan::grpcPublicationCertificateName)
+                .toList());
+    workloadCertificateNames.add(plan.grpcAccountCertificateName());
+    workloadCertificateNames.add(plan.grpcGameSessionCertificateName());
     certificateNames =
-        java.util.stream.Stream.concat(
-                certificateNames.stream(),
-                HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
-                    .map(plan::grpcPublicationCertificateName))
+        java.util.stream.Stream.concat(certificateNames.stream(), workloadCertificateNames.stream())
             .toList();
     List<String> ownedCertificateNames = new ArrayList<>();
     for (String name : certificateNames) {
@@ -1056,11 +1085,12 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       boolean ready,
       RuntimeProfileService.RuntimeProfile profile,
       RoleMaterials materials) {
-    if (ready && !materials.publicationEvidenceComplete()) {
+    if (ready && !materials.workloadIdentityEvidenceComplete()) {
       ready = false;
       phase = HostedEnvironmentIdentityStatus.Phase.Verifying;
-      reason = "PublicationIdentityEvidenceIncomplete";
-      message = "all five protected publication identity proofs are required for readiness";
+      reason = "WorkloadIdentityEvidenceIncomplete";
+      message =
+          "the five protected publication, exact Account, and Game Session workload identity proofs are required for readiness";
     }
     resource.setStatus(
         statusService.status(
@@ -1109,7 +1139,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
 
   private static HostedEnvironmentIdentityStatus.RoleStatus previousRole(
       HostedEnvironmentIdentity resource, String role) {
-    if (HostedIdentityContract.isGrpcPublicationRole(role)) {
+    if (HostedIdentityContract.isGrpcWorkloadIdentityRole(role)) {
       return null;
     }
     if (resource.getStatus() == null) return null;
