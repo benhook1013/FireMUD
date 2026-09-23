@@ -255,9 +255,10 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
         }:
             raise CliError("live-state decisions are unavailable in acceptance fixture mode")
         if args.decide_command == "summary-disposition":
-            if args.decision == "accepted_fixed" and args.corrected_head is None:
+            decision = args.decision.replace("-", "_")
+            if decision == "accepted_fixed" and args.corrected_head is None:
                 raise CliError("accepted-fixed summary disposition requires --corrected-head")
-            if args.decision != "accepted_fixed" and args.corrected_head is not None:
+            if decision != "accepted_fixed" and args.corrected_head is not None:
                 raise CliError("--corrected-head is valid only for accepted-fixed summary disposition")
             payload = github.fetch_pull_request(controller.repository, args.pr)
             pull_request = payload.get("data", {}).get("repository", {}).get("pullRequest", {})
@@ -266,7 +267,7 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             live_head = pull_request.get("headRefOid")
             if not isinstance(live_head, str) or not status_module.EXACT_SHA.fullmatch(live_head):
                 raise CliError("live PR response has no exact head for summary adjudication")
-            if args.decision == "accepted_fixed":
+            if decision == "accepted_fixed":
                 if args.corrected_head.casefold() != live_head.casefold():
                     raise CliError("--corrected-head must equal the live PR head")
                 if args.head.casefold() == live_head.casefold():
@@ -285,7 +286,6 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 for finding in selected.get("findings", [])
             ):
                 raise CliError("the exact summary does not contain the requested finding kind and count")
-            decision = args.decision.replace("-", "_")
             disposition = SummaryFindingDisposition(
                 pr=args.pr,
                 head=args.head,

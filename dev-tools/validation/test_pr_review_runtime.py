@@ -1052,6 +1052,65 @@ class RuntimeTest(unittest.TestCase):
                 review_cli._dispatch(args)
             self.assertEqual(len(store.load().summary_dispositions), 1)
 
+    def test_accepted_fixed_summary_disposition_uses_hyphenated_cli_choice(self) -> None:
+        corrected_head = "d" * 40
+        review = {
+            "databaseId": 78,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": (
+                f"Reviewing files that changed from the base of the PR and between `{BASE}` and `{HEAD}`.\n"
+                "Outside diff range comments (1)"
+            ),
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-23T00:01:00Z",
+            "commit": {"oid": HEAD},
+        }
+        payload = self._payload(reviews=[review], head=corrected_head)
+        with tempfile.TemporaryDirectory() as directory:
+            store = StateStore(Path(directory) / "state.json")
+            controller = SimpleNamespace(repository="owner/repo", store=store)
+            args = review_cli._parser().parse_args(
+                [
+                    "decide",
+                    "summary-disposition",
+                    "accepted-fixed",
+                    "--pr",
+                    "42",
+                    "--head",
+                    HEAD,
+                    "--source",
+                    "review",
+                    "--summary-id",
+                    "78",
+                    "--kind",
+                    "outside_diff",
+                    "--count",
+                    "1",
+                    "--reason",
+                    "fix was published on the corrected head",
+                    "--corrected-head",
+                    corrected_head,
+                ]
+            )
+            with (
+                patch.object(review_cli, "default_controller", return_value=controller),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+            ):
+                result, exit_status = review_cli._dispatch(args)
+
+            self.assertEqual(exit_status, 0)
+            self.assertEqual(result["disposition"]["decision"], "accepted_fixed")
+            self.assertEqual(store.load().summary_dispositions[0].corrected_head, corrected_head)
+
+            args.corrected_head = "e" * 40
+            with (
+                patch.object(review_cli, "default_controller", return_value=controller),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                self.assertRaisesRegex(review_cli.CliError, "--corrected-head must equal the live PR head"),
+            ):
+                review_cli._dispatch(args)
+            self.assertEqual(store.load().summary_dispositions[0].corrected_head, corrected_head)
+
 
 if __name__ == "__main__":
     unittest.main()
