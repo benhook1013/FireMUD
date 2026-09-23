@@ -303,8 +303,9 @@ def git_common_dir(cwd: str | os.PathLike[str] | None = None) -> Path:
             check=True,
             capture_output=True,
             text=True,
+            timeout=30,
         )
-    except (OSError, subprocess.CalledProcessError) as exc:
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         raise StateError("cannot resolve the repository Git common directory") from exc
     common = Path(result.stdout.strip())
     if not common.is_absolute():

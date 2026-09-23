@@ -5,9 +5,11 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
+from pr_review import state as state_module
 from pr_review.policy import Channel, Evidence, ReviewStatus, completion_status, select_review_target, taper_satisfied
 from pr_review.stack import PRSnapshot, ReconciliationStatus, ReviewAnchor, classify_anchor, reconcile_stack
 from pr_review.state import Judgment, PolicyOverride, ReviewState, StackReconciliationDecision, StateError, StateStore
@@ -100,8 +102,19 @@ class ReviewStateStackTest(unittest.TestCase):
                 "1:cli": PolicyOverride(cli_zero_useful=1, head="h", checkpoint="c", reason="close-out", patch_id="p")
             },
         )
-        current = Evidence(1, "h", "c", patch_id="other", anchored=True, completed=True, attributable=True)
+        current = Evidence(
+            1,
+            "h",
+            "c",
+            patch_id="other",
+            anchored=True,
+            completed=True,
+            attributable=True,
+            corrected_state=True,
+        )
         self.assertEqual(completion_status(state, Channel.CLI, (current,)), ReviewStatus.READY)
+        matching = dataclasses.replace(current, patch_id="p")
+        self.assertEqual(completion_status(state, Channel.CLI, (matching,)), ReviewStatus.COMPLETE)
         legacy = ReviewState(
             ordered_prs=(1,),
             policy_overrides={
@@ -109,6 +122,15 @@ class ReviewStateStackTest(unittest.TestCase):
             },
         )
         self.assertEqual(completion_status(legacy, Channel.CLI, (dataclasses.replace(current, patch_id=None),)), ReviewStatus.READY)
+
+    def test_git_common_dir_bounds_subprocess_and_translates_timeout(self):
+        timeout = state_module.subprocess.TimeoutExpired("git rev-parse --git-common-dir", 30)
+        with (
+            patch.object(state_module.subprocess, "run", side_effect=timeout) as run,
+            self.assertRaisesRegex(StateError, "cannot resolve the repository Git common directory"),
+        ):
+            state_module.git_common_dir()
+        self.assertEqual(run.call_args.kwargs["timeout"], 30)
 
     def test_override_cannot_bypass_an_accepted_or_non_zero_useful_checkpoint(self):
         state = ReviewState(
