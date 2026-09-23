@@ -16,15 +16,15 @@ This assignment supersedes the Cycle 12 stop/report boundary and every earlier r
 ## Active target
 
 - #2840 is the Unit 1A child of #2839.
-- Published head: `b9c155de9685f47b2efd16490abac090c4f7de20`.
+- Published head: `cde02b01e04b2eaf03ba46eb0ea7049aaade13c3`.
 - Unique scope: 51 files.
-- Cycles 1–8 were productive; Cycle 9 was dry, and Cycles 10–12 were productive. Cycle 11 and Cycle 12 each produced two distinct useful findings. The PR body and private ledger hold the detailed counts and dispositions.
+- Cycles 1–8 were productive; Cycle 9 was dry, and Cycles 10–13 were productive. Cycle 13 accepted two distinct P1 obligations, one live entitlement-availability defect and one target-only initial billing-owner decision gap. The PR body and private ledger hold the detailed counts and dispositions.
 - Current dry streak: zero. Unit 1A is not corpus-tapered or merge-ready.
-- Cycle 12's accepted corrections are published and locally validated. Account ran 245 unit tests; 17 PostgreSQL integration tests were skipped without Docker. The cumulative stack retains inherited CI failures outside #2840's changed paths.
+- Cycle 13's accepted corrections are published and locally validated. Account ran 249 unit tests; 17 PostgreSQL integration tests were skipped without Docker. The current subscription writer remains fail-closed pending the initial billing-owner design choice, so that target decision does not halt independent review. The cumulative stack retains inherited CI failures outside #2840's changed paths.
 
 ## Assignment
 
-Resume only #2840 with fresh corrected-state whole-Unit-1A reviews starting at Cycle 13.
+Continue only #2840 with fresh corrected-state whole-Unit-1A review Cycle 14 on the published Cycle 13 head.
 
 - Review the complete corrected semantic unit, not merely the latest diff.
 - Adjudicate every candidate. Integrate, validate, publish, and ledger every useful accepted correction before starting the next cycle.
