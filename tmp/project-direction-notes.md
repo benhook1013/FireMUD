@@ -58,7 +58,7 @@ Review capacity follows the active front and is transferred only at a coherent h
 
 ## Overseer corrections recorded 2026-09-22
 
-- Overseer incorrectly treated #2824's three-round Hosted report boundary as merge readiness instead of returning its still-productive `2/1 → 2/2 → 1/1` evidence for human judgment. The merge was reverted by #2836 and is being recreated as #2837.
+- Overseer incorrectly treated #2824's three-round Hosted report boundary as merge readiness instead of returning its still-productive `2/1 → 2/2 → 1/1` evidence for human judgment. The merge was reverted by #2836; reviewed replacement #2837 later merged.
 - Overseer repeated the same cap error by describing #2837 CLI as complete after two productive rounds (`3/1`, `4/2`). CLI was resumed; future caps trigger reporting and do not stop productive review.
 - Overseer allowed a new user question to interrupt creation of an already-required CI sentinel. Existing authorized work remains active across steering unless the user explicitly stops or replaces it.
 - Overseer and worker orchestrators repeatedly performed delegable inventories and mechanical review preparation in their main lanes until the user intervened. Future tasks identify disjoint delegation lanes at the start rather than treating subagents as a late recovery step.
