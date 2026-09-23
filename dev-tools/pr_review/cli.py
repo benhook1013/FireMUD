@@ -336,7 +336,6 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 raise CliError(
                     f"PR #{args.pr} requires exactly one durable Hosted trigger with ID {args.trigger_id}"
                 )
-            payload = github.fetch_pull_request(controller.repository, args.pr)
             return hosted.retire_trigger_record(
                 matching_paths[0],
                 controller.repository,
@@ -344,7 +343,7 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 args.trigger_id,
                 args.head,
                 args.reason,
-                payload,
+                lambda: github.fetch_pull_request(controller.repository, args.pr),
             ), 0
         if args.decide_command == "trigger-retire-stuck":
             if not args.confirmed_wait_expired:

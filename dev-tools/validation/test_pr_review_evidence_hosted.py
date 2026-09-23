@@ -831,7 +831,38 @@ class HostedEvidenceTests(unittest.TestCase):
                 patch.object(hosted, "default_trigger_record_path", return_value=lock_path),
                 self.assertRaisesRegex(ValueError, "active"),
             ):
-                hosted.retire_trigger_record(path, REPO, PR, 10, HEAD, "stale", payload)
+                hosted.retire_trigger_record(path, REPO, PR, 10, HEAD, "stale", lambda: payload)
+
+    def test_retirement_fetches_live_payload_under_lock_and_rejects_advanced_head(self):
+        current_head = "c" * 40
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        record = trigger_record()
+        advanced_payload = review_payload([trigger], head=current_head)
+        lock_acquired = False
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            path.write_text(json.dumps(record), encoding="utf-8")
+            lock_path = Path(directory) / "lock-trigger.json"
+            original_with_lock = hosted._with_lock
+
+            def acquire_tracked_lock(lock_file):
+                nonlocal lock_acquired
+                descriptor = original_with_lock(lock_file)
+                lock_acquired = True
+                return descriptor
+
+            def fetch_after_lock():
+                self.assertTrue(lock_acquired)
+                return advanced_payload
+
+            with (
+                patch.object(hosted, "default_trigger_record_path", return_value=lock_path),
+                patch.object(hosted, "_with_lock", side_effect=acquire_tracked_lock),
+                self.assertRaisesRegex(ValueError, "current head does not match"),
+            ):
+                hosted.retire_trigger_record(path, REPO, PR, 10, HEAD, "stale", fetch_after_lock)
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "posted")
 
     def test_retirement_refuses_unresolved_timed_out_trigger_on_same_head(self):
         record = trigger_record()
@@ -849,7 +880,9 @@ class HostedEvidenceTests(unittest.TestCase):
                 patch.object(hosted, "default_trigger_record_path", return_value=Path(directory) / "lock.json"),
                 self.assertRaisesRegex(ValueError, "same head"),
             ):
-                hosted.retire_trigger_record(path, REPO, PR, 10, HEAD, "stale", review_payload([trigger]))
+                hosted.retire_trigger_record(
+                    path, REPO, PR, 10, HEAD, "stale", lambda: review_payload([trigger])
+                )
             self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "timed_out")
 
     def test_retirement_accepts_only_durable_later_exact_head_completion(self):
@@ -897,7 +930,9 @@ class HostedEvidenceTests(unittest.TestCase):
                 patch.object(hosted, "default_trigger_record_path", return_value=lock_path),
                 patch.object(hosted, "trigger_record_paths", return_value=[later_path]),
             ):
-                result = hosted.retire_trigger_record(old_path, REPO, PR, 10, HEAD, "superseded", payload)
+                result = hosted.retire_trigger_record(
+                    old_path, REPO, PR, 10, HEAD, "superseded", lambda: payload
+                )
             self.assertEqual(result["status"], "retired")
 
             unverified_path = common / "unverified.json"
@@ -907,7 +942,9 @@ class HostedEvidenceTests(unittest.TestCase):
                 patch.object(hosted, "trigger_record_paths", return_value=[]),
                 self.assertRaisesRegex(ValueError, "later completed exact-head"),
             ):
-                hosted.retire_trigger_record(unverified_path, REPO, PR, 10, HEAD, "superseded", payload)
+                hosted.retire_trigger_record(
+                    unverified_path, REPO, PR, 10, HEAD, "superseded", lambda: payload
+                )
 
     def test_stuck_trigger_recovery_requires_explicit_wait_and_a_new_exact_head(self):
         current_head = "c" * 40

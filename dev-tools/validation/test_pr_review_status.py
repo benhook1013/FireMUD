@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -21,6 +22,35 @@ BASE = "a" * 40
 HEAD = "b" * 40
 MERGE_BASE = "c" * 40
 REQUIRED_CONTEXTS = ["Validation Gate", "Security Gate", "License Gate", "Smoke Gate", "CodeQL Gate"]
+
+
+def _review_thread_node_fields_without_comments(query: str) -> str:
+    """Return review-thread node fields excluding the nested comment connection."""
+
+    thread_nodes = re.search(r"\breviewThreads\s*\([^)]*\)\s*\{\s*nodes\s*\{", query)
+    if thread_nodes is None:
+        raise AssertionError("query does not select reviewThreads.nodes")
+
+    def selection_end(source: str, opening_brace: int) -> int:
+        depth = 0
+        for index in range(opening_brace, len(source)):
+            if source[index] == "{":
+                depth += 1
+            elif source[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    return index
+        raise AssertionError("query contains an unterminated GraphQL selection")
+
+    node_opening = thread_nodes.end() - 1
+    node_end = selection_end(query, node_opening)
+    node_fields = query[node_opening + 1 : node_end]
+    comments = re.search(r"\bcomments\s*\([^)]*\)\s*\{", node_fields)
+    if comments is None:
+        return node_fields
+    comments_opening = comments.end() - 1
+    comments_end = selection_end(node_fields, comments_opening)
+    return node_fields[: comments.start()] + node_fields[comments_end + 1 :]
 
 
 def checkpoint_payload() -> dict:
@@ -183,8 +213,9 @@ class StatusTest(unittest.TestCase):
         self.assertFalse(report["ready"])
 
     def test_review_thread_queries_use_opaque_ids_without_database_id(self) -> None:
-        self.assertNotRegex(github._BASE_QUERY, r"databaseId\s+isResolved")
-        self.assertNotRegex(github._connection_query("reviewThreads"), r"databaseId\s+isResolved")
+        for query in (github._BASE_QUERY, github._connection_query("reviewThreads")):
+            with self.subTest(query=query):
+                self.assertNotRegex(_review_thread_node_fields_without_comments(query), r"\bdatabaseId\b")
         report = self._ready_report(github_payload())
         self.assertEqual(report["unresolved_threads"][0]["id"], "PRRT_1")
 

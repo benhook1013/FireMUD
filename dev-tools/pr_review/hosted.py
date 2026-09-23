@@ -997,7 +997,7 @@ def retire_trigger_record(
     trigger_id: int,
     expected_head_sha: str,
     reason: str,
-    payload: dict[str, Any],
+    fetch_payload: Callable[[], dict[str, Any]],
 ) -> dict[str, Any]:
     if (
         not isinstance(trigger_id, int)
@@ -1009,13 +1009,24 @@ def retire_trigger_record(
         or any(ord(char) < 0x20 for char in reason)
     ):
         raise ValueError("invalid trigger retirement request")
+    if not callable(fetch_payload):
+        raise TypeError("trigger retirement requires a live pull-request fetch callback")
     record_path = Path(path)
     descriptor = _with_lock(default_trigger_record_path(repo, pr_number))
     try:
         # Re-read after taking the same per-PR lock used by Hosted posting.
         record = load_trigger_record(record_path, repo, pr_number)
+        payload = fetch_payload()
+        if not isinstance(payload, dict):
+            raise TypeError("live pull-request response is not an object")
+        try:
+            pr = payload["data"]["repository"]["pullRequest"]
+        except (KeyError, TypeError) as error:
+            raise TypeError("live pull-request data is unavailable for trigger retirement") from error
+        if not isinstance(pr, dict):
+            raise TypeError("live pull-request data is unavailable for trigger retirement")
         state = trigger_state(repo, pr_number, payload, record, record_path)
-        current = payload["data"]["repository"]["pullRequest"].get("headRefOid")
+        current = pr.get("headRefOid")
         if (
             state.trigger_comment_id != trigger_id
             or not isinstance(current, str)
