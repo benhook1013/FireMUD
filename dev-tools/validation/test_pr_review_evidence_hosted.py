@@ -83,6 +83,33 @@ def trigger_record(head: str = HEAD):
 
 
 class GithubAndEvidenceTests(unittest.TestCase):
+    def test_summary_counts_require_anchored_canonical_lines(self):
+        body = (
+            "The review discusses Outside diff range comments and Duplicate comments in prose.\n"
+            "### Outside diff range comments (2)\n"
+            "**Duplicate comments (1)**"
+        )
+        self.assertEqual(evidence.summary_action_counts(body), (2, 1))
+
+    def test_summary_marker_without_count_fails_closed(self):
+        with self.assertRaisesRegex(evidence.EvidenceError, "summary section has no canonical count"):
+            evidence.summary_action_counts("## Outside diff range comments")
+
+    def test_malformed_heading_or_bold_summary_fails_closed(self):
+        for body in ("### Outside diff range comments: 2", "**Duplicate comments: 1**"):
+            with self.subTest(body=body), self.assertRaisesRegex(
+                evidence.EvidenceError, "summary section has no canonical count"
+            ):
+                evidence.summary_action_counts(body)
+
+    def test_summary_phrase_in_body_prose_is_not_a_marker(self):
+        body = (
+            "This paragraph mentions Outside the diff and Duplicate comments without reporting summary counts.\n"
+            "Outside diff range comments are discussed in prose.\n"
+            "Duplicate comments are discussed in prose."
+        )
+        self.assertEqual(evidence.summary_action_counts(body), (0, 0))
+
     def test_graphql_variables_preserve_strings_and_type_only_non_boolean_integers(self):
         query = "query($owner:String!, $repo:String!, $number:Int!, $after:String!) { viewer { login } }"
         variables = {"owner": "123", "repo": "@project", "number": 42, "after": "007", "enabled": True}

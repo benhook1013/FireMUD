@@ -117,10 +117,28 @@ def summary_action_counts(body: str) -> tuple[int, int]:
     counts: dict[str, int] = {"outside_diff": 0, "duplicate": 0}
     for kind, markers in SUMMARY_MARKERS.items():
         found: list[int] = []
-        for marker in markers:
-            found.extend(int(value) for value in re.findall(rf"{re.escape(marker)}\s*\((\d+)\)", body, re.IGNORECASE))
-        if any(marker.casefold() in body.casefold() for marker in markers) and not found:
-            raise EvidenceError(f"CodeRabbit {kind} summary section has no canonical count")
+        for line in body.splitlines():
+            for marker in markers:
+                prefix = re.match(
+                    rf"^\s*(?:(?P<heading>#{{1,6}})\s+)?(?P<bold>\*\*)?{re.escape(marker)}(?P<tail>.*)$",
+                    line,
+                    re.IGNORECASE,
+                )
+                if not prefix:
+                    continue
+                explicit = prefix.group("heading") is not None or prefix.group("bold") is not None
+                tail = prefix.group("tail").strip()
+                if tail.startswith("**"):
+                    tail = tail[2:].lstrip()
+                if tail.endswith("**"):
+                    tail = tail[:-2].rstrip()
+                if not tail:
+                    raise EvidenceError(f"CodeRabbit {kind} summary section has no canonical count")
+                count = re.fullmatch(r"\((\d+)\)", tail)
+                if count:
+                    found.append(int(count.group(1)))
+                elif explicit or tail.startswith("("):
+                    raise EvidenceError(f"CodeRabbit {kind} summary section has no canonical count")
         counts[kind] = max(found, default=0)
     return counts["outside_diff"], counts["duplicate"]
 

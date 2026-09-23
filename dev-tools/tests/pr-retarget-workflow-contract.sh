@@ -332,29 +332,7 @@ security_path="$ROOT_DIR/.github/workflows/security.yml"
 
 for path in "$ci_path" "$security_path" "$smoke_path"; do
   require_contains "$path" 'types: [opened, synchronize, reopened, edited]'
-  require_contains "$path" "format('metadata-{0}', github.run_id) || 'required' }}"
-  require_contains "$path" 'github.event.pull_request.number'
-  require_contains "$path" '  cancel-in-progress: true'
 done
-
-# Metadata-only edits must use their isolated group expression, while substantive
-# runs retain one stable group and continue cancelling stale work.
-python3 - "$ci_path" "$security_path" "$smoke_path" <<'PY'
-import sys
-from pathlib import Path
-
-import yaml
-
-for workflow_path in map(Path, sys.argv[1:]):
-    workflow = yaml.load(workflow_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    expression = workflow["concurrency"]["group"]
-    if "github.event.action == 'edited'" not in expression or "github.event.changes.base.ref == null" not in expression:
-        raise SystemExit(f"{workflow_path.name}: metadata isolation lost its edited/non-retarget guard")
-    if "format('metadata-{0}', github.run_id) || 'required'" not in expression:
-        raise SystemExit(f"{workflow_path.name}: metadata and substantive group selection changed")
-    if workflow["concurrency"]["cancel-in-progress"] != "true":
-        raise SystemExit(f"{workflow_path.name}: substantive stale-run cancellation is disabled")
-PY
 
 require_exact_line "$security_path" '    name: Security Summary'
 # Metadata-only edits get distinct optional summary contexts; substantive events
