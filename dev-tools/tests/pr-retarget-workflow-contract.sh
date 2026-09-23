@@ -337,9 +337,8 @@ for path in "$ci_path" "$security_path" "$smoke_path"; do
   require_contains "$path" '  cancel-in-progress: true'
 done
 
-# Two rapid metadata edits on the same PR/head must occupy distinct workflow
-# groups, so neither a running nor a pending summary can cancel the other.
-# Substantive runs retain one stable group and continue cancelling stale work.
+# Metadata-only edits must use their isolated group expression, while substantive
+# runs retain one stable group and continue cancelling stale work.
 python3 - "$ci_path" "$security_path" "$smoke_path" <<'PY'
 import sys
 from pathlib import Path
@@ -353,11 +352,6 @@ for workflow_path in map(Path, sys.argv[1:]):
         raise SystemExit(f"{workflow_path.name}: metadata isolation lost its edited/non-retarget guard")
     if "format('metadata-{0}', github.run_id) || 'required'" not in expression:
         raise SystemExit(f"{workflow_path.name}: metadata and substantive group selection changed")
-    first_edit = expression.replace("format('metadata-{0}', github.run_id)", "metadata-101")
-    second_edit = expression.replace("format('metadata-{0}', github.run_id)", "metadata-102")
-    substantive = expression.replace("format('metadata-{0}', github.run_id)", "required")
-    if first_edit == second_edit or first_edit == substantive or second_edit == substantive:
-        raise SystemExit(f"{workflow_path.name}: rapid metadata edits can cancel each other or substantive CI")
     if workflow["concurrency"]["cancel-in-progress"] != "true":
         raise SystemExit(f"{workflow_path.name}: substantive stale-run cancellation is disabled")
 PY

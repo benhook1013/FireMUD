@@ -379,106 +379,55 @@ import yaml
 
 root = Path(sys.argv[1])
 workflows = {
-    "ci.yml": ("ci", "validation-gate", "Validation Gate"),
-    "security.yml": ("security", "security-gate", "Security Gate"),
-    "smoke.yml": ("smoke", "smoke-gate", "Smoke Gate"),
+    "ci.yml": ("validation-gate", "Validation Gate", True),
+    "security.yml": ("security-gate", "Security Gate", True),
+    "license-scan.yml": ("license-gate", "License Gate", False),
+    "smoke.yml": ("smoke-gate", "Smoke Gate", True),
+    "codeql.yml": ("codeql-gate", "CodeQL Gate", False),
 }
+
 metadata_guard = "github.event.action != 'edited' || github.event.changes.base.ref != null"
-metadata_events = (91001, 91002)
-
-for workflow, (prefix, gate_job, gate_name) in workflows.items():
+for workflow, (gate_job, gate_name, run_scoped_metadata) in workflows.items():
     path = root / ".github" / "workflows" / workflow
     data = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    group = data["concurrency"]["group"]
-    if "github.run_id" not in group:
-        raise SystemExit(f"{workflow} metadata group must include github.run_id")
-    if "github.event.pull_request.number" not in group:
-        raise SystemExit(f"{workflow} concurrency group must remain PR-scoped")
-    jobs = data["jobs"]
-    for job_name, job in jobs.items():
-        if job_name == gate_job:
-            continue
-        condition = job.get("if", "") if isinstance(job, dict) else ""
-        if metadata_guard not in condition:
-            raise SystemExit(
-                f"{workflow} job {job_name} could duplicate substantive work on metadata edits"
-            )
-
-    # The production expression resolves to a run-specific metadata suffix;
-    # this fixture makes the two-event isolation requirement executable.
-    groups = {
-        f"{prefix}-pr-2844-metadata-{run_id}" for run_id in metadata_events
-    }
-    if len(groups) != len(metadata_events):
-        raise SystemExit(f"{workflow} rapid metadata edits share a concurrency group")
-    if f"{prefix}-pr-2844-required" in groups:
-        raise SystemExit(f"{workflow} metadata edits can cancel the required group")
-
-    gate = jobs[gate_job]
-    if gate.get("name") != gate_name and workflow != "smoke.yml":
-        raise SystemExit(f"{workflow} required gate name changed")
-
-gate_workflows = {
-    **workflows,
-    "license-scan.yml": ("license", "license-gate", "License Gate"),
-    "codeql.yml": ("codeql", "codeql-gate", "CodeQL Gate"),
-}
-required_gate_fixtures = []
-for workflow, (_prefix, gate_job, gate_name) in gate_workflows.items():
-    path = root / ".github" / "workflows" / workflow
-    data = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    job = data["jobs"][gate_job]
-    required_gate_fixtures.append(
-        {
-            "workflow": workflow,
-            "job": gate_job,
-            "context": gate_name,
-            "status": "completed",
-            "conclusion": "success",
-        }
+    concurrency = data["concurrency"]
+    group = concurrency["group"]
+    required_group_parts = (
+        "github.event.pull_request.number",
+        "github.event.action == 'edited'",
+        "github.event.changes.base.ref == null",
+        "|| 'required'",
     )
-    if workflow != "smoke.yml" and job.get("name") != gate_name:
-        raise SystemExit(f"{workflow} required gate fixture has no matching job context")
+    if any(part not in group for part in required_group_parts):
+        raise SystemExit(f"{workflow} concurrency expression lost PR-scoped metadata isolation")
+    metadata_suffix = "format('metadata-{0}', github.run_id)" if run_scoped_metadata else "&& 'metadata' || 'required'"
+    if metadata_suffix not in group:
+        raise SystemExit(f"{workflow} concurrency expression changed its metadata group")
+    if concurrency.get("cancel-in-progress") != "true":
+        raise SystemExit(f"{workflow} must cancel obsolete required-gate runs")
 
-# Build metadata-event fixtures only after checking the parsed job conditions.
-# A non-gate job is expected to skip only when its own condition contains the
-# guard that excludes metadata-only edits. The required gate remains backed by
-# the successful required-gate fixtures above and its preservation action.
-metadata_job_fixtures = []
-metadata_guard = "github.event.action != 'edited' || github.event.changes.base.ref != null"
-for workflow, (_prefix, gate_job, _gate_name) in workflows.items():
+    gate = data["jobs"][gate_job]
+    if workflow == "smoke.yml":
+        expected_gate_name = (
+            "${{ github.event.action == 'edited' && github.event.changes.base.ref == null "
+            "&& 'PR Metadata Edit (Smoke Gate)' || 'Smoke Gate' }}"
+        )
+    else:
+        expected_gate_name = gate_name
+    if gate.get("name") != expected_gate_name:
+        raise SystemExit(f"{workflow} required gate context changed")
+
+for workflow in ("ci.yml", "security.yml", "smoke.yml"):
     path = root / ".github" / "workflows" / workflow
     data = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     for job_name, job in data["jobs"].items():
-        if job_name == gate_job:
+        if job_name == workflows[workflow][0]:
             continue
         condition = job.get("if", "") if isinstance(job, dict) else ""
         if metadata_guard not in condition:
             raise SystemExit(
                 f"{workflow} job {job_name} can run for a metadata-only edited event"
             )
-        metadata_job_fixtures.append(
-            {
-                "workflow": workflow,
-                "job": job_name,
-                "context": job.get("name", job_name),
-                "status": "completed",
-                "conclusion": "skipped",
-            }
-        )
-
-required_contexts = {fixture["context"]: fixture["conclusion"] for fixture in required_gate_fixtures}
-metadata_contexts = {fixture["context"]: fixture["conclusion"] for fixture in metadata_job_fixtures}
-aggregate = {**required_contexts, **metadata_contexts}
-residue = {"failure", "cancelled"}
-if residue.intersection(aggregate.values()):
-    raise SystemExit("metadata edit aggregate contains failed or cancelled residue")
-if len(required_contexts) != len(required_gate_fixtures):
-    raise SystemExit("required gate event/job fixtures do not expose distinct authoritative contexts")
-if not required_contexts or any(conclusion != "success" for conclusion in required_contexts.values()):
-    raise SystemExit("metadata edit must retain successful authoritative required-gate fixtures")
-if not metadata_job_fixtures or any(fixture["conclusion"] != "skipped" for fixture in metadata_job_fixtures):
-    raise SystemExit("metadata-only non-gate jobs must be skipped by their verified job guards")
 PY
 
 # shellcheck disable=SC2016 # Match the checked-in arithmetic assignment literally.
