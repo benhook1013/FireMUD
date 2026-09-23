@@ -51,6 +51,8 @@ Document then published Unit 1A child #2840 at `1dc0ddb5449047554ff19ff288a9c12e
 
 The true backlog outside the train is only Document’s post-5B corpus programme and General’s Phase 1 → Phase 2 programme. Shared tooling/refactoring, CI/hosted operations, default preview TLS, and failed-empty-preview capacity are candidate inputs or acceptance checks within those programmes, not standalone jobs. No later gameplay feature slice is selected.
 
+Measured CI latency candidate: #2835's authoritative `PR Full-Stack Smoke` took 14m12s. `Build local PR runtime images` consumed 8m37s, the integrated smoke 2m41s, and image export/upload about 1m55s. Prefer controlled two- or three-way parallel service-image construction within the same credential-free runner, after the one shared Gradle/base build, over separate GitHub jobs that would duplicate builds or transfer large Docker archives. Preserve the single integrated smoke and post-smoke artifact boundary. Treat this as a measured optimization candidate after the active review-control work, not a current merge blocker.
+
 ## Operating invariants
 
 - Substantial worker assignments live in `/home/ben/src/FireMUD-project-direction/tmp/task-briefs/` before handoff. The worker message is a concise summary plus the exact absolute brief path. Append dated follow-ups and corrections to the same brief and send only a short pointer to the appended section; explicitly mark superseded instructions. If the accumulated instructions become conflicting, the Overseer may rewrite the brief into one aligned current assignment, but must tell the worker what changed or was removed and that the rewritten brief supersedes earlier chat. Small self-contained requests may remain entirely in chat.
