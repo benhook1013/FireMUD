@@ -180,6 +180,7 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertEqual(remaining, summary["findings"])
         self.assertEqual(matched, [accepted_fixed.to_dict()])
 
+    @unittest.skipUnless("fork" in multiprocessing.get_all_start_methods(), "requires the fork start method")
     def test_concurrent_updates_are_serialized_and_leave_valid_json(self):
         with tempfile.TemporaryDirectory() as directory:
             path = str(Path(directory) / "firemud" / "pr-review-stack.json")
