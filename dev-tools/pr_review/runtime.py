@@ -23,6 +23,7 @@ _PLAN_CEILING_PATTERN = re.compile(
     r"|(?:plan|review).{0,120}(?:file|files).{0,120}"
     r"(?:limit|ceiling|maximum|cap).{0,120}(?:exceed\w*|too many|over|reject\w*|skip\w*))"
 )
+_CODERABBIT_FILE_CEILING = 100
 
 
 class LiveGitHub:
@@ -207,6 +208,7 @@ class LiveEvidence:
         head: str,
         payload: dict[str, Any],
         *,
+        changed_files: int | None = None,
         include_hosted_findings: bool = True,
     ) -> list[dict[str, Any]]:
         """Return blockers shared by review channels and Hosted-only obligations.
@@ -277,12 +279,9 @@ class LiveEvidence:
                 )
         all_reviews = [*pull.get("comments", {}).get("nodes", []), *pull.get("reviews", {}).get("nodes", [])]
         latest_exact_completion = datetime.min.replace(tzinfo=timezone.utc)
-        current_head_commit_at = None
-        for node in (pull.get("commits") or {}).get("nodes", []):
-            commit = node.get("commit") if isinstance(node, dict) else None
-            if isinstance(commit, dict) and commit.get("oid") == head:
-                current_head_commit_at = hosted.parse_timestamp(commit.get("committedDate"))
-                break
+        current_diff_within_file_ceiling = (
+            type(changed_files) is int and 0 <= changed_files <= _CODERABBIT_FILE_CEILING
+        )
         for item in all_reviews:
             if not github.is_coderabbit_login((item.get("author") or {}).get("login", "")):
                 continue
@@ -305,7 +304,7 @@ class LiveEvidence:
                 and _PLAN_CEILING_PATTERN.search(body)
                 and timestamp is not None
                 and timestamp >= latest_exact_completion
-                and (current_head_commit_at is None or timestamp >= current_head_commit_at)
+                and not current_diff_within_file_ceiling
             ):
                 values.append(
                     {
@@ -481,7 +480,15 @@ class LiveEvidence:
                             "reason": state.reason,
                         }
                     )
-        values.extend(self._global_blockers(pr, head, payload, include_hosted_findings=channel == "hosted"))
+        values.extend(
+            self._global_blockers(
+                pr,
+                head,
+                payload,
+                changed_files=live.changed_files,
+                include_hosted_findings=channel == "hosted",
+            )
+        )
         self._histories[key] = values
         return values
 

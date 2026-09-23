@@ -270,8 +270,8 @@ class RuntimeTest(unittest.TestCase):
             },
         }
 
-    def _history(self, common: Path, payload, channel="hosted"):
-        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+    def _history(self, common: Path, payload, channel="hosted", *, changed_files=1):
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", changed_files)
         live = LiveGitHub("owner/repo")
         with (
             patch.object(github, "fetch_pull_request", return_value=payload),
@@ -795,8 +795,8 @@ class RuntimeTest(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory() as directory:
             payload = self._payload(comments, threads=threads)
-            hosted_history = self._history(Path(directory), payload, "hosted")
-            cli_history = self._history(Path(directory), payload, "cli")
+            hosted_history = self._history(Path(directory), payload, "hosted", changed_files=101)
+            cli_history = self._history(Path(directory), payload, "cli", changed_files=101)
         self.assertTrue(
             any(
                 item.get("held") and item.get("checkpoint", "").startswith("review-threads:")
@@ -814,7 +814,7 @@ class RuntimeTest(unittest.TestCase):
         self.assertTrue(any(item.get("over_ceiling") for item in hosted_history))
         self.assertTrue(any(item.get("over_ceiling") for item in cli_history))
 
-    def test_file_ceiling_skip_is_scoped_to_the_current_head_and_later_completion_clears_it(self) -> None:
+    def test_file_ceiling_skip_uses_current_changed_file_count_and_later_completion_clears_it(self) -> None:
         old_head = "d" * 40
         old_summary = {
             "databaseId": 19,
@@ -834,17 +834,17 @@ class RuntimeTest(unittest.TestCase):
             ),
             "createdAt": "2026-09-23T00:04:00Z",
         }
-        current_head_commit = {"nodes": [{"commit": {"oid": HEAD, "committedDate": "2026-09-23T00:05:00Z"}}]}
+        current_head_commit = {"nodes": [{"commit": {"oid": HEAD, "committedDate": "2026-09-23T00:01:00Z"}}]}
         with tempfile.TemporaryDirectory() as directory:
             stale_payload = self._payload([old_summary, skip])
             stale_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
-            stale_history = self._history(Path(directory), stale_payload, "cli")
+            stale_history = self._history(Path(directory), stale_payload, "cli", changed_files=100)
             self.assertFalse(any(item.get("over_ceiling") for item in stale_history))
 
             current_skip = {**skip, "createdAt": "2026-09-23T00:06:00Z"}
             current_payload = self._payload([old_summary, current_skip])
             current_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
-            current_history = self._history(Path(directory), current_payload, "cli")
+            current_history = self._history(Path(directory), current_payload, "cli", changed_files=101)
             self.assertTrue(any(item.get("over_ceiling") for item in current_history))
 
             current_completion = {
@@ -858,7 +858,7 @@ class RuntimeTest(unittest.TestCase):
             }
             completed_payload = self._payload([old_summary, current_skip, current_completion])
             completed_payload["data"]["repository"]["pullRequest"]["commits"] = current_head_commit
-            completed_history = self._history(Path(directory), completed_payload, "cli")
+            completed_history = self._history(Path(directory), completed_payload, "cli", changed_files=101)
             self.assertFalse(any(item.get("over_ceiling") for item in completed_history))
 
     def test_summary_selector_uses_current_head_updated_time_and_rejects_ties(self) -> None:
