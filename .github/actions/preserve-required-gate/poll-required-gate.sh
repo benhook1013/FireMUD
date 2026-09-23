@@ -11,6 +11,11 @@ for required_variable in GH_TOKEN BASE_SHA HEAD_SHA PR_NUMBER REQUIRED_GATE_NAME
     exit 1
   fi
 done
+ALLOW_PENDING="${ALLOW_PENDING:-false}"
+if [[ "${ALLOW_PENDING}" != "true" && "${ALLOW_PENDING}" != "false" ]]; then
+  echo "Required-gate preservation received invalid allow-pending value; refusing to poll." >&2
+  exit 1
+fi
 is_github_sha() {
   [[ "$1" =~ ^[0-9A-Fa-f]{40}$ ]]
 }
@@ -484,6 +489,10 @@ for attempt in $(seq 1 "${max_attempts}"); do
     exit 1
   fi
   if [ "${prior_status}" = "none" ]; then
+    if [[ "${ALLOW_PENDING}" == "true" ]]; then
+      echo "No prior ${REQUIRED_GATE_NAME} is visible yet; allowing the distinct metadata-only job to finish." >&2
+      exit 0
+    fi
     if [ "${attempt}" -eq "${max_attempts}" ] || (( SECONDS >= poll_deadline )); then
       echo "Timed out waiting for a prior ${REQUIRED_GATE_NAME} on unchanged head ${HEAD_SHA} to appear." >&2
       exit 1
@@ -498,6 +507,10 @@ for attempt in $(seq 1 "${max_attempts}"); do
   if [ "${prior_status}" != "pending" ]; then
     echo "Unexpected prior ${REQUIRED_GATE_NAME} selection state ${prior_status:-unknown}; refusing to preserve." >&2
     exit 1
+  fi
+  if [[ "${ALLOW_PENDING}" == "true" ]]; then
+    echo "Relevant prior ${REQUIRED_GATE_NAME} is still pending; allowing the distinct metadata-only job to finish." >&2
+    exit 0
   fi
   if [ "${attempt}" -eq "${max_attempts}" ] || (( SECONDS >= poll_deadline )); then
     echo "Timed out waiting for the relevant prior ${REQUIRED_GATE_NAME} on unchanged head ${HEAD_SHA} to complete." >&2

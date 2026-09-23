@@ -188,6 +188,138 @@ class CheckpointReporterTest(unittest.TestCase):
         self.assertIsNone(checkpoints[1].run_id)
         self.assertEqual(checkpoints[1].hosted_review_id, 5263109682)
 
+    def test_parses_and_renders_checkpoint_duration_without_changing_counts(self) -> None:
+        comments = [
+            {
+                "id": 5755500680,
+                "body": (
+                    "CLI: 19 found / 18 accepted · `573fb38` · 37 files · 91s\n"
+                    "<!-- firemud-cli-run: run.JpGzfG -->\n"
+                    "<!-- firemud-review-duration-seconds: 91 -->"
+                ),
+                "created_at": "2026-09-21T04:41:30Z",
+            },
+            {
+                "id": 5755518575,
+                "body": (
+                    "Hosted: 8 found / 8 accepted · `573fb38` · 37 files · 814s\n"
+                    "<!-- firemud-hosted-review: 5263109682 -->\n"
+                    "<!-- firemud-review-duration-seconds: 814 -->"
+                ),
+                "created_at": "2026-09-21T04:44:20Z",
+            },
+        ]
+
+        report = self.reporter.collect_report(comments, 0)
+
+        self.assertEqual(report["warnings"], [])
+        self.assertEqual(
+            [
+                (item["type"], item["raw_found"], item["accepted"], item["duration_seconds"])
+                for item in report["checkpoints"]
+            ],
+            [("CLI", 19, 18, 91), ("Hosted", 8, 8, 814)],
+        )
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.reporter.emit_text(report)
+        self.assertIn("duration_seconds", output.getvalue().splitlines()[1])
+        self.assertIn("19/18 573fb38 37 91 run.JpGzfG", output.getvalue())
+
+    def test_durationless_history_and_malformed_or_missing_duration_evidence(self) -> None:
+        comments = [
+            {
+                "id": 1,
+                "body": "Hosted: 1 found / 0 accepted · `abcdef1` · 2 files",
+                "created_at": "2026-09-10T00:00:00Z",
+            },
+            {
+                "id": 2,
+                "body": (
+                    "CLI: 2 found / 1 accepted · `abcdef1` · 2 files · 12s\n"
+                    "<!-- firemud-cli-run: run.A1b2C3 -->"
+                ),
+                "created_at": "2026-09-10T00:01:00Z",
+            },
+            {
+                "id": 3,
+                "body": (
+                    "Hosted: 3 found / 2 accepted · `abcdef1` · 2 files · 13s\n"
+                    "<!-- firemud-review-duration-seconds: nope -->"
+                ),
+                "created_at": "2026-09-10T00:02:00Z",
+            },
+            {
+                "id": 4,
+                "body": (
+                    "Hosted: 4 found / 3 accepted · `abcdef1` · 2 files · 14s\n"
+                    "<!-- firemud-review-duration-seconds: 15 -->"
+                ),
+                "created_at": "2026-09-10T00:03:00Z",
+            },
+            {
+                "id": 5,
+                "body": (
+                    "Hosted: 5 found / 4 accepted · `abcdef1` · 2 files · 16s\n"
+                    "<!-- firemud-review-duration-seconds: 16 -->\n"
+                    "<!-- firemud-review-duration-seconds: 16 -->"
+                ),
+                "created_at": "2026-09-10T00:04:00Z",
+            },
+            {
+                "id": 6,
+                "body": (
+                    "Hosted: 6 found / 5 accepted · `abcdef1` · 2 files\n"
+                    "<!-- firemud-review-duration-seconds: 17 -->"
+                ),
+                "created_at": "2026-09-10T00:05:00Z",
+            },
+        ]
+
+        checkpoints, _ = self.reporter.parse_checkpoint_comments(comments)
+        report = self.reporter.collect_report(comments, 0)
+
+        self.assertEqual(report["matched_checkpoints"], 6)
+        self.assertEqual(report["unparsed_candidates"], 0)
+        self.assertNotIn("duration_seconds", report["checkpoints"][0])
+        self.assertNotIn("duration_invalid", report["checkpoints"][0])
+        self.assertFalse(checkpoints[0].duration_invalid)
+        self.assertTrue(all("duration_seconds" not in item for item in report["checkpoints"]))
+        self.assertTrue(any("malformed" in warning for warning in report["warnings"]))
+        self.assertTrue(any("duplicate" in warning for warning in report["warnings"]))
+        self.assertTrue(any("incomplete" in warning for warning in report["warnings"]))
+        self.assertTrue(any("mismatched" in warning for warning in report["warnings"]))
+
+    def test_conflicting_duration_evidence_invalidates_detail_and_round_linkage(self) -> None:
+        comments = [
+            {
+                "id": 7,
+                "body": (
+                    "CLI: 1 found / 0 accepted · `abcdef1` · 2 files · 14s\n"
+                    "<!-- firemud-cli-run: run.A1b2C3 -->\n"
+                    "<!-- firemud-review-duration-seconds: 15 -->"
+                ),
+                "created_at": "2026-09-10T00:06:00Z",
+            }
+        ]
+
+        checkpoints, unparsed = self.reporter.parse_checkpoint_comments(comments)
+        self.assertEqual(unparsed, 0)
+        self.assertTrue(checkpoints[0].duration_invalid)
+        self.assertEqual(checkpoints[0].duration_seconds, None)
+
+        detail = self.reporter.collect_detail(comments, 7, "owner/repo", 42)
+        self.assertEqual(detail["linkage_status"], "invalid")
+        self.assertTrue(detail["no_linked_data"])
+        self.assertIn("duration", detail["message"])
+        self.assertTrue(detail["checkpoint"]["duration_invalid"])
+
+        rounds = self.reporter.collect_rejections(
+            comments, 1, "owner/repo", 42, source="cli", disposition="all"
+        )
+        self.assertEqual(rounds["rounds"][0]["status"], "invalid")
+        self.assertIn("duration", rounds["rounds"][0]["message"])
+
     def test_preserves_bold_checkpoint_syntax_and_rejects_unpaired_bold(self) -> None:
         comments = [
             {
@@ -756,10 +888,12 @@ class CheckpointReporterTest(unittest.TestCase):
                 "repository=owner/repo\n"
                 "pull_request=42\n"
                 "candidate_sha=abc1234567890123456789012345678901234567\n"
-                "candidate_files=1\n",
+                "candidate_files=1\n"
+                "review_duration_seconds=12\n",
                 encoding="utf-8",
             )
             (run_dir / "exit-status").write_text("0\n", encoding="utf-8")
+            (run_dir / "review-duration-seconds").write_text("12\n", encoding="utf-8")
             (run_dir / "stdout").write_text(
                 "\n".join(
                     [
@@ -790,7 +924,11 @@ class CheckpointReporterTest(unittest.TestCase):
             comments = [
                 {
                     "id": 777,
-                    "body": "**CLI: 1 found / 0 accepted** · `abc1234` · 1 files\n<!-- firemud-cli-run: run.A1b2C3 -->",
+                    "body": (
+                        "**CLI: 1 found / 0 accepted** · `abc1234` · 1 files · 12s\n"
+                        "<!-- firemud-cli-run: run.A1b2C3 -->\n"
+                        "<!-- firemud-review-duration-seconds: 12 -->"
+                    ),
                     "created_at": "2026-09-10T00:00:00Z",
                     "updated_at": "2026-09-10T00:00:00Z",
                 }
@@ -811,6 +949,21 @@ class CheckpointReporterTest(unittest.TestCase):
                     "owner/repo",
                     42,
                 )
+                duration_mismatch = self.reporter.collect_detail(
+                    [
+                        {
+                            **comments[0],
+                            "body": (
+                                "**CLI: 1 found / 0 accepted** · `abc1234` · 1 files · 13s\n"
+                                "<!-- firemud-cli-run: run.A1b2C3 -->\n"
+                                "<!-- firemud-review-duration-seconds: 13 -->"
+                            ),
+                        }
+                    ],
+                    777,
+                    "owner/repo",
+                    42,
+                )
                 (run_dir / "rejections.tsv").unlink()
                 without_rejections = self.reporter.collect_detail(comments, 777, "owner/repo", 42)
                 (run_dir / "decisions.tsv").write_text(
@@ -822,6 +975,9 @@ class CheckpointReporterTest(unittest.TestCase):
         self.assertTrue(legacy_capture.rejection_file_present)
         self.assertFalse(legacy_capture.decision_file_present)
         self.assertEqual(detail["linkage_status"], "linked")
+        self.assertEqual(detail["checkpoint"]["duration_seconds"], 12)
+        self.assertEqual(duration_mismatch["linkage_status"], "invalid")
+        self.assertIn("duration", duration_mismatch["message"])
         self.assertEqual(detail["findings"][0]["reason_status"], "not recorded")
         self.assertEqual(detail["findings"][0]["rejection_reason"], None)
         self.assertEqual(detail["unlinked_rejections"][0]["format"], "legacy")
