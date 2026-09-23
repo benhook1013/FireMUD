@@ -14,7 +14,7 @@ from unittest.mock import Mock, patch
 DEV_TOOLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(DEV_TOOLS))
 
-from pr_review import hosted
+from pr_review import evidence, hosted
 from pr_review.cli import _render
 from pr_review.cli_runner import (
     EffectiveParent,
@@ -31,6 +31,7 @@ BASE = "a" * 40
 PARENT = BASE
 HEAD = "c" * 40
 CANDIDATE = "d" * 40
+OLDER_BASE = "e" * 40
 
 
 class FakeGitHub:
@@ -71,6 +72,9 @@ class FakeCommands:
         patch_bytes=None,
         timeout_review=False,
         timeout_git=False,
+        review_output="review output\n",
+        parent_is_ancestor=True,
+        merge_base=None,
     ):
         self.root = root
         self.delay = delay
@@ -85,6 +89,9 @@ class FakeCommands:
         self.patch_bytes = patch_bytes or f"candidate patch {self.candidate}\n".encode()
         self.timeout_review = timeout_review
         self.timeout_git = timeout_git
+        self.review_output = review_output
+        self.parent_is_ancestor = parent_is_ancestor
+        self.merge_base = merge_base or PARENT
         self.timeout_calls = []
 
     def run(self, args, *, cwd=None, capture_output=False, check=True, text=True, timeout=None):
@@ -104,7 +111,7 @@ class FakeCommands:
             time.sleep(self.delay)
             with self.guard:
                 self.active -= 1
-            return CompletedProcess(args, 0, "review output\n", "")
+            return CompletedProcess(args, 0, self.review_output, "")
         if args[:3] == ["git", "-C", str(self.root)]:
             if self.timeout_git:
                 raise subprocess.TimeoutExpired(args, timeout, output=b"partial git\n", stderr=b"timed out\n")
@@ -121,22 +128,23 @@ class FakeCommands:
             if git_args == ["rev-list", "--count", f"{HEAD}..{self.candidate}"]:
                 return CompletedProcess(args, 0, "1\n", "")
             if git_args[:3] == ["merge-base", "--all", PARENT]:
-                return CompletedProcess(args, 0, f"{PARENT}\n", "")
+                return CompletedProcess(args, 0, f"{self.merge_base}\n", "")
             if git_args[:3] == ["merge-base", "--is-ancestor", HEAD]:
                 return CompletedProcess(args, 0, "", "")
             if git_args[:3] == ["merge-base", "--is-ancestor", PARENT]:
-                return CompletedProcess(args, 0, "", "")
+                return CompletedProcess(args, 0 if self.parent_is_ancestor else 1, "", "")
             return CompletedProcess(args, 0, "", "")
         raise AssertionError(f"unexpected command: {args}")
 
 
-def target(*, reconciled=True, ancestor_links_valid=True):
+def target(*, reconciled=True, ancestor_links_valid=True, merge_base=""):
     snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, changed_files=1)
     return ReviewTarget(
         snapshot,
         EffectiveParent("develop", PARENT),
         reconciled=reconciled,
         ancestor_links_valid=ancestor_links_valid,
+        merge_base=merge_base,
         repository="owner/repo",
     )
 
@@ -245,6 +253,10 @@ class CliReviewRunnerTests(unittest.TestCase):
             metadata = json.loads((capture_dir / "metadata.json").read_text())
             self.assertTrue(metadata["timed_out"])
             self.assertIsNone(metadata["exit_status"])
+            self.assertEqual(
+                (capture_dir / "review-duration-seconds").read_text(),
+                f"{metadata['duration_seconds']}\n",
+            )
 
     def test_nul_path_output_preserves_multiple_paths_and_timeout_configuration(self):
         files = ["src/Representative.java", "src/path with spaces\n.txt"]
@@ -311,6 +323,82 @@ class CliReviewRunnerTests(unittest.TestCase):
             metadata = json.loads((result.capture_dir / "metadata.json").read_text())
             self.assertTrue(metadata["provisional"])
             self.assertIn("one-pass", metadata["reason"])
+
+    def test_provisional_run_allows_parent_tip_outside_candidate_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = FakeCommands(root, parent_is_ancestor=False, merge_base=OLDER_BASE)
+            result = run_cli_review(
+                target(reconciled=False, merge_base=OLDER_BASE),
+                github=FakeGitHub(),
+                source_root=root,
+                runner=commands,
+                allow_unreconciled=True,
+                reason="one provisional discovery after the parent advanced",
+            )
+
+            self.assertEqual(result.merge_base, OLDER_BASE)
+            self.assertEqual(result.parent_sha, PARENT)
+            self.assertTrue(result.provisional)
+            self.assertIn(
+                ("git", "-C", str(root), "update-ref", f"refs/heads/codex-review-base/{result.run_id}", OLDER_BASE),
+                [call[0] for call in commands.calls],
+            )
+            self.assertIn(
+                ("git", "-C", str(root), "merge-base", "--all", PARENT, HEAD),
+                [call[0] for call in commands.calls],
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            with self.assertRaisesRegex(ReviewRunnerError, "does not contain the exact effective parent tip"):
+                run_cli_review(
+                    target(),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=FakeCommands(root, parent_is_ancestor=False, merge_base=OLDER_BASE),
+                )
+
+    def test_successful_capture_contains_duration_artifact_and_loads(self):
+        complete = {
+            "type": "complete",
+            "status": "review_completed",
+            "findings": 0,
+            "reviewedFiles": ["src/Representative.java"],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = FakeCommands(root, review_output=json.dumps(complete) + "\n")
+            clock_values = iter((0, 1_250_000_000))
+            result = run_cli_review(
+                target(),
+                github=FakeGitHub(),
+                source_root=root,
+                runner=commands,
+                monotonic_ns=lambda: next(clock_values),
+            )
+
+            duration_artifact = result.capture_dir / "review-duration-seconds"
+            self.assertEqual(duration_artifact.read_text(encoding="utf-8"), "2\n")
+            checkpoint = evidence.Checkpoint(
+                comment_id=None,
+                created_at="",
+                type="CLI",
+                raw_found=0,
+                accepted=0,
+                reviewed_sha=result.candidate_sha[:12],
+                file_count=result.candidate_files,
+                correction=False,
+                updated_at=None,
+                run_id=result.run_id,
+                hosted_review_id=None,
+                duration_seconds=result.duration_seconds,
+            )
+            capture = evidence.load_cli_capture(checkpoint, "owner/repo", 42, root / ".git")
+            self.assertEqual(capture.metadata["review_duration_seconds"], "2")
 
     def test_repository_lock_rejects_a_concurrent_cli_process(self):
         with tempfile.TemporaryDirectory() as directory:

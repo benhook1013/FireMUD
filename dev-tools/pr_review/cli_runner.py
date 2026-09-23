@@ -440,14 +440,17 @@ def _validate_target(
         candidate_sha,
         timeout=git_timeout_seconds,
     )
-    _ancestor(
-        runner,
-        source_root,
-        target.parent.head_sha,
-        candidate_sha,
-        "committed HEAD does not contain the exact effective parent tip",
-        timeout=git_timeout_seconds,
-    )
+    # Provisional discovery can use the unique merge base above even when the exact
+    # parent tip is outside candidate history; normal reviews still require ancestry.
+    if not allow_unreconciled:
+        _ancestor(
+            runner,
+            source_root,
+            target.parent.head_sha,
+            candidate_sha,
+            "committed HEAD does not contain the exact effective parent tip",
+            timeout=git_timeout_seconds,
+        )
     candidate_count = len(
         _nul_paths(
             runner,
@@ -674,6 +677,7 @@ def run_cli_review(
                     (capture_dir / "stdout").write_text(stdout, encoding="utf-8")
                     (capture_dir / "stderr").write_text(stderr, encoding="utf-8")
                     (capture_dir / "exit-status").write_text("timeout\n", encoding="utf-8")
+                    (capture_dir / "review-duration-seconds").write_text(f"{duration}\n", encoding="utf-8")
                     metadata.update({"duration_seconds": duration, "exit_status": None, "timed_out": True})
                     _atomic_json(capture_dir / "metadata.json", metadata)
                     with (capture_dir / "metadata").open("a", encoding="utf-8") as legacy_file:
@@ -688,6 +692,7 @@ def run_cli_review(
                 (capture_dir / "stdout").write_text(process.stdout or "", encoding="utf-8")
                 (capture_dir / "stderr").write_text(process.stderr or "", encoding="utf-8")
                 (capture_dir / "exit-status").write_text(f"{process.returncode}\n", encoding="utf-8")
+                (capture_dir / "review-duration-seconds").write_text(f"{duration}\n", encoding="utf-8")
                 metadata.update({"duration_seconds": duration, "exit_status": process.returncode})
                 _atomic_json(capture_dir / "metadata.json", metadata)
                 with (capture_dir / "metadata").open("a", encoding="utf-8") as legacy_file:
