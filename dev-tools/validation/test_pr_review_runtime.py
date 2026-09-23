@@ -231,12 +231,12 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(record["anchor"]["patch_id"], PATCH)
 
     @staticmethod
-    def _payload(comments=None, reviews=None, threads=None):
+    def _payload(comments=None, reviews=None, threads=None, *, head=HEAD):
         return {
             "data": {
                 "repository": {
                     "pullRequest": {
-                        "headRefOid": HEAD,
+                        "headRefOid": head,
                         "comments": {"nodes": comments or []},
                         "reviews": {"nodes": reviews or []},
                         "reviewThreads": {"nodes": threads or []},
@@ -270,8 +270,8 @@ class RuntimeTest(unittest.TestCase):
             },
         }
 
-    def _history(self, common: Path, payload, channel="hosted", *, changed_files=1):
-        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", changed_files)
+    def _history(self, common: Path, payload, channel="hosted", *, changed_files=1, current_head=HEAD):
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, current_head, "feature", changed_files)
         live = LiveGitHub("owner/repo")
         with (
             patch.object(github, "fetch_pull_request", return_value=payload),
@@ -374,6 +374,68 @@ class RuntimeTest(unittest.TestCase):
             record["anchor"] = {"child_head": HEAD}
             record_path.write_text(json.dumps(record), encoding="utf-8")
             history = self._history(common, payload)
+            self.assertFalse(any(item.get("checkpoint") == "12" and item.get("completed") for item in history))
+
+    def test_historical_hosted_checkpoint_uses_captured_head_after_live_head_moves(self) -> None:
+        current_head = "d" * 40
+        created = "2026-09-23T00:01:00Z"
+        reviewed = "2026-09-23T00:02:00Z"
+        trigger = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": created,
+            "updatedAt": created,
+            "url": "https://example.test/comments/10",
+        }
+        checkpoint = {
+            "databaseId": 12,
+            "author": {"login": "maintainer"},
+            "body": (
+                f"Hosted: 1 found / 0 accepted · `{HEAD[:12]}` · 1 files · 5s\n"
+                "<!-- firemud-hosted-review: 55 -->\n<!-- firemud-review-duration-seconds: 5 -->"
+            ),
+            "createdAt": reviewed,
+            "updatedAt": reviewed,
+        }
+        review = {
+            "databaseId": 55,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+            "state": "COMMENTED",
+            "submittedAt": reviewed,
+            "commit": {"oid": HEAD},
+        }
+        payload = self._payload([trigger, checkpoint], [review], head=current_head)
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            record_path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            record_path.parent.mkdir(parents=True)
+            record = self._trigger_record(created=created)
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+
+            history = self._history(common, payload, current_head=current_head)
+            matched = [item for item in history if item.get("checkpoint") == "12"]
+            self.assertEqual(len(matched), 1)
+            self.assertTrue(matched[0]["completed"])
+            self.assertTrue(matched[0]["attributable"])
+            self.assertTrue(matched[0]["anchored"])
+            self.assertEqual(matched[0]["head"], HEAD)
+            self.assertFalse(matched[0]["corrected_state"])
+
+            mismatched = {
+                **record,
+                "head_sha": current_head,
+                "anchor": {**record["anchor"], "child_head": current_head},
+            }
+            record_path.write_text(json.dumps(mismatched), encoding="utf-8")
+            history = self._history(common, payload, current_head=current_head)
+            self.assertFalse(any(item.get("checkpoint") == "12" and item.get("completed") for item in history))
+
+            malformed = {**record, "head_sha": "not-a-commit"}
+            record_path.write_text(json.dumps(malformed), encoding="utf-8")
+            history = self._history(common, payload, current_head=current_head)
             self.assertFalse(any(item.get("checkpoint") == "12" and item.get("completed") for item in history))
 
     def test_hosted_duplicate_or_forged_zero_checkpoint_cannot_override_adjudicated_response(self) -> None:

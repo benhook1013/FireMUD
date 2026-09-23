@@ -137,24 +137,27 @@ class LiveEvidence:
         reviews: list[dict[str, Any]],
         payload: dict[str, Any],
     ) -> tuple[dict[str, Any], dict[str, Any]] | None:
-        proof = evidence.hosted_checkpoint_evidence(checkpoint, reviews, head)
-        if proof.get("status") != "completed":
-            return None
         for path in hosted.trigger_record_paths(self.repo, pr):
             try:
                 record = hosted.load_trigger_record(path, self.repo, pr)
                 state = hosted.trigger_state(self.repo, pr, payload, record, path)
             except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
                 continue
+            captured_head = record["head_sha"]
+            proof = evidence.hosted_checkpoint_evidence(checkpoint, reviews, captured_head)
+            if proof.get("status") != "completed":
+                continue
             anchor = record.get("anchor")
             if (
                 state.state == "completed"
-                and state.head_sha.casefold() == head.casefold()
+                and state.head_sha.casefold() == captured_head.casefold()
                 and state.response_id == checkpoint.hosted_review_id
                 and state.response_id == proof.get("review_id")
-                and state.head_sha.casefold() == str(proof.get("commit_id", "")).casefold()
+                and captured_head.casefold() == str(proof.get("commit_id", "")).casefold()
+                and isinstance(checkpoint.reviewed_sha, str)
+                and captured_head.casefold().startswith(checkpoint.reviewed_sha.casefold())
                 and self._anchor_complete(anchor)
-                and anchor.get("child_head", "").casefold() == head.casefold()
+                and anchor.get("child_head", "").casefold() == captured_head.casefold()
             ):
                 trigger_id = state.trigger_comment_id
                 trigger = next(
