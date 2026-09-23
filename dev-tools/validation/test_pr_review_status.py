@@ -460,10 +460,16 @@ class StatusTest(unittest.TestCase):
         )
         compact = status.emit_text(report)
         encoded = json.dumps(report, sort_keys=True)
+        decoded = json.loads(encoded)
         self.assertIn("PR #2838", compact)
+        self.assertIn("Review controller", compact)
+        self.assertIn(
+            "threads: current=1 · outdated=0 · total=1",
+            compact,
+        )
         self.assertIn(report["verdict"], compact)
-        self.assertIn("Review controller", encoded)
-        self.assertIn(str(report["threads"]["total"]), encoded)
+        self.assertEqual(decoded, report)
+        self.assertEqual(decoded["threads"], {"current": 1, "outdated": 0, "total": 1})
 
     def test_ci_coalescing_keeps_latest_failed_check_and_contexts(self) -> None:
         checks = [
