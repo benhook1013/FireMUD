@@ -117,6 +117,20 @@ def _parser() -> argparse.ArgumentParser:
     prepost_recovery.add_argument("--reason", required=True)
     prepost_recovery.add_argument("--confirmed-not-posted", action="store_true")
     prepost_recovery.add_argument("--json", action="store_true", dest="as_json")
+    stuck_recovery = decide_commands.add_parser(
+        "trigger-retire-stuck",
+        help="retire a stuck trigger after the live PR head advanced",
+        description=(
+            "Retire one stuck trigger only after its captured head differs from the exact current PR head. "
+            "Same-head retry is refused because a late response cannot be distinguished from a replacement review."
+        ),
+    )
+    stuck_recovery.add_argument("--pr", required=True, type=_positive_int)
+    stuck_recovery.add_argument("--trigger-id", required=True, type=_positive_int)
+    stuck_recovery.add_argument("--head", required=True)
+    stuck_recovery.add_argument("--reason", required=True)
+    stuck_recovery.add_argument("--confirmed-wait-expired", action="store_true")
+    stuck_recovery.add_argument("--json", action="store_true", dest="as_json")
     return parser
 
 
@@ -206,7 +220,11 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
         )
         return result, int(getattr(result, "exit_status", 0))
     if args.command == "decide":
-        if fixture is not None and args.decide_command in {"trigger-recover-prepost", "trigger-retire"}:
+        if fixture is not None and args.decide_command in {
+            "trigger-recover-prepost",
+            "trigger-retire",
+            "trigger-retire-stuck",
+        }:
             raise CliError("Hosted trigger commands are unavailable in acceptance fixture mode")
         if args.decide_command == "trigger-recover-prepost":
             if not args.confirmed_not_posted:
@@ -247,6 +265,27 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 args.head,
                 args.reason,
                 payload,
+            ), 0
+        if args.decide_command == "trigger-retire-stuck":
+            if not args.confirmed_wait_expired:
+                raise CliError("stuck-trigger retirement requires --confirmed-wait-expired operator assertion")
+            paths = hosted.current_trigger_record_paths(controller.repository, args.pr)
+            if len(paths) != 1:
+                raise CliError(f"PR #{args.pr} requires exactly one current Hosted trigger for recovery")
+            record = hosted.load_trigger_record(paths[0], controller.repository, args.pr)
+            trigger = record.get("trigger")
+            trigger_id = trigger.get("id") if isinstance(trigger, dict) else None
+            if type(trigger_id) is not int or trigger_id != args.trigger_id:
+                raise CliError(f"PR #{args.pr} current Hosted trigger does not match ID {args.trigger_id}")
+            return hosted.retire_stuck_trigger_after_head_advance(
+                paths[0],
+                controller.repository,
+                args.pr,
+                args.trigger_id,
+                args.head,
+                args.reason,
+                args.confirmed_wait_expired,
+                lambda: github.fetch_pull_request(controller.repository, args.pr),
             ), 0
         if args.decide_command == "judgment":
             return controller.decide_judgment(

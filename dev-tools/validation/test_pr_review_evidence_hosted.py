@@ -9,11 +9,13 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 PR_REVIEW = ROOT / "dev-tools" / "pr_review"
 sys.path.insert(0, str(PR_REVIEW))
+sys.path.insert(0, str(ROOT / "dev-tools"))
 
 
 def load(name: str):
@@ -28,6 +30,7 @@ def load(name: str):
 github = load("github")
 evidence = load("evidence")
 hosted = load("hosted")
+from pr_review import cli as cli_module
 
 REPO = "owner/repo"
 PR = 42
@@ -615,6 +618,244 @@ class HostedEvidenceTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "later completed exact-head"),
             ):
                 hosted.retire_trigger_record(unverified_path, REPO, PR, 10, HEAD, "superseded", payload)
+
+    def test_stuck_trigger_recovery_requires_explicit_wait_and_a_new_exact_head(self):
+        current_head = "c" * 40
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        active = comment(11, "coderabbitai", "Full review triggered", "2026-09-23T00:02:00Z")
+        record = trigger_record()
+        live_payload = review_payload([trigger, active], head=current_head)
+        fetch = unittest.mock.Mock(return_value=live_payload)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            path.write_text(json.dumps(record), encoding="utf-8")
+            lock_path = Path(directory) / "lock-trigger.json"
+            with (
+                patch.object(hosted, "default_trigger_record_path", return_value=lock_path),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[path]),
+            ):
+                result = hosted.retire_stuck_trigger_after_head_advance(
+                    path, REPO, PR, 10, current_head, "bounded wait expired on old head", True, fetch
+                )
+            self.assertEqual(result["status"], "retired")
+            self.assertEqual(result["captured_head_sha"], HEAD)
+            self.assertEqual(result["current_head_sha"], current_head)
+            self.assertEqual(result["observed_live_state"], "active")
+            self.assertFalse(result["late_responses_counted"])
+            fetch.assert_called_once_with()
+            retired = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(retired["status"], "retired")
+            self.assertEqual(retired["retirement"]["observed_live_state"], "active")
+            self.assertTrue(retired["retirement"]["confirmed_wait_expired"])
+
+            # A late completion remains retired even if it names the old exact SHA.
+            late = comment(
+                12,
+                "coderabbitai",
+                f"<!-- walkthrough_start -->\nReviewing files that changed from the base of the PR and between {BASE} and {HEAD}.",
+                "2026-09-23T00:03:00Z",
+            )
+            late_state = hosted.trigger_state(
+                REPO,
+                PR,
+                review_payload([trigger, active, late], head=current_head),
+                retired,
+                path,
+            )
+            self.assertEqual(late_state.state, "retired")
+            self.assertIsNone(late_state.response_id)
+
+    def test_stuck_trigger_recovery_accepts_awaiting_response_after_head_advance(self):
+        current_head = "c" * 40
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        record = trigger_record()
+        live_payload = review_payload([trigger], head=current_head)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            path.write_text(json.dumps(record), encoding="utf-8")
+            with (
+                patch.object(hosted, "default_trigger_record_path", return_value=Path(directory) / "lock.json"),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[path]),
+            ):
+                result = hosted.retire_stuck_trigger_after_head_advance(
+                    path,
+                    REPO,
+                    PR,
+                    10,
+                    current_head,
+                    "bounded wait expired with no response",
+                    True,
+                    lambda: live_payload,
+                )
+        self.assertEqual(result["observed_live_state"], "awaiting_response")
+
+    def test_late_old_head_review_cannot_complete_a_new_head_trigger(self):
+        current_head = "c" * 40
+        old_trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        current_trigger = comment(20, "owner", hosted.FULL_COMMAND, "2026-09-23T00:04:00Z")
+        late_old_review = {
+            **comment(
+                21,
+                "coderabbitai[bot]",
+                f"<!-- walkthrough_start -->\nReviewing files that changed from the base of the PR and between {BASE} and {HEAD}.",
+                "2026-09-23T00:05:00Z",
+            ),
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-23T00:05:00Z",
+            "commit": {"oid": HEAD},
+        }
+        current_record = trigger_record(current_head)
+        current_record["trigger"] = {
+            "id": 20,
+            "created_at": "2026-09-23T00:04:00Z",
+            "url": current_trigger["url"],
+            "author_login": "owner",
+            "type": "full",
+            "command": hosted.FULL_COMMAND,
+        }
+        state = hosted.trigger_state(
+            REPO,
+            PR,
+            review_payload([old_trigger, current_trigger], [late_old_review], head=current_head),
+            current_record,
+        )
+        self.assertEqual(state.state, "ambiguous")
+        self.assertNotEqual(state.state, "completed")
+
+    def test_stuck_trigger_recovery_fails_closed_without_wait_assertion_or_on_same_head(self):
+        record = trigger_record()
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            path.write_text(json.dumps(record), encoding="utf-8")
+            lock_path = Path(directory) / "lock.json"
+            with (
+                patch.object(hosted, "default_trigger_record_path", return_value=lock_path),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[path]),
+                self.assertRaisesRegex(ValueError, "confirmed-wait-expired"),
+            ):
+                hosted.retire_stuck_trigger_after_head_advance(
+                    path, REPO, PR, 10, "c" * 40, "expired", False, lambda: review_payload([trigger], head="c" * 40)
+                )
+            with (
+                patch.object(hosted, "default_trigger_record_path", return_value=lock_path),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[path]),
+                self.assertRaisesRegex(ValueError, "same-head"),
+            ):
+                hosted.retire_stuck_trigger_after_head_advance(
+                    path, REPO, PR, 10, HEAD, "expired", True, lambda: review_payload([trigger])
+                )
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "posted")
+
+    def test_stuck_trigger_recovery_rejects_live_completed_or_ambiguous_state(self):
+        current_head = "c" * 40
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        completed = comment(
+            11,
+            "coderabbitai",
+            f"<!-- walkthrough_start -->\nReviewing files that changed from the base of the PR and between {BASE} and {HEAD}.",
+            "2026-09-23T00:02:00Z",
+        )
+        later_trigger = comment(12, "owner", hosted.FULL_COMMAND, "2026-09-23T00:03:00Z")
+        for comments, expected_state in (([trigger, completed], "completed"), ([trigger, later_trigger], "ambiguous")):
+            with self.subTest(expected_state=expected_state), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "trigger.json"
+                record = trigger_record()
+                path.write_text(json.dumps(record), encoding="utf-8")
+                with (
+                    patch.object(
+                        hosted, "default_trigger_record_path", return_value=Path(directory) / "lock.json"
+                    ),
+                    patch.object(hosted, "current_trigger_record_paths", return_value=[path]),
+                    self.assertRaisesRegex(ValueError, f"live state {expected_state}"),
+                ):
+                    hosted.retire_stuck_trigger_after_head_advance(
+                        path,
+                        REPO,
+                        PR,
+                        10,
+                        current_head,
+                        "operator confirms bounded wait expired",
+                        True,
+                        lambda comments=comments: review_payload(comments, head=current_head),
+                    )
+                self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "posted")
+
+    def test_stuck_trigger_command_requires_explicit_wait_assertion(self):
+        args = cli_module._parser().parse_args(
+            [
+                "decide",
+                "trigger-retire-stuck",
+                "--pr",
+                str(PR),
+                "--trigger-id",
+                "10",
+                "--head",
+                "c" * 40,
+                "--reason",
+                "bounded wait expired",
+            ]
+        )
+        self.assertFalse(args.confirmed_wait_expired)
+        with (
+            patch.object(cli_module, "_controller", return_value=(SimpleNamespace(repository=REPO), None)),
+            self.assertRaisesRegex(cli_module.CliError, "confirmed-wait-expired"),
+        ):
+            cli_module._dispatch(args)
+
+    def test_stuck_trigger_recovery_rejects_live_head_mismatch(self):
+        current_head = "c" * 40
+        actual_head = "d" * 40
+        record = trigger_record()
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            path.write_text(json.dumps(record), encoding="utf-8")
+            with (
+                patch.object(
+                    hosted, "default_trigger_record_path", return_value=Path(directory) / "lock.json"
+                ),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[path]),
+                self.assertRaisesRegex(ValueError, "current pull-request head"),
+            ):
+                hosted.retire_stuck_trigger_after_head_advance(
+                    path,
+                    REPO,
+                    PR,
+                    10,
+                    current_head,
+                    "bounded wait expired",
+                    True,
+                    lambda: review_payload([trigger], head=actual_head),
+                )
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "posted")
+
+    def test_stuck_trigger_recovery_rejects_malformed_persisted_timeout(self):
+        current_head = "c" * 40
+        record = trigger_record()
+        record["status"] = "timed_out"
+        record["timeout"] = {"at": "not-a-time", "observed_state": "active"}
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            path.write_text(json.dumps(record), encoding="utf-8")
+            with (
+                patch.object(
+                    hosted, "default_trigger_record_path", return_value=Path(directory) / "lock.json"
+                ),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[path]),
+                self.assertRaisesRegex(ValueError, "valid unresolved-state timeout"),
+            ):
+                hosted.retire_stuck_trigger_after_head_advance(
+                    path,
+                    REPO,
+                    PR,
+                    10,
+                    current_head,
+                    "bounded wait expired",
+                    True,
+                    lambda: review_payload([trigger], head=current_head),
+                )
 
 
 if __name__ == "__main__":

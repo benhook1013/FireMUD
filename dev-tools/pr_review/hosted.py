@@ -995,6 +995,128 @@ def retire_trigger_record(
     }
 
 
+def retire_stuck_trigger_after_head_advance(
+    path: str | Path,
+    repo: str,
+    pr_number: int,
+    trigger_id: int,
+    expected_current_head_sha: str,
+    reason: str,
+    confirmed_wait_expired: bool,
+    fetch_payload: Callable[[], dict[str, Any]],
+) -> dict[str, Any]:
+    """Retire one stuck trigger only after its captured PR head has advanced.
+
+    The operator must confirm that the bounded wait expired. A same-head retry
+    is deliberately unsupported because a delayed provider response cannot be
+    distinguished from a response to a replacement request on the same SHA.
+    The live PR is fetched while holding the normal per-PR Hosted request lock;
+    the exact captured trigger and current head are checked before the durable
+    record is retired. The retired record makes any later response to the old
+    trigger non-counting.
+    """
+
+    if (
+        not isinstance(trigger_id, int)
+        or isinstance(trigger_id, bool)
+        or trigger_id <= 0
+        or not isinstance(expected_current_head_sha, str)
+        or not EXACT_SHA.fullmatch(expected_current_head_sha)
+        or not isinstance(reason, str)
+        or not reason.strip()
+        or len(reason) > 240
+        or any(ord(char) < 0x20 for char in reason)
+    ):
+        raise ValueError("invalid stuck-trigger retirement request")
+    if confirmed_wait_expired is not True:
+        raise ValueError("stuck-trigger retirement requires --confirmed-wait-expired")
+    if not callable(fetch_payload):
+        raise TypeError("stuck-trigger retirement requires a live pull-request fetch callback")
+
+    record_path = Path(path)
+    descriptor = _with_lock(default_trigger_record_path(repo, pr_number))
+    try:
+        current_paths = current_trigger_record_paths(repo, pr_number)
+        if len(current_paths) != 1 or current_paths[0] != record_path:
+            raise ValueError("stuck-trigger retirement requires exactly one current Hosted trigger")
+        record = load_trigger_record(record_path, repo, pr_number)
+        trigger = record.get("trigger") or {}
+        if type(trigger.get("id")) is not int or trigger["id"] != trigger_id:
+            raise ValueError("durable Hosted trigger identity does not match retirement request")
+        captured_head = record.get("head_sha")
+        if not isinstance(captured_head, str) or not EXACT_SHA.fullmatch(captured_head):
+            raise ValueError("durable Hosted trigger has no exact captured head")
+        if record.get("status") not in {"posted", "timed_out"}:
+            raise ValueError("stuck-trigger retirement requires a verified posted trigger")
+        if record.get("status") == "timed_out":
+            timeout = record.get("timeout")
+            if (
+                not isinstance(timeout, dict)
+                or timeout.get("observed_state") not in {"active", "awaiting_response"}
+                or parse_timestamp(timeout.get("at")) is None
+            ):
+                raise ValueError("timed-out trigger has no valid unresolved-state timeout record")
+        if captured_head.casefold() == expected_current_head_sha.casefold():
+            raise ValueError("same-head stuck-trigger recovery is unsafe; wait for a new exact PR head")
+
+        payload = fetch_payload()
+        if not isinstance(payload, dict):
+            raise TypeError("live pull-request response is not an object")
+        try:
+            pr = payload["data"]["repository"]["pullRequest"]
+        except (KeyError, TypeError) as error:
+            raise TypeError("live pull-request data is unavailable for stuck-trigger retirement") from error
+        if not isinstance(pr, dict):
+            raise TypeError("live pull-request data is unavailable for stuck-trigger retirement")
+        comments = (pr.get("comments") or {}).get("nodes")
+        reviews = (pr.get("reviews") or {}).get("nodes")
+        if not isinstance(comments, list) or not isinstance(reviews, list):
+            raise TypeError("complete paginated Hosted response history is unavailable for stuck-trigger retirement")
+        current_head = pr.get("headRefOid")
+        if not isinstance(current_head, str) or current_head.casefold() != expected_current_head_sha.casefold():
+            raise ValueError("current pull-request head does not match stuck-trigger retirement request")
+
+        state = trigger_state(repo, pr_number, payload, record, record_path)
+        if state.head_sha.casefold() != captured_head.casefold() or state.trigger_comment_id != trigger_id:
+            raise ValueError("live Hosted trigger identity changed during stuck-trigger retirement")
+        if state.state not in {"active", "awaiting_response"}:
+            raise ValueError(f"cannot retire stuck trigger in live state {state.state}")
+
+        current = load_trigger_record(record_path, repo, pr_number)
+        if json.dumps(current, sort_keys=True) != json.dumps(record, sort_keys=True):
+            raise ValueError("Hosted trigger record changed during stuck-trigger retirement")
+        updated = dict(record)
+        updated["status"] = "retired"
+        updated["retirement"] = {
+            "action": "operator_retire_stuck_after_head_advance",
+            "retired_at": utc_now(),
+            "reason": reason.strip(),
+            "trigger_comment_id": trigger_id,
+            "captured_head_sha": captured_head,
+            "expected_current_head_sha": expected_current_head_sha,
+            "observed_live_state": state.state,
+            "observed_response_id": state.response_id,
+            "confirmed_wait_expired": True,
+            "late_responses_counted": False,
+        }
+        atomic_write_json(record_path, updated)
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+    return {
+        "operation": "retire_stuck_trigger_after_head_advance",
+        "status": "retired",
+        "repository": repo,
+        "pr_number": pr_number,
+        "trigger_comment_id": trigger_id,
+        "captured_head_sha": captured_head,
+        "current_head_sha": expected_current_head_sha,
+        "observed_live_state": state.state,
+        "reason": reason.strip(),
+        "late_responses_counted": False,
+    }
+
+
 def _has_later_completed_exact_head(
     repo: str,
     pr_number: int,
