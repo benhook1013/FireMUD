@@ -53,12 +53,14 @@ for token in \
   if [[ -e "dev-tools/$retired" || -e "dev-tools/validation/$retired" ]]; then
     fail "retired public tool still exists: $retired"
   fi
-  if rg -n --hidden --glob '!.git/**' --glob '!dev-tools/tests/pr-review-controller-contract.sh' \
-      -F "$retired" . >/dev/null; then
+  # git grep searches all tracked paths, including dotfiles, without requiring
+  # an extra runner binary. Exclude this contract, which constructs the retired
+  # basenames to keep the scan hermetic.
+  if git grep -n -F -e "$retired" -- . ':!dev-tools/tests/pr-review-controller-contract.sh' >/dev/null; then
     fail "retired public tool is still referenced: $retired"
   else
-    rg_status=$?
-    (( rg_status == 1 )) || fail "retired reference scan failed for $retired (rg exit $rg_status)"
+    grep_status=$?
+    (( grep_status == 1 )) || fail "retired reference scan failed for $retired (git grep exit $grep_status)"
   fi
 done
 
