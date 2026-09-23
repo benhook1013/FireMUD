@@ -1590,8 +1590,7 @@ class HostedIdentityReconcilerSafetyTest {
     assertEquals("4".repeat(64), status.getTcpProxyBridge().getSpkiSha256());
     assertEquals("5".repeat(64), status.getGrpc().getSpkiSha256());
     ArgumentCaptor<String> gatewayRevision = ArgumentCaptor.forClass(String.class);
-    ArgumentCaptor<Map<String, String>> publicationRevisions =
-        ArgumentCaptor.forClass(Map.class);
+    ArgumentCaptor<Map<String, String>> publicationRevisions = ArgumentCaptor.forClass(Map.class);
     verify(fixture.rollout)
         .sync(
             any(),
