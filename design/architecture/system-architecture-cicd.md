@@ -22,7 +22,7 @@ This document describes the continuous integration strategy for FireMUD using **
 - **Create release PRs automatically** using the `release-please` workflow.
 - **Propose dependency updates automatically** with Renovate against the `develop` branch across the supported dependency managers.
 - **Generate database ERD diagrams** as build artifacts after each run. The [`dev-tools/docs/generate-erd.sh`](../../dev-tools/docs/generate-erd.sh) script writes them to `design/erd/`, and the workflow uploads this directory as artifacts.
-- **Cancel previous runs for the same branch** using a concurrency group so CI resources are conserved and deployment jobs do not race each other for the same environment.
+- **Cancel superseded substantive runs for the same branch** using a concurrency group so CI resources are conserved and deployment jobs do not race for the same environment. Metadata-only title/body edits use separate per-run concurrency groups in the Validation, Security, and Smoke workflows; they do not cancel one another or a substantive required-gate run.
 
 ## Implementation Status
 
