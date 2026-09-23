@@ -1500,6 +1500,13 @@ publication_san_guard = (
     "(!object.metadata.labels['firemud.dev/role'].startsWith('grpc-publication-') ||"
 )
 assert publication_san_guard in normalized_profile_expression
+publication_certificate_name_guard = (
+    "object.metadata.name == (((request.namespace == 'dev-identity') ? 'dev' : "
+    "request.namespace.substring(0, request.namespace.size() - 9)) + '-grpc-' + "
+    "object.metadata.labels['firemud.dev/role'].substring(17))"
+)
+assert publication_certificate_name_guard in normalized_profile_expression
+assert_balanced_cel_delimiters(profile_expression, "publication Certificate profile")
 for required_publication_common_guard in (
     "request.operation != 'DELETE'",
     "object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller'",
@@ -1525,6 +1532,34 @@ assert (
 ) in normalized_profile_expression
 assert "object.spec.usages == ['digital signature', 'key encipherment', 'server auth']" in profile_expression
 assert "object.spec.usages == ['digital signature', 'key encipherment', 'client auth']" in profile_expression
+
+
+def publication_certificate_name(namespace, role):
+    assert role.startswith("grpc-publication-")
+    prefix = canonical_environment_prefix(namespace).removesuffix("-")
+    return f"{prefix}-grpc-{role.removeprefix('grpc-publication-')}"
+
+
+def publication_certificate_name_matches(namespace, role, name):
+    return name == publication_certificate_name(namespace, role)
+
+
+assert publication_certificate_name_matches(
+    "pr-42-identity", "grpc-publication-game-design-service", "pr-42-grpc-game-design-service"
+)
+assert publication_certificate_name_matches(
+    "dev-identity",
+    "grpc-publication-automation-scripting-service",
+    "dev-grpc-automation-scripting-service",
+)
+assert not publication_certificate_name_matches(
+    "pr-42-identity", "grpc-publication-game-design-service", "pr-42-grpc-world-management-service"
+)
+assert not publication_certificate_name_matches(
+    "dev-identity",
+    "grpc-publication-game-design-service",
+    "dev-grpc-automation-scripting-service",
+)
 for private_key_profile in (
     "object.spec.privateKey.algorithm == 'RSA'",
     "object.spec.privateKey.size == 2048",

@@ -1027,6 +1027,9 @@ class HostedIdentityScopeServiceTest {
   }
 
   private static List<String> splitCelList(String expression) {
+    if (expression.isBlank()) {
+      return List.of();
+    }
     java.util.ArrayList<String> elements = new java.util.ArrayList<>();
     int elementStart = 0;
     int parenthesisDepth = 0;
@@ -1051,6 +1054,13 @@ class HostedIdentityScopeServiceTest {
     }
     elements.add(expression.substring(elementStart).trim());
     return List.copyOf(elements);
+  }
+
+  @Test
+  void celListParserTreatsBlankExpressionAsEmptyList() {
+    assertEquals(List.of(), splitCelList(""));
+    assertEquals(List.of(), splitCelList(" \t\n "));
+    assertEquals(List.of("'get'", "'list'"), splitCelList("'get', 'list'"));
   }
 
   private static String evaluateIdentitySecretName(

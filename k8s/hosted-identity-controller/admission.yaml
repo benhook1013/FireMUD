@@ -407,7 +407,8 @@ spec:
              object.spec.uris == ['spiffe://firemud/ns/' + ((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)) + '/sa/tcp-proxy-service'] &&
              object.spec.usages == ['digital signature', 'key encipherment', 'client auth'])) &&
            (!object.metadata.labels['firemud.dev/role'].startsWith('grpc-publication-') ||
-            (object.spec.secretName == object.metadata.name &&
+            (object.metadata.name == (((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)) + '-grpc-' + object.metadata.labels['firemud.dev/role'].substring(17)) &&
+             object.spec.secretName == object.metadata.name &&
              object.spec.dnsNames == [object.metadata.labels['firemud.dev/role'].substring(17), object.metadata.labels['firemud.dev/role'].substring(17) + '.' + ((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)), object.metadata.labels['firemud.dev/role'].substring(17) + '.' + ((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)) + '.svc', object.metadata.labels['firemud.dev/role'].substring(17) + '.' + ((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)) + '.svc.cluster.local'] &&
              object.spec.uris == ['spiffe://firemud/ns/' + ((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)) + '/sa/' + object.metadata.labels['firemud.dev/role'].substring(17)] &&
              object.spec.usages == ['digital signature', 'key encipherment', 'server auth', 'client auth']))))) ||

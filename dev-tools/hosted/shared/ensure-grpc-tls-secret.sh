@@ -56,9 +56,10 @@ read_secret_file() {
   local secret_name="$1"
   local key="$2"
   local output="$3"
+  local escaped_key="${key//./\\.}"
   local encoded
 
-  encoded="$(kubectl -n "$namespace" get secret "$secret_name" -o "jsonpath={.data['${key}']}")" || return 1
+  encoded="$(kubectl -n "$namespace" get secret "$secret_name" -o "jsonpath={.data.${escaped_key}}")" || return 1
   [[ -n "$encoded" ]] || return 1
   printf '%s' "$encoded" | base64 --decode >"$output" || return 1
   [[ -s "$output" ]]

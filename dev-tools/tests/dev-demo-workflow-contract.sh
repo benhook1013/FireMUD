@@ -47,6 +47,8 @@ contains_literal "$certificate_generator" \
 # shellcheck disable=SC2016
 for required in \
   'ca_secret="firemud-grpc-ca"' \
+  'local escaped_key="${key//./\\.}"' \
+  'jsonpath={.data.${escaped_key}}' \
   'if ! secret_exists "$shared_secret"; then' \
   'if secret_exists "$ca_secret"; then' \
   'assert_certificate_unexpired "$source_ca"' \
@@ -80,6 +82,48 @@ python3 "$runner_label_validator" "$workflow" "$reconciler"
 }
 fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$fixture_dir"' EXIT
+
+# Exercise the actual Secret reader with a mocked kubectl and verify the dotted
+# Secret keys are passed as literal escaped JSONPath fields.
+secret_reader="$fixture_dir/read-secret-file.sh"
+{
+  awk '
+    /^read_secret_file\(\)/ { capture = 1 }
+    /^apply_secret\(\)/ { capture = 0 }
+    capture { print }
+  ' "$standalone_grpc_tls"
+  cat <<'EOF'
+namespace=namespace
+kubectl() {
+  local output_format="${7:-}"
+  printf '%s\n' "$output_format" >>"$MOCK_KUBECTL_LOG"
+  [[ "$output_format" == jsonpath=* ]] || return 1
+  printf 'cHJvb2Y='
+}
+
+for secret_key in ca.crt tls.crt tls.key; do
+  read_secret_file secret "$secret_key" "$OUTPUT_DIR/$secret_key"
+done
+EOF
+} >"$secret_reader"
+MOCK_KUBECTL_LOG="$fixture_dir/kubectl-jsonpaths.log" OUTPUT_DIR="$fixture_dir" \
+  bash "$secret_reader"
+expected_jsonpaths=(
+  'jsonpath={.data.ca\.crt}'
+  'jsonpath={.data.tls\.crt}'
+  'jsonpath={.data.tls\.key}'
+)
+mapfile -t actual_jsonpaths <"$fixture_dir/kubectl-jsonpaths.log"
+[[ "${actual_jsonpaths[*]}" == "${expected_jsonpaths[*]}" ]] || {
+  echo "Secret reader did not request literal dotted keys: ${actual_jsonpaths[*]}" >&2
+  exit 1
+}
+for secret_key in ca.crt tls.crt tls.key; do
+  [[ "$(<"$fixture_dir/$secret_key")" == proof ]] || {
+    echo "Secret reader did not decode mocked key $secret_key" >&2
+    exit 1
+  }
+done
 
 # Exercise the standalone reuse validator with one canonical leaf and three
 # malformed profiles. This sources only the target helper functions so the
