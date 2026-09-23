@@ -21,6 +21,16 @@ class AuthenticationExceptionHandlerTest {
   }
 
   @Test
+  void mapsEntitlementAuthorityUnavailableToServiceUnavailable() {
+    var response =
+        handler.handleAuthenticationException(
+            new AuthenticationException("ENTITLEMENT_UNAVAILABLE", "retry later"));
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+    assertThat(response.getBody().error().code()).isEqualTo("ENTITLEMENT_UNAVAILABLE");
+  }
+
+  @Test
   void retainsUnauthorizedStatusForOrdinaryAuthenticationFailure() {
     var response =
         handler.handleAuthenticationException(

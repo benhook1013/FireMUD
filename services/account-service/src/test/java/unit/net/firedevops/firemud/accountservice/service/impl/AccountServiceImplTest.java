@@ -1252,7 +1252,7 @@ class AccountServiceImplTest {
             AuthenticationException.class,
             () -> service.getTenantEntitlementsForRuntime(7L, "req-missing-entitlement"));
 
-    assertEquals("AUTH_UNAVAILABLE", exception.getCode());
+    assertEquals("ENTITLEMENT_UNAVAILABLE", exception.getCode());
   }
 
   @Test
@@ -1272,7 +1272,7 @@ class AccountServiceImplTest {
             AuthenticationException.class,
             () -> service.getTenantEntitlementsForRuntime(7L, "req-ambiguous-entitlement"));
 
-    assertEquals("AUTH_UNAVAILABLE", exception.getCode());
+    assertEquals("ENTITLEMENT_UNAVAILABLE", exception.getCode());
   }
 
   @Test
@@ -1351,7 +1351,7 @@ class AccountServiceImplTest {
         assertThrows(
             AuthenticationException.class,
             () -> service.issueConnectToken(bootstrap.bootstrapToken(), request));
-    assertEquals("AUTH_UNAVAILABLE", unavailable.getCode());
+    assertEquals("ENTITLEMENT_UNAVAILABLE", unavailable.getCode());
     org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
         .storeConnectTokenReplay(
             org.mockito.ArgumentMatchers.anyLong(),
@@ -1359,7 +1359,8 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.eq("req-entitlement-retry"),
             org.mockito.ArgumentMatchers.argThat(
-                replay -> !replay.success() && "AUTH_UNAVAILABLE".equals(replay.errorCode())),
+                replay ->
+                    !replay.success() && "ENTITLEMENT_UNAVAILABLE".equals(replay.errorCode())),
             org.mockito.ArgumentMatchers.anyLong());
 
     ConnectTokenResult retried = service.issueConnectToken(bootstrap.bootstrapToken(), request);

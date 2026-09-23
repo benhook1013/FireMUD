@@ -666,7 +666,7 @@ class AccountGrpcServiceTest {
     Mockito.when(accountService.getTenantEntitlementsForRuntime(1L, "req-ambiguous"))
         .thenThrow(
             new AuthenticationException(
-                "AUTH_UNAVAILABLE",
+                "ENTITLEMENT_UNAVAILABLE",
                 "Tenant entitlement authority is missing or ambiguous; retry later"));
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
 
@@ -691,7 +691,7 @@ class AccountGrpcServiceTest {
 
     assertNotNull(ref.get());
     assertTrue(ref.get().hasError());
-    assertEquals("AUTH_UNAVAILABLE", ref.get().getError().getCode());
+    assertEquals("ENTITLEMENT_UNAVAILABLE", ref.get().getError().getCode());
   }
 
   @Test

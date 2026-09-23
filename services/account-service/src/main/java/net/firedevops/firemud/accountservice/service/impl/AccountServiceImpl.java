@@ -487,7 +487,8 @@ public class AccountServiceImpl implements AccountService {
     try {
       return issueConnectTokenFresh(bootstrapContext, scopeContext, request);
     } catch (AuthenticationException ex) {
-      if (!"AUTH_UNAVAILABLE".equals(ex.getCode())) {
+      if (!"AUTH_UNAVAILABLE".equals(ex.getCode())
+          && !"ENTITLEMENT_UNAVAILABLE".equals(ex.getCode())) {
         sessionService.storeConnectTokenReplay(
             scopeContext.tenantId(),
             bootstrapContext.accountId(),
@@ -705,7 +706,8 @@ public class AccountServiceImpl implements AccountService {
         subscriptionRepository.findByTenantId(tenantId);
     if (subscriptions.size() != 1) {
       throw new AuthenticationException(
-          "AUTH_UNAVAILABLE", "Tenant entitlement authority is missing or ambiguous; retry later");
+          "ENTITLEMENT_UNAVAILABLE",
+          "Tenant entitlement authority is missing or ambiguous; retry later");
     }
     net.firedevops.firemud.accountservice.entity.Subscription subscription =
         subscriptions.getFirst();

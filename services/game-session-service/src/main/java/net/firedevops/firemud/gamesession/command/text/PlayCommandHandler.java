@@ -786,6 +786,11 @@ public class PlayCommandHandler {
       long requestedCharacterId) {
     Optional<ErrorDetail> maybeError = extractError(response.getError());
     if (maybeError.isPresent()) {
+      if (isEntitlementUnavailable(maybeError.get())) {
+        return Optional.of(
+            entitlementUnavailableFailure(
+                tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
+      }
       if (isAuthorityUnavailable(maybeError.get())) {
         return Optional.of(
             authorityUnavailableFailure(
@@ -842,6 +847,19 @@ public class PlayCommandHandler {
         null);
   }
 
+  private PlayCommandHandlingResult entitlementUnavailableFailure(
+      String tenantTag, String gameInstanceTag, long requestedCharacterId) {
+    return failure(
+        GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_CODE,
+        GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_MESSAGE,
+        "error.play.entitlement-unavailable",
+        Map.of(),
+        tenantTag,
+        gameInstanceTag,
+        Long.toString(requestedCharacterId),
+        null);
+  }
+
   private Optional<ErrorDetail> extractError(ErrorDetail error) {
     if (error == null) {
       return Optional.empty();
@@ -868,6 +886,11 @@ public class PlayCommandHandler {
   private boolean isAuthorityUnavailable(ErrorDetail error) {
     String code = Optional.ofNullable(error.getCode()).orElse("");
     return GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE.equalsIgnoreCase(code);
+  }
+
+  private boolean isEntitlementUnavailable(ErrorDetail error) {
+    String code = Optional.ofNullable(error.getCode()).orElse("");
+    return GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_CODE.equalsIgnoreCase(code);
   }
 
   private boolean isSafeMembershipAuthorityResponse(

@@ -23,14 +23,19 @@ components:
   schemas:
     CreateAccountRequest:
       type: object
+      description: Current API shape requires tenantId; target global registration with explicit JOIN remains unimplemented.
       properties:
+        tenantId:
+          type: integer
+          format: int64
+          minimum: 1
         username:
           type: string
         email:
           type: string
         password:
           type: string
-      required: [username, email, password]
+      required: [tenantId, username, email, password]
     AccountDto:
       type: object
       properties:

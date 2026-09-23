@@ -284,7 +284,7 @@ public final class AccountClient
     return GetTenantEntitlementsForRuntimeResponse.newBuilder()
         .setError(
             ErrorDetail.newBuilder()
-                .setCode(AuthenticationErrorCodes.UNAVAILABLE)
+                .setCode("ENTITLEMENT_UNAVAILABLE")
                 .setMessage("Entitlement authority unavailable"))
         .build();
   }

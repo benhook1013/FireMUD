@@ -308,7 +308,7 @@ class AccountClientTest {
     GetTenantEntitlementsForRuntimeResponse response =
         newClient(null).getTenantEntitlementsForRuntime("7", "request-1");
 
-    assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
+    assertThat(response.getError().getCode()).isEqualTo("ENTITLEMENT_UNAVAILABLE");
     assertThat(response.getError().getMessage()).isEqualTo("Entitlement authority unavailable");
   }
 
@@ -327,7 +327,7 @@ class AccountClientTest {
     GetTenantEntitlementsForRuntimeResponse response =
         fixture.client().getTenantEntitlementsForRuntime("7", "request-1");
 
-    assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
+    assertThat(response.getError().getCode()).isEqualTo("ENTITLEMENT_UNAVAILABLE");
     assertThat(response.getError().getMessage()).isEqualTo("Entitlement authority unavailable");
     verify(fixture.initialStub())
         .getTenantEntitlementsForRuntime(any(GetTenantEntitlementsForRuntimeRequest.class));
