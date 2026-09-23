@@ -1103,6 +1103,24 @@ class HostedIdentityReconcilerSafetyTest {
   }
 
   @Test
+  void retirementDeletesEverySecretAndCertificateFromCanonicalNameLists() {
+    RetirementDeletionFixture fixture = new RetirementDeletionFixture();
+    List<Resource<Secret>> secrets =
+        HostedIdentityScopeService.identitySecretNames(fixture.plan).stream()
+            .map(name -> fixture.secret(name, HostedIdentityContract.GRPC_ROLE))
+            .toList();
+    List<Resource<GenericKubernetesResource>> certificates =
+        HostedIdentityScopeService.requiredCertificateNames(fixture.plan).stream()
+            .map(fixture::certificate)
+            .toList();
+
+    fixture.retire();
+
+    secrets.forEach(secret -> verify(secret).delete());
+    certificates.forEach(certificate -> verify(certificate).delete());
+  }
+
+  @Test
   void retirementObservesNamespaceTerminationBeforeDeletingScopeObjects() {
     RetirementDeletionFixture fixture = new RetirementDeletionFixture();
     Namespace terminating = fixture.buildIdentityNamespace(true);
@@ -1849,6 +1867,10 @@ class HostedIdentityReconcilerSafetyTest {
   }
 
   private static final class RetirementDeletionFixture {
+    private final EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(
+                initializedProperties(HostedIdentityProperties.ActivationMode.ACTIVE))
+            .plan("pr-42");
     private final KubernetesClient client = mock(KubernetesClient.class);
     private final Resource<Namespace> identityNamespace = mock(Resource.class);
     private final RuntimeProfileService runtime = mock(RuntimeProfileService.class);
@@ -1982,6 +2004,25 @@ class HostedIdentityReconcilerSafetyTest {
                   .endMetadata()
                   .build());
       return secret;
+    }
+
+    private Resource<GenericKubernetesResource> certificate(String name) {
+      Resource<GenericKubernetesResource> certificate = mock(Resource.class);
+      when(identityCertificates.withName(name)).thenReturn(certificate);
+      GenericKubernetesResource resource = new GenericKubernetesResource();
+      resource.setMetadata(
+          new ObjectMetaBuilder()
+              .withName(name)
+              .withNamespace("pr-42-identity")
+              .withLabels(
+                  Map.of(
+                      HostedIdentityContract.MANAGED_BY_LABEL,
+                      HostedIdentityContract.CONTROLLER_NAME,
+                      HostedIdentityContract.ENVIRONMENT_LABEL,
+                      "pr-42"))
+              .build());
+      when(certificate.get()).thenReturn(resource);
+      return certificate;
     }
 
     private UpdateControl<HostedEnvironmentIdentity> retire() {

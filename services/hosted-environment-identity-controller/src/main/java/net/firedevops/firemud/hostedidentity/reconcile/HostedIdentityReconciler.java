@@ -870,31 +870,8 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
         || !isOwnedIdentityNamespace(identityNamespace, plan, namespaceTerminating)) {
       return false;
     }
-    List<String> secretNames =
-        List.of(
-            plan.ingressSecretName(),
-            plan.telnetSecretName(),
-            plan.gatewayInternalWsSecretName(),
-            plan.tcpProxyBridgeSecretName(),
-            plan.grpcSecretName(),
-            plan.ingressSecretName() + "-previous",
-            plan.telnetSecretName() + "-previous",
-            plan.gatewayInternalWsSecretName() + "-previous",
-            plan.tcpProxyBridgeSecretName() + "-previous",
-            plan.grpcSecretName() + "-previous");
-    List<String> publicationSecretNames =
-        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
-            .flatMap(
-                workload ->
-                    java.util.stream.Stream.of(
-                        plan.grpcPublicationSourceSecretName(workload),
-                        plan.grpcPublicationSourceSecretName(workload) + "-previous"))
-            .toList();
-    secretNames =
-        java.util.stream.Stream.concat(secretNames.stream(), publicationSecretNames.stream())
-            .toList();
     List<String> ownedSecretNames = new ArrayList<>();
-    for (String name : secretNames) {
+    for (String name : HostedIdentityScopeService.identitySecretNames(plan)) {
       Secret secret = client.secrets().inNamespace(plan.identityNamespace()).withName(name).get();
       if (secret == null) {
         continue;
@@ -904,20 +881,8 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       }
       ownedSecretNames.add(name);
     }
-    List<String> certificateNames =
-        List.of(
-            plan.ingressCertificateName(),
-            plan.telnetCertificateName(),
-            plan.gatewayInternalWsCertificateName(),
-            plan.tcpProxyBridgeCertificateName());
-    certificateNames =
-        java.util.stream.Stream.concat(
-                certificateNames.stream(),
-                HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
-                    .map(plan::grpcPublicationCertificateName))
-            .toList();
     List<String> ownedCertificateNames = new ArrayList<>();
-    for (String name : certificateNames) {
+    for (String name : HostedIdentityScopeService.requiredCertificateNames(plan)) {
       var operation =
           client
               .genericKubernetesResources(ResourceContexts.CERTIFICATES)
