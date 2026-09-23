@@ -429,7 +429,14 @@ def _validate_cli_checkpoint_decisions(checkpoint: Checkpoint, capture: CaptureD
         raise CaptureInvalid("CLI checkpoint accepted count does not match linked findings decisions")
 
 
-def load_cli_capture(checkpoint: Checkpoint, repo: str, pr_number: int, common: Path | None = None) -> CaptureData:
+def _load_cli_capture(
+    checkpoint: Checkpoint,
+    repo: str,
+    pr_number: int,
+    common: Path | None,
+    *,
+    validate_checkpoint_decisions: bool,
+) -> CaptureData:
     if checkpoint.type != "CLI" or not checkpoint.run_id or not RUN_ID.fullmatch(checkpoint.run_id):
         raise CaptureUnavailable("checkpoint has no valid CLI capture marker")
     if checkpoint.duration_invalid:
@@ -490,7 +497,8 @@ def load_cli_capture(checkpoint: Checkpoint, repo: str, pr_number: int, common: 
         rejection_path = _contained_file(run_dir, "rejections.tsv", required=False)
         if rejection_path is None:
             capture = CaptureData(metadata, findings, source_identity=str(run_dir.resolve()))
-            _validate_cli_checkpoint_decisions(checkpoint, capture)
+            if validate_checkpoint_decisions:
+                _validate_cli_checkpoint_decisions(checkpoint, capture)
             return capture
         decisions: dict[int, tuple[str, str]] = {}
         unlinked: list[dict[str, Any]] = []
@@ -513,7 +521,8 @@ def load_cli_capture(checkpoint: Checkpoint, repo: str, pr_number: int, common: 
             else:
                 raise CaptureInvalid(f"rejection records are malformed at line {number}")
         capture = CaptureData(metadata, findings, decisions, unlinked, False, str(run_dir.resolve()))
-        _validate_cli_checkpoint_decisions(checkpoint, capture)
+        if validate_checkpoint_decisions:
+            _validate_cli_checkpoint_decisions(checkpoint, capture)
         return capture
     decisions: dict[int, tuple[str, str]] = {}
     unlinked: list[dict[str, Any]] = []
@@ -531,8 +540,21 @@ def load_cli_capture(checkpoint: Checkpoint, repo: str, pr_number: int, common: 
         else:
             decisions[finding_id] = (disposition, reason)
     capture = CaptureData(metadata, findings, decisions, unlinked, True, str(run_dir.resolve()))
-    _validate_cli_checkpoint_decisions(checkpoint, capture)
+    if validate_checkpoint_decisions:
+        _validate_cli_checkpoint_decisions(checkpoint, capture)
     return capture
+
+
+def load_cli_capture(checkpoint: Checkpoint, repo: str, pr_number: int, common: Path | None = None) -> CaptureData:
+    """Load a public checkpoint's capture and require its decisions to match."""
+
+    return _load_cli_capture(
+        checkpoint,
+        repo,
+        pr_number,
+        common,
+        validate_checkpoint_decisions=True,
+    )
 
 
 def discover_cli_captures(repo: str, pr_number: int, common: Path | None = None) -> list[CaptureData]:
@@ -587,7 +609,15 @@ def discover_cli_captures(repo: str, pr_number: int, common: Path | None = None)
                     run_id=run_dir.name,
                     hosted_review_id=None,
                 )
-                captures.append(load_cli_capture(checkpoint, repo, pr_number, common))
+                captures.append(
+                    _load_cli_capture(
+                        checkpoint,
+                        repo,
+                        pr_number,
+                        common,
+                        validate_checkpoint_decisions=False,
+                    )
+                )
             except (EvidenceError, OSError, ValueError):
                 continue
     return captures

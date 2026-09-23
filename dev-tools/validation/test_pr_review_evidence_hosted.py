@@ -279,6 +279,42 @@ class GithubAndEvidenceTests(unittest.TestCase):
             capture = self._cli_capture(common, decision_text="1\trejected\tduplicate finding\n")
             self.assertEqual(capture.decisions, {1: ("rejected", "duplicate finding")})
 
+    def test_uncheckpointed_raw_positive_capture_is_discovered_without_decision_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            run_id = "run.Pending"
+            run = common / "coderabbit-review-logs" / run_id
+            run.mkdir(parents=True)
+            (run / "metadata").write_text(
+                f"run_id={run_id}\nrepository={REPO}\npull_request={PR}\n"
+                f"candidate_sha={HEAD}\ncandidate_files=1\n",
+                encoding="utf-8",
+            )
+            (run / "stdout").write_text(
+                json.dumps({"type": "finding", "message": "one"})
+                + "\n"
+                + json.dumps(
+                    {"type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["a"]}
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (run / "exit-status").write_text("0\n", encoding="utf-8")
+
+            captures = evidence.discover_cli_captures(REPO, PR, common)
+
+            self.assertEqual(len(captures), 1)
+            self.assertEqual(captures[0].metadata["run_id"], run_id)
+            self.assertEqual(len(captures[0].findings), 1)
+            self.assertEqual(captures[0].decisions, {})
+            self.assertFalse(captures[0].decision_file_present)
+
+            checkpoint = evidence.Checkpoint(
+                1, "2026-09-23T00:00:00Z", "CLI", 1, 0, HEAD[:12], 1, False, None, run_id, None
+            )
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "complete linked"):
+                evidence.load_cli_capture(checkpoint, REPO, PR, common)
+
     def test_cli_duration_evidence_fails_closed_and_valid_duration_checks_capture(self):
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)

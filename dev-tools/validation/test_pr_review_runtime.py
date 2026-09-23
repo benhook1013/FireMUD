@@ -751,7 +751,11 @@ class RuntimeTest(unittest.TestCase):
                 encoding="utf-8",
             )
             (run / "stdout").write_text(
-                json.dumps({"type": "complete", "status": "review_completed", "findings": 0, "reviewedFiles": ["a"]})
+                json.dumps({"type": "finding", "message": "one"})
+                + "\n"
+                + json.dumps(
+                    {"type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["a"]}
+                )
                 + "\n",
                 encoding="utf-8",
             )
@@ -761,6 +765,7 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(len(pending), 1)
             self.assertTrue(pending[0]["held"])
             self.assertFalse(pending[0]["completed"])
+            self.assertEqual(pending[0]["raw"], 1)
 
     def test_hosted_findings_hold_hosted_but_not_cli_and_file_ceiling_is_global(self) -> None:
         comments = [
