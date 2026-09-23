@@ -665,7 +665,9 @@ class HostedRunner:
             ):
                 raise ControllerError("Hosted request response has no immutable full-review identity")
             after = self.live.pull_request(pr)
-            status = "posted" if after == before else "posted_boundary_changed"
+            before_identity = (before.head_sha.casefold(), before.base_ref_name, before.base_sha.casefold())
+            after_identity = (after.head_sha.casefold(), after.base_ref_name, after.base_sha.casefold())
+            status = "posted" if after_identity == before_identity else "posted_boundary_changed"
             record = {
                 **posting,
                 "status": status,

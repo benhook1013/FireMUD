@@ -854,6 +854,77 @@ class HostedEvidenceTests(unittest.TestCase):
                 )
         self.assertEqual(result["observed_live_state"], "awaiting_response")
 
+    def test_posted_boundary_changed_trigger_can_only_be_retired_after_head_advance(self):
+        current_head = "c" * 40
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        record = trigger_record()
+        record["status"] = "posted_boundary_changed"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            path.write_text(json.dumps(record), encoding="utf-8")
+            with (
+                patch.object(hosted, "default_trigger_record_path", return_value=Path(directory) / "lock.json"),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[path]),
+            ):
+                result = hosted.retire_stuck_trigger_after_head_advance(
+                    path,
+                    REPO,
+                    PR,
+                    10,
+                    current_head,
+                    "bounded wait expired after head advance",
+                    True,
+                    lambda: review_payload([trigger], head=current_head),
+                )
+            retired = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(result["observed_live_state"], "awaiting_response")
+        self.assertEqual(retired["status"], "retired")
+        self.assertEqual(retired["retirement"]["action"], "operator_retire_stuck_after_head_advance")
+        self.assertFalse(retired["retirement"]["late_responses_counted"])
+
+    def test_posted_boundary_changed_stuck_recovery_rejects_ambiguity(self):
+        current_head = "c" * 40
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        later_trigger = comment(12, "owner", hosted.FULL_COMMAND, "2026-09-23T00:03:00Z")
+        record = trigger_record()
+        record["status"] = "posted_boundary_changed"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            path.write_text(json.dumps(record), encoding="utf-8")
+            with (
+                patch.object(hosted, "default_trigger_record_path", return_value=Path(directory) / "lock.json"),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[path]),
+                self.assertRaisesRegex(ValueError, "live state ambiguous"),
+            ):
+                hosted.retire_stuck_trigger_after_head_advance(
+                    path,
+                    REPO,
+                    PR,
+                    10,
+                    current_head,
+                    "bounded wait expired after head advance",
+                    True,
+                    lambda: review_payload([trigger, later_trigger], head=current_head),
+                )
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "posted_boundary_changed")
+
+    def test_posted_boundary_changed_stuck_recovery_rejects_same_head(self):
+        record = trigger_record()
+        record["status"] = "posted_boundary_changed"
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            path.write_text(json.dumps(record), encoding="utf-8")
+            with (
+                patch.object(hosted, "default_trigger_record_path", return_value=Path(directory) / "lock.json"),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[path]),
+                self.assertRaisesRegex(ValueError, "same-head"),
+            ):
+                hosted.retire_stuck_trigger_after_head_advance(
+                    path, REPO, PR, 10, HEAD, "bounded wait expired", True, lambda: review_payload([trigger])
+                )
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "posted_boundary_changed")
+
     def test_late_old_head_review_cannot_complete_a_new_head_trigger(self):
         current_head = "c" * 40
         old_trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")

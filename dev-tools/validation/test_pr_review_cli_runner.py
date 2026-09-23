@@ -26,6 +26,7 @@ from pr_review.cli_runner import (
     run_cli_review,
     target_from_resolver,
 )
+from pr_review.patch_identity import patch_diff_args
 
 BASE = "a" * 40
 PARENT = BASE
@@ -122,7 +123,7 @@ class FakeCommands:
                 return CompletedProcess(args, 0, f"{self.candidate}\n", "")
             if git_args[:3] == ["diff", "--name-only", "-z"]:
                 return CompletedProcess(args, 0, "\0".join(self.files) + "\0", "")
-            if git_args == ["diff", "--binary", "--full-index", f"{PARENT}...{self.candidate}"]:
+            if git_args == list(patch_diff_args(PARENT, self.candidate)):
                 output = self.patch_bytes if not text else self.patch_bytes.decode("utf-8")
                 return CompletedProcess(args, 0, output, b"" if not text else "")
             if git_args == ["rev-list", "--count", f"{HEAD}..{self.candidate}"]:

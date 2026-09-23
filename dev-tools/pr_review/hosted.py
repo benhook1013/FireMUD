@@ -1083,7 +1083,7 @@ def retire_stuck_trigger_after_head_advance(
         captured_head = record.get("head_sha")
         if not isinstance(captured_head, str) or not EXACT_SHA.fullmatch(captured_head):
             raise ValueError("durable Hosted trigger has no exact captured head")
-        if record.get("status") not in {"posted", "timed_out"}:
+        if record.get("status") not in {"posted", "posted_boundary_changed", "timed_out"}:
             raise ValueError("stuck-trigger retirement requires a verified posted trigger")
         if record.get("status") == "timed_out":
             timeout = record.get("timeout")
@@ -1113,7 +1113,14 @@ def retire_stuck_trigger_after_head_advance(
         if not isinstance(current_head, str) or current_head.casefold() != expected_current_head_sha.casefold():
             raise ValueError("current pull-request head does not match stuck-trigger retirement request")
 
-        state = trigger_state(repo, pr_number, payload, record, record_path)
+        # A posting-boundary change is not review evidence.  After the exact PR
+        # head advances, inspect its durable trigger as posted only in memory so
+        # this locked recovery can verify whether it is still active or awaiting
+        # a response.  The record remains boundary-changed unless retired below.
+        state_record = record
+        if record.get("status") == "posted_boundary_changed":
+            state_record = {**record, "status": "posted"}
+        state = trigger_state(repo, pr_number, payload, state_record, record_path)
         if state.head_sha.casefold() != captured_head.casefold() or state.trigger_comment_id != trigger_id:
             raise ValueError("live Hosted trigger identity changed during stuck-trigger retirement")
         if state.state not in {"active", "awaiting_response"}:

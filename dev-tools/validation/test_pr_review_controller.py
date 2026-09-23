@@ -27,6 +27,7 @@ from pr_review.controller import (
     compact_result,
     json_result,
 )
+from pr_review.patch_identity import patch_diff_args
 from pr_review.policy import Evidence
 from pr_review.state import StateStore
 
@@ -107,6 +108,10 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(actual, hashlib.sha256(raw_diff).hexdigest())
         self.assertFalse(run.call_args.kwargs["text"])
         self.assertEqual(run.call_args.kwargs["timeout"], 9)
+        self.assertEqual(
+            run.call_args.args[0],
+            ["git", "-C", str(DefaultGitProvider().root), *patch_diff_args("a" * 40, "b" * 40)],
+        )
 
     def test_default_git_provider_rejects_ambiguous_remote_head_snapshot(self):
         with patch(

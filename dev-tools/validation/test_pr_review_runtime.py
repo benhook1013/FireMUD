@@ -248,6 +248,102 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(record["anchor"]["patch_id"], PATCH)
             self.assertEqual(record["posting_comment_id_floor"], 0)
 
+    def test_hosted_post_boundary_uses_only_immutable_review_identity(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
+        live = LiveGitHub("owner/repo")
+        comment = {
+            "id": 123,
+            "created_at": "2026-09-23T00:01:00Z",
+            "html_url": "https://example.test/123",
+            "body": hosted.FULL_COMMAND,
+            "user": {"login": "maintainer"},
+        }
+
+        def gh_call(args, **kwargs):
+            if args == ["gh", "api", "user"]:
+                output = {"login": "maintainer"}
+            else:
+                output = comment
+            return CompletedProcess(args, 0, json.dumps(output), "")
+
+        changed_metadata = PullRequestSnapshot(
+            42,
+            "OPEN",
+            "develop",
+            BASE,
+            HEAD,
+            "renamed-feature",
+            7,
+            "UNKNOWN",
+            False,
+            True,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            with (
+                patch.object(live, "pull_request", side_effect=[snapshot, changed_metadata]),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=self._payload()),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[]),
+                patch.object(evidence, "git_common_dir", return_value=Path(directory)),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+            ):
+                result = HostedRunner("owner/repo", live)(target, expect_pr=42)
+            record = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(result["status"], "posted")
+        self.assertEqual(record["status"], "posted")
+
+    def test_hosted_post_boundary_fails_closed_on_review_identity_change(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
+        live = LiveGitHub("owner/repo")
+        comment = {
+            "id": 123,
+            "created_at": "2026-09-23T00:01:00Z",
+            "html_url": "https://example.test/123",
+            "body": hosted.FULL_COMMAND,
+            "user": {"login": "maintainer"},
+        }
+
+        def gh_call(args, **kwargs):
+            output = {"login": "maintainer"} if args == ["gh", "api", "user"] else comment
+            return CompletedProcess(args, 0, json.dumps(output), "")
+
+        changed_identities = (
+            PullRequestSnapshot(42, "OPEN", "develop", BASE, "d" * 40, "feature", 1),
+            PullRequestSnapshot(42, "OPEN", "release", BASE, HEAD, "feature", 1),
+            PullRequestSnapshot(42, "OPEN", "develop", "e" * 40, HEAD, "feature", 1),
+        )
+        for after in changed_identities:
+            with self.subTest(after=after), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "trigger.json"
+                with (
+                    patch.object(live, "pull_request", side_effect=[snapshot, after]),
+                    patch.object(live, "branch_head", return_value=BASE),
+                    patch.object(github, "fetch_pull_request", return_value=self._payload()),
+                    patch.object(hosted, "default_trigger_record_path", return_value=path),
+                    patch.object(hosted, "current_trigger_record_paths", return_value=[]),
+                    patch.object(evidence, "git_common_dir", return_value=Path(directory)),
+                    patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+                    self.assertRaisesRegex(ControllerError, "changed across the Hosted posting boundary"),
+                ):
+                    HostedRunner("owner/repo", live)(target, expect_pr=42)
+                self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "posted_boundary_changed")
+
     def test_hosted_request_floor_failure_leaves_no_reservation_or_post(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
         target = ReviewTarget(

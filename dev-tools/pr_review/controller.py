@@ -15,7 +15,6 @@ checkpoint observations remain provider data and are never copied into state.
 from __future__ import annotations
 
 import dataclasses
-import hashlib
 import subprocess
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
@@ -29,6 +28,7 @@ from .cli_runner import (
     run_cli_review,
 )
 from .hosted import prepare_full_trigger
+from .patch_identity import patch_identity
 from .state import Judgment, PolicyOverride, ReviewState, StackReconciliationDecision, StateStore
 
 
@@ -164,14 +164,15 @@ class DefaultGitProvider:
     def patch_identity(self, merge_base: str, head: str) -> str:
         self._ensure_commit(merge_base)
         self._ensure_commit(head)
-        result = self._run_process(
-            ["git", "-C", str(self.root), "diff", "--binary", "--full-index", f"{merge_base}...{head}"],
-            check=True,
-        )
-        output = result.stdout
-        if isinstance(output, str):
-            output = output.encode("utf-8")
-        return hashlib.sha256(output).hexdigest()
+
+        def run_diff(args: Sequence[str]) -> bytes | str:
+            result = self._run_process(
+                ["git", "-C", str(self.root), *args],
+                check=True,
+            )
+            return result.stdout
+
+        return patch_identity(run_diff, merge_base, head)
 
 
 class EmptyEvidence:

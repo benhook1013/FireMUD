@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import dataclasses
 import fcntl
-import hashlib
 import json
 import os
 import shutil
@@ -29,6 +28,7 @@ from typing import Any, Protocol
 
 from . import github as github_api
 from . import hosted
+from .patch_identity import patch_identity
 
 
 class ReviewRunnerError(RuntimeError):
@@ -274,22 +274,17 @@ def _patch_identity(
 ) -> str:
     """Hash the complete binary-capable candidate patch used by the review."""
 
-    result = _git(
-        runner,
-        source_root,
-        "diff",
-        "--binary",
-        "--full-index",
-        f"{merge_base}...{head}",
-        text=False,
-        timeout=timeout,
-    )
-    output = result.stdout
-    if isinstance(output, str):
-        # Keep injected text-mode runners compatible; the real subprocess runner
-        # returns bytes for this call so the hash is over the exact diff bytes.
-        output = output.encode("utf-8")
-    return hashlib.sha256(output).hexdigest()
+    def run_diff(args: Sequence[str]) -> bytes | str:
+        result = _git(
+            runner,
+            source_root,
+            *args,
+            text=False,
+            timeout=timeout,
+        )
+        return result.stdout
+
+    return patch_identity(run_diff, merge_base, head)
 
 
 def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
