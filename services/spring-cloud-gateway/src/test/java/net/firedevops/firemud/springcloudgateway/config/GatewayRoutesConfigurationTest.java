@@ -50,7 +50,18 @@ class GatewayRoutesConfigurationTest {
           "admin-tick-remediation",
           "design-ping",
           "design-templates-read",
-          "account-auth",
+          "account-auth-login",
+          "account-auth-player-bootstrap",
+          "account-auth-bootstrap-worlds",
+          "account-auth-bootstrap-realms",
+          "account-auth-bootstrap-characters",
+          "account-auth-bootstrap-join",
+          "account-auth-connect-token",
+          "account-auth-request-password-reset",
+          "account-auth-complete-password-reset",
+          "account-auth-request-email-verification",
+          "account-auth-verify-email",
+          "account-auth-recover-username",
           "account-accounts",
           "account-profiles",
           "account-ping",
@@ -144,13 +155,34 @@ class GatewayRoutesConfigurationTest {
     assertNoRouteWithPathAndMethod(gatewayProperties, "/api/design/templates", "POST");
     assertNoRouteWithPathAndMethod(gatewayProperties, "/api/design/assets", "POST");
 
-    assertHasPath(gatewayProperties, "account-auth", "/api/account/auth/**");
+    assertHasPath(gatewayProperties, "account-auth-verify-email", "/api/account/auth/verify-email");
+    assertHasMethod(gatewayProperties, "account-auth-verify-email", "POST");
+    assertHasPath(
+        gatewayProperties,
+        "account-auth-complete-password-reset",
+        "/api/account/auth/complete-password-reset");
+    assertHasMethod(gatewayProperties, "account-auth-complete-password-reset", "POST");
+    assertHasMethod(gatewayProperties, "account-auth-bootstrap-worlds", "GET");
+    assertHasMethod(gatewayProperties, "account-auth-bootstrap-realms", "GET");
+    assertHasMethod(gatewayProperties, "account-auth-bootstrap-characters", "GET");
+    assertHasMethod(gatewayProperties, "account-auth-request-email-verification", "POST");
+    assertHasMethod(gatewayProperties, "account-auth-request-password-reset", "POST");
+    assertNoConfiguredPath(gatewayProperties, "/api/account/auth/**");
+    assertNoRouteWithPathAndMethod(gatewayProperties, "/api/account/auth/verify-email", "GET");
+    assertNoRouteWithPathAndMethod(
+        gatewayProperties, "/api/account/auth/complete-password-reset", "GET");
+    assertNoRouteWithPathAndMethod(
+        gatewayProperties, "/api/account/auth/verify-email/extra", "POST");
+    assertNoRouteWithPathAndMethod(gatewayProperties, "/api/account/auth/internal/runtime", "POST");
+    assertNoConfiguredPathStartsWith(gatewayProperties, "/api/account/internal/");
+    assertNoConfiguredPathStartsWith(gatewayProperties, "/verify-email");
+    assertNoConfiguredPathStartsWith(gatewayProperties, "/reset-password");
     assertHasPath(gatewayProperties, "account-accounts", "/api/account/accounts/**");
     assertHasPath(gatewayProperties, "account-profiles", "/api/account/profiles/**");
     assertHasPath(gatewayProperties, "account-ping", "/api/account/ping");
     assertHasPath(gatewayProperties, "account-jwks", "/api/account/.well-known/jwks.json");
 
-    assertHasStripPrefixTwo(gatewayProperties, "account-auth");
+    assertHasStripPrefixTwo(gatewayProperties, "account-auth-verify-email");
     assertHasStripPrefixTwo(gatewayProperties, "account-accounts");
     assertHasStripPrefixTwo(gatewayProperties, "account-profiles");
     assertHasStripPrefixTwo(gatewayProperties, "account-ping");

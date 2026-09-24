@@ -291,4 +291,16 @@ class AuthControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"));
   }
+
+  @Test
+  void emailedGetRequestsNeverConsumeTokens() throws Exception {
+    mockMvc
+        .perform(get("/auth/verify-email").param("token", "tok"))
+        .andExpect(status().is4xxClientError());
+    mockMvc
+        .perform(get("/auth/reset-password").param("token", "tok"))
+        .andExpect(status().is4xxClientError());
+
+    verifyNoInteractions(accountService);
+  }
 }
