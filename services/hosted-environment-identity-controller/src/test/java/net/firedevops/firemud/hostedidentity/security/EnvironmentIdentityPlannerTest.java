@@ -41,8 +41,7 @@ class EnvironmentIdentityPlannerTest {
             "tcp-proxy-service"),
         plan.grpcConsumers());
     for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
-      assertEquals(
-          "pr-42-grpc-" + workload, plan.grpcPublicationSourceSecretName(workload));
+      assertEquals("pr-42-grpc-" + workload, plan.grpcPublicationSourceSecretName(workload));
       assertEquals("firemud-grpc-" + workload, plan.grpcPublicationSecretName(workload));
       assertEquals(
           "spiffe://firemud/ns/pr-42/sa/" + workload, plan.grpcPublicationUriSan(workload));

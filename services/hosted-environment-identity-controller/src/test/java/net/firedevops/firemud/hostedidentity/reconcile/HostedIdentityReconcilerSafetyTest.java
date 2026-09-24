@@ -1630,6 +1630,55 @@ class HostedIdentityReconcilerSafetyTest {
   }
 
   @Test
+  void invalidRevisionWithHighGenerationIsRejectedAndCannotBecomePublicationBaseline() {
+    String role = HostedIdentityContract.grpcPublicationRole("game-design-service");
+    DeploymentHeadGateFixture fixture =
+        new DeploymentHeadGateFixture(
+            new RuntimeProfileService.RuntimeProfile(
+                "uid",
+                "a".repeat(40),
+                "a".repeat(40),
+                HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+                32016,
+                true));
+    Map<String, HostedEnvironmentIdentityStatus.RoleStatus> publicationHistory =
+        new java.util.LinkedHashMap<>();
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      String publicationRole = HostedIdentityContract.grpcPublicationRole(workload);
+      HostedEnvironmentIdentityStatus.RoleStatus history =
+          HostedStatusService.role(
+              "sha256:" + "a".repeat(64), 1L, 1L, "b".repeat(64), "cert-manager", "source-ready");
+      publicationHistory.put(publicationRole, history);
+    }
+    publicationHistory.get(role).setRevision("invalid revision");
+    publicationHistory.get(role).setSourceGeneration(99L);
+    HostedEnvironmentIdentityStatus priorStatus = new HostedEnvironmentIdentityStatus();
+    priorStatus.setGrpcPublication(publicationHistory);
+    fixture.resource.setStatus(priorStatus);
+
+    assertEquals(
+        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
+            .map(HostedIdentityContract::grpcPublicationRole)
+            .collect(java.util.stream.Collectors.toSet()),
+        publicationHistory.keySet());
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () -> HostedIdentityReconciler.previousRole(fixture.resource, role));
+    assertEquals(
+        "grpc publication status must contain exactly five role entries", failure.getMessage());
+
+    UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
+
+    HostedEnvironmentIdentityStatus blocked = result.getResource().orElseThrow().getStatus();
+    assertEquals(HostedEnvironmentIdentityStatus.Phase.Blocked, blocked.getPhase());
+    assertEquals("ReconciliationBlocked", blocked.getConditions().get(0).getReason());
+    assertNull(blocked.getGrpcPublication().get(role).getSourceGeneration());
+    assertNull(blocked.getGrpcPublication().get(role).getRevision());
+    verifyNoInteractions(fixture.projections);
+  }
+
+  @Test
   void everyManagedTransportRoleRequiresIndependentLeafKeyMaterial() {
     var ingress = material(1, 1, "1".repeat(64), "ingress");
     var telnet = material(1, 1, "2".repeat(64), "telnet");
