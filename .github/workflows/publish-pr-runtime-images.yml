@@ -72,7 +72,22 @@ jobs:
           import re
           import subprocess
           import sys
+          import time
           from pathlib import Path
+
+          import importlib.util
+
+          eligibility_path = Path("dev-tools/hosted/preview/preview-eligibility.py").resolve()
+          eligibility_spec = importlib.util.spec_from_file_location(
+              "preview_eligibility", eligibility_path
+          )
+          if eligibility_spec is None or eligibility_spec.loader is None:
+              raise SystemExit(f"unable to load preview eligibility policy: {eligibility_path}")
+          eligibility_module = importlib.util.module_from_spec(eligibility_spec)
+          eligibility_spec.loader.exec_module(eligibility_module)
+          DEPENDENCY_BOT_AUTHORS = eligibility_module.DEPENDENCY_BOT_AUTHORS
+          evaluate = eligibility_module.evaluate
+          parse_labels = eligibility_module.parse_labels
 
           EXPECTED_SERVICES = [
               "account-service",
@@ -119,6 +134,17 @@ jobs:
                   return json.loads(result.stdout)
               except json.JSONDecodeError as error:
                   fail(f"GitHub API returned malformed JSON for {endpoint}: {error}")
+
+          def current_pull_request(endpoint):
+              for attempt in range(3):
+                  pull_request = gh_json(endpoint)
+                  if pull_request.get("mergeable") is not None and \
+                      pull_request.get("mergeable_state") != "unknown":
+                      return pull_request
+                  if attempt == 2:
+                      fail("current pull request mergeability remained unknown after bounded retries")
+                  time.sleep(2)
+              fail("current pull request mergeability could not be resolved")
 
           repository = required_environment("CURRENT_REPOSITORY")
           source_run_id_text = required_environment("SOURCE_RUN_ID")
@@ -184,7 +210,7 @@ jobs:
               if not default_branch or source_head_branch != default_branch:
                   fail("typed refresh source run is not on the repository default branch")
 
-          pull_request = gh_json(f"repos/{repository}/pulls/{pr_number_int}")
+          pull_request = current_pull_request(f"repos/{repository}/pulls/{pr_number_int}")
           if pull_request.get("number") != pr_number_int or pull_request.get("state") != "open":
               fail("source pull request is not the current open pull request")
           if (pull_request.get("head") or {}).get("sha") != head_sha:
@@ -197,8 +223,30 @@ jobs:
           if base.get("repo", {}).get("full_name") != repository:
               fail("current pull request base repository is not the current repository")
           base_ref = base.get("ref")
-          if base_ref not in {"main", "develop"}:
-              fail("current pull request base ref is outside the runtime workflow contract")
+          if not isinstance(base_ref, str) or not base_ref:
+              fail("current pull request base ref is missing")
+          labels = pull_request.get("labels")
+          labels_json = json.dumps(labels, separators=(",", ":"))
+          labels_valid, is_priority = parse_labels(labels_json)
+          if not labels_valid:
+              fail("current pull request labels are malformed")
+          author = (pull_request.get("user") or {}).get("login")
+          if not isinstance(author, str) or not author:
+              fail("current pull request author is missing")
+          eligible, eligibility_reason, _ = evaluate(
+              "deploy", "open", base_ref, author, labels_json
+          )
+          if not eligible:
+              fail(f"current pull request is not preview-eligible: {eligibility_reason}")
+          if author in DEPENDENCY_BOT_AUTHORS:
+              fail("current pull request is authored by a dependency bot")
+          if pull_request.get("mergeable") is not True:
+              fail("current pull request is not currently mergeable")
+          mergeable_state = pull_request.get("mergeable_state")
+          if not isinstance(mergeable_state, str) or mergeable_state in {
+              "dirty", "conflicting", "unknown"
+          }:
+              fail("current pull request mergeability state is not a usable non-conflicting value")
           current_base_ref = gh_json(f"repos/{repository}/git/ref/heads/{base_ref}")
           if (current_base_ref.get("object") or {}).get("sha") != base_sha:
               fail("current base branch ref SHA differs from source metadata")

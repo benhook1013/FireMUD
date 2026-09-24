@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 4 ]]; then
-  echo "usage: $0 <target_namespace> <max_active> <target_pr_number> <target_head_sha>" >&2
+if [[ $# -ne 6 ]]; then
+  echo "usage: $0 <target_namespace> <max_active> <target_pr_number> <target_head_sha> <target_base_sha> <target_merge_sha>" >&2
   exit 1
 fi
 
@@ -10,19 +10,30 @@ target_namespace="$1"
 max_active="$2"
 target_pr_number="$3"
 target_head_sha="$4"
+target_base_sha="$5"
+target_merge_sha="$6"
 priority_label="preview:priority"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 eligibility_script="${PREVIEW_ELIGIBILITY_SCRIPT:-${script_dir}/preview-eligibility.py}"
 revalidate_deploy_script="${PREVIEW_REVALIDATE_DEPLOY_SCRIPT:-${script_dir}/revalidate-preview-deploy.sh}"
+revalidate_source_binding_script="${PREVIEW_REVALIDATE_SOURCE_BINDING_SCRIPT:-${script_dir}/revalidate-preview-source-binding.sh}"
 delete_script="${PREVIEW_DELETE_SCRIPT:-${script_dir}/../shared/delete-hosted-namespace.sh}"
 publish_reclaimed_script="${PREVIEW_RECLAIMED_PUBLISH_SCRIPT:-${script_dir}/publish-preview-reclaimed.sh}"
 publish_attempts="${PREVIEW_RECLAIM_PUBLISH_ATTEMPTS:-3}"
 publish_retry_delay_seconds="${PREVIEW_RECLAIM_PUBLISH_RETRY_DELAY_SECONDS:-2}"
+readonly capacity_unavailable_exit_status=75
 
-if ! [[ "$max_active" =~ ^[0-9]+$ ]]; then
-  echo "max_active must be an integer, got: $max_active" >&2
+if ! [[ "$max_active" =~ ^[12]$ ]]; then
+  echo "max_active must be exactly 1 or 2, got: $max_active" >&2
   exit 1
 fi
+for sha_name in target_head_sha target_base_sha target_merge_sha; do
+  sha_value="${!sha_name}"
+  if ! [[ "$sha_value" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "${sha_name} must be exactly 40 lowercase hexadecimal characters" >&2
+    exit 1
+  fi
+done
 if ! [[ "$publish_attempts" =~ ^[1-9][0-9]*$ ]]; then
   echo "PREVIEW_RECLAIM_PUBLISH_ATTEMPTS must be a positive integer" >&2
   exit 1
@@ -46,6 +57,20 @@ emit_output() {
   if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
     printf '%s=%s\n' "$name" "$value" >> "$GITHUB_OUTPUT"
   fi
+}
+
+capacity_unavailable() {
+  emit_output allocation_status unavailable
+  echo "$1" >&2
+  exit "$capacity_unavailable_exit_status"
+}
+
+revalidate_target() {
+  local stage="$1"
+
+  bash "$revalidate_deploy_script" "$target_pr_number" "$target_head_sha" || return 1
+  bash "$revalidate_source_binding_script" \
+    "$target_pr_number" "$target_head_sha" "$target_base_sha" "$target_merge_sha" "$stage"
 }
 
 inspect_labels() {
@@ -103,7 +128,15 @@ find_unsatisfied_priority_pr() {
   local extra
   local namespace
   local namespace_owner
+  local namespace_tuple
+  local candidate_base_sha
+  local candidate_head_sha
+  local candidate_merge_sha
+  local candidate_image_tag
+  local namespace_base
   local namespace_head
+  local namespace_merge
+  local namespace_image
   local page
   local page_rows
   local open_pr_page_size=100
@@ -188,12 +221,88 @@ find_unsatisfied_priority_pr() {
       return 1
     fi
     namespace="pr-${pr_number}"
-    if ! namespace_owner="$(kubectl get namespace "$namespace" --ignore-not-found -o jsonpath='{.metadata.labels.firemud\.dev/pr-number}')" ||
-      ! namespace_head="$(kubectl get namespace "$namespace" --ignore-not-found -o jsonpath='{.metadata.annotations.firemud\.dev/last-preview-head-sha}')"; then
+    if ! namespace_tuple="$(kubectl get namespace "$namespace" --ignore-not-found \
+      -o jsonpath='{.metadata.labels.firemud\.dev/pr-number}{"\t"}{.metadata.annotations.firemud\.dev/last-preview-base-sha}{"\t"}{.metadata.annotations.firemud\.dev/last-preview-head-sha}{"\t"}{.metadata.annotations.firemud\.dev/last-preview-merge-sha}{"\t"}{.metadata.annotations.firemud\.dev/last-preview-image-tag}')"; then
       echo "Unable to revalidate priority candidate namespace ${namespace}; refusing priority evaluation" >&2
       return 1
     fi
-    if [[ "$namespace_owner" != "$pr_number" || "$namespace_head" != "$head_sha" ]]; then
+    IFS=$'\t' read -r namespace_owner namespace_base namespace_head namespace_merge namespace_image <<<"$namespace_tuple"
+    if ! candidate_metadata_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}")"; then
+      echo "Unable to revalidate priority candidate PR #${pr_number}; refusing priority evaluation" >&2
+      return 1
+    fi
+    if ! candidate_live_metadata="$(get_pr_state "$pr_number")"; then
+      echo "Unable to revalidate priority candidate state for PR #${pr_number}; refusing priority evaluation" >&2
+      return 1
+    fi
+    IFS=$'\t' read -r candidate_live_state candidate_live_head candidate_live_priority candidate_live_labels_valid <<<"$candidate_live_metadata"
+    if [[ "$candidate_live_labels_valid" != valid ]]; then
+      echo "Unable to revalidate priority candidate labels for PR #${pr_number}; refusing priority evaluation" >&2
+      return 1
+    fi
+    case "$candidate_live_state" in
+      closed)
+        # A candidate that closed after the open-PR snapshot no longer blocks
+        # ordinary allocation, even if its old snapshot carried the priority label.
+        continue
+        ;;
+      open)
+        if [[ "$candidate_live_priority" != true ]]; then
+          # Likewise, a live removal of preview:priority releases the slot.
+          continue
+        fi
+        ;;
+      *)
+        echo "Unable to revalidate priority candidate state for PR #${pr_number}; refusing priority evaluation" >&2
+        return 1
+        ;;
+    esac
+    candidate_base_ref="$(jq -r '.base.ref // empty' <<<"$candidate_metadata_json")"
+    candidate_base_repository="$(jq -r '.base.repo.full_name // empty' <<<"$candidate_metadata_json")"
+    candidate_head_repository="$(jq -r '.head.repo.full_name // empty' <<<"$candidate_metadata_json")"
+    candidate_head_sha="$(jq -r '.head.sha // empty' <<<"$candidate_metadata_json")"
+    candidate_merge_sha="$(jq -r '.merge_commit_sha // empty' <<<"$candidate_metadata_json")"
+    candidate_mergeable="$(jq -r 'if (.mergeable | type) == "boolean" then (.mergeable | tostring) else "invalid" end' <<<"$candidate_metadata_json")"
+    candidate_mergeable_state="$(jq -r 'if (.mergeable_state | type) == "string" then .mergeable_state else "invalid" end' <<<"$candidate_metadata_json")"
+    candidate_metadata_state="$(jq -r '.state // empty' <<<"$candidate_metadata_json")"
+    if [[ "$candidate_base_repository" != "$GITHUB_REPOSITORY" ||
+      "$candidate_head_repository" != "$GITHUB_REPOSITORY" ||
+      "$candidate_metadata_state" != "$candidate_live_state" ||
+      "$candidate_live_head" != "$head_sha" ||
+      "$candidate_head_sha" != "$head_sha" ||
+      "$candidate_mergeable" == invalid ||
+      "$candidate_mergeable_state" == invalid ||
+      "$candidate_mergeable_state" == unknown ||
+      -z "$candidate_mergeable_state" ||
+      ! "$candidate_base_ref" =~ ^[A-Za-z0-9._/-]+$ ||
+      ! "$candidate_merge_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+      printf '%s\n' "$pr_number"
+      return
+    fi
+    if [[ "$candidate_mergeable" == false ||
+      "$candidate_mergeable_state" == dirty ||
+      "$candidate_mergeable_state" == conflicting ]]; then
+      # A confirmed conflict means this priority candidate cannot deploy and
+      # must not reserve an ordinary preview slot.
+      continue
+    fi
+    if ! candidate_base_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${candidate_base_ref}" --jq '.object.sha')" ||
+      ! [[ "$candidate_base_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+      printf '%s\n' "$pr_number"
+      return
+    fi
+    candidate_merge_sha="${candidate_merge_sha,,}"
+    candidate_base_sha="${candidate_base_sha,,}"
+    if ! candidate_image_tag="$(bash "${script_dir}/resolve-preview-image-tag.sh" \
+      "$candidate_merge_sha" "$pr_number" "$candidate_base_sha")"; then
+      printf '%s\n' "$pr_number"
+      return
+    fi
+    if [[ "$namespace_owner" != "$pr_number" ||
+      "$namespace_base" != "$candidate_base_sha" ||
+      "$namespace_head" != "$candidate_head_sha" ||
+      "$namespace_merge" != "$candidate_merge_sha" ||
+      "$namespace_image" != "$candidate_image_tag" ]]; then
       printf '%s\n' "$pr_number"
       return
     fi
@@ -203,14 +312,14 @@ find_unsatisfied_priority_pr() {
 # Fail closed on the complete live PR contract before evaluating or mutating
 # shared preview capacity. The workflow repeats this check immediately before
 # Helm so both race-sensitive deploy boundaries stay protected.
-if ! bash "$revalidate_deploy_script" "$target_pr_number" "$target_head_sha"; then
+if ! revalidate_target "before shared preview capacity evaluation"; then
   echo "Refusing capacity action because target deploy eligibility could not be revalidated" >&2
   exit 1
 fi
 
 if ! namespace_rows_output="$(
   kubectl get namespaces -l firemud.dev/preview=true \
-    -o jsonpath='{range .items[*]}{.metadata.creationTimestamp}{"|"}{.metadata.name}{"|"}{.metadata.labels.firemud\.dev/pr-number}{"|"}{.metadata.annotations.firemud\.dev/preview-allocated-at}{"|"}{.metadata.annotations.firemud\.dev/last-preview-head-sha}{"|"}{.metadata.annotations.firemud\.dev/last-preview-image-tag}{"\n"}{end}'
+    -o jsonpath='{range .items[*]}{.metadata.creationTimestamp}{"|"}{.metadata.name}{"|"}{.metadata.labels.firemud\.dev/pr-number}{"|"}{.metadata.annotations.firemud\.dev/preview-allocated-at}{"|"}{.metadata.annotations.firemud\.dev/last-preview-base-sha}{"|"}{.metadata.annotations.firemud\.dev/last-preview-head-sha}{"|"}{.metadata.annotations.firemud\.dev/last-preview-merge-sha}{"|"}{.metadata.annotations.firemud\.dev/last-preview-image-tag}{"\n"}{end}'
 )"; then
   echo "Unable to list current preview namespaces; refusing capacity action" >&2
   exit 1
@@ -222,7 +331,11 @@ target_exists=false
 target_allocation_timestamp=""
 candidate_rows=()
 for row in "${namespace_rows[@]}"; do
-  IFS='|' read -r created_at namespace pr_number allocated_at previous_head_sha previous_image_tag <<<"$row"
+  IFS='|' read -r created_at namespace pr_number allocated_at field5 field6 field7 field8 <<<"$row"
+  previous_base_sha="${field5:-}"
+  previous_head_sha="${field6:-}"
+  previous_merge_sha="${field7:-}"
+  previous_image_tag="${field8:-}"
   allocation_timestamp="${allocated_at:-$created_at}"
   if [[ "$namespace" == "$target_namespace" ]]; then
     if [[ "$pr_number" != "$target_pr_number" ]]; then
@@ -238,7 +351,7 @@ for row in "${namespace_rows[@]}"; do
     echo "Skipping ${namespace}: namespace and PR ownership label are not canonical" >&2
     continue
   fi
-  candidate_rows+=("${allocation_timestamp}|${namespace}|${pr_number}|${previous_head_sha}|${previous_image_tag}")
+  candidate_rows+=("${allocation_timestamp}|${namespace}|${pr_number}|${previous_base_sha}|${previous_head_sha}|${previous_merge_sha}|${previous_image_tag}")
 done
 
 if [[ -z "$target_allocation_timestamp" ]]; then
@@ -271,8 +384,7 @@ if [[ "$target_is_priority" != "true" ]]; then
     exit 1
   fi
   if [[ -n "$unsatisfied_priority_pr" ]]; then
-    echo "Yielding ordinary PR #${target_pr_number}: priority PR #${unsatisfied_priority_pr} has no current preview" >&2
-    exit 1
+    capacity_unavailable "Yielding ordinary PR #${target_pr_number}: priority PR #${unsatisfied_priority_pr} has no current preview"
   fi
 fi
 if (( active_count < max_active )); then
@@ -284,8 +396,7 @@ if (( active_count > max_active )); then
 fi
 
 if [[ "$target_is_priority" != "true" ]]; then
-  echo "Preview capacity exhausted; PR #${target_pr_number} does not have ${priority_label}" >&2
-  exit 1
+  capacity_unavailable "Preview capacity exhausted; PR #${target_pr_number} does not have ${priority_label}"
 fi
 
 sorted_candidates=()
@@ -294,7 +405,7 @@ if (( ${#candidate_rows[@]} > 0 )); then
 fi
 selected=""
 for row in "${sorted_candidates[@]}"; do
-  IFS='|' read -r allocated_at namespace pr_number previous_head_sha previous_image_tag <<<"$row"
+  IFS='|' read -r allocated_at namespace pr_number previous_base_sha previous_head_sha previous_merge_sha previous_image_tag <<<"$row"
   if ! candidate_metadata="$(get_pr_state "$pr_number" 2>/dev/null)"; then
     echo "Skipping ${namespace}: PR #${pr_number} metadata is unavailable"
     continue
@@ -308,11 +419,10 @@ for row in "${sorted_candidates[@]}"; do
 done
 
 if [[ -z "$selected" ]]; then
-  echo "Preview capacity exhausted; every reclaimable slot is priority-protected" >&2
-  exit 1
+  capacity_unavailable "Preview capacity exhausted; every reclaimable slot is priority-protected"
 fi
 
-IFS='|' read -r selected_allocated_at selected_namespace selected_pr selected_head selected_image <<<"$selected"
+IFS='|' read -r selected_allocated_at selected_namespace selected_pr selected_base selected_head selected_merge selected_image <<<"$selected"
 
 preview_comment_rows="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${selected_pr}/comments" \
   --jq '
@@ -380,6 +490,10 @@ publish_reclaim_state() {
   return 1
 }
 
+if ! revalidate_target "immediately before reclaim status publication"; then
+  echo "Refusing reclaim because target deploy eligibility or source binding changed before reclaim status publication" >&2
+  exit 1
+fi
 if ! publish_reclaim_state reclaiming; then
   echo "Refusing reclaim because the conservative victim status could not be published" >&2
   exit 1
@@ -389,7 +503,7 @@ fi
 # deletion. The job-level lifecycle lock prevents another managed preview
 # deploy, proof, or cleanup from racing this destructive boundary.
 revalidation_failure=""
-if ! bash "$revalidate_deploy_script" "$target_pr_number" "$target_head_sha"; then
+if ! revalidate_target "immediately before victim deletion"; then
   revalidation_failure="target PR #${target_pr_number} complete deploy contract could not be revalidated"
 elif target_metadata="$(get_pr_state "$target_pr_number")"; then
   IFS=$'\t' read -r target_state current_target_head target_is_priority target_labels_valid <<<"$target_metadata"
@@ -413,7 +527,9 @@ namespace_state_available=true
 current_owner=""
 current_created_at=""
 current_allocated_at=""
+current_base=""
 current_head=""
+current_merge=""
 current_image=""
 namespace_fields_sentinel='|firemud-preview-namespace-fields-v1'
 if ! current_namespace_json="$(kubectl get namespace "$selected_namespace" -o json)"; then
@@ -434,7 +550,9 @@ elif ! current_namespace_fields_encoded="$(jq -e -r '
       field(.metadata.labels["firemud.dev/pr-number"]),
       field(.metadata.creationTimestamp),
       field(.metadata.annotations["firemud.dev/preview-allocated-at"]),
+      field(.metadata.annotations["firemud.dev/last-preview-base-sha"]),
       field(.metadata.annotations["firemud.dev/last-preview-head-sha"]),
+      field(.metadata.annotations["firemud.dev/last-preview-merge-sha"]),
       field(.metadata.annotations["firemud.dev/last-preview-image-tag"])
     ] as $fields
     | if any($fields[]; test("[|\u0000-\u001f\u007f]")) then
@@ -450,19 +568,23 @@ else
   if [[ "$current_namespace_fields_encoded" != *"$namespace_fields_sentinel" ]]; then
     namespace_state_available=false
   else
-    IFS='|' read -r owner_encoded created_encoded allocated_encoded head_encoded image_encoded extra \
+    IFS='|' read -r owner_encoded created_encoded allocated_encoded base_encoded head_encoded merge_encoded image_encoded extra \
       <<<"$namespace_fields_payload"
     if [[ -n "${extra:-}" ]] ||
       ! [[ "$owner_encoded" =~ ^[A-Za-z0-9+/]*={0,2}$ ]] ||
       ! [[ "$created_encoded" =~ ^[A-Za-z0-9+/]*={0,2}$ ]] ||
       ! [[ "$allocated_encoded" =~ ^[A-Za-z0-9+/]*={0,2}$ ]] ||
+      ! [[ "$base_encoded" =~ ^[A-Za-z0-9+/]*={0,2}$ ]] ||
       ! [[ "$head_encoded" =~ ^[A-Za-z0-9+/]*={0,2}$ ]] ||
+      ! [[ "$merge_encoded" =~ ^[A-Za-z0-9+/]*={0,2}$ ]] ||
       ! [[ "$image_encoded" =~ ^[A-Za-z0-9+/]*={0,2}$ ]]; then
       namespace_state_available=false
     elif ! current_owner="$(printf '%s' "$owner_encoded" | base64 --decode 2>/dev/null)" ||
       ! current_created_at="$(printf '%s' "$created_encoded" | base64 --decode 2>/dev/null)" ||
       ! current_allocated_at="$(printf '%s' "$allocated_encoded" | base64 --decode 2>/dev/null)" ||
+      ! current_base="$(printf '%s' "$base_encoded" | base64 --decode 2>/dev/null)" ||
       ! current_head="$(printf '%s' "$head_encoded" | base64 --decode 2>/dev/null)" ||
+      ! current_merge="$(printf '%s' "$merge_encoded" | base64 --decode 2>/dev/null)" ||
       ! current_image="$(printf '%s' "$image_encoded" | base64 --decode 2>/dev/null)"; then
       namespace_state_available=false
     fi
@@ -473,7 +595,9 @@ namespace_intact=false
 if [[ "$namespace_state_available" == "true" &&
   "$current_owner" == "$selected_pr" &&
   "$current_effective_allocated_at" == "$selected_allocated_at" &&
+  "$current_base" == "$selected_base" &&
   "$current_head" == "$selected_head" &&
+  "$current_merge" == "$selected_merge" &&
   "$current_image" == "$selected_image" ]]; then
   namespace_intact=true
 fi

@@ -684,6 +684,9 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0182-separated-hosted-runtime-and-certificate-identity-lifecycles.md": adr_allocation(
         "PO-3", "Accepted", "PO-1", "PO-4", "SF-1"
     ),
+    "design/architecture/decisions/adr-0184-emergency-tcp-proxy-identity-withdrawal.md": adr_allocation(
+        "SF-1", "Accepted", "PO-2", "PO-3", "PO-4"
+    ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",

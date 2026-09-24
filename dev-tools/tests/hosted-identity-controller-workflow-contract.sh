@@ -679,6 +679,8 @@ contains "$dev_demo" 'request-hosted-identity.sh dev-demo Retired'
 contains "$dev_demo" '--projections dev-demo "${{ needs.dev-demo-plan.outputs.namespace }}" 900'
 contains "$dev_demo" 'wait-for-hosted-identity.sh'
 contains "$dev_demo" 'ensure-grpc-tls-secret.sh'
+contains "$dev_demo" 'ensure-standalone-grpc-certificates.sh'
+contains "$dev_demo" 'TRUSTED_HOSTED_STANDALONE_CERTIFICATE_KUBECONFIG'
 contains "$dev_demo" "steps.certificate-identity.outputs.mode == 'standalone'"
 for required in \
   '--discover-api' \
@@ -890,6 +892,7 @@ expected_gates = {
     "prepare-runtime": "needs.validate-target.outputs.action == 'deploy'",
     "deploy-runtime": "needs.validate-target.outputs.action == 'deploy'",
     "verify-runtime": "needs.validate-target.outputs.action == 'deploy'",
+    "publish-preview-proof": "needs.validate-target.outputs.action == 'deploy'",
     "destroy-runtime": "needs.validate-target.outputs.action == 'destroy'",
     "retire-identity": "needs.validate-target.outputs.action == 'destroy'",
 }
@@ -915,6 +918,7 @@ assert "RETIRE_IDENTITY=true" in target_step["run"]
 assert "RETIRE_IDENTITY=false" in target_step["run"]
 for job_name in ("prepare-runtime", "deploy-runtime", "verify-runtime"):
     assert "needs.validate-target.outputs.action == 'deploy'" in jobs[job_name]["if"], job_name
+assert "needs.deploy-runtime.outputs.allocation_status == 'allocated'" in jobs["verify-runtime"]["if"]
 assert jobs["destroy-runtime"]["if"] == (
     "${{ needs.validate-target.outputs.action == 'destroy' }}"
 )
@@ -974,7 +978,8 @@ for job_name in ("verify-runtime", "destroy-runtime", "retire-identity"):
 assert jobs["prepare-runtime"]["timeout-minutes"] == 45
 assert jobs["deploy-runtime"]["timeout-minutes"] == 45
 assert jobs["deploy-runtime"]["outputs"] == {
-    "runtime_namespace_uid": "${{ steps.record-runtime-namespace-uid.outputs.uid }}"
+    "runtime_namespace_uid": "${{ steps.record-runtime-namespace-uid.outputs.uid }}",
+    "allocation_status": "${{ steps.allocate-capacity.outputs.allocation_status }}",
 }
 for job_name, step_name in (
     ("destroy-runtime", "Revalidate preview cleanup target before runtime deletion"),
@@ -1589,7 +1594,7 @@ assert target_script.index(shared_head_guard) > workflow_branch_end
 for label_fragment in (
     'labels_json="$(jq -c',
     'label_metadata="$(python3',
-    'labels_valid="$(sed -n',
+    '--operation deploy --state "$state"',
 ):
     label_index = target_script.index(label_fragment)
     assert workflow_run_start < label_index, label_fragment
@@ -1605,8 +1610,12 @@ for fragment in (
     'select(.expired == false)',
     'preview-(render|intent)-pr-[1-9][0-9]{0,50}-[0-9a-fA-F]{40}',
     "[[ \"$(jq 'length' <<<\"$canonical_artifacts\")\" == 1 ]]",
-    '[[ "$base_ref" == main || "$base_ref" == develop ]] || emit_no_action',
-    'Ignoring closed pull request because its base branch is unsupported.',
+    'mergeable="$(jq -r',
+    'if (.mergeable | type) == "boolean" then (.mergeable | tostring) else "invalid" end',
+    'if (.mergeable_state | type) == "string" then .mergeable_state else "invalid" end',
+    'Ignoring lifecycle event because the current pull request is conflicting.',
+    '[[ "$mergeable" == true && -n "$mergeable_state" && "$mergeable_state" != unknown && "$mergeable_state" != invalid ]] || emit_no_action',
+    '--operation deploy --state "$state"',
     '[[ "$state" == closed ]] || emit_no_action',
     'Ignoring closed pull request because it has been reopened.',
     '[[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]] || emit_no_action',
@@ -1729,7 +1738,7 @@ assert deploy_steps.index(active_request) < deploy_steps.index(deploy_requester_
 assert "Remember preview runtime kubeconfig" not in deploy_by_name
 assert "Restore preview runtime kubeconfig" not in deploy_by_name
 runtime_kubeconfig_path = "${{ runner.temp }}/preview-runtime.kubeconfig"
-runtime_kubeconfig_cleanup = 'rm -f -- "$RUNNER_TEMP/preview-runtime.kubeconfig"'
+runtime_kubeconfig_cleanup = 'rm -f -- "$RUNNER_TEMP/preview-runtime.kubeconfig"\n'
 runtime_kubeconfig_marker = '"$RUNNER_TEMP/preview-runtime.kubeconfig"'
 manager_kubeconfig_path = "${{ runner.temp }}/preview-namespace-manager.kubeconfig"
 manager_kubeconfig_cleanup = 'rm -f -- "$RUNNER_TEMP/preview-namespace-manager.kubeconfig"'
@@ -1778,7 +1787,9 @@ for job_name, job in jobs.items():
         assert cleanup["run"] == manager_kubeconfig_cleanup, job_name
     else:
         assert manager_kubeconfig_marker in cleanup["run"], job_name
-assert manager_kubeconfig_jobs == {"deploy-runtime", "destroy-runtime"}
+assert manager_kubeconfig_jobs == {
+    "deploy-runtime", "publish-preview-proof", "destroy-runtime"
+}
 assert "Set up Helm" not in deploy_by_name
 requested_step_index = next(
     index
@@ -1795,6 +1806,11 @@ clean_delete_step_index = next(
     for index, step in enumerate(deploy_steps)
     if step.get("name") == "Delete exact preview runtime namespace before recreate"
 )
+capture_retry_step_index = next(
+    index
+    for index, step in enumerate(deploy_steps)
+    if step.get("name") == "Capture exact proof-retry record before namespace recreation"
+)
 allocate_port_step_index = next(
     index
     for index, step in enumerate(deploy_steps)
@@ -1808,11 +1824,12 @@ apply_step_index = next(
 deployed_step_index = next(
     index
     for index, step in enumerate(deploy_steps)
-    if step.get("name") == "Record exact deployed preview head"
+    if step.get("name") == "Record exact deployed preview tuple"
 )
 assert (
     allocate_port_step_index
     < clean_revalidate_step_index
+    < capture_retry_step_index
     < clean_delete_step_index
     < requested_step_index
     < apply_step_index
@@ -1847,6 +1864,30 @@ assert (
     'bash ./dev-tools/hosted/shared/delete-hosted-namespace.sh \\\n'
     '  "$RUNTIME_NAMESPACE" "$RUNTIME_NAMESPACE"'
 ) in clean_delete["run"]
+capture_retry = deploy_by_name[
+    "Capture exact proof-retry record before namespace recreation"
+]
+assert capture_retry["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
+    "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}",
+    "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
+    "EXPECTED_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
+    "EXPECTED_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
+    "EXPECTED_MERGE_SHA": "${{ needs.validate-target.outputs.merge_sha }}",
+    "EXPECTED_IMAGE_TAG": "${{ needs.validate-target.outputs.image_tag }}",
+}
+for required in (
+    'kubectl get namespace "$RUNTIME_NAMESPACE" --ignore-not-found -o json',
+    'firemud.dev/proof-retry-count',
+    'firemud.dev/proof-retry-base-sha',
+    'firemud.dev/proof-retry-head-sha',
+    'firemud.dev/proof-retry-merge-sha',
+    'firemud.dev/proof-retry-image-tag',
+    'Retry annotations must be a complete string record before namespace recreation.',
+    'Existing proof-retry record belongs to another tuple; resetting its budget.',
+    'proof_retry_count=$retry_count',
+):
+    assert required in capture_retry["run"], required
 create_step = deploy_by_name["Create and annotate exact preview runtime namespace"]
 assert create_step["env"]["ALLOCATED_TELNET_PORT"] == (
     "${{ steps.allocate-telnet-port.outputs.port }}"
@@ -1854,11 +1895,38 @@ assert create_step["env"]["ALLOCATED_TELNET_PORT"] == (
 assert create_step["env"]["ALLOCATION_TIMESTAMP"] == (
     "${{ steps.allocate-capacity.outputs.allocation_timestamp }}"
 )
+for output_name in (
+    "proof_retry_count",
+    "proof_retry_base_sha",
+    "proof_retry_head_sha",
+    "proof_retry_merge_sha",
+    "proof_retry_image_tag",
+):
+    assert f"steps.capture-proof-retry.outputs.{output_name}" in create_step["run"]
+standalone_grpc_shared = deploy_by_name["Prepare standalone shared gRPC TLS secret"]
+standalone_grpc_certificates = deploy_by_name["Prepare standalone gRPC certificates"]
 standalone_grpc = deploy_by_name["Prepare standalone gRPC TLS secret"]
 standalone_certificates = deploy_by_name["Prepare standalone transport certificates"]
 standalone_secret_wait = deploy_by_name["Wait for standalone transport Secret projections"]
+assert standalone_grpc_shared["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/preview-runtime.kubeconfig",
+    "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}"
+}
+assert standalone_grpc_shared["run"].splitlines() == [
+    "set -euo pipefail",
+    'bash ./dev-tools/hosted/shared/ensure-grpc-tls-secret.sh --shared-only "$RUNTIME_NAMESPACE"',
+]
+assert standalone_grpc_certificates["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/standalone-certificate-writer.kubeconfig",
+    "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}"
+}
+assert standalone_grpc_certificates["run"].splitlines() == [
+    "set -euo pipefail",
+    'bash ./dev-tools/hosted/shared/ensure-standalone-grpc-certificates.sh "$RUNTIME_NAMESPACE"',
+]
 assert standalone_grpc["if"] == (
-    "${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' }}"
+    "${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' && "
+    "steps.allocate-capacity.outputs.allocation_status == 'allocated' }}"
 )
 assert standalone_grpc["env"] == {
     "KUBECONFIG": "${{ runner.temp }}/preview-runtime.kubeconfig",
@@ -1877,7 +1945,8 @@ assert standalone_certificates["run"].splitlines() == [
     'bash ./dev-tools/hosted/preview/ensure-standalone-transport-certificates.sh "$RUNTIME_NAMESPACE"',
 ]
 assert standalone_secret_wait["if"] == (
-    "${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' }}"
+    "${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' && "
+    "steps.allocate-capacity.outputs.allocation_status == 'allocated' }}"
 )
 assert standalone_secret_wait["env"] == {
     "KUBECONFIG": "${{ runner.temp }}/preview-runtime.kubeconfig",
@@ -1890,6 +1959,8 @@ assert standalone_secret_wait["run"].splitlines() == [
 ]
 assert (
     requested_step_index
+    < deploy_steps.index(standalone_grpc_shared)
+    < deploy_steps.index(standalone_grpc_certificates)
     < deploy_steps.index(standalone_grpc)
     < deploy_steps.index(standalone_certificates)
     < deploy_steps.index(standalone_secret_wait)
@@ -1898,17 +1969,26 @@ assert (
 apply_step = deploy_steps[apply_step_index]
 deployed_step = deploy_steps[deployed_step_index]
 assert apply_step["id"] == "deploy-runtime-artifact"
-assert deployed_step["if"] == "${{ steps.deploy-runtime-artifact.outcome == 'success' }}"
+assert deployed_step["if"] == (
+    "${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' && "
+    "steps.deploy-runtime-artifact.outcome == 'success' }}"
+)
 assert "firemud.dev/last-preview-head-sha=${HEAD_SHA}" in deployed_step["run"]
 runtime_uid_step = deploy_by_name["Record exact deployed runtime Namespace UID"]
 runtime_uid_step_index = deploy_steps.index(runtime_uid_step)
 assert runtime_uid_step["id"] == "record-runtime-namespace-uid"
-assert runtime_uid_step["if"] == "${{ steps.deploy-runtime-artifact.outcome == 'success' }}"
+assert runtime_uid_step["if"] == (
+    "${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' && "
+    "steps.deploy-runtime-artifact.outcome == 'success' }}"
+)
 assert runtime_uid_step["env"] == {
     "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
     "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}",
     "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
+    "EXPECTED_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
     "EXPECTED_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
+    "EXPECTED_MERGE_SHA": "${{ needs.validate-target.outputs.merge_sha }}",
+    "EXPECTED_IMAGE_TAG": "${{ needs.validate-target.outputs.image_tag }}",
 }
 assert deployed_step_index < runtime_uid_step_index
 runtime_uid_run = runtime_uid_step["run"]
@@ -1916,8 +1996,14 @@ for required in (
     'kubectl get namespace "$RUNTIME_NAMESPACE" --ignore-not-found -o json',
     '"firemud.dev/preview"',
     '"firemud.dev/pr-number"',
+    '"firemud.dev/requested-preview-base-sha"',
     '"firemud.dev/requested-preview-head-sha"',
+    '"firemud.dev/requested-preview-merge-sha"',
+    '"firemud.dev/requested-preview-image-tag"',
+    '"firemud.dev/last-preview-base-sha"',
     '"firemud.dev/last-preview-head-sha"',
+    '"firemud.dev/last-preview-merge-sha"',
+    '"firemud.dev/last-preview-image-tag"',
     'echo "uid=$runtime_uid" >> "$GITHUB_OUTPUT"',
 ):
     assert required in runtime_uid_run, required
@@ -1932,9 +2018,10 @@ privileged_validation_guards = {
             "Invalid allocation timestamp",
         ),
     ),
-    "Record exact deployed preview head": (
+    "Record exact deployed preview tuple": (
         ('[[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]] || {', "Invalid preview runtime namespace"),
-        ('[[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || {', "Invalid preview head SHA"),
+        ('for sha_name in BASE_SHA HEAD_SHA MERGE_SHA; do', "Invalid preview ${sha_label} SHA"),
+        ('[[ "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || {', "Invalid preview image tag"),
     ),
 }
 for step_name, guards in privileged_validation_guards.items():
@@ -1942,6 +2029,9 @@ for step_name, guards in privileged_validation_guards.items():
     for predicate, error_title in guards:
         assert predicate in step_run
         assert f"::error title={error_title}::" in step_run
+deployed_tuple_run = deploy_by_name["Record exact deployed preview tuple"]["run"]
+assert 'sha_label="${sha_name%_SHA}"' in deployed_tuple_run
+assert 'sha_label="${sha_label,,}"' in deployed_tuple_run
 inject_step = deploy_by_name["Inject trusted allocated Telnet port"]["run"]
 assert '"$RUNTIME_NAMESPACE" "$TELNET_PORT"' in inject_step
 assert '"${{ needs.validate-target.outputs.certificate_identity_mode }}"' in inject_step
@@ -2013,7 +2103,6 @@ for stage in (
     "before capacity reclaim",
     "before clean runtime redeploy",
     "before the identity request",
-    "before success publication",
 ):
     assert stage in trusted_source
 dry_run = "kubectl apply --dry-run=server"
@@ -2055,16 +2144,32 @@ assert actual_apply_line == dry_run_line + 3
 assert apply_run.count(source_binding_helper) == 2
 assert apply_run.count('current_pull_request_json') == 0
 
+capacity_unavailable = next(
+    step
+    for step in deploy_steps
+    if step.get("name") == "Publish trusted preview unavailable capacity"
+)
+assert capacity_unavailable["id"] == "publish-capacity-unavailable"
+assert capacity_unavailable["if"] == (
+    "${{ steps.allocate-capacity.outputs.allocation_status == 'unavailable' }}"
+)
+
 deploy_failure = next(
     step
     for step in deploy_steps
     if step.get("name") == "Publish trusted preview deployment failure"
 )
-assert deploy_failure["if"] == "${{ !cancelled() && failure() }}"
+assert deploy_failure["if"] == (
+    "${{ !cancelled() && failure() && "
+    "(steps.allocate-capacity.outputs.allocation_status != 'unavailable' || "
+    "steps.publish-capacity-unavailable.outcome == 'failure') }}"
+)
 assert deploy_failure["uses"] == "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3"
 assert deploy_failure["env"] == {
     "PREVIEW_PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
     "PREVIEW_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
+    "PREVIEW_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
+    "PREVIEW_MERGE_SHA": "${{ needs.validate-target.outputs.merge_sha }}",
     "PREVIEW_IMAGE_TAG": "${{ needs.validate-target.outputs.image_tag }}",
     "PREVIEW_HOSTNAME": "${{ needs.validate-target.outputs.hostname }}",
     "PREVIEW_EXPOSURE_MODE": "${{ needs.validate-target.outputs.exposure_mode }}",
@@ -2093,7 +2198,9 @@ assert "rollout status" not in rollout_step["run"]
 
 assert "concurrency" not in jobs["prepare-runtime"]
 assert "concurrency" not in jobs["verify-runtime"]
-for job_name in ("deploy-runtime", "destroy-runtime", "retire-identity"):
+for job_name in (
+    "deploy-runtime", "publish-preview-proof", "destroy-runtime", "retire-identity"
+):
     assert jobs[job_name]["concurrency"] == {
         "group": "preview-allocation-lifecycle",
         "cancel-in-progress": False,
@@ -2117,6 +2224,24 @@ verify_steps = jobs["verify-runtime"]["steps"]
 verify_by_name = {
     step.get("name"): step for step in verify_steps if isinstance(step, dict)
 }
+proof_steps = jobs["publish-preview-proof"]["steps"]
+proof_by_name = {
+    step.get("name"): step for step in proof_steps if isinstance(step, dict)
+}
+for publisher in (
+    prepare_by_name["Publish trusted preview preparation failure"],
+    deploy_by_name["Publish trusted preview unavailable capacity"],
+    deploy_by_name["Publish trusted preview deployment failure"],
+    verify_by_name["Publish trusted preview deployment state"],
+    proof_by_name["Publish trusted preview success"],
+    verify_by_name["Publish trusted preview verification failure"],
+):
+    assert publisher["env"]["PREVIEW_BASE_SHA"] == (
+        "${{ needs.validate-target.outputs.base_sha }}"
+    )
+    assert publisher["env"]["PREVIEW_MERGE_SHA"] == (
+        "${{ needs.validate-target.outputs.merge_sha }}"
+    )
 verify_head_step_index = next(
     index
     for index, step in enumerate(verify_steps)
@@ -2134,7 +2259,10 @@ assert capture_uid_step_index == verify_head_step_index + 1
 assert capture_uid_step["id"] == "capture-runtime-namespace"
 assert capture_uid_step["env"] == {
     "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
+    "EXPECTED_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
     "EXPECTED_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
+    "EXPECTED_MERGE_SHA": "${{ needs.validate-target.outputs.merge_sha }}",
+    "EXPECTED_IMAGE_TAG": "${{ needs.validate-target.outputs.image_tag }}",
     "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}",
     "EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID": (
         "${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}"
@@ -2145,8 +2273,14 @@ for required in (
     'kubectl get namespace "$RUNTIME_NAMESPACE" --ignore-not-found -o json',
     '"firemud.dev/preview"',
     '"firemud.dev/pr-number"',
+    '"firemud.dev/requested-preview-base-sha"',
     '"firemud.dev/requested-preview-head-sha"',
+    '"firemud.dev/requested-preview-merge-sha"',
+    '"firemud.dev/requested-preview-image-tag"',
+    '"firemud.dev/last-preview-base-sha"',
     '"firemud.dev/last-preview-head-sha"',
+    '"firemud.dev/last-preview-merge-sha"',
+    '"firemud.dev/last-preview-image-tag"',
     '"$runtime_uid" == "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID"',
     'echo "uid=$runtime_uid" >> "$GITHUB_OUTPUT"',
 ):
@@ -2159,7 +2293,7 @@ assert "::error title=Invalid runtime Telnet port::" in runtime_port_run
 assert "actual value was ${port:-empty}." in runtime_port_run
 verify_success_index = next(
     index
-    for index, step in enumerate(verify_steps)
+    for index, step in enumerate(proof_steps)
     if step.get("name") == "Publish trusted preview success"
 )
 verify_failure_index = next(
@@ -2167,8 +2301,7 @@ verify_failure_index = next(
     for index, step in enumerate(verify_steps)
     if step.get("name") == "Publish trusted preview verification failure"
 )
-assert verify_success_index < verify_failure_index
-verify_success = verify_steps[verify_success_index]
+verify_success = proof_steps[verify_success_index]
 assert verify_success["if"] == "${{ success() }}"
 assert "needs.validate-target.outputs.exposure_mode == 'public'" in verify_by_name[
     "Smoke hosted preview over TCP"
@@ -2180,26 +2313,28 @@ assert controller_wait["if"] == (
 assert '"${{ needs.validate-target.outputs.exposure_mode }}"' in controller_wait["run"]
 final_uid_step_index = next(
     index
-    for index, step in enumerate(verify_steps)
+    for index, step in enumerate(proof_steps)
     if step.get("name")
-    == "Revalidate exact source binding and runtime Namespace UID before success publication"
+    == "Revalidate exact source binding and runtime Namespace UID before proof publication"
 )
-final_uid_step = verify_by_name[
-    "Revalidate exact source binding and runtime Namespace UID before success publication"
+final_uid_step = proof_by_name[
+    "Revalidate exact source binding and runtime Namespace UID before proof publication"
 ]
 assert final_uid_step_index + 1 == verify_success_index
 assert final_uid_step["env"] == {
     "GH_TOKEN": "${{ github.token }}",
+    "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
     "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
     "EXPECTED_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
     "EXPECTED_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
     "EXPECTED_MERGE_SHA": "${{ needs.validate-target.outputs.merge_sha }}",
+    "EXPECTED_IMAGE_TAG": "${{ needs.validate-target.outputs.image_tag }}",
     "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}",
     "EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID": (
         "${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}"
     ),
     "CAPTURED_RUNTIME_NAMESPACE_UID": (
-        "${{ steps.capture-runtime-namespace.outputs.uid }}"
+        "${{ needs.verify-runtime.outputs.runtime_namespace_uid }}"
     ),
 }
 final_uid_run = final_uid_step["run"]
@@ -2208,7 +2343,7 @@ namespace_lookup_position = final_uid_run.index(
     'kubectl get namespace "$RUNTIME_NAMESPACE" --ignore-not-found -o json'
 )
 uid_comparison_position = final_uid_run.index(
-    '[[ "$observed_uid" == "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID" ]] || {'
+    'IFS=\'|\' read -r namespace_uid namespace_resource_version <<<"$namespace_identity"'
 )
 assert source_revalidation_position < namespace_lookup_position < uid_comparison_position
 for required in (
@@ -2217,16 +2352,48 @@ for required in (
     '"firemud.dev/requested-preview-head-sha"',
     '"firemud.dev/last-preview-head-sha"',
     '"$CAPTURED_RUNTIME_NAMESPACE_UID" == "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID"',
-    '::error title=Missing deployed preview runtime Namespace UID::The deploy job did not publish its post-apply Namespace UID.',
-    '::error title=Preview runtime namespace UID fence failed::',
-    '::error title=Preview runtime namespace UID changed::',
+    '::error title=Missing deployed preview Namespace UID::The deploy job did not publish its Namespace UID.',
+    '::error title=Preview runtime proof fence failed::',
 ):
     assert required in final_uid_run, required
+proof_tuple_step = proof_by_name[
+    "Revalidate exact source binding and runtime Namespace UID before proof publication"
+]
+assert proof_tuple_step["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
+    "GH_TOKEN": "${{ github.token }}",
+    "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
+    "EXPECTED_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
+    "EXPECTED_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
+    "EXPECTED_MERGE_SHA": "${{ needs.validate-target.outputs.merge_sha }}",
+    "EXPECTED_IMAGE_TAG": "${{ needs.validate-target.outputs.image_tag }}",
+    "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}",
+    "EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID": (
+        "${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}"
+    ),
+    "CAPTURED_RUNTIME_NAMESPACE_UID": (
+        "${{ needs.verify-runtime.outputs.runtime_namespace_uid }}"
+    ),
+}
+proof_tuple_run = proof_tuple_step["run"]
+for required in (
+    'kubectl get namespace "$RUNTIME_NAMESPACE" --ignore-not-found -o json',
+    'select($metadata.uid == $expected_namespace_uid)',
+    '"firemud.dev/proof-preview-base-sha=${EXPECTED_BASE_SHA}"',
+    '"firemud.dev/proof-preview-head-sha=${EXPECTED_HEAD_SHA}"',
+    '"firemud.dev/proof-preview-merge-sha=${EXPECTED_MERGE_SHA}"',
+    '"firemud.dev/proof-preview-image-tag=${EXPECTED_IMAGE_TAG}"',
+    '"firemud.dev/proof-preview-namespace-uid=${namespace_uid}"',
+    '--resource-version "$namespace_resource_version"',
+):
+    assert required in proof_tuple_run, required
 verify_failure = verify_steps[verify_failure_index]
 assert verify_failure["if"] == "${{ !cancelled() && failure() }}"
 assert verify_failure["env"] == {
     "PREVIEW_PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
     "PREVIEW_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
+    "PREVIEW_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
+    "PREVIEW_MERGE_SHA": "${{ needs.validate-target.outputs.merge_sha }}",
     "PREVIEW_IMAGE_TAG": "${{ needs.validate-target.outputs.image_tag }}",
     "PREVIEW_HOSTNAME": "${{ needs.validate-target.outputs.hostname }}",
     "PREVIEW_EXPOSURE_MODE": "${{ needs.validate-target.outputs.exposure_mode }}",
@@ -2478,11 +2645,14 @@ preview_derive_run = preview_derive_step["run"]
 for payload_name, env_name in (
     ("action", "CLIENT_ACTION"),
     ("head_sha", "CLIENT_HEAD_SHA"),
+    ("base_ref", "CLIENT_BASE_REF"),
+    ("base_sha", "CLIENT_BASE_SHA"),
+    ("merge_sha", "CLIENT_MERGE_SHA"),
+    ("image_tag", "CLIENT_IMAGE_TAG"),
     ("preview_domain", "CLIENT_PREVIEW_DOMAIN"),
     ("pr_number", "CLIENT_PR_NUMBER"),
 ):
     assert preview_derive_step["env"][env_name] == f"${{{{ github.event.client_payload.{payload_name} }}}}"
-assert "CLIENT_IMAGE_TAG" not in preview_derive_step["env"]
 assert "${{ inputs." not in preview_derive_run
 assert "set -euo pipefail" in preview_derive_run
 pr_number_validation = '[[ ! "$PR_NUMBER" =~ ^[1-9][0-9]{0,50}$ ]]'
@@ -2490,16 +2660,16 @@ action_validation = '[[ "$ACTION" != deploy && "$ACTION" != destroy ]]'
 assert pr_number_validation in preview_derive_run
 assert action_validation in preview_derive_run
 assert '[[ ! "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]' in preview_derive_run
-assert '[[ ! "$BASE_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]' in preview_derive_run
+assert '[[ "$ACTION" == deploy && ! "$BASE_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]' in preview_derive_run
 assert 'HEAD_SHA="${HEAD_SHA,,}"' in preview_derive_run
 assert 'BASE_SHA="${BASE_SHA,,}"' in preview_derive_run
 assert 'PR_NUMBER="$CLIENT_PR_NUMBER"' in preview_derive_run
 assert 'HEAD_SHA="$CLIENT_HEAD_SHA"' in preview_derive_run
 assert 'if [[ "$CLIENT_ACTION" != "$ACTION" ]]' in preview_derive_run
-assert "CLIENT_IMAGE_TAG" not in preview_derive_run
+assert "CLIENT_IMAGE_TAG" in preview_derive_run
 assert 'PREVIEW_DOMAIN="$CLIENT_PREVIEW_DOMAIN"' in preview_derive_run
 assert preview_derive_run.index('HEAD_SHA="${HEAD_SHA,,}"') < preview_derive_run.index(
-    'if [[ "$ACTION" == deploy ]]'
+    'resolve-preview-image-tag.sh'
 )
 assert 'resolve-preview-image-tag.sh' in preview_derive_run
 assert 'IMAGE_TAG="$HEAD_SHA"' in preview_derive_run
@@ -2542,11 +2712,23 @@ for job_name in ("dev-demo-deploy", "dev-demo-destroy"):
         if step.get("id") == "certificate-identity"
     )
     assert_mode_step(dev_demo_mode_step, job_name)
-assert "firemud.dev/requested-preview-head-sha=${head_sha}" in preview_annotator
-assert "firemud.dev/last-preview-head-sha=${head_sha}" not in preview_annotator
+for annotation in (
+    "firemud.dev/requested-preview-base-sha=${base_sha}",
+    "firemud.dev/requested-preview-head-sha=${head_sha}",
+    "firemud.dev/requested-preview-merge-sha=${merge_sha}",
+    "firemud.dev/requested-preview-image-tag=${image_tag}",
+):
+    assert annotation in preview_annotator
+for annotation in (
+    "firemud.dev/last-preview-base-sha=${base_sha}",
+    "firemud.dev/last-preview-head-sha=${head_sha}",
+    "firemud.dev/last-preview-merge-sha=${merge_sha}",
+    "firemud.dev/last-preview-image-tag=${image_tag}",
+):
+    assert annotation not in preview_annotator
 assert preview_annotator.index(
     '"firemud.dev/requested-preview-head-sha=${head_sha}"'
-) < preview_annotator.index('"firemud.dev/last-preview-image-tag=${image_tag}"')
+) < preview_annotator.index('"firemud.dev/requested-preview-image-tag=${image_tag}"')
 
 projection_wait = next(
     step["run"]
@@ -2905,25 +3087,129 @@ run_preview_annotator() {
 
 : >"$preview_annotator_log"
 run_preview_annotator \
-  pr-42 42 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  pr-42 42 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa cccccccccccccccccccccccccccccccccccccccc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   public 32015 2026-09-13T01:02:03Z
 mapfile -t preview_annotator_calls <"$preview_annotator_log"
 [[ "${#preview_annotator_calls[@]}" -eq 2 ]]
 [[ "${preview_annotator_calls[0]}" == \
-  "annotate namespace pr-42 firemud.dev/requested-preview-head-sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa firemud.dev/last-preview-image-tag=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa firemud.dev/preview-allocated-at=2026-09-13T01:02:03Z firemud.dev/last-preview-sync-at="*" firemud.dev/last-preview-telnet-port=32015 --overwrite" ]]
+  "annotate namespace pr-42 firemud.dev/requested-preview-base-sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb firemud.dev/requested-preview-head-sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa firemud.dev/requested-preview-merge-sha=cccccccccccccccccccccccccccccccccccccccc firemud.dev/requested-preview-image-tag=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa firemud.dev/preview-allocated-at=2026-09-13T01:02:03Z firemud.dev/last-preview-sync-at="*" firemud.dev/last-preview-telnet-port=32015 --overwrite" ]]
 [[ "${preview_annotator_calls[1]}" == \
   "label namespace pr-42 firemud.dev/preview=true firemud.dev/pr-number=42 firemud.dev/preview-exposure-mode=public --overwrite" ]]
 
 : >"$preview_annotator_log"
 run_preview_annotator \
-  pr-42 42 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  pr-42 42 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa cccccccccccccccccccccccccccccccccccccccc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   private 0 2026-09-13T01:02:03Z
 mapfile -t preview_annotator_calls <"$preview_annotator_log"
 [[ "${#preview_annotator_calls[@]}" -eq 2 ]]
 [[ "${preview_annotator_calls[0]}" == \
-  "annotate namespace pr-42 firemud.dev/requested-preview-head-sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa firemud.dev/last-preview-image-tag=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa firemud.dev/preview-allocated-at=2026-09-13T01:02:03Z firemud.dev/last-preview-sync-at="*" firemud.dev/last-preview-telnet-port- --overwrite" ]]
+  "annotate namespace pr-42 firemud.dev/requested-preview-base-sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb firemud.dev/requested-preview-head-sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa firemud.dev/requested-preview-merge-sha=cccccccccccccccccccccccccccccccccccccccc firemud.dev/requested-preview-image-tag=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa firemud.dev/preview-allocated-at=2026-09-13T01:02:03Z firemud.dev/last-preview-sync-at="*" firemud.dev/last-preview-telnet-port- --overwrite" ]]
 [[ "${preview_annotator_calls[1]}" == \
   "label namespace pr-42 firemud.dev/preview=true firemud.dev/pr-number=42 firemud.dev/preview-exposure-mode=private --overwrite" ]]
+
+: >"$preview_annotator_log"
+run_preview_annotator \
+  pr-42 42 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa cccccccccccccccccccccccccccccccccccccccc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  private 0 2026-09-13T01:02:03Z \
+  2 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  cccccccccccccccccccccccccccccccccccccccc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+mapfile -t preview_annotator_calls <"$preview_annotator_log"
+[[ "${#preview_annotator_calls[@]}" -eq 2 ]]
+[[ "${preview_annotator_calls[0]}" == *"firemud.dev/proof-retry-count=2"* ]]
+[[ "${preview_annotator_calls[0]}" == *"firemud.dev/proof-retry-base-sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"* ]]
+[[ "${preview_annotator_calls[0]}" == *"firemud.dev/proof-retry-head-sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"* ]]
+[[ "${preview_annotator_calls[0]}" == *"firemud.dev/proof-retry-merge-sha=cccccccccccccccccccccccccccccccccccccccc"* ]]
+[[ "${preview_annotator_calls[0]}" == *"firemud.dev/proof-retry-image-tag=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"* ]]
+
+for partial_retry_args in \
+  "2" \
+  "2 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; do
+  : >"$preview_annotator_log"
+  read -r -a partial_retry_values <<<"$partial_retry_args"
+  if run_preview_annotator \
+    pr-42 42 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa cccccccccccccccccccccccccccccccccccccccc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    private 0 2026-09-13T01:02:03Z "${partial_retry_values[@]}" \
+    >"$TEMP_DIR/invalid-preview-retry.output" \
+    2>"$TEMP_DIR/invalid-preview-retry.error"; then
+    echo "preview namespace annotator accepted a partial proof-retry record: $partial_retry_args" >&2
+    exit 1
+  fi
+  [[ ! -s "$preview_annotator_log" ]]
+done
+
+capture_retry_step="$TEMP_DIR/capture-proof-retry.sh"
+python3 - "$trusted" "$capture_retry_step" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+steps = workflow["jobs"]["deploy-runtime"]["steps"]
+step = next(
+    step
+    for step in steps
+    if step.get("name") == "Capture exact proof-retry record before namespace recreation"
+)
+Path(sys.argv[2]).write_text(step["run"], encoding="utf-8")
+PY
+chmod +x "$capture_retry_step"
+capture_retry_stub_dir="$TEMP_DIR/capture-retry-stubs"
+capture_retry_namespace_json="$TEMP_DIR/capture-retry-namespace.json"
+capture_retry_output="$TEMP_DIR/capture-retry-output"
+mkdir -p "$capture_retry_stub_dir"
+cat >"$capture_retry_stub_dir/kubectl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == get && "$2" == namespace ]]; then
+  cat "${CAPTURE_RETRY_NAMESPACE_JSON:?}"
+  exit 0
+fi
+printf 'unexpected capture-retry kubectl invocation: %s\n' "$*" >&2
+exit 2
+SH
+chmod +x "$capture_retry_stub_dir/kubectl"
+run_capture_retry() {
+  env \
+    PATH="$capture_retry_stub_dir:$PATH" \
+    KUBECONFIG=fake \
+    RUNTIME_NAMESPACE=pr-42 \
+    PR_NUMBER=42 \
+    EXPECTED_BASE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+    EXPECTED_HEAD_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    EXPECTED_MERGE_SHA=cccccccccccccccccccccccccccccccccccccccc \
+    EXPECTED_IMAGE_TAG=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    GITHUB_OUTPUT="$capture_retry_output" \
+    CAPTURE_RETRY_NAMESPACE_JSON="$capture_retry_namespace_json" \
+    bash "$capture_retry_step"
+}
+jq -nc \
+  '{metadata:{annotations:{
+    "firemud.dev/proof-retry-count":"2",
+    "firemud.dev/proof-retry-base-sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "firemud.dev/proof-retry-head-sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "firemud.dev/proof-retry-merge-sha":"cccccccccccccccccccccccccccccccccccccccc",
+    "firemud.dev/proof-retry-image-tag":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }}}' >"$capture_retry_namespace_json"
+: >"$capture_retry_output"
+run_capture_retry
+grep -Fqx 'proof_retry_count=2' "$capture_retry_output"
+grep -Fqx 'proof_retry_base_sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "$capture_retry_output"
+grep -Fqx 'proof_retry_head_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$capture_retry_output"
+grep -Fqx 'proof_retry_merge_sha=cccccccccccccccccccccccccccccccccccccccc' "$capture_retry_output"
+grep -Fqx 'proof_retry_image_tag=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$capture_retry_output"
+
+jq -nc \
+  '{metadata:{annotations:{
+    "firemud.dev/proof-retry-count":"2",
+    "firemud.dev/proof-retry-base-sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }}}' >"$capture_retry_namespace_json"
+: >"$capture_retry_output"
+if run_capture_retry; then
+  echo "capture accepted a partial proof-retry annotation record" >&2
+  exit 1
+fi
+[[ ! -s "$capture_retry_output" ]]
 
 invalid_preview_annotator_cases=(
   "pr-042|042|public|32000|2026-09-13T01:02:03Z"
@@ -2943,7 +3229,8 @@ for invalid_preview_annotator_case in "${invalid_preview_annotator_cases[@]}"; d
     <<<"$invalid_preview_annotator_case"
   : >"$preview_annotator_log"
   if run_preview_annotator \
-    "$invalid_namespace" "$invalid_pr" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    "$invalid_namespace" "$invalid_pr" bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa cccccccccccccccccccccccccccccccccccccccc \
     aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$invalid_mode" "$invalid_port" "$invalid_timestamp" \
     >"$TEMP_DIR/invalid-preview-annotator.output" \
     2>"$TEMP_DIR/invalid-preview-annotator.error"; then
@@ -2964,8 +3251,9 @@ invalid_preview_annotator_heads=(
 for invalid_preview_annotator_head in "${invalid_preview_annotator_heads[@]}"; do
   : >"$preview_annotator_log"
   if run_preview_annotator \
-    pr-42 42 "$invalid_preview_annotator_head" \
-    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 32000 2026-09-13T01:02:03Z \
+    pr-42 42 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb "$invalid_preview_annotator_head" \
+    cccccccccccccccccccccccccccccccccccccccc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    public 32000 2026-09-13T01:02:03Z \
     >"$TEMP_DIR/invalid-preview-annotator-head.output" \
     2>"$TEMP_DIR/invalid-preview-annotator-head.error"; then
     echo "preview namespace annotator accepted invalid head SHA: $invalid_preview_annotator_head" >&2
@@ -2988,8 +3276,9 @@ invalid_preview_annotator_image_tags=(
 for invalid_preview_annotator_image_tag in "${invalid_preview_annotator_image_tags[@]}"; do
   : >"$preview_annotator_log"
   if run_preview_annotator \
-    pr-42 42 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-    "$invalid_preview_annotator_image_tag" 32000 2026-09-13T01:02:03Z \
+    pr-42 42 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa cccccccccccccccccccccccccccccccccccccccc \
+    "$invalid_preview_annotator_image_tag" public 32000 2026-09-13T01:02:03Z \
     >"$TEMP_DIR/invalid-preview-annotator-image-tag.output" \
     2>"$TEMP_DIR/invalid-preview-annotator-image-tag.error"; then
     echo "preview namespace annotator accepted invalid image tag: $invalid_preview_annotator_image_tag" >&2
@@ -3281,6 +3570,9 @@ run_preview_derive_dispatch() {
     EVENT_BASE_SHA='' \
     CLIENT_PR_NUMBER="$input_pr_number" \
     CLIENT_HEAD_SHA="$input_head_sha" \
+    CLIENT_BASE_REF=develop \
+    CLIENT_BASE_SHA="$preview_derive_base_lower" \
+    CLIENT_MERGE_SHA="$preview_derive_merge_lower" \
     CLIENT_PREVIEW_DOMAIN="$input_preview_domain" \
     CLIENT_ACTION="$input_action" \
     CLIENT_IMAGE_TAG="$input_image_tag" \
@@ -3307,7 +3599,7 @@ run_preview_derive_dispatch \
   901 \
   "$preview_derive_head_lower" \
   deploy \
-  "$preview_derive_head_lower" \
+  "$preview_derive_base_lower" \
   preview.firedevops.net \
   "$preview_derive_output" \
   "$preview_derive_error"
@@ -3323,7 +3615,7 @@ PREVIEW_DERIVE_CHANGED_FILES='.github/workflows/runtime-images.yml' run_preview_
   901 \
   "$preview_derive_head_lower" \
   deploy \
-  "$preview_derive_head_lower" \
+  "pr-merge-$preview_derive_merge_lower" \
   preview.firedevops.net \
   "$preview_derive_runtime_output" \
   "$TEMP_DIR/preview-derive-runtime.error"
@@ -3572,15 +3864,19 @@ done
 
 preview_image_tag_129="$(printf 'z%.0s' {1..129})"
 preview_derive_ignored_tag_output="$TEMP_DIR/preview-derive-ignored-tag.output"
-run_preview_derive_dispatch \
+if run_preview_derive_dispatch \
   901 \
   "$preview_derive_head_lower" \
   deploy \
   "$preview_image_tag_129" \
   preview.firedevops.net \
   "$preview_derive_ignored_tag_output" \
+  "$TEMP_DIR/preview-derive-ignored-tag.error"; then
+  echo "preview plan accepted a stale typed image identity" >&2
+  exit 1
+fi
+grep -Fxq '::error title=Stale preview image identity::The current PR image identity no longer matches the reconciler request.' \
   "$TEMP_DIR/preview-derive-ignored-tag.error"
-grep -Fxq "image_tag=${preview_derive_base_lower}" "$preview_derive_ignored_tag_output"
 
 invalid_domain_index=0
 for invalid_preview_domain in \
@@ -3593,7 +3889,7 @@ for invalid_preview_domain in \
     901 \
     "$preview_derive_head_lower" \
     deploy \
-    "$preview_derive_head_lower" \
+    "$preview_derive_base_lower" \
     "$invalid_preview_domain" \
     "$invalid_domain_output" \
     "$invalid_domain_error"; then
@@ -4877,7 +5173,7 @@ apply_step = next(
     step for step in steps if step.get("name") == "Apply validated PR runtime artifact"
 )
 record_step = next(
-    step for step in steps if step.get("name") == "Record exact deployed preview head"
+    step for step in steps if step.get("name") == "Record exact deployed preview tuple"
 )
 apply_run = apply_step["run"]
 for source, target in {
@@ -4967,7 +5263,7 @@ jq -nc \
   --arg repository "$repository_name" \
   --arg base "$base_sha" \
   --arg merge "$merge_sha" \
-  '{state:$state,head:{sha:$head,repo:{full_name:$repository}},base:{ref:"develop",sha:$base,repo:{full_name:"example/FireMUD"}},merge_commit_sha:$merge,user:{login:"trusted-user"},labels:[]}'
+  '{state:$state,head:{sha:$head,repo:{full_name:$repository}},base:{ref:"develop",sha:$base,repo:{full_name:"example/FireMUD"}},merge_commit_sha:$merge,mergeable:true,mergeable_state:"clean",user:{login:"trusted-user"},labels:[]}'
 SH
 cat >"$apply_stub_dir/kubectl" <<'SH'
 #!/usr/bin/env bash
@@ -4990,11 +5286,14 @@ if [[ "$1" == apply && "$2" == --server-side ]]; then
   exit 0
 fi
 if [[ "$1" == annotate ]]; then
-  [[ $# -eq 5 ]]
+  [[ $# -eq 8 ]]
   [[ "$2" == namespace && "$3" == pr-42 ]]
-  [[ "$4" == "firemud.dev/last-preview-head-sha=${TEST_EXPECTED_HEAD:?}" ]]
-  [[ "$5" == --overwrite ]]
-  printf 'deployed-head=%s\n' "$4" >>"${TEST_APPLY_LOG:?}"
+  [[ "$4" == "firemud.dev/last-preview-base-sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" ]]
+  [[ "$5" == "firemud.dev/last-preview-head-sha=${TEST_EXPECTED_HEAD:?}" ]]
+  [[ "$6" == "firemud.dev/last-preview-merge-sha=cccccccccccccccccccccccccccccccccccccccc" ]]
+  [[ "$7" == "firemud.dev/last-preview-image-tag=pr-merge-cccccccccccccccccccccccccccccccccccccccc" ]]
+  [[ "$8" == --overwrite ]]
+  printf 'deployed-tuple\n' >>"${TEST_APPLY_LOG:?}"
   exit 0
 fi
 printf 'unexpected fake kubectl invocation: %s\n' "$*" >&2
@@ -5046,7 +5345,10 @@ run_apply_fixture() {
         PATH="$apply_stub_dir:$PATH" \
         RUNTIME_NAMESPACE=pr-42 \
         PR_NUMBER=42 \
+        BASE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
         HEAD_SHA="$head_sha" \
+        MERGE_SHA=cccccccccccccccccccccccccccccccccccccccc \
+        IMAGE_TAG=pr-merge-cccccccccccccccccccccccccccccccccccccccc \
         TEST_EXPECTED_HEAD="$head_sha" \
         TEST_APPLY_LOG="$apply_log" \
         bash "$record_preview_head_step"
@@ -5078,7 +5380,7 @@ run_apply_fixture wrong-merge \
   "gh-1" \
   "Preview source binding changed"
 run_apply_fixture success \
-  "gh-1 gh-2 dry-run gh-3 gh-4 apply deployed-head=firemud.dev/last-preview-head-sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  "gh-1 gh-2 dry-run gh-3 gh-4 apply deployed-tuple"
 
 stage_error="$TEMP_DIR/source-binding-stage.error"
 set +e
@@ -5113,7 +5415,10 @@ if env \
   PATH="$apply_stub_dir:$PATH" \
   RUNTIME_NAMESPACE=pr-42 \
   PR_NUMBER=42 \
+  BASE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
   HEAD_SHA="$mixed_case_head" \
+  MERGE_SHA=cccccccccccccccccccccccccccccccccccccccc \
+  IMAGE_TAG=pr-merge-cccccccccccccccccccccccccccccccccccccccc \
   TEST_EXPECTED_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   TEST_APPLY_LOG="$source_preview_log" \
   bash "$record_source_preview_head_step" \
@@ -5973,13 +6278,21 @@ case "$resource" in
     fi
     ;;
   repos/example/FireMUD/pulls/900)
+    mergeable_state_json="$(jq -cn --arg value "${TEST_PR_MERGEABLE_STATE:-clean}" '$value')"
+    case "${TEST_PR_MERGEABLE_STATE:-clean}" in
+      true|false|null)
+        mergeable_state_json="${TEST_PR_MERGEABLE_STATE}"
+        ;;
+    esac
     jq -nc \
       --arg state "${TEST_PR_STATE:-open}" \
       --arg head "${TEST_PR_HEAD_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
       --arg repository "${TEST_PR_HEAD_REPOSITORY:-example/FireMUD}" \
       --arg base_ref "${TEST_PR_BASE_REF:-develop}" \
+      --argjson mergeable "${TEST_PR_MERGEABLE:-true}" \
+      --argjson mergeable_state "$mergeable_state_json" \
       --argjson labels "${TEST_PR_LABELS_JSON:-[]}" \
-      '{state:$state,changed_files:1,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:"dddddddddddddddddddddddddddddddddddddddd",repo:{full_name:"example/FireMUD"}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",labels:$labels}'
+      '{state:$state,changed_files:1,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:"dddddddddddddddddddddddddddddddddddddddd",repo:{full_name:"example/FireMUD"}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",mergeable:$mergeable,mergeable_state:$mergeable_state,labels:$labels}'
     ;;
   repos/example/FireMUD/git/ref/heads/*)
     printf '%s' '{"ref":"refs/heads/develop","object":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
@@ -6092,6 +6405,8 @@ run_deploy_target_fixture() {
       FAKE_METADATA_BASE_SHA="${FAKE_FIXTURE_METADATA_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
       FAKE_METADATA_MERGE_SHA="${FAKE_FIXTURE_METADATA_MERGE_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
       TEST_PR_LABELS_JSON="${FAKE_FIXTURE_PR_LABELS_JSON:-[]}" \
+      TEST_PR_MERGEABLE="${FAKE_FIXTURE_MERGEABLE:-${TEST_PR_MERGEABLE:-true}}" \
+      TEST_PR_MERGEABLE_STATE="${FAKE_FIXTURE_MERGEABLE_STATE:-${TEST_PR_MERGEABLE_STATE:-clean}}" \
       TEST_CERTIFICATE_MODE="${FAKE_FIXTURE_CERTIFICATE_MODE:-hosted-controller}" \
       FAKE_EXPOSURE_MODE="${FAKE_FIXTURE_EXPOSURE_MODE:-private}" \
       VALID_RENDER_MANIFEST="$target_rendered_manifest" \
@@ -6107,6 +6422,8 @@ run_deploy_target_fixture() {
   fi
   grep -Fq "$expected_message" "$output" "$stdout" "$stderr" 2>/dev/null || {
     echo "deploy target fixture ${scenario} did not emit expected diagnostic: ${expected_message}" >&2
+    echo "--- ${scenario} output ---" >&2
+    cat "$output" "$stdout" "$stderr" "$TEMP_DIR/deploy-target-${scenario}.gh.log" >&2
     return 1
   }
 }
@@ -6156,12 +6473,25 @@ FAKE_FIXTURE_METADATA_MERGE_SHA=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee \
 FAKE_FIXTURE_PR_LABELS_JSON='{}' \
   run_deploy_target_fixture malformed-labels 0 \
     'Refusing hosted preview lifecycle action: PR label metadata is missing or malformed.'
+TEST_PR_MERGEABLE_STATE=unknown \
+  run_deploy_target_fixture unknown-mergeability 0 \
+    'Ignoring lifecycle event because pull-request mergeability is unavailable.'
+TEST_PR_MERGEABLE=false TEST_PR_MERGEABLE_STATE=dirty \
+  run_deploy_target_fixture explicit-conflict 0 \
+    'Ignoring lifecycle event because the current pull request is conflicting.'
+TEST_PR_MERGEABLE='"true"' \
+  run_deploy_target_fixture nonboolean-mergeability 0 \
+    'Ignoring lifecycle event because pull-request mergeability is unavailable.'
+TEST_PR_MERGEABLE=true TEST_PR_MERGEABLE_STATE=true \
+  run_deploy_target_fixture nonstring-mergeability-state 0 \
+    'Ignoring lifecycle event because pull-request mergeability is unavailable.'
 FAKE_FIXTURE_WORKFLOW_RUN_JSON='{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"push","repository":{"full_name":"example/FireMUD"}}' \
   run_deploy_target_fixture unsupported-event 0 \
     'Ignoring source run with unsupported event push.'
 unset FAKE_FIXTURE_ARTIFACTS_JSON FAKE_FIXTURE_ARTIFACT_FILES \
   FAKE_FIXTURE_METADATA_BASE_SHA FAKE_FIXTURE_METADATA_MERGE_SHA \
   FAKE_FIXTURE_PR_LABELS_JSON FAKE_FIXTURE_WORKFLOW_RUN_JSON FAKE_STALE_MERGE_PARENTS
+unset TEST_PR_MERGEABLE TEST_PR_MERGEABLE_STATE
 
 run_target_without_pull_request_metadata() {
   local scenario="$1"
@@ -6311,7 +6641,7 @@ test ! -s "$target_python_log"
 test "$(cat "$TEMP_DIR/closed-target-accepted.output")" = "$(cat <<EOF
 action=destroy
 pr_number=900
-base_sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+base_sha=
 head_sha=${closed_head}
 merge_sha=cccccccccccccccccccccccccccccccccccccccc
 image_tag=${closed_head}
@@ -6341,9 +6671,9 @@ run_closed_target_fixture invalid-head closed example/FireMUD develop \
 test "$(cat "$TEMP_DIR/closed-target-invalid-head.output")" = $'action=none\nretire_identity=false\ncleanup_state=none'
 run_closed_target_fixture unsupported-base closed example/FireMUD feature \
   "$closed_head" "$closed_head" 0
-test "$(cat "$TEMP_DIR/closed-target-unsupported-base.output")" = $'action=none\nretire_identity=false\ncleanup_state=none'
-grep -Fxq '::notice::Ignoring closed pull request because its base branch is unsupported.' \
-  "$TEMP_DIR/closed-target-unsupported-base.stdout"
+grep -Fxq 'action=destroy' "$TEMP_DIR/closed-target-unsupported-base.output"
+grep -Fxq 'base_sha=' "$TEMP_DIR/closed-target-unsupported-base.output"
+grep -Fxq 'cleanup_state=closed' "$TEMP_DIR/closed-target-unsupported-base.output"
 run_closed_target_fixture stale-head closed example/FireMUD develop \
   "$closed_head" bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 0
 test "$(cat "$TEMP_DIR/closed-target-stale-head.output")" = $'action=none\nretire_identity=false\ncleanup_state=none'
