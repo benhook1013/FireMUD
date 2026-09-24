@@ -204,7 +204,10 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     RuntimeRegionStatus status = new RuntimeRegionStatus();
     status.setTenantId(tenantId);
     status.setGameInstanceId(gameInstanceId);
-    status.setRegionId("cross-service-region-" + gameInstanceId);
+    // Match the runtime owner boundary used by TickQueueControlService. Keeping the fixture on
+    // the canonical game-instance region prevents a late command from an earlier baseline from
+    // becoming permanently stale when the shared test database is reset between scenarios.
+    status.setRegionId(Long.toString(gameInstanceId));
     status.setRegionEpoch(1L);
     status.setExecutorFence("cross-service-fence-" + gameInstanceId);
     status.setOwnerService("game-session-cross-service-test");

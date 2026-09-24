@@ -250,8 +250,8 @@ if [[ "${1:-}" == "--retired" ]]; then
   exit 1
 fi
 
-if [[ $# -lt 2 || $# -gt 5 ]]; then
-  echo "usage: $0 <identity_name> <expected_head_sha> [runtime_namespace] [timeout_seconds] [private|public]" >&2
+if [[ $# -lt 2 || $# -gt 8 ]]; then
+  echo "usage: $0 <identity_name> <expected_head_sha> [runtime_namespace] [timeout_seconds] [private|public] [expected_base_sha] [expected_merge_sha] [expected_image_tag]" >&2
   exit 2
 fi
 
@@ -264,6 +264,9 @@ else
 fi
 timeout_seconds="${4:-900}"
 exposure_mode="${5:-public}"
+expected_base_sha="${6:-}"
+expected_merge_sha="${7:-}"
+expected_image_tag="${8:-}"
 
 if [[ "$exposure_mode" != private && "$exposure_mode" != public ]]; then
   echo "exposure mode must be private or public: ${exposure_mode}" >&2
@@ -279,6 +282,22 @@ normalize_head_sha() {
   [[ "$head_sha" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
   printf '%s' "${head_sha,,}"
 }
+
+if [[ -n "$expected_base_sha" || -n "$expected_merge_sha" || -n "$expected_image_tag" ]]; then
+  if [[ -z "$expected_base_sha" || -z "$expected_merge_sha" || -z "$expected_image_tag" ]]; then
+    echo "expected base, merge, and image tuple values must be supplied together" >&2
+    exit 2
+  fi
+  if ! expected_base_sha="$(normalize_head_sha "$expected_base_sha")" ||
+    ! expected_merge_sha="$(normalize_head_sha "$expected_merge_sha")"; then
+    echo "expected base and merge SHAs must be exactly 40 hexadecimal characters" >&2
+    exit 2
+  fi
+  if ! [[ "$expected_image_tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+    echo "expected image tag must be a canonical immutable image tag" >&2
+    exit 2
+  fi
+fi
 
 report_stale_identity_profile() {
   local profile_uid="$1"
@@ -335,8 +354,14 @@ while (( SECONDS < deadline )); do
     namespace_deployed_head="$(jq -r '.metadata.annotations["firemud.dev/last-dev-demo-head-sha"] // empty' <<<"$namespace_json")"
     namespace_telnet_port="$(jq -r '.metadata.annotations["firemud.dev/last-dev-demo-telnet-port"] // empty' <<<"$namespace_json")"
   else
+    namespace_requested_base="$(jq -r '.metadata.annotations["firemud.dev/requested-preview-base-sha"] // empty' <<<"$namespace_json")"
     namespace_requested_head="$(jq -r '.metadata.annotations["firemud.dev/requested-preview-head-sha"] // empty' <<<"$namespace_json")"
+    namespace_requested_merge="$(jq -r '.metadata.annotations["firemud.dev/requested-preview-merge-sha"] // empty' <<<"$namespace_json")"
+    namespace_requested_image="$(jq -r '.metadata.annotations["firemud.dev/requested-preview-image-tag"] // empty' <<<"$namespace_json")"
+    namespace_deployed_base="$(jq -r '.metadata.annotations["firemud.dev/last-preview-base-sha"] // empty' <<<"$namespace_json")"
     namespace_deployed_head="$(jq -r '.metadata.annotations["firemud.dev/last-preview-head-sha"] // empty' <<<"$namespace_json")"
+    namespace_deployed_merge="$(jq -r '.metadata.annotations["firemud.dev/last-preview-merge-sha"] // empty' <<<"$namespace_json")"
+    namespace_deployed_image="$(jq -r '.metadata.annotations["firemud.dev/last-preview-image-tag"] // empty' <<<"$namespace_json")"
     namespace_telnet_port="$(jq -r '.metadata.annotations["firemud.dev/last-preview-telnet-port"] // empty' <<<"$namespace_json")"
   fi
   if [[ -z "$namespace_uid" ]]; then
@@ -363,6 +388,22 @@ while (( SECONDS < deadline )); do
     echo "Runtime namespace ${runtime_namespace} deployed head is stale; expected ${expected_head_sha}, observed ${namespace_deployed_head}."
     sleep 5
     continue
+  fi
+  if [[ -n "$expected_base_sha" ]]; then
+    if ! normalized_namespace_requested_base="$(normalize_head_sha "$namespace_requested_base")" ||
+      ! normalized_namespace_requested_merge="$(normalize_head_sha "$namespace_requested_merge")" ||
+      ! normalized_namespace_deployed_base="$(normalize_head_sha "$namespace_deployed_base")" ||
+      ! normalized_namespace_deployed_merge="$(normalize_head_sha "$namespace_deployed_merge")" ||
+      [[ "$normalized_namespace_requested_base" != "$expected_base_sha" ]] ||
+      [[ "$normalized_namespace_requested_merge" != "$expected_merge_sha" ]] ||
+      [[ "$namespace_requested_image" != "$expected_image_tag" ]] ||
+      [[ "$normalized_namespace_deployed_base" != "$expected_base_sha" ]] ||
+      [[ "$normalized_namespace_deployed_merge" != "$expected_merge_sha" ]] ||
+      [[ "$namespace_deployed_image" != "$expected_image_tag" ]]; then
+      echo "Runtime namespace ${runtime_namespace} has stale or incomplete requested/deployed preview tuple evidence; retrying."
+      sleep 5
+      continue
+    fi
   fi
   if [[ "$exposure_mode" == private ]]; then
     if [[ "$namespace_has_telnet_port_annotation" != false ]]; then

@@ -50,6 +50,13 @@ import io.fabric8.kubernetes.client.dsl.MixedOperation;
 import io.fabric8.kubernetes.client.dsl.NonNamespaceOperation;
 import io.fabric8.kubernetes.client.dsl.ReplaceDeletable;
 import io.fabric8.kubernetes.client.dsl.Resource;
+import java.io.ByteArrayInputStream;
+import java.security.MessageDigest;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -59,8 +66,10 @@ import net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtur
 import net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.StableBatchFixture;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import net.firedevops.firemud.hostedidentity.security.EnvironmentIdentityPlanner;
+import net.firedevops.firemud.hostedidentity.security.GrpcMaterialFixture;
 import net.firedevops.firemud.hostedidentity.security.GrpcTransportBundleGenerator;
 import net.firedevops.firemud.hostedidentity.security.SecretMaterialValidator;
+import net.firedevops.firemud.hostedidentity.security.SecretMaterialValidator.MaterialValidationException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -884,6 +893,133 @@ class CertificateMaterialServiceTest {
   }
 
   @Test
+  void deferredAcceptedGrpcProjectionAllowsPriorSharedBundleSansDuringIngressRotation()
+      throws Exception {
+    EnvironmentIdentityPlan plan = plan();
+    SecretMaterialValidator validator = new SecretMaterialValidator();
+    EnvironmentIdentityPlan previousBundlePlan =
+        plan.withGrpcConsumers(previousGrpcConsumers(plan));
+    Secret previousBundle = GrpcMaterialFixture.generate(previousBundlePlan);
+
+    CertificateMaterialService.RoleMaterial deferred =
+        materializeDeferredGrpcProjection(plan, previousBundlePlan, previousBundle, validator);
+
+    assertEquals(SERIALIZED_DEFERRED, deferred.state());
+    assertEquals(previousBundle.getData(), deferred.source().getData());
+  }
+
+  @Test
+  void unacceptedGrpcProjectionAllowsPreviousElevenConsumerSansDuringIngressRotation()
+      throws Exception {
+    EnvironmentIdentityPlan plan = plan();
+    SecretMaterialValidator validator = new SecretMaterialValidator();
+    EnvironmentIdentityPlan previousBundlePlan =
+        plan.withGrpcConsumers(previousGrpcConsumers(plan));
+    Secret previousBundle = GrpcMaterialFixture.generate(previousBundlePlan);
+
+    CertificateMaterialService.RoleMaterial inFlight =
+        materializeGrpcProjection(
+            plan, previousBundlePlan, previousBundle, validator, true, false);
+
+    assertEquals(SERIALIZED_IN_FLIGHT, inFlight.state());
+    assertEquals(previousBundle.getData(), inFlight.source().getData());
+  }
+
+  @Test
+  void unacceptedGrpcProjectionDoesNotRetryPreviousSansForOtherValidationFailures()
+      throws Exception {
+    EnvironmentIdentityPlan plan = plan();
+    SecretMaterialValidator validator = new SecretMaterialValidator();
+    EnvironmentIdentityPlan previousBundlePlan =
+        plan.withGrpcConsumers(previousGrpcConsumers(plan));
+    Secret previousBundle = GrpcMaterialFixture.generate(previousBundlePlan);
+
+    MaterialValidationException failure =
+        assertThrows(
+            MaterialValidationException.class,
+            () ->
+                materializeGrpcProjection(
+                    plan, previousBundlePlan, previousBundle, validator, true, true));
+
+    assertEquals("certificate and private key do not match", failure.getMessage());
+    assertFalse(failure.isSanMismatch());
+  }
+
+  @Test
+  void deferredAcceptedGrpcProjectionAllowsCurrentSixConsumerSansDuringIngressRotation()
+      throws Exception {
+    EnvironmentIdentityPlan plan = plan();
+    SecretMaterialValidator validator = new SecretMaterialValidator();
+    Secret currentBundle = GrpcMaterialFixture.generate(plan);
+
+    CertificateMaterialService.RoleMaterial deferred =
+        materializeDeferredGrpcProjection(plan, plan, currentBundle, validator);
+
+    assertEquals(SERIALIZED_DEFERRED, deferred.state());
+    assertEquals(currentBundle.getData(), deferred.source().getData());
+  }
+
+  @Test
+  void deferredAcceptedGrpcProjectionRejectsSanOutsidePriorSharedBundleSet() throws Exception {
+    EnvironmentIdentityPlan plan = plan();
+    SecretMaterialValidator validator = new SecretMaterialValidator();
+    List<String> previousConsumers = previousGrpcConsumers(plan);
+    previousConsumers.add("unrelated-service");
+    EnvironmentIdentityPlan unexpectedBundlePlan = plan.withGrpcConsumers(previousConsumers);
+    Secret unexpectedBundle = GrpcMaterialFixture.generate(unexpectedBundlePlan);
+
+    MaterialValidationException failure =
+        assertThrows(
+            MaterialValidationException.class,
+            () ->
+                materializeDeferredGrpcProjection(
+                    plan, unexpectedBundlePlan, unexpectedBundle, validator));
+
+    assertEquals("certificate SANs do not exactly match the derived names", failure.getMessage());
+    assertTrue(failure.isSanMismatch());
+  }
+
+  @Test
+  void newGrpcMaterialStillRequiresCurrentSixConsumerSanSet() throws Exception {
+    EnvironmentIdentityPlan plan = plan();
+    EnvironmentIdentityPlan previousBundlePlan =
+        plan.withGrpcConsumers(previousGrpcConsumers(plan));
+    Secret previousBundle = GrpcMaterialFixture.generate(previousBundlePlan);
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    String trustAnchor = trustAnchorFingerprint(previousBundle);
+    properties.setGrpcTrustAnchorSha256(trustAnchor);
+    SecretClient secretClient = secretClient(plan);
+    Resource<Secret> absentProjection = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(anyString())).thenReturn(absentProjection);
+    when(absentProjection.get()).thenReturn(null);
+    SecretMaterialValidator validator = new SecretMaterialValidator();
+    GrpcTransportBundleGenerator grpcGenerator = mock(GrpcTransportBundleGenerator.class);
+    Secret source =
+        ownedSecret(
+            plan,
+            HostedIdentityContract.GRPC_ROLE,
+            plan.grpcSecretName(),
+            previousBundle.getData(),
+            Map.of(HostedIdentityContract.ISSUANCE_GENERATION_ANNOTATION, "1"));
+    source.setType("Opaque");
+    source.getMetadata().setNamespace(plan.identityNamespace());
+    when(grpcGenerator.ensure(
+            secretClient.client(), plan, 1L, properties.getGrpcRenewBefore(), trustAnchor))
+        .thenReturn(source);
+    CertificateMaterialService service =
+        new CertificateMaterialService(
+            new CertificateResourceFactory(), validator, grpcGenerator, properties);
+
+    MaterialValidationException failure =
+        assertThrows(
+            MaterialValidationException.class,
+            () -> service.beginMaterialization(secretClient.client(), plan).grpc(1L));
+
+    assertEquals("certificate SANs do not exactly match the derived names", failure.getMessage());
+    assertTrue(failure.isSanMismatch());
+  }
+
+  @Test
   void certificateReadinessIsBoundToObservedGenerationAndPositiveRevision() {
     GenericKubernetesResource certificate = new GenericKubernetesResource();
     certificate.setMetadata(new ObjectMetaBuilder().withGeneration(7L).build());
@@ -1667,6 +1803,115 @@ class CertificateMaterialServiceTest {
   }
 
   @Test
+  void publicationRotationAcceptsPredecessorStoredUnderCanonicalSourceName() {
+    EnvironmentIdentityPlan plan = plan();
+    SecretClient secretClient = secretClient(plan);
+    String workload = "game-design-service";
+    String role = HostedIdentityContract.grpcPublicationRole(workload);
+    String projectionName = plan.grpcPublicationSecretName(workload);
+    String sourceName = plan.grpcPublicationSourceSecretName(workload);
+    Map<String, String> previousData =
+        Map.of("tls.crt", encoded("previous"), "tls.key", encoded("key-previous"));
+    String previousRevision = SecretProjectionService.revisionForRole(role, previousData);
+    String previousSpki = "1".repeat(64);
+    Map<String, String> currentData =
+        Map.of("tls.crt", encoded("current"), "tls.key", encoded("key-current"));
+    String currentRevision = SecretProjectionService.revisionForRole(role, currentData);
+    String currentSpki = "2".repeat(64);
+
+    Resource<Secret> absentProjection = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(anyString())).thenReturn(absentProjection);
+    when(absentProjection.get()).thenReturn(null);
+    Resource<Secret> ingressProjectionResource = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(plan.ingressSecretName()))
+        .thenReturn(ingressProjectionResource);
+    Secret ingressProjection =
+        ownedSecret(
+            plan,
+            HostedIdentityContract.INGRESS_ROLE,
+            plan.ingressSecretName(),
+            currentData,
+            acceptedAnnotations(
+                SecretProjectionService.revisionForRole(
+                    HostedIdentityContract.INGRESS_ROLE, previousData),
+                previousSpki));
+    ingressProjection
+        .getMetadata()
+        .getAnnotations()
+        .put(
+            HostedIdentityContract.REVISION_ANNOTATION,
+            SecretProjectionService.revisionForRole(
+                HostedIdentityContract.INGRESS_ROLE, currentData));
+    ingressProjection
+        .getMetadata()
+        .getAnnotations()
+        .put(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION, "pending");
+    when(ingressProjectionResource.get()).thenReturn(ingressProjection);
+
+    Resource<Secret> publicationProjectionResource = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(projectionName))
+        .thenReturn(publicationProjectionResource);
+    Map<String, String> publicationAnnotations =
+        acceptedAnnotations(previousRevision, previousSpki);
+    publicationAnnotations.put(HostedIdentityContract.REVISION_ANNOTATION, currentRevision);
+    publicationAnnotations.put(HostedIdentityContract.SOURCE_GENERATION_ANNOTATION, "2");
+    publicationAnnotations.put(HostedIdentityContract.SOURCE_OBJECT_GENERATION_ANNOTATION, "2");
+    publicationAnnotations.put(HostedIdentityContract.SPKI_SHA256_ANNOTATION, currentSpki);
+    publicationAnnotations.put(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION, "pending");
+    Secret publicationProjection =
+        ownedSecret(plan, role, projectionName, currentData, publicationAnnotations);
+    when(publicationProjectionResource.get()).thenReturn(publicationProjection);
+
+    Resource<Secret> absentSource = mock(Resource.class);
+    when(secretClient.identitySecrets().withName(anyString())).thenReturn(absentSource);
+    when(absentSource.get()).thenReturn(null);
+    Resource<Secret> predecessorResource = mock(Resource.class);
+    when(secretClient.identitySecrets().withName(sourceName + "-previous"))
+        .thenReturn(predecessorResource);
+    Secret predecessor =
+        ownedSecret(
+            plan,
+            role,
+            sourceName + "-previous",
+            previousData,
+            acceptedAnnotations(previousRevision, previousSpki));
+    predecessor.getMetadata().setNamespace(plan.identityNamespace());
+    when(predecessorResource.get()).thenReturn(predecessor);
+
+    SecretMaterialValidator validator = mock(SecretMaterialValidator.class);
+    SecretMaterialValidator.MaterialSummary summary =
+        new SecretMaterialValidator.MaterialSummary(
+            "1".repeat(64),
+            previousSpki,
+            java.time.Instant.EPOCH,
+            java.time.Instant.MAX,
+            "3".repeat(64));
+    when(validator.validateIdentity(
+            any(Secret.class),
+            anyCollection(),
+            anyCollection(),
+            anyString(),
+            anyBoolean(),
+            anyBoolean(),
+            anyString()))
+        .thenReturn(summary);
+    CertificateMaterialService service =
+        new CertificateMaterialService(
+            mock(CertificateResourceFactory.class),
+            validator,
+            mock(GrpcTransportBundleGenerator.class),
+            new HostedIdentityProperties());
+
+    CertificateMaterialService.RoleMaterial publication =
+        service.beginMaterialization(secretClient.client(), plan).grpcPublication(workload);
+
+    assertSame(predecessor, publication.source());
+    assertEquals(SERIALIZED_DEFERRED, publication.state());
+    verify(predecessorResource).get();
+    verify(secretClient.identitySecrets(), never()).withName(projectionName + "-previous");
+  }
+
+  @Test
   void grpcUsesTheAcceptedProjectionWithoutRereadingTheDeferredSource() {
     EnvironmentIdentityPlan plan = plan();
     SecretClient secretClient = secretClient(plan);
@@ -1831,6 +2076,137 @@ class CertificateMaterialServiceTest {
     properties.put("status", ready.getAdditionalProperties().get("status"));
     desired.setAdditionalProperties(properties);
     return desired;
+  }
+
+  private static List<String> previousGrpcConsumers(EnvironmentIdentityPlan plan) {
+    List<String> consumers = new ArrayList<>(plan.grpcConsumers());
+    consumers.addAll(HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS);
+    return consumers;
+  }
+
+  private static CertificateMaterialService.RoleMaterial materializeDeferredGrpcProjection(
+      EnvironmentIdentityPlan plan,
+      EnvironmentIdentityPlan bundlePlan,
+      Secret bundle,
+      SecretMaterialValidator validator)
+      throws Exception {
+    return materializeGrpcProjection(plan, bundlePlan, bundle, validator, false, false);
+  }
+
+  private static CertificateMaterialService.RoleMaterial materializeGrpcProjection(
+      EnvironmentIdentityPlan plan,
+      EnvironmentIdentityPlan bundlePlan,
+      Secret bundle,
+      SecretMaterialValidator validator,
+      boolean unaccepted,
+      boolean mismatchedKey)
+      throws Exception {
+    SecretClient secretClient = secretClient(plan);
+    Resource<Secret> absentProjection = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(anyString())).thenReturn(absentProjection);
+    when(absentProjection.get()).thenReturn(null);
+    Resource<Secret> absentSource = mock(Resource.class);
+    when(secretClient.identitySecrets().withName(anyString())).thenReturn(absentSource);
+    when(absentSource.get()).thenReturn(null);
+
+    Secret ingressProjection = pendingIngressProjection(plan);
+    Resource<Secret> ingressProjectionResource = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(plan.ingressSecretName()))
+        .thenReturn(ingressProjectionResource);
+    when(ingressProjectionResource.get()).thenReturn(ingressProjection);
+
+    Secret grpcProjection = acceptedGrpcProjection(plan, bundlePlan, bundle, validator);
+    if (mismatchedKey) {
+      grpcProjection
+          .getData()
+          .put("tls.key", GrpcMaterialFixture.generate(bundlePlan).getData().get("tls.key"));
+      grpcProjection
+          .getMetadata()
+          .getAnnotations()
+          .put(
+              HostedIdentityContract.REVISION_ANNOTATION,
+              SecretProjectionService.revisionForRole(
+                  HostedIdentityContract.GRPC_ROLE, grpcProjection.getData()));
+    }
+    if (unaccepted) {
+      grpcProjection
+          .getMetadata()
+          .getAnnotations()
+          .remove(HostedIdentityContract.ACCEPTED_REVISION_ANNOTATION);
+      grpcProjection
+          .getMetadata()
+          .getAnnotations()
+          .put(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION, "pending");
+    }
+    Resource<Secret> grpcProjectionResource = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(plan.grpcSecretName()))
+        .thenReturn(grpcProjectionResource);
+    when(grpcProjectionResource.get()).thenReturn(grpcProjection);
+
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    properties.setGrpcTrustAnchorSha256(trustAnchorFingerprint(bundle));
+    CertificateMaterialService service =
+        new CertificateMaterialService(
+            new CertificateResourceFactory(),
+            validator,
+            mock(GrpcTransportBundleGenerator.class),
+            properties);
+    return service.beginMaterialization(secretClient.client(), plan).grpc(1L);
+  }
+
+  private static Secret pendingIngressProjection(EnvironmentIdentityPlan plan) {
+    Map<String, String> data =
+        Map.of(
+            "tls.crt", encoded("rotating-ingress-certificate"), "tls.key", encoded("ingress-key"));
+    String revision =
+        SecretProjectionService.revisionForRole(HostedIdentityContract.INGRESS_ROLE, data);
+    Map<String, String> annotations =
+        acceptedAnnotations("sha256:" + "0".repeat(64), "1".repeat(64));
+    annotations.put(HostedIdentityContract.REVISION_ANNOTATION, revision);
+    annotations.put(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION, "pending");
+    return ownedSecret(
+        plan, HostedIdentityContract.INGRESS_ROLE, plan.ingressSecretName(), data, annotations);
+  }
+
+  private static Secret acceptedGrpcProjection(
+      EnvironmentIdentityPlan plan,
+      EnvironmentIdentityPlan bundlePlan,
+      Secret bundle,
+      SecretMaterialValidator validator) {
+    Secret tlsBundle = new SecretBuilder(bundle).withType("kubernetes.io/tls").build();
+    SecretMaterialValidator.MaterialSummary summary =
+        validator.validateIdentity(
+            tlsBundle,
+            GrpcTransportBundleGenerator.grpcDnsNames(bundlePlan),
+            List.of(),
+            "kubernetes.io/tls",
+            true,
+            true,
+            "");
+    String revision =
+        SecretProjectionService.revisionForRole(HostedIdentityContract.GRPC_ROLE, bundle.getData());
+    Map<String, String> annotations = acceptedAnnotations(revision, summary.spkiSha256());
+    annotations.put(
+        HostedIdentityContract.PROVENANCE_ANNOTATION, HostedIdentityContract.TRANSPORT_PROVENANCE);
+    Secret projection =
+        ownedSecret(
+            plan,
+            HostedIdentityContract.GRPC_ROLE,
+            plan.grpcSecretName(),
+            bundle.getData(),
+            annotations);
+    projection.setType("Opaque");
+    return projection;
+  }
+
+  private static String trustAnchorFingerprint(Secret bundle) throws Exception {
+    byte[] encodedPem = Base64.getDecoder().decode(bundle.getData().get("ca.crt"));
+    X509Certificate certificate =
+        (X509Certificate)
+            CertificateFactory.getInstance("X.509")
+                .generateCertificate(new ByteArrayInputStream(encodedPem));
+    return HexFormat.of()
+        .formatHex(MessageDigest.getInstance("SHA-256").digest(certificate.getEncoded()));
   }
 
   @SuppressWarnings("unchecked")

@@ -463,22 +463,22 @@ final class HostedIdentityTestFixtures {
       case HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE -> plan.gatewayInternalWsSecretName();
       case HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE -> plan.tcpProxyBridgeSecretName();
       case HostedIdentityContract.GRPC_ROLE -> plan.grpcSecretName();
-      default -> {
-        if (HostedIdentityContract.isGrpcPublicationRole(role)) {
-          yield plan.grpcPublicationSecretName(
-              role.substring(HostedIdentityContract.GRPC_PUBLICATION_ROLE_PREFIX.length()));
-        }
-        throw new IllegalArgumentException("unsupported role");
-      }
+      default -> plan.grpcPublicationSecretName(grpcPublicationWorkload(role));
     };
   }
 
   static String sourceSecretName(EnvironmentIdentityPlan plan, String role) {
     if (HostedIdentityContract.isGrpcPublicationRole(role)) {
-      return plan.grpcPublicationSourceSecretName(
-          role.substring(HostedIdentityContract.GRPC_PUBLICATION_ROLE_PREFIX.length()));
+      return plan.grpcPublicationSourceSecretName(grpcPublicationWorkload(role));
     }
     return secretName(plan, role);
+  }
+
+  private static String grpcPublicationWorkload(String role) {
+    if (!HostedIdentityContract.isGrpcPublicationRole(role)) {
+      throw new IllegalArgumentException("unsupported role");
+    }
+    return role.substring(HostedIdentityContract.GRPC_PUBLICATION_ROLE_PREFIX.length());
   }
 
   record SecretClient(

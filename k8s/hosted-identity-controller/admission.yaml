@@ -181,11 +181,25 @@ spec:
           request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')) &&
          request.name.matches('^(firemud-grpc-tls|firemud-grpc-tls-previous|firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)|firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)-previous|(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))(-previous)?)$') &&
          (request.name == 'firemud-grpc-tls' || request.name == 'firemud-grpc-tls-previous' ||
+          request.name.matches('^firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)(-previous)?$') ||
           request.name.startsWith(
             ((request.namespace == 'dev' || request.namespace == 'dev-identity') ? 'dev' :
              request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$') ?
                request.namespace.substring(0, request.namespace.size() - 9) :
                request.namespace) + '-'))) ||
+        (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
+         request.namespace.matches('^(dev|pr-[1-9][0-9]{0,50})$') &&
+         ((request.operation == 'DELETE' &&
+           request.name.matches('^firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)$')) ||
+          (request.operation in ['CREATE', 'UPDATE'] &&
+           has(object.metadata.labels) &&
+           object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller' &&
+           object.metadata.labels['firemud.dev/retention'] == 'retained' &&
+           ((object.metadata.name == 'firemud-grpc-game-design-service' && object.metadata.labels['firemud.dev/role'] == 'grpc-publication-game-design-service') ||
+            (object.metadata.name == 'firemud-grpc-world-management-service' && object.metadata.labels['firemud.dev/role'] == 'grpc-publication-world-management-service') ||
+            (object.metadata.name == 'firemud-grpc-entity-management-service' && object.metadata.labels['firemud.dev/role'] == 'grpc-publication-entity-management-service') ||
+            (object.metadata.name == 'firemud-grpc-game-logic-service' && object.metadata.labels['firemud.dev/role'] == 'grpc-publication-game-logic-service') ||
+            (object.metadata.name == 'firemud-grpc-automation-scripting-service' && object.metadata.labels['firemud.dev/role'] == 'grpc-publication-automation-scripting-service'))))) ||
         (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
          ((request.operation == 'DELETE' &&
            (request.name == 'firemud-grpc-tls' ||
@@ -222,7 +236,7 @@ spec:
                  ((request.namespace == 'dev' || request.namespace == 'dev-identity') ? 'dev' :
                   request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$') ?
                     request.namespace.substring(0, request.namespace.size() - 9) :
-                    request.namespace) + '-'))))))) ||
+                    request.namespace) + '-')))))))) ||
         (request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' &&
          request.operation in ['CREATE', 'UPDATE'] &&
          request.namespace.matches('^(dev-identity|pr-[1-9][0-9]{0,50}-identity)$') &&
@@ -368,7 +382,7 @@ spec:
              object.spec.dnsNames == [((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)) + '.preview.firedevops.net'] &&
              (!has(object.spec.uris) || object.spec.uris.size() == 0) &&
              object.spec.issuerRef.name == 'letsencrypt-prod') ||
-            (object.metadata.labels['firemud.dev/role'] in ['gateway-internal-ws', 'tcp-proxy-bridge'] &&
+            ((object.metadata.labels['firemud.dev/role'] in ['gateway-internal-ws', 'tcp-proxy-bridge'] || object.metadata.labels['firemud.dev/role'].startsWith('grpc-publication-')) &&
              object.spec.issuerRef.name == 'firemud-ca-issuer')) &&
            object.spec.issuerRef.kind == 'ClusterIssuer' &&
            object.spec.issuerRef.group == 'cert-manager.io' &&
@@ -392,12 +406,13 @@ spec:
            (object.metadata.labels['firemud.dev/role'] != 'tcp-proxy-bridge' ||
             ((!has(object.spec.dnsNames) || object.spec.dnsNames.size() == 0) &&
              object.spec.uris == ['spiffe://firemud/ns/' + ((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)) + '/sa/tcp-proxy-service'] &&
-             object.spec.usages == ['digital signature', 'key encipherment', 'client auth'])) ||
+             object.spec.usages == ['digital signature', 'key encipherment', 'client auth'])) &&
            (!object.metadata.labels['firemud.dev/role'].startsWith('grpc-publication-') ||
-            (object.spec.secretName == object.metadata.name &&
+            (object.metadata.name == (((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)) + '-grpc-' + object.metadata.labels['firemud.dev/role'].substring(17)) &&
+             object.spec.secretName == object.metadata.name &&
              object.spec.dnsNames == [object.metadata.labels['firemud.dev/role'].substring(17), object.metadata.labels['firemud.dev/role'].substring(17) + '.' + ((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)), object.metadata.labels['firemud.dev/role'].substring(17) + '.' + ((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)) + '.svc', object.metadata.labels['firemud.dev/role'].substring(17) + '.' + ((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)) + '.svc.cluster.local'] &&
              object.spec.uris == ['spiffe://firemud/ns/' + ((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)) + '/sa/' + object.metadata.labels['firemud.dev/role'].substring(17)] &&
-             object.spec.usages == ['digital signature', 'key encipherment', 'server auth', 'client auth']))) ||
+             object.spec.usages == ['digital signature', 'key encipherment', 'server auth', 'client auth']))))) ||
         (request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' &&
          request.subResource == 'status' &&
          request.operation == 'UPDATE' &&
