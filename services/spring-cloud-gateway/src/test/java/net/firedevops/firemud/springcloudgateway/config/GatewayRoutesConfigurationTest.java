@@ -10,7 +10,10 @@ import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestS
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.route;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.io.IOException;
 import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Set;
 import java.util.stream.Collectors;
 import net.firedevops.firemud.springcloudgateway.SpringCloudGatewayApplication;
@@ -88,6 +91,18 @@ class GatewayRoutesConfigurationTest {
   void publicRouteAllowlistExposesOnlyCuratedEdgeRoutes() {
     assertThat(gatewayProperties.getRoutes().stream().map(RouteDefinition::getId))
         .containsExactlyInAnyOrderElementsOf(ROUTE_IDS);
+  }
+
+  @Test
+  void genericGatewayRetryNeverReplaysOneUseAccountPosts() throws IOException {
+    // The test classpath has its own application.yml, so inspect the shipped
+    // configuration rather than asserting the test profile's default filters.
+    Path source = Path.of("src/main/resources/application.yml");
+    String config = Files.readString(source);
+    assertThat(config).containsPattern("(?s)- name: Retry\\s+args:.*?methods: GET(?:\\s|$)");
+    assertThat(config).doesNotContain("methods: GET,POST");
+    assertHasMethod(gatewayProperties, "account-auth-verify-email", "POST");
+    assertHasMethod(gatewayProperties, "account-auth-complete-password-reset", "POST");
   }
 
   @Test
