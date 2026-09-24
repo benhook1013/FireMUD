@@ -996,6 +996,66 @@ spec:
         - name: jwt-jwks
           secret:
             secretName: jwt-jwks
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: game-design-service
+spec:
+  template:
+    spec:
+      volumes:
+        - name: grpc-tls
+          secret:
+            secretName: hobby-game-design-service-identity
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: world-management-service
+spec:
+  template:
+    spec:
+      volumes:
+        - name: grpc-tls
+          secret:
+            secretName: hobby-world-management-service-identity
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: entity-management-service
+spec:
+  template:
+    spec:
+      volumes:
+        - name: grpc-tls
+          secret:
+            secretName: hobby-entity-management-service-identity
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: game-logic-service
+spec:
+  template:
+    spec:
+      volumes:
+        - name: grpc-tls
+          secret:
+            secretName: hobby-game-logic-service-identity
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: automation-scripting-service
+spec:
+  template:
+    spec:
+      volumes:
+        - name: grpc-tls
+          secret:
+            secretName: hobby-automation-scripting-service-identity
 YAML
 
 python3 - <<'PY' "$RENDERED_MANIFEST"
@@ -1415,6 +1475,69 @@ for policy_id in ("PREFLIGHT-JWT-001", "PREFLIGHT-JWKS-001"):
     diagnostic = [check for check in report["checkResults"] if check["policyId"] == policy_id]
     if len(diagnostic) != 1 or diagnostic[0]["required"]:
         raise SystemExit(f"{policy_id} diagnostic was incorrectly apply-blocking: {diagnostic}")
+PY
+
+# Exercise the command boundary with a malformed publication workload render.
+MALFORMED_PUBLICATION_RENDER="$TMP_DIR/hobby-publication-malformed.yaml"
+MALFORMED_PUBLICATION_REPORT="$TMP_DIR/hobby-publication-malformed-report.json"
+python3 - "$RENDERED_MANIFEST" "$MALFORMED_PUBLICATION_RENDER" <<'PY'
+import pathlib
+import sys
+
+import yaml
+
+source = pathlib.Path(sys.argv[1])
+target = pathlib.Path(sys.argv[2])
+documents = [
+    document
+    for document in yaml.safe_load_all(source.read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+publication = next(
+    document
+    for document in documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "game-design-service"
+)
+grpc_volume = next(
+    volume
+    for volume in publication["spec"]["template"]["spec"]["volumes"]
+    if volume.get("name") == "grpc-tls"
+)
+grpc_volume["secret"]["secretName"] = " "
+target.write_text(yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8")
+PY
+set +e
+FIREMUD_PREFLIGHT_CONTEXT=ci-static \
+  FIREMUD_DEPLOYMENT_REF=contract-hobby-malformed-publication \
+  FIREMUD_PREFLIGHT_RENDER_PATH="$MALFORMED_PUBLICATION_RENDER" \
+  FIREMUD_PREFLIGHT_OUTPUT="$MALFORMED_PUBLICATION_REPORT" \
+  python3 "$SCRIPT" hobby-self-hosted >"$TMP_DIR/hobby-publication-malformed.out"
+malformed_publication_status=$?
+set -e
+if [ "$malformed_publication_status" -eq 0 ]; then
+  echo "ci-static accepted a malformed publication Secret render" >&2
+  exit 1
+fi
+python3 - "$MALFORMED_PUBLICATION_REPORT" <<'PY'
+import json
+import pathlib
+import sys
+
+report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+publication_secret = next(
+    check
+    for check in report["checkResults"]
+    if check["policyId"] == "PREFLIGHT-SECRETS-001"
+)
+if (
+    publication_secret["status"] != "fail"
+    or "malformed grpc-tls Secret volume" not in publication_secret["message"]
+):
+    raise SystemExit(
+        "ci-static malformed publication render did not fail PREFLIGHT-SECRETS-001: "
+        f"{publication_secret}"
+    )
 PY
 
 # A ConfigMap-backed player-facing fixture remains deferred and must fail required binding checks.
@@ -9255,6 +9378,31 @@ if any(
 ):
     raise SystemExit(
         "publication Secret requirements did not use expected-binding namespace and keys"
+    )
+
+malformed_static_publication_documents = copy.deepcopy(publication_documents)
+malformed_static_publication_documents[0]["spec"]["template"]["spec"]["volumes"][0][
+    "secret"
+]["secretName"] = " "
+with (
+    patch.object(
+        module,
+        "secret_keys_lookup_failure",
+        side_effect=AssertionError("ci-static attempted a live Secret lookup"),
+    ),
+):
+    static_publication_issues = module.publication_workload_secret_issues(
+        publication_expected,
+        malformed_static_publication_documents,
+        lookup_cluster_secrets=False,
+    )
+if (
+    len(static_publication_issues) != 1
+    or "malformed grpc-tls Secret volume" not in static_publication_issues[0]
+):
+    raise SystemExit(
+        "ci-static publication render validation did not reject a malformed Secret volume: "
+        f"{static_publication_issues}"
     )
 
 missing_workload_documents = publication_documents[:-1]

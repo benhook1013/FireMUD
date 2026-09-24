@@ -979,12 +979,16 @@ def publication_workload_secret_requirements(
 def publication_workload_secret_issues(
     expected: dict[str, Any],
     documents: list[dict[str, Any]],
+    *,
+    lookup_cluster_secrets: bool = True,
 ) -> list[str]:
-    """Verify each required publication certificate Secret and its data keys."""
+    """Validate publication Secret bindings and, optionally, their live data keys."""
     try:
         requirements = publication_workload_secret_requirements(expected, documents)
     except ValueError as exc:
         return [str(exc)]
+    if not lookup_cluster_secrets:
+        return []
     issues = []
     for secret_name, namespace, required_keys in requirements:
         issue, _, _ = secret_keys_lookup_failure(
@@ -7192,8 +7196,25 @@ def main() -> int:
                 secret_check_failed = True
                 break
         if not secret_check_failed:
+            publication_secret_issues = publication_workload_secret_issues(
+                expected_bindings, documents, lookup_cluster_secrets=False
+            )
+            if publication_secret_issues:
+                has_required_failure = append_result(
+                    check_results,
+                    "PREFLIGHT-SECRETS-001",
+                    True,
+                    "fail",
+                    "Publication workload render: " + "; ".join(publication_secret_issues),
+                ) or has_required_failure
+                secret_check_failed = True
+        if not secret_check_failed:
             has_required_failure = append_result(
-                check_results, "PREFLIGHT-SECRETS-001", True, "pass", "Rendered workloads reference required player-facing Secret bindings",
+                check_results,
+                "PREFLIGHT-SECRETS-001",
+                True,
+                "pass",
+                "Rendered player-facing and publication workloads reference required Secret bindings",
             ) or has_required_failure
     else:
         for secret_name, secret_namespace, binding_path in expected_player_secret_bindings(
