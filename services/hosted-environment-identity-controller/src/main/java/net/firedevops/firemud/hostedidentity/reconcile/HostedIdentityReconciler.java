@@ -1160,7 +1160,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
     }
     for (Map.Entry<String, HostedEnvironmentIdentityStatus.RoleStatus> entry :
         publicationRoles.entrySet()) {
-      if (!isSchemaValidPublicationRoleStatus(entry.getValue())) {
+      if (entry.getValue() == null || !entry.getValue().isSchemaValid()) {
         throw new IllegalStateException(
             "grpc publication status contains an invalid entry for role " + entry.getKey());
       }
@@ -1179,40 +1179,11 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
           stored == null ? null : stored.get(role);
       normalized.put(
           role,
-          isSchemaValidPublicationRoleStatus(evidence)
-              ? copyRoleStatus(evidence)
+          evidence != null && evidence.isSchemaValid()
+              ? evidence.copy()
               : new HostedEnvironmentIdentityStatus.RoleStatus());
     }
     return normalized;
-  }
-
-  private static boolean isSchemaValidPublicationRoleStatus(
-      HostedEnvironmentIdentityStatus.RoleStatus roleStatus) {
-    return roleStatus != null
-        && schemaString(roleStatus.getRevision(), 128, "[A-Za-z0-9][A-Za-z0-9._:+/@=-]{0,127}")
-        && (roleStatus.getSourceGeneration() == null || roleStatus.getSourceGeneration() >= 1)
-        && (roleStatus.getSourceObjectGeneration() == null
-            || roleStatus.getSourceObjectGeneration() >= 1)
-        && schemaString(roleStatus.getSpkiSha256(), 64, "[0-9a-f]{64}")
-        && schemaString(roleStatus.getProvenance(), 128, "[A-Za-z][A-Za-z0-9_.-]{0,127}")
-        && schemaString(roleStatus.getState(), 64, "[A-Za-z][A-Za-z0-9_.-]{0,63}");
-  }
-
-  private static boolean schemaString(String value, int maxLength, String pattern) {
-    return value == null || (value.length() <= maxLength && value.matches(pattern));
-  }
-
-  private static HostedEnvironmentIdentityStatus.RoleStatus copyRoleStatus(
-      HostedEnvironmentIdentityStatus.RoleStatus source) {
-    HostedEnvironmentIdentityStatus.RoleStatus copy =
-        new HostedEnvironmentIdentityStatus.RoleStatus();
-    copy.setRevision(source.getRevision());
-    copy.setSourceGeneration(source.getSourceGeneration());
-    copy.setSourceObjectGeneration(source.getSourceObjectGeneration());
-    copy.setSpkiSha256(source.getSpkiSha256());
-    copy.setProvenance(source.getProvenance());
-    copy.setState(source.getState());
-    return copy;
   }
 
   static void validateSourceProgress(

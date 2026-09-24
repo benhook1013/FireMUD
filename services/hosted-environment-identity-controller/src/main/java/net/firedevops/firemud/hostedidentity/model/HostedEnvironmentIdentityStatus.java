@@ -125,17 +125,7 @@ public class HostedEnvironmentIdentityStatus {
   }
 
   private static RoleStatus copyRole(RoleStatus source) {
-    if (source == null) {
-      return null;
-    }
-    RoleStatus copy = new RoleStatus();
-    copy.setRevision(source.getRevision());
-    copy.setSourceGeneration(source.getSourceGeneration());
-    copy.setSourceObjectGeneration(source.getSourceObjectGeneration());
-    copy.setSpkiSha256(source.getSpkiSha256());
-    copy.setProvenance(source.getProvenance());
-    copy.setState(source.getState());
-    return copy;
+    return source == null ? null : source.copy();
   }
 
   private static RuntimeProfile copyProfile(RuntimeProfile source) {
@@ -224,6 +214,30 @@ public class HostedEnvironmentIdentityStatus {
 
     public void setState(String state) {
       this.state = state;
+    }
+
+    public boolean isSchemaValid() {
+      return schemaString(revision, 128, "[A-Za-z0-9][A-Za-z0-9._:+/@=-]{0,127}")
+          && (sourceGeneration == null || sourceGeneration >= 1)
+          && (sourceObjectGeneration == null || sourceObjectGeneration >= 1)
+          && schemaString(spkiSha256, 64, "[0-9a-f]{64}")
+          && schemaString(provenance, 128, "[A-Za-z][A-Za-z0-9_.-]{0,127}")
+          && schemaString(state, 64, "[A-Za-z][A-Za-z0-9_.-]{0,63}");
+    }
+
+    public RoleStatus copy() {
+      RoleStatus copy = new RoleStatus();
+      copy.setRevision(revision);
+      copy.setSourceGeneration(sourceGeneration);
+      copy.setSourceObjectGeneration(sourceObjectGeneration);
+      copy.setSpkiSha256(spkiSha256);
+      copy.setProvenance(provenance);
+      copy.setState(state);
+      return copy;
+    }
+
+    private static boolean schemaString(String value, int maxLength, String pattern) {
+      return value == null || (value.length() <= maxLength && value.matches(pattern));
     }
   }
 
