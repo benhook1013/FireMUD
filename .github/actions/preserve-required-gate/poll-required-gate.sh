@@ -75,6 +75,9 @@ declare -A workflow_run_cache=()
 declare -A job_cache=()
 declare -A terminal_job_cache=()
 declare -A preservation_step_refresh_attempts=()
+declare -A verified_substantive_run_cache=()
+last_uncertain_substantive_workflow=false
+substantive_wait_extended=false
 sleep_until_poll_deadline() {
   local remaining=$((poll_deadline - SECONDS))
   if (( remaining <= 0 )); then
@@ -91,6 +94,7 @@ extend_for_active_substantive_run() {
   if [[ "${poll_attempt_limit}" != "${active_max_attempts}" ]]; then
     poll_attempt_limit="${active_max_attempts}"
     poll_deadline="${active_poll_deadline}"
+    substantive_wait_extended=true
     echo "Verified substantive workflow is active before ${REQUIRED_GATE_NAME} was published; extending the bounded wait to ${active_poll_timeout_seconds}s." >&2
   fi
 }
@@ -123,6 +127,7 @@ find_active_substantive_workflow() {
     if [[ "${active_workflow_status_result}" -ne 0 ]]; then
       active_workflow_status_error="$(<"${api_error_file}")"
       if is_retryable_gh_failure "${active_workflow_status_result}" "${active_workflow_status_error}"; then
+        uncertain_substantive_workflow=true
         echo "Retryable GitHub API failure while checking for an active substantive ${EXPECTED_WORKFLOW_NAME} run; retaining the short fail-closed wait." >&2
         return 0
       fi
@@ -196,6 +201,10 @@ find_active_substantive_workflow() {
 
   while IFS=$'\t' read -r active_run_id active_run_status; do
     [[ -z "${active_run_id}${active_run_status}" ]] && continue
+    if [[ "${verified_substantive_run_cache[${active_run_id}]:-false}" == "true" ]]; then
+      active_substantive_workflow=true
+      continue
+    fi
     : >"${api_error_file}"
     set +e
     active_run_jobs_json="$(gh api --method GET \
@@ -257,10 +266,26 @@ find_active_substantive_workflow() {
       uncertain_substantive_workflow=true
     elif [[ "${change_job_completed_successfully}" == "true" ]]; then
       active_substantive_workflow=true
+      verified_substantive_run_cache["${active_run_id}"]=true
     elif [[ "${change_job_inconclusive}" == "true" ]]; then
       uncertain_substantive_workflow=true
     fi
   done <<<"${active_run_rows}"
+}
+
+refresh_active_workflow_state() {
+  local should_discover=false
+  if [[ "${substantive_wait_extended}" != "true" ]] &&
+    { (( attempt == 1 || (attempt - 1) % 4 == 0 )) || (( attempt == poll_attempt_limit )); }; then
+    should_discover=true
+  fi
+  if [[ "${should_discover}" == "true" ]]; then
+    find_active_substantive_workflow
+    last_uncertain_substantive_workflow="${uncertain_substantive_workflow}"
+  else
+    active_substantive_workflow=false
+    uncertain_substantive_workflow="${last_uncertain_substantive_workflow}"
+  fi
 }
 
 for attempt in $(seq 1 "${active_max_attempts}"); do
@@ -688,8 +713,8 @@ for attempt in $(seq 1 "${active_max_attempts}"); do
     exit 1
   fi
   if [ "${prior_status}" = "none" ]; then
-    find_active_substantive_workflow
-    if [[ "${active_substantive_workflow}" == "true" ]]; then
+    refresh_active_workflow_state
+    if [[ "${active_substantive_workflow}" == "true" || "${substantive_wait_extended}" == "true" ]]; then
       extend_for_active_substantive_run
       echo "A verified substantive workflow is active with ${REQUIRED_GATE_NAME} unpublished; retrying attempt ${attempt}/${poll_attempt_limit}." >&2
     elif [[ "${uncertain_substantive_workflow}" == "true" ]]; then
@@ -714,7 +739,7 @@ for attempt in $(seq 1 "${active_max_attempts}"); do
   if [[ "${prior_preserve_step}" == "skipped" ]]; then
     extend_for_active_substantive_run
   else
-    find_active_substantive_workflow
+    refresh_active_workflow_state
     if [[ "${active_substantive_workflow}" == "true" ]]; then
       extend_for_active_substantive_run
     fi
@@ -723,7 +748,8 @@ for attempt in $(seq 1 "${active_max_attempts}"); do
     echo "Timed out waiting for the relevant prior ${REQUIRED_GATE_NAME} on unchanged head ${HEAD_SHA} to complete." >&2
     exit 1
   fi
-  if [[ "${prior_preserve_step}" == "skipped" || "${active_substantive_workflow:-false}" == "true" ]]; then
+  if [[ "${prior_preserve_step}" == "skipped" || "${active_substantive_workflow:-false}" == "true" ||
+    "${substantive_wait_extended}" == "true" ]]; then
     echo "A verified substantive ${REQUIRED_GATE_NAME} is still pending; retrying attempt ${attempt}/${poll_attempt_limit}." >&2
   else
     echo "A prior ${REQUIRED_GATE_NAME} is pending but its substantive identity is not yet verified; retaining the short fail-closed bound (attempt ${attempt}/${poll_attempt_limit})." >&2
