@@ -29,6 +29,59 @@ PATCH = "c" * 64
 
 
 class RuntimeTest(unittest.TestCase):
+    def test_prepost_abandoned_trigger_audit_requires_the_existing_closure_proof(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "prepost-abandoned-0123456789abcdefabcd.json"
+            now = "2026-09-24T00:00:00Z"
+            record = {
+                "repository": "owner/repo",
+                "pr_number": 42,
+                "status": "abandoned_prepost",
+                "head_sha": HEAD,
+                "trigger": None,
+                "posting_comment_id_floor": 10,
+                "posting_started_at": now,
+                "posting_actor_login": "reviewer",
+                "recovery": {
+                    "action": "operator_confirmed_prepost_abandon",
+                    "confirmed_not_posted": True,
+                    "live_comment_history": "complete_paginated_no_candidate",
+                    "expected_head_sha": HEAD,
+                    "captured_head_sha": HEAD,
+                    "at": now,
+                    "reason": "the POST was never issued",
+                },
+            }
+            path.write_text(json.dumps(record), encoding="utf-8")
+            LiveEvidence._validate_prepost_abandoned(path, "owner/repo", 42)
+
+            record["recovery"]["confirmed_not_posted"] = False
+            path.write_text(json.dumps(record), encoding="utf-8")
+            with self.assertRaisesRegex(ControllerError, "lacks complete closure proof"):
+                LiveEvidence._validate_prepost_abandoned(path, "owner/repo", 42)
+
+    def test_unrecorded_public_hosted_responses_must_be_terminal_and_head_bound(self) -> None:
+        review = {
+            "databaseId": 71,
+            "state": "COMMENTED",
+            "body": "**Actionable comments posted:** 1",
+            "commit": {"oid": HEAD},
+        }
+        active_comment = {
+            "databaseId": 72,
+            "body": "Full review triggered. I am reviewing the pull request now.",
+            "createdAt": "2026-09-24T00:00:00Z",
+        }
+        ambiguous_comment = {
+            "databaseId": 73,
+            "body": "**Actionable comments posted:** 1",
+            "createdAt": "2026-09-24T00:00:00Z",
+        }
+        self.assertEqual(LiveEvidence._public_response_state(review, "submittedAt", {}), "completed")
+        self.assertEqual(LiveEvidence._public_response_state(active_comment, "createdAt", {}), "active")
+        self.assertEqual(LiveEvidence._public_response_state(ambiguous_comment, "createdAt", {}), "ambiguous")
+        self.assertIsNone(LiveEvidence._public_response_state({"databaseId": 74, "body": ""}, "createdAt", {}))
+
     def test_trigger_retirement_selects_the_unique_record_matching_trigger_id(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

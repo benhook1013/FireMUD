@@ -411,6 +411,7 @@ class LegacyEvidenceTransition:
     hosted_fingerprints: tuple[str, ...] = ()
     cli_fingerprints: tuple[str, ...] = ()
     reason: str = ""
+    retired_hosted_fingerprints: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if isinstance(self.pr, bool) or not isinstance(self.pr, int) or self.pr <= 0:
@@ -435,6 +436,13 @@ class LegacyEvidenceTransition:
                 raise StateError(f"legacy transition {name} must contain SHA-256 fingerprints")
             if len(set(values)) != len(values):
                 raise StateError(f"legacy transition {name} fingerprints must be unique")
+        retired = self.retired_hosted_fingerprints
+        if not isinstance(retired, tuple) or any(
+            not isinstance(value, str) or FINGERPRINT.fullmatch(value) is None for value in retired
+        ):
+            raise StateError("legacy transition retired Hosted fingerprints must be SHA-256 fingerprints")
+        if len(set(retired)) != len(retired) or not set(retired).issubset(self.hosted_fingerprints):
+            raise StateError("retired Hosted fingerprints must be unique members of the audited Hosted set")
         if not self.hosted_fingerprints and not self.cli_fingerprints:
             raise StateError("legacy transition requires at least one legacy observation")
 
@@ -465,6 +473,7 @@ class LegacyEvidenceTransition:
             "patch_id",
             "hosted_fingerprints",
             "cli_fingerprints",
+            "retired_hosted_fingerprints",
             "reason",
         }
         if set(value) - allowed:
@@ -472,10 +481,13 @@ class LegacyEvidenceTransition:
         try:
             hosted = value.get("hosted_fingerprints", ())
             cli = value.get("cli_fingerprints", ())
+            retired_hosted = value.get("retired_hosted_fingerprints", ())
             if isinstance(hosted, list):
                 hosted = tuple(hosted)
             if isinstance(cli, list):
                 cli = tuple(cli)
+            if isinstance(retired_hosted, list):
+                retired_hosted = tuple(retired_hosted)
             return cls(
                 pr=value["pr"],
                 child_head=value["child_head"],
@@ -485,6 +497,7 @@ class LegacyEvidenceTransition:
                 patch_id=value["patch_id"],
                 hosted_fingerprints=hosted,
                 cli_fingerprints=cli,
+                retired_hosted_fingerprints=retired_hosted,
                 reason=value["reason"],
             )
         except StateError:

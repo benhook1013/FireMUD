@@ -141,6 +141,10 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="carry the exact prior legacy fingerprints to a new coherent anchor",
     )
+    transition.add_argument(
+        "--retire-missing-hosted-fingerprint",
+        help="retire one exact prior Hosted fingerprint only when it is the sole missing Hosted observation",
+    )
     transition.add_argument("--json", action="store_true", dest="as_json")
     retirement = decide_commands.add_parser("trigger-retire")
     retirement.add_argument("--pr", required=True, type=_positive_int)
@@ -409,6 +413,7 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 head=args.head,
                 reason=args.reason,
                 reauthorize=args.reauthorize,
+                retire_missing_hosted_fingerprint=args.retire_missing_hosted_fingerprint,
             ), 0
         return controller.decide_policy(
             pr=args.pr,

@@ -6,6 +6,7 @@ import fcntl
 import json
 import os
 import re
+import stat
 import subprocess
 from collections.abc import Sequence
 from datetime import datetime, timezone
@@ -15,7 +16,13 @@ from . import evidence, github, hosted
 from . import status as status_module
 from .cli_runner import PullRequestSnapshot, ReviewRunnerError, ReviewTarget, run_cli_review
 from .controller import ControllerError, DefaultGitProvider, ReviewController
-from .state import StateError, StateStore, SummaryFindingDisposition, adjudicate_summary_findings
+from .state import (
+    StateError,
+    StateStore,
+    SummaryFindingDisposition,
+    adjudicate_summary_findings,
+    observation_fingerprint,
+)
 
 _PLAN_CEILING_PATTERN = re.compile(
     r"(?is)(?:(?:exceed\w*|too many|over|reject\w*|skip\w*).{0,120}"
@@ -24,6 +31,7 @@ _PLAN_CEILING_PATTERN = re.compile(
     r"(?:limit|ceiling|maximum|cap).{0,120}(?:exceed\w*|too many|over|reject\w*|skip\w*))"
 )
 _CODERABBIT_FILE_CEILING = 100
+_PREPOST_ABANDONED_PATTERN = re.compile(r"^prepost-abandoned-[0-9a-f]{20}\.json$")
 
 
 class LiveGitHub:
@@ -132,6 +140,388 @@ class LiveEvidence:
                 }
             )
         return result
+
+    @staticmethod
+    def _complete_trigger_paths(repo: str, pr: int) -> list[str]:
+        """Enumerate every current and archived trigger without hiding read failures."""
+
+        root = hosted._git_common_dir()
+        paths: list[str] = []
+        for directory in (
+            root / "firemud" / "hosted" / hosted._safe_repo(repo) / f"pr-{pr}",
+            root / "coderabbit-review-logs" / "hosted" / hosted._safe_repo(repo) / f"pr-{pr}",
+        ):
+            try:
+                directory_stat = directory.lstat()
+            except FileNotFoundError:
+                continue
+            except OSError as error:
+                raise ControllerError("Hosted trigger-record history cannot be completely inspected") from error
+            if stat.S_ISLNK(directory_stat.st_mode) or not stat.S_ISDIR(directory_stat.st_mode):
+                raise ControllerError("Hosted trigger-record history contains an unsafe directory")
+            try:
+                entries = list(directory.iterdir())
+            except OSError as error:
+                raise ControllerError("Hosted trigger-record history cannot be completely inspected") from error
+            for path in entries:
+                is_current = path.name == "trigger.json"
+                is_archived = hosted.ARCHIVED.fullmatch(path.name) is not None
+                is_prepost_abandoned = _PREPOST_ABANDONED_PATTERN.fullmatch(path.name) is not None
+                if not is_current and not is_archived and not is_prepost_abandoned:
+                    if path.name.startswith(("trigger-", "prepost-abandoned-")) and path.name.endswith(".json"):
+                        raise ControllerError("Hosted trigger-record history contains a malformed archive name")
+                    continue
+                try:
+                    entry_stat = path.lstat()
+                except OSError as error:
+                    raise ControllerError("a Hosted trigger record cannot be completely inspected") from error
+                if stat.S_ISLNK(entry_stat.st_mode) or not stat.S_ISREG(entry_stat.st_mode):
+                    raise ControllerError("Hosted trigger-record history contains an unsafe record")
+                if is_prepost_abandoned:
+                    LiveEvidence._validate_prepost_abandoned(path, repo, pr)
+                    continue
+                paths.append(str(path))
+        return paths
+
+    @staticmethod
+    def _validate_prepost_abandoned(path: Any, repo: str, pr: int) -> None:
+        """Accept only the existing durable proof that a pre-POST reservation was closed."""
+
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise ControllerError("an archived Hosted pre-POST reservation is unreadable") from error
+        recovery = record.get("recovery") if isinstance(record, dict) else None
+        if (
+            not isinstance(record, dict)
+            or record.get("repository") != repo
+            or record.get("pr_number") != pr
+            or record.get("status") != "abandoned_prepost"
+            or isinstance(record.get("trigger"), dict)
+            or not isinstance(record.get("head_sha"), str)
+            or not hosted.EXACT_SHA.fullmatch(record["head_sha"])
+            or type(record.get("posting_comment_id_floor")) is not int
+            or record["posting_comment_id_floor"] < 0
+            or hosted.parse_timestamp(record.get("posting_started_at")) is None
+            or not isinstance(record.get("posting_actor_login"), str)
+            or not record["posting_actor_login"].strip()
+            or hosted.is_coderabbit_login(record["posting_actor_login"])
+            or not isinstance(recovery, dict)
+            or recovery.get("action") != "operator_confirmed_prepost_abandon"
+            or recovery.get("confirmed_not_posted") is not True
+            or recovery.get("live_comment_history") != "complete_paginated_no_candidate"
+            or not isinstance(recovery.get("expected_head_sha"), str)
+            or recovery["expected_head_sha"].casefold() != record["head_sha"].casefold()
+            or not isinstance(recovery.get("captured_head_sha"), str)
+            or recovery["captured_head_sha"].casefold() != record["head_sha"].casefold()
+            or hosted.parse_timestamp(recovery.get("at")) is None
+            or not isinstance(recovery.get("reason"), str)
+            or not recovery["reason"].strip()
+        ):
+            raise ControllerError("an archived Hosted pre-POST reservation lacks complete closure proof")
+
+    @staticmethod
+    def _full_review_commands(comments: list[dict[str, Any]]) -> list[tuple[int, datetime]]:
+        commands: list[tuple[int, datetime]] = []
+        for item in comments:
+            author = ((item.get("author") or {}).get("login"))
+            body = item.get("body")
+            if hosted.is_coderabbit_login(author) or not isinstance(body, str):
+                continue
+            if hosted.normalize_command(body) != hosted.FULL_COMMAND:
+                continue
+            identity = github.immutable_database_id(item)
+            created = hosted.parse_timestamp(item.get("createdAt"))
+            if identity is None or created is None:
+                raise ControllerError("a full-review trigger has incomplete public identity")
+            commands.append((identity, created))
+        commands.sort(key=lambda value: (value[1], value[0]))
+        return commands
+
+    @staticmethod
+    def _bot_response_ids(comments: list[dict[str, Any]], reviews: list[dict[str, Any]]) -> list[tuple[int, datetime]]:
+        responses: list[tuple[int, datetime]] = []
+        for item, timestamp_field in (
+            *((comment, "createdAt") for comment in comments),
+            *((review, "submittedAt") for review in reviews),
+        ):
+            if not github.is_coderabbit_login((item.get("author") or {}).get("login")):
+                continue
+            if timestamp_field == "submittedAt" and item.get("state") == "DISMISSED":
+                continue
+            identity = github.immutable_database_id(item)
+            created = hosted.parse_timestamp(item.get(timestamp_field))
+            if identity is None or created is None:
+                raise ControllerError("a Hosted response has incomplete public identity")
+            responses.append((identity, created))
+        return responses
+
+    @staticmethod
+    def _public_response_state(
+        item: dict[str, Any], timestamp_field: str, checkpoint_by_response: dict[int, evidence.Checkpoint]
+    ) -> str | None:
+        """Classify a public response when its private trigger record is gone."""
+
+        identity = github.immutable_database_id(item)
+        checkpoint = checkpoint_by_response.get(identity) if identity is not None else None
+        raw_body = item.get("body")
+        body = raw_body if isinstance(raw_body, str) else ""
+        if timestamp_field == "submittedAt":
+            if item.get("state") == "DISMISSED":
+                return None
+            if item.get("state") not in {"COMMENTED", "APPROVED", "CHANGES_REQUESTED"}:
+                return "ambiguous"
+            commit = (item.get("commit") or {}).get("oid")
+            if isinstance(commit, str) and hosted.EXACT_SHA.fullmatch(commit):
+                return "completed"
+            if hosted._substantive(body):
+                return "completed" if hosted._scope_head(body) else "ambiguous"
+            if checkpoint is not None and isinstance(checkpoint.reviewed_sha, str):
+                return "completed"
+            return None
+
+        created = hosted.parse_timestamp(item.get("createdAt"))
+        if hosted.REVIEW_LIMIT_MARKER in body or (
+            created is not None and hosted._rate_limit(body, created) is not None
+        ) or body.strip().lower().startswith("review rate limited"):
+            return "rate_limited"
+        if hosted.NOOP_MARKER in body:
+            return "noop"
+        if hosted.ACTIVE_PATTERN.search(hosted._unquoted(body)):
+            return "active"
+        if hosted.FAILED_PATTERN.search(hosted._unquoted(body)):
+            return "failed"
+        if hosted._substantive(body) or hosted.FINISHED_REVIEW_PATTERN.search(hosted._unquoted(body)):
+            if hosted._scope_head(body):
+                return "completed"
+            if checkpoint is not None and isinstance(checkpoint.reviewed_sha, str):
+                return "completed"
+            return "ambiguous"
+        return None
+
+    def legacy_transition_reauthorization_audit(
+        self,
+        pr: int,
+        expected_hosted_fingerprints: tuple[str, ...],
+        expected_anchor: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Prove completeness and attribution of all currently available Hosted evidence."""
+
+        payload = self._payload(pr)
+        try:
+            pull = payload["data"]["repository"]["pullRequest"]
+            comments_connection = pull["comments"]
+            reviews_connection = pull["reviews"]
+            threads_connection = pull["reviewThreads"]
+            comments = comments_connection["nodes"]
+            reviews = reviews_connection["nodes"]
+            threads = threads_connection["nodes"]
+        except (KeyError, TypeError) as error:
+            raise ControllerError("complete paginated GitHub review/comment evidence is unavailable") from error
+        try:
+            expected_head = expected_anchor["child_head"]
+            expected_base_ref = expected_anchor["live_base_ref"]
+            expected_base_tip = expected_anchor["live_base_tip"]
+        except (KeyError, TypeError) as error:
+            raise ControllerError("missing Hosted fingerprint retirement lacks a complete current anchor") from error
+        if (
+            pull.get("number") != pr
+            or not isinstance(expected_head, str)
+            or not isinstance(pull.get("headRefOid"), str)
+            or pull["headRefOid"].casefold() != expected_head.casefold()
+            or not isinstance(expected_base_ref, str)
+            or pull.get("baseRefName") != expected_base_ref
+            or not isinstance(expected_base_tip, str)
+            or not isinstance(pull.get("baseRefOid"), str)
+            or pull["baseRefOid"].casefold() != expected_base_tip.casefold()
+        ):
+            raise ControllerError("GitHub PR head or base moved during missing Hosted fingerprint retirement")
+        latest = self.live.pull_request(pr)
+        if (
+            latest.number != pr
+            or latest.head_sha.casefold() != expected_head.casefold()
+            or latest.base_ref_name != expected_base_ref
+            or latest.base_sha.casefold() != expected_base_tip.casefold()
+        ):
+            raise ControllerError("GitHub PR head or base moved during missing Hosted fingerprint retirement")
+        if any(not isinstance(values, list) for values in (comments, reviews, threads)):
+            raise ControllerError("complete paginated GitHub review/comment evidence is malformed")
+        for item in (*comments, *reviews):
+            if not isinstance(item, dict) or github.immutable_database_id(item) is None:
+                raise ControllerError("complete paginated GitHub review/comment evidence lacks immutable identities")
+        for thread in threads:
+            thread_comments = thread.get("comments") if isinstance(thread, dict) else None
+            if (
+                not isinstance(thread, dict)
+                or not isinstance(thread.get("isResolved"), bool)
+                or not isinstance(thread.get("isOutdated"), bool)
+                or not isinstance(thread_comments, dict)
+                or not isinstance(thread_comments.get("nodes"), list)
+            ):
+                raise ControllerError("complete paginated GitHub review-thread evidence is malformed")
+            if any(
+                not isinstance(comment, dict) or github.immutable_database_id(comment) is None
+                for comment in thread_comments["nodes"]
+            ):
+                raise ControllerError("complete paginated GitHub review-thread comments lack immutable identities")
+
+        normalized_comments = self._comments(payload)
+        checkpoints, unparsed = evidence.parse_checkpoint_comments(normalized_comments)
+        if unparsed:
+            raise ControllerError("GitHub history contains an unparsed review checkpoint")
+        hosted_checkpoints = [item for item in checkpoints if item.type.casefold() == "hosted"]
+        hosted_checkpoint_ids = {item.hosted_review_id for item in hosted_checkpoints}
+        if any(item.comment_id is None or item.hosted_review_id is None for item in hosted_checkpoints):
+            raise ControllerError("a Hosted checkpoint has incomplete immutable identity")
+        checkpoint_by_response = {
+            item.hosted_review_id: item for item in hosted_checkpoints if item.hosted_review_id is not None
+        }
+
+        records_by_trigger: dict[int, tuple[dict[str, Any], hosted.TriggerState]] = {}
+        active_reservations: list[str] = []
+        ambiguous_responses: list[str] = []
+        for path in self._complete_trigger_paths(self.repo, pr):
+            try:
+                record = hosted.load_trigger_record(path, self.repo, pr)
+                state = hosted.trigger_state(self.repo, pr, payload, record, path)
+            except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
+                raise ControllerError("an available Hosted trigger record is unreadable or ambiguous") from error
+            trigger_id = state.trigger_comment_id
+            if not isinstance(trigger_id, int) or trigger_id <= 0:
+                raise ControllerError("an available Hosted trigger record has no exact trigger identity")
+            if trigger_id in records_by_trigger:
+                ambiguous_responses.append("duplicate trigger identity")
+                continue
+            records_by_trigger[trigger_id] = (record, state)
+            if state.state in {"active", "awaiting_response", "ambiguous", "unattributed", "timed_out"}:
+                active_reservations.append(state.state)
+            elif state.state == "rate_limited":
+                reset = hosted.parse_timestamp(state.cooldown_until)
+                if reset is None or reset > datetime.now(timezone.utc):
+                    active_reservations.append("rate_limited")
+            elif state.state not in {"completed", "noop", "failed", "retired"}:
+                ambiguous_responses.append("unrecognized trigger state")
+            if state.state not in {"retired"} and state.attributed is not True:
+                ambiguous_responses.append("unattributed trigger response")
+
+        commands = self._full_review_commands(comments)
+        responses = self._bot_response_ids(comments, reviews)
+        response_ids = [identity for identity, _ in responses]
+        if len(set(response_ids)) != len(response_ids):
+            ambiguous_responses.append("duplicate response identity")
+        unmatched_responses: list[str] = []
+        responses_by_trigger: dict[int, set[int]] = {}
+        unrecorded_responses_by_trigger: dict[int, list[tuple[dict[str, Any], str, datetime]]] = {}
+        response_by_id = {
+            github.immutable_database_id(item): (item, timestamp_field)
+            for item, timestamp_field in (
+                *((comment, "createdAt") for comment in comments),
+                *((review, "submittedAt") for review in reviews),
+            )
+            if github.immutable_database_id(item) is not None
+        }
+        for response_id, response_at in responses:
+            previous = [item for item in commands if item[1] < response_at]
+            if not previous:
+                unmatched_responses.append("response has no preceding full-review trigger")
+                continue
+            latest_time = previous[-1][1]
+            nearest = [item for item in previous if item[1] == latest_time]
+            if len(nearest) != 1:
+                ambiguous_responses.append("response has a timestamp-ambiguous trigger window")
+                continue
+            trigger_id = nearest[0][0]
+            matched = records_by_trigger.get(trigger_id)
+            if matched is None:
+                response_item, timestamp_field = response_by_id[response_id]
+                unrecorded_responses_by_trigger.setdefault(trigger_id, []).append(
+                    (response_item, timestamp_field, response_at)
+                )
+                continue
+            record, state = matched
+            responses_by_trigger.setdefault(trigger_id, set()).add(response_id)
+            if state.state not in {"retired"} and state.state == "completed":
+                response_item = next(
+                    (
+                        item
+                        for item in (*comments, *reviews)
+                        if github.immutable_database_id(item) == response_id
+                    ),
+                    None,
+                )
+                body = (response_item or {}).get("body")
+                if isinstance(body, str) and hosted._substantive(body):
+                    if response_item in reviews:
+                        commit = (response_item.get("commit") or {}).get("oid")
+                        if not isinstance(commit, str) or commit.casefold() != record["head_sha"].casefold():
+                            ambiguous_responses.append("substantive review response is bound to another head")
+                    elif not hosted._matches_head(body, record["head_sha"]):
+                        ambiguous_responses.append("substantive comment response does not identify its captured head")
+
+        for trigger_id, (record, state) in records_by_trigger.items():
+            if state.state == "retired" and responses_by_trigger.get(trigger_id):
+                ambiguous_responses.append("a retired Hosted trigger has a later public response")
+            if state.response_id is not None and state.response_id not in responses_by_trigger.get(trigger_id, set()):
+                ambiguous_responses.append("trigger response is absent from complete GitHub history")
+            if state.state == "completed" and state.response_id not in hosted_checkpoint_ids:
+                fingerprinted = any(
+                    observation_fingerprint(item) in expected_hosted_fingerprints
+                    for item in self.history(pr, "hosted")
+                    if item.get("checkpoint") == f"trigger-uncheckpointed:{state.response_id}"
+                )
+                if not fingerprinted:
+                    unmatched_responses.append("completed Hosted response has no checkpoint or prior audit")
+
+        for trigger_id, _ in commands:
+            if trigger_id in records_by_trigger:
+                continue
+            public_responses = unrecorded_responses_by_trigger.get(trigger_id, [])
+            events = [
+                (
+                    response_at,
+                    github.immutable_database_id(item) or 0,
+                    self._public_response_state(item, timestamp_field, checkpoint_by_response),
+                    item,
+                )
+                for item, timestamp_field, response_at in public_responses
+            ]
+            events = [event for event in events if event[2] is not None]
+            if not events:
+                active_reservations.append("a public full-review trigger has no attributable terminal response")
+                continue
+            _, _, response_state, response_item = max(events, key=lambda event: (event[0], event[1]))
+            if response_state == "active":
+                active_reservations.append("a public full-review trigger still has an active response")
+            elif response_state == "ambiguous":
+                ambiguous_responses.append("an unrecorded public response does not identify its reviewed head")
+            elif response_state == "rate_limited":
+                response_at = hosted.parse_timestamp(response_item.get("createdAt"))
+                cooldown = hosted._rate_limit(response_item.get("body", ""), response_at) if response_at else None
+                if cooldown is None or cooldown > datetime.now(timezone.utc):
+                    active_reservations.append("an unrecorded public response has an unresolved rate limit")
+
+        hosted_history = self.history(pr, "hosted")
+        represented_checkpoints = {
+            str(item.get("checkpoint")) for item in hosted_history if isinstance(item, dict)
+        }
+        for checkpoint in hosted_checkpoints:
+            if str(checkpoint.comment_id) not in represented_checkpoints:
+                unmatched_responses.append("a public Hosted checkpoint has no unique attributable trigger")
+        unresolved_findings = [
+            str(item.get("checkpoint", "Hosted finding"))
+            for item in hosted_history
+            if str(item.get("checkpoint", "")).startswith(
+                ("review-threads:", "summary-actions:", "over-ceiling:")
+            )
+            and (item.get("held") is True or item.get("unstable") is True or item.get("over_ceiling") is True)
+        ]
+        return {
+            "complete": True,
+            "active_reservations": active_reservations,
+            "unmatched_responses": unmatched_responses,
+            "ambiguous_responses": ambiguous_responses,
+            "unresolved_findings": unresolved_findings,
+        }
 
     @staticmethod
     def _anchor(metadata: dict[str, str]) -> dict[str, Any]:

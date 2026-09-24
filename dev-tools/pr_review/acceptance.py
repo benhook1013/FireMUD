@@ -12,6 +12,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import stat
 import tempfile
 from collections.abc import Mapping, Sequence
@@ -137,10 +138,13 @@ class FixtureGit:
 class FixtureEvidence:
     """Fixture evidence plus atomically persisted, isolated simulated discoveries."""
 
-    def __init__(self, fixture: Mapping[str, Any], state_path: Path, repository: str) -> None:
+    def __init__(
+        self, fixture: Mapping[str, Any], state_path: Path, repository: str, github: FixtureGitHub
+    ) -> None:
         values = _mapping(fixture.get("evidence", {}), "evidence")
         self._values: dict[tuple[int, str], tuple[Any, ...]] = {}
         self.repository = repository
+        self.github = github
         self.path = state_path.with_name(f"{state_path.name}.fixture-evidence.json")
         self.lock_path = state_path.with_name(f".{state_path.name}.fixture-evidence.lock")
         for pr_key, channels in values.items():
@@ -178,6 +182,39 @@ class FixtureEvidence:
             return baseline
         recorded = tuple(item for item in self._recorded() if item.get("pr") == pr)
         return (*baseline, *recorded)
+
+    def legacy_transition_reauthorization_audit(
+        self,
+        pr: int,
+        expected_hosted_fingerprints: tuple[str, ...],
+        expected_anchor: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Treat the isolated fixture's explicit evidence arrays as its complete source."""
+
+        if pr not in {number for number, _ in self._values}:
+            raise AcceptanceFixtureError(f"fixture has no evidence history for PR #{pr}")
+        if any(not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None for value in expected_hosted_fingerprints):
+            raise AcceptanceFixtureError("fixture retirement audit received a malformed Hosted fingerprint")
+        live = self.github.pull_request(pr)
+        expected_head = expected_anchor.get("child_head")
+        expected_base_ref = expected_anchor.get("live_base_ref")
+        expected_base_tip = expected_anchor.get("live_base_tip")
+        if (
+            not isinstance(expected_head, str)
+            or expected_head.casefold() != live.head.casefold()
+            or not isinstance(expected_base_ref, str)
+            or expected_base_ref != live.base_ref
+            or not isinstance(expected_base_tip, str)
+            or expected_base_tip.casefold() != live.base_tip.casefold()
+        ):
+            raise AcceptanceFixtureError("fixture PR head or base moved during missing Hosted fingerprint retirement")
+        return {
+            "complete": True,
+            "active_reservations": [],
+            "unmatched_responses": [],
+            "ambiguous_responses": [],
+            "unresolved_findings": [],
+        }
 
     def record_provisional(self, target: ReviewTarget, reason: str) -> None:
         """Atomically reserve one synthetic child/parent discovery identity."""
@@ -373,7 +410,7 @@ class AcceptanceFixture:
         payload["default_base_tip"] = default_tip
         self.github = FixtureGitHub(pull_requests)
         self.git = FixtureGit(payload)
-        self.evidence = FixtureEvidence(payload, self.state_path, self.repository)
+        self.evidence = FixtureEvidence(payload, self.state_path, self.repository, self.github)
         self.pull_requests = pull_requests
         self.initial_stack = tuple(ordered)
 

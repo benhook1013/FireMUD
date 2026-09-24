@@ -99,6 +99,9 @@ def run_gh_query(query: str, variables: dict[str, str | int]) -> dict[str, Any]:
 _BASE_QUERY = """
 query($owner:String!, $repo:String!, $number:Int!) {
   repository(owner:$owner, name:$repo) { pullRequest(number:$number) {
+    number
+    baseRefName
+    baseRefOid
     headRefOid
     commits(last:1) { nodes { commit { oid committedDate statusCheckRollup { state } } } }
     reviewThreads(first:100) { nodes { id isResolved isOutdated path line comments(first:20) {

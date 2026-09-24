@@ -103,6 +103,7 @@ class ReviewStateStackTest(unittest.TestCase):
             (observation_fingerprint({"checkpoint": "hosted"}),),
             (observation_fingerprint({"checkpoint": "cli"}),),
             "legacy evidence lacks modern anchors",
+            (observation_fingerprint({"checkpoint": "hosted"}),),
         )
         state = ReviewState(ordered_prs=(2818,), legacy_transitions=(transition,))
         self.assertEqual(ReviewState.from_dict(state.to_dict()), state)

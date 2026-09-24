@@ -448,6 +448,115 @@ class AcceptanceCliTest(unittest.TestCase):
             self.assertEqual(len(json.loads(isolated.read_text(encoding="utf-8"))["legacy_transitions"]), 2)
             self.assertEqual(canonical.read_bytes() if canonical.exists() else None, before)
 
+    def test_missing_hosted_fingerprint_retirement_is_audited_and_no_quota(self):
+        canonical = state.state_path()
+        before = canonical.read_bytes() if canonical.exists() else None
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "missing-hosted-retirement.json"
+            isolated = root / "state.json"
+            payload = fixture_payload()
+            legacy_hosted = {
+                "pr": 1,
+                "head": LEGACY_HEAD,
+                "checkpoint": "trigger-uncheckpointed:42",
+                "held": True,
+            }
+            legacy_cli = {
+                "pr": 1,
+                "head": LEGACY_HEAD,
+                "checkpoint": "legacy-cli",
+                "completed": True,
+                "attributable": True,
+                "anchored": False,
+                "child_head": LEGACY_HEAD,
+                "corrected_state": True,
+                "accepted": 3,
+                "raw": 4,
+                "parent_head": "9" * 40,
+                "patch_id": "",
+            }
+            payload["evidence"]["1"] = {"hosted": [legacy_hosted], "cli": [legacy_cli]}
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+
+            self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1").returncode, 0)
+            initial = self.run_cli(
+                fixture,
+                isolated,
+                "decide",
+                "transition",
+                "--pr",
+                "1",
+                "--head",
+                HEAD_1,
+                "--reason",
+                "retire the unanchored legacy observations",
+            )
+            self.assertEqual(initial.returncode, 0, initial.stderr)
+            fingerprint = state.observation_fingerprint(legacy_hosted)
+
+            payload["evidence"]["1"]["hosted"] = [
+                {
+                    "pr": 1,
+                    "head": HEAD_1,
+                    "checkpoint": "modern-hosted",
+                    "completed": True,
+                    "attributable": True,
+                    "anchored": True,
+                    "corrected_state": True,
+                    "accepted": 1,
+                    "raw": 1,
+                    "child_head": HEAD_1,
+                    "parent_identity": "develop",
+                    "parent_head": BASE,
+                    "merge_base": BASE,
+                    "patch_id": "patch-1",
+                }
+            ]
+            payload["branch_heads"]["feature-1"] = HEAD_2
+            payload["pull_requests"][0]["head"] = HEAD_2
+            payload["merge_bases"][f"{BASE}...{HEAD_2}"] = BASE
+            payload["patch_ids"][f"{BASE}...{HEAD_2}"] = "patch-advanced"
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+
+            result = self.run_cli(
+                fixture,
+                isolated,
+                "decide",
+                "transition",
+                "--pr",
+                "1",
+                "--head",
+                HEAD_2,
+                "--reason",
+                "retire the exact missing Hosted fingerprint",
+                "--reauthorize",
+                "--retire-missing-hosted-fingerprint",
+                fingerprint,
+                "--json",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            decision = json.loads(result.stdout)
+            self.assertEqual(decision["retirement"]["retired_missing_hosted_fingerprints"], [fingerprint])
+            status = json.loads(self.run_cli(fixture, isolated, "status", "--json").stdout)
+            self.assertEqual(
+                status["legacy_transitions"][-1]["retired_hosted_fingerprints"], [fingerprint]
+            )
+
+            payload["evidence"]["1"]["hosted"].append(legacy_hosted)
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+            raw = json.loads(self.run_cli(fixture, isolated, "evidence", "1", "--json").stdout)
+            self.assertIn(legacy_hosted, raw["policy"]["hosted"])
+            self.assertEqual(
+                json.loads(self.run_cli(fixture, isolated, "status", "--json").stdout)["prs"][0]["channels"],
+                {"hosted": "READY", "cli": "READY"},
+            )
+            for channel in ("hosted", "cli"):
+                run = self.run_cli(fixture, isolated, "run", channel, "--expect-pr", "1")
+                self.assertEqual(run.returncode, 0, run.stderr)
+                self.assertIn("quota_consumed=False", run.stdout)
+            self.assertEqual(canonical.read_bytes() if canonical.exists() else None, before)
+
     def test_default_base_tip_accepts_case_differences_in_fixture_branch_sha(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -1074,8 +1074,44 @@ class ReviewController:
         ):
             raise ControllerError("legacy transition reauthorization requires matching modern head identity")
 
+    def _require_complete_reauthorization_audit(
+        self, pr: int, hosted_fingerprints: Sequence[str], current: Mapping[str, Any]
+    ) -> None:
+        """Require the live provider to prove complete, attributable Hosted evidence."""
+
+        audit_method = getattr(self._evidence_provider, "legacy_transition_reauthorization_audit", None)
+        if not callable(audit_method):
+            raise ControllerError(
+                "missing Hosted fingerprint retirement requires a complete paginated evidence audit"
+            )
+        try:
+            audit = audit_method(pr, tuple(hosted_fingerprints), current)
+        except ControllerError:
+            raise
+        except Exception as error:
+            raise ControllerError(
+                "missing Hosted fingerprint retirement could not verify complete paginated evidence"
+            ) from error
+        if not isinstance(audit, Mapping) or audit.get("complete") is not True:
+            raise ControllerError("missing Hosted fingerprint retirement requires complete paginated evidence")
+        for field, description in (
+            ("active_reservations", "an active or unresolved Hosted reservation"),
+            ("unmatched_responses", "an unmatched Hosted response"),
+            ("ambiguous_responses", "an ambiguous Hosted response"),
+            ("unresolved_findings", "unresolved actionable findings"),
+        ):
+            values = audit.get(field)
+            if not isinstance(values, Sequence) or isinstance(values, (str, bytes)) or values:
+                raise ControllerError(f"missing Hosted fingerprint retirement cannot proceed with {description}")
+
     def decide_legacy_transition(
-        self, *, pr: int, head: str, reason: str, reauthorize: bool = False
+        self,
+        *,
+        pr: int,
+        head: str,
+        reason: str,
+        reauthorize: bool = False,
+        retire_missing_hosted_fingerprint: str | None = None,
     ) -> dict[str, Any]:
         """Retire only the observed legacy evidence at one exact current anchor."""
 
@@ -1085,6 +1121,13 @@ class ReviewController:
             raise ControllerError("legacy evidence transition reason is malformed")
         if not isinstance(reauthorize, bool):
             raise ControllerError("legacy evidence transition reauthorization flag is malformed")
+        if retire_missing_hosted_fingerprint is not None:
+            if not isinstance(retire_missing_hosted_fingerprint, str) or not re.fullmatch(
+                r"[0-9a-f]{64}", retire_missing_hosted_fingerprint
+            ):
+                raise ControllerError("missing Hosted fingerprint retirement requires an exact SHA-256 fingerprint")
+            if not reauthorize:
+                raise ControllerError("missing Hosted fingerprint retirement requires explicit reauthorization")
         state = self._state()
         if pr not in state.ordered_prs:
             raise ControllerError(f"PR #{pr} is not in the configured review stack")
@@ -1125,7 +1168,16 @@ class ReviewController:
             raise ControllerError("legacy transition requires explicit reauthorization after the anchor changed")
         if reauthorize and prior is None and existing is None:
             raise ControllerError("legacy transition reauthorization requires a prior transition")
+        if retire_missing_hosted_fingerprint is not None:
+            if prior is None or retire_missing_hosted_fingerprint not in prior.hosted_fingerprints:
+                raise ControllerError(
+                    "missing Hosted fingerprint must exactly match a fingerprint from the prior transition"
+                )
+            if retire_missing_hosted_fingerprint in prior.retired_hosted_fingerprints:
+                raise ControllerError("the selected Hosted fingerprint is already retired")
         fingerprints: dict[str, tuple[str, ...]] = {}
+        retired_hosted = set((existing or prior).retired_hosted_fingerprints) if (existing or prior) else set()
+        newly_missing_hosted: set[str] = set()
         for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
             values = tuple(_history(self._evidence_provider, pr, channel))
             reauthorization_reference = existing or prior
@@ -1143,11 +1195,15 @@ class ReviewController:
                     if fingerprint in expected_set:
                         if fingerprint in found:
                             raise ControllerError("legacy transition evidence has an ambiguous duplicate observation")
-                        self._legacy_transition_record(value, pr, current.child_head)
+                        if fingerprint not in retired_hosted:
+                            self._legacy_transition_record(value, pr, current.child_head)
                         found[fingerprint] = value
                     else:
                         self._reauthorization_observation(value, pr)
-                if set(found) != expected_set:
+                missing = expected_set - set(found)
+                if channel == policy.Channel.HOSTED:
+                    newly_missing_hosted.update(missing - retired_hosted)
+                elif missing:
                     raise ControllerError("legacy transition reauthorization lost an old evidence observation")
                 fingerprints[channel.value] = expected
                 continue
@@ -1162,6 +1218,22 @@ class ReviewController:
                 checkpoints.add(checkpoint)
                 channel_fingerprints.append(observation_fingerprint(value))
             fingerprints[channel.value] = tuple(dict.fromkeys(channel_fingerprints))
+        if newly_missing_hosted:
+            if (
+                retire_missing_hosted_fingerprint is None
+                or newly_missing_hosted != {retire_missing_hosted_fingerprint}
+            ):
+                raise ControllerError(
+                    "reauthorization lost Hosted evidence; retirement requires the exact sole missing prior fingerprint"
+                )
+            audit_anchor = current.as_dict()
+            audit_anchor["live_base_ref"] = live[pr].base_ref
+            audit_anchor["live_base_tip"] = live[pr].base_tip
+            self._require_complete_reauthorization_audit(pr, fingerprints["hosted"], audit_anchor)
+            self._assert_transition_anchor_still_current(state, pr, current)
+            retired_hosted.add(retire_missing_hosted_fingerprint)
+        elif retire_missing_hosted_fingerprint is not None:
+            raise ControllerError("selected Hosted fingerprint is present and cannot be retired as missing")
         if not any(fingerprints.values()):
             raise ControllerError("no legacy evidence requires a transition")
         transition = LegacyEvidenceTransition(
@@ -1174,15 +1246,20 @@ class ReviewController:
             fingerprints["hosted"],
             fingerprints["cli"],
             reason.strip(),
+            tuple(value for value in fingerprints["hosted"] if value in retired_hosted),
         )
         if existing is not None:
             if (
                 existing.hosted_fingerprints != transition.hosted_fingerprints
                 or existing.cli_fingerprints != transition.cli_fingerprints
+                or existing.retired_hosted_fingerprints != transition.retired_hosted_fingerprints
             ):
                 raise ControllerError("an exact-anchor legacy transition already exists with different evidence")
             return {
                 "transition": existing.to_dict(),
+                "retirement": {
+                    "retired_missing_hosted_fingerprints": list(existing.retired_hosted_fingerprints),
+                },
                 "legacy_transitions": [item.to_dict() for item in state.legacy_transitions],
                 "recorded": False,
             }
@@ -1194,9 +1271,37 @@ class ReviewController:
         )
         return {
             "transition": transition.to_dict(),
+            "retirement": {
+                "retired_missing_hosted_fingerprints": list(transition.retired_hosted_fingerprints),
+            },
             "legacy_transitions": [item.to_dict() for item in updated.legacy_transitions],
             "recorded": True,
         }
+
+    def _assert_transition_anchor_still_current(
+        self, state: ReviewState, pr: int, expected: AnchorFacts
+    ) -> None:
+        """Recheck the complete live anchor after a missing-record audit."""
+
+        remote_heads = self.git.remote_heads()
+        live, snapshots, default_tip = self._live_snapshots(state, remote_heads)
+        baseline = stack.reconcile_stack(
+            state.ordered_prs,
+            snapshots,
+            self.default_base_ref,
+            default_tip,
+            is_ancestor=self.git.is_ancestor,
+        )
+        if (
+            baseline.status_for(pr) != stack.ReconciliationStatus.COHERENT
+            or live[pr].merged
+            or self._head_repository_problem(live[pr])
+            or not self._current_branches_match(state, live, baseline, pr, remote_heads)
+        ):
+            raise ControllerError("topology changed during missing Hosted fingerprint retirement")
+        after = self._anchor(pr, live[pr], baseline.links[pr])
+        if after.as_dict() != expected.as_dict():
+            raise ControllerError("PR head, parent, merge-base, or patch changed during missing Hosted fingerprint retirement")
 
     # Keep the shorter spelling available to callers of the controller API;
     # the CLI's canonical operation is ``decide transition``.
@@ -1332,7 +1437,11 @@ class ReviewController:
     def status(self) -> dict[str, Any]:
         state = self._state()
         if not state.ordered_prs:
-            return {"ordered_prs": [], "status": "EMPTY"}
+            return {
+                "ordered_prs": [],
+                "status": "EMPTY",
+                "legacy_transitions": [item.to_dict() for item in state.legacy_transitions],
+            }
         live, reconciliation = self._reconciliation(state)
         values: list[dict[str, Any]] = []
         for pr in state.ordered_prs:
@@ -1379,7 +1488,12 @@ class ReviewController:
                     "channels": channel_status,
                 }
             )
-        return {"ordered_prs": list(state.ordered_prs), "status": reconciliation.status.value, "prs": values}
+        return {
+            "ordered_prs": list(state.ordered_prs),
+            "status": reconciliation.status.value,
+            "prs": values,
+            "legacy_transitions": [item.to_dict() for item in state.legacy_transitions],
+        }
 
     def resolve_cli_target(self, expected_pr: int | None = None) -> ReviewTarget:
         selected = self._target(policy.Channel.CLI, expected_pr)

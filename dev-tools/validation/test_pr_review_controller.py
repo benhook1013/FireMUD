@@ -31,7 +31,7 @@ from pr_review.controller import (
 )
 from pr_review.patch_identity import patch_diff_args
 from pr_review.policy import Channel, Evidence, taper_satisfied
-from pr_review.state import StateStore
+from pr_review.state import StateStore, observation_fingerprint
 
 BASE = "a" * 40
 PARENT = "b" * 40
@@ -74,6 +74,26 @@ class FakeGitHub:
         return self.values[number]
 
 
+class AuditedEvidence(dict):
+    def __init__(self, *args, audit=None, on_audit=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.audit = audit or {
+            "complete": True,
+            "active_reservations": [],
+            "unmatched_responses": [],
+            "ambiguous_responses": [],
+            "unresolved_findings": [],
+        }
+        self.on_audit = on_audit
+        self.audit_calls = []
+
+    def legacy_transition_reauthorization_audit(self, pr_number, fingerprints, anchor):
+        self.audit_calls.append((pr_number, fingerprints, anchor))
+        if self.on_audit is not None:
+            self.on_audit()
+        return self.audit
+
+
 def pr(number, head, base_ref="develop", base_tip=BASE, *, merged=False, head_repository="owner/repo"):
     return LivePullRequest(
         number,
@@ -97,6 +117,60 @@ class ControllerTests(unittest.TestCase):
             evidence=evidence or {},
             repository="owner/repo",
         )
+
+    def make_legacy_retirement_case(self, *, audit=None, on_audit=None):
+        old_head = "7" * 40
+        legacy_cli = {
+            "pr": 1,
+            "head": old_head,
+            "checkpoint": "legacy-cli",
+            "completed": True,
+            "attributable": True,
+            "anchored": False,
+            "corrected_state": True,
+            "accepted": 3,
+            "raw": 4,
+            "child_head": old_head,
+            "parent_head": "1" * 40,
+            "patch_id": "",
+        }
+        legacy_hosted = {
+            "pr": 1,
+            "head": old_head,
+            "checkpoint": "trigger-uncheckpointed:42",
+            "held": True,
+        }
+        evidence = AuditedEvidence(
+            {(1, "cli"): [legacy_cli], (1, "hosted"): [legacy_hosted]},
+            audit=audit,
+            on_audit=on_audit,
+        )
+        values = {1: pr(1, HEAD_1)}
+        controller = self.make(values, evidence, heads={"feature-1": HEAD_1})
+        controller.set_stack([1])
+        controller.decide_legacy_transition(pr=1, head=HEAD_1, reason="record the prior legacy transition")
+        legacy_fingerprint = observation_fingerprint(legacy_hosted)
+        modern_hosted = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "modern-hosted",
+            "completed": True,
+            "attributable": True,
+            "anchored": True,
+            "corrected_state": True,
+            "accepted": 0,
+            "raw": 0,
+            "child_head": HEAD_1,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": f"patch-{HEAD_1[:4]}",
+        }
+        evidence[(1, "hosted")].append(modern_hosted)
+        evidence[(1, "hosted")].remove(legacy_hosted)
+        values[1] = pr(1, HEAD_2)
+        controller.git.heads["feature-1"] = HEAD_2
+        return controller, evidence, values, legacy_hosted, legacy_fingerprint
 
     def test_default_git_provider_translates_timeout_expired(self):
         provider = DefaultGitProvider(timeout_seconds=7)
@@ -1065,6 +1139,120 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(status["channels"], {"hosted": "READY", "cli": "READY"})
         self.assertEqual(len(controller._state().legacy_transitions), 2)
         self.assertEqual(controller.evidence(1)["1"]["hosted"][1]["checkpoint"], "modern-hosted")
+
+    def test_legacy_transition_retires_only_the_exact_missing_hosted_fingerprint_and_keeps_it_non_counting(self):
+        controller, evidence, _, legacy_hosted, fingerprint = self.make_legacy_retirement_case()
+
+        result = controller.decide_legacy_transition(
+            pr=1,
+            head=HEAD_2,
+            reason="retire the one audited missing Hosted fingerprint",
+            reauthorize=True,
+            retire_missing_hosted_fingerprint=fingerprint,
+        )
+
+        self.assertTrue(result["recorded"])
+        self.assertEqual(result["retirement"]["retired_missing_hosted_fingerprints"], [fingerprint])
+        transition = controller._state().legacy_transitions[-1]
+        self.assertEqual(transition.hosted_fingerprints, (fingerprint,))
+        self.assertEqual(transition.retired_hosted_fingerprints, (fingerprint,))
+        self.assertEqual(evidence.audit_calls[0][1], (fingerprint,))
+        self.assertEqual(
+            controller.status()["legacy_transitions"][-1]["retired_hosted_fingerprints"],
+            (fingerprint,),
+        )
+
+        evidence[(1, "hosted")].append(legacy_hosted)
+        state = controller._state()
+        _, reconciliation = controller._reconciliation(state)
+        projected = controller._policy_history(state, 1, Channel.HOSTED, reconciliation)
+        reappeared = next(item for item in projected if item["checkpoint"] == legacy_hosted["checkpoint"])
+        self.assertTrue(reappeared["non_counting"])
+        repeated = controller.decide_legacy_transition(
+            pr=1,
+            head=HEAD_2,
+            reason="retain the exact audited transition",
+            reauthorize=True,
+        )
+        self.assertFalse(repeated["recorded"])
+        self.assertEqual(repeated["transition"]["retired_hosted_fingerprints"], (fingerprint,))
+
+    def test_legacy_transition_missing_hosted_retirement_rejects_changed_or_nonprior_fingerprints(self):
+        controller, evidence, _, _, fingerprint = self.make_legacy_retirement_case()
+        changed = {
+            "pr": 1,
+            "head": "7" * 40,
+            "checkpoint": "trigger-uncheckpointed:42",
+            "held": True,
+            "reason": "changed record",
+        }
+        evidence[(1, "hosted")].append(changed)
+        with self.assertRaisesRegex(ControllerError, "active or ambiguous"):
+            controller.decide_legacy_transition(
+                pr=1,
+                head=HEAD_2,
+                reason="a changed observation is not the audited fingerprint",
+                reauthorize=True,
+                retire_missing_hosted_fingerprint=fingerprint,
+            )
+
+        evidence[(1, "hosted")].remove(changed)
+        with self.assertRaisesRegex(ControllerError, "exactly match a fingerprint from the prior transition"):
+            controller.decide_legacy_transition(
+                pr=1,
+                head=HEAD_2,
+                reason="an unaudited fingerprint cannot be retired",
+                reauthorize=True,
+                retire_missing_hosted_fingerprint="0" * 64,
+            )
+        self.assertEqual(len(controller._state().legacy_transitions), 1)
+
+    def test_legacy_transition_missing_hosted_retirement_rejects_incomplete_or_blocked_audits(self):
+        blockers = (
+            ("active_reservations", "active or unresolved Hosted reservation"),
+            ("unmatched_responses", "unmatched Hosted response"),
+            ("ambiguous_responses", "ambiguous Hosted response"),
+            ("unresolved_findings", "unresolved actionable findings"),
+        )
+        for field, message in blockers:
+            with self.subTest(field=field):
+                controller, evidence, _, _, fingerprint = self.make_legacy_retirement_case()
+                evidence.audit[field] = ["blocked"]
+                with self.assertRaisesRegex(ControllerError, message):
+                    controller.decide_legacy_transition(
+                        pr=1,
+                        head=HEAD_2,
+                        reason="all current Hosted evidence must be attributable and complete",
+                        reauthorize=True,
+                        retire_missing_hosted_fingerprint=fingerprint,
+                    )
+                self.assertEqual(len(controller._state().legacy_transitions), 1)
+
+    def test_legacy_transition_missing_hosted_retirement_rechecks_moved_parent_and_head(self):
+        for move in ("parent", "head"):
+            with self.subTest(move=move):
+                holder = {}
+
+                def move_during_audit(move=move, holder=holder):
+                    controller = holder["controller"]
+                    if move == "parent":
+                        controller.github.values[1] = pr(1, HEAD_2, base_tip="9" * 40)
+                        controller.git.heads["develop"] = "9" * 40
+                    else:
+                        controller.github.values[1] = pr(1, "8" * 40)
+                        controller.git.heads["feature-1"] = "8" * 40
+
+                controller, _, _, _, fingerprint = self.make_legacy_retirement_case(on_audit=move_during_audit)
+                holder["controller"] = controller
+                with self.assertRaisesRegex(ControllerError, "changed during missing Hosted fingerprint retirement"):
+                    controller.decide_legacy_transition(
+                        pr=1,
+                        head=HEAD_2,
+                        reason="the live topology must remain stable through the audit",
+                        reauthorize=True,
+                        retire_missing_hosted_fingerprint=fingerprint,
+                    )
+                self.assertEqual(len(controller._state().legacy_transitions), 1)
 
     def test_legacy_transition_requires_exact_coherent_current_topology(self):
         legacy = {
