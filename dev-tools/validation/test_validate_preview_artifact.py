@@ -43,6 +43,183 @@ EXPECTED_HELM_CHART_LABEL = (
 class PreviewArtifactServiceValidationTest(unittest.TestCase):
     validator = VALIDATOR
 
+    def _publication_grpc_deployment(self):
+        return {
+            "kind": "Deployment",
+            "metadata": {"name": "game-design-service"},
+            "spec": {
+                "template": {
+                    "spec": {
+                        "serviceAccountName": "firemud-app",
+                        "containers": [
+                            {
+                                "name": "game-design-service",
+                                "env": [
+                                    {
+                                        "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+                                        "valueFrom": {
+                                            "fieldRef": {
+                                                "fieldPath": "metadata.namespace"
+                                            }
+                                        },
+                                    },
+                                    {
+                                        "name": "FIREMUD_GRPC_CERT_CHAIN_PATH",
+                                        "value": "/tls/tls.crt",
+                                    },
+                                    {
+                                        "name": "FIREMUD_GRPC_PRIVATE_KEY_PATH",
+                                        "value": "/tls/tls.key",
+                                    },
+                                    {
+                                        "name": "FIREMUD_GRPC_CA_CERT_PATH",
+                                        "value": "/grpc-trust/ca.crt",
+                                    },
+                                ],
+                                "volumeMounts": [
+                                    {
+                                        "name": "grpc-tls",
+                                        "mountPath": "/tls",
+                                        "readOnly": True,
+                                    },
+                                    {
+                                        "name": "grpc-trust",
+                                        "mountPath": "/grpc-trust",
+                                        "readOnly": True,
+                                    },
+                                    {
+                                        "name": "jwt-signing-keys",
+                                        "mountPath": "/var/run/secrets/firemud/jwt",
+                                        "readOnly": True,
+                                    },
+                                ],
+                            }
+                        ],
+                        "volumes": [
+                            {
+                                "name": "grpc-tls",
+                                "secret": {
+                                    "secretName": "firemud-grpc-game-design-service",
+                                    "items": [
+                                        {"key": "tls.crt", "path": "tls.crt"},
+                                        {"key": "tls.key", "path": "tls.key"},
+                                    ],
+                                },
+                            },
+                            {
+                                "name": "grpc-trust",
+                                "secret": {
+                                    "secretName": "firemud-grpc-tls",
+                                    "items": [{"key": "ca.crt", "path": "ca.crt"}],
+                                },
+                            },
+                            {
+                                "name": "jwt-signing-keys",
+                                "secret": {"secretName": "jwt-signing-keys"},
+                            },
+                        ],
+                    }
+                }
+            },
+        }
+
+    def test_publication_grpc_consumer_accepts_pod_namespace_field_ref(self):
+        with patch.object(self.validator, "SERVICE_IMAGES", {"game-design-service"}):
+            self.validator.validate_service_consumers(
+                [self._publication_grpc_deployment()], "pr-42"
+            )
+
+    def test_publication_grpc_consumer_rejects_invalid_namespace_binding(self):
+        invalid_envs = (
+            ("missing", None),
+            (
+                "duplicate",
+                {
+                    "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+                    "valueFrom": {
+                        "fieldRef": {"fieldPath": "metadata.namespace"}
+                    },
+                },
+            ),
+            (
+                "literal",
+                {
+                    "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+                    "value": "pr-42",
+                },
+            ),
+            (
+                "wrong field path",
+                {
+                    "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+                    "valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}},
+                },
+            ),
+            (
+                "conflicting value",
+                {
+                    "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+                    "value": "pr-42",
+                    "valueFrom": {
+                        "fieldRef": {"fieldPath": "metadata.namespace"}
+                    },
+                },
+            ),
+        )
+        for name, invalid_entry in invalid_envs:
+            with self.subTest(name=name):
+                document = self._publication_grpc_deployment()
+                env = document["spec"]["template"]["spec"]["containers"][0]["env"]
+                if name == "missing":
+                    env[:] = [
+                        entry
+                        for entry in env
+                        if entry["name"] != "FIREMUD_GRPC_WORKLOAD_NAMESPACE"
+                    ]
+                elif name == "duplicate":
+                    env.append(invalid_entry)
+                else:
+                    env[0] = invalid_entry
+                with (
+                    patch.object(
+                        self.validator, "SERVICE_IMAGES", {"game-design-service"}
+                    ),
+                    self.assertRaisesRegex(
+                        ValueError,
+                        "must bind FIREMUD_GRPC_WORKLOAD_NAMESPACE to metadata.namespace",
+                    ),
+                ):
+                    self.validator.validate_service_consumers([document], "pr-42")
+
+    def test_publication_grpc_consumers_reject_shared_client_identity_fallbacks(self):
+        cases = (
+            (
+                "shared grpc Secret",
+                lambda document: document["spec"]["template"]["spec"]["volumes"][
+                    0
+                ]["secret"].update({"secretName": "firemud-grpc-tls"}),
+                "unexpected grpc-tls source",
+            ),
+            (
+                "client certificate path",
+                lambda document: document["spec"]["template"]["spec"]["containers"][
+                    0
+                ]["env"][1].update({"value": "/tls/client.crt"}),
+                "must configure FIREMUD_GRPC_CERT_CHAIN_PATH as /tls/tls.crt",
+            ),
+        )
+        for name, mutate, expected_error in cases:
+            with self.subTest(name=name):
+                document = self._publication_grpc_deployment()
+                mutate(document)
+                with (
+                    patch.object(
+                        self.validator, "SERVICE_IMAGES", {"game-design-service"}
+                    ),
+                    self.assertRaisesRegex(ValueError, re.escape(expected_error)),
+                ):
+                    self.validator.validate_service_consumers([document], "pr-42")
+
     def _tcp_proxy_service(
         self, *, service_type="ClusterIP", port=2323, target_port=2323
     ):
@@ -358,12 +535,25 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
             }
         )
 
-    def _manifest_fixture(self, volume):
+    def test_sanitized_walk_accepts_publication_secret_for_its_owner(self):
+        document = self._manifest_fixture(
+            {
+                "name": "grpc-tls",
+                "secret": {"secretName": "firemud-grpc-game-design-service"},
+            },
+            workload_name="game-design-service",
+        )
+        self.validator._validate_sanitized_secret_refs(document)
+
+    def _manifest_fixture(
+        self, volume, *, workload_name="account-service", kind="Deployment"
+    ):
+        app_name = "firemud-seed" if kind == "Job" else workload_name
         return {
-            "apiVersion": "apps/v1",
-            "kind": "Deployment",
+            "apiVersion": "batch/v1" if kind == "Job" else "apps/v1",
+            "kind": kind,
             "metadata": {
-                "name": "account-service",
+                "name": app_name,
                 "namespace": "pr-42",
                 "labels": {
                     **self.validator._expected_top_level_labels(),
@@ -371,9 +561,13 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
                 },
             },
             "spec": {
-                "selector": {"matchLabels": {"app": "account-service"}},
+                **(
+                    {}
+                    if kind == "Job"
+                    else {"selector": {"matchLabels": {"app": app_name}}}
+                ),
                 "template": {
-                    "metadata": {"labels": {"app": "account-service"}},
+                    "metadata": {"labels": {"app": app_name}},
                     "spec": {
                         "securityContext": {
                             "runAsNonRoot": True,
@@ -384,8 +578,8 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
                         },
                         "containers": [
                             {
-                                "name": "account-service",
-                                "image": "ghcr.io/benhook1013/account-service:pr-42-head-42",
+                                "name": workload_name,
+                                "image": f"ghcr.io/benhook1013/{workload_name}:pr-42-head-42",
                                 "securityContext": {
                                     "allowPrivilegeEscalation": False,
                                     "capabilities": {"drop": ["ALL"]},
@@ -400,17 +594,19 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
 
     def _validate_manifest(self, document):
         validator = self.validator
+        kind = document["kind"]
+        name = document["metadata"]["name"]
         expected_names = {
             kind: set() for kind in validator.EXPECTED_NAMES
         }
-        expected_names["Deployment"] = {"account-service"}
+        expected_names[kind] = {name}
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "manifest.yaml"
             path.write_text(yaml.safe_dump(document), encoding="utf-8")
             with (
                 patch.object(validator, "EXPECTED_NAMES", expected_names),
                 patch.object(
-                    validator, "EXPECTED_OBJECTS", {("Deployment", "account-service")}
+                    validator, "EXPECTED_OBJECTS", {(kind, name)}
                 ),
                 patch.object(validator, "validate_services"),
                 patch.object(validator, "validate_network_policies"),
@@ -527,6 +723,92 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
             },
         ):
             self._validate_manifest(self._manifest_fixture(copy.deepcopy(volume)))
+
+    def test_manifest_walk_accepts_publication_secret_for_its_owner(self):
+        document = self._manifest_fixture(
+            {
+                "name": "grpc-tls",
+                "secret": {"secretName": "firemud-grpc-game-design-service"},
+            },
+            workload_name="game-design-service",
+        )
+        self._validate_manifest(document)
+
+    def test_manifest_walk_rejects_publication_secret_outside_owner_volume(self):
+        foreign_owner_volume = self._manifest_fixture(
+            {
+                "name": "grpc-tls",
+                "secret": {"secretName": "firemud-grpc-game-design-service"},
+            },
+            workload_name="world-management-service",
+        )
+        env_secret_key_ref = self._manifest_fixture(
+            {"emptyDir": {}}, workload_name="game-design-service"
+        )
+        env_secret_key_ref["spec"]["template"]["spec"]["containers"][0][
+            "env"
+        ] = [
+            {
+                "name": "TLS_KEY",
+                "valueFrom": {
+                    "secretKeyRef": {
+                        "name": "firemud-grpc-game-design-service",
+                        "key": "tls.key",
+                    }
+                },
+            }
+        ]
+        env_from_secret_ref = self._manifest_fixture(
+            {"emptyDir": {}}, workload_name="game-design-service"
+        )
+        env_from_secret_ref["spec"]["template"]["spec"]["containers"][0][
+            "envFrom"
+        ] = [
+            {"secretRef": {"name": "firemud-grpc-game-design-service"}}
+        ]
+        job_volume = self._manifest_fixture(
+            {
+                "name": "grpc-tls",
+                "secret": {"secretName": "firemud-grpc-game-design-service"},
+            },
+            workload_name="game-design-service",
+            kind="Job",
+        )
+        unexpected_volume = self._manifest_fixture(
+            {
+                "name": "unexpected",
+                "secret": {"secretName": "firemud-grpc-game-design-service"},
+            },
+            workload_name="game-design-service",
+        )
+        cases = (
+            (
+                foreign_owner_volume,
+                "object.spec.template.spec.volumes[0].secret.secretName",
+            ),
+            (
+                env_secret_key_ref,
+                "object.spec.template.spec.containers[0].env[0].valueFrom.secretKeyRef.name",
+            ),
+            (
+                env_from_secret_ref,
+                "object.spec.template.spec.containers[0].envFrom[0].secretRef.name",
+            ),
+            (
+                job_volume,
+                "object.spec.template.spec.volumes[0].secret.secretName",
+            ),
+            (
+                unexpected_volume,
+                "object.spec.template.spec.volumes[0].secret.secretName",
+            ),
+        )
+        for document, location in cases:
+            with self.subTest(document=document), self.assertRaisesRegex(
+                ValueError,
+                re.escape(f"{location} contains an unapproved Secret reference"),
+            ):
+                self._validate_manifest(document)
 
     def test_manifest_walk_rejects_cross_namespace_identity_references(self):
         cases = (

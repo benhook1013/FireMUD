@@ -225,6 +225,21 @@ class WorldManagementServiceApplicationIntegrationTest {
     }
   }
 
+  @Test
+  @Transactional
+  void worldEventFindByIdPreservesARegionReferenceWithoutJoinedScopeColumns() {
+    long regionId = insertRegion(404L, 4004L, 44L);
+    Long eventId =
+        insertEvent(404L, 4004L, regionId, "FIND_BY_ID_NOTICE", LocalDateTime.now().plusMinutes(1));
+
+    WorldEvent event = worldEventRepository.findById(eventId).orElseThrow();
+
+    assertThat(event.getRegionInstance()).isNotNull();
+    assertThat(event.getRegionInstance().getId()).isEqualTo(regionId);
+    assertThat(event.getRegionInstance().getTenantId()).isNull();
+    assertThat(event.getRegionInstance().getGameInstanceId()).isNull();
+  }
+
   private static void awaitLatch(CountDownLatch latch) {
     try {
       assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();

@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: smoke-${{ github.workflow }}-${{ format('pr-{0}-controller', github.event.pull_request.number) }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required' }}
+  group: smoke-${{ github.workflow }}-${{ format('pr-{0}-controller', github.event.pull_request.number) }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && format('metadata-{0}', github.run_id) || 'required' }}
   cancel-in-progress: true
 
 jobs:
@@ -270,7 +270,7 @@ jobs:
             }
 
   smoke-summary:
-    name: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Summary)' || 'Smoke Summary' }}
+    name: ${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Summary)' || 'Smoke Summary' }}
     runs-on: ubuntu-latest
     permissions:
       # This job updates the canonical comment to the terminal Smoke Gate result.
@@ -415,7 +415,7 @@ jobs:
       pull-requests: read # Re-read the current PR head and base before accepting smoke.
     needs: [changes]
     if: ${{ always() && github.event_name == 'pull_request' }}
-    timeout-minutes: 30
+    timeout-minutes: 95
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
@@ -520,16 +520,7 @@ jobs:
             }
 
             function identityKey(identity) {
-              return `${identity.baseRef}@${identity.baseSha}...${identity.headSha}#${identity.mergeSha}`;
-            }
-
-            function eventIdentityMatches(identity) {
-              return (
-                identity.baseRef === baseRef &&
-                identity.baseSha === eventBaseSha &&
-                identity.headSha === headSha &&
-                identity.mergeSha === eventMergeSha
-              );
+              return `${identity.sourceEvent}:${identity.baseRef}@${identity.baseSha}...${identity.headSha}#${identity.mergeSha}`;
             }
 
             async function resolveCurrentIdentity(label) {
@@ -553,14 +544,48 @@ jobs:
                 return { obsolete: true };
               }
 
-              const currentBaseRef = currentPullRequest.base.ref;
               try {
+                if (
+                  !/^[0-9a-f]{40}$/.test(eventBaseSha ?? "") ||
+                  !/^[0-9a-f]{40}$/.test(eventMergeSha ?? "")
+                ) {
+                  throw new Error("GitHub supplied an invalid event base or test-merge SHA");
+                }
+
+                const { data: mergeCommit } = await withTransientGitHubRetry(
+                  "event test-merge lookup",
+                  () => github.rest.repos.getCommit({
+                    owner,
+                    repo,
+                    ref: eventMergeSha,
+                  })
+                );
+                const parents = mergeCommit.parents ?? [];
+                if (
+                  mergeCommit.sha === eventMergeSha &&
+                  parents.length === 2 &&
+                  parents[0]?.sha === eventBaseSha &&
+                  parents[1]?.sha === headSha
+                ) {
+                  identityDiagnostic = `resolved tested event identity ${baseRef}@${eventBaseSha}...${headSha}#${eventMergeSha}`;
+                  return {
+                    baseRef,
+                    baseSha: eventBaseSha,
+                    headSha,
+                    mergeSha: eventMergeSha,
+                    sourceEvent: "pull_request",
+                  };
+                }
+
+                core.info(
+                  `Event test merge parents are not [${eventBaseSha}, ${headSha}]; checking for an exact trusted current-base smoke refresh.`
+                );
                 const { data: currentBaseRefData } = await withTransientGitHubRetry(
                   "current base ref lookup",
                   () => github.rest.git.getRef({
                     owner,
                     repo,
-                    ref: `heads/${currentBaseRef}`,
+                    ref: `heads/${baseRef}`,
                   })
                 );
                 const currentBaseSha = currentBaseRefData.object?.sha;
@@ -571,8 +596,7 @@ jobs:
                 ) {
                   throw new Error("GitHub returned an invalid current base or test-merge SHA");
                 }
-
-                const { data: mergeCommit } = await withTransientGitHubRetry(
+                const { data: currentMergeCommit } = await withTransientGitHubRetry(
                   "current test-merge lookup",
                   () => github.rest.repos.getCommit({
                     owner,
@@ -580,27 +604,28 @@ jobs:
                     ref: currentMergeSha,
                   })
                 );
-                const parents = mergeCommit.parents ?? [];
+                const currentParents = currentMergeCommit.parents ?? [];
                 if (
-                  mergeCommit.sha !== currentMergeSha ||
-                  parents.length !== 2 ||
-                  parents[0]?.sha !== currentBaseSha ||
-                  parents[1]?.sha !== headSha
+                  currentMergeCommit.sha !== currentMergeSha ||
+                  currentParents.length !== 2 ||
+                  currentParents[0]?.sha !== currentBaseSha ||
+                  currentParents[1]?.sha !== headSha
                 ) {
                   throw new Error(
-                    `test merge parents are not [${currentBaseSha}, ${headSha}]`
+                    `current test merge parents are not [${currentBaseSha}, ${headSha}]`
                   );
                 }
 
-                identityDiagnostic = `resolved current identity ${currentBaseRef}@${currentBaseSha}...${headSha}#${currentMergeSha}`;
+                identityDiagnostic = `resolved trusted current-base identity ${baseRef}@${currentBaseSha}...${headSha}#${currentMergeSha}`;
                 return {
-                  baseRef: currentBaseRef,
+                  baseRef,
                   baseSha: currentBaseSha,
                   headSha,
                   mergeSha: currentMergeSha,
+                  sourceEvent: "repository_dispatch",
                 };
               } catch (error) {
-                identityDiagnostic = `${label} could not resolve the current base ref and exact test merge: ${error.message}`;
+                identityDiagnostic = `${label} could not verify the event or trusted current-base test merge: ${error.message}`;
                 core.warning(identityDiagnostic);
                 return null;
               }
@@ -640,9 +665,6 @@ jobs:
               }
               pollIteration += 1;
 
-              const expectedRuntimeEvent = eventIdentityMatches(currentIdentity)
-                ? "pull_request"
-                : "repository_dispatch";
               const expectedDisplayTitle =
                 `Build Runtime Images secure-pr-artifact pr-${prNumber} ` +
                 `base-${currentIdentity.baseSha} head-${currentIdentity.headSha} ` +
@@ -651,10 +673,10 @@ jobs:
                 owner,
                 repo,
                 workflow_id: "runtime-images.yml",
-                event: expectedRuntimeEvent,
+                event: currentIdentity.sourceEvent,
                 per_page: 100,
               };
-              if (expectedRuntimeEvent === "pull_request") {
+              if (currentIdentity.sourceEvent === "pull_request") {
                 workflowRunQuery.head_sha = currentIdentity.headSha;
               } else {
                 const pullRequestCreatedAt = context.payload.pull_request.created_at;
@@ -677,13 +699,13 @@ jobs:
                     const runs = response.data ?? [];
                     for (const run of runs) {
                       if (
-                        run.event !== expectedRuntimeEvent ||
-                        (expectedRuntimeEvent === "pull_request" && run.head_sha !== currentIdentity.headSha) ||
+                        run.event !== currentIdentity.sourceEvent ||
+                        (currentIdentity.sourceEvent === "pull_request" && run.head_sha !== currentIdentity.headSha) ||
                         run.display_title !== expectedDisplayTitle
                       ) {
                         continue;
                       }
-                      if (expectedRuntimeEvent === "pull_request") {
+                      if (currentIdentity.sourceEvent === "pull_request") {
                         const pullRequests = run.pull_requests ?? [];
                         if (
                           pullRequests.length > 0 &&
@@ -842,11 +864,8 @@ jobs:
                 return;
               }
 
-              const sourceDescription = expectedRuntimeEvent === "repository_dispatch"
-                ? "trusted typed repository_dispatch refresh"
-                : "ordinary pull_request source";
               core.info(
-                `No ${sourceDescription} runtime-images/full-smoke run found yet for PR #${prNumber} ` +
+                `No exact ${currentIdentity.sourceEvent} runtime-images/full-smoke run found yet for PR #${prNumber} ` +
                 `base ${currentIdentity.baseSha} head ${currentIdentity.headSha} merge ${currentIdentity.mergeSha}; waiting...`
               );
               await new Promise((resolve) => setTimeout(resolve, sleepMs));
@@ -862,18 +881,7 @@ jobs:
             const timeoutIdentity = currentIdentity
               ? `base ${currentIdentity.baseSha} head ${currentIdentity.headSha} merge ${currentIdentity.mergeSha}`
               : `event base ${eventBaseSha} head ${headSha} merge ${eventMergeSha}`;
-            const timeoutEvent = currentIdentity && eventIdentityMatches(currentIdentity)
-              ? "pull_request"
-              : "repository_dispatch";
-            if (timeoutEvent === "repository_dispatch") {
-              core.setFailed(
-                `Timed out waiting for the trusted typed repository_dispatch runtime-images/full-smoke run for PR #${prNumber} ` +
-                `${timeoutIdentity}; no trusted refresh dispatch exists or it did not complete. ` +
-                `The stale pull_request source is not accepted. Diagnostic: ${identityDiagnostic}`
-              );
-            } else {
-              core.setFailed(
-                `Timed out waiting for the runtime-images/full-smoke run for PR #${prNumber} ${timeoutIdentity}. ` +
-                `Diagnostic: ${identityDiagnostic}`
-              );
-            }
+            core.setFailed(
+              `Timed out waiting for the exact runtime-images/full-smoke run for PR #${prNumber} ${timeoutIdentity}. ` +
+              `Diagnostic: ${identityDiagnostic}`
+            );

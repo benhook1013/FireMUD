@@ -277,6 +277,7 @@ Validation precedence is fixed: first parse every checked queue row and validate
 | [ADR 0180](./adr-0180-account-owned-hosted-terms-acceptance-gate.md) | Accepted | `AA-1.3` | `AA-1.5`, `AR-1.1`, `AR-1.4`, `AR-1.5`, `EA-3.2`, `PO-1.3`, `SF-2.3` | Account-owned hosted-terms catalog, acceptance evidence, and official-hosted creator mutation gate |
 | [ADR 0181](./adr-0181-changed-hosted-terms-decline-and-existing-content-continuity.md) | Accepted | `PO-1.3` | `AA-1.3`, `AA-1.4`, `AA-1.5`, `AR-1.1`, `AR-1.4`, `AR-1.5`, `EA-3.2`, `SF-2.3` | Changed hosted-terms decline, prior-terms continuity, lifecycle-reducing access, and finite transition |
 | [ADR 0182](./adr-0182-separated-hosted-runtime-and-certificate-identity-lifecycles.md) | Accepted | `PO-3.2` | `PO-3.1`, `PO-4.4`, `SF-1.3`, `PO-1.1` | Separated hosted runtime and certificate-identity lifecycles |
+| [ADR 0184](./adr-0184-emergency-tcp-proxy-identity-withdrawal.md) | Accepted | `SF-1.3` | `PO-2.1`, `PO-2.2`, `PO-3.2`, `PO-4.4` | Emergency trust cutoff for a withdrawn TCP Proxy bridge identity |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../../product/capability-taxonomy.md).
 

@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 1 ]]; then
-  echo "usage: $0 <namespace>" >&2
+grpc_tls_operation='complete'
+if [[ $# -eq 2 && "$1" == --shared-only ]]; then
+  grpc_tls_operation='shared-only'
+  namespace="$2"
+elif [[ $# -eq 1 ]]; then
+  namespace="$1"
+else
+  echo "usage: $0 [--shared-only] <dev|pr-N-namespace>" >&2
   exit 1
 fi
 
-namespace="$1"
 umask 077
-[[ "$namespace" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] || {
-  echo "invalid runtime namespace: $namespace" >&2
+[[ "$namespace" == dev || "$namespace" =~ ^pr-[1-9][0-9]{0,50}$ ]] || {
+  echo "runtime namespace must be dev or canonical pr-N: $namespace" >&2
   exit 1
 }
 
@@ -28,17 +33,14 @@ legacy_generator="$script_dir/../../certs/generate-dev-certs.sh"
 }
 
 shared_secret="${PREVIEW_GRPC_TLS_SECRET_NAME:-firemud-grpc-tls}"
-ca_secret="firemud-grpc-ca"
-cert_dir="${PREVIEW_GRPC_TLS_CERT_DIR:-}"
-temporary_cert_dir=false
-if [[ -z "$cert_dir" ]]; then
+provided_cert_dir="${PREVIEW_GRPC_TLS_CERT_DIR:-}"
+if [[ -z "$provided_cert_dir" ]]; then
   cert_dir="$(mktemp -d)"
-  temporary_cert_dir=true
+else
+  mkdir -p "$provided_cert_dir"
+  cert_dir="$(mktemp -d "${provided_cert_dir%/}/firemud-grpc-tls.XXXXXXXX")"
 fi
-mkdir -p "$cert_dir"
-if [[ "$temporary_cert_dir" == true ]]; then
-  trap 'rm -rf "$cert_dir"' EXIT
-fi
+trap 'rm -rf "$cert_dir"' EXIT
 
 workloads=(
   game-design-service
@@ -49,16 +51,24 @@ workloads=(
 )
 
 secret_exists() {
-  kubectl -n "$namespace" get secret "$1" >/dev/null 2>&1
+  local secret_name="$1"
+  local lookup_result
+
+  if ! lookup_result="$(kubectl -n "$namespace" get secret "$secret_name" --ignore-not-found -o name 2>&1)"; then
+    echo "failed to look up Kubernetes Secret ${namespace}/${secret_name}: ${lookup_result}" >&2
+    exit 1
+  fi
+  [[ -n "$lookup_result" ]]
 }
 
 read_secret_file() {
   local secret_name="$1"
   local key="$2"
   local output="$3"
+  local escaped_key="${key//./\\.}"
   local encoded
 
-  encoded="$(kubectl -n "$namespace" get secret "$secret_name" -o "jsonpath={.data['${key}']}")" || return 1
+  encoded="$(kubectl -n "$namespace" get secret "$secret_name" -o "jsonpath={.data.${escaped_key}}")" || return 1
   [[ -n "$encoded" ]] || return 1
   printf '%s' "$encoded" | base64 --decode >"$output" || return 1
   [[ -s "$output" ]]
@@ -91,6 +101,21 @@ ca_bundle_contains() {
   openssl verify -CAfile "$bundle" "$certificate" >/dev/null 2>&1
 }
 
+assert_certificate_unexpired() {
+  local certificate="$1"
+  local description="$2"
+  local rotation_secrets="$3"
+
+  if ! openssl x509 -in "$certificate" -noout >/dev/null 2>&1; then
+    return 0
+  fi
+  if ! openssl x509 -in "$certificate" -checkend 0 -noout >/dev/null 2>&1; then
+    echo "$description is expired; for safe rotation, an operator must delete these retained Secrets before rerunning:" \
+      "$rotation_secrets" >&2
+    return 1
+  fi
+}
+
 validate_workload_certificate() {
   local certificate="$1"
   local key="$2"
@@ -103,9 +128,17 @@ validate_workload_certificate() {
   local san_values
   local expected_dns
 
-  openssl x509 -in "$certificate" -noout >/dev/null
-  assert_key_matches_certificate "$certificate" "$key"
-  certificate_text="$(openssl x509 -in "$certificate" -noout -text)"
+  if ! openssl x509 -in "$certificate" -noout >/dev/null 2>&1; then
+    echo "workload certificate could not be parsed: $certificate" >&2
+    return 1
+  fi
+  if ! assert_key_matches_certificate "$certificate" "$key"; then
+    return 1
+  fi
+  if ! certificate_text="$(openssl x509 -in "$certificate" -noout -text)"; then
+    echo "workload certificate could not be parsed: $certificate" >&2
+    return 1
+  fi
   basic_constraints="$(printf '%s\n' "$certificate_text" | awk '
     /X509v3 Basic Constraints:/ {
       getline
@@ -142,7 +175,10 @@ validate_workload_certificate() {
     echo "workload certificate EKU must be exactly serverAuth/clientAuth: $certificate" >&2
     return 1
   }
-  san_values="$(openssl x509 -in "$certificate" -noout -ext subjectAltName | awk 'NR > 1 { print }' | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+  if ! san_values="$(openssl x509 -in "$certificate" -noout -ext subjectAltName | awk 'NR > 1 { print }' | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"; then
+    echo "workload certificate SANs could not be read: $certificate" >&2
+    return 1
+  fi
   [[ "$(printf '%s\n' "$san_values" | sed '/^$/d' | wc -l)" -eq 5 ]] || {
     echo "workload certificate must contain exactly one URI SAN and four DNS SANs: $certificate" >&2
     return 1
@@ -166,17 +202,11 @@ validate_workload_certificate() {
 shared_ca="$cert_dir/shared-ca.crt"
 shared_cert="$cert_dir/shared-client.crt"
 shared_key="$cert_dir/shared-client.key"
-source_ca="$cert_dir/source-ca.crt"
-source_key="$cert_dir/source-ca.key"
 
 if ! secret_exists "$shared_secret"; then
-  if secret_exists "$ca_secret"; then
-    echo "shared gRPC TLS Secret is missing while standalone source material exists; refusing fresh replacement" >&2
-    exit 1
-  fi
   for workload in "${workloads[@]}"; do
-    if secret_exists "firemud-grpc-${workload}" || secret_exists "${namespace}-grpc-${workload}"; then
-      echo "shared gRPC TLS Secret is missing while a publication Secret exists; refusing fresh replacement" >&2
+    if secret_exists "firemud-grpc-${workload}"; then
+      echo "shared gRPC TLS Secret is missing while a cert-manager publication Secret exists; refusing fresh replacement" >&2
       exit 1
     fi
   done
@@ -196,6 +226,15 @@ if secret_exists "$shared_secret"; then
     exit 1
   }
   openssl x509 -in "$shared_cert" -noout >/dev/null
+  shared_rotation_secrets=("${namespace}/${shared_secret}")
+  for workload in "${workloads[@]}"; do
+    if secret_exists "firemud-grpc-${workload}"; then
+      shared_rotation_secrets+=("${namespace}/firemud-grpc-${workload}")
+    fi
+  done
+  assert_certificate_unexpired "$shared_cert" \
+    "shared gRPC TLS client certificate in Secret ${namespace}/${shared_secret}" \
+    "${shared_rotation_secrets[*]}" || exit 1
   assert_key_matches_certificate "$shared_cert" "$shared_key"
 else
   # The legacy shared bundle is still required by the six non-publication
@@ -216,98 +255,68 @@ else
     --from-file=client.key="$shared_key"
 fi
 
-existing_publication_secret=false
-for workload in "${workloads[@]}"; do
-  if secret_exists "firemud-grpc-${workload}" || secret_exists "${namespace}-grpc-${workload}"; then
-    existing_publication_secret=true
-  fi
-done
-
-if secret_exists "$ca_secret"; then
-  read_secret_file "$ca_secret" ca.crt "$source_ca" || {
-    echo "existing standalone gRPC CA Secret lacks a usable ca.crt" >&2
-    exit 1
-  }
-  read_secret_file "$ca_secret" ca.key "$source_key" || {
-    echo "existing standalone gRPC CA Secret lacks its private key; refusing to mint replacement material" >&2
-    exit 1
-  }
-else
-  if [[ "$existing_publication_secret" == true ]]; then
-    echo "standalone gRPC CA Secret is missing while a publication Secret exists; refusing certificate replacement" >&2
-    exit 1
-  fi
-
-  # Keep the legacy shared leaf and CA intact. A separate, stable CA signs the
-  # five distinct publication leaves; the CA key is retained only in this
-  # unmounted source Secret so it can be reused for future missing projections.
-  openssl genrsa -out "$source_key" 2048 >/dev/null 2>&1
-  openssl req -x509 -new -nodes -key "$source_key" -sha256 -days 365 \
-    -subj "/CN=FireMUD-Standalone-gRPC-CA" \
-    -addext "basicConstraints=critical,CA:true,pathlen:0" \
-    -addext "keyUsage=critical,keyCertSign,cRLSign" \
-    -out "$source_ca"
-  chmod 644 "$source_ca"
-  chmod 600 "$source_key"
-  apply_secret "$ca_secret" \
-    --from-file=ca.crt="$source_ca" \
-    --from-file=ca.key="$source_key"
-fi
-
-openssl x509 -in "$source_ca" -noout >/dev/null
-openssl pkey -in "$source_key" -noout >/dev/null
-assert_key_matches_certificate "$source_ca" "$source_key" 2>/dev/null || {
-  echo "standalone gRPC CA certificate and private key do not match" >&2
-  exit 1
-}
-
-# Add the standalone CA to the existing shared trust bundle without replacing
-# the shared six-workload leaf. This is a one-time migration and is a no-op on
-# every subsequent deployment.
-if ! ca_bundle_contains "$shared_ca" "$source_ca"; then
-  cat "$shared_ca" "$source_ca" >"$cert_dir/shared-ca-updated.crt"
-  mv "$cert_dir/shared-ca-updated.crt" "$shared_ca"
-  apply_secret "$shared_secret" \
-    --from-file=ca.crt="$shared_ca" \
-    --from-file=client.crt="$shared_cert" \
-    --from-file=client.key="$shared_key"
+if [[ "$grpc_tls_operation" == shared-only ]]; then
+  printf 'namespace=%s\nsharedSecret=ready\n' "$namespace"
+  exit 0
 fi
 
 declare -A fingerprints=()
 shared_fingerprint="$(openssl x509 -in "$shared_cert" -outform der | openssl sha256)"
+certificate_wait_timeout_seconds="${CERTIFICATE_WAIT_TIMEOUT_SECONDS:-900}"
+if [[ ! "$certificate_wait_timeout_seconds" =~ ^[1-9][0-9]{0,3}$ ]] ||
+  ((10#$certificate_wait_timeout_seconds > 3600)); then
+  echo "CERTIFICATE_WAIT_TIMEOUT_SECONDS must be an integer between 1 and 3600" >&2
+  exit 2
+fi
+issuer_ca=''
+issuer_fingerprint=''
+certificate_wait_deadline=$((SECONDS + certificate_wait_timeout_seconds))
 
 for workload in "${workloads[@]}"; do
   secret_name="firemud-grpc-${workload}"
-  source_name="${namespace}-grpc-${workload}"
   workload_cert="$cert_dir/${workload}.crt"
   workload_key="$cert_dir/${workload}.key"
+  workload_ca="$cert_dir/${workload}-ca.crt"
+  projection_complete=false
 
-  if secret_exists "$source_name"; then
-    read_secret_file "$source_name" tls.crt "$workload_cert" || {
-      echo "existing publication source Secret lacks a usable tls.crt: $source_name" >&2
-      exit 1
-    }
-    read_secret_file "$source_name" tls.key "$workload_key" || {
-      echo "existing publication source Secret lacks a usable tls.key: $source_name" >&2
-      exit 1
-    }
-  elif secret_exists "$secret_name"; then
-    # Recover the stable source name from an older standalone run without
-    # minting a new leaf. The runtime projection remains disposable.
-    read_secret_file "$secret_name" tls.crt "$workload_cert" || {
-      echo "existing publication Secret lacks a usable tls.crt: $secret_name" >&2
-      exit 1
-    }
-    read_secret_file "$secret_name" tls.key "$workload_key" || {
-      echo "existing publication Secret lacks a usable tls.key: $secret_name" >&2
-      exit 1
-    }
-  else
-    "$legacy_generator" --workload "$source_ca" "$source_key" "$workload_cert" "$workload_key" "$namespace" "$workload"
-  fi
+  while ((SECONDS < certificate_wait_deadline)); do
+    if secret_exists "$secret_name" &&
+      read_secret_file "$secret_name" tls.crt "$workload_cert" &&
+      read_secret_file "$secret_name" tls.key "$workload_key" &&
+      read_secret_file "$secret_name" ca.crt "$workload_ca"; then
+      projection_complete=true
+      break
+    fi
+    sleep 5
+  done
+  [[ "$projection_complete" == true ]] || {
+    echo "cert-manager Secret ${namespace}/${secret_name} did not become key-complete within the aggregate ${certificate_wait_timeout_seconds}s window" >&2
+    exit 1
+  }
 
   validate_workload_certificate "$workload_cert" "$workload_key" "$workload"
-  openssl verify -CAfile "$source_ca" "$workload_cert" >/dev/null
+  assert_certificate_unexpired "$workload_cert" \
+    "cert-manager publication certificate in Secret ${namespace}/${secret_name}" \
+    "${namespace}/${secret_name}" || exit 1
+  openssl x509 -in "$workload_ca" -noout -text | grep -Fq 'CA:TRUE' || {
+    echo "cert-manager CA projection is not a CA certificate: ${namespace}/${secret_name}" >&2
+    exit 1
+  }
+  assert_certificate_unexpired "$workload_ca" \
+    "cert-manager CA projection in Secret ${namespace}/${secret_name}" \
+    "${namespace}/${secret_name}" || exit 1
+  openssl verify -CAfile "$workload_ca" "$workload_cert" >/dev/null || {
+    echo "cert-manager publication certificate does not chain to its projected CA: ${namespace}/${secret_name}" >&2
+    exit 1
+  }
+  current_issuer_fingerprint="$(openssl x509 -in "$workload_ca" -outform der | openssl sha256)"
+  if [[ -n "$issuer_fingerprint" && "$issuer_fingerprint" != "$current_issuer_fingerprint" ]]; then
+    echo "cert-manager publication Secrets do not share one CA projection" >&2
+    exit 1
+  fi
+  issuer_fingerprint="$current_issuer_fingerprint"
+  issuer_ca="$workload_ca"
+
   fingerprint="$(openssl x509 -in "$workload_cert" -outform der | openssl sha256)"
   [[ "$fingerprint" != "$shared_fingerprint" ]] || {
     echo "publication workload certificate must not reuse the shared gRPC leaf: $secret_name" >&2
@@ -318,18 +327,22 @@ for workload in "${workloads[@]}"; do
     exit 1
   }
   fingerprints["$fingerprint"]="$workload"
-
-  if ! secret_exists "$source_name"; then
-    apply_secret "$source_name" \
-      --from-file=ca.crt="$shared_ca" \
-      --from-file=tls.crt="$workload_cert" \
-      --from-file=tls.key="$workload_key"
-  fi
-
-  apply_secret "$secret_name" \
-    --from-file=ca.crt="$shared_ca" \
-    --from-file=tls.crt="$workload_cert" \
-    --from-file=tls.key="$workload_key"
 done
 
-echo "Stable standalone gRPC TLS material is ready in namespace ${namespace}: shared leaf plus ${#workloads[@]} distinct publication leaves"
+if ! ca_bundle_contains "$shared_ca" "$issuer_ca"; then
+  cat "$shared_ca" "$issuer_ca" >"$cert_dir/shared-ca-updated.crt"
+  mv "$cert_dir/shared-ca-updated.crt" "$shared_ca"
+  apply_secret "$shared_secret" \
+    --from-file=ca.crt="$shared_ca" \
+    --from-file=client.crt="$shared_cert" \
+    --from-file=client.key="$shared_key"
+fi
+
+# Remove the former runtime-local CA key only after replacement projections
+# have passed validation and the shared trust bundle has the issuer anchor.
+kubectl -n "$namespace" delete secret firemud-grpc-ca --ignore-not-found >/dev/null
+for workload in "${workloads[@]}"; do
+  kubectl -n "$namespace" delete secret "${namespace}-grpc-${workload}" --ignore-not-found >/dev/null
+done
+
+echo "cert-manager gRPC TLS material is ready in namespace ${namespace}: shared legacy bundle plus ${#fingerprints[@]} distinct publication leaves"

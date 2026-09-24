@@ -33,6 +33,14 @@ class EnvironmentIdentityPlannerTest {
     assertEquals("firemud-grpc-tls", plan.grpcSecretName());
     assertEquals(
         List.of(
+            "game-design-service",
+            "world-management-service",
+            "entity-management-service",
+            "game-logic-service",
+            "automation-scripting-service"),
+        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS);
+    assertEquals(
+        List.of(
             "account-service",
             "game-session-service",
             "logging-admin-service",
@@ -40,14 +48,12 @@ class EnvironmentIdentityPlannerTest {
             "spring-cloud-gateway",
             "tcp-proxy-service"),
         plan.grpcConsumers());
-    assertEquals(
-        "pr-42-grpc-game-design-service",
-        plan.grpcPublicationSourceSecretName("game-design-service"));
-    assertEquals(
-        "firemud-grpc-game-design-service", plan.grpcPublicationSecretName("game-design-service"));
-    assertEquals(
-        "spiffe://firemud/ns/pr-42/sa/game-design-service",
-        plan.grpcPublicationUriSan("game-design-service"));
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      assertEquals("pr-42-grpc-" + workload, plan.grpcPublicationSourceSecretName(workload));
+      assertEquals("firemud-grpc-" + workload, plan.grpcPublicationSecretName(workload));
+      assertEquals(
+          "spiffe://firemud/ns/pr-42/sa/" + workload, plan.grpcPublicationUriSan(workload));
+    }
   }
 
   @Test

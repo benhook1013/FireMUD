@@ -33,7 +33,7 @@ spec:
             - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
               value: /tls/tls.key
             - name: FIREMUD_GRPC_CA_CERT_PATH
-              value: /tls/ca.crt
+              value: /grpc-trust/ca.crt
           envFrom:
             - configMapRef:
                 name: firemud-config
@@ -42,6 +42,9 @@ spec:
           volumeMounts:
             - name: grpc-tls
               mountPath: /tls
+              readOnly: true
+            - name: grpc-trust
+              mountPath: /grpc-trust
               readOnly: true
             - name: jwt-signing-keys
               mountPath: /var/run/secrets/firemud/jwt
@@ -111,6 +114,17 @@ spec:
         - name: grpc-tls
           secret:
             secretName: firemud-grpc-automation-scripting-service
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: grpc-trust
+          secret:
+            secretName: firemud-grpc-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
         - name: jwt-signing-keys
           secret:
             secretName: jwt-signing-keys

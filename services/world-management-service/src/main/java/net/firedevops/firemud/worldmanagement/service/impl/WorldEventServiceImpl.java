@@ -52,7 +52,7 @@ public class WorldEventServiceImpl implements WorldEventService {
   @Timed(value = "worldEvent.schedule")
   public WorldEventDto scheduleEvent(WorldEventDto dto) {
     if (WorldEvent.WEATHER_CHANGE_EVENT_TYPE.equals(dto.eventType())) {
-      throw new IllegalStateException(
+      throw new IllegalArgumentException(
           "WEATHER_CHANGE_UNAVAILABLE: weather aggregate and effect fence are not established");
     }
     WorldEvent entity = mapper.toEntity(dto);
@@ -67,7 +67,11 @@ public class WorldEventServiceImpl implements WorldEventService {
                   () ->
                       new IllegalArgumentException(
                           "REGION_INSTANCE_NOT_FOUND: runtime region instance not found"));
-      if (!Objects.equals(dto.tenantId(), regionInstance.getTenantId())
+      if (dto.tenantId() == null
+          || dto.gameInstanceId() == null
+          || regionInstance.getTenantId() == null
+          || regionInstance.getGameInstanceId() == null
+          || !Objects.equals(dto.tenantId(), regionInstance.getTenantId())
           || !Objects.equals(dto.gameInstanceId(), regionInstance.getGameInstanceId())) {
         throw new IllegalArgumentException(
             "REGION_INSTANCE_SCOPE_MISMATCH: runtime region is outside the event scope");

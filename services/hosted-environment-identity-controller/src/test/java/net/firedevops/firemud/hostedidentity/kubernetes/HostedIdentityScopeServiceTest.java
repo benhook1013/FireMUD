@@ -872,35 +872,10 @@ class HostedIdentityScopeServiceTest {
   }
 
   private static List<String> admittedRuntimeDeploymentNames() throws IOException {
-    Path admissionPath = findRepositoryFile("k8s/hosted-identity-controller/admission.yaml");
-    Map<?, ?> scopeRolePolicy;
-    try (var reader = Files.newBufferedReader(admissionPath)) {
-      scopeRolePolicy =
-          java.util.stream.StreamSupport.stream(new Yaml().loadAll(reader).spliterator(), false)
-              .filter(Objects::nonNull)
-              .map(Map.class::cast)
-              .filter(document -> "ValidatingAdmissionPolicy".equals(document.get("kind")))
-              .filter(
-                  document ->
-                      "firemud-hosted-identity-scope-roles"
-                          .equals(((Map<?, ?>) document.get("metadata")).get("name")))
-              .findFirst()
-              .orElseThrow(() -> new AssertionError("scope-role admission policy must exist"));
-    }
-    Map<?, ?> spec = (Map<?, ?>) scopeRolePolicy.get("spec");
-    List<?> validations = (List<?>) spec.get("validations");
-    List<String> runtimeScopeExpressions =
-        validations.stream()
-            .map(Map.class::cast)
-            .map(validation -> validation.get("expression"))
-            .filter(String.class::isInstance)
-            .map(String.class::cast)
-            .filter(expression -> expression.contains(RUNTIME_SCOPE_MARKER))
-            .toList();
-    assertEquals(
-        1, runtimeScopeExpressions.size(), "exactly one runtime-scope admission branch must exist");
+    String runtimeScopeExpression =
+        scopeRoleAdmissionExpression(RUNTIME_SCOPE_MARKER, "runtime-scope");
     List<String> deploymentRules =
-        celExistsRuleBodies(runtimeScopeExpressions.get(0)).stream()
+        celExistsRuleBodies(runtimeScopeExpression).stream()
             .filter(
                 rule ->
                     Optional.of(List.of("apps")).equals(celListEquality(rule, "apiGroups"))
@@ -921,6 +896,29 @@ class HostedIdentityScopeServiceTest {
 
   private static List<String> admittedIdentitySecretNames(
       EnvironmentIdentityPlan plan, List<String> verbs) throws IOException {
+    String identityScopeExpression =
+        scopeRoleAdmissionExpression(IDENTITY_SCOPE_MARKER, "identity-scope");
+    List<String> secretRules =
+        celExistsRuleBodies(identityScopeExpression).stream()
+            .filter(
+                rule ->
+                    Optional.of(List.of("")).equals(celListEquality(rule, "apiGroups"))
+                        && Optional.of(List.of("secrets"))
+                            .equals(celListEquality(rule, "resources"))
+                        && Optional.of(verbs).equals(celListEquality(rule, "verbs"))
+                        && celListExpressions(rule, "resourceNames").isPresent())
+            .toList();
+    assertEquals(
+        1,
+        secretRules.size(),
+        "identity Secret allowlist must have exactly one matching Role rule");
+    return celListExpressions(secretRules.get(0), "resourceNames").orElseThrow().stream()
+        .map(expression -> evaluateIdentitySecretName(expression, plan))
+        .toList();
+  }
+
+  private static String scopeRoleAdmissionExpression(String marker, String scopeDescription)
+      throws IOException {
     Path admissionPath = findRepositoryFile("k8s/hosted-identity-controller/admission.yaml");
     Map<?, ?> scopeRolePolicy;
     try (var reader = Files.newBufferedReader(admissionPath)) {
@@ -938,35 +936,19 @@ class HostedIdentityScopeServiceTest {
     }
     Map<?, ?> spec = (Map<?, ?>) scopeRolePolicy.get("spec");
     List<?> validations = (List<?>) spec.get("validations");
-    List<String> identityScopeExpressions =
+    List<String> scopeExpressions =
         validations.stream()
             .map(Map.class::cast)
             .map(validation -> validation.get("expression"))
             .filter(String.class::isInstance)
             .map(String.class::cast)
-            .filter(expression -> expression.contains(IDENTITY_SCOPE_MARKER))
+            .filter(expression -> expression.contains(marker))
             .toList();
     assertEquals(
         1,
-        identityScopeExpressions.size(),
-        "exactly one identity-scope admission branch must exist");
-    List<String> secretRules =
-        celExistsRuleBodies(identityScopeExpressions.get(0)).stream()
-            .filter(
-                rule ->
-                    Optional.of(List.of("")).equals(celListEquality(rule, "apiGroups"))
-                        && Optional.of(List.of("secrets"))
-                            .equals(celListEquality(rule, "resources"))
-                        && Optional.of(verbs).equals(celListEquality(rule, "verbs"))
-                        && celListExpressions(rule, "resourceNames").isPresent())
-            .toList();
-    assertEquals(
-        1,
-        secretRules.size(),
-        "identity Secret allowlist must have exactly one matching Role rule");
-    return celListExpressions(secretRules.get(0), "resourceNames").orElseThrow().stream()
-        .map(expression -> evaluateIdentitySecretName(expression, plan))
-        .toList();
+        scopeExpressions.size(),
+        "exactly one " + scopeDescription + " admission branch must exist");
+    return scopeExpressions.get(0);
   }
 
   private static List<String> celExistsRuleBodies(String expression) {
@@ -1045,6 +1027,9 @@ class HostedIdentityScopeServiceTest {
   }
 
   private static List<String> splitCelList(String expression) {
+    if (expression.isBlank()) {
+      return List.of();
+    }
     java.util.ArrayList<String> elements = new java.util.ArrayList<>();
     int elementStart = 0;
     int parenthesisDepth = 0;
@@ -1069,6 +1054,13 @@ class HostedIdentityScopeServiceTest {
     }
     elements.add(expression.substring(elementStart).trim());
     return List.copyOf(elements);
+  }
+
+  @Test
+  void celListParserTreatsBlankExpressionAsEmptyList() {
+    assertEquals(List.of(), splitCelList(""));
+    assertEquals(List.of(), splitCelList(" \t\n "));
+    assertEquals(List.of("'get'", "'list'"), splitCelList("'get', 'list'"));
   }
 
   private static String evaluateIdentitySecretName(

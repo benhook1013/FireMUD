@@ -1,7 +1,9 @@
 package net.firedevops.firemud.hostedidentity.model;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public class HostedEnvironmentIdentityStatus {
   private Long observedGeneration;
@@ -12,6 +14,7 @@ public class HostedEnvironmentIdentityStatus {
   private RoleStatus gatewayInternalWs;
   private RoleStatus tcpProxyBridge;
   private RoleStatus grpc;
+  private Map<String, RoleStatus> grpcPublication;
   private RuntimeProfile profile;
 
   public Long getObservedGeneration() {
@@ -81,6 +84,24 @@ public class HostedEnvironmentIdentityStatus {
 
   public void setGrpc(RoleStatus grpc) {
     this.grpc = copyRole(grpc);
+  }
+
+  public Map<String, RoleStatus> getGrpcPublication() {
+    if (grpcPublication == null) {
+      return null;
+    }
+    Map<String, RoleStatus> copy = new LinkedHashMap<>();
+    grpcPublication.forEach((role, status) -> copy.put(role, copyRole(status)));
+    return copy;
+  }
+
+  public void setGrpcPublication(Map<String, RoleStatus> grpcPublication) {
+    if (grpcPublication == null) {
+      this.grpcPublication = null;
+      return;
+    }
+    this.grpcPublication = new LinkedHashMap<>();
+    grpcPublication.forEach((role, status) -> this.grpcPublication.put(role, copyRole(status)));
   }
 
   public RuntimeProfile getProfile() {
