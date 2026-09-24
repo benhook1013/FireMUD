@@ -634,9 +634,7 @@ public class AccountServiceImpl implements AccountService {
     if (operation.requestDigest() != null
         && (!Integer.valueOf(1).equals(operation.requestDigestVersion())
             || !operation.requestDigest().equals(requestDigest))) {
-      accountJoinOperationRepository.recordAttemptFailure(
-          requestId, "AVAILABLE", "IDEMPOTENCY_CONFLICT");
-      return pendingJoinFailure(scope, "IDEMPOTENCY_CONFLICT");
+      return failedJoin(requestId, scope, "IDEMPOTENCY_CONFLICT");
     }
     if (operation.requestDigest() == null) {
       accountJoinOperationRepository.bindPolicyEvidence(
@@ -670,9 +668,7 @@ public class AccountServiceImpl implements AccountService {
             commitEvaluation.allowPublicJoin(),
             commitEvaluation.entitlementVersion());
     if (!requestDigest.equals(commitDigest)) {
-      accountJoinOperationRepository.recordAttemptFailure(
-          requestId, "AVAILABLE", "IDEMPOTENCY_CONFLICT");
-      return pendingJoinFailure(scope, "IDEMPOTENCY_CONFLICT");
+      return failedJoin(requestId, scope, "IDEMPOTENCY_CONFLICT");
     }
     if (!commitEvaluation.gameplayAvailable()) {
       return failedJoin(requestId, scope, "TENANT_BILLING_BLOCKED");
