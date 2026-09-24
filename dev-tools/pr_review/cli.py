@@ -103,6 +103,17 @@ def _parser() -> argparse.ArgumentParser:
     policy.add_argument("--cli-zero-useful", type=_nonnegative_int)
     policy.add_argument("--reason", required=True)
     policy.add_argument("--json", action="store_true", dest="as_json")
+    allocation = decide_commands.add_parser(
+        "allocation", help="grant, renew, cancel, or hand off one exact-bound channel review allocation"
+    )
+    allocation.add_argument("action", choices=("grant", "renew", "cancel", "handoff"))
+    allocation.add_argument("--pr", required=True, type=_positive_int)
+    allocation.add_argument("--channel", required=True, choices=("hosted", "cli"))
+    allocation.add_argument("--head", required=True, type=_exact_sha)
+    allocation.add_argument("--reason", required=True)
+    allocation.add_argument("--checkpoint")
+    allocation.add_argument("--validation")
+    allocation.add_argument("--json", action="store_true", dest="as_json")
     summary_disposition = decide_commands.add_parser(
         "summary-disposition",
         help="adjudicate one exact CodeRabbit summary-only finding bucket",
@@ -218,6 +229,11 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             for channel, state in stack_item["channels"].items():
                 if state != "COMPLETE":
                     review_reasons.append(f"{channel} review policy is {state}")
+            for channel, allocation in stack_item.get("allocations", {}).items():
+                if allocation["status"] != "HANDED_OFF":
+                    review_reasons.append(
+                        f"{channel} review allocation is {allocation['status']}: {allocation['reason']}"
+                    )
         if review_reasons:
             report["reasons"].extend(review_reasons)
             report["ready"] = False
@@ -380,6 +396,16 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 head=args.head,
                 checkpoint=args.checkpoint,
                 reason=args.reason,
+            ), 0
+        if args.decide_command == "allocation":
+            return controller.decide_allocation(
+                action=args.action,
+                pr=args.pr,
+                channel=args.channel,
+                head=args.head,
+                reason=args.reason,
+                checkpoint=args.checkpoint,
+                validation=args.validation,
             ), 0
         if args.decide_command == "reconcile":
             return controller.decide_reconciliation(

@@ -28,6 +28,7 @@ class ReviewStatus(str, Enum):
     OVER_CEILING = "OVER_CEILING"
     JUDGMENT_REQUIRED = "JUDGMENT_REQUIRED"
     PROVISIONAL = "PROVISIONAL"
+    ALLOCATION_EXHAUSTED = "ALLOCATION_EXHAUSTED"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -290,13 +291,28 @@ def select_review_target(
     *,
     reconciliation_by_pr: Mapping[int, ReconciliationStatus | str] | None = None,
     other_channel_heads: Mapping[int, str] | None = None,
+    handed_off_prs: Iterable[int] = (),
+    exhausted_prs: Iterable[int] = (),
+    allocation_blocks: Mapping[int, str] | None = None,
 ) -> ChannelDecision:
     """Derive the next target; callers still perform live GitHub/quota operations."""
 
     selected = Channel(channel)
     reconciliation_by_pr = reconciliation_by_pr or {}
     other_channel_heads = other_channel_heads or {}
+    handed_off = set(handed_off_prs)
+    exhausted = set(exhausted_prs)
+    allocation_blocks = allocation_blocks or {}
     for pr in live_prs:
+        if pr in handed_off:
+            continue
+        if pr in allocation_blocks:
+            return ChannelDecision(selected, pr, ReviewStatus.JUDGMENT_REQUIRED, allocation_blocks[pr])
+        if pr in exhausted:
+            return ChannelDecision(
+                selected, pr, ReviewStatus.ALLOCATION_EXHAUSTED,
+                f"{pr} has consumed its {selected.value} allocation; findings and validation must be cleared before handoff",
+            )
         history = evidence_by_pr.get(pr, ())
         all_items = [Evidence.from_value(value) for value in history]
         if any(item.pr != pr for item in all_items):

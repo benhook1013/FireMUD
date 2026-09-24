@@ -364,6 +364,116 @@ class StackReconciliationDecision:
 
 
 @dataclasses.dataclass(frozen=True)
+class ReviewAllocation:
+    """A durable, pre-authorized one-result review allocation.
+
+    The allocation is bound to the complete stack identity observed when an
+    operator made the promise.  The controller may consume it only after a
+    completed result for that identity, and the optional handoff proof records
+    the later corrected state without pretending that the review itself made
+    the PR merge-ready.
+    """
+
+    pr: int
+    channel: str
+    head: str
+    parent_identity: str
+    parent_head: str
+    merge_base: str
+    patch_id: str
+    baseline_checkpoints: tuple[str, ...]
+    reason: str
+    handoff_checkpoint: str | None = None
+    handoff_head: str | None = None
+    handoff_validation: str | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.pr, bool) or not isinstance(self.pr, int) or self.pr <= 0:
+            raise StateError("review allocation PR must be a positive integer")
+        if self.channel not in {"hosted", "cli"}:
+            raise StateError("review allocation channel must be hosted or cli")
+        for name in ("head", "parent_head", "merge_base"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not EXACT_SHA.fullmatch(value):
+                raise StateError(f"review allocation {name} must be an exact SHA")
+        for name in ("parent_identity", "patch_id", "reason"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise StateError(f"review allocation {name} must be a non-empty string")
+        if not isinstance(self.baseline_checkpoints, tuple):
+            raise StateError("review allocation baseline checkpoints must be a tuple")
+        if any(not isinstance(item, str) or not item.strip() for item in self.baseline_checkpoints):
+            raise StateError("review allocation baseline checkpoints must be non-empty strings")
+        if len(set(self.baseline_checkpoints)) != len(self.baseline_checkpoints):
+            raise StateError("review allocation baseline checkpoints must be unique")
+        handoff_values = (self.handoff_checkpoint, self.handoff_head, self.handoff_validation)
+        if any(value is not None for value in handoff_values):
+            if not all(isinstance(value, str) and value.strip() for value in handoff_values):
+                raise StateError("review allocation handoff proof must be complete")
+            if not EXACT_SHA.fullmatch(self.handoff_head or ""):
+                raise StateError("review allocation handoff head must be an exact SHA")
+
+    @property
+    def identity(self) -> str:
+        return f"{self.pr}:{self.channel}"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "pr": self.pr,
+            "channel": self.channel,
+            "head": self.head,
+            "parent_identity": self.parent_identity,
+            "parent_head": self.parent_head,
+            "merge_base": self.merge_base,
+            "patch_id": self.patch_id,
+            "baseline_checkpoints": list(self.baseline_checkpoints),
+            "reason": self.reason,
+            "handoff_checkpoint": self.handoff_checkpoint,
+            "handoff_head": self.handoff_head,
+            "handoff_validation": self.handoff_validation,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> ReviewAllocation:
+        allowed = {
+            "pr",
+            "channel",
+            "head",
+            "parent_identity",
+            "parent_head",
+            "merge_base",
+            "patch_id",
+            "baseline_checkpoints",
+            "reason",
+            "handoff_checkpoint",
+            "handoff_head",
+            "handoff_validation",
+        }
+        if set(value) - allowed:
+            raise StateError("review allocation contains fields outside the private schema")
+        raw_checkpoints = value.get("baseline_checkpoints")
+        if not isinstance(raw_checkpoints, list):
+            raise StateError("review allocation baseline checkpoints must be a JSON array")
+        try:
+            return cls(
+                pr=value["pr"],
+                channel=value["channel"],
+                head=value["head"],
+                parent_identity=value["parent_identity"],
+                parent_head=value["parent_head"],
+                merge_base=value["merge_base"],
+                patch_id=value["patch_id"],
+                baseline_checkpoints=tuple(raw_checkpoints),
+                reason=value["reason"],
+                handoff_checkpoint=value.get("handoff_checkpoint"),
+                handoff_head=value.get("handoff_head"),
+                handoff_validation=value.get("handoff_validation"),
+            )
+        except KeyError as exc:
+            raise StateError("review allocation contains malformed private records") from exc
+
+
+@dataclasses.dataclass(frozen=True)
 class ReviewState:
     """The complete persisted document, excluding all live review observations."""
 
@@ -372,6 +482,7 @@ class ReviewState:
     judgments: tuple[Judgment, ...] = ()
     reconciliations: tuple[StackReconciliationDecision, ...] = ()
     summary_dispositions: tuple[SummaryFindingDisposition, ...] = ()
+    allocations: Mapping[str, ReviewAllocation] = dataclasses.field(default_factory=dict)
     schema_version: int = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -388,6 +499,14 @@ class ReviewState:
                 or not isinstance(override, PolicyOverride)
             ):
                 raise StateError("policy overrides must be keyed by PR and channel")
+        for identity, allocation in self.allocations.items():
+            if (
+                not isinstance(identity, str)
+                or not re.fullmatch(r"[1-9][0-9]*:(?:hosted|cli)", identity)
+                or not isinstance(allocation, ReviewAllocation)
+                or allocation.identity != identity
+            ):
+                raise StateError("review allocations must be keyed by matching PR and channel")
         if any(not isinstance(item, SummaryFindingDisposition) for item in self.summary_dispositions):
             raise StateError("summary dispositions must contain validated disposition records")
         identities = [item.identity for item in self.summary_dispositions]
@@ -402,6 +521,7 @@ class ReviewState:
             "judgments": [item.to_dict() for item in self.judgments],
             "reconciliations": [item.to_dict() for item in self.reconciliations],
             "summary_dispositions": [item.to_dict() for item in self.summary_dispositions],
+            "allocations": {identity: item.to_dict() for identity, item in sorted(self.allocations.items())},
         }
 
     @classmethod
@@ -415,6 +535,7 @@ class ReviewState:
             "judgments",
             "reconciliations",
             "summary_dispositions",
+            "allocations",
         }:
             raise StateError("state contains fields outside the private configuration schema")
         if value.get("schema_version") != SCHEMA_VERSION:
@@ -424,8 +545,14 @@ class ReviewState:
             raise StateError("policy overrides must be an object")
         if any(not isinstance(item, Mapping) for item in raw_overrides.values()):
             raise StateError("policy override records must be objects")
+        raw_allocations = value.get("allocations", {})
+        if not isinstance(raw_allocations, Mapping):
+            raise StateError("review allocations must be an object")
+        if any(not isinstance(item, Mapping) for item in raw_allocations.values()):
+            raise StateError("review allocation records must be objects")
         try:
             overrides = {identity: PolicyOverride.from_dict(item) for identity, item in raw_overrides.items()}
+            allocations = {identity: ReviewAllocation.from_dict(item) for identity, item in raw_allocations.items()}
             return cls(
                 ordered_prs=tuple(value.get("ordered_prs", ())),
                 policy_overrides=overrides,
@@ -436,6 +563,7 @@ class ReviewState:
                 summary_dispositions=tuple(
                     SummaryFindingDisposition.from_dict(item) for item in value.get("summary_dispositions", ())
                 ),
+                allocations=allocations,
             )
         except StateError:
             raise

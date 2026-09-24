@@ -15,6 +15,7 @@ from pr_review.stack import PRSnapshot, ReconciliationStatus, ReviewAnchor, clas
 from pr_review.state import (
     Judgment,
     PolicyOverride,
+    ReviewAllocation,
     ReviewState,
     StackReconciliationDecision,
     StateError,
@@ -39,6 +40,81 @@ def _append_prs(path: str, prs: tuple[int, ...]) -> None:
 
 
 class ReviewStateStackTest(unittest.TestCase):
+    def test_review_allocation_round_trips_and_is_keyed_by_pr_and_channel(self):
+        allocation = ReviewAllocation(
+            pr=2849,
+            channel="hosted",
+            head="a" * 40,
+            parent_identity="develop",
+            parent_head="b" * 40,
+            merge_base="c" * 40,
+            patch_id="patch-2849",
+            baseline_checkpoints=("checkpoint-1", "checkpoint-2"),
+            reason="one final Hosted result before handoff",
+            handoff_checkpoint="handoff-1",
+            handoff_head="d" * 40,
+            handoff_validation="focused contracts and required CI passed",
+        )
+        state = ReviewState(allocations={allocation.identity: allocation})
+
+        restored = ReviewState.from_dict(state.to_dict())
+
+        self.assertEqual(restored, state)
+        self.assertEqual(restored.allocations["2849:hosted"].baseline_checkpoints, ("checkpoint-1", "checkpoint-2"))
+
+    def test_old_state_without_allocations_remains_readable(self):
+        state = ReviewState.from_dict({"schema_version": 1, "ordered_prs": [2849]})
+
+        self.assertEqual(state.ordered_prs, (2849,))
+        self.assertEqual(state.allocations, {})
+
+    def test_review_allocation_rejects_malformed_or_incomplete_records(self):
+        base = {
+            "pr": 2849,
+            "channel": "hosted",
+            "head": "a" * 40,
+            "parent_identity": "develop",
+            "parent_head": "b" * 40,
+            "merge_base": "c" * 40,
+            "patch_id": "patch-2849",
+            "baseline_checkpoints": ["checkpoint-1"],
+            "reason": "handoff",
+        }
+        for name, value in (
+            ("head", "short"),
+            ("parent_identity", " "),
+            ("baseline_checkpoints", ["checkpoint-1", "checkpoint-1"]),
+            ("baseline_checkpoints", "checkpoint-1"),
+            ("handoff_checkpoint", "handoff-1"),
+            ("handoff_head", "not-a-sha"),
+        ):
+            with self.subTest(name=name, value=value):
+                malformed = {**base, name: value}
+                with self.assertRaises(StateError):
+                    ReviewAllocation.from_dict(malformed)
+
+        with self.assertRaisesRegex(StateError, "outside the private schema"):
+            ReviewAllocation.from_dict({**base, "unexpected": True})
+
+    def test_review_state_rejects_mismatched_allocation_key_and_malformed_mapping(self):
+        allocation = ReviewAllocation(
+            2849,
+            "hosted",
+            "a" * 40,
+            "develop",
+            "b" * 40,
+            "c" * 40,
+            "patch-2849",
+            ("checkpoint-1",),
+            "handoff",
+        )
+        with self.assertRaisesRegex(StateError, "matching PR and channel"):
+            ReviewState(allocations={"2849:cli": allocation})
+        with self.assertRaisesRegex(StateError, "review allocations must be an object"):
+            ReviewState.from_dict({"schema_version": 1, "allocations": []})
+        with self.assertRaisesRegex(StateError, "review allocation records must be objects"):
+            ReviewState.from_dict({"schema_version": 1, "allocations": {"2849:hosted": None}})
+
     def test_state_is_schema_versioned_and_atomic_store_keeps_only_configuration(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "firemud" / "pr-review-stack.json"
@@ -86,6 +162,7 @@ class ReviewStateStackTest(unittest.TestCase):
             self.assertEqual(document["policy_overrides"]["2838:hosted"]["head"], "h1")
             self.assertEqual(document["reconciliations"][0]["parent_head"], "parent-head")
             self.assertEqual(document["summary_dispositions"][0]["summary_id"], 71)
+            self.assertEqual(document["allocations"], {})
             self.assertNotIn("live_head", json.dumps(document))
             self.assertNotIn("base_tip", json.dumps(document))
             self.assertNotIn("evidence", json.dumps(document))

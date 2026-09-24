@@ -86,4 +86,13 @@ grep -Fq 'three consecutive zero-useful' design/developer-workflows/pr-lifecycle
 grep -Fq -- '--allow-unreconciled' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not define provisional CLI semantics'
 
+grep -Fq 'review_results' dev-tools/pr_review/acceptance.py \
+  || fail 'acceptance fixtures do not expose deterministic review result sequences'
+grep -Fq 'result_positions' dev-tools/pr_review/acceptance.py \
+  || fail 'acceptance fixtures do not persist result sequence positions'
+grep -Fq 'simulated = True' dev-tools/pr_review/acceptance.py \
+  || fail 'acceptance adapter is not marked simulated for live-trigger guards'
+grep -Fq 'allocation' dev-tools/pr_review/cli.py \
+  || fail 'public CLI does not expose allocation decisions'
+
 printf 'pr-review controller contract: passed\n'

@@ -28,7 +28,7 @@ from .cli_runner import (
 )
 from .hosted import prepare_full_trigger
 from .patch_identity import patch_identity
-from .state import Judgment, PolicyOverride, ReviewState, StackReconciliationDecision, StateStore
+from .state import Judgment, PolicyOverride, ReviewAllocation, ReviewState, StackReconciliationDecision, StateStore
 
 
 class ControllerError(RuntimeError):
@@ -397,6 +397,7 @@ class ReviewController:
         repository: str = "",
         hosted_adapter: Callable[..., Any] | None = None,
         cli_adapter: Callable[..., Any] | None = None,
+        isolated_fixture: bool = False,
     ) -> None:
         self.store = store or StateStore()
         self.github = github
@@ -406,6 +407,7 @@ class ReviewController:
         self.repository = repository
         self.hosted_adapter = hosted_adapter
         self.cli_adapter = cli_adapter
+        self.isolated_fixture = isolated_fixture
 
     def _require_github(self) -> GitHubProvider:
         if self.github is None:
@@ -861,6 +863,137 @@ class ReviewController:
         )
         return {"decision": decision.to_dict(), "reconciliations": [item.to_dict() for item in updated.reconciliations]}
 
+    def _allocation_progress(
+        self,
+        allocation: ReviewAllocation,
+        history: Sequence[Any],
+        current: AnchorFacts | None,
+        reconciliation: stack.ReconciliationStatus,
+    ) -> dict[str, Any]:
+        """Derive consumption from immutable evidence; never persist a live observation."""
+
+        def result(status: str, reason: str, checkpoint: str | None = None, accepted: int | None = None) -> dict[str, Any]:
+            return {
+                "status": status,
+                "reason": reason,
+                "promised_head": allocation.head,
+                "checkpoint": checkpoint,
+                "accepted": accepted,
+                "handoff_head": allocation.handoff_head,
+            }
+
+        if current is None or reconciliation in {
+            stack.ReconciliationStatus.PARENT_MOVED,
+            stack.ReconciliationStatus.UNRECONCILED,
+        }:
+            return result("INVALID", "the current stack identity is not coherent; renew or cancel the allocation")
+        if (
+            current.parent_identity != allocation.parent_identity
+            or current.parent_head != allocation.parent_head
+            or current.merge_base != allocation.merge_base
+        ):
+            return result("INVALID", "the allocated parent or merge base moved; renewed judgment is required")
+
+        baseline = set(allocation.baseline_checkpoints)
+        subsequent = [
+            item for item in history
+            if _field(item, "correction") is not True
+            and _field(item, "checkpoint", "checkpoint_id") not in baseline
+        ]
+        checkpoints = [_field(item, "checkpoint", "checkpoint_id") for item in subsequent]
+        if any(not isinstance(value, str) or not value for value in checkpoints) or len(checkpoints) != len(set(checkpoints)):
+            return result("INVALID", "post-allocation evidence has missing or duplicate checkpoint identities")
+        completed_after = [
+            item for item in subsequent
+            if _field(item, "completed") is True and _field(item, "attributable") is True
+            and _field(item, "provisional") is not True
+        ]
+        if len(completed_after) > 1:
+            return result("INVALID", "more than one completed review followed the one-review promise")
+        matching: list[Any] = []
+        for item in subsequent:
+            if not (
+                _field(item, "completed") is True
+                and _field(item, "attributable") is True
+                and _field(item, "anchored") is True
+                and _field(item, "provisional") is not True
+                and not any(
+                    _field(item, flag) is True
+                    for flag in ("rate_limited", "held", "unstable", "unreconciled", "parent_moved", "over_ceiling")
+                )
+            ):
+                continue
+            if (
+                _field(item, "pr") == allocation.pr
+                and _field(item, "channel") in (None, allocation.channel)
+                and _field(item, "head", "reviewed_head") == allocation.head
+                and _field(item, "child_head") == allocation.head
+                and _field(item, "parent_identity") == allocation.parent_identity
+                and _field(item, "parent_head") == allocation.parent_head
+                and _field(item, "merge_base") == allocation.merge_base
+                and _field(item, "patch_id", "patch_identity") == allocation.patch_id
+            ):
+                matching.append(item)
+        if len(matching) > 1:
+            return result("INVALID", "multiple completed results match the one-review allocation")
+        if not matching:
+            if current.child_head != allocation.head or current.patch_id != allocation.patch_id:
+                return result("INVALID", "the promised head or patch changed before a matching review")
+            return result("PROMISED", "waiting for one completed attributable review of the promised head")
+
+        review = matching[0]
+        checkpoint = _field(review, "checkpoint", "checkpoint_id")
+        accepted = _field(review, "accepted")
+        if type(accepted) is not int or accepted < 0:
+            return result("INVALID", "completed review has an invalid accepted-finding count")
+        if current.child_head != allocation.head and not self.git.is_ancestor(allocation.head, current.child_head):
+            return result("INVALID", "the corrected head does not descend from the reviewed head", checkpoint, accepted)
+        if any(
+            _field(item, flag) is True
+            for item in history
+            for flag in ("held", "unstable", "unreconciled", "parent_moved", "over_ceiling", "rate_limited")
+            if _field(item, "head", "reviewed_head") in (None, "", current.child_head)
+        ):
+            return result("EXHAUSTED_PENDING", "current review, finding, or thread obligations remain", checkpoint, accepted)
+        if any(
+            _field(item, "completed") is True
+            and _field(item, "attributable") is True
+            and _field(item, "provisional") is not True
+            and _field(item, "correction") is not True
+            and _field(item, "head", "reviewed_head") == current.child_head
+            and type(_field(item, "accepted")) is int
+            and _field(item, "accepted") > 0
+            for item in history
+        ):
+            return result("EXHAUSTED_PENDING", "accepted findings need a published corrected head", checkpoint, accepted)
+        if allocation.handoff_checkpoint is None:
+            return result("EXHAUSTED_PENDING", "review allocation exhausted; validated handoff is still required", checkpoint, accepted)
+        if allocation.handoff_checkpoint != checkpoint or allocation.handoff_head != current.child_head:
+            return result("INVALID", "recorded handoff no longer matches the consumed review and live head", checkpoint, accepted)
+        return result("HANDED_OFF", "review capacity handed off; merge readiness remains a separate judgment", checkpoint, accepted)
+
+    def _allocation_views(
+        self,
+        state: ReviewState,
+        live: Mapping[int, LivePullRequest],
+        reconciliation: stack.Reconciliation,
+        channel: policy.Channel,
+        histories: Mapping[int, Sequence[Any]],
+    ) -> dict[int, dict[str, Any]]:
+        views: dict[int, dict[str, Any]] = {}
+        for pr in state.ordered_prs:
+            allocation = state.allocations.get(f"{pr}:{channel.value}")
+            if allocation is None or live[pr].merged:
+                continue
+            try:
+                current = self._anchor(pr, live[pr], reconciliation.links[pr])
+            except (ControllerError, OSError, subprocess.SubprocessError, ValueError):
+                current = None
+            views[pr] = self._allocation_progress(
+                allocation, histories[pr], current, reconciliation.status_for(pr, channel.value)
+            )
+        return views
+
     def _target(self, channel: policy.Channel | str, expected_pr: int | None = None) -> Target:
         selected = policy.Channel(channel)
         state = self._state()
@@ -872,6 +1005,7 @@ class ReviewController:
             if problem:
                 raise ControllerError(f"PR #{pr} {problem}")
         history = {pr: _history(self._evidence_provider, pr, selected) for pr in state.ordered_prs}
+        allocations = self._allocation_views(state, live, reconciliation, selected, history)
         other = policy.Channel.CLI if selected == policy.Channel.HOSTED else policy.Channel.HOSTED
         other_heads = {}
         for pr in state.ordered_prs:
@@ -892,6 +1026,11 @@ class ReviewController:
             history,
             reconciliation_by_pr={pr: reconciliation.status_for(pr, selected.value) for pr in state.ordered_prs},
             other_channel_heads=other_heads,
+            handed_off_prs=(pr for pr, view in allocations.items() if view["status"] == "HANDED_OFF"),
+            exhausted_prs=(pr for pr, view in allocations.items() if view["status"] == "EXHAUSTED_PENDING"),
+            allocation_blocks={
+                pr: view["reason"] for pr, view in allocations.items() if view["status"] == "INVALID"
+            },
         )
         if decision.target is None:
             raise ControllerError(decision.reason)
@@ -934,6 +1073,7 @@ class ReviewController:
             policy.ReviewStatus.OVER_CEILING,
             policy.ReviewStatus.JUDGMENT_REQUIRED,
             policy.ReviewStatus.PROVISIONAL,
+            policy.ReviewStatus.ALLOCATION_EXHAUSTED,
         }
         if selected.status in blocked and not provisional:
             raise ControllerError(f"{selected.channel.value} review cannot run: {selected.status.value}")
@@ -944,13 +1084,21 @@ class ReviewController:
             return {"ordered_prs": [], "status": "EMPTY"}
         live, reconciliation = self._reconciliation(state)
         values: list[dict[str, Any]] = []
+        histories = {
+            channel: {pr: _history(self._evidence_provider, pr, channel) for pr in state.ordered_prs}
+            for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
+        }
+        allocations = {
+            channel: self._allocation_views(state, live, reconciliation, channel, histories[channel])
+            for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
+        }
         for pr in state.ordered_prs:
             item = live[pr]
             reconciliation_status = reconciliation.status_for(pr)
             channel_status: dict[str, str] = {}
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
                 other = policy.Channel.CLI if channel == policy.Channel.HOSTED else policy.Channel.HOSTED
-                other_history = _history(self._evidence_provider, pr, other)
+                other_history = histories[other][pr]
                 latest = _latest_review(other_history)
                 other_head = _field(latest, "head", "reviewed_head") if latest is not None else None
                 channel_reconciliation = reconciliation.status_for(pr, channel.value)
@@ -963,7 +1111,7 @@ class ReviewController:
                     channel_status[channel.value] = policy.completion_status(
                         state,
                         channel,
-                        _history(self._evidence_provider, pr, channel),
+                        histories[channel][pr],
                         reconciliation=channel_reconciliation,
                         other_channel_head=(
                             other_head
@@ -986,6 +1134,11 @@ class ReviewController:
                     "reconciliation": reconciliation_status.value,
                     "reason": reconciliation.reasons.get(pr, ""),
                     "channels": channel_status,
+                    "allocations": {
+                        channel.value: allocations[channel][pr]
+                        for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
+                        if pr in allocations[channel]
+                    },
                 }
             )
         return {"ordered_prs": list(state.ordered_prs), "status": reconciliation.status.value, "prs": values}
@@ -1006,7 +1159,8 @@ class ReviewController:
     def run_hosted(self, *, expected_pr: int | None = None, **kwargs: Any) -> Any:
         selected = self._target(policy.Channel.HOSTED, expected_pr)
         self._ensure_runnable(selected)
-        prepare_full_trigger(selected.pr, expected_pr)
+        if not self.isolated_fixture:
+            prepare_full_trigger(selected.pr, expected_pr)
         if self.hosted_adapter is None:
             raise ControllerError("Hosted adapter is not configured")
         return self.hosted_adapter(selected.target, expect_pr=expected_pr, **kwargs)
@@ -1122,6 +1276,120 @@ class ReviewController:
             "channel": channels[0],
             "policy_override": override.to_dict(),
             "policy_overrides": {k: v.to_dict() for k, v in state.policy_overrides.items()},
+        }
+
+    def decide_allocation(
+        self,
+        *,
+        action: str,
+        pr: int,
+        channel: str,
+        head: str,
+        reason: str,
+        checkpoint: str | None = None,
+        validation: str | None = None,
+    ) -> dict[str, Any]:
+        """Record an exact-bound operator capacity decision, never a taper decision."""
+
+        if action not in {"grant", "renew", "cancel", "handoff"}:
+            raise ControllerError("allocation action must be grant, renew, cancel, or handoff")
+        try:
+            selected = policy.Channel(channel)
+        except ValueError as exc:
+            raise ControllerError("allocation channel must be hosted or cli") from exc
+        if not isinstance(reason, str) or not reason.strip():
+            raise ControllerError("review allocation decisions require a reason")
+        normalized_head = _sha(head, "allocation head")
+        state = self._state()
+        if pr not in state.ordered_prs:
+            raise ControllerError(f"PR #{pr} is not in the configured review stack")
+        identity = f"{pr}:{selected.value}"
+        previous = state.allocations.get(identity)
+        if action == "grant" and previous is not None:
+            raise ControllerError("allocation already exists; use renew or cancel explicitly")
+        if action != "grant" and previous is None:
+            raise ControllerError("no allocation exists for this PR and channel")
+        live, reconciliation = self._reconciliation(state)
+        item = live[pr]
+        if normalized_head != item.head:
+            raise ControllerError("allocation head does not match the live pull-request head")
+        if self._head_repository_problem(item):
+            raise ControllerError(f"PR #{pr} has an unsupported head repository")
+        def update_allocation(current_state: ReviewState, replacement: ReviewAllocation | None) -> ReviewState:
+            if current_state.allocations.get(identity) != previous:
+                raise ControllerError("review allocation changed concurrently; reread before deciding")
+            values = dict(current_state.allocations)
+            if replacement is None:
+                values.pop(identity, None)
+            else:
+                values[identity] = replacement
+            return dataclasses.replace(current_state, allocations=values)
+
+        if action == "cancel":
+            updated = self.store.update(lambda current_state: update_allocation(current_state, None))
+            return {"action": action, "pr": pr, "channel": selected.value, "allocations": list(updated.allocations)}
+
+        if reconciliation.status_for(pr) in {
+            stack.ReconciliationStatus.UNRECONCILED,
+            stack.ReconciliationStatus.PARENT_MOVED,
+        }:
+            raise ControllerError("allocation requires a coherent current stack identity")
+        current = self._anchor(pr, item, reconciliation.links[pr])
+        history = _history(self._evidence_provider, pr, selected)
+        if action in {"grant", "renew"}:
+            if checkpoint is not None or validation is not None:
+                raise ControllerError("grant and renew cannot include handoff proof")
+            if action == "grant":
+                target = self._target(selected, expected_pr=pr)
+                self._ensure_runnable(target)
+            if any(
+                _field(value, flag) is True
+                for value in history
+                for flag in ("held", "unstable", "rate_limited", "unreconciled", "parent_moved", "over_ceiling")
+                if _field(value, "head", "reviewed_head") in (None, "", item.head)
+            ):
+                raise ControllerError("current review evidence is blocked; allocation cannot be promised")
+            baseline = tuple(
+                _field(value, "checkpoint", "checkpoint_id")
+                for value in history if _field(value, "correction") is not True
+            )
+            if any(not isinstance(value, str) or not value for value in baseline):
+                raise ControllerError("existing review evidence lacks a checkpoint identity")
+            if len(baseline) != len(set(baseline)):
+                raise ControllerError("existing checkpoint identities are ambiguous")
+            allocation = ReviewAllocation(
+                pr=pr,
+                channel=selected.value,
+                head=item.head,
+                parent_identity=current.parent_identity,
+                parent_head=current.parent_head,
+                merge_base=current.merge_base,
+                patch_id=current.patch_id,
+                baseline_checkpoints=baseline,
+                reason=reason,
+            )
+        else:
+            assert previous is not None
+            if not checkpoint or not validation or not validation.strip():
+                raise ControllerError("handoff requires the consumed checkpoint and exact-head validation evidence")
+            progress = self._allocation_progress(
+                previous, history, current, reconciliation.status_for(pr, selected.value)
+            )
+            if progress["status"] != "EXHAUSTED_PENDING" or progress["checkpoint"] != checkpoint:
+                raise ControllerError("handoff requires exactly one consumed attributable review checkpoint")
+            if progress["reason"] != "review allocation exhausted; validated handoff is still required":
+                raise ControllerError(progress["reason"])
+            allocation = dataclasses.replace(
+                previous,
+                handoff_checkpoint=checkpoint,
+                handoff_head=item.head,
+                handoff_validation=validation,
+            )
+        updated = self.store.update(lambda current_state: update_allocation(current_state, allocation))
+        return {
+            "action": action,
+            "allocation": allocation.to_dict(),
+            "allocations": list(updated.allocations),
         }
 
     def _validate_decision_identity(

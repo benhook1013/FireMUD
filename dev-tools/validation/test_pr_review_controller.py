@@ -98,6 +98,216 @@ class ControllerTests(unittest.TestCase):
             repository="owner/repo",
         )
 
+    @staticmethod
+    def allocation_evidence(
+        number=1,
+        head=HEAD_1,
+        checkpoint="before-allocation",
+        *,
+        accepted=0,
+        completed=True,
+        attributable=True,
+        anchored=True,
+        **extra,
+    ):
+        return {
+            "pr": number,
+            "head": head,
+            "checkpoint": checkpoint,
+            "completed": completed,
+            "attributable": attributable,
+            "anchored": anchored,
+            "corrected_state": completed,
+            "accepted": accepted,
+            "child_head": head,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": f"patch-{head[:4]}",
+            **extra,
+        }
+
+    def grant_allocation(self, *, channel="hosted", evidence=None, values=None, heads=None):
+        controller = self.make(
+            values or {1: pr(1, HEAD_1)},
+            evidence or {(1, channel): [self.allocation_evidence()]},
+            heads=heads,
+        )
+        controller.set_stack([1])
+        controller.decide_allocation(
+            action="grant",
+            pr=1,
+            channel=channel,
+            head=HEAD_1,
+            reason="one bounded result before capacity handoff",
+        )
+        return controller
+
+    def test_allocation_is_promised_before_review_and_does_not_make_pr_complete(self):
+        controller = self.grant_allocation()
+        result = controller.status()["prs"][0]
+
+        self.assertEqual(result["allocations"]["hosted"]["status"], "PROMISED")
+        self.assertNotEqual(result["channels"]["hosted"], "COMPLETE")
+        self.assertEqual(controller.resolve_hosted_target().snapshot.number, 1)
+
+    def test_first_review_can_be_allocated_without_historical_checkpoints(self):
+        controller = self.make({1: pr(1, HEAD_1)})
+        controller.set_stack([1])
+
+        granted = controller.decide_allocation(
+            action="grant", pr=1, channel="hosted", head=HEAD_1, reason="first complete review"
+        )
+
+        self.assertEqual(granted["allocation"]["baseline_checkpoints"], [])
+        self.assertEqual(controller.status()["prs"][0]["allocations"]["hosted"]["status"], "PROMISED")
+
+    def test_completed_dry_result_consumes_once_but_waits_for_handoff(self):
+        evidence = {(1, "hosted"): [self.allocation_evidence(accepted=1)]}
+        controller = self.grant_allocation(evidence=evidence)
+        evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="allocated-dry"))
+
+        result = controller.status()["prs"][0]
+
+        self.assertEqual(result["allocations"]["hosted"]["status"], "EXHAUSTED_PENDING")
+        self.assertEqual(result["allocations"]["hosted"]["checkpoint"], "allocated-dry")
+        self.assertNotEqual(result["channels"]["hosted"], "COMPLETE")
+        with self.assertRaisesRegex(ControllerError, "ALLOCATION_EXHAUSTED"):
+            controller.resolve_hosted_target()
+        with self.assertRaisesRegex(ControllerError, "accepted findings need a published corrected head"):
+            controller.decide_allocation(
+                action="handoff", pr=1, channel="hosted", head=HEAD_1,
+                checkpoint="allocated-dry", validation="checks green", reason="premature",
+            )
+
+    def test_productive_result_requires_corrected_head_before_handoff(self):
+        evidence = {(1, "hosted"): [self.allocation_evidence()]}
+        controller = self.grant_allocation(evidence=evidence)
+        evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="allocated-findings", accepted=2))
+
+        with self.assertRaisesRegex(ControllerError, "accepted findings need a published corrected head"):
+            controller.decide_allocation(
+                action="handoff",
+                pr=1,
+                channel="hosted",
+                head=HEAD_1,
+                checkpoint="allocated-findings",
+                validation="checks passed",
+                reason="findings remain on the promised head",
+            )
+
+    def test_accepted_fix_head_can_be_handed_off_after_validation(self):
+        evidence = {(1, "hosted"): [self.allocation_evidence()]}
+        values = {1: pr(1, HEAD_1)}
+        controller = self.grant_allocation(evidence=evidence, values=values)
+        evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="allocated-findings", accepted=2))
+        values[1] = pr(1, HEAD_2)
+
+        result = controller.decide_allocation(
+            action="handoff",
+            pr=1,
+            channel="hosted",
+            head=HEAD_2,
+            checkpoint="allocated-findings",
+            validation="focused correction and required checks passed",
+            reason="accepted findings are published and validated",
+        )
+
+        self.assertEqual(result["allocation"]["handoff_head"], HEAD_2)
+        self.assertEqual(controller.status()["prs"][0]["allocations"]["hosted"]["status"], "HANDED_OFF")
+
+    def test_duplicate_stale_partial_and_rate_limited_results_do_not_consume(self):
+        cases = (
+            ("duplicate", [self.allocation_evidence(checkpoint="allocated"), self.allocation_evidence(checkpoint="allocated")]),
+            ("partial", [self.allocation_evidence(checkpoint="partial", completed=False)]),
+            ("rate-limited", [self.allocation_evidence(checkpoint="limited", rate_limited=True)]),
+        )
+        for label, later in cases:
+            with self.subTest(result=label):
+                evidence = {(1, "hosted"): [self.allocation_evidence()]}
+                controller = self.grant_allocation(evidence=evidence)
+                evidence[(1, "hosted")].extend(later)
+                view = controller.status()["prs"][0]["allocations"]["hosted"]
+                self.assertNotEqual(view["status"], "HANDED_OFF")
+                self.assertIn(view["status"], {"PROMISED", "INVALID", "EXHAUSTED_PENDING"})
+
+        evidence = {(1, "hosted"): [self.allocation_evidence()]}
+        values = {1: pr(1, HEAD_1)}
+        controller = self.grant_allocation(evidence=evidence, values=values)
+        evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="stale", head=HEAD_2))
+        values[1] = pr(1, HEAD_2)
+        self.assertEqual(controller.status()["prs"][0]["allocations"]["hosted"]["status"], "INVALID")
+
+    def test_hosted_and_cli_allocations_are_independent(self):
+        values = {1: pr(1, HEAD_1)}
+        evidence = {
+            (1, "hosted"): [self.allocation_evidence()],
+            (1, "cli"): [self.allocation_evidence()],
+        }
+        controller = self.make(values, evidence)
+        controller.set_stack([1])
+        controller.decide_allocation(
+            action="grant", pr=1, channel="hosted", head=HEAD_1, reason="Hosted handoff"
+        )
+
+        result = controller.status()["prs"][0]
+
+        self.assertIn("hosted", result["allocations"])
+        self.assertNotIn("cli", result["allocations"])
+        self.assertEqual(controller.resolve_cli_target().snapshot.number, 1)
+
+    def test_cancel_removes_allocation_and_renew_rebinds_reason(self):
+        controller = self.grant_allocation()
+        renewed = controller.decide_allocation(
+            action="renew", pr=1, channel="hosted", head=HEAD_1, reason="renewed after operator review"
+        )
+        self.assertEqual(renewed["allocation"]["reason"], "renewed after operator review")
+
+        cancelled = controller.decide_allocation(
+            action="cancel", pr=1, channel="hosted", head=HEAD_1, reason="cancelled by Overseer"
+        )
+        self.assertEqual(cancelled["allocations"], [])
+        self.assertNotIn("hosted", controller.status()["prs"][0]["allocations"])
+
+    def test_next_pr_is_selected_after_handoff_but_parent_movement_blocks_it(self):
+        values = {
+            1: pr(1, HEAD_1),
+            2: pr(2, HEAD_2, "feature-1", HEAD_1),
+        }
+        evidence = {
+            (1, "hosted"): [self.allocation_evidence()],
+            (2, "hosted"): [
+                self.allocation_evidence(
+                    2,
+                    HEAD_2,
+                    "child-before",
+                    parent_identity="1",
+                    parent_head=HEAD_1,
+                )
+            ],
+        }
+        controller = self.make(values, evidence, heads={"feature-1": HEAD_1, "feature-2": HEAD_2})
+        controller.set_stack([1, 2])
+        controller.decide_allocation(
+            action="grant", pr=1, channel="hosted", head=HEAD_1, reason="parent handoff"
+        )
+        evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="allocated"))
+        controller.decide_allocation(
+            action="handoff",
+            pr=1,
+            channel="hosted",
+            head=HEAD_1,
+            checkpoint="allocated",
+            validation="parent checks passed",
+            reason="parent handoff complete",
+        )
+        self.assertEqual(controller.resolve_hosted_target().snapshot.number, 2)
+
+        values[1] = pr(1, "7" * 40)
+        controller.git.heads["feature-1"] = "7" * 40
+        with self.assertRaises(ControllerError):
+            controller.resolve_hosted_target()
+
     def test_default_git_provider_translates_timeout_expired(self):
         provider = DefaultGitProvider(timeout_seconds=7)
         with patch(
