@@ -61,6 +61,22 @@ public class EmailVerificationTokenRepository {
     }
   }
 
+  /** Atomically consumes a still-valid token so only one transaction can claim it. */
+  public boolean consumeIfUnexpired(EmailVerificationToken token, LocalDateTime capturedNow) {
+    if (token == null || token.getId() == null) {
+      return false;
+    }
+    return dsl.deleteFrom(EMAIL_VERIFICATION_TOKEN)
+            .where(
+                EMAIL_VERIFICATION_TOKEN
+                    .ID
+                    .eq(token.getId())
+                    .and(EMAIL_VERIFICATION_TOKEN.TOKEN.eq(token.getToken()))
+                    .and(EMAIL_VERIFICATION_TOKEN.EXPIRES_AT.ge(capturedNow)))
+            .execute()
+        == 1;
+  }
+
   public void deleteByAccountId(Long accountId) {
     dsl.deleteFrom(EMAIL_VERIFICATION_TOKEN)
         .where(EMAIL_VERIFICATION_TOKEN.ACCOUNT_ID.eq(accountId))

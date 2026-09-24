@@ -34,6 +34,38 @@ public class AccountTenantMembershipRepository {
             .fetchOne(this::toEntity));
   }
 
+  /** Reads and locks the exact membership row for a JOIN reconciliation proof. */
+  public Optional<JoinMembershipProof> findJoinProofForUpdate(long accountId, long tenantId) {
+    return dsl.select(
+            ACCOUNT_TENANT_MEMBERSHIP.ID,
+            ACCOUNT_TENANT_MEMBERSHIP.ACCOUNT_ID,
+            ACCOUNT_TENANT_MEMBERSHIP.TENANT_ID,
+            ACCOUNT_TENANT_MEMBERSHIP.GAMEPLAY_ADMISSION_ALLOWED,
+            ACCOUNT_TENANT_MEMBERSHIP.LIFECYCLE_STATE,
+            ACCOUNT_TENANT_MEMBERSHIP.MEMBERSHIP_VERSION,
+            ACCOUNT_TENANT_MEMBERSHIP.MEMBERSHIP_AUTHORITY_GENERATION,
+            ACCOUNT_TENANT_MEMBERSHIP.AUTHORITY_PROVENANCE)
+        .from(ACCOUNT_TENANT_MEMBERSHIP)
+        .where(
+            ACCOUNT_TENANT_MEMBERSHIP
+                .ACCOUNT_ID
+                .eq(accountId)
+                .and(ACCOUNT_TENANT_MEMBERSHIP.TENANT_ID.eq(tenantId)))
+        .forUpdate()
+        .fetchOptional(
+            record ->
+                new JoinMembershipProof(
+                    record.get(ACCOUNT_TENANT_MEMBERSHIP.ID),
+                    record.get(ACCOUNT_TENANT_MEMBERSHIP.ACCOUNT_ID),
+                    record.get(ACCOUNT_TENANT_MEMBERSHIP.TENANT_ID),
+                    Boolean.TRUE.equals(
+                        record.get(ACCOUNT_TENANT_MEMBERSHIP.GAMEPLAY_ADMISSION_ALLOWED)),
+                    record.get(ACCOUNT_TENANT_MEMBERSHIP.LIFECYCLE_STATE),
+                    record.get(ACCOUNT_TENANT_MEMBERSHIP.MEMBERSHIP_VERSION),
+                    record.get(ACCOUNT_TENANT_MEMBERSHIP.MEMBERSHIP_AUTHORITY_GENERATION),
+                    record.get(ACCOUNT_TENANT_MEMBERSHIP.AUTHORITY_PROVENANCE)));
+  }
+
   public boolean existsByAccountIdAndTenantId(Long accountId, Long tenantId) {
     return dsl.fetchExists(
         ACCOUNT_TENANT_MEMBERSHIP,
@@ -169,4 +201,14 @@ public class AccountTenantMembershipRepository {
     membership.setAuthorityProvenance(record.get(ACCOUNT_TENANT_MEMBERSHIP.AUTHORITY_PROVENANCE));
     return membership;
   }
+
+  public record JoinMembershipProof(
+      long membershipId,
+      long accountId,
+      long tenantId,
+      boolean gameplayAdmissionAllowed,
+      String lifecycleState,
+      long membershipVersion,
+      long membershipAuthorityGeneration,
+      String authorityProvenance) {}
 }

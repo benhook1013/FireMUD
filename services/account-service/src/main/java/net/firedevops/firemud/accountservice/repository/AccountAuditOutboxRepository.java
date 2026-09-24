@@ -7,6 +7,7 @@ import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupp
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
 import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
@@ -56,6 +57,25 @@ public class AccountAuditOutboxRepository {
         .orderBy(ACCOUNT_AUDIT_OUTBOX.CREATED_AT.asc(), ACCOUNT_AUDIT_OUTBOX.AUDIT_EVENT_ID.asc())
         .limit(limit)
         .fetch(this::toEnvelope);
+  }
+
+  /** Locks one exact Account JOIN transition envelope for transaction-local reconciliation. */
+  public Optional<AccountAuditEnvelope> findJoinEnvelopeForUpdate(
+      UUID auditEventId, long tenantId) {
+    if (auditEventId == null || tenantId <= 0) {
+      throw new IllegalArgumentException("JOIN audit identity and tenant are required");
+    }
+    return dsl.selectFrom(ACCOUNT_AUDIT_OUTBOX)
+        .where(
+            ACCOUNT_AUDIT_OUTBOX
+                .AUDIT_EVENT_ID
+                .eq(auditEventId)
+                .and(ACCOUNT_AUDIT_OUTBOX.SCOPE.eq("tenant"))
+                .and(ACCOUNT_AUDIT_OUTBOX.TENANT_ID.eq(tenantId))
+                .and(ACCOUNT_AUDIT_OUTBOX.PRODUCER_SERVICE.eq("account-service"))
+                .and(ACCOUNT_AUDIT_OUTBOX.EVENT_TYPE.eq("ACCOUNT_JOINED_PUBLIC_PRODUCTION")))
+        .forUpdate()
+        .fetchOptional(this::toEnvelope);
   }
 
   public void markDelivered(
