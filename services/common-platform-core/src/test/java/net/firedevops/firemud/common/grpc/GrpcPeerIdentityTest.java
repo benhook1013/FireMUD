@@ -56,6 +56,7 @@ class GrpcPeerIdentityTest {
         .isEqualTo("https://[2001:db8::1]:1/path");
     assertThat(CanonicalUri.parse("https://[2001:DB8::1]:65535/path").orElseThrow().value())
         .isEqualTo("https://[2001:db8::1]:65535/path");
+    assertThat(CanonicalUri.parse("https://[.1:2:3:4:5:6:7:8]/path")).isEmpty();
     assertThat(CanonicalUri.parse("https://firemud").orElseThrow().value())
         .isEqualTo("https://firemud/");
   }
