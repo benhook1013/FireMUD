@@ -7031,7 +7031,7 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
 
     def test_legacy_target_only_route_declaration_is_rejected(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-        route = route_for(document, "account-service", "POST /auth/bootstrap/join")
+        route = route_for(document, "account-service", "BillingArtifactsTenant")
         route.pop("route_status")
         route.setdefault("implementation_status", {})["target_only"] = True
         errors = validate_document(self.validator, document)
