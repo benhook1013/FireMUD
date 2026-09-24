@@ -607,6 +607,10 @@ public class AccountServiceImpl implements AccountService {
       return replayJoinOperation(operation, callerBinding, scope);
     }
 
+    if (isConnectScopeExpired(scope)) {
+      return failedJoin(requestId, scope, "CONNECT_SCOPE_INVALID");
+    }
+
     JoinEvaluation evaluation = evaluateJoin(scope);
     if (evaluation.failureCode() != null) {
       if (isRetryableJoinAuthorityFailure(evaluation)) {
@@ -750,6 +754,14 @@ public class AccountServiceImpl implements AccountService {
       VerifiedJoinScope scope, String outcomeCode) {
     return new JoinPublicProductionResult(
         false, outcomeCode, scope.accountId(), scope.tenantId(), 0L, 0L, 0L, false);
+  }
+
+  private boolean isConnectScopeExpired(VerifiedJoinScope scope) {
+    try {
+      return !Instant.parse(scope.connectScopeExpiresAt()).isAfter(Instant.now());
+    } catch (RuntimeException ex) {
+      return true;
+    }
   }
 
   private boolean isRetryableJoinAuthorityFailure(JoinEvaluation evaluation) {
