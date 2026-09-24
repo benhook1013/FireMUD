@@ -212,6 +212,20 @@ if secret_exists "$shared_secret"; then
     exit 1
   }
   openssl x509 -in "$shared_cert" -noout >/dev/null
+  shared_rotation_secrets=("${namespace}/${shared_secret}")
+  if secret_exists "$ca_secret"; then
+    shared_rotation_secrets+=("${namespace}/${ca_secret}")
+  fi
+  for workload in "${workloads[@]}"; do
+    for retained_secret in "${namespace}-grpc-${workload}" "firemud-grpc-${workload}"; do
+      if secret_exists "$retained_secret"; then
+        shared_rotation_secrets+=("${namespace}/${retained_secret}")
+      fi
+    done
+  done
+  assert_certificate_unexpired "$shared_cert" \
+    "shared gRPC TLS client certificate in Secret ${namespace}/${shared_secret}" \
+    "${shared_rotation_secrets[*]}" || exit 1
   assert_key_matches_certificate "$shared_cert" "$shared_key"
 else
   # The legacy shared bundle is still required by the six non-publication

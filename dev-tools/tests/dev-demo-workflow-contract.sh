@@ -51,6 +51,8 @@ for required in \
   'local escaped_key="${key//./\\.}"' \
   'jsonpath={.data.${escaped_key}}' \
   'if ! secret_exists "$shared_secret"; then' \
+  'assert_certificate_unexpired "$shared_cert"' \
+  'shared gRPC TLS client certificate in Secret ${namespace}/${shared_secret}' \
   'if secret_exists "$ca_secret"; then' \
   'assert_certificate_unexpired "$source_ca"' \
   'assert_certificate_unexpired "$workload_cert"' \
@@ -310,6 +312,11 @@ expect_expired_certificate \
   'delete these retained Secrets before rerunning: pr-42/firemud-grpc-ca pr-42/pr-42-grpc-game-design-service pr-42/firemud-grpc-game-design-service' \
   "$expiry_fixture_dir/expired-ca.crt"
 expect_expired_certificate \
+  'shared gRPC TLS client certificate in Secret pr-42/firemud-grpc-tls' \
+  'pr-42/firemud-grpc-tls pr-42/firemud-grpc-ca pr-42/pr-42-grpc-game-design-service pr-42/firemud-grpc-game-design-service' \
+  'delete these retained Secrets before rerunning: pr-42/firemud-grpc-tls pr-42/firemud-grpc-ca pr-42/pr-42-grpc-game-design-service pr-42/firemud-grpc-game-design-service' \
+  "$expiry_fixture_dir/expired-leaf.crt"
+expect_expired_certificate \
   'publication certificate in Secret pr-42/pr-42-grpc-game-design-service' \
   'pr-42/pr-42-grpc-game-design-service pr-42/firemud-grpc-game-design-service' \
   'delete these retained Secrets before rerunning: pr-42/pr-42-grpc-game-design-service pr-42/firemud-grpc-game-design-service' \
@@ -324,8 +331,17 @@ leaf_expiry = source.index('assert_certificate_unexpired "$workload_cert"')
 leaf_verification = source.index(
     'openssl verify -CAfile "$source_ca" "$workload_cert"'
 )
+shared_branch_start = source.index('if secret_exists "$shared_secret"; then')
+shared_branch_end = source.index('\nelse\n', shared_branch_start)
+shared_branch = source[shared_branch_start:shared_branch_end]
+shared_cert_parse = shared_branch.index('openssl x509 -in "$shared_cert" -noout')
+shared_cert_expiry = shared_branch.index('assert_certificate_unexpired "$shared_cert"')
+shared_key_match = shared_branch.index('assert_key_matches_certificate "$shared_cert" "$shared_key"')
 assert ca_expiry < leaf_verification
 assert leaf_expiry < leaf_verification
+assert shared_cert_parse < shared_cert_expiry < shared_key_match
+assert 'shared gRPC TLS client certificate in Secret ${namespace}/${shared_secret}' in shared_branch
+assert '"${shared_rotation_secrets[*]}"' in shared_branch
 PY
 
 if ! (
