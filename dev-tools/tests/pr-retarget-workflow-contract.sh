@@ -328,19 +328,21 @@ preview_comment_test_path="$ROOT_DIR/dev-tools/tests/publish-preview-comment.tes
 
 node --test "$preview_comment_test_path"
 
-for path in "$ci_path" "$smoke_path"; do
+security_path="$ROOT_DIR/.github/workflows/security.yml"
+
+for path in "$ci_path" "$security_path" "$smoke_path"; do
   require_contains "$path" 'types: [opened, synchronize, reopened, edited]'
-  require_contains "$path" "&& 'metadata' || 'required' }}"
-  require_contains "$path" '  cancel-in-progress: true'
 done
 
-require_contains "$ci_path" 'PR Metadata Edit (Validation Summary)'
-require_contains "$smoke_path" 'PR Metadata Edit (Smoke Summary)'
-# A metadata-only edit starts a non-required controller job so its preservation
-# failure cannot create a second failed branch-protection context named Smoke
-# Gate. A base retarget still uses the canonical required name.
+# Metadata-only edits get distinct optional summary contexts; substantive events
+# retain each summary's canonical name.
 # shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
-assert_job_contains smoke.yml smoke-gate "name: \${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Gate)' || 'Smoke Gate' }}"
+assert_job_contains security.yml security-summary "name: \${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Security Summary)' || 'Security Summary' }}"
+assert_job_contains ci.yml validation-summary "name: \${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Validation Summary)' || 'Validation Summary' }}"
+assert_job_contains smoke.yml smoke-summary "name: \${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Summary)' || 'Smoke Summary' }}"
+# A metadata-only edit must retain the required gate name. Its preservation
+# action verifies prior proof before reporting success for the unchanged tuple.
+assert_job_contains smoke.yml smoke-gate 'name: Smoke Gate'
 assert_job_contains smoke.yml smoke-summary-pending 'name: Smoke Summary (Pending)'
 assert_job_contains smoke.yml smoke-summary-pending 'tracked-by-smoke-gate'
 assert_job_contains smoke.yml smoke-summary 'needs: [changes, smoke-gate, smoke-summary-pending]'
@@ -433,12 +435,8 @@ smoke_path, runtime_path = map(Path, sys.argv[1:])
 smoke = yaml.load(smoke_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 runtime = yaml.load(runtime_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
-metadata_name = (
-    "${{ github.event.action == 'edited' && github.event.changes.base.ref == null "
-    "&& 'PR Metadata Edit (Smoke Gate)' || 'Smoke Gate' }}"
-)
-if smoke["jobs"]["smoke-gate"].get("name") != metadata_name:
-    raise SystemExit("metadata-only smoke must use a non-required job context")
+if smoke["jobs"]["smoke-gate"].get("name") != "Smoke Gate":
+    raise SystemExit("metadata-only smoke must retain its required gate context")
 
 runtime_jobs = runtime["jobs"]
 metadata_guard = "github.event.action != 'edited' || github.event.changes.base.ref != null"

@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required' }}
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && format('metadata-{0}', github.run_id) || 'required' }}
   cancel-in-progress: true
 
 jobs:
@@ -349,9 +349,7 @@ jobs:
           bash ./dev-tools/tests/workflow-version-authority-contract.sh
           bash ./dev-tools/tests/workflow-tool-updater-contract.sh
           bash ./dev-tools/tests/jacoco-combined-report-contract.sh
-          bash ./dev-tools/tests/coderabbit-cli-wrapper-contract.sh
-          bash ./dev-tools/tests/coderabbit-review-contract.sh
-          bash ./dev-tools/tests/coderabbit-trigger-retirement-contract.sh
+          bash ./dev-tools/tests/pr-review-controller-contract.sh
           bash ./dev-tools/tests/testcontainers-disabled-contract.sh
           bash ./dev-tools/tests/pr-retarget-workflow-contract.sh
           bash ./dev-tools/tests/static-analysis-summary-contract.sh
@@ -1004,7 +1002,7 @@ jobs:
 
   # Final gating and PR reporting
   validation-summary:
-    name: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Validation Summary)' || 'Validation Summary' }}
+    name: ${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Validation Summary)' || 'Validation Summary' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
