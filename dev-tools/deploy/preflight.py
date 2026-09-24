@@ -146,7 +146,9 @@ PUBLICATION_GRPC_WORKLOADS = (
     "game-logic-service",
     "automation-scripting-service",
 )
-PUBLICATION_GRPC_SECRET_KEYS = {"ca.crt", "tls.crt", "tls.key"}
+PUBLICATION_GRPC_LEAF_SECRET_KEYS = {"tls.crt", "tls.key"}
+PUBLICATION_GRPC_TRUST_SECRET_NAME = "firemud-grpc-tls"
+PUBLICATION_GRPC_TRUST_SECRET_KEYS = {"ca.crt"}
 BASE_SECRET_COMPLIANCE_CLASSES = frozenset(
     {
         "jwt-signing-keys-jwks",
@@ -936,7 +938,7 @@ def publication_workload_secret_requirements(
     expected: dict[str, Any],
     documents: list[dict[str, Any]],
 ) -> tuple[tuple[str, str, set[str]], ...]:
-    """Resolve publication leaf Secrets from each rendered workload's grpc-tls volume."""
+    """Resolve each publication leaf Secret and its shared CA trust Secret."""
     expected_namespace = secret_binding_namespace(
         get(expected, "internalBindings.postgres.credentialsRef")
     )
@@ -959,7 +961,8 @@ def publication_workload_secret_requirements(
             "internalBindings.certificates.workloadMtlsRef"
         )
     workload_mtls_secret_name = workload_mtls_ref[2][0]
-    requirements = []
+    requirements: list[tuple[str, str, set[str]]] = []
+    leaf_secret_names: list[str] = []
     for workload in PUBLICATION_GRPC_WORKLOADS:
         deployments = [
             document
@@ -995,20 +998,46 @@ def publication_workload_secret_requirements(
             for volume in volumes
             if isinstance(volume, dict) and volume.get("name") == "grpc-tls"
         ]
+        trust_volumes = [
+            volume
+            for volume in volumes
+            if isinstance(volume, dict) and volume.get("name") == "grpc-trust"
+        ]
         if len(grpc_volumes) != 1:
             raise ValueError(
                 f"Expected exactly one grpc-tls volume for publication workload {workload}; found {len(grpc_volumes)}"
             )
+        if len(trust_volumes) != 1:
+            raise ValueError(
+                f"Expected exactly one grpc-trust volume for publication workload {workload}; found {len(trust_volumes)}"
+            )
         grpc_volume = grpc_volumes[0]
         secret = grpc_volume.get("secret")
         secret_name = secret.get("secretName") if isinstance(secret, dict) else None
+        expected_leaf_items = {("tls.crt", "tls.crt"), ("tls.key", "tls.key")}
+        leaf_items = secret.get("items") if isinstance(secret, dict) else None
         if (
             not isinstance(secret, dict)
             or not isinstance(secret_name, str)
             or not secret_name.strip()
             or secret_name != secret_name.strip()
-            or not set(secret).issubset({"secretName", "defaultMode"})
+            or not set(secret).issubset({"secretName", "defaultMode", "items"})
             or set(grpc_volume) != {"name", "secret"}
+            or not isinstance(leaf_items, list)
+            or len(leaf_items) != len(expected_leaf_items)
+            or any(
+                not isinstance(item, dict)
+                or set(item) != {"key", "path"}
+                or not isinstance(item.get("key"), str)
+                or not isinstance(item.get("path"), str)
+                for item in leaf_items
+            )
+            or {
+                (item["key"], item["path"])
+                for item in leaf_items
+                if isinstance(item, dict)
+            }
+            != expected_leaf_items
         ):
             raise ValueError(
                 f"Rendered publication workload {workload} has a malformed grpc-tls Secret volume"
@@ -1018,10 +1047,43 @@ def publication_workload_secret_requirements(
                 f"Rendered publication workload {workload} grpc-tls Secret must be distinct from "
                 f"the workload mTLS Secret {workload_mtls_secret_name}"
             )
-        if secret_name == "firemud-grpc-tls":
+        if secret_name == PUBLICATION_GRPC_TRUST_SECRET_NAME:
             raise ValueError(
                 f"Rendered publication workload {workload} grpc-tls Secret must not use the "
-                "shared fallback Secret firemud-grpc-tls"
+                "shared trust Secret firemud-grpc-tls"
+            )
+
+        trust_volume = trust_volumes[0]
+        trust_secret = trust_volume.get("secret")
+        trust_secret_name = (
+            trust_secret.get("secretName") if isinstance(trust_secret, dict) else None
+        )
+        expected_trust_items = {("ca.crt", "ca.crt")}
+        trust_items = trust_secret.get("items") if isinstance(trust_secret, dict) else None
+        if (
+            not isinstance(trust_secret, dict)
+            or trust_secret_name != PUBLICATION_GRPC_TRUST_SECRET_NAME
+            or not set(trust_secret).issubset({"secretName", "defaultMode", "items"})
+            or set(trust_volume) != {"name", "secret"}
+            or not isinstance(trust_items, list)
+            or len(trust_items) != len(expected_trust_items)
+            or any(
+                not isinstance(item, dict)
+                or set(item) != {"key", "path"}
+                or not isinstance(item.get("key"), str)
+                or not isinstance(item.get("path"), str)
+                for item in trust_items
+            )
+            or {
+                (item["key"], item["path"])
+                for item in trust_items
+                if isinstance(item, dict)
+            }
+            != expected_trust_items
+        ):
+            raise ValueError(
+                f"Rendered publication workload {workload} requires the shared CA-only "
+                f"Secret {PUBLICATION_GRPC_TRUST_SECRET_NAME} in its grpc-trust volume"
             )
 
         containers = pod_spec.get("containers")
@@ -1091,6 +1153,11 @@ def publication_workload_secret_requirements(
                 f"Rendered publication workload {workload} has ambiguous gRPC TLS path env entries"
             )
 
+        expected_grpc_paths = {
+            "FIREMUD_GRPC_CERT_CHAIN_PATH": "/tls/tls.crt",
+            "FIREMUD_GRPC_PRIVATE_KEY_PATH": "/tls/tls.key",
+            "FIREMUD_GRPC_CA_CERT_PATH": "/grpc-trust/ca.crt",
+        }
         grpc_paths: dict[str, str] = {}
         for name in GRPC_TLS_PATH_NAMES:
             path = environment.get(name)
@@ -1099,9 +1166,10 @@ def publication_workload_secret_requirements(
                 or not path.startswith("/")
                 or path.startswith("//")
                 or posixpath.normpath(path) != path
+                or path != expected_grpc_paths[name]
             ):
                 raise ValueError(
-                    f"Rendered publication workload {workload} must configure {name} as a canonical absolute path"
+                    f"Rendered publication workload {workload} must configure {name} as {expected_grpc_paths[name]}"
                 )
             grpc_paths[name] = path
 
@@ -1129,55 +1197,69 @@ def publication_workload_secret_requirements(
                     f"Rendered publication workload {workload} has a malformed volume mount readOnly value"
                 )
 
-        grpc_mounts = [
-            mount for mount in volume_mounts if mount.get("name") == "grpc-tls"
-        ]
-        if len(grpc_mounts) != 1:
-            raise ValueError(
-                f"Expected exactly one grpc-tls mount for publication workload {workload}; "
-                f"found {len(grpc_mounts)}"
-            )
-        grpc_mount = grpc_mounts[0]
-        grpc_mount_path = grpc_mount["mountPath"]
-        if (
-            grpc_mount.get("readOnly") is not True
-            or grpc_mount_path.startswith("//")
-            or posixpath.normpath(grpc_mount_path) != grpc_mount_path
-        ):
-            raise ValueError(
-                f"Rendered publication workload {workload} requires one read-only grpc-tls mount at a canonical absolute mountPath"
-            )
-        if "subPath" in grpc_mount or "subPathExpr" in grpc_mount:
-            raise ValueError(
-                f"Rendered publication workload {workload} grpc-tls mount must not use subPath or subPathExpr"
-            )
+        expected_mounts = {
+            "grpc-tls": "/tls",
+            "grpc-trust": "/grpc-trust",
+        }
+        validated_mounts: dict[str, dict[str, Any]] = {}
+        for volume_name, mount_path in expected_mounts.items():
+            mounts = [mount for mount in volume_mounts if mount.get("name") == volume_name]
+            if len(mounts) != 1:
+                raise ValueError(
+                    f"Expected exactly one {volume_name} mount for publication workload {workload}; found {len(mounts)}"
+                )
+            mount = mounts[0]
+            if (
+                mount.get("readOnly") is not True
+                or mount.get("mountPath") != mount_path
+                or "subPath" in mount
+                or "subPathExpr" in mount
+            ):
+                raise ValueError(
+                    f"Rendered publication workload {workload} requires a read-only {volume_name} mount at {mount_path} without subPath"
+                )
+            validated_mounts[volume_name] = mount
+
         if any(
-            not path_is_under_mount(path, grpc_mount_path)
-            for path in grpc_paths.values()
+            not path_is_under_mount(path, "/tls")
+            for path in (
+                grpc_paths["FIREMUD_GRPC_CERT_CHAIN_PATH"],
+                grpc_paths["FIREMUD_GRPC_PRIVATE_KEY_PATH"],
+            )
+        ) or not path_is_under_mount(
+            grpc_paths["FIREMUD_GRPC_CA_CERT_PATH"], "/grpc-trust"
         ):
             raise ValueError(
-                f"Rendered publication workload {workload} has a gRPC TLS path outside its grpc-tls mount"
+                f"Rendered publication workload {workload} gRPC TLS paths do not match the split leaf/trust mounts"
             )
 
         for mount in volume_mounts:
-            if mount is grpc_mount:
+            if mount in validated_mounts.values():
                 continue
             mount_path = posixpath.normpath("/" + mount["mountPath"].lstrip("/"))
-            if not path_is_under_mount(mount_path, grpc_mount_path) or not any(
-                path_is_under_mount(path, mount_path) for path in grpc_paths.values()
-            ):
-                continue
-            raise ValueError(
-                f"Rendered publication workload {workload} has another volume mount covering a gRPC TLS path"
-            )
+            for root_path in expected_mounts.values():
+                if not path_is_under_mount(mount_path, root_path):
+                    continue
+                if any(path_is_under_mount(path, mount_path) for path in grpc_paths.values()):
+                    raise ValueError(
+                        f"Rendered publication workload {workload} has another volume mount covering a gRPC TLS path"
+                    )
+
         requirements.append(
-            (secret_name, workload_namespace, set(PUBLICATION_GRPC_SECRET_KEYS))
+            (secret_name, workload_namespace, set(PUBLICATION_GRPC_LEAF_SECRET_KEYS))
         )
-    secret_names = [name for name, _, _ in requirements]
-    if len(set(secret_names)) != len(secret_names):
+        leaf_secret_names.append(secret_name)
+    if len(set(leaf_secret_names)) != len(leaf_secret_names):
         raise ValueError(
             "Rendered publication workloads must mount five distinct grpc-tls Secrets"
         )
+    requirements.append(
+        (
+            PUBLICATION_GRPC_TRUST_SECRET_NAME,
+            expected_namespace,
+            set(PUBLICATION_GRPC_TRUST_SECRET_KEYS),
+        )
+    )
     return tuple(requirements)
 
 

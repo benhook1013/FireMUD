@@ -1031,15 +1031,29 @@ spec:
             - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
               value: /tls/tls.key
             - name: FIREMUD_GRPC_CA_CERT_PATH
-              value: /tls/ca.crt
+              value: /grpc-trust/ca.crt
           volumeMounts:
             - name: grpc-tls
               mountPath: /tls
+              readOnly: true
+            - name: grpc-trust
+              mountPath: /grpc-trust
               readOnly: true
       volumes:
         - name: grpc-tls
           secret:
             secretName: hobby-game-design-service-identity
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: grpc-trust
+          secret:
+            secretName: firemud-grpc-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -1056,15 +1070,29 @@ spec:
             - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
               value: /tls/tls.key
             - name: FIREMUD_GRPC_CA_CERT_PATH
-              value: /tls/ca.crt
+              value: /grpc-trust/ca.crt
           volumeMounts:
             - name: grpc-tls
               mountPath: /tls
+              readOnly: true
+            - name: grpc-trust
+              mountPath: /grpc-trust
               readOnly: true
       volumes:
         - name: grpc-tls
           secret:
             secretName: hobby-world-management-service-identity
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: grpc-trust
+          secret:
+            secretName: firemud-grpc-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -1081,15 +1109,29 @@ spec:
             - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
               value: /tls/tls.key
             - name: FIREMUD_GRPC_CA_CERT_PATH
-              value: /tls/ca.crt
+              value: /grpc-trust/ca.crt
           volumeMounts:
             - name: grpc-tls
               mountPath: /tls
+              readOnly: true
+            - name: grpc-trust
+              mountPath: /grpc-trust
               readOnly: true
       volumes:
         - name: grpc-tls
           secret:
             secretName: hobby-entity-management-service-identity
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: grpc-trust
+          secret:
+            secretName: firemud-grpc-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -1106,15 +1148,29 @@ spec:
             - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
               value: /tls/tls.key
             - name: FIREMUD_GRPC_CA_CERT_PATH
-              value: /tls/ca.crt
+              value: /grpc-trust/ca.crt
           volumeMounts:
             - name: grpc-tls
               mountPath: /tls
+              readOnly: true
+            - name: grpc-trust
+              mountPath: /grpc-trust
               readOnly: true
       volumes:
         - name: grpc-tls
           secret:
             secretName: hobby-game-logic-service-identity
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: grpc-trust
+          secret:
+            secretName: firemud-grpc-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -1131,15 +1187,29 @@ spec:
             - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
               value: /tls/tls.key
             - name: FIREMUD_GRPC_CA_CERT_PATH
-              value: /tls/ca.crt
+              value: /grpc-trust/ca.crt
           volumeMounts:
             - name: grpc-tls
               mountPath: /tls
+              readOnly: true
+            - name: grpc-trust
+              mountPath: /grpc-trust
               readOnly: true
       volumes:
         - name: grpc-tls
           secret:
             secretName: hobby-automation-scripting-service-identity
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: grpc-trust
+          secret:
+            secretName: firemud-grpc-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
 YAML
 
 python3 - <<'PY' "$RENDERED_MANIFEST"
@@ -2063,7 +2133,23 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
 production_preflight_status=$?
 set -e
 if [ "$production_preflight_status" -ne 0 ]; then
-  echo "production preflight rejected the checked-in Gateway bridge wiring" >&2
+  python3 - "$PRODUCTION_REPORT" <<'PY' >&2
+import json
+import pathlib
+import sys
+
+report_path = pathlib.Path(sys.argv[1])
+if not report_path.is_file():
+    raise SystemExit("production preflight failed without writing its report")
+report = json.loads(report_path.read_text(encoding="utf-8"))
+failures = [
+    f"{check.get('policyId', '<unknown>')}: {check.get('message', '<no message>')}"
+    for check in report.get("checkResults", [])
+    if check.get("status") == "fail"
+]
+detail = "; ".join(failures) if failures else "report contains no failed checks"
+raise SystemExit(f"production preflight rejected the checked-in manifest: {detail}")
+PY
   exit 1
 fi
 python3 - "$PRODUCTION_REPORT" <<'PY'
@@ -9755,7 +9841,20 @@ publication_documents = [
                     "volumes": [
                         {
                             "name": "grpc-tls",
-                            "secret": {"secretName": f"hobby-{workload}-identity"},
+                            "secret": {
+                                "secretName": f"hobby-{workload}-identity",
+                                "items": [
+                                    {"key": "tls.crt", "path": "tls.crt"},
+                                    {"key": "tls.key", "path": "tls.key"},
+                                ],
+                            },
+                        },
+                        {
+                            "name": "grpc-trust",
+                            "secret": {
+                                "secretName": module.PUBLICATION_GRPC_TRUST_SECRET_NAME,
+                                "items": [{"key": "ca.crt", "path": "ca.crt"}],
+                            },
                         }
                     ],
                     "containers": [
@@ -9771,7 +9870,7 @@ publication_documents = [
                                     (
                                         "/tls/tls.crt",
                                         "/tls/tls.key",
-                                        "/tls/ca.crt",
+                                        "/grpc-trust/ca.crt",
                                     ),
                                 )
                             ],
@@ -9779,6 +9878,11 @@ publication_documents = [
                                 {
                                     "name": "grpc-tls",
                                     "mountPath": "/tls",
+                                    "readOnly": True,
+                                },
+                                {
+                                    "name": "grpc-trust",
+                                    "mountPath": "/grpc-trust",
                                     "readOnly": True,
                                 }
                             ],
@@ -9797,17 +9901,21 @@ expected_publication_names = {
     f"hobby-{workload}-identity"
     for workload in module.PUBLICATION_GRPC_WORKLOADS
 }
-if {name for name, _, _ in publication_requirements} != expected_publication_names:
-    raise SystemExit(
-        "publication Secret requirements do not follow the five rendered grpc-tls bindings"
-    )
-if any(
-    namespace != "firemud"
-    or keys != {"ca.crt", "tls.crt", "tls.key"}
-    for _, namespace, keys in publication_requirements
+if {name for name, _, _ in publication_requirements} != (
+    expected_publication_names | {module.PUBLICATION_GRPC_TRUST_SECRET_NAME}
 ):
     raise SystemExit(
-        "publication Secret requirements did not use expected-binding namespace and keys"
+        "publication Secret requirements do not follow the five leaf bindings and shared trust binding"
+    )
+publication_keys = {name: keys for name, _, keys in publication_requirements}
+if any(namespace != "firemud" for _, namespace, _ in publication_requirements):
+    raise SystemExit("publication Secret requirements did not use the expected-binding namespace")
+if any(
+    publication_keys[name] != {"tls.crt", "tls.key"}
+    for name in expected_publication_names
+) or publication_keys[module.PUBLICATION_GRPC_TRUST_SECRET_NAME] != {"ca.crt"}:
+    raise SystemExit(
+        "publication Secret requirements did not separate leaf keys from the shared CA key"
     )
 
 def publication_static_issues(documents):
@@ -9855,9 +9963,9 @@ fallback_workload_mtls_collision_documents[0]["spec"]["template"]["spec"]["volum
     0
 ]["secret"]["secretName"] = "firemud-grpc-tls"
 expect_publication_static_failure(
-    "the fixed firemud-grpc-tls fallback reused as a publication leaf Secret",
+    "the shared firemud-grpc-tls trust Secret reused as a publication leaf Secret",
     fallback_workload_mtls_collision_documents,
-    "shared fallback Secret firemud-grpc-tls",
+    "shared trust Secret firemud-grpc-tls",
 )
 
 
@@ -9939,7 +10047,7 @@ config_map_overlay_spec["volumes"].append(
 config_map_overlay_spec["containers"][0]["volumeMounts"].append(
     {
         "name": "config-map-overlay",
-        "mountPath": "/tls/ca.crt",
+        "mountPath": "/grpc-trust/ca.crt",
         "readOnly": True,
     }
 )
@@ -10046,10 +10154,10 @@ default_mode_publication_documents[0]["spec"]["template"]["spec"]["volumes"][0][
 default_mode_requirements = module.publication_workload_secret_requirements(
     publication_expected, default_mode_publication_documents
 )
-if len(default_mode_requirements) != len(module.PUBLICATION_GRPC_WORKLOADS):
+if len(default_mode_requirements) != len(module.PUBLICATION_GRPC_WORKLOADS) + 1:
     raise SystemExit("publication grpc-tls Secret defaultMode was not accepted")
 
-for forbidden_secret_key in ("items", "optional", "unexpected"):
+for forbidden_secret_key in ("optional", "unexpected"):
     forbidden_secret_documents = copy.deepcopy(publication_documents)
     forbidden_secret_documents[0]["spec"]["template"]["spec"]["volumes"][0][
         "secret"
@@ -10067,6 +10175,64 @@ for forbidden_secret_key in ("items", "optional", "unexpected"):
             f"publication grpc-tls Secret accepted forbidden key {forbidden_secret_key}: "
             f"{forbidden_secret_issues}"
         )
+
+for invalid_leaf_items in (
+    [{"key": "tls.crt", "path": "tls.crt"}],
+    [
+        {"key": "tls.crt", "path": "tls.crt"},
+        {"key": "tls.key", "path": "tls.key"},
+        {"key": "ca.crt", "path": "ca.crt"},
+    ],
+    [{"key": "tls.crt", "path": "tls.crt"}, {"key": "ca.crt", "path": "tls.key"}],
+):
+    invalid_leaf_documents = copy.deepcopy(publication_documents)
+    invalid_leaf_documents[0]["spec"]["template"]["spec"]["volumes"][0]["secret"][
+        "items"
+    ] = invalid_leaf_items
+    expect_publication_static_failure(
+        "a leaf Secret without exactly tls.crt and tls.key",
+        invalid_leaf_documents,
+        "malformed grpc-tls Secret volume",
+    )
+
+for invalid_trust_case in ("missing", "wrong-secret", "extra-key", "wrong-path"):
+    invalid_trust_documents = copy.deepcopy(publication_documents)
+    trust_volume = invalid_trust_documents[0]["spec"]["template"]["spec"]["volumes"][1]
+    if invalid_trust_case == "missing":
+        invalid_trust_documents[0]["spec"]["template"]["spec"]["volumes"].pop(1)
+    elif invalid_trust_case == "wrong-secret":
+        trust_volume["secret"]["secretName"] = "hobby-game-design-ca"
+    elif invalid_trust_case == "extra-key":
+        trust_volume["secret"]["items"].append(
+            {"key": "tls.crt", "path": "tls.crt"}
+        )
+    else:
+        trust_volume["secret"]["items"][0]["path"] = "wrong-ca.crt"
+    expect_publication_static_failure(
+        f"a {invalid_trust_case} or malformed shared grpc-trust binding",
+        invalid_trust_documents,
+        "grpc-trust volume",
+    )
+
+missing_trust_mount_documents = copy.deepcopy(publication_documents)
+missing_trust_mount_documents[0]["spec"]["template"]["spec"]["containers"][0][
+    "volumeMounts"
+].pop(1)
+expect_publication_static_failure(
+    "a missing grpc-trust mount",
+    missing_trust_mount_documents,
+    "exactly one grpc-trust mount",
+)
+
+writable_trust_mount_documents = copy.deepcopy(publication_documents)
+writable_trust_mount_documents[0]["spec"]["template"]["spec"]["containers"][0][
+    "volumeMounts"
+][1]["readOnly"] = False
+expect_publication_static_failure(
+    "a writable grpc-trust mount",
+    writable_trust_mount_documents,
+    "read-only grpc-trust mount",
+)
 
 malformed_static_publication_documents = copy.deepcopy(publication_documents)
 malformed_static_publication_documents[0]["spec"]["template"]["spec"]["volumes"][0][
@@ -10188,8 +10354,7 @@ if not any(
     raise SystemExit("publication workload namespace mismatch did not fail closed")
 
 publication_success_fixture = {
-    name: {"ca.crt", "tls.crt", "tls.key"}
-    for name, _, _ in publication_requirements
+    name: keys for name, _, keys in publication_requirements
 }
 queried_publication_secrets = []
 
@@ -10210,7 +10375,9 @@ with patch.object(
         publication_expected, publication_documents
     ):
         raise SystemExit("complete publication Secret fixture failed preflight")
-if {name for name, _, _ in queried_publication_secrets} != expected_publication_names:
+if {name for name, _, _ in queried_publication_secrets} != (
+    expected_publication_names | {module.PUBLICATION_GRPC_TRUST_SECRET_NAME}
+):
     raise SystemExit("preflight did not query precisely the mounted publication Secrets")
 if any(namespace != "firemud" for _, namespace, _ in queried_publication_secrets):
     raise SystemExit("preflight queried a publication Secret in the wrong namespace")
