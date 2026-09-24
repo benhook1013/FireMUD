@@ -38,6 +38,7 @@ Common commands:
 
 ```bash
 npm run dev
+npm run test
 npm run build
 npm run preview
 npm run lint

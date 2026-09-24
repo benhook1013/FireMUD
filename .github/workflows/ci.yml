@@ -829,6 +829,7 @@ jobs:
         run: |
           npm run lint
           npm run format -- -c
+          npm run test
         working-directory: web-client
 
       - name: Install pinned Chrome for Testing and ChromeDriver

@@ -6,9 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "lint": "node ./node_modules/eslint/bin/eslint.js .",
     "preview": "vite preview",
-    "format": "prettier --check \"src/**/*.{ts,tsx}\"",
+    "format": "prettier --check \"src/**/*.{ts,tsx}\" \"tests/**/*.mjs\"",
     "format:fix": "prettier --write \"src/**/*.{ts,tsx}\"",
     "accessibility": "npm run build && npx serve dist -l 5000 & npx wait-on http://localhost:5000/index.html && npx axe http://localhost:5000/index.html --chrome-options=\"--no-sandbox\" --exit"
   },

@@ -1,5 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import type { EmailLinkLandingRoute } from './emailLinkLanding';
+import {
+  completeEmailLink,
+  type EmailLinkLandingRoute,
+} from './emailLinkLanding';
 
 interface EmailLinkLandingProps {
   route: Exclude<EmailLinkLandingRoute, null>;
@@ -15,19 +18,6 @@ function installNoReferrerPolicy(): void {
     document.head.append(policy);
   }
   policy.content = 'no-referrer';
-}
-
-async function postToken(path: string, token: string, newPassword?: string) {
-  const response = await fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(
-      newPassword === undefined ? { token } : { token, newPassword }
-    ),
-  });
-  if (!response.ok) {
-    throw new Error('The request could not be completed.');
-  }
 }
 
 export default function EmailLinkLanding({ route }: EmailLinkLandingProps) {
@@ -51,13 +41,7 @@ export default function EmailLinkLanding({ route }: EmailLinkLandingProps) {
     setSubmitting(true);
     setFailed(false);
     try {
-      await postToken(
-        isVerification
-          ? '/api/account/auth/verify-email'
-          : '/api/account/auth/complete-password-reset',
-        token,
-        isVerification ? undefined : password
-      );
+      await completeEmailLink(route, isVerification ? undefined : password);
       setComplete(true);
       setPassword('');
     } catch {
