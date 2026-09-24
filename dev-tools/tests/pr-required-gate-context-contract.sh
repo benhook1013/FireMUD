@@ -26,6 +26,14 @@ grep -Fq '  gate-name:' "$ACTION" || {
   echo "required-gate preservation action must expose a gate-name input" >&2
   exit 1
 }
+grep -A3 -Fxq '  allow-pending:' "$ACTION" || {
+  echo "required-gate preservation action must declare the optional allow-pending input" >&2
+  exit 1
+}
+grep -Fxq "    default: 'false'" <(sed -n '/^  allow-pending:/,/^[^ ]/p' "$ACTION") || {
+  echo "required-gate preservation allow-pending input must default to false" >&2
+  exit 1
+}
 
 assert_required_input_declaration() {
   local action_path="$1"
@@ -91,6 +99,7 @@ if ! grep -Fq 'GH_TOKEN: ${{ github.token }}' "$ACTION" ||
   ! grep -Fq 'EXPECTED_WORKFLOW_NAME: ${{ inputs.workflow-name }}' "$ACTION" ||
   ! grep -Fq 'EXPECTED_WORKFLOW_FILE: ${{ inputs.workflow-file }}' "$ACTION" ||
   ! grep -Fq 'EXPECTED_WORKFLOW_PATH: ${{ inputs.workflow-path }}' "$ACTION" ||
+  ! grep -Fq 'ALLOW_PENDING: ${{ inputs.allow-pending }}' "$ACTION" ||
   grep -Fq 'EXPECTED_JOB_ID' "$ACTION"; then
   echo "required-gate action must retain caller, head, gate, and workflow identity inputs without local job identity" >&2
   exit 1
@@ -123,16 +132,19 @@ while IFS='|' read -r workflow gate_job_id gate workflow_name workflow_file work
     echo "$workflow must contain required gate job ID $gate_job_id" >&2
     exit 1
   }
-  if [[ "$workflow" == "smoke.yml" ]]; then
+  if [[ "$workflow" == "ci.yml" || "$workflow" == "security.yml" || "$workflow" == "smoke.yml" ]]; then
     # A metadata-only edit must not create a second check run with the required
-    # Smoke Gate name. The non-required metadata job may still poll the prior
+    # gate name. The non-required metadata job may still poll the prior
     # substantive gate, but its own failure cannot replace that required proof.
     # shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
-    expected_gate_name="    name: \${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Gate)' || 'Smoke Gate' }}"
+    expected_gate_name="    name: \${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (${gate})' || '${gate}' }}"
     if ! grep -Fxq "$expected_gate_name" <<<"$gate_block"; then
       echo "$workflow must separate its metadata-only job name from the required $gate context" >&2
       exit 1
     fi
+  elif grep -Fq 'allow-pending:' <<<"$gate_block"; then
+    echo "$workflow must retain fail-closed required-gate polling" >&2
+    exit 1
   elif ! grep -Fxq "    name: $gate" <<<"$gate_block"; then
     echo "$workflow must always emit the required $gate context" >&2
     exit 1
@@ -187,6 +199,15 @@ while IFS='|' read -r workflow gate_job_id gate workflow_name workflow_file work
     echo "$workflow $gate preservation must retain its metadata-only condition" >&2
     exit 1
   }
+  if [[ "$workflow" == "ci.yml" || "$workflow" == "security.yml" || "$workflow" == "smoke.yml" ]]; then
+    grep -Eq "^          allow-pending: 'true'([[:space:]]+#.*)?$" <<<"$preserve_block" || {
+      echo "$workflow metadata-only preservation must allow the required gate to remain pending" >&2
+      exit 1
+    }
+  elif grep -Fq 'allow-pending:' <<<"$preserve_block"; then
+    echo "$workflow must retain fail-closed required-gate polling" >&2
+    exit 1
+  fi
   checkout_block="$(awk '
     /^      - name: Check out required-gate action$/ {
       if (found) exit
@@ -317,7 +338,12 @@ if not isinstance(result_env, dict) or result_env.get("CHANGES_RESULT") != "${{ 
 PY
 
   group_line=$(grep -m1 '^  group:' "$path" || true)
-  if [[ "$group_line" != *"&& 'metadata' || 'required' }}"* ]]; then
+  if [[ "$workflow" == "ci.yml" || "$workflow" == "security.yml" || "$workflow" == "smoke.yml" ]]; then
+    if [[ "$group_line" != *"format('metadata-{0}', github.run_id) || 'required' }}"* ]]; then
+      echo "$workflow concurrency group must give every metadata-only run a unique namespace" >&2
+      exit 1
+    fi
+  elif [[ "$group_line" != *"&& 'metadata' || 'required' }}"* ]]; then
     echo "$workflow concurrency group must separate metadata and required PR runs" >&2
     exit 1
   fi
@@ -340,6 +366,70 @@ license-scan.yml|license-gate|License Gate|License Checks|license-scan.yml|.gith
 smoke.yml|smoke-gate|Smoke Gate|PR Smoke Gate|smoke.yml|.github/workflows/smoke.yml
 codeql.yml|codeql-gate|CodeQL Gate|CodeQL Analysis|codeql.yml|.github/workflows/codeql.yml
 EOF
+
+# Model two rapid metadata edits against the unchanged head. Each lightweight
+# run gets an independent namespace, while the required gate contexts remain
+# the sole authoritative checks and optional summaries cannot leave cancelled
+# or failed residue in the aggregate rollup.
+python3 - "$ROOT_DIR" <<'PY'
+from pathlib import Path
+import sys
+
+import yaml
+
+root = Path(sys.argv[1])
+workflows = {
+    "ci.yml": ("validation-gate", "Validation Gate", True),
+    "security.yml": ("security-gate", "Security Gate", True),
+    "license-scan.yml": ("license-gate", "License Gate", False),
+    "smoke.yml": ("smoke-gate", "Smoke Gate", True),
+    "codeql.yml": ("codeql-gate", "CodeQL Gate", False),
+}
+
+metadata_guard = "github.event.action != 'edited' || github.event.changes.base.ref != null"
+for workflow, (gate_job, gate_name, run_scoped_metadata) in workflows.items():
+    path = root / ".github" / "workflows" / workflow
+    data = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    concurrency = data["concurrency"]
+    group = concurrency["group"]
+    required_group_parts = (
+        "github.event.pull_request.number",
+        "github.event.action == 'edited'",
+        "github.event.changes.base.ref == null",
+        "|| 'required'",
+    )
+    if any(part not in group for part in required_group_parts):
+        raise SystemExit(f"{workflow} concurrency expression lost PR-scoped metadata isolation")
+    metadata_suffix = "format('metadata-{0}', github.run_id)" if run_scoped_metadata else "&& 'metadata' || 'required'"
+    if metadata_suffix not in group:
+        raise SystemExit(f"{workflow} concurrency expression changed its metadata group")
+    if concurrency.get("cancel-in-progress") != "true":
+        raise SystemExit(f"{workflow} must cancel obsolete required-gate runs")
+
+    gate = data["jobs"][gate_job]
+    if workflow in {"ci.yml", "security.yml", "smoke.yml"}:
+        expected_gate_name = (
+            "${{ github.event.action == 'edited' && github.event.changes.base.ref == null "
+            f"&& 'PR Metadata Edit ({gate_name})' || '{gate_name}' "
+            "}}"
+        )
+    else:
+        expected_gate_name = gate_name
+    if gate.get("name") != expected_gate_name:
+        raise SystemExit(f"{workflow} required gate context changed")
+
+for workflow in ("ci.yml", "security.yml", "smoke.yml"):
+    path = root / ".github" / "workflows" / workflow
+    data = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    for job_name, job in data["jobs"].items():
+        if job_name == workflows[workflow][0]:
+            continue
+        condition = job.get("if", "") if isinstance(job, dict) else ""
+        if metadata_guard not in condition:
+            raise SystemExit(
+                f"{workflow} job {job_name} can run for a metadata-only edited event"
+            )
+PY
 
 # shellcheck disable=SC2016 # Match the checked-in arithmetic assignment literally.
 poll_timeout_minutes="$(sed -n 's/^poll_timeout_seconds=\$((\([1-9][0-9]*\) \* 60))$/\1/p' "$POLL_SCRIPT")"
@@ -835,6 +925,7 @@ run_action() {
   local failure_mode="$2"
   local scenario="${3:-failure-retry}"
   local call_count_dir="${4:-}"
+  local allow_pending="${5:-false}"
   GH_RETRY_COUNT_FILE="$count_file" \
   GH_FAILURE_MODE="$failure_mode" \
   GH_SCENARIO="$scenario" \
@@ -851,6 +942,7 @@ run_action() {
   EXPECTED_WORKFLOW_NAME='CI — Validation' \
   EXPECTED_WORKFLOW_FILE=ci.yml \
   EXPECTED_WORKFLOW_PATH=.github/workflows/ci.yml \
+  ALLOW_PENDING="$allow_pending" \
   bash "$POLL_SCRIPT"
 }
 
@@ -1011,6 +1103,39 @@ pending_count="$tmp_dir/count-pending-predecessor"
 run_action "$pending_count" none pending-predecessor
 [[ "$(<"$pending_count")" == "2" ]] || {
   echo "required-gate action did not poll the relevant prior run while it was finishing" >&2
+  exit 1
+}
+
+allowed_pending_output="$tmp_dir/allowed-pending-output"
+allowed_pending_count="$tmp_dir/count-allowed-pending"
+run_action "$allowed_pending_count" none pending-predecessor '' true >"$allowed_pending_output" 2>&1
+[[ "$(<"$allowed_pending_count")" == "1" ]] || {
+  echo "required-gate action did not immediately allow a pending prior gate when opted in" >&2
+  exit 1
+}
+grep -Fq 'allowing the distinct metadata-only job' "$allowed_pending_output" || {
+  echo "required-gate action did not report its pending opt-in result" >&2
+  exit 1
+}
+
+allowed_missing_count="$tmp_dir/count-allowed-missing"
+run_action "$allowed_missing_count" none no-prior '' true
+[[ "$(<"$allowed_missing_count")" == "1" ]] || {
+  echo "required-gate action did not immediately allow a missing prior gate when opted in" >&2
+  exit 1
+}
+
+allowed_failure_output="$tmp_dir/allowed-failure-output"
+set +e
+run_action "$tmp_dir/count-allowed-failure" none failed-predecessor '' true >"$allowed_failure_output" 2>&1
+allowed_failure_status=$?
+set -e
+[[ "$allowed_failure_status" -ne 0 ]] || {
+  echo "required-gate action allowed allow-pending to mask a terminal failed required gate" >&2
+  exit 1
+}
+grep -Fq 'concluded failure' "$allowed_failure_output" || {
+  echo "required-gate action did not retain terminal failure behavior when opted in" >&2
   exit 1
 }
 
