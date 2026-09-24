@@ -41,7 +41,7 @@ These journeys define observable product behavior and user-facing outcomes; tech
 
 ## Implementation Status
 
-The target journeys below are primary. Current runtime status is concise: explicit `JOIN` / `Join & Play` and the complete realm-scoped character gate remain unimplemented; existing credential-bearing clients may still use direct `LOGIN` -> `PLAY` when they already have usable membership and a character. Connect-token issuance and text `PLAY` require existing membership and return `JOIN_REQUIRED` for eligible missing or `INACTIVE` public-production membership. Realm-aware discovery is implemented at the backend boundary, but the richer character-creation descriptor remains a gap. Account export is still Account/profile-only, and the complete cross-service deletion workflow is not yet proved. See the [Account Service export contract](../../architecture/microservices/account-service/api-contracts.md#current-vs-target-export-lifecycle), [ADR 0043](../../architecture/decisions/adr-0043-global-account-lifecycle-and-bounded-erasure-workflow.md#decision), and [ADR 0050](../../architecture/decisions/adr-0050-versioned-export-retention-and-erasure-policy.md#decision) for those implementation boundaries.
+The target journeys below are primary. Current runtime status is concise: the local Account `JOIN` / `Join & Play` operation and global-only registration seam are implemented, but the complete realm-scoped character gate remains unimplemented and direct text/first-party end-to-end proof, PostgreSQL execution, pending-operation recovery/reconciliation, and downstream lifecycle/authority-generation admission proof remain incomplete. Existing credential-bearing clients may still use direct `LOGIN` -> `PLAY` when they already have usable membership and a character. Connect-token issuance and text `PLAY` require existing membership and return `JOIN_REQUIRED` for an eligible missing or non-admitting public-production membership; the current adapter cannot classify the latter specifically as `INACTIVE`. Realm-aware discovery is implemented at the backend boundary, but the richer character-creation descriptor remains a gap. Account export is still Account/profile-only, and the complete cross-service deletion workflow is not yet proved. See the [Account Service export contract](../../architecture/microservices/account-service/api-contracts.md#current-vs-target-export-lifecycle), [ADR 0043](../../architecture/decisions/adr-0043-global-account-lifecycle-and-bounded-erasure-workflow.md#decision), and [ADR 0050](../../architecture/decisions/adr-0050-versioned-export-retention-and-erasure-policy.md#decision) for those implementation boundaries.
 
 Current gameplay supports room views, movement, foundational inventory/container/equipment commands, and room-local `SAY`, `WHISPER`, and `TELL`. Guild chat and mail remain deferred target behavior and are not current player-runtime capabilities. The shared current communication path includes metadata-only whisper observers and recipient-side delivery for generic WebSocket and Telnet clients; broader audible scopes and first-party/MCP-aware presentation remain gaps. The target player-facing report ingress is not currently available; current support is limited to an internal service-to-service report-persistence seam, not player ingress.
 
@@ -109,7 +109,7 @@ Player → Account bootstrap/discovery → [Join & Play when public membership i
        → connect-token issuance → Gateway WebSocket handshake → bare LOGIN → PLAY
 ```
 
-Target-state example text-client transcript (explicit `JOIN` is not implemented in the current runtime):
+Target-state example text-client transcript (the local `JOIN` seam exists; complete transport end-to-end proof remains incomplete):
 
 ```text
 WORLDS
@@ -138,7 +138,7 @@ LOGIN
 PLAY <world> [realm] [character]
 ```
 
-Target-state example first-time public production join (explicit `JOIN`/`Join & Play`, including `POST /auth/bootstrap/join`, is not implemented in the current runtime):
+Target-state example first-time public production join (the local Account `JOIN`/`Join & Play` operation exists; complete transport and production proof remains incomplete):
 
 ```text
 POST /auth/player-bootstrap { accountIdentifier=player@example.com, secret=<redacted> }

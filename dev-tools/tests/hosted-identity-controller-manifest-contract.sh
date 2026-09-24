@@ -4128,6 +4128,34 @@ def assert_paths_and_mount(container, service, cert_path, key_path):
         fail(f"Deployment/{service} grpc-tls must mount read-only at /tls")
 
 
+def allows_shared_namespace_identity(service, env):
+    namespace_identity = env.get("FIREMUD_GRPC_WORKLOAD_NAMESPACE")
+    expected_namespace_identity = {
+        "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+        "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
+    }
+    if service == "logging-admin-service":
+        return namespace_identity == expected_namespace_identity
+    return namespace_identity is None
+
+
+# The exact downward-API namespace identity is valid only for Logging & Admin
+# among shared transports; every other shared service must reject this shape.
+negative_shared_namespace_fixture = {
+    "FIREMUD_GRPC_WORKLOAD_NAMESPACE": {
+        "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+        "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
+    }
+}
+for service in shared_services:
+    if service != "logging-admin-service" and allows_shared_namespace_identity(
+        service, negative_shared_namespace_fixture
+    ):
+        fail(
+            f"shared namespace identity fixture unexpectedly accepted for {service}"
+        )
+
+
 for service in distinct_workload_services:
     deployment = deployment_for(service)
     container, pod_spec = workload_container(deployment, service)
@@ -4164,7 +4192,13 @@ for service in shared_services:
     deployment = deployment_for(service)
     container, pod_spec = workload_container(deployment, service)
     assert_paths_and_mount(container, service, "/tls/client.crt", "/tls/client.key")
-    if "FIREMUD_GRPC_WORKLOAD_NAMESPACE" in env_map(container, service):
+    env = env_map(container, service)
+    if not allows_shared_namespace_identity(service, env):
+        if service == "logging-admin-service":
+            fail(
+                f"Deployment/{service} must derive FIREMUD_GRPC_WORKLOAD_NAMESPACE "
+                "from metadata.namespace"
+            )
         fail(
             f"Deployment/{service} shared transport unexpectedly declares "
             "FIREMUD_GRPC_WORKLOAD_NAMESPACE"

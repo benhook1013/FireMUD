@@ -38,7 +38,7 @@ These recovered manifests are starting review prompts, not frozen inventories or
 
 ### 1A
 
-Unit 1A's substantive boundary is the following 28 identity, membership, entitlement, billing, and hosted-terms sources:
+Unit 1A's substantive boundary is the following 29 identity, membership, entitlement, billing, and hosted-terms sources:
 
 1. `design/architecture/service-responsibility-matrix.md`
 2. `design/architecture/system-architecture-overview.md`
@@ -68,6 +68,7 @@ Unit 1A's substantive boundary is the following 28 identity, membership, entitle
 26. `design/architecture/decisions/adr-0179-firemud-managed-creator-commerce-boundary.md`
 27. `design/architecture/decisions/adr-0180-account-owned-hosted-terms-acceptance-gate.md`
 28. `design/architecture/decisions/adr-0181-changed-hosted-terms-decline-and-existing-content-continuity.md`
+29. `design/architecture/microservices/account-service/README.md`
 
 Review Account's sole authority for global identity, credentials, explicit membership, entitlement, Creator Party and terms evidence; account-global versus tenant-scoped records; public versus private/playtest access; strict and continuity entitlement freshness; authentication path separation; role versus gameplay authority; hosted creator mutation currentness; changed-terms decline and prior-rights continuity; and payment evidence versus runtime entitlement. Unit 1A consumes 5A token/authority primitives and hands gameplay binding to 1B and operator reference execution to 6C. Refresh for material 5A, 6C, 1B, 5B/5D, 3A, or billing/provider changes. Repository licence/terms files remain legal-policy handoffs rather than technical authority sources.
 
