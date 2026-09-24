@@ -336,6 +336,31 @@ assert_production_change_requires_attestation() {
   assert_balanced_preflight_group "Missing-attestation failure for $fixture_path"
 }
 
+if (
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/dev-tools/deploy/validate-kustomize-overlays.sh"
+  changed_files_between_base_and_head() {
+    printf '%s\n' 'design/architecture/deployment-note.md'
+  }
+  python3() {
+    echo "Non-Kubernetes change unexpectedly invoked static preflight: $*" >&2
+    return 1
+  }
+  GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop run_preflight_policy_checks
+) >"$OUTPUT_FILE" 2>&1; then
+  :
+else
+  echo "Non-Kubernetes change failed the static-preflight skip contract" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
+fi
+
+grep -Fqx 'Skipping ci-static preflight because no PR k8s/* changes were detected; any PR k8s/* change runs static preflight, while production-overlay changes also require production attestation.' "$OUTPUT_FILE" || {
+  echo "Static-preflight skip diagnostic does not distinguish Kubernetes changes from production-attested changes" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
+}
+
 assert_shared_change_runs_ordinary_overlay_checks() {
   local fixture_path="$1"
   (
