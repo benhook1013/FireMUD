@@ -1,12 +1,14 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
@@ -66,9 +68,11 @@ public final class GameplayWorldCatalog {
       // Fall back to slug matching.
     }
     String normalized = selector.trim().toLowerCase(Locale.ROOT);
-    return worlds.stream()
-        .filter(world -> normalized.equals(world.slug().toLowerCase(Locale.ROOT)))
-        .findFirst();
+    List<WorldView> matches =
+        worlds.stream()
+            .filter(world -> normalized.equals(world.slug().toLowerCase(Locale.ROOT)))
+            .toList();
+    return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
   }
 
   public Optional<RealmView> resolveRealm(WorldView world, String selector) {
@@ -250,14 +254,25 @@ public final class GameplayWorldCatalog {
   }
 
   private static List<WorldView> toWorlds(List<GameplayAdmissionPointerSnapshot> pointers) {
-    Map<String, MutableWorldAccumulator> worlds = new LinkedHashMap<>();
-    for (GameplayAdmissionPointerSnapshot pointer : pointers) {
-      if (!hasCompleteAuthorityPointer(pointer)) {
+    List<GameplayAdmissionPointerSnapshot> completePointers =
+        pointers.stream().filter(GameplayWorldCatalog::hasCompleteAuthorityPointer).toList();
+    Map<String, Set<Long>> tenantsByWorldSlug = new LinkedHashMap<>();
+    for (GameplayAdmissionPointerSnapshot pointer : completePointers) {
+      tenantsByWorldSlug
+          .computeIfAbsent(normalizeSlug(pointer.worldSlug()), ignored -> new HashSet<>())
+          .add(pointer.tenantId());
+    }
+
+    Map<TenantWorldKey, MutableWorldAccumulator> worlds = new LinkedHashMap<>();
+    for (GameplayAdmissionPointerSnapshot pointer : completePointers) {
+      String normalizedWorldSlug = normalizeSlug(pointer.worldSlug());
+      if (tenantsByWorldSlug.get(normalizedWorldSlug).size() > 1) {
         continue;
       }
+      TenantWorldKey key = new TenantWorldKey(pointer.tenantId(), normalizedWorldSlug);
       MutableWorldAccumulator world =
           worlds.computeIfAbsent(
-              pointer.worldSlug(),
+              key,
               ignored ->
                   new MutableWorldAccumulator(pointer.worldSlug(), pointer.worldDisplayName()));
       world
@@ -278,6 +293,12 @@ public final class GameplayWorldCatalog {
                             .toList()))
             .toList());
   }
+
+  private static String normalizeSlug(String slug) {
+    return slug.toLowerCase(Locale.ROOT);
+  }
+
+  private record TenantWorldKey(long tenantId, String normalizedSlug) {}
 
   private static boolean hasCompleteAuthorityPointer(GameplayAdmissionPointerSnapshot pointer) {
     return GameplayAdmissionPointerSnapshots.hasCompleteRoutingBundle(pointer)

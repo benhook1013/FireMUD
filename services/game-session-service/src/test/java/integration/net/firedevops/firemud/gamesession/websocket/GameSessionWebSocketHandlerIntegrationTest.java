@@ -1079,7 +1079,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
-  void websocketFirstPartyLogoutRetainsReplayStateForFreshReconnect() throws Exception {
+  void websocketFirstPartyLogoutRetainsReplayStateButSuppressesReplayForFreshReconnect()
+      throws Exception {
     when(screenBufferService.get(eq(22L), eq(1L), eq(123L)))
         .thenReturn(
             Optional.of(
@@ -1118,16 +1119,36 @@ class GameSessionWebSocketHandlerIntegrationTest {
       client.send("PLAY demo");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
+      client.awaitMatching(
+          payload ->
+              "player_output".equals(json(payload).path("eventType").asText())
+                  && containsKind(json(payload), "VIEW"),
+          "fresh view output");
+      client.awaitMatching(
+          payload ->
+              "player_output".equals(json(payload).path("eventType").asText())
+                  && containsKind(json(payload), "PROMPT"),
+          "fresh prompt output");
       secondPayloads = client.responses();
     }
 
     assertThat(secondPayloads).anyMatch(payload -> isStructuredCommand(payload, "LOGIN"));
     assertThat(secondPayloads).anyMatch(payload -> isStructuredCommand(payload, "PLAY"));
     assertThat(secondPayloads)
-        .anyMatch(
+        .noneMatch(
             payload ->
                 "transcript_chunk".equals(json(payload).path("eventType").asText())
                     && payload.contains("First-party replay"));
+    assertThat(secondPayloads)
+        .anyMatch(
+            payload ->
+                "player_output".equals(json(payload).path("eventType").asText())
+                    && containsKind(json(payload), "VIEW"));
+    assertThat(secondPayloads)
+        .anyMatch(
+            payload ->
+                "player_output".equals(json(payload).path("eventType").asText())
+                    && containsKind(json(payload), "PROMPT"));
   }
 
   @Test

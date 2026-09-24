@@ -27,6 +27,42 @@ class GameplayWorldCatalogTest {
   }
 
   @Test
+  void visibleWorldsSuppressesCaseInsensitiveWorldSlugCollisionsAcrossTenants() {
+    when(authorityService.listPointers())
+        .thenReturn(
+            List.of(
+                pointer("demo", "Demo World", "production", "Live Realm", 7L, 11L, 1L),
+                pointer("DEMO", "Other Demo World", "event", "Event Realm", 8L, 12L, 1L)));
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThat(catalog.visibleWorlds()).isEmpty();
+    assertThat(catalog.browseView().worlds()).isEmpty();
+    assertThat(catalog.resolveWorld("demo")).isEmpty();
+    assertThat(catalog.browseRealms("DEMO")).isEmpty();
+  }
+
+  @Test
+  void resolveWorldFailsClosedWhenNormalizedSlugMatchesMultipleWorldViews() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(worldWithTargetRealm("preview", true), worldWithTargetRealm("preview", true)));
+
+    assertThat(catalog.resolveWorld(" DeMo ")).isEmpty();
+  }
+
+  @Test
+  void uniqueWorldRemainsVisibleAndResolvable() {
+    when(authorityService.listPointers())
+        .thenReturn(
+            List.of(pointer("demo", "Demo World", "production", "Live Realm", 7L, 11L, 1L)));
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThat(catalog.visibleWorlds()).hasSize(1);
+    assertThat(catalog.browseView().worlds()).extracting("slug").containsExactly("demo");
+    assertThat(catalog.resolveWorld("DEMO")).isPresent();
+  }
+
+  @Test
   void reverseRuntimeLookupFailsClosedWhenMultipleVisibleRealmsShareRuntimeTarget() {
     when(authorityService.listPointers())
         .thenReturn(

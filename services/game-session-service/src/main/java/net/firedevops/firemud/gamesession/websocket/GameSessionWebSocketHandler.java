@@ -489,7 +489,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                   sendProjectedOutput(
                       session, look, localeTag, effectivePresentation, "fresh LOOK");
                 }
-                if (effectivePresentation.prompt().emitAfterReconnectRestore()) {
+                if (effectivePresentation.prompt().enabled()
+                    && effectivePresentation.prompt().emitAfterReconnectRestore()) {
                   composePrompt(context)
                       .ifPresent(
                           prompt -> {

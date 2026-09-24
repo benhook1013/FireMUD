@@ -73,6 +73,18 @@ class CommunicationWebSocketCrossServiceTest {
     assertThat(responses).anyMatch(response -> response.startsWith("OK PLAY"));
     assertThat(responses)
         .anyMatch(response -> response.contains(ChatTestFixtures.canonicalSayText()));
+    assertThat(entityStub().lastListCharactersByAccountRequest())
+        .hasValueSatisfying(
+            request -> {
+              assertThat(request.getTenantId()).isEqualTo(Long.toString(TENANT_ID));
+              assertThat(request.getAccountId()).isEqualTo(Long.toString(ACCOUNT_ID));
+              assertThat(request.getGameInstanceId())
+                  .isEqualTo(Long.toString(DEMO_WORLD_INSTANCE_ID));
+              assertThat(request.getPlayableStateScope())
+                  .isEqualTo(
+                      net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                          .PLAYABLE_STATE_SCOPE_SHARED);
+            });
     assertThat(socialStub().lastRequest())
         .hasValueSatisfying(
             request -> {
@@ -87,6 +99,29 @@ class CommunicationWebSocketCrossServiceTest {
         COMMAND_WAIT,
         "gamesession.command.say.invocations",
         1.0);
+  }
+
+  @Test
+  void websocketPlayDeniesBeforeReadingEntityRosterWhenAccountAdmissionIsDenied() throws Exception {
+    ensureTestServicesStarted();
+    long sessionId = prepareGameInstance();
+    STACK.accountStub().denyGameplayAdmission();
+
+    try (GameplayWebSocketScenarios.LoginThenPlayScenario scenario =
+        GameplayWebSocketScenarios.loginThenAttemptPlay(
+            GameplayWebSocketScenarios.proxyGatewayDriverFactory(
+                gameSessionWebSocketUrl(), COMMAND_WAIT, TENANT_ID, sessionId),
+            "account-denied-play-" + sessionId,
+            GameplayWebSocketScenarios.demoAdmission(READY_LOOK_TEXT),
+            client ->
+                client.awaitMatching(
+                    response -> response.startsWith("ERROR JOIN_REQUIRED"),
+                    "Account admission denial before Entity roster lookup"))) {
+      assertThat(scenario.driver().responses())
+          .anyMatch(response -> response.startsWith("ERROR JOIN_REQUIRED"));
+    }
+
+    assertThat(entityStub().lastListCharactersByAccountRequest()).isEmpty();
   }
 
   @Test
@@ -877,14 +912,17 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   private long prepareGameInstance() {
-    return STACK.freshGameplayBaseline(
-        TENANT_ID,
-        DEMO_WORLD_INSTANCE_ID,
-        ACCOUNT_ID,
-        7L,
-        ACCOUNT_ID,
-        Long.parseLong(ChatTestFixtures.PLAYER_SORA),
-        Long.parseLong(ChatTestFixtures.PLAYER_NYX));
+    long sessionId =
+        STACK.freshGameplayBaseline(
+            TENANT_ID,
+            DEMO_WORLD_INSTANCE_ID,
+            ACCOUNT_ID,
+            7L,
+            ACCOUNT_ID,
+            Long.parseLong(ChatTestFixtures.PLAYER_SORA),
+            Long.parseLong(ChatTestFixtures.PLAYER_NYX));
+    entityStub().resetCharacterRosterState();
+    return sessionId;
   }
 
   private void seedLiveTargetSession() {

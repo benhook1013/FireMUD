@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The accepted separation of global control-plane roles from gameplay authority is target state. Current global-role presence classification still has drift, and the regression test proving a normally joined global-role account remains an ordinary player is missing. No runtime completion is claimed by this ADR.
+The accepted separation of global control-plane roles from gameplay authority is target state. Game Session's current presence classifier and the shared gameplay-specific claim helpers now ignore global roles, with focused ordinary-player regression proof; this does not establish completed Account-backed gameplay admission, which remains fail-closed pending typed runtime reads and tenant-scoped grant proof. No end-to-end runtime completion is claimed by this ADR.
 
 ## Decision Record
 
