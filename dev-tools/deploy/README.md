@@ -27,7 +27,7 @@ They are not generic CI utilities. They enforce the deployment contract for play
 - `validate-kustomize-overlays.sh`
   - CI-focused validator for the checked-in Kubernetes overlay definitions in the repo.
   - Use this when validating overlay changes in a PR, not as the main gate for a real environment deploy.
-  - It renders the `stage` and `prod` overlays, checks that referenced images exist, and enforces staging backup-marker rules. A PR changing `k8s/overlays/prod` also requires one production promotion attestation and runs production preflight in `ci-static` context; shared `k8s/base`, Postgres, and Velero changes alone still receive render and image validation without requiring promotion evidence.
+  - It renders the `stage` and `prod` overlays, checks that referenced images exist, and enforces staging backup-marker rules. Any PR changing `k8s/**` runs production preflight in `ci-static` context, bound to the full current commit when no production attestation applies. Changes under `k8s/overlays/prod` additionally require exactly one production promotion attestation; roll-forward-only changes also require exactly one backup-readiness record. Shared `k8s/base`, Postgres, and Velero changes receive static policy validation without requiring production promotion evidence.
 
 ## Choosing The Right Script
 
