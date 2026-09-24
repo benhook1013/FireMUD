@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -776,8 +777,9 @@ class SecretProjectionServiceTest {
     assertEquals(acceptedData, predecessor.getValue().getData());
     verify(secretClient.identitySecrets(), never()).withName(projectionName + "-previous");
     assertEquals("projected", result.state());
-    verify(predecessorCreate).create();
-    verify(lockedReplacementResource).replace();
+    var order = inOrder(predecessorCreate, lockedReplacementResource);
+    order.verify(predecessorCreate).create();
+    order.verify(lockedReplacementResource).replace();
   }
 
   @Test
