@@ -30,7 +30,7 @@ from pr_review.controller import (
     json_result,
 )
 from pr_review.patch_identity import patch_diff_args
-from pr_review.policy import Evidence
+from pr_review.policy import Channel, Evidence, taper_satisfied
 from pr_review.state import StateStore
 
 BASE = "a" * 40
@@ -597,6 +597,40 @@ class ControllerTests(unittest.TestCase):
             "one provisional CLI discovery is already recorded for this exact child/parent identity",
         ):
             controller.run_cli(allow_unreconciled=True, reason="one")
+
+    def test_reconciled_provisional_history_allows_target_without_tapering(self):
+        completed = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "completed",
+            "completed": True,
+            "attributable": True,
+            "anchored": True,
+            "corrected_state": True,
+            "accepted": 0,
+            "child_head": HEAD_1,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": f"patch-{HEAD_1[:4]}",
+        }
+        provisional = dict(
+            completed,
+            checkpoint="provisional",
+            anchored=False,
+            corrected_state=False,
+            provisional=True,
+        )
+        history = [completed, provisional]
+        controller = self.make({1: pr(1, HEAD_1)}, {(1, "cli"): history})
+        controller.set_stack([1])
+
+        result = controller.status()
+
+        self.assertEqual(result["prs"][0]["reconciliation"], "COHERENT")
+        self.assertEqual(result["prs"][0]["channels"]["cli"], "READY")
+        self.assertEqual(controller.resolve_cli_target().snapshot.head_sha, HEAD_1)
+        self.assertFalse(taper_satisfied(Channel.CLI, history, required=2))
 
     def test_provisional_discovery_allows_parent_moved_child_with_reason(self):
         values = {

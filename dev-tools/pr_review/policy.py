@@ -239,7 +239,7 @@ def completion_status(
     if not reviews:
         return ReviewStatus.READY
     if _same_head_provisional_barrier(history, reviews):
-        return ReviewStatus.PROVISIONAL
+        return ReviewStatus.READY
     latest = reviews[-1]
     reconciliation_value = reconciliation.value if isinstance(reconciliation, ReconciliationStatus) else reconciliation
     if reconciliation_value == ReconciliationStatus.PATCH_CHANGED.value:
