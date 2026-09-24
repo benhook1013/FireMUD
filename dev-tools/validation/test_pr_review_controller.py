@@ -312,18 +312,22 @@ class ControllerTests(unittest.TestCase):
 
     def test_duplicate_stale_partial_and_rate_limited_results_do_not_consume(self):
         cases = (
-            ("duplicate", [self.allocation_evidence(checkpoint="allocated"), self.allocation_evidence(checkpoint="allocated")]),
-            ("partial", [self.allocation_evidence(checkpoint="partial", completed=False)]),
-            ("rate-limited", [self.allocation_evidence(checkpoint="limited", rate_limited=True)]),
+            (
+                "duplicate",
+                [self.allocation_evidence(checkpoint="allocated"), self.allocation_evidence(checkpoint="allocated")],
+                "INVALID",
+            ),
+            ("partial", [self.allocation_evidence(checkpoint="partial", completed=False)], "PROMISED"),
+            ("rate-limited", [self.allocation_evidence(checkpoint="limited", rate_limited=True)], "PROMISED"),
         )
-        for label, later in cases:
+        for label, later, expected_status in cases:
             with self.subTest(result=label):
                 evidence = {(1, "hosted"): [self.allocation_evidence()]}
                 controller = self.grant_allocation(evidence=evidence)
                 evidence[(1, "hosted")].extend(later)
                 view = controller.status()["prs"][0]["allocations"]["hosted"]
                 self.assertNotEqual(view["status"], "HANDED_OFF")
-                self.assertIn(view["status"], {"PROMISED", "INVALID", "EXHAUSTED_PENDING"})
+                self.assertEqual(view["status"], expected_status)
 
         evidence = {(1, "hosted"): [self.allocation_evidence()]}
         values = {1: pr(1, HEAD_1)}
