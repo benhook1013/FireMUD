@@ -247,7 +247,7 @@ CREATE TABLE account_audit_outbox (
     schema_version INTEGER NOT NULL,
     payload_digest_version INTEGER NOT NULL,
     payload_digest VARCHAR(71) NOT NULL,
-    payload TEXT NOT NULL,
+    payload TEXT,
     receiver_receipt_id VARCHAR(128),
     receiver_log_event_id VARCHAR(128),
     delivery_status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
@@ -259,7 +259,10 @@ CREATE TABLE account_audit_outbox (
     CONSTRAINT account_audit_outbox_version_check
         CHECK (schema_version > 0 AND payload_digest_version = 1),
     CONSTRAINT account_audit_outbox_delivery_check
-        CHECK (delivery_status IN ('PENDING', 'COMMITTED', 'MINIMIZED'))
+        CHECK (delivery_status IN ('PENDING', 'COMMITTED', 'MINIMIZED')),
+    CONSTRAINT account_audit_outbox_payload_state_check
+        CHECK ((delivery_status = 'MINIMIZED' AND payload IS NULL)
+            OR (delivery_status IN ('PENDING', 'COMMITTED') AND payload IS NOT NULL))
 );
 
 CREATE INDEX idx_account_audit_outbox_pending

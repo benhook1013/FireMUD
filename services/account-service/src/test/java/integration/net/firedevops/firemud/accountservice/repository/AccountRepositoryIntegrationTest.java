@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.nio.file.Path;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.VerifiedJoinScope;
 import net.firedevops.firemud.accountservice.entity.Account;
@@ -188,6 +189,87 @@ class AccountRepositoryIntegrationTest {
                 Long.class,
                 auditEventId))
         .isEqualTo(1L);
+  }
+
+  @Test
+  void minimizedAuditReceiptClearsPayloadAndRetainsCompactIdentity() {
+    JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+    AccountAuditOutboxRepository outbox = new AccountAuditOutboxRepository(dsl);
+    UUID minimizedEventId = UUID.randomUUID();
+    String minimizedPayload = "{\"accountId\":42,\"requestId\":\"join-42\"}";
+    String minimizedDigest = AccountAuditDigest.ofPayload(minimizedPayload);
+    UUID committedEventId = UUID.randomUUID();
+    String committedPayload = "{\"accountId\":43}";
+
+    outbox.append(
+        minimizedEventId, "tenant", 7L, "ACCOUNT_JOINED_PUBLIC_PRODUCTION", minimizedPayload);
+    outbox.markDelivered(minimizedEventId, "receipt-minimized", "log-minimized", true);
+    outbox.append(committedEventId, "platform", null, "ACCOUNT_REGISTERED", committedPayload);
+    outbox.markDelivered(committedEventId, "receipt-committed", "log-committed", false);
+
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT payload FROM account_audit_outbox WHERE audit_event_id = ?",
+                String.class,
+                minimizedEventId))
+        .isNull();
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT scope FROM account_audit_outbox WHERE audit_event_id = ?",
+                String.class,
+                minimizedEventId))
+        .isEqualTo("tenant");
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT audit_event_id FROM account_audit_outbox WHERE audit_event_id = ?",
+                UUID.class,
+                minimizedEventId))
+        .isEqualTo(minimizedEventId);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT tenant_id FROM account_audit_outbox WHERE audit_event_id = ?",
+                Long.class,
+                minimizedEventId))
+        .isEqualTo(7L);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT payload_digest FROM account_audit_outbox WHERE audit_event_id = ?",
+                String.class,
+                minimizedEventId))
+        .isEqualTo(minimizedDigest);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT receiver_receipt_id FROM account_audit_outbox WHERE audit_event_id = ?",
+                String.class,
+                minimizedEventId))
+        .isEqualTo("receipt-minimized");
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT receiver_log_event_id FROM account_audit_outbox WHERE audit_event_id = ?",
+                String.class,
+                minimizedEventId))
+        .isEqualTo("log-minimized");
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT delivery_status FROM account_audit_outbox WHERE audit_event_id = ?",
+                String.class,
+                minimizedEventId))
+        .isEqualTo("MINIMIZED");
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT payload FROM account_audit_outbox WHERE audit_event_id = ?",
+                String.class,
+                committedEventId))
+        .isEqualTo(committedPayload);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT delivery_status FROM account_audit_outbox WHERE audit_event_id = ?",
+                String.class,
+                committedEventId))
+        .isEqualTo("COMMITTED");
+    assertThat(outbox.pending(10))
+        .noneMatch(envelope -> envelope.auditEventId().equals(minimizedEventId))
+        .noneMatch(envelope -> envelope.auditEventId().equals(committedEventId));
   }
 
   @Test

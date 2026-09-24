@@ -60,12 +60,17 @@ public class AccountAuditOutboxRepository {
 
   public void markDelivered(
       UUID auditEventId, String receiptId, String logEventId, boolean minimized) {
-    int changed =
+    var update =
         dsl.update(ACCOUNT_AUDIT_OUTBOX)
             .set(ACCOUNT_AUDIT_OUTBOX.RECEIVER_RECEIPT_ID, receiptId)
             .set(ACCOUNT_AUDIT_OUTBOX.RECEIVER_LOG_EVENT_ID, logEventId)
             .set(ACCOUNT_AUDIT_OUTBOX.DELIVERY_STATUS, minimized ? "MINIMIZED" : "COMMITTED")
-            .set(ACCOUNT_AUDIT_OUTBOX.LAST_ATTEMPT_AT, toLocalDateTime(Instant.now()))
+            .set(ACCOUNT_AUDIT_OUTBOX.LAST_ATTEMPT_AT, toLocalDateTime(Instant.now()));
+    if (minimized) {
+      update.set(ACCOUNT_AUDIT_OUTBOX.PAYLOAD, (String) null);
+    }
+    int changed =
+        update
             .where(
                 ACCOUNT_AUDIT_OUTBOX
                     .AUDIT_EVENT_ID

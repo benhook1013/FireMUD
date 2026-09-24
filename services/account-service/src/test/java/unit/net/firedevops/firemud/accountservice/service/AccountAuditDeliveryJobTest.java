@@ -36,6 +36,19 @@ class AccountAuditDeliveryJobTest {
   }
 
   @Test
+  void minimizedReceiverReceiptMarksSameIdentityTerminal() {
+    AccountAuditEnvelope envelope = platformRegistration();
+    when(outbox.pending(50)).thenReturn(List.of(envelope));
+    when(client.deliver(envelope))
+        .thenReturn(new LoggingAdminClient.AuditDeliveryResult("receipt-2", "log-2", true));
+
+    job.deliverPending();
+
+    verify(outbox).markDelivered(envelope.auditEventId(), "receipt-2", "log-2", true);
+    verify(outbox, never()).recordAttempt(envelope.auditEventId());
+  }
+
+  @Test
   void unavailableReceiverKeepsSameEnvelopePending() {
     AccountAuditEnvelope envelope = platformRegistration();
     when(outbox.pending(50)).thenReturn(List.of(envelope));
