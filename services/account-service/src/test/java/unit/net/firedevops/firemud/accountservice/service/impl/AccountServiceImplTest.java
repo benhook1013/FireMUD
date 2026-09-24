@@ -594,6 +594,106 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void expiredPersistedPendingJoinFailsTerminallyWithoutAuthorityOrMembershipTransition() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(sessionService.isAccountSessionActive(
+            org.mockito.ArgumentMatchers.eq(11L), org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(true);
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    AtomicReference<VerifiedJoinScope> retainedScope = new AtomicReference<>();
+    AtomicReference<AccountJoinOperationRepository.JoinOperation> retainedOperation =
+        new AtomicReference<>();
+    retainJoinEvidence(retainedScope, retainedOperation);
+    String connectScopeId = "expired-connect-scope";
+    JoinPublicProductionRequest request =
+        new JoinPublicProductionRequest(connectScopeId, "join-expired-pending-1");
+
+    VerifiedJoinScope expiredScope =
+        new VerifiedJoinScope(
+            connectScopeId,
+            11L,
+            7L,
+            101L,
+            "demo",
+            "production",
+            "production-namespace-7",
+            "SHARED",
+            44L,
+            23L,
+            17L,
+            "1999-12-31T23:59:00Z",
+            "2000-01-01T00:00:00Z",
+            "");
+    expiredScope =
+        new VerifiedJoinScope(
+            expiredScope.connectScopeId(),
+            expiredScope.accountId(),
+            expiredScope.tenantId(),
+            expiredScope.realmId(),
+            expiredScope.worldSlug(),
+            expiredScope.realmSlug(),
+            expiredScope.playableStateNamespaceId(),
+            expiredScope.playableStateScope(),
+            expiredScope.gameInstanceId(),
+            expiredScope.catalogRevision(),
+            expiredScope.pointerVersion(),
+            expiredScope.evaluatedAt(),
+            expiredScope.connectScopeExpiresAt(),
+            net.firedevops.firemud.accountservice.dto.AccountJoinDigest.scope(expiredScope));
+    retainedScope.set(expiredScope);
+    String callerBinding =
+        new JwtUtil(JWT_SECRET, 300000L)
+            .parseToken(bootstrap.bootstrapToken())
+            .getPayload()
+            .get("jti")
+            .toString();
+    retainedOperation.set(
+        new AccountJoinOperationRepository.JoinOperation(
+            expiredScope.accountId(),
+            expiredScope.tenantId(),
+            callerBinding,
+            net.firedevops.firemud.accountservice.dto.AccountJoinDigest.tokenHash(connectScopeId),
+            expiredScope.snapshotDigest(),
+            "UNAVAILABLE",
+            null,
+            null,
+            null,
+            null,
+            "PENDING",
+            null,
+            null,
+            null,
+            null,
+            1,
+            net.firedevops.firemud.accountservice.dto.AccountJoinDigest.intent(
+                request.requestId(), expiredScope, callerBinding),
+            "ENTITLEMENT_UNAVAILABLE",
+            "UNAVAILABLE"));
+
+    JoinPublicProductionResult expiredRetry =
+        service.joinPublicProduction(bootstrap.bootstrapToken(), request);
+    JoinPublicProductionResult terminalReadback =
+        service.joinPublicProduction(bootstrap.bootstrapToken(), request);
+
+    assertFalse(expiredRetry.success());
+    assertEquals("CONNECT_SCOPE_INVALID", expiredRetry.outcomeCode());
+    assertFalse(terminalReadback.success());
+    assertTrue(terminalReadback.replayed());
+    assertEquals("CONNECT_SCOPE_INVALID", terminalReadback.outcomeCode());
+    assertEquals("FAILED", retainedOperation.get().status());
+    assertEquals("CONNECT_SCOPE_INVALID", retainedOperation.get().outcome());
+    verifyNoInteractions(
+        subscriptionRepository, accountTenantMembershipRepository, accountAuditOutboxRepository);
+  }
+
+  @Test
   void joinPublicProductionReturnsConflictWhenGlobalRequestIdClaimIsLost() {
     Account account = new Account();
     account.setId(11L);
