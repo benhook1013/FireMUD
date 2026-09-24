@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -51,7 +52,10 @@ import io.javaoperatorsdk.operator.api.reconciler.Context;
 import io.javaoperatorsdk.operator.api.reconciler.ControllerConfiguration;
 import io.javaoperatorsdk.operator.api.reconciler.ResourceOperations;
 import io.javaoperatorsdk.operator.api.reconciler.UpdateControl;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
@@ -59,7 +63,10 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Pattern;
 import net.firedevops.firemud.hostedidentity.admission.AdmissionValidator;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
@@ -83,6 +90,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.yaml.snakeyaml.Yaml;
 
 @ExtendWith(OutputCaptureExtension.class)
 class HostedIdentityReconcilerSafetyTest {
@@ -1587,6 +1595,169 @@ class HostedIdentityReconcilerSafetyTest {
     resource.setStatus(status);
 
     assertNotNull(HostedIdentityReconciler.previousRole(resource, role));
+  }
+
+  @Test
+  void publicationRoleStatusValidationMatchesTheCrdConsumerSchema() throws IOException {
+    Map<?, ?> roleProperties = publicationRoleStatusProperties();
+    assertEquals(
+        Set.of(
+            "revision",
+            "sourceGeneration",
+            "sourceObjectGeneration",
+            "spkiSha256",
+            "provenance",
+            "state"),
+        roleProperties.keySet());
+
+    HostedEnvironmentIdentityStatus.RoleStatus empty =
+        new HostedEnvironmentIdentityStatus.RoleStatus();
+    assertTrue(empty.isSchemaValid(), "all consumer status fields are optional in the CRD");
+
+    assertRoleStatusExamples(
+        roleProperties,
+        "revision",
+        List.of("A", "a".repeat(128), "A._:+/@=-"),
+        List.of("", "-invalid", "a".repeat(129)));
+    assertRoleStatusExamples(
+        roleProperties, "sourceGeneration", List.of(1L, Long.MAX_VALUE), List.of(0L, -1L));
+    assertRoleStatusExamples(
+        roleProperties, "sourceObjectGeneration", List.of(1L, Long.MAX_VALUE), List.of(0L, -1L));
+    assertRoleStatusExamples(
+        roleProperties,
+        "spkiSha256",
+        List.of("a".repeat(64)),
+        List.of("A".repeat(64), "a".repeat(63)));
+    assertRoleStatusExamples(
+        roleProperties,
+        "provenance",
+        List.of("A", "A".repeat(128), "Cert_manager-v2"),
+        List.of("", "9source", "_source", "A".repeat(129)));
+    assertRoleStatusExamples(
+        roleProperties,
+        "state",
+        List.of("A", "A".repeat(64), "Ready_v2.-"),
+        List.of("", "9state", "_state", "A".repeat(65)));
+
+    HostedEnvironmentIdentityStatus.RoleStatus source =
+        new HostedEnvironmentIdentityStatus.RoleStatus();
+    source.setRevision("revision-1");
+    source.setSourceGeneration(1L);
+    source.setSourceObjectGeneration(2L);
+    source.setSpkiSha256("a".repeat(64));
+    source.setProvenance("cert-manager");
+    source.setState("source-ready");
+    HostedEnvironmentIdentityStatus.RoleStatus copy = source.copy();
+    assertNotSame(source, copy);
+    assertEquals(source.getRevision(), copy.getRevision());
+    assertEquals(source.getSourceGeneration(), copy.getSourceGeneration());
+    assertEquals(source.getSourceObjectGeneration(), copy.getSourceObjectGeneration());
+    assertEquals(source.getSpkiSha256(), copy.getSpkiSha256());
+    assertEquals(source.getProvenance(), copy.getProvenance());
+    assertEquals(source.getState(), copy.getState());
+    source.setRevision("changed");
+    assertEquals("revision-1", copy.getRevision());
+  }
+
+  private static void assertRoleStatusExamples(
+      Map<?, ?> roleProperties, String field, List<?> accepted, List<?> rejected) {
+    assertRoleStatusValueParity(roleProperties, field, null, true);
+    for (Object value : accepted) {
+      assertRoleStatusValueParity(roleProperties, field, value, true);
+    }
+    for (Object value : rejected) {
+      assertRoleStatusValueParity(roleProperties, field, value, false);
+    }
+  }
+
+  private static void assertRoleStatusValueParity(
+      Map<?, ?> roleProperties, String field, Object value, boolean expected) {
+    Map<?, ?> propertySchema = schemaMap(roleProperties.get(field));
+    boolean schemaValid = crdSchemaAccepts(propertySchema, value);
+    assertEquals(expected, schemaValid, "the CRD example expectation for " + field);
+
+    HostedEnvironmentIdentityStatus.RoleStatus roleStatus =
+        new HostedEnvironmentIdentityStatus.RoleStatus();
+    switch (field) {
+      case "revision" -> roleStatus.setRevision((String) value);
+      case "sourceGeneration" -> roleStatus.setSourceGeneration((Long) value);
+      case "sourceObjectGeneration" -> roleStatus.setSourceObjectGeneration((Long) value);
+      case "spkiSha256" -> roleStatus.setSpkiSha256((String) value);
+      case "provenance" -> roleStatus.setProvenance((String) value);
+      case "state" -> roleStatus.setState((String) value);
+      default -> throw new IllegalArgumentException("unsupported role status field: " + field);
+    }
+    assertEquals(
+        schemaValid,
+        roleStatus.isSchemaValid(),
+        "RoleStatus model validation must match the CRD for " + field + " value " + value);
+  }
+
+  private static boolean crdSchemaAccepts(Map<?, ?> propertySchema, Object value) {
+    if (value == null) {
+      return true;
+    }
+    if ("string".equals(propertySchema.get("type"))) {
+      if (!(value instanceof String stringValue)) {
+        return false;
+      }
+      int maxLength = ((Number) propertySchema.get("maxLength")).intValue();
+      String pattern = Objects.toString(propertySchema.get("pattern"));
+      return stringValue.length() <= maxLength
+          && Pattern.compile(pattern).matcher(stringValue).matches();
+    }
+    if ("integer".equals(propertySchema.get("type"))) {
+      if (!(value instanceof Long || value instanceof Integer)) {
+        return false;
+      }
+      long minimum = ((Number) propertySchema.get("minimum")).longValue();
+      return ((Number) value).longValue() >= minimum;
+    }
+    throw new AssertionError("unsupported CRD consumer status property schema: " + propertySchema);
+  }
+
+  private static Map<?, ?> publicationRoleStatusProperties() throws IOException {
+    Map<?, ?> root;
+    try (var reader =
+        Files.newBufferedReader(findRepositoryFile("k8s/hosted-identity-controller/crd.yaml"))) {
+      root = schemaMap(new Yaml().load(reader));
+    }
+    Map<?, ?> spec = schemaMap(root.get("spec"));
+    List<?> versions = (List<?>) spec.get("versions");
+    Map<?, ?> version = schemaMap(versions.get(0));
+    Map<?, ?> openApiSchema = schemaMap(schemaMap(version.get("schema")).get("openAPIV3Schema"));
+    Map<?, ?> statusProperties =
+        schemaMap(
+            schemaMap(schemaMap(openApiSchema.get("properties")).get("status")).get("properties"));
+    Map<?, ?> consumerSchema = schemaMap(statusProperties.get("ingress"));
+    Map<?, ?> publicationSchema = schemaMap(statusProperties.get("grpcPublication"));
+    assertEquals(
+        consumerSchema,
+        publicationSchema.get("additionalProperties"),
+        "grpcPublication entries must use the shared consumer status schema");
+    return schemaMap(consumerSchema.get("properties"));
+  }
+
+  private static Map<?, ?> schemaMap(Object value) {
+    if (value instanceof Map<?, ?> map) {
+      return map;
+    }
+    throw new AssertionError("expected CRD schema mapping but found " + value);
+  }
+
+  private static Path findRepositoryFile(String relativePath) {
+    Path directory = Path.of("").toAbsolutePath();
+    while (directory != null) {
+      Path candidate = directory.resolve(relativePath);
+      if (Files.isRegularFile(candidate)) {
+        return candidate;
+      }
+      if (Files.isRegularFile(directory.resolve("settings.gradle.kts"))) {
+        break;
+      }
+      directory = directory.getParent();
+    }
+    throw new AssertionError("could not locate repository file " + relativePath);
   }
 
   @Test
