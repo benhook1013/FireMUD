@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
 from pr_review import cli, state
-from pr_review.acceptance import AcceptanceFixtureError, load
+from pr_review.acceptance import AcceptanceFixtureError, FixtureReviewAdapter, load
 
 BASE = "a" * 40
 HEAD_1 = "b" * 40
@@ -808,6 +808,53 @@ class AcceptanceCliTest(unittest.TestCase):
             sidecar = json.loads((root / "state.json.fixture-evidence.json").read_text(encoding="utf-8"))
             self.assertEqual(sidecar["result_positions"]["1:hosted"], 4)
             self.assertEqual(sidecar["evidence"], [])
+
+    def test_dry_fixture_results_get_distinct_defaults_and_duplicate_checkpoint_is_not_recorded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture_path = root / "fixture.json"
+            isolated = root / "state.json"
+            payload = fixture_payload()
+            payload["review_results"] = {
+                "1": {
+                    "hosted": [
+                        {"status": "dry", "record_evidence": True},
+                        {"status": "dry", "record_evidence": True},
+                        {"status": "dry", "record_evidence": True, "checkpoint": "explicit-dry"},
+                        {"status": "dry", "record_evidence": True, "checkpoint": "explicit-dry"},
+                    ]
+                }
+            }
+            fixture_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            acceptance = load(fixture_path, isolated)
+            controller = acceptance.controller()
+            target = controller.resolve_hosted_target(expected_pr=1)
+            adapter = FixtureReviewAdapter("hosted", acceptance.evidence)
+
+            first_result = acceptance.evidence.next_result(target, "hosted")
+            self.assertIsNotNone(first_result)
+            self.assertEqual(first_result["_fixture_result_position"], 1)
+            first_checkpoint = acceptance.evidence.record_result(target, "hosted", first_result)
+            second = adapter(target)
+            third = adapter(target)
+            fourth = adapter(target)
+
+            self.assertIsNotNone(first_checkpoint)
+            self.assertNotEqual(first_checkpoint, second["recorded_checkpoint"])
+            self.assertTrue(second["recorded_evidence"])
+            self.assertEqual(third["recorded_checkpoint"], "explicit-dry")
+            self.assertTrue(third["recorded_evidence"])
+            self.assertIsNone(fourth["recorded_checkpoint"])
+            self.assertFalse(fourth["recorded_evidence"])
+
+            sidecar = json.loads((root / "state.json.fixture-evidence.json").read_text(encoding="utf-8"))
+            self.assertEqual(sidecar["result_positions"]["1:hosted"], 4)
+            self.assertEqual(
+                [item["checkpoint"] for item in sidecar["evidence"]],
+                [first_checkpoint, second["recorded_checkpoint"], "explicit-dry"],
+            )
+            self.assertNotIn("_fixture_result_position", sidecar["evidence"][0])
 
     def test_allocation_handoff_keeps_findings_and_next_parent_gates(self):
         with tempfile.TemporaryDirectory() as directory:

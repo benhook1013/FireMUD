@@ -33,6 +33,14 @@ class EnvironmentIdentityPlannerTest {
     assertEquals("firemud-grpc-tls", plan.grpcSecretName());
     assertEquals(
         List.of(
+            "game-design-service",
+            "world-management-service",
+            "entity-management-service",
+            "game-logic-service",
+            "automation-scripting-service"),
+        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS);
+    assertEquals(
+        List.of(
             "account-service",
             "game-session-service",
             "logging-admin-service",

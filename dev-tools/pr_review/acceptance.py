@@ -316,6 +316,7 @@ class FixtureEvidence:
                         f"review_results for PR #{pr} {channel} are exhausted"
                     )
                 result = dict(configured[index])
+                result["_fixture_result_position"] = index + 1
                 positions[key] = index + 1
                 self._write_sidecar(payload)
                 return result
@@ -341,7 +342,17 @@ class FixtureEvidence:
             attributable = True
         checkpoint = supplied.get("checkpoint") or result.get("checkpoint")
         if checkpoint is None:
-            checkpoint = f"fixture-{channel}-{target.snapshot.number}-{target.snapshot.head_sha[:12]}"
+            result_position = result.get("_fixture_result_position", 1)
+            if (
+                isinstance(result_position, bool)
+                or not isinstance(result_position, int)
+                or result_position <= 0
+            ):
+                raise AcceptanceFixtureError("simulated review result position must be a positive integer")
+            checkpoint = (
+                f"fixture-{channel}-{target.snapshot.number}-{target.snapshot.head_sha[:12]}"
+                f"-result-{result_position}"
+            )
         if not isinstance(checkpoint, str) or not checkpoint.strip():
             raise AcceptanceFixtureError("simulated review result checkpoint must be non-empty")
         accepted = supplied.get("accepted", result.get("accepted", 1 if status == "productive" else 0))
@@ -386,15 +397,16 @@ class FixtureEvidence:
             try:
                 payload = self._sidecar()
                 evidence_entries = payload["evidence"]
-                if not any(
+                if any(
                     item.get("pr") == target.snapshot.number
-                    and item.get("channel") == channel
+                    and item.get("channel", "cli") == channel
                     and item.get("checkpoint") == checkpoint
                     for item in evidence_entries
                 ):
-                    evidence["channel"] = channel
-                    evidence_entries.append(evidence)
-                    self._write_sidecar(payload)
+                    return None
+                evidence["channel"] = channel
+                evidence_entries.append(evidence)
+                self._write_sidecar(payload)
             finally:
                 fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
         return checkpoint
