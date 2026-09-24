@@ -75,6 +75,9 @@ declare -A workflow_run_cache=()
 declare -A job_cache=()
 declare -A terminal_job_cache=()
 declare -A preservation_step_refresh_attempts=()
+declare -A verified_substantive_run_cache=()
+last_uncertain_substantive_workflow=false
+substantive_wait_extended=false
 sleep_until_poll_deadline() {
   local remaining=$((poll_deadline - SECONDS))
   if (( remaining <= 0 )); then
@@ -91,6 +94,7 @@ extend_for_active_substantive_run() {
   if [[ "${poll_attempt_limit}" != "${active_max_attempts}" ]]; then
     poll_attempt_limit="${active_max_attempts}"
     poll_deadline="${active_poll_deadline}"
+    substantive_wait_extended=true
     echo "Verified substantive workflow is active before ${REQUIRED_GATE_NAME} was published; extending the bounded wait to ${active_poll_timeout_seconds}s." >&2
   fi
 }
@@ -123,6 +127,7 @@ find_active_substantive_workflow() {
     if [[ "${active_workflow_status_result}" -ne 0 ]]; then
       active_workflow_status_error="$(<"${api_error_file}")"
       if is_retryable_gh_failure "${active_workflow_status_result}" "${active_workflow_status_error}"; then
+        uncertain_substantive_workflow=true
         echo "Retryable GitHub API failure while checking for an active substantive ${EXPECTED_WORKFLOW_NAME} run; retaining the short fail-closed wait." >&2
         return 0
       fi
@@ -132,9 +137,10 @@ find_active_substantive_workflow() {
     fi
     set +e
     active_workflow_runs_json="$(jq -n \
-      --argjson existing "${active_workflow_runs_json}" \
-      --argjson next "${active_workflow_status_json}" \
-      '$existing + $next' 2>>"${api_error_file}")"
+      --slurpfile existing /dev/fd/3 \
+      --slurpfile next /dev/fd/4 \
+      '$existing[0] + $next[0]' 3<<<"${active_workflow_runs_json}" \
+      4<<<"${active_workflow_status_json}" 2>>"${api_error_file}")"
     active_workflow_runs_combine_status=$?
     set -e
     if [[ "${active_workflow_runs_combine_status}" -ne 0 ]]; then
@@ -195,6 +201,10 @@ find_active_substantive_workflow() {
 
   while IFS=$'\t' read -r active_run_id active_run_status; do
     [[ -z "${active_run_id}${active_run_status}" ]] && continue
+    if [[ "${verified_substantive_run_cache[${active_run_id}]:-false}" == "true" ]]; then
+      active_substantive_workflow=true
+      continue
+    fi
     : >"${api_error_file}"
     set +e
     active_run_jobs_json="$(gh api --method GET \
@@ -256,10 +266,27 @@ find_active_substantive_workflow() {
       uncertain_substantive_workflow=true
     elif [[ "${change_job_completed_successfully}" == "true" ]]; then
       active_substantive_workflow=true
+      verified_substantive_run_cache["${active_run_id}"]=true
     elif [[ "${change_job_inconclusive}" == "true" ]]; then
       uncertain_substantive_workflow=true
     fi
   done <<<"${active_run_rows}"
+}
+
+refresh_active_workflow_state() {
+  local should_discover=false
+  if [[ "${substantive_wait_extended}" != "true" ]] &&
+    { (( attempt == 1 || (attempt - 1) % 4 == 0 || attempt == poll_attempt_limit )) ||
+      (( poll_deadline - SECONDS <= 2 * poll_interval_seconds )); }; then
+    should_discover=true
+  fi
+  if [[ "${should_discover}" == "true" ]]; then
+    find_active_substantive_workflow
+    last_uncertain_substantive_workflow="${uncertain_substantive_workflow}"
+  else
+    active_substantive_workflow=false
+    uncertain_substantive_workflow="${last_uncertain_substantive_workflow}"
+  fi
 }
 
 for attempt in $(seq 1 "${active_max_attempts}"); do
@@ -433,45 +460,66 @@ for attempt in $(seq 1 "${active_max_attempts}"); do
       workflow_run_cache["${workflow_run_id}"]="${workflow_run_json}"
     fi
     set +e
-    workflow_run_identity_ok="$(jq -r \
+    workflow_run_identity_state="$(jq -r \
       --arg expected_id "${workflow_run_id}" \
       --arg expected_workflow_id "${expected_workflow_id}" \
       --arg expected_name "${EXPECTED_WORKFLOW_NAME}" \
       --arg expected_path "${EXPECTED_WORKFLOW_PATH}" \
       --arg expected_head "${HEAD_SHA}" \
+      --arg expected_base "${BASE_SHA}" \
       --arg expected_repository "${GITHUB_REPOSITORY}" \
       --arg expected_pr "${PR_NUMBER}" \
       --arg expected_display_title "${expected_display_title}" \
-      'if (.id | type) == "number" and
-            (.workflow_id | type) == "number" and
-            (.id == ($expected_id | tonumber)) and
-            (.workflow_id == ($expected_workflow_id | tonumber)) and
-          (.name == $expected_name or .name == $expected_display_title) and
+      '. as $run
+      | ((try (.display_title | capture("^(?<name>.*) pr-(?<pr>[1-9][0-9]*) base-(?<base>[0-9A-Fa-f]{40}) head-(?<head>[0-9A-Fa-f]{40})$")) catch null) // {}) as $title
+      | if ($run.id | type) == "number" and
+            ($run.workflow_id | type) == "number" and
+            ($run.id == ($expected_id | tonumber)) and
+            ($run.workflow_id == ($expected_workflow_id | tonumber)) and
+          ($run.name == $expected_name or $run.name == $expected_display_title) and
           (
-            .path == $expected_path or
+            $run.path == $expected_path or
             (
-              (.path | startswith($expected_path + "@")) and
-              ((.path | ltrimstr($expected_path + "@")) | test("^.+$"))
+              ($run.path | startswith($expected_path + "@")) and
+              (($run.path | ltrimstr($expected_path + "@")) | test("^.+$"))
             )
           ) and
-          .head_sha == $expected_head and
-          .repository.full_name == $expected_repository and
-          .event == "pull_request" and
-          (.display_title // null) == $expected_display_title and
-          ((.pull_requests // null) | type) == "array" and
+          $run.head_sha == $expected_head and
+          $run.repository.full_name == $expected_repository and
+          $run.event == "pull_request" and
+          (($run.pull_requests // null) | type) == "array" and
           (
-            ((.pull_requests | length) > 0 and
-              any(.pull_requests[]; ((.number // null) | tostring) == $expected_pr)) or
-            ((.pull_requests | length) == 0 and
-              (.display_title // null) == $expected_display_title)
+            (($run.pull_requests | length) > 0 and
+              any($run.pull_requests[]; ((.number // null) | tostring) == $expected_pr)) or
+            (($run.pull_requests | length) == 0 and
+              ($run.display_title // null) == $expected_display_title)
           )
-        then "true" else "false" end' \
+        then
+          if ($run.display_title // null) == $expected_display_title then
+            "current"
+          elif (($run.pull_requests | length) > 0) and
+            $title.name == $expected_name and $title.pr == $expected_pr and
+            any($run.pull_requests[];
+              ((.number // null) | tostring) == $expected_pr and
+              (.base.sha // "") == $title.base and
+              (.head.sha // "") == $title.head and
+              ((.base.sha // "") != $expected_base or (.head.sha // "") != $expected_head))
+          then
+            "stale"
+          else
+            "invalid"
+          end
+        else "invalid" end' \
       <<<"${workflow_run_json}" 2>>"${api_error_file}")"
     workflow_run_query_status=$?
     set -e
     if [[ "${workflow_run_query_status}" -ne 0 ||
-      "${workflow_run_identity_ok}" != "true" ]]; then
+      ( "${workflow_run_identity_state}" != "current" &&
+        "${workflow_run_identity_state}" != "stale" ) ]]; then
       candidate_ambiguous=true
+      continue
+    fi
+    if [[ "${workflow_run_identity_state}" == "stale" ]]; then
       continue
     fi
     job_json="${job_cache[${job_id}]:-}"
@@ -666,8 +714,8 @@ for attempt in $(seq 1 "${active_max_attempts}"); do
     exit 1
   fi
   if [ "${prior_status}" = "none" ]; then
-    find_active_substantive_workflow
-    if [[ "${active_substantive_workflow}" == "true" ]]; then
+    refresh_active_workflow_state
+    if [[ "${active_substantive_workflow}" == "true" || "${substantive_wait_extended}" == "true" ]]; then
       extend_for_active_substantive_run
       echo "A verified substantive workflow is active with ${REQUIRED_GATE_NAME} unpublished; retrying attempt ${attempt}/${poll_attempt_limit}." >&2
     elif [[ "${uncertain_substantive_workflow}" == "true" ]]; then
@@ -692,7 +740,7 @@ for attempt in $(seq 1 "${active_max_attempts}"); do
   if [[ "${prior_preserve_step}" == "skipped" ]]; then
     extend_for_active_substantive_run
   else
-    find_active_substantive_workflow
+    refresh_active_workflow_state
     if [[ "${active_substantive_workflow}" == "true" ]]; then
       extend_for_active_substantive_run
     fi
@@ -701,7 +749,8 @@ for attempt in $(seq 1 "${active_max_attempts}"); do
     echo "Timed out waiting for the relevant prior ${REQUIRED_GATE_NAME} on unchanged head ${HEAD_SHA} to complete." >&2
     exit 1
   fi
-  if [[ "${prior_preserve_step}" == "skipped" || "${active_substantive_workflow:-false}" == "true" ]]; then
+  if [[ "${prior_preserve_step}" == "skipped" || "${active_substantive_workflow:-false}" == "true" ||
+    "${substantive_wait_extended}" == "true" ]]; then
     echo "A verified substantive ${REQUIRED_GATE_NAME} is still pending; retrying attempt ${attempt}/${poll_attempt_limit}." >&2
   else
     echo "A prior ${REQUIRED_GATE_NAME} is pending but its substantive identity is not yet verified; retaining the short fail-closed bound (attempt ${attempt}/${poll_attempt_limit})." >&2

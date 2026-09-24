@@ -524,8 +524,19 @@ if [[ "$*" == *"/actions/workflows/${EXPECTED_WORKFLOW_FILE}/runs"* ]]; then
       exit 90
       ;;
   esac
+  if [[ -n "${GH_CALL_COUNT_DIR:-}" ]]; then
+    active_call_file="$GH_CALL_COUNT_DIR/active-$active_status"
+    active_call_count=0
+    [[ -f "$active_call_file" ]] && active_call_count="$(<"$active_call_file")"
+    printf '%s' "$((active_call_count + 1))" >"$active_call_file"
+  fi
   case "${GH_SCENARIO:-}" in
-    active-workflow-delayed-gate|active-workflow-wrong-base|active-workflow-metadata-only|active-workflow-mismatched-tuple)
+    active-workflow-delayed-gate|active-workflow-late-arrival|active-workflow-wrong-base|active-workflow-metadata-only|active-workflow-mismatched-tuple)
+      if [[ "${GH_SCENARIO}" == "active-workflow-late-arrival" &&
+        "$(<"$count_file")" -ne 92 ]]; then
+        printf '[{"workflow_runs":[]} ]\n'
+        exit 0
+      fi
       if [[ "$active_status" != "in_progress" ]]; then
         printf '[{"workflow_runs":[]} ]\n'
         exit 0
@@ -534,7 +545,8 @@ if [[ "$*" == *"/actions/workflows/${EXPECTED_WORKFLOW_FILE}/runs"* ]]; then
       [[ "${GH_SCENARIO}" == "active-workflow-wrong-base" ]] && display_title="CI — Validation pr-${PR_NUMBER} base-cccccccccccccccccccccccccccccccccccccccc head-${HEAD_SHA}"
       run_head_sha="${HEAD_SHA}"
       pull_requests='[]'
-      if [[ "${GH_SCENARIO}" == "active-workflow-delayed-gate" ]]; then
+      if [[ "${GH_SCENARIO}" == "active-workflow-delayed-gate" ||
+        "${GH_SCENARIO}" == "active-workflow-late-arrival" ]]; then
         # GitHub may report the synthetic merge SHA for pull_request runs;
         # the populated PR tuple remains the authoritative identity.
         run_head_sha=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
@@ -576,6 +588,12 @@ if [[ "$*" == *"/actions/runs/100/jobs"* ]]; then
   if [[ "$*" != *"--paginate"* || "$*" != *"--slurp"* ]]; then
     echo "simulated workflow jobs lookup omitted pagination" >&2
     exit 90
+  fi
+  if [[ -n "${GH_CALL_COUNT_DIR:-}" ]]; then
+    active_jobs_file="$GH_CALL_COUNT_DIR/run-jobs-100"
+    active_jobs_count=0
+    [[ -f "$active_jobs_file" ]] && active_jobs_count="$(<"$active_jobs_file")"
+    printf '%s' "$((active_jobs_count + 1))" >"$active_jobs_file"
   fi
   change_conclusion=success
   [[ "${GH_SCENARIO:-}" == "active-workflow-metadata-only" ]] && change_conclusion=skipped
@@ -625,6 +643,9 @@ if [[ "$*" == *"/actions/jobs/"* ]]; then
   elif [[ "${GH_SCENARIO:-}" == "pending-preservation-step-not-concluded" &&
     "${job_id}" == "100" && "$(<"$count_file")" -le 3 ]]; then
     printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
+  elif [[ "${GH_SCENARIO:-}" == "pending-gate-discovery-throttle" &&
+    "${job_id}" == "100" && "$(<"$count_file")" -le 5 ]]; then
+    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   elif [[ "${GH_SCENARIO:-}" == "pending-missing-step-with-failed-substantive" &&
     "${job_id}" == "101" ]]; then
     printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
@@ -665,6 +686,16 @@ if [[ "$*" == *"/actions/runs/"* ]]; then
   elif [[ "${GH_SCENARIO:-}" == "wrong-run-name" ]]; then
     workflow_name='Security Checks'
   fi
+  if [[ "${GH_SCENARIO:-}" == "valid-new-tuple" ]]; then
+    pull_requests="[{\"number\":${PR_NUMBER},\"base\":{\"sha\":\"${BASE_SHA}\"},\"head\":{\"sha\":\"${HEAD_SHA}\"}}]"
+  elif [[ "${GH_SCENARIO:-}" == "stale-then-current-tuple" ]]; then
+    if [[ "${run_id}" == "200" ]]; then
+      display_title="${workflow_name} pr-${PR_NUMBER} base-cccccccccccccccccccccccccccccccccccccccc head-${HEAD_SHA}"
+      pull_requests="[{\"number\":${PR_NUMBER},\"base\":{\"sha\":\"cccccccccccccccccccccccccccccccccccccccc\"},\"head\":{\"sha\":\"${HEAD_SHA}\"}}]"
+    else
+      pull_requests="[{\"number\":${PR_NUMBER},\"base\":{\"sha\":\"${BASE_SHA}\"},\"head\":{\"sha\":\"${HEAD_SHA}\"}}]"
+    fi
+  fi
   if [[ "${GH_SCENARIO:-}" == "fork-empty-association" ||
     "${GH_SCENARIO:-}" == "dynamic-run-name-fork-empty" ]]; then
     pull_requests='[]'
@@ -677,11 +708,13 @@ if [[ "$*" == *"/actions/runs/"* ]]; then
     display_title="${workflow_name} pr-${PR_NUMBER} base-cccccccccccccccccccccccccccccccccccccccc head-${HEAD_SHA}"
   elif [[ "${GH_SCENARIO:-}" == "populated-wrong-base" ]]; then
     display_title="${workflow_name} pr-${PR_NUMBER} base-cccccccccccccccccccccccccccccccccccccccc head-${HEAD_SHA}"
+    pull_requests="[{\"number\":${PR_NUMBER},\"base\":{\"sha\":\"cccccccccccccccccccccccccccccccccccccccc\"},\"head\":{\"sha\":\"${HEAD_SHA}\"}}]"
   elif [[ "${GH_SCENARIO:-}" == "empty-wrong-head" ]]; then
     pull_requests='[]'
     display_title="${workflow_name} pr-${PR_NUMBER} base-${BASE_SHA} head-dddddddddddddddddddddddddddddddddddddddd"
   elif [[ "${GH_SCENARIO:-}" == "populated-wrong-head" ]]; then
     display_title="${workflow_name} pr-${PR_NUMBER} base-${BASE_SHA} head-dddddddddddddddddddddddddddddddddddddddd"
+    pull_requests="[{\"number\":${PR_NUMBER},\"base\":{\"sha\":\"${BASE_SHA}\"},\"head\":{\"sha\":\"dddddddddddddddddddddddddddddddddddddddd\"}}]"
   elif [[ "${GH_SCENARIO:-}" == "empty-wrong-title" ]]; then
     pull_requests='[]'
     display_title='not the canonical run title'
@@ -794,6 +827,13 @@ JSON
       printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:30:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     fi
     ;;
+  active-workflow-late-arrival)
+    if [[ "$count" -le 92 ]]; then
+      printf '[{"check_runs":[]} ]\n'
+    else
+      printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:30:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    fi
+    ;;
   failed-predecessor)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"failure","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
@@ -803,7 +843,10 @@ JSON
   same-timestamp-newer-failure)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"completed","conclusion":"failure","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
-  cross-workflow-same-name|fork-empty-association|dynamic-run-name|dynamic-run-name-fork-empty|wrong-run-name|wrong-job-workflow-name|empty-wrong-pr|empty-wrong-base|populated-wrong-base|empty-wrong-head|populated-wrong-head|empty-wrong-title|empty-malformed-association|other-pr-association)
+  stale-then-current-tuple)
+    printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T01:00:00Z","started_at":"2026-07-30T00:00:00Z","created_at":"2026-07-30T00:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":201,"details_url":"https://github.com/example/firemud/actions/runs/201/job/201","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    ;;
+  cross-workflow-same-name|fork-empty-association|dynamic-run-name|dynamic-run-name-fork-empty|wrong-run-name|wrong-job-workflow-name|empty-wrong-pr|empty-wrong-base|populated-wrong-base|empty-wrong-head|populated-wrong-head|empty-wrong-title|empty-malformed-association|other-pr-association|valid-new-tuple)
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":200,"details_url":"https://github.com/example/firemud/actions/runs/200/job/200","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     ;;
   duplicate-invalid-run-identity)
@@ -896,6 +939,13 @@ JSON
     fi
     printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"%s","conclusion":%s,"completed_at":%s,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n' "$status" "$conclusion" "$completed_at"
     ;;
+  pending-gate-discovery-throttle)
+    if [[ "$count" -le 5 ]]; then
+      printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"in_progress","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    else
+      printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
+    fi
+    ;;
   cache-metadata-across-polls)
     if [[ "$count" -eq 1 ]]; then
       printf '[{"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"},{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"in_progress","conclusion":null,"started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
@@ -982,12 +1032,12 @@ grep -Fq 'retry_error_text="${job_error}"' <<<"$action_script" || {
   echo "required-gate action must capture retryable API error text at the failure site" >&2
   exit 1
 }
-for active_status in in_progress queued requested waiting pending; do
-  grep -Fq "$active_status" <<<"$action_script" || {
-    echo "required-gate action must scope active workflow lookup to $active_status runs" >&2
-    exit 1
-  }
-done
+# Assert the exact discovery-loop declaration so stray mentions cannot mask a
+# removed active status from the actual API query.
+grep -Fxq '  for active_workflow_status in in_progress queued requested waiting pending; do' <<<"$action_script" || {
+  echo "required-gate action must query every supported active workflow status" >&2
+  exit 1
+}
 retry_branch="$(awk '/^  if \[\[ "\$\{job_lookup_retryable\}" == "true" \]\]; then$/{capture=1} capture{print} capture && /^  fi$/{exit}' <<<"$action_script")"
 # shellcheck disable=SC2016 # Assert literal shell parameter expansion syntax.
 grep -Fq '[[ -z "${retry_error_text}" ]] || printf' <<<"$retry_branch" || {
@@ -1053,6 +1103,35 @@ if grep -Fq 'Polling delay bounded' "$deadline_unclamped_output"; then
   echo "required-gate action logged a polling delay that was not clamped" >&2
   exit 1
 fi
+
+refresh_active_workflow_state_script="$(awk '
+  /^refresh_active_workflow_state\(\) \{$/ { capture=1 }
+  capture {
+    print
+    if ($0 == "}") exit
+  }
+' <<<"$action_script")"
+[[ -n "$refresh_active_workflow_state_script" ]] || {
+  echo "required-gate action must define active-workflow state refresh" >&2
+  exit 1
+}
+late_deadline_discovery_script="poll_interval_seconds=$poll_interval_seconds
+attempt=3
+poll_attempt_limit=$max_attempts
+substantive_wait_extended=false
+last_uncertain_substantive_workflow=false
+active_substantive_workflow=false
+uncertain_substantive_workflow=false
+discovery_count=0
+find_active_substantive_workflow() { discovery_count=\$((discovery_count + 1)); }
+poll_deadline=\$((SECONDS + 2 * poll_interval_seconds))
+${refresh_active_workflow_state_script}
+refresh_active_workflow_state
+[[ \$discovery_count == 1 ]]"
+PATH="$tmp_dir:$PATH" bash -euo pipefail -c "$late_deadline_discovery_script" || {
+  echo "required-gate action did not rediscover when the wall-clock deadline approached before the final attempt" >&2
+  exit 1
+}
 
 run_guard_action() {
   local output_file="$1"
@@ -1210,7 +1289,9 @@ run_action "$delayed_after_19_minutes_count" none delayed-predecessor-after-19-m
 
 slow_substantive_output="$tmp_dir/slow-substantive-output"
 slow_substantive_count="$tmp_dir/count-slow-substantive"
-run_action "$slow_substantive_count" none active-workflow-delayed-gate >"$slow_substantive_output" 2>&1
+slow_substantive_api_counts="$tmp_dir/slow-substantive-api-counts"
+mkdir -p "$slow_substantive_api_counts"
+run_action "$slow_substantive_count" none active-workflow-delayed-gate "$slow_substantive_api_counts" >"$slow_substantive_output" 2>&1
 (( 97 * poll_interval_seconds > poll_timeout_seconds )) || {
   echo "slow-substantive fixture must exceed the former missing-gate polling budget" >&2
   exit 1
@@ -1221,6 +1302,35 @@ run_action "$slow_substantive_count" none active-workflow-delayed-gate >"$slow_s
 }
 grep -Fq 'substantive workflow is active' "$slow_substantive_output" || {
   echo "required-gate action did not distinguish active substantive work from a missing predecessor" >&2
+  exit 1
+}
+for active_status in in_progress queued requested waiting pending; do
+  [[ "$(<"$slow_substantive_api_counts/active-$active_status")" == "1" ]] || {
+    echo "required-gate action rediscovered $active_status after extending for a verified active run" >&2
+    exit 1
+  }
+done
+[[ "$(<"$slow_substantive_api_counts/run-jobs-100")" == "1" ]] || {
+  echo "required-gate action did not reuse completed change-detector evidence for the active run" >&2
+  exit 1
+}
+
+late_active_count="$tmp_dir/count-late-active-arrival"
+late_active_api_counts="$tmp_dir/late-active-api-counts"
+mkdir -p "$late_active_api_counts"
+run_action "$late_active_count" none active-workflow-late-arrival "$late_active_api_counts" >"$tmp_dir/late-active-output" 2>&1
+[[ "$(<"$late_active_count")" == "93" ]] || {
+  echo "required-gate action missed an active substantive workflow appearing on the final short-bound discovery" >&2
+  exit 1
+}
+for active_status in in_progress queued requested waiting pending; do
+  [[ "$(<"$late_active_api_counts/active-$active_status")" == "24" ]] || {
+    echo "required-gate action did not run active-workflow discovery every fourth poll plus the final short-bound poll" >&2
+    exit 1
+  }
+done
+[[ "$(<"$late_active_api_counts/run-jobs-100")" == "1" ]] || {
+  echo "required-gate action did not fetch completed change-detector evidence once for the late active run" >&2
   exit 1
 }
 
@@ -1261,6 +1371,21 @@ run_action "$pending_step_count" none pending-preservation-step-not-concluded
   echo "required-gate action did not treat pending preservation jobs without a concluded step as pending" >&2
   exit 1
 }
+
+pending_discovery_count="$tmp_dir/count-pending-gate-discovery-throttle"
+pending_discovery_api_counts="$tmp_dir/pending-gate-discovery-api-counts"
+mkdir -p "$pending_discovery_api_counts"
+run_action "$pending_discovery_count" none pending-gate-discovery-throttle "$pending_discovery_api_counts"
+[[ "$(<"$pending_discovery_count")" == "6" ]] || {
+  echo "required-gate action did not continue polling a pending gate through completion" >&2
+  exit 1
+}
+for active_status in in_progress queued requested waiting pending; do
+  [[ "$(<"$pending_discovery_api_counts/active-$active_status")" == "2" ]] || {
+    echo "required-gate action did not throttle active-workflow discovery for a pending gate" >&2
+    exit 1
+  }
+done
 
 completed_step_lag_count="$tmp_dir/count-completed-preservation-step-lag"
 completed_step_lag_output="$tmp_dir/completed-preservation-step-lag-output"
@@ -1504,7 +1629,39 @@ for details_url_scenario in details-url-query details-url-fragment; do
   }
 done
 
-for malformed_scenario in cross-workflow-same-name malformed-run-path-ref-suffix malformed-details-url-suffix wrong-run-repository wrong-run-name wrong-job-workflow-name unknown-app unknown-check-name invalid-job-id missing-job-id unsupported-status missing-timestamp empty-wrong-pr empty-wrong-base populated-wrong-base empty-wrong-head populated-wrong-head empty-wrong-title empty-malformed-association other-pr-association; do
+valid_new_tuple_count="$tmp_dir/count-valid-new-tuple"
+run_action "$valid_new_tuple_count" none valid-new-tuple
+[[ "$(<"$valid_new_tuple_count")" == "1" ]] || {
+  echo "required-gate action rejected a valid populated current workflow tuple" >&2
+  exit 1
+}
+
+stale_then_current_tuple_count="$tmp_dir/count-stale-then-current-tuple"
+run_action "$stale_then_current_tuple_count" none stale-then-current-tuple
+[[ "$(<"$stale_then_current_tuple_count")" == "1" ]] || {
+  echo "required-gate action did not skip a stale populated tuple before accepting the valid current tuple" >&2
+  exit 1
+}
+
+for stale_scenario in populated-wrong-base populated-wrong-head; do
+  stale_output="$tmp_dir/${stale_scenario}-output"
+  stale_count="$tmp_dir/count-${stale_scenario}"
+  set +e
+  run_action "$stale_count" none "$stale_scenario" >"$stale_output" 2>&1
+  stale_status=$?
+  set -e
+  [[ "$stale_status" -ne 0 && "$(<"$stale_count")" == "$max_attempts" ]] || {
+    echo "required-gate action did not skip stale populated ${stale_scenario} tuple (status=$stale_status attempts=$(<"$stale_count"))" >&2
+    cat "$stale_output" >&2
+    exit 1
+  }
+  if grep -Fq 'Ambiguous prior' "$stale_output"; then
+    echo "required-gate action treated stale populated ${stale_scenario} tuple as ambiguous" >&2
+    exit 1
+  fi
+done
+
+for malformed_scenario in cross-workflow-same-name malformed-run-path-ref-suffix malformed-details-url-suffix wrong-run-repository wrong-run-name wrong-job-workflow-name unknown-app unknown-check-name invalid-job-id missing-job-id unsupported-status missing-timestamp empty-wrong-pr empty-wrong-base empty-wrong-head empty-wrong-title empty-malformed-association other-pr-association; do
   malformed_output="$tmp_dir/${malformed_scenario}-output"
   set +e
   run_action "$tmp_dir/count-${malformed_scenario}" none "$malformed_scenario" >"$malformed_output" 2>&1
