@@ -1042,7 +1042,7 @@ spec:
       volumes:
         - name: grpc-tls
           secret:
-            secretName: hobby-game-design-service-identity
+            secretName: firemud-grpc-game-design-service
             items:
               - key: tls.crt
                 path: tls.crt
@@ -1081,7 +1081,7 @@ spec:
       volumes:
         - name: grpc-tls
           secret:
-            secretName: hobby-world-management-service-identity
+            secretName: firemud-grpc-world-management-service
             items:
               - key: tls.crt
                 path: tls.crt
@@ -1120,7 +1120,7 @@ spec:
       volumes:
         - name: grpc-tls
           secret:
-            secretName: hobby-entity-management-service-identity
+            secretName: firemud-grpc-entity-management-service
             items:
               - key: tls.crt
                 path: tls.crt
@@ -1159,7 +1159,7 @@ spec:
       volumes:
         - name: grpc-tls
           secret:
-            secretName: hobby-game-logic-service-identity
+            secretName: firemud-grpc-game-logic-service
             items:
               - key: tls.crt
                 path: tls.crt
@@ -1198,7 +1198,7 @@ spec:
       volumes:
         - name: grpc-tls
           secret:
-            secretName: hobby-automation-scripting-service-identity
+            secretName: firemud-grpc-automation-scripting-service
             items:
               - key: tls.crt
                 path: tls.crt
@@ -9842,7 +9842,7 @@ publication_documents = [
                         {
                             "name": "grpc-tls",
                             "secret": {
-                                "secretName": f"hobby-{workload}-identity",
+                                "secretName": f"firemud-grpc-{workload}",
                                 "items": [
                                     {"key": "tls.crt", "path": "tls.crt"},
                                     {"key": "tls.key", "path": "tls.key"},
@@ -9898,7 +9898,7 @@ publication_requirements = module.publication_workload_secret_requirements(
     publication_expected, publication_documents
 )
 expected_publication_names = {
-    f"hobby-{workload}-identity"
+    f"firemud-grpc-{workload}"
     for workload in module.PUBLICATION_GRPC_WORKLOADS
 }
 if {name for name, _, _ in publication_requirements} != (
@@ -9936,6 +9936,26 @@ def expect_publication_static_failure(description, documents, expected_fragment=
         raise SystemExit(
             f"publication preflight rejected {description} for the wrong reason: {issues}"
         )
+
+
+swapped_leaf_documents = copy.deepcopy(publication_documents)
+first_leaf = swapped_leaf_documents[0]["spec"]["template"]["spec"]["volumes"][0][
+    "secret"
+]["secretName"]
+second_leaf = swapped_leaf_documents[1]["spec"]["template"]["spec"]["volumes"][0][
+    "secret"
+]["secretName"]
+swapped_leaf_documents[0]["spec"]["template"]["spec"]["volumes"][0]["secret"][
+    "secretName"
+] = second_leaf
+swapped_leaf_documents[1]["spec"]["template"]["spec"]["volumes"][0]["secret"][
+    "secretName"
+] = first_leaf
+expect_publication_static_failure(
+    "two distinct publication leaf Secrets assigned to the wrong workloads",
+    swapped_leaf_documents,
+    f"grpc-tls Secret must be firemud-grpc-{module.PUBLICATION_GRPC_WORKLOADS[0]}",
+)
 
 
 workload_mtls_ref = module.parse_binding_ref(
@@ -10342,12 +10362,14 @@ duplicate_secret_documents[1]["spec"]["template"]["spec"]["volumes"][0][
     "volumes"
 ][0]["secret"]["secretName"]
 if not any(
-    "five distinct grpc-tls Secrets" in issue
+    "grpc-tls Secret must be firemud-grpc-world-management-service" in issue
     for issue in module.publication_workload_secret_issues(
         publication_expected, duplicate_secret_documents
     )
 ):
-    raise SystemExit("reused publication grpc-tls Secret did not fail closed")
+    raise SystemExit(
+        "reused publication grpc-tls Secret did not fail the workload ownership check"
+    )
 
 namespace_mismatch_documents = copy.deepcopy(publication_documents)
 namespace_mismatch_documents[0]["metadata"]["namespace"] = "other-namespace"
