@@ -124,9 +124,17 @@ validate_workload_certificate() {
   local san_values
   local expected_dns
 
-  openssl x509 -in "$certificate" -noout >/dev/null
-  assert_key_matches_certificate "$certificate" "$key"
-  certificate_text="$(openssl x509 -in "$certificate" -noout -text)"
+  if ! openssl x509 -in "$certificate" -noout >/dev/null 2>&1; then
+    echo "workload certificate could not be parsed: $certificate" >&2
+    return 1
+  fi
+  if ! assert_key_matches_certificate "$certificate" "$key"; then
+    return 1
+  fi
+  if ! certificate_text="$(openssl x509 -in "$certificate" -noout -text)"; then
+    echo "workload certificate could not be parsed: $certificate" >&2
+    return 1
+  fi
   basic_constraints="$(printf '%s\n' "$certificate_text" | awk '
     /X509v3 Basic Constraints:/ {
       getline
@@ -163,7 +171,10 @@ validate_workload_certificate() {
     echo "workload certificate EKU must be exactly serverAuth/clientAuth: $certificate" >&2
     return 1
   }
-  san_values="$(openssl x509 -in "$certificate" -noout -ext subjectAltName | awk 'NR > 1 { print }' | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+  if ! san_values="$(openssl x509 -in "$certificate" -noout -ext subjectAltName | awk 'NR > 1 { print }' | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"; then
+    echo "workload certificate SANs could not be read: $certificate" >&2
+    return 1
+  fi
   [[ "$(printf '%s\n' "$san_values" | sed '/^$/d' | wc -l)" -eq 5 ]] || {
     echo "workload certificate must contain exactly one URI SAN and four DNS SANs: $certificate" >&2
     return 1

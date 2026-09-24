@@ -1866,6 +1866,13 @@ class ReviewController:
             if action == "grant":
                 target = self._target(selected, expected_pr=pr)
                 self._ensure_runnable(target)
+            else:
+                assert previous is not None
+                prior_progress = self._allocation_progress(
+                    previous, history, current, reconciliation.status_for(pr, selected.value)
+                )
+                if prior_progress["status"] in {"EXHAUSTED_PENDING", "HANDED_OFF"}:
+                    raise ControllerError("consumed or handed-off review allocations cannot be renewed")
             if any(
                 _field(value, flag) is True
                 for value in history

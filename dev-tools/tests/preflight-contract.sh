@@ -853,6 +853,25 @@ spec:
   ports:
     - port: 443
 ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spring-cloud-gateway
+  namespace: firemud
+spec:
+  template:
+    spec:
+      containers:
+        - name: spring-cloud-gateway
+          volumeMounts:
+            - name: gateway-ws-server-tls
+              mountPath: /gateway-ws-server-tls
+              readOnly: true
+      volumes:
+        - name: gateway-ws-server-tls
+          secret:
+            secretName: hobby-gateway-internal-ws
+---
 apiVersion: v1
 kind: Secret
 metadata:
@@ -3849,6 +3868,148 @@ bridge_values, bridge_issues = module.validate_gateway_ws_values(
 )
 if bridge_issues or not bridge_values:
     raise SystemExit(f"canonical bridge fixture did not pass: {bridge_issues}")
+
+gateway_listener_expected = yaml.safe_load(
+    current_expected_path.read_text(encoding="utf-8")
+)
+gateway_listener_ref = module.parse_binding_ref(
+    module.get(
+        gateway_listener_expected,
+        "internalBindings.certificates.gatewayInternalWsListenerRef",
+    )
+)
+if (
+    gateway_listener_ref is None
+    or gateway_listener_ref[0] != "cert-manager"
+    or len(gateway_listener_ref[2]) != 1
+):
+    raise SystemExit("fixture did not resolve the Gateway listener Secret binding")
+gateway_listener_namespace = gateway_listener_ref[1]
+gateway_listener_secret_name = gateway_listener_ref[2][0]
+
+
+def gateway_listener_failure_issues(documents):
+    _, issues = module.validate_gateway_ws_values(
+        documents,
+        gateway_listener_expected,
+    )
+    return issues
+
+
+def expect_gateway_listener_failure(description, documents, expected_fragment):
+    issues = gateway_listener_failure_issues(documents)
+    if not any(expected_fragment in issue for issue in issues):
+        raise SystemExit(
+            f"{description} did not fail with the expected Gateway listener diagnostic: {issues}"
+        )
+
+
+def find_gateway_deployment(documents):
+    return next(
+        document
+        for document in documents
+        if document.get("kind") == "Deployment"
+        and document.get("metadata", {}).get("name") == "spring-cloud-gateway"
+    )
+
+
+wrong_gateway_listener_documents = copy.deepcopy(rendered_documents)
+wrong_gateway_listener_volume = next(
+    volume
+    for volume in find_gateway_deployment(wrong_gateway_listener_documents)["spec"][
+        "template"
+    ]["spec"]["volumes"]
+    if volume.get("name") == "gateway-ws-server-tls"
+)
+wrong_gateway_listener_volume["secret"]["secretName"] = "decoy-gateway-listener"
+expect_gateway_listener_failure(
+    "a Gateway listener Secret that differs from its expected binding",
+    wrong_gateway_listener_documents,
+    f"must reference Secret {gateway_listener_namespace}/{gateway_listener_secret_name}",
+)
+
+missing_gateway_listener_volume_documents = copy.deepcopy(rendered_documents)
+missing_gateway_listener_pod_spec = find_gateway_deployment(
+    missing_gateway_listener_volume_documents
+)["spec"]["template"]["spec"]
+missing_gateway_listener_pod_spec["volumes"] = [
+    volume
+    for volume in missing_gateway_listener_pod_spec["volumes"]
+    if volume.get("name") != "gateway-ws-server-tls"
+]
+expect_gateway_listener_failure(
+    "a missing Gateway listener Secret volume",
+    missing_gateway_listener_volume_documents,
+    "exactly one gateway-ws-server-tls Secret volume",
+)
+
+duplicate_gateway_listener_volume_documents = copy.deepcopy(rendered_documents)
+duplicate_gateway_listener_pod_spec = find_gateway_deployment(
+    duplicate_gateway_listener_volume_documents
+)["spec"]["template"]["spec"]
+duplicate_gateway_listener_pod_spec["volumes"].append(
+    copy.deepcopy(
+        next(
+            volume
+            for volume in duplicate_gateway_listener_pod_spec["volumes"]
+            if volume.get("name") == "gateway-ws-server-tls"
+        )
+    )
+)
+expect_gateway_listener_failure(
+    "duplicate Gateway listener Secret volumes",
+    duplicate_gateway_listener_volume_documents,
+    "exactly one gateway-ws-server-tls Secret volume",
+)
+
+wrong_gateway_listener_namespace_documents = copy.deepcopy(rendered_documents)
+find_gateway_deployment(wrong_gateway_listener_namespace_documents)["metadata"][
+    "namespace"
+] = "other"
+expect_gateway_listener_failure(
+    "a Gateway Deployment in the wrong namespace",
+    wrong_gateway_listener_namespace_documents,
+    f"Gateway Deployment namespace does not match listener Secret binding namespace {gateway_listener_namespace}",
+)
+
+missing_gateway_deployment_documents = [
+    document
+    for document in rendered_documents
+    if not (
+        document.get("kind") == "Deployment"
+        and document.get("metadata", {}).get("name") == "spring-cloud-gateway"
+    )
+]
+expect_gateway_listener_failure(
+    "a missing Gateway Deployment",
+    missing_gateway_deployment_documents,
+    "exactly one rendered spring-cloud-gateway Deployment is required",
+)
+
+duplicate_gateway_deployment_documents = copy.deepcopy(rendered_documents)
+duplicate_gateway_deployment_documents.append(
+    copy.deepcopy(find_gateway_deployment(duplicate_gateway_deployment_documents))
+)
+expect_gateway_listener_failure(
+    "duplicate Gateway Deployments in the expected namespace",
+    duplicate_gateway_deployment_documents,
+    "exactly one rendered spring-cloud-gateway Deployment is required",
+)
+
+duplicate_gateway_deployment_other_namespace_documents = copy.deepcopy(rendered_documents)
+duplicate_gateway_deployment_other_namespace = copy.deepcopy(
+    find_gateway_deployment(duplicate_gateway_deployment_other_namespace_documents)
+)
+duplicate_gateway_deployment_other_namespace["metadata"]["namespace"] = "other"
+duplicate_gateway_deployment_other_namespace_documents.append(
+    duplicate_gateway_deployment_other_namespace
+)
+expect_gateway_listener_failure(
+    "a correct Gateway Deployment plus a same-name Deployment in another namespace",
+    duplicate_gateway_deployment_other_namespace_documents,
+    "exactly one rendered spring-cloud-gateway Deployment is required",
+)
+
 strategy_issue = "TCP Proxy bridge Deployment strategy must be Recreate for planned identity replacement"
 strategy_mutation = copy.deepcopy(rendered_documents)
 strategy_deployment = next(
@@ -10101,6 +10262,25 @@ spec:
   type: ClusterIP
   ports:
     - port: 443
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spring-cloud-gateway
+  namespace: __NAMESPACE__
+spec:
+  template:
+    spec:
+      containers:
+        - name: spring-cloud-gateway
+          volumeMounts:
+            - name: gateway-ws-server-tls
+              mountPath: /gateway-ws-server-tls
+              readOnly: true
+      volumes:
+        - name: gateway-ws-server-tls
+          secret:
+            secretName: __RELEASE__-gateway-internal-ws
 ---
 apiVersion: v1
 kind: Service

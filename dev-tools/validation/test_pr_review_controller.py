@@ -254,6 +254,65 @@ class ControllerTests(unittest.TestCase):
                 checkpoint="allocated-dry", validation="checks green", reason="premature",
             )
 
+    def test_consumed_dry_and_useful_allocations_cannot_be_renewed(self):
+        for label, accepted in (("dry", 0), ("useful", 1)):
+            with self.subTest(result=label):
+                evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
+                controller = self.grant_allocation(evidence=evidence)
+                evidence[(1, "hosted")].append(
+                    self.allocation_evidence(checkpoint=f"allocated-{label}", accepted=accepted)
+                )
+
+                with self.assertRaisesRegex(ControllerError, "consumed or handed-off"):
+                    controller.decide_allocation(
+                        action="renew",
+                        pr=1,
+                        channel="hosted",
+                        head=HEAD_1,
+                        reason="do not erase consumed progress",
+                    )
+
+    def test_handed_off_allocation_cannot_be_renewed(self):
+        evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
+        controller = self.grant_allocation(evidence=evidence)
+        evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="allocated"))
+        controller.decide_allocation(
+            action="handoff",
+            pr=1,
+            channel="hosted",
+            head=HEAD_1,
+            checkpoint="allocated",
+            validation="checks passed",
+            reason="hand off completed review capacity",
+        )
+
+        with self.assertRaisesRegex(ControllerError, "consumed or handed-off"):
+            controller.decide_allocation(
+                action="renew",
+                pr=1,
+                channel="hosted",
+                head=HEAD_1,
+                reason="do not reopen a handed-off allocation",
+            )
+
+    def test_pre_review_identity_move_can_still_renew_allocation(self):
+        values = {1: pr(1, HEAD_1)}
+        evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
+        controller = self.grant_allocation(evidence=evidence, values=values)
+        values[1] = pr(1, HEAD_2)
+        controller.git.heads["feature-1"] = HEAD_2
+
+        renewed = controller.decide_allocation(
+            action="renew",
+            pr=1,
+            channel="hosted",
+            head=HEAD_2,
+            reason="rebind after a pre-review identity move",
+        )
+
+        self.assertEqual(renewed["allocation"]["head"], HEAD_2)
+        self.assertEqual(renewed["allocation"]["baseline_checkpoints"], ["before-allocation"])
+
     def test_allocation_ancestry_lookup_failure_is_invalid_without_breaking_status_or_target_selection(self):
         evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
         values = {1: pr(1, HEAD_1)}

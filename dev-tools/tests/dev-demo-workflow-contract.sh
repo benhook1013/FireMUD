@@ -326,6 +326,7 @@ make_profile_certificate \
 make_profile_certificate \
   missing-eku critical,CA:false critical,digitalSignature,keyEncipherment serverAuth
 echo "dev-demo certificate fixture: malformed profiles generated" >&2
+printf 'not a certificate\n' >"$certificate_fixture_dir/unparseable.crt"
 
 validator_source="$certificate_fixture_dir/validate-workload-certificate.sh"
 {
@@ -477,6 +478,8 @@ echo "dev-demo certificate fixture: canonical workload certificate accepted" >&2
 expect_invalid_workload_profile() {
   local name="$1"
   local expected_message="$2"
+  local certificate="${3:-$certificate_fixture_dir/${name}.crt}"
+  local key="${4:-$certificate_fixture_dir/${name}.key}"
   local output
   if output="$(
     {
@@ -485,8 +488,8 @@ expect_invalid_workload_profile() {
       # shellcheck disable=SC1090 # The test extracts the exact target function body.
       source "$validator_source"
       validate_workload_certificate \
-        "$certificate_fixture_dir/${name}.crt" \
-        "$certificate_fixture_dir/${name}.key" \
+        "$certificate" \
+        "$key" \
         game-design-service
     } 2>&1
   )"; then
@@ -503,6 +506,10 @@ expect_invalid_workload_profile() {
 expect_invalid_workload_profile ca-leaf 'workload certificate must be a non-CA leaf'
 expect_invalid_workload_profile missing-key-usage 'key usage must be exactly digitalSignature/keyEncipherment'
 expect_invalid_workload_profile missing-eku 'EKU must be exactly serverAuth/clientAuth'
+expect_invalid_workload_profile unparseable 'workload certificate could not be parsed' \
+  "$certificate_fixture_dir/unparseable.crt" "$certificate_fixture_dir/valid.key"
+expect_invalid_workload_profile mismatched-key 'certificate and private key do not match' \
+  "$certificate_fixture_dir/valid.crt" "$certificate_fixture_dir/ca.key"
 echo "dev-demo certificate fixture: malformed profiles rejected" >&2
 
 expect_mode() {

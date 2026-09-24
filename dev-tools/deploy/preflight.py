@@ -4237,6 +4237,60 @@ def validate_gateway_ws_values(
     values: list[str] = []
     if canonical is None:
         return values, issues
+    listener_ref = parse_binding_ref(
+        get(expected, "internalBindings.certificates.gatewayInternalWsListenerRef")
+    )
+    if listener_ref is None or len(listener_ref[2]) != 1:
+        return values, issues
+    listener_namespace = listener_ref[1]
+    listener_secret_name = listener_ref[2][0]
+    gateway_deployments = [
+        document
+        for document in documents
+        if document.get("kind") == "Deployment"
+        and metadata_name(document) == "spring-cloud-gateway"
+    ]
+    if len(gateway_deployments) != 1:
+        issues.append(
+            "exactly one rendered spring-cloud-gateway Deployment is required"
+        )
+    elif not rendered_namespace_matches(
+        gateway_deployments[0],
+        listener_namespace,
+        default_namespace=listener_namespace,
+    ):
+        issues.append(
+            "Gateway Deployment namespace does not match listener Secret binding "
+            f"namespace {listener_namespace}"
+        )
+    else:
+        gateway_pod_spec = get(gateway_deployments[0], "spec.template.spec")
+        gateway_volumes = (
+            gateway_pod_spec.get("volumes")
+            if isinstance(gateway_pod_spec, dict)
+            else None
+        )
+        gateway_listener_volumes = [
+            volume
+            for volume in gateway_volumes or []
+            if isinstance(volume, dict)
+            and volume.get("name") == "gateway-ws-server-tls"
+        ]
+        if len(gateway_listener_volumes) != 1:
+            issues.append(
+                "spring-cloud-gateway Deployment must contain exactly one "
+                "gateway-ws-server-tls Secret volume"
+            )
+        else:
+            gateway_listener_secret = gateway_listener_volumes[0].get("secret")
+            if (
+                not isinstance(gateway_listener_secret, dict)
+                or gateway_listener_secret.get("secretName") != listener_secret_name
+            ):
+                issues.append(
+                    "Gateway listener volume must reference Secret "
+                    f"{listener_namespace}/{listener_secret_name}"
+                )
     canonical_host, canonical_port = canonical.rsplit(":", 1)
     for document in documents:
         bridge_containers: list[tuple[dict[str, Any], dict[str, str | None]]] = []
