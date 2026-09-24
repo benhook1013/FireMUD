@@ -1104,6 +1104,35 @@ if grep -Fq 'Polling delay bounded' "$deadline_unclamped_output"; then
   exit 1
 fi
 
+refresh_active_workflow_state_script="$(awk '
+  /^refresh_active_workflow_state\(\) \{$/ { capture=1 }
+  capture {
+    print
+    if ($0 == "}") exit
+  }
+' <<<"$action_script")"
+[[ -n "$refresh_active_workflow_state_script" ]] || {
+  echo "required-gate action must define active-workflow state refresh" >&2
+  exit 1
+}
+late_deadline_discovery_script="poll_interval_seconds=$poll_interval_seconds
+attempt=3
+poll_attempt_limit=$max_attempts
+substantive_wait_extended=false
+last_uncertain_substantive_workflow=false
+active_substantive_workflow=false
+uncertain_substantive_workflow=false
+discovery_count=0
+find_active_substantive_workflow() { discovery_count=\$((discovery_count + 1)); }
+poll_deadline=\$((SECONDS + 2 * poll_interval_seconds))
+${refresh_active_workflow_state_script}
+refresh_active_workflow_state
+[[ \$discovery_count == 1 ]]"
+PATH="$tmp_dir:$PATH" bash -euo pipefail -c "$late_deadline_discovery_script" || {
+  echo "required-gate action did not rediscover when the wall-clock deadline approached before the final attempt" >&2
+  exit 1
+}
+
 run_guard_action() {
   local output_file="$1"
   local event_name="$2"

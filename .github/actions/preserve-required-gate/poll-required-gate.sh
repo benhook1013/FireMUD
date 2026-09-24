@@ -276,7 +276,8 @@ find_active_substantive_workflow() {
 refresh_active_workflow_state() {
   local should_discover=false
   if [[ "${substantive_wait_extended}" != "true" ]] &&
-    { (( attempt == 1 || (attempt - 1) % 4 == 0 )) || (( attempt == poll_attempt_limit )); }; then
+    { (( attempt == 1 || (attempt - 1) % 4 == 0 || attempt == poll_attempt_limit )) ||
+      (( poll_deadline - SECONDS <= 2 * poll_interval_seconds )); }; then
     should_discover=true
   fi
   if [[ "${should_discover}" == "true" ]]; then
