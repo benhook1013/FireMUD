@@ -132,20 +132,11 @@ while IFS='|' read -r workflow gate_job_id gate workflow_name workflow_file work
     echo "$workflow must contain required gate job ID $gate_job_id" >&2
     exit 1
   }
-  if [[ "$workflow" == "ci.yml" || "$workflow" == "security.yml" || "$workflow" == "smoke.yml" ]]; then
-    # A metadata-only edit must not create a second check run with the required
-    # gate name. The non-required metadata job may still poll the prior
-    # substantive gate, but its own failure cannot replace that required proof.
-    # shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
-    expected_gate_name="    name: \${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (${gate})' || '${gate}' }}"
-    if ! grep -Fxq "$expected_gate_name" <<<"$gate_block"; then
-      echo "$workflow must separate its metadata-only job name from the required $gate context" >&2
-      exit 1
-    fi
-  elif grep -Fq 'allow-pending:' <<<"$gate_block"; then
+  if grep -Fq 'allow-pending:' <<<"$gate_block"; then
     echo "$workflow must retain fail-closed required-gate polling" >&2
     exit 1
-  elif ! grep -Fxq "    name: $gate" <<<"$gate_block"; then
+  fi
+  if ! grep -Fxq "    name: $gate" <<<"$gate_block"; then
     echo "$workflow must always emit the required $gate context" >&2
     exit 1
   fi
@@ -199,12 +190,7 @@ while IFS='|' read -r workflow gate_job_id gate workflow_name workflow_file work
     echo "$workflow $gate preservation must retain its metadata-only condition" >&2
     exit 1
   }
-  if [[ "$workflow" == "ci.yml" || "$workflow" == "security.yml" || "$workflow" == "smoke.yml" ]]; then
-    grep -Eq "^          allow-pending: 'true'([[:space:]]+#.*)?$" <<<"$preserve_block" || {
-      echo "$workflow metadata-only preservation must allow the required gate to remain pending" >&2
-      exit 1
-    }
-  elif grep -Fq 'allow-pending:' <<<"$preserve_block"; then
+  if grep -Fq 'allow-pending:' <<<"$preserve_block"; then
     echo "$workflow must retain fail-closed required-gate polling" >&2
     exit 1
   fi
@@ -407,15 +393,7 @@ for workflow, (gate_job, gate_name, run_scoped_metadata) in workflows.items():
         raise SystemExit(f"{workflow} must cancel obsolete required-gate runs")
 
     gate = data["jobs"][gate_job]
-    if workflow in {"ci.yml", "security.yml", "smoke.yml"}:
-        expected_gate_name = (
-            "${{ github.event.action == 'edited' && github.event.changes.base.ref == null "
-            f"&& 'PR Metadata Edit ({gate_name})' || '{gate_name}' "
-            "}}"
-        )
-    else:
-        expected_gate_name = gate_name
-    if gate.get("name") != expected_gate_name:
+    if gate.get("name") != gate_name:
         raise SystemExit(f"{workflow} required gate context changed")
 
 for workflow in ("ci.yml", "security.yml", "smoke.yml"):
