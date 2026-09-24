@@ -56,6 +56,10 @@ for required in \
   'failed to look up Kubernetes Secret ${namespace}/${secret_name}' \
   'jsonpath+="{\"|\"}{.data.${escaped_key}}"' \
   'if read_secret_snapshot "$shared_secret"' \
+  "local jsonpath='{.metadata.name}'" \
+  'jsonpath=${jsonpath}' \
+  'failed to fetch Kubernetes Secret snapshot ${namespace}/${secret_name}' \
+  'if ((shared_snapshot_status == 0)); then' \
   'assert_certificate_unexpired "$shared_cert"' \
   'shared gRPC TLS client certificate in Secret ${namespace}/${shared_secret}' \
   'assert_certificate_unexpired "$workload_cert"' \
@@ -142,11 +146,12 @@ secret_lookup_test="$fixture_dir/test-secret-exists.sh"
 {
   awk '
     /^secret_exists\(\)/ { capture = 1 }
-    /^read_secret_file\(\)/ { capture = 0 }
+    /^read_secret_snapshot\(\)/ { capture = 0 }
     capture { print }
   ' "$standalone_grpc_tls"
   cat <<'EOF'
 namespace=contract
+cert_dir="$OUTPUT_DIR"
 lookup_mode="$1"
 generation_or_apply_marker="$2"
 kubectl() {
@@ -175,20 +180,20 @@ expected_generation_or_apply=false
 EOF
 } >"$secret_lookup_test"
 missing_generation_or_apply_marker="$fixture_dir/missing-generation-or-apply"
-bash "$secret_lookup_test" missing "$missing_generation_or_apply_marker"
+OUTPUT_DIR="$fixture_dir" bash "$secret_lookup_test" missing "$missing_generation_or_apply_marker"
 [[ -f "$missing_generation_or_apply_marker" ]] || {
   echo "Missing Secret did not enter the generation/apply branch" >&2
   exit 1
 }
 present_generation_or_apply_marker="$fixture_dir/present-generation-or-apply"
-bash "$secret_lookup_test" present "$present_generation_or_apply_marker"
+OUTPUT_DIR="$fixture_dir" bash "$secret_lookup_test" present "$present_generation_or_apply_marker"
 [[ ! -e "$present_generation_or_apply_marker" ]] || {
   echo "Present Secret incorrectly entered the generation/apply branch" >&2
   exit 1
 }
 for lookup_failure in denied transport; do
   lookup_failure_marker="$fixture_dir/${lookup_failure}-generation-or-apply"
-  if lookup_output="$(bash "$secret_lookup_test" "$lookup_failure" "$lookup_failure_marker" 2>&1)"; then
+  if lookup_output="$(OUTPUT_DIR="$fixture_dir" bash "$secret_lookup_test" "$lookup_failure" "$lookup_failure_marker" 2>&1)"; then
     echo "Secret lookup unexpectedly continued after ${lookup_failure} failure" >&2
     exit 1
   fi
@@ -212,47 +217,77 @@ for lookup_failure in denied transport; do
   }
 done
 
-# Exercise the actual Secret reader with a mocked kubectl and verify the dotted
-# Secret keys are passed as literal escaped JSONPath fields.
-secret_reader="$fixture_dir/read-secret-file.sh"
+# Exercise the actual single-snapshot Secret reader with mocked kubectl. Verify
+# dotted JSONPath keys, one read for all requested fields, and fail-closed errors.
+secret_snapshot_reader="$fixture_dir/read-secret-snapshot.sh"
 {
   awk '
-    /^read_secret_file\(\)/ { capture = 1 }
+    /^read_secret_snapshot\(\)/ { capture = 1 }
     /^apply_secret\(\)/ { capture = 0 }
     capture { print }
   ' "$standalone_grpc_tls"
   cat <<'EOF'
-namespace=namespace
+namespace=contract
+lookup_mode="$1"
 kubectl() {
-  local output_format="${7:-}"
-  printf '%s\n' "$output_format" >>"$MOCK_KUBECTL_LOG"
-  [[ "$output_format" == jsonpath=* ]] || return 1
-  printf 'cHJvb2Y='
+  local expected='-n contract get secret target --ignore-not-found -o jsonpath={.metadata.name}{"|"}{.data.ca\.crt}{"|"}{.data.tls\.crt}{"|"}{.data.tls\.key}'
+  [[ "$*" == "$expected" ]] || {
+    echo "unexpected kubectl arguments: $*" >&2
+    return 2
+  }
+  printf '%s\n' "$*" >>"$MOCK_KUBECTL_LOG"
+  case "$lookup_mode" in
+    present) printf 'target|Y2E=|Y2VydA==|a2V5' ;;
+    missing) return 0 ;;
+    denied) echo 'Error from server (Forbidden): secrets is forbidden' >&2; return 1 ;;
+  esac
 }
 
-for secret_key in ca.crt tls.crt tls.key; do
-  read_secret_file secret "$secret_key" "$OUTPUT_DIR/$secret_key"
-done
+if read_secret_snapshot target ca.crt "$OUTPUT_DIR/ca.crt" \
+  tls.crt "$OUTPUT_DIR/tls.crt" tls.key "$OUTPUT_DIR/tls.key"; then
+  snapshot_status=0
+else
+  snapshot_status=$?
+fi
+printf '%s\n' "$snapshot_status" >"$OUTPUT_DIR/status"
+[[ "$snapshot_status" -ne 3 ]]
 EOF
-} >"$secret_reader"
-MOCK_KUBECTL_LOG="$fixture_dir/kubectl-jsonpaths.log" OUTPUT_DIR="$fixture_dir" \
-  bash "$secret_reader"
-expected_jsonpaths=(
-  'jsonpath={.data.ca\.crt}'
-  'jsonpath={.data.tls\.crt}'
-  'jsonpath={.data.tls\.key}'
-)
-mapfile -t actual_jsonpaths <"$fixture_dir/kubectl-jsonpaths.log"
-[[ "${actual_jsonpaths[*]}" == "${expected_jsonpaths[*]}" ]] || {
-  echo "Secret reader did not request literal dotted keys: ${actual_jsonpaths[*]}" >&2
+} >"$secret_snapshot_reader"
+MOCK_KUBECTL_LOG="$fixture_dir/snapshot-kubectl.log" OUTPUT_DIR="$fixture_dir" \
+  bash "$secret_snapshot_reader" present
+expected_snapshot_jsonpath='-n contract get secret target --ignore-not-found -o jsonpath={.metadata.name}{"|"}{.data.ca\.crt}{"|"}{.data.tls\.crt}{"|"}{.data.tls\.key}'
+[[ "$(wc -l <"$fixture_dir/snapshot-kubectl.log")" -eq 1 && \
+  "$(<"$fixture_dir/snapshot-kubectl.log")" == "$expected_snapshot_jsonpath" ]] || {
+  echo "Secret snapshot did not use one read with escaped dotted keys" >&2
+  cat "$fixture_dir/snapshot-kubectl.log" >&2
   exit 1
 }
-for secret_key in ca.crt tls.crt tls.key; do
-  [[ "$(<"$fixture_dir/$secret_key")" == proof ]] || {
-    echo "Secret reader did not decode mocked key $secret_key" >&2
-    exit 1
-  }
-done
+[[ "$(<"$fixture_dir/status")" == 0 && "$(<"$fixture_dir/ca.crt")" == ca && \
+  "$(<"$fixture_dir/tls.crt")" == cert && "$(<"$fixture_dir/tls.key")" == key ]] || {
+  echo "Secret snapshot did not decode all requested fields" >&2
+  exit 1
+}
+MOCK_KUBECTL_LOG="$fixture_dir/missing-snapshot-kubectl.log" OUTPUT_DIR="$fixture_dir" \
+  bash "$secret_snapshot_reader" missing
+[[ "$(<"$fixture_dir/status")" == 1 ]] || {
+  echo "Missing Secret snapshot did not return the ordinary missing status" >&2
+  exit 1
+}
+snapshot_failure_log="$fixture_dir/denied-snapshot-kubectl.log"
+if snapshot_failure_output="$(
+  MOCK_KUBECTL_LOG="$snapshot_failure_log" OUTPUT_DIR="$fixture_dir" \
+    bash "$secret_snapshot_reader" denied 2>&1
+)"; then
+  echo "Secret snapshot continued after a Kubernetes read failure" >&2
+  exit 1
+fi
+[[ "$(<"$fixture_dir/status")" == 3 && \
+  "$snapshot_failure_output" == *"failed to fetch Kubernetes Secret snapshot contract/target"* && \
+  "$snapshot_failure_output" == *"Forbidden): secrets is forbidden"* ]] || {
+  echo "Secret snapshot failure did not fail closed with a useful diagnostic" >&2
+  printf '%s\n' "$snapshot_failure_output" >&2
+  exit 1
+}
 
 # Exercise the standalone reuse validator with one canonical leaf and three
 # malformed profiles. This sources only the target helper functions so the
@@ -458,7 +493,7 @@ leaf_expiry = source.index('assert_certificate_unexpired "$workload_cert"')
 leaf_verification = source.index(
     'openssl verify -CAfile "$workload_ca" "$workload_cert"'
 )
-shared_branch_start = source.index('if secret_exists "$shared_secret"; then')
+shared_branch_start = source.index('if ((shared_snapshot_status == 0)); then')
 shared_branch_end = source.index('\nelse\n', shared_branch_start)
 shared_branch = source[shared_branch_start:shared_branch_end]
 shared_cert_parse = shared_branch.index('openssl x509 -in "$shared_cert" -noout')
