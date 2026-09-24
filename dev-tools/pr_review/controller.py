@@ -501,6 +501,8 @@ class ReviewController:
         selected = set(
             reconciliation.legacy_transition_fingerprints.get(pr, {}).get(channel.value, ())
         )
+        if not selected:
+            return [self._clear_untrusted_non_counting(value) for value in history]
         projected: list[Any] = []
         for value in history:
             if observation_fingerprint(value) in selected:

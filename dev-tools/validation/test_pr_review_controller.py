@@ -12,6 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from subprocess import CompletedProcess
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1254,6 +1255,35 @@ class ControllerTests(unittest.TestCase):
         controller.set_stack([1])
 
         self.assertEqual(controller.status()["prs"][0]["channels"]["hosted"], "HELD")
+
+    def test_policy_history_without_selected_fingerprints_does_not_fingerprint_untrusted_records(self):
+        held = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "trigger:42",
+            "held": True,
+            "non_counting": True,
+        }
+        unsupported = {**held, "unsupported": Path("unsupported-observation")}
+        controller = self.make(
+            {1: pr(1, HEAD_1)}, {(1, "hosted"): [held, unsupported]}, heads={"feature-1": HEAD_1}
+        )
+        controller.set_stack([1])
+
+        status = controller.status()
+        self.assertEqual(status["prs"][0]["channels"]["hosted"], "HELD")
+
+        projected = controller._policy_history(
+            controller._state(),
+            1,
+            Channel.HOSTED,
+            SimpleNamespace(legacy_transition_fingerprints={}),
+        )
+
+        self.assertEqual(projected[0], {key: value for key, value in held.items() if key != "non_counting"})
+        self.assertEqual(
+            projected[1], {key: value for key, value in unsupported.items() if key != "non_counting"}
+        )
 
     def test_transitioned_legacy_history_cannot_override_modern_completion_or_decision_checkpoint(self):
         old_head = "7" * 40
