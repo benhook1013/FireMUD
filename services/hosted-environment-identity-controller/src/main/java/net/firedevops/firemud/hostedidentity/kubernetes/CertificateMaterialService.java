@@ -274,7 +274,12 @@ public class CertificateMaterialService {
     if (selectedRotationRole == null) {
       return batch.claimPostSnapshotRotation(candidate)
           ? candidate
-          : acceptedMaterial(client, plan, candidate.role(), expectation);
+          : acceptedMaterial(
+              client,
+              plan,
+              candidate.role(),
+              expectation,
+              batch.deferBehindPostSnapshotRotation(candidate.role()));
     }
     if (candidate.role().equals(selectedRotationRole)) {
       return pendingMaterial(client, plan, candidate, expectation);
@@ -282,7 +287,7 @@ public class CertificateMaterialService {
     if (batch.initializing(candidate.role())) {
       return candidate;
     }
-    return acceptedMaterial(client, plan, candidate.role(), expectation);
+    return acceptedMaterial(client, plan, candidate.role(), expectation, true);
   }
 
   private RoleMaterial materializeSerialized(
@@ -321,7 +326,7 @@ public class CertificateMaterialService {
       return pinned;
     }
     if (batch.deferBehindSelectedRotation(role) || batch.deferBehindPostSnapshotRotation(role)) {
-      return acceptedMaterial(client, plan, role, expectation);
+      return acceptedMaterial(client, plan, role, expectation, true);
     }
     return null;
   }
@@ -361,7 +366,7 @@ public class CertificateMaterialService {
       return candidate;
     }
     return projectionMaterial(
-        projection, candidate.role(), expectation, RoleMaterialState.SERIALIZED_IN_FLIGHT);
+        plan, projection, candidate.role(), expectation, RoleMaterialState.SERIALIZED_IN_FLIGHT);
   }
 
   static boolean pendingProjectionOwnsRotation(
@@ -496,7 +501,8 @@ public class CertificateMaterialService {
       KubernetesClient client,
       EnvironmentIdentityPlan plan,
       String role,
-      RoleExpectation expectation) {
+      RoleExpectation expectation,
+      boolean deferredBehindAnotherRotation) {
     String name = plan.secretName(role);
     String sourceName = sourceSecretName(plan, role);
     Secret current = client.secrets().inNamespace(plan.runtimeNamespace()).withName(name).get();
@@ -543,7 +549,7 @@ public class CertificateMaterialService {
       accepted = retainedSource;
     }
     SecretMaterialValidator.MaterialSummary summary =
-        validateAcceptedMaterial(accepted, role, expectation);
+        validateAcceptedMaterial(accepted, plan, role, expectation, deferredBehindAnotherRotation);
     if (!acceptedSpki.equals(summary.spkiSha256())) {
       throw new IllegalStateException("accepted projection SPKI fingerprint changed");
     }
@@ -566,12 +572,17 @@ public class CertificateMaterialService {
   /**
    * Validates material recorded as accepted during serialized internal CA rotation. The accepted
    * shared gRPC-family path intentionally skips the configured trust-anchor pin because its
-   * predecessor may still use the prior internal CA; newly selected material remains pinned. The
-   * accepted gRPC projection is stored as {@code Opaque}, so a copy is normalized to the TLS Secret
-   * type before validation.
+   * predecessor may still use the prior internal CA; newly selected material remains pinned. A
+   * deferred accepted shared gRPC bundle may also have the prior consumer SAN set while another
+   * role rotates. The accepted gRPC projection is stored as {@code Opaque}, so a copy is normalized
+   * to the TLS Secret type before validation.
    */
   private SecretMaterialValidator.MaterialSummary validateAcceptedMaterial(
-      Secret accepted, String role, RoleExpectation current) {
+      Secret accepted,
+      EnvironmentIdentityPlan plan,
+      String role,
+      RoleExpectation current,
+      boolean deferredBehindAnotherRotation) {
     boolean sharedGrpcTrust =
         HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE.equals(role)
             || HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE.equals(role)
@@ -580,6 +591,7 @@ public class CertificateMaterialService {
     Secret validationSecret = accepted;
     String expectedType = current.expectedType();
     String expectedTrustAnchor = current.trustAnchor();
+    List<String> expectedDnsNames = current.expectedDnsNames();
     if (sharedGrpcTrust) {
       // An accepted shared-role predecessor may remain under the prior internal CA during
       // serialized CA rotation; the selected replacement is still pinned to the configured anchor.
@@ -595,9 +607,30 @@ public class CertificateMaterialService {
         expectedType = "kubernetes.io/tls";
       }
     }
+    if (HostedIdentityContract.GRPC_ROLE.equals(role) && deferredBehindAnotherRotation) {
+      return validateGrpcMaterialWithPreviousSans(
+          plan,
+          validationSecret,
+          expectedDnsNames,
+          current.expectedUriSans(),
+          expectedType,
+          current.requireServerAuth(),
+          current.requireClientAuth(),
+          expectedTrustAnchor);
+    }
+    return validateAcceptedMaterial(
+        validationSecret, current, expectedDnsNames, expectedType, expectedTrustAnchor);
+  }
+
+  private SecretMaterialValidator.MaterialSummary validateAcceptedMaterial(
+      Secret validationSecret,
+      RoleExpectation current,
+      Collection<String> expectedDnsNames,
+      String expectedType,
+      String expectedTrustAnchor) {
     return materialValidator.validateIdentity(
         validationSecret,
-        current.expectedDnsNames(),
+        expectedDnsNames,
         current.expectedUriSans(),
         expectedType,
         current.requireServerAuth(),
@@ -605,8 +638,64 @@ public class CertificateMaterialService {
         expectedTrustAnchor);
   }
 
+  private SecretMaterialValidator.MaterialSummary validateGrpcMaterialWithPreviousSans(
+      EnvironmentIdentityPlan plan,
+      Secret secret,
+      Collection<String> expectedDnsNames,
+      Collection<String> expectedUriSans,
+      String expectedType,
+      boolean requireServerAuth,
+      boolean requireClientAuth,
+      String expectedTrustAnchor) {
+    try {
+      return materialValidator.validateIdentity(
+          secret,
+          expectedDnsNames,
+          expectedUriSans,
+          expectedType,
+          requireServerAuth,
+          requireClientAuth,
+          expectedTrustAnchor);
+    } catch (SecretMaterialValidator.MaterialValidationException currentFailure) {
+      if (!currentFailure.isSanMismatch()) {
+        throw currentFailure;
+      }
+      try {
+        return materialValidator.validateIdentity(
+            secret,
+            previousGrpcBundleDnsNames(plan, expectedDnsNames),
+            expectedUriSans,
+            expectedType,
+            requireServerAuth,
+            requireClientAuth,
+            expectedTrustAnchor);
+      } catch (SecretMaterialValidator.MaterialValidationException previousFailure) {
+        if (!previousFailure.isSanMismatch()) {
+          throw previousFailure;
+        }
+        currentFailure.addSuppressed(previousFailure);
+        throw currentFailure;
+      }
+    }
+  }
+
+  private static List<String> previousGrpcBundleDnsNames(
+      EnvironmentIdentityPlan plan, Collection<String> currentDnsNames) {
+    return java.util.stream.Stream.concat(
+            currentDnsNames.stream(),
+            HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
+                .flatMap(workload -> plan.grpcPublicationDnsNames(workload).stream()))
+        .distinct()
+        .sorted()
+        .toList();
+  }
+
   private RoleMaterial projectionMaterial(
-      Secret projection, String role, RoleExpectation expectation, RoleMaterialState state) {
+      EnvironmentIdentityPlan plan,
+      Secret projection,
+      String role,
+      RoleExpectation expectation,
+      RoleMaterialState state) {
     Map<String, String> annotations = projection.getMetadata().getAnnotations();
     long sourceGeneration =
         positiveAnnotation(annotations, HostedIdentityContract.SOURCE_GENERATION_ANNOTATION);
@@ -617,14 +706,24 @@ public class CertificateMaterialService {
       throw new IllegalStateException("accepted projection provenance is invalid");
     }
     var summary =
-        materialValidator.validateIdentity(
-            projection,
-            expectation.expectedDnsNames(),
-            expectation.expectedUriSans(),
-            expectation.expectedType(),
-            expectation.requireServerAuth(),
-            expectation.requireClientAuth(),
-            expectation.trustAnchor());
+        HostedIdentityContract.GRPC_ROLE.equals(role)
+            ? validateGrpcMaterialWithPreviousSans(
+                plan,
+                projection,
+                expectation.expectedDnsNames(),
+                expectation.expectedUriSans(),
+                expectation.expectedType(),
+                expectation.requireServerAuth(),
+                expectation.requireClientAuth(),
+                expectation.trustAnchor())
+            : materialValidator.validateIdentity(
+                projection,
+                expectation.expectedDnsNames(),
+                expectation.expectedUriSans(),
+                expectation.expectedType(),
+                expectation.requireServerAuth(),
+                expectation.requireClientAuth(),
+                expectation.trustAnchor());
     return new RoleMaterial(
         role, projection, summary, sourceGeneration, sourceObjectGeneration, provenance, state);
   }
@@ -1215,7 +1314,11 @@ public class CertificateMaterialService {
         return null;
       }
       return projectionMaterial(
-          observation.projection(), role, expectation, RoleMaterialState.SERIALIZED_IN_FLIGHT);
+          plan,
+          observation.projection(),
+          role,
+          expectation,
+          RoleMaterialState.SERIALIZED_IN_FLIGHT);
     }
 
     private boolean initializing(String role) {

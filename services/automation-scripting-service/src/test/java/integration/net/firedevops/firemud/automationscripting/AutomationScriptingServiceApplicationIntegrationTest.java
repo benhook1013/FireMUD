@@ -21,12 +21,14 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.dto.ScriptDefinitionDto;
+import net.firedevops.firemud.automationscripting.entity.Faction;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptHandoffEvent;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.mapper.ScriptDefinitionMapper;
+import net.firedevops.firemud.automationscripting.repository.FactionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
@@ -122,6 +124,8 @@ class AutomationScriptingServiceApplicationIntegrationTest {
   @Autowired private SagaRunner sagaRunner;
 
   @Autowired private ScriptHandoffEventRepository scriptHandoffEventRepository;
+
+  @Autowired private FactionRepository factionRepository;
 
   @Test
   void pingEndpointReturnsPong() {
@@ -481,9 +485,11 @@ class AutomationScriptingServiceApplicationIntegrationTest {
     audit.setWorldSlug("");
     audit.setRealmSlug("");
     audit.setPointerVersion("");
-    audit.setEventType("onCommand");
+    audit.setScriptId("script-nullable-ingress");
+    audit.setEventType("onLoad");
     audit.setEventSchemaVersion("v1");
     audit.setScriptPatchVersion("patch-nullable-ingress");
+    audit.setRequestDigest("a".repeat(64));
     audit.setScriptEventId(scriptEventId);
     audit.setSourceService("integration-test");
     audit.setTriggerMode("EVENT");
@@ -559,6 +565,7 @@ class AutomationScriptingServiceApplicationIntegrationTest {
     item.setStatus("DEAD_LETTERED");
     item.setFailureGeneration(7L);
     item.setScriptPinEpoch(1L);
+    item.setScriptPinControlPlaneRequestId("pin-request-concurrent-replay");
     item.setCreatedAt(Instant.now());
     item.setUpdatedAt(Instant.now());
     return item;
@@ -605,5 +612,20 @@ class AutomationScriptingServiceApplicationIntegrationTest {
     item.setCreatedAt(Instant.now());
     item.setUpdatedAt(Instant.now());
     return item;
+  }
+
+  @Test
+  void factionLookupRequiresTheOwningTenant() {
+    Faction faction = new Faction();
+    faction.setTenantId(4101L);
+    faction.setName("tenant-scoped-integration-faction");
+    faction.setDescription("repository scope proof");
+    faction = factionRepository.save(faction);
+
+    assertThat(factionRepository.findByTenantIdAndId(4101L, faction.getId()))
+        .get()
+        .extracting(Faction::getTenantId)
+        .isEqualTo(4101L);
+    assertThat(factionRepository.findByTenantIdAndId(4102L, faction.getId())).isEmpty();
   }
 }

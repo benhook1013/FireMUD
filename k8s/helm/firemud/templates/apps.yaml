@@ -64,8 +64,11 @@
 {{- $managedTelnetEnv := list "TCP_PROXY_TELNET_MODE" "TCP_PROXY_TLS_ENABLED" "TCP_PROXY_TLS_CERT" "TCP_PROXY_TLS_KEY" }}
 {{- $managedGatewayWsServerEnv := list "FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED" "FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS" "FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT" "FIREMUD_GATEWAY_TCP_PROXY_TLS_CERT_CHAIN_PATH" "FIREMUD_GATEWAY_TCP_PROXY_TLS_PRIVATE_KEY_PATH" "FIREMUD_GATEWAY_TCP_PROXY_TLS_CLIENT_CA_PATH" "FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT" "FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE" "FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN" }}
 {{- $managedGatewayWsClientEnv := list "GATEWAY_WS_URL" "FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH" "FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH" "FIREMUD_GATEWAY_WS_CA_CERT_PATH" }}
+{{- $grpcWorkloadNames := include "firemud.grpcWorkloadNames" . | fromJsonArray }}
 {{- range $service := .Values.previewStack.services }}
 {{- $serviceType := default "ClusterIP" $service.serviceType }}
+{{- $usesGrpcWorkloadIdentity := has $service.name $grpcWorkloadNames }}
+{{- $mountGrpcTrustBundle := and $service.mountGrpcTls $usesGrpcWorkloadIdentity }}
 {{- $publicTelnetService := and (eq $service.name "tcp-proxy-service") (or (eq $serviceType "NodePort") (eq $serviceType "LoadBalancer")) }}
 {{- $telnetPort := "" }}
 {{- if and $publicTelnetService $telnetTlsEnabled (not $service.mountTelnetTls) }}
@@ -177,25 +180,23 @@ spec:
             {{- if $service.springProfile }}
             - name: SPRING_PROFILES_ACTIVE
               value: "prod"
-            {{- if has $service.name (include "firemud.grpcWorkloadNames" $ | fromJsonArray) }}
-            - name: FIREMUD_GRPC_WORKLOAD_NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
-            {{- end }}
             {{- end }}
             - name: SPRING_FLYWAY_TABLE
               value: {{ printf "flyway_schema_history_%s" (default (replace "-" "_" $service.name) $service.schema) | quote }}
             - name: SERVICE_SCHEMA
               value: {{ default (replace "-" "_" $service.name) $service.schema | quote }}
             {{- if $service.mountGrpcTls }}
-            {{- if has $service.name (include "firemud.grpcWorkloadNames" $ | fromJsonArray) }}
+            {{- if $usesGrpcWorkloadIdentity }}
+            - name: FIREMUD_GRPC_WORKLOAD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: FIREMUD_GRPC_CERT_CHAIN_PATH
               value: /tls/tls.crt
             - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
               value: /tls/tls.key
             - name: FIREMUD_GRPC_CA_CERT_PATH
-              value: /tls/ca.crt
+              value: /grpc-trust/ca.crt
             {{- else }}
 {{ include "firemud.grpcTlsEnv" $ | nindent 12 }}
             {{- end }}
@@ -221,11 +222,16 @@ spec:
             - secretRef:
                 name: firemud-secret
           {{- end }}
-          {{- if or $service.mountGrpcTls $mountTelnetTls $mountGatewayWsServerTls $mountGatewayWsClientTls (and $previewJwt.enabled $service.envFromShared) }}
+          {{- if or $service.mountGrpcTls $mountGrpcTrustBundle $mountTelnetTls $mountGatewayWsServerTls $mountGatewayWsClientTls (and $previewJwt.enabled $service.envFromShared) }}
           volumeMounts:
             {{- if $service.mountGrpcTls }}
             - name: grpc-tls
               mountPath: /tls
+              readOnly: true
+            {{- end }}
+            {{- if $mountGrpcTrustBundle }}
+            - name: grpc-trust
+              mountPath: /grpc-trust
               readOnly: true
             {{- end }}
             {{- if and $previewJwt.enabled $service.envFromShared }}
@@ -287,12 +293,27 @@ spec:
             limits:
               cpu: {{ default "750m" $.Values.previewStack.resources.app.limits.cpu | quote }}
               memory: {{ default "512Mi" $.Values.previewStack.resources.app.limits.memory | quote }}
-      {{- if or $service.mountGrpcTls $mountTelnetTls $mountGatewayWsServerTls $mountGatewayWsClientTls (and $previewJwt.enabled $service.envFromShared) }}
+      {{- if or $service.mountGrpcTls $mountGrpcTrustBundle $mountTelnetTls $mountGatewayWsServerTls $mountGatewayWsClientTls (and $previewJwt.enabled $service.envFromShared) }}
       volumes:
         {{- if $service.mountGrpcTls }}
         - name: grpc-tls
           secret:
             secretName: {{ include "firemud.grpcSecretNameForService" (dict "root" $ "serviceName" $service.name) }}
+            {{- if $usesGrpcWorkloadIdentity }}
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+            {{- end }}
+        {{- end }}
+        {{- if $mountGrpcTrustBundle }}
+        - name: grpc-trust
+          secret:
+            secretName: {{ include "firemud.grpcSecretName" $ }}
+            items:
+              - key: ca.crt
+                path: ca.crt
         {{- end }}
         {{- if and $previewJwt.enabled $service.envFromShared }}
         - name: jwt-signing-keys
