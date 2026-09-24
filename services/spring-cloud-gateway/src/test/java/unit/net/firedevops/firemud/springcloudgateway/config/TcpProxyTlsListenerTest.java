@@ -18,6 +18,7 @@ import java.lang.reflect.Field;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
@@ -27,10 +28,13 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BooleanSupplier;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.springcloudgateway.filter.TcpProxyTrustPolicy;
+import net.firedevops.firemud.springcloudgateway.health.TcpProxyTlsListenerHealthIndicator;
 import net.firedevops.firemud.test.TlsTestSupport;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.springframework.context.support.GenericApplicationContext;
@@ -102,6 +106,171 @@ class TcpProxyTlsListenerTest {
       listener.stop();
     }
     assertThat(listener.isRunning()).isFalse();
+  }
+
+  @Test
+  void rejectedCredentialUpdateKeepsLastKnownGoodContextAndMakesReadinessUnhealthy(
+      @TempDir Path directory) throws Exception {
+    Path certificate = Files.copy(fixture("dev-cert.pem"), directory.resolve("tls.crt"));
+    Path privateKey = Files.copy(fixture("dev-key.pem"), directory.resolve("tls.key"));
+    Path clientCa = Files.copy(fixture("dev-ca.pem"), directory.resolve("ca.crt"));
+    GatewayTcpProxyListenerProperties properties = tlsProperties(0);
+    properties.setCertificateChainPath(certificate.toString());
+    properties.setPrivateKeyPath(privateKey.toString());
+    properties.setTrustedClientCaPath(clientCa.toString());
+    TcpProxyTrustPolicy policy = mock(TcpProxyTrustPolicy.class);
+    when(policy.requiresClientCertificate()).thenReturn(true);
+    when(policy.profileName()).thenReturn("breakglass_fingerprint");
+    when(policy.timeUntilProfileExpiry()).thenReturn(null);
+    TcpProxyTlsListener listener =
+        new TcpProxyTlsListener(
+            properties,
+            policy,
+            (request, response) -> {
+              response.setStatusCode(HttpStatus.NO_CONTENT);
+              return response.setComplete();
+            });
+
+    try {
+      listener.start();
+      int port = listener.boundPort();
+      assertThat(listener.isTlsMaterialHealthy()).isTrue();
+      assertThat(requestStatus(port, clientContext(true), "/actuator/health/liveness"))
+          .isEqualTo(HttpStatus.NO_CONTENT.value());
+
+      Files.writeString(clientCa, "partial CA projection");
+      await(() -> !listener.isTlsMaterialHealthy());
+
+      var readiness = new TcpProxyTlsListenerHealthIndicator(properties, listener).health();
+      assertThat(readiness.getStatus().getCode()).isEqualTo("OUT_OF_SERVICE");
+      assertThat(readiness.getDetails()).containsEntry("tlsMaterial", "unhealthy");
+      assertThat(requestStatus(port, clientContext(true), "/actuator/health/liveness"))
+          .as("invalid trust material must not be installed for new no-SNI handshakes")
+          .isEqualTo(HttpStatus.NO_CONTENT.value());
+
+      Files.copy(fixture("dev-ca.pem"), clientCa, StandardCopyOption.REPLACE_EXISTING);
+      await(listener::isTlsMaterialHealthy);
+      assertThat(requestStatus(port, clientContext(true), "/actuator/health/liveness"))
+          .isEqualTo(HttpStatus.NO_CONTENT.value());
+    } finally {
+      listener.stop();
+    }
+  }
+
+  @Test
+  void validClientCaRotationUpdatesNoSniHandshakesAndPreservesOpenBridge(
+      @TempDir Path directory) throws Exception {
+    Path clientCa = Files.copy(fixture("dev-ca.pem"), directory.resolve("ca.crt"));
+    GatewayTcpProxyListenerProperties properties = tlsProperties(0);
+    properties.setTrustedClientCaPath(clientCa.toString());
+    TcpProxyTrustPolicy policy = mock(TcpProxyTrustPolicy.class);
+    when(policy.requiresClientCertificate()).thenReturn(true);
+    when(policy.profileName()).thenReturn("breakglass_fingerprint");
+    when(policy.timeUntilProfileExpiry()).thenReturn(null);
+
+    GenericApplicationContext appContext = new GenericApplicationContext();
+    SimpleUrlHandlerMapping mapping = new SimpleUrlHandlerMapping();
+    AtomicBoolean websocketOpened = new AtomicBoolean();
+    WebSocketHandler websocketHandler =
+        session -> {
+          websocketOpened.set(true);
+          return session.receive().then();
+        };
+    mapping.setOrder(-1);
+    mapping.setUrlMap(Map.of("/ws/game", websocketHandler));
+    appContext.getBeanFactory().registerSingleton("gameplayMapping", mapping);
+    appContext
+        .getBeanFactory()
+        .registerSingleton("gameplayWebSocketHandlerAdapter", new WebSocketHandlerAdapter());
+    appContext.refresh();
+    mapping.setApplicationContext(appContext);
+    HttpHandler webHandler =
+        WebHttpHandlerBuilder.webHandler(new DispatcherHandler(appContext)).build();
+    HttpHandler httpHandler =
+        (request, response) -> {
+          if ("/actuator/health/liveness".equals(request.getURI().getPath())) {
+            response.setStatusCode(HttpStatus.NO_CONTENT);
+            return response.setComplete();
+          }
+          return webHandler.handle(request, response);
+        };
+    TcpProxyTlsListener listener = new TcpProxyTlsListener(properties, policy, httpHandler);
+    Disposable websocket = null;
+
+    try {
+      listener.start();
+      int port = listener.boundPort();
+      assertThat(listener.isTlsMaterialHealthy()).isTrue();
+      assertThat(requestStatus(port, clientContext(true), "/actuator/health/liveness"))
+          .isEqualTo(HttpStatus.NO_CONTENT.value());
+      SslContext bridgeClientContext = clientContext(true);
+      websocket =
+          new ReactorNettyWebSocketClient(
+                  HttpClient.create().secure(spec -> spec.sslContext(bridgeClientContext)))
+              .execute(
+                  URI.create("wss://127.0.0.1:" + port + "/ws/game"),
+                  session -> session.receive().then())
+              .subscribe();
+      await(websocketOpened::get);
+      assertThat(websocket.isDisposed()).isFalse();
+
+      Files.copy(
+          fixture("tcp-proxy-client-ca.pem"), clientCa, StandardCopyOption.REPLACE_EXISTING);
+      SslContext rotatedClient = clientContext("tcp-proxy-client.pem", "tcp-proxy-client-key.pem");
+      await(
+          () -> {
+            try {
+              return requestStatus(port, rotatedClient, "/actuator/health/liveness")
+                  == HttpStatus.NO_CONTENT.value();
+            } catch (RuntimeException handshakePending) {
+              return false;
+            }
+          });
+      assertThat(listener.isTlsMaterialHealthy()).isTrue();
+      assertThat(websocket.isDisposed())
+          .as("ordinary TLS rotation leaves the established WebSocket bridge open")
+          .isFalse();
+      Throwable oldIdentityFailure =
+          catchThrowable(
+              () -> requestStatus(port, clientContext(true), "/actuator/health/liveness"));
+      assertThat(oldIdentityFailure).isNotNull();
+      assertThat(TlsTestSupport.isTlsHandshakeRejection(oldIdentityFailure)).isTrue();
+    } finally {
+      if (websocket != null) {
+        websocket.dispose();
+      }
+      listener.stop();
+      appContext.close();
+    }
+  }
+
+  @Test
+  void projectedCredentialSnapshotRejectsGenerationSwapDuringContextLoad(@TempDir Path directory)
+      throws Exception {
+    Path generationOne = Files.createDirectory(directory.resolve("..generation-one"));
+    Path generationTwo = Files.createDirectory(directory.resolve("..generation-two"));
+    Files.copy(fixture("dev-cert.pem"), generationOne.resolve("tls.crt"));
+    Files.copy(fixture("dev-key.pem"), generationOne.resolve("tls.key"));
+    Files.copy(fixture("dev-cert.pem"), generationTwo.resolve("tls.crt"));
+    Files.copy(fixture("dev-key.pem"), generationTwo.resolve("tls.key"));
+    Path generationPointer = directory.resolve("..data");
+    Files.createSymbolicLink(generationPointer, Path.of("..generation-one"));
+    Path certificate =
+        Files.createSymbolicLink(directory.resolve("tls.crt"), Path.of("..data/tls.crt"));
+    Path privateKey =
+        Files.createSymbolicLink(directory.resolve("tls.key"), Path.of("..data/tls.key"));
+    TcpProxyTlsListener.CredentialSnapshot snapshot =
+        TcpProxyTlsListener.captureCredentialSnapshot(certificate, privateKey, null);
+
+    snapshot.requireConsistentCertificateKeyGeneration();
+    assertThat(snapshot.isCurrent()).isTrue();
+
+    Files.delete(generationPointer);
+    Files.createSymbolicLink(generationPointer, Path.of("..generation-two"));
+
+    assertThat(snapshot.isCurrent())
+        .as("a projection swap during context construction invalidates the captured snapshot")
+        .isFalse();
   }
 
   @Test
@@ -464,6 +633,22 @@ class TcpProxyTlsListenerTest {
     return builder.build();
   }
 
+  private static SslContext clientContext(String certificateName, String privateKeyName)
+      throws Exception {
+    return SslContextBuilder.forClient()
+        .trustManager(fixture("dev-ca.pem").toFile())
+        .keyManager(fixture(certificateName).toFile(), fixture(privateKeyName).toFile())
+        .build();
+  }
+
+  private static void await(BooleanSupplier condition) throws InterruptedException {
+    Instant deadline = Instant.now().plusSeconds(5);
+    while (!condition.getAsBoolean() && Instant.now().isBefore(deadline)) {
+      Thread.sleep(25);
+    }
+    assertThat(condition.getAsBoolean()).as("condition within bounded wait").isTrue();
+  }
+
   private static GatewayTcpProxyListenerProperties tlsProperties(int port) {
     GatewayTcpProxyListenerProperties properties = new GatewayTcpProxyListenerProperties();
     properties.setEnabled(true);
@@ -482,6 +667,11 @@ class TcpProxyTlsListenerTest {
 
   private static Path fixture(String name) {
     Path workingDirectory = Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize();
+    Path moduleTestFixture =
+        workingDirectory.resolve("src/test/resources/certs").resolve(name).normalize();
+    if (Files.isRegularFile(moduleTestFixture)) {
+      return moduleTestFixture;
+    }
     Path moduleSibling =
         workingDirectory
             .resolve("../common-test-support/src/testFixtures/resources/certs")

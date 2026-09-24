@@ -4,6 +4,7 @@ set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 proof="$repo_root/dev-tools/hosted/trust-bootstrap/prove-issuance-boundary.sh"
+readme="$repo_root/k8s/trust-bootstrap/README.md"
 
 fail() {
   echo "trust-bootstrap live-proof contract: $1" >&2
@@ -11,7 +12,81 @@ fail() {
 }
 
 [[ -f "$proof" ]] || fail 'proof helper is missing'
+[[ -f "$readme" ]] || fail 'trust-bootstrap README is missing'
 bash -n "$proof" || fail 'proof helper has invalid shell syntax'
+
+python3 - "$readme" <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+
+readme = Path(sys.argv[1]).read_text(encoding="utf-8")
+marker = "## Pre-CA handoff evidence (non-secret)"
+if marker not in readme:
+    raise SystemExit("README is missing the canonical pre-CA handoff evidence section")
+handoff = readme.split(marker, 1)[1].split("## Recovery copy and rotation", 1)[0]
+ordered_markers = [
+    "trusted_context=",
+    'kubectl config current-context',
+    'kubectl auth whoami -o jsonpath=',
+    'grep -Fx system:masters',
+    'admission_policies=(',
+    'firemud-trust-bootstrap-certificaterequest',
+    'firemud-trust-ca-secret-boundary',
+    'firemud-trust-runtime-binding-boundary',
+    'failure_policy="',
+    'validation_actions="',
+    'controller_resource="',
+    'controller_mode="',
+    'FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE',
+    'controllerActivation=',
+    'clusterissuer firemud-ca-issuer',
+    'secret firemud-grpc-ca',
+    'serviceaccount preview-deployer',
+    'clusterrolebinding preview-deployer',
+    'pre-ca-handoff=pass',
+]
+positions = [handoff.find(marker) for marker in ordered_markers]
+if any(position < 0 for position in positions) or positions != sorted(positions):
+    raise SystemExit(
+        "pre-CA handoff evidence is missing its context, identity, Fail/Deny, "
+        "paused-controller, absence, or pass ordering"
+    )
+
+for forbidden in (
+    "kubectl apply",
+    "kubectl create",
+    "kubectl delete",
+    "kubectl patch",
+    "gh secret set",
+    "base64",
+    ".data",
+    "--from-file",
+):
+    if forbidden in handoff:
+        raise SystemExit(f"pre-CA evidence must not contain mutating or secret-bearing operation: {forbidden}")
+
+if re.search(r"-o json(?:\s|['\"]|$)", handoff):
+    raise SystemExit("pre-CA evidence must not request Secret-bearing JSON output")
+
+if not re.search(r'kubectl get [^\n]+--ignore-not-found -o name', handoff):
+    raise SystemExit("pre-CA evidence must use name-only absence readbacks")
+if 'if ! resource_names="$(kubectl get $resource --ignore-not-found -o name)"; then' not in handoff:
+    raise SystemExit("pre-CA evidence must fail closed when an absence lookup errors")
+if 'pre-CA handoff could not verify resource absence:' not in handoff:
+    raise SystemExit("pre-CA evidence must report lookup failure separately from resource presence")
+if 'if [[ -n "$resource_names" ]]; then' not in handoff:
+    raise SystemExit("pre-CA evidence must check captured names only after a successful lookup")
+if 'if kubectl get $resource --ignore-not-found -o name | grep -q .' in handoff:
+    raise SystemExit("pre-CA evidence must not treat a failed lookup pipeline as absence")
+if "all eight" not in readme.split("## Required order", 1)[1].split(
+    "## Pre-CA handoff evidence", 1
+)[0]:
+    raise SystemExit("required order must retain the all-eight admission-boundary obligation")
+PY
 
 require() {
   local fragment=$1

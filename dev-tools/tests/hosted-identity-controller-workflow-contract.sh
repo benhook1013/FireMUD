@@ -1730,7 +1730,6 @@ assert deploy_steps.index(active_request) < deploy_steps.index(deploy_requester_
 assert "Remember preview runtime kubeconfig" not in deploy_by_name
 assert "Restore preview runtime kubeconfig" not in deploy_by_name
 runtime_kubeconfig_path = "${{ runner.temp }}/preview-runtime.kubeconfig"
-runtime_kubeconfig_cleanup = 'rm -f -- "$RUNNER_TEMP/preview-runtime.kubeconfig"'
 runtime_kubeconfig_marker = '"$RUNNER_TEMP/preview-runtime.kubeconfig"'
 manager_kubeconfig_path = "${{ runner.temp }}/preview-namespace-manager.kubeconfig"
 manager_kubeconfig_cleanup = 'rm -f -- "$RUNNER_TEMP/preview-namespace-manager.kubeconfig"'
@@ -1755,7 +1754,13 @@ for job_name, job in jobs.items():
         assert runtime_kubeconfig_marker in cleanup["run"], job_name
         assert manager_kubeconfig_marker in cleanup["run"], job_name
     else:
-        assert cleanup["run"] == runtime_kubeconfig_cleanup, job_name
+        for expected_cleanup_file in (
+            "preview-runtime.kubeconfig",
+            "preview-telnet-semantics.json",
+            "preview-wss-semantics.json",
+            "preview-playable-proof.json",
+        ):
+            assert f'"$RUNNER_TEMP/{expected_cleanup_file}"' in cleanup["run"], job_name
     assert steps[-1] == cleanup, job_name
 assert runtime_kubeconfig_jobs == {"deploy-runtime", "verify-runtime"}
 manager_kubeconfig_jobs = set()
@@ -2005,7 +2010,7 @@ assert apply_run.count(revalidate_target) == 2
 source_binding_helper = (
     "bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh"
 )
-assert trusted_source.count(source_binding_helper) == 9
+assert trusted_source.count(source_binding_helper) == 10
 assert trusted_source.count('pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"') == 1
 assert "current_pull_request_json" not in trusted_source
 assert "(.head.repo.full_name == $repository)" not in trusted_source
@@ -2188,7 +2193,7 @@ final_uid_step_index = next(
 final_uid_step = verify_by_name[
     "Revalidate exact source binding and runtime Namespace UID before success publication"
 ]
-assert final_uid_step_index + 1 == verify_success_index
+assert final_uid_step_index < verify_success_index
 assert final_uid_step["env"] == {
     "GH_TOKEN": "${{ github.token }}",
     "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
@@ -2223,6 +2228,53 @@ for required in (
     '::error title=Preview runtime namespace UID changed::',
 ):
     assert required in final_uid_run, required
+verify_setup_python = verify_by_name["Set up canonical Python dependencies"]
+assert verify_setup_python["uses"] == "./.github/actions/setup-python"
+assert verify_setup_python["with"] == {"requirements": "smoke"}
+telnet_diagnostic = verify_by_name["Smoke hosted preview over TCP"]
+wss_diagnostic = verify_by_name["Smoke first-party hosted WSS and compare Telnet LOOK"]
+proof_writer = verify_by_name["Write bounded hosted playable diagnostic evidence"]
+proof_upload = verify_by_name["Upload bounded hosted playable diagnostic evidence"]
+final_evidence_recheck = verify_by_name[
+    "Revalidate exact source binding and runtime Namespace UID after diagnostic evidence"
+]
+public_controller_condition = (
+    "${{ needs.validate-target.outputs.exposure_mode == 'public' && "
+    "needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}"
+)
+assert telnet_diagnostic["env"]["CERTIFICATE_IDENTITY_MODE"] == (
+    "${{ needs.validate-target.outputs.certificate_identity_mode }}"
+)
+assert 'if [[ "$CERTIFICATE_IDENTITY_MODE" == hosted-controller ]]; then' in telnet_diagnostic["run"]
+assert 'export SMOKE_SEMANTIC_OUT="$RUNNER_TEMP/preview-telnet-semantics.json"' in telnet_diagnostic["run"]
+for diagnostic in (wss_diagnostic, proof_writer, proof_upload):
+    assert diagnostic["if"] == public_controller_condition
+assert "--expected-room-id \"$room_id\"" in wss_diagnostic["run"]
+assert "--reconnect" in wss_diagnostic["run"]
+assert "write-playable-proof.py" in proof_writer["run"]
+assert "--base-sha \"$BASE_SHA\"" in proof_writer["run"]
+assert "--merge-sha \"$MERGE_SHA\"" in proof_writer["run"]
+assert "--telnet-outcome passed --wss-outcome passed" in proof_writer["run"]
+assert proof_upload["with"]["path"] == "${{ runner.temp }}/preview-playable-proof.json"
+assert proof_upload["with"]["if-no-files-found"] == "error"
+assert proof_upload["with"]["retention-days"] == 7
+assert "revalidate-preview-source-binding.sh" in final_evidence_recheck["run"]
+assert "firemud.dev/requested-preview-base-sha" in final_evidence_recheck["run"]
+assert "firemud.dev/requested-preview-merge-sha" in final_evidence_recheck["run"]
+assert "firemud.dev/last-preview-base-sha" in final_evidence_recheck["run"]
+assert "firemud.dev/last-preview-merge-sha" in final_evidence_recheck["run"]
+assert "firemud.dev/last-preview-image-tag" in final_evidence_recheck["run"]
+assert "firemud.dev/last-preview-head-sha" in final_evidence_recheck["run"]
+assert "EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID" in final_evidence_recheck["run"]
+assert (
+    verify_steps.index(telnet_diagnostic)
+    < verify_steps.index(wss_diagnostic)
+    < final_uid_step_index
+    < verify_steps.index(proof_writer)
+    < verify_steps.index(final_evidence_recheck)
+    < verify_steps.index(proof_upload)
+    < verify_success_index
+)
 verify_failure = verify_steps[verify_failure_index]
 assert verify_failure["if"] == "${{ !cancelled() && failure() }}"
 assert verify_failure["env"] == {

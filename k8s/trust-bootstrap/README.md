@@ -12,6 +12,85 @@ This is a prerequisite for the private Gateway–TCP Proxy bridge in #2713. It m
 6. Run the reviewed recovery workflow's `restore` operation on `develop`. It accepts only the dedicated recovery ServiceAccount, the explicitly selected Kubernetes context, all eight live fail-closed admission bindings, and a revoked legacy ServiceAccount/ClusterRoleBinding. It writes only `firemud-system/firemud-grpc-ca` (`Opaque`, `ca.crt`/`ca.key`) and `cert-manager/firemud-grpc-ca` (`kubernetes.io/tls`, `tls.crt`/`tls.key`), then compares exact bytes through private readback. The copy is never printed. Install the fixed `firemud-ca-issuer` only after this recovery and readback pass.
 7. With the controller still inactive, request the fixed standalone internal Gateway and TCP Proxy Certificates through the scoped writer, observe `Ready`, key-complete output Secrets, and the served certificate identities/chain. Repeat unauthorized direct CertificateRequest and Certificate tests after the issuer becomes Ready; an admission-only dry-run before issuance is not proof that unauthorized signing cannot occur. Retain only non-secret evidence. Controller bootstrap and the #2713 private-bridge rollout are later gates.
 
+## Pre-CA handoff evidence (non-secret)
+
+Before step 5, run the following from the explicitly approved Kubernetes context after the staged credentials have been finalized. It is a read-only boundary gate: it prints only caller, policy, binding, resource-name, and activation-mode metadata; it must not read Secret data, install resources, or repair a failed prerequisite. Save its output with the bootstrap record. Any failed assertion blocks CA generation and installation.
+
+```bash
+set -euo pipefail
+
+trusted_context="${FIREMUD_HOSTED_IDENTITY_TRUSTED_CONTEXT:?set the approved Kubernetes context}"
+current_context="$(kubectl config current-context)"
+[[ "$current_context" == "$trusted_context" ]] || {
+  echo "current Kubernetes context is not the explicitly approved context" >&2
+  exit 1
+}
+operator_identity="$(kubectl auth whoami -o jsonpath='{.status.userInfo.username}')"
+operator_groups="$(kubectl auth whoami -o jsonpath='{range .status.userInfo.groups[*]}{.}{"\n"}{end}')"
+grep -Fx system:masters <<<"$operator_groups" >/dev/null || {
+  echo "current Kubernetes operator is not a system:masters member" >&2
+  exit 1
+}
+printf 'pre-ca-caller=%s context=%s\n' "$operator_identity" "$current_context"
+
+admission_policies=(
+  firemud-trust-bootstrap-certificaterequest
+  firemud-trust-bootstrap-certificaterequest-subresources
+  firemud-trust-bootstrap-certificate
+  firemud-trust-bootstrap-certificate-status
+  firemud-trust-bootstrap-ca-issuers
+  firemud-trust-ca-secret-boundary
+  firemud-trust-runtime-namespace-boundary
+  firemud-trust-runtime-binding-boundary
+)
+for policy in "${admission_policies[@]}"; do
+  failure_policy="$(kubectl get validatingadmissionpolicy "$policy" -o jsonpath='{.spec.failurePolicy}')"
+  bound_policy="$(kubectl get validatingadmissionpolicybinding "$policy" -o jsonpath='{.spec.policyName}')"
+  validation_actions="$(kubectl get validatingadmissionpolicybinding "$policy" -o jsonpath='{.spec.validationActions[*]}')"
+  [[ "$failure_policy" == Fail && "$bound_policy" == "$policy" && "$validation_actions" == Deny ]] || {
+    echo "trust-bootstrap admission boundary is not exactly Fail/Deny for ${policy}" >&2
+    exit 1
+  }
+  printf 'admission=%s failurePolicy=%s policyName=%s validationActions=%s\n' \
+    "$policy" "$failure_policy" "$bound_policy" "$validation_actions"
+done
+
+controller_resource="$(kubectl -n firemud-system get deployment firemud-hosted-identity-controller \
+  --ignore-not-found -o name)"
+if [[ -n "$controller_resource" ]]; then
+  controller_mode="$(kubectl -n firemud-system get deployment firemud-hosted-identity-controller \
+    -o jsonpath='{.spec.template.spec.containers[?(@.name=="controller")].env[?(@.name=="FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE")].value}')"
+  [[ "$controller_mode" == paused ]] || {
+    echo "hosted identity controller is active or missing its pause marker; keep it paused before CA installation" >&2
+    exit 1
+  }
+else
+  controller_mode=absent
+fi
+printf 'controllerActivation=%s\n' "${controller_mode:-absent}"
+
+for resource in \
+  "clusterissuer firemud-ca-issuer" \
+  "-n firemud-system secret firemud-grpc-ca" \
+  "-n cert-manager secret firemud-grpc-ca" \
+  "-n kube-system serviceaccount preview-deployer" \
+  "clusterrolebinding preview-deployer"; do
+  resource_names=""
+  if ! resource_names="$(kubectl get $resource --ignore-not-found -o name)"; then
+    echo "pre-CA handoff could not verify resource absence: ${resource}" >&2
+    exit 1
+  fi
+  if [[ -n "$resource_names" ]]; then
+    echo "pre-CA handoff found a forbidden existing resource: ${resource}" >&2
+    exit 1
+  fi
+done
+printf 'pre-ca-resources=issuer-and-fixed-secrets-absent legacy-credential=revoked\n'
+printf 'pre-ca-handoff=pass\n'
+```
+
+The resource loop intentionally reads only object names (`-o name`); it is not a CA or credential readback. This gate does not prove CA validity, cert-manager issuance, served identity, or consumer convergence. Those remain the private recovery, issuer, and later hosted-controller proof obligations below.
+
 ## Recovery copy and rotation
 
 `FIREMUD_PREVIEW_CA_RECOVERY_BUNDLE` is a versioned JSON envelope with base64 PEM certificate and private key plus the public SHA-256 fingerprint. It is stored only as a GitHub Environment secret; the expected fingerprint is a separate Environment variable and must also match the deployed controller trust anchor. `preview-ca-recovery.yml` checks out only `develop`, selects only the recovery Environment, and accepts `verify` or `restore`. The script refuses malformed, mismatched, expired, non-RSA-4096, non-CA, or non-self-signed material. A fresh cluster first installs the same reviewed admission/RBAC boundary and reissues a scoped recovery kubeconfig; it must not reuse a token from the lost cluster. The recovery copy is independently usable without the original operator machine or password manager.
@@ -23,3 +102,11 @@ Scoped deployment kubeconfigs use dedicated ServiceAccount token Secrets labeled
 ## Current state
 
 The recovery Environment and its `develop` branch policy were created on 2026-09-21. No recovery bundle, fingerprint, or recovery kubeconfig has been populated yet. No FireMUD internal CA has been generated or installed; the controller remains inactive. This note must be updated with the actual live proof before the prerequisite is called operationally complete.
+
+## Hosted playable diagnostic after activation
+
+Once the protected bootstrap above and controller activation have their own live proof, and Gate 1's exact base/head/merge/image Namespace annotations are present in the deployed trusted workflow, an eligible public preview can run the trusted default-branch `verify-runtime` job in `hosted-identity-request.yml`. The job waits for controller identity and runtime rollouts, runs the public Telnet `LOGIN → PLAY → LOOK` probe, then runs the first-party WSS flow with a fresh one-use connect token. The WSS probe compares its structured LOOK room ID with Telnet, closes and reconnects with a second fresh token, checks that the consumed cookie is rejected as a replay, and checks final LOGOUT/close. It does not use candidate-controlled scripts after the runtime kubeconfig enters scope.
+
+The trusted job revalidates the open PR's exact base, head, and merge binding, requested/deployed Namespace annotations, and runtime Namespace UID around diagnostics. It fails closed if the current parent stack has not yet absorbed Gate 1's annotation contract. Its bounded `hosted-playable-diagnostic-pr-N-<merge SHA>` artifact records the validated source tuple, Namespace UID and allocation, controller observed generation and five projection revisions, running application image tags and runtime digests, and the two transport outcomes. Raw Kubernetes objects, connect tokens, credentials, CA keys, and kubeconfigs are not artifacts. A passing artifact is a diagnostic for this exact deployed preview, not production readiness, browser acceptance under [ADR 0178](../../design/architecture/decisions/adr-0178-disposable-transport-complete-pr-preview-proof.md), or proof of CNI/local-node egress policy.
+
+Before treating this as live evidence, the operator must separately retain non-secret records of the pre-CA admission and credential checks, recovery-copy verification, issuer readiness, controller activation order, served Gateway/TCP Proxy and gRPC certificate identities, projection rotation/convergence, and the [controller egress allow/deny matrix](../hosted-identity-controller/README.md#live-egress-evidence-before-activation). A denied target alone is insufficient to establish egress policy when the target might be unreachable; use a permitted positive control and record the CNI/local-node handling. This diagnostic covers reconnect after transport close, token-replay rejection, and final logout; an active simultaneous-controller takeover and post-logout replay-suppression proof remain separate player-session obligations, not implied by this artifact. Do not run a live active takeover against the shared demo character: it changes binding and presence state. That proof requires an explicitly isolated disposable character and two concurrent fresh-token sockets, and must not claim the still-unimplemented namespace-scoped atomic takeover contract. If any protected value, issuer, or controller is absent, stop before activation and report that precise gate. Local tests and rendered manifests are not substitutes for these live observations.

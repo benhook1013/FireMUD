@@ -952,6 +952,8 @@ jobs:
 
       - name: Set up canonical Python dependencies
         uses: ./.github/actions/setup-python
+        with:
+          requirements: smoke
 
       - name: Set up kubectl
         uses: ./.github/actions/setup-kubectl
@@ -1108,9 +1110,35 @@ jobs:
           PREVIEW_BASE_URL: https://${{ needs.validate-target.outputs.hostname }}
           SMOKE_TELNET_HOST: ${{ needs.validate-target.outputs.hostname }}
           TCP_PORT: ${{ steps.runtime-port.outputs.port }}
+          CERTIFICATE_IDENTITY_MODE: ${{ needs.validate-target.outputs.certificate_identity_mode }}
         run: |
+          set -euo pipefail
+          umask 077
           : "${TCP_PORT:?runtime-port step must provide the allocated NodePort}"
+          if [[ "$CERTIFICATE_IDENTITY_MODE" == hosted-controller ]]; then
+            export SMOKE_SEMANTIC_OUT="$RUNNER_TEMP/preview-telnet-semantics.json"
+          fi
           bash ./dev-tools/hosted/shared/hosted-login-look-smoke.sh
+
+      - name: Smoke first-party hosted WSS and compare Telnet LOOK
+        if: ${{ needs.validate-target.outputs.exposure_mode == 'public' && needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
+        env:
+          PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
+          TELNET_SEMANTIC_OUT: ${{ runner.temp }}/preview-telnet-semantics.json
+          WSS_SEMANTIC_OUT: ${{ runner.temp }}/preview-wss-semantics.json
+        run: |
+          set -euo pipefail
+          umask 077
+          room_id="$(jq -er '.lookRoomId | select(type == "string" and length > 0)' "$TELNET_SEMANTIC_OUT")"
+          python3 ./dev-tools/hosted/shared/hosted-websocket-playable-smoke.py \
+            --gateway-base "https://${PREVIEW_HOSTNAME}" \
+            --websocket-url "wss://${PREVIEW_HOSTNAME}/ws/game" \
+            --origin "https://${PREVIEW_HOSTNAME}" \
+            --expected-room-id "$room_id" \
+            --reconnect > "$WSS_SEMANTIC_OUT"
+          jq -e --arg expected "$room_id" \
+            '.transport == "first-party-wss" and .classification == "diagnostic-operator-smoke" and .lookRoomId == $expected and .sessions == 2 and .logout == true and .reconnect == true' \
+            "$WSS_SEMANTIC_OUT" >/dev/null
 
       - name: Revalidate exact source binding and runtime Namespace UID before success publication
         env:
@@ -1167,6 +1195,77 @@ jobs:
             echo "::error title=Preview runtime namespace UID changed::Expected ${EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID}; observed ${observed_uid}." >&2
             exit 1
           }
+
+      - name: Write bounded hosted playable diagnostic evidence
+        if: ${{ needs.validate-target.outputs.exposure_mode == 'public' && needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
+        env:
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
+          IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+        run: |
+          set -euo pipefail
+          umask 077
+          evidence_dir="$(mktemp -d "$RUNNER_TEMP/preview-playable-evidence.XXXXXX")"
+          trap 'rm -f -- "$evidence_dir/namespace.json" "$evidence_dir/identity.json" "$evidence_dir/pods.json"; rmdir -- "$evidence_dir"' EXIT
+          kubectl get namespace "$RUNTIME_NAMESPACE" -o json > "$evidence_dir/namespace.json"
+          kubectl -n firemud-system get hostedenvironmentidentity "$RUNTIME_NAMESPACE" -o json > "$evidence_dir/identity.json"
+          kubectl -n "$RUNTIME_NAMESPACE" get pods -o json > "$evidence_dir/pods.json"
+          python3 ./dev-tools/hosted/preview/write-playable-proof.py \
+            --pr-number "$PR_NUMBER" --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" \
+            --merge-sha "$MERGE_SHA" --image-tag "$IMAGE_TAG" \
+            --namespace-json "$evidence_dir/namespace.json" \
+            --identity-json "$evidence_dir/identity.json" \
+            --pods-json "$evidence_dir/pods.json" \
+            --telnet-outcome passed --wss-outcome passed \
+            > "$RUNNER_TEMP/preview-playable-proof.json"
+
+      - name: Revalidate exact source binding and runtime Namespace UID after diagnostic evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          EXPECTED_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          EXPECTED_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+          EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID: ${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}
+          IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA" \
+            "before success publication"
+          [[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]] || exit 1
+          observed_uid="$(kubectl get namespace "$RUNTIME_NAMESPACE" -o json \
+            | jq -er --arg pr "$PR_NUMBER" --arg base "$EXPECTED_BASE_SHA" \
+                --arg head "$EXPECTED_HEAD_SHA" --arg merge "$EXPECTED_MERGE_SHA" \
+                --arg image "$IMAGE_TAG" \
+              '.metadata as $m | select($m.labels["firemud.dev/preview"] == "true") \
+              | select($m.labels["firemud.dev/pr-number"] == $pr) \
+              | select($m.annotations["firemud.dev/requested-preview-base-sha"] == $base) \
+              | select($m.annotations["firemud.dev/requested-preview-head-sha"] == $head) \
+              | select($m.annotations["firemud.dev/requested-preview-merge-sha"] == $merge) \
+              | select($m.annotations["firemud.dev/requested-preview-image-tag"] == $image) \
+              | select($m.annotations["firemud.dev/last-preview-base-sha"] == $base) \
+              | select($m.annotations["firemud.dev/last-preview-head-sha"] == $head) \
+              | select($m.annotations["firemud.dev/last-preview-merge-sha"] == $merge) \
+              | select($m.annotations["firemud.dev/last-preview-image-tag"] == $image) \
+              | $m.uid | select(type == "string" and length > 0)')"
+          [[ "$observed_uid" == "$EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID" ]] || {
+            echo "::error title=Preview runtime Namespace UID changed after diagnostics::Expected ${EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID}; observed ${observed_uid}." >&2
+            exit 1
+          }
+
+      - name: Upload bounded hosted playable diagnostic evidence
+        if: ${{ needs.validate-target.outputs.exposure_mode == 'public' && needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: hosted-playable-diagnostic-pr-${{ needs.validate-target.outputs.pr_number }}-${{ needs.validate-target.outputs.merge_sha }}
+          path: ${{ runner.temp }}/preview-playable-proof.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Publish trusted preview success
         if: ${{ success() }}
@@ -1270,7 +1369,12 @@ jobs:
 
       - name: Remove runtime kubeconfig
         if: ${{ always() }}
-        run: rm -f -- "$RUNNER_TEMP/preview-runtime.kubeconfig"
+        run: |
+          rm -f -- \
+            "$RUNNER_TEMP/preview-runtime.kubeconfig" \
+            "$RUNNER_TEMP/preview-telnet-semantics.json" \
+            "$RUNNER_TEMP/preview-wss-semantics.json" \
+            "$RUNNER_TEMP/preview-playable-proof.json"
 
   destroy-runtime:
     name: Delete Preview Runtime

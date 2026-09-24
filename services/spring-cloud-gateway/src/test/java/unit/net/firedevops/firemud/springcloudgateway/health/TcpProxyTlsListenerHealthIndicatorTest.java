@@ -29,12 +29,17 @@ class TcpProxyTlsListenerHealthIndicatorTest {
     TcpProxyTlsListener listener = mock(TcpProxyTlsListener.class);
     when(listener.boundPort()).thenReturn(-1);
     when(listener.isRunning()).thenReturn(false);
+    when(listener.isTlsMaterialHealthy()).thenReturn(false);
 
     assertThat(new TcpProxyTlsListenerHealthIndicator(properties, listener).health().getStatus())
         .isEqualTo(Status.OUT_OF_SERVICE);
 
     when(listener.boundPort()).thenReturn(8443);
     when(listener.isRunning()).thenReturn(true);
+    when(listener.isTlsMaterialHealthy()).thenReturn(false);
+    assertThat(new TcpProxyTlsListenerHealthIndicator(properties, listener).health().getStatus())
+        .isEqualTo(Status.OUT_OF_SERVICE);
+    when(listener.isTlsMaterialHealthy()).thenReturn(true);
     assertThat(new TcpProxyTlsListenerHealthIndicator(properties, listener).health().getStatus())
         .isEqualTo(Status.UP);
   }
@@ -47,6 +52,7 @@ class TcpProxyTlsListenerHealthIndicatorTest {
     TcpProxyTlsListener listener = mock(TcpProxyTlsListener.class);
     when(listener.boundPort()).thenReturn(-1);
     when(listener.isRunning()).thenReturn(false);
+    when(listener.isTlsMaterialHealthy()).thenReturn(false);
 
     var health = new TcpProxyTlsListenerHealthIndicator(properties, listener).health();
 
@@ -55,6 +61,7 @@ class TcpProxyTlsListenerHealthIndicatorTest {
         .containsEntry("listener", "tcp-proxy-internal-tls")
         .containsEntry("configuredPort", 8443)
         .containsEntry("boundPort", -1)
-        .containsEntry("trustProfile", null);
+        .containsEntry("trustProfile", null)
+        .containsEntry("tlsMaterial", "unhealthy");
   }
 }

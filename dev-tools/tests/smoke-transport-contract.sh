@@ -61,6 +61,54 @@ for remote_host in (
     assert not smoke_common.is_localhost_equivalent(remote_host), remote_host
 
 
+class FakeReadinessResponse:
+    def __init__(self, status, body):
+        self.status = status
+        self.body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self):
+        return self.body
+
+
+for status, body, expected in (
+    (200, b'{"status":"UP"}', True),
+    (204, b'{"status":"UP"}', True),
+    (302, b'{"status":"UP"}', False),
+    (404, b'{"status":"UP"}', False),
+    (200, b'{"detail":"\\"status\\":\\"UP\\"","status":"DOWN"}', False),
+    (200, b'{"components":{"status":"UP"}}', False),
+    (200, b'{"status":"up"}', False),
+    (200, b'not-json', False),
+    (200, b'\xff', False),
+):
+    with patch.object(
+        smoke_common.urllib.request,
+        "urlopen",
+        return_value=FakeReadinessResponse(status, body),
+    ):
+        assert smoke_common.http_readiness_up("https://example.test/readiness", 1) is expected
+
+assert smoke_common.telnet_look_room_id(
+    "OK LOOK\n\x1b[32mRoom: \x1b[0mStart (ID: room-123)\nShort: A room\n"
+) == "room-123"
+assert smoke_common.telnet_look_room_id(
+    "OK LOOK\r\nRoom: Start (ID: room-123)\r\nShort: A room\r\n"
+) == "room-123"
+for malformed_look in ("OK LOOK", "Room: Start (ID: )", "Room: Start (ID: x y)"):
+    try:
+        smoke_common.telnet_look_room_id(malformed_look)
+    except smoke_common.ProbeOperationalFailure:
+        pass
+    else:
+        raise AssertionError("malformed Telnet LOOK view accepted")
+
+
 class FakeSession:
     def __init__(self, chunks=None):
         self.chunks = list(chunks or [])

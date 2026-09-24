@@ -40,7 +40,7 @@ from pathlib import Path
 repo_root = Path(os.environ["FIREMUD_REPO_ROOT"])
 sys.path.insert(0, str(repo_root / "dev-tools" / "smoke"))
 
-from smoke_common import login_play_look_steps, run_telnet_smoke_session
+from smoke_common import login_play_look_steps, run_telnet_smoke_session, telnet_look_room_id
 
 host = os.environ["SMOKE_TELNET_HOST"]
 port = int(os.environ["TCP_PORT"])
@@ -53,7 +53,7 @@ login_expect = os.environ.get("SMOKE_LOGIN_EXPECT", "OK LOGIN")
 play_expect = os.environ.get("SMOKE_PLAY_EXPECT", "OK PLAY")
 look_expect = os.environ.get("SMOKE_LOOK_EXPECT", "OK LOOK")
 ca_file = os.environ.get("SMOKE_TELNET_CA_FILE") or None
-run_telnet_smoke_session(
+responses = run_telnet_smoke_session(
     host,
     port,
     login_play_look_steps(
@@ -72,6 +72,21 @@ run_telnet_smoke_session(
     tls_server_hostname=host,
     tls_ca_file=ca_file,
 )
+
+semantic_out = os.environ.get("SMOKE_SEMANTIC_OUT")
+if semantic_out:
+    import json
+    import re
+
+    room_id = telnet_look_room_id(responses[-1])
+    if re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", room_id) is None:
+        raise RuntimeError("Telnet LOOK room ID is malformed")
+    path = Path(semantic_out)
+    if not path.is_absolute():
+        raise RuntimeError("SMOKE_SEMANTIC_OUT must be an absolute path")
+    with path.open("x", encoding="utf-8") as output:
+        json.dump({"transport": "telnet", "lookRoomId": room_id}, output)
+        output.write("\n")
 
 label = os.environ.get("SMOKE_TARGET_LABEL", "hosted environment")
 print(f"{label} TCP LOGIN -> PLAY -> LOOK smoke test passed.")

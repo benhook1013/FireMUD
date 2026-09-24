@@ -200,6 +200,11 @@ gateway_deployment = named("Deployment", "spring-cloud-gateway")
 proxy_deployment = named("Deployment", "tcp-proxy-service")
 gateway, gateway_env = env_map(gateway_deployment)
 proxy, proxy_env = env_map(proxy_deployment)
+shared_config = named("ConfigMap", "firemud-config").get("data") or {}
+if shared_config.get("FIREMUD_GRPC_TLS_RELOAD_ENABLED") != "true":
+    raise SystemExit(
+        "hosted shared configuration must enable gRPC TLS reload watchers for managed renewal"
+    )
 if proxy_deployment["spec"].get("strategy") != {"type": "Recreate"}:
     raise SystemExit("preview TCP Proxy Deployment must use the Recreate strategy")
 postgres_deployment = named("Deployment", "postgres")
