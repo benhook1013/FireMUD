@@ -306,6 +306,18 @@ class LiveEvidence:
             return "ambiguous"
         return None
 
+    @staticmethod
+    def _uncheckpointed_hosted_observation(pr: int, state: hosted.TriggerState) -> dict[str, Any]:
+        """Construct the held observation for a completed response without a checkpoint."""
+
+        return {
+            "pr": pr,
+            "head": state.head_sha,
+            "checkpoint": f"trigger-uncheckpointed:{state.response_id or 'unknown'}",
+            "held": True,
+            "reason": "completed Hosted review has no valid public checkpoint and requires adjudication",
+        }
+
     def legacy_transition_reauthorization_audit(
         self,
         pr: int,
@@ -479,11 +491,14 @@ class LiveEvidence:
             if state.response_id is not None and state.response_id not in responses_by_trigger.get(trigger_id, set()):
                 ambiguous_responses.append("trigger response is absent from complete GitHub history")
             if state.state == "completed" and state.response_id not in hosted_checkpoint_ids:
+                observation = self._uncheckpointed_hosted_observation(pr, state)
+                fingerprint = observation_fingerprint(observation)
                 fingerprinted = any(
                     observation_fingerprint(item) in expected_hosted_fingerprints
+                    and observation_fingerprint(item) == fingerprint
                     for item in self.history(pr, "hosted")
-                    if item.get("checkpoint") == f"trigger-uncheckpointed:{state.response_id}"
-                )
+                    if item.get("checkpoint") == observation["checkpoint"]
+                ) or fingerprint in expected_hosted_fingerprints
                 if not fingerprinted:
                     unmatched_responses.append("completed Hosted response has no checkpoint or prior audit")
 
@@ -1112,15 +1127,7 @@ class LiveEvidence:
                         }
                     )
                 elif state.state == "completed" and state.response_id not in emitted_hosted_response_ids:
-                    values.append(
-                        {
-                            "pr": pr,
-                            "head": state.head_sha,
-                            "checkpoint": f"trigger-uncheckpointed:{state.response_id or 'unknown'}",
-                            "held": True,
-                            "reason": "completed Hosted review has no valid public checkpoint and requires adjudication",
-                        }
-                    )
+                    values.append(self._uncheckpointed_hosted_observation(pr, state))
                 elif state.state in {"active", "awaiting_response", "ambiguous", "unattributed", "timed_out"}:
                     values.append(
                         {

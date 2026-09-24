@@ -21,7 +21,7 @@ from pr_review import evidence, github, hosted
 from pr_review.cli_runner import EffectiveParent, PullRequestSnapshot, ReviewRunnerError, ReviewTarget
 from pr_review.controller import ControllerError
 from pr_review.runtime import HostedRunner, LiveEvidence, LiveGitHub, default_controller
-from pr_review.state import ReviewState, StateStore, SummaryFindingDisposition
+from pr_review.state import ReviewState, StateStore, SummaryFindingDisposition, observation_fingerprint
 
 BASE = "a" * 40
 HEAD = "b" * 40
@@ -1036,6 +1036,63 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(len(held), 1)
         self.assertTrue(held[0]["held"])
         self.assertFalse(held[0].get("completed", False))
+
+    def test_archived_completed_hosted_response_uses_exact_uncheckpointed_observation_fingerprint(self) -> None:
+        trigger_at = "2026-09-23T00:01:00Z"
+        response_at = "2026-09-23T00:03:00Z"
+        trigger = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": trigger_at,
+            "updatedAt": trigger_at,
+            "url": "https://example.test/comments/10",
+        }
+        response = {
+            "databaseId": 11,
+            "author": {"login": "coderabbitai"},
+            "body": "Full review finished.",
+            "createdAt": response_at,
+            "updatedAt": response_at,
+        }
+        payload = self._payload([trigger, response])
+        pull = payload["data"]["repository"]["pullRequest"]
+        pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        live = LiveGitHub("owner/repo")
+        observer = LiveEvidence("owner/repo", live)
+        record = self._trigger_record(created=trigger_at)
+        state = SimpleNamespace(
+            trigger_comment_id=10,
+            state="completed",
+            terminal=True,
+            attributed=True,
+            response_id=11,
+            head_sha=HEAD,
+        )
+
+        def run_audit(expected_fingerprints: tuple[str, ...]) -> dict[str, object]:
+            with (
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(observer, "_complete_trigger_paths", return_value=["trigger-10.json"]),
+                patch.object(hosted, "load_trigger_record", return_value=record),
+                patch.object(hosted, "trigger_state", return_value=state),
+                patch.object(observer, "history", return_value=[]),
+            ):
+                return observer.legacy_transition_reauthorization_audit(
+                    42,
+                    expected_fingerprints,
+                    {"child_head": HEAD, "live_base_ref": "develop", "live_base_tip": BASE},
+                )
+
+        expected = observer._uncheckpointed_hosted_observation(42, state)
+        expected_fingerprint = observation_fingerprint(expected)
+        accepted = run_audit((expected_fingerprint,))
+        self.assertNotIn("completed Hosted response has no checkpoint or prior audit", accepted["unmatched_responses"])
+
+        rejected = run_audit(("d" * 64,))
+        self.assertIn("completed Hosted response has no checkpoint or prior audit", rejected["unmatched_responses"])
 
     def test_historical_hosted_checkpoint_uses_captured_head_after_live_head_moves(self) -> None:
         current_head = "d" * 40

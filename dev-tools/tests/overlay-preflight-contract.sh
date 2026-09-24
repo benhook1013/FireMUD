@@ -911,7 +911,12 @@ if ! (
     echo "unexpected production preflight invocation: $*" >&2
     return 1
   }
-  GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop main
+  main_status=0
+  GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop main || main_status=$?
+  if [[ "$main_status" -ne 0 ]]; then
+    echo "Shared-base validator main failed with status $main_status" >&2
+    exit "$main_status"
+  fi
   if [[ "$python3_invoked" != "false" ]]; then
     echo "Shared-base validation unexpectedly invoked production preflight" >&2
     exit 1

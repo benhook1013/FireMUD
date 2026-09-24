@@ -100,6 +100,7 @@ secret_lookup_test="$fixture_dir/test-secret-exists.sh"
   cat <<'EOF'
 namespace=contract
 lookup_mode="$1"
+generation_or_apply_marker="$2"
 kubectl() {
   [[ "$*" == "-n contract get secret target --ignore-not-found -o name" ]] || {
     echo "unexpected kubectl arguments: $*" >&2
@@ -117,6 +118,7 @@ generation_or_apply_ran=false
 if secret_exists target; then
   :
 else
+  : >"$generation_or_apply_marker"
   generation_or_apply_ran=true
 fi
 expected_generation_or_apply=false
@@ -124,13 +126,28 @@ expected_generation_or_apply=false
 [[ "$generation_or_apply_ran" == "$expected_generation_or_apply" ]]
 EOF
 } >"$secret_lookup_test"
-bash "$secret_lookup_test" missing
-bash "$secret_lookup_test" present
+missing_generation_or_apply_marker="$fixture_dir/missing-generation-or-apply"
+bash "$secret_lookup_test" missing "$missing_generation_or_apply_marker"
+[[ -f "$missing_generation_or_apply_marker" ]] || {
+  echo "Missing Secret did not enter the generation/apply branch" >&2
+  exit 1
+}
+present_generation_or_apply_marker="$fixture_dir/present-generation-or-apply"
+bash "$secret_lookup_test" present "$present_generation_or_apply_marker"
+[[ ! -e "$present_generation_or_apply_marker" ]] || {
+  echo "Present Secret incorrectly entered the generation/apply branch" >&2
+  exit 1
+}
 for lookup_failure in denied transport; do
-  if lookup_output="$(bash "$secret_lookup_test" "$lookup_failure" 2>&1)"; then
+  lookup_failure_marker="$fixture_dir/${lookup_failure}-generation-or-apply"
+  if lookup_output="$(bash "$secret_lookup_test" "$lookup_failure" "$lookup_failure_marker" 2>&1)"; then
     echo "Secret lookup unexpectedly continued after ${lookup_failure} failure" >&2
     exit 1
   fi
+  [[ ! -e "$lookup_failure_marker" ]] || {
+    echo "Secret lookup entered the generation/apply branch after ${lookup_failure} failure" >&2
+    exit 1
+  }
   [[ "$lookup_output" == *"failed to look up Kubernetes Secret contract/target"* ]] || {
     echo "Secret lookup diagnostic omitted the target for ${lookup_failure} failure" >&2
     printf '%s\n' "$lookup_output" >&2
