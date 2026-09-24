@@ -37,11 +37,31 @@ class LiveGitHub:
 
     def pull_request(self, number: int) -> PullRequestSnapshot:
         value = self.metadata(number)
-        head_repository = value.get("headRepository")
-        if isinstance(head_repository, dict):
-            head_repository = head_repository.get("nameWithOwner")
-        if head_repository is not None and not isinstance(head_repository, str):
+        head_repository_value = value.get("headRepository")
+        if not isinstance(head_repository_value, dict):
             raise ReviewRunnerError("GitHub pull-request head repository identity is malformed")
+        if "nameWithOwner" in head_repository_value:
+            head_repository = head_repository_value.get("nameWithOwner")
+            if (
+                not isinstance(head_repository, str)
+                or head_repository.count("/") != 1
+                or any(not part or any(character.isspace() for character in part) for part in head_repository.split("/"))
+            ):
+                raise ReviewRunnerError("GitHub pull-request head repository identity is malformed")
+        else:
+            owner_value = value.get("headRepositoryOwner")
+            owner = owner_value.get("login") if isinstance(owner_value, dict) else None
+            name = head_repository_value.get("name")
+            if (
+                not isinstance(owner, str)
+                or not owner
+                or any(character.isspace() for character in owner)
+                or not isinstance(name, str)
+                or not name
+                or any(character.isspace() for character in name)
+            ):
+                raise ReviewRunnerError("GitHub pull-request head repository identity is malformed")
+            head_repository = f"{owner}/{name}"
         return PullRequestSnapshot(
             number=int(value["number"]),
             state=str(value["state"]),
@@ -784,7 +804,7 @@ class HostedRunner:
                     check=True,
                     capture_output=True,
                     text=True,
-                    timeout=hosted.GH_API_TIMEOUT_SECONDS if hasattr(hosted, "GH_API_TIMEOUT_SECONDS") else 120,
+                    timeout=github.GH_API_TIMEOUT_SECONDS,
                 )
                 comment = json.loads(completed.stdout)
             except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:

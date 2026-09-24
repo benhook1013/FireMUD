@@ -18,7 +18,7 @@ sys.path.insert(0, str(ROOT / "dev-tools"))
 
 from pr_review import cli as review_cli
 from pr_review import evidence, github, hosted
-from pr_review.cli_runner import EffectiveParent, PullRequestSnapshot, ReviewTarget
+from pr_review.cli_runner import EffectiveParent, PullRequestSnapshot, ReviewRunnerError, ReviewTarget
 from pr_review.controller import ControllerError
 from pr_review.runtime import HostedRunner, LiveEvidence, LiveGitHub, default_controller
 from pr_review.state import ReviewState, StateStore, SummaryFindingDisposition
@@ -176,6 +176,62 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(snapshot.head_repository, "owner/repo")
             self.assertEqual(live.pull_request_files(42), ["a.txt", "b.txt"])
 
+    def test_live_github_derives_head_repository_identity_when_name_with_owner_is_absent(self) -> None:
+        metadata = {
+            "number": 42,
+            "state": "OPEN",
+            "baseRefName": "develop",
+            "baseRefOid": BASE,
+            "headRefName": "feature",
+            "headRefOid": HEAD,
+            "headRepository": {"name": "repo"},
+            "headRepositoryOwner": {"login": "owner"},
+            "changedFiles": 0,
+            "mergeable": "MERGEABLE",
+            "mergedAt": None,
+        }
+        with patch.object(github, "fetch_pr_metadata", return_value=metadata):
+            self.assertEqual(LiveGitHub("owner/repo").pull_request(42).head_repository, "owner/repo")
+
+    def test_live_github_rejects_malformed_present_head_repository_identity(self) -> None:
+        metadata = {
+            "number": 42,
+            "state": "OPEN",
+            "baseRefName": "develop",
+            "baseRefOid": BASE,
+            "headRefName": "feature",
+            "headRefOid": HEAD,
+            "headRepository": {"nameWithOwner": "repo", "name": "repo"},
+            "headRepositoryOwner": {"login": "owner"},
+            "changedFiles": 0,
+            "mergeable": "MERGEABLE",
+            "mergedAt": None,
+        }
+        with (
+            patch.object(github, "fetch_pr_metadata", return_value=metadata),
+            self.assertRaisesRegex(ReviewRunnerError, "head repository identity is malformed"),
+        ):
+            LiveGitHub("owner/repo").pull_request(42)
+
+    def test_live_github_rejects_missing_head_repository_owner_for_fallback(self) -> None:
+        metadata = {
+            "number": 42,
+            "state": "OPEN",
+            "baseRefName": "develop",
+            "baseRefOid": BASE,
+            "headRefName": "feature",
+            "headRefOid": HEAD,
+            "headRepository": {"name": "repo"},
+            "changedFiles": 0,
+            "mergeable": "MERGEABLE",
+            "mergedAt": None,
+        }
+        with (
+            patch.object(github, "fetch_pr_metadata", return_value=metadata),
+            self.assertRaisesRegex(ReviewRunnerError, "head repository identity is malformed"),
+        ):
+            LiveGitHub("owner/repo").pull_request(42)
+
     def test_fetch_pr_metadata_requests_head_repository_identity(self) -> None:
         metadata = {"number": 42, "headRepository": {"nameWithOwner": "owner/repo"}}
         with patch(
@@ -271,11 +327,13 @@ class RuntimeTest(unittest.TestCase):
             "body": hosted.FULL_COMMAND,
             "user": {"login": "maintainer"},
         }
+        post_timeout: list[float] = []
 
         def gh_call(args, **kwargs):
             if args == ["gh", "api", "user"]:
                 output = {"login": "maintainer"}
             else:
+                post_timeout.append(kwargs["timeout"])
                 expected = [
                     "gh",
                     "api",
@@ -310,6 +368,7 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(record["anchor"]["parent_head"], BASE)
             self.assertEqual(record["anchor"]["patch_id"], PATCH)
             self.assertEqual(record["posting_comment_id_floor"], 0)
+            self.assertEqual(post_timeout, [github.GH_API_TIMEOUT_SECONDS])
 
     def test_hosted_post_boundary_uses_only_immutable_review_identity(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
