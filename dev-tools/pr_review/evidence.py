@@ -122,6 +122,7 @@ def _summary_marker_context(line: str, marker: str) -> tuple[bool, str] | None:
 
     text = line.strip()
     explicit = False
+    list_item = False
     while text:
         previous = text
         if text.startswith(">"):
@@ -129,19 +130,27 @@ def _summary_marker_context(line: str, marker: str) -> tuple[bool, str] | None:
         elif (heading := re.match(r"^#{1,6}\s+", text)):
             text = text[heading.end() :]
             explicit = True
-        elif text.startswith(("**", "__", "- ", "+ ", "* ")):
+        elif text.startswith(("- ", "+ ", "* ")):
             text = text[2:].lstrip()
-            explicit = True
+            # A list marker is not summary markup on its own.  In particular,
+            # ordinary prose such as ``- **Duplicate comments** handling``
+            # must not become a malformed canonical section merely because the
+            # prose happens to name a summary category.  A canonical count is
+            # still accepted below after its optional list styling is removed.
+            list_item = True
+        elif text.startswith(("**", "__")):
+            text = text[2:].lstrip()
+            explicit = explicit or not list_item
         else:
             wrapper = SUMMARY_WRAPPER.match(text)
             if wrapper:
                 text = text[wrapper.end() :]
-                explicit = True
+                explicit = explicit or not list_item
             else:
                 emoji = SUMMARY_EMOJI.match(text)
                 if emoji:
                     text = text[emoji.end() :]
-                    explicit = True
+                    explicit = explicit or not list_item
         if text == previous:
             break
     if not text.casefold().startswith(marker.casefold()):

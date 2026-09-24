@@ -131,6 +131,15 @@ class GithubAndEvidenceTests(unittest.TestCase):
         )
         self.assertEqual(evidence.summary_action_counts(body), (0, 0))
 
+    def test_list_prose_does_not_become_explicit_summary_markup(self):
+        body = (
+            "- **Duplicate comments** handling is unified.\n"
+            "* Outside the diff, the runner records the explanation.\n"
+            "- **Outside diff range comments (2)**\n"
+            "- Duplicate comments (1)"
+        )
+        self.assertEqual(evidence.summary_action_counts(body), (2, 1))
+
     def test_graphql_variables_preserve_strings_and_type_only_non_boolean_integers(self):
         query = "query($owner:String!, $repo:String!, $number:Int!, $after:String!) { viewer { login } }"
         variables = {"owner": "123", "repo": "@project", "number": 42, "after": "007", "enabled": True}
@@ -1044,12 +1053,47 @@ class HostedEvidenceTests(unittest.TestCase):
         self.assertEqual(retired["retirement"]["action"], "operator_retire_stuck_after_head_advance")
         self.assertFalse(retired["retirement"]["late_responses_counted"])
 
-    def test_posted_boundary_changed_stuck_recovery_rejects_ambiguity(self):
+    def test_posted_boundary_changed_stuck_recovery_accepts_later_trigger_ambiguity(self):
         current_head = "c" * 40
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
         later_trigger = comment(12, "owner", hosted.FULL_COMMAND, "2026-09-23T00:03:00Z")
         record = trigger_record()
         record["status"] = "posted_boundary_changed"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            path.write_text(json.dumps(record), encoding="utf-8")
+            with (
+                patch.object(hosted, "default_trigger_record_path", return_value=Path(directory) / "lock.json"),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[path]),
+            ):
+                result = hosted.retire_stuck_trigger_after_head_advance(
+                    path,
+                    REPO,
+                    PR,
+                    10,
+                    current_head,
+                    "bounded wait expired after head advance",
+                    True,
+                    lambda: review_payload([trigger, later_trigger], head=current_head),
+                )
+            self.assertEqual(result["observed_live_state"], "ambiguous")
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "retired")
+
+    def test_stuck_trigger_recovery_rejects_other_ambiguity(self):
+        current_head = "c" * 40
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        mismatched_review = {
+            **comment(
+                11,
+                "coderabbitai",
+                f"<!-- walkthrough_start -->\nReviewing files that changed from the base of the PR and between {BASE} and {HEAD}.",
+                "2026-09-23T00:02:00Z",
+            ),
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-23T00:02:00Z",
+            "commit": {"oid": "d" * 40},
+        }
+        record = trigger_record()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "trigger.json"
             path.write_text(json.dumps(record), encoding="utf-8")
@@ -1066,9 +1110,9 @@ class HostedEvidenceTests(unittest.TestCase):
                     current_head,
                     "bounded wait expired after head advance",
                     True,
-                    lambda: review_payload([trigger, later_trigger], head=current_head),
+                    lambda: review_payload([trigger], [mismatched_review], head=current_head),
                 )
-            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "posted_boundary_changed")
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "posted")
 
     def test_posted_boundary_changed_stuck_recovery_rejects_same_head(self):
         record = trigger_record()
@@ -1161,7 +1205,7 @@ class HostedEvidenceTests(unittest.TestCase):
                 )
             self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "posted")
 
-    def test_stuck_trigger_recovery_rejects_live_completed_or_ambiguous_state(self):
+    def test_stuck_trigger_recovery_rejects_live_completed_state(self):
         current_head = "c" * 40
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
         completed = comment(
@@ -1170,30 +1214,26 @@ class HostedEvidenceTests(unittest.TestCase):
             f"<!-- walkthrough_start -->\nReviewing files that changed from the base of the PR and between {BASE} and {HEAD}.",
             "2026-09-23T00:02:00Z",
         )
-        later_trigger = comment(12, "owner", hosted.FULL_COMMAND, "2026-09-23T00:03:00Z")
-        for comments, expected_state in (([trigger, completed], "completed"), ([trigger, later_trigger], "ambiguous")):
-            with self.subTest(expected_state=expected_state), tempfile.TemporaryDirectory() as directory:
-                path = Path(directory) / "trigger.json"
-                record = trigger_record()
-                path.write_text(json.dumps(record), encoding="utf-8")
-                with (
-                    patch.object(
-                        hosted, "default_trigger_record_path", return_value=Path(directory) / "lock.json"
-                    ),
-                    patch.object(hosted, "current_trigger_record_paths", return_value=[path]),
-                    self.assertRaisesRegex(ValueError, f"live state {expected_state}"),
-                ):
-                    hosted.retire_stuck_trigger_after_head_advance(
-                        path,
-                        REPO,
-                        PR,
-                        10,
-                        current_head,
-                        "operator confirms bounded wait expired",
-                        True,
-                        lambda comments=comments: review_payload(comments, head=current_head),
-                    )
-                self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "posted")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            record = trigger_record()
+            path.write_text(json.dumps(record), encoding="utf-8")
+            with (
+                patch.object(hosted, "default_trigger_record_path", return_value=Path(directory) / "lock.json"),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[path]),
+                self.assertRaisesRegex(ValueError, "live state completed"),
+            ):
+                hosted.retire_stuck_trigger_after_head_advance(
+                    path,
+                    REPO,
+                    PR,
+                    10,
+                    current_head,
+                    "operator confirms bounded wait expired",
+                    True,
+                    lambda: review_payload([trigger, completed], head=current_head),
+                )
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "posted")
 
     def test_stuck_trigger_command_requires_explicit_wait_assertion(self):
         args = cli_module._parser().parse_args(

@@ -46,6 +46,7 @@ RATE_LIMIT_PATTERN = re.compile(
 EXACT_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
 ARCHIVED = re.compile(r"^trigger-([1-9][0-9]*)\.json$")
 TIMEOUT_REASON = "bounded wait expired before a terminal CodeRabbit response"
+LATER_TRIGGER_AMBIGUITY_REASON = "a later or concurrent full-review trigger prevents attribution"
 
 
 @dataclass(frozen=True)
@@ -869,7 +870,7 @@ def trigger_state(
                 response_created_at=None,
                 response_url=None,
                 cooldown_until=None,
-                reason="a later or concurrent full-review trigger prevents attribution",
+                reason=LATER_TRIGGER_AMBIGUITY_REASON,
             )
         if record.get("status") == "timed_out":
             return TriggerState(
@@ -1166,7 +1167,10 @@ def retire_stuck_trigger_after_head_advance(
             "noop",
             "failed",
         }
-        if state.state not in {"active", "awaiting_response"} and not terminal_boundary_changed:
+        retire_after_later_trigger = (
+            state.state == "ambiguous" and state.reason == LATER_TRIGGER_AMBIGUITY_REASON
+        )
+        if state.state not in {"active", "awaiting_response"} and not terminal_boundary_changed and not retire_after_later_trigger:
             raise ValueError(f"cannot retire stuck trigger in live state {state.state}")
 
         current = load_trigger_record(record_path, repo, pr_number)
