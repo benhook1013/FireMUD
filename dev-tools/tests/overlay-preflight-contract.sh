@@ -350,6 +350,11 @@ assert_shared_change_runs_ordinary_overlay_checks() {
     }
     python3() {
       if [[ "$#" -eq 2 && "$2" = production ]]; then
+        if [[ "${FIREMUD_PREFLIGHT_CONTEXT:-}" != "ci-static" ]]; then
+          echo "ordinary static preflight used the wrong context" >&2
+          return 1
+        fi
+        printf 'validated static preflight: %s\n' "${FIREMUD_DEPLOYMENT_REF:-}"
         return 0
       fi
       command python3 "$@"
@@ -375,8 +380,8 @@ assert_shared_change_runs_ordinary_overlay_checks() {
     exit 1
   }
   if [[ "$fixture_path" = k8s/overlays/stage/kustomization.yaml ]]; then
-    grep -Fqx 'Skipping static preflight policy enforcement because no production attestation context is present.' "$OUTPUT_FILE" || {
-      echo "Non-rendering change did not skip production promotion preflight: $fixture_path" >&2
+    grep -Fqx "validated static preflight: $(git rev-parse HEAD)" "$OUTPUT_FILE" || {
+      echo "Stage overlay change did not run static preflight at the current HEAD: $fixture_path" >&2
       cat "$OUTPUT_FILE" >&2
       exit 1
     }
@@ -390,7 +395,7 @@ for changed_file in \
   assert_production_change_requires_attestation "$changed_file"
 done
 
-assert_nonproduction_change_skips_attestation() {
+assert_nonproduction_change_runs_static_preflight() {
   local test_changed_file="$1"
   (
     # shellcheck disable=SC1091
@@ -398,21 +403,35 @@ assert_nonproduction_change_skips_attestation() {
     changed_files_between_base_and_head() {
       printf '%s\n' "$test_changed_file"
     }
+    python3() {
+      if [[ "$#" -ne 2 \
+        || "$1" != "$REPO_ROOT/dev-tools/deploy/preflight.py" \
+        || "$2" != production \
+        || "${FIREMUD_PREFLIGHT_CONTEXT:-}" != ci-static \
+        || "${FIREMUD_DEPLOYMENT_REF:-}" != "$(git rev-parse HEAD)" \
+        || -n "${FIREMUD_PROMOTION_ATTESTATION:-}" \
+        || -n "${FIREMUD_BACKUP_READINESS_EVIDENCE:-}" ]]; then
+        echo "Shared Kubernetes change received incorrect static preflight inputs" >&2
+        return 1
+      fi
+      printf 'validated static preflight without production attestation\n'
+    }
     GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop run_preflight_policy_checks
   ) >"$OUTPUT_FILE" 2>&1
 
-  grep -q "Skipping static preflight policy enforcement" "$OUTPUT_FILE" || {
-    echo "Non-production change unexpectedly required production attestation: $1" >&2
+  grep -q "validated static preflight without production attestation" "$OUTPUT_FILE" || {
+    echo "Kubernetes change did not run static preflight without production attestation: $1" >&2
     cat "$OUTPUT_FILE" >&2
     exit 1
   }
+  assert_balanced_preflight_group "Static preflight for $test_changed_file"
 }
 
 for changed_file in \
   'k8s/base/account-service.yaml' \
   'k8s/postgres/pg-dump-cronjob.yaml' \
   'k8s/velero/schedule.yaml'; do
-  assert_nonproduction_change_skips_attestation "$changed_file"
+  assert_nonproduction_change_runs_static_preflight "$changed_file"
 done
 for changed_file in \
   'k8s/overlays/stage/kustomization.yaml' \
@@ -669,20 +688,38 @@ assert_balanced_preflight_group "Production preflight failure"
   changed_files_between_base_and_head() {
     printf '%s\n' 'k8s/overlays/stage/kustomization.yaml'
   }
+  python3() {
+    if [[ "$#" -eq 2 && "$1" = "$REPO_ROOT/dev-tools/deploy/preflight.py" && "$2" = production \
+      && "${FIREMUD_PREFLIGHT_CONTEXT:-}" = ci-static \
+      && "${FIREMUD_DEPLOYMENT_REF:-}" = "$(git rev-parse HEAD)" ]]; then
+      return 0
+    fi
+    echo "unexpected stage static preflight arguments" >&2
+    return 1
+  }
   GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop run_preflight_policy_checks
 ) >"$OUTPUT_FILE" 2>&1
 
-grep -q "Skipping static preflight policy enforcement because no production attestation context is present." "$OUTPUT_FILE" || {
-  echo "Non-production overlay validation did not take the policy-skip path" >&2
+if grep -q "Skipping static preflight policy enforcement" "$OUTPUT_FILE"; then
+  echo "Stage overlay validation skipped static preflight" >&2
   cat "$OUTPUT_FILE" >&2
   exit 1
-}
+fi
 
 if ! (
   # shellcheck disable=SC1091
   source "$REPO_ROOT/dev-tools/deploy/validate-kustomize-overlays.sh"
   changed_files_between_base_and_head() {
     printf '%s\n' 'k8s/velero/verify-backups-cronjob.yaml'
+  }
+  python3() {
+    if [[ "$#" -eq 2 && "$1" = "$REPO_ROOT/dev-tools/deploy/preflight.py" && "$2" = production \
+      && "${FIREMUD_PREFLIGHT_CONTEXT:-}" = ci-static \
+      && "${FIREMUD_DEPLOYMENT_REF:-}" = "$(git rev-parse HEAD)" ]]; then
+      return 0
+    fi
+    echo "unexpected Velero static preflight arguments" >&2
+    return 1
   }
   GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=develop run_preflight_policy_checks
 ) >"$OUTPUT_FILE" 2>&1; then
@@ -691,11 +728,11 @@ if ! (
   exit 1
 fi
 
-grep -q "Skipping static preflight policy enforcement" "$OUTPUT_FILE" || {
+if grep -q "must include exactly one attestation file" "$OUTPUT_FILE"; then
   echo "Standalone Velero pre-release assets incorrectly required production attestation" >&2
   cat "$OUTPUT_FILE" >&2
   exit 1
-}
+fi
 
 for environment_and_overlay in 'staging stage' 'production prod'; do
   read -r environment overlay <<<"$environment_and_overlay"
@@ -843,8 +880,15 @@ if ! (
     return 1
   }
   python3() {
-    python3_invoked="true"
-    echo "unexpected production preflight invocation: $*" >&2
+    if [[ "$#" -eq 2 && "$1" = "$REPO_ROOT/dev-tools/deploy/preflight.py" && "$2" = production \
+      && "${FIREMUD_PREFLIGHT_CONTEXT:-}" = ci-static \
+      && "${FIREMUD_DEPLOYMENT_REF:-}" = "$(git rev-parse HEAD)" \
+      && -z "${FIREMUD_PROMOTION_ATTESTATION:-}" \
+      && -z "${FIREMUD_BACKUP_READINESS_EVIDENCE:-}" ]]; then
+      python3_invoked="true"
+      return 0
+    fi
+    echo "unexpected static preflight invocation: $*" >&2
     return 1
   }
   main_status=0
@@ -853,8 +897,8 @@ if ! (
     echo "Shared-base validator main failed with status $main_status" >&2
     exit "$main_status"
   fi
-  if [[ "$python3_invoked" != "false" ]]; then
-    echo "Shared-base validation unexpectedly invoked production preflight" >&2
+  if [[ "$python3_invoked" != "true" ]]; then
+    echo "Shared-base validation skipped static preflight" >&2
     exit 1
   fi
   mapfile -t kubectl_render_calls <"$kubectl_render_trace"
@@ -879,10 +923,10 @@ if ! (
   exit 1
 fi
 
-grep -q "Skipping static preflight policy enforcement" "$OUTPUT_FILE" || {
-  echo "Shared-base main path did not skip production attestation enforcement" >&2
+if grep -q "Skipping static preflight policy enforcement" "$OUTPUT_FILE"; then
+  echo "Shared-base main path skipped static policy enforcement" >&2
   cat "$OUTPUT_FILE" >&2
   exit 1
-}
+fi
 
 echo "overlay preflight contract checks passed"

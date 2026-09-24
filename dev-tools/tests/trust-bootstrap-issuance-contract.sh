@@ -16,7 +16,6 @@ python3 - "$MANIFEST" <<'PY'
 from __future__ import annotations
 
 import copy
-import re
 import sys
 from pathlib import Path
 
@@ -151,9 +150,8 @@ def check_contract(items: list[dict]) -> None:
     certificate_match = actual_policies["firemud-trust-bootstrap-certificate"]["spec"][
         "matchConditions"
     ][0]["expression"]
-    certificate_status = expressions(
-        actual_policies["firemud-trust-bootstrap-certificate-status"]
-    )
+    certificate_status_policy = actual_policies["firemud-trust-bootstrap-certificate-status"]
+    certificate_status = certificate_status_policy["spec"]
     for needle in (
         "system:serviceaccount:firemud-system:firemud-standalone-certificate-writer",
         "request.operation == 'CREATE' &&",
@@ -182,50 +180,29 @@ def check_contract(items: list[dict]) -> None:
         "object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$')",
     ):
         require(certificate, needle, "Certificate boundary")
-    hosted_grpc_certificate_pattern = (
-        r"^(dev|pr-[1-9][0-9]{0,50})-grpc-"
-        r"(game-design-service|world-management-service|entity-management-service|"
-        r"game-logic-service|automation-scripting-service)$"
-    )
-    require(
-        certificate_status,
-        "system:serviceaccount:firemud-system:firemud-hosted-identity-controller",
-        "Certificate status boundary",
-    )
-    for needle in (
-        "request.namespace == 'dev-identity'",
-        "request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')",
-        f"object.metadata.name.matches('{hosted_grpc_certificate_pattern}')",
-        "object.spec.issuerRef.name == 'firemud-ca-issuer'",
-        "object.spec.issuerRef.kind == 'ClusterIssuer'",
-        "object.spec.issuerRef.group == 'cert-manager.io'",
-        "object.spec == oldObject.spec",
+    status_rules = certificate_status["matchConstraints"]["resourceRules"]
+    if len(status_rules) != 1 or set(status_rules[0]["resources"]) != {"certificates/status"}:
+        fail("Certificate status boundary must cover only certificates/status")
+    if status_rules[0].get("operations") != ["UPDATE"]:
+        fail("Certificate status boundary must cover only status updates")
+    status_match = certificate_status["matchConditions"][0]["expression"]
+    if " ".join(status_match.split()) != (
+        "has(object.spec.issuerRef) && object.spec.issuerRef.name == 'firemud-ca-issuer'"
     ):
-        require(certificate_status, needle, "Certificate status boundary")
-    hosted_grpc_certificates = {
-        f"{identity}-grpc-{service}"
-        for identity in ("dev", "pr-42")
-        for service in (
-            "game-design-service",
-            "world-management-service",
-            "entity-management-service",
-            "game-logic-service",
-            "automation-scripting-service",
-        )
-    }
-    if any(
-        re.fullmatch(hosted_grpc_certificate_pattern, name) is None
-        for name in hosted_grpc_certificates
+        fail("Certificate status boundary must match only internal CA Certificates")
+    if len(certificate_status["validations"]) != 1:
+        fail("Certificate status boundary must have exactly one validation")
+    status_validation = certificate_status["validations"][0]
+    if " ".join(status_validation["expression"].split()) != (
+        "request.userInfo.groups.exists(group, group == 'system:masters') || "
+        "(request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' && "
+        "object.spec == oldObject.spec)"
     ):
-        fail("controller gRPC Certificate allowlist does not cover the five canonical names")
-    for rejected_name in (
-        "pr-0-grpc-game-design-service",
-        "pr-42-grpc-unknown-service",
-        "pr-42-grpc-game-design-service-previous",
-        "pr-42-grpc-game-design-service-extra",
+        fail("Certificate status updates must be limited to cert-manager or system:masters for an unchanged spec")
+    if status_validation.get("message") != (
+        "only cert-manager or trusted system:masters may update status for an unchanged internal Certificate"
     ):
-        if re.fullmatch(hosted_grpc_certificate_pattern, rejected_name):
-            fail(f"controller gRPC Certificate allowlist accepts noncanonical name: {rejected_name}")
+        fail("Certificate status denial message does not describe the allowed callers")
     require(
         certificate_validation,
         "^(dev|pr-[1-9][0-9]{0,50})-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$",
