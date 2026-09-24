@@ -49,6 +49,8 @@ contains_literal "$certificate_generator" \
 for required in \
   'ca_secret="firemud-grpc-ca"' \
   'local escaped_key="${key//./\\.}"' \
+  'get secret "$secret_name" --ignore-not-found -o name' \
+  'failed to look up Kubernetes Secret ${namespace}/${secret_name}' \
   'jsonpath={.data.${escaped_key}}' \
   'if ! secret_exists "$shared_secret"; then' \
   'assert_certificate_unexpired "$shared_cert"' \
@@ -85,6 +87,65 @@ python3 "$runner_label_validator" "$workflow" "$reconciler"
 }
 fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$fixture_dir"' EXIT
+
+# A missing Secret is an ordinary false result. Lookup errors must stop the
+# caller so it cannot take the bootstrap generation/apply branch.
+secret_lookup_test="$fixture_dir/test-secret-exists.sh"
+{
+  awk '
+    /^secret_exists\(\)/ { capture = 1 }
+    /^read_secret_file\(\)/ { capture = 0 }
+    capture { print }
+  ' "$standalone_grpc_tls"
+  cat <<'EOF'
+namespace=contract
+lookup_mode="$1"
+kubectl() {
+  [[ "$*" == "-n contract get secret target --ignore-not-found -o name" ]] || {
+    echo "unexpected kubectl arguments: $*" >&2
+    return 2
+  }
+  case "$lookup_mode" in
+    missing) return 0 ;;
+    present) printf '%s\n' secret/target ;;
+    denied) echo 'Error from server (Forbidden): secrets is forbidden' >&2; return 1 ;;
+    transport) echo 'Unable to connect to the server: connection refused' >&2; return 1 ;;
+  esac
+}
+
+generation_or_apply_ran=false
+if secret_exists target; then
+  :
+else
+  generation_or_apply_ran=true
+fi
+expected_generation_or_apply=false
+[[ "$lookup_mode" == missing ]] && expected_generation_or_apply=true
+[[ "$generation_or_apply_ran" == "$expected_generation_or_apply" ]]
+EOF
+} >"$secret_lookup_test"
+bash "$secret_lookup_test" missing
+bash "$secret_lookup_test" present
+for lookup_failure in denied transport; do
+  if lookup_output="$(bash "$secret_lookup_test" "$lookup_failure" 2>&1)"; then
+    echo "Secret lookup unexpectedly continued after ${lookup_failure} failure" >&2
+    exit 1
+  fi
+  [[ "$lookup_output" == *"failed to look up Kubernetes Secret contract/target"* ]] || {
+    echo "Secret lookup diagnostic omitted the target for ${lookup_failure} failure" >&2
+    printf '%s\n' "$lookup_output" >&2
+    exit 1
+  }
+  case "$lookup_failure" in
+    denied) expected_lookup_error='Forbidden): secrets is forbidden' ;;
+    transport) expected_lookup_error='connection refused' ;;
+  esac
+  [[ "$lookup_output" == *"$expected_lookup_error"* ]] || {
+    echo "Secret lookup diagnostic omitted kubectl's ${lookup_failure} error" >&2
+    printf '%s\n' "$lookup_output" >&2
+    exit 1
+  }
+done
 
 # Exercise the actual Secret reader with a mocked kubectl and verify the dotted
 # Secret keys are passed as literal escaped JSONPath fields.

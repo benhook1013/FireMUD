@@ -49,7 +49,14 @@ workloads=(
 )
 
 secret_exists() {
-  kubectl -n "$namespace" get secret "$1" >/dev/null 2>&1
+  local secret_name="$1"
+  local lookup_result
+
+  if ! lookup_result="$(kubectl -n "$namespace" get secret "$secret_name" --ignore-not-found -o name 2>&1)"; then
+    echo "failed to look up Kubernetes Secret ${namespace}/${secret_name}: ${lookup_result}" >&2
+    exit 1
+  fi
+  [[ -n "$lookup_result" ]]
 }
 
 read_secret_file() {

@@ -1564,8 +1564,10 @@ class HostedIdentityReconcilerSafetyTest {
   }
 
   @Test
-  void malformedGrpcPublicationHistoryRemainsFailClosedAndIsPreservedInBlockedStatus() {
+  void malformedGrpcPublicationHistoryIsNormalizedWithoutBecomingHighWaterEvidence() {
     String role = HostedIdentityContract.grpcPublicationRole("game-design-service");
+    String invalidRole = HostedIdentityContract.grpcPublicationRole("entity-management-service");
+    String nullRole = HostedIdentityContract.grpcPublicationRole("world-management-service");
     DeploymentHeadGateFixture fixture =
         new DeploymentHeadGateFixture(
             new RuntimeProfileService.RuntimeProfile(
@@ -1575,8 +1577,18 @@ class HostedIdentityReconcilerSafetyTest {
                 HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
                 32016,
                 true));
+    HostedEnvironmentIdentityStatus.RoleStatus validHistory =
+        HostedStatusService.role(
+            "sha256:" + "a".repeat(64), 4L, 2L, "b".repeat(64), "cert-manager", "source-ready");
+    HostedEnvironmentIdentityStatus.RoleStatus invalidHistory =
+        HostedStatusService.role(
+            "invalid revision", 99L, 2L, "c".repeat(64), "cert-manager", "source-ready");
     Map<String, HostedEnvironmentIdentityStatus.RoleStatus> malformedPublication =
-        Map.of(role, new HostedEnvironmentIdentityStatus.RoleStatus());
+        new java.util.LinkedHashMap<>();
+    malformedPublication.put(role, validHistory);
+    malformedPublication.put(invalidRole, invalidHistory);
+    malformedPublication.put(nullRole, null);
+    malformedPublication.put("unexpected-role", new HostedEnvironmentIdentityStatus.RoleStatus());
     HostedEnvironmentIdentityStatus priorStatus = new HostedEnvironmentIdentityStatus();
     priorStatus.setGrpcPublication(malformedPublication);
     fixture.resource.setStatus(priorStatus);
@@ -1593,9 +1605,28 @@ class HostedIdentityReconcilerSafetyTest {
     HostedEnvironmentIdentityStatus blocked = result.getResource().orElseThrow().getStatus();
     assertEquals(HostedEnvironmentIdentityStatus.Phase.Blocked, blocked.getPhase());
     assertEquals("ReconciliationBlocked", blocked.getConditions().get(0).getReason());
-    assertEquals(1, blocked.getGrpcPublication().size());
-    assertTrue(blocked.getGrpcPublication().containsKey(role));
-    assertNull(blocked.getGrpcPublication().get(role).getSourceGeneration());
+    assertEquals("False", blocked.getConditions().get(0).getStatus());
+    assertEquals(
+        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
+            .map(HostedIdentityContract::grpcPublicationRole)
+            .collect(java.util.stream.Collectors.toSet()),
+        blocked.getGrpcPublication().keySet());
+    assertEquals(4L, blocked.getGrpcPublication().get(role).getSourceGeneration());
+    assertNull(blocked.getGrpcPublication().get(invalidRole).getSourceGeneration());
+    assertNull(blocked.getGrpcPublication().get(invalidRole).getRevision());
+    assertNull(blocked.getGrpcPublication().get(nullRole).getSourceGeneration());
+    assertNull(
+        blocked
+            .getGrpcPublication()
+            .get(HostedIdentityContract.grpcPublicationRole("game-logic-service"))
+            .getSourceGeneration());
+    assertNull(
+        blocked
+            .getGrpcPublication()
+            .get(HostedIdentityContract.grpcPublicationRole("automation-scripting-service"))
+            .getSourceGeneration());
+    assertTrue(blocked.getGrpcPublication().values().stream().allMatch(java.util.Objects::nonNull));
+    verifyNoInteractions(fixture.projections);
   }
 
   @Test

@@ -314,7 +314,15 @@ class LiveEvidence:
     ) -> dict[str, Any]:
         """Prove completeness and attribution of all currently available Hosted evidence."""
 
+        # Retirement is the final authorization boundary. Earlier command checks may
+        # have populated these caches, so refresh the complete public snapshot and
+        # both derived channel histories before making the retirement decision.
+        self._payloads.pop(pr, None)
+        self._histories.pop((pr, "hosted"), None)
+        self._histories.pop((pr, "cli"), None)
         payload = self._payload(pr)
+        self.history(pr, "hosted")
+        self.history(pr, "cli")
         try:
             pull = payload["data"]["repository"]["pullRequest"]
             comments_connection = pull["comments"]

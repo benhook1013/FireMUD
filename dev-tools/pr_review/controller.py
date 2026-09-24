@@ -2003,7 +2003,7 @@ class ReviewController:
             return self.decide_legacy_transition(**kwargs)
         if operation == "reconcile":
             return self.decide_reconciliation(**kwargs)
-        raise ControllerError("decision must be retain, reopen, policy, or reconcile, or transition")
+        raise ControllerError("decision must be retain, reopen, policy, transition, or reconcile")
 
 
 def compact_result(value: Mapping[str, Any]) -> str:

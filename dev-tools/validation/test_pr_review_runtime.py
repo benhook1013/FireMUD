@@ -127,6 +127,68 @@ class RuntimeTest(unittest.TestCase):
             )
         self.assertIn("response has no preceding full-review trigger", audit["unmatched_responses"])
 
+    def test_retirement_audit_refreshes_cached_public_and_channel_history(self) -> None:
+        stale_payload = self._payload()
+        current_trigger = {
+            "databaseId": 101,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-24T00:02:00Z",
+            "updatedAt": "2026-09-24T00:02:00Z",
+        }
+        current_review = {
+            "databaseId": 102,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-24T00:01:00Z",
+            "commit": {"oid": HEAD},
+        }
+        current_payload = self._payload(
+            [current_trigger],
+            [current_review],
+            [
+                {
+                    "isResolved": False,
+                    "isOutdated": True,
+                    "comments": {"nodes": [{"databaseId": 103}]},
+                }
+            ],
+        )
+        pull = current_payload["data"]["repository"]["pullRequest"]
+        pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        live = LiveGitHub("owner/repo")
+        observer = LiveEvidence("owner/repo", live)
+        observer._payloads[42] = stale_payload
+        observer._histories[(42, "hosted")] = [{"checkpoint": "stale-hosted"}]
+        observer._histories[(42, "cli")] = [{"checkpoint": "stale-cli"}]
+
+        with (
+            patch.object(github, "fetch_pull_request", return_value=current_payload) as fetch,
+            patch.object(live, "pull_request", return_value=snapshot),
+            patch.object(observer, "_complete_trigger_paths", return_value=[]),
+            patch.object(observer, "history", wraps=observer.history) as history,
+        ):
+            audit = observer.legacy_transition_reauthorization_audit(
+                42,
+                (),
+                {"child_head": HEAD, "live_base_ref": "develop", "live_base_tip": BASE},
+            )
+
+        fetch.assert_called_once_with("owner/repo", 42)
+        self.assertCountEqual(
+            [call.args for call in history.call_args_list[:2]],
+            [(42, "hosted"), (42, "cli")],
+        )
+        self.assertNotEqual(observer._histories[(42, "hosted")], [{"checkpoint": "stale-hosted"}])
+        self.assertNotEqual(observer._histories[(42, "cli")], [{"checkpoint": "stale-cli"}])
+        self.assertIn("response has no preceding full-review trigger", audit["unmatched_responses"])
+        self.assertIn(
+            "a public full-review trigger has no attributable terminal response",
+            audit["active_reservations"],
+        )
+
     def test_legacy_checkpoint_is_attributed_only_to_unique_exact_terminal_response(self) -> None:
         trigger_at = "2026-09-24T00:00:00Z"
         response_at = "2026-09-24T00:01:00Z"

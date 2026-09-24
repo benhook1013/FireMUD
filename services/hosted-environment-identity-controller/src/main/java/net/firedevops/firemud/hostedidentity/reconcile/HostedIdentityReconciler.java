@@ -1063,8 +1063,8 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
     try {
       previous = previousPublicationRoles(resource);
     } catch (IllegalStateException malformedStoredStatus) {
-      // Keep malformed persisted evidence intact while publishing the fail-closed status.
-      return resource.getStatus().getGrpcPublication();
+      // Repair the status shape without treating malformed evidence as a high-water mark.
+      return normalizedPreviousPublicationRoles(resource);
     }
     Map<String, HostedEnvironmentIdentityStatus.RoleStatus> current = new LinkedHashMap<>();
     for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
@@ -1133,11 +1133,59 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
             .map(HostedIdentityContract::grpcPublicationRole)
             .collect(java.util.stream.Collectors.toUnmodifiableSet());
     if (!publicationRoles.keySet().equals(expectedRoles)
-        || publicationRoles.values().stream().anyMatch(java.util.Objects::isNull)) {
+        || publicationRoles.values().stream()
+            .anyMatch(roleStatus -> !isSchemaValidPublicationRoleStatus(roleStatus))) {
       throw new IllegalStateException(
           "grpc publication status must contain exactly five role entries");
     }
     return publicationRoles;
+  }
+
+  private static Map<String, HostedEnvironmentIdentityStatus.RoleStatus>
+      normalizedPreviousPublicationRoles(HostedEnvironmentIdentity resource) {
+    Map<String, HostedEnvironmentIdentityStatus.RoleStatus> stored =
+        resource.getStatus() == null ? null : resource.getStatus().getGrpcPublication();
+    Map<String, HostedEnvironmentIdentityStatus.RoleStatus> normalized = new LinkedHashMap<>();
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      String role = HostedIdentityContract.grpcPublicationRole(workload);
+      HostedEnvironmentIdentityStatus.RoleStatus evidence =
+          stored == null ? null : stored.get(role);
+      normalized.put(
+          role,
+          isSchemaValidPublicationRoleStatus(evidence)
+              ? copyRoleStatus(evidence)
+              : new HostedEnvironmentIdentityStatus.RoleStatus());
+    }
+    return normalized;
+  }
+
+  private static boolean isSchemaValidPublicationRoleStatus(
+      HostedEnvironmentIdentityStatus.RoleStatus roleStatus) {
+    return roleStatus != null
+        && schemaString(roleStatus.getRevision(), 128, "[A-Za-z0-9][A-Za-z0-9._:+/@=-]{0,127}")
+        && (roleStatus.getSourceGeneration() == null || roleStatus.getSourceGeneration() >= 1)
+        && (roleStatus.getSourceObjectGeneration() == null
+            || roleStatus.getSourceObjectGeneration() >= 1)
+        && schemaString(roleStatus.getSpkiSha256(), 64, "[0-9a-f]{64}")
+        && schemaString(roleStatus.getProvenance(), 128, "[A-Za-z][A-Za-z0-9_.-]{0,127}")
+        && schemaString(roleStatus.getState(), 64, "[A-Za-z][A-Za-z0-9_.-]{0,63}");
+  }
+
+  private static boolean schemaString(String value, int maxLength, String pattern) {
+    return value == null || (value.length() <= maxLength && value.matches(pattern));
+  }
+
+  private static HostedEnvironmentIdentityStatus.RoleStatus copyRoleStatus(
+      HostedEnvironmentIdentityStatus.RoleStatus source) {
+    HostedEnvironmentIdentityStatus.RoleStatus copy =
+        new HostedEnvironmentIdentityStatus.RoleStatus();
+    copy.setRevision(source.getRevision());
+    copy.setSourceGeneration(source.getSourceGeneration());
+    copy.setSourceObjectGeneration(source.getSourceObjectGeneration());
+    copy.setSpkiSha256(source.getSpkiSha256());
+    copy.setProvenance(source.getProvenance());
+    copy.setState(source.getState());
+    return copy;
   }
 
   static void validateSourceProgress(
