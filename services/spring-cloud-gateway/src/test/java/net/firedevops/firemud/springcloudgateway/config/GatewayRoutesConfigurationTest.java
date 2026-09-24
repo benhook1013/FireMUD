@@ -3,7 +3,9 @@ package net.firedevops.firemud.springcloudgateway.config;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasMethod;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasPath;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertHasStripPrefixTwo;
+import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertNoConfiguredPath;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertNoConfiguredPathStartsWith;
+import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertNoRouteWithPathAndMethod;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.assertSocialChatAndFriendsAreEdgeGated;
 import static net.firedevops.firemud.springcloudgateway.config.GatewayRouteTestSupport.route;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -46,7 +48,8 @@ class GatewayRoutesConfigurationTest {
           "admin-remote-followups",
           "admin-sagas",
           "admin-tick-remediation",
-          "design",
+          "design-ping",
+          "design-templates-read",
           "account-auth",
           "account-accounts",
           "account-profiles",
@@ -130,8 +133,16 @@ class GatewayRoutesConfigurationTest {
     assertHasStripPrefixTwo(gatewayProperties, "admin-sagas");
     assertHasStripPrefixTwo(gatewayProperties, "admin-tick-remediation");
 
-    assertHasPath(gatewayProperties, "design", "/api/design/**");
-    assertHasStripPrefixTwo(gatewayProperties, "design");
+    assertHasPath(gatewayProperties, "design-ping", "/api/design/ping");
+    assertHasMethod(gatewayProperties, "design-ping", "GET");
+    assertHasStripPrefixTwo(gatewayProperties, "design-ping");
+    assertHasPath(gatewayProperties, "design-templates-read", "/api/design/templates");
+    assertHasMethod(gatewayProperties, "design-templates-read", "GET");
+    assertHasStripPrefixTwo(gatewayProperties, "design-templates-read");
+    assertNoConfiguredPath(gatewayProperties, "/api/design/**");
+    assertNoConfiguredPath(gatewayProperties, "/api/design/assets");
+    assertNoRouteWithPathAndMethod(gatewayProperties, "/api/design/templates", "POST");
+    assertNoRouteWithPathAndMethod(gatewayProperties, "/api/design/assets", "POST");
 
     assertHasPath(gatewayProperties, "account-auth", "/api/account/auth/**");
     assertHasPath(gatewayProperties, "account-accounts", "/api/account/accounts/**");
