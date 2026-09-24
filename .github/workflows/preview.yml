@@ -1,6 +1,6 @@
 name: PR Preview Environment
 
-run-name: ${{ github.event_name == 'repository_dispatch' && format('Preview dispatch pr-{0}-{1}', github.event.client_payload.pr_number, github.event.client_payload.head_sha) || format('PR preview {0}', github.event.pull_request.number) }}
+run-name: ${{ github.event_name == 'repository_dispatch' && format('Preview dispatch pr-{0}-base-{1}-head-{2}-merge-{3}', github.event.client_payload.pr_number, github.event.client_payload.base_sha || 'unknown', github.event.client_payload.head_sha, github.event.client_payload.merge_sha || 'unknown') || format('PR preview {0}', github.event.pull_request.number) }}
 
 on:
   pull_request_target:
@@ -15,6 +15,8 @@ on:
       - synchronize
       - reopened
       - labeled
+      - unlabeled
+      - edited
   repository_dispatch:
     types: [preview-deploy, preview-destroy]
 
@@ -26,7 +28,7 @@ jobs:
   preview-plan:
     name: Preview Plan
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request_target' || (github.event.pull_request.head.repo.full_name == github.repository && (github.event.action != 'labeled' || github.event.label.name == 'preview:priority')) }}
+    if: ${{ github.event_name != 'pull_request_target' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository && (github.event.action != 'labeled' && github.event.action != 'unlabeled' || github.event.label.name == 'preview:priority') && (github.event.action != 'edited' || github.event.changes.base != null)) }}
     concurrency:
       group: preview-plan-${{ github.event_name == 'pull_request_target' && github.event.pull_request.number || github.event.client_payload.pr_number || github.ref }}
       cancel-in-progress: true
@@ -73,6 +75,10 @@ jobs:
           CLIENT_ACTION: ${{ github.event.client_payload.action }}
           CLIENT_PR_NUMBER: ${{ github.event.client_payload.pr_number }}
           CLIENT_HEAD_SHA: ${{ github.event.client_payload.head_sha }}
+          CLIENT_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          CLIENT_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          CLIENT_MERGE_SHA: ${{ github.event.client_payload.merge_sha }}
+          CLIENT_IMAGE_TAG: ${{ github.event.client_payload.image_tag }}
           CLIENT_PREVIEW_DOMAIN: ${{ github.event.client_payload.preview_domain }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -98,6 +104,10 @@ jobs:
             PR_NUMBER="$CLIENT_PR_NUMBER"
             HEAD_SHA="$CLIENT_HEAD_SHA"
             PREVIEW_DOMAIN="$CLIENT_PREVIEW_DOMAIN"
+            PLANNED_BASE_REF="$CLIENT_BASE_REF"
+            PLANNED_BASE_SHA="$CLIENT_BASE_SHA"
+            PLANNED_MERGE_SHA="$CLIENT_MERGE_SHA"
+            PLANNED_IMAGE_TAG="$CLIENT_IMAGE_TAG"
             BASE_SHA=""
             MERGE_SHA=""
             case "$EVENT_ACTION" in
@@ -122,6 +132,22 @@ jobs:
             fi
             if [[ "$PREVIEW_DOMAIN" != preview.firedevops.net ]]; then
               echo "::error title=Invalid preview domain override::Only preview.firedevops.net is canonical." >&2
+              exit 1
+            fi
+            for planned_sha in "$PLANNED_BASE_SHA" "$PLANNED_MERGE_SHA"; do
+              if [[ -n "$planned_sha" && ! "$planned_sha" =~ ^[0-9a-f]{40}$ ]]; then
+                echo "::error title=Invalid preview dispatch tuple::Typed preview dispatches must use lowercase hexadecimal SHAs." >&2
+                exit 1
+              fi
+            done
+            if [[ -n "$PLANNED_BASE_REF" && ! "$PLANNED_BASE_REF" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+              echo "::error title=Invalid preview dispatch base ref::Typed preview dispatches must use a valid base branch ref." >&2
+              exit 1
+            fi
+            if [[ "$ACTION" == deploy ]] &&
+              { [[ -n "$PLANNED_BASE_REF" || -n "$PLANNED_BASE_SHA" || -n "$PLANNED_MERGE_SHA" ]] &&
+                [[ -z "$PLANNED_BASE_REF" || -z "$PLANNED_BASE_SHA" || -z "$PLANNED_MERGE_SHA" ]]; }; then
+              echo "::error title=Incomplete preview dispatch tuple::Typed preview deploys must carry base ref, base SHA, and merge SHA together." >&2
               exit 1
             fi
           fi
@@ -167,23 +193,30 @@ jobs:
               exit 1
             fi
             CURRENT_HEAD_SHA="${CURRENT_HEAD_SHA,,}"
-            if ! CURRENT_BASE_REF_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${CURRENT_BASE_REF}")" ||
-              ! CURRENT_BASE_SHA="$(jq -er '.object.sha | select(type == "string")' <<<"$CURRENT_BASE_REF_JSON")" ||
-              [[ ! "$CURRENT_BASE_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+            CURRENT_BASE_SHA=""
+            if CURRENT_BASE_REF_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${CURRENT_BASE_REF}")" &&
+              CURRENT_BASE_SHA="$(jq -er '.object.sha | select(type == "string")' <<<"$CURRENT_BASE_REF_JSON")" &&
+              [[ "$CURRENT_BASE_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+              CURRENT_BASE_SHA="${CURRENT_BASE_SHA,,}"
+            elif [[ "$ACTION" != destroy ]]; then
               echo "::error title=Invalid pull request base ref::Unable to read a 40-character hexadecimal SHA from the current base branch ref." >&2
               exit 1
             fi
-            CURRENT_BASE_SHA="${CURRENT_BASE_SHA,,}"
             if [[ "${HEAD_SHA,,}" != "$CURRENT_HEAD_SHA" ]]; then
               echo "::error title=Stale preview head SHA::Supplied head SHA does not equal the current pull request head." >&2
               exit 1
             fi
-            if [[ "$EVENT_NAME" == pull_request_target && "${EVENT_BASE_SHA,,}" != "$CURRENT_BASE_SHA" ]]; then
+            if [[ "$ACTION" == deploy && "$EVENT_NAME" == pull_request_target && "${EVENT_BASE_SHA,,}" != "$CURRENT_BASE_SHA" ]]; then
               BASE_REFRESH_REQUIRED=true
             fi
             HEAD_SHA="$CURRENT_HEAD_SHA"
             BASE_SHA="$CURRENT_BASE_SHA"
 
+            if [[ "$EVENT_NAME" == pull_request_target && "$CURRENT_BASE_REF" != main && "$CURRENT_BASE_REF" != develop ]] ||
+              [[ "$EVENT_NAME" == repository_dispatch && "$CURRENT_BASE_REF" != main && "$CURRENT_BASE_REF" != develop ]] ||
+              [[ "$EVENT_NAME" == repository_dispatch && -n "$PLANNED_BASE_SHA" && -n "$PLANNED_IMAGE_TAG" ]]; then
+              BASE_REFRESH_REQUIRED=true
+            fi
             if [[ "$ACTION" != deploy ]]; then
               break
             fi
@@ -236,9 +269,17 @@ jobs:
             break
           done
 
+          if [[ "$EVENT_NAME" == repository_dispatch && -n "$PLANNED_BASE_SHA" ]] &&
+            { [[ "$PLANNED_BASE_REF" != "$CURRENT_BASE_REF" ]] ||
+              [[ "$PLANNED_BASE_SHA" != "$BASE_SHA" ]] ||
+              [[ -n "$PLANNED_MERGE_SHA" && "$PLANNED_MERGE_SHA" != "$MERGE_SHA" ]]; }; then
+            echo "::error title=Stale preview dispatch tuple::The live pull request no longer matches the reconciler's requested base tuple." >&2
+            exit 1
+          fi
+
           if [[ ! "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]] ||
-            [[ ! "$BASE_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
-            echo "::error title=Invalid preview SHA::Expected 40-character hexadecimal head and base SHAs." >&2
+            [[ "$ACTION" == deploy && ! "$BASE_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+            echo "::error title=Invalid preview SHA::Expected a 40-character hexadecimal head SHA and, for deploy, a base SHA." >&2
             exit 1
           fi
           if [[ "$ACTION" == deploy && ! "$MERGE_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
@@ -256,6 +297,10 @@ jobs:
             EXPECTED_MERGE_IMAGE_TAG="pr-merge-${MERGE_SHA}"
             if [[ "$IMAGE_TAG" != "$EXPECTED_MERGE_IMAGE_TAG" && "$IMAGE_TAG" != "$BASE_SHA" ]]; then
               echo "::error title=Invalid preview image resolution::Expected the tested PR merge tag or immutable base SHA." >&2
+              exit 1
+            fi
+            if [[ -n "${PLANNED_IMAGE_TAG:-}" && "$PLANNED_IMAGE_TAG" != "$IMAGE_TAG" ]]; then
+              echo "::error title=Stale preview image identity::The current PR image identity no longer matches the reconciler request." >&2
               exit 1
             fi
           fi
@@ -456,6 +501,7 @@ jobs:
                 base_sha: process.env.BASE_SHA,
                 head_sha: process.env.HEAD_SHA,
                 merge_sha: process.env.MERGE_SHA,
+                image_tag: process.env.IMAGE_TAG,
               },
             });
             core.info(`Dispatched current-base runtime refresh for PR #${process.env.PR_NUMBER}.`);

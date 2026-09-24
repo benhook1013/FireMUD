@@ -160,7 +160,7 @@ public class HostedIdentityScopeService {
     ensureBinding(client, plan.identityNamespace(), ROLE_NAME, labels(plan), ROLE_NAME, plan);
   }
 
-  static List<String> identitySecretNames(EnvironmentIdentityPlan plan) {
+  public static List<String> identitySecretNames(EnvironmentIdentityPlan plan) {
     List<String> names =
         new java.util.ArrayList<>(
             List.of(
@@ -226,7 +226,7 @@ public class HostedIdentityScopeService {
     return List.copyOf(names);
   }
 
-  static List<String> requiredCertificateNames(EnvironmentIdentityPlan plan) {
+  public static List<String> requiredCertificateNames(EnvironmentIdentityPlan plan) {
     List<String> names =
         new java.util.ArrayList<>(
             List.of(

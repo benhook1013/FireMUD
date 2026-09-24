@@ -693,6 +693,9 @@ ADR_ALLOCATION_EXPECTATIONS = {
         "SF-2",
         "PO-4",
     ),
+    "design/architecture/decisions/adr-0184-emergency-tcp-proxy-identity-withdrawal.md": adr_allocation(
+        "SF-1", "Accepted", "PO-2", "PO-3", "PO-4"
+    ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",
