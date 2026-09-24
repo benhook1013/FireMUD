@@ -555,10 +555,6 @@ public class TextPlayerOutputRenderer {
         + output.friendsOnlyCount()
         + "\nVisibility private: "
         + output.privateCount()
-        + "\nVisibility hidden-staff: "
-        + output.hiddenStaffCount()
-        + "\nVisibility unspecified: "
-        + output.unspecifiedVisibilityCount()
         + "\nScope shared: "
         + output.sharedCount()
         + "\nScope isolated: "
@@ -595,7 +591,10 @@ public class TextPlayerOutputRenderer {
   }
 
   private String renderFriendStatus(FriendPresenceViewOutput.Entry entry) {
-    if (entry.online()) {
+    if (isRedactedFriendPresence(entry)) {
+      return "presence unavailable";
+    }
+    if (Boolean.TRUE.equals(entry.online())) {
       StringBuilder line = new StringBuilder("online");
       String location = renderFriendLocation(entry);
       if (StringUtils.hasText(location)) {
@@ -624,6 +623,21 @@ public class TextPlayerOutputRenderer {
       return qualifier + " " + java.time.Instant.ofEpochMilli(entry.lastSeenAtEpochMs());
     }
     return "offline";
+  }
+
+  private boolean isRedactedFriendPresence(FriendPresenceViewOutput.Entry entry) {
+    return !StringUtils.hasText(entry.visibilityPolicy())
+        && !Boolean.TRUE.equals(entry.online())
+        && entry.lastSeenAtEpochMs() == null
+        && !StringUtils.hasText(entry.worldSlug())
+        && !StringUtils.hasText(entry.worldDisplayName())
+        && !StringUtils.hasText(entry.realmSlug())
+        && !StringUtils.hasText(entry.realmDisplayName())
+        && !StringUtils.hasText(entry.characterName())
+        && !StringUtils.hasText(entry.playableStateScope())
+        && entry.pointerVersion() == null
+        && !StringUtils.hasText(entry.activityState())
+        && !StringUtils.hasText(entry.recentDisposition());
   }
 
   private String renderFriendLocation(FriendPresenceViewOutput.Entry entry) {

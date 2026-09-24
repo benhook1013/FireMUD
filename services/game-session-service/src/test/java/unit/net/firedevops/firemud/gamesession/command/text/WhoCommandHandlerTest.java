@@ -59,10 +59,8 @@ class WhoCommandHandlerTest {
             java.util.Map.of(
                 "accountId",
                 "1",
-                "globalRoles",
-                java.util.List.of("platformAdmin"),
                 "scopedRoles",
-                java.util.Map.of()));
+                java.util.Map.of("22", java.util.List.of("god"))));
 
     gameplayPresenceService.registerConnected(
         new SessionContext(1L, 22L, 1L, "god@example.com", 101L, "Aster", 7L, "R-1", godJwt));
@@ -89,6 +87,32 @@ class WhoCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(render(result)).isEqualTo("Gods [2]: Aster, Dara\nPlayers [2]: Ben, Cara");
+  }
+
+  @Test
+  void whoShowsGlobalOnlyRolesAsPlayers() {
+    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService(jwtUtil);
+    WhoCommandHandler handler =
+        new WhoCommandHandler(gameplayPresenceService, activityResolver, scriptEventPublisher);
+    String globalOnlyJwt =
+        jwtUtil.generateToken(
+            "1",
+            java.util.Map.of(
+                "accountId",
+                "1",
+                "globalRoles",
+                java.util.List.of("platformAdmin", "support", "billingAdmin", "god", "moderator")));
+
+    gameplayPresenceService.registerConnected(
+        new SessionContext(1L, 22L, 1L, "staff@example.com", 101L, "Aster", 7L, "R-1", globalOnlyJwt));
+
+    TextCommandInterpretationResult result =
+        handler.handle(
+            new TextCommand(TextCommandType.WHO, java.util.List.of(), "WHO"),
+            new SessionContext(2L, 22L, 2L, "second@example.com", 102L, "Ben", 7L, "R-1", null));
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    assertThat(render(result)).isEqualTo("Gods [0]: \nPlayers [1]: Aster");
   }
 
   @Test

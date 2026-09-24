@@ -21,7 +21,7 @@ final class GameplayPresenceRoleClassifier {
       if (claims.hasGameplayRole(tenantId, "god")) {
         return GameplayPresenceRole.GOD;
       }
-      if (claims.hasGameplayRole(tenantId, "platformAdmin", "tenantAdmin")) {
+      if (claims.hasGameplayRole(tenantId, "tenantAdmin")) {
         return GameplayPresenceRole.ADMIN;
       }
       if (claims.hasGameplayRole(tenantId, "moderator")) {
