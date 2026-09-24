@@ -20,6 +20,7 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
+import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
@@ -285,6 +286,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
         .getTenantEntitlementsForRuntime(
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.nullable(String.class));
+    when(accountClient.issueDirectTextConnectScope(any(), any()))
+        .thenReturn(
+            IssueDirectTextConnectScopeResponse.newBuilder()
+                .setConnectScopeId("test-public-production-connect-scope")
+                .setConnectScopeExpiresAt(java.time.Instant.now().plusSeconds(3600).toString())
+                .build());
     org.mockito.Mockito.doReturn(
             ListCharactersByAccountResponse.newBuilder()
                 .addCharacters(
@@ -852,6 +859,18 @@ class GameSessionWebSocketHandlerIntegrationTest {
     verify(commandService).enqueue("41", "LOGIN demo@example.com swordfish", false);
     verify(commandService, never()).enqueue("41", "REALMS demo", false);
     verify(commandService, never()).enqueue("41", "CHARS demo", false);
+    verify(accountClient)
+        .issueDirectTextConnectScope(
+            any(),
+            argThat(
+                target ->
+                    "22".equals(target.tenantId())
+                        && "demo".equals(target.worldSlug())
+                        && "production".equals(target.realmSlug())
+                        && "SHARED".equals(target.playableStateScope())
+                        && "1".equals(target.gameInstanceId())
+                        && target.catalogRevision() > 0
+                        && target.pointerVersion() == 1L));
     verify(entityManagementClient, never())
         .listCharactersByAccount(
             org.mockito.ArgumentMatchers.anyString(),
@@ -995,7 +1014,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
-  void websocketFirstPartyReconnectReplaysBufferedScreenAndFreshLookAfterPlay() throws Exception {
+  void websocketFirstPartyFreshPlayDoesNotReplayBufferedScreenAndPerformsFreshLook()
+      throws Exception {
     when(screenBufferService.get(eq(22L), eq(1L), eq(123L)))
         .thenReturn(
             Optional.of(
@@ -1016,11 +1036,6 @@ class GameSessionWebSocketHandlerIntegrationTest {
       client.send("PLAY demo");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
-      client.awaitMatching(
-          payload ->
-              "transcript_chunk".equals(json(payload).path("eventType").asText())
-                  && payload.contains("Recent combat line"),
-          "replayed transcript chunk");
       client.awaitMatching(
           payload ->
               "player_output".equals(json(payload).path("eventType").asText())
@@ -1044,10 +1059,11 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 GameplayStructuredCommandAssertions.isStructuredCommand(
                     payload, "PLAY", "play", "META", "SESSION"));
     assertThat(payloads)
-        .anyMatch(
+        .noneMatch(
             payload ->
                 "transcript_chunk".equals(json(payload).path("eventType").asText())
-                    && payload.contains("Recent combat line"));
+                    && (payload.contains("Recent combat line")
+                        || payload.contains("Second recent line")));
     assertThat(payloads)
         .anyMatch(
             payload ->
