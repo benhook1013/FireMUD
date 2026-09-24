@@ -115,6 +115,15 @@ if [[ -n "${pr_number}" && -n "${base_image_tag}" ]]; then
     exit 1
   fi
 
+  # Trusted branch-SHA images exist only for main/develop. A stacked base is
+  # another PR branch, so its head SHA is not a published runtime-image
+  # identity. Always build and select the exact tested merge for stacked PRs,
+  # even when the child itself has no runtime-changing paths.
+  if [[ "${current_base_ref}" != main && "${current_base_ref}" != develop ]]; then
+    echo "${merge_image_tag}"
+    exit 0
+  fi
+
   if ! changed_files_json="$(
     gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}/files?per_page=100" --paginate --slurp
   )"; then

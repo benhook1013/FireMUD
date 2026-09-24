@@ -7,6 +7,7 @@ import org.gradle.api.tasks.compile.JavaCompile
 import java.io.File
 import org.flywaydb.gradle.FlywayExtension
 import org.springframework.boot.gradle.tasks.run.BootRun
+import org.gradle.testing.jacoco.tasks.JacocoReport
 
 buildscript {
     dependencies {
@@ -305,17 +306,30 @@ subprojects {
 
     tasks.test {
         useJUnitPlatform()
-        if (fullCheck) finalizedBy("jacocoTestReport")
     }
 
-    tasks.jacocoTestReport {
+    val coverageTestTaskNames = buildList {
+        add("test")
+        if (file("src/test/java/integration").exists()) add("integrationTest")
+        if (file("src/test/java/crossservice").exists()) add("crossServiceTest")
+    }
+    tasks.named<JacocoReport>("jacocoTestReport") {
         enabled = fullCheck
-        dependsOn(tasks.test)
+        dependsOn(coverageTestTaskNames)
+        executionData.setFrom(
+            coverageTestTaskNames.map { taskName ->
+                layout.buildDirectory.file("jacoco/$taskName.exec")
+            }
+        )
         reports {
             xml.required.set(true)
             csv.required.set(false)
             html.required.set(true)
         }
+    }
+
+    tasks.named("check") {
+        if (fullCheck) dependsOn("jacocoTestReport")
     }
 }
 

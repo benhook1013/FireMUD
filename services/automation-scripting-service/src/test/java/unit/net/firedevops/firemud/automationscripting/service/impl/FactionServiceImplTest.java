@@ -105,4 +105,25 @@ class FactionServiceImplTest {
             service.getReputation(
                 2L, 2L, "live", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, 1L));
   }
+
+  @Test
+  void getReputationReturnsTheOwnedFactionStanding() {
+    FactionRepository factionRepository = Mockito.mock(FactionRepository.class);
+    FactionStandingRepository standingRepository = Mockito.mock(FactionStandingRepository.class);
+    FactionServiceImpl service = new FactionServiceImpl(factionRepository, standingRepository);
+    Faction faction = new Faction();
+    faction.setId(1L);
+    FactionStanding standing = new FactionStanding();
+    standing.setFaction(faction);
+    standing.setReputation(12);
+    when(factionRepository.findByTenantIdAndId(1L, 1L)).thenReturn(Optional.of(faction));
+    when(standingRepository.findByTenantIdAndCharacterIdAndPlayableStateKeyAndFaction_Id(
+            1L, 2L, "instance:GI-1", 1L))
+        .thenReturn(Optional.of(standing));
+
+    assertEquals(
+        12,
+        service.getReputation(
+            1L, 2L, "GI-1", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED, 1L));
+  }
 }

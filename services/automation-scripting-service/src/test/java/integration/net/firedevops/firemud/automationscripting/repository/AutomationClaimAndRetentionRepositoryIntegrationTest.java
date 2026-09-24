@@ -248,7 +248,6 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     assertThat(dsl.fetchCount(SCRIPT_EVENT_AUDIT)).isEqualTo(1);
 
     ScriptEventAudit duplicate = handlerAudit("tenant-handler-audit");
-    duplicate.setSourceService("duplicate-service");
     duplicate.setFinalOutcome("DUPLICATE_ATTEMPT");
     duplicate.setFinalReason("duplicate-attempt");
 
@@ -958,7 +957,7 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     ScriptHandoffEvent incompleteHandoff = retainedHandoff(incompleteParent.getId());
     incompleteHandoff.setEventId("incomplete-correlated-parent");
     incompleteHandoff.setHandoffOutcome("");
-    handoffRepository.save(incompleteHandoff);
+    incompleteHandoff = handoffRepository.save(incompleteHandoff);
 
     ScriptWorkItem completeParent = retainedWorkItem();
     completeParent.setScriptEventId("complete-correlated-parent");
