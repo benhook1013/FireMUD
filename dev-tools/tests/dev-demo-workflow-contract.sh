@@ -118,7 +118,7 @@ supplied_cert_dir="$(<"$fixture_dir/supplied-cert-dir")"
   exit 1
 }
 CERT_DIR_CAPTURE="$fixture_dir/default-cert-dir" \
-  PREVIEW_GRPC_TLS_CERT_DIR= bash "$cert_workspace_setup"
+  PREVIEW_GRPC_TLS_CERT_DIR='' bash "$cert_workspace_setup"
 default_cert_dir="$(<"$fixture_dir/default-cert-dir")"
 [[ ! -e "$default_cert_dir" ]] || {
   echo "certificate cleanup left the default temporary directory behind" >&2
