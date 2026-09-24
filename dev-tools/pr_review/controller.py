@@ -499,6 +499,7 @@ class ReviewController:
                 reasons=reasons,
                 statuses=statuses,
             )
+        unsupported_reasons = {pr: reasons[pr] for pr in unsupported}
         reconciled: dict[int, StackReconciliationDecision] = {}
         anchors: dict[int, AnchorFacts] = {}
         anchor_failures: dict[int, str] = {}
@@ -687,6 +688,16 @@ class ReviewController:
                     statuses[pr] = stack.ReconciliationStatus.PARENT_MOVED
                     reasons.setdefault(pr, "an earlier parent review identity moved")
                     changed = True
+        # The first reconciliation pass rejects unsupported head repositories
+        # before the anchored pass runs.  The second stack reconciliation can
+        # otherwise replace those fail-closed markings with a fresh coherent
+        # result.  Carry them forward, while retaining a stronger genuine
+        # parent-movement diagnosis discovered by the later pass.
+        for pr in unsupported:
+            if statuses.get(pr) == stack.ReconciliationStatus.PARENT_MOVED:
+                continue
+            statuses[pr] = stack.ReconciliationStatus.UNRECONCILED
+            reasons[pr] = unsupported_reasons[pr]
         if any(value == stack.ReconciliationStatus.PARENT_MOVED for value in statuses.values()):
             overall = stack.ReconciliationStatus.PARENT_MOVED
         elif any(value == stack.ReconciliationStatus.UNRECONCILED for value in statuses.values()):

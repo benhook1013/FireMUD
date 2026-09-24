@@ -165,6 +165,29 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaisesRegex(ControllerError, "unsupported cross-repository head"):
             controller.resolve_cli_target()
 
+    def test_unsupported_parent_and_descendant_remain_unreconciled_after_second_pass(self):
+        values = {
+            1: pr(1, HEAD_1, head_repository="fork/repo"),
+            2: pr(2, HEAD_2, "feature-1", HEAD_1),
+        }
+        controller = self.make(values, heads={"feature-1": HEAD_1, "feature-2": HEAD_2})
+        controller.store.update(lambda current: dataclasses.replace(current, ordered_prs=(1, 2)))
+
+        result = controller.status()
+
+        for index, expected_reason in enumerate(
+            (
+                "uses unsupported cross-repository head 'fork/repo'",
+                "effective parent PR #1 has an unsupported head repository",
+            )
+        ):
+            self.assertEqual(result["prs"][index]["reconciliation"], "UNRECONCILED")
+            self.assertEqual(result["prs"][index]["channels"]["hosted"], "UNRECONCILED")
+            self.assertEqual(result["prs"][index]["channels"]["cli"], "UNRECONCILED")
+            self.assertIn(expected_reason, result["prs"][index]["reason"])
+        with self.assertRaisesRegex(ControllerError, "unsupported cross-repository head"):
+            controller.resolve_cli_target()
+
     def test_parent_move_marks_descendants_and_blocks_target(self):
         values = {1: pr(1, HEAD_1), 2: pr(2, HEAD_2, "feature-1", HEAD_1)}
         controller = self.make(values, heads={"feature-1": "1" * 40})
