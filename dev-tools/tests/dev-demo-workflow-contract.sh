@@ -88,6 +88,43 @@ python3 "$runner_label_validator" "$workflow" "$reconciler"
 fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$fixture_dir"' EXIT
 
+# Exercise the certificate workspace setup and EXIT cleanup directly. A caller
+# supplied root may contain unrelated files, so only the private child created
+# for this invocation may be removed.
+cert_workspace_setup="$fixture_dir/cert-workspace-setup.sh"
+{
+  awk '
+    /^provided_cert_dir=/ { capture = 1 }
+    /^workloads=\(/ { capture = 0 }
+    capture { print }
+  ' "$standalone_grpc_tls"
+  cat <<'EOF'
+printf 'generated certificate material\n' >"$cert_dir/generated.crt"
+printf '%s\n' "$cert_dir" >"$CERT_DIR_CAPTURE"
+EOF
+} >"$cert_workspace_setup"
+cert_workspace_root="$fixture_dir/caller-owned-certs"
+mkdir -p "$cert_workspace_root"
+printf 'preserve me\n' >"$cert_workspace_root/unrelated.txt"
+CERT_DIR_CAPTURE="$fixture_dir/supplied-cert-dir" \
+  PREVIEW_GRPC_TLS_CERT_DIR="$cert_workspace_root" bash "$cert_workspace_setup"
+supplied_cert_dir="$(<"$fixture_dir/supplied-cert-dir")"
+[[ -d "$cert_workspace_root" && "$(<"$cert_workspace_root/unrelated.txt")" == 'preserve me' ]] || {
+  echo "certificate cleanup removed or changed the caller-supplied root" >&2
+  exit 1
+}
+[[ ! -e "$supplied_cert_dir" && "$(find "$cert_workspace_root" -mindepth 1 -maxdepth 1 | wc -l)" -eq 1 ]] || {
+  echo "certificate cleanup did not remove only its private child directory" >&2
+  exit 1
+}
+CERT_DIR_CAPTURE="$fixture_dir/default-cert-dir" \
+  PREVIEW_GRPC_TLS_CERT_DIR= bash "$cert_workspace_setup"
+default_cert_dir="$(<"$fixture_dir/default-cert-dir")"
+[[ ! -e "$default_cert_dir" ]] || {
+  echo "certificate cleanup left the default temporary directory behind" >&2
+  exit 1
+}
+
 # A missing Secret is an ordinary false result. Lookup errors must stop the
 # caller so it cannot take the bootstrap generation/apply branch.
 secret_lookup_test="$fixture_dir/test-secret-exists.sh"

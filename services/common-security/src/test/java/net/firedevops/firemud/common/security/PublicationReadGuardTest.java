@@ -1,9 +1,15 @@
 package net.firedevops.firemud.common.security;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.grpc.Context;
+import java.util.Set;
+import net.firedevops.firemud.automationscripting.v1.AutomationScriptingServiceGrpc;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
+import net.firedevops.firemud.gamelogic.v1.GameLogicServiceGrpc;
+import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 import org.junit.jupiter.api.Test;
 
 class PublicationReadGuardTest {
@@ -15,6 +21,25 @@ class PublicationReadGuardTest {
           "game-design-service");
 
   private final PublicationReadGuard guard = new PublicationReadGuard(TRUSTED_NAMESPACE);
+
+  @Test
+  void protectsExactlyTheGeneratedPublicationDigestMethods() {
+    Set<String> expectedMethods =
+        Set.of(
+            "world_management.v1.WorldManagementService/GetDraftDesignDigest",
+            "entity_management.v1.EntityManagementService/GetDraftDesignDigest",
+            "game_logic.v1.GameLogicService/GetDraftDesignDigest",
+            "automation_scripting.v1.AutomationScriptingService/GetDraftDesignDigest");
+    Set<String> descriptorMethods =
+        Set.of(
+            WorldManagementServiceGrpc.getGetDraftDesignDigestMethod().getFullMethodName(),
+            EntityManagementServiceGrpc.getGetDraftDesignDigestMethod().getFullMethodName(),
+            GameLogicServiceGrpc.getGetDraftDesignDigestMethod().getFullMethodName(),
+            AutomationScriptingServiceGrpc.getGetDraftDesignDigestMethod().getFullMethodName());
+
+    assertThat(PublicationReadGuard.PUBLICATION_READ_METHODS).isEqualTo(expectedMethods);
+    assertThat(PublicationReadGuard.PUBLICATION_READ_METHODS).isEqualTo(descriptorMethods);
+  }
 
   @Test
   void allowsAllFourExactPublicationReadsWithPeerIdentityWithoutJwt() {

@@ -1,7 +1,11 @@
 package net.firedevops.firemud.common.security;
 
 import java.util.Set;
+import net.firedevops.firemud.automationscripting.v1.AutomationScriptingServiceGrpc;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
+import net.firedevops.firemud.gamelogic.v1.GameLogicServiceGrpc;
+import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 
 /**
  * Authorization guard for the four owner-to-owner publication digest reads.
@@ -12,13 +16,13 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
  */
 public final class PublicationReadGuard {
   public static final String WORLD_MANAGEMENT_DIGEST_METHOD =
-      "world_management.v1.WorldManagementService/GetDraftDesignDigest";
+      WorldManagementServiceGrpc.getGetDraftDesignDigestMethod().getFullMethodName();
   public static final String ENTITY_MANAGEMENT_DIGEST_METHOD =
-      "entity_management.v1.EntityManagementService/GetDraftDesignDigest";
+      EntityManagementServiceGrpc.getGetDraftDesignDigestMethod().getFullMethodName();
   public static final String GAME_LOGIC_DIGEST_METHOD =
-      "game_logic.v1.GameLogicService/GetDraftDesignDigest";
+      GameLogicServiceGrpc.getGetDraftDesignDigestMethod().getFullMethodName();
   public static final String AUTOMATION_SCRIPTING_DIGEST_METHOD =
-      "automation_scripting.v1.AutomationScriptingService/GetDraftDesignDigest";
+      AutomationScriptingServiceGrpc.getGetDraftDesignDigestMethod().getFullMethodName();
 
   public static final Set<String> PUBLICATION_READ_METHODS =
       Set.of(

@@ -7,6 +7,7 @@ import hashlib
 import itertools
 import json
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -966,6 +967,177 @@ def publication_workload_secret_requirements(
             raise ValueError(
                 f"Rendered publication workload {workload} has a malformed grpc-tls Secret volume"
             )
+
+        containers = pod_spec.get("containers")
+        if not isinstance(containers, list):
+            raise TypeError(
+                f"Rendered publication workload {workload} has no valid pod containers list"
+            )
+        workload_containers = [
+            container
+            for container in containers
+            if isinstance(container, dict) and container.get("name") == workload
+        ]
+        if len(workload_containers) != 1:
+            raise ValueError(
+                f"Expected exactly one owning container for publication workload {workload}; "
+                f"found {len(workload_containers)}"
+            )
+        container = workload_containers[0]
+
+        environment, env_issues = effective_container_env(
+            documents,
+            deployment,
+            container,
+            relevant_names=set(GRPC_TLS_PATH_NAMES),
+        )
+        if env_issues:
+            raise ValueError(
+                f"Rendered publication workload {workload} has invalid gRPC TLS path environment: "
+                + "; ".join(env_issues)
+            )
+
+        container_env = container.get("env", [])
+        if not isinstance(container_env, list):
+            raise TypeError(
+                f"Rendered publication workload {workload} has no valid container env list"
+            )
+        declared_grpc_path_names: list[str] = []
+        for entry in container_env:
+            if not isinstance(entry, dict):
+                raise TypeError(
+                    f"Rendered publication workload {workload} has a malformed container env entry"
+                )
+            name = entry.get("name")
+            if name not in GRPC_TLS_PATH_NAMES:
+                continue
+            declared_grpc_path_names.append(name)
+            if not set(entry).issubset({"name", "value", "valueFrom"}):
+                raise ValueError(
+                    f"Rendered publication workload {workload} has a malformed {name} env entry"
+                )
+            if "value" in entry and "valueFrom" in entry:
+                raise ValueError(
+                    f"Rendered publication workload {workload} has an ambiguous {name} env entry"
+                )
+            if "valueFrom" in entry:
+                value_from = entry.get("valueFrom")
+                if (
+                    not isinstance(value_from, dict)
+                    or len(value_from) != 1
+                    or not set(value_from).issubset({"configMapKeyRef", "secretKeyRef"})
+                ):
+                    raise ValueError(
+                        f"Rendered publication workload {workload} has a malformed {name} env source"
+                    )
+        if len(declared_grpc_path_names) != len(set(declared_grpc_path_names)):
+            raise ValueError(
+                f"Rendered publication workload {workload} has ambiguous gRPC TLS path env entries"
+            )
+
+        grpc_paths: dict[str, str] = {}
+        for name in GRPC_TLS_PATH_NAMES:
+            path = environment.get(name)
+            if (
+                not isinstance(path, str)
+                or not path.startswith("/")
+                or path.startswith("//")
+                or posixpath.normpath(path) != path
+            ):
+                raise ValueError(
+                    f"Rendered publication workload {workload} must configure {name} as a canonical absolute path"
+                )
+            grpc_paths[name] = path
+
+        volume_mounts = container.get("volumeMounts")
+        if not isinstance(volume_mounts, list):
+            raise TypeError(
+                f"Rendered publication workload {workload} has no valid container volumeMounts list"
+            )
+        for mount in volume_mounts:
+            if not isinstance(mount, dict):
+                raise TypeError(
+                    f"Rendered publication workload {workload} has a malformed container volume mount"
+                )
+            if not isinstance(mount.get("name"), str) or not mount["name"].strip():
+                raise ValueError(
+                    f"Rendered publication workload {workload} has a volume mount with an invalid name"
+                )
+            mount_path = mount.get("mountPath")
+            if not isinstance(mount_path, str) or not mount_path.startswith("/"):
+                raise ValueError(
+                    f"Rendered publication workload {workload} has a volume mount with a non-absolute mountPath"
+                )
+            if "readOnly" in mount and not isinstance(mount["readOnly"], bool):
+                raise ValueError(
+                    f"Rendered publication workload {workload} has a malformed volume mount readOnly value"
+                )
+
+        grpc_mounts = [
+            mount for mount in volume_mounts if mount.get("name") == "grpc-tls"
+        ]
+        if len(grpc_mounts) != 1:
+            raise ValueError(
+                f"Expected exactly one grpc-tls mount for publication workload {workload}; "
+                f"found {len(grpc_mounts)}"
+            )
+        grpc_mount = grpc_mounts[0]
+        grpc_mount_path = grpc_mount["mountPath"]
+        if (
+            grpc_mount.get("readOnly") is not True
+            or grpc_mount_path.startswith("//")
+            or posixpath.normpath(grpc_mount_path) != grpc_mount_path
+        ):
+            raise ValueError(
+                f"Rendered publication workload {workload} requires one read-only grpc-tls mount at a canonical absolute mountPath"
+            )
+        if any(
+            not path_is_under_mount(path, grpc_mount_path)
+            for path in grpc_paths.values()
+        ):
+            raise ValueError(
+                f"Rendered publication workload {workload} has a gRPC TLS path outside its grpc-tls mount"
+            )
+
+        volume_definitions: dict[str, list[dict[str, Any]]] = {}
+        for volume in volumes:
+            if isinstance(volume, dict) and isinstance(volume.get("name"), str):
+                volume_definitions.setdefault(volume["name"], []).append(volume)
+        for mount in volume_mounts:
+            if mount is grpc_mount or mount.get("readOnly") is not True:
+                continue
+            mount_path = posixpath.normpath("/" + mount["mountPath"].lstrip("/"))
+            if not any(
+                path_is_under_mount(path, mount_path) for path in grpc_paths.values()
+            ):
+                continue
+            mounted_volumes = volume_definitions.get(mount["name"], [])
+            if len(mounted_volumes) != 1:
+                raise ValueError(
+                    f"Rendered publication workload {workload} has an ambiguous read-only mount covering a gRPC TLS path"
+                )
+            mounted_volume = mounted_volumes[0]
+            projected = mounted_volume.get("projected")
+            projected_sources = projected.get("sources") if isinstance(projected, dict) else None
+            projected_secret = (
+                isinstance(projected_sources, list)
+                and any(
+                    isinstance(source, dict) and "secret" in source
+                    for source in projected_sources
+                )
+            )
+            malformed_projected = "projected" in mounted_volume and (
+                not isinstance(projected_sources, list)
+                or not projected_sources
+                or any(
+                    not isinstance(source, dict) or len(source) != 1
+                    for source in projected_sources
+                )
+            )
+            if "secret" in mounted_volume or projected_secret or malformed_projected:
+                raise ValueError(
+                    f"Rendered publication workload {workload} has another read-only Secret mount covering a gRPC TLS path"
+                )
         requirements.append(
             (secret_name, workload_namespace, set(PUBLICATION_GRPC_SECRET_KEYS))
         )

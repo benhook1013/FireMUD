@@ -1004,6 +1004,19 @@ metadata:
 spec:
   template:
     spec:
+      containers:
+        - name: game-design-service
+          env:
+            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
+              value: /tls/tls.crt
+            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
+              value: /tls/tls.key
+            - name: FIREMUD_GRPC_CA_CERT_PATH
+              value: /tls/ca.crt
+          volumeMounts:
+            - name: grpc-tls
+              mountPath: /tls
+              readOnly: true
       volumes:
         - name: grpc-tls
           secret:
@@ -1016,6 +1029,19 @@ metadata:
 spec:
   template:
     spec:
+      containers:
+        - name: world-management-service
+          env:
+            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
+              value: /tls/tls.crt
+            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
+              value: /tls/tls.key
+            - name: FIREMUD_GRPC_CA_CERT_PATH
+              value: /tls/ca.crt
+          volumeMounts:
+            - name: grpc-tls
+              mountPath: /tls
+              readOnly: true
       volumes:
         - name: grpc-tls
           secret:
@@ -1028,6 +1054,19 @@ metadata:
 spec:
   template:
     spec:
+      containers:
+        - name: entity-management-service
+          env:
+            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
+              value: /tls/tls.crt
+            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
+              value: /tls/tls.key
+            - name: FIREMUD_GRPC_CA_CERT_PATH
+              value: /tls/ca.crt
+          volumeMounts:
+            - name: grpc-tls
+              mountPath: /tls
+              readOnly: true
       volumes:
         - name: grpc-tls
           secret:
@@ -1040,6 +1079,19 @@ metadata:
 spec:
   template:
     spec:
+      containers:
+        - name: game-logic-service
+          env:
+            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
+              value: /tls/tls.crt
+            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
+              value: /tls/tls.key
+            - name: FIREMUD_GRPC_CA_CERT_PATH
+              value: /tls/ca.crt
+          volumeMounts:
+            - name: grpc-tls
+              mountPath: /tls
+              readOnly: true
       volumes:
         - name: grpc-tls
           secret:
@@ -1052,6 +1104,19 @@ metadata:
 spec:
   template:
     spec:
+      containers:
+        - name: automation-scripting-service
+          env:
+            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
+              value: /tls/tls.crt
+            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
+              value: /tls/tls.key
+            - name: FIREMUD_GRPC_CA_CERT_PATH
+              value: /tls/ca.crt
+          volumeMounts:
+            - name: grpc-tls
+              mountPath: /tls
+              readOnly: true
       volumes:
         - name: grpc-tls
           secret:
@@ -9353,7 +9418,33 @@ publication_documents = [
                             "name": "grpc-tls",
                             "secret": {"secretName": f"hobby-{workload}-identity"},
                         }
-                    ]
+                    ],
+                    "containers": [
+                        {
+                            "name": workload,
+                            "env": [
+                                {
+                                    "name": path_name,
+                                    "value": path,
+                                }
+                                for path_name, path in zip(
+                                    module.GRPC_TLS_PATH_NAMES,
+                                    (
+                                        "/tls/tls.crt",
+                                        "/tls/tls.key",
+                                        "/tls/ca.crt",
+                                    ),
+                                )
+                            ],
+                            "volumeMounts": [
+                                {
+                                    "name": "grpc-tls",
+                                    "mountPath": "/tls",
+                                    "readOnly": True,
+                                }
+                            ],
+                        }
+                    ],
                 }
             }
         },
@@ -9379,6 +9470,129 @@ if any(
     raise SystemExit(
         "publication Secret requirements did not use expected-binding namespace and keys"
     )
+
+def publication_static_issues(documents):
+    return module.publication_workload_secret_issues(
+        publication_expected,
+        documents,
+        lookup_cluster_secrets=False,
+    )
+
+
+def expect_publication_static_failure(description, documents):
+    issues = publication_static_issues(documents)
+    if not issues:
+        raise SystemExit(f"publication preflight accepted {description}")
+
+
+missing_grpc_mount_documents = copy.deepcopy(publication_documents)
+missing_grpc_mount_documents[0]["spec"]["template"]["spec"]["containers"][0][
+    "volumeMounts"
+] = []
+expect_publication_static_failure("a missing grpc-tls container mount", missing_grpc_mount_documents)
+
+writable_grpc_mount_documents = copy.deepcopy(publication_documents)
+writable_grpc_mount_documents[0]["spec"]["template"]["spec"]["containers"][0][
+    "volumeMounts"
+][0]["readOnly"] = False
+expect_publication_static_failure("a writable grpc-tls container mount", writable_grpc_mount_documents)
+
+outside_grpc_path_documents = copy.deepcopy(publication_documents)
+outside_grpc_path_documents[0]["spec"]["template"]["spec"]["containers"][0][
+    "env"
+][0]["value"] = "/alternate/tls.crt"
+expect_publication_static_failure("a gRPC TLS path outside grpc-tls", outside_grpc_path_documents)
+
+non_absolute_grpc_path_documents = copy.deepcopy(publication_documents)
+non_absolute_grpc_path_documents[0]["spec"]["template"]["spec"]["containers"][0][
+    "env"
+][0]["value"] = "tls/tls.crt"
+expect_publication_static_failure(
+    "a non-absolute gRPC TLS path",
+    non_absolute_grpc_path_documents,
+)
+
+missing_grpc_path_documents = copy.deepcopy(publication_documents)
+missing_grpc_path_documents[0]["spec"]["template"]["spec"]["containers"][0][
+    "env"
+].pop()
+expect_publication_static_failure(
+    "a missing gRPC TLS path env variable",
+    missing_grpc_path_documents,
+)
+
+overlapping_secret_mount_documents = copy.deepcopy(publication_documents)
+overlapping_spec = overlapping_secret_mount_documents[0]["spec"]["template"]["spec"]
+overlapping_spec["volumes"].append(
+    {"name": "alternate-secret", "secret": {"secretName": "alternate-identity"}}
+)
+overlapping_spec["containers"][0]["volumeMounts"].append(
+    {
+        "name": "alternate-secret",
+        "mountPath": "/tls/tls.key",
+        "readOnly": True,
+    }
+)
+expect_publication_static_failure(
+    "another read-only Secret mount covering a gRPC TLS path",
+    overlapping_secret_mount_documents,
+)
+
+unrelated_secret_mount_documents = copy.deepcopy(publication_documents)
+unrelated_spec = unrelated_secret_mount_documents[0]["spec"]["template"]["spec"]
+unrelated_spec["volumes"].append(
+    {"name": "unrelated-secret", "secret": {"secretName": "unrelated-secret"}}
+)
+unrelated_spec["containers"][0]["volumeMounts"].append(
+    {
+        "name": "unrelated-secret",
+        "mountPath": "/var/run/unrelated-secret",
+        "readOnly": True,
+    }
+)
+unrelated_secret_requirements = module.publication_workload_secret_requirements(
+    publication_expected,
+    unrelated_secret_mount_documents,
+)
+if unrelated_secret_requirements != publication_requirements:
+    raise SystemExit("an unrelated non-overlapping Secret mount changed publication requirements")
+
+ambiguous_container_documents = copy.deepcopy(publication_documents)
+ambiguous_container_spec = ambiguous_container_documents[0]["spec"]["template"]["spec"]
+ambiguous_container_spec["containers"].append(copy.deepcopy(ambiguous_container_spec["containers"][0]))
+expect_publication_static_failure(
+    "ambiguous owning publication containers",
+    ambiguous_container_documents,
+)
+
+ambiguous_mount_documents = copy.deepcopy(publication_documents)
+ambiguous_mount_spec = ambiguous_mount_documents[0]["spec"]["template"]["spec"]
+ambiguous_mount_spec["containers"][0]["volumeMounts"].append(
+    copy.deepcopy(ambiguous_mount_spec["containers"][0]["volumeMounts"][0])
+)
+expect_publication_static_failure("ambiguous grpc-tls mounts", ambiguous_mount_documents)
+
+non_absolute_grpc_mount_documents = copy.deepcopy(publication_documents)
+non_absolute_grpc_mount_documents[0]["spec"]["template"]["spec"]["containers"][0][
+    "volumeMounts"
+][0]["mountPath"] = "tls"
+expect_publication_static_failure(
+    "a non-absolute grpc-tls mountPath",
+    non_absolute_grpc_mount_documents,
+)
+
+ambiguous_env_documents = copy.deepcopy(publication_documents)
+ambiguous_env_spec = ambiguous_env_documents[0]["spec"]["template"]["spec"]
+ambiguous_env_spec["containers"][0]["env"].append(
+    copy.deepcopy(ambiguous_env_spec["containers"][0]["env"][0])
+)
+expect_publication_static_failure("ambiguous gRPC TLS path env entries", ambiguous_env_documents)
+
+malformed_grpc_path_documents = copy.deepcopy(publication_documents)
+malformed_grpc_path_documents[0]["spec"]["template"]["spec"]["containers"][0][
+    "env"
+][0]["value"] = "/tls/../outside/tls.crt"
+expect_publication_static_failure("a non-canonical gRPC TLS path", malformed_grpc_path_documents)
 
 default_mode_publication_documents = copy.deepcopy(publication_documents)
 default_mode_publication_documents[0]["spec"]["template"]["spec"]["volumes"][0][

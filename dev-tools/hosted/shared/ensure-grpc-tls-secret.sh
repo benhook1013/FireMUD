@@ -29,16 +29,14 @@ legacy_generator="$script_dir/../../certs/generate-dev-certs.sh"
 
 shared_secret="${PREVIEW_GRPC_TLS_SECRET_NAME:-firemud-grpc-tls}"
 ca_secret="firemud-grpc-ca"
-cert_dir="${PREVIEW_GRPC_TLS_CERT_DIR:-}"
-temporary_cert_dir=false
-if [[ -z "$cert_dir" ]]; then
+provided_cert_dir="${PREVIEW_GRPC_TLS_CERT_DIR:-}"
+if [[ -z "$provided_cert_dir" ]]; then
   cert_dir="$(mktemp -d)"
-  temporary_cert_dir=true
+else
+  mkdir -p "$provided_cert_dir"
+  cert_dir="$(mktemp -d "${provided_cert_dir%/}/firemud-grpc-tls.XXXXXXXX")"
 fi
-mkdir -p "$cert_dir"
-if [[ "$temporary_cert_dir" == true ]]; then
-  trap 'rm -rf "$cert_dir"' EXIT
-fi
+trap 'rm -rf "$cert_dir"' EXIT
 
 workloads=(
   game-design-service

@@ -92,7 +92,13 @@ grep -Fq 'result_positions' dev-tools/pr_review/acceptance.py \
   || fail 'acceptance fixtures do not persist result sequence positions'
 grep -Fq 'simulated = True' dev-tools/pr_review/acceptance.py \
   || fail 'acceptance adapter is not marked simulated for live-trigger guards'
-grep -Fq 'allocation' dev-tools/pr_review/cli.py \
-  || fail 'public CLI does not expose allocation decisions'
+awk '
+  /^    allocation = decide_commands\.add_parser\(/ {
+    getline
+    if ($0 ~ /^        "allocation",/) found = 1
+  }
+  END { exit !found }
+' dev-tools/pr_review/cli.py \
+  || fail 'public CLI does not register the allocation decision subcommand'
 
 printf 'pr-review controller contract: passed\n'

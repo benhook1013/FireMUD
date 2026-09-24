@@ -26,6 +26,11 @@ if gateway["spec"].get("podSelector") != {"matchLabels": {"app": "spring-cloud-g
         "Gateway NetworkPolicy must select the spring-cloud-gateway app pods: "
         f"{gateway['spec'].get('podSelector')}"
     )
+if gateway["spec"].get("policyTypes") != ["Ingress"]:
+    raise SystemExit(
+        "Gateway NetworkPolicy must declare exactly Ingress policy type: "
+        f"{gateway['spec'].get('policyTypes')}"
+    )
 ingress = gateway["spec"]["ingress"]
 tcp_proxy_rules = [
     rule
