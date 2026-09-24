@@ -89,6 +89,56 @@ class RuntimeTest(unittest.TestCase):
                 review_cli._dispatch(args)
             fetch.assert_not_called()
 
+    def test_trigger_retirement_ignores_unreadable_unrelated_history(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            malformed = root / "trigger-malformed.json"
+            malformed.write_text("{not-json", encoding="utf-8")
+            valid = root / "trigger-20.json"
+            valid.write_text(
+                json.dumps(
+                    {
+                        "status": "posted",
+                        "repository": "owner/repo",
+                        "pr_number": 42,
+                        "head_sha": HEAD,
+                        "trigger": {
+                            "id": 20,
+                            "created_at": "2026-09-23T00:00:00Z",
+                            "url": "https://example.test/comments/20",
+                            "type": "full",
+                            "command": hosted.FULL_COMMAND,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            args = review_cli._parser().parse_args(
+                [
+                    "decide",
+                    "trigger-retire",
+                    "--pr",
+                    "42",
+                    "--trigger-id",
+                    "20",
+                    "--head",
+                    HEAD,
+                    "--reason",
+                    "retire selected trigger",
+                ]
+            )
+            with (
+                patch.object(review_cli, "default_controller", return_value=SimpleNamespace(repository="owner/repo")),
+                patch.object(hosted, "trigger_record_paths", return_value=[malformed, valid]),
+                patch.object(github, "fetch_pull_request", return_value={}),
+                patch.object(hosted, "retire_trigger_record", return_value={"status": "retired"}) as retire,
+            ):
+                result, exit_status = review_cli._dispatch(args)
+
+            self.assertEqual(exit_status, 0)
+            self.assertEqual(result["status"], "retired")
+            self.assertEqual(retire.call_args.args[0], valid)
+
     def test_default_controller_derives_the_repository_default_base(self) -> None:
         with patch.object(
             github,

@@ -327,7 +327,13 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 raise CliError(f"PR #{args.pr} has no durable Hosted trigger")
             matching_paths = []
             for path in paths:
-                record = hosted.load_trigger_record(path, controller.repository, args.pr)
+                try:
+                    record = hosted.load_trigger_record(path, controller.repository, args.pr)
+                except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+                    # An unrelated archived record must not prevent selecting a
+                    # valid exact trigger, while malformed matches still fail
+                    # closed through the exactly-one-match check below.
+                    continue
                 trigger = record.get("trigger")
                 trigger_id = trigger.get("id") if isinstance(trigger, dict) else None
                 if type(trigger_id) is int and trigger_id == args.trigger_id:
