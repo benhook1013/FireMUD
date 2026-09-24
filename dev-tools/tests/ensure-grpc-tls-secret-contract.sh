@@ -110,6 +110,9 @@ case "$operation" in
     secret="$2"
     shift 2
     if [[ "${1:-}" == --ignore-not-found ]]; then
+      shift
+    fi
+    if [[ "${1:-}" == -o && "${2:-}" == name ]]; then
       printf 'lookup %s/%s\n' "$namespace" "$secret" >>"$KUBECTL_LOG"
       printf 'secret/%s\n' "$secret"
       exit 0
@@ -118,58 +121,69 @@ case "$operation" in
       echo "unexpected kubectl get options: $*" >&2
       exit 2
     }
-    expression="$2"
-    key="${expression#jsonpath=}"
-    key="${key#\{.data.}"
-    key="${key%\}}"
-    key="${key//\\./.}"
-    printf 'read %s/%s %s\n' "$namespace" "$secret" "$key" >>"$KUBECTL_LOG"
-    if [[ "$PROJECTION_MODE" == stale-partial && "$secret" == firemud-grpc-game-design-service ]]; then
-      case "$key" in
-        tls.crt)
-          count_file="$STATE_DIR/cert-reads"
-          count=0
-          [[ ! -f "$count_file" ]] || count="$(<"$count_file")"
-          count=$((count + 1))
-          printf '%s\n' "$count" >"$count_file"
-          if ((count > 1)); then exit 0; fi
-          ;;
-        ca.crt)
-          count_file="$STATE_DIR/ca-reads"
-          count=0
-          [[ ! -f "$count_file" ]] || count="$(<"$count_file")"
-          count=$((count + 1))
-          printf '%s\n' "$count" >"$count_file"
-          if ((count == 1)); then exit 0; fi
-          ;;
-      esac
+    expression="${2#jsonpath=}"
+    if [[ "$expression" != *'{.metadata.name}'* || "$expression" != *'{.data.'* ]]; then
+      echo "unexpected Secret snapshot expression: $expression" >&2
+      exit 2
     fi
-    if [[ "$PROJECTION_MODE" == delayed-each-workload && "$secret" == firemud-grpc-* && "$key" == tls.crt ]]; then
-      workload="${secret#firemud-grpc-}"
-      count_file="$STATE_DIR/$workload-cert-reads"
-      count=0
-      [[ ! -f "$count_file" ]] || count="$(<"$count_file")"
-      count=$((count + 1))
-      printf '%s\n' "$count" >"$count_file"
-      if ((count == 1)); then exit 0; fi
-    fi
-    file=''
+    workload=''
+    fields=(ca.crt client.crt client.key)
     if [[ "$secret" == firemud-grpc-tls ]]; then
-      case "$key" in
-        ca.crt) file="$DATA_DIR/shared-ca.crt" ;;
-        client.crt) file="$DATA_DIR/shared.crt" ;;
-        client.key) file="$DATA_DIR/shared.key" ;;
-      esac
+      :
     elif [[ "$secret" == firemud-grpc-* ]]; then
       workload="${secret#firemud-grpc-}"
-      case "$key" in
-        tls.crt) file="$DATA_DIR/$workload.crt" ;;
-        tls.key) file="$DATA_DIR/$workload.key" ;;
-        ca.crt) file="$DATA_DIR/$workload-ca.crt" ;;
-      esac
+      fields=(tls.crt tls.key ca.crt)
+    else
+      echo "unexpected Secret snapshot: $secret" >&2
+      exit 2
     fi
-    [[ -n "$file" && -s "$file" ]] || exit 0
-    base64 -w0 "$file"
+    for key in "${fields[@]}"; do
+      escaped_key="${key//./\\.}"
+      [[ "$expression" == *"{.data.${escaped_key}}"* ]] || {
+        echo "Secret snapshot omitted required field $key: $expression" >&2
+        exit 2
+      }
+    done
+    field_list="$(IFS=,; printf '%s' "${fields[*]}")"
+    printf 'snapshot %s/%s fields=%s\n' "$namespace" "$secret" "$field_list" >>"$KUBECTL_LOG"
+    count_file="$STATE_DIR/${secret//\//_}-snapshots"
+    count=0
+    [[ ! -f "$count_file" ]] || count="$(<"$count_file")"
+    count=$((count + 1))
+    printf '%s\n' "$count" >"$count_file"
+    omitted_field=''
+    if [[ "$PROJECTION_MODE" == stale-partial && "$secret" == firemud-grpc-game-design-service ]]; then
+      if ((count % 2 == 1)); then omitted_field=ca.crt; else omitted_field=tls.crt; fi
+    elif [[ "$PROJECTION_MODE" == delayed-each-workload && -n "$workload" && "$count" == 1 ]]; then
+      omitted_field=tls.crt
+    fi
+    response="$secret|"
+    for index in "${!fields[@]}"; do
+      key="${fields[$index]}"
+      file=''
+      if [[ "$secret" == firemud-grpc-tls ]]; then
+        case "$key" in
+          ca.crt) file="$DATA_DIR/shared-ca.crt" ;;
+          client.crt) file="$DATA_DIR/shared.crt" ;;
+          client.key) file="$DATA_DIR/shared.key" ;;
+        esac
+      else
+        case "$key" in
+          tls.crt) file="$DATA_DIR/$workload.crt" ;;
+          tls.key) file="$DATA_DIR/$workload.key" ;;
+          ca.crt) file="$DATA_DIR/$workload-ca.crt" ;;
+        esac
+      fi
+      if [[ "$key" == "$omitted_field" ]]; then
+        encoded=''
+      else
+        [[ -n "$file" && -s "$file" ]] || { echo "missing fixture field $key" >&2; exit 2; }
+        encoded="$(base64 -w0 "$file")"
+      fi
+      response+="$encoded"
+      if ((index < ${#fields[@]} - 1)); then response+='|'; fi
+    done
+    printf '%s' "$response"
     ;;
   delete)
     [[ "$1" == secret ]] || { echo "unexpected kubectl delete: $*" >&2; exit 2; }
@@ -223,11 +237,23 @@ grep -Fq '5 distinct publication leaves' "$fixture_dir/success.out" || {
   echo "the helper did not accept five valid cert-manager projections" >&2
   exit 1
 }
-if grep -Eq '^read dev/firemud-grpc-ca |^create .*firemud-grpc-ca|ca\.key' "$success_log"; then
+if grep -Eq '^snapshot dev/firemud-grpc-ca |^create .*firemud-grpc-ca|ca\.key' "$success_log"; then
   echo "the helper read or created a runtime-local CA key/Secret" >&2
   exit 1
 fi
-last_projection_line="$(grep -n '^read dev/firemud-grpc-automation-scripting-service ca.crt$' "$success_log" | tail -n 1 | cut -d: -f1)"
+for secret in firemud-grpc-tls "${workloads[@]/#/firemud-grpc-}"; do
+  if [[ "$secret" == firemud-grpc-tls ]]; then
+    expected_fields='ca.crt,client.crt,client.key'
+  else
+    expected_fields='tls.crt,tls.key,ca.crt'
+  fi
+  snapshot_count="$(grep -Fc "snapshot dev/$secret fields=$expected_fields" "$success_log" || true)"
+  [[ "$snapshot_count" == 1 ]] || {
+    echo "expected exactly one complete Secret snapshot for dev/$secret, got $snapshot_count" >&2
+    exit 1
+  }
+done
+last_projection_line="$(grep -n '^snapshot dev/firemud-grpc-automation-scripting-service fields=tls.crt,tls.key,ca.crt$' "$success_log" | tail -n 1 | cut -d: -f1)"
 reapply_line="$(grep -n '^apply dev/firemud-grpc-tls$' "$success_log" | cut -d: -f1)"
 legacy_delete_line="$(grep -n '^delete dev/firemud-grpc-ca$' "$success_log" | cut -d: -f1)"
 [[ -n "$last_projection_line" && -n "$reapply_line" && -n "$legacy_delete_line" && \

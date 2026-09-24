@@ -61,17 +61,50 @@ secret_exists() {
   [[ -n "$lookup_result" ]]
 }
 
-read_secret_file() {
+read_secret_snapshot() {
   local secret_name="$1"
-  local key="$2"
-  local output="$3"
-  local escaped_key="${key//./\\.}"
-  local encoded
+  shift
+  local jsonpath='{.metadata.name}'
+  local key output escaped_key
+  local response actual_name
+  local -a keys=() outputs=() snapshot_fields=()
 
-  encoded="$(kubectl -n "$namespace" get secret "$secret_name" -o "jsonpath={.data.${escaped_key}}")" || return 1
-  [[ -n "$encoded" ]] || return 1
-  printf '%s' "$encoded" | base64 --decode >"$output" || return 1
-  [[ -s "$output" ]]
+  while (($#)); do
+    key="$1"
+    output="$2"
+    shift 2
+    keys+=("$key")
+    outputs+=("$output")
+    escaped_key="${key//./\\.}"
+    jsonpath+="{\"|\"}{.data.${escaped_key}}"
+  done
+
+  if ! response="$(kubectl -n "$namespace" get secret "$secret_name" --ignore-not-found -o "jsonpath=${jsonpath}")"; then
+    echo "failed to fetch Kubernetes Secret snapshot ${namespace}/${secret_name}: ${response}" >&2
+    return 3
+  fi
+  [[ -n "$response" ]] || return 1
+  IFS='|' read -r -a snapshot_fields <<<"$response"
+  actual_name="${snapshot_fields[0]:-}"
+  [[ "$actual_name" == "$secret_name" && "${#snapshot_fields[@]}" -eq "$((${#keys[@]} + 1))" ]] || return 2
+
+  for output in "${outputs[@]}"; do
+    : >"$output"
+  done
+  local index encoded
+  for index in "${!keys[@]}"; do
+    encoded="${snapshot_fields[$((index + 1))]}"
+    [[ -n "$encoded" ]] || {
+      for output in "${outputs[@]}"; do : >"$output"; done
+      return 2
+    }
+    if ! printf '%s' "$encoded" | base64 --decode >"${outputs[$index]}" ||
+      [[ ! -s "${outputs[$index]}" ]]; then
+      for output in "${outputs[@]}"; do : >"$output"; done
+      return 2
+    fi
+  done
+  return 0
 }
 
 apply_secret() {
@@ -203,34 +236,31 @@ shared_ca="$cert_dir/shared-ca.crt"
 shared_cert="$cert_dir/shared-client.crt"
 shared_key="$cert_dir/shared-client.key"
 
-if ! secret_exists "$shared_secret"; then
+shared_snapshot_status=0
+if read_secret_snapshot "$shared_secret" \
+  ca.crt "$shared_ca" client.crt "$shared_cert" client.key "$shared_key"; then
+  shared_snapshot_status=0
+else
+  shared_snapshot_status=$?
+fi
+
+if ((shared_snapshot_status == 1)); then
   for workload in "${workloads[@]}"; do
     if secret_exists "firemud-grpc-${workload}"; then
       echo "shared gRPC TLS Secret is missing while a cert-manager publication Secret exists; refusing fresh replacement" >&2
       exit 1
     fi
   done
+elif ((shared_snapshot_status != 0)); then
+  echo "existing gRPC TLS Secret lacks a usable certificate snapshot: $shared_secret" >&2
+  exit 1
 fi
 
-if secret_exists "$shared_secret"; then
-  read_secret_file "$shared_secret" ca.crt "$shared_ca" || {
-    echo "existing gRPC TLS Secret lacks a usable ca.crt: $shared_secret" >&2
-    exit 1
-  }
-  read_secret_file "$shared_secret" client.crt "$shared_cert" || {
-    echo "existing gRPC TLS Secret lacks a usable client.crt: $shared_secret" >&2
-    exit 1
-  }
-  read_secret_file "$shared_secret" client.key "$shared_key" || {
-    echo "existing gRPC TLS Secret lacks a usable client.key: $shared_secret" >&2
-    exit 1
-  }
+if ((shared_snapshot_status == 0)); then
   openssl x509 -in "$shared_cert" -noout >/dev/null
   shared_rotation_secrets=("${namespace}/${shared_secret}")
   for workload in "${workloads[@]}"; do
-    if secret_exists "firemud-grpc-${workload}"; then
-      shared_rotation_secrets+=("${namespace}/firemud-grpc-${workload}")
-    fi
+    shared_rotation_secrets+=("${namespace}/firemud-grpc-${workload}")
   done
   assert_certificate_unexpired "$shared_cert" \
     "shared gRPC TLS client certificate in Secret ${namespace}/${shared_secret}" \
@@ -280,10 +310,8 @@ for workload in "${workloads[@]}"; do
   projection_complete=false
 
   while ((SECONDS < certificate_wait_deadline)); do
-    if secret_exists "$secret_name" &&
-      read_secret_file "$secret_name" tls.crt "$workload_cert" &&
-      read_secret_file "$secret_name" tls.key "$workload_key" &&
-      read_secret_file "$secret_name" ca.crt "$workload_ca"; then
+    if read_secret_snapshot "$secret_name" \
+      tls.crt "$workload_cert" tls.key "$workload_key" ca.crt "$workload_ca"; then
       projection_complete=true
       break
     fi
