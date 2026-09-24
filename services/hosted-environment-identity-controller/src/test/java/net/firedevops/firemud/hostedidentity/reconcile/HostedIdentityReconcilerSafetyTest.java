@@ -6,6 +6,7 @@ import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMateri
 import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SOURCE_READY;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -1564,6 +1565,24 @@ class HostedIdentityReconcilerSafetyTest {
   }
 
   @Test
+  void grpcPublicationHistoryAcceptsSchemaValidEmptyRoleStatus() {
+    String role = HostedIdentityContract.grpcPublicationRole("game-design-service");
+    HostedEnvironmentIdentity resource = resource();
+    HostedEnvironmentIdentityStatus status = new HostedEnvironmentIdentityStatus();
+    Map<String, HostedEnvironmentIdentityStatus.RoleStatus> publicationHistory =
+        new java.util.LinkedHashMap<>();
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      publicationHistory.put(
+          HostedIdentityContract.grpcPublicationRole(workload),
+          new HostedEnvironmentIdentityStatus.RoleStatus());
+    }
+    status.setGrpcPublication(publicationHistory);
+    resource.setStatus(status);
+
+    assertNotNull(HostedIdentityReconciler.previousRole(resource, role));
+  }
+
+  @Test
   void malformedGrpcPublicationHistoryIsNormalizedWithoutBecomingHighWaterEvidence() {
     String role = HostedIdentityContract.grpcPublicationRole("game-design-service");
     String invalidRole = HostedIdentityContract.grpcPublicationRole("entity-management-service");
@@ -1666,7 +1685,7 @@ class HostedIdentityReconcilerSafetyTest {
             IllegalStateException.class,
             () -> HostedIdentityReconciler.previousRole(fixture.resource, role));
     assertEquals(
-        "grpc publication status must contain exactly five role entries", failure.getMessage());
+        "grpc publication status contains an invalid entry for role " + role, failure.getMessage());
 
     UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
 

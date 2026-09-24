@@ -1132,11 +1132,16 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
         HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
             .map(HostedIdentityContract::grpcPublicationRole)
             .collect(java.util.stream.Collectors.toUnmodifiableSet());
-    if (!publicationRoles.keySet().equals(expectedRoles)
-        || publicationRoles.values().stream()
-            .anyMatch(roleStatus -> !isSchemaValidPublicationRoleStatus(roleStatus))) {
+    if (!publicationRoles.keySet().equals(expectedRoles)) {
       throw new IllegalStateException(
           "grpc publication status must contain exactly five role entries");
+    }
+    for (Map.Entry<String, HostedEnvironmentIdentityStatus.RoleStatus> entry :
+        publicationRoles.entrySet()) {
+      if (!isSchemaValidPublicationRoleStatus(entry.getValue())) {
+        throw new IllegalStateException(
+            "grpc publication status contains an invalid entry for role " + entry.getKey());
+      }
     }
     return publicationRoles;
   }
