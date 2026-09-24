@@ -433,34 +433,17 @@ public class AutomationScriptingGrpcService
       requirePublicationRead();
       PublicationDigestRequestBinding binding = publicationBinding(request);
       binding.validateSupplied(request.getDerivedWorkflowIdentity(), request.getRequestDigest());
-      var digest =
-          binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.FULL_VERSION
-              ? scriptDesignDigestService.getDraftDesignDigestForVersion(
-                  binding.tenantId(), binding.versionId())
-              : scriptDesignDigestService.getDraftDesignDigestForScriptPatch(
-                  binding.tenantId(), binding.scriptPatchVersion());
-      String expectedScope =
-          binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.FULL_VERSION
-              ? binding.versionId()
-              : binding.scriptPatchVersion();
-      if (!binding.tenantId().equals(digest.tenantId())
-          || !expectedScope.equals(digest.scopeValue())) {
-        throw new IllegalArgumentException("owner digest scope does not match publication binding");
-      }
-      GetDraftDesignDigestResponse.Builder response =
+      responseObserver.onNext(
           GetDraftDesignDigestResponse.newBuilder()
-              .setTenantId(binding.tenantId())
-              .setAppliedCommitId(digest.appliedCommitId())
-              .setContentDigest(digest.contentDigest())
-              .setDigestSchemaVersion(digest.digestSchemaVersion());
-      if (binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.FULL_VERSION) {
-        response.setVersionId(binding.versionId());
-      } else {
-        response
-            .setScriptPatchVersion(binding.scriptPatchVersion())
-            .setBaseVersionId(binding.baseVersionId());
-      }
-      responseObserver.onNext(response.build());
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "GetDraftDesignDigest",
+                      "UNSUPPORTED_SCOPE",
+                      "Automation cannot attest this scope until its exact version mapping "
+                          + "and base-bound patch digest are available"))
+              .build());
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       responseObserver.onNext(
@@ -561,6 +544,20 @@ public class AutomationScriptingGrpcService
         NotifyScriptVersionUpdateResponse.newBuilder();
     try {
       requireAdminRole();
+      if (request.getAffectedScriptsCount() == 0) {
+        response
+            .setSuccess(false)
+            .setError(
+                GrpcAppErrors.error(
+                    meterRegistry,
+                    logger,
+                    "NotifyScriptVersionUpdate",
+                    "INVALID_ARGUMENT",
+                    "zero_handler_manifest_unverifiable"));
+        responseObserver.onNext(response.build());
+        responseObserver.onCompleted();
+        return;
+      }
       scriptVersionService.notifyUpdate(
           request.getTenantId(), request.getScriptPatchVersion(), request.getAffectedScriptsList());
       response.setSuccess(true);

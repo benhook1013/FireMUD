@@ -89,7 +89,7 @@ Tick-driven automation and event handling never use synchronous sagas or Tempora
 
 ## Hot Reload and Failure Handling
 
-For a non-empty `NotifyScriptVersionUpdate` notification, tenant-scoped readiness ingestion is intended for `<tenantId, scriptPatchVersion>`. Instance-scoped reload happens later only when Game Session pins an already-`READY` patch for a specific runtime scope. In the current normal Game Design integration, `affectedScripts` is empty; the handler returns before creating a readiness row and the conditional Temporal tracking hook does not run:
+For a non-empty `NotifyScriptVersionUpdate` notification, tenant-scoped readiness ingestion is intended for `<tenantId, scriptPatchVersion>`. Instance-scoped reload happens later only when Game Session pins an already-`READY` patch for a specific runtime scope. The current Game Design integration supplies an empty `affectedScripts` list; Automation now rejects that unsupported notification with `zero_handler_manifest_unverifiable` before readiness mutation instead of reporting success. This denial is not the target durable `FAILED` readiness/audit receipt for an identifiable patch and does not establish a zero-handler manifest:
 
 - `NotifyScriptVersionUpdate` is a tenant-readiness ingestion signal, not an instance activation signal. It causes the service to ingest compiled graphs and bindings for `<tenantId, scriptPatchVersion>`, then run tenant-scoped readiness checks and `onLoad` before any running instance is allowed to pin that patch.
 - Tenant readiness uses the patch lifecycle `PENDING_VALIDATION -> ONLOAD_RUNNING -> READY/FAILED`, plus terminal `SUPERSEDED` when a newer publish displaces an older pending patch for the same tenant.

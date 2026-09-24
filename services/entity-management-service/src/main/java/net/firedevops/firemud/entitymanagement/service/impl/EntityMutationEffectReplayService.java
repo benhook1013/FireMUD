@@ -44,7 +44,8 @@ public class EntityMutationEffectReplayService {
       Supplier<T> mutation,
       ResponseParser<T> parser) {
     if (!StringUtils.hasText(effectId)) {
-      return mutation.get();
+      throw new ResponseStatusException(
+          HttpStatus.BAD_REQUEST, "Effect id is required for replay-guarded mutations");
     }
     String normalizedEffectId = effectId.trim();
     String normalizedOperationName = operationName.trim();

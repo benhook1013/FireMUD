@@ -60,7 +60,13 @@ public class AutomationScriptingClient
             .setScriptPatchVersion(patchVersion)
             .addAllAffectedScripts(scripts)
             .build();
-    stub().notifyScriptVersionUpdate(request);
+    var response = stub().notifyScriptVersionUpdate(request);
+    if (!response.getSuccess() || response.hasError()) {
+      String detail = response.hasError() ? response.getError().getCode() : "NO_READINESS_STARTED";
+      throw new IllegalStateException(
+          "SCRIPT_PATCH_NOTIFICATION_REJECTED: Automation did not accept patch readiness: "
+              + detail);
+    }
   }
 
   public PublishParticipantDigestDto getDraftDesignDigestForScriptPatch(

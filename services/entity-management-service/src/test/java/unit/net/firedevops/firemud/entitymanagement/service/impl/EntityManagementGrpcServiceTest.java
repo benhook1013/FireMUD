@@ -27,6 +27,7 @@ import net.firedevops.firemud.entitymanagement.dto.ActorResourceStateDto;
 import net.firedevops.firemud.entitymanagement.dto.ActorStateDto;
 import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
 import net.firedevops.firemud.entitymanagement.effect.EffectPayloadParser;
+import net.firedevops.firemud.entitymanagement.repository.EntityMutationEffectRepository;
 import net.firedevops.firemud.entitymanagement.service.ActorConditionMutationService;
 import net.firedevops.firemud.entitymanagement.service.ActorStateService;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
@@ -3310,6 +3311,67 @@ class EntityManagementGrpcServiceTest {
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     assertEquals("itemId must be positive", ref.get().getError().getMessage());
     verifyNoInteractions(equipmentService);
+  }
+
+  @Test
+  void wearEquipmentRejectsBlankEffectIdBeforeMutation() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EntityDraftDesignDigestService digestService =
+        Mockito.mock(EntityDraftDesignDigestService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    ContainerService containerService = Mockito.mock(ContainerService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityMutationEffectRepository effectRepository =
+        Mockito.mock(EntityMutationEffectRepository.class);
+    EntityMutationEffectReplayService replayService =
+        new EntityMutationEffectReplayService(effectRepository, new SimpleMeterRegistry());
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            digestService,
+            equipmentService,
+            inventoryService,
+            containerService,
+            roomEntityService,
+            replayService,
+            Mockito.mock(EntityUpgradeValidationService.class),
+            attestationService(),
+            new SimpleMeterRegistry());
+
+    AtomicReference<WearEquipmentItemResponse> ref = new AtomicReference<>();
+    service.wearEquipment(
+        WearEquipmentItemRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("GI-1")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
+            .setItemId("99")
+            .setEffectId(" \t ")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(WearEquipmentItemResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals(
+        "Effect id is required for replay-guarded mutations", ref.get().getError().getMessage());
+    verifyNoInteractions(equipmentService, effectRepository);
   }
 
   @Test

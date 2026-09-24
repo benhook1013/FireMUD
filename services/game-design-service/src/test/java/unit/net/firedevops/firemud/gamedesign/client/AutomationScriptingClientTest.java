@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamedesign.client;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -11,6 +12,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.v1.AutomationScriptingServiceGrpc;
 import net.firedevops.firemud.automationscripting.v1.GetDraftDesignDigestRequest;
 import net.firedevops.firemud.automationscripting.v1.GetDraftDesignDigestResponse;
+import net.firedevops.firemud.automationscripting.v1.NotifyScriptVersionUpdateRequest;
+import net.firedevops.firemud.automationscripting.v1.NotifyScriptVersionUpdateResponse;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
@@ -88,6 +91,31 @@ class AutomationScriptingClientTest {
     assertThat(request.getPublishRequestId()).isEqualTo(binding.publishRequestId());
     assertThat(request.getDerivedWorkflowIdentity()).isEqualTo(binding.derivedWorkflowIdentity());
     assertThat(request.getRequestDigest()).isEqualTo(binding.requestDigest());
+  }
+
+  @Test
+  void notificationWithoutAcceptedReadinessFailsClosed() throws Exception {
+    ServiceEndpointsProperties endpoints = new ServiceEndpointsProperties();
+    CommonGrpcClientProperties grpc = new CommonGrpcClientProperties();
+    grpc.setPlaintext(true);
+    AutomationScriptingServiceGrpc.AutomationScriptingServiceBlockingStub stub =
+        mock(AutomationScriptingServiceGrpc.AutomationScriptingServiceBlockingStub.class);
+    when(stub.notifyScriptVersionUpdate(any(NotifyScriptVersionUpdateRequest.class)))
+        .thenReturn(NotifyScriptVersionUpdateResponse.newBuilder().setSuccess(false).build());
+    TestAutomationScriptingClient client =
+        new TestAutomationScriptingClient(
+            endpoints,
+            grpc,
+            mock(GrpcChannelFactory.class),
+            BlockingGrpcStubCustomizer.noop(),
+            stub);
+    client.initialize();
+
+    assertThatThrownBy(
+            () -> client.notifyScriptVersionUpdate("tenant-1", "patch-1", java.util.List.of()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("SCRIPT_PATCH_NOTIFICATION_REJECTED");
+    verify(stub).notifyScriptVersionUpdate(any(NotifyScriptVersionUpdateRequest.class));
   }
 
   private static final class TestAutomationScriptingClient extends AutomationScriptingClient {

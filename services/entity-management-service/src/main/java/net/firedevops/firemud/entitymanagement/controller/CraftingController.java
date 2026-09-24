@@ -1,34 +1,33 @@
 package net.firedevops.firemud.entitymanagement.controller;
 
 import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.common.ErrorDetail;
 import net.firedevops.firemud.entitymanagement.dto.CraftingRecipeDto;
-import net.firedevops.firemud.entitymanagement.service.CraftingService;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-/** REST endpoints for crafting recipes. */
+/** Fail-closed legacy crafting routes until tenant-bound owner authorization is implemented. */
 @RestController
 @RequestMapping("/crafting/recipes")
-@RequiredArgsConstructor
 public class CraftingController {
-  private final CraftingService craftingService;
-
   @PostMapping
   public ResponseEntity<ApiResponse<CraftingRecipeDto>> create(
       @Valid @RequestBody CraftingRecipeDto dto) {
-    CraftingRecipeDto result = craftingService.createRecipe(dto);
-    return ResponseEntity.ok(ApiResponse.success(result));
+    return unavailable();
   }
 
   @GetMapping("/{id}")
   public ResponseEntity<ApiResponse<CraftingRecipeDto>> get(@PathVariable String id) {
-    return EntityManagementRequestReaders.withBadRequest(
-        () ->
-            ResponseEntity.ok(
-                ApiResponse.success(
-                    craftingService.getRecipe(
-                        EntityManagementRequestReaders.requirePositivePathId(id, "id")))));
+    return unavailable();
+  }
+
+  private ResponseEntity<ApiResponse<CraftingRecipeDto>> unavailable() {
+    return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
+        .body(
+            ApiResponse.error(
+                new ErrorDetail(
+                    "CRAFTING_UNAVAILABLE", "Crafting requires tenant-bound owner authorization")));
   }
 }
