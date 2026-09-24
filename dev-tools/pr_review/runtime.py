@@ -247,6 +247,13 @@ class LiveEvidence:
         ):
             if not github.is_coderabbit_login((item.get("author") or {}).get("login")):
                 continue
+            body = item.get("body")
+            if (
+                timestamp_field == "createdAt"
+                and isinstance(body, str)
+                and "<!-- This is an auto-generated comment: summarize by coderabbit.ai -->" in body
+            ):
+                continue
             if timestamp_field == "submittedAt" and item.get("state") == "DISMISSED":
                 continue
             identity = github.immutable_database_id(item)
@@ -504,6 +511,64 @@ class LiveEvidence:
         represented_checkpoints = {
             str(item.get("checkpoint")) for item in hosted_history if isinstance(item, dict)
         }
+        checkpoints_by_response: dict[int, list[evidence.Checkpoint]] = {}
+        for checkpoint in hosted_checkpoints:
+            if checkpoint.hosted_review_id is not None:
+                checkpoints_by_response.setdefault(checkpoint.hosted_review_id, []).append(checkpoint)
+        legacy_represented_checkpoint_ids: set[str] = set()
+        states_by_response: dict[int, list[tuple[dict[str, Any], hosted.TriggerState]]] = {}
+        for record, state in records_by_trigger.values():
+            if state.response_id is not None:
+                states_by_response.setdefault(state.response_id, []).append((record, state))
+        for response_id, candidates in checkpoints_by_response.items():
+            if len(candidates) != 1:
+                continue
+            checkpoint = candidates[0]
+            matching = states_by_response.get(response_id, [])
+            if len(matching) != 1:
+                continue
+            record, state = matching[0]
+            captured_head = record.get("head_sha")
+            review_matches = [
+                item for item in reviews
+                if github.immutable_database_id(item) == response_id
+            ]
+            trigger = next(
+                (
+                    item for item in comments
+                    if github.immutable_database_id(item) == state.trigger_comment_id
+                ),
+                None,
+            )
+            trigger_author = ((trigger or {}).get("author") or {}).get("login")
+            checkpoint_author = checkpoint.author_login
+            review_commit = (
+                (review_matches[0].get("commit") or {}).get("oid")
+                if len(review_matches) == 1 and isinstance(review_matches[0].get("commit"), dict)
+                else None
+            )
+            if (
+                not ambiguous_responses
+                and state.state == "completed"
+                and state.terminal is True
+                and state.attributed is True
+                and state.response_id == response_id
+                and isinstance(captured_head, str)
+                and hosted.EXACT_SHA.fullmatch(captured_head)
+                and state.head_sha.casefold() == captured_head.casefold()
+                and isinstance(checkpoint.reviewed_sha, str)
+                and captured_head.casefold().startswith(checkpoint.reviewed_sha.casefold())
+                and len(review_matches) == 1
+                and isinstance(review_commit, str)
+                and review_commit.casefold() == captured_head.casefold()
+                and isinstance(trigger_author, str)
+                and isinstance(checkpoint_author, str)
+                and trigger_author.casefold() == checkpoint_author.casefold()
+                and not github.is_coderabbit_login(trigger_author)
+                and checkpoint.comment_id is not None
+            ):
+                legacy_represented_checkpoint_ids.add(str(checkpoint.comment_id))
+        represented_checkpoints.update(legacy_represented_checkpoint_ids)
         for checkpoint in hosted_checkpoints:
             if str(checkpoint.comment_id) not in represented_checkpoints:
                 unmatched_responses.append("a public Hosted checkpoint has no unique attributable trigger")

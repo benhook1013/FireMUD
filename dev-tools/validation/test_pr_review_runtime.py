@@ -82,6 +82,137 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(LiveEvidence._public_response_state(ambiguous_comment, "createdAt", {}), "ambiguous")
         self.assertIsNone(LiveEvidence._public_response_state({"databaseId": 74, "body": ""}, "createdAt", {}))
 
+    def test_auto_generated_summary_is_not_a_response_but_unmatched_review_still_blocks(self) -> None:
+        auto_summary = {
+            "databaseId": 5748509184,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "<!-- This is an auto-generated comment: summarize by coderabbit.ai -->\nPR summary",
+            "createdAt": "2026-09-24T00:00:00Z",
+        }
+        unmatched_review = {
+            "databaseId": 91,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-24T00:01:00Z",
+            "commit": {"oid": HEAD},
+        }
+        self.assertEqual(
+            LiveEvidence._bot_response_ids([auto_summary], [unmatched_review]),
+            [(91, datetime(2026, 9, 24, 0, 1, tzinfo=timezone.utc))],
+        )
+
+        payload = self._payload([auto_summary], [unmatched_review])
+        pull = payload["data"]["repository"]["pullRequest"]
+        pull.update(
+            {
+                "number": 42,
+                "baseRefName": "develop",
+                "baseRefOid": BASE,
+            }
+        )
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        live = LiveGitHub("owner/repo")
+        observer = LiveEvidence("owner/repo", live)
+        with (
+            patch.object(github, "fetch_pull_request", return_value=payload),
+            patch.object(live, "pull_request", return_value=snapshot),
+            patch.object(observer, "_complete_trigger_paths", return_value=[]),
+            patch.object(observer, "history", return_value=[]),
+        ):
+            audit = observer.legacy_transition_reauthorization_audit(
+                42,
+                (),
+                {"child_head": HEAD, "live_base_ref": "develop", "live_base_tip": BASE},
+            )
+        self.assertIn("response has no preceding full-review trigger", audit["unmatched_responses"])
+
+    def test_legacy_checkpoint_is_attributed_only_to_unique_exact_terminal_response(self) -> None:
+        trigger_at = "2026-09-24T00:00:00Z"
+        response_at = "2026-09-24T00:01:00Z"
+        checkpoint_at = "2026-09-24T00:02:00Z"
+        trigger = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": trigger_at,
+            "updatedAt": trigger_at,
+            "url": "https://example.test/comments/10",
+        }
+        checkpoint = {
+            "databaseId": 12,
+            "author": {"login": "maintainer"},
+            "body": (
+                f"Hosted: 0 found / 0 accepted · `{HEAD[:12]}` · 1 files\n"
+                "<!-- firemud-hosted-review: 55 -->"
+            ),
+            "createdAt": checkpoint_at,
+            "updatedAt": checkpoint_at,
+        }
+        review = {
+            "databaseId": 55,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+            "state": "COMMENTED",
+            "submittedAt": response_at,
+            "commit": {"oid": HEAD},
+        }
+        payload = self._payload([trigger, checkpoint], [review])
+        pull = payload["data"]["repository"]["pullRequest"]
+        pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        live = LiveGitHub("owner/repo")
+        observer = LiveEvidence("owner/repo", live)
+        record = {"head_sha": HEAD}
+        state = SimpleNamespace(
+            trigger_comment_id=10,
+            trigger_created_at=trigger_at,
+            state="completed",
+            terminal=True,
+            attributed=True,
+            response_id=55,
+            head_sha=HEAD,
+        )
+
+        def run_audit(selected_record=record, selected_state=state, selected_checkpoint=checkpoint):
+            observer._payloads.clear()
+            selected_payload = self._payload([trigger, selected_checkpoint], [review])
+            selected_pull = selected_payload["data"]["repository"]["pullRequest"]
+            selected_pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+            with (
+                patch.object(github, "fetch_pull_request", return_value=selected_payload),
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(observer, "_complete_trigger_paths", return_value=["trigger-10.json"]),
+                patch.object(hosted, "load_trigger_record", return_value=selected_record),
+                patch.object(hosted, "trigger_state", return_value=selected_state),
+                patch.object(observer, "history", return_value=[]),
+            ):
+                return observer.legacy_transition_reauthorization_audit(
+                    42,
+                    (),
+                    {"child_head": HEAD, "live_base_ref": "develop", "live_base_tip": BASE},
+                )
+
+        accepted = run_audit()
+        self.assertNotIn(
+            "a public Hosted checkpoint has no unique attributable trigger",
+            accepted["unmatched_responses"],
+        )
+
+        invalid_cases = (
+            ({"head_sha": "d" * 40}, state, checkpoint),
+            (record, SimpleNamespace(**{**state.__dict__, "terminal": False}), checkpoint),
+            (record, state, {**checkpoint, "author": {"login": "different-user"}}),
+        )
+        for selected_record, selected_state, selected_checkpoint in invalid_cases:
+            with self.subTest(record=selected_record, state=selected_state, checkpoint=selected_checkpoint):
+                rejected = run_audit(selected_record, selected_state, selected_checkpoint)
+                self.assertIn(
+                    "a public Hosted checkpoint has no unique attributable trigger",
+                    rejected["unmatched_responses"],
+                    msg=str(rejected),
+                )
+
     def test_trigger_retirement_selects_the_unique_record_matching_trigger_id(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
