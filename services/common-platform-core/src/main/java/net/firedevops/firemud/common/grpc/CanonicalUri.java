@@ -140,9 +140,7 @@ public record CanonicalUri(String value, String scheme, String authority, String
   }
 
   private static boolean isIpv6Literal(String literal) {
-    if (literal.isEmpty()
-        || literal.indexOf(':') < 0
-        || !isIpv6LiteralStart(literal.charAt(0))) {
+    if (literal.isEmpty() || literal.indexOf(':') < 0 || !isIpv6LiteralStart(literal.charAt(0))) {
       return false;
     }
     for (int index = 0; index < literal.length(); index++) {

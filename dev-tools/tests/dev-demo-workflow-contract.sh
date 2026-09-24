@@ -16,6 +16,8 @@ python3 -c 'import yaml' >/dev/null 2>&1 || {
 }
 python3 "$ROOT_DIR/dev-tools/validation/check_dev_demo_summary.py" "$ROOT_DIR"
 python3 "$ROOT_DIR/dev-tools/validation/test_check_dev_demo_summary.py"
+bash "$ROOT_DIR/dev-tools/tests/standalone-grpc-certificates-contract.sh"
+bash "$ROOT_DIR/dev-tools/tests/ensure-grpc-tls-secret-contract.sh"
 
 mode_resolver="$ROOT_DIR/dev-tools/hosted/shared/resolve-certificate-identity-mode.py"
 mode_action="$ROOT_DIR/.github/actions/resolve-certificate-identity-mode/action.yml"
@@ -29,6 +31,7 @@ annotator="$ROOT_DIR/dev-tools/hosted/dev-demo/annotate-dev-demo-namespace.sh"
 target_validator="$ROOT_DIR/dev-tools/hosted/dev-demo/validate-dev-demo-target.sh"
 runtime_rollout_waiter="$ROOT_DIR/dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh"
 standalone_grpc_tls="$ROOT_DIR/dev-tools/hosted/shared/ensure-grpc-tls-secret.sh"
+standalone_grpc_certificates="$ROOT_DIR/dev-tools/hosted/shared/ensure-standalone-grpc-certificates.sh"
 certificate_generator="$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh"
 
 contains_literal() {
@@ -39,6 +42,7 @@ contains_literal() {
 }
 
 bash -n "$standalone_grpc_tls"
+bash -n "$standalone_grpc_certificates"
 bash -n "$certificate_generator"
 # This is a literal source snippet; expansion would change what the contract checks.
 # shellcheck disable=SC2016
@@ -47,7 +51,6 @@ contains_literal "$certificate_generator" \
 # These are literal source snippets; expansion would change what the contract checks.
 # shellcheck disable=SC2016
 for required in \
-  'ca_secret="firemud-grpc-ca"' \
   'local escaped_key="${key//./\\.}"' \
   'get secret "$secret_name" --ignore-not-found -o name' \
   'failed to look up Kubernetes Secret ${namespace}/${secret_name}' \
@@ -55,12 +58,12 @@ for required in \
   'if ! secret_exists "$shared_secret"; then' \
   'assert_certificate_unexpired "$shared_cert"' \
   'shared gRPC TLS client certificate in Secret ${namespace}/${shared_secret}' \
-  'if secret_exists "$ca_secret"; then' \
-  'assert_certificate_unexpired "$source_ca"' \
   'assert_certificate_unexpired "$workload_cert"' \
-  'standalone gRPC CA certificate in Secret' \
-  'publication certificate in Secret' \
-  'if secret_exists "$secret_name"; then' \
+  'cert-manager publication certificate in Secret' \
+  'cert-manager CA projection' \
+  'openssl verify -CAfile "$workload_ca" "$workload_cert"' \
+  'kubectl -n "$namespace" delete secret firemud-grpc-ca --ignore-not-found' \
+  'kubectl -n "$namespace" delete secret "${namespace}-grpc-${workload}" --ignore-not-found' \
   'URI:${expected_uri}' \
   '"${workload}.${namespace}.svc.cluster.local"' \
   'basic_constraints' \
@@ -69,15 +72,21 @@ for required in \
   'DigitalSignature,KeyEncipherment' \
   'extended_key_usage' \
   'TLSWebServerAuthentication,TLSWebClientAuthentication' \
-  'source_name="${namespace}-grpc-${workload}"' \
-  '--from-file=tls.crt="$workload_cert"' \
-  '--from-file=tls.key="$workload_key"' \
   '  game-design-service' \
   '  world-management-service' \
   '  entity-management-service' \
   '  game-logic-service' \
   '  automation-scripting-service'; do
   contains_literal "$standalone_grpc_tls" "$required"
+done
+for required in \
+  "INTERNAL_ISSUER='firemud-ca-issuer'" \
+  'runtime namespace must be dev or canonical pr-N' \
+  'secretName: firemud-grpc-${workload}' \
+  'rotationPolicy: Always' \
+  'Certificate/${certificate} did not become Ready' \
+  'certificates=ready'; do
+  contains_literal "$standalone_grpc_certificates" "$required"
 done
 python3 "$runner_label_validator" --self-test
 python3 "$runner_label_validator" "$workflow" "$reconciler"
@@ -423,29 +432,29 @@ expect_expired_certificate() {
 }
 
 expect_expired_certificate \
-  'standalone gRPC CA certificate in Secret pr-42/firemud-grpc-ca' \
-  'pr-42/firemud-grpc-ca pr-42/pr-42-grpc-game-design-service pr-42/firemud-grpc-game-design-service' \
-  'delete these retained Secrets before rerunning: pr-42/firemud-grpc-ca pr-42/pr-42-grpc-game-design-service pr-42/firemud-grpc-game-design-service' \
+  'cert-manager CA projection in Secret pr-42/firemud-grpc-game-design-service' \
+  'pr-42/firemud-grpc-game-design-service' \
+  'delete these retained Secrets before rerunning: pr-42/firemud-grpc-game-design-service' \
   "$expiry_fixture_dir/expired-ca.crt"
 expect_expired_certificate \
   'shared gRPC TLS client certificate in Secret pr-42/firemud-grpc-tls' \
-  'pr-42/firemud-grpc-tls pr-42/firemud-grpc-ca pr-42/pr-42-grpc-game-design-service pr-42/firemud-grpc-game-design-service' \
-  'delete these retained Secrets before rerunning: pr-42/firemud-grpc-tls pr-42/firemud-grpc-ca pr-42/pr-42-grpc-game-design-service pr-42/firemud-grpc-game-design-service' \
+  'pr-42/firemud-grpc-tls pr-42/firemud-grpc-game-design-service' \
+  'delete these retained Secrets before rerunning: pr-42/firemud-grpc-tls pr-42/firemud-grpc-game-design-service' \
   "$expiry_fixture_dir/expired-leaf.crt"
 expect_expired_certificate \
-  'publication certificate in Secret pr-42/pr-42-grpc-game-design-service' \
-  'pr-42/pr-42-grpc-game-design-service pr-42/firemud-grpc-game-design-service' \
-  'delete these retained Secrets before rerunning: pr-42/pr-42-grpc-game-design-service pr-42/firemud-grpc-game-design-service' \
+  'cert-manager publication certificate in Secret pr-42/firemud-grpc-game-design-service' \
+  'pr-42/firemud-grpc-game-design-service' \
+  'delete these retained Secrets before rerunning: pr-42/firemud-grpc-game-design-service' \
   "$expiry_fixture_dir/expired-leaf.crt"
 python3 - "$standalone_grpc_tls" <<'PY'
 import sys
 from pathlib import Path
 
 source = Path(sys.argv[1]).read_text(encoding="utf-8")
-ca_expiry = source.index('assert_certificate_unexpired "$source_ca"')
+ca_expiry = source.index('assert_certificate_unexpired "$workload_ca"')
 leaf_expiry = source.index('assert_certificate_unexpired "$workload_cert"')
 leaf_verification = source.index(
-    'openssl verify -CAfile "$source_ca" "$workload_cert"'
+    'openssl verify -CAfile "$workload_ca" "$workload_cert"'
 )
 shared_branch_start = source.index('if secret_exists "$shared_secret"; then')
 shared_branch_end = source.index('\nelse\n', shared_branch_start)
@@ -456,8 +465,13 @@ shared_key_match = shared_branch.index('assert_key_matches_certificate "$shared_
 assert ca_expiry < leaf_verification
 assert leaf_expiry < leaf_verification
 assert shared_cert_parse < shared_cert_expiry < shared_key_match
-assert 'shared gRPC TLS client certificate in Secret ${namespace}/${shared_secret}' in shared_branch
-assert '"${shared_rotation_secrets[*]}"' in shared_branch
+assert 'shared gRPC TLS client certificate in Secret ' in shared_branch
+assert 'shared_rotation_secrets' in shared_branch
+assert 'read_secret_file "$ca_secret" ca.key' not in source
+assert '--from-file=ca.key=' not in source
+assert 'openssl genrsa -out "$source_key"' not in source
+assert 'kubectl -n "$namespace" delete secret firemud-grpc-ca --ignore-not-found' in source
+assert source.index('delete secret firemud-grpc-ca') > leaf_verification
 PY
 
 if ! (
@@ -942,6 +956,13 @@ if runtime_kubeconfig.get("with") != {
     "export-to-github-env": "false",
 }:
     raise SystemExit("dev-demo runtime deployer action does not use the scoped runtime secret")
+standalone_certificate_writer = deploy_by_name["Write standalone certificate-writer credentials"]
+if standalone_certificate_writer.get("with") != {
+    "content": "${{ secrets.TRUSTED_HOSTED_STANDALONE_CERTIFICATE_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/dev-demo-standalone-certificate-writer.kubeconfig",
+    "export-to-github-env": "false",
+}:
+    raise SystemExit("dev-demo standalone certificate writer does not use the scoped certificate secret")
 requester_writer = deploy_by_name["Write hosted identity requester kubeconfig"]
 if requester_writer.get("uses") != "./.github/actions/write-kubeconfig":
     raise SystemExit("dev-demo Active requester must use the canonical kubeconfig action")
@@ -971,6 +992,8 @@ expected_deploy_kubeconfigs = {
     "Apply fixed dev-demo Active request": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
     "Wait for all controller identity projections": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Ensure GHCR pull secret exists": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Prepare dev-demo shared gRPC TLS secret": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Ensure dev-demo standalone gRPC certificates": "${{ runner.temp }}/dev-demo-standalone-certificate-writer.kubeconfig",
     "Ensure dev-demo gRPC TLS secret exists": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Validate dev-demo chart render": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Deploy dev-demo release": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
@@ -994,6 +1017,7 @@ expected_dev_demo_cleanup = (
     'rm -f -- \\\n'
     '  "$RUNNER_TEMP/dev-demo-namespace-manager.kubeconfig" \\\n'
     '  "$RUNNER_TEMP/dev-demo-runtime.kubeconfig" \\\n'
+    '  "$RUNNER_TEMP/dev-demo-standalone-certificate-writer.kubeconfig" \\\n'
     '  "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"\n'
 )
 if dev_demo_cleanup.get("run") != expected_dev_demo_cleanup:

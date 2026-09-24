@@ -179,7 +179,7 @@ def check_contract(items: list[dict]) -> None:
         require(certificate, needle, "Certificate boundary")
     require(
         certificate_validation,
-        "^pr-[1-9][0-9]{0,50}-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$",
+        "^(dev|pr-[1-9][0-9]{0,50})-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service))$",
         "standalone Certificate validation",
     )
     require(

@@ -679,6 +679,8 @@ contains "$dev_demo" 'request-hosted-identity.sh dev-demo Retired'
 contains "$dev_demo" '--projections dev-demo "${{ needs.dev-demo-plan.outputs.namespace }}" 900'
 contains "$dev_demo" 'wait-for-hosted-identity.sh'
 contains "$dev_demo" 'ensure-grpc-tls-secret.sh'
+contains "$dev_demo" 'ensure-standalone-grpc-certificates.sh'
+contains "$dev_demo" 'TRUSTED_HOSTED_STANDALONE_CERTIFICATE_KUBECONFIG'
 contains "$dev_demo" "steps.certificate-identity.outputs.mode == 'standalone'"
 for required in \
   '--discover-api' \
@@ -1901,9 +1903,27 @@ for output_name in (
     "proof_retry_image_tag",
 ):
     assert f"steps.capture-proof-retry.outputs.{output_name}" in create_step["run"]
+standalone_grpc_shared = deploy_by_name["Prepare standalone shared gRPC TLS secret"]
+standalone_grpc_certificates = deploy_by_name["Prepare standalone gRPC certificates"]
 standalone_grpc = deploy_by_name["Prepare standalone gRPC TLS secret"]
 standalone_certificates = deploy_by_name["Prepare standalone transport certificates"]
 standalone_secret_wait = deploy_by_name["Wait for standalone transport Secret projections"]
+assert standalone_grpc_shared["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/preview-runtime.kubeconfig",
+    "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}"
+}
+assert standalone_grpc_shared["run"].splitlines() == [
+    "set -euo pipefail",
+    'bash ./dev-tools/hosted/shared/ensure-grpc-tls-secret.sh --shared-only "$RUNTIME_NAMESPACE"',
+]
+assert standalone_grpc_certificates["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/standalone-certificate-writer.kubeconfig",
+    "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}"
+}
+assert standalone_grpc_certificates["run"].splitlines() == [
+    "set -euo pipefail",
+    'bash ./dev-tools/hosted/shared/ensure-standalone-grpc-certificates.sh "$RUNTIME_NAMESPACE"',
+]
 assert standalone_grpc["if"] == (
     "${{ needs.validate-target.outputs.certificate_identity_mode == 'standalone' && "
     "steps.allocate-capacity.outputs.allocation_status == 'allocated' }}"
@@ -1939,6 +1959,8 @@ assert standalone_secret_wait["run"].splitlines() == [
 ]
 assert (
     requested_step_index
+    < deploy_steps.index(standalone_grpc_shared)
+    < deploy_steps.index(standalone_grpc_certificates)
     < deploy_steps.index(standalone_grpc)
     < deploy_steps.index(standalone_certificates)
     < deploy_steps.index(standalone_secret_wait)
