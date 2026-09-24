@@ -284,6 +284,13 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             ):
                 self.validator.validate_workflow(root)
 
+    def test_bootstrap_python_heredoc_uses_exact_shell_terminator(self):
+        source = (
+            self.validator.BOOTSTRAP_PYTHON_HEREDOC_OPENER
+            + "\nprint('before')\n  PY\nprint('after')\nPY\n"
+        )
+        self.assertIn("print('after')", self.validator._bootstrap_python_source(source))
+
     def test_validate_workflow_accepts_reformatted_player_bootstrap_payload(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
         canonical_payload = (
