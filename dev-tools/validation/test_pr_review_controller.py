@@ -1014,6 +1014,31 @@ class ControllerTests(unittest.TestCase):
                 self.assertEqual(result["prs"][failed_index]["channels"]["cli"], "UNRECONCILED")
                 self.assertEqual(result["prs"][healthy_index]["reconciliation"], "COHERENT")
 
+        controller = self.make(
+            {1: pr(1, HEAD_1), 2: pr(2, HEAD_2, "feature-1", HEAD_1)},
+            heads={"feature-1": HEAD_1, "feature-2": HEAD_2},
+        )
+        controller.set_stack([1, 2])
+        original_is_ancestor = controller.git.is_ancestor
+        failing_calls = 0
+
+        def fail_child_ancestry(parent, child):
+            nonlocal failing_calls
+            if parent == HEAD_1 and child == HEAD_2:
+                failing_calls += 1
+                raise OSError("simulated ancestry lookup failure")
+            return original_is_ancestor(parent, child)
+
+        controller.git.is_ancestor = fail_child_ancestry
+        result = controller.status()
+
+        self.assertEqual(failing_calls, 2)
+        self.assertEqual(result["prs"][1]["reconciliation"], "UNRECONCILED")
+        self.assertEqual(result["prs"][1]["channels"]["hosted"], "UNRECONCILED")
+        self.assertEqual(result["prs"][1]["channels"]["cli"], "UNRECONCILED")
+        self.assertEqual(result["prs"][0]["pr"], 1)
+        self.assertEqual(result["prs"][0]["reconciliation"], "COHERENT")
+
     def test_reconciliation_decision_is_available_under_decide_command(self):
         args = _parser().parse_args(
             [

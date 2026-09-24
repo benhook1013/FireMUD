@@ -459,12 +459,19 @@ class ReviewController:
     def _reconciliation(self, state: ReviewState) -> tuple[dict[int, LivePullRequest], stack.Reconciliation]:
         remote_heads = self.git.remote_heads()
         live, snapshots, default_tip = self._live_snapshots(state, remote_heads)
+
+        def is_ancestor(parent: str, child: str) -> bool:
+            try:
+                return self.git.is_ancestor(parent, child)
+            except (ControllerError, OSError, subprocess.SubprocessError, ValueError):
+                return False
+
         baseline = stack.reconcile_stack(
             state.ordered_prs,
             snapshots,
             self.default_base_ref,
             default_tip,
-            is_ancestor=self.git.is_ancestor,
+            is_ancestor=is_ancestor,
         )
         unsupported: set[int] = set()
         reasons = dict(baseline.reasons)
@@ -533,7 +540,7 @@ class ReviewController:
             snapshots,
             self.default_base_ref,
             default_tip,
-            is_ancestor=self.git.is_ancestor,
+            is_ancestor=is_ancestor,
             anchored_parent_heads=anchored,
         )
         reasons = dict(result.reasons)

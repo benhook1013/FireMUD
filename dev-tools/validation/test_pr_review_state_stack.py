@@ -608,7 +608,7 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertFalse(target.provisional)
         self.assertFalse(taper_satisfied(Channel.CLI, provisional, 3))
 
-    def test_newer_same_head_provisional_evidence_blocks_prior_taper(self):
+    def test_newer_same_head_provisional_evidence_allows_fresh_review_without_tapering(self):
         reviewed = tuple(
             Evidence(
                 1,
@@ -633,10 +633,10 @@ class ReviewStateStackTest(unittest.TestCase):
         )
         history = (*reviewed, provisional)
         state = ReviewState(ordered_prs=(1,))
-        self.assertEqual(completion_status(state, Channel.CLI, history), ReviewStatus.PROVISIONAL)
+        self.assertEqual(completion_status(state, Channel.CLI, history), ReviewStatus.READY)
         target = select_review_target(state, Channel.CLI, (1,), {1: history})
-        self.assertEqual(target.status, ReviewStatus.PROVISIONAL)
-        self.assertTrue(target.provisional)
+        self.assertEqual(target.status, ReviewStatus.READY)
+        self.assertFalse(target.provisional)
         self.assertFalse(taper_satisfied(Channel.CLI, history, 3))
 
     def test_provisional_history_does_not_override_equivalent_history_judgment(self):
