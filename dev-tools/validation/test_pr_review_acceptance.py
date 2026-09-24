@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -86,6 +87,26 @@ def fixture_payload_with_uppercase_default_sha() -> dict[str, object]:
     return payload
 
 
+def fixture_payload_for_allocation() -> dict[str, object]:
+    payload = fixture_payload()
+    payload["ordered_prs"] = [1]
+    payload["pull_requests"] = [payload["pull_requests"][0]]
+    payload["review_results"] = {
+        "1": {
+            "hosted": [
+                {"status": "productive", "record_evidence": True, "accepted": 1, "raw": 1},
+            ],
+            "cli": [
+                {"status": "rate_limited"},
+                {"status": "partial"},
+                {"status": "stale"},
+                {"status": "duplicate"},
+            ],
+        }
+    }
+    return payload
+
+
 class AcceptanceCliTest(unittest.TestCase):
     def run_cli(self, fixture: Path, isolated: Path, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -103,6 +124,35 @@ class AcceptanceCliTest(unittest.TestCase):
             text=True,
             check=False,
         )
+
+    def test_live_status_never_calls_an_exhausted_allocation_merge_ready(self):
+        report = {
+            "pull_request": {"headRefOid": HEAD_1, "baseRefName": "develop", "baseRefOid": BASE},
+            "reasons": [],
+            "ready": True,
+            "verdict": "READY",
+            "mergeability": {"clean": True, "diagnosis": "READY"},
+        }
+        controller = SimpleNamespace(
+            repository="fixture/firemud",
+            store=SimpleNamespace(load=lambda: SimpleNamespace(summary_dispositions=())),
+            status=lambda: {
+                "prs": [{
+                    "pr": 1, "head": HEAD_1, "base": "develop", "parent_head": BASE,
+                    "reconciliation": "COHERENT", "channels": {"hosted": "COMPLETE", "cli": "COMPLETE"},
+                    "allocations": {"hosted": {"status": "EXHAUSTED_PENDING", "reason": "handoff pending"}},
+                }]
+            },
+        )
+        args = cli._parser().parse_args(["status", "--pr", "1", "--json"])
+        with patch("pr_review.cli._controller", return_value=(controller, None)), patch(
+            "pr_review.cli.status_module.status", return_value=report
+        ):
+            result, code = cli._dispatch(args)
+
+        self.assertEqual(code, 0)
+        self.assertFalse(result["ready"])
+        self.assertIn("hosted review allocation is EXHAUSTED_PENDING", result["reasons"][0])
 
     def test_public_commands_use_isolated_state_and_simulated_review_adapters(self):
         canonical = state.state_path()
@@ -651,6 +701,164 @@ class AcceptanceCliTest(unittest.TestCase):
             )
             self.assertFalse(fixture_request_lock.exists())
             self.assertFalse(canonical_request_lock.exists())
+
+    def test_allocation_fixture_consumes_one_result_and_supports_corrected_head_handoff(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "fixture.json"
+            isolated = root / "state.json"
+            payload = fixture_payload_for_allocation()
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+
+            self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1").returncode, 0)
+            grant = self.run_cli(
+                fixture,
+                isolated,
+                "decide",
+                "allocation",
+                "grant",
+                "--pr",
+                "1",
+                "--channel",
+                "hosted",
+                "--head",
+                HEAD_1,
+                "--reason",
+                "bounded acceptance capacity",
+            )
+            self.assertEqual(grant.returncode, 0, grant.stderr)
+
+            first = self.run_cli(fixture, isolated, "run", "hosted", "--expect-pr", "1")
+            self.assertEqual(first.returncode, 0, first.stderr)
+            self.assertIn("result=productive", first.stdout)
+            self.assertIn("recorded_evidence=True", first.stdout)
+            second = self.run_cli(fixture, isolated, "run", "hosted", "--expect-pr", "1")
+            self.assertNotEqual(second.returncode, 0)
+            self.assertIn("ALLOCATION_EXHAUSTED", second.stderr)
+
+            shown = self.run_cli(fixture, isolated, "status", "--pr", "1", "--json")
+            self.assertEqual(shown.returncode, 0, shown.stderr)
+            allocation = json.loads(shown.stdout)["prs"][0]["allocations"]["hosted"]
+            self.assertEqual(allocation["status"], "EXHAUSTED_PENDING")
+            checkpoint = allocation["checkpoint"]
+            self.assertIsInstance(checkpoint, str)
+
+            corrected = json.loads(json.dumps(payload))
+            corrected["branch_heads"]["feature-1"] = HEAD_2
+            corrected["merge_bases"][f"{BASE}...{HEAD_2}"] = BASE
+            corrected["patch_ids"][f"{BASE}...{HEAD_2}"] = "patch-corrected"
+            corrected["pull_requests"][0]["head"] = HEAD_2
+            fixture.write_text(json.dumps(corrected), encoding="utf-8")
+
+            handoff = self.run_cli(
+                fixture,
+                isolated,
+                "decide",
+                "allocation",
+                "handoff",
+                "--pr",
+                "1",
+                "--channel",
+                "hosted",
+                "--head",
+                HEAD_2,
+                "--checkpoint",
+                checkpoint,
+                "--validation",
+                "corrected head and required checks validated in the isolated fixture",
+                "--reason",
+                "findings corrected and capacity released",
+            )
+            self.assertEqual(handoff.returncode, 0, handoff.stderr)
+            final = self.run_cli(fixture, isolated, "status", "--pr", "1", "--json")
+            self.assertEqual(final.returncode, 0, final.stderr)
+            self.assertEqual(
+                json.loads(final.stdout)["prs"][0]["allocations"]["hosted"]["status"],
+                "HANDED_OFF",
+            )
+
+    def test_fixture_result_sequence_is_persisted_and_nonterminal_results_do_not_create_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "fixture.json"
+            isolated = root / "state.json"
+            payload = fixture_payload_for_allocation()
+            payload["review_results"]["1"]["hosted"] = [
+                {"status": "rate_limited"},
+                {"status": "partial"},
+                {"status": "stale"},
+                {"status": "duplicate"},
+            ]
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+            self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1").returncode, 0)
+            grant = self.run_cli(
+                fixture, isolated, "decide", "allocation", "grant", "--pr", "1", "--channel", "hosted",
+                "--head", HEAD_1, "--reason", "nonterminal result sequence",
+            )
+            self.assertEqual(grant.returncode, 0, grant.stderr)
+            for expected in ("rate_limited", "partial", "stale", "duplicate"):
+                result = self.run_cli(fixture, isolated, "run", "hosted", "--expect-pr", "1")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(f"result={expected}", result.stdout)
+                shown = self.run_cli(fixture, isolated, "status", "--pr", "1", "--json")
+                self.assertEqual(shown.returncode, 0, shown.stderr)
+                self.assertEqual(
+                    json.loads(shown.stdout)["prs"][0]["allocations"]["hosted"]["status"], "PROMISED"
+                )
+            sidecar = json.loads((root / "state.json.fixture-evidence.json").read_text(encoding="utf-8"))
+            self.assertEqual(sidecar["result_positions"]["1:hosted"], 4)
+            self.assertEqual(sidecar["evidence"], [])
+
+    def test_allocation_handoff_keeps_findings_and_next_parent_gates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "fixture.json"
+            isolated = root / "state.json"
+            payload = fixture_payload()
+            payload["review_results"] = {
+                "1": {"hosted": [{"status": "dry", "record_evidence": True, "checkpoint": "allocated-dry"}]}
+            }
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+            self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1", "2").returncode, 0)
+            grant = self.run_cli(
+                fixture, isolated, "decide", "allocation", "grant", "--pr", "1", "--channel", "hosted",
+                "--head", HEAD_1, "--reason", "one review then handoff",
+            )
+            self.assertEqual(grant.returncode, 0, grant.stderr)
+            first = self.run_cli(fixture, isolated, "run", "hosted", "--expect-pr", "1")
+            self.assertEqual(first.returncode, 0, first.stderr)
+
+            held = json.loads(json.dumps(payload))
+            held["evidence"]["1"]["hosted"] = [
+                {"pr": 1, "head": HEAD_1, "checkpoint": "unresolved-thread", "held": True}
+            ]
+            fixture.write_text(json.dumps(held), encoding="utf-8")
+            blocked = self.run_cli(
+                fixture, isolated, "decide", "allocation", "handoff", "--pr", "1", "--channel", "hosted",
+                "--head", HEAD_1, "--checkpoint", "allocated-dry", "--validation", "checks green",
+                "--reason", "attempted before thread resolution",
+            )
+            self.assertNotEqual(blocked.returncode, 0)
+            self.assertIn("obligations remain", blocked.stderr)
+            self.assertNotEqual(self.run_cli(fixture, isolated, "run", "hosted", "--expect-pr", "2").returncode, 0)
+
+            fixture.write_text(json.dumps(payload), encoding="utf-8")
+            handoff = self.run_cli(
+                fixture, isolated, "decide", "allocation", "handoff", "--pr", "1", "--channel", "hosted",
+                "--head", HEAD_1, "--checkpoint", "allocated-dry", "--validation", "checks green",
+                "--reason", "thread resolved and head validated",
+            )
+            self.assertEqual(handoff.returncode, 0, handoff.stderr)
+            next_pr = self.run_cli(fixture, isolated, "run", "hosted", "--expect-pr", "2")
+            self.assertEqual(next_pr.returncode, 0, next_pr.stderr)
+            self.assertIn("pr=2", next_pr.stdout)
+
+            moved = json.loads(json.dumps(payload))
+            moved["pull_requests"][1]["base_tip"] = "d" * 40
+            fixture.write_text(json.dumps(moved), encoding="utf-8")
+            blocked_next = self.run_cli(fixture, isolated, "run", "hosted", "--expect-pr", "2")
+            self.assertNotEqual(blocked_next.returncode, 0)
+            self.assertIn("PARENT_MOVED", blocked_next.stderr)
 
 
 if __name__ == "__main__":
