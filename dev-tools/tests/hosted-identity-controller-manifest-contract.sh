@@ -3761,6 +3761,10 @@ def service_consumer_documents():
                     "value": "/tls/tls.key",
                 },
                 {"name": "FIREMUD_GRPC_CA_CERT_PATH", "value": "/tls/ca.crt"},
+                {
+                    "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+                    "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
+                },
             ]
         elif service != "spring-cloud-gateway":
             container["env"] = [
