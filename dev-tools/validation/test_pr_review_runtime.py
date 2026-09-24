@@ -165,6 +165,8 @@ class RuntimeTest(unittest.TestCase):
         observer._histories[(42, "cli")] = [{"checkpoint": "stale-cli"}]
 
         with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(evidence, "git_common_dir", return_value=Path(directory)),
             patch.object(github, "fetch_pull_request", return_value=current_payload) as fetch,
             patch.object(live, "pull_request", return_value=snapshot),
             patch.object(observer, "_complete_trigger_paths", return_value=[]),
