@@ -4215,7 +4215,9 @@ PY
 rendered="$(mktemp)"
 helm_rendered="$(mktemp)"
 resolved_values="$(mktemp)"
-trap 'rm -f "$rendered" "$helm_rendered" "$resolved_values"' EXIT
+namespace_gate_values="$(mktemp)"
+namespace_gate_rendered="$(mktemp)"
+trap 'rm -f "$rendered" "$helm_rendered" "$resolved_values" "$namespace_gate_values" "$namespace_gate_rendered"' EXIT
 kubectl kustomize "$MANIFEST_DIR" >"$rendered"
 require_literal "$rendered" "kind: CustomResourceDefinition"
 require_literal "$rendered" "kind: ValidatingAdmissionPolicy"
@@ -4407,6 +4409,70 @@ for service in shared_services:
             f"Deployment/{service} shared grpc-tls must use firemud-grpc-tls, "
             f"found {secret_name!r}"
         )
+PY
+
+python3 - "$resolved_values" "$namespace_gate_values" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+values = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+services = values["previewStack"]["services"]
+by_name = {service["name"]: service for service in services}
+by_name["game-design-service"]["springProfile"] = False
+by_name["game-design-service"]["mountGrpcTls"] = True
+by_name["world-management-service"]["mountGrpcTls"] = False
+Path(sys.argv[2]).write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+
+if ! helm template hosted-identity-namespace-gates "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$namespace_gate_values" \
+  >"$namespace_gate_rendered"; then
+  fail "Helm chart render failed for gRPC namespace gate fixture"
+fi
+python3 - "$namespace_gate_rendered" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+
+def fail(message):
+    raise SystemExit(f"Helm gRPC namespace gate contract: {message}")
+
+
+deployments = {
+    document.get("metadata", {}).get("name"): document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict) and document.get("kind") == "Deployment"
+}
+
+
+def env_map(service):
+    deployment = deployments.get(service)
+    if deployment is None:
+        fail(f"Deployment/{service} is missing")
+    containers = deployment.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
+    container = next((item for item in containers if item.get("name") == service), None)
+    if container is None:
+        fail(f"container/{service} is missing")
+    return {entry.get("name"): entry for entry in container.get("env", []) if entry.get("name")}
+
+
+mounted_without_spring = env_map("game-design-service")
+namespace = mounted_without_spring.get("FIREMUD_GRPC_WORKLOAD_NAMESPACE")
+if namespace != {
+    "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+    "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
+}:
+    fail(f"mounted publication workload must derive namespace from metadata.namespace, found {namespace!r}")
+if "SPRING_PROFILES_ACTIVE" in mounted_without_spring:
+    fail("springProfile=false workload unexpectedly enables the Spring profile")
+
+without_mount = env_map("world-management-service")
+if "FIREMUD_GRPC_WORKLOAD_NAMESPACE" in without_mount:
+    fail("publication workload without a gRPC TLS mount unexpectedly declares namespace")
 PY
 
 echo "hosted identity controller manifest contract passed"

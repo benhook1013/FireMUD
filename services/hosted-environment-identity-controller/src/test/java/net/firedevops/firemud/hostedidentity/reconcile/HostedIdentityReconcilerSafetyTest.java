@@ -1499,9 +1499,19 @@ class HostedIdentityReconcilerSafetyTest {
       String publicationRole = HostedIdentityContract.grpcPublicationRole(workload);
       var persistedRole = new HostedEnvironmentIdentityStatus.RoleStatus();
       persistedRole.setRevision("sha256:" + "a".repeat(64));
-      persistedRole.setSourceGeneration(publicationRole.equals(role) ? 4L : 1L);
-      persistedRole.setSourceObjectGeneration(2L);
-      persistedRole.setSpkiSha256("b".repeat(64));
+      boolean rollbackTarget = publicationRole.equals(role);
+      String fixtureFingerprintDigit =
+          switch (workload) {
+            case "game-design-service" -> "6";
+            case "world-management-service" -> "7";
+            case "entity-management-service" -> "8";
+            case "game-logic-service" -> "9";
+            case "automation-scripting-service" -> "a";
+            default -> throw new IllegalArgumentException(workload);
+          };
+      persistedRole.setSourceGeneration(rollbackTarget ? 4L : 1L);
+      persistedRole.setSourceObjectGeneration(rollbackTarget ? 2L : 1L);
+      persistedRole.setSpkiSha256((rollbackTarget ? "b" : fixtureFingerprintDigit).repeat(64));
       persistedRole.setProvenance("cert-manager");
       persistedRole.setState("source-ready");
       publicationHistory.put(publicationRole, persistedRole);
@@ -1532,6 +1542,11 @@ class HostedIdentityReconcilerSafetyTest {
     HostedEnvironmentIdentityStatus blocked = result.getResource().orElseThrow().getStatus();
     assertEquals(HostedEnvironmentIdentityStatus.Phase.Blocked, blocked.getPhase());
     assertEquals("ReconciliationBlocked", blocked.getConditions().get(0).getReason());
+    assertEquals(
+        "certificate source generation rolled back for role "
+            + role
+            + " (source generation 3 < prior generation 4)",
+        blocked.getConditions().get(0).getMessage());
     assertEquals(4L, blocked.getGrpcPublication().get(role).getSourceGeneration());
     verifyNoInteractions(fixture.projections);
   }

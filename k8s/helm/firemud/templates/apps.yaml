@@ -169,12 +169,6 @@ spec:
             {{- if $service.springProfile }}
             - name: SPRING_PROFILES_ACTIVE
               value: "prod"
-            {{- if has $service.name (include "firemud.grpcWorkloadNames" $ | fromJsonArray) }}
-            - name: FIREMUD_GRPC_WORKLOAD_NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
-            {{- end }}
             {{- end }}
             - name: SPRING_FLYWAY_TABLE
               value: {{ printf "flyway_schema_history_%s" (default (replace "-" "_" $service.name) $service.schema) | quote }}
@@ -182,6 +176,10 @@ spec:
               value: {{ default (replace "-" "_" $service.name) $service.schema | quote }}
             {{- if $service.mountGrpcTls }}
             {{- if has $service.name (include "firemud.grpcWorkloadNames" $ | fromJsonArray) }}
+            - name: FIREMUD_GRPC_WORKLOAD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: FIREMUD_GRPC_CERT_CHAIN_PATH
               value: /tls/tls.crt
             - name: FIREMUD_GRPC_PRIVATE_KEY_PATH

@@ -1147,7 +1147,14 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
     String revision =
         SecretProjectionService.revisionForRole(material.role(), material.source().getData());
     if (material.sourceGeneration() < priorGeneration) {
-      throw new IllegalStateException("certificate source generation rolled back");
+      throw new IllegalStateException(
+          "certificate source generation rolled back for role "
+              + material.role()
+              + " (source generation "
+              + material.sourceGeneration()
+              + " < prior generation "
+              + priorGeneration
+              + ")");
     }
     if (material.sourceObjectGeneration() < priorObjectGeneration) {
       throw new IllegalStateException("certificate source object generation rolled back");
