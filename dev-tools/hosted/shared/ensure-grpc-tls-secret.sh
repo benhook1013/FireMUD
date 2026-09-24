@@ -53,9 +53,16 @@ workloads=(
 secret_exists() {
   local secret_name="$1"
   local lookup_result
+  local lookup_error
+  local lookup_error_message
 
-  if ! lookup_result="$(kubectl -n "$namespace" get secret "$secret_name" --ignore-not-found -o name 2>&1)"; then
-    echo "failed to look up Kubernetes Secret ${namespace}/${secret_name}: ${lookup_result}" >&2
+  lookup_error="$(mktemp "$cert_dir/secret-lookup.XXXXXX")"
+  if lookup_result="$(kubectl -n "$namespace" get secret "$secret_name" --ignore-not-found -o name 2>"$lookup_error")"; then
+    rm -f -- "$lookup_error"
+  else
+    lookup_error_message="$(<"$lookup_error")"
+    rm -f -- "$lookup_error"
+    echo "failed to look up Kubernetes Secret ${namespace}/${secret_name}: ${lookup_error_message}" >&2
     exit 1
   fi
   [[ -n "$lookup_result" ]]

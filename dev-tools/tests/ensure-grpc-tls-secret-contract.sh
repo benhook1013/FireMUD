@@ -114,7 +114,23 @@ case "$operation" in
     fi
     if [[ "${1:-}" == -o && "${2:-}" == name ]]; then
       printf 'lookup %s/%s\n' "$namespace" "$secret" >>"$KUBECTL_LOG"
-      printf 'secret/%s\n' "$secret"
+      case "${LOOKUP_MODE:-present}" in
+        warning-on-absent)
+          echo "Warning: secrets \"$secret\" not found" >&2
+          exit 0
+          ;;
+        failure)
+          echo "mock kubectl lookup failure for $secret" >&2
+          exit 7
+          ;;
+        present)
+          printf 'secret/%s\n' "$secret"
+          ;;
+        *)
+          echo "unexpected lookup mode: $LOOKUP_MODE" >&2
+          exit 2
+          ;;
+      esac
       exit 0
     fi
     [[ "${1:-}" == -o && "${2:-}" == jsonpath=* ]] || {
@@ -125,6 +141,9 @@ case "$operation" in
     if [[ "$expression" != *'{.metadata.name}'* || "$expression" != *'{.data.'* ]]; then
       echo "unexpected Secret snapshot expression: $expression" >&2
       exit 2
+    fi
+    if [[ "${LOOKUP_MODE:-present}" != present && "$secret" == firemud-grpc-tls ]]; then
+      exit 0
     fi
     workload=''
     fields=(ca.crt client.crt client.key)
@@ -209,12 +228,17 @@ run_helper() {
   local state="$3"
   local bash_env_file="${4:-}"
   local timeout_seconds="${5:-1}"
+  local lookup_mode="${6:-present}"
+  local cert_dir_parent="${7:-}"
+  local applied_secret_path="${8:-$applied_secret}"
   mkdir -p "$state"
   PATH="$mock_bin:$PATH" \
     BASH_ENV="$bash_env_file" \
+    LOOKUP_MODE="$lookup_mode" \
     DATA_DIR="$data_dir" \
     KUBECTL_LOG="$log" \
-    APPLIED_SECRET="$applied_secret" \
+    APPLIED_SECRET="$applied_secret_path" \
+    PREVIEW_GRPC_TLS_CERT_DIR="$cert_dir_parent" \
     PROJECTION_MODE="$mode" \
     STATE_DIR="$state" \
     CERTIFICATE_WAIT_TIMEOUT_SECONDS="$timeout_seconds" \
@@ -259,6 +283,44 @@ legacy_delete_line="$(grep -n '^delete dev/firemud-grpc-ca$' "$success_log" | cu
 [[ -n "$last_projection_line" && -n "$reapply_line" && -n "$legacy_delete_line" && \
   "$reapply_line" -gt "$last_projection_line" && "$legacy_delete_line" -gt "$reapply_line" ]] || {
   echo "the shared Secret was not reapplied before deleting the legacy runtime CA Secret" >&2
+  exit 1
+}
+
+# A successful Kubernetes warning for an absent Secret belongs on stderr and
+# must not make the lookup result appear present.
+warning_lookup_log="$fixture_dir/warning-lookup.log"
+if ! run_helper complete "$warning_lookup_log" "$fixture_dir/warning-lookup-state" \
+  "" 30 warning-on-absent "" "$fixture_dir/warning-lookup-applied-secret.yaml" \
+  >"$fixture_dir/warning-lookup.out" 2>"$fixture_dir/warning-lookup.err"; then
+  cat "$fixture_dir/warning-lookup.out" "$fixture_dir/warning-lookup.err" >&2
+  exit 1
+fi
+grep -Fq '5 distinct publication leaves' "$fixture_dir/warning-lookup.out" || {
+  echo "a warning on an absent Secret was treated as an existing Secret" >&2
+  exit 1
+}
+
+# A failed lookup must retain its diagnostic and remove the temporary stderr
+# capture along with the helper's certificate workspace.
+failed_lookup_cert_parent="$fixture_dir/failed-lookup-certs"
+mkdir -p "$failed_lookup_cert_parent"
+if run_helper complete "$fixture_dir/failed-lookup.log" "$fixture_dir/failed-lookup-state" \
+  "" 30 failure "$failed_lookup_cert_parent" >"$fixture_dir/failed-lookup.out" \
+  2>"$fixture_dir/failed-lookup.err"; then
+  echo "the helper continued after a failed Kubernetes Secret lookup" >&2
+  exit 1
+fi
+grep -Fq 'mock kubectl lookup failure for firemud-grpc-game-design-service' \
+  "$fixture_dir/failed-lookup.err" || {
+  echo "the helper did not report the Kubernetes Secret lookup error" >&2
+  cat "$fixture_dir/failed-lookup.err" >&2
+  exit 1
+}
+shopt -s nullglob
+failed_lookup_captures=("$failed_lookup_cert_parent"/*)
+shopt -u nullglob
+[[ "${#failed_lookup_captures[@]}" -eq 0 ]] || {
+  echo "the helper left temporary certificate or stderr capture files after lookup failure" >&2
   exit 1
 }
 
