@@ -1173,8 +1173,14 @@ class HostedIdentityReconcilerSafetyTest {
   @Test
   void retirementDeletesEverySecretAndCertificateFromCanonicalNameLists() {
     RetirementDeletionFixture fixture = new RetirementDeletionFixture();
+    List<String> secretNames = HostedIdentityScopeService.identitySecretNames(fixture.plan);
+    for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
+      String publicationSecretName = fixture.plan.grpcPublicationSourceSecretName(workload);
+      assertTrue(secretNames.contains(publicationSecretName));
+      assertTrue(secretNames.contains(publicationSecretName + "-previous"));
+    }
     List<Resource<Secret>> secrets =
-        HostedIdentityScopeService.identitySecretNames(fixture.plan).stream()
+        secretNames.stream()
             .map(name -> fixture.secret(name, HostedIdentityContract.GRPC_ROLE))
             .toList();
     List<Resource<GenericKubernetesResource>> certificates =
