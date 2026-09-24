@@ -68,13 +68,14 @@ public final class PublicationReadGuard {
     GrpcPeerIdentity peerIdentity = GrpcPeerIdentity.current();
     if (peerIdentity == null
         || !peerIdentity.isService(GAME_DESIGN_SERVICE)
-        || !peerIdentity.isInNamespace(trustedNamespace)) {
+        || !peerIdentity.isInNamespace(trustedNamespace)
+        || SessionContext.hasAuthenticatedCallerContext()) {
       throw denied();
     }
   }
 
   private AdminAuthorizationException denied() {
     return new AdminAuthorizationException(
-        "Publication read requires the authenticated Game Design workload peer identity");
+        "Publication read requires only the authenticated Game Design workload peer identity");
   }
 }
