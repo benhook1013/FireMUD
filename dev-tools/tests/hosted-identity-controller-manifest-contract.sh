@@ -460,6 +460,7 @@ consumer_schemas = [
 assert all(value == consumer_schemas[0] for value in consumer_schemas[1:])
 publication_roles = consumer_properties["grpcPublication"]
 assert publication_roles["type"] == "object"
+assert publication_roles["maxProperties"] == 5
 assert publication_roles["description"] == (
     "Per-publication workload certificate projection and rollout evidence only; "
     "this does not prove receiver-method authorization or authorize publication identity activation."
@@ -1267,6 +1268,15 @@ controller_secret_expression = next(
     if "system:serviceaccount:firemud-system:firemud-hosted-identity-controller" in expression
 )
 normalized_controller_secret_expression = " ".join(controller_secret_expression.split())
+namespace_controller_secret_expression = next(
+    expression
+    for expression in secret_expressions
+    if "system:serviceaccount:kube-system:namespace-controller" in expression
+)
+normalized_namespace_controller_secret_expression = " ".join(
+    namespace_controller_secret_expression.split()
+)
+assert "request.name.matches('^firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)(-previous)?$')" in normalized_namespace_controller_secret_expression
 assert "object.metadata.labels['firemud.dev/role'].startsWith('grpc-publication-')" in controller_secret_expression
 assert "object.metadata.name == 'firemud-grpc-tls'" in controller_secret_expression
 assert normalized_controller_secret_expression.count("request.name.startsWith(") == 3
@@ -1297,12 +1307,38 @@ def canonical_primary_name(namespace, name):
     }
 
 
+def namespace_controller_secret_delete_is_allowed(namespace, name):
+    if namespace not in {"dev", "dev-identity"} and not re.fullmatch(
+        r"pr-[1-9][0-9]{0,50}(-identity)?", namespace
+    ):
+        return False
+    if name in {"firemud-grpc-tls", "firemud-grpc-tls-previous"}:
+        return True
+    fixed_publication_secret = re.fullmatch(
+        r"firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)(-previous)?",
+        name,
+    )
+    return bool(fixed_publication_secret) or canonical_primary_name(namespace, name.removesuffix("-previous"))
+
+
 assert canonical_primary_name("dev-identity", "dev-tls")
 assert canonical_primary_name("pr-42", "pr-42-telnet-tls")
 assert canonical_primary_name("pr-42-identity", "pr-42-gateway-internal-ws")
 assert not canonical_primary_name("pr-42-identity", "pr-43-gateway-internal-ws")
 assert not canonical_primary_name("dev-identity", "pr-42-tls")
 assert canonical_primary_name("pr-42-identity", "pr-42-grpc-game-design-service")
+assert namespace_controller_secret_delete_is_allowed(
+    "pr-42", "firemud-grpc-game-design-service"
+)
+assert namespace_controller_secret_delete_is_allowed(
+    "pr-42", "firemud-grpc-game-design-service-previous"
+)
+assert not namespace_controller_secret_delete_is_allowed(
+    "pr-42", "pr-43-grpc-game-design-service"
+)
+assert not namespace_controller_secret_delete_is_allowed(
+    "pr-42", "pr-43-grpc-game-design-service-previous"
+)
 
 publication_workloads = (
     "game-design-service",

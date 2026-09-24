@@ -43,6 +43,91 @@ EXPECTED_HELM_CHART_LABEL = (
 class PreviewArtifactServiceValidationTest(unittest.TestCase):
     validator = VALIDATOR
 
+    def _publication_grpc_deployment(self):
+        return {
+            "kind": "Deployment",
+            "metadata": {"name": "game-design-service"},
+            "spec": {
+                "template": {
+                    "spec": {
+                        "serviceAccountName": "firemud-app",
+                        "containers": [
+                            {
+                                "name": "game-design-service",
+                                "env": [
+                                    {
+                                        "name": "FIREMUD_GRPC_CERT_CHAIN_PATH",
+                                        "value": "/tls/tls.crt",
+                                    },
+                                    {
+                                        "name": "FIREMUD_GRPC_PRIVATE_KEY_PATH",
+                                        "value": "/tls/tls.key",
+                                    },
+                                    {
+                                        "name": "FIREMUD_GRPC_CA_CERT_PATH",
+                                        "value": "/tls/ca.crt",
+                                    },
+                                ],
+                                "volumeMounts": [
+                                    {
+                                        "name": "grpc-tls",
+                                        "mountPath": "/tls",
+                                        "readOnly": True,
+                                    },
+                                    {
+                                        "name": "jwt-signing-keys",
+                                        "mountPath": "/var/run/secrets/firemud/jwt",
+                                        "readOnly": True,
+                                    },
+                                ],
+                            }
+                        ],
+                        "volumes": [
+                            {
+                                "name": "grpc-tls",
+                                "secret": {
+                                    "secretName": "firemud-grpc-game-design-service"
+                                },
+                            },
+                            {
+                                "name": "jwt-signing-keys",
+                                "secret": {"secretName": "jwt-signing-keys"},
+                            },
+                        ],
+                    }
+                }
+            },
+        }
+
+    def test_publication_grpc_consumers_reject_shared_client_identity_fallbacks(self):
+        cases = (
+            (
+                "shared grpc Secret",
+                lambda document: document["spec"]["template"]["spec"]["volumes"][
+                    0
+                ]["secret"].update({"secretName": "firemud-grpc-tls"}),
+                "unexpected grpc-tls source",
+            ),
+            (
+                "client certificate path",
+                lambda document: document["spec"]["template"]["spec"]["containers"][
+                    0
+                ]["env"][0].update({"value": "/tls/client.crt"}),
+                "must configure FIREMUD_GRPC_CERT_CHAIN_PATH as /tls/tls.crt",
+            ),
+        )
+        for name, mutate, expected_error in cases:
+            with self.subTest(name=name):
+                document = self._publication_grpc_deployment()
+                mutate(document)
+                with (
+                    patch.object(
+                        self.validator, "SERVICE_IMAGES", {"game-design-service"}
+                    ),
+                    self.assertRaisesRegex(ValueError, re.escape(expected_error)),
+                ):
+                    self.validator.validate_service_consumers([document], "pr-42")
+
     def _tcp_proxy_service(
         self, *, service_type="ClusterIP", port=2323, target_port=2323
     ):

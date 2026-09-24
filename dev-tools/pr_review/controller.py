@@ -378,6 +378,7 @@ def _latest_review(history: Sequence[Any]) -> Any | None:
         if (
             _field(item, "completed") is True
             and _field(item, "attributable") is True
+            and _field(item, "non_counting") is not True
             and _field(item, "provisional") is not True
             and _field(item, "correction") is not True
         ):
@@ -494,8 +495,6 @@ class ReviewController:
         """
 
         history = _history(self._evidence_provider, pr, channel)
-        if pr not in reconciliation.legacy_transition_prs:
-            return history
         selected = set(
             reconciliation.legacy_transition_fingerprints.get(pr, {}).get(channel.value, ())
         )
@@ -1545,7 +1544,13 @@ class ReviewController:
         parsed_history = [policy.Evidence.from_value(item) for item in history]
         effective_reviews: list[tuple[int, policy.Evidence]] = []
         for index, item in enumerate(parsed_history):
-            if item.correction or item.completed is not True or item.attributable is not True or item.provisional:
+            if (
+                item.non_counting
+                or item.correction
+                or item.completed is not True
+                or item.attributable is not True
+                or item.provisional
+            ):
                 continue
             if item.pr != pr:
                 raise ControllerError("decision evidence is attributable to another pull request")
@@ -1553,7 +1558,7 @@ class ReviewController:
         matching = [
             item
             for item in parsed_history
-            if item.checkpoint == checkpoint and item.pr == pr and not item.correction
+            if item.checkpoint == checkpoint and item.pr == pr and not item.correction and not item.non_counting
         ]
         if not matching:
             raise ControllerError("decision checkpoint is not attributable to the pull request")

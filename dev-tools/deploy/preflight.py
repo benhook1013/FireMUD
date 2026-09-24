@@ -902,29 +902,87 @@ def expected_player_secret_bindings(
 
 def publication_workload_secret_requirements(
     expected: dict[str, Any],
+    documents: list[dict[str, Any]],
 ) -> tuple[tuple[str, str, set[str]], ...]:
-    """Resolve publication leaf Secrets in the namespace owned by expected bindings."""
-    namespace = secret_binding_namespace(get(expected, "internalBindings.postgres.credentialsRef"))
-    if namespace is None:
+    """Resolve publication leaf Secrets from each rendered workload's grpc-tls volume."""
+    expected_namespace = secret_binding_namespace(
+        get(expected, "internalBindings.postgres.credentialsRef")
+    )
+    if expected_namespace is None:
         raise ValueError(
             "Cannot resolve publication workload Secret namespace from internalBindings.postgres.credentialsRef"
         )
-    return tuple(
-        (
-            f"firemud-grpc-{workload}",
-            namespace,
-            set(PUBLICATION_GRPC_SECRET_KEYS),
+    requirements = []
+    for workload in PUBLICATION_GRPC_WORKLOADS:
+        deployments = [
+            document
+            for document in documents
+            if document.get("kind") == "Deployment"
+            and isinstance(document.get("metadata"), dict)
+            and document["metadata"].get("name") == workload
+        ]
+        if len(deployments) != 1:
+            raise ValueError(
+                f"Expected exactly one rendered Deployment for publication workload {workload}; found {len(deployments)}"
+            )
+        deployment = deployments[0]
+        metadata = deployment["metadata"]
+        workload_namespace = metadata.get("namespace", expected_namespace)
+        if not isinstance(workload_namespace, str) or not workload_namespace.strip():
+            raise ValueError(
+                f"Rendered publication workload {workload} has an invalid namespace"
+            )
+        if workload_namespace != expected_namespace:
+            raise ValueError(
+                f"Rendered publication workload {workload} namespace {workload_namespace} "
+                f"does not match expected Secret namespace {expected_namespace}"
+            )
+        pod_spec = get(deployment, "spec.template.spec")
+        volumes = pod_spec.get("volumes") if isinstance(pod_spec, dict) else None
+        if not isinstance(volumes, list):
+            raise ValueError(
+                f"Rendered publication workload {workload} has no valid pod volumes list"
+            )
+        grpc_volumes = [
+            volume
+            for volume in volumes
+            if isinstance(volume, dict) and volume.get("name") == "grpc-tls"
+        ]
+        if len(grpc_volumes) != 1:
+            raise ValueError(
+                f"Expected exactly one grpc-tls volume for publication workload {workload}; found {len(grpc_volumes)}"
+            )
+        grpc_volume = grpc_volumes[0]
+        secret = grpc_volume.get("secret")
+        secret_name = secret.get("secretName") if isinstance(secret, dict) else None
+        if (
+            not isinstance(secret, dict)
+            or not isinstance(secret_name, str)
+            or not secret_name.strip()
+            or secret_name != secret_name.strip()
+            or set(grpc_volume) != {"name", "secret"}
+        ):
+            raise ValueError(
+                f"Rendered publication workload {workload} has a malformed grpc-tls Secret volume"
+            )
+        requirements.append(
+            (secret_name, workload_namespace, set(PUBLICATION_GRPC_SECRET_KEYS))
         )
-        for workload in PUBLICATION_GRPC_WORKLOADS
-    )
+    secret_names = [name for name, _, _ in requirements]
+    if len(set(secret_names)) != len(secret_names):
+        raise ValueError(
+            "Rendered publication workloads must mount five distinct grpc-tls Secrets"
+        )
+    return tuple(requirements)
 
 
 def publication_workload_secret_issues(
     expected: dict[str, Any],
+    documents: list[dict[str, Any]],
 ) -> list[str]:
     """Verify each required publication certificate Secret and its data keys."""
     try:
-        requirements = publication_workload_secret_requirements(expected)
+        requirements = publication_workload_secret_requirements(expected, documents)
     except ValueError as exc:
         return [str(exc)]
     issues = []
@@ -7156,7 +7214,9 @@ def main() -> int:
                 secret_check_failed = True
                 break
         if not secret_check_failed:
-            publication_secret_issues = publication_workload_secret_issues(expected_bindings)
+            publication_secret_issues = publication_workload_secret_issues(
+                expected_bindings, documents
+            )
             if publication_secret_issues:
                 has_required_failure = (
                     append_result(

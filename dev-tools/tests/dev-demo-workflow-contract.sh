@@ -38,7 +38,8 @@ contains_literal() {
   }
 }
 
-bash -n "$standalone_grpc_tls" "$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh"
+bash -n "$standalone_grpc_tls"
+bash -n "$certificate_generator"
 # This is a literal source snippet; expansion would change what the contract checks.
 # shellcheck disable=SC2016
 contains_literal "$certificate_generator" \

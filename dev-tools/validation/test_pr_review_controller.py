@@ -894,6 +894,88 @@ class ControllerTests(unittest.TestCase):
                         reason="must not dismiss unsafe legacy state",
                     )
 
+    def test_untrusted_non_counting_marker_does_not_hide_held_evidence_without_transition(self):
+        held = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "trigger:42",
+            "held": True,
+            "non_counting": True,
+        }
+        controller = self.make(
+            {1: pr(1, HEAD_1)}, {(1, "hosted"): [held]}, heads={"feature-1": HEAD_1}
+        )
+        controller.set_stack([1])
+
+        self.assertEqual(controller.status()["prs"][0]["channels"]["hosted"], "HELD")
+
+    def test_transitioned_legacy_history_cannot_override_modern_completion_or_decision_checkpoint(self):
+        old_head = "7" * 40
+        legacy_cli = {
+            "pr": 1,
+            "head": old_head,
+            "checkpoint": "legacy-cli",
+            "completed": True,
+            "attributable": True,
+            "anchored": False,
+            "corrected_state": True,
+            "accepted": 0,
+            "raw": 0,
+            "child_head": old_head,
+            "parent_identity": "develop",
+            "parent_head": "1" * 40,
+            "patch_id": "",
+        }
+        legacy_hosted = {
+            "pr": 1,
+            "head": old_head,
+            "checkpoint": "trigger-uncheckpointed:42",
+            "held": True,
+        }
+        evidence = {(1, "cli"): [legacy_cli], (1, "hosted"): [legacy_hosted]}
+        controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1})
+        controller.set_stack([1])
+        controller.decide_legacy_transition(
+            pr=1,
+            head=HEAD_1,
+            reason="retire unanchored history before modern review",
+        )
+
+        def modern(channel, index):
+            return {
+                "pr": 1,
+                "head": HEAD_1,
+                "checkpoint": f"{channel}-{index}",
+                "completed": True,
+                "attributable": True,
+                "anchored": True,
+                "corrected_state": True,
+                "accepted": 0,
+                "raw": 0,
+                "child_head": HEAD_1,
+                "parent_identity": "develop",
+                "parent_head": BASE,
+                "merge_base": BASE,
+                "patch_id": f"patch-{HEAD_1[:4]}",
+            }
+
+        for channel in ("hosted", "cli"):
+            modern_history = [modern(channel, index) for index in range(3)]
+            # Provider ordering can put an older transitioned observation after
+            # later evidence; the controller marker must still exclude it.
+            evidence[(1, channel)] = modern_history + [legacy_hosted if channel == "hosted" else legacy_cli]
+
+        channels = controller.status()["prs"][0]["channels"]
+        self.assertEqual(channels, {"hosted": "COMPLETE", "cli": "COMPLETE"})
+        result = controller.decide_policy(
+            pr=1,
+            head=HEAD_1,
+            checkpoint="hosted-2",
+            hosted_zero_useful=1,
+            reason="bind the override to the latest modern checkpoint",
+        )
+        self.assertEqual(result["policy_override"]["checkpoint"], "hosted-2")
+
     def test_legacy_transition_reauthorization_keeps_newer_review_counting_after_head_advance(self):
         old_head = "7" * 40
         old_parent = "1" * 40

@@ -9218,16 +9218,35 @@ spec.loader.exec_module(module)
 publication_expected = module.load_yaml(
     root / "design/operations/environments/production/expected-bindings.yaml"
 )
+publication_documents = [
+    {
+        "kind": "Deployment",
+        "metadata": {"name": workload, "namespace": "firemud"},
+        "spec": {
+            "template": {
+                "spec": {
+                    "volumes": [
+                        {
+                            "name": "grpc-tls",
+                            "secret": {"secretName": f"hobby-{workload}-identity"},
+                        }
+                    ]
+                }
+            }
+        },
+    }
+    for workload in module.PUBLICATION_GRPC_WORKLOADS
+]
 publication_requirements = module.publication_workload_secret_requirements(
-    publication_expected
+    publication_expected, publication_documents
 )
 expected_publication_names = {
-    f"firemud-grpc-{workload}"
+    f"hobby-{workload}-identity"
     for workload in module.PUBLICATION_GRPC_WORKLOADS
 }
 if {name for name, _, _ in publication_requirements} != expected_publication_names:
     raise SystemExit(
-        "publication Secret requirements do not cover exactly the five workload identities"
+        "publication Secret requirements do not follow the five rendered grpc-tls bindings"
     )
 if any(
     namespace != "firemud"
@@ -9238,21 +9257,111 @@ if any(
         "publication Secret requirements did not use expected-binding namespace and keys"
     )
 
+missing_workload_documents = publication_documents[:-1]
+if not any(
+    "Expected exactly one rendered Deployment" in issue
+    for issue in module.publication_workload_secret_issues(
+        publication_expected, missing_workload_documents
+    )
+):
+    raise SystemExit("missing publication workload did not fail closed")
+
+ambiguous_workload_documents = publication_documents + [
+    copy.deepcopy(publication_documents[0])
+]
+if not any(
+    "Expected exactly one rendered Deployment" in issue
+    for issue in module.publication_workload_secret_issues(
+        publication_expected, ambiguous_workload_documents
+    )
+):
+    raise SystemExit("ambiguous publication workload did not fail closed")
+
+missing_grpc_volume_documents = copy.deepcopy(publication_documents)
+missing_grpc_volume_documents[0]["spec"]["template"]["spec"]["volumes"] = []
+if not any(
+    "Expected exactly one grpc-tls volume" in issue
+    for issue in module.publication_workload_secret_issues(
+        publication_expected, missing_grpc_volume_documents
+    )
+):
+    raise SystemExit("missing grpc-tls volume did not fail closed")
+
+ambiguous_grpc_volume_documents = copy.deepcopy(publication_documents)
+ambiguous_grpc_volume_documents[0]["spec"]["template"]["spec"]["volumes"].append(
+    copy.deepcopy(ambiguous_grpc_volume_documents[0]["spec"]["template"]["spec"]["volumes"][0])
+)
+if not any(
+    "Expected exactly one grpc-tls volume" in issue
+    for issue in module.publication_workload_secret_issues(
+        publication_expected, ambiguous_grpc_volume_documents
+    )
+):
+    raise SystemExit("ambiguous grpc-tls volume did not fail closed")
+
+malformed_grpc_volume_documents = copy.deepcopy(publication_documents)
+malformed_grpc_volume_documents[0]["spec"]["template"]["spec"]["volumes"][0][
+    "secret"
+]["secretName"] = " "
+if not any(
+    "malformed grpc-tls Secret volume" in issue
+    for issue in module.publication_workload_secret_issues(
+        publication_expected, malformed_grpc_volume_documents
+    )
+):
+    raise SystemExit("malformed grpc-tls Secret volume did not fail closed")
+
+duplicate_secret_documents = copy.deepcopy(publication_documents)
+duplicate_secret_documents[1]["spec"]["template"]["spec"]["volumes"][0][
+    "secret"
+]["secretName"] = duplicate_secret_documents[0]["spec"]["template"]["spec"][
+    "volumes"
+][0]["secret"]["secretName"]
+if not any(
+    "five distinct grpc-tls Secrets" in issue
+    for issue in module.publication_workload_secret_issues(
+        publication_expected, duplicate_secret_documents
+    )
+):
+    raise SystemExit("reused publication grpc-tls Secret did not fail closed")
+
+namespace_mismatch_documents = copy.deepcopy(publication_documents)
+namespace_mismatch_documents[0]["metadata"]["namespace"] = "other-namespace"
+if not any(
+    "does not match expected Secret namespace" in issue
+    for issue in module.publication_workload_secret_issues(
+        publication_expected, namespace_mismatch_documents
+    )
+):
+    raise SystemExit("publication workload namespace mismatch did not fail closed")
+
 publication_success_fixture = {
     name: {"ca.crt", "tls.crt", "tls.key"}
     for name, _, _ in publication_requirements
 }
-with patch.object(
-    module,
-    "secret_keys_lookup_failure",
-    side_effect=lambda name, namespace, required: (
+queried_publication_secrets = []
+
+def publication_secret_lookup(name, namespace, required):
+    queried_publication_secrets.append((name, namespace, required))
+    return (
         (None, False, False)
         if required <= publication_success_fixture[name]
         else (f"Required Secret {namespace}/{name} is missing keys", True, False)
-    ),
+    )
+
+with patch.object(
+    module,
+    "secret_keys_lookup_failure",
+    side_effect=publication_secret_lookup,
 ):
-    if module.publication_workload_secret_issues(publication_expected):
+    if module.publication_workload_secret_issues(
+        publication_expected, publication_documents
+    ):
         raise SystemExit("complete publication Secret fixture failed preflight")
+if {name for name, _, _ in queried_publication_secrets} != expected_publication_names:
+    raise SystemExit("preflight did not query precisely the mounted publication Secrets")
+if any(namespace != "firemud" for _, namespace, _ in queried_publication_secrets):
+    raise SystemExit("preflight queried a publication Secret in the wrong namespace")
 
 missing_publication_name = publication_requirements[0][0]
 with patch.object(
@@ -9265,7 +9374,7 @@ with patch.object(
     ),
 ):
     missing_secret_issues = module.publication_workload_secret_issues(
-        publication_expected
+        publication_expected, publication_documents
     )
 if len(missing_secret_issues) != 1 or "Missing required Secret" not in missing_secret_issues[0]:
     raise SystemExit(
@@ -9281,7 +9390,9 @@ with patch.object(
         else (None, False, False)
     ),
 ):
-    missing_key_issues = module.publication_workload_secret_issues(publication_expected)
+    missing_key_issues = module.publication_workload_secret_issues(
+        publication_expected, publication_documents
+    )
 if len(missing_key_issues) != 1 or "missing keys: tls.key" not in missing_key_issues[0]:
     raise SystemExit(
         f"missing publication Secret key fixture did not fail closed: {missing_key_issues}"
