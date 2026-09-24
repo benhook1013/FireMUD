@@ -16,6 +16,8 @@ python3 -c 'import yaml' >/dev/null 2>&1 || {
 }
 python3 "$ROOT_DIR/dev-tools/validation/check_dev_demo_summary.py" "$ROOT_DIR"
 python3 "$ROOT_DIR/dev-tools/validation/test_check_dev_demo_summary.py"
+bash "$ROOT_DIR/dev-tools/tests/standalone-grpc-certificates-contract.sh"
+bash "$ROOT_DIR/dev-tools/tests/ensure-grpc-tls-secret-contract.sh"
 
 mode_resolver="$ROOT_DIR/dev-tools/hosted/shared/resolve-certificate-identity-mode.py"
 mode_action="$ROOT_DIR/.github/actions/resolve-certificate-identity-mode/action.yml"
@@ -29,6 +31,8 @@ annotator="$ROOT_DIR/dev-tools/hosted/dev-demo/annotate-dev-demo-namespace.sh"
 target_validator="$ROOT_DIR/dev-tools/hosted/dev-demo/validate-dev-demo-target.sh"
 runtime_rollout_waiter="$ROOT_DIR/dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh"
 standalone_grpc_tls="$ROOT_DIR/dev-tools/hosted/shared/ensure-grpc-tls-secret.sh"
+standalone_grpc_certificates="$ROOT_DIR/dev-tools/hosted/shared/ensure-standalone-grpc-certificates.sh"
+certificate_generator="$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh"
 
 contains_literal() {
   grep -Fq -- "$2" "$1" || {
@@ -37,14 +41,29 @@ contains_literal() {
   }
 }
 
-bash -n "$standalone_grpc_tls" "$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh"
+bash -n "$standalone_grpc_tls"
+bash -n "$standalone_grpc_certificates"
+bash -n "$certificate_generator"
+# This is a literal source snippet; expansion would change what the contract checks.
+# shellcheck disable=SC2016
+contains_literal "$certificate_generator" \
+  'openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$output_key"'
 # These are literal source snippets; expansion would change what the contract checks.
 # shellcheck disable=SC2016
 for required in \
-  'ca_secret="firemud-grpc-ca"' \
+  'local escaped_key="${key//./\\.}"' \
+  'get secret "$secret_name" --ignore-not-found -o name' \
+  'failed to look up Kubernetes Secret ${namespace}/${secret_name}' \
+  'jsonpath={.data.${escaped_key}}' \
   'if ! secret_exists "$shared_secret"; then' \
-  'if secret_exists "$ca_secret"; then' \
-  'if secret_exists "$secret_name"; then' \
+  'assert_certificate_unexpired "$shared_cert"' \
+  'shared gRPC TLS client certificate in Secret ${namespace}/${shared_secret}' \
+  'assert_certificate_unexpired "$workload_cert"' \
+  'cert-manager publication certificate in Secret' \
+  'cert-manager CA projection' \
+  'openssl verify -CAfile "$workload_ca" "$workload_cert"' \
+  'kubectl -n "$namespace" delete secret firemud-grpc-ca --ignore-not-found' \
+  'kubectl -n "$namespace" delete secret "${namespace}-grpc-${workload}" --ignore-not-found' \
   'URI:${expected_uri}' \
   '"${workload}.${namespace}.svc.cluster.local"' \
   'basic_constraints' \
@@ -53,15 +72,21 @@ for required in \
   'DigitalSignature,KeyEncipherment' \
   'extended_key_usage' \
   'TLSWebServerAuthentication,TLSWebClientAuthentication' \
-  'source_name="${namespace}-grpc-${workload}"' \
-  '--from-file=tls.crt="$workload_cert"' \
-  '--from-file=tls.key="$workload_key"' \
   '  game-design-service' \
   '  world-management-service' \
   '  entity-management-service' \
   '  game-logic-service' \
   '  automation-scripting-service'; do
   contains_literal "$standalone_grpc_tls" "$required"
+done
+for required in \
+  "INTERNAL_ISSUER='firemud-ca-issuer'" \
+  'runtime namespace must be dev or canonical pr-N' \
+  "secretName: firemud-grpc-\${workload}" \
+  'rotationPolicy: Always' \
+  "Certificate/\${certificate} did not become Ready" \
+  'certificates=ready'; do
+  contains_literal "$standalone_grpc_certificates" "$required"
 done
 python3 "$runner_label_validator" --self-test
 python3 "$runner_label_validator" "$workflow" "$reconciler"
@@ -71,6 +96,161 @@ python3 "$runner_label_validator" "$workflow" "$reconciler"
 }
 fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$fixture_dir"' EXIT
+
+# Exercise the certificate workspace setup and EXIT cleanup directly. A caller
+# supplied root may contain unrelated files, so only the private child created
+# for this invocation may be removed.
+cert_workspace_setup="$fixture_dir/cert-workspace-setup.sh"
+{
+  awk '
+    /^provided_cert_dir=/ { capture = 1 }
+    /^workloads=\(/ { capture = 0 }
+    capture { print }
+  ' "$standalone_grpc_tls"
+  cat <<'EOF'
+printf 'generated certificate material\n' >"$cert_dir/generated.crt"
+printf '%s\n' "$cert_dir" >"$CERT_DIR_CAPTURE"
+EOF
+} >"$cert_workspace_setup"
+cert_workspace_root="$fixture_dir/caller-owned-certs"
+mkdir -p "$cert_workspace_root"
+printf 'preserve me\n' >"$cert_workspace_root/unrelated.txt"
+CERT_DIR_CAPTURE="$fixture_dir/supplied-cert-dir" \
+  PREVIEW_GRPC_TLS_CERT_DIR="$cert_workspace_root" bash "$cert_workspace_setup"
+supplied_cert_dir="$(<"$fixture_dir/supplied-cert-dir")"
+[[ -d "$cert_workspace_root" && "$(<"$cert_workspace_root/unrelated.txt")" == 'preserve me' ]] || {
+  echo "certificate cleanup removed or changed the caller-supplied root" >&2
+  exit 1
+}
+[[ ! -e "$supplied_cert_dir" && "$(find "$cert_workspace_root" -mindepth 1 -maxdepth 1 | wc -l)" -eq 1 ]] || {
+  echo "certificate cleanup did not remove only its private child directory" >&2
+  exit 1
+}
+CERT_DIR_CAPTURE="$fixture_dir/default-cert-dir" \
+  PREVIEW_GRPC_TLS_CERT_DIR='' bash "$cert_workspace_setup"
+default_cert_dir="$(<"$fixture_dir/default-cert-dir")"
+[[ ! -e "$default_cert_dir" ]] || {
+  echo "certificate cleanup left the default temporary directory behind" >&2
+  exit 1
+}
+
+# A missing Secret is an ordinary false result. Lookup errors must stop the
+# caller so it cannot take the bootstrap generation/apply branch.
+secret_lookup_test="$fixture_dir/test-secret-exists.sh"
+{
+  awk '
+    /^secret_exists\(\)/ { capture = 1 }
+    /^read_secret_file\(\)/ { capture = 0 }
+    capture { print }
+  ' "$standalone_grpc_tls"
+  cat <<'EOF'
+namespace=contract
+lookup_mode="$1"
+generation_or_apply_marker="$2"
+kubectl() {
+  [[ "$*" == "-n contract get secret target --ignore-not-found -o name" ]] || {
+    echo "unexpected kubectl arguments: $*" >&2
+    return 2
+  }
+  case "$lookup_mode" in
+    missing) return 0 ;;
+    present) printf '%s\n' secret/target ;;
+    denied) echo 'Error from server (Forbidden): secrets is forbidden' >&2; return 1 ;;
+    transport) echo 'Unable to connect to the server: connection refused' >&2; return 1 ;;
+  esac
+}
+
+generation_or_apply_ran=false
+if secret_exists target; then
+  :
+else
+  : >"$generation_or_apply_marker"
+  generation_or_apply_ran=true
+fi
+expected_generation_or_apply=false
+[[ "$lookup_mode" == missing ]] && expected_generation_or_apply=true
+[[ "$generation_or_apply_ran" == "$expected_generation_or_apply" ]]
+EOF
+} >"$secret_lookup_test"
+missing_generation_or_apply_marker="$fixture_dir/missing-generation-or-apply"
+bash "$secret_lookup_test" missing "$missing_generation_or_apply_marker"
+[[ -f "$missing_generation_or_apply_marker" ]] || {
+  echo "Missing Secret did not enter the generation/apply branch" >&2
+  exit 1
+}
+present_generation_or_apply_marker="$fixture_dir/present-generation-or-apply"
+bash "$secret_lookup_test" present "$present_generation_or_apply_marker"
+[[ ! -e "$present_generation_or_apply_marker" ]] || {
+  echo "Present Secret incorrectly entered the generation/apply branch" >&2
+  exit 1
+}
+for lookup_failure in denied transport; do
+  lookup_failure_marker="$fixture_dir/${lookup_failure}-generation-or-apply"
+  if lookup_output="$(bash "$secret_lookup_test" "$lookup_failure" "$lookup_failure_marker" 2>&1)"; then
+    echo "Secret lookup unexpectedly continued after ${lookup_failure} failure" >&2
+    exit 1
+  fi
+  [[ ! -e "$lookup_failure_marker" ]] || {
+    echo "Secret lookup entered the generation/apply branch after ${lookup_failure} failure" >&2
+    exit 1
+  }
+  [[ "$lookup_output" == *"failed to look up Kubernetes Secret contract/target"* ]] || {
+    echo "Secret lookup diagnostic omitted the target for ${lookup_failure} failure" >&2
+    printf '%s\n' "$lookup_output" >&2
+    exit 1
+  }
+  case "$lookup_failure" in
+    denied) expected_lookup_error='Forbidden): secrets is forbidden' ;;
+    transport) expected_lookup_error='connection refused' ;;
+  esac
+  [[ "$lookup_output" == *"$expected_lookup_error"* ]] || {
+    echo "Secret lookup diagnostic omitted kubectl's ${lookup_failure} error" >&2
+    printf '%s\n' "$lookup_output" >&2
+    exit 1
+  }
+done
+
+# Exercise the actual Secret reader with a mocked kubectl and verify the dotted
+# Secret keys are passed as literal escaped JSONPath fields.
+secret_reader="$fixture_dir/read-secret-file.sh"
+{
+  awk '
+    /^read_secret_file\(\)/ { capture = 1 }
+    /^apply_secret\(\)/ { capture = 0 }
+    capture { print }
+  ' "$standalone_grpc_tls"
+  cat <<'EOF'
+namespace=namespace
+kubectl() {
+  local output_format="${7:-}"
+  printf '%s\n' "$output_format" >>"$MOCK_KUBECTL_LOG"
+  [[ "$output_format" == jsonpath=* ]] || return 1
+  printf 'cHJvb2Y='
+}
+
+for secret_key in ca.crt tls.crt tls.key; do
+  read_secret_file secret "$secret_key" "$OUTPUT_DIR/$secret_key"
+done
+EOF
+} >"$secret_reader"
+MOCK_KUBECTL_LOG="$fixture_dir/kubectl-jsonpaths.log" OUTPUT_DIR="$fixture_dir" \
+  bash "$secret_reader"
+expected_jsonpaths=(
+  'jsonpath={.data.ca\.crt}'
+  'jsonpath={.data.tls\.crt}'
+  'jsonpath={.data.tls\.key}'
+)
+mapfile -t actual_jsonpaths <"$fixture_dir/kubectl-jsonpaths.log"
+[[ "${actual_jsonpaths[*]}" == "${expected_jsonpaths[*]}" ]] || {
+  echo "Secret reader did not request literal dotted keys: ${actual_jsonpaths[*]}" >&2
+  exit 1
+}
+for secret_key in ca.crt tls.crt tls.key; do
+  [[ "$(<"$fixture_dir/$secret_key")" == proof ]] || {
+    echo "Secret reader did not decode mocked key $secret_key" >&2
+    exit 1
+  }
+done
 
 # Exercise the standalone reuse validator with one canonical leaf and three
 # malformed profiles. This sources only the target helper functions so the
@@ -89,6 +269,21 @@ echo "dev-demo certificate fixture: generating canonical workload certificate" >
   "$certificate_fixture_dir/ca.crt" "$certificate_fixture_dir/ca.key" \
   "$certificate_fixture_dir/valid.crt" "$certificate_fixture_dir/valid.key" \
   pr-42 game-design-service
+key_pem_label="$(head -n 1 "$certificate_fixture_dir/valid.key")"
+[[ "$key_pem_label" == '-----BEGIN PRIVATE KEY-----' ]] || {
+  echo "generated publication key is not PKCS#8: $key_pem_label" >&2
+  exit 1
+}
+key_profile="$(openssl pkey -in "$certificate_fixture_dir/valid.key" -text -noout 2>/dev/null \
+  | head -n 1)"
+if ! grep -Eq '^Private-Key: \(2048 bit(, [0-9]+ primes)?\)$' <<<"$key_profile"; then
+  echo "generated publication key does not match the RSA 2048 profile: $key_profile" >&2
+  exit 1
+fi
+openssl pkey -in "$certificate_fixture_dir/valid.key" -check -noout >/dev/null 2>&1 || {
+  echo "generated publication key failed OpenSSL key validation" >&2
+  exit 1
+}
 echo "dev-demo certificate fixture: canonical workload certificate generated" >&2
 
 make_profile_certificate() {
@@ -140,6 +335,7 @@ make_profile_certificate \
 make_profile_certificate \
   missing-eku critical,CA:false critical,digitalSignature,keyEncipherment serverAuth
 echo "dev-demo certificate fixture: malformed profiles generated" >&2
+printf 'not a certificate\n' >"$certificate_fixture_dir/unparseable.crt"
 
 validator_source="$certificate_fixture_dir/validate-workload-certificate.sh"
 {
@@ -149,12 +345,134 @@ validator_source="$certificate_fixture_dir/validate-workload-certificate.sh"
     capture { print }
   ' "$standalone_grpc_tls"
   awk '
+    /^assert_certificate_unexpired\(\)/ { capture = 1 }
+    /^validate_workload_certificate\(\)/ { capture = 0 }
+    capture { print }
+  ' "$standalone_grpc_tls"
+  awk '
     /^validate_workload_certificate\(\)/ { capture = 1 }
     /^shared_ca=/ { capture = 0 }
     capture { print }
   ' "$standalone_grpc_tls"
 } >"$validator_source"
 echo "dev-demo certificate fixture: validator extracted" >&2
+
+expiry_helper_source="$certificate_fixture_dir/validate-certificate-expiry.sh"
+awk '
+  /^assert_certificate_unexpired\(\)/ { capture = 1 }
+  /^validate_workload_certificate\(\)/ { capture = 0 }
+  capture { print }
+' "$standalone_grpc_tls" >"$expiry_helper_source"
+expiry_fixture_dir="$certificate_fixture_dir/expiry"
+mkdir -p "$expiry_fixture_dir/newcerts"
+: >"$expiry_fixture_dir/index.txt"
+printf '1000\n' >"$expiry_fixture_dir/serial"
+cat >"$expiry_fixture_dir/openssl.cnf" <<EOF
+[ ca ]
+default_ca = CA_default
+[ CA_default ]
+database = $expiry_fixture_dir/index.txt
+serial = $expiry_fixture_dir/serial
+new_certs_dir = $expiry_fixture_dir/newcerts
+private_key = $certificate_fixture_dir/ca.key
+certificate = $certificate_fixture_dir/ca.crt
+default_md = sha256
+policy = policy_any
+[ policy_any ]
+commonName = supplied
+[ v3_ca ]
+basicConstraints = critical,CA:true,pathlen:0
+keyUsage = critical,keyCertSign,cRLSign
+[ v3_leaf ]
+basicConstraints = critical,CA:false
+keyUsage = critical,digitalSignature,keyEncipherment
+extendedKeyUsage = serverAuth,clientAuth
+EOF
+openssl req -newkey rsa:2048 -nodes \
+  -keyout "$expiry_fixture_dir/expired-ca.key" \
+  -out "$expiry_fixture_dir/expired-ca.csr" \
+  -subj '/CN=expired-contract-CA' >/dev/null 2>&1
+openssl ca -selfsign -batch -config "$expiry_fixture_dir/openssl.cnf" \
+  -keyfile "$expiry_fixture_dir/expired-ca.key" \
+  -in "$expiry_fixture_dir/expired-ca.csr" \
+  -out "$expiry_fixture_dir/expired-ca.crt" \
+  -startdate 20200101000000Z -enddate 20200102000000Z \
+  -extensions v3_ca >/dev/null 2>&1
+openssl req -newkey rsa:2048 -nodes \
+  -keyout "$expiry_fixture_dir/expired-leaf.key" \
+  -out "$expiry_fixture_dir/expired-leaf.csr" \
+  -subj '/CN=expired-contract-leaf' >/dev/null 2>&1
+openssl ca -batch -config "$expiry_fixture_dir/openssl.cnf" \
+  -in "$expiry_fixture_dir/expired-leaf.csr" \
+  -out "$expiry_fixture_dir/expired-leaf.crt" \
+  -startdate 20200101000000Z -enddate 20200102000000Z \
+  -extensions v3_leaf >/dev/null 2>&1
+
+expect_expired_certificate() {
+  local description="$1"
+  local rotation_secrets="$2"
+  local expected_message="$3"
+  local certificate="$4"
+  local output
+  if output="$(
+    {
+      # shellcheck disable=SC1090 # The test extracts the exact expiry helper body.
+      source "$expiry_helper_source"
+      assert_certificate_unexpired "$certificate" "$description" "$rotation_secrets"
+    } 2>&1
+  )"; then
+    echo "accepted expired certificate for ${description}" >&2
+    exit 1
+  fi
+  [[ "$output" == *"$expected_message"* ]] || {
+    echo "expired certificate diagnostic lacked: ${expected_message}" >&2
+    printf '%s\n' "$output" >&2
+    exit 1
+  }
+}
+
+expect_expired_certificate \
+  'cert-manager CA projection in Secret pr-42/firemud-grpc-game-design-service' \
+  'pr-42/firemud-grpc-game-design-service' \
+  'delete these retained Secrets before rerunning: pr-42/firemud-grpc-game-design-service' \
+  "$expiry_fixture_dir/expired-ca.crt"
+expect_expired_certificate \
+  'shared gRPC TLS client certificate in Secret pr-42/firemud-grpc-tls' \
+  'pr-42/firemud-grpc-tls pr-42/firemud-grpc-game-design-service' \
+  'delete these retained Secrets before rerunning: pr-42/firemud-grpc-tls pr-42/firemud-grpc-game-design-service' \
+  "$expiry_fixture_dir/expired-leaf.crt"
+expect_expired_certificate \
+  'cert-manager publication certificate in Secret pr-42/firemud-grpc-game-design-service' \
+  'pr-42/firemud-grpc-game-design-service' \
+  'delete these retained Secrets before rerunning: pr-42/firemud-grpc-game-design-service' \
+  "$expiry_fixture_dir/expired-leaf.crt"
+python3 - "$standalone_grpc_tls" <<'PY'
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+ca_expiry = source.index('assert_certificate_unexpired "$workload_ca"')
+leaf_expiry = source.index('assert_certificate_unexpired "$workload_cert"')
+leaf_verification = source.index(
+    'openssl verify -CAfile "$workload_ca" "$workload_cert"'
+)
+shared_branch_start = source.index('if secret_exists "$shared_secret"; then')
+shared_branch_end = source.index('\nelse\n', shared_branch_start)
+shared_branch = source[shared_branch_start:shared_branch_end]
+shared_cert_parse = shared_branch.index('openssl x509 -in "$shared_cert" -noout')
+shared_cert_expiry = shared_branch.index('assert_certificate_unexpired "$shared_cert"')
+shared_key_match = shared_branch.index('assert_key_matches_certificate "$shared_cert" "$shared_key"')
+assert ca_expiry < leaf_verification
+assert leaf_expiry < leaf_verification
+assert shared_cert_parse < shared_cert_expiry < shared_key_match
+assert 'shared gRPC TLS client certificate in Secret ' in shared_branch
+assert 'shared_rotation_secrets' in shared_branch
+assert 'read_secret_file "$ca_secret" ca.key' not in source
+assert '--from-file=ca.key=' not in source
+assert 'openssl genrsa -out "$source_key"' not in source
+assert 'kubectl -n "$namespace" delete secret firemud-grpc-ca --ignore-not-found' in source
+assert source.index('delete secret firemud-grpc-ca') > leaf_verification
+PY
 
 if ! (
   # shellcheck disable=SC2030 # The extracted validator reads this subshell-local namespace.
@@ -174,6 +492,8 @@ echo "dev-demo certificate fixture: canonical workload certificate accepted" >&2
 expect_invalid_workload_profile() {
   local name="$1"
   local expected_message="$2"
+  local certificate="${3:-$certificate_fixture_dir/${name}.crt}"
+  local key="${4:-$certificate_fixture_dir/${name}.key}"
   local output
   if output="$(
     {
@@ -182,8 +502,8 @@ expect_invalid_workload_profile() {
       # shellcheck disable=SC1090 # The test extracts the exact target function body.
       source "$validator_source"
       validate_workload_certificate \
-        "$certificate_fixture_dir/${name}.crt" \
-        "$certificate_fixture_dir/${name}.key" \
+        "$certificate" \
+        "$key" \
         game-design-service
     } 2>&1
   )"; then
@@ -200,6 +520,10 @@ expect_invalid_workload_profile() {
 expect_invalid_workload_profile ca-leaf 'workload certificate must be a non-CA leaf'
 expect_invalid_workload_profile missing-key-usage 'key usage must be exactly digitalSignature/keyEncipherment'
 expect_invalid_workload_profile missing-eku 'EKU must be exactly serverAuth/clientAuth'
+expect_invalid_workload_profile unparseable 'workload certificate could not be parsed' \
+  "$certificate_fixture_dir/unparseable.crt" "$certificate_fixture_dir/valid.key"
+expect_invalid_workload_profile mismatched-key 'certificate and private key do not match' \
+  "$certificate_fixture_dir/valid.crt" "$certificate_fixture_dir/ca.key"
 echo "dev-demo certificate fixture: malformed profiles rejected" >&2
 
 expect_mode() {
@@ -632,6 +956,13 @@ if runtime_kubeconfig.get("with") != {
     "export-to-github-env": "false",
 }:
     raise SystemExit("dev-demo runtime deployer action does not use the scoped runtime secret")
+standalone_certificate_writer = deploy_by_name["Write standalone certificate-writer credentials"]
+if standalone_certificate_writer.get("with") != {
+    "content": "${{ secrets.TRUSTED_HOSTED_STANDALONE_CERTIFICATE_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/dev-demo-standalone-certificate-writer.kubeconfig",
+    "export-to-github-env": "false",
+}:
+    raise SystemExit("dev-demo standalone certificate writer does not use the scoped certificate secret")
 requester_writer = deploy_by_name["Write hosted identity requester kubeconfig"]
 if requester_writer.get("uses") != "./.github/actions/write-kubeconfig":
     raise SystemExit("dev-demo Active requester must use the canonical kubeconfig action")
@@ -661,6 +992,8 @@ expected_deploy_kubeconfigs = {
     "Apply fixed dev-demo Active request": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
     "Wait for all controller identity projections": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Ensure GHCR pull secret exists": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Prepare dev-demo shared gRPC TLS secret": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
+    "Ensure dev-demo standalone gRPC certificates": "${{ runner.temp }}/dev-demo-standalone-certificate-writer.kubeconfig",
     "Ensure dev-demo gRPC TLS secret exists": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Validate dev-demo chart render": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Deploy dev-demo release": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
@@ -684,6 +1017,7 @@ expected_dev_demo_cleanup = (
     'rm -f -- \\\n'
     '  "$RUNNER_TEMP/dev-demo-namespace-manager.kubeconfig" \\\n'
     '  "$RUNNER_TEMP/dev-demo-runtime.kubeconfig" \\\n'
+    '  "$RUNNER_TEMP/dev-demo-standalone-certificate-writer.kubeconfig" \\\n'
     '  "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"\n'
 )
 if dev_demo_cleanup.get("run") != expected_dev_demo_cleanup:

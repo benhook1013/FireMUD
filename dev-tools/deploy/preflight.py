@@ -7,6 +7,7 @@ import hashlib
 import itertools
 import json
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -138,6 +139,16 @@ GRPC_TLS_PATH_NAMES = (
     "FIREMUD_GRPC_PRIVATE_KEY_PATH",
     "FIREMUD_GRPC_CA_CERT_PATH",
 )
+PUBLICATION_GRPC_WORKLOADS = (
+    "game-design-service",
+    "world-management-service",
+    "entity-management-service",
+    "game-logic-service",
+    "automation-scripting-service",
+)
+PUBLICATION_GRPC_LEAF_SECRET_KEYS = {"tls.crt", "tls.key", "ca.crt"}
+PUBLICATION_GRPC_TRUST_SECRET_NAME = "firemud-grpc-tls"
+PUBLICATION_GRPC_TRUST_SECRET_KEYS = {"ca.crt"}
 BASE_SECRET_COMPLIANCE_CLASSES = frozenset(
     {
         "jwt-signing-keys-jwks",
@@ -890,6 +901,391 @@ def expected_player_secret_bindings(
             "internalBindings.jwt.jwksRef",
         )
     )
+
+
+def bridge_certificate_secret_issues(expected: dict[str, Any]) -> list[str]:
+    """Check the live key-bearing Secrets selected by the expected bridge certificate refs."""
+    binding_paths = (
+        "internalBindings.certificates.gatewayInternalWsListenerRef",
+        "internalBindings.certificates.tcpProxyBridgeClientRef",
+    )
+    required_keys = {"tls.crt", "tls.key", "ca.crt"}
+    issues = []
+    for binding_path in binding_paths:
+        parsed_ref = parse_binding_ref(get(expected, binding_path))
+        if (
+            parsed_ref is None
+            or parsed_ref[0] != "cert-manager"
+            or not parsed_ref[1]
+            or len(parsed_ref[2]) != 1
+            or not parsed_ref[2][0]
+        ):
+            issues.append(
+                "Cannot resolve required Secret binding from expected bindings: "
+                + binding_path
+            )
+            continue
+        _, namespace, segments = parsed_ref
+        issue, _, _ = secret_keys_lookup_failure(
+            segments[0], namespace, required_keys
+        )
+        if issue is not None:
+            issues.append(f"{binding_path}: {issue}")
+    return issues
+
+
+def publication_workload_secret_requirements(
+    expected: dict[str, Any],
+    documents: list[dict[str, Any]],
+) -> tuple[tuple[str, str, set[str]], ...]:
+    """Resolve each publication leaf Secret and its shared CA trust Secret."""
+    expected_namespace = secret_binding_namespace(
+        get(expected, "internalBindings.postgres.credentialsRef")
+    )
+    if expected_namespace is None:
+        raise ValueError(
+            "Cannot resolve publication workload Secret namespace from internalBindings.postgres.credentialsRef"
+        )
+    workload_mtls_ref = parse_binding_ref(
+        get(expected, "internalBindings.certificates.workloadMtlsRef")
+    )
+    if (
+        workload_mtls_ref is None
+        or workload_mtls_ref[0] != "cert-manager"
+        or not workload_mtls_ref[1]
+        or len(workload_mtls_ref[2]) != 1
+        or not workload_mtls_ref[2][0]
+    ):
+        raise ValueError(
+            "Cannot resolve workload mTLS Secret name from "
+            "internalBindings.certificates.workloadMtlsRef"
+        )
+    workload_mtls_secret_name = workload_mtls_ref[2][0]
+    requirements: list[tuple[str, str, set[str]]] = []
+    leaf_secret_names: list[str] = []
+    for workload in PUBLICATION_GRPC_WORKLOADS:
+        deployments = [
+            document
+            for document in documents
+            if document.get("kind") == "Deployment"
+            and isinstance(document.get("metadata"), dict)
+            and document["metadata"].get("name") == workload
+        ]
+        if len(deployments) != 1:
+            raise ValueError(
+                f"Expected exactly one rendered Deployment for publication workload {workload}; found {len(deployments)}"
+            )
+        deployment = deployments[0]
+        metadata = deployment["metadata"]
+        workload_namespace = metadata.get("namespace", expected_namespace)
+        if not isinstance(workload_namespace, str) or not workload_namespace.strip():
+            raise ValueError(
+                f"Rendered publication workload {workload} has an invalid namespace"
+            )
+        if workload_namespace != expected_namespace:
+            raise ValueError(
+                f"Rendered publication workload {workload} namespace {workload_namespace} "
+                f"does not match expected Secret namespace {expected_namespace}"
+            )
+        pod_spec = get(deployment, "spec.template.spec")
+        volumes = pod_spec.get("volumes") if isinstance(pod_spec, dict) else None
+        if not isinstance(volumes, list):
+            raise TypeError(
+                f"Rendered publication workload {workload} has no valid pod volumes list"
+            )
+        grpc_volumes = [
+            volume
+            for volume in volumes
+            if isinstance(volume, dict) and volume.get("name") == "grpc-tls"
+        ]
+        trust_volumes = [
+            volume
+            for volume in volumes
+            if isinstance(volume, dict) and volume.get("name") == "grpc-trust"
+        ]
+        if len(grpc_volumes) != 1:
+            raise ValueError(
+                f"Expected exactly one grpc-tls volume for publication workload {workload}; found {len(grpc_volumes)}"
+            )
+        if len(trust_volumes) != 1:
+            raise ValueError(
+                f"Expected exactly one grpc-trust volume for publication workload {workload}; found {len(trust_volumes)}"
+            )
+        grpc_volume = grpc_volumes[0]
+        secret = grpc_volume.get("secret")
+        secret_name = secret.get("secretName") if isinstance(secret, dict) else None
+        expected_leaf_items = {("tls.crt", "tls.crt"), ("tls.key", "tls.key")}
+        leaf_items = secret.get("items") if isinstance(secret, dict) else None
+        if (
+            not isinstance(secret, dict)
+            or not isinstance(secret_name, str)
+            or not secret_name.strip()
+            or secret_name != secret_name.strip()
+            or not set(secret).issubset({"secretName", "defaultMode", "items"})
+            or set(grpc_volume) != {"name", "secret"}
+            or not isinstance(leaf_items, list)
+            or len(leaf_items) != len(expected_leaf_items)
+            or any(
+                not isinstance(item, dict)
+                or set(item) != {"key", "path"}
+                or not isinstance(item.get("key"), str)
+                or not isinstance(item.get("path"), str)
+                for item in leaf_items
+            )
+            or {
+                (item["key"], item["path"])
+                for item in leaf_items
+                if isinstance(item, dict)
+            }
+            != expected_leaf_items
+        ):
+            raise ValueError(
+                f"Rendered publication workload {workload} has a malformed grpc-tls Secret volume"
+            )
+        if secret_name == workload_mtls_secret_name:
+            raise ValueError(
+                f"Rendered publication workload {workload} grpc-tls Secret must be distinct from "
+                f"the workload mTLS Secret {workload_mtls_secret_name}"
+            )
+        if secret_name == PUBLICATION_GRPC_TRUST_SECRET_NAME:
+            raise ValueError(
+                f"Rendered publication workload {workload} grpc-tls Secret must not use the "
+                "shared trust Secret firemud-grpc-tls"
+            )
+
+        trust_volume = trust_volumes[0]
+        trust_secret = trust_volume.get("secret")
+        trust_secret_name = (
+            trust_secret.get("secretName") if isinstance(trust_secret, dict) else None
+        )
+        expected_trust_items = {("ca.crt", "ca.crt")}
+        trust_items = trust_secret.get("items") if isinstance(trust_secret, dict) else None
+        if (
+            not isinstance(trust_secret, dict)
+            or trust_secret_name != PUBLICATION_GRPC_TRUST_SECRET_NAME
+            or not set(trust_secret).issubset({"secretName", "defaultMode", "items"})
+            or set(trust_volume) != {"name", "secret"}
+            or not isinstance(trust_items, list)
+            or len(trust_items) != len(expected_trust_items)
+            or any(
+                not isinstance(item, dict)
+                or set(item) != {"key", "path"}
+                or not isinstance(item.get("key"), str)
+                or not isinstance(item.get("path"), str)
+                for item in trust_items
+            )
+            or {
+                (item["key"], item["path"])
+                for item in trust_items
+                if isinstance(item, dict)
+            }
+            != expected_trust_items
+        ):
+            raise ValueError(
+                f"Rendered publication workload {workload} requires the shared CA-only "
+                f"Secret {PUBLICATION_GRPC_TRUST_SECRET_NAME} in its grpc-trust volume"
+            )
+
+        containers = pod_spec.get("containers")
+        if not isinstance(containers, list):
+            raise TypeError(
+                f"Rendered publication workload {workload} has no valid pod containers list"
+            )
+        workload_containers = [
+            container
+            for container in containers
+            if isinstance(container, dict) and container.get("name") == workload
+        ]
+        if len(workload_containers) != 1:
+            raise ValueError(
+                f"Expected exactly one owning container for publication workload {workload}; "
+                f"found {len(workload_containers)}"
+            )
+        container = workload_containers[0]
+
+        environment, env_issues = effective_container_env(
+            documents,
+            deployment,
+            container,
+            relevant_names=set(GRPC_TLS_PATH_NAMES),
+        )
+        if env_issues:
+            raise ValueError(
+                f"Rendered publication workload {workload} has invalid gRPC TLS path environment: "
+                + "; ".join(env_issues)
+            )
+
+        container_env = container.get("env", [])
+        if not isinstance(container_env, list):
+            raise TypeError(
+                f"Rendered publication workload {workload} has no valid container env list"
+            )
+        declared_grpc_path_names: list[str] = []
+        for entry in container_env:
+            if not isinstance(entry, dict):
+                raise TypeError(
+                    f"Rendered publication workload {workload} has a malformed container env entry"
+                )
+            name = entry.get("name")
+            if name not in GRPC_TLS_PATH_NAMES:
+                continue
+            declared_grpc_path_names.append(name)
+            if not set(entry).issubset({"name", "value", "valueFrom"}):
+                raise ValueError(
+                    f"Rendered publication workload {workload} has a malformed {name} env entry"
+                )
+            if "value" in entry and "valueFrom" in entry:
+                raise ValueError(
+                    f"Rendered publication workload {workload} has an ambiguous {name} env entry"
+                )
+            if "valueFrom" in entry:
+                value_from = entry.get("valueFrom")
+                if (
+                    not isinstance(value_from, dict)
+                    or len(value_from) != 1
+                    or not set(value_from).issubset({"configMapKeyRef", "secretKeyRef"})
+                ):
+                    raise ValueError(
+                        f"Rendered publication workload {workload} has a malformed {name} env source"
+                    )
+        if len(declared_grpc_path_names) != len(set(declared_grpc_path_names)):
+            raise ValueError(
+                f"Rendered publication workload {workload} has ambiguous gRPC TLS path env entries"
+            )
+
+        expected_grpc_paths = {
+            "FIREMUD_GRPC_CERT_CHAIN_PATH": "/tls/tls.crt",
+            "FIREMUD_GRPC_PRIVATE_KEY_PATH": "/tls/tls.key",
+            "FIREMUD_GRPC_CA_CERT_PATH": "/grpc-trust/ca.crt",
+        }
+        grpc_paths: dict[str, str] = {}
+        for name in GRPC_TLS_PATH_NAMES:
+            path = environment.get(name)
+            if (
+                not isinstance(path, str)
+                or not path.startswith("/")
+                or path.startswith("//")
+                or posixpath.normpath(path) != path
+                or path != expected_grpc_paths[name]
+            ):
+                raise ValueError(
+                    f"Rendered publication workload {workload} must configure {name} as {expected_grpc_paths[name]}"
+                )
+            grpc_paths[name] = path
+
+        volume_mounts = container.get("volumeMounts")
+        if not isinstance(volume_mounts, list):
+            raise TypeError(
+                f"Rendered publication workload {workload} has no valid container volumeMounts list"
+            )
+        for mount in volume_mounts:
+            if not isinstance(mount, dict):
+                raise TypeError(
+                    f"Rendered publication workload {workload} has a malformed container volume mount"
+                )
+            if not isinstance(mount.get("name"), str) or not mount["name"].strip():
+                raise ValueError(
+                    f"Rendered publication workload {workload} has a volume mount with an invalid name"
+                )
+            mount_path = mount.get("mountPath")
+            if not isinstance(mount_path, str) or not mount_path.startswith("/"):
+                raise ValueError(
+                    f"Rendered publication workload {workload} has a volume mount with a non-absolute mountPath"
+                )
+            if "readOnly" in mount and not isinstance(mount["readOnly"], bool):
+                raise ValueError(
+                    f"Rendered publication workload {workload} has a malformed volume mount readOnly value"
+                )
+
+        expected_mounts = {
+            "grpc-tls": "/tls",
+            "grpc-trust": "/grpc-trust",
+        }
+        validated_mounts: dict[str, dict[str, Any]] = {}
+        for volume_name, mount_path in expected_mounts.items():
+            mounts = [mount for mount in volume_mounts if mount.get("name") == volume_name]
+            if len(mounts) != 1:
+                raise ValueError(
+                    f"Expected exactly one {volume_name} mount for publication workload {workload}; found {len(mounts)}"
+                )
+            mount = mounts[0]
+            if (
+                mount.get("readOnly") is not True
+                or mount.get("mountPath") != mount_path
+                or "subPath" in mount
+                or "subPathExpr" in mount
+            ):
+                raise ValueError(
+                    f"Rendered publication workload {workload} requires a read-only {volume_name} mount at {mount_path} without subPath"
+                )
+            validated_mounts[volume_name] = mount
+
+        if any(
+            not path_is_under_mount(path, "/tls")
+            for path in (
+                grpc_paths["FIREMUD_GRPC_CERT_CHAIN_PATH"],
+                grpc_paths["FIREMUD_GRPC_PRIVATE_KEY_PATH"],
+            )
+        ) or not path_is_under_mount(
+            grpc_paths["FIREMUD_GRPC_CA_CERT_PATH"], "/grpc-trust"
+        ):
+            raise ValueError(
+                f"Rendered publication workload {workload} gRPC TLS paths do not match the split leaf/trust mounts"
+            )
+
+        for mount in volume_mounts:
+            if mount in validated_mounts.values():
+                continue
+            mount_path = posixpath.normpath("/" + mount["mountPath"].lstrip("/"))
+            for root_path in expected_mounts.values():
+                if not path_is_under_mount(mount_path, root_path):
+                    continue
+                if any(path_is_under_mount(path, mount_path) for path in grpc_paths.values()):
+                    raise ValueError(
+                        f"Rendered publication workload {workload} has another volume mount covering a gRPC TLS path"
+                    )
+
+        requirements.append(
+            (secret_name, workload_namespace, set(PUBLICATION_GRPC_LEAF_SECRET_KEYS))
+        )
+        leaf_secret_names.append(secret_name)
+    if len(set(leaf_secret_names)) != len(leaf_secret_names):
+        raise ValueError(
+            "Rendered publication workloads must mount five distinct grpc-tls Secrets"
+        )
+    requirements.append(
+        (
+            PUBLICATION_GRPC_TRUST_SECRET_NAME,
+            expected_namespace,
+            set(PUBLICATION_GRPC_TRUST_SECRET_KEYS),
+        )
+    )
+    return tuple(requirements)
+
+
+def publication_workload_secret_issues(
+    expected: dict[str, Any],
+    documents: list[dict[str, Any]],
+    *,
+    lookup_cluster_secrets: bool = True,
+) -> list[str]:
+    """Validate publication Secret bindings and, optionally, their live data keys."""
+    try:
+        requirements = publication_workload_secret_requirements(expected, documents)
+    except (TypeError, ValueError) as exc:
+        return [str(exc)]
+    if not lookup_cluster_secrets:
+        return []
+    issues = []
+    for secret_name, namespace, required_keys in requirements:
+        issue, _, _ = secret_keys_lookup_failure(
+            secret_name,
+            namespace,
+            required_keys,
+        )
+        if issue is not None:
+            issues.append(issue)
+    return issues
 
 
 def is_missing(value: Any) -> bool:
@@ -3923,6 +4319,60 @@ def validate_gateway_ws_values(
     values: list[str] = []
     if canonical is None:
         return values, issues
+    listener_ref = parse_binding_ref(
+        get(expected, "internalBindings.certificates.gatewayInternalWsListenerRef")
+    )
+    if listener_ref is None or len(listener_ref[2]) != 1:
+        return values, issues
+    listener_namespace = listener_ref[1]
+    listener_secret_name = listener_ref[2][0]
+    gateway_deployments = [
+        document
+        for document in documents
+        if document.get("kind") == "Deployment"
+        and metadata_name(document) == "spring-cloud-gateway"
+    ]
+    if len(gateway_deployments) != 1:
+        issues.append(
+            "exactly one rendered spring-cloud-gateway Deployment is required"
+        )
+    elif not rendered_namespace_matches(
+        gateway_deployments[0],
+        listener_namespace,
+        default_namespace=listener_namespace,
+    ):
+        issues.append(
+            "Gateway Deployment namespace does not match listener Secret binding "
+            f"namespace {listener_namespace}"
+        )
+    else:
+        gateway_pod_spec = get(gateway_deployments[0], "spec.template.spec")
+        gateway_volumes = (
+            gateway_pod_spec.get("volumes")
+            if isinstance(gateway_pod_spec, dict)
+            else None
+        )
+        gateway_listener_volumes = [
+            volume
+            for volume in gateway_volumes or []
+            if isinstance(volume, dict)
+            and volume.get("name") == "gateway-ws-server-tls"
+        ]
+        if len(gateway_listener_volumes) != 1:
+            issues.append(
+                "spring-cloud-gateway Deployment must contain exactly one "
+                "gateway-ws-server-tls Secret volume"
+            )
+        else:
+            gateway_listener_secret = gateway_listener_volumes[0].get("secret")
+            if (
+                not isinstance(gateway_listener_secret, dict)
+                or gateway_listener_secret.get("secretName") != listener_secret_name
+            ):
+                issues.append(
+                    "Gateway listener volume must reference Secret "
+                    f"{listener_namespace}/{listener_secret_name}"
+                )
     canonical_host, canonical_port = canonical.rsplit(":", 1)
     for document in documents:
         bridge_containers: list[tuple[dict[str, Any], dict[str, str | None]]] = []
@@ -7087,8 +7537,25 @@ def main() -> int:
                 secret_check_failed = True
                 break
         if not secret_check_failed:
+            publication_secret_issues = publication_workload_secret_issues(
+                expected_bindings, documents, lookup_cluster_secrets=False
+            )
+            if publication_secret_issues:
+                has_required_failure = append_result(
+                    check_results,
+                    "PREFLIGHT-SECRETS-001",
+                    True,
+                    "fail",
+                    "Publication workload render: " + "; ".join(publication_secret_issues),
+                ) or has_required_failure
+                secret_check_failed = True
+        if not secret_check_failed:
             has_required_failure = append_result(
-                check_results, "PREFLIGHT-SECRETS-001", True, "pass", "Rendered workloads reference required player-facing Secret bindings",
+                check_results,
+                "PREFLIGHT-SECRETS-001",
+                True,
+                "pass",
+                "Rendered player-facing and publication workloads reference required Secret bindings",
             ) or has_required_failure
     else:
         for secret_name, secret_namespace, binding_path in expected_player_secret_bindings(
@@ -7109,11 +7576,43 @@ def main() -> int:
                 secret_check_failed = True
                 break
         if not secret_check_failed:
-            has_required_failure = append_result(
-                check_results,
-                "PREFLIGHT-SECRETS-001", True, "pass",
-                "Required player-facing Secrets exist in the target cluster",
-            ) or has_required_failure
+            bridge_secret_issues = bridge_certificate_secret_issues(expected_bindings)
+            if bridge_secret_issues:
+                has_required_failure = append_result(
+                    check_results,
+                    "PREFLIGHT-SECRETS-001",
+                    True,
+                    "fail",
+                    "Bridge certificate Secret: " + "; ".join(bridge_secret_issues),
+                ) or has_required_failure
+                secret_check_failed = True
+        if not secret_check_failed:
+            publication_secret_issues = publication_workload_secret_issues(
+                expected_bindings, documents
+            )
+            if publication_secret_issues:
+                has_required_failure = (
+                    append_result(
+                        check_results,
+                        "PREFLIGHT-SECRETS-001",
+                        True,
+                        "fail",
+                        "Publication workload certificate: " + "; ".join(publication_secret_issues),
+                    )
+                    or has_required_failure
+                )
+                secret_check_failed = True
+        if not secret_check_failed:
+            has_required_failure = (
+                append_result(
+                    check_results,
+                    "PREFLIGHT-SECRETS-001",
+                    True,
+                    "pass",
+                    "Required player-facing and publication workload Secrets and keys exist in the target cluster",
+                )
+                or has_required_failure
+            )
 
     jwks_namespace = secret_binding_namespace(
         get(expected_bindings, "internalBindings.jwt.jwksRef")

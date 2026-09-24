@@ -26,12 +26,14 @@ import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptHandoffEvent;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
+import net.firedevops.firemud.automationscripting.entity.Faction;
 import net.firedevops.firemud.automationscripting.mapper.ScriptDefinitionMapper;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptHandoffEventRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
+import net.firedevops.firemud.automationscripting.repository.FactionRepository;
 import net.firedevops.firemud.automationscripting.service.impl.BuiltInScriptEventRegistryService;
 import net.firedevops.firemud.automationscripting.service.impl.ScriptDefinitionServiceImpl;
 import net.firedevops.firemud.common.saga.SagaException;
@@ -122,6 +124,8 @@ class AutomationScriptingServiceApplicationIntegrationTest {
   @Autowired private SagaRunner sagaRunner;
 
   @Autowired private ScriptHandoffEventRepository scriptHandoffEventRepository;
+
+  @Autowired private FactionRepository factionRepository;
 
   @Test
   void pingEndpointReturnsPong() {
@@ -608,5 +612,20 @@ class AutomationScriptingServiceApplicationIntegrationTest {
     item.setCreatedAt(Instant.now());
     item.setUpdatedAt(Instant.now());
     return item;
+  }
+
+  @Test
+  void factionLookupRequiresTheOwningTenant() {
+    Faction faction = new Faction();
+    faction.setTenantId(4101L);
+    faction.setName("tenant-scoped-integration-faction");
+    faction.setDescription("repository scope proof");
+    faction = factionRepository.save(faction);
+
+    assertThat(factionRepository.findByTenantIdAndId(4101L, faction.getId()))
+        .get()
+        .extracting(Faction::getTenantId)
+        .isEqualTo(4101L);
+    assertThat(factionRepository.findByTenantIdAndId(4102L, faction.getId())).isEmpty();
   }
 }

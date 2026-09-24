@@ -87,16 +87,23 @@ evaluate_retention_eligibility() {
   eligible=""
   reason=""
 
-  if ! pr_metadata="$(
-    gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" \
-      --jq '
+  if ! live_pr_json="$(
+    gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" 2>/dev/null
+  )"; then
+    echo "Keeping ${subject}: PR #${pr_number} metadata is unavailable or malformed"
+    return 1
+  fi
+  if ! jq -e 'type == "object"' <<<"$live_pr_json" >/dev/null 2>&1; then
+    echo "Keeping ${subject}: PR #${pr_number} metadata is unavailable or malformed"
+    return 1
+  fi
+  if ! pr_metadata="$(jq -r '
         [
           .state,
           .base.ref,
           .user.login,
           (.labels | tojson | @base64)
-        ] | @tsv' 2>/dev/null
-  )"; then
+        ] | @tsv' <<<"$live_pr_json")"; then
     echo "Keeping ${subject}: PR #${pr_number} metadata is unavailable or malformed"
     return 1
   fi
@@ -140,6 +147,56 @@ evaluate_retention_eligibility() {
   fi
   eligible="${eligibility_first_line#eligible=}"
   reason="${eligibility_second_line#reason=}"
+
+  # Every retained preview must be same-repository on both sides.  Unknown
+  # API state is retained conservatively; it must never turn a transient
+  # outage into destructive cleanup.
+  local base_repository head_repository mergeable mergeable_state
+  local base_ref_response
+  if ! base_repository="$(jq -er '.base.repo.full_name | select(type == "string" and length > 0)' <<<"$live_pr_json")" ||
+    ! head_repository="$(jq -er '.head.repo.full_name | select(type == "string" and length > 0)' <<<"$live_pr_json")"; then
+    echo "Keeping ${subject}: PR #${pr_number} live ownership metadata is malformed or incomplete"
+    return 1
+  fi
+  if [[ "$base_repository" != "$GITHUB_REPOSITORY" || "$head_repository" != "$GITHUB_REPOSITORY" ]]; then
+    eligible=false
+    reason="untrusted-repository"
+  elif [[ "$eligible" == true ]]; then
+    # Every retained open preview, including ordinary main/develop previews,
+    # is eligible only while its live base remains addressable and GitHub
+    # reports a known clean merge candidate. Unknown mergeability is retained
+    # conservatively because it can represent a transient GitHub state.
+    mergeable="$(jq -r 'if (.mergeable | type) == "boolean" then (.mergeable | tostring) else "invalid" end' <<<"$live_pr_json")"
+    mergeable_state="$(jq -r 'if (.mergeable_state | type) == "string" then .mergeable_state else "invalid" end' <<<"$live_pr_json")"
+    if [[ "$mergeable" == invalid || "$mergeable_state" == invalid || "$mergeable_state" == unknown ]]; then
+      echo "Keeping ${subject}: PR #${pr_number} mergeability is unknown"
+      return 1
+    elif [[ "$mergeable" == false || "$mergeable_state" == dirty || "$mergeable_state" == conflicting ]]; then
+      eligible=false
+      reason="merge-conflict"
+    elif [[ "$mergeable" != true ]]; then
+      echo "Keeping ${subject}: PR #${pr_number} mergeability is unknown"
+      return 1
+    else
+      # A confirmed 404 is authoritative evidence that the base branch is
+      # gone. Other API failures, including rate limits and transport errors,
+      # retain the runtime conservatively. Successful but malformed responses
+      # are likewise not safe to interpret as a missing branch.
+      if base_ref_response="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${pr_base_ref}" --jq '.object.sha' 2>&1)"; then
+        if ! [[ "$base_ref_response" =~ ^[0-9a-fA-F]{40}$ ]]; then
+          echo "Keeping ${subject}: PR #${pr_number} base branch metadata is malformed"
+          return 1
+        fi
+      elif [[ "$base_ref_response" =~ [Hh][Tt][Tt][Pp][^0-9]*404 ]] ||
+        [[ "$base_ref_response" =~ [Ss]tatus[^0-9]*404 ]]; then
+        eligible=false
+        reason="missing-base-branch"
+      else
+        echo "Keeping ${subject}: PR #${pr_number} base branch lookup failed"
+        return 1
+      fi
+    fi
+  fi
 }
 
 retire_hosted_identity() {
@@ -268,7 +325,7 @@ recover_stranded_hosted_identities() {
       continue
     fi
     case "$reason" in
-      dependency-bot | unsupported-base-branch | pr-not-open)
+      dependency-bot|unsupported-base-branch|priority-label-required|pr-not-open|missing-base-branch|untrusted-repository)
         ;;
       *)
         echo "Keeping HostedEnvironmentIdentity/${identity_name}: PR #${pr_number} eligibility reason is not authoritative for retirement (reason=${reason})"
@@ -325,7 +382,7 @@ for row in "${namespace_rows[@]}"; do
   fi
 
   case "$reason" in
-    dependency-bot | unsupported-base-branch | pr-not-open)
+    dependency-bot|unsupported-base-branch|priority-label-required|pr-not-open|missing-base-branch|merge-conflict|untrusted-repository)
       ;;
     *)
       echo "Keeping ${namespace}: PR #${pr_number} eligibility reason is not authoritative for pruning (reason=${reason})"
@@ -341,7 +398,7 @@ for row in "${namespace_rows[@]}"; do
       echo "Hosted runtime deletion failed for ${namespace}; skipping identity retirement and continuing stale cleanup." >&2
       continue
     fi
-    if [[ "$retire_terminal_identities" == true ]]; then
+    if [[ "$retire_terminal_identities" == true && "$reason" != "merge-conflict" ]]; then
       if ! retire_hosted_identity "$namespace"; then
         retirement_failures=$((retirement_failures + 1))
       fi

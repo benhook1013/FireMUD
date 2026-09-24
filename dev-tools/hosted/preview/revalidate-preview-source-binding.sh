@@ -13,6 +13,34 @@ EXPECTED_MERGE_SHA="$4"
 STAGE="${5:-}"
 
 pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+if jq -e '(.mergeable == null) or (.mergeable_state == "unknown")' \
+  <<<"$pull_request_json" >/dev/null 2>&1; then
+  retry_attempts="${PREVIEW_METADATA_RETRY_ATTEMPTS:-3}"
+  retry_delay_seconds="${PREVIEW_METADATA_RETRY_DELAY_SECONDS:-1}"
+  if ! [[ "$retry_attempts" =~ ^[1-9][0-9]*$ ]] ||
+    ! [[ "$retry_delay_seconds" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    echo "::error title=Preview source binding changed::Preview mergeability retry settings are invalid." >&2
+    exit 1
+  fi
+  for ((retry_attempt = 1; retry_attempt <= retry_attempts; retry_attempt++)); do
+    if ! refreshed_pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"; then
+      echo "::error title=Preview source binding changed::The current PR metadata could not be refreshed${STAGE:+ $STAGE}." >&2
+      exit 1
+    fi
+    if ! jq -e 'type == "object"' <<<"$refreshed_pull_request_json" >/dev/null 2>&1; then
+      echo "::error title=Preview source binding changed::The refreshed PR metadata is malformed${STAGE:+ $STAGE}." >&2
+      exit 1
+    fi
+    pull_request_json="$refreshed_pull_request_json"
+    if ! jq -e '(.mergeable == null) or (.mergeable_state == "unknown")' \
+      <<<"$pull_request_json" >/dev/null 2>&1; then
+      break
+    fi
+    if (( retry_attempt < retry_attempts )); then
+      sleep "$retry_delay_seconds"
+    fi
+  done
+fi
 base_ref="$(jq -er '.base.ref | select(type == "string" and length > 0)' <<<"$pull_request_json")" || {
   echo "::error title=Preview source binding changed::The current PR base ref is missing or invalid${STAGE:+ $STAGE}." >&2
   exit 1
@@ -62,6 +90,12 @@ jq -e \
   --arg current_head "$current_head_sha" \
   --arg current_merge "$current_merge_sha" \
   '.state == "open" and
+   (.mergeable | type) == "boolean" and
+   .mergeable == true and
+   (.mergeable_state | type) == "string" and
+   .mergeable_state != "unknown" and
+   .mergeable_state != "dirty" and
+   .mergeable_state != "conflicting" and
    .head.repo.full_name == $repository and
    .base.repo.full_name == $repository and
    .head.sha == $expected_head and
@@ -70,7 +104,7 @@ jq -e \
    $current_merge == $expected_merge and
    .merge_commit_sha == $expected_merge' \
   <<<"$pull_request_json" >/dev/null || {
-  echo "::error title=Preview source binding changed::The current PR head, base, merge, or repository no longer matches the validated artifact${STAGE:+ $STAGE}." >&2
+  echo "::error title=Preview source binding changed::The current PR head, base, merge, repository, or mergeability no longer matches the validated artifact${STAGE:+ $STAGE}." >&2
   exit 1
 }
 jq -e \
