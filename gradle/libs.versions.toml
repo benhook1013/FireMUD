@@ -1,7 +1,7 @@
 [versions]
 spring-boot = "4.1.1"
 jooq = "3.21.8"
-flyway = "13.7.0"
+flyway = "13.8.0"
 mapstruct = "1.6.3"
 lombok = "1.18.48"
 lombok-mapstruct-binding = "0.2.0"
