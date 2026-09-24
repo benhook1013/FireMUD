@@ -522,15 +522,14 @@ class TextCommandInterpreterTest {
   }
 
   @Test
-  void realmsAreVisibleAfterLogin() {
+  void realmsFailClosedWhenAccountScopeIssuerIsUnavailable() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
 
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("1", "REALMS demo", false);
 
-    assertTrue(interpretation.commandResult().accepted());
-    assertTrue(renderedResponse("REALMS demo", interpretation).contains("Live Realm"));
-    assertTrue(renderedResponse("REALMS demo", interpretation).contains("[shared, allow_new]"));
+    assertFalse(interpretation.commandResult().accepted());
+    assertEquals("AUTH_UNAVAILABLE", interpretation.commandResult().errorCode());
   }
 
   @Test
@@ -1051,6 +1050,7 @@ class TextCommandInterpreterTest {
     realm.setTenantId(tenantId);
     realm.setGameInstanceId(gameInstanceId);
     realm.setVisible(true);
+    realm.setPublicProductionRealm(true);
     realm.setRequiresCharacterSelection(requiresCharacterSelection);
     world.setRealms(List.of(realm));
     return world;

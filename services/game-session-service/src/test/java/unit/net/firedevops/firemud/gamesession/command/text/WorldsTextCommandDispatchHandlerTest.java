@@ -66,7 +66,7 @@ class WorldsTextCommandDispatchHandlerTest {
   }
 
   @Test
-  void publishesCommandEventForGameplayScopedRealmsBrowse() {
+  void realmsBrowseFailsClosedWhenAccountScopeIssuerIsUnavailable() {
     gameplayCatalogProperties.setWorlds(List.of(world("sandbox", 1L, 2L, false)));
     SessionContext context =
         new SessionContext(
@@ -80,18 +80,9 @@ class WorldsTextCommandDispatchHandlerTest {
                 false,
                 Optional.of(context)));
 
-    assertThat(result.commandResult().accepted()).isTrue();
-    assertThat(result.outputs())
-        .singleElement()
-        .extracting(output -> output.payload())
-        .isInstanceOf(RealmBrowseViewOutput.class);
-    Mockito.verify(scriptEventPublisher)
-        .publishCommandEvent(
-            Mockito.eq(context),
-            Mockito.argThat(
-                gameplayCommand ->
-                    "REALMS".equals(gameplayCommand.getCommandName())
-                        && "REALMS sandbox".equals(gameplayCommand.getCommandText())));
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("AUTH_UNAVAILABLE");
+    Mockito.verifyNoInteractions(scriptEventPublisher);
   }
 
   @Test
@@ -262,6 +253,7 @@ class WorldsTextCommandDispatchHandlerTest {
     realm.setTenantId(tenantId);
     realm.setGameInstanceId(gameInstanceId);
     realm.setVisible(true);
+    realm.setPublicProductionRealm(true);
     realm.setRequiresCharacterSelection(requiresCharacterSelection);
     realm.setStateScope(GameplayCatalogProperties.RealmStateScope.SHARED);
     realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.ALLOW_NEW);

@@ -50,8 +50,30 @@ public final class GameplayWorldCatalog {
   }
 
   public Optional<RealmBrowseViewOutput> browseRealms(String worldSelector) {
-    return resolveWorld(worldSelector)
+    return resolvePublicWorld(worldSelector)
         .map(world -> new RealmBrowseViewOutput(world.slug(), realmEntries(world)));
+  }
+
+  /** Resolves only realms currently safe to expose through the public browse projections. */
+  public Optional<WorldView> resolvePublicWorld(String selector) {
+    if (selector == null || selector.isBlank()) {
+      return Optional.empty();
+    }
+    List<WorldView> worlds = publicVisibleWorlds();
+    try {
+      int index = Integer.parseInt(selector);
+      if (index >= 1 && index <= worlds.size()) {
+        return Optional.of(worlds.get(index - 1));
+      }
+    } catch (NumberFormatException ignored) {
+      // Fall back to slug matching.
+    }
+    String normalized = selector.trim().toLowerCase(Locale.ROOT);
+    List<WorldView> matches =
+        worlds.stream()
+            .filter(world -> normalized.equals(world.slug().toLowerCase(Locale.ROOT)))
+            .toList();
+    return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
   }
 
   public Optional<WorldView> resolveWorld(String selector) {
@@ -61,9 +83,13 @@ public final class GameplayWorldCatalog {
     List<WorldView> worlds = visibleWorlds();
     try {
       int index = Integer.parseInt(selector);
-      if (index >= 1 && index <= worlds.size()) {
-        return Optional.of(worlds.get(index - 1));
+      List<WorldView> publicWorlds = publicVisibleWorlds();
+      if (index >= 1 && index <= publicWorlds.size()) {
+        return Optional.of(publicWorlds.get(index - 1));
       }
+      // Numeric selectors are the public menu's aliases. Non-public admission remains
+      // available by its explicit world slug until Account supplies caller-bound authority.
+      return Optional.empty();
     } catch (NumberFormatException ignored) {
       // Fall back to slug matching.
     }
@@ -178,18 +204,28 @@ public final class GameplayWorldCatalog {
     return world.realms().stream().filter(RealmView::visible).toList();
   }
 
+  public List<RealmView> publicVisibleRealms(WorldView world) {
+    return visibleRealms(world).stream().filter(RealmView::publicProductionRealm).toList();
+  }
+
   public List<WorldView> visibleWorlds() {
     return normalizeWorlds(worldSupplier.get()).stream()
         .filter(this::hasVisibleRealmEntries)
         .toList();
   }
 
+  public List<WorldView> publicVisibleWorlds() {
+    return normalizeWorlds(worldSupplier.get()).stream()
+        .filter(world -> !publicVisibleRealms(world).isEmpty())
+        .toList();
+  }
+
   private List<WorldsViewOutput.WorldEntry> worldEntries() {
-    List<WorldView> worlds = visibleWorlds();
+    List<WorldView> worlds = publicVisibleWorlds();
     ArrayList<WorldsViewOutput.WorldEntry> entries = new ArrayList<>(worlds.size());
     for (int i = 0; i < worlds.size(); i++) {
       WorldView world = worlds.get(i);
-      RealmView defaultRealm = defaultRealm(world);
+      RealmView defaultRealm = publicVisibleRealms(world).getFirst();
       entries.add(
           new WorldsViewOutput.WorldEntry(
               i + 1,
@@ -202,7 +238,7 @@ public final class GameplayWorldCatalog {
   }
 
   private List<RealmBrowseViewOutput.RealmEntry> realmEntries(WorldView world) {
-    List<RealmView> realms = visibleRealms(world);
+    List<RealmView> realms = publicVisibleRealms(world);
     ArrayList<RealmBrowseViewOutput.RealmEntry> entries = new ArrayList<>(realms.size());
     for (int i = 0; i < realms.size(); i++) {
       RealmView realm = realms.get(i);

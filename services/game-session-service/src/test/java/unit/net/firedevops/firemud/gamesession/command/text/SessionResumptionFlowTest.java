@@ -397,16 +397,9 @@ class SessionResumptionFlowTest {
 
     verify(accountRecentPresenceService)
         .recordDisconnect(1L, AccountRecentPresenceDisposition.TAKEOVER);
-    verify(scriptEventPublisher)
+    Mockito.verify(scriptEventPublisher, Mockito.never())
         .publishRegionExitEvent(
-            Mockito.argThat(
-                context ->
-                    context.sessionId() == 1L
-                        && context.gameInstanceId() == 1L
-                        && context.characterId() == 7001L
-                        && "R-1021".equals(context.roomInstanceId())),
-            Mockito.eq("disconnect:takeover:1:1:7001"),
-            Mockito.eq("TAKEOVER"));
+            Mockito.any(SessionContext.class), Mockito.anyString(), Mockito.anyString());
     assertEquals(1.0, meterRegistry.counter("gamesession.session.takeover").count());
     assertEquals(0.0, meterRegistry.counter("gamesession.session.resume").count());
   }
@@ -477,7 +470,7 @@ class SessionResumptionFlowTest {
     assertTrue(secondLogin.commandResult().accepted());
     TextCommandInterpretationResult deniedPlay = interpreter.interpret("1", PLAY_PAYLOAD, false);
     assertFalse(deniedPlay.commandResult().accepted());
-    assertEquals("WORLD_ACCESS_DENIED", deniedPlay.commandResult().errorCode());
+    assertEquals("JOIN_REQUIRED", deniedPlay.commandResult().errorCode());
 
     TextCommandInterpretationResult lookAfterDeniedReconnect =
         interpreter.interpret("1", LOOK_PAYLOAD, false);
@@ -580,6 +573,7 @@ class SessionResumptionFlowTest {
     realm.setTenantId(tenantId);
     realm.setGameInstanceId(gameInstanceId);
     realm.setVisible(true);
+    realm.setPublicProductionRealm(true);
     realm.setRequiresCharacterSelection(requiresCharacterSelection);
     world.setRealms(List.of(realm));
     return world;

@@ -259,12 +259,31 @@ public final class EntityManagementStubServer implements AutoCloseable {
 
   private net.firedevops.firemud.entitymanagement.v1.Character characterForAccount(
       String accountId) {
-    return switch (accountId) {
-      case "7" -> ChatTestFixtures.characterByName("Emberline");
-      case "8" -> ChatTestFixtures.characterByName("Sora");
-      case "9" -> ChatTestFixtures.characterByName("Nyx");
-      default -> null;
-    };
+    net.firedevops.firemud.entitymanagement.v1.Character fixedCharacter =
+        switch (accountId) {
+          case "7" -> ChatTestFixtures.characterByName("Emberline");
+          case "8" -> ChatTestFixtures.characterByName("Sora");
+          case "9" -> ChatTestFixtures.characterByName("Nyx");
+          default -> null;
+        };
+    if (fixedCharacter != null) {
+      return fixedCharacter;
+    }
+    try {
+      long numericAccountId = Long.parseLong(accountId);
+      if (numericAccountId >= 7_001L && numericAccountId <= 7_010L) {
+        long playerNumber = numericAccountId - 7_000L;
+        return net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
+            .setId(Long.toString(numericAccountId))
+            .setTenantId("1")
+            .setAccountId(Long.toString(numericAccountId))
+            .setName("player-" + playerNumber)
+            .build();
+      }
+    } catch (NumberFormatException ignored) {
+      // Non-numeric account identities are not persisted actors in this fixture.
+    }
+    return null;
   }
 
   public synchronized void resetItemState() {

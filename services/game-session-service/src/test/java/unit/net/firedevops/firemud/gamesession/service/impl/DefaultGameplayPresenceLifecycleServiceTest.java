@@ -118,6 +118,22 @@ class DefaultGameplayPresenceLifecycleServiceTest {
   }
 
   @Test
+  void takeoverRemovesDisplacedSessionWithoutPublishingCharacterRegionExit() {
+    SessionContext context =
+        new SessionContext(
+            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 1L, "R-1021", "");
+    whenGameplayContextPresent(context);
+
+    service.recordDisconnected(41L, AccountRecentPresenceDisposition.TAKEOVER);
+
+    verify(scriptEventPublisher, never())
+        .publishRegionExitEvent(Mockito.any(SessionContext.class), anyString(), anyString());
+    verify(accountRecentPresenceService)
+        .recordDisconnect(41L, AccountRecentPresenceDisposition.TAKEOVER);
+    verify(gameplayPresenceService).removeBySessionId(41L);
+  }
+
+  @Test
   void recordDisconnectedSkipsLifecycleEventWithoutGameplayRegionBinding() {
     whenGameplayContextPresent(
         new SessionContext(41L, 22L, 0L, "demo@example.com", 7001L, "Emberline", 0L, "", ""));

@@ -70,7 +70,8 @@ public class WorldsCommandHandler {
     if (connectScopeSessionStore != null) {
       connectScopeSessionStore.clearWorldScopes(sessionContext, worldSelector);
     }
-    Optional<GameplayWorldCatalog.WorldView> maybeWorld = worldCatalog.resolveWorld(worldSelector);
+    Optional<GameplayWorldCatalog.WorldView> maybeWorld =
+        worldCatalog.resolvePublicWorld(worldSelector);
     if (maybeWorld.isEmpty()) {
       return RealmBrowseResult.invalidSelector();
     }
@@ -78,7 +79,7 @@ public class WorldsCommandHandler {
     GameplayWorldCatalog.WorldView world = maybeWorld.orElseThrow();
     List<RealmBrowseViewOutput.RealmEntry> visibleEntries = new ArrayList<>();
     List<DirectTextConnectScopeSessionStore.ScopedRealm> issuedScopes = new ArrayList<>();
-    for (GameplayWorldCatalog.RealmView realm : worldCatalog.visibleRealms(world)) {
+    for (GameplayWorldCatalog.RealmView realm : worldCatalog.publicVisibleRealms(world)) {
       if (realm.publicProductionRealm()) {
         if (accountClient == null || connectScopeSessionStore == null) {
           return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
@@ -242,15 +243,17 @@ public class WorldsCommandHandler {
       SessionContext sessionContext, String worldSelector, String realmSelector) {
     Objects.requireNonNull(sessionContext, "sessionContext must not be null");
     java.util.Optional<GameplayWorldCatalog.WorldView> maybeWorld =
-        worldCatalog.resolveWorld(worldSelector);
+        worldCatalog.resolvePublicWorld(worldSelector);
     if (maybeWorld.isEmpty()) {
       return CharacterBrowseResult.invalidWorld();
     }
     GameplayWorldCatalog.WorldView world = maybeWorld.orElseThrow();
     java.util.Optional<GameplayWorldCatalog.RealmView> maybeRealm =
         StringUtils.hasText(realmSelector)
-            ? worldCatalog.resolveRealm(world, realmSelector)
-            : worldCatalog.requiresExplicitRealmSelection(world)
+            ? worldCatalog
+                .resolveRealm(world, realmSelector)
+                .filter(GameplayWorldCatalog.RealmView::publicProductionRealm)
+            : worldCatalog.publicVisibleRealms(world).size() > 1
                 ? java.util.Optional.empty()
                 : worldCatalog.resolveDefaultRealm(world);
     if (StringUtils.hasText(realmSelector) && maybeRealm.isEmpty()) {
