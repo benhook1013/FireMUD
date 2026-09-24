@@ -237,6 +237,9 @@ def completion_status(
     history = [item for item in all_items if not item.correction and not item.non_counting]
     if not history:
         if all_items and any(item.non_counting for item in all_items):
+            reconciliation_blocker = _blocked(Evidence(all_items[0].pr, "", ""), reconciliation)
+            if reconciliation_blocker:
+                return reconciliation_blocker
             return ReviewStatus.READY
         return ReviewStatus.MISSING_EVIDENCE
     for item in history:

@@ -663,6 +663,25 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertFalse(taper_satisfied(Channel.CLI, history, 3))
         self.assertEqual(select_review_target(state, Channel.CLI, (1,), {1: history}).status, ReviewStatus.READY)
 
+    def test_non_counting_history_does_not_hide_reconciliation_blockers(self):
+        history = (
+            Evidence(1, "h", "legacy", completed=True, attributable=True, non_counting=True),
+        )
+        state = ReviewState(ordered_prs=(1,))
+
+        self.assertEqual(
+            completion_status(state, Channel.CLI, history, reconciliation=ReconciliationStatus.PARENT_MOVED),
+            ReviewStatus.PARENT_MOVED,
+        )
+        self.assertEqual(
+            completion_status(state, Channel.CLI, history, reconciliation=ReconciliationStatus.UNRECONCILED),
+            ReviewStatus.UNRECONCILED,
+        )
+        self.assertEqual(
+            completion_status(state, Channel.CLI, history, reconciliation=ReconciliationStatus.COHERENT),
+            ReviewStatus.READY,
+        )
+
     def test_correction_checkpoint_remains_evidence_but_never_changes_the_taper(self):
         reviews = tuple(
             Evidence(
