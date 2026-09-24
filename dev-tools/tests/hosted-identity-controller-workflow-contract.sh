@@ -2126,6 +2126,13 @@ assert "Wait for exact controller identity readiness" not in deploy_by_name
 assert "Wait for runtime rollouts before operator validation" not in deploy_by_name
 
 verify_steps = jobs["verify-runtime"]["steps"]
+assert jobs["verify-runtime"]["env"] == {
+    "HOSTED_PLAYABLE_EMAIL": "demo@example.com",
+    "HOSTED_PLAYABLE_PASSWORD": "swordfish",
+    "HOSTED_PLAYABLE_WORLD": "demo",
+    "HOSTED_PLAYABLE_REALM": "production",
+    "HOSTED_PLAYABLE_CHARACTER": "",
+}
 verify_by_name = {
     step.get("name"): step for step in verify_steps if isinstance(step, dict)
 }
@@ -2287,6 +2294,22 @@ assert telnet_diagnostic["env"]["CERTIFICATE_IDENTITY_MODE"] == (
 )
 assert 'if [[ "$CERTIFICATE_IDENTITY_MODE" == hosted-controller ]]; then' in telnet_diagnostic["run"]
 assert 'export SMOKE_SEMANTIC_OUT="$RUNNER_TEMP/preview-telnet-semantics.json"' in telnet_diagnostic["run"]
+for target, source in (
+    ("SMOKE_LOGIN_EMAIL", "HOSTED_PLAYABLE_EMAIL"),
+    ("SMOKE_PASSWORD", "HOSTED_PLAYABLE_PASSWORD"),
+    ("SMOKE_WORLD", "HOSTED_PLAYABLE_WORLD"),
+    ("SMOKE_REALM", "HOSTED_PLAYABLE_REALM"),
+    ("SMOKE_CHARACTER", "HOSTED_PLAYABLE_CHARACTER"),
+):
+    assert f'export {target}="${source}"' in telnet_diagnostic["run"]
+for flag, source in (
+    ("username", "HOSTED_PLAYABLE_EMAIL"),
+    ("password", "HOSTED_PLAYABLE_PASSWORD"),
+    ("world", "HOSTED_PLAYABLE_WORLD"),
+    ("realm", "HOSTED_PLAYABLE_REALM"),
+    ("character", "HOSTED_PLAYABLE_CHARACTER"),
+):
+    assert f'--{flag} "${source}"' in wss_diagnostic["run"]
 for diagnostic in (wss_diagnostic, proof_writer, proof_upload):
     assert diagnostic["if"] == public_controller_condition
 assert proof_writer["env"]["NAMESPACE_KUBECONFIG"] == (

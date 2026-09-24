@@ -41,6 +41,17 @@ from smoke_common import (
     run_websocket_smoke_session,
 )
 
+shared_scope_steps = smoke_common.login_play_look_steps(
+    "demo@example.com", "swordfish", "demo", "OK WORLDS", "OK LOGIN", "OK PLAY", "OK LOOK",
+    realm="production", character="Ada",
+)
+assert shared_scope_steps[2][0] == "PLAY demo production Ada"
+default_character_steps = smoke_common.login_play_look_steps(
+    "demo@example.com", "swordfish", "demo", "OK WORLDS", "OK LOGIN", "OK PLAY", "OK LOOK",
+    realm="production", character=None,
+)
+assert default_character_steps[2][0] == "PLAY demo production"
+
 
 for local_host in (
     "localhost",

@@ -941,6 +941,13 @@ jobs:
       contents: read # Check out the trusted default-branch verification implementation.
       pull-requests: read # Revalidate the pull-request state and exact head before publication.
       issues: write # GitHub's issue-comment API owns pull-request comments.
+    env:
+      # One trusted demo identity/scope feeds both transports; ambient smoke overrides cannot split parity.
+      HOSTED_PLAYABLE_EMAIL: demo@example.com
+      HOSTED_PLAYABLE_PASSWORD: swordfish
+      HOSTED_PLAYABLE_WORLD: demo
+      HOSTED_PLAYABLE_REALM: production
+      HOSTED_PLAYABLE_CHARACTER: ''
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -1141,6 +1148,11 @@ jobs:
           if [[ "$CERTIFICATE_IDENTITY_MODE" == hosted-controller ]]; then
             export SMOKE_SEMANTIC_OUT="$RUNNER_TEMP/preview-telnet-semantics.json"
           fi
+          export SMOKE_LOGIN_EMAIL="$HOSTED_PLAYABLE_EMAIL"
+          export SMOKE_PASSWORD="$HOSTED_PLAYABLE_PASSWORD"
+          export SMOKE_WORLD="$HOSTED_PLAYABLE_WORLD"
+          export SMOKE_REALM="$HOSTED_PLAYABLE_REALM"
+          export SMOKE_CHARACTER="$HOSTED_PLAYABLE_CHARACTER"
           bash ./dev-tools/hosted/shared/hosted-login-look-smoke.sh
 
       - name: Smoke first-party hosted WSS and compare Telnet LOOK
@@ -1157,6 +1169,11 @@ jobs:
             --gateway-base "https://${PREVIEW_HOSTNAME}" \
             --websocket-url "wss://${PREVIEW_HOSTNAME}/ws/game" \
             --origin "https://${PREVIEW_HOSTNAME}" \
+            --username "$HOSTED_PLAYABLE_EMAIL" \
+            --password "$HOSTED_PLAYABLE_PASSWORD" \
+            --world "$HOSTED_PLAYABLE_WORLD" \
+            --realm "$HOSTED_PLAYABLE_REALM" \
+            --character "$HOSTED_PLAYABLE_CHARACTER" \
             --expected-room-id "$room_id" \
             --reconnect > "$WSS_SEMANTIC_OUT"
           jq -e --arg expected "$room_id" \

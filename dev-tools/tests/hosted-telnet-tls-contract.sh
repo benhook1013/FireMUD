@@ -16,6 +16,9 @@ assert 'ca_file = os.environ.get("SMOKE_TELNET_CA_FILE") or None' in script, (
 )
 assert "tls_server_hostname=host" in script, "hosted Telnet smoke must set SNI/hostname"
 assert "tls_ca_file=ca_file" in script, "hosted Telnet smoke must use the CA override"
+assert "realm=realm" in script and "character=character" in script, (
+    "hosted Telnet smoke must use the trusted WSS realm and character scope"
+)
 assert "_create_unverified_context" not in script, (
     "hosted Telnet smoke must not disable certificate verification"
 )
