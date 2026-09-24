@@ -396,6 +396,7 @@ public class AccountServiceImpl implements AccountService {
                 new BootstrapRealmDto(
                     realm.worldSlug(),
                     realm.realmSlug(),
+                    realm.realmId().toString(),
                     realm.displayName(),
                     realm.tenantId(),
                     realm.gameInstanceId(),
@@ -470,7 +471,7 @@ public class AccountServiceImpl implements AccountService {
         || target == null
         || caller.accountId() <= 0L
         || caller.tenantId() != target.tenantId()
-        || caller.realmId() != target.realmId()
+        || !caller.realmId().equals(target.realmId())
         || caller.gameInstanceId() != target.gameInstanceId()
         || !caller.playableStateNamespaceId().equals(target.playableStateNamespaceId())
         || !caller.playableStateScope().equals(target.playableStateScope())) {
@@ -483,7 +484,7 @@ public class AccountServiceImpl implements AccountService {
       throw new AuthenticationException(
           "REALM_UNAVAILABLE", "Selected public realm is unavailable");
     }
-    if (current.realmId() != target.realmId()
+    if (!current.realmId().equals(target.realmId())
         || !current.playableStateNamespaceId().equals(target.playableStateNamespaceId())
         || !current.stateScope().equals(target.playableStateScope())
         || current.gameInstanceId() != target.gameInstanceId()
@@ -785,7 +786,7 @@ public class AccountServiceImpl implements AccountService {
     if (retained.accountId() != accountId
         || signedScope.accountId() != accountId
         || signedScope.tenantId() != retained.tenantId()
-        || signedScope.realmId() != retained.realmId()
+        || !signedScope.realmId().equals(retained.realmId())
         || !signedScope.playableStateNamespaceId().equals(retained.playableStateNamespaceId())
         || !signedScope.playableStateScope().equals(retained.playableStateScope())
         || signedScope.gameInstanceId() != retained.gameInstanceId()
@@ -806,6 +807,7 @@ public class AccountServiceImpl implements AccountService {
       JoinOperation operation, String requestId, String callerBinding, VerifiedJoinScope scope) {
     String expectedIntentDigest = AccountJoinDigest.intent(requestId, scope, callerBinding);
     if (operation.accountId() != scope.accountId()
+        || !operation.realmId().equals(scope.realmId())
         || !operation.callerBinding().equals(callerBinding)
         || !operation.scopeTokenHash().equals(AccountJoinDigest.tokenHash(scope.connectScopeId()))
         || !operation.connectScopeDigest().equals(scope.snapshotDigest())
@@ -889,7 +891,7 @@ public class AccountServiceImpl implements AccountService {
     if (caller != null
         && (caller.accountId() != scope.accountId()
             || caller.tenantId() != scope.tenantId()
-            || caller.realmId() != scope.realmId()
+            || !caller.realmId().equals(scope.realmId())
             || caller.gameInstanceId() != scope.gameInstanceId()
             || !caller.playableStateNamespaceId().equals(scope.playableStateNamespaceId())
             || !caller.playableStateScope().equals(scope.playableStateScope()))) {
@@ -1303,7 +1305,7 @@ public class AccountServiceImpl implements AccountService {
           readRuntimeRealmTarget(
               gameSessionClient.getAdmissionPointer(candidate.tenantId(), worldSlug, realmSlug));
       if (realm.tenantId() != candidate.tenantId()
-          || realm.realmId() != candidate.realmId()
+          || !realm.realmId().equals(candidate.realmId())
           || !realm.playableStateNamespaceId().equals(candidate.playableStateNamespaceId())
           || !realm.stateScope().equals(candidate.stateScope())
           || realm.gameInstanceId() != candidate.gameInstanceId()
@@ -1372,7 +1374,7 @@ public class AccountServiceImpl implements AccountService {
             Map.entry("aud", "bootstrap-connect-scope"),
             Map.entry("accountId", bootstrapContext.accountId()),
             Map.entry("tenantId", realm.tenantId()),
-            Map.entry("realmId", realm.realmId()),
+            Map.entry("realmId", realm.realmId().toString()),
             Map.entry("worldSlug", realm.worldSlug()),
             Map.entry("realmSlug", realm.realmSlug()),
             Map.entry("playableStateNamespaceId", realm.playableStateNamespaceId()),
@@ -1457,7 +1459,7 @@ public class AccountServiceImpl implements AccountService {
       return new ConnectScopeContext(
           routingClaims.accountId(),
           routingClaims.tenantId(),
-          requirePositiveLong(claims.get("realmId"), "realmId"),
+          requireCanonicalRealmId(claims.get("realmId")),
           routingClaims.worldSlug(),
           routingClaims.realmSlug(),
           JwtClaims.requireText(claims.get("playableStateNamespaceId"), "playableStateNamespaceId"),
@@ -1521,7 +1523,7 @@ public class AccountServiceImpl implements AccountService {
         requireRealmTarget(
             scopeContext.tenantId(), scopeContext.worldSlug(), scopeContext.realmSlug());
     if (currentRealm.tenantId() != scopeContext.tenantId()
-        || currentRealm.realmId() != scopeContext.realmId()
+        || !currentRealm.realmId().equals(scopeContext.realmId())
         || !currentRealm.playableStateNamespaceId().equals(scopeContext.playableStateNamespaceId())
         || !currentRealm.stateScope().equals(scopeContext.playableStateScope())
         || currentRealm.gameInstanceId() != scopeContext.gameInstanceId()
@@ -2163,7 +2165,7 @@ public class AccountServiceImpl implements AccountService {
       boolean requiresCharacterSelection,
       String displayName) {
     long tenantId = requirePositiveLong(tenantIdText, "tenantId");
-    long realmId = requirePositiveLong(realmIdText, "realmId");
+    UUID realmId = requireCanonicalRealmId(realmIdText);
     long gameInstanceId = requirePositiveLong(gameInstanceIdText, "gameInstanceId");
     if (!StringUtils.hasText(playableStateNamespaceId)) {
       throw new IllegalArgumentException("playableStateNamespaceId is required");
@@ -2214,10 +2216,25 @@ public class AccountServiceImpl implements AccountService {
     return JwtClaims.requireLong(value, field, false);
   }
 
+  private UUID requireCanonicalRealmId(Object value) {
+    if (!(value instanceof String text) || text.isBlank()) {
+      throw new IllegalArgumentException("realmId must be a canonical UUID");
+    }
+    try {
+      UUID realmId = UUID.fromString(text);
+      if (!realmId.toString().equals(text)) {
+        throw new IllegalArgumentException("realmId must be a canonical UUID");
+      }
+      return realmId;
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalArgumentException("realmId must be a canonical UUID", ex);
+    }
+  }
+
   private record ConnectScopeContext(
       long accountId,
       long tenantId,
-      long realmId,
+      UUID realmId,
       String worldSlug,
       String realmSlug,
       String playableStateNamespaceId,
@@ -2230,7 +2247,7 @@ public class AccountServiceImpl implements AccountService {
 
   private record RuntimeRealmTarget(
       long tenantId,
-      long realmId,
+      UUID realmId,
       String playableStateNamespaceId,
       long gameInstanceId,
       String worldSlug,

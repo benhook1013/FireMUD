@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.UUID;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
@@ -103,10 +104,10 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       requireGameSessionPeer();
       DirectTextCallerContext caller = directTextCaller(request.getPlayerContext());
       long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
-      long realmId = requirePositiveRequestId(request.getRealmId(), "realmId");
+      UUID realmId = requireCanonicalRealmId(request.getRealmId());
       long gameInstanceId = requirePositiveRequestId(request.getGameInstanceId(), "gameInstanceId");
       if (caller.tenantId() != tenantId
-          || caller.realmId() != realmId
+          || !caller.realmId().equals(realmId)
           || caller.gameInstanceId() != gameInstanceId
           || !caller.playableStateNamespaceId().equals(request.getPlayableStateNamespaceId())
           || !caller.playableStateScope().equals(request.getPlayableStateScope())) {
@@ -198,12 +199,27 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     return new DirectTextCallerContext(
         requirePositiveRequestId(context.getAccountId(), "accountId"),
         requirePositiveRequestId(context.getTenantId(), "tenantId"),
-        requirePositiveRequestId(context.getRealmId(), "realmId"),
+        requireCanonicalRealmId(context.getRealmId()),
         requireText(context.getPlayableStateNamespaceId(), "playableStateNamespaceId"),
         requireText(context.getPlayableStateScope(), "playableStateScope"),
         requirePositiveRequestId(context.getGameInstanceId(), "gameInstanceId"),
         requireText(context.getSessionId(), "sessionId"),
         context.getRequestId());
+  }
+
+  private UUID requireCanonicalRealmId(String value) {
+    if (value == null || value.isBlank()) {
+      throw new IllegalArgumentException("realmId is required");
+    }
+    try {
+      UUID realmId = UUID.fromString(value);
+      if (!realmId.toString().equals(value)) {
+        throw new IllegalArgumentException("realmId must be a canonical UUID");
+      }
+      return realmId;
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalArgumentException("realmId must be a canonical UUID", ex);
+    }
   }
 
   private String requireText(String value, String fieldName) {

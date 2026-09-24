@@ -38,6 +38,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SuppressWarnings("resource")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class AccountRepositoryIntegrationTest {
+  private static final UUID REALM_ID = UUID.fromString("4c4b57d8-e3a2-48fe-9977-e7df0fdce901");
   private static final String MIGRATION_LOCATION =
       "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
   private static final String MIGRATION_PROOF_SCHEMA = "account_migration_proof";
@@ -104,8 +105,15 @@ class AccountRepositoryIntegrationTest {
         status -> joinOperations.insertIntent(requestId, scope, callerBinding, intentDigest));
 
     assertThat(joinOperation(joinOperations, requestId).status()).isEqualTo("PENDING");
+    assertThat(joinOperation(joinOperations, requestId).realmId()).isEqualTo(REALM_ID);
     assertThat(joinOperation(joinOperations, requestId).outcome()).isNull();
     assertThat(joinOperation(joinOperations, requestId).intentDigest()).isEqualTo(intentDigest);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT realm_id FROM account_join_operations WHERE request_id = ?",
+                UUID.class,
+                requestId))
+        .isEqualTo(REALM_ID);
     assertThat(joinOperation(joinOperations, requestId).requestDigest()).isNull();
     assertThat(joinOperation(joinOperations, requestId).entitlementVersion()).isNull();
     assertThat(joinOperation(joinOperations, requestId).allowPublicJoin()).isNull();
@@ -182,6 +190,34 @@ class AccountRepositoryIntegrationTest {
         .isEqualTo(1L);
   }
 
+  @Test
+  void connectScopeRepositoryRetainsCanonicalRealmUuidAndDetectsTampering() {
+    JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+    long accountId =
+        Objects.requireNonNull(
+            jdbc.queryForObject(
+                "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
+                Long.class,
+                "scope-uuid",
+                "scope-uuid@example.com",
+                "hash"));
+    AccountConnectScopeRepository scopes = new AccountConnectScopeRepository(dsl);
+    VerifiedJoinScope scope = joinScope(accountId);
+
+    scopes.insert(scope);
+
+    assertThat(scopes.find(scope.connectScopeId()).orElseThrow().realmId()).isEqualTo(REALM_ID);
+    UUID changedRealmId = UUID.fromString("57c58f36-c5ea-4aa8-8ef7-91a45e407f01");
+    jdbc.update(
+        "UPDATE account_connect_scope_records SET realm_id = ? WHERE scope_token_hash = ?",
+        changedRealmId,
+        AccountJoinDigest.tokenHash(scope.connectScopeId()));
+
+    assertThatThrownBy(() -> scopes.find(scope.connectScopeId()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("JOIN scope digest mismatch");
+  }
+
   private void commitJoinOutcome(
       AccountJoinOperationRepository joinOperations,
       AccountTenantMembershipRepository memberships,
@@ -231,7 +267,7 @@ class AccountRepositoryIntegrationTest {
             "two-phase-connect-scope",
             accountId,
             7L,
-            31L,
+            REALM_ID,
             "demo",
             "production",
             "namespace-44",

@@ -4,15 +4,18 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 class AccountJoinDigestTest {
+  private static final UUID REALM_ID = UUID.fromString("4c4b57d8-e3a2-48fe-9977-e7df0fdce901");
+
   @Test
   void scopeAndRequestDigestsMatchUtf8CanonicalVectors() {
     VerifiedJoinScope scope = scope("scope-token-α", "production");
 
     assertEquals(
-        "sha256:3ecdb49d051fb18e9e925031da8245504af61d956993b5b44fc7b4f0781b0da6",
+        "sha256:15efd695569eca4a26589922c7ad128c3a2318203d1a2181666cc3ed6650f5b8",
         AccountJoinDigest.scope(scope));
     assertEquals(
         "sha256:764b03cbe948293517acb4ce201dbd24fc4d2a0a2306e853f2ab0a6c3775a768",
@@ -29,12 +32,16 @@ class AccountJoinDigestTest {
     assertNotEquals(
         AccountJoinDigest.request(scope, "bootstrap-jti-α", true, 5L),
         AccountJoinDigest.request(withGameInstance(scope, 45L), "bootstrap-jti-α", true, 5L));
+    assertNotEquals(
+        AccountJoinDigest.scope(scope),
+        AccountJoinDigest.scope(
+            withRealm(scope, UUID.fromString("57c58f36-c5ea-4aa8-8ef7-91a45e407f01"))));
     assertThrows(
         IllegalArgumentException.class,
         () -> AccountJoinDigest.request(scope, "bootstrap-jti-α", null, null));
 
     assertEquals(
-        "sha256:d6cfe1a2c241a63bdb0f5c381e18fddae1f00431da5f27cbfbf0f0a4b9748a3b",
+        "sha256:13445ed45c66f0e149250f4101c95452a74f15e56dbf3b9b271852ff2d058776",
         AccountJoinDigest.intent("join-request-α", scope, "bootstrap-jti-α"));
   }
 
@@ -73,12 +80,30 @@ class AccountJoinDigestTest {
         scope.snapshotDigest());
   }
 
+  private static VerifiedJoinScope withRealm(VerifiedJoinScope scope, UUID realmId) {
+    return new VerifiedJoinScope(
+        scope.connectScopeId(),
+        scope.accountId(),
+        scope.tenantId(),
+        realmId,
+        scope.worldSlug(),
+        scope.realmSlug(),
+        scope.playableStateNamespaceId(),
+        scope.playableStateScope(),
+        scope.gameInstanceId(),
+        scope.catalogRevision(),
+        scope.pointerVersion(),
+        scope.evaluatedAt(),
+        scope.connectScopeExpiresAt(),
+        scope.snapshotDigest());
+  }
+
   private static VerifiedJoinScope scope(String connectScopeId, String realmSlug) {
     return new VerifiedJoinScope(
         connectScopeId,
         11L,
         7L,
-        31L,
+        REALM_ID,
         "demo",
         realmSlug,
         "namespace-44",

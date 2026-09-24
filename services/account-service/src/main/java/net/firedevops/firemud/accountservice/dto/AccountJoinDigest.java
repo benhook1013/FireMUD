@@ -16,7 +16,7 @@ public final class AccountJoinDigest {
             + "targetClass=PUBLIC_PRODUCTION\n"
             + field("connectScopeId", scope.connectScopeId())
             + field("tenantId", scope.tenantId())
-            + field("realmId", scope.realmId())
+            + field("realmId", scope.realmId().toString())
             + field("worldSlug", scope.worldSlug())
             + field("realmSlug", scope.realmSlug())
             + field("playableStateNamespaceId", scope.playableStateNamespaceId())
@@ -67,7 +67,7 @@ public final class AccountJoinDigest {
             + field("tenantId", scope.tenantId())
             + field("worldSlug", scope.worldSlug())
             + field("realmSlug", scope.realmSlug())
-            + field("realmId", scope.realmId())
+            + field("realmId", scope.realmId().toString())
             + field("playableStateNamespaceId", scope.playableStateNamespaceId())
             + field("playableStateScope", scope.playableStateScope())
             + field("gameInstanceId", scope.gameInstanceId())

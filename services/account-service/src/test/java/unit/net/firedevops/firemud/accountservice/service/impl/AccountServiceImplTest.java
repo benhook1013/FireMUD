@@ -12,6 +12,7 @@ import de.mkammerer.argon2.Argon2;
 import de.mkammerer.argon2.Argon2Factory;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -70,6 +71,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
@@ -79,6 +81,7 @@ import org.springframework.transaction.support.SimpleTransactionStatus;
 
 class AccountServiceImplTest {
   private static final String JWT_SECRET = "mysecretkey123456789012345678901";
+  private static final String REALM_ID = "4c4b57d8-e3a2-48fe-9977-e7df0fdce901";
   @Mock private AccountRepository accountRepository;
   @Mock private AccountAuditOutboxRepository accountAuditOutboxRepository;
   @Mock private AccountConnectScopeRepository accountConnectScopeRepository;
@@ -150,7 +153,7 @@ class AccountServiceImplTest {
                     .setDisplayName("Live Realm")
                     .setTenantId("7")
                     .setGameInstanceId("44")
-                    .setRealmId("101")
+                    .setRealmId(REALM_ID)
                     .setPlayableStateNamespaceId("production-namespace-7")
                     .setCatalogRevision(23L)
                     .setPointerVersion(17L)
@@ -169,7 +172,7 @@ class AccountServiceImplTest {
                 .setRealmDisplayName("Live Realm")
                 .setTenantId("7")
                 .setGameInstanceId("44")
-                .setRealmId("101")
+                .setRealmId(REALM_ID)
                 .setPlayableStateNamespaceId("production-namespace-7")
                 .setCatalogRevision(23L)
                 .setPointerVersion(17L)
@@ -327,6 +330,7 @@ class AccountServiceImplTest {
     assertTrue(retried.success());
     assertTrue(retried.replayed());
     assertNotNull(onboardingToken.connectToken());
+    assertEquals(REALM_ID, retainedScope.get().realmId().toString());
     assertEquals(
         first,
         new JoinPublicProductionResult(
@@ -620,7 +624,7 @@ class AccountServiceImplTest {
             connectScopeId,
             11L,
             7L,
-            101L,
+            UUID.fromString(REALM_ID),
             "demo",
             "production",
             "production-namespace-7",
@@ -658,6 +662,7 @@ class AccountServiceImplTest {
         new AccountJoinOperationRepository.JoinOperation(
             expiredScope.accountId(),
             expiredScope.tenantId(),
+            expiredScope.realmId(),
             callerBinding,
             net.firedevops.firemud.accountservice.dto.AccountJoinDigest.tokenHash(connectScopeId),
             expiredScope.snapshotDigest(),
@@ -718,6 +723,7 @@ class AccountServiceImplTest {
         new AccountJoinOperationRepository.JoinOperation(
             12L,
             scope.tenantId(),
+            scope.realmId(),
             "different-caller",
             net.firedevops.firemud.accountservice.dto.AccountJoinDigest.tokenHash(connectScopeId),
             scope.snapshotDigest(),
@@ -822,6 +828,7 @@ class AccountServiceImplTest {
                   new AccountJoinOperationRepository.JoinOperation(
                       scope.accountId(),
                       scope.tenantId(),
+                      scope.realmId(),
                       callerBinding,
                       net.firedevops.firemud.accountservice.dto.AccountJoinDigest.tokenHash(
                           scope.connectScopeId()),
@@ -855,6 +862,7 @@ class AccountServiceImplTest {
                   new AccountJoinOperationRepository.JoinOperation(
                       pending.accountId(),
                       pending.tenantId(),
+                      pending.realmId(),
                       pending.callerBinding(),
                       pending.scopeTokenHash(),
                       pending.connectScopeDigest(),
@@ -888,6 +896,7 @@ class AccountServiceImplTest {
                   new AccountJoinOperationRepository.JoinOperation(
                       pending.accountId(),
                       pending.tenantId(),
+                      pending.realmId(),
                       pending.callerBinding(),
                       pending.scopeTokenHash(),
                       pending.connectScopeDigest(),
@@ -921,6 +930,7 @@ class AccountServiceImplTest {
                   new AccountJoinOperationRepository.JoinOperation(
                       pending.accountId(),
                       pending.tenantId(),
+                      pending.realmId(),
                       pending.callerBinding(),
                       pending.scopeTokenHash(),
                       pending.connectScopeDigest(),
@@ -1463,7 +1473,7 @@ class AccountServiceImplTest {
                     .setDisplayName("Broken Realm")
                     .setTenantId("bad")
                     .setGameInstanceId("44")
-                    .setRealmId("101")
+                    .setRealmId(REALM_ID)
                     .setPlayableStateNamespaceId("production-namespace-7")
                     .setCatalogRevision(23L)
                     .setPointerVersion(17L)
@@ -1480,6 +1490,43 @@ class AccountServiceImplTest {
     assertThrows(
         IllegalArgumentException.class,
         () -> service.listBootstrapWorlds(bootstrap.bootstrapToken()));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"101", "not-a-uuid", "4C4B57D8-E3A2-48FE-9977-E7DF0FDCE901"})
+  void listBootstrapRealmsRejectsNoncanonicalRealmIds(String realmId) {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("production")
+                    .setDisplayName("Live Realm")
+                    .setTenantId("7")
+                    .setGameInstanceId("44")
+                    .setRealmId(realmId)
+                    .setPlayableStateNamespaceId("production-namespace-7")
+                    .setCatalogRevision(23L)
+                    .setPointerVersion(17L)
+                    .setVisible(true)
+                    .setPublicProductionRealm(true)
+                    .setRequiresCharacterSelection(false)
+                    .setStateScope("SHARED")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build()));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo"));
   }
 
   @Test
@@ -1644,6 +1691,59 @@ class AccountServiceImplTest {
                     new ConnectTokenRequest(malformedConnectScopeId, "req-err3")));
 
     assertEquals("CONNECT_SCOPE_INVALID", ex.getCode());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"101", "not-a-uuid", "4C4B57D8-E3A2-48FE-9977-E7DF0FDCE901"})
+  void issueConnectTokenRejectsNoncanonicalRealmIdClaims(String realmId) {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String malformedConnectScopeId =
+        new JwtUtil(JWT_SECRET, 120000L)
+            .generateToken(
+                "11",
+                Map.ofEntries(
+                    Map.entry("aud", "bootstrap-connect-scope"),
+                    Map.entry("accountId", "11"),
+                    Map.entry("tenantId", "7"),
+                    Map.entry("realmId", realmId),
+                    Map.entry("worldSlug", "demo"),
+                    Map.entry("realmSlug", "production"),
+                    Map.entry("playableStateNamespaceId", "production-namespace-7"),
+                    Map.entry("playableStateScope", "SHARED"),
+                    Map.entry("gameInstanceId", "44"),
+                    Map.entry("catalogRevision", "23"),
+                    Map.entry("pointerVersion", "17"),
+                    Map.entry("evaluatedAt", java.time.Instant.now().toString()),
+                    Map.entry(
+                        "connectScopeExpiresAt",
+                        java.time.Instant.now().plusSeconds(3600).toString()),
+                    Map.entry("jti", "invalid-realm-id")));
+
+    AuthenticationException ex =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.issueConnectToken(
+                    bootstrap.bootstrapToken(),
+                    new ConnectTokenRequest(malformedConnectScopeId, "req-invalid-realm-id")));
+
+    assertEquals("CONNECT_SCOPE_INVALID", ex.getCode());
+    verifyNoInteractions(accountConnectScopeRepository);
   }
 
   @Test
@@ -2096,7 +2196,7 @@ class AccountServiceImplTest {
                 .setRealmDisplayName("Live Realm")
                 .setTenantId("7")
                 .setGameInstanceId("99")
-                .setRealmId("101")
+                .setRealmId(REALM_ID)
                 .setPlayableStateNamespaceId("production-namespace-7")
                 .setCatalogRevision(23L)
                 .setPointerVersion(18L)
@@ -2150,7 +2250,7 @@ class AccountServiceImplTest {
                 .setRealmDisplayName("Live Realm")
                 .setTenantId("7")
                 .setGameInstanceId("44")
-                .setRealmId("101")
+                .setRealmId(REALM_ID)
                 .setPlayableStateNamespaceId("production-namespace-7")
                 .setCatalogRevision(23L)
                 .setPointerVersion(17L)
@@ -2208,7 +2308,7 @@ class AccountServiceImplTest {
                     .setDisplayName("Live Realm")
                     .setTenantId("")
                     .setGameInstanceId("44")
-                    .setRealmId("101")
+                    .setRealmId(REALM_ID)
                     .setPlayableStateNamespaceId("production-namespace-7")
                     .setCatalogRevision(23L)
                     .setPointerVersion(17L)
@@ -2270,7 +2370,7 @@ class AccountServiceImplTest {
                 .setRealmDisplayName("Live Realm")
                 .setTenantId("7")
                 .setGameInstanceId("99")
-                .setRealmId("101")
+                .setRealmId(REALM_ID)
                 .setPlayableStateNamespaceId("production-namespace-7")
                 .setCatalogRevision(23L)
                 .setPointerVersion(18L)
@@ -2463,7 +2563,7 @@ class AccountServiceImplTest {
                     .setDisplayName("Preview Realm")
                     .setTenantId("7")
                     .setGameInstanceId("55")
-                    .setRealmId("101")
+                    .setRealmId(REALM_ID)
                     .setPlayableStateNamespaceId("production-namespace-7")
                     .setCatalogRevision(23L)
                     .setPointerVersion(19L)
@@ -2482,7 +2582,7 @@ class AccountServiceImplTest {
                 .setRealmDisplayName("Preview Realm")
                 .setTenantId("7")
                 .setGameInstanceId("55")
-                .setRealmId("101")
+                .setRealmId(REALM_ID)
                 .setPlayableStateNamespaceId("production-namespace-7")
                 .setCatalogRevision(23L)
                 .setPointerVersion(19L)
@@ -2556,7 +2656,7 @@ class AccountServiceImplTest {
                 .setRealmDisplayName("Live Realm")
                 .setTenantId("7")
                 .setGameInstanceId("99")
-                .setRealmId("101")
+                .setRealmId(REALM_ID)
                 .setPlayableStateNamespaceId("production-namespace-7")
                 .setCatalogRevision(23L)
                 .setPointerVersion(18L)
@@ -2591,7 +2691,7 @@ class AccountServiceImplTest {
                 .setRealmDisplayName("Live Realm")
                 .setTenantId("7")
                 .setGameInstanceId("44")
-                .setRealmId("101")
+                .setRealmId(REALM_ID)
                 .setPlayableStateNamespaceId("production-namespace-7")
                 .setCatalogRevision(23L)
                 .setPointerVersion(17L)
@@ -2728,7 +2828,7 @@ class AccountServiceImplTest {
             .setDisplayName("Live Realm")
             .setTenantId("7")
             .setGameInstanceId("44")
-            .setRealmId("101")
+            .setRealmId(REALM_ID)
             .setPlayableStateNamespaceId("production-namespace-7")
             .setCatalogRevision(23L)
             .setPointerVersion(17L)
@@ -2781,7 +2881,7 @@ class AccountServiceImplTest {
             .setDisplayName("Live Realm")
             .setTenantId("7")
             .setGameInstanceId("44")
-            .setRealmId("101")
+            .setRealmId(REALM_ID)
             .setPlayableStateNamespaceId("production-namespace-7")
             .setCatalogRevision(23L)
             .setPointerVersion(17L)
@@ -2820,6 +2920,13 @@ class AccountServiceImplTest {
     var realms = service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo");
 
     assertEquals(1, realms.size());
+    assertEquals(REALM_ID, realms.getFirst().realmId());
+    assertEquals(
+        REALM_ID,
+        new JwtUtil(JWT_SECRET, 300000L)
+            .parseToken(realms.getFirst().connectScopeId())
+            .getPayload()
+            .get("realmId"));
     assertEquals("SHARED", realms.getFirst().stateScope());
     assertEquals("ALLOW_NEW", realms.getFirst().characterCreationPolicy());
   }
@@ -2843,7 +2950,7 @@ class AccountServiceImplTest {
                     .setDisplayName("Broken Realm")
                     .setTenantId("bad")
                     .setGameInstanceId("44")
-                    .setRealmId("101")
+                    .setRealmId(REALM_ID)
                     .setPlayableStateNamespaceId("production-namespace-7")
                     .setCatalogRevision(23L)
                     .setPointerVersion(17L)
@@ -2859,7 +2966,7 @@ class AccountServiceImplTest {
                     .setDisplayName("Live Realm")
                     .setTenantId("7")
                     .setGameInstanceId("44")
-                    .setRealmId("101")
+                    .setRealmId(REALM_ID)
                     .setPlayableStateNamespaceId("production-namespace-7")
                     .setCatalogRevision(23L)
                     .setPointerVersion(17L)
@@ -2898,7 +3005,7 @@ class AccountServiceImplTest {
                     .setDisplayName("Live Realm")
                     .setTenantId("7")
                     .setGameInstanceId("91")
-                    .setRealmId("101")
+                    .setRealmId(REALM_ID)
                     .setPlayableStateNamespaceId("production-namespace-7")
                     .setCatalogRevision(23L)
                     .setPointerVersion(17L)
@@ -2917,7 +3024,7 @@ class AccountServiceImplTest {
                 .setRealmDisplayName("Live Realm")
                 .setTenantId("7")
                 .setGameInstanceId("91")
-                .setRealmId("101")
+                .setRealmId(REALM_ID)
                 .setPlayableStateNamespaceId("production-namespace-7")
                 .setCatalogRevision(23L)
                 .setPointerVersion(17L)
@@ -2974,7 +3081,7 @@ class AccountServiceImplTest {
                 .setRealmDisplayName("Live Realm")
                 .setTenantId("7")
                 .setGameInstanceId("bad")
-                .setRealmId("101")
+                .setRealmId(REALM_ID)
                 .setPlayableStateNamespaceId("production-namespace-7")
                 .setCatalogRevision(23L)
                 .setPointerVersion(17L)
@@ -3022,7 +3129,7 @@ class AccountServiceImplTest {
                 .setRealmDisplayName("Live Realm")
                 .setTenantId("7")
                 .setGameInstanceId("44")
-                .setRealmId("101")
+                .setRealmId(REALM_ID)
                 .setPlayableStateNamespaceId("production-namespace-7")
                 .setCatalogRevision(23L)
                 .setPointerVersion(17L)
@@ -3069,7 +3176,7 @@ class AccountServiceImplTest {
                     .setDisplayName("Live Realm")
                     .setTenantId("7")
                     .setGameInstanceId("91")
-                    .setRealmId("101")
+                    .setRealmId(REALM_ID)
                     .setPlayableStateNamespaceId("production-namespace-7")
                     .setCatalogRevision(23L)
                     .setPointerVersion(17L)
@@ -3088,7 +3195,7 @@ class AccountServiceImplTest {
                 .setRealmDisplayName("Live Realm")
                 .setTenantId("7")
                 .setGameInstanceId("44")
-                .setRealmId("101")
+                .setRealmId(REALM_ID)
                 .setPlayableStateNamespaceId("production-namespace-7")
                 .setCatalogRevision(23L)
                 .setPointerVersion(17L)
@@ -3107,7 +3214,7 @@ class AccountServiceImplTest {
                 .setRealmDisplayName("Live Realm")
                 .setTenantId("7")
                 .setGameInstanceId("91")
-                .setRealmId("101")
+                .setRealmId(REALM_ID)
                 .setPlayableStateNamespaceId("production-namespace-7")
                 .setCatalogRevision(23L)
                 .setPointerVersion(17L)
@@ -3167,7 +3274,7 @@ class AccountServiceImplTest {
                     .setDisplayName("Tenant Seven")
                     .setTenantId("7")
                     .setGameInstanceId("44")
-                    .setRealmId("101")
+                    .setRealmId(REALM_ID)
                     .setPlayableStateNamespaceId("production-namespace-7")
                     .setCatalogRevision(23L)
                     .setPointerVersion(17L)
@@ -3182,7 +3289,7 @@ class AccountServiceImplTest {
                     .setDisplayName("Tenant Eight")
                     .setTenantId("8")
                     .setGameInstanceId("45")
-                    .setRealmId("101")
+                    .setRealmId(REALM_ID)
                     .setPlayableStateNamespaceId("production-namespace-8")
                     .setCatalogRevision(23L)
                     .setPointerVersion(18L)
@@ -3250,6 +3357,44 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void listBootstrapCharactersRejectsChangedCanonicalRealmId() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    net.firedevops.firemud.gamesession.v1.GameplayRealm changedRealm =
+        gameSessionClient.listGameplayRealms("demo").getFirst().toBuilder()
+            .setRealmId("57c58f36-c5ea-4aa8-8ef7-91a45e407f01")
+            .build();
+    when(gameSessionClient.listGameplayRealms("demo")).thenReturn(java.util.List.of(changedRealm));
+    net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer changedAdmissionPointer =
+        gameSessionClient.getAdmissionPointer(7L, "demo", "production").toBuilder()
+            .setRealmId("57c58f36-c5ea-4aa8-8ef7-91a45e407f01")
+            .build();
+    when(gameSessionClient.getAdmissionPointer(7L, "demo", "production"))
+        .thenReturn(changedAdmissionPointer);
+
+    AuthenticationException ex =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.listBootstrapCharacters(
+                    bootstrap.bootstrapToken(), "demo", "production", connectScopeId));
+
+    assertEquals("CONNECT_SCOPE_MISMATCH", ex.getCode());
+    verifyNoInteractions(entityManagementClient);
+  }
+
+  @Test
   void listBootstrapRealmsExcludesNonPublicRealmWithoutGrant() {
     Account account = new Account();
     account.setId(11L);
@@ -3273,7 +3418,7 @@ class AccountServiceImplTest {
                     .setDisplayName("Preview Realm")
                     .setTenantId("7")
                     .setGameInstanceId("55")
-                    .setRealmId("101")
+                    .setRealmId(REALM_ID)
                     .setPlayableStateNamespaceId("production-namespace-7")
                     .setCatalogRevision(23L)
                     .setPointerVersion(19L)
@@ -3321,7 +3466,7 @@ class AccountServiceImplTest {
                     .setDisplayName("Preview Realm")
                     .setTenantId("7")
                     .setGameInstanceId("55")
-                    .setRealmId("101")
+                    .setRealmId(REALM_ID)
                     .setPlayableStateNamespaceId("production-namespace-7")
                     .setCatalogRevision(23L)
                     .setPointerVersion(19L)
@@ -3340,7 +3485,7 @@ class AccountServiceImplTest {
                 .setRealmDisplayName("Preview Realm")
                 .setTenantId("7")
                 .setGameInstanceId("55")
-                .setRealmId("101")
+                .setRealmId(REALM_ID)
                 .setPlayableStateNamespaceId("production-namespace-7")
                 .setCatalogRevision(23L)
                 .setPointerVersion(19L)
@@ -3384,7 +3529,7 @@ class AccountServiceImplTest {
                     .setDisplayName("Preview Realm")
                     .setTenantId("7")
                     .setGameInstanceId("55")
-                    .setRealmId("101")
+                    .setRealmId(REALM_ID)
                     .setPlayableStateNamespaceId("production-namespace-7")
                     .setCatalogRevision(23L)
                     .setPointerVersion(19L)
@@ -3446,7 +3591,7 @@ class AccountServiceImplTest {
                     .setDisplayName("Preview Realm")
                     .setTenantId("7")
                     .setGameInstanceId("55")
-                    .setRealmId("101")
+                    .setRealmId(REALM_ID)
                     .setPlayableStateNamespaceId("production-namespace-7")
                     .setCatalogRevision(23L)
                     .setPointerVersion(19L)
@@ -3465,7 +3610,7 @@ class AccountServiceImplTest {
                 .setRealmDisplayName("Preview Realm")
                 .setTenantId("7")
                 .setGameInstanceId("55")
-                .setRealmId("101")
+                .setRealmId(REALM_ID)
                 .setPlayableStateNamespaceId("production-namespace-7")
                 .setCatalogRevision(23L)
                 .setPointerVersion(19L)
@@ -3920,7 +4065,7 @@ class AccountServiceImplTest {
         .setRealmDisplayName("production".equals(realmSlug) ? "Live Realm" : "Preview Realm")
         .setTenantId(Long.toString(tenantId))
         .setGameInstanceId(gameInstanceId)
-        .setRealmId("101")
+        .setRealmId(REALM_ID)
         .setPlayableStateNamespaceId("production-namespace-" + tenantId)
         .setCatalogRevision(23L)
         .setPointerVersion(pointerVersion)

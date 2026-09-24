@@ -170,6 +170,7 @@ class AuthControllerTest {
                 new BootstrapRealmDto(
                     "demo",
                     "production",
+                    "4c4b57d8-e3a2-48fe-9977-e7df0fdce901",
                     "Live Realm",
                     1L,
                     42L,
@@ -188,6 +189,7 @@ class AuthControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data[0].realmSlug").value("production"))
+        .andExpect(jsonPath("$.data[0].realmId").value("4c4b57d8-e3a2-48fe-9977-e7df0fdce901"))
         .andExpect(jsonPath("$.data[0].connectScopeId").value("scope-1"));
   }
 

@@ -9,6 +9,7 @@ import io.grpc.Context;
 import io.grpc.stub.StreamObserver;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
@@ -58,10 +59,14 @@ import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 
 class AccountGrpcServiceTest {
   private static final String WORKLOAD_NAMESPACE = "test";
+  private static final String REALM_ID = "4c4b57d8-e3a2-48fe-9977-e7df0fdce901";
+  private static final String OTHER_REALM_ID = "57c58f36-c5ea-4aa8-8ef7-91a45e407f01";
   private static final GrpcPeerIdentity GAME_SESSION_PEER =
       new GrpcPeerIdentity(
           "spiffe://firemud/ns/test/sa/game-session-service",
@@ -72,7 +77,7 @@ class AccountGrpcServiceTest {
     return PlayerExecutionContext.newBuilder()
         .setAccountId("10")
         .setTenantId("20")
-        .setRealmId("30")
+        .setRealmId(REALM_ID)
         .setPlayableStateNamespaceId("realm-state-30")
         .setPlayableStateScope("realm:30")
         .setGameInstanceId("40")
@@ -85,7 +90,7 @@ class AccountGrpcServiceTest {
     return IssueDirectTextConnectScopeRequest.newBuilder()
         .setPlayerContext(validPlayerContext())
         .setTenantId("20")
-        .setRealmId("30")
+        .setRealmId(REALM_ID)
         .setWorldSlug("world")
         .setRealmSlug("public")
         .setPlayableStateNamespaceId("realm-state-30")
@@ -171,9 +176,24 @@ class AccountGrpcServiceTest {
     Mockito.verify(accountService)
         .issueDirectTextConnectScope(
             new DirectTextCallerContext(
-                10L, 20L, 30L, "realm-state-30", "realm:30", 40L, "session-1", "request-1"),
+                10L,
+                20L,
+                UUID.fromString(REALM_ID),
+                "realm-state-30",
+                "realm:30",
+                40L,
+                "session-1",
+                "request-1"),
             new DirectTextJoinTarget(
-                20L, 30L, "world", "public", "realm-state-30", "realm:30", 40L, 5L, 8L));
+                20L,
+                UUID.fromString(REALM_ID),
+                "world",
+                "public",
+                "realm-state-30",
+                "realm:30",
+                40L,
+                5L,
+                8L));
   }
 
   @Test
@@ -206,7 +226,14 @@ class AccountGrpcServiceTest {
     Mockito.verify(accountService)
         .joinPublicProductionFromGameSession(
             new DirectTextCallerContext(
-                10L, 20L, 30L, "realm-state-30", "realm:30", 40L, "session-1", "request-1"),
+                10L,
+                20L,
+                UUID.fromString(REALM_ID),
+                "realm-state-30",
+                "realm:30",
+                40L,
+                "session-1",
+                "request-1"),
             new JoinPublicProductionRequest("scope-1", "request-1"));
   }
 
@@ -254,7 +281,7 @@ class AccountGrpcServiceTest {
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
 
     IssueDirectTextConnectScopeRequest mismatchedTarget =
-        validScopeRequest().toBuilder().setRealmId("31").build();
+        validScopeRequest().toBuilder().setRealmId(OTHER_REALM_ID).build();
     PlayerExecutionContext malformedContext =
         validPlayerContext().toBuilder().setAccountId("NaN").build();
     JoinPublicProductionMembershipRequest mismatchedJoin =
@@ -282,6 +309,37 @@ class AccountGrpcServiceTest {
     assertEquals("INVALID_ARGUMENT", targetObserver.response().getError().getCode());
     assertEquals("INVALID_ARGUMENT", malformedObserver.response().getError().getCode());
     assertEquals("INVALID_ARGUMENT", requestIdObserver.response().getError().getCode());
+    Mockito.verifyNoInteractions(accountService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"30", "not-a-uuid", "4C4B57D8-E3A2-48FE-9977-E7DF0FDCE901"})
+  void directTextScopeRejectsNoncanonicalRealmIdsAtBothIngressFields(String realmId) {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<IssueDirectTextConnectScopeResponse> targetObserver =
+        new RecordingObserver<>();
+    RecordingObserver<IssueDirectTextConnectScopeResponse> contextObserver =
+        new RecordingObserver<>();
+
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.issueDirectTextConnectScope(
+                validScopeRequest().toBuilder().setRealmId(realmId).build(), targetObserver));
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.issueDirectTextConnectScope(
+                validScopeRequest().toBuilder()
+                    .setPlayerContext(validPlayerContext().toBuilder().setRealmId(realmId).build())
+                    .build(),
+                contextObserver));
+
+    assertEquals("INVALID_ARGUMENT", targetObserver.response().getError().getCode());
+    assertEquals("INVALID_ARGUMENT", contextObserver.response().getError().getCode());
     Mockito.verifyNoInteractions(accountService);
   }
 
