@@ -415,7 +415,7 @@ jobs:
       pull-requests: read # Re-read the current PR head and base before accepting smoke.
     needs: [changes]
     if: ${{ always() && github.event_name == 'pull_request' }}
-    timeout-minutes: 30
+    timeout-minutes: 95
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
