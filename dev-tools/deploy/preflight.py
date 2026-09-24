@@ -944,6 +944,21 @@ def publication_workload_secret_requirements(
         raise ValueError(
             "Cannot resolve publication workload Secret namespace from internalBindings.postgres.credentialsRef"
         )
+    workload_mtls_ref = parse_binding_ref(
+        get(expected, "internalBindings.certificates.workloadMtlsRef")
+    )
+    if (
+        workload_mtls_ref is None
+        or workload_mtls_ref[0] != "cert-manager"
+        or not workload_mtls_ref[1]
+        or len(workload_mtls_ref[2]) != 1
+        or not workload_mtls_ref[2][0]
+    ):
+        raise ValueError(
+            "Cannot resolve workload mTLS Secret name from "
+            "internalBindings.certificates.workloadMtlsRef"
+        )
+    workload_mtls_secret_name = workload_mtls_ref[2][0]
     requirements = []
     for workload in PUBLICATION_GRPC_WORKLOADS:
         deployments = [
@@ -997,6 +1012,16 @@ def publication_workload_secret_requirements(
         ):
             raise ValueError(
                 f"Rendered publication workload {workload} has a malformed grpc-tls Secret volume"
+            )
+        if secret_name == workload_mtls_secret_name:
+            raise ValueError(
+                f"Rendered publication workload {workload} grpc-tls Secret must be distinct from "
+                f"the workload mTLS Secret {workload_mtls_secret_name}"
+            )
+        if secret_name == "firemud-grpc-tls":
+            raise ValueError(
+                f"Rendered publication workload {workload} grpc-tls Secret must not use the "
+                "shared fallback Secret firemud-grpc-tls"
             )
 
         containers = pod_spec.get("containers")

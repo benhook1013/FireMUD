@@ -9657,10 +9657,47 @@ def publication_static_issues(documents):
     )
 
 
-def expect_publication_static_failure(description, documents):
+def expect_publication_static_failure(description, documents, expected_fragment=None):
     issues = publication_static_issues(documents)
     if not issues:
         raise SystemExit(f"publication preflight accepted {description}")
+    if expected_fragment is not None and not any(
+        expected_fragment in issue for issue in issues
+    ):
+        raise SystemExit(
+            f"publication preflight rejected {description} for the wrong reason: {issues}"
+        )
+
+
+workload_mtls_ref = module.parse_binding_ref(
+    module.get(
+        publication_expected,
+        "internalBindings.certificates.workloadMtlsRef",
+    )
+)
+if workload_mtls_ref is None or len(workload_mtls_ref[2]) != 1:
+    raise SystemExit("production fixture did not resolve a single workload mTLS Secret name")
+workload_mtls_secret_name = workload_mtls_ref[2][0]
+
+bound_workload_mtls_collision_documents = copy.deepcopy(publication_documents)
+bound_workload_mtls_collision_documents[0]["spec"]["template"]["spec"]["volumes"][
+    0
+]["secret"]["secretName"] = workload_mtls_secret_name
+expect_publication_static_failure(
+    "the workload mTLS Secret reused as a publication leaf Secret",
+    bound_workload_mtls_collision_documents,
+    "distinct from the workload mTLS Secret",
+)
+
+fallback_workload_mtls_collision_documents = copy.deepcopy(publication_documents)
+fallback_workload_mtls_collision_documents[0]["spec"]["template"]["spec"]["volumes"][
+    0
+]["secret"]["secretName"] = "firemud-grpc-tls"
+expect_publication_static_failure(
+    "the fixed firemud-grpc-tls fallback reused as a publication leaf Secret",
+    fallback_workload_mtls_collision_documents,
+    "shared fallback Secret firemud-grpc-tls",
+)
 
 
 missing_grpc_mount_documents = copy.deepcopy(publication_documents)
